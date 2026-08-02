@@ -16,6 +16,7 @@ from .normalization import (
     normalize_option_volatility,
     normalize_trading_calendar,
 )
+from .normalization.calendar import normalize_calendar_code, normalize_calendar_market
 from .quality import (
     run_bar_quality_checks,
     run_option_contract_quality_checks,
@@ -439,12 +440,13 @@ def collect_trading_calendar(
 ) -> DatasetRunManifest:
     if start_date > end_date:
         raise ValueError("start_date must be on or before end_date")
-    if bool(market) == bool(code):
+    normalized_market = normalize_calendar_market(market)
+    normalized_code = normalize_calendar_code(code)
+    if bool(normalized_market) == bool(normalized_code):
         raise ValueError("Provide exactly one of market or code")
 
-    normalized_market = market.upper() if market else None
     scope_type = "MARKET" if normalized_market else "CODE"
-    scope_value = normalized_market or code or ""
+    scope_value = normalized_market or normalized_code or ""
     captured_at = pd.Timestamp.now(tz="UTC")
     manifest = DatasetRunManifest(
         dataset="trading_calendar",
@@ -453,7 +455,7 @@ def collect_trading_calendar(
             "scope_type": scope_type,
             "scope_value": scope_value,
             "market": normalized_market,
-            "code": code,
+            "code": normalized_code,
             "requested_start_date": start_date.isoformat(),
             "requested_end_date": end_date.isoformat(),
             "returned_min_date": None,
@@ -475,7 +477,7 @@ def collect_trading_calendar(
                 start_date=start_date,
                 end_date=end_date,
                 market=normalized_market,
-                code=code,
+                code=normalized_code,
             )
             if raw.empty:
                 raise RuntimeError("No trading calendar rows were returned")
@@ -491,7 +493,9 @@ def collect_trading_calendar(
         curated = normalize_trading_calendar(
             raw,
             market=normalized_market,
-            code=code,
+            code=normalized_code,
+            requested_start_date=start_date,
+            requested_end_date=end_date,
             captured_at=captured_at,
             source=settings.source,
             source_schema_version=settings.source_schema_version,

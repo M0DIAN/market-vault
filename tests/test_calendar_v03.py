@@ -107,7 +107,7 @@ def test_calendar_collector_code_mode_calls_request_trading_days(tmp_path):
     ctx = FakeCalendarContext(response=pd.DataFrame({"time": ["2026-07-01"], "trade_date_type": ["WHOLE"]}))
     collector = collector_with_context(tmp_path, ctx)
 
-    out = collector.fetch_trading_calendar(date(2026, 7, 1), date(2026, 7, 31), code="US.MU")
+    out = collector.fetch_trading_calendar(date(2026, 7, 1), date(2026, 7, 31), code=" us.mu ")
 
     assert len(out) == 1
     assert ctx.calls[0] == {"start": "2026-07-01", "end": "2026-07-31", "code": "US.MU"}
@@ -120,6 +120,8 @@ def test_calendar_collector_requires_exactly_one_scope(tmp_path):
         collector.fetch_trading_calendar(date(2026, 7, 1), date(2026, 7, 31))
     with pytest.raises(ValueError):
         collector.fetch_trading_calendar(date(2026, 7, 1), date(2026, 7, 31), market="US", code="US.MU")
+    with pytest.raises(ValueError, match="code cannot be empty"):
+        collector.fetch_trading_calendar(date(2026, 7, 1), date(2026, 7, 31), code="   ")
 
 
 def test_calendar_collector_api_failure_and_close(tmp_path):
@@ -146,6 +148,8 @@ def test_calendar_normalization_maps_dates_types_captured_at_dedup_and_sort():
         raw,
         market="US",
         code=None,
+        requested_start_date=date(2026, 7, 1),
+        requested_end_date=date(2026, 7, 31),
         captured_at=pd.Timestamp("2026-08-02T01:00:00Z"),
         source="moomoo",
         source_schema_version="10.9",
@@ -157,13 +161,17 @@ def test_calendar_normalization_maps_dates_types_captured_at_dedup_and_sort():
     assert str(out["captured_at"].dt.tz) == "UTC"
     assert out.loc[0, "scope_type"] == "MARKET"
     assert out.loc[0, "scope_value"] == "US"
+    assert out.loc[0, "requested_start_date"] == date(2026, 7, 1)
+    assert out.loc[0, "requested_end_date"] == date(2026, 7, 31)
 
 
 def test_calendar_normalization_preserves_unknown_type():
     out = normalize_trading_calendar(
         pd.DataFrame({"time": ["2026-07-01"], "trade_date_type": ["NIGHT"]}),
         market=None,
-        code="US.MU",
+        code=" Us.Mu ",
+        requested_start_date=date(2026, 7, 1),
+        requested_end_date=date(2026, 7, 31),
         captured_at=pd.Timestamp("2026-08-02T01:00:00Z"),
         source="moomoo",
         source_schema_version="10.9",
@@ -173,6 +181,7 @@ def test_calendar_normalization_preserves_unknown_type():
     assert out.loc[0, "trade_date_type"] == "NIGHT"
     assert out.loc[0, "scope_type"] == "CODE"
     assert out.loc[0, "reference_code"] == "US.MU"
+    assert out.loc[0, "scope_value"] == "US.MU"
 
 
 def test_calendar_quality_checks_failures_and_warns():
@@ -202,6 +211,8 @@ def test_calendar_quality_valid_data_passes():
         calendar_frame(),
         market="US",
         code=None,
+        requested_start_date=date(2026, 7, 1),
+        requested_end_date=date(2026, 7, 31),
         captured_at=pd.Timestamp("2026-08-02T01:00:00Z"),
         source="moomoo",
         source_schema_version="10.9",
@@ -277,6 +288,8 @@ def test_calendar_paths_and_duckdb_latest_use_captured_at(tmp_path):
         pd.DataFrame({"time": ["2026-07-01"], "trade_date_type": ["WHOLE"]}),
         market="US",
         code=None,
+        requested_start_date=date(2026, 7, 1),
+        requested_end_date=date(2026, 7, 31),
         captured_at=pd.Timestamp("2026-08-01T01:00:00Z"),
         source="moomoo",
         source_schema_version="10.9",
@@ -286,6 +299,8 @@ def test_calendar_paths_and_duckdb_latest_use_captured_at(tmp_path):
         pd.DataFrame({"time": ["2026-07-01"], "trade_date_type": ["MORNING"]}),
         market="US",
         code=None,
+        requested_start_date=date(2026, 7, 1),
+        requested_end_date=date(2026, 7, 31),
         captured_at=pd.Timestamp("2026-08-02T01:00:00Z"),
         source="moomoo",
         source_schema_version="10.9",
@@ -319,6 +334,129 @@ def test_calendar_paths_and_duckdb_latest_use_captured_at(tmp_path):
     assert row == ("MORNING", "aaaa-run")
 
 
+def test_calendar_latest_withdraws_dates_missing_from_new_covering_snapshot(tmp_path):
+    cfg = settings(tmp_path)
+    store = ParquetStore(cfg)
+    catalog = Catalog(cfg)
+    older = normalize_trading_calendar(
+        pd.DataFrame(
+            {
+                "time": ["2026-07-01", "2026-07-02", "2026-07-03"],
+                "trade_date_type": ["WHOLE", "WHOLE", "WHOLE"],
+            }
+        ),
+        market="US",
+        code=None,
+        requested_start_date=date(2026, 7, 1),
+        requested_end_date=date(2026, 7, 31),
+        captured_at=pd.Timestamp("2026-08-01T01:00:00Z"),
+        source="moomoo",
+        source_schema_version="10.9",
+        run_id="zzzz-run",
+    )
+    newer = normalize_trading_calendar(
+        pd.DataFrame({"time": ["2026-07-01", "2026-07-02"], "trade_date_type": ["WHOLE", "MORNING"]}),
+        market="US",
+        code=None,
+        requested_start_date=date(2026, 7, 1),
+        requested_end_date=date(2026, 7, 31),
+        captured_at=pd.Timestamp("2026-08-02T01:00:00Z"),
+        source="moomoo",
+        source_schema_version="10.9",
+        run_id="aaaa-run",
+    )
+    store.write_trading_calendar_curated(older, "MARKET", "US", date(2026, 7, 1), date(2026, 7, 31), "zzzz-run")
+    store.write_trading_calendar_curated(newer, "MARKET", "US", date(2026, 7, 1), date(2026, 7, 31), "aaaa-run")
+
+    assert catalog.refresh_trading_calendar_views()
+    with duckdb.connect(str(cfg.catalog_path)) as con:
+        latest = con.execute("SELECT trade_date, trade_date_type FROM trading_calendar_latest ORDER BY trade_date").fetchall()
+        history_0703 = con.execute(
+            "SELECT count(*) FROM trading_calendar WHERE trade_date = DATE '2026-07-03'"
+        ).fetchone()[0]
+
+    assert latest == [(date(2026, 7, 1), "WHOLE"), (date(2026, 7, 2), "MORNING")]
+    assert history_0703 == 1
+
+
+def test_calendar_latest_partial_range_snapshot_leaves_outside_old_rows(tmp_path):
+    cfg = settings(tmp_path)
+    store = ParquetStore(cfg)
+    catalog = Catalog(cfg)
+    older = normalize_trading_calendar(
+        pd.DataFrame({"time": ["2026-07-01", "2026-07-15"], "trade_date_type": ["WHOLE", "WHOLE"]}),
+        market="US",
+        code=None,
+        requested_start_date=date(2026, 7, 1),
+        requested_end_date=date(2026, 7, 31),
+        captured_at=pd.Timestamp("2026-08-01T01:00:00Z"),
+        source="moomoo",
+        source_schema_version="10.9",
+        run_id="zzzz-run",
+    )
+    newer = normalize_trading_calendar(
+        pd.DataFrame({"time": ["2026-07-15"], "trade_date_type": ["AFTERNOON"]}),
+        market="US",
+        code=None,
+        requested_start_date=date(2026, 7, 15),
+        requested_end_date=date(2026, 7, 31),
+        captured_at=pd.Timestamp("2026-08-02T01:00:00Z"),
+        source="moomoo",
+        source_schema_version="10.9",
+        run_id="aaaa-run",
+    )
+    store.write_trading_calendar_curated(older, "MARKET", "US", date(2026, 7, 1), date(2026, 7, 31), "zzzz-run")
+    store.write_trading_calendar_curated(newer, "MARKET", "US", date(2026, 7, 15), date(2026, 7, 31), "aaaa-run")
+
+    assert catalog.refresh_trading_calendar_views()
+    with duckdb.connect(str(cfg.catalog_path)) as con:
+        rows = con.execute("SELECT trade_date, trade_date_type FROM trading_calendar_latest ORDER BY trade_date").fetchall()
+
+    assert rows == [(date(2026, 7, 1), "WHOLE"), (date(2026, 7, 15), "AFTERNOON")]
+
+
+def test_calendar_latest_supports_old_parquet_without_requested_range(tmp_path):
+    cfg = settings(tmp_path)
+    store = ParquetStore(cfg)
+    catalog = Catalog(cfg)
+    old_columns = [
+        "scope_type",
+        "scope_value",
+        "market",
+        "reference_code",
+        "trade_date",
+        "trade_date_type",
+        "captured_at",
+        "source",
+        "source_schema_version",
+        "ingestion_run_id",
+    ]
+    old = pd.DataFrame(
+        [
+            {
+                "scope_type": "MARKET",
+                "scope_value": "US",
+                "market": "US",
+                "reference_code": None,
+                "trade_date": date(2026, 7, 3),
+                "trade_date_type": "WHOLE",
+                "captured_at": pd.Timestamp("2026-08-01T01:00:00Z"),
+                "source": "moomoo",
+                "source_schema_version": "10.9",
+                "ingestion_run_id": "old-run",
+            }
+        ],
+        columns=old_columns,
+    )
+    store.write_trading_calendar_curated(old, "MARKET", "US", date(2026, 7, 3), date(2026, 7, 3), "old-run")
+
+    assert catalog.refresh_trading_calendar_views()
+    with duckdb.connect(str(cfg.catalog_path)) as con:
+        rows = con.execute("SELECT trade_date, trade_date_type FROM trading_calendar_latest").fetchall()
+
+    assert rows == [(date(2026, 7, 3), "WHOLE")]
+
+
 def test_calendar_market_and_code_scopes_do_not_mix(tmp_path):
     cfg = settings(tmp_path)
     store = ParquetStore(cfg)
@@ -327,6 +465,8 @@ def test_calendar_market_and_code_scopes_do_not_mix(tmp_path):
         pd.DataFrame({"time": ["2026-07-01"], "trade_date_type": ["WHOLE"]}),
         market="US",
         code=None,
+        requested_start_date=date(2026, 7, 1),
+        requested_end_date=date(2026, 7, 31),
         captured_at=pd.Timestamp("2026-08-02T01:00:00Z"),
         source="moomoo",
         source_schema_version="10.9",
@@ -335,7 +475,9 @@ def test_calendar_market_and_code_scopes_do_not_mix(tmp_path):
     code = normalize_trading_calendar(
         pd.DataFrame({"time": ["2026-07-01"], "trade_date_type": ["AFTERNOON"]}),
         market=None,
-        code="US.MU",
+        code=" Us.Mu ",
+        requested_start_date=date(2026, 7, 1),
+        requested_end_date=date(2026, 7, 31),
         captured_at=pd.Timestamp("2026-08-02T01:00:00Z"),
         source="moomoo",
         source_schema_version="10.9",
@@ -346,7 +488,7 @@ def test_calendar_market_and_code_scopes_do_not_mix(tmp_path):
 
     vault = MarketVault(cfg)
     market_rows = vault.load_trading_calendar(market="US")
-    code_rows = vault.load_trading_calendar(code="US.MU")
+    code_rows = vault.load_trading_calendar(code="us.mu")
 
     assert market_rows["scope_type"].tolist() == ["MARKET"]
     assert code_rows["scope_type"].tolist() == ["CODE"]

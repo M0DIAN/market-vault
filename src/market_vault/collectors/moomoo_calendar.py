@@ -7,6 +7,7 @@ import pandas as pd
 
 from ..moomoo_sdk import load_moomoo_sdk
 from ..models import Settings
+from ..normalization.calendar import normalize_calendar_code, normalize_calendar_market
 from .moomoo_history import MoomooRequestError
 
 
@@ -25,7 +26,7 @@ SUPPORTED_TRADE_DATE_MARKETS = [
 
 
 def resolve_trade_date_market(name: str, sdk: dict[str, Any]) -> Any:
-    normalized = name.upper()
+    normalized = normalize_calendar_market(name)
     if normalized not in SUPPORTED_TRADE_DATE_MARKETS:
         supported = ", ".join(SUPPORTED_TRADE_DATE_MARKETS)
         raise ValueError(f"Unsupported trade date market: {name}. Supported values: {supported}")
@@ -81,7 +82,9 @@ class MoomooCalendarCollector:
     ) -> pd.DataFrame:
         if start_date > end_date:
             raise ValueError("start_date must be on or before end_date")
-        if bool(market) == bool(code):
+        normalized_market = normalize_calendar_market(market)
+        normalized_code = normalize_calendar_code(code)
+        if bool(normalized_market) == bool(normalized_code):
             raise ValueError("Provide exactly one of market or code")
 
         self.connect()
@@ -91,11 +94,11 @@ class MoomooCalendarCollector:
             "start": start_date.isoformat(),
             "end": end_date.isoformat(),
         }
-        label = code or market or "UNKNOWN"
-        if market:
-            kwargs["market"] = resolve_trade_date_market(market, sdk)
+        label = normalized_code or normalized_market or "UNKNOWN"
+        if normalized_market:
+            kwargs["market"] = resolve_trade_date_market(normalized_market, sdk)
         else:
-            kwargs["code"] = code
+            kwargs["code"] = normalized_code
 
         ret, data = self._ctx.request_trading_days(**kwargs)
         if ret != sdk["RET_OK"]:

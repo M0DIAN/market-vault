@@ -170,7 +170,9 @@ market-vault --settings config/settings.yaml calendar-query `
   --limit 30
 ```
 
-The curated `trading_calendar` dataset stores `scope_type`, `scope_value`, `market`, `reference_code`, `trade_date`, `trade_date_type`, UTC `captured_at`, `source`, `source_schema_version`, and `ingestion_run_id`. The calendar returned by OpenD excludes weekends and regular holidays and preserves `WHOLE`, `MORNING`, or `AFTERNOON` trading-day types. It is not described as an absolute official exchange calendar and may not identify every temporary market closure.
+The curated `trading_calendar` dataset stores `scope_type`, `scope_value`, `market`, `reference_code`, `trade_date`, `trade_date_type`, `requested_start_date`, `requested_end_date`, UTC `captured_at`, `source`, `source_schema_version`, and `ingestion_run_id`. The calendar returned by OpenD excludes weekends and regular holidays and preserves `WHOLE`, `MORNING`, or `AFTERNOON` trading-day types. It is not described as an absolute official exchange calendar and may not identify every temporary market closure.
+
+OpenD `request_trading_days` has its own range and rate limits: historical calendar data is available for roughly the past 10 years, future dates are limited to the current calendar year's December 31, and the endpoint allows at most 30 requests per 30 seconds. MarketVault fetches this data dynamically from OpenD and does not hard-code exchange holidays.
 
 ## Query data
 

@@ -7,6 +7,7 @@ import pandas as pd
 
 from .config import load_settings
 from .models import Settings
+from .normalization.calendar import normalize_calendar_code, normalize_calendar_market
 from .storage import Catalog
 
 
@@ -59,13 +60,15 @@ class MarketVault:
         start_date: str | date | None = None,
         end_date: str | date | None = None,
     ) -> pd.DataFrame:
-        if bool(market) == bool(code):
+        normalized_market = normalize_calendar_market(market)
+        normalized_code = normalize_calendar_code(code)
+        if bool(normalized_market) == bool(normalized_code):
             raise ValueError("Provide exactly one of market or code")
         if not self.catalog.refresh_trading_calendar_views():
             return pd.DataFrame()
 
-        scope_type = "MARKET" if market else "CODE"
-        scope_value = market.upper() if market else code
+        scope_type = "MARKET" if normalized_market else "CODE"
+        scope_value = normalized_market or normalized_code
         clauses = ["scope_type = ?", "scope_value = ?"]
         params: list[object] = [scope_type, scope_value]
         if start_date is not None:

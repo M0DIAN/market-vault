@@ -266,10 +266,18 @@ class Catalog:
             if curated_files:
                 curated_glob = (curated_root / "**" / "*.parquet").as_posix().replace("'", "''")
                 has_captured_at = self._parquet_files_have_column(con, curated_files, "captured_at")
+                has_requested_start = self._parquet_files_have_column(con, curated_files, "requested_start_date")
+                has_requested_end = self._parquet_files_have_column(con, curated_files, "requested_end_date")
                 order_clause = (
                     "captured_at DESC NULLS LAST, ingestion_run_id DESC"
                     if has_captured_at
                     else "ingestion_run_id DESC"
+                )
+                effective_start_expr = (
+                    "COALESCE(requested_start_date, trade_date)" if has_requested_start else "trade_date"
+                )
+                effective_end_expr = (
+                    "COALESCE(requested_end_date, trade_date)" if has_requested_end else "trade_date"
                 )
                 con.execute(
                     f"""
@@ -281,16 +289,58 @@ class Catalog:
                 con.execute(
                     f"""
                     CREATE OR REPLACE VIEW trading_calendar_latest AS
-                    SELECT * EXCLUDE (_rn)
-                    FROM (
-                        SELECT *,
-                               row_number() OVER (
-                                   PARTITION BY scope_type, scope_value, trade_date, source
-                                   ORDER BY {order_clause}
-                               ) AS _rn
+                    WITH all_rows AS (
+                        SELECT *
                         FROM read_parquet('{curated_glob}', union_by_name = true, hive_partitioning = true)
+                    ),
+                    snapshots AS (
+                        SELECT DISTINCT
+                            scope_type,
+                            scope_value,
+                            source,
+                            ingestion_run_id,
+                            captured_at,
+                            {effective_start_expr} AS effective_start_date,
+                            {effective_end_expr} AS effective_end_date
+                        FROM all_rows
+                    ),
+                    historical_dates AS (
+                        SELECT DISTINCT scope_type, scope_value, trade_date, source
+                        FROM all_rows
+                    ),
+                    latest_covering_snapshot AS (
+                        SELECT * EXCLUDE (_rn)
+                        FROM (
+                            SELECT
+                                d.scope_type,
+                                d.scope_value,
+                                d.trade_date,
+                                d.source,
+                                s.ingestion_run_id,
+                                s.captured_at,
+                                row_number() OVER (
+                                    PARTITION BY d.scope_type, d.scope_value, d.trade_date, d.source
+                                    ORDER BY {order_clause}
+                                ) AS _rn
+                            FROM historical_dates d
+                            JOIN snapshots s
+                              ON s.scope_type = d.scope_type
+                             AND s.scope_value = d.scope_value
+                             AND s.source = d.source
+                             AND s.effective_start_date <= d.trade_date
+                             AND s.effective_end_date >= d.trade_date
+                        )
+                        WHERE _rn = 1
                     )
-                    WHERE _rn = 1
+                    SELECT r.*
+                    FROM all_rows r
+                    JOIN latest_covering_snapshot s
+                      ON s.scope_type = r.scope_type
+                     AND s.scope_value = r.scope_value
+                     AND s.trade_date = r.trade_date
+                     AND s.source = r.source
+                     AND s.ingestion_run_id = r.ingestion_run_id
+                     AND s.captured_at IS NOT DISTINCT FROM r.captured_at
                     """
                 )
         return True
