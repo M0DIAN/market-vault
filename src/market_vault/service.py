@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import date, datetime, timezone
+import time
+from datetime import date, datetime, timedelta, timezone
 
 import pandas as pd
 
@@ -21,6 +22,18 @@ from .storage import Catalog, ParquetStore
 def _hash_config(payload: dict) -> str:
     text = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def option_chain_date_chunks(start_date: date, end_date: date) -> list[tuple[date, date]]:
+    if start_date > end_date:
+        raise ValueError("start_date must be on or before end_date")
+    chunks: list[tuple[date, date]] = []
+    chunk_start = start_date
+    while chunk_start <= end_date:
+        chunk_end = min(chunk_start + timedelta(days=29), end_date)
+        chunks.append((chunk_start, chunk_end))
+        chunk_start = chunk_end + timedelta(days=1)
+    return chunks
 
 
 def collect_history(
@@ -188,6 +201,11 @@ def collect_option_chain(
 ) -> DatasetRunManifest:
     if start_date > end_date:
         raise ValueError("start_date must be on or before end_date")
+    chunk_ranges = option_chain_date_chunks(start_date, end_date)
+    chunk_range_dicts = [
+        {"start_date": chunk_start.isoformat(), "end_date": chunk_end.isoformat()}
+        for chunk_start, chunk_end in chunk_ranges
+    ]
 
     manifest = DatasetRunManifest(
         dataset="option_contracts",
@@ -196,32 +214,69 @@ def collect_option_chain(
             "underlying": underlying,
             "start_date": start_date.isoformat(),
             "end_date": end_date.isoformat(),
+            "requested_start_date": start_date.isoformat(),
+            "requested_end_date": end_date.isoformat(),
             "option_type": option_type.upper(),
             "option_cond_type": option_cond_type.upper(),
             "source_schema_version": settings.source_schema_version,
+            "chunk_count": len(chunk_ranges),
+            "chunk_ranges": chunk_range_dicts,
+            "successful_chunks": [],
+            "failed_chunks": [],
+            "returned_contract_count": 0,
         },
     )
     manifest.config_hash = _hash_config(manifest.parameters)
 
-    raw = pd.DataFrame()
+    raw_frames: list[pd.DataFrame] = []
     curated = pd.DataFrame()
     captured_at = pd.Timestamp.now(tz="UTC")
     try:
         with MoomooOptionCollector(settings) as collector:
-            raw = collector.fetch_option_chain(
-                underlying=underlying,
-                start_date=start_date,
-                end_date=end_date,
-                option_type=option_type,
-                option_cond_type=option_cond_type,
-            )
-        if raw.empty:
-            raise RuntimeError("No option contracts returned")
-        raw = raw.copy()
-        raw["underlying_code"] = underlying
-        raw["capture_date"] = captured_at.date()
-        raw["captured_at"] = captured_at
-        raw["ingestion_run_id"] = manifest.run_id
+            for index, (chunk_start, chunk_end) in enumerate(chunk_ranges):
+                chunk_info = {"start_date": chunk_start.isoformat(), "end_date": chunk_end.isoformat()}
+                try:
+                    raw_chunk = collector.fetch_option_chain(
+                        underlying=underlying,
+                        start_date=chunk_start,
+                        end_date=chunk_end,
+                        option_type=option_type,
+                        option_cond_type=option_cond_type,
+                    )
+                    if raw_chunk.empty:
+                        raise RuntimeError("No option contracts returned")
+                    raw_chunk = raw_chunk.copy()
+                    raw_chunk["underlying_code"] = underlying
+                    raw_chunk["requested_start_date"] = start_date
+                    raw_chunk["requested_end_date"] = end_date
+                    raw_chunk["chunk_start_date"] = chunk_start
+                    raw_chunk["chunk_end_date"] = chunk_end
+                    raw_chunk["capture_date"] = captured_at.date()
+                    raw_chunk["captured_at"] = captured_at
+                    raw_chunk["ingestion_run_id"] = manifest.run_id
+                    raw_frames.append(raw_chunk)
+                    manifest.parameters["successful_chunks"].append(chunk_info)
+                except Exception as exc:
+                    failed = dict(chunk_info)
+                    failed["error"] = str(exc)
+                    manifest.parameters["failed_chunks"].append(failed)
+                    manifest.failed_items[f"{chunk_start.isoformat()}_{chunk_end.isoformat()}"] = str(exc)
+                if index < len(chunk_ranges) - 1:
+                    time.sleep(settings.request_pause_seconds)
+    except Exception as exc:
+        for chunk_start, chunk_end in chunk_ranges:
+            failed = {
+                "start_date": chunk_start.isoformat(),
+                "end_date": chunk_end.isoformat(),
+                "error": str(exc),
+            }
+            manifest.parameters["failed_chunks"].append(failed)
+            manifest.failed_items[f"{chunk_start.isoformat()}_{chunk_end.isoformat()}"] = str(exc)
+
+    store = ParquetStore(settings)
+    catalog = Catalog(settings)
+    raw = pd.concat(raw_frames, ignore_index=True) if raw_frames else pd.DataFrame()
+    if not raw.empty:
         curated = normalize_option_contracts(
             frame=raw,
             underlying_code=underlying,
@@ -231,11 +286,7 @@ def collect_option_chain(
             run_id=manifest.run_id,
         )
         manifest.successful_items.append(underlying)
-    except Exception as exc:
-        manifest.failed_items[underlying] = str(exc)
-
-    store = ParquetStore(settings)
-    catalog = Catalog(settings)
+        manifest.parameters["returned_contract_count"] = len(curated)
     quality_results = run_option_contract_quality_checks(curated)
     if not raw.empty:
         raw_path = store.write_option_chain_raw(raw, underlying, captured_at.date(), manifest.run_id)
@@ -244,6 +295,9 @@ def collect_option_chain(
         manifest.curated_file = str(curated_path)
         manifest.row_count = len(curated)
         catalog.refresh_option_contract_views()
+
+    if not manifest.successful_items and not manifest.failed_items:
+        manifest.failed_items[underlying] = "No option contracts returned"
 
     return _finish_dataset_run(settings, catalog, manifest, quality_results)
 

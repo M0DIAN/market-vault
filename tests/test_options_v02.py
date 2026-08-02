@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 from types import SimpleNamespace
 
 import duckdb
@@ -14,7 +14,7 @@ from market_vault.quality.checks import (
     run_option_contract_quality_checks,
     run_option_volatility_quality_checks,
 )
-from market_vault.service import collect_option_volatility
+from market_vault.service import collect_option_chain, collect_option_volatility, option_chain_date_chunks
 from market_vault.storage import Catalog, ParquetStore
 
 
@@ -373,3 +373,176 @@ def test_option_paths_and_duckdb_latest_view(tmp_path):
         latest_count = con.execute("SELECT count(*) FROM option_contracts_latest").fetchone()[0]
 
     assert latest_count == 2
+
+
+def test_option_chain_chunks_for_one_day_and_thirty_days():
+    assert option_chain_date_chunks(date(2026, 8, 7), date(2026, 8, 7)) == [
+        (date(2026, 8, 7), date(2026, 8, 7))
+    ]
+    assert option_chain_date_chunks(date(2026, 8, 7), date(2026, 9, 5)) == [
+        (date(2026, 8, 7), date(2026, 9, 5))
+    ]
+
+
+def test_option_chain_chunks_for_thirty_one_days():
+    assert option_chain_date_chunks(date(2026, 8, 7), date(2026, 9, 6)) == [
+        (date(2026, 8, 7), date(2026, 9, 5)),
+        (date(2026, 9, 6), date(2026, 9, 6)),
+    ]
+
+
+def test_option_chain_chunks_for_real_expiration_range():
+    assert option_chain_date_chunks(date(2026, 8, 7), date(2026, 9, 18)) == [
+        (date(2026, 8, 7), date(2026, 9, 5)),
+        (date(2026, 9, 6), date(2026, 9, 18)),
+    ]
+
+
+def test_option_chain_chunks_have_no_overlap_or_gap():
+    chunks = option_chain_date_chunks(date(2026, 8, 7), date(2026, 10, 10))
+
+    assert chunks[0][0] == date(2026, 8, 7)
+    assert chunks[-1][1] == date(2026, 10, 10)
+    for left, right in zip(chunks, chunks[1:]):
+        assert right[0] == left[1] + timedelta(days=1)
+
+
+class ServiceFakeOptionChainCollector:
+    responses = {}
+    failures = set()
+    instances = []
+
+    def __init__(self, settings):
+        self.settings = settings
+        self.calls = []
+        ServiceFakeOptionChainCollector.instances.append(self)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        pass
+
+    def fetch_option_chain(self, underlying, start_date, end_date, option_type="ALL", option_cond_type="ALL"):
+        self.calls.append(
+            {
+                "underlying": underlying,
+                "start_date": start_date,
+                "end_date": end_date,
+                "option_type": option_type,
+                "option_cond_type": option_cond_type,
+            }
+        )
+        key = (start_date, end_date)
+        if key in self.failures:
+            raise RuntimeError(f"chunk failed: {start_date} to {end_date}")
+        return self.responses.get(key, option_chain_frame())
+
+
+def reset_fake_option_chain_collector():
+    ServiceFakeOptionChainCollector.responses = {}
+    ServiceFakeOptionChainCollector.failures = set()
+    ServiceFakeOptionChainCollector.instances = []
+
+
+def chunk_frame(code: str, name: str = "MU CALL") -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "code": [code],
+            "name": [name],
+            "owner_stock_code": ["US.MU"],
+            "option_type": ["CALL" if "C" in code[-7:] else "PUT"],
+            "strike_price": ["120.0"],
+            "strike_time": ["2026-08-07"],
+        }
+    )
+
+
+def test_option_chain_service_merges_multichunk_results_and_deduplicates(monkeypatch, tmp_path):
+    import market_vault.service as service
+
+    reset_fake_option_chain_collector()
+    first = (date(2026, 8, 7), date(2026, 9, 5))
+    second = (date(2026, 9, 6), date(2026, 9, 18))
+    ServiceFakeOptionChainCollector.responses = {
+        first: chunk_frame("US.MU260807C120000"),
+        second: chunk_frame("US.MU260807C120000", "duplicate"),
+    }
+    monkeypatch.setattr(service, "MoomooOptionCollector", ServiceFakeOptionChainCollector)
+
+    manifest = collect_option_chain(
+        settings(tmp_path),
+        "US.MU",
+        date(2026, 8, 7),
+        date(2026, 9, 18),
+        option_type="CALL",
+        option_cond_type="ITM",
+    )
+
+    assert manifest.status == "SUCCESS"
+    assert manifest.row_count == 1
+    assert manifest.parameters["chunk_count"] == 2
+    assert manifest.parameters["returned_contract_count"] == 1
+    assert len(manifest.parameters["successful_chunks"]) == 2
+    assert len(manifest.parameters["failed_chunks"]) == 0
+    assert len(ServiceFakeOptionChainCollector.instances[0].calls) == 2
+    assert ServiceFakeOptionChainCollector.instances[0].calls[0]["option_type"] == "CALL"
+
+
+def test_option_chain_partial_chunk_failure_saves_successes(monkeypatch, tmp_path):
+    import market_vault.service as service
+
+    reset_fake_option_chain_collector()
+    first = (date(2026, 8, 7), date(2026, 9, 5))
+    second = (date(2026, 9, 6), date(2026, 9, 18))
+    ServiceFakeOptionChainCollector.responses = {first: chunk_frame("US.MU260807C120000")}
+    ServiceFakeOptionChainCollector.failures = {second}
+    monkeypatch.setattr(service, "MoomooOptionCollector", ServiceFakeOptionChainCollector)
+
+    manifest = collect_option_chain(settings(tmp_path), "US.MU", date(2026, 8, 7), date(2026, 9, 18))
+
+    assert manifest.status == "PARTIAL"
+    assert manifest.row_count == 1
+    assert len(manifest.parameters["successful_chunks"]) == 1
+    assert manifest.parameters["failed_chunks"] == [
+        {
+            "start_date": "2026-09-06",
+            "end_date": "2026-09-18",
+            "error": "chunk failed: 2026-09-06 to 2026-09-18",
+        }
+    ]
+
+
+def test_option_chain_all_chunks_failed_marks_failed(monkeypatch, tmp_path):
+    import market_vault.service as service
+
+    reset_fake_option_chain_collector()
+    ServiceFakeOptionChainCollector.failures = {
+        (date(2026, 8, 7), date(2026, 9, 5)),
+        (date(2026, 9, 6), date(2026, 9, 18)),
+    }
+    monkeypatch.setattr(service, "MoomooOptionCollector", ServiceFakeOptionChainCollector)
+
+    manifest = collect_option_chain(settings(tmp_path), "US.MU", date(2026, 8, 7), date(2026, 9, 18))
+
+    assert manifest.status == "FAILED"
+    assert manifest.row_count == 0
+    assert len(manifest.parameters["successful_chunks"]) == 0
+    assert len(manifest.parameters["failed_chunks"]) == 2
+
+
+def test_option_chain_chunks_share_one_run_id(monkeypatch, tmp_path):
+    import market_vault.service as service
+
+    reset_fake_option_chain_collector()
+    monkeypatch.setattr(service, "MoomooOptionCollector", ServiceFakeOptionChainCollector)
+
+    manifest = collect_option_chain(settings(tmp_path), "US.MU", date(2026, 8, 7), date(2026, 9, 18))
+    raw = pd.read_parquet(manifest.raw_file)
+
+    assert raw["ingestion_run_id"].nunique() == 1
+    assert raw["ingestion_run_id"].iloc[0] == manifest.run_id
+    assert manifest.parameters["chunk_ranges"] == [
+        {"start_date": "2026-08-07", "end_date": "2026-09-05"},
+        {"start_date": "2026-09-06", "end_date": "2026-09-18"},
+    ]

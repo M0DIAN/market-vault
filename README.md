@@ -109,6 +109,8 @@ market-vault --settings config/settings.yaml option-chain `
 
 The curated dataset standardizes `option_code`, `option_name`, `underlying_code`, `option_type`, `strike_price`, `expiry_date`, `contract_size`, `lot_size`, `exchange`, `exercise_type`, `suspension`, `delisting`, `captured_at`, `source`, `source_schema_version`, and `ingestion_run_id`. Fields not returned by moomoo are kept as null rather than inferred.
 
+The moomoo option-chain endpoint limits each request to a maximum 30-day span. MarketVault automatically splits longer `--start-date` / `--end-date` ranges into non-overlapping 30-day chunks, retries no hidden ranges, and merges successful chunks into one raw file, one curated file, one manifest, and one quality report. Users do not need to split long expiration ranges manually.
+
 ## Daily option volatility
 
 Collect daily volatility analysis for one or more option contracts:
