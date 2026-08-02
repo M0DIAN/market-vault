@@ -246,6 +246,55 @@ class Catalog:
                 )
         return True
 
+    def refresh_trading_calendar_views(self) -> bool:
+        raw_root = self.settings.data_root / "raw" / f"source={self.settings.source}" / "dataset=trading_calendar"
+        curated_root = self.settings.data_root / "curated" / "trading_calendar"
+        raw_files = list(raw_root.rglob("*.parquet")) if raw_root.exists() else []
+        curated_files = list(curated_root.rglob("*.parquet")) if curated_root.exists() else []
+        if not raw_files and not curated_files:
+            return False
+        with self.connect() as con:
+            if raw_files:
+                raw_glob = (raw_root / "**" / "*.parquet").as_posix().replace("'", "''")
+                con.execute(
+                    f"""
+                    CREATE OR REPLACE VIEW trading_calendar_raw AS
+                    SELECT *
+                    FROM read_parquet('{raw_glob}', union_by_name = true, hive_partitioning = true)
+                    """
+                )
+            if curated_files:
+                curated_glob = (curated_root / "**" / "*.parquet").as_posix().replace("'", "''")
+                has_captured_at = self._parquet_files_have_column(con, curated_files, "captured_at")
+                order_clause = (
+                    "captured_at DESC NULLS LAST, ingestion_run_id DESC"
+                    if has_captured_at
+                    else "ingestion_run_id DESC"
+                )
+                con.execute(
+                    f"""
+                    CREATE OR REPLACE VIEW trading_calendar AS
+                    SELECT *
+                    FROM read_parquet('{curated_glob}', union_by_name = true, hive_partitioning = true)
+                    """
+                )
+                con.execute(
+                    f"""
+                    CREATE OR REPLACE VIEW trading_calendar_latest AS
+                    SELECT * EXCLUDE (_rn)
+                    FROM (
+                        SELECT *,
+                               row_number() OVER (
+                                   PARTITION BY scope_type, scope_value, trade_date, source
+                                   ORDER BY {order_clause}
+                               ) AS _rn
+                        FROM read_parquet('{curated_glob}', union_by_name = true, hive_partitioning = true)
+                    )
+                    WHERE _rn = 1
+                    """
+                )
+        return True
+
     def _parquet_files_have_column(self, con, files: list[Path], column: str) -> bool:
         for file in files:
             path = file.as_posix().replace("'", "''")

@@ -51,3 +51,35 @@ class MarketVault:
         """
         with self.catalog.connect() as con:
             return con.execute(sql, params).fetchdf()
+
+    def load_trading_calendar(
+        self,
+        market: str | None = None,
+        code: str | None = None,
+        start_date: str | date | None = None,
+        end_date: str | date | None = None,
+    ) -> pd.DataFrame:
+        if bool(market) == bool(code):
+            raise ValueError("Provide exactly one of market or code")
+        if not self.catalog.refresh_trading_calendar_views():
+            return pd.DataFrame()
+
+        scope_type = "MARKET" if market else "CODE"
+        scope_value = market.upper() if market else code
+        clauses = ["scope_type = ?", "scope_value = ?"]
+        params: list[object] = [scope_type, scope_value]
+        if start_date is not None:
+            clauses.append("trade_date >= ?")
+            params.append(start_date)
+        if end_date is not None:
+            clauses.append("trade_date <= ?")
+            params.append(end_date)
+
+        sql = f"""
+            SELECT *
+            FROM trading_calendar_latest
+            WHERE {' AND '.join(clauses)}
+            ORDER BY trade_date
+        """
+        with self.catalog.connect() as con:
+            return con.execute(sql, params).fetchdf()

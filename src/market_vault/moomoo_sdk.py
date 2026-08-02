@@ -28,6 +28,8 @@ def load_moomoo_sdk() -> dict[str, Any]:
         "OptionCondType": getattr(module, "OptionCondType", None),
         "OptionType": getattr(module, "OptionType", None),
         "OptionVolatilityTimePeriodType": getattr(module, "OptionVolatilityTimePeriodType", None),
+        "TradeDateMarket": getattr(module, "TradeDateMarket", None),
+        "TradeDateType": getattr(module, "TradeDateType", None),
     }
 
 

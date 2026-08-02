@@ -30,6 +30,8 @@ def fake_sdk_module(version: str):
         OptionType=SimpleNamespace(ALL="ALL"),
         OptionCondType=SimpleNamespace(ALL="ALL", WITHIN="WITHIN", OUTSIDE="OUTSIDE"),
         OptionVolatilityTimePeriodType=SimpleNamespace(WEEK="WEEK"),
+        TradeDateMarket=SimpleNamespace(US="US"),
+        TradeDateType=SimpleNamespace(WHOLE="WHOLE"),
     )
 
 
@@ -70,6 +72,28 @@ def test_loader_reports_clear_error_when_sdk_missing(monkeypatch):
 
     with pytest.raises(MoomooDependencyError, match="pip install -U moomoo-api"):
         load_moomoo_sdk()
+
+
+def test_loader_includes_trade_date_symbols_when_present(monkeypatch):
+    moomoo = fake_sdk_module("moomoo-version")
+    patch_imports(monkeypatch, {"moomoo": moomoo})
+
+    loaded = load_moomoo_sdk()
+
+    assert loaded["TradeDateMarket"].US == "US"
+    assert loaded["TradeDateType"].WHOLE == "WHOLE"
+
+
+def test_loader_allows_missing_trade_date_symbols(monkeypatch):
+    moomoo = fake_sdk_module("moomoo-version")
+    delattr(moomoo, "TradeDateMarket")
+    delattr(moomoo, "TradeDateType")
+    patch_imports(monkeypatch, {"moomoo": moomoo})
+
+    loaded = load_moomoo_sdk()
+
+    assert loaded["TradeDateMarket"] is None
+    assert loaded["TradeDateType"] is None
 
 
 def test_collectors_share_unified_loader(monkeypatch, tmp_path):
