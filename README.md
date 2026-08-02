@@ -1,6 +1,6 @@
 # MarketVault v0.2
 
-MarketVault is a reproducible historical market-data archive for moomoo OpenD. V0.1 focused on closed-date stock, ETF, and option candlesticks. V0.2 adds option contract static metadata and daily option volatility datasets while preserving the existing historical K-line interface.
+MarketVault is a local historical market database for moomoo OpenD. V0.1 focused on closed-date stock, ETF, and option candlesticks. V0.2 adds option contract static metadata and daily option volatility datasets while preserving the existing historical K-line interface.
 
 ## What this version does
 
@@ -19,6 +19,8 @@ MarketVault is a reproducible historical market-data archive for moomoo OpenD. V
 ## Important data boundary
 
 This project can backfill historical candlesticks, option-chain static metadata, and daily volatility analysis where OpenD and the account permissions allow it. It cannot reconstruct historical minute-by-minute Bid/Ask, order-book depth, Greeks, or complete intraday IV after the fact. Those fields require a live capture and subscription pipeline.
+
+MarketVault does not include real-time subscriptions, live Bid/Ask, live Greeks, positions, signals, execution, or automatic trading.
 
 ## Requirements
 
@@ -138,6 +140,40 @@ market-vault --settings config/settings.yaml doctor
 
 The command reports Python version, SDK import/version, OpenD host and port, socket connectivity, whether `get_option_chain` and `get_option_volatility` are exposed by the installed SDK, and whether volatility periods use SDK enums or integer fallback.
 
+## V0.3 development: trading calendar foundation
+
+Collect historical trading-calendar rows from OpenD `request_trading_days` by market:
+
+```powershell
+market-vault --settings config/settings.yaml calendar `
+  --market US `
+  --start-date 2026-01-01 `
+  --end-date 2026-12-31
+```
+
+Or by reference code:
+
+```powershell
+market-vault --settings config/settings.yaml calendar `
+  --code US.MU `
+  --start-date 2026-01-01 `
+  --end-date 2026-12-31
+```
+
+Query the local DuckDB/Parquet dataset without connecting to OpenD:
+
+```powershell
+market-vault --settings config/settings.yaml calendar-query `
+  --market US `
+  --start-date 2026-01-01 `
+  --end-date 2026-12-31 `
+  --limit 30
+```
+
+The curated `trading_calendar` dataset stores `scope_type`, `scope_value`, `market`, `reference_code`, `trade_date`, `trade_date_type`, `requested_start_date`, `requested_end_date`, UTC `captured_at`, `source`, `source_schema_version`, and `ingestion_run_id`. The calendar returned by OpenD excludes weekends and regular holidays and preserves `WHOLE`, `MORNING`, or `AFTERNOON` trading-day types. It is not described as an absolute official exchange calendar and may not identify every temporary market closure.
+
+OpenD `request_trading_days` has its own range and rate limits: historical calendar data is available for roughly the past 10 years, future dates are limited to the current calendar year's December 31, and the endpoint allows at most 30 requests per 30 seconds. MarketVault fetches this data dynamically from OpenD and does not hard-code exchange holidays.
+
 ## Query data
 
 ```powershell
@@ -170,9 +206,11 @@ data/
 ├─ raw/source=moomoo/dataset=market_bars/...
 ├─ raw/source=moomoo/dataset=option_chain/...
 ├─ raw/source=moomoo/dataset=option_volatility_daily/...
+├─ raw/source=moomoo/dataset=trading_calendar/scope_type=MARKET/scope_value=US/...
 ├─ curated/source=moomoo/dataset=market_bars/...
 ├─ curated/option_contracts/underlying_code=US.MU/capture_date=YYYY-MM-DD/...
-└─ curated/option_volatility_daily/start_date=YYYY-MM-DD/end_date=YYYY-MM-DD/...
+├─ curated/option_volatility_daily/start_date=YYYY-MM-DD/end_date=YYYY-MM-DD/...
+└─ curated/trading_calendar/scope_type=MARKET/scope_value=US/...
 catalog/market_vault.duckdb
 manifests/*.json
 reports/data_quality/*.json
@@ -194,3 +232,5 @@ The tests are offline and do not require OpenD.
 - The option-code parser supports the common moomoo US option format such as `US.MU260807C120000`. Unusual roots should be validated before relying on automatic underlying inference.
 - Option-chain metadata is static contract information. Dynamic quotes, trading status changes, Greeks, minute-level Bid/Ask, and complete historical intraday IV are outside V0.2.
 - OpenD must be running, logged in, and entitled for the underlying market, option chain, and option volatility data. Permission or quota failures are recorded per request in the run manifest.
+- The V0.2 option-volatility coverage check uses a weekday-boundary heuristic. It does not identify all US exchange holidays; a formal NYSE/Nasdaq exchange calendar is planned for a later version.
+- The V0.3 development trading-calendar foundation depends on OpenD `request_trading_days` and should not be treated as a complete official exchange-calendar authority.

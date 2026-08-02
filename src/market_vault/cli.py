@@ -8,7 +8,8 @@ from pathlib import Path
 from .api import MarketVault
 from .config import load_settings, load_universe
 from .doctor import run_doctor
-from .service import collect_history, collect_option_chain, collect_option_volatility
+from .collectors.moomoo_calendar import SUPPORTED_TRADE_DATE_MARKETS
+from .service import collect_history, collect_option_chain, collect_option_volatility, collect_trading_calendar
 from .storage import Catalog
 
 
@@ -63,6 +64,21 @@ def build_parser() -> argparse.ArgumentParser:
     option_volatility.add_argument("--codes", nargs="+", required=True)
     option_volatility.add_argument("--start-date", required=True, type=_parse_date)
     option_volatility.add_argument("--end-date", required=True, type=_parse_date)
+
+    calendar = sub.add_parser("calendar", help="Collect historical trading calendar days")
+    calendar_scope = calendar.add_mutually_exclusive_group(required=True)
+    calendar_scope.add_argument("--market", choices=SUPPORTED_TRADE_DATE_MARKETS)
+    calendar_scope.add_argument("--code")
+    calendar.add_argument("--start-date", required=True, type=_parse_date)
+    calendar.add_argument("--end-date", required=True, type=_parse_date)
+
+    calendar_query = sub.add_parser("calendar-query", help="Query local trading calendar data")
+    calendar_query_scope = calendar_query.add_mutually_exclusive_group(required=True)
+    calendar_query_scope.add_argument("--market", choices=SUPPORTED_TRADE_DATE_MARKETS)
+    calendar_query_scope.add_argument("--code")
+    calendar_query.add_argument("--start-date", type=_parse_date)
+    calendar_query.add_argument("--end-date", type=_parse_date)
+    calendar_query.add_argument("--limit", type=int, default=30)
 
     return parser
 
@@ -130,6 +146,28 @@ def main() -> None:
             end_date=args.end_date,
         )
         print(json.dumps(manifest.as_dict(), ensure_ascii=False, indent=2))
+        return
+
+    if args.command == "calendar":
+        manifest = collect_trading_calendar(
+            settings=settings,
+            market=args.market,
+            code=args.code,
+            start_date=args.start_date,
+            end_date=args.end_date,
+        )
+        print(json.dumps(manifest.as_dict(), ensure_ascii=False, indent=2))
+        return
+
+    if args.command == "calendar-query":
+        vault = MarketVault(settings)
+        frame = vault.load_trading_calendar(
+            market=args.market,
+            code=args.code,
+            start_date=args.start_date,
+            end_date=args.end_date,
+        )
+        print(frame.head(args.limit).to_string(index=False))
         return
 
 

@@ -188,3 +188,68 @@ def run_option_volatility_quality_checks(
             )
 
     return checks
+
+
+def run_trading_calendar_quality_checks(
+    df: pd.DataFrame,
+    start_date: date,
+    end_date: date,
+) -> list[QualityResult]:
+    if df.empty:
+        return [QualityResult("non_empty", "FAIL", "> 0 rows", "0 rows", "No trading calendar rows were returned")]
+
+    checks: list[QualityResult] = []
+    required = {
+        "scope_type",
+        "scope_value",
+        "trade_date",
+        "trade_date_type",
+        "captured_at",
+        "source",
+    }
+    missing = sorted(required - set(df.columns))
+    checks.append(_result("required_columns", not missing, "all present", str(missing or "all present")))
+    if missing:
+        return checks
+
+    parsed_dates = pd.to_datetime(df["trade_date"], errors="coerce")
+    invalid_dates = int(parsed_dates.isna().sum())
+    checks.append(_result("trade_date_valid", invalid_dates == 0, "valid dates", str(invalid_dates)))
+
+    out_of_range = int(((parsed_dates.dt.date < start_date) | (parsed_dates.dt.date > end_date)).fillna(True).sum())
+    checks.append(_result("trade_date_in_requested_range", out_of_range == 0, "0 out-of-range rows", str(out_of_range)))
+
+    invalid_scope_type = int((~df["scope_type"].isin(["MARKET", "CODE"])).sum())
+    checks.append(_result("scope_type_valid", invalid_scope_type == 0, "MARKET or CODE", str(invalid_scope_type)))
+
+    empty_scope_value = int(df["scope_value"].isna().sum() + (df["scope_value"].astype("string").str.len() == 0).sum())
+    checks.append(_result("scope_value_non_empty", empty_scope_value == 0, "0 invalid rows", str(empty_scope_value)))
+
+    duplicate_count = int(
+        df.duplicated(subset=["scope_type", "scope_value", "trade_date", "source", "captured_at"]).sum()
+    )
+    checks.append(_result("duplicate_trading_calendar", duplicate_count == 0, "0", str(duplicate_count)))
+
+    unsorted_groups = 0
+    for _, group in df.groupby(["scope_type", "scope_value"], sort=False):
+        if not pd.to_datetime(group["trade_date"], errors="coerce").is_monotonic_increasing:
+            unsorted_groups += 1
+    checks.append(_result("trade_date_ascending", unsorted_groups == 0, "0 unsorted groups", str(unsorted_groups)))
+
+    empty_type = int(
+        df["trade_date_type"].isna().sum() + (df["trade_date_type"].astype("string").str.len() == 0).sum()
+    )
+    checks.append(_result("trade_date_type_non_empty", empty_type == 0, "0 invalid rows", str(empty_type)))
+
+    known = {"WHOLE", "MORNING", "AFTERNOON"}
+    unknown = sorted(set(df["trade_date_type"].dropna().astype(str)) - known)
+    checks.append(
+        QualityResult(
+            "trade_date_type_known",
+            "WARN" if unknown else "PASS",
+            "WHOLE, MORNING, AFTERNOON",
+            ", ".join(unknown) if unknown else "all known",
+            "Unknown trade date types were preserved." if unknown else None,
+        )
+    )
+    return checks

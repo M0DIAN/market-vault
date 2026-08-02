@@ -7,14 +7,21 @@ from datetime import date, datetime, timedelta, timezone
 
 import pandas as pd
 
-from .collectors import MoomooHistoryCollector, MoomooOptionCollector
+from .collectors import MoomooCalendarCollector, MoomooHistoryCollector, MoomooOptionCollector
 from .collectors.moomoo_options import OPTION_VOLATILITY_PERIOD_VALUES, select_option_volatility_period
 from .models import DatasetRunManifest, RunManifest, Settings
-from .normalization import normalize_bars, normalize_option_contracts, normalize_option_volatility
+from .normalization import (
+    normalize_bars,
+    normalize_option_contracts,
+    normalize_option_volatility,
+    normalize_trading_calendar,
+)
+from .normalization.calendar import normalize_calendar_code, normalize_calendar_market
 from .quality import (
     run_bar_quality_checks,
     run_option_contract_quality_checks,
     run_option_volatility_quality_checks,
+    run_trading_calendar_quality_checks,
 )
 from .storage import Catalog, ParquetStore
 
@@ -422,6 +429,127 @@ def collect_option_volatility(
         catalog.refresh_option_volatility_views()
 
     return _finish_dataset_run(settings, catalog, manifest, quality_results)
+
+
+def collect_trading_calendar(
+    settings: Settings,
+    start_date: date,
+    end_date: date,
+    market: str | None = None,
+    code: str | None = None,
+) -> DatasetRunManifest:
+    if start_date > end_date:
+        raise ValueError("start_date must be on or before end_date")
+    normalized_market = normalize_calendar_market(market)
+    normalized_code = normalize_calendar_code(code)
+    if bool(normalized_market) == bool(normalized_code):
+        raise ValueError("Provide exactly one of market or code")
+
+    scope_type = "MARKET" if normalized_market else "CODE"
+    scope_value = normalized_market or normalized_code or ""
+    captured_at = pd.Timestamp.now(tz="UTC")
+    manifest = DatasetRunManifest(
+        dataset="trading_calendar",
+        requested_items=[scope_value],
+        parameters={
+            "scope_type": scope_type,
+            "scope_value": scope_value,
+            "market": normalized_market,
+            "code": normalized_code,
+            "requested_start_date": start_date.isoformat(),
+            "requested_end_date": end_date.isoformat(),
+            "returned_min_date": None,
+            "returned_max_date": None,
+            "returned_trade_date_count": 0,
+            "api_request_count": 1,
+            "successful_api_request_count": 0,
+            "failed_api_request_count": 0,
+            "source_schema_version": settings.source_schema_version,
+        },
+    )
+    manifest.config_hash = _hash_config(manifest.parameters)
+
+    raw = pd.DataFrame()
+    curated = pd.DataFrame()
+    try:
+        with MoomooCalendarCollector(settings) as collector:
+            raw = collector.fetch_trading_calendar(
+                start_date=start_date,
+                end_date=end_date,
+                market=normalized_market,
+                code=normalized_code,
+            )
+            if raw.empty:
+                raise RuntimeError("No trading calendar rows were returned")
+        raw = raw.copy()
+        raw["scope_type"] = scope_type
+        raw["scope_value"] = scope_value
+        raw["requested_start_date"] = start_date
+        raw["requested_end_date"] = end_date
+        raw["captured_at"] = captured_at
+        raw["ingestion_run_id"] = manifest.run_id
+        if "trade_date_type" in raw.columns:
+            raw["trade_date_type"] = raw["trade_date_type"].map(_sdk_name)
+        curated = normalize_trading_calendar(
+            raw,
+            market=normalized_market,
+            code=normalized_code,
+            requested_start_date=start_date,
+            requested_end_date=end_date,
+            captured_at=captured_at,
+            source=settings.source,
+            source_schema_version=settings.source_schema_version,
+            run_id=manifest.run_id,
+        )
+        if curated.empty:
+            raise RuntimeError("No trading calendar rows remained after normalization")
+        manifest.successful_items.append(scope_value)
+        manifest.parameters["successful_api_request_count"] = 1
+        returned_dates = sorted(pd.to_datetime(curated["trade_date"], errors="coerce").dropna().dt.date.unique())
+        if returned_dates:
+            manifest.parameters["returned_min_date"] = returned_dates[0].isoformat()
+            manifest.parameters["returned_max_date"] = returned_dates[-1].isoformat()
+            manifest.parameters["returned_trade_date_count"] = len(returned_dates)
+    except Exception as exc:
+        manifest.failed_items[scope_value] = str(exc)
+        manifest.parameters["failed_api_request_count"] = 1
+
+    store = ParquetStore(settings)
+    catalog = Catalog(settings)
+    quality_results = run_trading_calendar_quality_checks(curated, start_date, end_date)
+    if not curated.empty:
+        raw_path = store.write_trading_calendar_raw(
+            raw,
+            scope_type,
+            scope_value,
+            start_date,
+            end_date,
+            manifest.run_id,
+        )
+        curated_path = store.write_trading_calendar_curated(
+            curated,
+            scope_type,
+            scope_value,
+            start_date,
+            end_date,
+            manifest.run_id,
+        )
+        manifest.raw_file = str(raw_path)
+        manifest.curated_file = str(curated_path)
+        manifest.row_count = len(curated)
+        catalog.refresh_trading_calendar_views()
+
+    return _finish_dataset_run(settings, catalog, manifest, quality_results)
+
+
+def _sdk_name(value) -> str | None:
+    if value is None or pd.isna(value):
+        return None
+    name = getattr(value, "name", None)
+    text = str(name if name is not None else value).strip()
+    if "." in text:
+        text = text.rsplit(".", 1)[-1]
+    return text or None
 
 
 def _extract_option_volatility_dates(raw: pd.DataFrame) -> list[date]:
