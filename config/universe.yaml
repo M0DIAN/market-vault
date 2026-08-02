@@ -1,0 +1,9 @@
+core_universe:
+  - US.SPY
+  - US.QQQ
+  - US.SOXX
+  - US.MU
+
+trade_universe: []
+event_universe: []
+option_universe: []

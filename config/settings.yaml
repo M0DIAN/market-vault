@@ -1,0 +1,17 @@
+opend:
+  host: "127.0.0.1"
+  port: 11111
+
+storage:
+  root_dir: "./data"
+  catalog_path: "./catalog/market_vault.duckdb"
+  manifest_dir: "./manifests"
+  report_dir: "./reports/data_quality"
+
+collector:
+  max_count: 1000
+  source: "moomoo"
+  source_schema_version: "10.9"
+  default_session: "ALL"
+  default_adjustment: "NONE"
+  request_pause_seconds: 0.35
