@@ -6,6 +6,7 @@ from typing import Any
 
 import pandas as pd
 
+from ..moomoo_sdk import load_moomoo_sdk
 from ..models import Settings
 from .moomoo_history import MoomooDependencyError, MoomooRequestError
 
@@ -38,32 +39,7 @@ class MoomooOptionCollector:
     def _load_sdk(self) -> dict[str, Any]:
         if self._sdk is not None:
             return self._sdk
-        try:
-            from futu import (  # type: ignore
-                IndexOptionType,
-                OpenQuoteContext,
-                OptionCondType,
-                OptionType,
-                RET_OK,
-            )
-        except ImportError as exc:
-            raise MoomooDependencyError(
-                "The moomoo Python SDK is unavailable. Run `pip install moomoo-api`, "
-                "start OpenD, and try again."
-            ) from exc
-        try:
-            from futu import OptionVolatilityTimePeriodType  # type: ignore
-        except ImportError:
-            OptionVolatilityTimePeriodType = None
-
-        self._sdk = {
-            "IndexOptionType": IndexOptionType,
-            "OpenQuoteContext": OpenQuoteContext,
-            "OptionCondType": OptionCondType,
-            "OptionType": OptionType,
-            "OptionVolatilityTimePeriodType": OptionVolatilityTimePeriodType,
-            "RET_OK": RET_OK,
-        }
+        self._sdk = load_moomoo_sdk()
         return self._sdk
 
     def connect(self) -> None:

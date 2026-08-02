@@ -6,11 +6,8 @@ from typing import Any
 
 import pandas as pd
 
+from ..moomoo_sdk import MoomooDependencyError, load_moomoo_sdk
 from ..models import Settings
-
-
-class MoomooDependencyError(RuntimeError):
-    pass
 
 
 class MoomooRequestError(RuntimeError):
@@ -28,29 +25,7 @@ class MoomooHistoryCollector:
     def _load_sdk(self) -> dict[str, Any]:
         if self._sdk is not None:
             return self._sdk
-        try:
-            from futu import (  # type: ignore
-                AuType,
-                KLType,
-                KL_FIELD,
-                OpenQuoteContext,
-                RET_OK,
-                Session,
-            )
-        except ImportError as exc:
-            raise MoomooDependencyError(
-                "The moomoo Python SDK is unavailable. Run `pip install moomoo-api`, "
-                "start OpenD, and try again."
-            ) from exc
-
-        self._sdk = {
-            "AuType": AuType,
-            "KLType": KLType,
-            "KL_FIELD": KL_FIELD,
-            "OpenQuoteContext": OpenQuoteContext,
-            "RET_OK": RET_OK,
-            "Session": Session,
-        }
+        self._sdk = load_moomoo_sdk()
         return self._sdk
 
     def connect(self) -> None:

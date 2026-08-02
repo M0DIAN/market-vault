@@ -1,18 +1,21 @@
 from __future__ import annotations
 
-import importlib
+import contextlib
+import io
+import logging
 import socket
 import sys
-from types import ModuleType
+import time
 from typing import Any
 
+from .moomoo_sdk import load_moomoo_sdk
 from .models import Settings
 
 
-def run_doctor(settings: Settings, sdk_module: ModuleType | Any | None = None) -> dict[str, Any]:
+def run_doctor(settings: Settings, sdk_info: dict[str, Any] | None = None) -> dict[str, Any]:
     result: dict[str, Any] = {
         "python_version": sys.version.split()[0],
-        "moomoo_sdk_module": "futu",
+        "moomoo_sdk_module": None,
         "moomoo_sdk_importable": False,
         "moomoo_sdk_version": None,
         "opend_host": settings.opend_host,
@@ -23,15 +26,34 @@ def run_doctor(settings: Settings, sdk_module: ModuleType | Any | None = None) -
     }
 
     try:
-        sdk = sdk_module if sdk_module is not None else importlib.import_module("futu")
+        sdk = sdk_info if sdk_info is not None else load_moomoo_sdk()
         result["moomoo_sdk_importable"] = True
-        result["moomoo_sdk_version"] = _sdk_version(sdk)
-        context = getattr(sdk, "OpenQuoteContext", None)
-        if context is not None:
-            result["get_option_chain"] = "supported" if hasattr(context, "get_option_chain") else "unsupported"
-            result["get_option_volatility"] = (
-                "supported" if hasattr(context, "get_option_volatility") else "unsupported"
-            )
+        result["moomoo_sdk_module"] = sdk.get("module_name")
+        result["moomoo_sdk_version"] = sdk.get("version")
+        ctx = None
+        try:
+            previous_disable_level = logging.root.manager.disable
+            try:
+                logging.disable(logging.CRITICAL)
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    ctx = sdk["OpenQuoteContext"](host=settings.opend_host, port=settings.opend_port)
+            finally:
+                logging.disable(previous_disable_level)
+            result["get_option_chain"] = "supported" if hasattr(ctx, "get_option_chain") else "unsupported"
+            result["get_option_volatility"] = "supported" if hasattr(ctx, "get_option_volatility") else "unsupported"
+        finally:
+            if ctx is not None:
+                try:
+                    previous_disable_level = logging.root.manager.disable
+                    try:
+                        logging.disable(logging.CRITICAL)
+                        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                            ctx.close()
+                        time.sleep(0.1)
+                    finally:
+                        logging.disable(previous_disable_level)
+                except Exception:
+                    pass
     except Exception as exc:
         result["moomoo_sdk_error"] = _short_error(exc)
 
@@ -42,14 +64,6 @@ def run_doctor(settings: Settings, sdk_module: ModuleType | Any | None = None) -
         result["opend_error"] = _short_error(exc)
 
     return result
-
-
-def _sdk_version(sdk: Any) -> str | None:
-    for name in ["__version__", "VERSION", "version"]:
-        value = getattr(sdk, name, None)
-        if value is not None:
-            return str(value)
-    return None
 
 
 def _short_error(exc: BaseException) -> str:

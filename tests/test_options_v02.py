@@ -331,14 +331,26 @@ def test_option_volatility_filter_keeps_only_requested_range():
 
 
 def test_doctor_reports_missing_option_volatility_as_unsupported(tmp_path):
-    fake_sdk = SimpleNamespace(
-        __version__="10.9.fake",
-        OpenQuoteContext=type("FakeQuoteContext", (), {"get_option_chain": lambda self: None}),
-    )
+    class FakeQuoteContext:
+        def __init__(self, host=None, port=None):
+            pass
 
-    report = run_doctor(settings(tmp_path), sdk_module=fake_sdk)
+        def get_option_chain(self):
+            pass
+
+        def close(self):
+            pass
+
+    fake_sdk = {
+        "module_name": "moomoo",
+        "version": "10.9.fake",
+        "OpenQuoteContext": FakeQuoteContext,
+    }
+
+    report = run_doctor(settings(tmp_path), sdk_info=fake_sdk)
 
     assert report["moomoo_sdk_importable"] is True
+    assert report["moomoo_sdk_module"] == "moomoo"
     assert report["moomoo_sdk_version"] == "10.9.fake"
     assert report["get_option_chain"] == "supported"
     assert report["get_option_volatility"] == "unsupported"

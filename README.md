@@ -37,7 +37,7 @@ python -m pip install --upgrade pip
 pip install -e ".[dev]"
 ```
 
-The official Python package is installed from PyPI as `moomoo-api`, while the SDK's import namespace is `futu`.
+The official Python package is installed from PyPI as `moomoo-api`. MarketVault first imports the SDK through the current `moomoo` namespace and falls back to the older `futu` namespace for compatibility.
 
 ## Fast Windows setup
 
