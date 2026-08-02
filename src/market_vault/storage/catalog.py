@@ -279,10 +279,34 @@ class Catalog:
                 effective_end_expr = (
                     "COALESCE(requested_end_date, trade_date)" if has_requested_end else "trade_date"
                 )
+                public_requested_start_expr = (
+                    "COALESCE(requested_start_date, trade_date) AS requested_start_date"
+                    if has_requested_start
+                    else "trade_date AS requested_start_date"
+                )
+                public_requested_end_expr = (
+                    "COALESCE(requested_end_date, trade_date) AS requested_end_date"
+                    if has_requested_end
+                    else "trade_date AS requested_end_date"
+                )
+                public_columns = f"""
+                    scope_type,
+                    scope_value,
+                    market,
+                    reference_code,
+                    trade_date,
+                    trade_date_type,
+                    {public_requested_start_expr},
+                    {public_requested_end_expr},
+                    captured_at,
+                    source,
+                    source_schema_version,
+                    ingestion_run_id
+                """
                 con.execute(
                     f"""
                     CREATE OR REPLACE VIEW trading_calendar AS
-                    SELECT *
+                    SELECT {public_columns}
                     FROM read_parquet('{curated_glob}', union_by_name = true, hive_partitioning = true)
                     """
                 )
@@ -290,7 +314,7 @@ class Catalog:
                     f"""
                     CREATE OR REPLACE VIEW trading_calendar_latest AS
                     WITH all_rows AS (
-                        SELECT *
+                        SELECT {public_columns}
                         FROM read_parquet('{curated_glob}', union_by_name = true, hive_partitioning = true)
                     ),
                     snapshots AS (
@@ -332,7 +356,19 @@ class Catalog:
                         )
                         WHERE _rn = 1
                     )
-                    SELECT r.*
+                    SELECT
+                        r.scope_type,
+                        r.scope_value,
+                        r.market,
+                        r.reference_code,
+                        r.trade_date,
+                        r.trade_date_type,
+                        r.requested_start_date,
+                        r.requested_end_date,
+                        r.captured_at,
+                        r.source,
+                        r.source_schema_version,
+                        r.ingestion_run_id
                     FROM all_rows r
                     JOIN latest_covering_snapshot s
                       ON s.scope_type = r.scope_type

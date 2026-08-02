@@ -21,6 +21,22 @@ from market_vault.service import collect_trading_calendar
 from market_vault.storage import Catalog, ParquetStore
 
 
+TRADING_CALENDAR_PUBLIC_COLUMNS = [
+    "scope_type",
+    "scope_value",
+    "market",
+    "reference_code",
+    "trade_date",
+    "trade_date_type",
+    "requested_start_date",
+    "requested_end_date",
+    "captured_at",
+    "source",
+    "source_schema_version",
+    "ingestion_run_id",
+]
+
+
 def settings(tmp_path) -> Settings:
     return Settings(
         project_root=tmp_path,
@@ -330,8 +346,14 @@ def test_calendar_paths_and_duckdb_latest_use_captured_at(tmp_path):
     assert catalog.refresh_trading_calendar_views()
     with duckdb.connect(str(cfg.catalog_path)) as con:
         row = con.execute("SELECT trade_date_type, ingestion_run_id FROM trading_calendar_latest").fetchone()
+        history_columns = con.sql("SELECT * FROM trading_calendar LIMIT 0").df().columns.tolist()
+        latest_columns = con.sql("SELECT * FROM trading_calendar_latest LIMIT 0").df().columns.tolist()
 
     assert row == ("MORNING", "aaaa-run")
+    assert history_columns == TRADING_CALENDAR_PUBLIC_COLUMNS
+    assert latest_columns == TRADING_CALENDAR_PUBLIC_COLUMNS
+    assert "start_date" not in latest_columns
+    assert "end_date" not in latest_columns
 
 
 def test_calendar_latest_withdraws_dates_missing_from_new_covering_snapshot(tmp_path):
@@ -453,8 +475,10 @@ def test_calendar_latest_supports_old_parquet_without_requested_range(tmp_path):
     assert catalog.refresh_trading_calendar_views()
     with duckdb.connect(str(cfg.catalog_path)) as con:
         rows = con.execute("SELECT trade_date, trade_date_type FROM trading_calendar_latest").fetchall()
+        columns = con.sql("SELECT * FROM trading_calendar_latest LIMIT 0").df().columns.tolist()
 
     assert rows == [(date(2026, 7, 3), "WHOLE")]
+    assert columns == TRADING_CALENDAR_PUBLIC_COLUMNS
 
 
 def test_calendar_market_and_code_scopes_do_not_mix(tmp_path):
@@ -490,6 +514,10 @@ def test_calendar_market_and_code_scopes_do_not_mix(tmp_path):
     market_rows = vault.load_trading_calendar(market="US")
     code_rows = vault.load_trading_calendar(code="us.mu")
 
+    assert market_rows.columns.tolist() == TRADING_CALENDAR_PUBLIC_COLUMNS
+    assert code_rows.columns.tolist() == TRADING_CALENDAR_PUBLIC_COLUMNS
+    assert "start_date" not in code_rows.columns
+    assert "end_date" not in code_rows.columns
     assert market_rows["scope_type"].tolist() == ["MARKET"]
     assert code_rows["scope_type"].tolist() == ["CODE"]
     assert code_rows.loc[0, "trade_date_type"] == "AFTERNOON"
