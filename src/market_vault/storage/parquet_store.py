@@ -65,3 +65,90 @@ class ParquetStore:
         path.parent.mkdir(parents=True, exist_ok=True)
         df.to_parquet(path, index=False, compression="zstd")
         return path
+
+    @staticmethod
+    def _dataset_key(parts: list[str]) -> str:
+        payload = "|".join(parts)
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+    def write_option_chain_raw(
+        self,
+        df: pd.DataFrame,
+        underlying_code: str,
+        capture_date: date,
+        run_id: str,
+    ) -> Path:
+        key = self._dataset_key([underlying_code, capture_date.isoformat(), run_id])
+        path = (
+            self.settings.data_root
+            / "raw"
+            / f"source={self.settings.source}"
+            / "dataset=option_chain"
+            / f"underlying_code={underlying_code}"
+            / f"capture_date={capture_date.isoformat()}"
+            / f"batch-{key}.parquet"
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        df.to_parquet(path, index=False, compression="zstd")
+        return path
+
+    def write_option_contracts_curated(
+        self,
+        df: pd.DataFrame,
+        underlying_code: str,
+        capture_date: date,
+        run_id: str,
+    ) -> Path:
+        key = self._dataset_key([underlying_code, capture_date.isoformat(), run_id])
+        path = (
+            self.settings.data_root
+            / "curated"
+            / "option_contracts"
+            / f"underlying_code={underlying_code}"
+            / f"capture_date={capture_date.isoformat()}"
+            / f"batch-{key}.parquet"
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        df.to_parquet(path, index=False, compression="zstd")
+        return path
+
+    def write_option_volatility_raw(
+        self,
+        df: pd.DataFrame,
+        start_date: date,
+        end_date: date,
+        run_id: str,
+    ) -> Path:
+        key = self._dataset_key([start_date.isoformat(), end_date.isoformat(), run_id])
+        path = (
+            self.settings.data_root
+            / "raw"
+            / f"source={self.settings.source}"
+            / "dataset=option_volatility_daily"
+            / f"start_date={start_date.isoformat()}"
+            / f"end_date={end_date.isoformat()}"
+            / f"batch-{key}.parquet"
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        df.to_parquet(path, index=False, compression="zstd")
+        return path
+
+    def write_option_volatility_curated(
+        self,
+        df: pd.DataFrame,
+        start_date: date,
+        end_date: date,
+        run_id: str,
+    ) -> Path:
+        key = self._dataset_key([start_date.isoformat(), end_date.isoformat(), run_id])
+        path = (
+            self.settings.data_root
+            / "curated"
+            / "option_volatility_daily"
+            / f"start_date={start_date.isoformat()}"
+            / f"end_date={end_date.isoformat()}"
+            / f"batch-{key}.parquet"
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        df.to_parquet(path, index=False, compression="zstd")
+        return path
