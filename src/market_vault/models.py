@@ -78,3 +78,54 @@ class RunManifest:
             "status": self.status,
             "config_hash": self.config_hash,
         }
+
+
+@dataclass
+class DatasetRunManifest:
+    dataset: str
+    requested_items: list[str]
+    parameters: dict[str, Any]
+    run_id: str = field(default_factory=lambda: str(uuid4()))
+    started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    finished_at: datetime | None = None
+    status: str = "RUNNING"
+    successful_items: list[str] = field(default_factory=list)
+    failed_items: dict[str, str] = field(default_factory=dict)
+    raw_file: str | None = None
+    curated_file: str | None = None
+    quality_report: str | None = None
+    row_count: int = 0
+    config_hash: str = ""
+
+    @property
+    def request_count(self) -> int:
+        return len(self.requested_items)
+
+    @property
+    def success_count(self) -> int:
+        return len(self.successful_items)
+
+    @property
+    def failure_count(self) -> int:
+        return len(self.failed_items)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "run_id": self.run_id,
+            "dataset": self.dataset,
+            "started_at": self.started_at.isoformat(),
+            "finished_at": self.finished_at.isoformat() if self.finished_at else None,
+            "status": self.status,
+            "parameters": self.parameters,
+            "requested_items": self.requested_items,
+            "request_count": self.request_count,
+            "successful_items": self.successful_items,
+            "success_count": self.success_count,
+            "failed_items": self.failed_items,
+            "failure_count": self.failure_count,
+            "row_count": self.row_count,
+            "raw_file": self.raw_file,
+            "curated_file": self.curated_file,
+            "quality_report": self.quality_report,
+            "config_hash": self.config_hash,
+        }

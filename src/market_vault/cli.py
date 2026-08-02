@@ -7,7 +7,7 @@ from pathlib import Path
 
 from .api import MarketVault
 from .config import load_settings, load_universe
-from .service import collect_history
+from .service import collect_history, collect_option_chain, collect_option_volatility
 from .storage import Catalog
 
 
@@ -47,6 +47,18 @@ def build_parser() -> argparse.ArgumentParser:
     query.add_argument("--session")
     query.add_argument("--adjustment", default="NONE")
     query.add_argument("--limit", type=int, default=20)
+
+    option_chain = sub.add_parser("option-chain", help="Collect static option contract metadata")
+    option_chain.add_argument("--underlying", required=True)
+    option_chain.add_argument("--start-date", required=True, type=_parse_date)
+    option_chain.add_argument("--end-date", required=True, type=_parse_date)
+    option_chain.add_argument("--option-type", default="ALL", choices=["ALL", "CALL", "PUT"])
+    option_chain.add_argument("--option-cond-type", default="ALL", choices=["ALL", "ITM", "ATM", "OTM"])
+
+    option_volatility = sub.add_parser("option-volatility", help="Collect daily option volatility data")
+    option_volatility.add_argument("--codes", nargs="+", required=True)
+    option_volatility.add_argument("--start-date", required=True, type=_parse_date)
+    option_volatility.add_argument("--end-date", required=True, type=_parse_date)
 
     return parser
 
@@ -88,6 +100,28 @@ def main() -> None:
             adjustment=args.adjustment,
         )
         print(frame.head(args.limit).to_string(index=False))
+        return
+
+    if args.command == "option-chain":
+        manifest = collect_option_chain(
+            settings=settings,
+            underlying=args.underlying,
+            start_date=args.start_date,
+            end_date=args.end_date,
+            option_type=args.option_type,
+            option_cond_type=args.option_cond_type,
+        )
+        print(json.dumps(manifest.as_dict(), ensure_ascii=False, indent=2))
+        return
+
+    if args.command == "option-volatility":
+        manifest = collect_option_volatility(
+            settings=settings,
+            codes=args.codes,
+            start_date=args.start_date,
+            end_date=args.end_date,
+        )
+        print(json.dumps(manifest.as_dict(), ensure_ascii=False, indent=2))
         return
 
 

@@ -1,6 +1,6 @@
-# MarketVault v0.1
+# MarketVault v0.2
 
-MarketVault is a reproducible historical market-data archive for moomoo OpenD. V0.1 focuses on closed-date stock, ETF, and option candlesticks, then stores both source-preserving and normalized Parquet datasets with a DuckDB catalog.
+MarketVault is a reproducible historical market-data archive for moomoo OpenD. V0.1 focused on closed-date stock, ETF, and option candlesticks. V0.2 adds option contract static metadata and daily option volatility datasets while preserving the existing historical K-line interface.
 
 ## What this version does
 
@@ -12,10 +12,13 @@ MarketVault is a reproducible historical market-data archive for moomoo OpenD. V
 - Generates a JSON manifest and data-quality report for every run.
 - Maintains DuckDB metadata tables and a deduplicated `market_bars` view.
 - Continues collecting other symbols if one symbol fails.
+- Collects option-chain static contract metadata from `get_option_chain`.
+- Collects daily option volatility analysis rows from `get_option_volatility`.
+- Maintains `option_contracts`, `option_contracts_latest`, and `option_volatility_daily` DuckDB views.
 
-## Important V0.1 boundary
+## Important data boundary
 
-This project can backfill historical candlesticks. It cannot reconstruct historical minute-by-minute Bid/Ask, order-book depth, or option Greeks after the fact. Those fields belong in a later live-capture pipeline.
+This project can backfill historical candlesticks, option-chain static metadata, and daily volatility analysis where OpenD and the account permissions allow it. It cannot reconstruct historical minute-by-minute Bid/Ask, order-book depth, Greeks, or complete intraday IV after the fact. Those fields require a live capture and subscription pipeline.
 
 ## Requirements
 
@@ -89,6 +92,34 @@ market-vault --settings config/settings.yaml collect `
   --interval 1m
 ```
 
+## Option chain metadata
+
+Collect static option contracts for an underlying and expiration-date range:
+
+```powershell
+market-vault --settings config/settings.yaml option-chain `
+  --underlying US.MU `
+  --start-date 2026-08-07 `
+  --end-date 2026-09-18 `
+  --option-type ALL `
+  --option-cond-type ALL
+```
+
+The curated dataset standardizes `option_code`, `option_name`, `underlying_code`, `option_type`, `strike_price`, `expiry_date`, `contract_size`, `lot_size`, `exchange`, `exercise_type`, `suspension`, `delisting`, `captured_at`, `source`, `source_schema_version`, and `ingestion_run_id`. Fields not returned by moomoo are kept as null rather than inferred.
+
+## Daily option volatility
+
+Collect daily volatility analysis for one or more option contracts:
+
+```powershell
+market-vault --settings config/settings.yaml option-volatility `
+  --codes US.MU260807C120000 US.MU260807P100000 `
+  --start-date 2026-07-01 `
+  --end-date 2026-07-31
+```
+
+The curated dataset standardizes `option_code`, `trade_date`, `implied_volatility`, `historical_volatility`, `volatility_premium`, `average_implied_volatility`, `volatility_status`, `source`, and `ingestion_run_id`. IV/HV fields may be null when OpenD does not return a value.
+
 ## Query data
 
 ```powershell
@@ -119,7 +150,11 @@ print(bars.head())
 ```text
 data/
 ├─ raw/source=moomoo/dataset=market_bars/...
-└─ curated/source=moomoo/dataset=market_bars/...
+├─ raw/source=moomoo/dataset=option_chain/...
+├─ raw/source=moomoo/dataset=option_volatility_daily/...
+├─ curated/source=moomoo/dataset=market_bars/...
+├─ curated/option_contracts/underlying_code=US.MU/capture_date=YYYY-MM-DD/...
+└─ curated/option_volatility_daily/start_date=YYYY-MM-DD/end_date=YYYY-MM-DD/...
 catalog/market_vault.duckdb
 manifests/*.json
 reports/data_quality/*.json
@@ -139,4 +174,5 @@ The tests are offline and do not require OpenD.
 
 - `requested_trade_date` preserves the date requested from moomoo. `market_calendar_date` preserves each returned Eastern-time calendar date. This deliberately avoids pretending that overnight bars can be assigned to an exchange session date without an exchange-calendar layer.
 - The option-code parser supports the common moomoo US option format such as `US.MU260807C120000`. Unusual roots should be validated before relying on automatic underlying inference.
-- V0.1 does not yet collect option-chain metadata or daily option volatility; those are the next collector modules.
+- Option-chain metadata is static contract information. Dynamic quotes, trading status changes, Greeks, minute-level Bid/Ask, and complete historical intraday IV are outside V0.2.
+- OpenD must be running, logged in, and entitled for the underlying market, option chain, and option volatility data. Permission or quota failures are recorded per request in the run manifest.
