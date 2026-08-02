@@ -98,6 +98,7 @@ def test_option_volatility_normalizes_and_filters_range():
         "moomoo",
         "run-1",
         "10.9",
+        pd.Timestamp("2026-08-02T01:00:00Z"),
     )
 
     assert out["trade_date"].tolist() == [date(2026, 7, 1), date(2026, 7, 15)]
@@ -422,9 +423,20 @@ def test_option_volatility_manifest_records_quarter_integer_value(monkeypatch, t
     assert manifest.status == "SUCCESS"
     assert manifest.parameters["query_time_period"] == "QUARTER"
     assert manifest.parameters["query_time_period_value"] == 3
+    assert manifest.parameters["api_request_count"] == 1
+    assert manifest.parameters["successful_api_request_count"] == 1
+    assert manifest.parameters["failed_api_request_count"] == 0
     assert manifest.parameters["returned_min_date"] == "2026-07-01"
     assert manifest.parameters["returned_max_date"] == "2026-07-31"
     assert manifest.parameters["range_complete"] is True
+    assert manifest.parameters["coverage_by_code"] == {
+        "US.MU260807C10000": {
+            "returned_min_date": "2026-07-01",
+            "returned_max_date": "2026-07-31",
+            "range_complete": True,
+            "row_count": 3,
+        }
+    }
 
 
 def test_option_volatility_weekend_boundaries_do_not_make_range_incomplete(monkeypatch, tmp_path):
@@ -461,6 +473,124 @@ def test_option_volatility_weekend_boundaries_do_not_make_range_incomplete(monke
     assert manifest.parameters["returned_min_date"] == "2026-07-06"
     assert manifest.parameters["returned_max_date"] == "2026-07-31"
     assert manifest.parameters["range_complete"] is True
+
+
+class MixedCoverageFakeCollector:
+    failures = set()
+    frames = {}
+
+    def __init__(self, settings):
+        self.settings = settings
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        pass
+
+    def fetch_option_volatility(self, option_code, query_time_period, hv_time_period=30):
+        if option_code in self.failures:
+            raise RuntimeError(f"{option_code} failed")
+        return self.frames[option_code]
+
+
+def test_option_volatility_multi_code_all_complete_success(monkeypatch, tmp_path):
+    import market_vault.service as service
+
+    MixedCoverageFakeCollector.failures = set()
+    MixedCoverageFakeCollector.frames = {
+        "US.MU260807C10000": pd.DataFrame({"timestamp_str": ["2026-07-01", "2026-07-31"], "implied_volatility": [1, 2]}),
+        "US.MU260807P10000": pd.DataFrame({"timestamp_str": ["2026-07-01", "2026-07-31"], "implied_volatility": [3, 4]}),
+    }
+    monkeypatch.setattr(service, "MoomooOptionCollector", MixedCoverageFakeCollector)
+
+    manifest = collect_option_volatility(
+        settings(tmp_path),
+        ["US.MU260807C10000", "US.MU260807P10000"],
+        date(2026, 7, 1),
+        date(2026, 7, 31),
+        as_of_date=date(2026, 8, 2),
+    )
+
+    assert manifest.status == "SUCCESS"
+    assert manifest.parameters["api_request_count"] == 2
+    assert manifest.parameters["successful_api_request_count"] == 2
+    assert manifest.parameters["failed_api_request_count"] == 0
+    assert manifest.parameters["range_complete"] is True
+    assert all(item["range_complete"] for item in manifest.parameters["coverage_by_code"].values())
+
+
+def test_option_volatility_combined_min_max_does_not_hide_incomplete_codes(monkeypatch, tmp_path):
+    import market_vault.service as service
+
+    MixedCoverageFakeCollector.failures = set()
+    MixedCoverageFakeCollector.frames = {
+        "US.MU260807C10000": pd.DataFrame({"timestamp_str": ["2026-07-01"], "implied_volatility": [1]}),
+        "US.MU260807P10000": pd.DataFrame({"timestamp_str": ["2026-07-31"], "implied_volatility": [4]}),
+    }
+    monkeypatch.setattr(service, "MoomooOptionCollector", MixedCoverageFakeCollector)
+
+    manifest = collect_option_volatility(
+        settings(tmp_path),
+        ["US.MU260807C10000", "US.MU260807P10000"],
+        date(2026, 7, 1),
+        date(2026, 7, 31),
+        as_of_date=date(2026, 8, 2),
+    )
+
+    assert manifest.status == "PARTIAL"
+    assert manifest.parameters["returned_min_date"] == "2026-07-01"
+    assert manifest.parameters["returned_max_date"] == "2026-07-31"
+    assert manifest.parameters["range_complete"] is False
+    assert manifest.parameters["coverage_by_code"]["US.MU260807C10000"]["range_complete"] is False
+    assert manifest.parameters["coverage_by_code"]["US.MU260807P10000"]["range_complete"] is False
+
+
+def test_option_volatility_one_complete_one_incomplete_is_partial(monkeypatch, tmp_path):
+    import market_vault.service as service
+
+    MixedCoverageFakeCollector.failures = set()
+    MixedCoverageFakeCollector.frames = {
+        "US.MU260807C10000": pd.DataFrame({"timestamp_str": ["2026-07-01", "2026-07-31"], "implied_volatility": [1, 2]}),
+        "US.MU260807P10000": pd.DataFrame({"timestamp_str": ["2026-07-01"], "implied_volatility": [3]}),
+    }
+    monkeypatch.setattr(service, "MoomooOptionCollector", MixedCoverageFakeCollector)
+
+    manifest = collect_option_volatility(
+        settings(tmp_path),
+        ["US.MU260807C10000", "US.MU260807P10000"],
+        date(2026, 7, 1),
+        date(2026, 7, 31),
+        as_of_date=date(2026, 8, 2),
+    )
+
+    assert manifest.status == "PARTIAL"
+    assert manifest.parameters["coverage_by_code"]["US.MU260807C10000"]["range_complete"] is True
+    assert manifest.parameters["coverage_by_code"]["US.MU260807P10000"]["range_complete"] is False
+
+
+def test_option_volatility_one_success_one_interface_failure_is_partial(monkeypatch, tmp_path):
+    import market_vault.service as service
+
+    MixedCoverageFakeCollector.failures = {"US.MU260807P10000"}
+    MixedCoverageFakeCollector.frames = {
+        "US.MU260807C10000": pd.DataFrame({"timestamp_str": ["2026-07-01", "2026-07-31"], "implied_volatility": [1, 2]}),
+    }
+    monkeypatch.setattr(service, "MoomooOptionCollector", MixedCoverageFakeCollector)
+
+    manifest = collect_option_volatility(
+        settings(tmp_path),
+        ["US.MU260807C10000", "US.MU260807P10000"],
+        date(2026, 7, 1),
+        date(2026, 7, 31),
+        as_of_date=date(2026, 8, 2),
+    )
+
+    assert manifest.status == "PARTIAL"
+    assert manifest.parameters["successful_api_request_count"] == 1
+    assert manifest.parameters["failed_api_request_count"] == 1
+    assert "US.MU260807P10000" in manifest.failed_items
+    assert list(manifest.parameters["coverage_by_code"]) == ["US.MU260807C10000"]
 
 
 def test_option_volatility_filter_keeps_only_requested_range():
@@ -597,6 +727,46 @@ def test_option_volatility_parquet_and_duckdb_include_analysis(tmp_path):
         ).fetchone()
 
     assert row == ("normal", 1)
+
+
+def test_option_volatility_latest_view_uses_captured_at_before_run_id(tmp_path):
+    cfg = settings(tmp_path)
+    store = ParquetStore(cfg)
+    catalog = Catalog(cfg)
+    older = normalize_option_volatility(
+        pd.DataFrame({"timestamp_str": ["2026-07-01"], "implied_volatility": [20.0]}),
+        "US.MU260807C10000",
+        date(2026, 7, 1),
+        date(2026, 7, 31),
+        "moomoo",
+        "zzzz-run",
+        "10.9",
+        pd.Timestamp("2026-08-01T01:00:00Z"),
+    )
+    newer = normalize_option_volatility(
+        pd.DataFrame({"timestamp_str": ["2026-07-01"], "implied_volatility": [30.0]}),
+        "US.MU260807C10000",
+        date(2026, 7, 1),
+        date(2026, 7, 31),
+        "moomoo",
+        "aaaa-run",
+        "10.9",
+        pd.Timestamp("2026-08-02T01:00:00Z"),
+    )
+    store.write_option_volatility_curated(older, date(2026, 7, 1), date(2026, 7, 31), "zzzz-run")
+    store.write_option_volatility_curated(newer, date(2026, 7, 1), date(2026, 7, 31), "aaaa-run")
+
+    assert catalog.refresh_option_volatility_views()
+    with duckdb.connect(str(cfg.catalog_path)) as con:
+        row = con.execute(
+            """
+            SELECT implied_volatility, ingestion_run_id
+            FROM option_volatility_daily
+            WHERE option_code = 'US.MU260807C10000' AND trade_date = DATE '2026-07-01'
+            """
+        ).fetchone()
+
+    assert row == (30.0, "aaaa-run")
 
 
 def test_option_chain_chunks_for_one_day_and_thirty_days():

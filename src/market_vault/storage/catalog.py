@@ -223,6 +223,12 @@ class Catalog:
                 )
             if curated_files:
                 curated_glob = (curated_root / "**" / "*.parquet").as_posix().replace("'", "''")
+                has_captured_at = self._parquet_files_have_column(con, curated_files, "captured_at")
+                order_clause = (
+                    "captured_at DESC NULLS LAST, ingestion_run_id DESC"
+                    if has_captured_at
+                    else "ingestion_run_id DESC"
+                )
                 con.execute(
                     f"""
                     CREATE OR REPLACE VIEW option_volatility_daily AS
@@ -231,7 +237,7 @@ class Catalog:
                         SELECT *,
                                row_number() OVER (
                                    PARTITION BY option_code, trade_date, source
-                                   ORDER BY ingestion_run_id DESC
+                                   ORDER BY {order_clause}
                                ) AS _rn
                         FROM read_parquet('{curated_glob}', union_by_name = true, hive_partitioning = true)
                     )
@@ -239,3 +245,14 @@ class Catalog:
                     """
                 )
         return True
+
+    def _parquet_files_have_column(self, con, files: list[Path], column: str) -> bool:
+        for file in files:
+            path = file.as_posix().replace("'", "''")
+            try:
+                columns = [row[0] for row in con.execute(f"DESCRIBE SELECT * FROM read_parquet('{path}')").fetchall()]
+            except duckdb.Error:
+                continue
+            if column in columns:
+                return True
+        return False

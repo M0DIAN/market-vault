@@ -107,7 +107,9 @@ def run_option_volatility_quality_checks(
     start_date: date,
     end_date: date,
     returned_min_date: date | None = None,
+    returned_max_date: date | None = None,
     range_complete: bool = True,
+    coverage_by_code: dict | None = None,
 ) -> list[QualityResult]:
     if df.empty:
         checks = [
@@ -118,9 +120,12 @@ def run_option_volatility_quality_checks(
                 QualityResult(
                     "requested_range_complete",
                     "WARN",
-                    f"returned_min_date <= {start_date.isoformat()}",
-                    returned_min_date.isoformat() if returned_min_date else "no returned dates",
-                    "The API response did not cover the full requested start date.",
+                    f"requested_start_date={start_date.isoformat()}, requested_end_date={end_date.isoformat()}",
+                    (
+                        f"returned_min_date={returned_min_date.isoformat() if returned_min_date else None}, "
+                        f"returned_max_date={returned_max_date.isoformat() if returned_max_date else None}"
+                    ),
+                    "The API response did not cover the full requested date window.",
                 )
             )
         return checks
@@ -155,10 +160,31 @@ def run_option_volatility_quality_checks(
         QualityResult(
             "requested_range_complete",
             "PASS" if range_complete else "WARN",
-            f"returned_min_date <= {start_date.isoformat()}",
-            returned_min_date.isoformat() if returned_min_date else "no returned dates",
-            None if range_complete else "The API response did not cover the full requested start date.",
+            f"requested_start_date={start_date.isoformat()}, requested_end_date={end_date.isoformat()}",
+            (
+                f"returned_min_date={returned_min_date.isoformat() if returned_min_date else None}, "
+                f"returned_max_date={returned_max_date.isoformat() if returned_max_date else None}"
+            ),
+            None if range_complete else "One or more option codes did not cover the full requested date window.",
         )
     )
+    for option_code, coverage in sorted((coverage_by_code or {}).items()):
+        if not coverage.get("range_complete"):
+            checks.append(
+                QualityResult(
+                    "requested_range_complete_by_code",
+                    "WARN",
+                    (
+                        f"option_code={option_code}, requested_start_date={start_date.isoformat()}, "
+                        f"requested_end_date={end_date.isoformat()}"
+                    ),
+                    (
+                        f"returned_min_date={coverage.get('returned_min_date')}, "
+                        f"returned_max_date={coverage.get('returned_max_date')}, "
+                        f"row_count={coverage.get('row_count')}"
+                    ),
+                    f"Option code {option_code} did not cover the full requested date window.",
+                )
+            )
 
     return checks

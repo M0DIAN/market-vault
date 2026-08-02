@@ -122,9 +122,11 @@ market-vault --settings config/settings.yaml option-volatility `
   --end-date 2026-07-31
 ```
 
-The moomoo response fields are normalized as follows: `timestamp_str` to `trade_date`, `implied_volatility` to `implied_volatility`, `history_volatility` to `historical_volatility`, `volatility_premium` to `volatility_premium`, `average_impvol` to `average_implied_volatility`, `impvol_status` to nullable integer `volatility_status`, and `analysis` to nullable string `analysis`. The curated dataset also includes `option_code`, `source`, `source_schema_version`, and `ingestion_run_id`. Optional volatility fields may be null when OpenD does not return a value.
+The moomoo response fields are normalized as follows: `timestamp_str` to `trade_date`, `implied_volatility` to `implied_volatility`, `history_volatility` to `historical_volatility`, `volatility_premium` to `volatility_premium`, `average_impvol` to `average_implied_volatility`, `impvol_status` to nullable integer `volatility_status`, and `analysis` to nullable string `analysis`. The curated dataset also includes `option_code`, UTC `captured_at`, `source`, `source_schema_version`, and `ingestion_run_id`. Optional volatility fields may be null when OpenD does not return a value.
 
-The official volatility endpoint accepts a lookback period, not direct start and end dates. MarketVault selects the smallest official period that covers the requested start date from the collection date: `WEEK`, `MONTH`, `QUARTER`, `HALF_YEAR`, or `YEAR`, then filters returned rows to the requested date range. Some moomoo SDK builds do not export `OptionVolatilityTimePeriodType`; in that case MarketVault uses official integer period values (`WEEK=1`, `MONTH=2`, `QUARTER=3`, `HALF_YEAR=4`, `YEAR=5`). This does not affect `get_option_volatility` availability. Requests older than the maximum `YEAR` period are rejected before OpenD is called. If the API response does not cover the requested window's available weekday boundary, the run manifest sets `range_complete` to `false` and the quality report records a warning.
+The official volatility endpoint accepts a lookback period, not direct start and end dates. MarketVault selects the smallest official period that covers the requested start date from the collection date: `WEEK`, `MONTH`, `QUARTER`, `HALF_YEAR`, or `YEAR`, then filters returned rows to the requested date range. Some moomoo SDK builds do not export `OptionVolatilityTimePeriodType`; in that case MarketVault uses official integer period values (`WEEK=1`, `MONTH=2`, `QUARTER=3`, `HALF_YEAR=4`, `YEAR=5`). This does not affect `get_option_volatility` availability. Requests older than the maximum `YEAR` period are rejected before OpenD is called. Coverage is calculated per option code using a weekday-boundary heuristic; it does not know NYSE/Nasdaq holidays. A formal exchange calendar is planned for a later version.
+
+Run manifests keep the top-level `request_count` as the number of requested items for compatibility. The actual OpenD call count is recorded in `parameters.api_request_count`; successful and failed calls are recorded as `parameters.successful_api_request_count` and `parameters.failed_api_request_count`.
 
 ## Doctor
 
@@ -176,7 +178,7 @@ manifests/*.json
 reports/data_quality/*.json
 ```
 
-A deterministic batch filename is used for the same date/symbol-set/interval/session/adjustment combination. Re-running the identical request overwrites that batch file. The DuckDB view also deduplicates bars by `(code, interval, adjustment, time_utc)`.
+A deterministic batch filename is used for the same date/symbol-set/interval/session/adjustment combination. Re-running the identical request overwrites that batch file. The DuckDB view deduplicates bars by `(code, interval, adjustment, time_utc)`. The `option_volatility_daily` view deduplicates by `(option_code, trade_date, source)` and chooses the latest row by `captured_at DESC NULLS LAST`, with `ingestion_run_id` only as a secondary tie-breaker.
 
 ## Tests
 

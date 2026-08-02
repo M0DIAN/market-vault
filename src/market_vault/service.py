@@ -224,6 +224,9 @@ def collect_option_chain(
             "successful_chunks": [],
             "failed_chunks": [],
             "returned_contract_count": 0,
+            "api_request_count": len(chunk_ranges),
+            "successful_api_request_count": 0,
+            "failed_api_request_count": 0,
         },
     )
     manifest.config_hash = _hash_config(manifest.parameters)
@@ -287,6 +290,8 @@ def collect_option_chain(
         )
         manifest.successful_items.append(underlying)
         manifest.parameters["returned_contract_count"] = len(curated)
+    manifest.parameters["successful_api_request_count"] = len(manifest.parameters["successful_chunks"])
+    manifest.parameters["failed_api_request_count"] = len(manifest.parameters["failed_chunks"])
     quality_results = run_option_contract_quality_checks(curated)
     if not raw.empty:
         raw_path = store.write_option_chain_raw(raw, underlying, captured_at.date(), manifest.run_id)
@@ -317,6 +322,7 @@ def collect_option_volatility(
     effective_as_of_date = as_of_date or datetime.now(timezone.utc).date()
     query_time_period = select_option_volatility_period(start_date, effective_as_of_date)
     query_time_period_value = OPTION_VOLATILITY_PERIOD_VALUES[query_time_period]
+    captured_at = pd.Timestamp.now(tz="UTC")
 
     requested_codes = sorted(set(codes))
     manifest = DatasetRunManifest(
@@ -336,6 +342,10 @@ def collect_option_volatility(
             "returned_min_date": None,
             "returned_max_date": None,
             "range_complete": False,
+            "coverage_by_code": {},
+            "api_request_count": len(requested_codes),
+            "successful_api_request_count": 0,
+            "failed_api_request_count": 0,
         },
     )
     manifest.config_hash = _hash_config(manifest.parameters)
@@ -355,6 +365,7 @@ def collect_option_volatility(
                     raw["requested_end_date"] = end_date
                     raw["query_time_period"] = query_time_period
                     raw["hv_time_period"] = hv_time_period
+                    raw["captured_at"] = captured_at
                     raw["ingestion_run_id"] = manifest.run_id
                     raw_frames.append(raw)
                     curated = normalize_option_volatility(
@@ -365,6 +376,7 @@ def collect_option_volatility(
                         source=settings.source,
                         run_id=manifest.run_id,
                         source_schema_version=settings.source_schema_version,
+                        captured_at=captured_at,
                     )
                     if curated.empty:
                         raise RuntimeError("API returned rows, but none were inside the requested date range")
@@ -380,24 +392,26 @@ def collect_option_volatility(
     catalog = Catalog(settings)
     curated_all = pd.concat(curated_frames, ignore_index=True) if curated_frames else pd.DataFrame()
     raw_all = pd.concat(raw_frames, ignore_index=True) if raw_frames else pd.DataFrame()
-    returned_dates = _extract_option_volatility_dates(curated_all)
-    returned_min_date = min(returned_dates) if returned_dates else None
-    returned_max_date = max(returned_dates) if returned_dates else None
-    range_complete = _option_volatility_range_complete(
-        returned_min_date,
-        returned_max_date,
-        start_date,
-        end_date,
-    )
+    coverage_by_code = _option_volatility_coverage_by_code(curated_all, start_date, end_date)
+    returned_mins = [item["returned_min_date"] for item in coverage_by_code.values() if item["returned_min_date"]]
+    returned_maxes = [item["returned_max_date"] for item in coverage_by_code.values() if item["returned_max_date"]]
+    returned_min_date = min(date.fromisoformat(item) for item in returned_mins) if returned_mins else None
+    returned_max_date = max(date.fromisoformat(item) for item in returned_maxes) if returned_maxes else None
+    range_complete = bool(coverage_by_code) and all(item["range_complete"] for item in coverage_by_code.values())
     manifest.parameters["returned_min_date"] = returned_min_date.isoformat() if returned_min_date else None
     manifest.parameters["returned_max_date"] = returned_max_date.isoformat() if returned_max_date else None
     manifest.parameters["range_complete"] = range_complete
+    manifest.parameters["coverage_by_code"] = coverage_by_code
+    manifest.parameters["successful_api_request_count"] = len(manifest.successful_items)
+    manifest.parameters["failed_api_request_count"] = len(manifest.failed_items)
     quality_results = run_option_volatility_quality_checks(
         curated_all,
         start_date,
         end_date,
         returned_min_date=returned_min_date,
+        returned_max_date=returned_max_date,
         range_complete=range_complete,
+        coverage_by_code=coverage_by_code,
     )
     if raw_frames:
         raw_path = store.write_option_volatility_raw(raw_all, start_date, end_date, manifest.run_id)
@@ -425,6 +439,33 @@ def _extract_option_volatility_dates(raw: pd.DataFrame) -> list[date]:
     else:
         return []
     return [item.date() for item in parsed.dropna()]
+
+
+def _option_volatility_coverage_by_code(
+    df: pd.DataFrame,
+    start_date: date,
+    end_date: date,
+) -> dict[str, dict]:
+    if df.empty or "option_code" not in df.columns:
+        return {}
+    coverage: dict[str, dict] = {}
+    for option_code, group in df.groupby("option_code", sort=True):
+        returned_dates = _extract_option_volatility_dates(group)
+        returned_min_date = min(returned_dates) if returned_dates else None
+        returned_max_date = max(returned_dates) if returned_dates else None
+        complete = _option_volatility_range_complete(
+            returned_min_date,
+            returned_max_date,
+            start_date,
+            end_date,
+        )
+        coverage[str(option_code)] = {
+            "returned_min_date": returned_min_date.isoformat() if returned_min_date else None,
+            "returned_max_date": returned_max_date.isoformat() if returned_max_date else None,
+            "range_complete": complete,
+            "row_count": int(len(group)),
+        }
+    return coverage
 
 
 def _option_volatility_range_complete(

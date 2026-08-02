@@ -35,6 +35,7 @@ OPTION_VOLATILITY_COLUMNS = [
     "average_implied_volatility",
     "volatility_status",
     "analysis",
+    "captured_at",
     "source",
     "source_schema_version",
     "ingestion_run_id",
@@ -145,6 +146,7 @@ def normalize_option_volatility(
     source: str,
     run_id: str,
     source_schema_version: str | None = None,
+    captured_at: pd.Timestamp | None = None,
 ) -> pd.DataFrame:
     if frame.empty:
         return pd.DataFrame(columns=OPTION_VOLATILITY_COLUMNS)
@@ -164,6 +166,7 @@ def normalize_option_volatility(
                 "average_implied_volatility": _first_present(row, ["average_implied_volatility", "average_impvol"]),
                 "volatility_status": _first_present(row, ["volatility_status", "impvol_status"]),
                 "analysis": _first_present(row, ["analysis"]),
+                "captured_at": captured_at,
                 "source": source,
                 "source_schema_version": source_schema_version,
                 "ingestion_run_id": run_id,
@@ -172,6 +175,7 @@ def normalize_option_volatility(
 
     df = pd.DataFrame(rows, columns=OPTION_VOLATILITY_COLUMNS)
     df["trade_date"] = pd.to_datetime(df["trade_date"], errors="coerce").dt.date
+    df["captured_at"] = pd.to_datetime(df["captured_at"], utc=True)
     for column in [
         "implied_volatility",
         "historical_volatility",
