@@ -8,7 +8,7 @@ from datetime import date, datetime, timedelta, timezone
 import pandas as pd
 
 from .collectors import MoomooHistoryCollector, MoomooOptionCollector
-from .collectors.moomoo_options import select_option_volatility_period
+from .collectors.moomoo_options import OPTION_VOLATILITY_PERIOD_VALUES, select_option_volatility_period
 from .models import DatasetRunManifest, RunManifest, Settings
 from .normalization import normalize_bars, normalize_option_contracts, normalize_option_volatility
 from .quality import (
@@ -316,6 +316,7 @@ def collect_option_volatility(
         raise ValueError("start_date must be on or before end_date")
     effective_as_of_date = as_of_date or datetime.now(timezone.utc).date()
     query_time_period = select_option_volatility_period(start_date, effective_as_of_date)
+    query_time_period_value = OPTION_VOLATILITY_PERIOD_VALUES[query_time_period]
 
     requested_codes = sorted(set(codes))
     manifest = DatasetRunManifest(
@@ -327,6 +328,7 @@ def collect_option_volatility(
             "end_date": end_date.isoformat(),
             "source": settings.source,
             "query_time_period": query_time_period,
+            "query_time_period_value": query_time_period_value,
             "hv_time_period": hv_time_period,
             "as_of_date": effective_as_of_date.isoformat(),
             "requested_start_date": start_date.isoformat(),
@@ -362,6 +364,7 @@ def collect_option_volatility(
                         end_date=end_date,
                         source=settings.source,
                         run_id=manifest.run_id,
+                        source_schema_version=settings.source_schema_version,
                     )
                     if curated.empty:
                         raise RuntimeError("API returned rows, but none were inside the requested date range")
@@ -377,10 +380,15 @@ def collect_option_volatility(
     catalog = Catalog(settings)
     curated_all = pd.concat(curated_frames, ignore_index=True) if curated_frames else pd.DataFrame()
     raw_all = pd.concat(raw_frames, ignore_index=True) if raw_frames else pd.DataFrame()
-    returned_dates = _extract_option_volatility_dates(raw_all)
+    returned_dates = _extract_option_volatility_dates(curated_all)
     returned_min_date = min(returned_dates) if returned_dates else None
     returned_max_date = max(returned_dates) if returned_dates else None
-    range_complete = returned_min_date is not None and returned_min_date <= start_date
+    range_complete = _option_volatility_range_complete(
+        returned_min_date,
+        returned_max_date,
+        start_date,
+        end_date,
+    )
     manifest.parameters["returned_min_date"] = returned_min_date.isoformat() if returned_min_date else None
     manifest.parameters["returned_max_date"] = returned_max_date.isoformat() if returned_max_date else None
     manifest.parameters["range_complete"] = range_complete
@@ -417,3 +425,36 @@ def _extract_option_volatility_dates(raw: pd.DataFrame) -> list[date]:
     else:
         return []
     return [item.date() for item in parsed.dropna()]
+
+
+def _option_volatility_range_complete(
+    returned_min_date: date | None,
+    returned_max_date: date | None,
+    start_date: date,
+    end_date: date,
+) -> bool:
+    if returned_min_date is None or returned_max_date is None:
+        return False
+    expected_start = _next_weekday(start_date)
+    expected_end = _previous_weekday(end_date)
+    if expected_start is None or expected_end is None:
+        return True
+    return returned_min_date <= expected_start and returned_max_date >= expected_end
+
+
+def _next_weekday(value: date) -> date | None:
+    current = value
+    for _ in range(7):
+        if current.weekday() < 5:
+            return current
+        current = current + timedelta(days=1)
+    return None
+
+
+def _previous_weekday(value: date) -> date | None:
+    current = value
+    for _ in range(7):
+        if current.weekday() < 5:
+            return current
+        current = current - timedelta(days=1)
+    return None

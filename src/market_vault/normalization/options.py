@@ -34,7 +34,9 @@ OPTION_VOLATILITY_COLUMNS = [
     "volatility_premium",
     "average_implied_volatility",
     "volatility_status",
+    "analysis",
     "source",
+    "source_schema_version",
     "ingestion_run_id",
 ]
 
@@ -142,6 +144,7 @@ def normalize_option_volatility(
     end_date: date,
     source: str,
     run_id: str,
+    source_schema_version: str | None = None,
 ) -> pd.DataFrame:
     if frame.empty:
         return pd.DataFrame(columns=OPTION_VOLATILITY_COLUMNS)
@@ -160,7 +163,9 @@ def normalize_option_volatility(
                 "volatility_premium": _first_present(row, ["volatility_premium"]),
                 "average_implied_volatility": _first_present(row, ["average_implied_volatility", "average_impvol"]),
                 "volatility_status": _first_present(row, ["volatility_status", "impvol_status"]),
+                "analysis": _first_present(row, ["analysis"]),
                 "source": source,
+                "source_schema_version": source_schema_version,
                 "ingestion_run_id": run_id,
             }
         )
@@ -174,6 +179,10 @@ def normalize_option_volatility(
         "average_implied_volatility",
     ]:
         df[column] = pd.to_numeric(df[column], errors="coerce")
+    if "volatility_status" in df.columns:
+        df["volatility_status"] = pd.to_numeric(df["volatility_status"], errors="coerce").astype("Int64")
+    if "analysis" in df.columns:
+        df["analysis"] = df["analysis"].astype("string")
     df = df[(df["trade_date"] >= start_date) & (df["trade_date"] <= end_date)]
     df = df.drop_duplicates(subset=["option_code", "trade_date", "source"], keep="last")
     return df.sort_values(["option_code", "trade_date"]).reset_index(drop=True)

@@ -23,6 +23,7 @@ def run_doctor(settings: Settings, sdk_info: dict[str, Any] | None = None) -> di
         "opend_connectable": False,
         "get_option_chain": "unsupported",
         "get_option_volatility": "unsupported",
+        "option_volatility_period_mode": None,
     }
 
     try:
@@ -30,6 +31,9 @@ def run_doctor(settings: Settings, sdk_info: dict[str, Any] | None = None) -> di
         result["moomoo_sdk_importable"] = True
         result["moomoo_sdk_module"] = sdk.get("module_name")
         result["moomoo_sdk_version"] = sdk.get("version")
+        result["option_volatility_period_mode"] = (
+            "enum" if sdk.get("OptionVolatilityTimePeriodType") is not None else "integer_fallback"
+        )
         ctx = None
         try:
             previous_disable_level = logging.root.manager.disable

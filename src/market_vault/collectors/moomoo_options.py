@@ -11,6 +11,15 @@ from ..models import Settings
 from .moomoo_history import MoomooDependencyError, MoomooRequestError
 
 
+OPTION_VOLATILITY_PERIOD_VALUES = {
+    "WEEK": 1,
+    "MONTH": 2,
+    "QUARTER": 3,
+    "HALF_YEAR": 4,
+    "YEAR": 5,
+}
+
+
 def select_option_volatility_period(start_date: date, as_of_date: date) -> str:
     if start_date > as_of_date:
         raise ValueError("start_date cannot be after the option volatility as_of_date")
@@ -26,6 +35,17 @@ def select_option_volatility_period(start_date: date, as_of_date: date) -> str:
     if days <= 366:
         return "YEAR"
     raise ValueError("Option volatility requests cannot exceed the official YEAR range")
+
+
+def resolve_option_volatility_period(name: str, sdk: dict[str, Any]) -> Any:
+    normalized = name.upper()
+    if normalized not in OPTION_VOLATILITY_PERIOD_VALUES:
+        supported = ", ".join(OPTION_VOLATILITY_PERIOD_VALUES)
+        raise ValueError(f"Unsupported option volatility period: {name}. Supported values: {supported}")
+    period_group = sdk.get("OptionVolatilityTimePeriodType")
+    if period_group is not None and hasattr(period_group, normalized):
+        return getattr(period_group, normalized)
+    return OPTION_VOLATILITY_PERIOD_VALUES[normalized]
 
 
 class MoomooOptionCollector:
@@ -123,14 +143,13 @@ class MoomooOptionCollector:
                 f"{option_code}: installed moomoo SDK does not expose get_option_volatility"
             )
 
-        period_group = sdk.get("OptionVolatilityTimePeriodType")
-        if period_group is None:
-            raise MoomooRequestError(
-                f"{option_code}: installed moomoo SDK does not expose OptionVolatilityTimePeriodType"
-            )
-        period = self._enum("OptionVolatilityTimePeriodType", query_time_period)
+        period = resolve_option_volatility_period(query_time_period, sdk)
 
-        ret, data = self._ctx.get_option_volatility(option_code, period, hv_time_period)
+        ret, data = self._ctx.get_option_volatility(
+            option_code,
+            query_time_period=period,
+            hv_time_period=hv_time_period,
+        )
         if ret != sdk["RET_OK"]:
             raise MoomooRequestError(f"{option_code}: {data}")
         if not isinstance(data, pd.DataFrame):

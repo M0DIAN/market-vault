@@ -122,9 +122,9 @@ market-vault --settings config/settings.yaml option-volatility `
   --end-date 2026-07-31
 ```
 
-The curated dataset standardizes `option_code`, `trade_date`, `implied_volatility`, `historical_volatility`, `volatility_premium`, `average_implied_volatility`, `volatility_status`, `source`, and `ingestion_run_id`. IV/HV fields may be null when OpenD does not return a value.
+The moomoo response fields are normalized as follows: `timestamp_str` to `trade_date`, `implied_volatility` to `implied_volatility`, `history_volatility` to `historical_volatility`, `volatility_premium` to `volatility_premium`, `average_impvol` to `average_implied_volatility`, `impvol_status` to nullable integer `volatility_status`, and `analysis` to nullable string `analysis`. The curated dataset also includes `option_code`, `source`, `source_schema_version`, and `ingestion_run_id`. Optional volatility fields may be null when OpenD does not return a value.
 
-The official volatility endpoint accepts a lookback period, not direct start and end dates. MarketVault selects the smallest official period that covers the requested start date from the collection date: `WEEK`, `MONTH`, `QUARTER`, `HALF_YEAR`, or `YEAR`, then filters returned rows to the requested date range. Requests older than the maximum `YEAR` period are rejected before OpenD is called. If the API response does not cover the requested start date, the run manifest sets `range_complete` to `false` and the quality report records a warning.
+The official volatility endpoint accepts a lookback period, not direct start and end dates. MarketVault selects the smallest official period that covers the requested start date from the collection date: `WEEK`, `MONTH`, `QUARTER`, `HALF_YEAR`, or `YEAR`, then filters returned rows to the requested date range. Some moomoo SDK builds do not export `OptionVolatilityTimePeriodType`; in that case MarketVault uses official integer period values (`WEEK=1`, `MONTH=2`, `QUARTER=3`, `HALF_YEAR=4`, `YEAR=5`). This does not affect `get_option_volatility` availability. Requests older than the maximum `YEAR` period are rejected before OpenD is called. If the API response does not cover the requested window's available weekday boundary, the run manifest sets `range_complete` to `false` and the quality report records a warning.
 
 ## Doctor
 
@@ -134,7 +134,7 @@ Check local SDK and OpenD capability without writing market data:
 market-vault --settings config/settings.yaml doctor
 ```
 
-The command reports Python version, SDK import/version, OpenD host and port, socket connectivity, and whether `get_option_chain` and `get_option_volatility` are exposed by the installed SDK.
+The command reports Python version, SDK import/version, OpenD host and port, socket connectivity, whether `get_option_chain` and `get_option_volatility` are exposed by the installed SDK, and whether volatility periods use SDK enums or integer fallback.
 
 ## Query data
 
