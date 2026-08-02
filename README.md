@@ -105,6 +105,8 @@ market-vault --settings config/settings.yaml option-chain `
   --option-cond-type ALL
 ```
 
+`--option-cond-type` supports only the filters exposed by the official moomoo option-chain API: `ALL`, `ITM` mapped to `OptionCondType.WITHIN`, and `OTM` mapped to `OptionCondType.OUTSIDE`. The API does not provide an ATM filter. Future analysis code can calculate ATM contracts from the underlying's current price and strike distance after collection.
+
 The curated dataset standardizes `option_code`, `option_name`, `underlying_code`, `option_type`, `strike_price`, `expiry_date`, `contract_size`, `lot_size`, `exchange`, `exercise_type`, `suspension`, `delisting`, `captured_at`, `source`, `source_schema_version`, and `ingestion_run_id`. Fields not returned by moomoo are kept as null rather than inferred.
 
 ## Daily option volatility
@@ -119,6 +121,18 @@ market-vault --settings config/settings.yaml option-volatility `
 ```
 
 The curated dataset standardizes `option_code`, `trade_date`, `implied_volatility`, `historical_volatility`, `volatility_premium`, `average_implied_volatility`, `volatility_status`, `source`, and `ingestion_run_id`. IV/HV fields may be null when OpenD does not return a value.
+
+The official volatility endpoint accepts a lookback period, not direct start and end dates. MarketVault selects the smallest official period that covers the requested start date from the collection date: `WEEK`, `MONTH`, `QUARTER`, `HALF_YEAR`, or `YEAR`, then filters returned rows to the requested date range. Requests older than the maximum `YEAR` period are rejected before OpenD is called. If the API response does not cover the requested start date, the run manifest sets `range_complete` to `false` and the quality report records a warning.
+
+## Doctor
+
+Check local SDK and OpenD capability without writing market data:
+
+```powershell
+market-vault --settings config/settings.yaml doctor
+```
+
+The command reports Python version, SDK import/version, OpenD host and port, socket connectivity, and whether `get_option_chain` and `get_option_volatility` are exposed by the installed SDK.
 
 ## Query data
 

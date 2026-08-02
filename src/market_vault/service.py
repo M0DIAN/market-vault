@@ -7,6 +7,7 @@ from datetime import date, datetime, timezone
 import pandas as pd
 
 from .collectors import MoomooHistoryCollector, MoomooOptionCollector
+from .collectors.moomoo_options import select_option_volatility_period
 from .models import DatasetRunManifest, RunManifest, Settings
 from .normalization import normalize_bars, normalize_option_contracts, normalize_option_volatility
 from .quality import (
@@ -154,7 +155,7 @@ def _finish_dataset_run(
         manifest.status = "FAILED"
     elif manifest.failed_items:
         manifest.status = "PARTIAL"
-    elif any(r.result == "FAIL" for r in quality_results):
+    elif any(r.result in {"FAIL", "WARN"} for r in quality_results):
         manifest.status = "PARTIAL"
     else:
         manifest.status = "SUCCESS"
@@ -252,11 +253,15 @@ def collect_option_volatility(
     codes: list[str],
     start_date: date,
     end_date: date,
+    as_of_date: date | None = None,
+    hv_time_period: int = 30,
 ) -> DatasetRunManifest:
     if not codes:
         raise ValueError("At least one option code is required")
     if start_date > end_date:
         raise ValueError("start_date must be on or before end_date")
+    effective_as_of_date = as_of_date or datetime.now(timezone.utc).date()
+    query_time_period = select_option_volatility_period(start_date, effective_as_of_date)
 
     requested_codes = sorted(set(codes))
     manifest = DatasetRunManifest(
@@ -267,6 +272,14 @@ def collect_option_volatility(
             "start_date": start_date.isoformat(),
             "end_date": end_date.isoformat(),
             "source": settings.source,
+            "query_time_period": query_time_period,
+            "hv_time_period": hv_time_period,
+            "as_of_date": effective_as_of_date.isoformat(),
+            "requested_start_date": start_date.isoformat(),
+            "requested_end_date": end_date.isoformat(),
+            "returned_min_date": None,
+            "returned_max_date": None,
+            "range_complete": False,
         },
     )
     manifest.config_hash = _hash_config(manifest.parameters)
@@ -277,25 +290,28 @@ def collect_option_volatility(
         with MoomooOptionCollector(settings) as collector:
             for code in requested_codes:
                 try:
-                    raw = collector.fetch_option_volatility(code, start_date, end_date)
+                    raw = collector.fetch_option_volatility(code, query_time_period, hv_time_period)
                     if raw.empty:
-                        raise RuntimeError("No option volatility rows returned")
+                        raise RuntimeError("API returned no option volatility rows")
                     raw = raw.copy()
                     raw["option_code"] = code
                     raw["requested_start_date"] = start_date
                     raw["requested_end_date"] = end_date
+                    raw["query_time_period"] = query_time_period
+                    raw["hv_time_period"] = hv_time_period
                     raw["ingestion_run_id"] = manifest.run_id
                     raw_frames.append(raw)
-                    curated_frames.append(
-                        normalize_option_volatility(
-                            frame=raw,
-                            option_code=code,
-                            start_date=start_date,
-                            end_date=end_date,
-                            source=settings.source,
-                            run_id=manifest.run_id,
-                        )
+                    curated = normalize_option_volatility(
+                        frame=raw,
+                        option_code=code,
+                        start_date=start_date,
+                        end_date=end_date,
+                        source=settings.source,
+                        run_id=manifest.run_id,
                     )
+                    if curated.empty:
+                        raise RuntimeError("API returned rows, but none were inside the requested date range")
+                    curated_frames.append(curated)
                     manifest.successful_items.append(code)
                 except Exception as exc:
                     manifest.failed_items[code] = str(exc)
@@ -306,9 +322,22 @@ def collect_option_volatility(
     store = ParquetStore(settings)
     catalog = Catalog(settings)
     curated_all = pd.concat(curated_frames, ignore_index=True) if curated_frames else pd.DataFrame()
-    quality_results = run_option_volatility_quality_checks(curated_all, start_date, end_date)
+    raw_all = pd.concat(raw_frames, ignore_index=True) if raw_frames else pd.DataFrame()
+    returned_dates = _extract_option_volatility_dates(raw_all)
+    returned_min_date = min(returned_dates) if returned_dates else None
+    returned_max_date = max(returned_dates) if returned_dates else None
+    range_complete = returned_min_date is not None and returned_min_date <= start_date
+    manifest.parameters["returned_min_date"] = returned_min_date.isoformat() if returned_min_date else None
+    manifest.parameters["returned_max_date"] = returned_max_date.isoformat() if returned_max_date else None
+    manifest.parameters["range_complete"] = range_complete
+    quality_results = run_option_volatility_quality_checks(
+        curated_all,
+        start_date,
+        end_date,
+        returned_min_date=returned_min_date,
+        range_complete=range_complete,
+    )
     if raw_frames:
-        raw_all = pd.concat(raw_frames, ignore_index=True)
         raw_path = store.write_option_volatility_raw(raw_all, start_date, end_date, manifest.run_id)
         curated_path = store.write_option_volatility_curated(curated_all, start_date, end_date, manifest.run_id)
         manifest.raw_file = str(raw_path)
@@ -317,3 +346,20 @@ def collect_option_volatility(
         catalog.refresh_option_volatility_views()
 
     return _finish_dataset_run(settings, catalog, manifest, quality_results)
+
+
+def _extract_option_volatility_dates(raw: pd.DataFrame) -> list[date]:
+    if raw.empty:
+        return []
+    values = None
+    for column in ["trade_date", "timestamp_str", "date"]:
+        if column in raw.columns:
+            values = raw[column]
+            break
+    if values is None and "timestamp" in raw.columns:
+        parsed = pd.to_datetime(raw["timestamp"], unit="s", utc=True, errors="coerce")
+    elif values is not None:
+        parsed = pd.to_datetime(values, errors="coerce")
+    else:
+        return []
+    return [item.date() for item in parsed.dropna()]

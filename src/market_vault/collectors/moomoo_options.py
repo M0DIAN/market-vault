@@ -10,6 +10,23 @@ from ..models import Settings
 from .moomoo_history import MoomooDependencyError, MoomooRequestError
 
 
+def select_option_volatility_period(start_date: date, as_of_date: date) -> str:
+    if start_date > as_of_date:
+        raise ValueError("start_date cannot be after the option volatility as_of_date")
+    days = (as_of_date - start_date).days
+    if days <= 7:
+        return "WEEK"
+    if days <= 31:
+        return "MONTH"
+    if days <= 92:
+        return "QUARTER"
+    if days <= 183:
+        return "HALF_YEAR"
+    if days <= 366:
+        return "YEAR"
+    raise ValueError("Option volatility requests cannot exceed the official YEAR range")
+
+
 class MoomooOptionCollector:
     """Thin wrapper around moomoo option-chain and option-volatility endpoints."""
 
@@ -69,15 +86,14 @@ class MoomooOptionCollector:
     def __exit__(self, exc_type, exc, tb) -> None:
         self.close()
 
-    def _enum(self, group: str, value: str, aliases: dict[str, list[str]] | None = None) -> Any:
+    def _enum(self, group: str, value: str, aliases: dict[str, str] | None = None) -> Any:
         sdk = self._load_sdk()
         enum_group = sdk[group]
         normalized = value.upper()
-        names = (aliases or {}).get(normalized, [normalized])
-        for name in names:
-            if hasattr(enum_group, name):
-                return getattr(enum_group, name)
-        raise ValueError(f"Unsupported {group} value: {value}")
+        name = (aliases or {}).get(normalized, normalized)
+        if hasattr(enum_group, name):
+            return getattr(enum_group, name)
+        raise ValueError(f"Unsupported {group} value: {value}; missing SDK enum {name}")
 
     def fetch_option_chain(
         self,
@@ -99,7 +115,7 @@ class MoomooOptionCollector:
             "option_cond_type": self._enum(
                 "OptionCondType",
                 option_cond_type,
-                {"ITM": ["WITHIN"], "ATM": ["NEAR", "ATM", "ALL"], "OTM": ["OUTSIDE"]},
+                {"ALL": "ALL", "ITM": "WITHIN", "OTM": "OUTSIDE"},
             ),
         }
         if "IndexOptionType" in sdk and hasattr(sdk["IndexOptionType"], "NORMAL"):
@@ -120,8 +136,8 @@ class MoomooOptionCollector:
     def fetch_option_volatility(
         self,
         option_code: str,
-        start_date: date,
-        end_date: date,
+        query_time_period: str,
+        hv_time_period: int = 30,
     ) -> pd.DataFrame:
         self.connect()
         assert self._ctx is not None
@@ -131,16 +147,14 @@ class MoomooOptionCollector:
                 f"{option_code}: installed moomoo SDK does not expose get_option_volatility"
             )
 
-        kwargs: dict[str, Any] = {"code": option_code}
         period_group = sdk.get("OptionVolatilityTimePeriodType")
-        if period_group is not None:
-            for name in ["MONTH", "THREE_MONTH", "HALF_YEAR", "YEAR"]:
-                if hasattr(period_group, name):
-                    kwargs["query_time_period"] = getattr(period_group, name)
-                    break
-        kwargs["hv_time_period"] = 30
+        if period_group is None:
+            raise MoomooRequestError(
+                f"{option_code}: installed moomoo SDK does not expose OptionVolatilityTimePeriodType"
+            )
+        period = self._enum("OptionVolatilityTimePeriodType", query_time_period)
 
-        ret, data = self._ctx.get_option_volatility(**kwargs)
+        ret, data = self._ctx.get_option_volatility(option_code, period, hv_time_period)
         if ret != sdk["RET_OK"]:
             raise MoomooRequestError(f"{option_code}: {data}")
         if not isinstance(data, pd.DataFrame):

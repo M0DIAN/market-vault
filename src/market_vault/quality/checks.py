@@ -106,9 +106,24 @@ def run_option_volatility_quality_checks(
     df: pd.DataFrame,
     start_date: date,
     end_date: date,
+    returned_min_date: date | None = None,
+    range_complete: bool = True,
 ) -> list[QualityResult]:
     if df.empty:
-        return [QualityResult("non_empty", "FAIL", "> 0 rows", "0 rows", "No option volatility rows were returned")]
+        checks = [
+            QualityResult("non_empty", "FAIL", "> 0 rows", "0 rows", "No option volatility rows were returned")
+        ]
+        if not range_complete:
+            checks.append(
+                QualityResult(
+                    "requested_range_complete",
+                    "WARN",
+                    f"returned_min_date <= {start_date.isoformat()}",
+                    returned_min_date.isoformat() if returned_min_date else "no returned dates",
+                    "The API response did not cover the full requested start date.",
+                )
+            )
+        return checks
 
     checks: list[QualityResult] = []
     required = {"option_code", "trade_date", "source"}
@@ -136,5 +151,14 @@ def run_option_volatility_quality_checks(
 
     out_of_range = int(((parsed_dates.dt.date < start_date) | (parsed_dates.dt.date > end_date)).fillna(True).sum())
     checks.append(_result("trade_date_in_requested_range", out_of_range == 0, "0 out-of-range rows", str(out_of_range)))
+    checks.append(
+        QualityResult(
+            "requested_range_complete",
+            "PASS" if range_complete else "WARN",
+            f"returned_min_date <= {start_date.isoformat()}",
+            returned_min_date.isoformat() if returned_min_date else "no returned dates",
+            None if range_complete else "The API response did not cover the full requested start date.",
+        )
+    )
 
     return checks

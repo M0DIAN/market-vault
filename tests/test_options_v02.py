@@ -3,15 +3,18 @@ from types import SimpleNamespace
 
 import duckdb
 import pandas as pd
+import pytest
 
 from market_vault.cli import build_parser
-from market_vault.collectors.moomoo_options import MoomooOptionCollector
+from market_vault.collectors.moomoo_options import MoomooOptionCollector, select_option_volatility_period
+from market_vault.doctor import run_doctor
 from market_vault.models import Settings
 from market_vault.normalization.options import normalize_option_contracts, normalize_option_volatility
 from market_vault.quality.checks import (
     run_option_contract_quality_checks,
     run_option_volatility_quality_checks,
 )
+from market_vault.service import collect_option_volatility
 from market_vault.storage import Catalog, ParquetStore
 
 
@@ -143,6 +146,25 @@ def test_cli_parses_option_commands():
     assert vol.codes == ["US.MU260807C120000", "US.MU260807P100000"]
 
 
+def test_cli_rejects_atm_option_condition():
+    parser = build_parser()
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(
+            [
+                "option-chain",
+                "--underlying",
+                "US.MU",
+                "--start-date",
+                "2026-08-07",
+                "--end-date",
+                "2026-09-18",
+                "--option-cond-type",
+                "ATM",
+            ]
+        )
+
+
 class FakeOptionContext:
     def __init__(self):
         self.chain_calls = []
@@ -152,8 +174,14 @@ class FakeOptionContext:
         self.chain_calls.append(kwargs)
         return 0, option_chain_frame()
 
-    def get_option_volatility(self, **kwargs):
-        self.vol_calls.append(kwargs)
+    def get_option_volatility(self, code, query_time_period, hv_time_period):
+        self.vol_calls.append(
+            {
+                "code": code,
+                "query_time_period": query_time_period,
+                "hv_time_period": hv_time_period,
+            }
+        )
         return 0, pd.DataFrame({"timestamp_str": ["2026-07-01"], "implied_volatility": [25.0]})
 
     def close(self):
@@ -166,20 +194,154 @@ def test_option_collector_calls_chain_and_batches_volatility(tmp_path):
     collector._ctx = ctx
     collector._sdk = {
         "OptionType": SimpleNamespace(ALL="ALL", CALL="CALL", PUT="PUT"),
-        "OptionCondType": SimpleNamespace(ALL="ALL", WITHIN="WITHIN", NEAR="NEAR", OUTSIDE="OUTSIDE"),
+        "OptionCondType": SimpleNamespace(ALL="ALL", WITHIN="WITHIN", OUTSIDE="OUTSIDE"),
         "IndexOptionType": SimpleNamespace(NORMAL="NORMAL"),
-        "OptionVolatilityTimePeriodType": SimpleNamespace(MONTH="MONTH"),
+        "OptionVolatilityTimePeriodType": SimpleNamespace(
+            WEEK="WEEK",
+            MONTH="MONTH",
+            QUARTER="QUARTER",
+            HALF_YEAR="HALF_YEAR",
+            YEAR="YEAR",
+        ),
         "RET_OK": 0,
     }
 
     chain = collector.fetch_option_chain("US.MU", date(2026, 8, 7), date(2026, 9, 18), "CALL", "ITM")
-    vol_1 = collector.fetch_option_volatility("US.MU260807C120000", date(2026, 7, 1), date(2026, 7, 31))
-    vol_2 = collector.fetch_option_volatility("US.MU260807P100000", date(2026, 7, 1), date(2026, 7, 31))
+    vol_1 = collector.fetch_option_volatility("US.MU260807C120000", "MONTH")
+    vol_2 = collector.fetch_option_volatility("US.MU260807P100000", "MONTH")
 
     assert len(chain) == 3
     assert ctx.chain_calls[0]["option_type"] == "CALL"
+    assert ctx.chain_calls[0]["option_cond_type"] == "WITHIN"
     assert len(ctx.vol_calls) == 2
+    assert ctx.vol_calls[0]["query_time_period"] == "MONTH"
     assert not vol_1.empty and not vol_2.empty
+
+
+def test_option_condition_strictly_maps_otm_to_outside(tmp_path):
+    ctx = FakeOptionContext()
+    collector = MoomooOptionCollector(settings(tmp_path))
+    collector._ctx = ctx
+    collector._sdk = {
+        "OptionType": SimpleNamespace(ALL="ALL", CALL="CALL", PUT="PUT"),
+        "OptionCondType": SimpleNamespace(ALL="ALL", WITHIN="WITHIN", OUTSIDE="OUTSIDE"),
+        "IndexOptionType": SimpleNamespace(NORMAL="NORMAL"),
+        "OptionVolatilityTimePeriodType": SimpleNamespace(WEEK="WEEK"),
+        "RET_OK": 0,
+    }
+
+    collector.fetch_option_chain("US.MU", date(2026, 8, 7), date(2026, 9, 18), "ALL", "OTM")
+
+    assert ctx.chain_calls[0]["option_cond_type"] == "OUTSIDE"
+
+
+def test_option_condition_missing_sdk_enum_does_not_fallback_to_all(tmp_path):
+    collector = MoomooOptionCollector(settings(tmp_path))
+    collector._ctx = FakeOptionContext()
+    collector._sdk = {
+        "OptionType": SimpleNamespace(ALL="ALL", CALL="CALL", PUT="PUT"),
+        "OptionCondType": SimpleNamespace(ALL="ALL", OUTSIDE="OUTSIDE"),
+        "IndexOptionType": SimpleNamespace(NORMAL="NORMAL"),
+        "OptionVolatilityTimePeriodType": SimpleNamespace(WEEK="WEEK"),
+        "RET_OK": 0,
+    }
+
+    with pytest.raises(ValueError, match="WITHIN"):
+        collector.fetch_option_chain("US.MU", date(2026, 8, 7), date(2026, 9, 18), "ALL", "ITM")
+
+
+@pytest.mark.parametrize(
+    ("start_date", "expected"),
+    [
+        (date(2026, 7, 25), "WEEK"),
+        (date(2026, 7, 2), "MONTH"),
+        (date(2026, 5, 2), "QUARTER"),
+        (date(2026, 2, 1), "HALF_YEAR"),
+        (date(2025, 8, 2), "YEAR"),
+    ],
+)
+def test_option_volatility_period_selection(start_date, expected):
+    assert select_option_volatility_period(start_date, date(2026, 8, 1)) == expected
+
+
+def test_option_volatility_rejects_more_than_one_year():
+    with pytest.raises(ValueError, match="YEAR"):
+        select_option_volatility_period(date(2025, 7, 30), date(2026, 8, 1))
+
+
+class ServiceFakeCollector:
+    def __init__(self, settings):
+        self.settings = settings
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        pass
+
+    def fetch_option_volatility(self, option_code, query_time_period, hv_time_period=30):
+        return pd.DataFrame(
+            {
+                "timestamp_str": ["2026-07-10", "2026-07-15", "2026-08-01"],
+                "implied_volatility": [25.0, 26.0, 27.0],
+                "history_volatility": [20.0, 21.0, 22.0],
+            }
+        )
+
+
+def test_option_volatility_manifest_marks_incomplete_range(monkeypatch, tmp_path):
+    import market_vault.service as service
+
+    monkeypatch.setattr(service, "MoomooOptionCollector", ServiceFakeCollector)
+
+    manifest = collect_option_volatility(
+        settings(tmp_path),
+        ["US.MU260807C120000"],
+        date(2026, 7, 1),
+        date(2026, 7, 31),
+        as_of_date=date(2026, 7, 31),
+    )
+
+    assert manifest.parameters["query_time_period"] == "MONTH"
+    assert manifest.parameters["returned_min_date"] == "2026-07-10"
+    assert manifest.parameters["returned_max_date"] == "2026-08-01"
+    assert manifest.parameters["range_complete"] is False
+    assert manifest.status == "PARTIAL"
+    assert manifest.row_count == 2
+
+
+def test_option_volatility_filter_keeps_only_requested_range():
+    raw = pd.DataFrame(
+        {
+            "timestamp_str": ["2026-06-30", "2026-07-01", "2026-07-31", "2026-08-01"],
+            "implied_volatility": [24.0, 25.0, 26.0, 27.0],
+        }
+    )
+
+    out = normalize_option_volatility(
+        raw,
+        "US.MU260807C120000",
+        date(2026, 7, 1),
+        date(2026, 7, 31),
+        "moomoo",
+        "run-1",
+    )
+
+    assert out["trade_date"].tolist() == [date(2026, 7, 1), date(2026, 7, 31)]
+
+
+def test_doctor_reports_missing_option_volatility_as_unsupported(tmp_path):
+    fake_sdk = SimpleNamespace(
+        __version__="10.9.fake",
+        OpenQuoteContext=type("FakeQuoteContext", (), {"get_option_chain": lambda self: None}),
+    )
+
+    report = run_doctor(settings(tmp_path), sdk_module=fake_sdk)
+
+    assert report["moomoo_sdk_importable"] is True
+    assert report["moomoo_sdk_version"] == "10.9.fake"
+    assert report["get_option_chain"] == "supported"
+    assert report["get_option_volatility"] == "unsupported"
 
 
 def test_option_paths_and_duckdb_latest_view(tmp_path):
