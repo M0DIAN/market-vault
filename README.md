@@ -174,6 +174,128 @@ The curated `trading_calendar` dataset stores `scope_type`, `scope_value`, `mark
 
 OpenD `request_trading_days` has its own range and rate limits: historical calendar data is available for roughly the past 10 years, future dates are limited to the current calendar year's December 31, and the endpoint allows at most 30 requests per 30 seconds. MarketVault fetches this data dynamically from OpenD and does not hard-code exchange holidays.
 
+## V0.3 development: resumable history backfill
+
+The `backfill` command plans and executes historical K-line collection for a range of trading dates derived from the local trading calendar. Re-running the same command resumes the work: items that already have completed data are skipped, and only failed or missing items are collected. Multiple symbols are supported in a single run.
+
+### Before you start
+
+- Collect the local trading calendar first with the `calendar` command. Backfill refuses to run when the calendar has no coverage for the requested range and prints the missing dates.
+- Choose the calendar scope with `--calendar-market US` or `--calendar-code US.MU` (exactly one is required). Trading dates are planned from the selected scope.
+- Calendar coverage must span the complete requested natural-date range. Coverage gaps are detected on natural dates, so run `calendar` once over the whole range instead of in disjoint chunks: a gap between two chunks is reported as missing coverage even when the gap only contains a weekend.
+- Only dates before today's UTC date are accepted.
+- Run one backfill process at a time per dataset; concurrent processes may collect the same items.
+
+### Standard backfill
+
+Collect a date range for several symbols:
+
+```powershell
+market-vault --settings config/settings.yaml backfill `
+  --calendar-market US `
+  --start-date 2026-01-01 `
+  --end-date 2026-07-31 `
+  --symbols US.MU US.SPY US.QQQ `
+  --interval 1m `
+  --session ALL `
+  --adjustment NONE
+```
+
+Or expand symbols from the universe groups:
+
+```powershell
+market-vault --settings config/settings.yaml backfill `
+  --calendar-code US.MU `
+  --start-date 2026-01-01 `
+  --end-date 2026-07-31 `
+  --groups core_universe
+```
+
+`--symbols` accepts any number of codes, and `--groups` accepts `core_universe`, `trade_universe`, `event_universe`, or `option_universe`. Items are planned per (symbol, trade date) and collected date by date. `--interval` defaults to `1m`; `--session` and `--adjustment` fall back to the `default_session` and `default_adjustment` values in `config/settings.yaml` when omitted.
+
+### Incremental mode
+
+Continue collecting from each symbol's latest completed date:
+
+```powershell
+market-vault --settings config/settings.yaml backfill `
+  --calendar-market US `
+  --incremental `
+  --end-date 2026-07-31 `
+  --symbols US.MU US.SPY
+```
+
+`--incremental` starts each symbol one calendar day after its latest completed trade date and cannot be combined with `--start-date`. Symbols that have no completed history require a bootstrap start:
+
+```powershell
+market-vault --settings config/settings.yaml backfill `
+  --calendar-market US `
+  --incremental `
+  --bootstrap-start-date 2026-01-01 `
+  --end-date 2026-07-31 `
+  --symbols US.NVDA
+```
+
+### Resume semantics
+
+- Re-running a standard backfill with the same range re-plans that range and collects only the failed or missing items; already-completed items are skipped.
+- `--incremental` only continues after each symbol's latest completed date and never re-examines earlier history.
+- If one date failed while a later date succeeded, incremental mode does not pick up that middle gap. Fill gaps by re-running a standard backfill with the explicit range, optionally with `--force`.
+- `--force` skips the completed-item check and re-collects the whole planned range. It does not change the incremental starting point: `--force` combined with `--incremental` is still bounded by each symbol's latest completed date.
+
+### Retry and recovery
+
+Failed items are retried up to `--max-retries` times (default 2) with exponential backoff starting at `--retry-backoff-seconds` (default 2.0, capped at 60 seconds). Only failed symbols of a date are retried; successful ones are not. A failing date does not stop the remaining dates or symbols.
+
+A Ctrl-C interruption may leave no top-level backfill manifest, but every completed child run is already recorded, so re-running the command resumes from the recorded state.
+
+### Python API
+
+```python
+from datetime import date
+
+from market_vault import MarketVault
+
+vault = MarketVault("config/settings.yaml")
+
+plan = vault.plan_backfill(
+    symbols=["US.MU", "US.SPY"],
+    start_date=date(2026, 1, 1),
+    end_date=date(2026, 7, 31),
+    calendar_market="US",
+)
+print([(item.code, item.trade_date) for item in plan.pending_items])
+
+manifest = vault.backfill(
+    symbols=["US.MU", "US.SPY"],
+    start_date=date(2026, 1, 1),
+    end_date=date(2026, 7, 31),
+    calendar_market="US",
+    max_retries=2,
+    retry_backoff_seconds=2.0,
+)
+print(manifest.status)
+```
+
+When `session` or `adjustment` is omitted, the settings defaults (`default_session`, `default_adjustment`) are used; explicit values override them. `plan_backfill` previews the plan without collecting anything — the CLI has no dry-run flag, so use the Python API to preview.
+
+### Run manifest
+
+Each backfill run writes `manifests/market_bars_backfill_<run_id>.json` and a quality report under `reports/`. The manifest records, per symbol:
+
+- successful dates (`successful_dates_by_symbol`),
+- skipped dates (`skipped_dates_by_symbol`),
+- failed dates with error messages (`failed_dates_by_symbol`),
+- the child run IDs of the underlying collection runs (`child_run_ids`),
+- the total collected rows (`row_count`) and the final `status` (`SUCCESS`, `PARTIAL`, or `FAILED`).
+
+### Known limitations
+
+- "Completed" currently means that curated rows exist, the run status is `SUCCESS` or `PARTIAL`, and no quality check `FAIL`ed. The expected number of bars is not validated, so non-empty but partial data may be treated as completed.
+- Incremental mode does not re-examine gaps before a symbol's latest completed date; fill them with a standard range backfill.
+- A Ctrl-C interruption may leave no top-level PARTIAL manifest; recovery relies on the recorded child runs.
+- The CLI has no dry-run flag; use `plan_backfill` to preview a plan.
+
 ## Query data
 
 ```powershell
@@ -234,3 +356,5 @@ The tests are offline and do not require OpenD.
 - OpenD must be running, logged in, and entitled for the underlying market, option chain, and option volatility data. Permission or quota failures are recorded per request in the run manifest.
 - The V0.2 option-volatility coverage check uses a weekday-boundary heuristic. It does not identify all US exchange holidays; a formal NYSE/Nasdaq exchange calendar is planned for a later version.
 - The V0.3 development trading-calendar foundation depends on OpenD `request_trading_days` and should not be treated as a complete official exchange-calendar authority.
+- The V0.3 backfill "completed" heuristic requires curated rows from a run without quality `FAIL` but does not validate expected bar counts, so non-empty but partial data may be treated as completed; incremental mode never re-examines gaps before a symbol's latest completed date.
+- Run one backfill process at a time per dataset; concurrent processes may collect the same items.

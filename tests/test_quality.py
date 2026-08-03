@@ -18,6 +18,6 @@ def test_quality_passes_clean_frame():
             "volume": [100],
         }
     )
-    df = normalize_bars(raw, date(2026, 7, 31), "1m", "NONE", "moomoo", "10.9", "run-1")
+    df = normalize_bars(raw, date(2026, 7, 31), "1m", "ALL", "NONE", "moomoo", "10.9", "run-1")
     checks = run_bar_quality_checks(df)
     assert all(item.result == "PASS" for item in checks)

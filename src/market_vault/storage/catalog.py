@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date
 from pathlib import Path
 from typing import Iterable
 
@@ -111,6 +112,27 @@ class Catalog:
             if rows:
                 con.executemany("INSERT INTO quality_results VALUES (?, ?, ?, ?, ?, ?)", rows)
 
+    def run_has_quality_fail(self, run_id: str) -> bool:
+        """Return True when a run has at least one FAIL quality result.
+
+        Bar quality checks are recorded per run in quality_results, and the
+        completion queries (completed_market_bar_items,
+        latest_completed_market_bar_dates) treat any run with a FAIL result as
+        not completed. The backfill must apply the same rule when deciding
+        whether a child run's symbols are actually complete, instead of
+        inferring it from the child run status (PARTIAL can also mean only
+        some symbols failed their network requests).
+        """
+        self.initialize()
+        if not run_id:
+            return False
+        with self.connect() as con:
+            row = con.execute(
+                "SELECT 1 FROM quality_results WHERE run_id = ? AND result = 'FAIL' LIMIT 1",
+                [run_id],
+            ).fetchone()
+        return row is not None
+
     def record_dataset_run(self, manifest: DatasetRunManifest) -> None:
         self.initialize()
         with self.connect() as con:
@@ -160,6 +182,197 @@ class Catalog:
                 """
             )
         return True
+
+    def trading_calendar_dates(
+        self,
+        scope_type: str,
+        scope_value: str,
+        start_date: date,
+        end_date: date,
+    ) -> list[date]:
+        if not self.refresh_trading_calendar_views():
+            return []
+        sql = """
+            SELECT DISTINCT trade_date
+            FROM trading_calendar_latest
+            WHERE scope_type = ?
+              AND scope_value = ?
+              AND trade_date >= ?
+              AND trade_date <= ?
+            ORDER BY trade_date
+        """
+        with self.connect() as con:
+            rows = con.execute(sql, [scope_type, scope_value, start_date, end_date]).fetchall()
+        return [row[0] for row in rows]
+
+    def trading_calendar_requested_ranges(
+        self,
+        scope_type: str,
+        scope_value: str,
+        start_date: date,
+        end_date: date,
+    ) -> list[tuple[date, date]]:
+        if not self.refresh_trading_calendar_views():
+            return []
+        sql = """
+            SELECT DISTINCT requested_start_date, requested_end_date
+            FROM trading_calendar_latest
+            WHERE scope_type = ?
+              AND scope_value = ?
+              AND requested_end_date >= ?
+              AND requested_start_date <= ?
+            ORDER BY requested_start_date, requested_end_date
+        """
+        with self.connect() as con:
+            rows = con.execute(sql, [scope_type, scope_value, start_date, end_date]).fetchall()
+        return [(row[0], row[1]) for row in rows]
+
+    def completed_market_bar_items(
+        self,
+        *,
+        symbols: list[str],
+        trade_dates: list[date],
+        interval: str,
+        requested_session: str,
+        adjustment: str,
+        source_schema_version: str,
+    ) -> set[tuple[str, date]]:
+        curated_root = self.settings.data_root / "curated" / f"source={self.settings.source}" / "dataset=market_bars"
+        curated_files = list(curated_root.rglob("*.parquet")) if curated_root.exists() else []
+        if not curated_files or not symbols or not trade_dates:
+            return set()
+        min_date = min(trade_dates)
+        max_date = max(trade_dates)
+        codes_clause = ", ".join("?" for _ in symbols)
+        with self.connect() as con:
+            has_requested_session = self._parquet_files_have_column(con, curated_files, "requested_session")
+            has_source_schema_version = self._parquet_files_have_column(con, curated_files, "source_schema_version")
+            requested_session_expr = (
+                "requested_session"
+                if has_requested_session
+                else "NULL::VARCHAR AS requested_session"
+            )
+            source_schema_expr = (
+                "source_schema_version"
+                if has_source_schema_version
+                else "NULL::VARCHAR AS source_schema_version"
+            )
+            curated_glob = (curated_root / "**" / "*.parquet").as_posix().replace("'", "''")
+            sql = f"""
+                WITH failed_runs AS (
+                    SELECT DISTINCT run_id
+                    FROM quality_results
+                    WHERE result = 'FAIL'
+                ),
+                eligible_runs AS (
+                    SELECT run_id, requested_trade_date, interval, session, adjustment
+                    FROM ingestion_runs
+                    WHERE status IN ('SUCCESS', 'PARTIAL')
+                      AND run_id NOT IN (SELECT run_id FROM failed_runs)
+                ),
+                curated AS (
+                    SELECT
+                        code,
+                        requested_trade_date,
+                        interval,
+                        adjustment,
+                        {requested_session_expr},
+                        {source_schema_expr},
+                        ingestion_run_id
+                    FROM read_parquet('{curated_glob}', union_by_name = true, hive_partitioning = true)
+                    WHERE requested_trade_date >= ?
+                      AND requested_trade_date <= ?
+                      AND code IN ({codes_clause})
+                )
+                SELECT DISTINCT c.code, c.requested_trade_date
+                FROM curated c
+                JOIN eligible_runs r
+                  ON r.run_id = c.ingestion_run_id
+                 AND r.requested_trade_date = c.requested_trade_date
+                 AND r.interval = c.interval
+                 AND r.adjustment = c.adjustment
+                 AND r.session = c.requested_session
+                WHERE c.interval = ?
+                  AND c.adjustment = ?
+                  AND c.requested_session = ?
+                  AND c.source_schema_version = ?
+            """
+            params: list[object] = [min_date, max_date, *symbols, interval, adjustment, requested_session, source_schema_version]
+            rows = con.execute(sql, params).fetchall()
+        requested_dates = set(trade_dates)
+        return {(row[0], row[1]) for row in rows if row[1] in requested_dates}
+
+    def latest_completed_market_bar_dates(
+        self,
+        *,
+        symbols: list[str],
+        interval: str,
+        requested_session: str,
+        adjustment: str,
+        source_schema_version: str,
+        end_date: date,
+    ) -> dict[str, date]:
+        curated_root = self.settings.data_root / "curated" / f"source={self.settings.source}" / "dataset=market_bars"
+        curated_files = list(curated_root.rglob("*.parquet")) if curated_root.exists() else []
+        if not curated_files or not symbols:
+            return {}
+        codes_clause = ", ".join("?" for _ in symbols)
+        with self.connect() as con:
+            has_requested_session = self._parquet_files_have_column(con, curated_files, "requested_session")
+            has_source_schema_version = self._parquet_files_have_column(con, curated_files, "source_schema_version")
+            requested_session_expr = (
+                "requested_session"
+                if has_requested_session
+                else "NULL::VARCHAR AS requested_session"
+            )
+            source_schema_expr = (
+                "source_schema_version"
+                if has_source_schema_version
+                else "NULL::VARCHAR AS source_schema_version"
+            )
+            curated_glob = (curated_root / "**" / "*.parquet").as_posix().replace("'", "''")
+            sql = f"""
+                WITH failed_runs AS (
+                    SELECT DISTINCT run_id
+                    FROM quality_results
+                    WHERE result = 'FAIL'
+                ),
+                eligible_runs AS (
+                    SELECT run_id, requested_trade_date, interval, session, adjustment
+                    FROM ingestion_runs
+                    WHERE status IN ('SUCCESS', 'PARTIAL')
+                      AND run_id NOT IN (SELECT run_id FROM failed_runs)
+                ),
+                curated AS (
+                    SELECT
+                        code,
+                        requested_trade_date,
+                        interval,
+                        adjustment,
+                        {requested_session_expr},
+                        {source_schema_expr},
+                        ingestion_run_id
+                    FROM read_parquet('{curated_glob}', union_by_name = true, hive_partitioning = true)
+                    WHERE requested_trade_date <= ?
+                      AND code IN ({codes_clause})
+                )
+                SELECT c.code, max(c.requested_trade_date) AS latest_trade_date
+                FROM curated c
+                JOIN eligible_runs r
+                  ON r.run_id = c.ingestion_run_id
+                 AND r.requested_trade_date = c.requested_trade_date
+                 AND r.interval = c.interval
+                 AND r.adjustment = c.adjustment
+                 AND r.session = c.requested_session
+                WHERE c.interval = ?
+                  AND c.adjustment = ?
+                  AND c.requested_session = ?
+                  AND c.source_schema_version = ?
+                GROUP BY c.code
+            """
+            params: list[object] = [end_date, *symbols, interval, adjustment, requested_session, source_schema_version]
+            rows = con.execute(sql, params).fetchall()
+        return {row[0]: row[1] for row in rows}
 
     def refresh_option_contract_views(self) -> bool:
         raw_root = self.settings.data_root / "raw" / f"source={self.settings.source}" / "dataset=option_chain"
