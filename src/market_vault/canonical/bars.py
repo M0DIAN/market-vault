@@ -177,43 +177,73 @@ def _finite_market_number(value, column: str) -> float:
     return number
 
 
-def _to_market_value(value) -> float | None:
-    if value is None:
-        return None
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    if pd.isna(number):
-        return None
-    return number
-
-
 def _optional_fields(row: pd.Series) -> tuple[tuple[str, float], ...]:
+    """Supported optional market fields.
+
+    A missing column is absent (allowed); a present null value is allowed;
+    any other present value must be numeric and finite -- non-numeric, NaN,
+    +Inf, and -Inf fail closed instead of being silently treated as absent.
+    """
     result = []
     for column in OPTIONAL_MARKET_FIELDS:
-        value = _to_market_value(row.get(column))
-        if value is None:
-            continue
-        result.append((column, value))
+        if column not in row.index:
+            continue  # absent
+        raw = row[column]
+        if raw is None:
+            continue  # null allowed
+        try:
+            number = float(raw)
+        except (TypeError, ValueError) as exc:
+            raise CanonicalBuildError(
+                f"non-numeric optional field {column}: {raw!r}"
+            ) from exc
+        if pd.isna(number) or number in (float("inf"), float("-inf")):
+            raise CanonicalBuildError(f"non-finite optional field {column}: {raw!r}")
+        result.append((column, number))
     return tuple(result)
 
 
-def _classification_value(row: pd.Series) -> tuple:
-    """Derived session and market calendar date join the reconciliation
-    comparison: a different derived session or calendar date for the same
+def _classification_value(market_calendar_date: date, canonical_session: str) -> tuple:
+    """Canonical classification fields in contract order.
+
+    Both values are normalized (market_calendar_date from the validated
+    market instant, canonical_session from market_session_label), never the
+    raw stored strings. A different derived classification for the same
     business key is a conflict, while a different requested_session is only
-    provenance."""
+    provenance.
+    """
     return (
-        str(row.get("session")),
-        _as_date(row["market_calendar_date"]).isoformat() if row.get("market_calendar_date") is not None else None,
+        market_calendar_date.isoformat(),
+        canonical_session,
     )
+
+
+def _descending_text(value: str) -> tuple:
+    """Sort key implementing descending lexicographic order for arbitrary text.
+
+    Comparing these keys ascending is equivalent to comparing the original
+    strings descending (negated character codes), which is exact for any
+    string, not just fixed-width hex.
+    """
+    return tuple(-ord(char) for char in value)
+
+
+def _normalize_ranking_timestamp(value, label: str) -> pd.Timestamp | None:
+    if value is None:
+        return None
+    stamp = pd.Timestamp(value)
+    if stamp.tzinfo is None:
+        raise CanonicalBuildError(f"{label} must be timezone-aware")
+    return stamp.tz_convert("UTC")
 
 
 #: Stable source-ranking rule aligned with the V0.3 latest-complete ordering:
 #: snapshot_ingested_at descending (nulls last), run_finished_at descending,
 #: ingestion_run_id descending, then the physical snapshot content hash as a
 #: final path-independent tie-breaker. snapshot_file never participates.
+#: Timestamps are normalized to UTC before ranking, so the order does not
+#: depend on the local machine timezone. One key function serves both the
+#: selected and the discarded sources, keeping a single comparison direction.
 def _source_rank_key(candidate: dict) -> tuple:
     ingested = candidate["snapshot_ingested_at"]
     finished = candidate["run_finished_at"]
@@ -222,14 +252,9 @@ def _source_rank_key(candidate: dict) -> tuple:
         -(ingested.timestamp()) if ingested is not None else 0,
         0 if finished is not None else 1,
         -(finished.timestamp()) if finished is not None else 0,
-        _reverse_hex(candidate["ingestion_run_id"]),
+        _descending_text(candidate["ingestion_run_id"]),
         candidate["physical_snapshot_hash"],
     )
-
-
-def _reverse_hex(value: str) -> str:
-    """Lexicographic reverse surrogate for descending run-id ordering."""
-    return "".join(reversed(value))
 
 
 def _validate_and_normalize_snapshot(
@@ -351,10 +376,13 @@ def _validate_and_normalize_snapshot(
         # time: normalize to America/New_York so any session-timezone
         # representation of the same instant yields identical values.
         market_time_ny = market_time.tz_convert("America/New_York")
-        market_calendar_date = (
-            _as_date(row["market_calendar_date"]) if row["market_calendar_date"] is not None else None
-        )
-        if market_calendar_date is not None and market_calendar_date != market_time_ny.date():
+        raw_calendar_date = row["market_calendar_date"]
+        if raw_calendar_date is None or pd.isna(raw_calendar_date):
+            raise CanonicalBuildError(
+                f"row {position} market_calendar_date is required canonical metadata"
+            )
+        market_calendar_date = _as_date(raw_calendar_date)
+        if market_calendar_date != market_time_ny.date():
             raise CanonicalBuildError(
                 f"row {position} market_calendar_date {market_calendar_date} does not "
                 f"match market instant date {market_time_ny.date()}"
@@ -387,7 +415,7 @@ def _validate_and_normalize_snapshot(
                 "close": _finite_market_number(row["close"], "close"),
                 "volume": _finite_market_number(row["volume"], "volume"),
                 "optional_fields": _optional_fields(row),
-                "classification": _classification_value(row),
+                "classification": _classification_value(market_calendar_date, canonical_session),
             }
         )
 
@@ -395,6 +423,7 @@ def _validate_and_normalize_snapshot(
     return {
         "physical_hash": physical_hash,
         "interval_seconds": interval_seconds,
+        "logical_source_rows_hash": hash_canonical_source_rows(rows),
         "records": normalized_records,
     }
 
@@ -442,8 +471,31 @@ def build_canonical_market_bars(
         )
 
     candidates: list[dict] = []
+    physical_identities: set[tuple] = set()
     for source in snapshots:
         normalized = _validate_and_normalize_snapshot(source)
+        # Stable physical source identity: path-independent (no snapshot_file).
+        physical_identities.add(
+            (
+                source.snapshot.code,
+                source.snapshot.requested_trade_date,
+                source.snapshot.ingestion_run_id,
+                normalized["physical_hash"],
+                (
+                    source.request_key.interval,
+                    source.request_key.requested_session,
+                    source.request_key.adjustment,
+                    source.request_key.source_schema_version,
+                ),
+            )
+        )
+        ingested = _normalize_ranking_timestamp(
+            source.snapshot.snapshot_ingested_at, "snapshot_ingested_at"
+        )
+        finished = _normalize_ranking_timestamp(
+            source.snapshot.run_finished_at, "snapshot.run_finished_at"
+        )
+        archive_available_at = _archive_available_at(source)
         for record in normalized["records"]:
             business_key = canonical_bar_key(
                 dataset_kind=dataset_kind,
@@ -467,18 +519,19 @@ def build_canonical_market_bars(
                     "market_available_at": bar_available_at(
                         record["market_time"], normalized["interval_seconds"]
                     ),
-                    "archive_available_at": _archive_available_at(source),
+                    "archive_available_at": archive_available_at,
                     "market_value": _market_value_tuple_from_record(record),
                     "optional_fields": record["optional_fields"],
                     "classification": record["classification"],
                     "physical_snapshot_hash": normalized["physical_hash"],
-                    "snapshot_ingested_at": source.snapshot.snapshot_ingested_at,
-                    "run_finished_at": source.snapshot.run_finished_at,
+                    "snapshot_ingested_at": ingested,
+                    "run_finished_at": finished,
                     "snapshot_file": source.snapshot.snapshot_file,
                     "ingestion_run_id": record["ingestion_run_id"],
                     "requested_trade_date": record["requested_trade_date"],
                     "requested_session": record["requested_session"],
-                    "logical_source_rows_hash": hash_canonical_source_rows(source.rows),
+                    # Computed once per snapshot, reused by every candidate.
+                    "logical_source_rows_hash": normalized["logical_source_rows_hash"],
                     "record": record,
                 }
             )
@@ -557,7 +610,7 @@ def build_canonical_market_bars(
         bars=tuple(bars),
         resolution=tuple(resolution),
         builder_version=canonical_builder_version,
-        source_snapshot_count=len({candidate["snapshot_file"] for candidate in candidates}),
+        source_snapshot_count=len(physical_identities),
     )
 
 

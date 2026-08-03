@@ -711,3 +711,184 @@ def test_no_synthetic_bars_generated(tmp_path):
                    time_keys=minute_keys("2026-07-01 09:30:00", 3))
     result = build_one(cfg)
     assert len(result.bars) == 3
+
+
+# --- Targeted corrections ---------------------------------------------------
+
+
+def test_ranking_run_id_descending_when_timestamps_tied(tmp_path):
+    cfg = settings(tmp_path)
+    # Identical ingested_at and run_finished_at: run-b must rank before run-a
+    # (descending lexicographic run id).
+    shared_ingested = pd.Timestamp("2026-07-01 13:00:00", tz="UTC")
+    shared_finished = datetime(2026, 7, 1, 14, 0, tzinfo=timezone.utc)
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 1),
+                   run_finished_at=shared_finished)
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-b",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 1),
+                   run_finished_at=shared_finished)
+    ref_a, rows_a = read_run_rows(cfg, run_id="run-a")
+    ref_b, rows_b = read_run_rows(cfg, run_id="run-b")
+    input_a = make_input(cfg, ref=ref_a, rows=rows_a)
+    input_b = make_input(cfg, ref=ref_b, rows=rows_b)
+    # Same ingested_at and finished_at on both refs.
+    for ref in (ref_a, ref_b):
+        object.__setattr__(ref, "snapshot_ingested_at", shared_ingested)
+        object.__setattr__(ref, "run_finished_at", shared_finished)
+
+    result = build_inputs(cfg, [input_a, input_b])
+    assert len(result.bars) == 1
+    assert result.resolution[0].selected.ingestion_run_id == "run-b"
+    assert [ref.ingestion_run_id for ref in result.resolution[0].equivalent_discarded] == ["run-a"]
+
+
+def test_stored_session_case_insensitive_equivalence(tmp_path):
+    cfg = settings(tmp_path)
+    write_snapshot(
+        cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
+        time_keys=minute_keys("2026-07-01 09:30:00", 1),
+        mutate=lambda df: df.assign(session="regular"),
+    )
+    ref = select_snapshot(cfg)
+    rows = Catalog(cfg).market_bar_snapshot_rows(ref).frame
+    result = build_inputs(cfg, [make_input(cfg, ref=ref, rows=rows)])
+    assert len(result.bars) == 1
+    assert result.bars[0].session == "REGULAR"
+
+
+def test_missing_market_calendar_date_fails_closed(tmp_path):
+    cfg = settings(tmp_path)
+    write_snapshot(
+        cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
+        time_keys=minute_keys("2026-07-01 09:30:00", 1),
+        mutate=lambda df: df.assign(market_calendar_date=None),
+    )
+    ref = select_snapshot(cfg)
+    rows = Catalog(cfg).market_bar_snapshot_rows(ref).frame
+    with pytest.raises(CanonicalBuildError, match="market_calendar_date is required"):
+        build_inputs(cfg, [make_input(cfg, ref=ref, rows=rows)])
+
+
+def test_classification_conflict_field_order():
+    from market_vault.canonical.bars import _differing_classification_names
+
+    reference = ("2026-07-01", "REGULAR")
+    assert _differing_classification_names(reference, ("2026-07-01", "AFTER_HOURS")) == (
+        "session",
+    )
+    assert _differing_classification_names(reference, ("2026-07-02", "AFTER_HOURS")) == (
+        "market_calendar_date",
+        "session",
+    )
+
+
+def test_source_snapshot_count_path_independent(tmp_path):
+    cfg = settings(tmp_path)
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 1))
+    ref = select_snapshot(cfg)
+    rows = Catalog(cfg).market_bar_snapshot_rows(ref).frame
+    relocated = CompleteSnapshotRef(
+        code=ref.code,
+        requested_trade_date=ref.requested_trade_date,
+        ingestion_run_id=ref.ingestion_run_id,
+        snapshot_file="curated/source=moomoo/dataset=market_bars/interval=1m/requested_trade_date=2026-07-01/relocated.parquet",
+        snapshot_ingested_at=ref.snapshot_ingested_at,
+        run_finished_at=ref.run_finished_at,
+        eligible_row_count=ref.eligible_row_count,
+    )
+    physical = file_hash(cfg, ref)
+    # Same stable identity, different descriptive path: count stays 1.
+    result = build_inputs(cfg, [
+        make_input(cfg, ref=ref, rows=rows),
+        make_input(cfg, ref=relocated, rows=rows, physical_hash=physical),
+    ])
+    assert result.source_snapshot_count == 1
+
+
+@pytest.mark.parametrize(
+    ("column", "bad_value"),
+    [
+        ("turnover", float("nan")),
+        ("turnover", float("inf")),
+        ("turnover", float("-inf")),
+        ("turnover", "not-a-number"),
+    ],
+)
+def test_malformed_optional_field_fails_closed(tmp_path, column, bad_value):
+    cfg = settings(tmp_path)
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 1))
+    ref = select_snapshot(cfg)
+    rows = Catalog(cfg).market_bar_snapshot_rows(ref).frame.assign(**{column: bad_value})
+    with pytest.raises(CanonicalBuildError):
+        build_inputs(cfg, [make_input(cfg, ref=ref, rows=rows)])
+
+
+def test_null_and_absent_optional_fields_allowed(tmp_path):
+    cfg = settings(tmp_path)
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 1))
+    ref = select_snapshot(cfg)
+    rows = Catalog(cfg).market_bar_snapshot_rows(ref).frame
+    rows_null = rows.copy()
+    rows_null["turnover"] = None
+    result = build_inputs(cfg, [make_input(cfg, ref=ref, rows=rows_null)])
+    assert result.bars[0].extra_fields == ()
+
+
+def test_naive_snapshot_ingested_at_fails_closed(tmp_path):
+    cfg = settings(tmp_path)
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 1))
+    ref = select_snapshot(cfg)
+    rows = Catalog(cfg).market_bar_snapshot_rows(ref).frame
+    object.__setattr__(ref, "snapshot_ingested_at", pd.Timestamp("2026-07-01 13:00:00"))
+    with pytest.raises(CanonicalBuildError, match="snapshot_ingested_at must be timezone-aware"):
+        build_inputs(cfg, [make_input(cfg, ref=ref, rows=rows)])
+
+
+def test_ranking_independent_of_local_timezone_representation(tmp_path):
+    cfg = settings(tmp_path)
+    instant = pd.Timestamp("2026-07-01 13:00:00", tz="UTC")
+    finished = datetime(2026, 7, 1, 14, 0, tzinfo=timezone.utc)
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 1),
+                   run_finished_at=finished)
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-b",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 1),
+                   run_finished_at=finished)
+    ref_a, rows_a = read_run_rows(cfg, run_id="run-a")
+    ref_b, rows_b = read_run_rows(cfg, run_id="run-b")
+    object.__setattr__(ref_a, "snapshot_ingested_at", instant)
+    object.__setattr__(ref_b, "snapshot_ingested_at", instant.tz_convert("Asia/Tokyo"))
+
+    result = build_inputs(cfg, [
+        make_input(cfg, ref=ref_a, rows=rows_a),
+        make_input(cfg, ref=ref_b, rows=rows_b),
+    ])
+    # Same instant expressed in different timezones must rank identically:
+    # run_b descends before run-a (run id tie-break).
+    assert result.resolution[0].selected.ingestion_run_id == "run-b"
+
+
+def test_logical_hash_computed_once_per_snapshot(monkeypatch, tmp_path):
+    cfg = settings(tmp_path)
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 3))
+    ref = select_snapshot(cfg)
+    rows = Catalog(cfg).market_bar_snapshot_rows(ref).frame
+    calls = []
+
+    import market_vault.canonical.bars as bars_module
+
+    original = bars_module.hash_canonical_source_rows
+    monkeypatch.setattr(
+        bars_module,
+        "hash_canonical_source_rows",
+        lambda frame: calls.append(len(frame)) or original(frame),
+    )
+    result = build_inputs(cfg, [make_input(cfg, ref=ref, rows=rows)])
+    assert len(result.bars) == 3
+    assert calls == [3]  # once per snapshot, not once per candidate
