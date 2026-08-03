@@ -302,6 +302,60 @@ class Catalog:
         requested_dates = set(trade_dates)
         return {(row[0], row[1]) for row in rows if row[1] in requested_dates}
 
+    def trading_dates_after(
+        self,
+        scope_type: str,
+        scope_value: str,
+        after_date: date,
+        end_date: date,
+    ) -> list[date]:
+        """Local trading dates strictly after a date, at or before end_date.
+
+        Dates come from trading_calendar_latest only: no weekday, weekend, or
+        holiday rules are applied here.
+        """
+        if not self.refresh_trading_calendar_views():
+            return []
+        sql = """
+            SELECT DISTINCT trade_date
+            FROM trading_calendar_latest
+            WHERE scope_type = ?
+              AND scope_value = ?
+              AND trade_date > ?
+              AND trade_date <= ?
+            ORDER BY trade_date
+        """
+        with self.connect() as con:
+            rows = con.execute(sql, [scope_type, scope_value, after_date, end_date]).fetchall()
+        return [row[0] for row in rows]
+
+    def next_trading_date(
+        self,
+        scope_type: str,
+        scope_value: str,
+        after_date: date,
+        end_date: date,
+    ) -> date | None:
+        """First local trading date strictly after a date and at or before end_date.
+
+        Returns None when the local calendar has no such date (e.g. the
+        symbol is already caught up through end_date, or the calendar
+        snapshot does not extend past the latest completed date).
+        """
+        if not self.refresh_trading_calendar_views():
+            return None
+        sql = """
+            SELECT MIN(trade_date)
+            FROM trading_calendar_latest
+            WHERE scope_type = ?
+              AND scope_value = ?
+              AND trade_date > ?
+              AND trade_date <= ?
+        """
+        with self.connect() as con:
+            row = con.execute(sql, [scope_type, scope_value, after_date, end_date]).fetchone()
+        return row[0] if row is not None and row[0] is not None else None
+
     def latest_completed_market_bar_dates(
         self,
         *,

@@ -168,7 +168,16 @@ def plan_history_backfill(
         for symbol in normalized_symbols:
             latest_date = latest_dates.get(symbol)
             if latest_date is not None:
-                start_date_by_symbol[symbol] = latest_date + timedelta(days=1)
+                next_date = catalog.next_trading_date(scope_type, scope_value, latest_date, end_date)
+                if next_date is not None:
+                    start_date_by_symbol[symbol] = next_date
+                else:
+                    # The local calendar has no trading day after the latest
+                    # completed date within end_date: the symbol is caught up
+                    # and has no pending work for this run. Start beyond
+                    # end_date so it contributes no items and no coverage
+                    # requirement.
+                    start_date_by_symbol[symbol] = end_date + timedelta(days=1)
             else:
                 assert bootstrap_start_date is not None
                 start_date_by_symbol[symbol] = bootstrap_start_date

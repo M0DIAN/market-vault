@@ -27,8 +27,10 @@ class ParquetStore:
         symbols: list[str],
         session: str,
         adjustment: str,
+        run_id: str,
     ) -> Path:
         key = self._batch_key(symbols, interval, session, adjustment)
+        safe_run_id = self._safe_partition_value(run_id)
         return (
             self.settings.data_root
             / layer
@@ -36,7 +38,7 @@ class ParquetStore:
             / "dataset=market_bars"
             / f"interval={interval.lower()}"
             / f"requested_trade_date={trade_date.isoformat()}"
-            / f"batch-{key}.parquet"
+            / f"batch-{key}-{safe_run_id}.parquet"
         )
 
     def write_raw(
@@ -47,8 +49,9 @@ class ParquetStore:
         symbols: list[str],
         session: str,
         adjustment: str,
+        run_id: str,
     ) -> Path:
-        path = self._path("raw", trade_date, interval, symbols, session, adjustment)
+        path = self._path("raw", trade_date, interval, symbols, session, adjustment, run_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         df.to_parquet(path, index=False, compression="zstd")
         return path
@@ -61,8 +64,9 @@ class ParquetStore:
         symbols: list[str],
         session: str,
         adjustment: str,
+        run_id: str,
     ) -> Path:
-        path = self._path("curated", trade_date, interval, symbols, session, adjustment)
+        path = self._path("curated", trade_date, interval, symbols, session, adjustment, run_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         df.to_parquet(path, index=False, compression="zstd")
         return path

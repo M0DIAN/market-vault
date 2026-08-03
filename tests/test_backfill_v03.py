@@ -134,7 +134,7 @@ def write_completed_bar(
     if not include_source_schema_version:
         curated = curated.drop(columns=["source_schema_version"])
     if write_curated:
-        store.write_curated(curated, trade_date, interval, [code], requested_session, adjustment)
+        store.write_curated(curated, trade_date, interval, [code], requested_session, adjustment, run_id=run.run_id)
     run.successful_symbols = [code]
     run.status = "SUCCESS"
     run.finished_at = datetime.now(timezone.utc)
@@ -200,9 +200,13 @@ def make_fake_collect_history(cfg: Settings, monkeypatch, responses: dict):
             raw_all = pd.concat(raw_frames, ignore_index=True)
             curated_all = pd.concat(curated_frames, ignore_index=True)
             store = ParquetStore(cfg)
-            manifest.raw_file = str(store.write_raw(raw_all, trade_date, interval, list(symbols), session, adjustment))
+            manifest.raw_file = str(
+                store.write_raw(raw_all, trade_date, interval, list(symbols), session, adjustment, run_id=manifest.run_id)
+            )
             manifest.curated_file = str(
-                store.write_curated(curated_all, trade_date, interval, list(symbols), session, adjustment)
+                store.write_curated(
+                    curated_all, trade_date, interval, list(symbols), session, adjustment, run_id=manifest.run_id
+                )
             )
             manifest.row_count = len(curated_all)
         Catalog(cfg).record_run(manifest)
@@ -1383,6 +1387,166 @@ def test_incremental_does_not_backfill_gaps_before_latest_completed(tmp_path):
     )
 
     assert plan.pending_items == [BackfillItem("US.MU", date(2026, 7, 6))]
+
+
+def test_incremental_starts_at_next_trading_day_across_weekend(tmp_path):
+    # Latest completed trade date is Friday 2026-07-03; the local calendar
+    # snapshot only covers the requested range 2026-07-06..2026-07-07. The
+    # incremental start must be the next local trading day (2026-07-06), not
+    # latest + 1 natural day (2026-07-04), so no false weekend coverage gap.
+    cfg = settings(tmp_path)
+    write_calendar_snapshot(
+        cfg,
+        market="US",
+        trade_dates=[date(2026, 7, 6), date(2026, 7, 7)],
+        requested_start_date=date(2026, 7, 6),
+        requested_end_date=date(2026, 7, 7),
+    )
+    write_completed_bar(cfg, code="US.MU", trade_date=date(2026, 7, 3))
+
+    plan = plan_history_backfill(
+        cfg,
+        symbols=["US.MU"],
+        end_date=date(2026, 7, 7),
+        calendar_market="US",
+        incremental=True,
+        today=date(2026, 8, 2),
+    )
+
+    assert plan.start_date_by_symbol == {"US.MU": date(2026, 7, 6)}
+    assert plan.pending_items == [
+        BackfillItem("US.MU", date(2026, 7, 6)),
+        BackfillItem("US.MU", date(2026, 7, 7)),
+    ]
+
+
+def test_incremental_next_trading_day_beyond_end_date_is_empty_success(monkeypatch, tmp_path):
+    cfg = settings(tmp_path)
+    write_calendar_snapshot(
+        cfg,
+        market="US",
+        trade_dates=[date(2026, 7, 1), date(2026, 7, 2), date(2026, 7, 6)],
+        requested_start_date=date(2026, 7, 1),
+        requested_end_date=date(2026, 7, 6),
+    )
+    write_completed_bar(cfg, code="US.MU", trade_date=date(2026, 7, 6))
+    monkeypatch.setattr(backfill_module, "collect_history", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError()))
+
+    manifest = collect_history_backfill(
+        cfg,
+        symbols=["US.MU"],
+        end_date=date(2026, 7, 6),
+        calendar_market="US",
+        incremental=True,
+        today=date(2026, 8, 2),
+    )
+
+    # No trading day after the latest completed date within end_date: the
+    # symbol is caught up, the plan is empty, and the run is SUCCESS.
+    assert manifest.status == "SUCCESS"
+    assert manifest.successful_items == ["US.MU"]
+    assert manifest.parameters["trading_date_count"] == 0
+    assert manifest.parameters["child_run_ids"] == []
+    assert manifest.parameters["successful_item_count"] == 0
+
+
+def test_incremental_symbols_use_their_own_next_trading_day(tmp_path):
+    cfg = settings(tmp_path)
+    write_calendar_snapshot(
+        cfg,
+        market="US",
+        trade_dates=[date(2026, 7, 1), date(2026, 7, 2), date(2026, 7, 3), date(2026, 7, 6), date(2026, 7, 7)],
+        requested_start_date=date(2026, 7, 1),
+        requested_end_date=date(2026, 7, 7),
+    )
+    write_completed_bar(cfg, code="US.MU", trade_date=date(2026, 7, 1))
+    write_completed_bar(cfg, code="US.NVDA", trade_date=date(2026, 7, 3))
+
+    plan = plan_history_backfill(
+        cfg,
+        symbols=["US.MU", "US.NVDA"],
+        end_date=date(2026, 7, 7),
+        calendar_market="US",
+        incremental=True,
+        today=date(2026, 8, 2),
+    )
+
+    # US.MU resumes on 2026-07-02; US.NVDA resumes after Friday 2026-07-03
+    # on the next trading day 2026-07-06. Items are sorted by (trade_date, code).
+    assert plan.start_date_by_symbol == {
+        "US.MU": date(2026, 7, 2),
+        "US.NVDA": date(2026, 7, 6),
+    }
+    assert plan.pending_items == [
+        BackfillItem("US.MU", date(2026, 7, 2)),
+        BackfillItem("US.MU", date(2026, 7, 3)),
+        BackfillItem("US.MU", date(2026, 7, 6)),
+        BackfillItem("US.NVDA", date(2026, 7, 6)),
+        BackfillItem("US.MU", date(2026, 7, 7)),
+        BackfillItem("US.NVDA", date(2026, 7, 7)),
+    ]
+
+
+def test_incremental_mixes_bootstrap_and_history_symbols(tmp_path):
+    cfg = settings(tmp_path)
+    write_calendar_snapshot(
+        cfg,
+        market="US",
+        trade_dates=[date(2026, 7, 1), date(2026, 7, 2), date(2026, 7, 6), date(2026, 7, 7)],
+        requested_start_date=date(2026, 7, 1),
+        requested_end_date=date(2026, 7, 7),
+    )
+    write_completed_bar(cfg, code="US.MU", trade_date=date(2026, 7, 2))
+
+    plan = plan_history_backfill(
+        cfg,
+        symbols=["US.MU", "US.NVDA"],
+        end_date=date(2026, 7, 7),
+        calendar_market="US",
+        incremental=True,
+        bootstrap_start_date=date(2026, 7, 1),
+        today=date(2026, 8, 2),
+    )
+
+    # US.MU has history and resumes on the next trading day 2026-07-06;
+    # US.NVDA has no history and keeps the bootstrap start date 2026-07-01.
+    # Items are sorted by (trade_date, code).
+    assert plan.start_date_by_symbol == {
+        "US.MU": date(2026, 7, 6),
+        "US.NVDA": date(2026, 7, 1),
+    }
+    assert plan.pending_items == [
+        BackfillItem("US.NVDA", date(2026, 7, 1)),
+        BackfillItem("US.NVDA", date(2026, 7, 2)),
+        BackfillItem("US.MU", date(2026, 7, 6)),
+        BackfillItem("US.NVDA", date(2026, 7, 6)),
+        BackfillItem("US.MU", date(2026, 7, 7)),
+        BackfillItem("US.NVDA", date(2026, 7, 7)),
+    ]
+
+
+def test_range_backfill_natural_date_coverage_unchanged(tmp_path):
+    # Non-incremental backfill keeps validating natural-date coverage from
+    # the requested start date; starting on a weekend day still reports the
+    # missing natural-date coverage instead of silently skipping it.
+    cfg = settings(tmp_path)
+    write_calendar_snapshot(
+        cfg,
+        market="US",
+        trade_dates=[date(2026, 7, 6), date(2026, 7, 7)],
+        requested_start_date=date(2026, 7, 6),
+        requested_end_date=date(2026, 7, 7),
+    )
+
+    with pytest.raises(ValueError, match="Missing coverage"):
+        plan_history_backfill(
+            cfg,
+            symbols=["US.MU"],
+            start_date=date(2026, 7, 4),
+            end_date=date(2026, 7, 7),
+            calendar_market="US",
+            today=date(2026, 8, 2),
+        )
 
 
 def test_backfill_cli_parses_standard_mode():
