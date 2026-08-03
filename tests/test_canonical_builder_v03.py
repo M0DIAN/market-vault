@@ -16,7 +16,6 @@ from market_vault.canonical import (
     build_canonical_market_bars,
     canonical_bar_key,
     canonical_row_version_id,
-    hash_canonical_source_rows,
 )
 from market_vault.canonical.bars import _differing_classification_names
 from market_vault.models import QualityResult, RunManifest, Settings
@@ -336,12 +335,13 @@ def test_optional_field_change_changes_logical_hash(tmp_path):
                    time_keys=minute_keys("2026-07-01 09:30:00", 1))
     ref = select_snapshot(cfg)
     rows = Catalog(cfg).market_bar_snapshot_rows(ref).frame
-    base = hash_canonical_source_rows(rows)
-    with_turnover = rows.assign(turnover=1234.5)
-    assert hash_canonical_source_rows(with_turnover) != base
-    # Logical hash includes provenance fields.
-    other_run = rows.assign(ingestion_run_id="run-other")
-    assert hash_canonical_source_rows(other_run) != base
+    base = build_inputs(cfg, [make_input(cfg, ref=ref, rows=rows)]).bars[0]
+
+    with_turnover = build_inputs(cfg, [
+        make_input(cfg, ref=ref, rows=rows.assign(turnover=1234.5))
+    ]).bars[0]
+    assert with_turnover.logical_source_rows_hash != base.logical_source_rows_hash
+    assert with_turnover.extra_fields == (("turnover", 1234.5),)
 
 
 # --- Identity ---------------------------------------------------------------
@@ -890,7 +890,7 @@ def test_logical_hash_computed_once_per_snapshot(monkeypatch, tmp_path):
     monkeypatch.setattr(
         bars_module,
         "_hash_normalized_records",
-        lambda records, interval_seconds: calls.append(len(records)) or original(records, interval_seconds),
+        lambda records: calls.append(len(records)) or original(records),
     )
     result = build_inputs(cfg, [make_input(cfg, ref=ref, rows=rows)])
     assert len(result.bars) == 3

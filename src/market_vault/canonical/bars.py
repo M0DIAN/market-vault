@@ -70,70 +70,7 @@ def _validate_physical_snapshot_hash(value: str) -> str:
     return normalized
 
 
-def _typed_row_value(column: str, value) -> str:
-    """Explicitly typed canonical serialization for one logical row field."""
-    if _is_null_scalar(value):
-        return f"{column}:z"  # z = absent/null
-    if isinstance(value, (pd.Timestamp, datetime)):
-        stamp = pd.Timestamp(value)
-        if stamp.tzinfo is None:
-            return f"{column}:t:{stamp.isoformat()}"
-        return f"{column}:t:{stamp.tz_convert('UTC').isoformat()}"
-    if isinstance(value, (date,)):
-        return f"{column}:d:{value.isoformat()}"
-    if isinstance(value, float):
-        return f"{column}:f:{float(value)!r}"
-    if isinstance(value, (int,)):
-        return f"{column}:i:{int(value)}"
-    return f"{column}:s:{value}"
-
-
-def hash_canonical_source_rows(rows: pd.DataFrame) -> str:
-    """Deterministic logical content hash of source curated rows.
-
-    Covers every field that can affect canonical output or conflict
-    resolution: normalized code/interval/adjustment, the market instant,
-    OHLCV, supported optional market fields, request/provenance fields, and
-    classification fields. Rows are encoded with an explicitly typed
-    canonical serialization (never repr() as the primary encoding) and the
-    set of row digests is sorted before hashing, so identical logical content
-    with different row orders hashes identically. SHA-256 is collision-
-    resistant; it is not claimed to be collision-free.
-    """
-    fields = (
-        "code",
-        "interval",
-        "adjustment",
-        "time_market",
-        "open",
-        "high",
-        "low",
-        "close",
-        "volume",
-        "turnover",
-        "last_close",
-        "change_rate",
-        "pe_ratio",
-        "turnover_rate",
-        "requested_trade_date",
-        "requested_session",
-        "market_calendar_date",
-        "session",
-        "ingestion_run_id",
-        "source_schema_version",
-    )
-    row_digests = []
-    for _, row in rows.iterrows():
-        parts = [
-            _typed_row_value(column, row.get(column) if column in rows.columns else None)
-            for column in fields
-        ]
-        row_digests.append(hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest())
-    row_digests.sort()
-    return hashlib.sha256("\x1e".join(row_digests).encode("utf-8")).hexdigest()
-
-
-def _hash_normalized_records(records: list[dict], interval_seconds: int) -> str:
+def _hash_normalized_records(records: list[dict]) -> str:
     """Deterministic logical hash over normalized canonical records.
 
     Encodes the already-normalized semantics -- canonical code/interval/
@@ -472,7 +409,7 @@ def _validate_and_normalize_snapshot(
     return {
         "physical_hash": physical_hash,
         "interval_seconds": interval_seconds,
-        "logical_source_rows_hash": _hash_normalized_records(normalized_records, interval_seconds),
+        "logical_source_rows_hash": _hash_normalized_records(normalized_records),
         "records": normalized_records,
     }
 

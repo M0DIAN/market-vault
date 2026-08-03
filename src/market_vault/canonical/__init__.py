@@ -11,7 +11,6 @@ from .bars import (
     CANONICAL_BUILDER_VERSION,
     DEFAULT_DATASET_KIND,
     build_canonical_market_bars,
-    hash_canonical_source_rows,
 )
 from .identity import canonical_bar_key, canonical_row_version_id
 from .models import (
@@ -39,5 +38,4 @@ __all__ = [
     "build_canonical_market_bars",
     "canonical_bar_key",
     "canonical_row_version_id",
-    "hash_canonical_source_rows",
 ]
