@@ -1,6 +1,6 @@
 # ADR 0001: Canonical ML Dataset Boundary
 
-- Status: proposed
+- Status: accepted
 - Deciders: MarketVault maintainers
 - Date: 2026-08-04
 - Related: [V0.4.0 direction](../v0_4_0_direction.md)
@@ -42,16 +42,24 @@ Constraints:
 2. **Two identity levels.**
 
    - **Canonical business identity** (`canonical_bar_key`):
-     `(dataset_kind, code, interval, requested_trade_date, requested_session,
-     adjustment, event_time)` — stable, version-free, and **without
-     `ingestion_run_id` or `source_schema_version`**. Two rows with the same
-     key describe the same market event.
+     `(dataset_kind, code, interval, adjustment, event_time)` — stable,
+     version-free, and **without `ingestion_run_id`, `source_schema_version`,
+     `requested_trade_date`, or `requested_session`**. Two rows with the same
+     key describe the same market event. Request-level fields
+     (`requested_trade_date`, `requested_session`, `market_calendar_date`,
+     `session`) are provenance, audit, partition, or classification fields
+     only. When different source requests resolve to the same key, the
+     builder reconciles them deterministically: on conflicting market values
+     it fails the build or records an explicit conflict — it never silently
+     emits two canonical business rows.
    - **Physical row version identity** (`canonical_row_version_id`):
-     `canonical_bar_key + ingestion_run_id + snapshot_file +
-     source_schema_version + canonical_builder_version`. This is the identity
-     used for provenance, rebuild comparison, and auditability.
+     `canonical_bar_key + ingestion_run_id + source_snapshot_content_hash +
+     source_schema_version + canonical_builder_version`. `snapshot_file` is
+     **not** part of the version identity because file paths can change; it
+     is carried only as provenance metadata. This identity is used for
+     provenance, rebuild comparison, and auditability.
 
-   Every canonical row carries provenance: `snapshot_file`,
+   Every canonical row carries provenance: `snapshot_file` (metadata only),
    `snapshot_ingested_at`, `run_finished_at`, the source COMPLETE audit state,
    and the canonical builder version.
 
@@ -166,12 +174,15 @@ Constraints:
    defined until then.
 3. Whether canonical rows are stored as one Parquet file per
    (dataset_kind, builder_version) or partitioned per trade date — deferred
-   to PR-3 of the proposed sequence.
+   to PR-4 of the proposed sequence.
 4. Whether the default no-cross-trading-day policy should also forbid
    overnight (OVERNIGHT-session) labels — deferred to label-spec review.
 
-## Status note
+## Implementation note
 
-This ADR remains **proposed** while the corrected decision is under review.
-It is changed to **accepted** only when the corrected decision is ready to
-merge.
+The timestamp-semantics contract (PR-2 of the proposed sequence in the V0.4.0
+direction document) is a hard prerequisite for the canonical builder: the six
+timestamp behaviors (OpenD `time_key` interval-start vs interval-end,
+interval completion / `market_available_at`, DST conversion, per-row
+`ingested_at`, `run_finished_at` semantics and precision, DuckDB timestamp
+round-trip) must be resolved and tested before any builder implementation.

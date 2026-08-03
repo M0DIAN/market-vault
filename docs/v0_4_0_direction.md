@@ -101,42 +101,51 @@ Materialization clarification:
 
 ### 4.1 Canonical business identity (`canonical_bar_key`)
 
-Stable, version-free, and **free of ingestion_run_id and
-source_schema_version**:
+Stable, version-free, and **free of ingestion_run_id, source_schema_version,
+requested_trade_date, and requested_session**:
 
 ```text
 dataset_kind        -- e.g. "market_bars_canonical"
 code                -- normalized symbol
 interval            -- normalized interval (1m/5m/15m/30m/60m)
-requested_trade_date
-requested_session
 adjustment
 event_time          -- the instant the row describes (see section 5)
 ```
 
 Two canonical rows with the same `canonical_bar_key` describe the same market
-event; they may differ in provenance or version.
+event; they may differ in provenance or version. The request-level fields
+`requested_trade_date`, `requested_session`, `market_calendar_date`, and
+`session` are **not** part of the business identity; they are carried as
+provenance, audit, partition, or classification fields.
+
+**Key reconciliation rule**: when different source requests resolve to the
+same `canonical_bar_key`, the builder must reconcile them deterministically.
+If their market values conflict, the builder must fail the build or record an
+explicit conflict in the manifest; it must never silently emit two canonical
+business rows for one key.
 
 ### 4.2 Physical row version identity (`canonical_row_version_id`)
 
 Captures which physical data and which builder produced the row:
 
 ```text
-canonical_bar_key    -- the business identity above
-ingestion_run_id     -- the physical snapshot the row came from
-snapshot_file        -- the physical snapshot file
+canonical_bar_key           -- the business identity above
+ingestion_run_id            -- the physical snapshot the row came from
+source_snapshot_content_hash -- content hash of the source snapshot
 source_schema_version
 canonical_builder_version
 ```
 
-`canonical_row_version_id` is the identity used for provenance, rebuild
-comparison, and auditability.
+`snapshot_file` is **not** part of the version identity: file paths can
+change, so it is carried only as provenance metadata. `canonical_row_version_id`
+is the identity used for provenance, rebuild comparison, and auditability.
 
 ### 4.3 Provenance
 
 Every canonical row carries, alongside `canonical_row_version_id`:
 
-- `snapshot_ingested_at` and `run_finished_at` of the source run.
+- `snapshot_file`, `snapshot_ingested_at`, and `run_finished_at` of the
+  source run (path as metadata only).
 - The `COMPLETE` audit state of the source (symbol, trade date) at build time.
 - The canonical builder version and its input spec versions.
 
@@ -338,30 +347,40 @@ Threats the dataset layer must defend against:
 ## 14. Proposed PR sequence
 
 ```text
-PR-1  docs: canonical dataset boundary ADR + direction (this PR)
-PR-2  feat: canonical builder core (business key, row version identity,
-       provenance, COMPLETE gate)
-PR-3  feat: canonical materialization + builder versioning + gap sidecar
-PR-4  feat: dataset manifest, deterministic dataset ID, content hashing
-PR-5  feat: two-clock point-in-time sample assembly
+PR-1   docs: canonical dataset boundary ADR + direction (this PR)
+PR-2   feat: timestamp-semantics contract -- resolve and test the OpenD
+       time_key interval-start versus interval-end semantics, interval
+       completion / market_available_at, DST conversion behavior, per-row
+       ingested_at semantics, run_finished_at semantics and precision, and
+       DuckDB timestamp round-trip behavior. Must land before any canonical
+       builder implementation.
+PR-3   feat: canonical builder core (canonical_bar_key, canonical_row_version_id,
+       key reconciliation, provenance, COMPLETE gate)
+PR-4   feat: canonical materialization + builder versioning + gap sidecar
+PR-5   feat: dataset manifest, deterministic dataset ID, content hashing
+PR-6   feat: two-clock point-in-time sample assembly
        (market_available_at / archive_available_at / dataset_as_of)
-PR-6  feat: feature and label spec versioning framework (no ML libraries)
-PR-7  feat: chronological splits and actual-label-end purging
-PR-8  tests: leakage threat-model regression suite (incl. adjustment policy)
-PR-9  chore: v0.4.0 release prep (docs, changelog, version bump)
+PR-7   feat: feature and label spec versioning framework (no ML libraries)
+PR-8   feat: chronological splits and actual-label-end purging
+PR-9   tests: leakage threat-model regression suite (incl. adjustment policy)
+PR-10  chore: v0.4.0 release prep (docs, changelog, version bump)
 ```
 
 Each PR keeps the V0.3 compatibility contract unchanged and runs the full
-offline test suite.
+offline test suite. PR-2 (timestamp-semantics contract) is a hard prerequisite
+for PR-3 and later: `event_time`, `market_available_at`, and
+`archive_available_at` cannot be implemented correctly until its tests pin
+the six timestamp behaviors.
 
 ## 15. V0.4.0 acceptance criteria
 
 - Canonical rows are derivable from audited complete physical snapshots only;
   a deterministic test set proves INCOMPLETE/MISSING keys never produce rows.
 - `event_time`, `market_available_at`, and `archive_available_at` semantics
-  are implemented and tested; the unresolved timestamp questions from
-  section 5 are resolved in code (or `event_time` remains operationally
-  defined and documented as such).
+  are implemented and tested; the timestamp-semantics contract PR (PR-2)
+  resolves and tests the six timestamp behaviors from section 5 before the
+  canonical builder lands (or `event_time` remains operationally defined and
+  documented as such).
 - Feature/label specs are versioned, content-hashed, and recorded in every
   manifest together with transform implementation versions.
 - The default no-cross-trading-day label policy and the default
