@@ -126,6 +126,7 @@ def collect_history(
             manifest.requested_symbols,
             manifest.session,
             manifest.adjustment,
+            run_id=manifest.run_id,
         )
         curated_path = store.write_curated(
             curated_all,
@@ -134,6 +135,7 @@ def collect_history(
             manifest.requested_symbols,
             manifest.session,
             manifest.adjustment,
+            run_id=manifest.run_id,
         )
         manifest.raw_file = str(raw_path)
         manifest.curated_file = str(curated_path)
