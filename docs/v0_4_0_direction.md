@@ -73,25 +73,36 @@ Raw       -- immutable source payloads, one file per collection run
 Curated   -- normalized bars/calendar/options, immutable snapshots,
              completion audited by V0.3
 Canonical -- resolved, point-in-time-consistent, versioned row set derived
-             from audited complete physical snapshots (the V0.4 boundary)
+             from audited complete physical snapshots (the V0.4 boundary;
+             the only new source-of-truth materialized data layer)
 Feature   -- deterministic, versioned transforms of canonical rows into
-             numeric/categorical inputs (spec-versioned, not stored per row)
-Label     -- deterministic, versioned outcome definitions (spec-versioned,
-             not stored per row)
+             numeric/categorical inputs (spec-versioned computations,
+             not stored as long-lived row data)
+Label     -- deterministic, versioned outcome definitions (spec-versioned
+             computations, not stored as long-lived row data)
 Sample    -- (canonical row identity, feature window, label window) tuple
              assembled under point-in-time rules
 Dataset   -- versioned collection of samples with a manifest and a
-             deterministic dataset ID
+             deterministic dataset ID; exported Parquet files are immutable
+             build artifacts, not another source-of-truth storage layer
 ```
 
-Only **Canonical** is materialized as new stored data in V0.4. Feature, Label,
-Sample, and Dataset are generated artifacts: their definitions are versioned
-specs, and the dataset manifest records the exact spec versions and source
-snapshot IDs used.
+Materialization clarification:
 
-## 4. Canonical row identity and required provenance
+- **Canonical is the only new source-of-truth materialized data layer.**
+- Feature, Label, and Sample are generated computations defined by versioned
+  specs; they are not another storage layer.
+- Exported Dataset Parquet files may be immutable build artifacts, but they
+  are derived outputs: rebuilding from the same inputs must reproduce the
+  same logical content, and a dataset is never treated as authoritative input
+  to another dataset build.
 
-A canonical row must be identifiable by:
+## 4. Canonical identity: business key and physical row version
+
+### 4.1 Canonical business identity (`canonical_bar_key`)
+
+Stable, version-free, and **free of ingestion_run_id and
+source_schema_version**:
 
 ```text
 dataset_kind        -- e.g. "market_bars_canonical"
@@ -100,14 +111,31 @@ interval            -- normalized interval (1m/5m/15m/30m/60m)
 requested_trade_date
 requested_session
 adjustment
-source_schema_version
 event_time          -- the instant the row describes (see section 5)
-ingestion_run_id    -- the physical snapshot the row came from
 ```
 
-Every canonical row carries provenance:
+Two canonical rows with the same `canonical_bar_key` describe the same market
+event; they may differ in provenance or version.
 
-- `ingestion_run_id` and `snapshot_file` of the source physical snapshot.
+### 4.2 Physical row version identity (`canonical_row_version_id`)
+
+Captures which physical data and which builder produced the row:
+
+```text
+canonical_bar_key    -- the business identity above
+ingestion_run_id     -- the physical snapshot the row came from
+snapshot_file        -- the physical snapshot file
+source_schema_version
+canonical_builder_version
+```
+
+`canonical_row_version_id` is the identity used for provenance, rebuild
+comparison, and auditability.
+
+### 4.3 Provenance
+
+Every canonical row carries, alongside `canonical_row_version_id`:
+
 - `snapshot_ingested_at` and `run_finished_at` of the source run.
 - The `COMPLETE` audit state of the source (symbol, trade date) at build time.
 - The canonical builder version and its input spec versions.
@@ -117,39 +145,54 @@ snapshots** selected by the V0.3 `latest_complete_market_bar_snapshots`
 semantics. INCOMPLETE or MISSING keys never produce canonical rows; they are
 recorded as gaps in the dataset manifest.
 
-## 5. event_time versus available_at
+## 5. Time semantics: event_time and the two availability clocks
 
-- **event_time**: the instant a bar describes (its interval start, in
-  America/New_York, converted to UTC for storage). It is immutable for a given
-  bar and independent of collection timing.
-- **available_at**: the earliest instant at which the row's information could
-  have been known at collection time — in practice derived from the source
-  snapshot's `ingested_at`/`run_finished_at`. It is a property of the
-  collection run, not of the market event.
+MarketVault records three distinct instants for every bar:
 
-Point-in-time assembly must use `available_at` (not `event_time`) to decide
-whether a row could have been observed when a sample's feature window closes,
-and label computation must use only rows whose `available_at` predates the
-label observation time.
+- **event_time**: the instant a bar describes. V0.4 treats this as the
+  interval start in America/New_York converted to UTC **as a hypothesis to be
+  verified**: do not assume `time_key` is definitely interval-start time until
+  its OpenD and normalization semantics have been verified by inspecting the
+  collector and `src/market_vault/normalization/bars.py`. Until verified,
+  `event_time` is defined operationally as "the normalized market timestamp
+  of the row converted to UTC", and canonical consumers must not rely on
+  interval-start alignment.
+- **market_available_at**: the earliest market-time instant at which the
+  complete bar could be used — the instant the bar's information could have
+  been known on the market clock. This is the clock that point-in-time
+  feature assembly must use when deciding whether a row could have been
+  observed at a feature window close.
+- **archive_available_at**: the instant the snapshot became available inside
+  MarketVault, normally `run_finished_at`. Archive-as-of reconstruction (an
+  "as of archive time" dataset) must additionally use this clock.
+
+An optional `dataset_as_of` parameter selects archive-time reproducibility:
+a dataset built with `dataset_as_of = T` may only consume snapshots whose
+`archive_available_at <= T`, so a later re-collection cannot change the
+dataset's content.
 
 **Unresolved (requires source-code inspection):** the exact semantics of
-`ingested_at` (per-row stamping time, precision, and timezone representation
-after Parquet round trips — DuckDB may surface timestamps in the session
-timezone) and the relationship between `run_finished_at` and the last
-`ingested_at` of a run must be confirmed by inspecting
-`src/market_vault/normalization/bars.py` and the catalog query layer before
-canonicalization. Until then, `available_at` is defined conservatively as
-`run_finished_at` when present.
+`time_key` (interval-start assumption), per-row `ingested_at` (stamping time,
+precision, and timezone representation after Parquet round trips — DuckDB may
+surface timestamps in the session timezone), and the relationship between
+`run_finished_at` and the last `ingested_at` of a run. Until these are
+resolved: `market_available_at` is provisionally `event_time + interval` (bar
+completion), `archive_available_at = run_finished_at` when present.
 
 ## 6. Point-in-time correctness requirements
 
 1. **No future leakage**: a sample's features may only include canonical rows
-   whose `available_at <= feature_window_close`.
+   whose `market_available_at <= feature_window_close`. Archive-as-of
+   datasets must additionally satisfy `archive_available_at <= dataset_as_of`.
 2. **Label horizon containment**: labels use only rows available at label
    observation time; incomplete label horizons are recorded, not silently
    filled (see section 9).
-3. **Determinism**: the same (source snapshot IDs, spec versions, sample
-   selection rules) must produce byte-identical samples.
+3. **Determinism**: the same (source snapshot IDs, spec versions and content,
+   transform implementations, sample selection rules) must produce
+   deterministic normalized rows, deterministic column ordering and dtypes,
+   a deterministic logical content hash, and a deterministic `dataset_id`.
+   Byte-identical Parquet output may only be promised when the serializer
+   version and all writer options are pinned (see section 10).
 4. **Provenance completeness**: every sample references the canonical rows it
    consumed; a dataset build that cannot resolve a source row fails loudly.
 5. **Audit-gated input**: canonicalization only consumes snapshots that pass
@@ -161,7 +204,9 @@ canonicalization. Until then, `available_at` is defined conservatively as
   `features/close_return_v1.spec.yaml`), not as code constants.
 - A feature spec pins: input canonical fields, transform function reference,
   parameter values, and the canonical/source-schema versions it requires.
-- The dataset manifest records every feature spec version used.
+- The dataset manifest records every feature spec version **and the content
+  hash of each spec**, plus the transform implementation or code version that
+  produced the values.
 - Changing a feature definition creates a new spec version; it never mutates
   an existing spec in place.
 
@@ -170,7 +215,8 @@ canonicalization. Until then, `available_at` is defined conservatively as
 - Label definitions follow the same versioned-spec pattern
   (`labels/next_day_ret_v1.spec.yaml`).
 - A label spec pins: observation window, horizon, alignment rule, missing-data
-  policy, and required canonical versions.
+  policy, and required canonical versions. The manifest records spec content
+  hashes and implementation versions like features.
 - **Default no-cross-trading-day label policy**: labels must not span a
   trading-day boundary unless the label spec explicitly opts in and defines
   the boundary rule. The default policy forbids, for example, deriving a label
@@ -180,39 +226,63 @@ canonicalization. Until then, `available_at` is defined conservatively as
 
 ## 9. Missing-bar and incomplete-horizon behavior
 
-- Missing bars are never invented. Internal gaps inside a segment are
-  WARN-level in V0.3 and must be represented in canonical rows as explicit
-  absent records (or an explicit gap marker), never as interpolated values.
+- **Canonical market bars contain only observed bars.** No synthetic OHLCV
+  rows are ever generated, and missing bars are never interpolated.
+- Gaps (internal gaps, and per-key INCOMPLETE/MISSING states) are recorded in
+  a **separate manifest section or a canonical gap sidecar**, never as
+  placeholder rows in the canonical bar stream.
+- V0.3 cannot detect every leading/trailing/session gap without an
+  authoritative per-date session schedule; the gap sidecar therefore records
+  only the gaps the audits can actually establish, and consumers must not
+  infer session-coverage completeness from the absence of gap records.
 - An incomplete label horizon (e.g. a horizon that extends past the last
   audited complete trade date) produces a sample with a declared
   `label_status: INCOMPLETE`; such samples are excluded from training splits
   by default and included only when a dataset spec opts in and records the
   policy.
 - Dataset-level completeness: the manifest records which (symbol, trade date)
-  keys were COMPLETE, INCOMPLETE, or MISSING at build time, so a downstream
-  consumer can distinguish "no data" from "data exists but not used".
+  keys were COMPLETE, INCOMPLETE, or MISSING at build time.
 
 ## 10. Dataset manifest and deterministic dataset ID
 
 Each generated dataset carries a manifest:
 
 ```text
-dataset_id        -- deterministic hash over (spec versions, source snapshot
-                     IDs, sample selection rules, split config)
+dataset_id            -- deterministic hash over the inputs listed below
 dataset_kind
 built_at
-source_snapshot_ids (ordered, deduplicated)
-feature_spec_versions
-label_spec_versions
+dataset_as_of         -- optional archive-time cutoff, when used
 canonical_builder_version
+canonical_row_version_ids (ordered, deduplicated)
+source snapshot IDs and source snapshot content hashes
+feature spec versions and content hashes
+label spec versions and content hashes
+transform implementation / code versions
+manifest schema version
+output schema and column order
+serialization format version
 split_spec
 per-key completion summary (COMPLETE/INCOMPLETE/MISSING counts)
 gaps (symbol, trade date) list
 ```
 
-`dataset_id` must be reproducible from the manifest inputs alone; two builds
-from identical inputs produce the identical ID and identical sample bytes.
-The manifest itself is written atomically with the existing reporting helper.
+`dataset_id` inputs therefore include:
+
+1. canonical builder version
+2. normalized feature/label spec content hashes
+3. transform implementation or code version
+4. source snapshot content hashes
+5. manifest schema version
+6. output schema/column order
+7. serialization format version
+
+`dataset_id` must be reproducible from the manifest inputs alone: two builds
+from identical inputs produce the identical ID and the identical **logical
+content** (deterministic normalized rows, column ordering, dtypes, and a
+deterministic logical content hash). Byte-identical Parquet bytes are
+promised only when the serializer version and all writer options are pinned;
+without that pin, only the logical content contract holds. The manifest
+itself is written atomically with the existing reporting helper.
 
 ## 11. Chronological train/validation/test splits
 
@@ -222,33 +292,45 @@ The manifest itself is written atomically with the existing reporting helper.
 - The split spec records the boundary dates and the rule (e.g. "all samples
   whose feature window closes on or before boundary X go to split Y").
 
-## 12. Purging at split boundaries based on maximum label horizon
+## 12. Purging at split boundaries based on actual label end
 
 - Because labels can look forward, samples near a split boundary can leak
   information across the boundary. The default rule: a sample is excluded from
-  a split when its label horizon crosses the split boundary.
-- Concretely, when the maximum label horizon is `H` canonical intervals (or
-  `H` trading days), the effective training window ends at
-  `split_boundary - H`; samples whose label observation time exceeds the
-  boundary are dropped from the earlier split (and logged in the manifest).
+  a split when **its actual `label_end_time`** crosses the split boundary —
+  not a nominal horizon subtracted from the boundary.
+- Concretely, each sample's label window has a concrete `label_end_time`
+  (the market instant the last label input becomes available). If
+  `label_end_time > split_boundary`, the sample is dropped from the earlier
+  split and logged in the manifest.
 - The purge rule is part of the split spec and must be recorded per dataset.
+  A nominal maximum-horizon purge may be offered as an optimization only when
+  it provably equals the actual-label-end rule.
 
 ## 13. Data leakage threat model
 
 Threats the dataset layer must defend against:
 
 1. **Future-bar leakage**: feature rows observed after the feature window
-   close (mitigated by `available_at` checks).
-2. **Label leakage across splits**: label horizons crossing split boundaries
-   (mitigated by section 12 purging).
-3. **Snapshot substitution**: a rebuild silently consuming a different source
-   snapshot (mitigated by pinning source snapshot IDs in the manifest and
-   failing on mismatch).
-4. **Spec drift**: feature/label definitions changing without a version bump
-   (mitigated by spec versioning and manifest recording).
-5. **Completion ambiguity**: using data that V0.3 would classify INCOMPLETE or
+   close (mitigated by `market_available_at` checks).
+2. **Archive-time leakage**: consuming snapshots archived after the dataset's
+   `dataset_as_of` (mitigated by `archive_available_at` checks in
+   archive-as-of datasets).
+3. **Label leakage across splits**: label windows crossing split boundaries
+   (mitigated by the actual-`label_end_time` purge of section 12).
+4. **Adjustment / corporate-action leakage**: adjusted prices embed
+   information about events that occurred after the feature window.
+   **The default leakage-safe dataset policy uses `adjustment = NONE`.** Any
+   adjusted-price dataset must declare and version its adjustment and
+   corporate-action as-of policy in the dataset manifest.
+5. **Snapshot substitution**: a rebuild silently consuming a different source
+   snapshot (mitigated by pinning source snapshot IDs and content hashes in
+   the manifest and failing on mismatch).
+6. **Spec drift**: feature/label definitions changing without a version bump
+   (mitigated by spec versioning, content hashes, and implementation
+   versions recorded in the manifest).
+7. **Completion ambiguity**: using data that V0.3 would classify INCOMPLETE or
    MISSING (mitigated by the COMPLETE gate and manifest gap recording).
-6. **Timezone misattribution**: interpreting instants in the wrong timezone
+8. **Timezone misattribution**: interpreting instants in the wrong timezone
    (mitigated by canonicalization in UTC and NY-local market time with
    explicit offsets, pending resolution of the timestamp semantics noted in
    section 5).
@@ -257,13 +339,15 @@ Threats the dataset layer must defend against:
 
 ```text
 PR-1  docs: canonical dataset boundary ADR + direction (this PR)
-PR-2  feat: canonical builder core (row identity, provenance, COMPLETE gate)
-PR-3  feat: canonical materialization + builder versioning
-PR-4  feat: dataset manifest and deterministic dataset ID
-PR-5  feat: point-in-time sample assembly (event_time/available_at rules)
+PR-2  feat: canonical builder core (business key, row version identity,
+       provenance, COMPLETE gate)
+PR-3  feat: canonical materialization + builder versioning + gap sidecar
+PR-4  feat: dataset manifest, deterministic dataset ID, content hashing
+PR-5  feat: two-clock point-in-time sample assembly
+       (market_available_at / archive_available_at / dataset_as_of)
 PR-6  feat: feature and label spec versioning framework (no ML libraries)
-PR-7  feat: chronological splits and boundary purging
-PR-8  tests: leakage threat-model regression suite
+PR-7  feat: chronological splits and actual-label-end purging
+PR-8  tests: leakage threat-model regression suite (incl. adjustment policy)
 PR-9  chore: v0.4.0 release prep (docs, changelog, version bump)
 ```
 
@@ -274,13 +358,21 @@ offline test suite.
 
 - Canonical rows are derivable from audited complete physical snapshots only;
   a deterministic test set proves INCOMPLETE/MISSING keys never produce rows.
-- `event_time`/`available_at` semantics are implemented, tested, and the
-  unresolved timestamp questions from section 5 are resolved in code.
-- Feature/label specs are versioned and recorded in every manifest.
-- The default no-cross-trading-day label policy is enforced and tested.
-- Dataset ID is deterministic; identical inputs produce identical IDs.
-- Chronological splits and boundary purging behave exactly per the split
-  spec, with a regression suite covering the leakage threat model.
+- `event_time`, `market_available_at`, and `archive_available_at` semantics
+  are implemented and tested; the unresolved timestamp questions from
+  section 5 are resolved in code (or `event_time` remains operationally
+  defined and documented as such).
+- Feature/label specs are versioned, content-hashed, and recorded in every
+  manifest together with transform implementation versions.
+- The default no-cross-trading-day label policy and the default
+  `adjustment = NONE` policy are enforced and tested; adjusted datasets
+  declare and version their as-of policy.
+- Canonical bars contain only observed bars; gaps live in the manifest/sidecar
+  and never as synthetic OHLCV rows.
+- Dataset ID is deterministic from its documented input set; identical inputs
+  produce identical IDs and identical logical content.
+- Chronological splits purge by actual `label_end_time`, with a regression
+  suite covering the leakage threat model.
 - No ML library is added; no runtime dependency changes for ML purposes.
 - All V0.3 offline tests continue to pass unchanged; V0.3 data and CLI
   behavior are untouched.

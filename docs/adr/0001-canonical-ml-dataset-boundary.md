@@ -15,8 +15,8 @@ and versioning themselves. V0.4 introduces a **canonical dataset layer** that
 owns those decisions once.
 
 The open question is where the boundary sits: what becomes materialized,
-versioned data (Canonical), what is generated on demand (Feature / Label /
-Sample / Dataset), and what explicitly stays out of scope.
+versioned source-of-truth data (Canonical), what is generated on demand
+(Feature / Label / Sample / Dataset), and what explicitly stays out of scope.
 
 Constraints:
 
@@ -29,58 +29,103 @@ Constraints:
 
 ## Decision
 
-1. **Canonical is the only new materialized layer.** Canonical rows are
-   resolved, point-in-time-consistent, versioned rows derived exclusively from
-   audited COMPLETE physical snapshots selected with the V0.3
-   `latest_complete_market_bar_snapshots` semantics. Feature, Label, Sample,
-   and Dataset are generated artifacts defined by versioned specs and recorded
-   in a dataset manifest; they are never stored as long-lived row data.
+1. **Canonical is the only new source-of-truth materialized data layer.**
+   Canonical rows are resolved, point-in-time-consistent, versioned rows
+   derived exclusively from audited COMPLETE physical snapshots selected with
+   the V0.3 `latest_complete_market_bar_snapshots` semantics. Feature, Label,
+   and Sample are generated computations defined by versioned specs; they are
+   never stored as long-lived row data. Exported Dataset Parquet files are
+   immutable build artifacts derived from canonical rows, not another
+   source-of-truth storage layer: a dataset is never authoritative input to
+   another dataset build.
 
-2. **Canonical row identity** is
-   `(dataset_kind, code, interval, requested_trade_date, requested_session,
-   adjustment, source_schema_version, event_time, ingestion_run_id)`. Every
-   row carries provenance: `snapshot_file`, `snapshot_ingested_at`,
-   `run_finished_at`, the source COMPLETE audit state, and the canonical
-   builder version.
+2. **Two identity levels.**
 
-3. **event_time vs available_at**: `event_time` is the interval start in
-   America/New_York converted to UTC and is immutable; `available_at` is the
-   earliest collection-time knowledge instant, derived from the source
-   snapshot (`run_finished_at` by default). Point-in-time assembly and label
-   computation may only consume rows whose `available_at` satisfies the
-   window rules. Unresolved timestamp semantics (per-row `ingested_at`
-   precision and timezone representation after Parquet round trips) are
-   flagged for source-code inspection before canonicalization; until then
-   `available_at = run_finished_at` when present.
+   - **Canonical business identity** (`canonical_bar_key`):
+     `(dataset_kind, code, interval, requested_trade_date, requested_session,
+     adjustment, event_time)` — stable, version-free, and **without
+     `ingestion_run_id` or `source_schema_version`**. Two rows with the same
+     key describe the same market event.
+   - **Physical row version identity** (`canonical_row_version_id`):
+     `canonical_bar_key + ingestion_run_id + snapshot_file +
+     source_schema_version + canonical_builder_version`. This is the identity
+     used for provenance, rebuild comparison, and auditability.
 
-4. **Spec versioning**: feature and label definitions are versioned spec
-   documents; a change creates a new version and never mutates an existing
-   one. The dataset manifest records every spec version used.
+   Every canonical row carries provenance: `snapshot_file`,
+   `snapshot_ingested_at`, `run_finished_at`, the source COMPLETE audit state,
+   and the canonical builder version.
 
-5. **Default no-cross-trading-day labels**: labels must not span a
+3. **Three-clock time model.**
+
+   - `event_time`: the instant a bar describes. V0.4 does not assume
+     `time_key` is definitely interval-start time until its OpenD and
+     normalization semantics have been verified; until then `event_time` is
+     defined operationally as the normalized market timestamp converted to
+     UTC.
+   - `market_available_at`: the earliest market-time instant at which the
+     complete bar could be used; point-in-time **feature assembly must use
+     this clock**.
+   - `archive_available_at`: the instant the snapshot became available inside
+     MarketVault, normally `run_finished_at`; **archive-as-of reconstruction
+     must additionally use this clock**, with an optional `dataset_as_of`
+     parameter selecting archive-time reproducibility.
+
+   Unresolved timestamp semantics (per-row `ingested_at` precision and
+   timezone representation after Parquet round trips) are flagged for
+   source-code inspection before canonicalization; until then
+   `market_available_at` is provisionally `event_time + interval` and
+   `archive_available_at = run_finished_at` when present.
+
+4. **Determinism contract, not byte identity.** Canonicalization and dataset
+   builds promise deterministic normalized rows, deterministic column
+   ordering and dtypes, a deterministic logical content hash, and a
+   deterministic `dataset_id`. Byte-identical Parquet output may only be
+   promised when the serializer version and all writer options are pinned;
+   without that pin, only the logical content contract holds.
+
+5. **Dataset ID inputs** include: canonical builder version; normalized
+   feature/label spec content hashes; transform implementation or code
+   version; source snapshot content hashes; manifest schema version; output
+   schema/column order; serialization format version. `dataset_id` is
+   reproducible from the manifest inputs alone.
+
+6. **Spec versioning**: feature and label definitions are versioned spec
+   documents whose content is hashed into the manifest together with the
+   transform implementation version; a change creates a new version and never
+   mutates an existing one.
+
+7. **Default no-cross-trading-day labels**: labels must not span a
    trading-day boundary unless a label spec explicitly opts in and defines
    the boundary rule.
 
-6. **Missing and incomplete data**: missing bars are recorded, never
-   interpolated; incomplete label horizons are declared
+8. **Default adjustment NONE**: the default leakage-safe dataset policy uses
+   `adjustment = NONE`, because adjusted prices embed corporate-action
+   information that can leak forward. Any adjusted-price dataset must declare
+   and version its adjustment and corporate-action as-of policy in the
+   manifest.
+
+9. **Missing and incomplete data**: canonical market bars contain only
+   observed bars — no synthetic OHLCV rows and no interpolation. Gaps are
+   recorded in a separate manifest section or canonical gap sidecar. V0.3
+   cannot detect every leading/trailing/session gap without an authoritative
+   per-date session schedule, so the gap sidecar records only gaps the audits
+   can establish. Incomplete label horizons are declared
    `label_status: INCOMPLETE` and excluded from training splits by default.
 
-7. **Deterministic datasets**: each generated dataset has a manifest with a
-   deterministic `dataset_id` hash over (spec versions, source snapshot IDs,
-   sample rules, split config). Identical inputs produce identical IDs and
-   identical sample bytes.
+10. **Chronological splits with actual-label-end purging**: splits are
+    date-ordered over canonical `event_time`; a sample is purged from the
+    earlier split when its **actual `label_end_time`** crosses the split
+    boundary (logged in the manifest). A nominal maximum-horizon purge is
+    only an optimization when it provably equals the actual-label-end rule.
 
-8. **Chronological splits with boundary purging**: splits are date-ordered
-   over canonical `event_time`; samples whose label horizon crosses a split
-   boundary are purged from the earlier split (log of purged samples in the
-   manifest).
+11. **Leakage threat model** (future-bar leakage via `market_available_at`,
+    archive-time leakage via `archive_available_at`/`dataset_as_of`,
+    cross-split label leakage via `label_end_time`, adjustment/corporate-
+    action leakage via the `adjustment = NONE` default, snapshot
+    substitution, spec drift, completion ambiguity, timezone
+    misattribution) is a tested contract of the dataset layer.
 
-9. **Leakage threat model** (future-bar leakage, cross-split label leakage,
-   snapshot substitution, spec drift, completion ambiguity, timezone
-   misattribution) is a tested contract of the dataset layer, not an
-   afterthought.
-
-10. **Out of scope for V0.4.0**: ML libraries, model training/inference,
+12. **Out of scope for V0.4.0**: ML libraries, model training/inference,
     reconstruction of unavailable historical fields, gap repair, source-data
     mutation, and any change to V0.3 runtime behavior.
 
@@ -91,22 +136,24 @@ Constraints:
 - One canonical implementation of completion gating, snapshot selection, and
   point-in-time rules, tested once and reused by every dataset build.
 - Deterministic, auditable datasets: every sample is traceable to a physical
-  snapshot and spec versions.
+  snapshot, spec versions, and content hashes.
 - V0.3 storage remains the single source of truth; canonicalization is a
-  pure read.
+  pure read, and dataset exports are derived artifacts, never another
+  authority.
 
 ### Negative
 
 - A new layer of stored data (canonical rows) adds storage overhead and a new
   builder that must be kept audited.
-- Point-in-time strictness can exclude usable data (incomplete horizons,
-  cross-split purging); consumers must opt in explicitly for relaxed rules.
+- Point-in-time strictness and the `adjustment = NONE` default can exclude
+  usable data (incomplete horizons, cross-split purging, adjusted prices);
+  consumers must opt in explicitly for relaxed rules.
 
 ### Neutral
 
 - Feature/Label/Sample/Dataset remain generated, so ML-specific code lives
   outside the runtime package unless a later decision materializes it.
-- The exact `available_at` definition depends on resolving the flagged
+- The exact `market_available_at` definition depends on resolving the flagged
   timestamp semantics in code inspection.
 
 ## Unresolved questions
@@ -114,8 +161,17 @@ Constraints:
 1. Exact semantics of per-row `ingested_at` (stamp time, precision, timezone
    after Parquet round trips) — requires reading
    `src/market_vault/normalization/bars.py` and the catalog query layer.
-2. Whether canonical rows are stored as one Parquet file per
+2. Whether `time_key` is interval-start time — requires verifying the OpenD
+   collector and normalization semantics; `event_time` stays operationally
+   defined until then.
+3. Whether canonical rows are stored as one Parquet file per
    (dataset_kind, builder_version) or partitioned per trade date — deferred
    to PR-3 of the proposed sequence.
-3. Whether the default no-cross-trading-day policy should also forbid
+4. Whether the default no-cross-trading-day policy should also forbid
    overnight (OVERNIGHT-session) labels — deferred to label-spec review.
+
+## Status note
+
+This ADR remains **proposed** while the corrected decision is under review.
+It is changed to **accepted** only when the corrected decision is ready to
+merge.
