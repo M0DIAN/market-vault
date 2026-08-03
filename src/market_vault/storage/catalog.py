@@ -14,14 +14,23 @@ from ..models import DatasetRunManifest, QualityResult, RunManifest, Settings
 
 @dataclass(frozen=True)
 class CompleteSnapshotRef:
-    """Reference to one immutable complete snapshot of a (code, trade date)."""
+    """Reference to one immutable complete physical snapshot of a (code, trade date)."""
 
     code: str
     requested_trade_date: date
     ingestion_run_id: str
+    snapshot_file: str
     snapshot_ingested_at: datetime | None
     run_finished_at: datetime | None
     row_count: int
+
+
+@dataclass(frozen=True)
+class SnapshotRows:
+    """Rows of a single physical snapshot plus its own column schema."""
+
+    frame: pd.DataFrame
+    physical_columns: set[str]
 
 #: Stable order for incomplete-item reasons reported to audits.
 INCOMPLETE_REASON_PRIORITY = (
@@ -610,14 +619,18 @@ class Catalog:
         adjustment: str,
         source_schema_version: str,
     ) -> dict[tuple[str, date], CompleteSnapshotRef]:
-        """Latest complete snapshot per (code, trade_date) for the exact key.
+        """Latest complete physical snapshot per (code, trade_date) for the
+        exact key.
 
         Snapshot eligibility is identical to completed_market_bar_items: exact
         curated key match, run linked to ingestion_runs, run status SUCCESS or
         PARTIAL, no FAIL quality result, and run metadata matching the curated
-        row. When several complete snapshots exist, the newest wins by
-        snapshot_ingested_at DESC NULLS LAST, run_finished_at DESC NULLS LAST,
-        ingestion_run_id DESC -- stable and deterministic.
+        row. The curated glob is read with ``filename = true`` so each Parquet
+        file is its own physical snapshot; the same run id in two files yields
+        two snapshots and their row counts are never merged. The newest wins
+        by snapshot_ingested_at DESC NULLS LAST, run_finished_at DESC NULLS
+        LAST, ingestion_run_id DESC, snapshot_file DESC -- stable and
+        deterministic.
         """
         self.initialize()
         files, curated_glob = self._market_bars_curated_glob(self.settings)
@@ -657,8 +670,14 @@ class Catalog:
                         {session_expr},
                         {schema_expr},
                         {run_id_expr},
-                        {ingested_expr}
-                    FROM read_parquet('{curated_glob}', union_by_name = true, hive_partitioning = true)
+                        {ingested_expr},
+                        filename
+                    FROM read_parquet(
+                        '{curated_glob}',
+                        union_by_name = true,
+                        hive_partitioning = true,
+                        filename = true
+                    )
                     WHERE requested_trade_date >= ?
                       AND requested_trade_date <= ?
                       AND code IN ({codes_clause})
@@ -668,6 +687,7 @@ class Catalog:
                         c.code,
                         c.requested_trade_date,
                         c.ingestion_run_id,
+                        c.filename AS snapshot_file,
                         MAX(c.ingested_at) AS snapshot_ingested_at,
                         COUNT(*) AS row_count,
                         r.finished_at AS run_finished_at
@@ -686,7 +706,12 @@ class Catalog:
                       AND c.ingestion_run_id NOT IN (
                           SELECT run_id FROM quality_results WHERE result = 'FAIL'
                       )
-                    GROUP BY c.code, c.requested_trade_date, c.ingestion_run_id, r.finished_at
+                    GROUP BY
+                        c.code,
+                        c.requested_trade_date,
+                        c.ingestion_run_id,
+                        c.filename,
+                        r.finished_at
                 ),
                 ranked AS (
                     SELECT *,
@@ -695,7 +720,8 @@ class Catalog:
                                ORDER BY
                                    snapshot_ingested_at DESC NULLS LAST,
                                    run_finished_at DESC NULLS LAST,
-                                   ingestion_run_id DESC
+                                   ingestion_run_id DESC,
+                                   snapshot_file DESC
                            ) AS _rn
                     FROM eligible
                 )
@@ -703,6 +729,7 @@ class Catalog:
                     code,
                     requested_trade_date,
                     ingestion_run_id,
+                    snapshot_file,
                     snapshot_ingested_at,
                     run_finished_at,
                     row_count
@@ -725,68 +752,100 @@ class Catalog:
                 code=row[0],
                 requested_trade_date=row[1],
                 ingestion_run_id=row[2],
-                snapshot_ingested_at=row[3],
-                run_finished_at=row[4],
-                row_count=int(row[5]),
+                snapshot_file=self._normalize_snapshot_file(row[3]),
+                snapshot_ingested_at=row[4],
+                run_finished_at=row[5],
+                row_count=int(row[6]),
             )
             for row in rows
         }
 
     def market_bar_snapshot_rows(
         self,
+        snapshot: CompleteSnapshotRef,
         *,
-        code: str,
-        trade_date: date,
-        ingestion_run_id: str,
         interval: str,
         requested_session: str,
         adjustment: str,
         source_schema_version: str,
-    ) -> pd.DataFrame:
-        """All raw rows of one immutable snapshot for the exact key.
+    ) -> SnapshotRows:
+        """All rows of one physical snapshot file for the exact key.
 
-        Reads from market_bars_snapshots, keeps duplicates (no dedup), filters
-        exactly on every request-key parameter plus the run id, and sorts by
-        time_utc for audit purposes. Never modifies stored data.
+        Reads only ``snapshot.snapshot_file`` -- never a glob or another
+        curated file -- keeps duplicates, filters exactly on every request-key
+        parameter plus the run id, and sorts by time_utc. ``physical_columns``
+        reflects the schema of the selected file only, so other files cannot
+        mask missing columns. Never modifies stored data and does not depend
+        on the public market_bars view being creatable.
         """
-        if not self.refresh_market_bars_view():
-            return pd.DataFrame()
-        columns = self.market_bars_snapshot_columns()
-        required_filters = {
-            "code",
-            "requested_trade_date",
-            "interval",
-            "adjustment",
-            "requested_session",
-            "source_schema_version",
-            "ingestion_run_id",
-        }
-        if not required_filters.issubset(columns):
-            return pd.DataFrame()
-        order_by = " ORDER BY time_utc" if "time_utc" in columns else ""
-        sql = f"""
-            SELECT *
-            FROM market_bars_snapshots
-            WHERE code = ?
-              AND requested_trade_date = ?
-              AND interval = ?
-              AND adjustment = ?
-              AND requested_session = ?
-              AND source_schema_version = ?
-              AND ingestion_run_id = ?
-            {order_by}
-        """
-        params: list[object] = [
-            code,
-            trade_date,
-            interval,
-            adjustment,
-            requested_session,
-            source_schema_version,
-            ingestion_run_id,
-        ]
+        file_path = self._resolve_snapshot_file(snapshot.snapshot_file)
+        if file_path is None or not file_path.exists():
+            return SnapshotRows(frame=pd.DataFrame(), physical_columns=set())
+        escaped = file_path.as_posix().replace("'", "''")
         with self.connect() as con:
-            return con.execute(sql, params).fetchdf()
+            physical_columns = {
+                row[0]
+                for row in con.execute(f"DESCRIBE SELECT * FROM read_parquet('{escaped}')").fetchall()
+            }
+            required_filters = {
+                "code",
+                "requested_trade_date",
+                "interval",
+                "adjustment",
+                "requested_session",
+                "source_schema_version",
+                "ingestion_run_id",
+            }
+            if not required_filters.issubset(physical_columns):
+                # The physical file lacks a filter column, so its rows cannot
+                # be attributed to the request key; report the real schema.
+                return SnapshotRows(frame=pd.DataFrame(), physical_columns=physical_columns)
+            order_by = " ORDER BY time_utc" if "time_utc" in physical_columns else ""
+            sql = f"""
+                SELECT *
+                FROM read_parquet('{escaped}')
+                WHERE code = ?
+                  AND requested_trade_date = ?
+                  AND interval = ?
+                  AND adjustment = ?
+                  AND requested_session = ?
+                  AND source_schema_version = ?
+                  AND ingestion_run_id = ?
+                {order_by}
+            """
+            params: list[object] = [
+                snapshot.code,
+                snapshot.requested_trade_date,
+                interval,
+                adjustment,
+                requested_session,
+                source_schema_version,
+                snapshot.ingestion_run_id,
+            ]
+            frame = con.execute(sql, params).fetchdf()
+        return SnapshotRows(frame=frame, physical_columns=physical_columns)
+
+    def _normalize_snapshot_file(self, filename: str | None) -> str:
+        """Normalize a DuckDB filename virtual column to a data-root relative path."""
+        if not filename:
+            return ""
+        path = Path(str(filename))
+        try:
+            return path.relative_to(self.settings.data_root).as_posix()
+        except ValueError:
+            # Defensive: paths outside the data root keep only their filename.
+            return path.name
+
+    def _resolve_snapshot_file(self, snapshot_file: str) -> Path | None:
+        """Resolve a snapshot file path, refusing paths outside the curated
+        market-bars root."""
+        curated_root = (
+            self.settings.data_root / "curated" / f"source={self.settings.source}" / "dataset=market_bars"
+        ).resolve()
+        path = (self.settings.data_root / snapshot_file).resolve()
+        if not path.is_relative_to(curated_root):
+            return None
+        return path
 
     def trading_dates_after(
         self,

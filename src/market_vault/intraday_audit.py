@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from uuid import uuid4
 
 import pandas as pd
@@ -84,12 +83,27 @@ def parse_intraday_interval(value: str) -> timedelta:
     return timedelta(seconds=INTERVAL_SECONDS[text])
 
 
+def session_occurrence_date(time_market: pd.Timestamp, session: str) -> date:
+    """Calendar-date key of a session occurrence in market time.
+
+    20:00 D through 03:59 D+1 belong to the same OVERNIGHT occurrence keyed
+    by D; every other session is keyed by its own local calendar date. The
+    key only separates observations, never predicts session boundaries.
+    """
+    local_date = time_market.date()
+    local_time = time_market.timetz().replace(tzinfo=None)
+    if session == "OVERNIGHT" and local_time < time(4, 0):
+        return local_date - timedelta(days=1)
+    return local_date
+
+
 @dataclass
 class CheckResult:
     name: str
     status: str
     details: str | None = None
     mismatch_count: int | None = None
+    field_mismatch_counts: dict[str, int] | None = None
 
     def as_dict(self) -> dict:
         return {
@@ -97,6 +111,7 @@ class CheckResult:
             "status": self.status,
             "details": self.details,
             "mismatch_count": self.mismatch_count,
+            "field_mismatch_counts": self.field_mismatch_counts,
         }
 
 
@@ -145,6 +160,7 @@ class GapDetail:
 @dataclass
 class SelectedSnapshotInfo:
     ingestion_run_id: str
+    snapshot_file: str
     snapshot_ingested_at: str | None
     run_finished_at: str | None
     row_count: int
@@ -152,6 +168,7 @@ class SelectedSnapshotInfo:
     def as_dict(self) -> dict:
         return {
             "ingestion_run_id": self.ingestion_run_id,
+            "snapshot_file": self.snapshot_file,
             "snapshot_ingested_at": self.snapshot_ingested_at,
             "run_finished_at": self.run_finished_at,
             "row_count": self.row_count,
@@ -291,7 +308,7 @@ class IntradayAuditReport:
     status: str = FAILED
     parameters: dict = field(default_factory=dict)
     calendar: IntradayCalendarInfo | None = None
-    summary: IntradaySummary = field(default_factory=IntradaySummary)
+    summary: IntradaySummary | None = None
     symbols: list[IntradaySymbolReport] = field(default_factory=list)
     report_file: str | None = None
 
@@ -305,7 +322,7 @@ class IntradayAuditReport:
             "status": self.status,
             "parameters": self.parameters,
             "calendar": self.calendar.as_dict() if self.calendar else None,
-            "summary": self.summary.as_dict(),
+            "summary": self.summary.as_dict() if self.summary else None,
             "symbols": [symbol.as_dict(include_pass_checks) for symbol in self.symbols],
             "report_file": self.report_file,
         }
@@ -396,7 +413,10 @@ def run_intraday_audit(
         expected_trade_dates=[value.isoformat() for value in state.expected_trade_dates],
     )
     if state.calendar_coverage_gaps:
+        # The expected trading-day set is not fully determined: no summary,
+        # no coverage percentage, and no bar-level classification.
         report.status = FAILED
+        report.summary = None
         _finish_intraday_report(report, settings)
         return report
 
@@ -477,18 +497,17 @@ def _audit_complete_snapshot(
     schema: str,
     max_gap_details: int,
 ) -> ItemAuditResult:
-    df = catalog.market_bar_snapshot_rows(
-        code=ref.code,
-        trade_date=ref.requested_trade_date,
-        ingestion_run_id=ref.ingestion_run_id,
+    rows = catalog.market_bar_snapshot_rows(
+        ref,
         interval=interval_value,
         requested_session=requested_session,
         adjustment=adjustment,
         source_schema_version=schema,
     )
     structure = _audit_snapshot_structure(
-        df,
+        rows.frame,
         ref,
+        physical_columns=rows.physical_columns,
         interval_value=interval_value,
         interval_seconds=interval_seconds,
         requested_session=requested_session,
@@ -507,6 +526,7 @@ def _audit_complete_snapshot(
         audit_status=FAILED if has_fail else WARN if has_warn else PASS,
         selected_snapshot=SelectedSnapshotInfo(
             ingestion_run_id=ref.ingestion_run_id,
+            snapshot_file=ref.snapshot_file,
             snapshot_ingested_at=_iso_timestamp(ref.snapshot_ingested_at),
             run_finished_at=_iso_timestamp(ref.run_finished_at),
             row_count=ref.row_count,
@@ -527,6 +547,7 @@ def _audit_snapshot_structure(
     df: pd.DataFrame,
     ref,
     *,
+    physical_columns: set[str],
     interval_value: str,
     interval_seconds: int,
     requested_session: str,
@@ -536,7 +557,10 @@ def _audit_snapshot_structure(
     checks: list[CheckResult] = []
     gaps: list[GapDetail] = []
 
-    missing_columns = REQUIRED_COLUMNS - set(df.columns)
+    # REQUIRED_COLUMNS is judged against the selected physical file's own
+    # schema; a union schema from other snapshot files must not mask a
+    # missing column here.
+    missing_columns = REQUIRED_COLUMNS - physical_columns
     if missing_columns:
         checks.append(
             CheckResult(
@@ -605,13 +629,19 @@ def _audit_snapshot_structure(
         "source_schema_version": schema,
         "ingestion_run_id": ref.ingestion_run_id,
     }
-    mismatch_rows = 0
+    # Rows with any mismatching field are counted once; field_mismatch_counts
+    # keeps the per-field row counts for diagnosis.
+    mismatch_mask = pd.Series(False, index=df.index)
+    field_mismatch_counts: dict[str, int] = {}
     for column, expected in expected_metadata.items():
         if isinstance(expected, date):
             column_dates = pd.to_datetime(df[column], errors="coerce").dt.date
-            mismatch_rows += int((column_dates != expected).sum())
+            field_mismatch = column_dates != expected
         else:
-            mismatch_rows += int((df[column].astype(str) != str(expected)).sum())
+            field_mismatch = df[column].astype(str) != str(expected)
+        field_mismatch_counts[column] = int(field_mismatch.sum())
+        mismatch_mask |= field_mismatch
+    mismatch_rows = int(mismatch_mask.sum())
     if mismatch_rows:
         checks.append(
             CheckResult(
@@ -619,6 +649,7 @@ def _audit_snapshot_structure(
                 "FAIL",
                 f"{mismatch_rows} rows differ from the requested request key",
                 mismatch_count=mismatch_rows,
+                field_mismatch_counts=field_mismatch_counts,
             )
         )
     else:
@@ -742,21 +773,18 @@ def _audit_snapshot_structure(
             )
         )
     else:
-        observed_sessions = set(df["session"].astype(str))
-        unknown_count = int((df["session"] == "UNKNOWN").sum())
-        disallowed = sorted(observed_sessions - allowed)
-        if unknown_count or disallowed:
-            details = []
-            if unknown_count:
-                details.append(f"{unknown_count} UNKNOWN labels")
-            if disallowed:
-                details.append(f"labels outside scope: {disallowed}")
+        stored_sessions = df["session"].astype(str)
+        scope_mismatch_mask = ~stored_sessions.isin(allowed)
+        scope_mismatch_count = int(scope_mismatch_mask.sum())
+        if scope_mismatch_count:
+            per_label = stored_sessions[scope_mismatch_mask].value_counts()
+            label_counts = ", ".join(f"{label}: {count}" for label, count in per_label.items())
             checks.append(
                 CheckResult(
                     CHECK_REQUESTED_SESSION_SCOPE,
                     "FAIL",
-                    "; ".join(details),
-                    mismatch_count=unknown_count + len(disallowed),
+                    f"{scope_mismatch_count} rows outside the requested scope ({label_counts})",
+                    mismatch_count=scope_mismatch_count,
                 )
             )
         else:
@@ -854,25 +882,33 @@ def _audit_snapshot_structure(
 def _split_session_segments(df: pd.DataFrame, interval_seconds: int) -> list[dict]:
     """Split rows into contiguous observed session segments.
 
-    A new segment starts whenever the session label differs from the previous
-    row; deltas and gaps are only computed inside one segment, so two separate
-    OVERNIGHT segments are never compared against each other.
+    A new segment starts whenever the canonical session label (recomputed
+    with market_session_label) differs from the previous row, or when the
+    session occurrence date changes -- so two OVERNIGHT observations on
+    consecutive calendar days stay separate. Deltas and gaps are only
+    computed inside one segment; JSON output uses market time while delta
+    arithmetic always uses UTC instants.
     """
     segments: list[dict] = []
     current_session: str | None = None
-    segment_rows: list[pd.Timestamp] = []
-    segment_first: pd.Timestamp | None = None
-    segment_last: pd.Timestamp | None = None
+    current_occurrence: date | None = None
+    utc_rows: list[pd.Timestamp] = []
+    market_rows: list[pd.Timestamp] = []
+    segment_first_market: pd.Timestamp | None = None
+    segment_last_market: pd.Timestamp | None = None
 
     def flush() -> None:
-        nonlocal segment_rows, current_session, segment_first, segment_last
-        if not segment_rows:
+        nonlocal utc_rows, market_rows, current_session, current_occurrence
+        nonlocal segment_first_market, segment_last_market
+        if not utc_rows:
             return
         segment_id = len(segments) + 1
         grid_violations = 0
         gap_details: list[GapDetail] = []
-        for prev, cur in zip(segment_rows, segment_rows[1:]):
-            delta = (cur - prev).total_seconds()
+        for prev_utc, cur_utc, prev_market, cur_market in zip(
+            utc_rows, utc_rows[1:], market_rows, market_rows[1:]
+        ):
+            delta = (cur_utc - prev_utc).total_seconds()
             if delta <= 0 or delta % interval_seconds != 0:
                 grid_violations += 1
             elif delta > interval_seconds:
@@ -880,8 +916,8 @@ def _split_session_segments(df: pd.DataFrame, interval_seconds: int) -> list[dic
                     GapDetail(
                         session=current_session or "UNKNOWN",
                         segment_id=segment_id,
-                        previous_time_market=_iso_timestamp(prev) or "",
-                        next_time_market=_iso_timestamp(cur) or "",
+                        previous_time_market=_iso_timestamp(prev_market) or "",
+                        next_time_market=_iso_timestamp(cur_market) or "",
                         delta_seconds=int(delta),
                         estimated_missing_bars=int(delta // interval_seconds - 1),
                     )
@@ -891,9 +927,9 @@ def _split_session_segments(df: pd.DataFrame, interval_seconds: int) -> list[dic
                 "info": SegmentInfo(
                     segment_id=segment_id,
                     session=current_session or "UNKNOWN",
-                    first_time_market=_iso_timestamp(segment_first),
-                    last_time_market=_iso_timestamp(segment_last),
-                    row_count=len(segment_rows),
+                    first_time_market=_iso_timestamp(segment_first_market),
+                    last_time_market=_iso_timestamp(segment_last_market),
+                    row_count=len(utc_rows),
                     internal_gap_count=len(gap_details),
                     estimated_missing_bar_count=sum(
                         gap.estimated_missing_bars for gap in gap_details
@@ -903,20 +939,26 @@ def _split_session_segments(df: pd.DataFrame, interval_seconds: int) -> list[dic
                 "gaps": gap_details,
             }
         )
-        segment_rows = []
+        utc_rows = []
+        market_rows = []
         current_session = None
-        segment_first = None
-        segment_last = None
+        current_occurrence = None
+        segment_first_market = None
+        segment_last_market = None
 
     for row in df.itertuples(index=False):
-        session = str(getattr(row, "session"))
-        timestamp = getattr(row, "time_utc")
-        if session != current_session:
+        time_utc_ts = getattr(row, "time_utc")
+        time_market_ts = getattr(row, "time_market")
+        session = market_session_label(time_market_ts)
+        occurrence = session_occurrence_date(time_market_ts, session)
+        if session != current_session or occurrence != current_occurrence:
             flush()
             current_session = session
-            segment_first = timestamp
-        segment_rows.append(timestamp)
-        segment_last = timestamp
+            current_occurrence = occurrence
+            segment_first_market = time_market_ts
+        utc_rows.append(time_utc_ts)
+        market_rows.append(time_market_ts)
+        segment_last_market = time_market_ts
     flush()
     return segments
 

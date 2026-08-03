@@ -475,17 +475,25 @@ def test_snapshot_selection_empty_without_complete_snapshot(tmp_path):
 # --- Snapshot reading -------------------------------------------------------
 
 
+def snapshot_ref(cfg: Settings, code: str = "US.MU", trade_date: date = date(2026, 7, 1)) -> object:
+    refs = Catalog(cfg).latest_complete_market_bar_snapshots(
+        symbols=[code], trade_dates=[trade_date], interval="1m",
+        requested_session="ALL", adjustment="NONE", source_schema_version="10.9",
+    )
+    return refs[(code, trade_date)]
+
+
 def test_snapshot_rows_exact_run_id(tmp_path):
     cfg = settings(tmp_path)
     us_calendar(cfg)
     write_snapshot(cfg, codes=["US.MU"], trade_date=date(2026, 7, 1), run_id="run-a",
                    time_keys=minute_keys("2026-07-01 09:30:00", 5))
-    df = Catalog(cfg).market_bar_snapshot_rows(
-        code="US.MU", trade_date=date(2026, 7, 1), ingestion_run_id="run-a",
+    rows = Catalog(cfg).market_bar_snapshot_rows(
+        snapshot_ref(cfg),
         interval="1m", requested_session="ALL", adjustment="NONE", source_schema_version="10.9",
     )
-    assert len(df) == 5
-    assert set(df["ingestion_run_id"]) == {"run-a"}
+    assert len(rows.frame) == 5
+    assert set(rows.frame["ingestion_run_id"]) == {"run-a"}
 
 
 def test_snapshot_rows_keep_duplicate_timestamps(tmp_path):
@@ -499,11 +507,11 @@ def test_snapshot_rows_keep_duplicate_timestamps(tmp_path):
         time_keys=minute_keys("2026-07-01 09:30:00", 5),
         mutate=lambda df: pd.concat([df, df.iloc[[0]]], ignore_index=True),
     )
-    df = Catalog(cfg).market_bar_snapshot_rows(
-        code="US.MU", trade_date=date(2026, 7, 1), ingestion_run_id="run-a",
+    rows = Catalog(cfg).market_bar_snapshot_rows(
+        snapshot_ref(cfg),
         interval="1m", requested_session="ALL", adjustment="NONE", source_schema_version="10.9",
     )
-    assert len(df) == 6
+    assert len(rows.frame) == 6
 
 
 def test_snapshot_rows_do_not_mix_old_snapshot(tmp_path):
@@ -513,11 +521,11 @@ def test_snapshot_rows_do_not_mix_old_snapshot(tmp_path):
                    time_keys=minute_keys("2026-07-01 09:30:00", 5))
     write_snapshot(cfg, codes=["US.MU"], trade_date=date(2026, 7, 1), run_id="run-b",
                    time_keys=minute_keys("2026-07-01 09:30:00", 5))
-    df = Catalog(cfg).market_bar_snapshot_rows(
-        code="US.MU", trade_date=date(2026, 7, 1), ingestion_run_id="run-b",
+    rows = Catalog(cfg).market_bar_snapshot_rows(
+        snapshot_ref(cfg),
         interval="1m", requested_session="ALL", adjustment="NONE", source_schema_version="10.9",
     )
-    assert set(df["ingestion_run_id"]) == {"run-b"}
+    assert set(rows.frame["ingestion_run_id"]) == {"run-b"}
 
 
 def test_snapshot_rows_do_not_mix_other_symbol(tmp_path):
@@ -525,11 +533,11 @@ def test_snapshot_rows_do_not_mix_other_symbol(tmp_path):
     us_calendar(cfg)
     write_snapshot(cfg, codes=["US.MU", "US.NVDA"], trade_date=date(2026, 7, 1), run_id="run-a",
                    time_keys=minute_keys("2026-07-01 09:30:00", 5))
-    df = Catalog(cfg).market_bar_snapshot_rows(
-        code="US.MU", trade_date=date(2026, 7, 1), ingestion_run_id="run-a",
+    rows = Catalog(cfg).market_bar_snapshot_rows(
+        snapshot_ref(cfg),
         interval="1m", requested_session="ALL", adjustment="NONE", source_schema_version="10.9",
     )
-    assert set(df["code"]) == {"US.MU"}
+    assert set(rows.frame["code"]) == {"US.MU"}
 
 
 def test_snapshot_rows_do_not_mix_other_date(tmp_path):
@@ -539,12 +547,12 @@ def test_snapshot_rows_do_not_mix_other_date(tmp_path):
                    time_keys=minute_keys("2026-07-01 09:30:00", 5))
     write_snapshot(cfg, codes=["US.MU"], trade_date=date(2026, 7, 2), run_id="run-2",
                    time_keys=minute_keys("2026-07-02 09:30:00", 5))
-    df = Catalog(cfg).market_bar_snapshot_rows(
-        code="US.MU", trade_date=date(2026, 7, 1), ingestion_run_id="run-1",
+    rows = Catalog(cfg).market_bar_snapshot_rows(
+        snapshot_ref(cfg, trade_date=date(2026, 7, 1)),
         interval="1m", requested_session="ALL", adjustment="NONE", source_schema_version="10.9",
     )
     # DuckDB reads DATE columns back as midnight timestamps.
-    assert {value.date() for value in df["requested_trade_date"]} == {date(2026, 7, 1)}
+    assert {value.date() for value in rows.frame["requested_trade_date"]} == {date(2026, 7, 1)}
 
 
 def test_snapshot_rows_do_not_mix_other_request_key(tmp_path):
@@ -554,11 +562,11 @@ def test_snapshot_rows_do_not_mix_other_request_key(tmp_path):
                    time_keys=minute_keys("2026-07-01 09:30:00", 5), interval="1m")
     write_snapshot(cfg, codes=["US.MU"], trade_date=date(2026, 7, 1), run_id="run-5m",
                    time_keys=minute_keys("2026-07-01 09:30:00", 5), interval="5m")
-    df = Catalog(cfg).market_bar_snapshot_rows(
-        code="US.MU", trade_date=date(2026, 7, 1), ingestion_run_id="run-1m",
+    rows = Catalog(cfg).market_bar_snapshot_rows(
+        snapshot_ref(cfg),
         interval="1m", requested_session="ALL", adjustment="NONE", source_schema_version="10.9",
     )
-    assert set(df["interval"]) == {"1m"}
+    assert set(rows.frame["interval"]) == {"1m"}
 
 
 def test_snapshot_rows_sorted_by_time_utc(tmp_path):
@@ -566,11 +574,11 @@ def test_snapshot_rows_sorted_by_time_utc(tmp_path):
     us_calendar(cfg)
     write_snapshot(cfg, codes=["US.MU"], trade_date=date(2026, 7, 1), run_id="run-a",
                    time_keys=list(reversed(minute_keys("2026-07-01 09:30:00", 5))))
-    df = Catalog(cfg).market_bar_snapshot_rows(
-        code="US.MU", trade_date=date(2026, 7, 1), ingestion_run_id="run-a",
+    rows = Catalog(cfg).market_bar_snapshot_rows(
+        snapshot_ref(cfg),
         interval="1m", requested_session="ALL", adjustment="NONE", source_schema_version="10.9",
     )
-    times = pd.to_datetime(df["time_utc"])
+    times = pd.to_datetime(rows.frame["time_utc"])
     assert times.is_monotonic_increasing
 
 
@@ -710,6 +718,7 @@ def test_structure_empty_snapshot_fails(tmp_path):
         code="US.MU",
         requested_trade_date=date(2026, 7, 1),
         ingestion_run_id="run-a",
+        snapshot_file="curated/source=moomoo/dataset=market_bars/interval=1m/requested_trade_date=2026-07-01/batch-x-run-a.parquet",
         snapshot_ingested_at=None,
         run_finished_at=None,
         row_count=0,
@@ -717,6 +726,7 @@ def test_structure_empty_snapshot_fails(tmp_path):
     structure = _audit_snapshot_structure(
         curated,
         ref,
+        physical_columns=set(curated.columns),
         interval_value="1m",
         interval_seconds=60,
         requested_session="ALL",
@@ -763,6 +773,7 @@ def test_structure_request_metadata_mismatch_fails(tmp_path):
         code="US.MU",
         requested_trade_date=date(2026, 7, 1),
         ingestion_run_id="run-a",
+        snapshot_file="curated/source=moomoo/dataset=market_bars/interval=1m/requested_trade_date=2026-07-01/batch-x-run-a.parquet",
         snapshot_ingested_at=None,
         run_finished_at=None,
         row_count=5,
@@ -770,6 +781,7 @@ def test_structure_request_metadata_mismatch_fails(tmp_path):
     structure = _audit_snapshot_structure(
         curated,
         ref,
+        physical_columns=set(curated.columns),
         interval_value="1m",
         interval_seconds=60,
         requested_session="ALL",
@@ -779,6 +791,7 @@ def test_structure_request_metadata_mismatch_fails(tmp_path):
     check = next(c for c in structure["checks"] if c.name == "EXACT_REQUEST_METADATA")
     assert check.status == "FAIL"
     assert check.mismatch_count == 5
+    assert check.field_mismatch_counts["requested_session"] == 5
 
 
 def test_structure_invalid_time_utc_fails(tmp_path):
@@ -1329,7 +1342,8 @@ def test_overall_calendar_gap_failed_and_no_bar_audit(tmp_path):
     assert report.status == "FAILED"
     assert report.calendar.coverage_complete is False
     assert report.calendar.coverage_gaps == [{"start_date": "2026-07-03", "end_date": "2026-07-03"}]
-    assert report.summary.audited_item_count == 0
+    assert report.summary is None
+    assert report.as_dict()["summary"] is None
     assert report.symbols == []
 
 
@@ -1689,6 +1703,339 @@ def test_include_pass_checks_only_changes_details(tmp_path):
     verbose_checks = verbose.symbols[0].items[0].as_dict(include_pass_checks=True)["checks"]
     assert len(verbose_checks) > len(default_checks)
     assert all(check["status"] != "PASS" for check in default_checks)
+
+
+# --- Physical snapshot isolation -------------------------------------------
+
+
+def test_snapshot_same_run_two_files_not_merged(tmp_path):
+    cfg = settings(tmp_path)
+    us_calendar(cfg)
+    # Two physical files with the same run id and the same (code, date):
+    # file-a only has US.MU, file-b has US.MU and US.NVDA.
+    write_snapshot(cfg, codes=["US.MU"], trade_date=date(2026, 7, 1), run_id="run-x",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 5),
+                   ingested_at="2026-07-01T12:00:00Z")
+    write_snapshot(cfg, codes=["US.MU", "US.NVDA"], trade_date=date(2026, 7, 1), run_id="run-x",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 5),
+                   ingested_at="2026-07-01T13:00:00Z")
+
+    refs = Catalog(cfg).latest_complete_market_bar_snapshots(
+        symbols=["US.MU"], trade_dates=[date(2026, 7, 1)], interval="1m",
+        requested_session="ALL", adjustment="NONE", source_schema_version="10.9",
+    )
+    ref = refs[("US.MU", date(2026, 7, 1))]
+    # Row counts are per physical file, never merged across the two files.
+    assert ref.row_count == 5
+    # The newest physical file (13:00 ingested_at) is selected; the file path
+    # identifies exactly one of the two files.
+    assert ref.snapshot_ingested_at is not None
+    # DuckDB surfaces timestamps in the session timezone; compare in UTC.
+    assert "T13:00" in ref.snapshot_ingested_at.astimezone(timezone.utc).isoformat()
+    assert ref.snapshot_file.startswith("curated/source=moomoo/dataset=market_bars/")
+    assert ref.snapshot_file.endswith(".parquet")
+    rows = Catalog(cfg).market_bar_snapshot_rows(
+        ref, interval="1m", requested_session="ALL", adjustment="NONE", source_schema_version="10.9",
+    )
+    assert len(rows.frame) == 5
+    assert set(rows.frame["code"]) == {"US.MU"}
+
+
+@pytest.mark.parametrize("dropped", ["open", "volume"])
+def test_physical_schema_missing_column_not_masked_by_other_file(tmp_path, dropped):
+    cfg = settings(tmp_path)
+    us_calendar(cfg)
+    # The newest complete snapshot lacks one required column; an older file
+    # still provides it, but the selected physical schema must not be masked.
+    write_snapshot(cfg, codes=["US.MU"], trade_date=date(2026, 7, 1), run_id="run-a",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 5),
+                   ingested_at="2026-07-01T13:00:00Z",
+                   mutate=lambda df: df.drop(columns=[dropped]))
+    write_snapshot(cfg, codes=["US.MU"], trade_date=date(2026, 7, 1), run_id="run-b",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 5),
+                   ingested_at="2026-07-01T12:00:00Z")
+
+    report = intraday_mu(cfg)
+    item = report.symbols[0].items[0]
+    assert item.selected_snapshot.ingestion_run_id == "run-a"
+    check = next(c for c in item.checks if c.name == "REQUIRED_COLUMNS")
+    assert check.status == "FAIL"
+    assert dropped in check.details
+    assert "Missing columns" in check.details
+    assert item.audit_status == "FAILED"
+
+
+def test_physical_schema_missing_ingested_at_not_masked(tmp_path):
+    cfg = settings(tmp_path)
+    us_calendar(cfg)
+    # Both files lack ingested_at (legacy-style), so the tie breaks on
+    # run_finished_at: run-a is newer and must be selected, and the audit
+    # still reports the genuinely missing ingested_at column.
+    write_snapshot(cfg, codes=["US.MU"], trade_date=date(2026, 7, 1), run_id="run-a",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 5),
+                   mutate=lambda df: df.drop(columns=["ingested_at"]),
+                   run_finished_at=datetime(2026, 7, 1, 13, 0, tzinfo=timezone.utc))
+    write_snapshot(cfg, codes=["US.MU"], trade_date=date(2026, 7, 1), run_id="run-b",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 5),
+                   mutate=lambda df: df.drop(columns=["ingested_at"]),
+                   run_finished_at=datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc))
+
+    report = intraday_mu(cfg)
+    item = report.symbols[0].items[0]
+    assert item.selected_snapshot.ingestion_run_id == "run-a"
+    check = next(c for c in item.checks if c.name == "REQUIRED_COLUMNS")
+    assert check.status == "FAIL"
+    assert "ingested_at" in check.details
+    assert item.audit_status == "FAILED"
+
+
+def test_public_market_bars_unavailable_still_audits_physical_file(tmp_path):
+    cfg = settings(tmp_path)
+    us_calendar(cfg)
+    # A snapshot missing time_utc breaks the public dedup view but the
+    # structural audit must still read the physical file and report the
+    # actually missing column instead of an empty frame.
+    write_snapshot(cfg, codes=["US.MU"], trade_date=date(2026, 7, 1), run_id="run-a",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 5),
+                   mutate=lambda df: df.drop(columns=["time_utc"]))
+
+    assert Catalog(cfg).refresh_market_bars_view() is False
+    report = intraday_mu(cfg)
+    item = report.symbols[0].items[0]
+    check = next(c for c in item.checks if c.name == "REQUIRED_COLUMNS")
+    assert check.status == "FAIL"
+    assert "time_utc" in check.details
+    # Only the genuinely missing column is reported, not the whole schema.
+    assert "Missing columns: ['time_utc']" == check.details
+
+
+def test_selected_snapshot_reports_relative_file(tmp_path):
+    cfg = settings(tmp_path)
+    us_calendar(cfg)
+    write_snapshot(cfg, codes=["US.MU"], trade_date=date(2026, 7, 1), run_id="run-ok",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 5))
+    report = intraday_mu(cfg)
+    item = report.symbols[0].items[0]
+    snapshot_file = item.selected_snapshot.snapshot_file
+    assert not Path(snapshot_file).is_absolute()
+    assert snapshot_file.startswith("curated/source=moomoo/dataset=market_bars/")
+    assert snapshot_file.endswith(".parquet")
+
+
+# --- Market-time segment/gap output -----------------------------------------
+
+
+def test_segment_times_use_market_time_with_offset(tmp_path):
+    cfg = settings(tmp_path)
+    us_calendar(cfg)
+    write_snapshot(cfg, codes=["US.MU"], trade_date=date(2026, 7, 1), run_id="run-ok",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 5))
+    report = intraday_mu(cfg)
+    segment = report.symbols[0].items[0].segments[0]
+    assert segment.first_time_market == "2026-07-01T09:30:00-04:00"
+    assert segment.last_time_market == "2026-07-01T09:34:00-04:00"
+
+
+def test_gap_times_use_market_time_with_offset(tmp_path):
+    cfg = settings(tmp_path)
+    us_calendar(cfg)
+    write_snapshot(cfg, codes=["US.MU"], trade_date=date(2026, 7, 1), run_id="run-ok",
+                   time_keys=["2026-07-01 09:30:00", "2026-07-01 09:32:00"])
+    report = intraday_mu(cfg)
+    gap = report.symbols[0].items[0].internal_gaps[0]
+    assert gap.previous_time_market == "2026-07-01T09:30:00-04:00"
+    assert gap.next_time_market == "2026-07-01T09:32:00-04:00"
+    # delta stays a UTC-instant difference.
+    assert gap.delta_seconds == 120
+
+
+def test_segment_times_winter_offset_minus_five(tmp_path):
+    cfg = settings(tmp_path)
+    us_calendar(cfg)
+    write_snapshot(cfg, codes=["US.MU"], trade_date=date(2026, 7, 1), run_id="run-ok",
+                   time_keys=["2026-01-15 09:30:00"])
+    report = intraday_mu(cfg)
+    segment = report.symbols[0].items[0].segments[0]
+    assert segment.first_time_market == "2026-01-15T09:30:00-05:00"
+
+
+# --- Session occurrence segmentation ----------------------------------------
+
+
+def test_segment_same_overnight_occurrence_connected(tmp_path):
+    cfg = settings(tmp_path)
+    us_calendar(cfg)
+    # 20:00 D through 03:59 D+1 belong to the same OVERNIGHT occurrence.
+    write_snapshot(
+        cfg,
+        codes=["US.MU"],
+        trade_date=date(2026, 7, 1),
+        run_id="run-ok",
+        time_keys=[
+            "2026-07-01 20:00:00",
+            "2026-07-01 20:01:00",
+            "2026-07-02 03:58:00",
+            "2026-07-02 03:59:00",
+        ],
+    )
+    report = intraday_mu(cfg)
+    item = report.symbols[0].items[0]
+    assert len(item.segments) == 1
+    assert item.segments[0].session == "OVERNIGHT"
+    assert item.segments[0].row_count == 4
+
+
+def test_segment_different_overnight_occurrences_not_connected(tmp_path):
+    cfg = settings(tmp_path)
+    us_calendar(cfg)
+    write_snapshot(
+        cfg,
+        codes=["US.MU"],
+        trade_date=date(2026, 7, 1),
+        run_id="run-ok",
+        time_keys=["2026-07-01 20:00:00", "2026-07-02 20:00:00"],
+    )
+    report = intraday_mu(cfg)
+    item = report.symbols[0].items[0]
+    assert [segment.session for segment in item.segments] == ["OVERNIGHT", "OVERNIGHT"]
+    assert item.internal_gaps == []
+    assert report.summary.internal_gap_count == 0
+
+
+def test_segment_cross_day_regular_not_connected(tmp_path):
+    cfg = settings(tmp_path)
+    us_calendar(cfg)
+    write_snapshot(
+        cfg,
+        codes=["US.MU"],
+        trade_date=date(2026, 7, 1),
+        run_id="run-ok",
+        time_keys=["2026-07-01 09:30:00", "2026-07-02 09:30:00"],
+    )
+    report = intraday_mu(cfg)
+    item = report.symbols[0].items[0]
+    assert [segment.session for segment in item.segments] == ["REGULAR", "REGULAR"]
+    assert item.internal_gaps == []
+    assert report.summary.internal_gap_count == 0
+
+
+# --- Calendar FAILED summary ------------------------------------------------
+
+
+def test_intraday_empty_calendar_summary_none(tmp_path):
+    cfg = settings(tmp_path)
+    report = intraday_mu(cfg)
+    assert report.status == "FAILED"
+    assert report.summary is None
+    assert report.as_dict()["summary"] is None
+    assert report.symbols == []
+
+
+# --- Metadata dedup and scope row counts ------------------------------------
+
+
+def test_metadata_mismatch_dedup_rows_and_field_counts(tmp_path):
+    from market_vault.intraday_audit import _audit_snapshot_structure
+    from market_vault.storage.catalog import CompleteSnapshotRef
+
+    cfg = settings(tmp_path)
+    raw = pd.DataFrame(
+        {
+            "code": ["US.MU"] * 5,
+            "name": ["US.MU"] * 5,
+            "time_key": minute_keys("2026-07-01 09:30:00", 5),
+            "open": [100.0] * 5,
+            "high": [101.0] * 5,
+            "low": [99.0] * 5,
+            "close": [100.5] * 5,
+            "volume": [100] * 5,
+        }
+    )
+    curated = normalize_bars(
+        raw,
+        requested_trade_date=date(2026, 7, 1),
+        interval="1m",
+        requested_session="ALL",
+        adjustment="NONE",
+        source="moomoo",
+        source_schema_version="10.9",
+        run_id="run-a",
+    )
+    curated = curated.copy()
+    # One row breaks three fields at once.
+    curated.loc[0, ["requested_session", "interval", "adjustment"]] = ["RTH", "5m", "QFQ"]
+    # A second row breaks one field.
+    curated.loc[1, "source_schema_version"] = "10.8"
+    ref = CompleteSnapshotRef(
+        code="US.MU",
+        requested_trade_date=date(2026, 7, 1),
+        ingestion_run_id="run-a",
+        snapshot_file="curated/source=moomoo/dataset=market_bars/interval=1m/requested_trade_date=2026-07-01/batch-x-run-a.parquet",
+        snapshot_ingested_at=None,
+        run_finished_at=None,
+        row_count=5,
+    )
+    structure = _audit_snapshot_structure(
+        curated,
+        ref,
+        physical_columns=set(curated.columns),
+        interval_value="1m",
+        interval_seconds=60,
+        requested_session="ALL",
+        adjustment="NONE",
+        schema="10.9",
+    )
+    check = next(c for c in structure["checks"] if c.name == "EXACT_REQUEST_METADATA")
+    assert check.status == "FAIL"
+    # Two distinct rows are wrong, not 4 (3 fields on one row plus 1).
+    assert check.mismatch_count == 2
+    assert check.field_mismatch_counts["requested_session"] == 1
+    assert check.field_mismatch_counts["interval"] == 1
+    assert check.field_mismatch_counts["adjustment"] == 1
+    assert check.field_mismatch_counts["source_schema_version"] == 1
+    assert check.field_mismatch_counts["code"] == 0
+    assert check.mismatch_count <= ref.row_count
+
+
+def test_session_scope_mismatch_count_rows(tmp_path):
+    cfg = settings(tmp_path)
+    us_calendar(cfg)
+    write_snapshot(
+        cfg,
+        codes=["US.MU"],
+        trade_date=date(2026, 7, 1),
+        run_id="run-a",
+        time_keys=minute_keys("2026-07-01 09:30:00", 5),
+        session="RTH",
+        mutate=lambda df: df.assign(session=["PRE_MARKET"] * 3 + ["REGULAR"] * 2),
+    )
+    report = intraday_mu(cfg, requested_session="RTH")
+    check = next(c for c in report.symbols[0].items[0].checks if c.name == "REQUESTED_SESSION_SCOPE")
+    assert check.status == "FAIL"
+    assert check.mismatch_count == 3
+    assert "PRE_MARKET: 3" in check.details
+
+
+def test_session_scope_mismatch_mixed_labels_row_counts(tmp_path):
+    cfg = settings(tmp_path)
+    us_calendar(cfg)
+    write_snapshot(
+        cfg,
+        codes=["US.MU"],
+        trade_date=date(2026, 7, 1),
+        run_id="run-a",
+        time_keys=minute_keys("2026-07-01 09:30:00", 6),
+        session="RTH",
+        mutate=lambda df: df.assign(
+            session=["PRE_MARKET"] * 2 + ["REGULAR"] * 3 + ["AFTER_HOURS"] * 1
+        ),
+    )
+    report = intraday_mu(cfg, requested_session="RTH")
+    check = next(c for c in report.symbols[0].items[0].checks if c.name == "REQUESTED_SESSION_SCOPE")
+    assert check.status == "FAIL"
+    assert check.mismatch_count == 3
+    assert "PRE_MARKET: 2" in check.details
+    assert "AFTER_HOURS: 1" in check.details
 
 
 def test_report_sorting_stable(tmp_path):
