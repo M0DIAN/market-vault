@@ -1487,6 +1487,114 @@ def test_incremental_symbols_use_their_own_next_trading_day(tmp_path):
     ]
 
 
+def test_incremental_missing_calendar_not_treated_as_caught_up(monkeypatch, tmp_path):
+    # The latest completed date (2026-07-03) is before end_date and the local
+    # calendar snapshot only covers up to 2026-07-03: the missing range must
+    # not be silently treated as "caught up". The plan fails, collect_history
+    # is never called, and no child run is recorded.
+    cfg = settings(tmp_path)
+    write_calendar_snapshot(
+        cfg,
+        market="US",
+        trade_dates=[date(2026, 7, 1), date(2026, 7, 2), date(2026, 7, 3)],
+        requested_start_date=date(2026, 7, 1),
+        requested_end_date=date(2026, 7, 3),
+    )
+    write_completed_bar(cfg, code="US.MU", trade_date=date(2026, 7, 3))
+    monkeypatch.setattr(
+        backfill_module,
+        "collect_history",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("collect_history must not be called")),
+    )
+
+    manifest = collect_history_backfill(
+        cfg,
+        symbols=["US.MU"],
+        end_date=date(2026, 7, 7),
+        calendar_market="US",
+        incremental=True,
+        today=date(2026, 8, 2),
+    )
+
+    assert manifest.status == "FAILED"
+    assert "Missing coverage" in manifest.failed_items["PLAN"]
+    assert "Run the calendar command first" in manifest.failed_items["PLAN"]
+    assert manifest.parameters["child_run_ids"] == []
+    assert manifest.parameters["successful_item_count"] == 0
+
+
+def test_incremental_covered_range_without_trading_days_allows_empty_plan(monkeypatch, tmp_path):
+    # The calendar snapshot's requested range fully covers 2026-07-04 to
+    # 2026-07-05 even though it has no trading-day rows there: the symbol is
+    # genuinely caught up and the run succeeds without calling collect_history.
+    cfg = settings(tmp_path)
+    write_calendar_snapshot(
+        cfg,
+        market="US",
+        trade_dates=[date(2026, 7, 1), date(2026, 7, 2), date(2026, 7, 3)],
+        requested_start_date=date(2026, 7, 1),
+        requested_end_date=date(2026, 7, 5),
+    )
+    write_completed_bar(cfg, code="US.MU", trade_date=date(2026, 7, 3))
+    monkeypatch.setattr(
+        backfill_module,
+        "collect_history",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("collect_history must not be called")),
+    )
+
+    manifest = collect_history_backfill(
+        cfg,
+        symbols=["US.MU"],
+        end_date=date(2026, 7, 5),
+        calendar_market="US",
+        incremental=True,
+        today=date(2026, 8, 2),
+    )
+
+    assert manifest.status == "SUCCESS"
+    assert manifest.successful_items == ["US.MU"]
+    assert manifest.parameters["trading_date_count"] == 0
+    assert manifest.parameters["child_run_ids"] == []
+    assert manifest.parameters["successful_item_count"] == 0
+
+
+def test_incremental_mixed_symbols_fail_when_calendar_coverage_missing(monkeypatch, tmp_path):
+    # US.MU finds its next trading day (2026-07-06), but US.NVDA's latest
+    # completed date (2026-07-06) is before end_date with no local calendar
+    # coverage afterwards. The whole plan must fail; US.NVDA must not be
+    # silently treated as caught up.
+    cfg = settings(tmp_path)
+    write_calendar_snapshot(
+        cfg,
+        market="US",
+        trade_dates=[date(2026, 7, 1), date(2026, 7, 6)],
+        requested_start_date=date(2026, 7, 1),
+        requested_end_date=date(2026, 7, 6),
+    )
+    write_completed_bar(cfg, code="US.MU", trade_date=date(2026, 7, 1))
+    write_completed_bar(cfg, code="US.NVDA", trade_date=date(2026, 7, 6))
+    monkeypatch.setattr(
+        backfill_module,
+        "collect_history",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("collect_history must not be called")),
+    )
+
+    manifest = collect_history_backfill(
+        cfg,
+        symbols=["US.MU", "US.NVDA"],
+        end_date=date(2026, 7, 7),
+        calendar_market="US",
+        incremental=True,
+        today=date(2026, 8, 2),
+    )
+
+    assert manifest.status == "FAILED"
+    assert "US.NVDA" in manifest.failed_items["PLAN"]
+    assert "Missing coverage" in manifest.failed_items["PLAN"]
+    assert manifest.parameters["child_run_ids"] == []
+    assert manifest.parameters["successful_item_count"] == 0
+
+
 def test_incremental_mixes_bootstrap_and_history_symbols(tmp_path):
     cfg = settings(tmp_path)
     write_calendar_snapshot(

@@ -171,12 +171,36 @@ def plan_history_backfill(
                 next_date = catalog.next_trading_date(scope_type, scope_value, latest_date, end_date)
                 if next_date is not None:
                     start_date_by_symbol[symbol] = next_date
+                elif latest_date >= end_date:
+                    # Already caught up: the latest completed date is at or
+                    # after the requested end, so there is nothing to collect
+                    # and no additional calendar coverage is required.
+                    start_date_by_symbol[symbol] = end_date + timedelta(days=1)
                 else:
-                    # The local calendar has no trading day after the latest
-                    # completed date within end_date: the symbol is caught up
-                    # and has no pending work for this run. Start beyond
-                    # end_date so it contributes no items and no coverage
-                    # requirement.
+                    # No next trading day between the latest completed date
+                    # and end_date. This can mean either that the calendar was
+                    # already queried over the whole range without trading
+                    # days, or that the local calendar does not cover it at
+                    # all. The latter must not be silently treated as caught
+                    # up: verify the snapshot's requested ranges cover
+                    # latest_date + 1 .. end_date and fail the plan otherwise.
+                    gap_start = latest_date + timedelta(days=1)
+                    ranges = catalog.trading_calendar_requested_ranges(
+                        scope_type,
+                        scope_value,
+                        gap_start,
+                        end_date,
+                    )
+                    gaps = missing_coverage_ranges(gap_start, end_date, ranges)
+                    if gaps:
+                        gap_text = ", ".join(f"{item[0].isoformat()} to {item[1].isoformat()}" for item in gaps)
+                        raise ValueError(
+                            "Local trading calendar does not cover the range after the latest "
+                            f"completed date for {symbol}. Missing coverage: {gap_text}. "
+                            "Run the calendar command first."
+                        )
+                    # The range after the latest completed date was already
+                    # queried and contains no trading days: caught up.
                     start_date_by_symbol[symbol] = end_date + timedelta(days=1)
             else:
                 assert bootstrap_start_date is not None
