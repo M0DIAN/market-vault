@@ -30,6 +30,40 @@ def infer_underlying(code: str) -> str | None:
     return f"{match.group('market')}.{match.group('root')}"
 
 
+def parse_market_time_key(series: pd.Series) -> pd.Series:
+    """Parse raw ``time_key`` values into America/New_York-aware timestamps.
+
+    Centralizes the semantics normalize_bars has always used: naive values are
+    localized to America/New_York (DST-ambiguous and nonexistent local times
+    raise), already-aware values are converted to America/New_York. The
+    resulting timestamps are the market-time instants of the bars.
+    """
+    parsed = pd.to_datetime(series, errors="raise")
+    if parsed.dt.tz is None:
+        parsed = parsed.dt.tz_localize(
+            ZoneInfo("America/New_York"), ambiguous="raise", nonexistent="raise"
+        )
+    else:
+        parsed = parsed.dt.tz_convert(ZoneInfo("America/New_York"))
+    return parsed
+
+
+def bar_available_at(market_time: pd.Timestamp, interval_seconds: int) -> pd.Timestamp:
+    """Market availability instant of a bar whose interval starts at
+    ``market_time``, expressed in UTC.
+
+    Under the adopted interval-start ``time_key`` interpretation, ``market_time
+    + interval`` is the exact earliest instant at which the complete OHLCV bar
+    could be known **only when the bar spans its full nominal interval**. For
+    bars that may be truncated at session boundaries or early closes it is a
+    conservative leakage-safe not-before bound; exact bar-end times require
+    authoritative per-date session schedules, which V0.3 does not have. This
+    is the v0.4 ``market_available_at`` rule; it is a pure computation and is
+    not part of any canonical materialization.
+    """
+    return (market_time + pd.Timedelta(seconds=interval_seconds)).tz_convert("UTC")
+
+
 def market_session_label(ts: pd.Timestamp) -> str:
     """Session label for a market-time instant, based on local wall-clock
     session boundaries in the timestamp's own timezone.
@@ -67,12 +101,7 @@ def normalize_bars(
         raise ValueError(f"Missing source columns: {sorted(missing)}")
 
     df = frame.copy()
-    market_tz = ZoneInfo("America/New_York")
-    parsed = pd.to_datetime(df["time_key"], errors="raise")
-    if parsed.dt.tz is None:
-        parsed = parsed.dt.tz_localize(market_tz, ambiguous="raise", nonexistent="raise")
-    else:
-        parsed = parsed.dt.tz_convert(market_tz)
+    parsed = parse_market_time_key(df["time_key"])
 
     df["time_market"] = parsed
     df["time_utc"] = parsed.dt.tz_convert("UTC")

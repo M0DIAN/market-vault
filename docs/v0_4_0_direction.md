@@ -158,14 +158,15 @@ recorded as gaps in the dataset manifest.
 
 MarketVault records three distinct instants for every bar:
 
-- **event_time**: the instant a bar describes. V0.4 treats this as the
-  interval start in America/New_York converted to UTC **as a hypothesis to be
-  verified**: do not assume `time_key` is definitely interval-start time until
-  its OpenD and normalization semantics have been verified by inspecting the
-  collector and `src/market_vault/normalization/bars.py`. Until verified,
-  `event_time` is defined operationally as "the normalized market timestamp
-  of the row converted to UTC", and canonical consumers must not rely on
-  interval-start alignment.
+- **event_time**: the instant a bar describes. V0.4 adopts **interval-start**
+  as the interpretation of `time_key` (see the verified timestamp-semantics
+  contract in [contracts/market_bar_timestamp_semantics.md](contracts/market_bar_timestamp_semantics.md)):
+  `event_time` is the normalized market timestamp (`time_market`) converted to
+  UTC. The official Moomoo documentation does not explicitly distinguish
+  interval start from interval end, so this interpretation carries a
+  mandatory re-verification requirement on SDK change; canonical consumers
+  must not assume interval-start alignment beyond what the contract
+  documents.
 - **market_available_at**: the earliest market-time instant at which the
   complete bar could be used — the instant the bar's information could have
   been known on the market clock. This is the clock that point-in-time
@@ -180,13 +181,22 @@ a dataset built with `dataset_as_of = T` may only consume snapshots whose
 `archive_available_at <= T`, so a later re-collection cannot change the
 dataset's content.
 
-**Unresolved (requires source-code inspection):** the exact semantics of
-`time_key` (interval-start assumption), per-row `ingested_at` (stamping time,
-precision, and timezone representation after Parquet round trips — DuckDB may
-surface timestamps in the session timezone), and the relationship between
-`run_finished_at` and the last `ingested_at` of a run. Until these are
-resolved: `market_available_at` is provisionally `event_time + interval` (bar
-completion), `archive_available_at = run_finished_at` when present.
+**Verified (timestamp-semantics contract PR):** the official Moomoo
+documentation defines the candlestick time in the market timezone without
+distinguishing interval start/end; MarketVault adopts **interval-start** as
+its evidence-supported interpretation (API behavior examples, normalization
+path, stored-data consistency) with a mandatory re-verification requirement;
+`market_available_at = event_time + interval` is exact only for bars known to
+span their full nominal interval and otherwise a conservative leakage-safe
+not-before bound; `archive_available_at = run_finished_at`; DST-ambiguous and
+nonexistent naive `time_key` values raise; `ingested_at` is stamped once per
+normalize call (same value across the batch, microseconds, UTC); DuckDB
+surfaces timestamps in the session timezone, so consumers must convert both
+sides to UTC. Full details and the pinned offline tests are in
+[contracts/market_bar_timestamp_semantics.md](contracts/market_bar_timestamp_semantics.md).
+**Remaining evidence gap:** the official documentation itself is not
+committed in this repository and does not explicitly distinguish interval
+start/end; the interpretation must be re-verified if SDK behavior changes.
 
 ## 6. Point-in-time correctness requirements
 
