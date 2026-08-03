@@ -99,6 +99,10 @@ def write_snapshot(
     include_schema: bool = True,
     legacy_filename: bool = False,
     record_run: bool = True,
+    run_trade_date: date | None = None,
+    run_interval: str | None = None,
+    run_session: str | None = None,
+    run_adjustment: str | None = None,
 ) -> None:
     store = ParquetStore(cfg)
     catalog = Catalog(cfg)
@@ -140,11 +144,11 @@ def write_snapshot(
     if not record_run:
         return
     run = RunManifest(
-        requested_trade_date=trade_date,
+        requested_trade_date=run_trade_date or trade_date,
         requested_symbols=[code],
-        interval=interval.lower(),
-        session=session.upper(),
-        adjustment=adjustment.upper(),
+        interval=(run_interval or interval).lower(),
+        session=(run_session or session).upper(),
+        adjustment=(run_adjustment or adjustment).upper(),
         run_id=run_id,
     )
     run.successful_symbols = [code]
@@ -512,6 +516,102 @@ def test_audit_legacy_metadata_not_complete_current_key(tmp_path):
     assert symbol.complete_trade_date_count == 0
     assert symbol.incomplete_trade_date_count == 0
     assert "2026-07-01" in symbol.missing_dates
+
+
+def test_audit_run_trade_date_mismatch_incomplete(tmp_path):
+    cfg = settings(tmp_path)
+    us_calendar(cfg)
+    # Curated row is dated 2026-07-01 but the linked run says 2026-07-02.
+    write_snapshot(
+        cfg,
+        code="US.MU",
+        trade_date=date(2026, 7, 1),
+        run_id="run-a",
+        run_trade_date=date(2026, 7, 2),
+    )
+    report = audit_mu(cfg)
+    symbol = report.symbols[0]
+    assert symbol.incomplete_dates == ["2026-07-01"]
+    assert symbol.incomplete_reasons == {"2026-07-01": ["RUN_METADATA_MISMATCH"]}
+
+
+def test_audit_run_interval_mismatch_incomplete(tmp_path):
+    cfg = settings(tmp_path)
+    us_calendar(cfg)
+    # Curated rows are 1m but the linked run was recorded as 5m.
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a", run_interval="5m")
+    report = audit_mu(cfg)
+    assert report.symbols[0].incomplete_reasons == {"2026-07-01": ["RUN_METADATA_MISMATCH"]}
+
+
+def test_audit_run_session_mismatch_incomplete(tmp_path):
+    cfg = settings(tmp_path)
+    us_calendar(cfg)
+    # Curated rows are ALL but the linked run was recorded as RTH.
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a", run_session="RTH")
+    report = audit_mu(cfg)
+    assert report.symbols[0].incomplete_reasons == {"2026-07-01": ["RUN_METADATA_MISMATCH"]}
+
+
+def test_audit_run_adjustment_mismatch_incomplete(tmp_path):
+    cfg = settings(tmp_path)
+    us_calendar(cfg)
+    # Curated rows are NONE but the linked run was recorded as QFQ.
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a", run_adjustment="QFQ")
+    report = audit_mu(cfg)
+    assert report.symbols[0].incomplete_reasons == {"2026-07-01": ["RUN_METADATA_MISMATCH"]}
+
+
+def test_audit_mismatch_snapshot_plus_complete_is_complete(tmp_path):
+    cfg = settings(tmp_path)
+    us_calendar(cfg)
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-bad", run_interval="5m")
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-good")
+    report = audit_mu(cfg)
+    symbol = report.symbols[0]
+    # Any complete snapshot makes the whole key COMPLETE.
+    assert symbol.complete_trade_date_count == 1
+    assert symbol.incomplete_dates == []
+    assert "2026-07-01" not in symbol.missing_dates
+
+
+def test_audit_mismatch_priority_after_quality_fail(tmp_path):
+    cfg = settings(tmp_path)
+    us_calendar(cfg)
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-q", quality="FAIL")
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-m", run_interval="5m")
+    report = audit_mu(cfg)
+    assert report.symbols[0].incomplete_reasons == {
+        "2026-07-01": ["QUALITY_FAIL", "RUN_METADATA_MISMATCH"]
+    }
+
+
+def test_audit_every_incomplete_date_has_reasons(tmp_path):
+    cfg = settings(tmp_path)
+    us_calendar(cfg)
+    # One incomplete date per reason family; every date must carry reasons.
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-q", quality="FAIL")
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 2), run_id="run-f", run_status="FAILED")
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 3), run_id="run-r", run_status="RUNNING")
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 6), run_id="run-m", run_trade_date=date(2026, 7, 7))
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 7), run_id="run-o", record_run=False)
+
+    report = audit_mu(cfg)
+    symbol = report.symbols[0]
+    assert symbol.incomplete_dates == [
+        "2026-07-01",
+        "2026-07-02",
+        "2026-07-03",
+        "2026-07-06",
+        "2026-07-07",
+    ]
+    for day in symbol.incomplete_dates:
+        assert symbol.incomplete_reasons[day], f"no reasons reported for {day}"
+    assert symbol.incomplete_reasons["2026-07-01"] == ["QUALITY_FAIL"]
+    assert symbol.incomplete_reasons["2026-07-02"] == ["RUN_FAILED"]
+    assert symbol.incomplete_reasons["2026-07-03"] == ["RUN_RUNNING"]
+    assert symbol.incomplete_reasons["2026-07-06"] == ["RUN_METADATA_MISMATCH"]
+    assert symbol.incomplete_reasons["2026-07-07"] == ["ORPHANED_RUN"]
 
 
 # --- Audit summary ----------------------------------------------------------

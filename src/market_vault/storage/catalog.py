@@ -14,6 +14,7 @@ INCOMPLETE_REASON_PRIORITY = (
     "QUALITY_FAIL",
     "RUN_FAILED",
     "RUN_RUNNING",
+    "RUN_METADATA_MISMATCH",
     "ORPHANED_RUN",
     "RUN_STATUS_UNKNOWN",
 )
@@ -23,13 +24,17 @@ def _snapshot_incomplete_reason(
     run_id: str | None,
     run_status: str | None,
     has_quality_fail: bool,
+    run_metadata: tuple | None,
+    curated_metadata: tuple,
 ) -> str | None:
     """Reason why a single snapshot cannot satisfy the completion criteria.
 
-    Returns None when the snapshot is complete (run SUCCESS or PARTIAL with
-    no FAIL quality result). Empty run ids cannot be attributed and are
-    reported as RUN_STATUS_UNKNOWN; run ids missing from ingestion_runs are
-    ORPHANED_RUN.
+    Returns None when the snapshot is complete: the run is SUCCESS or PARTIAL
+    with no FAIL quality result and its request metadata (trade date,
+    interval, session, adjustment) matches the curated row. Empty run ids
+    cannot be attributed and are reported as RUN_STATUS_UNKNOWN; run ids
+    missing from ingestion_runs are ORPHANED_RUN; runs whose metadata does
+    not match the curated row are RUN_METADATA_MISMATCH.
     """
     if run_id is None or str(run_id).strip() == "":
         return "RUN_STATUS_UNKNOWN"
@@ -41,9 +46,11 @@ def _snapshot_incomplete_reason(
         return "RUN_FAILED"
     if run_status == "RUNNING":
         return "RUN_RUNNING"
-    if run_status in ("SUCCESS", "PARTIAL"):
-        return None
-    return "RUN_STATUS_UNKNOWN"
+    if run_status not in ("SUCCESS", "PARTIAL"):
+        return "RUN_STATUS_UNKNOWN"
+    if run_metadata != curated_metadata:
+        return "RUN_METADATA_MISMATCH"
+    return None
 
 
 class Catalog:
@@ -491,7 +498,13 @@ class Catalog:
                       AND code IN ({codes_clause})
                 ),
                 runs AS (
-                    SELECT run_id, upper(status) AS status
+                    SELECT
+                        run_id,
+                        upper(status) AS status,
+                        requested_trade_date,
+                        interval,
+                        session,
+                        adjustment
                     FROM ingestion_runs
                 ),
                 failed AS (
@@ -504,7 +517,11 @@ class Catalog:
                     c.requested_trade_date,
                     c.ingestion_run_id,
                     r.status,
-                    f.run_id IS NOT NULL AS has_quality_fail
+                    f.run_id IS NOT NULL AS has_quality_fail,
+                    r.requested_trade_date AS run_requested_trade_date,
+                    r.interval AS run_interval,
+                    r.session AS run_session,
+                    r.adjustment AS run_adjustment
                 FROM curated c
                 LEFT JOIN runs r ON r.run_id = c.ingestion_run_id
                 LEFT JOIN failed f ON f.run_id = c.ingestion_run_id
@@ -524,8 +541,33 @@ class Catalog:
             ]
             rows = con.execute(sql, params).fetchall()
         reasons: dict[tuple[str, date], set[str]] = {}
-        for code, trade_date, run_id, run_status, has_quality_fail in rows:
-            reason = _snapshot_incomplete_reason(run_id, run_status, has_quality_fail)
+        curated_metadata = (requested_session, interval, adjustment)
+        for (
+            code,
+            trade_date,
+            run_id,
+            run_status,
+            has_quality_fail,
+            run_requested_trade_date,
+            run_interval,
+            run_session,
+            run_adjustment,
+        ) in rows:
+            reason = _snapshot_incomplete_reason(
+                run_id,
+                run_status,
+                has_quality_fail,
+                run_metadata=(
+                    run_requested_trade_date,
+                    run_interval,
+                    run_session,
+                    run_adjustment,
+                ),
+                curated_metadata=(
+                    trade_date,
+                    *curated_metadata,
+                ),
+            )
             if reason is not None:
                 reasons.setdefault((code, trade_date), set()).add(reason)
         return {
