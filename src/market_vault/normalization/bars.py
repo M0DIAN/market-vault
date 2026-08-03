@@ -30,7 +30,13 @@ def infer_underlying(code: str) -> str | None:
     return f"{match.group('market')}.{match.group('root')}"
 
 
-def _session_label(ts: pd.Timestamp) -> str:
+def market_session_label(ts: pd.Timestamp) -> str:
+    """Session label for a market-time instant, based on local wall-clock
+    session boundaries in the timestamp's own timezone.
+
+    20:00-04:00 -> OVERNIGHT, 04:00-09:30 -> PRE_MARKET,
+    09:30-16:00 -> REGULAR, 16:00-20:00 -> AFTER_HOURS.
+    """
     t = ts.timetz().replace(tzinfo=None)
     if t >= time(20, 0) or t < time(4, 0):
         return "OVERNIGHT"
@@ -73,7 +79,7 @@ def normalize_bars(
     df["market_calendar_date"] = parsed.dt.date
     df["requested_trade_date"] = requested_trade_date
     df["requested_session"] = requested_session.upper()
-    df["session"] = parsed.map(_session_label)
+    df["session"] = parsed.map(market_session_label)
     df["interval"] = interval.lower()
     df["adjustment"] = adjustment.upper()
     df["asset_type"] = df["code"].map(infer_asset_type)

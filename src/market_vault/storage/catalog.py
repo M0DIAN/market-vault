@@ -1,13 +1,27 @@
 from __future__ import annotations
 
 import json
-from datetime import date
+from dataclasses import dataclass
+from datetime import date, datetime
 from pathlib import Path
 from typing import Iterable
 
 import duckdb
+import pandas as pd
 
 from ..models import DatasetRunManifest, QualityResult, RunManifest, Settings
+
+
+@dataclass(frozen=True)
+class CompleteSnapshotRef:
+    """Reference to one immutable complete snapshot of a (code, trade date)."""
+
+    code: str
+    requested_trade_date: date
+    ingestion_run_id: str
+    snapshot_ingested_at: datetime | None
+    run_finished_at: datetime | None
+    row_count: int
 
 #: Stable order for incomplete-item reasons reported to audits.
 INCOMPLETE_REASON_PRIORITY = (
@@ -216,21 +230,28 @@ class Catalog:
                 FROM read_parquet('{glob_path}', union_by_name = true, hive_partitioning = true)
                 """
             )
-            con.execute(
-                f"""
-                CREATE OR REPLACE VIEW market_bars AS
-                SELECT * EXCLUDE (_rn)
-                FROM (
-                    SELECT *,
-                           row_number() OVER (
-                               PARTITION BY code, interval, adjustment, time_utc
-                               ORDER BY ingested_at DESC
-                           ) AS _rn
-                    FROM market_bars_snapshots
+            try:
+                con.execute(
+                    f"""
+                    CREATE OR REPLACE VIEW market_bars AS
+                    SELECT * EXCLUDE (_rn)
+                    FROM (
+                        SELECT *,
+                               row_number() OVER (
+                                   PARTITION BY code, interval, adjustment, time_utc
+                                   ORDER BY ingested_at DESC
+                               ) AS _rn
+                        FROM market_bars_snapshots
+                    )
+                    WHERE _rn = 1
+                    """
                 )
-                WHERE _rn = 1
-                """
-            )
+            except duckdb.Error:
+                # A snapshot file misses a column the dedup view requires
+                # (e.g. time_utc). Keep the snapshots view so structural
+                # audits can still report the missing column instead of
+                # crashing, and report the public view as unavailable.
+                return False
         return True
 
     def market_bars_snapshot_columns(self) -> set[str]:
@@ -578,6 +599,194 @@ class Catalog:
             key: sorted(values, key=INCOMPLETE_REASON_PRIORITY.index)
             for key, values in reasons.items()
         }
+
+    def latest_complete_market_bar_snapshots(
+        self,
+        *,
+        symbols: list[str],
+        trade_dates: list[date],
+        interval: str,
+        requested_session: str,
+        adjustment: str,
+        source_schema_version: str,
+    ) -> dict[tuple[str, date], CompleteSnapshotRef]:
+        """Latest complete snapshot per (code, trade_date) for the exact key.
+
+        Snapshot eligibility is identical to completed_market_bar_items: exact
+        curated key match, run linked to ingestion_runs, run status SUCCESS or
+        PARTIAL, no FAIL quality result, and run metadata matching the curated
+        row. When several complete snapshots exist, the newest wins by
+        snapshot_ingested_at DESC NULLS LAST, run_finished_at DESC NULLS LAST,
+        ingestion_run_id DESC -- stable and deterministic.
+        """
+        self.initialize()
+        files, curated_glob = self._market_bars_curated_glob(self.settings)
+        if not curated_glob or not symbols or not trade_dates:
+            return {}
+        min_date = min(trade_dates)
+        max_date = max(trade_dates)
+        codes_clause = ", ".join("?" for _ in symbols)
+        with self.connect() as con:
+            session_expr = (
+                "requested_session"
+                if self._parquet_files_have_column(con, files, "requested_session")
+                else "NULL::VARCHAR AS requested_session"
+            )
+            schema_expr = (
+                "source_schema_version"
+                if self._parquet_files_have_column(con, files, "source_schema_version")
+                else "NULL::VARCHAR AS source_schema_version"
+            )
+            run_id_expr = (
+                "ingestion_run_id"
+                if self._parquet_files_have_column(con, files, "ingestion_run_id")
+                else "NULL::VARCHAR AS ingestion_run_id"
+            )
+            ingested_expr = (
+                "ingested_at"
+                if self._parquet_files_have_column(con, files, "ingested_at")
+                else "NULL::TIMESTAMPTZ AS ingested_at"
+            )
+            sql = f"""
+                WITH curated AS (
+                    SELECT
+                        code,
+                        requested_trade_date,
+                        interval,
+                        adjustment,
+                        {session_expr},
+                        {schema_expr},
+                        {run_id_expr},
+                        {ingested_expr}
+                    FROM read_parquet('{curated_glob}', union_by_name = true, hive_partitioning = true)
+                    WHERE requested_trade_date >= ?
+                      AND requested_trade_date <= ?
+                      AND code IN ({codes_clause})
+                ),
+                eligible AS (
+                    SELECT
+                        c.code,
+                        c.requested_trade_date,
+                        c.ingestion_run_id,
+                        MAX(c.ingested_at) AS snapshot_ingested_at,
+                        COUNT(*) AS row_count,
+                        r.finished_at AS run_finished_at
+                    FROM curated c
+                    JOIN ingestion_runs r
+                      ON r.run_id = c.ingestion_run_id
+                     AND r.requested_trade_date = c.requested_trade_date
+                     AND r.interval = c.interval
+                     AND r.adjustment = c.adjustment
+                     AND r.session = c.requested_session
+                    WHERE c.interval = ?
+                      AND c.adjustment = ?
+                      AND c.requested_session = ?
+                      AND c.source_schema_version = ?
+                      AND upper(r.status) IN ('SUCCESS', 'PARTIAL')
+                      AND c.ingestion_run_id NOT IN (
+                          SELECT run_id FROM quality_results WHERE result = 'FAIL'
+                      )
+                    GROUP BY c.code, c.requested_trade_date, c.ingestion_run_id, r.finished_at
+                ),
+                ranked AS (
+                    SELECT *,
+                           row_number() OVER (
+                               PARTITION BY code, requested_trade_date
+                               ORDER BY
+                                   snapshot_ingested_at DESC NULLS LAST,
+                                   run_finished_at DESC NULLS LAST,
+                                   ingestion_run_id DESC
+                           ) AS _rn
+                    FROM eligible
+                )
+                SELECT
+                    code,
+                    requested_trade_date,
+                    ingestion_run_id,
+                    snapshot_ingested_at,
+                    run_finished_at,
+                    row_count
+                FROM ranked
+                WHERE _rn = 1
+                ORDER BY requested_trade_date, code
+            """
+            params: list[object] = [
+                min_date,
+                max_date,
+                *symbols,
+                interval,
+                adjustment,
+                requested_session,
+                source_schema_version,
+            ]
+            rows = con.execute(sql, params).fetchall()
+        return {
+            (row[0], row[1]): CompleteSnapshotRef(
+                code=row[0],
+                requested_trade_date=row[1],
+                ingestion_run_id=row[2],
+                snapshot_ingested_at=row[3],
+                run_finished_at=row[4],
+                row_count=int(row[5]),
+            )
+            for row in rows
+        }
+
+    def market_bar_snapshot_rows(
+        self,
+        *,
+        code: str,
+        trade_date: date,
+        ingestion_run_id: str,
+        interval: str,
+        requested_session: str,
+        adjustment: str,
+        source_schema_version: str,
+    ) -> pd.DataFrame:
+        """All raw rows of one immutable snapshot for the exact key.
+
+        Reads from market_bars_snapshots, keeps duplicates (no dedup), filters
+        exactly on every request-key parameter plus the run id, and sorts by
+        time_utc for audit purposes. Never modifies stored data.
+        """
+        if not self.refresh_market_bars_view():
+            return pd.DataFrame()
+        columns = self.market_bars_snapshot_columns()
+        required_filters = {
+            "code",
+            "requested_trade_date",
+            "interval",
+            "adjustment",
+            "requested_session",
+            "source_schema_version",
+            "ingestion_run_id",
+        }
+        if not required_filters.issubset(columns):
+            return pd.DataFrame()
+        order_by = " ORDER BY time_utc" if "time_utc" in columns else ""
+        sql = f"""
+            SELECT *
+            FROM market_bars_snapshots
+            WHERE code = ?
+              AND requested_trade_date = ?
+              AND interval = ?
+              AND adjustment = ?
+              AND requested_session = ?
+              AND source_schema_version = ?
+              AND ingestion_run_id = ?
+            {order_by}
+        """
+        params: list[object] = [
+            code,
+            trade_date,
+            interval,
+            adjustment,
+            requested_session,
+            source_schema_version,
+            ingestion_run_id,
+        ]
+        with self.connect() as con:
+            return con.execute(sql, params).fetchdf()
 
     def trading_dates_after(
         self,

@@ -364,6 +364,48 @@ Exit codes: `PASS` exits 0, `WARN` exits 0 (or 2 with `--fail-on-gaps`), `FAILED
 - `MISSING` means no curated rows exist for the exact key. Missing and incomplete dates are always reported; complete dates are included only with `--include-complete-dates`.
 - Every operation is pure local: no OpenD connection, no writes to Parquet, no deletion or renaming of files, and no entries in the ingestion metadata tables. Fixing gaps remains a separate, explicit `backfill` run.
 
+## V0.3 development: intraday integrity audit
+
+The `intraday-audit` command checks the intraday structure of the latest complete immutable snapshot for each (symbol, trade date) in a range:
+
+```powershell
+market-vault --settings config/settings.yaml intraday-audit `
+  --calendar-market US `
+  --start-date 2026-07-30 `
+  --end-date 2026-07-31 `
+  --symbols US.MU `
+  --interval 1m `
+  --session ALL `
+  --adjustment NONE
+```
+
+Strict mode for scripts and CI (WARN exits 2):
+
+```powershell
+market-vault --settings config/settings.yaml intraday-audit `
+  --calendar-market US `
+  --start-date 2026-07-30 `
+  --end-date 2026-07-31 `
+  --symbols US.MU `
+  --fail-on-warn
+```
+
+### What it validates
+
+- The command is pure local: no OpenD connection, no Parquet modification, no automatic repair or re-collection.
+- For every COMPLETE item it selects the newest complete physical snapshot (never the deduplicated `market_bars` view) and validates: exact request metadata, timestamp validity, UTC/market instant consistency, `market_calendar_date` consistency, session labels, requested-session scope, duplicate bars, minute-boundary alignment, interval-grid deltas, and internal gaps inside contiguous observed session segments.
+- Session labels come from the shared `market_session_label()` used by normalization (OVERNIGHT / PRE_MARKET / REGULAR / AFTER_HOURS).
+- Internal gaps are reported as WARN (never FAIL): halts, circuit breakers, and no-trade periods can legitimately leave empty bars.
+
+### What it does not claim
+
+> Internal gaps are detected only inside contiguous observed session segments. Leading or trailing session coverage is not evaluated in this stage.
+
+- No fixed daily bar counts (no 1440/390/1201 hardcoding) and no early-close calendar; 2026-07-30 (1440 rows) and 2026-07-31 (1201 rows) can both pass.
+- Session boundary coverage (start-of-session to first bar, last bar to end-of-session, wholly missing sessions) is not evaluated.
+- Reports go to `reports/data_quality/market_bars_intraday_audit_<run_id>.json`; the report records `boundary_coverage: {evaluated: false}`.
+- Fixing gaps stays an explicit `backfill` run. V0.3 remains under development.
+
 ## Query data
 
 ```powershell

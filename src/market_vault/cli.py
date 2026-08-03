@@ -11,6 +11,7 @@ from .backfill import collect_history_backfill
 from .config import load_settings, load_universe
 from .collectors.moomoo_calendar import SUPPORTED_TRADE_DATE_MARKETS
 from .doctor import run_doctor
+from .intraday_audit import run_intraday_audit
 from .service import collect_history, collect_option_chain, collect_option_volatility, collect_trading_calendar
 from .storage import Catalog
 
@@ -165,6 +166,31 @@ def build_parser() -> argparse.ArgumentParser:
     audit.add_argument("--source-schema-version")
     audit.add_argument("--include-complete-dates", action="store_true")
     audit.add_argument("--fail-on-gaps", action="store_true")
+
+    intraday = sub.add_parser(
+        "intraday-audit",
+        help="Audit intraday structure of the latest complete market-bar snapshots",
+    )
+    intraday_scope = intraday.add_mutually_exclusive_group(required=True)
+    intraday_scope.add_argument("--calendar-market", choices=SUPPORTED_TRADE_DATE_MARKETS)
+    intraday_scope.add_argument("--calendar-code")
+    intraday.add_argument("--start-date", required=True, type=_parse_date)
+    intraday.add_argument("--end-date", required=True, type=_parse_date)
+    intraday.add_argument("--symbols", nargs="*")
+    intraday.add_argument("--universe", default="config/universe.yaml")
+    intraday.add_argument(
+        "--groups",
+        nargs="*",
+        default=[],
+        choices=["core_universe", "trade_universe", "event_universe", "option_universe"],
+    )
+    intraday.add_argument("--interval", default="1m")
+    intraday.add_argument("--session", default=None)
+    intraday.add_argument("--adjustment", default=None)
+    intraday.add_argument("--source-schema-version")
+    intraday.add_argument("--include-pass-checks", action="store_true")
+    intraday.add_argument("--max-gap-details", type=int, default=100)
+    intraday.add_argument("--fail-on-warn", action="store_true")
 
     return parser
 
@@ -328,6 +354,45 @@ def main(argv: list[str] | None = None) -> int:
         if report.status == FAILED:
             return 1
         if report.status == WARN and args.fail_on_gaps:
+            return 2
+        return 0
+
+    if args.command == "intraday-audit":
+        symbols = _resolve_symbols(args)
+        if not symbols:
+            build_parser().error("At least one symbol is required via --symbols, --universe, or --groups")
+        try:
+            report = run_intraday_audit(
+                settings,
+                symbols=symbols,
+                start_date=args.start_date,
+                end_date=args.end_date,
+                calendar_market=args.calendar_market,
+                calendar_code=args.calendar_code,
+                interval=args.interval,
+                requested_session=args.session,
+                adjustment=args.adjustment,
+                source_schema_version=args.source_schema_version,
+                include_pass_checks=args.include_pass_checks,
+                max_gap_details=args.max_gap_details,
+            )
+        except ValueError as exc:
+            print(
+                json.dumps(
+                    {
+                        "report_type": "MARKET_BARS_INTRADAY_INTEGRITY_AUDIT",
+                        "status": "FAILED",
+                        "error": str(exc),
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return 1
+        print(json.dumps(report.as_dict(), ensure_ascii=False, indent=2))
+        if report.status == FAILED:
+            return 1
+        if report.status == WARN and args.fail_on_warn:
             return 2
         return 0
 
