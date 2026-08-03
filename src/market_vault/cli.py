@@ -294,19 +294,36 @@ def main(argv: list[str] | None = None) -> int:
         symbols = _resolve_symbols(args)
         if not symbols:
             build_parser().error("At least one symbol is required via --symbols, --universe, or --groups")
-        report = run_audit(
-            settings,
-            symbols=symbols,
-            start_date=args.start_date,
-            end_date=args.end_date,
-            calendar_market=args.calendar_market,
-            calendar_code=args.calendar_code,
-            interval=args.interval,
-            requested_session=args.session,
-            adjustment=args.adjustment,
-            source_schema_version=args.source_schema_version,
-            include_complete_dates=args.include_complete_dates,
-        )
+        try:
+            report = run_audit(
+                settings,
+                symbols=symbols,
+                start_date=args.start_date,
+                end_date=args.end_date,
+                calendar_market=args.calendar_market,
+                calendar_code=args.calendar_code,
+                interval=args.interval,
+                requested_session=args.session,
+                adjustment=args.adjustment,
+                source_schema_version=args.source_schema_version,
+                include_complete_dates=args.include_complete_dates,
+            )
+        except ValueError as exc:
+            # Invalid audit parameters produce a structured FAILED report
+            # instead of a Python traceback for CLI users. Argparse-level
+            # errors keep the standard exit code 2.
+            print(
+                json.dumps(
+                    {
+                        "report_type": "MARKET_BARS_COVERAGE_AUDIT",
+                        "status": "FAILED",
+                        "error": str(exc),
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return 1
         print(json.dumps(report.as_dict(), ensure_ascii=False, indent=2))
         if report.status == FAILED:
             return 1

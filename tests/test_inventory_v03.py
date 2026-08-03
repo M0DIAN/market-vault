@@ -7,11 +7,34 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-import market_vault.audit as audit_module
+import market_vault.cli as cli_module
 from market_vault.audit import run_inventory
 from market_vault.models import QualityResult, RunManifest, Settings
 from market_vault.normalization import normalize_bars
 from market_vault.storage import Catalog, ParquetStore
+
+
+def write_settings_file(tmp_path) -> Path:
+    cfg_dir = tmp_path / "cfg"
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+    cfg_path = cfg_dir / "settings.yaml"
+    cfg_path.write_text(
+        "opend:\n"
+        "  host: 127.0.0.1\n"
+        "  port: 11111\n"
+        "storage:\n"
+        "  root_dir: ./data\n"
+        "  catalog_path: ./catalog/market_vault.duckdb\n"
+        "  manifest_dir: ./manifests\n"
+        "  report_dir: ./reports\n"
+        "collector:\n"
+        "  source: moomoo\n"
+        "  source_schema_version: \"10.9\"\n"
+        "  default_session: ALL\n"
+        "  default_adjustment: NONE\n",
+        encoding="utf-8",
+    )
+    return cfg_path
 
 
 def settings(tmp_path) -> Settings:
@@ -48,6 +71,17 @@ def write_snapshot(
     code: str,
     trade_date: date,
     run_id: str,
+    **kwargs,
+) -> None:
+    write_multi_snapshot(cfg, codes=[code], trade_date=trade_date, run_id=run_id, **kwargs)
+
+
+def write_multi_snapshot(
+    cfg: Settings,
+    *,
+    codes: list[str],
+    trade_date: date,
+    run_id: str,
     interval: str = "1m",
     session: str = "ALL",
     adjustment: str = "NONE",
@@ -60,24 +94,34 @@ def write_snapshot(
     legacy_filename: bool = False,
     record_run: bool = True,
 ) -> None:
+    """Write one real Parquet file whose rows carry the same run id for every
+    symbol, mirroring a single child run that collected several symbols."""
     store = ParquetStore(cfg)
     catalog = Catalog(cfg)
-    raw = history_raw_frame(code, trade_date, close=close)
-    raw["requested_trade_date"] = trade_date
-    raw["interval"] = interval.lower()
-    raw["adjustment"] = adjustment.upper()
-    raw["requested_session"] = session.upper()
-    raw["ingestion_run_id"] = run_id
-    curated = normalize_bars(
-        raw,
-        requested_trade_date=trade_date,
-        interval=interval,
-        requested_session=session,
-        adjustment=adjustment,
-        source=cfg.source,
-        source_schema_version=schema,
-        run_id=run_id,
-    )
+    raw_frames: list[pd.DataFrame] = []
+    curated_frames: list[pd.DataFrame] = []
+    for code in codes:
+        raw = history_raw_frame(code, trade_date, close=close)
+        raw["requested_trade_date"] = trade_date
+        raw["interval"] = interval.lower()
+        raw["adjustment"] = adjustment.upper()
+        raw["requested_session"] = session.upper()
+        raw["ingestion_run_id"] = run_id
+        raw_frames.append(raw)
+        curated_frames.append(
+            normalize_bars(
+                raw,
+                requested_trade_date=trade_date,
+                interval=interval,
+                requested_session=session,
+                adjustment=adjustment,
+                source=cfg.source,
+                source_schema_version=schema,
+                run_id=run_id,
+            )
+        )
+    raw = pd.concat(raw_frames, ignore_index=True)
+    curated = pd.concat(curated_frames, ignore_index=True)
     if not include_session:
         raw = raw.drop(columns=["requested_session"])
         curated = curated.drop(columns=["requested_session"])
@@ -85,7 +129,7 @@ def write_snapshot(
         # Raw frames never carry source_schema_version; only curated does.
         curated = curated.drop(columns=["source_schema_version"])
 
-    batch_key = ParquetStore._batch_key([code], interval.lower(), session.upper(), adjustment.upper())
+    batch_key = ParquetStore._batch_key(codes, interval.lower(), session.upper(), adjustment.upper())
     if legacy_filename:
         raw_path = (
             cfg.data_root
@@ -110,20 +154,20 @@ def write_snapshot(
         curated_path.parent.mkdir(parents=True, exist_ok=True)
         curated.to_parquet(curated_path, index=False, compression="zstd")
     else:
-        store.write_raw(raw, trade_date, interval, [code], session, adjustment, run_id=run_id)
-        store.write_curated(curated, trade_date, interval, [code], session, adjustment, run_id=run_id)
+        store.write_raw(raw, trade_date, interval, codes, session, adjustment, run_id=run_id)
+        store.write_curated(curated, trade_date, interval, codes, session, adjustment, run_id=run_id)
 
     if not record_run:
         return
     run = RunManifest(
         requested_trade_date=trade_date,
-        requested_symbols=[code],
+        requested_symbols=list(codes),
         interval=interval.lower(),
         session=session.upper(),
         adjustment=adjustment.upper(),
         run_id=run_id,
     )
-    run.successful_symbols = [code]
+    run.successful_symbols = list(codes)
     run.status = run_status
     run.finished_at = datetime.now(timezone.utc)
     catalog.record_run(run)
@@ -430,3 +474,109 @@ def test_inventory_does_not_touch_open_d(monkeypatch, tmp_path):
     write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a")
     report = run_inventory(cfg)
     assert report.status == "SUCCESS"
+
+
+def test_inventory_earliest_and_latest_trade_date_across_combinations(tmp_path):
+    cfg = settings(tmp_path)
+    # Combination A (1m) spans 2026-01-01 .. 2026-07-31.
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 1, 1), run_id="run-a1", interval="1m")
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 31), run_id="run-a2", interval="1m")
+    # Combination B (5m) spans 2026-03-01 .. 2026-05-31.
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 3, 1), run_id="run-b1", interval="5m")
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 5, 31), run_id="run-b2", interval="5m")
+
+    report = run_inventory(cfg)
+
+    # earliest comes from the minimum first date; latest from the maximum
+    # last date -- not from a single min/max over first dates.
+    assert report.summary.earliest_trade_date == "2026-01-01"
+    assert report.summary.latest_trade_date == "2026-07-31"
+    assert len(report.items) == 2
+
+
+def test_inventory_global_snapshot_count_multi_symbol_same_run(tmp_path):
+    cfg = settings(tmp_path)
+    # One real Parquet file, one run id, two symbols in the same child run.
+    write_multi_snapshot(
+        cfg,
+        codes=["US.MU", "US.NVDA"],
+        trade_date=date(2026, 7, 1),
+        run_id="run-shared",
+    )
+
+    report = run_inventory(cfg)
+    by_code = {item.code: item for item in report.items}
+    assert by_code["US.MU"].snapshot_count == 1
+    assert by_code["US.NVDA"].snapshot_count == 1
+    assert report.summary.snapshot_count == 1
+    assert report.summary.snapshot_row_count == 2
+
+
+def test_inventory_global_snapshot_count_overlapping_runs(tmp_path):
+    cfg = settings(tmp_path)
+    # run-a collects both symbols; run-b only US.MU.
+    write_multi_snapshot(
+        cfg,
+        codes=["US.MU", "US.NVDA"],
+        trade_date=date(2026, 7, 1),
+        run_id="run-a",
+    )
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-b")
+
+    report = run_inventory(cfg)
+
+    # Two distinct run ids globally -- never a sum over per-item counts (3).
+    assert report.summary.snapshot_count == 2
+    by_code = {item.code: item for item in report.items}
+    assert by_code["US.MU"].snapshot_count == 2
+    assert by_code["US.NVDA"].snapshot_count == 1
+
+
+def test_inventory_normalizes_filter_parameters(tmp_path):
+    cfg = settings(tmp_path)
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a")
+
+    report = run_inventory(
+        cfg,
+        requested_session="all",
+        adjustment="none",
+        interval="1M",
+        source_schema_version=" 10.9 ",
+    )
+
+    assert report.parameters["interval"] == "1m"
+    assert report.parameters["requested_session"] == "ALL"
+    assert report.parameters["adjustment"] == "NONE"
+    assert report.parameters["source_schema_version"] == "10.9"
+    assert len(report.items) == 1
+    assert report.items[0].snapshot_row_count == 1
+
+
+def test_cli_inventory_normalized_filters_match_stored_case(tmp_path, capsys):
+    cfg_path = write_settings_file(tmp_path)
+    cfg = settings(tmp_path)
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a")
+
+    exit_code = cli_module.main(
+        [
+            "--settings",
+            str(cfg_path),
+            "inventory",
+            "--symbols",
+            "US.MU",
+            "--session",
+            "all",
+            "--adjustment",
+            "none",
+            "--interval",
+            "1M",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "SUCCESS"
+    assert payload["parameters"]["interval"] == "1m"
+    assert payload["parameters"]["requested_session"] == "ALL"
+    assert payload["parameters"]["adjustment"] == "NONE"
+    assert payload["summary"]["snapshot_row_count"] == 1

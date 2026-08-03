@@ -371,14 +371,18 @@ def run_inventory(
     """
     report = InventoryReport(run_id=str(uuid4()), started_at=_now_iso())
     normalized_symbols = normalize_backfill_symbols(symbols) if symbols else None
+    interval_value = interval.lower() if interval else None
+    session_value = requested_session.upper() if requested_session else None
+    adjustment_value = adjustment.upper() if adjustment else None
+    schema_value = source_schema_version.strip() if source_schema_version else None
     report.parameters = {
         "symbols": normalized_symbols or [],
         "start_date": start_date.isoformat() if start_date else None,
         "end_date": end_date.isoformat() if end_date else None,
-        "interval": interval.lower() if interval else None,
-        "requested_session": requested_session,
-        "adjustment": adjustment,
-        "source_schema_version": source_schema_version,
+        "interval": interval_value,
+        "requested_session": session_value,
+        "adjustment": adjustment_value,
+        "source_schema_version": schema_value,
         "include_files": include_files,
     }
 
@@ -396,15 +400,17 @@ def run_inventory(
     columns = catalog.market_bars_snapshot_columns()
     has_session = "requested_session" in columns
     has_schema = "source_schema_version" in columns
+    has_run_id = "ingestion_run_id" in columns
+    run_id_expr = "ingestion_run_id" if has_run_id else "NULL::VARCHAR"
 
     where_clause, params = _inventory_where(
         normalized_symbols,
         start_date,
         end_date,
-        interval.lower() if interval else None,
-        requested_session,
-        adjustment,
-        source_schema_version,
+        interval_value,
+        session_value,
+        adjustment_value,
+        schema_value,
         has_session=has_session,
         has_schema=has_schema,
     )
@@ -422,7 +428,7 @@ def run_inventory(
                 MIN(requested_trade_date) AS first_trade_date,
                 MAX(requested_trade_date) AS last_trade_date,
                 COUNT(DISTINCT requested_trade_date) AS present_trade_date_count,
-                COUNT(DISTINCT ingestion_run_id) AS snapshot_count,
+                COUNT(DISTINCT {run_id_expr}) AS snapshot_count,
                 COUNT(*) AS snapshot_row_count,
                 MAX(ingested_at) AS latest_ingested_at,
                 COUNT(*) FILTER (
@@ -436,6 +442,14 @@ def run_inventory(
         agg_rows = con.execute(agg_sql, params).fetchall()
         latest_query_sql = f"SELECT COUNT(*) FROM market_bars WHERE 1 = 1 {where_clause}"
         latest_query_row_count = int(con.execute(latest_query_sql, params).fetchone()[0])
+        # Global snapshot count over the same filters: distinct run ids
+        # across the whole range, not a sum over per-combination items.
+        # COUNT(DISTINCT ...) keeps DuckDB's NULL-excluding semantics, so
+        # rows without a run id never inflate the count.
+        snapshot_sql = (
+            f"SELECT COUNT(DISTINCT {run_id_expr}) FROM market_bars_snapshots WHERE 1 = 1 {where_clause}"
+        )
+        global_snapshot_count = int(con.execute(snapshot_sql, params).fetchone()[0])
 
     items: list[InventoryItem] = []
     legacy_total = 0
@@ -496,19 +510,20 @@ def run_inventory(
             )
         )
 
-    present_dates = [item.first_trade_date for item in items if item.first_trade_date]
+    first_dates = [item.first_trade_date for item in items if item.first_trade_date]
+    last_dates = [item.last_trade_date for item in items if item.last_trade_date]
     report.summary = InventorySummary(
         symbol_count=len({item.code for item in items}),
         parameter_combination_count=len(items),
-        snapshot_count=sum(item.snapshot_count for item in items),
+        snapshot_count=global_snapshot_count,
         snapshot_row_count=sum(item.snapshot_row_count for item in items),
         latest_query_row_count=latest_query_row_count,
         present_trade_date_count=sum(item.present_trade_date_count for item in items),
         completed_trade_date_count=sum(item.completed_trade_date_count for item in items),
         incomplete_trade_date_count=sum(item.incomplete_trade_date_count for item in items),
         legacy_metadata_row_count=legacy_total,
-        earliest_trade_date=min(present_dates) if present_dates else None,
-        latest_trade_date=max(present_dates) if present_dates else None,
+        earliest_trade_date=min(first_dates) if first_dates else None,
+        latest_trade_date=max(last_dates) if last_dates else None,
         latest_ingested_at=max(
             (item.latest_ingested_at for item in items if item.latest_ingested_at),
             default=None,
@@ -660,15 +675,16 @@ def run_audit(
     )
     gaps = missing_coverage_ranges(start_date, end_date, coverage_ranges)
     if gaps:
-        # Calendar coverage is incomplete: do not compute bar-level missing
-        # dates against a partial calendar.
+        # Calendar coverage is incomplete: the expected trading-day set is
+        # not fully determined and no bar-level classification ran. Leave
+        # summary null instead of claiming a coverage percentage.
         report.status = FAILED
         report.calendar.coverage_complete = False
         report.calendar.coverage_gaps = [
             {"start_date": gap_start.isoformat(), "end_date": gap_end.isoformat()}
             for gap_start, gap_end in gaps
         ]
-        report.summary = AuditSummary()
+        report.summary = None
         _finish_report(report, "market_bars_audit", settings)
         return report
 

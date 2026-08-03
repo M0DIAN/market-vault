@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -295,6 +295,11 @@ def test_audit_middle_gap_failed(tmp_path):
     assert report.status == "FAILED"
     assert report.calendar.coverage_complete is False
     assert report.calendar.coverage_gaps == [{"start_date": "2026-07-11", "end_date": "2026-07-11"}]
+    # No summary and no classification when the calendar is incomplete.
+    assert report.summary is None
+    assert report.symbols == []
+    assert report.calendar.expected_trade_date_count == 0
+    assert report.calendar.expected_trade_dates == []
 
 
 def test_audit_empty_calendar_failed(tmp_path):
@@ -303,6 +308,10 @@ def test_audit_empty_calendar_failed(tmp_path):
     assert report.status == "FAILED"
     assert report.calendar.coverage_complete is False
     assert report.calendar.coverage_gaps
+    assert report.summary is None
+    assert report.symbols == []
+    assert report.calendar.expected_trade_date_count == 0
+    assert report.calendar.expected_trade_dates == []
 
 
 def test_audit_coverage_failure_does_not_report_fake_missing_dates(tmp_path):
@@ -318,9 +327,10 @@ def test_audit_coverage_failure_does_not_report_fake_missing_dates(tmp_path):
     )
     report = audit_mu(cfg)
     assert report.status == "FAILED"
+    assert report.summary is None
     assert report.symbols == []
-    assert report.summary.total_expected_items == 0
-    assert report.summary.missing_item_count == 0
+    assert report.calendar.expected_trade_date_count == 0
+    assert report.calendar.expected_trade_dates == []
 
 
 def test_audit_does_not_touch_open_d(monkeypatch, tmp_path):
@@ -877,3 +887,73 @@ def test_api_pure_local(monkeypatch, tmp_path):
     )
     assert audit.status == "WARN"
     assert audit.summary.missing_item_count == 4
+
+
+def test_cli_audit_invalid_range_structured_error_no_traceback(tmp_path, capsys):
+    cfg_path = write_settings_file(tmp_path)
+
+    exit_code = cli_module.main(
+        [
+            "--settings",
+            str(cfg_path),
+            "audit",
+            "--calendar-market",
+            "US",
+            "--start-date",
+            "2026-07-02",
+            "--end-date",
+            "2026-07-01",
+            "--symbols",
+            "US.MU",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert exit_code == 1
+    assert payload["report_type"] == "MARKET_BARS_COVERAGE_AUDIT"
+    assert payload["status"] == "FAILED"
+    assert payload["error"] == "start_date must be on or before end_date"
+    assert "Traceback" not in captured.out
+    assert "Traceback" not in captured.err
+
+
+def test_cli_audit_future_end_date_structured_error_no_traceback(tmp_path, capsys):
+    cfg_path = write_settings_file(tmp_path)
+    future = datetime.now(timezone.utc).date() + timedelta(days=1)
+
+    exit_code = cli_module.main(
+        [
+            "--settings",
+            str(cfg_path),
+            "audit",
+            "--calendar-market",
+            "US",
+            "--start-date",
+            "2026-07-01",
+            "--end-date",
+            future.isoformat(),
+            "--symbols",
+            "US.MU",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert exit_code == 1
+    assert payload["status"] == "FAILED"
+    assert "before today's UTC date" in payload["error"]
+    assert "Traceback" not in captured.out
+    assert "Traceback" not in captured.err
+
+
+def test_api_audit_still_raises_value_error(tmp_path):
+    cfg = settings(tmp_path)
+    with pytest.raises(ValueError, match="on or before"):
+        MarketVault(cfg).audit_market_bars(
+            symbols=["US.MU"],
+            start_date=date(2026, 7, 2),
+            end_date=date(2026, 7, 1),
+            calendar_market="US",
+            today=date(2026, 8, 2),
+        )
