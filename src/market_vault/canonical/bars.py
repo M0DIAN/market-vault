@@ -49,6 +49,16 @@ OPTIONAL_MARKET_FIELDS = (
 _SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
+def _is_null_scalar(value) -> bool:
+    """Safe scalar-null check: None, NaN, pd.NA, and NaT are all null."""
+    if value is None:
+        return True
+    try:
+        return bool(pd.isna(value))
+    except (TypeError, ValueError):
+        return False
+
+
 def _validate_physical_snapshot_hash(value: str) -> str:
     if not value or not isinstance(value, str):
         raise CanonicalBuildError("physical_snapshot_hash must be a SHA-256 hex digest")
@@ -62,8 +72,8 @@ def _validate_physical_snapshot_hash(value: str) -> str:
 
 def _typed_row_value(column: str, value) -> str:
     """Explicitly typed canonical serialization for one logical row field."""
-    if value is None or (isinstance(value, float) and pd.isna(value)):
-        return f"{column}:z"  # z = absent
+    if _is_null_scalar(value):
+        return f"{column}:z"  # z = absent/null
     if isinstance(value, (pd.Timestamp, datetime)):
         stamp = pd.Timestamp(value)
         if stamp.tzinfo is None:
@@ -118,6 +128,49 @@ def hash_canonical_source_rows(rows: pd.DataFrame) -> str:
             _typed_row_value(column, row.get(column) if column in rows.columns else None)
             for column in fields
         ]
+        row_digests.append(hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest())
+    row_digests.sort()
+    return hashlib.sha256("\x1e".join(row_digests).encode("utf-8")).hexdigest()
+
+
+def _hash_normalized_records(records: list[dict], interval_seconds: int) -> str:
+    """Deterministic logical hash over normalized canonical records.
+
+    Encodes the already-normalized semantics -- canonical code/interval/
+    adjustment, the UTC event instant, OHLCV, supported optional values,
+    request/classification fields, run id, and schema version -- never raw
+    unnormalized DataFrame values. Equivalent casing, whitespace, and
+    timezone representations that normalize to the same canonical semantics
+    produce the same hash; the physical_snapshot_hash continues to preserve
+    exact file-byte identity. Row digests are sorted, so the hash is
+    independent of row order. SHA-256 is collision-resistant, not
+    collision-free.
+    """
+    row_digests = []
+    for record in records:
+        parts = [
+            f"code:s:{record['code']}",
+            f"interval:s:{record['interval']}",
+            f"adjustment:s:{record['adjustment']}",
+            f"event_time:t:{record['event_time'].tz_convert('UTC').isoformat()}",
+            f"open:f:{record['open']!r}",
+            f"high:f:{record['high']!r}",
+            f"low:f:{record['low']!r}",
+            f"close:f:{record['close']!r}",
+            f"volume:f:{record['volume']!r}",
+        ]
+        for column, value in record["optional_fields"]:
+            parts.append(f"{column}:f:{value!r}")
+        parts.extend(
+            [
+                f"requested_trade_date:d:{record['requested_trade_date'].isoformat()}",
+                f"requested_session:s:{record['requested_session']}",
+                f"market_calendar_date:d:{record['market_calendar_date'].isoformat()}",
+                f"session:s:{record['session']}",
+                f"ingestion_run_id:s:{record['ingestion_run_id']}",
+                f"source_schema_version:s:{record['source_schema_version']}",
+            ]
+        )
         row_digests.append(hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest())
     row_digests.sort()
     return hashlib.sha256("\x1e".join(row_digests).encode("utf-8")).hexdigest()
@@ -180,16 +233,17 @@ def _finite_market_number(value, column: str) -> float:
 def _optional_fields(row: pd.Series) -> tuple[tuple[str, float], ...]:
     """Supported optional market fields.
 
-    A missing column is absent (allowed); a present null value is allowed;
-    any other present value must be numeric and finite -- non-numeric, NaN,
-    +Inf, and -Inf fail closed instead of being silently treated as absent.
+    A missing column is allowed; None, NaN, pd.NA, and NaT are null and
+    allowed; finite numeric values are preserved; non-null non-numeric values
+    and positive/negative infinity fail closed instead of being silently
+    treated as absent.
     """
     result = []
     for column in OPTIONAL_MARKET_FIELDS:
         if column not in row.index:
-            continue  # absent
+            continue  # missing column allowed
         raw = row[column]
-        if raw is None:
+        if _is_null_scalar(raw):
             continue  # null allowed
         try:
             number = float(raw)
@@ -197,7 +251,7 @@ def _optional_fields(row: pd.Series) -> tuple[tuple[str, float], ...]:
             raise CanonicalBuildError(
                 f"non-numeric optional field {column}: {raw!r}"
             ) from exc
-        if pd.isna(number) or number in (float("inf"), float("-inf")):
+        if number in (float("inf"), float("-inf")):
             raise CanonicalBuildError(f"non-finite optional field {column}: {raw!r}")
         result.append((column, number))
     return tuple(result)
@@ -218,18 +272,8 @@ def _classification_value(market_calendar_date: date, canonical_session: str) ->
     )
 
 
-def _descending_text(value: str) -> tuple:
-    """Sort key implementing descending lexicographic order for arbitrary text.
-
-    Comparing these keys ascending is equivalent to comparing the original
-    strings descending (negated character codes), which is exact for any
-    string, not just fixed-width hex.
-    """
-    return tuple(-ord(char) for char in value)
-
-
 def _normalize_ranking_timestamp(value, label: str) -> pd.Timestamp | None:
-    if value is None:
+    if _is_null_scalar(value):
         return None
     stamp = pd.Timestamp(value)
     if stamp.tzinfo is None:
@@ -237,22 +281,27 @@ def _normalize_ranking_timestamp(value, label: str) -> pd.Timestamp | None:
     return stamp.tz_convert("UTC")
 
 
-#: Stable source-ranking rule aligned with the V0.3 latest-complete ordering:
-#: snapshot_ingested_at descending (nulls last), run_finished_at descending,
-#: ingestion_run_id descending, then the physical snapshot content hash as a
-#: final path-independent tie-breaker. snapshot_file never participates.
-#: Timestamps are normalized to UTC before ranking, so the order does not
-#: depend on the local machine timezone. One key function serves both the
-#: selected and the discarded sources, keeping a single comparison direction.
 def _source_rank_key(candidate: dict) -> tuple:
+    """Natural ascending rank tuple for selection with max().
+
+    The documented order is: snapshot_ingested_at present first then timestamp
+    DESC; run_finished_at present first then timestamp DESC; ingestion_run_id
+    DESC; physical_snapshot_hash DESC as the final path-independent
+    tie-breaker. Because max() picks the largest key, ascending tuple
+    comparison encodes that order exactly: presence flags put nulls last, and
+    the plain string fields select their lexicographically largest value,
+    which is the DESC winner. snapshot_file never participates; timestamps are
+    already normalized to UTC, so the order is independent of the local
+    machine timezone.
+    """
     ingested = candidate["snapshot_ingested_at"]
     finished = candidate["run_finished_at"]
     return (
-        0 if ingested is not None else 1,
-        -(ingested.timestamp()) if ingested is not None else 0,
-        0 if finished is not None else 1,
-        -(finished.timestamp()) if finished is not None else 0,
-        _descending_text(candidate["ingestion_run_id"]),
+        0 if ingested is None else 1,
+        ingested if ingested is not None else pd.Timestamp.min,
+        0 if finished is None else 1,
+        finished if finished is not None else pd.Timestamp.min,
+        candidate["ingestion_run_id"],
         candidate["physical_snapshot_hash"],
     )
 
@@ -423,7 +472,7 @@ def _validate_and_normalize_snapshot(
     return {
         "physical_hash": physical_hash,
         "interval_seconds": interval_seconds,
-        "logical_source_rows_hash": hash_canonical_source_rows(rows),
+        "logical_source_rows_hash": _hash_normalized_records(normalized_records, interval_seconds),
         "records": normalized_records,
     }
 
@@ -563,6 +612,7 @@ def build_canonical_market_bars(
         discarded = sorted(
             (candidate for candidate in group if candidate is not selected),
             key=_source_rank_key,
+            reverse=True,
         )
         record = selected["record"]
         bars.append(
@@ -658,7 +708,8 @@ def _conflict_candidate(group: list[dict]) -> list[dict]:
 
 
 def _select_primary(group: list[dict]) -> dict:
-    return min(group, key=_source_rank_key)
+    # max() selects the documented DESC winner; see _source_rank_key.
+    return max(group, key=_source_rank_key)
 
 
 def _source_ref(candidate: dict) -> CanonicalSourceRef:

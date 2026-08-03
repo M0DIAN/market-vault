@@ -810,7 +810,6 @@ def test_source_snapshot_count_path_independent(tmp_path):
 @pytest.mark.parametrize(
     ("column", "bad_value"),
     [
-        ("turnover", float("nan")),
         ("turnover", float("inf")),
         ("turnover", float("-inf")),
         ("turnover", "not-a-number"),
@@ -826,14 +825,18 @@ def test_malformed_optional_field_fails_closed(tmp_path, column, bad_value):
         build_inputs(cfg, [make_input(cfg, ref=ref, rows=rows)])
 
 
-def test_null_and_absent_optional_fields_allowed(tmp_path):
+@pytest.mark.parametrize(
+    ("column", "null_value"),
+    [("turnover", None), ("turnover", float("nan")), ("turnover", pd.NA)],
+)
+def test_null_optional_field_allowed(tmp_path, column, null_value):
     cfg = settings(tmp_path)
     write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
                    time_keys=minute_keys("2026-07-01 09:30:00", 1))
     ref = select_snapshot(cfg)
     rows = Catalog(cfg).market_bar_snapshot_rows(ref).frame
     rows_null = rows.copy()
-    rows_null["turnover"] = None
+    rows_null[column] = null_value
     result = build_inputs(cfg, [make_input(cfg, ref=ref, rows=rows_null)])
     assert result.bars[0].extra_fields == ()
 
@@ -883,12 +886,82 @@ def test_logical_hash_computed_once_per_snapshot(monkeypatch, tmp_path):
 
     import market_vault.canonical.bars as bars_module
 
-    original = bars_module.hash_canonical_source_rows
+    original = bars_module._hash_normalized_records
     monkeypatch.setattr(
         bars_module,
-        "hash_canonical_source_rows",
-        lambda frame: calls.append(len(frame)) or original(frame),
+        "_hash_normalized_records",
+        lambda records, interval_seconds: calls.append(len(records)) or original(records, interval_seconds),
     )
     result = build_inputs(cfg, [make_input(cfg, ref=ref, rows=rows)])
     assert len(result.bars) == 3
     assert calls == [3]  # once per snapshot, not once per candidate
+
+
+def test_ranking_prefix_run_ids_descending(tmp_path):
+    cfg = settings(tmp_path)
+    # "run-a" > "run" lexicographically: descending order picks run-a.
+    shared_ingested = pd.Timestamp("2026-07-01 13:00:00", tz="UTC")
+    shared_finished = datetime(2026, 7, 1, 14, 0, tzinfo=timezone.utc)
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 1),
+                   run_finished_at=shared_finished)
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 1),
+                   run_finished_at=shared_finished)
+    ref_a, rows_a = read_run_rows(cfg, run_id="run")
+    ref_b, rows_b = read_run_rows(cfg, run_id="run-a")
+    for ref in (ref_a, ref_b):
+        object.__setattr__(ref, "snapshot_ingested_at", shared_ingested)
+        object.__setattr__(ref, "run_finished_at", shared_finished)
+
+    result = build_inputs(cfg, [
+        make_input(cfg, ref=ref_a, rows=rows_a),
+        make_input(cfg, ref=ref_b, rows=rows_b),
+    ])
+    assert result.resolution[0].selected.ingestion_run_id == "run-a"
+    # Input order must not affect the selected source.
+    swapped = build_inputs(cfg, [
+        make_input(cfg, ref=ref_b, rows=rows_b),
+        make_input(cfg, ref=ref_a, rows=rows_a),
+    ])
+    assert swapped.resolution[0].selected.ingestion_run_id == "run-a"
+
+
+def test_nat_ranking_timestamp_ranks_nulls_last(tmp_path):
+    cfg = settings(tmp_path)
+    finished = datetime(2026, 7, 1, 14, 0, tzinfo=timezone.utc)
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 1),
+                   run_finished_at=finished)
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-b",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 1),
+                   run_finished_at=finished)
+    ref_a, rows_a = read_run_rows(cfg, run_id="run-a")
+    ref_b, rows_b = read_run_rows(cfg, run_id="run-b")
+    object.__setattr__(ref_a, "snapshot_ingested_at", pd.NaT)  # nulls last
+    object.__setattr__(ref_b, "snapshot_ingested_at", pd.Timestamp("2026-07-01 13:00:00", tz="UTC"))
+
+    result = build_inputs(cfg, [
+        make_input(cfg, ref=ref_a, rows=rows_a),
+        make_input(cfg, ref=ref_b, rows=rows_b),
+    ])
+    # run-b has a present ingested_at and wins; run-a (NaT) ranks last.
+    assert result.resolution[0].selected.ingestion_run_id == "run-b"
+
+
+def test_logical_hash_normalizes_equivalent_semantics(tmp_path):
+    cfg = settings(tmp_path)
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 1))
+    ref = select_snapshot(cfg)
+    rows = Catalog(cfg).market_bar_snapshot_rows(ref).frame
+    base = build_inputs(cfg, [make_input(cfg, ref=ref, rows=rows)]).bars[0]
+
+    # Equivalent casing/whitespace and timezone representation must produce
+    # the same logical source-row hash.
+    rows_equiv = rows.copy()
+    rows_equiv["session"] = " regular "
+    rows_equiv["time_market"] = pd.to_datetime(rows_equiv["time_market"]).dt.tz_convert("Asia/Tokyo")
+    result = build_inputs(cfg, [make_input(cfg, ref=ref, rows=rows_equiv)]).bars[0]
+    assert result.logical_source_rows_hash == base.logical_source_rows_hash
+    assert result.canonical_row_version_id == base.canonical_row_version_id
