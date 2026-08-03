@@ -153,6 +153,10 @@ def make_fake_collect_history(cfg: Settings, monkeypatch, responses: dict):
         key = (trade_date, tuple(symbols))
         call_log.append(key)
         response = responses[key]
+        # A list of responses yields one response per call in order; the
+        # last response is kept as the tail for any further retries.
+        if isinstance(response, list):
+            response = response.pop(0) if len(response) > 1 else response[0]
         if "raise" in response:
             raise response["raise"]
         manifest = RunManifest(
@@ -202,7 +206,10 @@ def make_fake_collect_history(cfg: Settings, monkeypatch, responses: dict):
             )
             manifest.row_count = len(curated_all)
         Catalog(cfg).record_run(manifest)
-        Catalog(cfg).record_quality(manifest.run_id, [QualityResult("bars_complete", "PASS")])
+        Catalog(cfg).record_quality(
+            manifest.run_id,
+            [QualityResult("bars_complete", "FAIL" if response.get("quality_fail") else "PASS")],
+        )
         run_ids.append(manifest.run_id)
         return manifest
 
@@ -890,6 +897,369 @@ def test_backfill_records_child_run_ids_and_row_count(monkeypatch, tmp_path):
 
     assert manifest.parameters["child_run_ids"] == run_ids
     assert manifest.row_count == 2
+
+
+def test_backfill_quality_fail_then_pass_is_success(monkeypatch, tmp_path):
+    cfg = settings(tmp_path)
+    write_calendar_snapshot(
+        cfg,
+        market="US",
+        trade_dates=[date(2026, 7, 1)],
+        requested_start_date=date(2026, 7, 1),
+        requested_end_date=date(2026, 7, 1),
+    )
+    calls, _ = make_fake_collect_history(
+        cfg,
+        monkeypatch,
+        {
+            (date(2026, 7, 1), ("US.MU",)): [
+                {"successful": ["US.MU"], "quality_fail": True},
+                {"successful": ["US.MU"]},
+            ],
+        },
+    )
+
+    manifest = collect_history_backfill(
+        cfg,
+        symbols=["US.MU"],
+        start_date=date(2026, 7, 1),
+        end_date=date(2026, 7, 1),
+        calendar_market="US",
+        retry_backoff_seconds=0,
+        today=date(2026, 8, 2),
+    )
+
+    # The quality-failing attempt must not count as success and must be
+    # retried; the retry passes quality checks, so the run succeeds.
+    assert calls == [
+        (date(2026, 7, 1), ("US.MU",)),
+        (date(2026, 7, 1), ("US.MU",)),
+    ]
+    assert manifest.status == "SUCCESS"
+    assert manifest.parameters["successful_dates_by_symbol"]["US.MU"] == ["2026-07-01"]
+    assert manifest.parameters["failed_dates_by_symbol"]["US.MU"] == []
+    assert manifest.parameters["successful_item_count"] == 1
+    assert manifest.parameters["failed_item_count"] == 0
+
+
+def test_backfill_quality_fail_exhausted_retries_is_failed(monkeypatch, tmp_path):
+    cfg = settings(tmp_path)
+    write_calendar_snapshot(
+        cfg,
+        market="US",
+        trade_dates=[date(2026, 7, 1)],
+        requested_start_date=date(2026, 7, 1),
+        requested_end_date=date(2026, 7, 1),
+    )
+    calls, _ = make_fake_collect_history(
+        cfg,
+        monkeypatch,
+        {
+            (date(2026, 7, 1), ("US.MU",)): {"successful": ["US.MU"], "quality_fail": True},
+        },
+    )
+
+    manifest = collect_history_backfill(
+        cfg,
+        symbols=["US.MU"],
+        start_date=date(2026, 7, 1),
+        end_date=date(2026, 7, 1),
+        calendar_market="US",
+        max_retries=1,
+        retry_backoff_seconds=0,
+        today=date(2026, 8, 2),
+    )
+
+    assert calls == [
+        (date(2026, 7, 1), ("US.MU",)),
+        (date(2026, 7, 1), ("US.MU",)),
+    ]
+    assert manifest.status == "FAILED"
+    assert manifest.parameters["successful_dates_by_symbol"]["US.MU"] == []
+    assert manifest.parameters["failed_dates_by_symbol"]["US.MU"] == [
+        {"date": "2026-07-01", "error": "Child run failed bar quality checks"}
+    ]
+    assert manifest.parameters["failed_item_count"] == 1
+    assert "Child run failed bar quality checks" in manifest.failed_items["US.MU"]
+
+
+def test_backfill_quality_fail_records_no_symbol_as_success_before_retry(monkeypatch, tmp_path):
+    cfg = settings(tmp_path)
+    write_calendar_snapshot(
+        cfg,
+        market="US",
+        trade_dates=[date(2026, 7, 1)],
+        requested_start_date=date(2026, 7, 1),
+        requested_end_date=date(2026, 7, 1),
+    )
+    calls, _ = make_fake_collect_history(
+        cfg,
+        monkeypatch,
+        {
+            (date(2026, 7, 1), ("US.MU", "US.NVDA")): [
+                {"successful": ["US.MU", "US.NVDA"], "quality_fail": True},
+                {"successful": ["US.MU", "US.NVDA"]},
+            ],
+        },
+    )
+
+    manifest = collect_history_backfill(
+        cfg,
+        symbols=["US.MU", "US.NVDA"],
+        start_date=date(2026, 7, 1),
+        end_date=date(2026, 7, 1),
+        calendar_market="US",
+        retry_backoff_seconds=0,
+        today=date(2026, 8, 2),
+    )
+
+    # Both symbols are retried after the quality-failing attempt; neither is
+    # recorded as successful from that attempt alone.
+    assert calls == [
+        (date(2026, 7, 1), ("US.MU", "US.NVDA")),
+        (date(2026, 7, 1), ("US.MU", "US.NVDA")),
+    ]
+    assert len(manifest.parameters["child_run_ids"]) == 2
+    assert manifest.status == "SUCCESS"
+    assert manifest.parameters["successful_dates_by_symbol"]["US.MU"] == ["2026-07-01"]
+    assert manifest.parameters["successful_dates_by_symbol"]["US.NVDA"] == ["2026-07-01"]
+
+
+def test_backfill_quality_fail_retry_records_date_once(monkeypatch, tmp_path):
+    cfg = settings(tmp_path)
+    write_calendar_snapshot(
+        cfg,
+        market="US",
+        trade_dates=[date(2026, 7, 1)],
+        requested_start_date=date(2026, 7, 1),
+        requested_end_date=date(2026, 7, 1),
+    )
+    calls, _ = make_fake_collect_history(
+        cfg,
+        monkeypatch,
+        {
+            (date(2026, 7, 1), ("US.MU", "US.NVDA")): [
+                {"successful": ["US.MU"], "failed": {"US.NVDA": "boom"}, "quality_fail": True},
+                {"successful": ["US.MU", "US.NVDA"]},
+            ],
+        },
+    )
+
+    manifest = collect_history_backfill(
+        cfg,
+        symbols=["US.MU", "US.NVDA"],
+        start_date=date(2026, 7, 1),
+        end_date=date(2026, 7, 1),
+        calendar_market="US",
+        retry_backoff_seconds=0,
+        today=date(2026, 8, 2),
+    )
+
+    assert calls == [
+        (date(2026, 7, 1), ("US.MU", "US.NVDA")),
+        (date(2026, 7, 1), ("US.MU", "US.NVDA")),
+    ]
+    # US.MU was reported successful by the quality-failing attempt too, but
+    # the date must be recorded exactly once (after the passing retry).
+    assert manifest.parameters["successful_dates_by_symbol"]["US.MU"] == ["2026-07-01"]
+    assert manifest.parameters["successful_dates_by_symbol"]["US.NVDA"] == ["2026-07-01"]
+    assert manifest.parameters["successful_item_count"] == 2
+    assert manifest.status == "SUCCESS"
+
+
+def test_backfill_unrecovered_quality_fail_records_clear_error(monkeypatch, tmp_path):
+    cfg = settings(tmp_path)
+    write_calendar_snapshot(
+        cfg,
+        market="US",
+        trade_dates=[date(2026, 7, 1)],
+        requested_start_date=date(2026, 7, 1),
+        requested_end_date=date(2026, 7, 1),
+    )
+    calls, _ = make_fake_collect_history(
+        cfg,
+        monkeypatch,
+        {
+            (date(2026, 7, 1), ("US.MU", "US.NVDA")): {
+                "successful": ["US.MU", "US.NVDA"],
+                "quality_fail": True,
+            },
+        },
+    )
+
+    manifest = collect_history_backfill(
+        cfg,
+        symbols=["US.MU", "US.NVDA"],
+        start_date=date(2026, 7, 1),
+        end_date=date(2026, 7, 1),
+        calendar_market="US",
+        max_retries=0,
+        retry_backoff_seconds=0,
+        today=date(2026, 8, 2),
+    )
+
+    assert calls == [(date(2026, 7, 1), ("US.MU", "US.NVDA"))]
+    assert manifest.status == "FAILED"
+    for symbol in ["US.MU", "US.NVDA"]:
+        assert manifest.parameters["failed_dates_by_symbol"][symbol] == [
+            {"date": "2026-07-01", "error": "Child run failed bar quality checks"}
+        ]
+        assert "2026-07-01" in manifest.failed_items[symbol]
+        assert "Child run failed bar quality checks" in manifest.failed_items[symbol]
+
+
+def test_backfill_partial_when_some_dates_quality_fail(monkeypatch, tmp_path):
+    cfg = settings(tmp_path)
+    write_calendar_snapshot(
+        cfg,
+        market="US",
+        trade_dates=[date(2026, 7, 1), date(2026, 7, 2)],
+        requested_start_date=date(2026, 7, 1),
+        requested_end_date=date(2026, 7, 2),
+    )
+    calls, _ = make_fake_collect_history(
+        cfg,
+        monkeypatch,
+        {
+            (date(2026, 7, 1), ("US.MU",)): {"successful": ["US.MU"], "quality_fail": True},
+            (date(2026, 7, 2), ("US.MU",)): {"successful": ["US.MU"]},
+        },
+    )
+
+    manifest = collect_history_backfill(
+        cfg,
+        symbols=["US.MU"],
+        start_date=date(2026, 7, 1),
+        end_date=date(2026, 7, 2),
+        calendar_market="US",
+        max_retries=0,
+        retry_backoff_seconds=0,
+        today=date(2026, 8, 2),
+    )
+
+    assert calls == [
+        (date(2026, 7, 1), ("US.MU",)),
+        (date(2026, 7, 2), ("US.MU",)),
+    ]
+    assert manifest.status == "PARTIAL"
+    assert manifest.parameters["successful_dates_by_symbol"]["US.MU"] == ["2026-07-02"]
+    assert manifest.parameters["failed_dates_by_symbol"]["US.MU"] == [
+        {"date": "2026-07-01", "error": "Child run failed bar quality checks"}
+    ]
+    assert manifest.parameters["successful_item_count"] == 1
+    assert manifest.parameters["failed_item_count"] == 1
+
+
+def test_backfill_rerun_skips_quality_recovered_data(monkeypatch, tmp_path):
+    cfg = settings(tmp_path)
+    write_calendar_snapshot(
+        cfg,
+        market="US",
+        trade_dates=[date(2026, 7, 1)],
+        requested_start_date=date(2026, 7, 1),
+        requested_end_date=date(2026, 7, 1),
+    )
+    first_calls, _ = make_fake_collect_history(
+        cfg,
+        monkeypatch,
+        {
+            (date(2026, 7, 1), ("US.MU",)): [
+                {"successful": ["US.MU"], "quality_fail": True},
+                {"successful": ["US.MU"]},
+            ],
+        },
+    )
+
+    first = collect_history_backfill(
+        cfg,
+        symbols=["US.MU"],
+        start_date=date(2026, 7, 1),
+        end_date=date(2026, 7, 1),
+        calendar_market="US",
+        retry_backoff_seconds=0,
+        today=date(2026, 8, 2),
+    )
+
+    assert first.status == "SUCCESS"
+    assert first_calls == [
+        (date(2026, 7, 1), ("US.MU",)),
+        (date(2026, 7, 1), ("US.MU",)),
+    ]
+
+    # The recovered data now passes the completion query, so a rerun of the
+    # same range skips it entirely instead of planning it again.
+    second_calls, _ = make_fake_collect_history(cfg, monkeypatch, {})
+
+    second = collect_history_backfill(
+        cfg,
+        symbols=["US.MU"],
+        start_date=date(2026, 7, 1),
+        end_date=date(2026, 7, 1),
+        calendar_market="US",
+        max_retries=0,
+        today=date(2026, 8, 2),
+    )
+
+    assert second_calls == []
+    assert second.status == "SUCCESS"
+    assert second.parameters["skipped_dates_by_symbol"]["US.MU"] == ["2026-07-01"]
+    assert second.parameters["skipped_item_count"] == 1
+    assert second.parameters["successful_item_count"] == 0
+
+
+def test_backfill_status_and_counts_consistent_after_quality_fail(monkeypatch, tmp_path):
+    cfg = settings(tmp_path)
+    write_calendar_snapshot(
+        cfg,
+        market="US",
+        trade_dates=[date(2026, 7, 1), date(2026, 7, 2)],
+        requested_start_date=date(2026, 7, 1),
+        requested_end_date=date(2026, 7, 2),
+    )
+    calls, _ = make_fake_collect_history(
+        cfg,
+        monkeypatch,
+        {
+            (date(2026, 7, 1), ("US.MU", "US.NVDA")): [
+                {"successful": ["US.MU", "US.NVDA"], "quality_fail": True},
+                {"successful": ["US.MU", "US.NVDA"]},
+            ],
+            (date(2026, 7, 2), ("US.MU", "US.NVDA")): {
+                "successful": ["US.MU", "US.NVDA"],
+                "quality_fail": True,
+            },
+        },
+    )
+
+    manifest = collect_history_backfill(
+        cfg,
+        symbols=["US.MU", "US.NVDA"],
+        start_date=date(2026, 7, 1),
+        end_date=date(2026, 7, 2),
+        calendar_market="US",
+        max_retries=1,
+        retry_backoff_seconds=0,
+        today=date(2026, 8, 2),
+    )
+
+    # 2026-07-01: quality fail then pass -> both symbols successful once.
+    # 2026-07-02: quality fail on both attempts -> both symbols failed.
+    assert calls == [
+        (date(2026, 7, 1), ("US.MU", "US.NVDA")),
+        (date(2026, 7, 1), ("US.MU", "US.NVDA")),
+        (date(2026, 7, 2), ("US.MU", "US.NVDA")),
+        (date(2026, 7, 2), ("US.MU", "US.NVDA")),
+    ]
+    assert manifest.status == "PARTIAL"
+    for symbol in ["US.MU", "US.NVDA"]:
+        assert manifest.parameters["successful_dates_by_symbol"][symbol] == ["2026-07-01"]
+        assert manifest.parameters["failed_dates_by_symbol"][symbol] == [
+            {"date": "2026-07-02", "error": "Child run failed bar quality checks"}
+        ]
+    assert manifest.parameters["successful_item_count"] == 2
+    assert manifest.parameters["failed_item_count"] == 2
+    assert manifest.successful_items == []
+    assert sorted(manifest.failed_items) == ["US.MU", "US.NVDA"]
 
 
 def test_incremental_uses_latest_completed_date_per_symbol(tmp_path):

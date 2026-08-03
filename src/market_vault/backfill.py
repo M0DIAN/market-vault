@@ -11,6 +11,22 @@ from .service import _hash_config, collect_history
 from .storage import Catalog
 
 
+QUALITY_FAIL_ERROR = "Child run failed bar quality checks"
+
+
+def _record_successful_date(manifest: DatasetRunManifest, symbol: str, trade_date: date) -> None:
+    """Record a successful symbol/trade-date pair, at most once.
+
+    A symbol can be retried within the same trade date (e.g. after a child
+    run failed bar quality checks and later recovered), so the date must not
+    be appended a second time on a successful retry.
+    """
+    dates = manifest.parameters["successful_dates_by_symbol"].setdefault(symbol, [])
+    iso_date = trade_date.isoformat()
+    if iso_date not in dates:
+        dates.append(iso_date)
+
+
 @dataclass(frozen=True)
 class BackfillItem:
     code: str
@@ -393,23 +409,31 @@ def collect_history_backfill(
                 )
                 manifest.parameters["child_run_ids"].append(child_manifest.run_id)
                 manifest.row_count += child_manifest.row_count
-                for symbol in child_manifest.successful_symbols:
-                    manifest.parameters["successful_dates_by_symbol"][symbol].append(trade_date.isoformat())
-                last_errors = {symbol: str(error) for symbol, error in child_manifest.failed_symbols.items()}
-                remaining_symbols = sorted(child_manifest.failed_symbols)
+                last_errors = {
+                    symbol: str(error) for symbol, error in child_manifest.failed_symbols.items()
+                }
+                if catalog.run_has_quality_fail(child_manifest.run_id):
+                    # Bar quality checks are recorded at the child-run level,
+                    # so a failing run cannot tell us which symbol failed the
+                    # checks. Conservatively treat every symbol this run
+                    # reported as successful as still incomplete for this
+                    # trade date: do not record it as successful and keep it
+                    # in the retry set together with the network failures.
+                    for symbol in child_manifest.successful_symbols:
+                        last_errors[symbol] = QUALITY_FAIL_ERROR
+                else:
+                    for symbol in child_manifest.successful_symbols:
+                        _record_successful_date(manifest, symbol, trade_date)
+                remaining_symbols = sorted(last_errors)
             except (KeyboardInterrupt, SystemExit):
                 raise
             except Exception as exc:
                 error_text = str(exc)
                 last_errors = {symbol: error_text for symbol in remaining_symbols}
-            if not remaining_symbols and not last_errors:
+            if not remaining_symbols:
                 break
             if attempt >= max_retries:
                 break
-            retry_symbols = sorted(last_errors)
-            if not retry_symbols:
-                break
-            remaining_symbols = retry_symbols
             delay = min(60.0, retry_backoff_seconds * (2 ** attempt))
             if delay > 0:
                 time.sleep(delay)

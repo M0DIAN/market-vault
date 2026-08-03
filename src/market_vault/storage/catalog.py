@@ -112,6 +112,27 @@ class Catalog:
             if rows:
                 con.executemany("INSERT INTO quality_results VALUES (?, ?, ?, ?, ?, ?)", rows)
 
+    def run_has_quality_fail(self, run_id: str) -> bool:
+        """Return True when a run has at least one FAIL quality result.
+
+        Bar quality checks are recorded per run in quality_results, and the
+        completion queries (completed_market_bar_items,
+        latest_completed_market_bar_dates) treat any run with a FAIL result as
+        not completed. The backfill must apply the same rule when deciding
+        whether a child run's symbols are actually complete, instead of
+        inferring it from the child run status (PARTIAL can also mean only
+        some symbols failed their network requests).
+        """
+        self.initialize()
+        if not run_id:
+            return False
+        with self.connect() as con:
+            row = con.execute(
+                "SELECT 1 FROM quality_results WHERE run_id = ? AND result = 'FAIL' LIMIT 1",
+                [run_id],
+            ).fetchone()
+        return row is not None
+
     def record_dataset_run(self, manifest: DatasetRunManifest) -> None:
         self.initialize()
         with self.connect() as con:
