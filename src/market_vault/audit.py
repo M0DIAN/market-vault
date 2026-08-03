@@ -1,21 +1,16 @@
 from __future__ import annotations
 
 import json
-import os
 import re
-import tempfile
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from .backfill import (
-    merge_date_ranges,
-    missing_coverage_ranges,
-    normalize_backfill_symbols,
-    resolve_calendar_scope,
-)
+from .backfill import normalize_backfill_symbols, resolve_calendar_scope
+from .coverage import load_market_bar_coverage_state
 from .models import Settings
+from .reporting import write_json_report_atomic
 from .storage import Catalog
 
 #: Legacy snapshot files are named batch-<16 hex>.parquet; current snapshot
@@ -42,22 +37,6 @@ def _iso_timestamp(value) -> str | None:
     if isinstance(value, str):
         return value
     return value.isoformat()
-
-
-def _write_json_atomic(report_path: Path, payload: dict) -> None:
-    """Write a JSON report via a temp file + replace() to avoid half-written files."""
-    report_path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(dir=report_path.parent, prefix=f"{report_path.stem}.", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump(payload, fh, ensure_ascii=False, indent=2)
-        os.replace(tmp_name, report_path)
-    except BaseException:
-        try:
-            os.unlink(tmp_name)
-        except OSError:
-            pass
-        raise
 
 
 @dataclass
@@ -349,7 +328,7 @@ def _finish_report(report, prefix: str, settings: Settings) -> None:
     report_path = settings.report_dir / f"{prefix}_{report.run_id}.json"
     payload = report.as_dict()
     payload["report_file"] = str(report_path)
-    _write_json_atomic(report_path, payload)
+    write_json_report_atomic(report_path, payload)
     report.report_file = str(report_path)
 
 
@@ -666,15 +645,19 @@ def run_audit(
         "source_schema_version": schema_value,
     }
 
-    catalog = Catalog(settings)
-    coverage_ranges = catalog.trading_calendar_requested_ranges(
-        scope_type,
-        scope_value,
-        start_date,
-        end_date,
+    state = load_market_bar_coverage_state(
+        settings,
+        scope_type=scope_type,
+        scope_value=scope_value,
+        symbols=normalized_symbols,
+        start_date=start_date,
+        end_date=end_date,
+        interval=interval_value,
+        requested_session=session_value,
+        adjustment=adjustment_value,
+        source_schema_version=schema_value,
     )
-    gaps = missing_coverage_ranges(start_date, end_date, coverage_ranges)
-    if gaps:
+    if state.calendar_coverage_gaps:
         # Calendar coverage is incomplete: the expected trading-day set is
         # not fully determined and no bar-level classification ran. Leave
         # summary null instead of claiming a coverage percentage.
@@ -682,41 +665,20 @@ def run_audit(
         report.calendar.coverage_complete = False
         report.calendar.coverage_gaps = [
             {"start_date": gap_start.isoformat(), "end_date": gap_end.isoformat()}
-            for gap_start, gap_end in gaps
+            for gap_start, gap_end in state.calendar_coverage_gaps
         ]
         report.summary = None
         _finish_report(report, "market_bars_audit", settings)
         return report
 
-    expected_dates = catalog.trading_calendar_dates(scope_type, scope_value, start_date, end_date)
+    expected_dates = state.expected_trade_dates
     report.calendar.expected_trade_date_count = len(expected_dates)
     report.calendar.expected_trade_dates = [value.isoformat() for value in expected_dates]
 
-    complete = catalog.completed_market_bar_items(
-        symbols=normalized_symbols,
-        trade_dates=expected_dates,
-        interval=interval_value,
-        requested_session=session_value,
-        adjustment=adjustment_value,
-        source_schema_version=schema_value,
-    )
-    present = catalog.present_market_bar_items(
-        symbols=normalized_symbols,
-        trade_dates=expected_dates,
-        interval=interval_value,
-        requested_session=session_value,
-        adjustment=adjustment_value,
-        source_schema_version=schema_value,
-    )
-    incomplete_keys = present - complete
-    all_reasons = catalog.incomplete_market_bar_item_reasons(
-        symbols=normalized_symbols,
-        trade_dates=expected_dates,
-        interval=interval_value,
-        requested_session=session_value,
-        adjustment=adjustment_value,
-        source_schema_version=schema_value,
-    )
+    complete = state.complete_items
+    present = state.present_items
+    incomplete_keys = state.incomplete_items
+    all_reasons = state.incomplete_reasons
 
     symbol_reports: list[AuditSymbolReport] = []
     total_complete = 0
