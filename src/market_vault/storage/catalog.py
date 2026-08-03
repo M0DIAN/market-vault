@@ -541,7 +541,6 @@ class Catalog:
             ]
             rows = con.execute(sql, params).fetchall()
         reasons: dict[tuple[str, date], set[str]] = {}
-        curated_metadata = (requested_session, interval, adjustment)
         for (
             code,
             trade_date,
@@ -553,6 +552,9 @@ class Catalog:
             run_session,
             run_adjustment,
         ) in rows:
+            # Both tuples follow the same field order: trade date, interval,
+            # session, adjustment -- expanding the request-key parameters
+            # explicitly here so the comparison cannot drift out of sync.
             reason = _snapshot_incomplete_reason(
                 run_id,
                 run_status,
@@ -565,7 +567,9 @@ class Catalog:
                 ),
                 curated_metadata=(
                     trade_date,
-                    *curated_metadata,
+                    interval,
+                    requested_session,
+                    adjustment,
                 ),
             )
             if reason is not None:

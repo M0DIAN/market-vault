@@ -586,6 +586,41 @@ def test_audit_mismatch_priority_after_quality_fail(tmp_path):
     }
 
 
+def test_snapshot_incomplete_reason_matching_metadata_is_none():
+    from market_vault.storage.catalog import _snapshot_incomplete_reason
+
+    # A run whose metadata exactly matches the curated row is eligible for
+    # completion: the reason must be None, not RUN_METADATA_MISMATCH. The
+    # tuple field order (trade date, interval, session, adjustment) must stay
+    # aligned between both sides for this to hold.
+    reason = _snapshot_incomplete_reason(
+        run_id="run-ok",
+        run_status="SUCCESS",
+        has_quality_fail=False,
+        run_metadata=(date(2026, 7, 1), "1m", "ALL", "NONE"),
+        curated_metadata=(date(2026, 7, 1), "1m", "ALL", "NONE"),
+    )
+    assert reason is None
+
+
+def test_catalog_incomplete_reasons_empty_for_complete_snapshot(tmp_path):
+    cfg = settings(tmp_path)
+    # A fully matching SUCCESS snapshot must yield no reasons at the Catalog
+    # layer itself -- the audit's complete-key filtering must not be the
+    # only thing hiding a wrong RUN_METADATA_MISMATCH.
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-ok")
+
+    reasons = Catalog(cfg).incomplete_market_bar_item_reasons(
+        symbols=["US.MU"],
+        trade_dates=[date(2026, 7, 1)],
+        interval="1m",
+        requested_session="ALL",
+        adjustment="NONE",
+        source_schema_version="10.9",
+    )
+    assert reasons == {}
+
+
 def test_audit_every_incomplete_date_has_reasons(tmp_path):
     cfg = settings(tmp_path)
     us_calendar(cfg)
