@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from .backfill import collect_history_backfill, plan_history_backfill
 from .config import load_settings
 from .models import Settings
 from .normalization.calendar import normalize_calendar_code, normalize_calendar_market
@@ -86,3 +87,79 @@ class MarketVault:
         """
         with self.catalog.connect() as con:
             return con.execute(sql, params).fetchdf()
+
+    def plan_backfill(
+        self,
+        *,
+        symbols: list[str],
+        end_date: date,
+        calendar_market: str | None = None,
+        calendar_code: str | None = None,
+        start_date: date | None = None,
+        interval: str = "1m",
+        session: str | None = None,
+        adjustment: str | None = None,
+        force: bool = False,
+        incremental: bool = False,
+        bootstrap_start_date: date | None = None,
+        today: date | None = None,
+    ):
+        if session is None:
+            session = self.settings.default_session
+        if adjustment is None:
+            adjustment = self.settings.default_adjustment
+        return plan_history_backfill(
+            self.settings,
+            symbols=symbols,
+            end_date=end_date,
+            calendar_market=calendar_market,
+            calendar_code=calendar_code,
+            start_date=start_date,
+            interval=interval,
+            session=session,
+            adjustment=adjustment,
+            force=force,
+            incremental=incremental,
+            bootstrap_start_date=bootstrap_start_date,
+            today=today,
+        )
+
+    def backfill(
+        self,
+        *,
+        symbols: list[str],
+        end_date: date,
+        calendar_market: str | None = None,
+        calendar_code: str | None = None,
+        start_date: date | None = None,
+        interval: str = "1m",
+        session: str | None = None,
+        adjustment: str | None = None,
+        force: bool = False,
+        incremental: bool = False,
+        bootstrap_start_date: date | None = None,
+        max_retries: int = 2,
+        retry_backoff_seconds: float = 2.0,
+        today: date | None = None,
+    ):
+        if session is None:
+            session = self.settings.default_session
+        if adjustment is None:
+            adjustment = self.settings.default_adjustment
+        return collect_history_backfill(
+            self.settings,
+            symbols=symbols,
+            end_date=end_date,
+            calendar_market=calendar_market,
+            calendar_code=calendar_code,
+            start_date=start_date,
+            interval=interval,
+            session=session,
+            adjustment=adjustment,
+            force=force,
+            incremental=incremental,
+            bootstrap_start_date=bootstrap_start_date,
+            max_retries=max_retries,
+            retry_backoff_seconds=retry_backoff_seconds,
+            today=today,
+        )

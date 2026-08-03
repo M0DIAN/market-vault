@@ -6,9 +6,10 @@ from datetime import date
 from pathlib import Path
 
 from .api import MarketVault
+from .backfill import collect_history_backfill
 from .config import load_settings, load_universe
-from .doctor import run_doctor
 from .collectors.moomoo_calendar import SUPPORTED_TRADE_DATE_MARKETS
+from .doctor import run_doctor
 from .service import collect_history, collect_option_chain, collect_option_volatility, collect_trading_calendar
 from .storage import Catalog
 
@@ -18,6 +19,29 @@ def _parse_date(value: str) -> date:
         return date.fromisoformat(value)
     except ValueError as exc:
         raise argparse.ArgumentTypeError("Date must use YYYY-MM-DD") from exc
+
+
+def _non_negative_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("Value must be non-negative")
+    return parsed
+
+
+def _non_negative_float(value: str) -> float:
+    parsed = float(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("Value must be non-negative")
+    return parsed
+
+
+def _resolve_symbols(args) -> list[str]:
+    symbols = list(args.symbols or [])
+    if getattr(args, "groups", None):
+        universe = load_universe(args.universe)
+        for group in args.groups:
+            symbols.extend(universe.get(group, []))
+    return symbols
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -80,6 +104,29 @@ def build_parser() -> argparse.ArgumentParser:
     calendar_query.add_argument("--end-date", type=_parse_date)
     calendar_query.add_argument("--limit", type=int, default=30)
 
+    backfill = sub.add_parser("backfill", help="Plan and execute resumable historical backfill")
+    backfill.add_argument("--start-date", type=_parse_date)
+    backfill.add_argument("--end-date", required=True, type=_parse_date)
+    backfill.add_argument("--symbols", nargs="*")
+    backfill.add_argument("--universe", default="config/universe.yaml")
+    backfill.add_argument(
+        "--groups",
+        nargs="*",
+        default=[],
+        choices=["core_universe", "trade_universe", "event_universe", "option_universe"],
+    )
+    backfill_scope = backfill.add_mutually_exclusive_group(required=True)
+    backfill_scope.add_argument("--calendar-market", choices=SUPPORTED_TRADE_DATE_MARKETS)
+    backfill_scope.add_argument("--calendar-code")
+    backfill.add_argument("--interval", default="1m")
+    backfill.add_argument("--session", default=None)
+    backfill.add_argument("--adjustment", default=None)
+    backfill.add_argument("--force", action="store_true")
+    backfill.add_argument("--incremental", action="store_true")
+    backfill.add_argument("--bootstrap-start-date", type=_parse_date)
+    backfill.add_argument("--max-retries", type=_non_negative_int, default=2)
+    backfill.add_argument("--retry-backoff-seconds", type=_non_negative_float, default=2.0)
+
     return parser
 
 
@@ -97,12 +144,7 @@ def main() -> None:
         return
 
     if args.command == "collect":
-        symbols = list(args.symbols or [])
-        if args.groups:
-            universe = load_universe(args.universe)
-            for group in args.groups:
-                symbols.extend(universe.get(group, []))
-        symbols = sorted(set(symbols))
+        symbols = sorted(set(_resolve_symbols(args)))
         manifest = collect_history(
             settings=settings,
             trade_date=args.date,
@@ -168,6 +210,30 @@ def main() -> None:
             end_date=args.end_date,
         )
         print(frame.head(args.limit).to_string(index=False))
+        return
+
+    if args.command == "backfill":
+        if not args.incremental and args.start_date is None:
+            build_parser().error("--start-date is required unless --incremental is used")
+        if args.incremental and args.start_date is not None:
+            build_parser().error("--start-date cannot be used with --incremental")
+        manifest = collect_history_backfill(
+            settings=settings,
+            symbols=_resolve_symbols(args),
+            start_date=args.start_date,
+            end_date=args.end_date,
+            calendar_market=args.calendar_market,
+            calendar_code=args.calendar_code,
+            interval=args.interval,
+            session=(args.session or settings.default_session),
+            adjustment=(args.adjustment or settings.default_adjustment),
+            force=args.force,
+            incremental=args.incremental,
+            bootstrap_start_date=args.bootstrap_start_date,
+            max_retries=args.max_retries,
+            retry_backoff_seconds=args.retry_backoff_seconds,
+        )
+        print(json.dumps(manifest.as_dict(), ensure_ascii=False, indent=2))
         return
 
 

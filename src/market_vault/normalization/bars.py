@@ -47,6 +47,7 @@ def normalize_bars(
     frame: pd.DataFrame,
     requested_trade_date: date,
     interval: str,
+    requested_session: str,
     adjustment: str,
     source: str,
     source_schema_version: str,
@@ -71,6 +72,7 @@ def normalize_bars(
     df["time_utc"] = parsed.dt.tz_convert("UTC")
     df["market_calendar_date"] = parsed.dt.date
     df["requested_trade_date"] = requested_trade_date
+    df["requested_session"] = requested_session.upper()
     df["session"] = parsed.map(_session_label)
     df["interval"] = interval.lower()
     df["adjustment"] = adjustment.upper()
@@ -108,6 +110,7 @@ def normalize_bars(
         "time_utc",
         "market_calendar_date",
         "requested_trade_date",
+        "requested_session",
         "session",
         "open",
         "high",

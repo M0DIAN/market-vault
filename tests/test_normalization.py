@@ -22,10 +22,11 @@ def sample_frame() -> pd.DataFrame:
 
 
 def test_normalize_assigns_timezones_and_sessions():
-    out = normalize_bars(sample_frame(), date(2026, 7, 31), "1m", "NONE", "moomoo", "10.9", "run-1")
+    out = normalize_bars(sample_frame(), date(2026, 7, 31), "1m", "ALL", "NONE", "moomoo", "10.9", "run-1")
     assert str(out["time_market"].dt.tz) == "America/New_York"
     assert str(out["time_utc"].dt.tz) == "UTC"
     assert out["session"].tolist() == ["REGULAR", "AFTER_HOURS"]
+    assert out["requested_session"].tolist() == ["ALL", "ALL"]
 
 
 def test_option_inference():

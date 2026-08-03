@@ -76,7 +76,7 @@ def collect_history(
     curated_frames: list[pd.DataFrame] = []
 
     with MoomooHistoryCollector(settings) as collector:
-        for symbol in manifest.requested_symbols:
+        for index, symbol in enumerate(manifest.requested_symbols):
             try:
                 raw = collector.fetch_history(
                     code=symbol,
@@ -99,6 +99,7 @@ def collect_history(
                     frame=raw,
                     requested_trade_date=trade_date,
                     interval=manifest.interval,
+                    requested_session=manifest.session,
                     adjustment=manifest.adjustment,
                     source=settings.source,
                     source_schema_version=settings.source_schema_version,
@@ -108,6 +109,8 @@ def collect_history(
                 manifest.successful_symbols.append(symbol)
             except Exception as exc:  # preserve per-symbol failures and continue the batch
                 manifest.failed_symbols[symbol] = str(exc)
+            if index < len(manifest.requested_symbols) - 1:
+                time.sleep(settings.request_pause_seconds)
 
     store = ParquetStore(settings)
     catalog = Catalog(settings)
