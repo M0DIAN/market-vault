@@ -119,3 +119,192 @@ def canonical_row_version_id(
             "canonical_builder_version": canonical_builder_version,
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# Build-level logical identities (ADR 0001, section 5).
+# ---------------------------------------------------------------------------
+
+_CONTENT_ID_PREFIX = "canonical-content"
+_RESOLUTION_ID_PREFIX = "canonical-resolution"
+_GAP_ID_PREFIX_BUILD = "canonical-gap-content"
+_BUILD_ID_PREFIX = "canonical-build"
+
+
+def _stable_source_identity(
+    *,
+    ingestion_run_id: str,
+    physical_snapshot_hash: str,
+    logical_source_rows_hash: str,
+    source_schema_version: str,
+    requested_trade_date,
+    requested_session: str,
+) -> dict:
+    """Path-independent stable source identity (snapshot_file excluded)."""
+    return {
+        "ingestion_run_id": ingestion_run_id,
+        "physical_snapshot_hash": physical_snapshot_hash,
+        "logical_source_rows_hash": logical_source_rows_hash,
+        "source_schema_version": source_schema_version,
+        "requested_trade_date": requested_trade_date,
+        "requested_session": requested_session,
+    }
+
+
+def canonical_content_id(bars: tuple) -> str:
+    """Versioned SHA-256 over deterministic logical Canonical Bar contents.
+
+    Includes all authoritative logical row fields and canonical identities;
+    excludes created_at, output paths, Parquet byte layout, file size,
+    serializer metadata, and ``snapshot_file`` (movable descriptive
+    provenance). Row order is normalized by sorting row digests, so equivalent
+    logical rows in any input order or timezone display produce the same ID.
+    """
+    row_digests = []
+    for bar in bars:
+        fields = {
+            "canonical_bar_key": bar.canonical_bar_key,
+            "canonical_row_version_id": bar.canonical_row_version_id,
+            "dataset_kind": bar.dataset_kind,
+            "code": bar.code,
+            "interval": bar.interval,
+            "adjustment": bar.adjustment,
+            "event_time": bar.event_time,
+            "market_available_at": bar.market_available_at,
+            "archive_available_at": bar.archive_available_at,
+            "open": bar.open,
+            "high": bar.high,
+            "low": bar.low,
+            "close": bar.close,
+            "volume": bar.volume,
+            "extra_fields": tuple(bar.extra_fields),
+            "ingestion_run_id": bar.ingestion_run_id,
+            "physical_snapshot_hash": bar.physical_snapshot_hash,
+            "logical_source_rows_hash": bar.logical_source_rows_hash,
+            "source_schema_version": bar.source_schema_version,
+            "canonical_builder_version": bar.canonical_builder_version,
+            "requested_trade_date": bar.requested_trade_date,
+            "requested_session": bar.requested_session,
+            "market_calendar_date": bar.market_calendar_date,
+            "session": bar.session,
+        }
+        payload = "\x1f".join(
+            f"{key}:{_field_text(value)}" for key, value in sorted(fields.items())
+        )
+        row_digests.append(hashlib.sha256(payload.encode("utf-8")).hexdigest())
+    row_digests.sort()
+    return _encode(_CONTENT_ID_PREFIX, {"row_hashes": "\x1e".join(row_digests)})
+
+
+def resolution_content_id(resolution: tuple) -> str:
+    """Deterministic path-independent hash of resolution semantics.
+
+    Covers canonical_bar_key, the selected source stable identity, and the
+    equivalent discarded source stable identities; ``snapshot_file`` never
+    influences it.
+    """
+    entry_digests = []
+    for entry in resolution:
+        selected = _stable_source_identity(
+            ingestion_run_id=entry.selected.ingestion_run_id,
+            physical_snapshot_hash=entry.selected.physical_snapshot_hash,
+            logical_source_rows_hash=entry.selected.logical_source_rows_hash,
+            source_schema_version=entry.selected.source_schema_version,
+            requested_trade_date=entry.selected.requested_trade_date,
+            requested_session=entry.selected.requested_session,
+        )
+        discarded = [
+            _stable_source_identity(
+                ingestion_run_id=ref.ingestion_run_id,
+                physical_snapshot_hash=ref.physical_snapshot_hash,
+                logical_source_rows_hash=ref.logical_source_rows_hash,
+                source_schema_version=ref.source_schema_version,
+                requested_trade_date=ref.requested_trade_date,
+                requested_session=ref.requested_session,
+            )
+            for ref in entry.equivalent_discarded
+        ]
+        payload = "\x1f".join(
+            [
+                f"key:{entry.canonical_bar_key}",
+                f"selected:{_encode(_RESOLUTION_ID_PREFIX + '-src', selected)}",
+                "discarded:"
+                + "\x1e".join(
+                    sorted(_encode(_RESOLUTION_ID_PREFIX + "-src", item) for item in discarded)
+                ),
+            ]
+        )
+        entry_digests.append(hashlib.sha256(payload.encode("utf-8")).hexdigest())
+    entry_digests.sort()
+    return _encode(_RESOLUTION_ID_PREFIX, {"entries": "\x1e".join(entry_digests)})
+
+
+def gap_content_id(gaps: tuple, gap_policy_version: str) -> str:
+    """Deterministic hash of generated gap sidecar rows and the gap policy."""
+    gap_digests = []
+    for gap in gaps:
+        payload = "\x1f".join(
+            [
+                f"gap_id:{gap.gap_id}",
+                f"dataset_kind:{gap.dataset_kind}",
+                f"code:{gap.code}",
+                f"interval:{gap.interval}",
+                f"adjustment:{gap.adjustment}",
+                f"market_calendar_date:{gap.market_calendar_date.isoformat()}",
+                f"session:{gap.session}",
+                f"previous:{_utc_iso(gap.previous_event_time)}",
+                f"next:{_utc_iso(gap.next_event_time)}",
+                f"missing_from:{_utc_iso(gap.missing_from_event_time)}",
+                f"missing_to:{_utc_iso(gap.missing_to_event_time)}",
+                f"missing_bar_count:{gap.missing_bar_count}",
+            ]
+        )
+        gap_digests.append(hashlib.sha256(payload.encode("utf-8")).hexdigest())
+    gap_digests.sort()
+    return _encode(
+        _GAP_ID_PREFIX_BUILD,
+        {"gap_policy_version": gap_policy_version, "rows": "\x1e".join(gap_digests)},
+    )
+
+
+def canonical_build_id(
+    *,
+    symbols: list[str],
+    trade_dates: list,
+    request_key,
+    canonical_content_id: str,
+    resolution_content_id: str,
+    gap_content_id: str,
+    selected_row_version_ids: list[str],
+    canonical_builder_version: str,
+    canonical_schema_version: str,
+    materializer_version: str,
+    gap_policy_version: str,
+) -> str:
+    """Deterministic versioned SHA-256 over the full build contract.
+
+    Independent of input order (all lists are normalized by sorting),
+    local machine timezone, snapshot path relocation, generated file paths,
+    Parquet byte hashes, and created_at. Changing the builder, schema,
+    materializer, gap policy, selected physical source, or logical contents
+    changes the build ID.
+    """
+    return _encode(
+        _BUILD_ID_PREFIX,
+        {
+            "symbols": "\x1e".join(sorted(symbols)),
+            "trade_dates": "\x1e".join(sorted(value.isoformat() for value in trade_dates)),
+            "interval": request_key.interval,
+            "requested_session": request_key.requested_session,
+            "adjustment": request_key.adjustment,
+            "source_schema_version": request_key.source_schema_version,
+            "canonical_content_id": canonical_content_id,
+            "resolution_content_id": resolution_content_id,
+            "gap_content_id": gap_content_id,
+            "selected_row_version_ids": "\x1e".join(sorted(selected_row_version_ids)),
+            "canonical_builder_version": canonical_builder_version,
+            "canonical_schema_version": canonical_schema_version,
+            "materializer_version": materializer_version,
+            "gap_policy_version": gap_policy_version,
+        },
+    )

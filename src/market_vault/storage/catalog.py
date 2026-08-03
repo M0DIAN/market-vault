@@ -837,6 +837,17 @@ class Catalog:
             return None
         return path
 
+    def resolve_snapshot_file(self, snapshot_file: str) -> Path:
+        """Public read-only resolver for a curated market-bar snapshot file.
+
+        Returns the absolute path when the file lies inside the curated
+        market-bars root; raises ValueError otherwise. Never modifies data.
+        """
+        path = self._resolve_snapshot_file(snapshot_file)
+        if path is None:
+            raise ValueError(f"unsafe snapshot file path: {snapshot_file!r}")
+        return path
+
     def trading_dates_after(
         self,
         scope_type: str,

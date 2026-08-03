@@ -354,6 +354,18 @@ Threats the dataset layer must defend against:
    explicit offsets, pending resolution of the timestamp semantics noted in
    section 5).
 
+## 13a. Progress
+
+- PR-1/PR-2 (planning + timestamp-semantics contract) merged: the six
+  timestamp behaviors are resolved and pinned by offline tests.
+- PR-3 (canonical builder core) merged: in-memory canonical rows, two-level
+  identity model, reconciliation, and conflicts.
+- PR-4 (materialization) in progress: immutable canonical build directories,
+  explicit Parquet schema, logical build identities, conservative gap
+  sidecar, resolution JSONL, immutable manifest, atomic commit, and EMPTY
+  builds — see
+  [contracts/canonical_market_bar_materialization.md](contracts/canonical_market_bar_materialization.md).
+
 ## 14. Proposed PR sequence
 
 ```text

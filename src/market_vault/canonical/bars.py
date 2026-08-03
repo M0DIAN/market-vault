@@ -654,6 +654,7 @@ def _source_ref(candidate: dict) -> CanonicalSourceRef:
         ingestion_run_id=candidate["ingestion_run_id"],
         physical_snapshot_hash=candidate["physical_snapshot_hash"],
         logical_source_rows_hash=candidate["logical_source_rows_hash"],
+        source_schema_version=candidate["record"]["source_schema_version"],
         snapshot_file=candidate["snapshot_file"],
         requested_trade_date=candidate["requested_trade_date"],
         requested_session=candidate["requested_session"],
