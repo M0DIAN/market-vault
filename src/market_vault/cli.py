@@ -5,6 +5,7 @@ import json
 from datetime import date
 from pathlib import Path
 
+from ._version import __version__
 from .api import MarketVault
 from .audit import FAILED, WARN, run_audit, run_inventory
 from .backfill import collect_history_backfill
@@ -49,6 +50,12 @@ def _resolve_symbols(args) -> list[str]:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="market-vault")
     parser.add_argument("--settings", default="config/settings.yaml")
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+        help="Show the market-vault version and exit",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     init = sub.add_parser("init-catalog", help="Create DuckDB metadata tables")
@@ -202,11 +209,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "init-catalog":
         Catalog(settings).initialize()
         print(f"Catalog initialized: {settings.catalog_path}")
-        return
+        return 0
 
     if args.command == "doctor":
         print(json.dumps(run_doctor(settings), ensure_ascii=False, indent=2))
-        return
+        return 0
 
     if args.command == "collect":
         symbols = sorted(set(_resolve_symbols(args)))
@@ -219,7 +226,7 @@ def main(argv: list[str] | None = None) -> int:
             adjustment=(args.adjustment or settings.default_adjustment),
         )
         print(json.dumps(manifest.as_dict(), ensure_ascii=False, indent=2))
-        return
+        return 0
 
     if args.command == "query":
         vault = MarketVault(settings)
@@ -231,7 +238,7 @@ def main(argv: list[str] | None = None) -> int:
             adjustment=args.adjustment,
         )
         print(frame.head(args.limit).to_string(index=False))
-        return
+        return 0
 
     if args.command == "option-chain":
         manifest = collect_option_chain(
@@ -243,7 +250,7 @@ def main(argv: list[str] | None = None) -> int:
             option_cond_type=args.option_cond_type,
         )
         print(json.dumps(manifest.as_dict(), ensure_ascii=False, indent=2))
-        return
+        return 0
 
     if args.command == "option-volatility":
         manifest = collect_option_volatility(
@@ -253,7 +260,7 @@ def main(argv: list[str] | None = None) -> int:
             end_date=args.end_date,
         )
         print(json.dumps(manifest.as_dict(), ensure_ascii=False, indent=2))
-        return
+        return 0
 
     if args.command == "calendar":
         manifest = collect_trading_calendar(
@@ -264,7 +271,7 @@ def main(argv: list[str] | None = None) -> int:
             end_date=args.end_date,
         )
         print(json.dumps(manifest.as_dict(), ensure_ascii=False, indent=2))
-        return
+        return 0
 
     if args.command == "calendar-query":
         vault = MarketVault(settings)
@@ -275,7 +282,7 @@ def main(argv: list[str] | None = None) -> int:
             end_date=args.end_date,
         )
         print(frame.head(args.limit).to_string(index=False))
-        return
+        return 0
 
     if args.command == "backfill":
         if not args.incremental and args.start_date is None:

@@ -1,6 +1,6 @@
-# MarketVault v0.2
+# MarketVault v0.3
 
-MarketVault is a local historical market database for moomoo OpenD. V0.1 focused on closed-date stock, ETF, and option candlesticks. V0.2 adds option contract static metadata and daily option volatility datasets while preserving the existing historical K-line interface.
+MarketVault is a local historical market database for moomoo OpenD. V0.1 focused on closed-date stock, ETF, and option candlesticks. V0.2 added option contract static metadata and daily option volatility datasets. V0.3 adds the trading-calendar-driven collection and audit toolchain: a local trading calendar, resumable historical backfill, immutable snapshots, inventory reports, trading-day coverage audits, and intraday integrity audits.
 
 ## What this version does
 
@@ -10,11 +10,34 @@ MarketVault is a local historical market database for moomoo OpenD. V0.1 focused
 - Keeps a raw Parquet layer and a normalized curated layer.
 - Adds US Eastern and UTC timestamps plus market-session labels.
 - Generates a JSON manifest and data-quality report for every run.
-- Maintains DuckDB metadata tables and a deduplicated `market_bars` view.
+- Maintains DuckDB metadata tables, a `market_bars_snapshots` view with every snapshot, and a deduplicated `market_bars` view.
 - Continues collecting other symbols if one symbol fails.
 - Collects option-chain static contract metadata from `get_option_chain`.
 - Collects daily option volatility analysis rows from `get_option_volatility`.
 - Maintains `option_contracts`, `option_contracts_latest`, and `option_volatility_daily` DuckDB views.
+- Collects a local trading calendar from `request_trading_days`.
+- Runs resumable standard and incremental history backfills driven by the local calendar.
+- Writes immutable Raw/Curated snapshots; a `--force` re-collection never overwrites an older snapshot.
+- Reports local storage, snapshot, and per-combination coverage through `inventory`.
+- Audits trading-day coverage with COMPLETE / INCOMPLETE / MISSING classification through `audit`.
+- Selects the latest complete physical snapshot and audits intraday structure, timestamps, timezones, session labels, duplicate bars, minute-grid alignment, and internal gaps through `intraday-audit`.
+- Runs CI on Python 3.11, 3.12, 3.13, and 3.14.
+
+## Recommended V0.3 workflow
+
+```text
+1. init-catalog
+2. calendar
+3. backfill
+4. inventory
+5. audit
+6. intraday-audit
+7. query
+```
+
+- `calendar` and `backfill` may connect to OpenD.
+- `inventory`, `audit`, `intraday-audit`, and `query` are pure-local reads.
+- Audit commands never modify data and never trigger automatic re-collection.
 
 ## Important data boundary
 
@@ -140,7 +163,7 @@ market-vault --settings config/settings.yaml doctor
 
 The command reports Python version, SDK import/version, OpenD host and port, socket connectivity, whether `get_option_chain` and `get_option_volatility` are exposed by the installed SDK, and whether volatility periods use SDK enums or integer fallback.
 
-## V0.3 development: trading calendar foundation
+## Trading calendar
 
 Collect historical trading-calendar rows from OpenD `request_trading_days` by market:
 
@@ -174,7 +197,7 @@ The curated `trading_calendar` dataset stores `scope_type`, `scope_value`, `mark
 
 OpenD `request_trading_days` has its own range and rate limits: historical calendar data is available for roughly the past 10 years, future dates are limited to the current calendar year's December 31, and the endpoint allows at most 30 requests per 30 seconds. MarketVault fetches this data dynamically from OpenD and does not hard-code exchange holidays.
 
-## V0.3 development: resumable history backfill
+## Resumable history backfill
 
 The `backfill` command plans and executes historical K-line collection for a range of trading dates derived from the local trading calendar. Re-running the same command resumes the work: items that already have completed data are skipped, and only failed or missing items are collected. Multiple symbols are supported in a single run.
 
@@ -225,7 +248,7 @@ market-vault --settings config/settings.yaml backfill `
   --symbols US.MU US.SPY
 ```
 
-`--incremental` starts each symbol one calendar day after its latest completed trade date and cannot be combined with `--start-date`. Symbols that have no completed history require a bootstrap start:
+Incremental mode asks the local trading calendar for the first trading date strictly after each symbol's latest completed date; it never advances by a natural day `+1` and never guesses weekends or holidays on its own. It cannot be combined with `--start-date`. Symbols that have no completed history require a bootstrap start:
 
 ```powershell
 market-vault --settings config/settings.yaml backfill `
@@ -296,7 +319,7 @@ Each backfill run writes `manifests/market_bars_backfill_<run_id>.json` and a qu
 - A Ctrl-C interruption may leave no top-level PARTIAL manifest; recovery relies on the recorded child runs.
 - The CLI has no dry-run flag; use `plan_backfill` to preview a plan.
 
-## V0.3 development: inventory and coverage audit
+## Inventory and coverage audit
 
 Two pure-local commands inspect the local market-bar store without touching OpenD or modifying any data file. Both write structured JSON reports under `reports/data_quality` (`market_bars_inventory_<run_id>.json` and `market_bars_audit_<run_id>.json`).
 
@@ -364,7 +387,7 @@ Exit codes: `PASS` exits 0, `WARN` exits 0 (or 2 with `--fail-on-gaps`), `FAILED
 - `MISSING` means no curated rows exist for the exact key. Missing and incomplete dates are always reported; complete dates are included only with `--include-complete-dates`.
 - Every operation is pure local: no OpenD connection, no writes to Parquet, no deletion or renaming of files, and no entries in the ingestion metadata tables. Fixing gaps remains a separate, explicit `backfill` run.
 
-## V0.3 development: intraday integrity audit
+## Intraday integrity audit
 
 The `intraday-audit` command checks the intraday structure of the latest complete immutable snapshot for each (symbol, trade date) in a range:
 
@@ -404,7 +427,7 @@ market-vault --settings config/settings.yaml intraday-audit `
 - No fixed daily bar counts (no 1440/390/1201 hardcoding) and no early-close calendar; 2026-07-30 (1440 rows) and 2026-07-31 (1201 rows) can both pass.
 - Session boundary coverage (start-of-session to first bar, last bar to end-of-session, wholly missing sessions) is not evaluated.
 - Reports go to `reports/data_quality/market_bars_intraday_audit_<run_id>.json`; the report records `boundary_coverage: {evaluated: false}`.
-- Fixing gaps stays an explicit `backfill` run. V0.3 remains under development.
+- Fixing gaps stays an explicit `backfill` run.
 
 ## Query data
 
@@ -458,13 +481,22 @@ pytest
 
 The tests are offline and do not require OpenD.
 
+## Upgrade from v0.2
+
+- No data directory deletion or rebuild is required, and no existing Parquet needs conversion.
+- `init-catalog` stays idempotent and works on already-initialized catalogs.
+- V0.2 Raw/Curated data keeps working, and legacy `batch-<batch_key>.parquet` filenames stay supported; new snapshots use run-ID filenames.
+- Legacy files missing the newer metadata columns are handled conservatively: `inventory` still counts them (for example as `legacy_metadata_row_count`), and the exact-key coverage audit never fabricates schema metadata from directory paths.
+- No automatic migration or deletion is performed.
+
 ## Known limitations
 
 - `requested_trade_date` preserves the date requested from moomoo. `market_calendar_date` preserves each returned Eastern-time calendar date. This deliberately avoids pretending that overnight bars can be assigned to an exchange session date without an exchange-calendar layer.
 - The option-code parser supports the common moomoo US option format such as `US.MU260807C120000`. Unusual roots should be validated before relying on automatic underlying inference.
-- Option-chain metadata is static contract information. Dynamic quotes, trading status changes, Greeks, minute-level Bid/Ask, and complete historical intraday IV are outside V0.2.
+- Option-chain metadata is static contract information. Dynamic quotes, trading status changes, Greeks, minute-level Bid/Ask, and complete historical intraday IV are outside V0.3.
 - OpenD must be running, logged in, and entitled for the underlying market, option chain, and option volatility data. Permission or quota failures are recorded per request in the run manifest.
-- The V0.2 option-volatility coverage check uses a weekday-boundary heuristic. It does not identify all US exchange holidays; a formal NYSE/Nasdaq exchange calendar is planned for a later version.
-- The V0.3 development trading-calendar foundation depends on OpenD `request_trading_days` and should not be treated as a complete official exchange-calendar authority.
-- The V0.3 backfill "completed" heuristic requires curated rows from a run without quality `FAIL` but does not validate expected bar counts, so non-empty but partial data may be treated as completed; incremental mode never re-examines gaps before a symbol's latest completed date.
+- The option-volatility coverage check uses a weekday-boundary heuristic. It does not identify all US exchange holidays; a formal NYSE/Nasdaq exchange calendar is planned for a later version.
+- The trading calendar depends on OpenD `request_trading_days` and should not be treated as a complete official exchange-calendar authority.
+- Trading-day coverage (`audit`) classifies each requested date as COMPLETE, INCOMPLETE, or MISSING; `intraday-audit` validates the structure of the latest complete physical snapshot and the internal continuity of observed session segments. Session leading/trailing boundaries are still not validated, wholly missing sessions are not judged, no fixed daily bar counts (390, 1201, 1440) are assumed, and early closes are not recognized. Internal gaps are reported as WARN and are never automatically re-collected.
+- Incremental mode never re-examines gaps before a symbol's latest completed date; fill them with an explicit range backfill.
 - Run one backfill process at a time per dataset; concurrent processes may collect the same items.

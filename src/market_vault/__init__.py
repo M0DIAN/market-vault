@@ -1,13 +1,15 @@
 """MarketVault package.
 
 The public API is loaded lazily so normalization and quality modules can be
-used in lightweight environments before DuckDB is installed.
+used in lightweight environments before DuckDB is installed. Importing this
+package must not import duckdb, pandas, moomoo, or futu.
 """
 
 from typing import Any
 
-__all__ = ["MarketVault"]
-__version__ = "0.1.0"
+from ._version import __version__
+
+__all__ = ["MarketVault", "__version__"]
 
 
 def __getattr__(name: str) -> Any:
