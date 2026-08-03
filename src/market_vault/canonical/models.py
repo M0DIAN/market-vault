@@ -1,8 +1,8 @@
 """Canonical market-bar data models.
 
-Defines the in-memory canonical row, source references, resolution metadata,
-and the structured conflict error used by the canonical builder core (ADR
-0001). No materialization happens here.
+Defines the in-memory canonical row, source references, the exact request
+key, resolution metadata, and structured errors used by the canonical builder
+core (ADR 0001). No materialization happens here.
 """
 
 from __future__ import annotations
@@ -11,6 +11,18 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 
 import pandas as pd
+
+from ..storage.catalog import CompleteSnapshotRef
+
+
+@dataclass(frozen=True)
+class CanonicalRequestKey:
+    """Exact request key the source rows must match (ADR 0001, section 4)."""
+
+    interval: str
+    requested_session: str
+    adjustment: str
+    source_schema_version: str
 
 
 @dataclass(frozen=True)
@@ -40,7 +52,8 @@ class CanonicalBar:
     extra_fields: tuple[tuple[str, float], ...]
     # Provenance and audit/classification fields (not part of the business key).
     ingestion_run_id: str
-    source_snapshot_content_hash: str
+    physical_snapshot_hash: str
+    logical_source_rows_hash: str
     source_schema_version: str
     canonical_builder_version: str
     requested_trade_date: date
@@ -54,23 +67,31 @@ class CanonicalBar:
 class CanonicalSnapshotInput:
     """One audited complete physical snapshot fed to the canonical builder.
 
-    ``snapshot`` must come from the V0.3 latest-complete selection; the
-    builder fails closed on missing or inconsistent metadata.
+    ``snapshot`` must come from the V0.3 latest-complete selection
+    (``Catalog.latest_complete_market_bar_snapshots``); it is the COMPLETE
+    gate. The builder never redefines completion: it validates that the
+    supplied rows actually match the selected ref and the exact request key,
+    and it fails closed on any mismatch. ``physical_snapshot_hash`` is the
+    SHA-256 of the complete physical snapshot file bytes (precomputed input).
     """
 
-    snapshot: object  # CompleteSnapshotRef
+    snapshot: CompleteSnapshotRef
     rows: pd.DataFrame
-    source_snapshot_content_hash: str
-    run_finished_at: datetime | None
-    run_status: str
+    physical_snapshot_hash: str
+    request_key: CanonicalRequestKey
 
 
 @dataclass(frozen=True)
 class CanonicalSourceRef:
-    """Reference to one source snapshot contributing to a canonical row."""
+    """Reference to one source snapshot contributing to a canonical row.
+
+    ``snapshot_file`` is descriptive provenance: a relocated byte-identical
+    file keeps the same identities and the same selected logical source.
+    """
 
     ingestion_run_id: str
-    source_snapshot_content_hash: str
+    physical_snapshot_hash: str
+    logical_source_rows_hash: str
     snapshot_file: str
     requested_trade_date: date
     requested_session: str
@@ -91,6 +112,8 @@ class CanonicalBuildResult:
 
     ``bars`` is ordered by ``canonical_bar_key`` ascending; ``resolution`` is
     ordered the same way and contains one entry per emitted row.
+    ``source_snapshot_count`` counts distinct physical snapshot identities
+    (physical files), not distinct run ids: one run may produce several files.
     """
 
     bars: tuple[CanonicalBar, ...]
@@ -101,7 +124,7 @@ class CanonicalBuildResult:
 
 class CanonicalConflictError(Exception):
     """Two source candidates for the same canonical_bar_key disagree on
-    contract-relevant market values.
+    contract-relevant market or classification values.
 
     Raised instead of silently emitting two business rows or picking a winner
     (ADR 0001, key reconciliation rule).

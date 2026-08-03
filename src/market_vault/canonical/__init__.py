@@ -11,7 +11,7 @@ from .bars import (
     CANONICAL_BUILDER_VERSION,
     DEFAULT_DATASET_KIND,
     build_canonical_market_bars,
-    hash_curated_snapshot_rows,
+    hash_canonical_source_rows,
 )
 from .identity import canonical_bar_key, canonical_row_version_id
 from .models import (
@@ -19,6 +19,7 @@ from .models import (
     CanonicalBuildError,
     CanonicalBuildResult,
     CanonicalConflictError,
+    CanonicalRequestKey,
     CanonicalResolutionEntry,
     CanonicalSnapshotInput,
     CanonicalSourceRef,
@@ -31,11 +32,12 @@ __all__ = [
     "CanonicalBuildError",
     "CanonicalBuildResult",
     "CanonicalConflictError",
+    "CanonicalRequestKey",
     "CanonicalResolutionEntry",
     "CanonicalSnapshotInput",
     "CanonicalSourceRef",
     "build_canonical_market_bars",
     "canonical_bar_key",
     "canonical_row_version_id",
-    "hash_curated_snapshot_rows",
+    "hash_canonical_source_rows",
 ]

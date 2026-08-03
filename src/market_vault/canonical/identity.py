@@ -16,7 +16,6 @@ never used.
 from __future__ import annotations
 
 import hashlib
-import json
 from datetime import date, datetime
 
 import pandas as pd
@@ -40,25 +39,28 @@ def _utc_iso(value: pd.Timestamp | datetime) -> str:
 
 def _field_text(value) -> str:
     if isinstance(value, (pd.Timestamp, datetime)):
-        return _utc_iso(value)
+        return f"t:{_utc_iso(value)}"
     if isinstance(value, date):
-        return value.isoformat()
+        return f"d:{value.isoformat()}"
     if isinstance(value, float):
-        return repr(float(value))
-    return str(value)
+        # Shortest round-trip decimal; explicit float marker.
+        return f"f:{float(value)!r}"
+    if isinstance(value, int):
+        return f"i:{value}"
+    return f"s:{value}"
 
 
 def _encode(prefix: str, fields: dict[str, object]) -> str:
-    """Versioned SHA-256 over a canonical JSON serialization.
+    """Versioned SHA-256 over an explicitly typed canonical serialization.
 
-    The payload is sorted by key and serialized with compact separators, so
-    the digest depends only on the field values, never on insertion order.
+    Every value is encoded with an explicit type marker (s/d/t/f/i) and a
+    normalized representation; the payload is sorted by key, so the digest
+    depends only on the field values, never on insertion order. SHA-256 is
+    used as a collision-resistant digest; it is not claimed to be
+    collision-free.
     """
-    payload = json.dumps(
-        {key: _field_text(value) for key, value in fields.items()},
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=True,
+    payload = "\x1f".join(
+        f"{key}:{_field_text(value)}" for key, value in sorted(fields.items())
     )
     text = f"{IDENTITY_ENCODING_VERSION}|{prefix}|{payload}"
     return hashlib.sha256(text.encode("utf-8")).hexdigest()

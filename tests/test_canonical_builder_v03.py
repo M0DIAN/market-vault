@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -10,17 +11,23 @@ from market_vault.canonical import (
     CANONICAL_BUILDER_VERSION,
     CanonicalBuildError,
     CanonicalConflictError,
+    CanonicalRequestKey,
     CanonicalSnapshotInput,
     build_canonical_market_bars,
     canonical_bar_key,
     canonical_row_version_id,
-    hash_curated_snapshot_rows,
+    hash_canonical_source_rows,
 )
+from market_vault.canonical.bars import _differing_classification_names
 from market_vault.models import QualityResult, RunManifest, Settings
 from market_vault.normalization import normalize_bars
 from market_vault.storage import Catalog, ParquetStore
+from market_vault.storage.catalog import CompleteSnapshotRef
 
 NY = "America/New_York"
+DEFAULT_KEY = CanonicalRequestKey(
+    interval="1m", requested_session="ALL", adjustment="NONE", source_schema_version="10.9"
+)
 
 
 def settings(tmp_path) -> Settings:
@@ -59,65 +66,71 @@ def raw_frame(code: str, time_keys: list[str], close: float = 100.5) -> pd.DataF
 def write_snapshot(
     cfg: Settings,
     *,
-    code: str,
+    code: str | None = None,
+    codes: list[str] | None = None,
     trade_date: date,
     run_id: str,
     time_keys: list[str],
     close: float = 100.5,
     session: str = "ALL",
     interval: str = "1m",
-    run_status: str = "SUCCESS",
     quality: str = "PASS",
     run_finished_at: datetime | None = None,
     mutate=None,
 ) -> None:
     store = ParquetStore(cfg)
     catalog = Catalog(cfg)
-    raw = raw_frame(code, time_keys, close=close)
-    curated = normalize_bars(
-        raw,
-        requested_trade_date=trade_date,
-        interval=interval,
-        requested_session=session,
-        adjustment="NONE",
-        source=cfg.source,
-        source_schema_version=cfg.source_schema_version,
-        run_id=run_id,
-    )
+    symbol_codes = codes or [code or "US.MU"]
+    frames = []
+    for symbol in symbol_codes:
+        raw = raw_frame(symbol, time_keys, close=close)
+        frames.append(
+            normalize_bars(
+                raw,
+                requested_trade_date=trade_date,
+                interval=interval,
+                requested_session=session,
+                adjustment="NONE",
+                source=cfg.source,
+                source_schema_version=cfg.source_schema_version,
+                run_id=run_id,
+            )
+        )
+    curated = pd.concat(frames, ignore_index=True)
     if mutate is not None:
         curated = mutate(curated)
-    store.write_curated(curated, trade_date, interval, [code], session, "NONE", run_id=run_id)
+    store.write_curated(curated, trade_date, interval, symbol_codes, session, "NONE", run_id=run_id)
     run = RunManifest(
         requested_trade_date=trade_date,
-        requested_symbols=[code],
+        requested_symbols=list(symbol_codes),
         interval=interval.lower(),
         session=session.upper(),
         adjustment="NONE",
         run_id=run_id,
     )
-    run.successful_symbols = [code]
-    run.status = run_status
+    run.successful_symbols = list(symbol_codes)
+    run.status = "SUCCESS"
     run.finished_at = run_finished_at or datetime(2026, 7, 1, 14, 0, tzinfo=timezone.utc)
     catalog.record_run(run)
     catalog.record_quality(run.run_id, [QualityResult("bars_complete", quality)])
 
 
-def select_snapshot(cfg: Settings, code: str = "US.MU", trade_date: date = date(2026, 7, 1), interval: str = "1m"):
+def select_snapshot(
+    cfg: Settings,
+    code: str = "US.MU",
+    trade_date: date = date(2026, 7, 1),
+    interval: str = "1m",
+    session: str = "ALL",
+):
     refs = Catalog(cfg).latest_complete_market_bar_snapshots(
         symbols=[code], trade_dates=[trade_date], interval=interval,
-        requested_session="ALL", adjustment="NONE", source_schema_version="10.9",
+        requested_session=session, adjustment="NONE", source_schema_version="10.9",
     )
     return refs.get((code, trade_date))
 
 
-def read_run_rows(cfg: Settings, *, run_id: str) -> tuple[object, pd.DataFrame]:
-    """Read one physical snapshot file by run id and build a ref for it.
-
-    Test helper for feeding a second audited snapshot into the builder when
-    the V0.3 latest-complete selection only returns the newest one.
-    """
-    from market_vault.storage.catalog import CompleteSnapshotRef
-
+def read_run_rows(cfg: Settings, *, run_id: str) -> tuple[CompleteSnapshotRef, pd.DataFrame]:
+    """Read one physical snapshot file by run id and build a ref for it."""
     root = cfg.data_root / "curated" / f"source={cfg.source}" / "dataset=market_bars"
     for path in sorted(root.rglob("*.parquet")):
         frame = pd.read_parquet(path)
@@ -125,47 +138,66 @@ def read_run_rows(cfg: Settings, *, run_id: str) -> tuple[object, pd.DataFrame]:
             trade_date = frame["requested_trade_date"].iloc[0]
             if isinstance(trade_date, pd.Timestamp):
                 trade_date = trade_date.date()
+            with Catalog(cfg).connect() as con:
+                row = con.execute(
+                    "SELECT finished_at FROM ingestion_runs WHERE run_id = ?", [run_id]
+                ).fetchone()
+            finished = pd.Timestamp(row[0]) if row and row[0] is not None else None
             ref = CompleteSnapshotRef(
                 code=str(frame["code"].iloc[0]),
                 requested_trade_date=trade_date,
                 ingestion_run_id=run_id,
                 snapshot_file=path.relative_to(cfg.data_root).as_posix(),
                 snapshot_ingested_at=None,
-                run_finished_at=None,
+                run_finished_at=finished,
                 eligible_row_count=len(frame),
             )
             return ref, frame
     raise AssertionError(f"no physical file found for run {run_id}")
 
 
-def snapshot_input(
+def file_hash(cfg: Settings, ref) -> str:
+    path = cfg.data_root / ref.snapshot_file
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def make_input(
     cfg: Settings,
     *,
     ref,
     rows: pd.DataFrame,
-    content_hash: str,
-    run_finished_at: datetime | None = datetime(2026, 7, 1, 14, 0, tzinfo=timezone.utc),
-    run_status: str = "SUCCESS",
+    request_key: CanonicalRequestKey = DEFAULT_KEY,
+    physical_hash: str | None = None,
 ) -> CanonicalSnapshotInput:
+    if physical_hash is None:
+        physical_hash = file_hash(cfg, ref)
     return CanonicalSnapshotInput(
         snapshot=ref,
         rows=rows,
-        source_snapshot_content_hash=content_hash,
-        run_finished_at=run_finished_at,
-        run_status=run_status,
+        physical_snapshot_hash=physical_hash,
+        request_key=request_key,
     )
 
 
-def build_one(cfg: Settings, code: str = "US.MU", trade_date: date = date(2026, 7, 1), interval: str = "1m", **kwargs):
-    ref = select_snapshot(cfg, code=code, trade_date=trade_date, interval=interval)
-    rows = Catalog(cfg).market_bar_snapshot_rows(ref)
-    content_hash = hash_curated_snapshot_rows(rows.frame)
-    return build_canonical_market_bars(
-        [snapshot_input(cfg, ref=ref, rows=rows.frame, content_hash=content_hash, **kwargs)]
-    )
+def build_one(cfg: Settings, code: str = "US.MU", trade_date: date = date(2026, 7, 1), **kwargs):
+    ref = select_snapshot(cfg, code=code, trade_date=trade_date)
+    rows = Catalog(cfg).market_bar_snapshot_rows(ref).frame
+    return build_canonical_market_bars([make_input(cfg, ref=ref, rows=rows, **kwargs)])
 
 
-# --- COMPLETE gate ----------------------------------------------------------
+def build_inputs(cfg: Settings, inputs: list[CanonicalSnapshotInput]):
+    return build_canonical_market_bars(inputs)
+
+
+# --- Empty input and COMPLETE gate ------------------------------------------
+
+
+def test_empty_input_returns_empty_result(tmp_path):
+    result = build_canonical_market_bars([])
+    assert result.bars == ()
+    assert result.resolution == ()
+    assert result.source_snapshot_count == 0
+    assert result.builder_version == CANONICAL_BUILDER_VERSION
 
 
 def test_complete_snapshot_produces_canonical_rows(tmp_path):
@@ -182,7 +214,6 @@ def test_incomplete_quality_fail_produces_no_rows(tmp_path):
     cfg = settings(tmp_path)
     write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-bad",
                    time_keys=minute_keys("2026-07-01 09:30:00", 2), quality="FAIL")
-    # The V0.3 COMPLETE gate excludes quality-FAIL runs from selection.
     assert select_snapshot(cfg) is None
 
 
@@ -191,20 +222,126 @@ def test_missing_snapshot_produces_no_rows(tmp_path):
     assert select_snapshot(cfg) is None
 
 
-def test_non_complete_run_status_fails_closed(tmp_path):
+# --- Row-set consistency validations ----------------------------------------
+
+
+def test_mismatched_snapshot_code_fails(tmp_path):
+    cfg = settings(tmp_path)
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 1))
+    ref = select_snapshot(cfg)
+    rows = Catalog(cfg).market_bar_snapshot_rows(ref).frame.assign(code="US.NVDA")
+    with pytest.raises(CanonicalBuildError, match="does not match snapshot code"):
+        build_inputs(cfg, [make_input(cfg, ref=ref, rows=rows)])
+
+
+def test_mismatched_run_id_fails(tmp_path):
+    cfg = settings(tmp_path)
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 1))
+    ref = select_snapshot(cfg)
+    rows = Catalog(cfg).market_bar_snapshot_rows(ref).frame.assign(ingestion_run_id="run-other")
+    with pytest.raises(CanonicalBuildError, match="does not match snapshot run"):
+        build_inputs(cfg, [make_input(cfg, ref=ref, rows=rows)])
+
+
+def test_mismatched_requested_trade_date_fails(tmp_path):
+    cfg = settings(tmp_path)
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 1))
+    ref = select_snapshot(cfg)
+    rows = Catalog(cfg).market_bar_snapshot_rows(ref).frame.assign(
+        requested_trade_date=pd.Timestamp("2026-07-02")
+    )
+    with pytest.raises(CanonicalBuildError, match="does not match snapshot"):
+        build_inputs(cfg, [make_input(cfg, ref=ref, rows=rows)])
+
+
+@pytest.mark.parametrize(
+    ("column", "bad_value"),
+    [
+        ("interval", "5m"),
+        ("requested_session", "RTH"),
+        ("adjustment", "QFQ"),
+        ("source_schema_version", "10.8"),
+    ],
+)
+def test_mismatched_request_key_field_fails(tmp_path, column, bad_value):
+    cfg = settings(tmp_path)
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 1))
+    ref = select_snapshot(cfg)
+    rows = Catalog(cfg).market_bar_snapshot_rows(ref).frame.assign(**{column: bad_value})
+    with pytest.raises(CanonicalBuildError, match="does not match"):
+        build_inputs(cfg, [make_input(cfg, ref=ref, rows=rows)])
+
+
+def test_mixed_interval_rows_fail(tmp_path):
     cfg = settings(tmp_path)
     write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
                    time_keys=minute_keys("2026-07-01 09:30:00", 2))
-    with pytest.raises(CanonicalBuildError, match="not audited as complete"):
-        build_one(cfg, run_status="FAILED")
+    ref = select_snapshot(cfg)
+    rows = Catalog(cfg).market_bar_snapshot_rows(ref).frame.copy()
+    rows.loc[1, "interval"] = "5m"
+    with pytest.raises(CanonicalBuildError, match="mixed interval rows"):
+        build_inputs(cfg, [make_input(cfg, ref=ref, rows=rows)])
 
 
-def test_missing_run_finished_at_fails_closed(tmp_path):
+def test_eligible_row_count_mismatch_fails(tmp_path):
     cfg = settings(tmp_path)
     write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
                    time_keys=minute_keys("2026-07-01 09:30:00", 2))
-    with pytest.raises(CanonicalBuildError, match="run_finished_at"):
-        build_one(cfg, run_finished_at=None)
+    ref = select_snapshot(cfg)
+    rows = Catalog(cfg).market_bar_snapshot_rows(ref).frame.iloc[:1]
+    with pytest.raises(CanonicalBuildError, match="eligible_row_count"):
+        build_inputs(cfg, [make_input(cfg, ref=ref, rows=rows)])
+
+
+@pytest.mark.parametrize(
+    ("column", "bad_value"),
+    [("open", float("nan")), ("high", float("inf")), ("close", "not-a-number")],
+)
+def test_invalid_market_values_fail_closed(tmp_path, column, bad_value):
+    cfg = settings(tmp_path)
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 1))
+    ref = select_snapshot(cfg)
+    rows = Catalog(cfg).market_bar_snapshot_rows(ref).frame.assign(**{column: bad_value})
+    with pytest.raises(CanonicalBuildError):
+        build_inputs(cfg, [make_input(cfg, ref=ref, rows=rows)])
+
+
+# --- Hashing ----------------------------------------------------------------
+
+
+def test_physical_snapshot_hash_validated(tmp_path):
+    cfg = settings(tmp_path)
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 1))
+    ref = select_snapshot(cfg)
+    rows = Catalog(cfg).market_bar_snapshot_rows(ref).frame
+    with pytest.raises(CanonicalBuildError, match="SHA-256"):
+        build_inputs(cfg, [make_input(cfg, ref=ref, rows=rows, physical_hash="")])
+    with pytest.raises(CanonicalBuildError, match="SHA-256"):
+        build_inputs(cfg, [make_input(cfg, ref=ref, rows=rows, physical_hash="not-a-hash")])
+    # Uppercase hex is normalized to lowercase and accepted.
+    upper = file_hash(cfg, ref).upper()
+    result = build_inputs(cfg, [make_input(cfg, ref=ref, rows=rows, physical_hash=upper)])
+    assert len(result.bars) == 1
+
+
+def test_optional_field_change_changes_logical_hash(tmp_path):
+    cfg = settings(tmp_path)
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 1))
+    ref = select_snapshot(cfg)
+    rows = Catalog(cfg).market_bar_snapshot_rows(ref).frame
+    base = hash_canonical_source_rows(rows)
+    with_turnover = rows.assign(turnover=1234.5)
+    assert hash_canonical_source_rows(with_turnover) != base
+    # Logical hash includes provenance fields.
+    other_run = rows.assign(ingestion_run_id="run-other")
+    assert hash_canonical_source_rows(other_run) != base
 
 
 # --- Identity ---------------------------------------------------------------
@@ -222,7 +359,7 @@ def test_business_key_excludes_run_id_schema_and_session(tmp_path):
     assert first.bars[0].canonical_row_version_id != second.bars[0].canonical_row_version_id
 
 
-def test_repeated_collection_keeps_business_key_changes_row_version(tmp_path):
+def test_repeated_collection_keeps_key_changes_row_version(tmp_path):
     cfg = settings(tmp_path)
     write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
                    time_keys=minute_keys("2026-07-01 09:30:00", 1))
@@ -234,38 +371,6 @@ def test_repeated_collection_keeps_business_key_changes_row_version(tmp_path):
     assert first.bars[0].canonical_row_version_id != second.bars[0].canonical_row_version_id
 
 
-def test_snapshot_path_does_not_affect_row_version_id():
-    key = canonical_bar_key(
-        dataset_kind="market_bars_canonical", code="US.MU", interval="1m",
-        adjustment="NONE", event_time=pd.Timestamp("2026-07-01 13:30:00", tz="UTC"),
-    )
-    base = dict(
-        canonical_bar_key=key,
-        ingestion_run_id="run-a",
-        source_snapshot_content_hash="hash-a",
-        source_schema_version="10.9",
-        canonical_builder_version=CANONICAL_BUILDER_VERSION,
-    )
-    # snapshot_file is provenance only and never part of the identity.
-    assert canonical_row_version_id(**base) == canonical_row_version_id(**base)
-
-
-def test_snapshot_content_change_changes_row_version_id():
-    key = canonical_bar_key(
-        dataset_kind="market_bars_canonical", code="US.MU", interval="1m",
-        adjustment="NONE", event_time=pd.Timestamp("2026-07-01 13:30:00", tz="UTC"),
-    )
-    base = dict(
-        canonical_bar_key=key,
-        ingestion_run_id="run-a",
-        source_schema_version="10.9",
-        canonical_builder_version=CANONICAL_BUILDER_VERSION,
-    )
-    assert canonical_row_version_id(**base, source_snapshot_content_hash="hash-a") != (
-        canonical_row_version_id(**base, source_snapshot_content_hash="hash-b")
-    )
-
-
 def test_builder_version_changes_only_row_version_id():
     key = canonical_bar_key(
         dataset_kind="market_bars_canonical", code="US.MU", interval="1m",
@@ -274,44 +379,59 @@ def test_builder_version_changes_only_row_version_id():
     base = dict(
         canonical_bar_key=key,
         ingestion_run_id="run-a",
-        source_snapshot_content_hash="hash-a",
+        source_snapshot_content_hash="a" * 64,
         source_schema_version="10.9",
     )
     v1 = canonical_row_version_id(**base, canonical_builder_version="market-bars-canonical-v1")
     v2 = canonical_row_version_id(**base, canonical_builder_version="market-bars-canonical-v2")
     assert v1 != v2
-    # Business key is independent of the builder version.
     assert canonical_bar_key(
         dataset_kind="market_bars_canonical", code="US.MU", interval="1m",
         adjustment="NONE", event_time=pd.Timestamp("2026-07-01 13:30:00", tz="UTC"),
     ) == key
 
 
-def test_requested_session_does_not_create_different_business_keys(tmp_path):
+def test_snapshot_path_does_not_affect_identities(tmp_path):
     cfg = settings(tmp_path)
-    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-all",
-                   time_keys=minute_keys("2026-07-01 09:30:00", 1), session="ALL")
-    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-rth",
-                   time_keys=minute_keys("2026-07-01 09:30:00", 1), session="RTH")
-    ref_all = select_snapshot(cfg)
-    rows_all = Catalog(cfg).market_bar_snapshot_rows(ref_all).frame
-    # The RTH snapshot is not visible to the ALL key selection; feed both
-    # snapshots' rows directly to prove the business key ignores session.
-    ref_rth = Catalog(cfg).latest_complete_market_bar_snapshots(
-        symbols=["US.MU"], trade_dates=[date(2026, 7, 1)], interval="1m",
-        requested_session="RTH", adjustment="NONE", source_schema_version="10.9",
-    )[("US.MU", date(2026, 7, 1))]
-    rows_rth = Catalog(cfg).market_bar_snapshot_rows(ref_rth).frame
-    hash_all = hash_curated_snapshot_rows(rows_all)
-    hash_rth = hash_curated_snapshot_rows(rows_rth)
-    result = build_canonical_market_bars(
-        [
-            snapshot_input(cfg, ref=ref_all, rows=rows_all, content_hash=hash_all),
-            snapshot_input(cfg, ref=ref_rth, rows=rows_rth, content_hash=hash_rth),
-        ]
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 1))
+    ref_a = select_snapshot(cfg)
+    rows = Catalog(cfg).market_bar_snapshot_rows(ref_a).frame
+    # Two inputs with the same run/content but different descriptive paths.
+    ref_b = CompleteSnapshotRef(
+        code=ref_a.code,
+        requested_trade_date=ref_a.requested_trade_date,
+        ingestion_run_id=ref_a.ingestion_run_id,
+        snapshot_file="curated/source=moomoo/dataset=market_bars/interval=1m/requested_trade_date=2026-07-01/relocated.parquet",
+        snapshot_ingested_at=None,
+        run_finished_at=ref_a.run_finished_at,
+        eligible_row_count=ref_a.eligible_row_count,
     )
+    result = build_inputs(cfg, [
+        make_input(cfg, ref=ref_a, rows=rows),
+        make_input(cfg, ref=ref_b, rows=rows, physical_hash=file_hash(cfg, ref_a)),
+    ])
     assert len(result.bars) == 1
-    assert result.bars[0].requested_session == "ALL"  # ranking selected run-all
+    bar = result.bars[0]
+    # Identities are path-independent; snapshot_file is descriptive only.
+    assert bar.snapshot_file == ref_a.snapshot_file  # ranking selected run-a's path
+    single = build_one(cfg).bars[0]
+    assert bar.canonical_bar_key == single.canonical_bar_key
+    assert bar.canonical_row_version_id == single.canonical_row_version_id
+
+
+def test_session_timezone_cannot_alter_identities():
+    instant = pd.Timestamp("2026-07-01 13:30:00", tz="UTC")
+    base = dict(
+        dataset_kind="market_bars_canonical", code="US.MU", interval="1m",
+        adjustment="NONE",
+    )
+    assert canonical_bar_key(**base, event_time=instant) == canonical_bar_key(
+        **base, event_time=instant.tz_convert(NY)
+    )
+    assert canonical_bar_key(**base, event_time=instant) == canonical_bar_key(
+        **base, event_time=instant.tz_convert("Asia/Tokyo")
+    )
 
 
 # --- Time columns -----------------------------------------------------------
@@ -344,7 +464,12 @@ def test_availability_computation_per_interval(tmp_path, interval, expected_utc)
     cfg = settings(tmp_path)
     write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
                    time_keys=minute_keys("2026-07-01 09:30:00", 1), interval=interval)
-    bar = build_one(cfg, interval=interval).bars[0]
+    request_key = CanonicalRequestKey(
+        interval=interval, requested_session="ALL", adjustment="NONE", source_schema_version="10.9"
+    )
+    ref = select_snapshot(cfg, interval=interval)
+    rows = Catalog(cfg).market_bar_snapshot_rows(ref).frame
+    bar = build_inputs(cfg, [make_input(cfg, ref=ref, rows=rows, request_key=request_key)]).bars[0]
     assert bar.market_available_at == pd.Timestamp(expected_utc)
 
 
@@ -352,8 +477,13 @@ def test_unsupported_interval_fails(tmp_path):
     cfg = settings(tmp_path)
     write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
                    time_keys=minute_keys("2026-07-01 09:30:00", 1), interval="1d")
+    request_key = CanonicalRequestKey(
+        interval="1d", requested_session="ALL", adjustment="NONE", source_schema_version="10.9"
+    )
+    ref = select_snapshot(cfg, interval="1d")
+    rows = Catalog(cfg).market_bar_snapshot_rows(ref).frame
     with pytest.raises(CanonicalBuildError, match="Unsupported intraday interval"):
-        build_one(cfg, interval="1d")
+        build_inputs(cfg, [make_input(cfg, ref=ref, rows=rows, request_key=request_key)])
 
 
 def test_naive_timestamp_fails(tmp_path):
@@ -361,48 +491,50 @@ def test_naive_timestamp_fails(tmp_path):
     write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
                    time_keys=minute_keys("2026-07-01 09:30:00", 1))
     ref = select_snapshot(cfg)
-    rows = Catalog(cfg).market_bar_snapshot_rows(ref).frame
-    rows_naive = rows.assign(time_utc=pd.to_datetime(rows["time_utc"]).dt.tz_localize(None))
+    rows = Catalog(cfg).market_bar_snapshot_rows(ref).frame.assign(
+        time_utc=pd.to_datetime(pd.Series(["2026-07-01 13:30:00"]))
+    )
     with pytest.raises(CanonicalBuildError, match="naive timestamp"):
-        build_canonical_market_bars(
-            [snapshot_input(cfg, ref=ref, rows=rows_naive, content_hash="hash-x")]
-        )
+        build_inputs(cfg, [make_input(cfg, ref=ref, rows=rows)])
 
 
 def test_event_time_market_time_mismatch_fails(tmp_path):
     cfg = settings(tmp_path)
-    write_snapshot(
-        cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
-        time_keys=minute_keys("2026-07-01 09:30:00", 1),
-        mutate=lambda df: df.assign(time_utc=pd.to_datetime(df["time_utc"]) + pd.Timedelta(hours=1)),
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 1))
+    ref = select_snapshot(cfg)
+    rows = Catalog(cfg).market_bar_snapshot_rows(ref).frame.assign(
+        time_utc=pd.to_datetime(
+            Catalog(cfg).market_bar_snapshot_rows(ref).frame["time_utc"]
+        ) + pd.Timedelta(hours=1)
     )
     with pytest.raises(CanonicalBuildError, match="disagreement"):
-        build_one(cfg)
+        build_inputs(cfg, [make_input(cfg, ref=ref, rows=rows)])
 
 
 # --- Reconciliation and conflicts -------------------------------------------
 
 
-def test_equivalent_duplicate_candidates_reconcile(tmp_path):
+def test_equivalent_duplicates_reconcile_with_documented_ranking(tmp_path):
     cfg = settings(tmp_path)
     write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
-                   time_keys=minute_keys("2026-07-01 09:30:00", 1))
+                   time_keys=minute_keys("2026-07-01 09:30:00", 1),
+                   run_finished_at=datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc))
     write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-b",
-                   time_keys=minute_keys("2026-07-01 09:30:00", 1))
+                   time_keys=minute_keys("2026-07-01 09:30:00", 1),
+                   run_finished_at=datetime(2026, 7, 1, 13, 0, tzinfo=timezone.utc))
     ref_a, rows_a = read_run_rows(cfg, run_id="run-a")
     ref_b, rows_b = read_run_rows(cfg, run_id="run-b")
 
-    result = build_canonical_market_bars(
-        [
-            snapshot_input(cfg, ref=ref_a, rows=rows_a, content_hash=hash_curated_snapshot_rows(rows_a)),
-            snapshot_input(cfg, ref=ref_b, rows=rows_b, content_hash=hash_curated_snapshot_rows(rows_b)),
-        ]
-    )
+    result = build_inputs(cfg, [
+        make_input(cfg, ref=ref_a, rows=rows_a),
+        make_input(cfg, ref=ref_b, rows=rows_b),
+    ])
     assert len(result.bars) == 1
     entry = result.resolution[0]
-    assert entry.selected.ingestion_run_id == "run-a"
-    assert [ref.ingestion_run_id for ref in entry.equivalent_discarded] == ["run-b"]
-    assert len(result.resolution) == 1
+    # run_finished_at descending: run-b is newer and selected.
+    assert entry.selected.ingestion_run_id == "run-b"
+    assert [ref.ingestion_run_id for ref in entry.equivalent_discarded] == ["run-a"]
 
 
 def test_duplicate_resolution_independent_of_input_order(tmp_path):
@@ -413,11 +545,11 @@ def test_duplicate_resolution_independent_of_input_order(tmp_path):
                    time_keys=minute_keys("2026-07-01 09:30:00", 1))
     ref_a, rows_a = read_run_rows(cfg, run_id="run-a")
     ref_b, rows_b = read_run_rows(cfg, run_id="run-b")
-    input_a = snapshot_input(cfg, ref=ref_a, rows=rows_a, content_hash=hash_curated_snapshot_rows(rows_a))
-    input_b = snapshot_input(cfg, ref=ref_b, rows=rows_b, content_hash=hash_curated_snapshot_rows(rows_b))
+    input_a = make_input(cfg, ref=ref_a, rows=rows_a)
+    input_b = make_input(cfg, ref=ref_b, rows=rows_b)
 
-    forward = build_canonical_market_bars([input_a, input_b])
-    reversed_result = build_canonical_market_bars([input_b, input_a])
+    forward = build_inputs(cfg, [input_a, input_b])
+    reversed_result = build_inputs(cfg, [input_b, input_a])
     assert [bar.canonical_bar_key for bar in forward.bars] == [
         bar.canonical_bar_key for bar in reversed_result.bars
     ]
@@ -434,34 +566,89 @@ def test_conflicting_ohlcv_raises_structured_error(tmp_path):
     ref_b, rows_b = read_run_rows(cfg, run_id="run-b")
 
     with pytest.raises(CanonicalConflictError) as excinfo:
-        build_canonical_market_bars(
-            [
-                snapshot_input(cfg, ref=ref_a, rows=rows_a, content_hash=hash_curated_snapshot_rows(rows_a)),
-                snapshot_input(cfg, ref=ref_b, rows=rows_b, content_hash=hash_curated_snapshot_rows(rows_b)),
-            ]
-        )
+        build_inputs(cfg, [
+            make_input(cfg, ref=ref_a, rows=rows_a),
+            make_input(cfg, ref=ref_b, rows=rows_b),
+        ])
     error = excinfo.value
     assert "close" in error.differing_fields
     assert len(error.candidates) == 2
-    run_ids = {candidate["run_id"] for candidate in error.candidates}
-    assert run_ids == {"run-a", "run-b"}
+    assert {candidate["run_id"] for candidate in error.candidates} == {"run-a", "run-b"}
     assert all(candidate["snapshot_hash"] for candidate in error.candidates)
     assert all(candidate["snapshot_file"] for candidate in error.candidates)
     assert "conflicting canonical candidates" in str(error)
 
 
-# --- Preservation and determinism -------------------------------------------
+def test_conflicting_derived_classification_detected():
+    # Derived classification is a function of the instant, so legal inputs
+    # cannot produce a conflict; the reconciliation comparison still guards
+    # against drift by treating any difference as a conflict.
+    reference = ("2026-07-01", "REGULAR")
+    assert _differing_classification_names(reference, ("2026-07-02", "REGULAR")) == (
+        "market_calendar_date",
+    )
+    assert _differing_classification_names(reference, ("2026-07-01", "AFTER_HOURS")) == (
+        "session",
+    )
+    assert _differing_classification_names(reference, reference) == ()
 
 
-def test_no_synthetic_bars_generated(tmp_path):
+def test_same_key_same_instant_different_tz_not_conflict(tmp_path):
     cfg = settings(tmp_path)
     write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
-                   time_keys=minute_keys("2026-07-01 09:30:00", 3))
-    result = build_one(cfg)
-    assert len(result.bars) == 3  # exactly the observed bars, no interpolation
+                   time_keys=minute_keys("2026-07-01 09:30:00", 1))
+    ref = select_snapshot(cfg)
+    rows = Catalog(cfg).market_bar_snapshot_rows(ref).frame
+    rows_tokyo = rows.assign(
+        time_market=pd.to_datetime(rows["time_market"]).dt.tz_convert("Asia/Tokyo")
+    )
+    result = build_inputs(cfg, [
+        make_input(cfg, ref=ref, rows=rows),
+        make_input(cfg, ref=ref, rows=rows_tokyo),
+    ])
+    assert len(result.bars) == 1
 
 
-def test_source_dataframe_not_mutated(tmp_path):
+# --- Determinism and counting -----------------------------------------------
+
+
+def test_source_snapshot_count_counts_physical_files(tmp_path):
+    cfg = settings(tmp_path)
+    # Two physical files carrying the same run id (different symbol sets
+    # produce different batch keys): one run, two physical snapshots.
+    write_snapshot(cfg, codes=["US.MU"], trade_date=date(2026, 7, 1), run_id="run-x",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 1))
+    write_snapshot(cfg, codes=["US.MU", "US.NVDA"], trade_date=date(2026, 7, 1), run_id="run-x",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 1))
+    root = cfg.data_root / "curated" / f"source={cfg.source}" / "dataset=market_bars"
+    paths = sorted(root.rglob("*.parquet"))
+    assert len(paths) == 2
+    inputs = []
+    for path in paths:
+        frame = pd.read_parquet(path)
+        frame_mu = frame[frame["code"] == "US.MU"].reset_index(drop=True)
+        with Catalog(cfg).connect() as con:
+            row = con.execute(
+                "SELECT finished_at FROM ingestion_runs WHERE run_id = ?", ["run-x"]
+            ).fetchone()
+        finished = pd.Timestamp(row[0]) if row and row[0] is not None else None
+        ref = CompleteSnapshotRef(
+            code="US.MU",
+            requested_trade_date=date(2026, 7, 1),
+            ingestion_run_id="run-x",
+            snapshot_file=path.relative_to(cfg.data_root).as_posix(),
+            snapshot_ingested_at=None,
+            run_finished_at=finished,
+            eligible_row_count=len(frame_mu),
+        )
+        inputs.append(make_input(cfg, ref=ref, rows=frame_mu))
+    result = build_inputs(cfg, inputs)
+    # Distinct physical identities (files), not distinct run ids.
+    assert result.source_snapshot_count == 2
+    assert len(result.bars) == 1  # same business key reconciled
+
+
+def test_actual_dataframe_not_mutated(tmp_path):
     cfg = settings(tmp_path)
     write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
                    time_keys=minute_keys("2026-07-01 09:30:00", 2))
@@ -470,6 +657,18 @@ def test_source_dataframe_not_mutated(tmp_path):
     before = rows.copy()
     build_one(cfg)
     pd.testing.assert_frame_equal(rows, before)
+
+
+def test_duplicate_dataframe_index_handled(tmp_path):
+    cfg = settings(tmp_path)
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 2))
+    ref = select_snapshot(cfg)
+    rows = Catalog(cfg).market_bar_snapshot_rows(ref).frame.copy()
+    duplicated = rows.copy()
+    duplicated.index = [0, 0]  # duplicate labels must not break positional lookup
+    result = build_inputs(cfg, [make_input(cfg, ref=ref, rows=duplicated)])
+    assert len(result.bars) == 2
 
 
 def test_output_ordering_deterministic(tmp_path):
@@ -486,14 +685,29 @@ def test_output_ordering_deterministic(tmp_path):
     assert len(set(keys)) == 3
 
 
-def test_session_timezone_cannot_alter_identities():
-    instant = pd.Timestamp("2026-07-01 13:30:00", tz="UTC")
-    ny_view = instant.tz_convert(NY)
-    tokyo_view = instant.tz_convert("Asia/Tokyo")
-    base = dict(
-        dataset_kind="market_bars_canonical", code="US.MU", interval="1m",
-        adjustment="NONE",
-    )
-    # Identical instants expressed in different timezones yield the same key.
-    assert canonical_bar_key(**base, event_time=ny_view) == canonical_bar_key(**base, event_time=tokyo_view)
-    assert canonical_bar_key(**base, event_time=instant) == canonical_bar_key(**base, event_time=tokyo_view)
+def test_full_result_independent_of_input_order(tmp_path):
+    cfg = settings(tmp_path)
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 1))
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-b",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 1))
+    ref_a, rows_a = read_run_rows(cfg, run_id="run-a")
+    ref_b, rows_b = read_run_rows(cfg, run_id="run-b")
+    input_a = make_input(cfg, ref=ref_a, rows=rows_a)
+    input_b = make_input(cfg, ref=ref_b, rows=rows_b)
+
+    forward = build_inputs(cfg, [input_a, input_b])
+    reversed_result = build_inputs(cfg, [input_b, input_a])
+    for a, b in zip(forward.bars, reversed_result.bars):
+        assert a.canonical_bar_key == b.canonical_bar_key
+        assert a.canonical_row_version_id == b.canonical_row_version_id
+        assert a.event_time == b.event_time
+        assert a.snapshot_file == b.snapshot_file  # descriptive provenance is stable
+
+
+def test_no_synthetic_bars_generated(tmp_path):
+    cfg = settings(tmp_path)
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 3))
+    result = build_one(cfg)
+    assert len(result.bars) == 3
