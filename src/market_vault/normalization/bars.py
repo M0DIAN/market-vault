@@ -49,14 +49,17 @@ def parse_market_time_key(series: pd.Series) -> pd.Series:
 
 
 def bar_available_at(market_time: pd.Timestamp, interval_seconds: int) -> pd.Timestamp:
-    """Earliest market-time instant at which the complete OHLCV bar could be
-    known, expressed in UTC.
+    """Market availability instant of a bar whose interval starts at
+    ``market_time``, expressed in UTC.
 
-    Under the verified interval-start ``time_key`` semantics, a bar whose
-    interval starts at ``market_time`` cannot be complete before the interval
-    ends, so the bar becomes available at ``market_time + interval``. This is
-    the v0.4 ``market_available_at`` rule; it is a pure computation and is not
-    part of any canonical materialization.
+    Under the adopted interval-start ``time_key`` interpretation, ``market_time
+    + interval`` is the exact earliest instant at which the complete OHLCV bar
+    could be known **only when the bar spans its full nominal interval**. For
+    bars that may be truncated at session boundaries or early closes it is a
+    conservative leakage-safe not-before bound; exact bar-end times require
+    authoritative per-date session schedules, which V0.3 does not have. This
+    is the v0.4 ``market_available_at`` rule; it is a pure computation and is
+    not part of any canonical materialization.
     """
     return (market_time + pd.Timedelta(seconds=interval_seconds)).tz_convert("UTC")
 

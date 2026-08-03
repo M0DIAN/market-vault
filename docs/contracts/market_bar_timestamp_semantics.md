@@ -24,43 +24,65 @@ converted to UTC. `market_available_at` is computed by
 
 ## 2. What the OpenD historical K-line `time_key` represents
 
-**Verified interpretation: `time_key` is the interval-start time in market
-time (America/New_York), formatted as `YYYY-MM-DD HH:MM:SS`.**
+**Official documentation wording:** the official Moomoo field documentation
+defines the K-line time as the candlestick time in the market timezone; it
+does **not** explicitly distinguish interval start from interval end. This
+repository does not contain the official documentation itself.
 
-Evidence:
+**MarketVault's adopted interpretation (evidence-supported, not documented
+verbatim):** `time_key` is treated as the interval-start time in market time
+(America/New_York), formatted as `YYYY-MM-DD HH:MM:SS`.
 
-- The moomoo/futu OpenD `request_history_kline` convention assigns a K-line
-  its opening time (external SDK documentation; no official OpenD document is
-  committed in this repository).
+Evidence supporting the interpretation:
+
+- API behavior examples: K-line times returned for minute intervals are
+  whole-minute values, which is the behavior expected of interval-start
+  labels; interval-end labels would surface seconds offsets on at least some
+  intervals.
 - The normalization path treats `time_key` as a point instant, never as a
   closed interval: `parse_market_time_key` localizes it and derives a single
   `time_market` column (see
   [`src/market_vault/normalization/bars.py`](../../src/market_vault/normalization/bars.py)).
 - Existing stored data is consistent with 1-minute bars at whole-minute
-  interval starts: a full Session.ALL day contains 1440 rows covering every
-  minute of a 24-hour window, and a regular-session day contains 1201 rows
-  starting at 09:30. Whole-minute, consecutive `time_key` values are only
-  consistent with interval-start semantics.
+  instants: stored `time_key` values are whole-minute and, within observed
+  runs, consecutive. (Row counts alone do not prove interval-start
+  semantics; they are only consistency evidence.)
 
-**Explicit limitation:** this repository does not contain the OpenD
-documentation itself. If a future SDK or OpenD build changes the meaning of
-`time_key`, this contract must be re-verified before canonicalization; the
-tests pin the current understanding with synthetic fixtures and must not be
-silently updated.
+**Re-verification requirement (mandatory):** because the official
+documentation does not explicitly distinguish interval start/end, this
+interpretation must be re-verified before canonicalization if any of the
+following change: the SDK behavior for returned K-line times, the
+normalization path, or the stored-data shape observed from real collections.
+The tests pin the current understanding with synthetic fixtures and must not
+be silently updated to accommodate a changed SDK without a documented
+re-verification.
 
 ## 3. `market_available_at` derivation
 
-Rule: `market_available_at = event_time + interval` (UTC).
+Rule: `market_available_at = event_time + interval` (UTC), computed by the
+pure function `bar_available_at`.
 
-Under interval-start semantics a bar's OHLCV values are not complete before
-the interval ends, so the earliest instant the complete bar could be known is
-the interval end. This is implemented as a pure function
-(`bar_available_at`) and does not assume any collection latency; collection
-latency affects `archive_available_at`, never `market_available_at`.
+Precision of the rule:
+
+- `event_time + interval` is **exact** for bars known to span the complete
+  nominal interval: under interval-start semantics, such a bar's OHLCV values
+  are not complete before the interval ends, so the earliest instant the
+  complete bar could be known is the interval end.
+- For bars that may be truncated at a session boundary or an early close,
+  `event_time + interval` is a **conservative leakage-safe not-before bound**,
+  not an exact earliest instant: the exact bar-end time would require
+  authoritative per-date session schedules, which V0.3 does not have.
+- It is therefore **not** claimed to be the universally exact earliest
+  instant for every supported interval and every bar; exactness holds only
+  when the bar is known to span its full nominal interval.
+
+Collection latency never affects `market_available_at`; it is captured by
+`archive_available_at`.
 
 Example (EDT): `time_market = 2026-07-01 09:30:00-04:00`,
 `interval = 1m` -> `event_time = 2026-07-01 13:30:00+00:00`,
-`market_available_at = 2026-07-01 13:31:00+00:00`.
+`market_available_at = 2026-07-01 13:31:00+00:00` (exact for a full 1m bar;
+a conservative not-before bound otherwise).
 
 ## 4. UTC / America/New_York conversion behavior
 
@@ -115,11 +137,18 @@ Example (EDT): `time_market = 2026-07-01 09:30:00-04:00`,
 
 ## 8. Unresolved evidence gaps
 
-1. No OpenD documentation is committed in the repository; the interval-start
-   interpretation rests on the SDK convention, the normalization path, and
-   stored-data consistency. Re-verify if the SDK behavior changes.
-2. Real stored data was observed (1440/1201 rows) but is not part of the
-   offline test suite; the tests use committed synthetic fixtures that pin
-   the same interpretation.
+1. The official Moomoo documentation is not committed in the repository and
+   does not explicitly distinguish interval start from interval end; the
+   interval-start interpretation rests on API behavior examples, the
+   normalization path, and stored-data consistency, and carries a mandatory
+   re-verification requirement (see section 2).
+2. Real stored data was observed (multiple whole-minute runs, including one
+   full 24-hour Session.ALL run and one shorter observed run) but is not part
+   of the offline test suite; the tests use committed synthetic fixtures that
+   pin the same interpretation.
 3. `ingested_at` cross-batch differences within a run are allowed but not
    asserted to be distinct; the contract only pins same-batch equality.
+4. Exact bar-end times at session boundaries and early closes are not known;
+   `market_available_at = event_time + interval` is exact only for bars known
+   to span their full nominal interval and is otherwise a conservative
+   not-before bound (see section 3).

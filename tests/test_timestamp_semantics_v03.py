@@ -76,11 +76,14 @@ def test_time_key_parsed_as_whole_minute_market_time(tmp_path):
     assert parsed.iloc[0] == pd.Timestamp("2026-07-01 09:30:00", tz=NY)
 
 
-def test_time_key_continuous_minutes_are_interval_starts(tmp_path):
+def test_time_key_preserves_consecutive_market_instants(tmp_path):
+    # Pins MarketVault's normalization behavior on synthetic fixtures; it
+    # does not claim to validate external OpenD time_key semantics.
     cfg = settings(tmp_path)
     curated = normalize(cfg, ["US.MU"], ["2026-07-01 09:30:00", "2026-07-01 09:31:00"])
     deltas = curated["time_market"].diff().dropna()
     assert (deltas == pd.Timedelta(minutes=1)).all()
+    assert curated["time_market"].iloc[0] == pd.Timestamp("2026-07-01 09:30:00", tz=NY)
 
 
 def test_time_key_aware_input_converted_to_market_time(tmp_path):

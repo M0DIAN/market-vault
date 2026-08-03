@@ -65,11 +65,11 @@ Constraints:
 
 3. **Three-clock time model.**
 
-   - `event_time`: the instant a bar describes. V0.4 does not assume
-     `time_key` is definitely interval-start time until its OpenD and
-     normalization semantics have been verified; until then `event_time` is
-     defined operationally as the normalized market timestamp converted to
-     UTC.
+   - `event_time`: the instant a bar describes. V0.4 adopts interval-start as
+     the interpretation of `time_key` (evidence-supported; the official
+     Moomoo documentation does not explicitly distinguish interval start/end,
+     so a re-verification requirement applies on SDK change). `event_time` is
+     the normalized market timestamp converted to UTC.
    - `market_available_at`: the earliest market-time instant at which the
      complete bar could be used; point-in-time **feature assembly must use
      this clock**.
@@ -169,9 +169,10 @@ Constraints:
 1. Exact semantics of per-row `ingested_at` (stamp time, precision, timezone
    after Parquet round trips) — requires reading
    `src/market_vault/normalization/bars.py` and the catalog query layer.
-2. Whether `time_key` is interval-start time — requires verifying the OpenD
-   collector and normalization semantics; `event_time` stays operationally
-   defined until then.
+2. The official Moomoo documentation does not explicitly distinguish
+   interval start from interval end; the adopted interval-start
+   interpretation (see the implementation note) carries a mandatory
+   re-verification requirement on SDK change.
 3. Whether canonical rows are stored as one Parquet file per
    (dataset_kind, builder_version) or partitioned per trade date — deferred
    to PR-4 of the proposed sequence.
@@ -185,12 +186,18 @@ resolved; conclusions are pinned by deterministic offline tests
 (`tests/test_timestamp_semantics_v03.py`) and documented in
 [contracts/market_bar_timestamp_semantics.md](../contracts/market_bar_timestamp_semantics.md).
 
-- `time_key` is interpreted as **interval-start market time** (SDK
-  convention, normalization path, and stored-data consistency; OpenD
-  documentation is not committed — re-verify on SDK change).
+- `time_key`: the official Moomoo documentation defines the candlestick time
+  in the market timezone without explicitly distinguishing interval start
+  from interval end; MarketVault adopts **interval-start** as its
+  evidence-supported interpretation (API behavior examples, normalization
+  path, stored-data consistency) with a mandatory re-verification requirement
+  on SDK change.
 - `event_time` = normalized market timestamp converted to UTC.
 - `market_available_at` = `event_time + interval` (pure function
-  `market_vault.normalization.bar_available_at`).
+  `market_vault.normalization.bar_available_at`); exact only for bars known
+  to span their full nominal interval, and a conservative leakage-safe
+  not-before bound for bars that may be truncated at session boundaries or
+  early closes.
 - `archive_available_at` = `run_finished_at` (the run's `finished_at`, UTC,
   present for SUCCESS/PARTIAL/FAILED).
 - DST: naive `time_key` values are localized to America/New_York with
