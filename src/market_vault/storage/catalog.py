@@ -14,7 +14,12 @@ from ..models import DatasetRunManifest, QualityResult, RunManifest, Settings
 
 @dataclass(frozen=True)
 class CompleteSnapshotRef:
-    """Reference to one immutable complete physical snapshot of a (code, trade date)."""
+    """Reference to one immutable complete physical snapshot of a (code, trade date).
+
+    ``eligible_row_count`` is the number of rows in the file that exactly
+    match the request key per the selection SQL; the audit may see more rows
+    (rows with damaged metadata) and counts them as ``audited_row_count``.
+    """
 
     code: str
     requested_trade_date: date
@@ -22,7 +27,7 @@ class CompleteSnapshotRef:
     snapshot_file: str
     snapshot_ingested_at: datetime | None
     run_finished_at: datetime | None
-    row_count: int
+    eligible_row_count: int
 
 
 @dataclass(frozen=True)
@@ -755,7 +760,7 @@ class Catalog:
                 snapshot_file=self._normalize_snapshot_file(row[3]),
                 snapshot_ingested_at=row[4],
                 run_finished_at=row[5],
-                row_count=int(row[6]),
+                eligible_row_count=int(row[6]),
             )
             for row in rows
         }
@@ -763,20 +768,18 @@ class Catalog:
     def market_bar_snapshot_rows(
         self,
         snapshot: CompleteSnapshotRef,
-        *,
-        interval: str,
-        requested_session: str,
-        adjustment: str,
-        source_schema_version: str,
     ) -> SnapshotRows:
-        """All rows of one physical snapshot file for the exact key.
+        """All rows of one physical snapshot file for the audited symbol.
 
         Reads only ``snapshot.snapshot_file`` -- never a glob or another
-        curated file -- keeps duplicates, filters exactly on every request-key
-        parameter plus the run id, and sorts by time_utc. ``physical_columns``
-        reflects the schema of the selected file only, so other files cannot
-        mask missing columns. Never modifies stored data and does not depend
-        on the public market_bars view being creatable.
+        curated file -- with ``hive_partitioning = false`` so path segments
+        like interval=... never masquerade as physical columns. Only ``code``
+        is filtered: one physical file legitimately holds several symbols,
+        and the remaining request-key fields are deliberately preserved for
+        the EXACT_REQUEST_METADATA check, which must see damaged rows instead
+        of having them filtered out. Rows are kept as-is (duplicates
+        included) and sorted by time_utc when that column exists.
+        ``physical_columns`` reflects the selected file's own schema.
         """
         file_path = self._resolve_snapshot_file(snapshot.snapshot_file)
         if file_path is None or not file_path.exists():
@@ -785,44 +788,31 @@ class Catalog:
         with self.connect() as con:
             physical_columns = {
                 row[0]
-                for row in con.execute(f"DESCRIBE SELECT * FROM read_parquet('{escaped}')").fetchall()
+                for row in con.execute(
+                    f"""
+                    DESCRIBE SELECT *
+                    FROM read_parquet(
+                        '{escaped}',
+                        hive_partitioning = false
+                    )
+                    """
+                ).fetchall()
             }
-            required_filters = {
-                "code",
-                "requested_trade_date",
-                "interval",
-                "adjustment",
-                "requested_session",
-                "source_schema_version",
-                "ingestion_run_id",
-            }
-            if not required_filters.issubset(physical_columns):
-                # The physical file lacks a filter column, so its rows cannot
-                # be attributed to the request key; report the real schema.
+            if "code" not in physical_columns:
+                # Rows cannot be attributed to the audited symbol; report the
+                # real physical schema so REQUIRED_COLUMNS can flag it.
                 return SnapshotRows(frame=pd.DataFrame(), physical_columns=physical_columns)
             order_by = " ORDER BY time_utc" if "time_utc" in physical_columns else ""
             sql = f"""
                 SELECT *
-                FROM read_parquet('{escaped}')
+                FROM read_parquet(
+                    '{escaped}',
+                    hive_partitioning = false
+                )
                 WHERE code = ?
-                  AND requested_trade_date = ?
-                  AND interval = ?
-                  AND adjustment = ?
-                  AND requested_session = ?
-                  AND source_schema_version = ?
-                  AND ingestion_run_id = ?
                 {order_by}
             """
-            params: list[object] = [
-                snapshot.code,
-                snapshot.requested_trade_date,
-                interval,
-                adjustment,
-                requested_session,
-                source_schema_version,
-                snapshot.ingestion_run_id,
-            ]
-            frame = con.execute(sql, params).fetchdf()
+            frame = con.execute(sql, [snapshot.code]).fetchdf()
         return SnapshotRows(frame=frame, physical_columns=physical_columns)
 
     def _normalize_snapshot_file(self, filename: str | None) -> str:

@@ -163,7 +163,8 @@ class SelectedSnapshotInfo:
     snapshot_file: str
     snapshot_ingested_at: str | None
     run_finished_at: str | None
-    row_count: int
+    eligible_row_count: int
+    audited_row_count: int
 
     def as_dict(self) -> dict:
         return {
@@ -171,7 +172,8 @@ class SelectedSnapshotInfo:
             "snapshot_file": self.snapshot_file,
             "snapshot_ingested_at": self.snapshot_ingested_at,
             "run_finished_at": self.run_finished_at,
-            "row_count": self.row_count,
+            "eligible_row_count": self.eligible_row_count,
+            "audited_row_count": self.audited_row_count,
         }
 
 
@@ -497,13 +499,7 @@ def _audit_complete_snapshot(
     schema: str,
     max_gap_details: int,
 ) -> ItemAuditResult:
-    rows = catalog.market_bar_snapshot_rows(
-        ref,
-        interval=interval_value,
-        requested_session=requested_session,
-        adjustment=adjustment,
-        source_schema_version=schema,
-    )
+    rows = catalog.market_bar_snapshot_rows(ref)
     structure = _audit_snapshot_structure(
         rows.frame,
         ref,
@@ -529,7 +525,8 @@ def _audit_complete_snapshot(
             snapshot_file=ref.snapshot_file,
             snapshot_ingested_at=_iso_timestamp(ref.snapshot_ingested_at),
             run_finished_at=_iso_timestamp(ref.run_finished_at),
-            row_count=ref.row_count,
+            eligible_row_count=ref.eligible_row_count,
+            audited_row_count=len(rows.frame),
         ),
         observed=ItemObservedInfo(
             first_time_market=structure["first_time_market"],
@@ -987,7 +984,7 @@ def _build_intraday_summary(
         warn_item_count=sum(1 for item in audited if item.audit_status == WARN),
         fail_item_count=sum(1 for item in audited if item.audit_status == FAILED),
         total_snapshot_rows=sum(
-            item.selected_snapshot.row_count for item in audited if item.selected_snapshot
+            item.selected_snapshot.audited_row_count for item in audited if item.selected_snapshot
         ),
         duplicate_timestamp_count=sum(
             _check_mismatch(item, CHECK_DUPLICATE_TIMESTAMPS) for item in audited
