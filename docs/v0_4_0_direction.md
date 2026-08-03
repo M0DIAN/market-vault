@@ -180,13 +180,18 @@ a dataset built with `dataset_as_of = T` may only consume snapshots whose
 `archive_available_at <= T`, so a later re-collection cannot change the
 dataset's content.
 
-**Unresolved (requires source-code inspection):** the exact semantics of
-`time_key` (interval-start assumption), per-row `ingested_at` (stamping time,
-precision, and timezone representation after Parquet round trips — DuckDB may
-surface timestamps in the session timezone), and the relationship between
-`run_finished_at` and the last `ingested_at` of a run. Until these are
-resolved: `market_available_at` is provisionally `event_time + interval` (bar
-completion), `archive_available_at = run_finished_at` when present.
+**Verified (timestamp-semantics contract PR):** `time_key` is interpreted as
+interval-start market time; `market_available_at = event_time + interval`;
+`archive_available_at = run_finished_at`; DST-ambiguous and nonexistent naive
+`time_key` values raise; `ingested_at` is stamped once per normalize call
+(same value across the batch, microseconds, UTC); DuckDB surfaces timestamps
+in the session timezone, so consumers must convert both sides to UTC. Full
+details and the pinned offline tests are in
+[contracts/market_bar_timestamp_semantics.md](contracts/market_bar_timestamp_semantics.md).
+**Remaining evidence gap:** the OpenD documentation itself is not committed
+in this repository; the interval-start interpretation rests on the SDK
+convention, the normalization path, and stored-data consistency and must be
+re-verified if SDK behavior changes.
 
 ## 6. Point-in-time correctness requirements
 

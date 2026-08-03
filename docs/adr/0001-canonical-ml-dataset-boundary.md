@@ -178,11 +178,24 @@ Constraints:
 4. Whether the default no-cross-trading-day policy should also forbid
    overnight (OVERNIGHT-session) labels — deferred to label-spec review.
 
-## Implementation note
+## Implementation note: timestamp semantics verified
 
-The timestamp-semantics contract (PR-2 of the proposed sequence in the V0.4.0
-direction document) is a hard prerequisite for the canonical builder: the six
-timestamp behaviors (OpenD `time_key` interval-start vs interval-end,
-interval completion / `market_available_at`, DST conversion, per-row
-`ingested_at`, `run_finished_at` semantics and precision, DuckDB timestamp
-round-trip) must be resolved and tested before any builder implementation.
+The timestamp-semantics prerequisite (PR-2 of the proposed sequence) is
+resolved; conclusions are pinned by deterministic offline tests
+(`tests/test_timestamp_semantics_v03.py`) and documented in
+[contracts/market_bar_timestamp_semantics.md](../contracts/market_bar_timestamp_semantics.md).
+
+- `time_key` is interpreted as **interval-start market time** (SDK
+  convention, normalization path, and stored-data consistency; OpenD
+  documentation is not committed — re-verify on SDK change).
+- `event_time` = normalized market timestamp converted to UTC.
+- `market_available_at` = `event_time + interval` (pure function
+  `market_vault.normalization.bar_available_at`).
+- `archive_available_at` = `run_finished_at` (the run's `finished_at`, UTC,
+  present for SUCCESS/PARTIAL/FAILED).
+- DST: naive `time_key` values are localized to America/New_York with
+  `ambiguous="raise"` and `nonexistent="raise"`.
+- `ingested_at`: stamped once per normalize call, identical across the batch,
+  microseconds, UTC.
+- Parquet preserves timezones via PyArrow; DuckDB surfaces instants in the
+  session timezone — consumers must convert both sides to UTC.
