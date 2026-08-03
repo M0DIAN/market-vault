@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from .audit import AuditReport, InventoryReport, run_audit, run_inventory
 from .backfill import collect_history_backfill, plan_history_backfill
 from .config import load_settings
 from .models import Settings
@@ -161,5 +162,71 @@ class MarketVault:
             bootstrap_start_date=bootstrap_start_date,
             max_retries=max_retries,
             retry_backoff_seconds=retry_backoff_seconds,
+            today=today,
+        )
+
+    def inventory_market_bars(
+        self,
+        *,
+        symbols: list[str] | None = None,
+        start_date: date | None = None,
+        end_date: date | None = None,
+        interval: str | None = None,
+        session: str | None = None,
+        adjustment: str | None = None,
+        source_schema_version: str | None = None,
+        include_files: bool = False,
+        today: date | None = None,
+    ) -> InventoryReport:
+        """Summarize local market-bar storage, snapshots, and coverage.
+
+        Pure local: no OpenD connection and no data mutation. ``symbols``
+        defaults to all local symbols; ``session``/``adjustment`` default to
+        no filter (unlike the audit command).
+        """
+        return run_inventory(
+            self.settings,
+            symbols=symbols,
+            start_date=start_date,
+            end_date=end_date,
+            interval=interval,
+            requested_session=session,
+            adjustment=adjustment,
+            source_schema_version=source_schema_version,
+            include_files=include_files,
+        )
+
+    def audit_market_bars(
+        self,
+        *,
+        symbols: list[str],
+        start_date: date,
+        end_date: date,
+        calendar_market: str | None = None,
+        calendar_code: str | None = None,
+        interval: str = "1m",
+        session: str | None = None,
+        adjustment: str | None = None,
+        source_schema_version: str | None = None,
+        include_complete_dates: bool = False,
+        today: date | None = None,
+    ) -> AuditReport:
+        """Audit trading-day coverage against the local trading calendar.
+
+        Pure local: no OpenD connection and no data mutation. ``session`` and
+        ``adjustment`` fall back to settings defaults when omitted.
+        """
+        return run_audit(
+            self.settings,
+            symbols=symbols,
+            start_date=start_date,
+            end_date=end_date,
+            calendar_market=calendar_market,
+            calendar_code=calendar_code,
+            interval=interval,
+            requested_session=session,
+            adjustment=adjustment,
+            source_schema_version=source_schema_version,
+            include_complete_dates=include_complete_dates,
             today=today,
         )

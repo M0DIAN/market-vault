@@ -6,6 +6,7 @@ from datetime import date
 from pathlib import Path
 
 from .api import MarketVault
+from .audit import FAILED, WARN, run_audit, run_inventory
 from .backfill import collect_history_backfill
 from .config import load_settings, load_universe
 from .collectors.moomoo_calendar import SUPPORTED_TRADE_DATE_MARKETS
@@ -127,11 +128,49 @@ def build_parser() -> argparse.ArgumentParser:
     backfill.add_argument("--max-retries", type=_non_negative_int, default=2)
     backfill.add_argument("--retry-backoff-seconds", type=_non_negative_float, default=2.0)
 
+    inventory = sub.add_parser("inventory", help="Summarize local market-bar storage, snapshots, and coverage")
+    inventory.add_argument("--symbols", nargs="*")
+    inventory.add_argument("--universe", default="config/universe.yaml")
+    inventory.add_argument(
+        "--groups",
+        nargs="*",
+        default=[],
+        choices=["core_universe", "trade_universe", "event_universe", "option_universe"],
+    )
+    inventory.add_argument("--start-date", type=_parse_date)
+    inventory.add_argument("--end-date", type=_parse_date)
+    inventory.add_argument("--interval")
+    inventory.add_argument("--session")
+    inventory.add_argument("--adjustment")
+    inventory.add_argument("--source-schema-version")
+    inventory.add_argument("--include-files", action="store_true")
+
+    audit = sub.add_parser("audit", help="Audit trading-day coverage against the local trading calendar")
+    audit_scope = audit.add_mutually_exclusive_group(required=True)
+    audit_scope.add_argument("--calendar-market", choices=SUPPORTED_TRADE_DATE_MARKETS)
+    audit_scope.add_argument("--calendar-code")
+    audit.add_argument("--start-date", required=True, type=_parse_date)
+    audit.add_argument("--end-date", required=True, type=_parse_date)
+    audit.add_argument("--symbols", nargs="*")
+    audit.add_argument("--universe", default="config/universe.yaml")
+    audit.add_argument(
+        "--groups",
+        nargs="*",
+        default=[],
+        choices=["core_universe", "trade_universe", "event_universe", "option_universe"],
+    )
+    audit.add_argument("--interval", default="1m")
+    audit.add_argument("--session", default=None)
+    audit.add_argument("--adjustment", default=None)
+    audit.add_argument("--source-schema-version")
+    audit.add_argument("--include-complete-dates", action="store_true")
+    audit.add_argument("--fail-on-gaps", action="store_true")
+
     return parser
 
 
-def main() -> None:
-    args = build_parser().parse_args()
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
     settings = load_settings(args.settings)
 
     if args.command == "init-catalog":
@@ -234,8 +273,49 @@ def main() -> None:
             retry_backoff_seconds=args.retry_backoff_seconds,
         )
         print(json.dumps(manifest.as_dict(), ensure_ascii=False, indent=2))
-        return
+        return 0
+
+    if args.command == "inventory":
+        report = run_inventory(
+            settings,
+            symbols=_resolve_symbols(args) or None,
+            start_date=args.start_date,
+            end_date=args.end_date,
+            interval=args.interval,
+            requested_session=args.session,
+            adjustment=args.adjustment,
+            source_schema_version=args.source_schema_version,
+            include_files=args.include_files,
+        )
+        print(json.dumps(report.as_dict(), ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "audit":
+        symbols = _resolve_symbols(args)
+        if not symbols:
+            build_parser().error("At least one symbol is required via --symbols, --universe, or --groups")
+        report = run_audit(
+            settings,
+            symbols=symbols,
+            start_date=args.start_date,
+            end_date=args.end_date,
+            calendar_market=args.calendar_market,
+            calendar_code=args.calendar_code,
+            interval=args.interval,
+            requested_session=args.session,
+            adjustment=args.adjustment,
+            source_schema_version=args.source_schema_version,
+            include_complete_dates=args.include_complete_dates,
+        )
+        print(json.dumps(report.as_dict(), ensure_ascii=False, indent=2))
+        if report.status == FAILED:
+            return 1
+        if report.status == WARN and args.fail_on_gaps:
+            return 2
+        return 0
+
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -9,6 +9,42 @@ import duckdb
 
 from ..models import DatasetRunManifest, QualityResult, RunManifest, Settings
 
+#: Stable order for incomplete-item reasons reported to audits.
+INCOMPLETE_REASON_PRIORITY = (
+    "QUALITY_FAIL",
+    "RUN_FAILED",
+    "RUN_RUNNING",
+    "ORPHANED_RUN",
+    "RUN_STATUS_UNKNOWN",
+)
+
+
+def _snapshot_incomplete_reason(
+    run_id: str | None,
+    run_status: str | None,
+    has_quality_fail: bool,
+) -> str | None:
+    """Reason why a single snapshot cannot satisfy the completion criteria.
+
+    Returns None when the snapshot is complete (run SUCCESS or PARTIAL with
+    no FAIL quality result). Empty run ids cannot be attributed and are
+    reported as RUN_STATUS_UNKNOWN; run ids missing from ingestion_runs are
+    ORPHANED_RUN.
+    """
+    if run_id is None or str(run_id).strip() == "":
+        return "RUN_STATUS_UNKNOWN"
+    if run_status is None:
+        return "ORPHANED_RUN"
+    if has_quality_fail:
+        return "QUALITY_FAIL"
+    if run_status == "FAILED":
+        return "RUN_FAILED"
+    if run_status == "RUNNING":
+        return "RUN_RUNNING"
+    if run_status in ("SUCCESS", "PARTIAL"):
+        return None
+    return "RUN_STATUS_UNKNOWN"
+
 
 class Catalog:
     def __init__(self, settings: Settings):
@@ -168,6 +204,13 @@ class Catalog:
         with self.connect() as con:
             con.execute(
                 f"""
+                CREATE OR REPLACE VIEW market_bars_snapshots AS
+                SELECT *
+                FROM read_parquet('{glob_path}', union_by_name = true, hive_partitioning = true)
+                """
+            )
+            con.execute(
+                f"""
                 CREATE OR REPLACE VIEW market_bars AS
                 SELECT * EXCLUDE (_rn)
                 FROM (
@@ -176,12 +219,35 @@ class Catalog:
                                PARTITION BY code, interval, adjustment, time_utc
                                ORDER BY ingested_at DESC
                            ) AS _rn
-                    FROM read_parquet('{glob_path}', union_by_name = true, hive_partitioning = true)
+                    FROM market_bars_snapshots
                 )
                 WHERE _rn = 1
                 """
             )
         return True
+
+    def market_bars_snapshot_columns(self) -> set[str]:
+        """Column names present in the union of all curated market-bar files."""
+        curated_root = self.settings.data_root / "curated" / f"source={self.settings.source}" / "dataset=market_bars"
+        files = list(curated_root.rglob("*.parquet")) if curated_root.exists() else []
+        if not files:
+            return set()
+        glob_path = (curated_root / "**" / "*.parquet").as_posix().replace("'", "''")
+        with self.connect() as con:
+            rows = con.execute(
+                f"""
+                DESCRIBE SELECT * FROM read_parquet('{glob_path}', union_by_name = true, hive_partitioning = true)
+                """
+            ).fetchall()
+        return {row[0] for row in rows}
+
+    @staticmethod
+    def _market_bars_curated_glob(settings: Settings) -> tuple[list[Path], str]:
+        curated_root = settings.data_root / "curated" / f"source={settings.source}" / "dataset=market_bars"
+        files = list(curated_root.rglob("*.parquet")) if curated_root.exists() else []
+        if not files:
+            return [], ""
+        return files, (curated_root / "**" / "*.parquet").as_posix().replace("'", "''")
 
     def trading_calendar_dates(
         self,
@@ -237,6 +303,7 @@ class Catalog:
         adjustment: str,
         source_schema_version: str,
     ) -> set[tuple[str, date]]:
+        self.initialize()
         curated_root = self.settings.data_root / "curated" / f"source={self.settings.source}" / "dataset=market_bars"
         curated_files = list(curated_root.rglob("*.parquet")) if curated_root.exists() else []
         if not curated_files or not symbols or not trade_dates:
@@ -301,6 +368,170 @@ class Catalog:
             rows = con.execute(sql, params).fetchall()
         requested_dates = set(trade_dates)
         return {(row[0], row[1]) for row in rows if row[1] in requested_dates}
+
+    def present_market_bar_items(
+        self,
+        *,
+        symbols: list[str],
+        trade_dates: list[date],
+        interval: str,
+        requested_session: str,
+        adjustment: str,
+        source_schema_version: str,
+    ) -> set[tuple[str, date]]:
+        """(code, trade_date) pairs with at least one curated row matching the
+        exact request key, regardless of run status or quality results.
+
+        Rows from legacy files missing requested_session or
+        source_schema_version never match the exact key, so they are not
+        reported as present.
+        """
+        files, curated_glob = self._market_bars_curated_glob(self.settings)
+        if not curated_glob or not symbols or not trade_dates:
+            return set()
+        min_date = min(trade_dates)
+        max_date = max(trade_dates)
+        codes_clause = ", ".join("?" for _ in symbols)
+        with self.connect() as con:
+            session_expr = (
+                "requested_session"
+                if self._parquet_files_have_column(con, files, "requested_session")
+                else "NULL::VARCHAR AS requested_session"
+            )
+            schema_expr = (
+                "source_schema_version"
+                if self._parquet_files_have_column(con, files, "source_schema_version")
+                else "NULL::VARCHAR AS source_schema_version"
+            )
+            sql = f"""
+                WITH curated AS (
+                    SELECT
+                        code,
+                        requested_trade_date,
+                        interval,
+                        adjustment,
+                        {session_expr},
+                        {schema_expr}
+                    FROM read_parquet('{curated_glob}', union_by_name = true, hive_partitioning = true)
+                    WHERE requested_trade_date >= ?
+                      AND requested_trade_date <= ?
+                      AND code IN ({codes_clause})
+                )
+                SELECT DISTINCT c.code, c.requested_trade_date
+                FROM curated c
+                WHERE c.interval = ?
+                  AND c.adjustment = ?
+                  AND c.requested_session = ?
+                  AND c.source_schema_version = ?
+            """
+            params: list[object] = [
+                min_date,
+                max_date,
+                *symbols,
+                interval,
+                adjustment,
+                requested_session,
+                source_schema_version,
+            ]
+            rows = con.execute(sql, params).fetchall()
+        return {(row[0], row[1]) for row in rows}
+
+    def incomplete_market_bar_item_reasons(
+        self,
+        *,
+        symbols: list[str],
+        trade_dates: list[date],
+        interval: str,
+        requested_session: str,
+        adjustment: str,
+        source_schema_version: str,
+    ) -> dict[tuple[str, date], list[str]]:
+        """Per present (code, trade_date) the sorted, deduplicated reasons why
+        no snapshot of that exact key satisfies the completion criteria.
+
+        A key with any complete snapshot is not included in the result; the
+        caller decides which keys are incomplete. Reasons follow
+        INCOMPLETE_REASON_PRIORITY ordering.
+        """
+        files, curated_glob = self._market_bars_curated_glob(self.settings)
+        if not curated_glob or not symbols or not trade_dates:
+            return {}
+        min_date = min(trade_dates)
+        max_date = max(trade_dates)
+        codes_clause = ", ".join("?" for _ in symbols)
+        with self.connect() as con:
+            session_expr = (
+                "requested_session"
+                if self._parquet_files_have_column(con, files, "requested_session")
+                else "NULL::VARCHAR AS requested_session"
+            )
+            schema_expr = (
+                "source_schema_version"
+                if self._parquet_files_have_column(con, files, "source_schema_version")
+                else "NULL::VARCHAR AS source_schema_version"
+            )
+            run_id_expr = (
+                "ingestion_run_id"
+                if self._parquet_files_have_column(con, files, "ingestion_run_id")
+                else "NULL::VARCHAR AS ingestion_run_id"
+            )
+            sql = f"""
+                WITH curated AS (
+                    SELECT
+                        code,
+                        requested_trade_date,
+                        interval,
+                        adjustment,
+                        {session_expr},
+                        {schema_expr},
+                        {run_id_expr}
+                    FROM read_parquet('{curated_glob}', union_by_name = true, hive_partitioning = true)
+                    WHERE requested_trade_date >= ?
+                      AND requested_trade_date <= ?
+                      AND code IN ({codes_clause})
+                ),
+                runs AS (
+                    SELECT run_id, upper(status) AS status
+                    FROM ingestion_runs
+                ),
+                failed AS (
+                    SELECT DISTINCT run_id
+                    FROM quality_results
+                    WHERE result = 'FAIL'
+                )
+                SELECT
+                    c.code,
+                    c.requested_trade_date,
+                    c.ingestion_run_id,
+                    r.status,
+                    f.run_id IS NOT NULL AS has_quality_fail
+                FROM curated c
+                LEFT JOIN runs r ON r.run_id = c.ingestion_run_id
+                LEFT JOIN failed f ON f.run_id = c.ingestion_run_id
+                WHERE c.interval = ?
+                  AND c.adjustment = ?
+                  AND c.requested_session = ?
+                  AND c.source_schema_version = ?
+            """
+            params: list[object] = [
+                min_date,
+                max_date,
+                *symbols,
+                interval,
+                adjustment,
+                requested_session,
+                source_schema_version,
+            ]
+            rows = con.execute(sql, params).fetchall()
+        reasons: dict[tuple[str, date], set[str]] = {}
+        for code, trade_date, run_id, run_status, has_quality_fail in rows:
+            reason = _snapshot_incomplete_reason(run_id, run_status, has_quality_fail)
+            if reason is not None:
+                reasons.setdefault((code, trade_date), set()).add(reason)
+        return {
+            key: sorted(values, key=INCOMPLETE_REASON_PRIORITY.index)
+            for key, values in reasons.items()
+        }
 
     def trading_dates_after(
         self,

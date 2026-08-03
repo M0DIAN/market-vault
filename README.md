@@ -296,6 +296,74 @@ Each backfill run writes `manifests/market_bars_backfill_<run_id>.json` and a qu
 - A Ctrl-C interruption may leave no top-level PARTIAL manifest; recovery relies on the recorded child runs.
 - The CLI has no dry-run flag; use `plan_backfill` to preview a plan.
 
+## V0.3 development: inventory and coverage audit
+
+Two pure-local commands inspect the local market-bar store without touching OpenD or modifying any data file. Both write structured JSON reports under `reports/data_quality` (`market_bars_inventory_<run_id>.json` and `market_bars_audit_<run_id>.json`).
+
+### Inventory
+
+Summarize local Raw/Curated files, snapshot and row counts, parameter combinations, per-symbol covered dates, and completion counts:
+
+```powershell
+market-vault --settings config/settings.yaml inventory
+```
+
+Filter by symbol:
+
+```powershell
+market-vault --settings config/settings.yaml inventory `
+  --symbols US.MU `
+  --interval 1m `
+  --session ALL `
+  --adjustment NONE
+```
+
+Include the physical file list in the report:
+
+```powershell
+market-vault --settings config/settings.yaml inventory `
+  --include-files
+```
+
+`--symbols`, `--universe`, and `--groups` filter by symbol; `--start-date`/`--end-date` filter by trade date; `--interval`, `--session`, `--adjustment`, and `--source-schema-version` filter by request key. Without filters, the report covers every local symbol and combination. An empty database reports `status: EMPTY` with zero counts. File entries (only with `--include-files`) list `layer`, `relative_path`, `size_bytes`, `modified_at`, and whether the filename is a legacy `batch-<batch_key>.parquet` name.
+
+### Audit
+
+Audit trading-day coverage for a date range against the local trading calendar:
+
+```powershell
+market-vault --settings config/settings.yaml audit `
+  --calendar-market US `
+  --start-date 2026-07-01 `
+  --end-date 2026-07-31 `
+  --symbols US.MU `
+  --interval 1m `
+  --session ALL `
+  --adjustment NONE
+```
+
+Strict mode for scripts and CI:
+
+```powershell
+market-vault --settings config/settings.yaml audit `
+  --calendar-market US `
+  --start-date 2026-07-01 `
+  --end-date 2026-07-31 `
+  --symbols US.MU `
+  --fail-on-gaps
+```
+
+Exit codes: `PASS` exits 0, `WARN` exits 0 (or 2 with `--fail-on-gaps`), `FAILED` exits 1.
+
+### Audit report semantics
+
+- The audit only checks trading-day-level coverage. It does not validate how many bars a trading day should contain.
+- Expected dates come from the local `trading_calendar_latest` dataset, never from weekday or holiday rules. The calendar snapshot's `requested_start_date`/`requested_end_date` ranges must fully cover `--start-date` to `--end-date`; otherwise the audit fails with `calendar_coverage_gaps` and does not compute bar-level missing dates.
+- A (symbol, trade date) is `COMPLETE` when curated rows match the exact `code / requested_trade_date / interval / requested_session / adjustment / source_schema_version` key, the run status is `SUCCESS` or `PARTIAL`, and no quality check `FAIL`ed — the same semantics as the backfill completion check.
+- `INCOMPLETE` means curated rows exist for the exact key but no snapshot satisfies the completion criteria; the report lists sorted, deduplicated reasons (`QUALITY_FAIL`, `RUN_FAILED`, `RUN_RUNNING`, `ORPHANED_RUN`, `RUN_STATUS_UNKNOWN`).
+- `MISSING` means no curated rows exist for the exact key. Missing and incomplete dates are always reported; complete dates are included only with `--include-complete-dates`.
+- Every operation is pure local: no OpenD connection, no writes to Parquet, no deletion or renaming of files, and no entries in the ingestion metadata tables. Fixing gaps remains a separate, explicit `backfill` run.
+
 ## Query data
 
 ```powershell
@@ -338,7 +406,7 @@ manifests/*.json
 reports/data_quality/*.json
 ```
 
-A deterministic batch filename is used for the same date/symbol-set/interval/session/adjustment combination. Re-running the identical request overwrites that batch file. The DuckDB view deduplicates bars by `(code, interval, adjustment, time_utc)`. The `option_volatility_daily` view deduplicates by `(option_code, trade_date, source)` and chooses the latest row by `captured_at DESC NULLS LAST`, with `ingestion_run_id` only as a secondary tie-breaker.
+Market-bar raw and curated files are written as `batch-<batch_key>-<run_id>.parquet`: each collection run gets its own immutable snapshot, so re-collecting the same date/parameters never overwrites an earlier snapshot. Files from before the snapshot naming (`batch-<batch_key>.parquet`) remain readable and are treated as legacy snapshots. The DuckDB view `market_bars_snapshots` exposes every snapshot row; the public `market_bars` view deduplicates bars by `(code, interval, adjustment, time_utc)` and keeps the newest `ingested_at` row, so the query layer always returns the latest snapshot. The `option_volatility_daily` view deduplicates by `(option_code, trade_date, source)` and chooses the latest row by `captured_at DESC NULLS LAST`, with `ingestion_run_id` only as a secondary tie-breaker.
 
 ## Tests
 
