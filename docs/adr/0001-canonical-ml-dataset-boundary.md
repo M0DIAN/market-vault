@@ -206,3 +206,17 @@ resolved; conclusions are pinned by deterministic offline tests
   microseconds, UTC.
 - Parquet preserves timezones via PyArrow; DuckDB surfaces instants in the
   session timezone — consumers must convert both sides to UTC.
+
+### Implementation note: immutable materialization verified
+
+The canonical materialization layer
+([contracts/canonical_market_bar_materialization.md](../contracts/canonical_market_bar_materialization.md))
+is implemented: COMPLETE snapshots are loaded through the V0.3
+latest-complete selector, canonical bars/gaps/resolution are derived by the
+in-memory builder, and each build is committed atomically as an immutable
+directory (`bars/`, `gaps/`, `resolution.jsonl`, `manifest.json`, `_SUCCESS`)
+keyed by a deterministic `canonical_build_id`. Logical identities
+(`canonical_content_id`, `resolution_content_id`, `gap_content_id`,
+`canonical_build_id`) are path- and byte-layout-independent; `snapshot_file`
+remains descriptive provenance. EMPTY builds are explicit, idempotency is
+enforced, and no mutable latest pointer or DuckDB view is registered yet.

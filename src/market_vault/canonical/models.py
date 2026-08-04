@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date, datetime
+from pathlib import Path
 
 import pandas as pd
 
@@ -92,6 +93,7 @@ class CanonicalSourceRef:
     ingestion_run_id: str
     physical_snapshot_hash: str
     logical_source_rows_hash: str
+    source_schema_version: str
     snapshot_file: str
     requested_trade_date: date
     requested_session: str
@@ -157,3 +159,39 @@ class CanonicalBuildError(ValueError):
     """Structured validation failure of canonical inputs (fail-closed)."""
 
     reason: str
+
+
+@dataclass(frozen=True)
+class CanonicalMaterializationResult:
+    """Frozen result of one canonical build materialization.
+
+    Paths are absolute in the Python result; inside manifest.json they are
+    relative to the build root.
+    """
+
+    canonical_build_id: str
+    canonical_content_id: str
+    status: str
+    build_path: Path
+    manifest_path: Path
+    row_count: int
+    gap_count: int
+    source_snapshot_count: int
+    created_new_build: bool
+
+
+@dataclass(frozen=True)
+class CanonicalMaterializationRequest:
+    """Normalized request scope participating in the build identity."""
+
+    symbols: list[str]
+    trade_dates: list
+    request_key: CanonicalRequestKey
+
+
+class CanonicalMaterializationError(ValueError):
+    """Structured materialization failure (fail-closed)."""
+
+
+class CanonicalGapArithmeticError(CanonicalMaterializationError):
+    """Internal adjacent gap delta that is not an exact nominal multiple."""
