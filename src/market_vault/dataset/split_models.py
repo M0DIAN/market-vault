@@ -169,6 +169,22 @@ class SplitValidationError(DatasetError):
     """
 
 
+def _as_split_validation_error(exc, context: str) -> None:
+    """Convert a documented validation-type exception to
+    :class:`SplitValidationError`.
+
+    A ``SplitValidationError`` passes through unchanged (never double-wrapped);
+    the contract-listed validation exceptions (``DatasetError``, ``TypeError``,
+    ``ValueError``, ``KeyError``, ``ZoneInfoNotFoundError``) are converted with
+    a context prefix. Broad ``except Exception`` is never used: programming
+    errors are not hidden, only the documented validation failures are
+    converted.
+    """
+    if isinstance(exc, SplitValidationError):
+        raise exc
+    raise SplitValidationError(f"{context}: {exc}") from exc
+
+
 def _reject_unsafe_split_text(value: str, label: str) -> None:
     try:
         reject_unsafe_text(value, label)
@@ -902,7 +918,14 @@ class ChronologicalSplitResult:
             self.splitter_version, "splitter_version"
         )
 
-        assignments = tuple(self.assignments)
+        try:
+            assignments = tuple(self.assignments)
+        except (TypeError, ValueError, KeyError) as exc:
+            _as_split_validation_error(
+                exc,
+                "assignments must be an iterable of "
+                "ChronologicalSplitAssignment",
+            )
         for assignment in assignments:
             if not isinstance(assignment, ChronologicalSplitAssignment):
                 raise SplitValidationError(
@@ -970,19 +993,36 @@ class ChronologicalSplitResult:
             raise SplitValidationError(
                 "assignment_schema must exactly match split_assignment_schema()"
             )
-        if self.assignment_schema_id != dataset_schema_id(schema):
+        try:
+            recomputed_schema_id = dataset_schema_id(schema)
+        except (DatasetError, TypeError, ValueError, KeyError) as exc:
+            _as_split_validation_error(exc, "cannot recompute the assignment schema id")
+        if self.assignment_schema_id != recomputed_schema_id:
             raise SplitValidationError(
                 "assignment_schema_id does not match the carried assignment schema"
             )
         expected_rows = _assignment_rows(assignments_sorted)
-        if tuple(self.assignment_rows) != expected_rows:
+        try:
+            provided_rows = tuple(self.assignment_rows)
+        except (TypeError, ValueError, KeyError) as exc:
+            _as_split_validation_error(
+                exc,
+                "assignment_rows must be an iterable of mappings",
+            )
+        if provided_rows != expected_rows:
             raise SplitValidationError(
                 "assignment_rows must exactly match the normalized "
                 "(sample_key-sorted) assignments"
             )
-        if self.assignment_content_id != logical_dataset_content_id(
-            schema, expected_rows
-        ):
+        try:
+            recomputed_content_id = logical_dataset_content_id(
+                schema, expected_rows
+            )
+        except (DatasetError, TypeError, ValueError, KeyError) as exc:
+            _as_split_validation_error(
+                exc, "cannot recompute the split assignment content id"
+            )
+        if self.assignment_content_id != recomputed_content_id:
             raise SplitValidationError(
                 "assignment_content_id does not match the carried assignment rows"
             )
@@ -1062,9 +1102,17 @@ def split_assignment_content_id(rows) -> str:
 
     Row order is irrelevant and row multiplicity is preserved; zero rows
     produce a deterministic, request-independent content ID tied to the
-    schema; no placeholder row is fabricated.
+    schema; no placeholder row is fabricated. Invalid row inputs (``None``,
+    non-iterable rows, non-mapping rows, missing or unknown fields, wrong
+    field types, nullability violations) surface as
+    :class:`SplitValidationError`, never as a bare ``DatasetError`` or
+    ``TypeError``. Valid rows produce exactly the same content IDs as the
+    underlying identity layer.
     """
-    return logical_dataset_content_id(split_assignment_schema(), rows)
+    try:
+        return logical_dataset_content_id(split_assignment_schema(), rows)
+    except (DatasetError, TypeError, ValueError, KeyError) as exc:
+        _as_split_validation_error(exc, "invalid split assignment rows")
 
 
 def _assignment_rows(
@@ -1216,12 +1264,15 @@ def chronological_split_spec_pin(spec: ChronologicalSplitSpec) -> SpecPin:
             f"chronological_split_spec_pin requires a ChronologicalSplitSpec, "
             f"got {type(spec).__name__}"
         )
-    return SpecPin(
-        kind=spec.kind,
-        name=spec.name,
-        version=spec.version,
-        content_sha256=chronological_split_spec_content_id(spec),
-    )
+    try:
+        return SpecPin(
+            kind=spec.kind,
+            name=spec.name,
+            version=spec.version,
+            content_sha256=chronological_split_spec_content_id(spec),
+        )
+    except (DatasetError, TypeError, ValueError, KeyError) as exc:
+        _as_split_validation_error(exc, "cannot build the split spec pin")
 
 
 def chronological_split_result_id(

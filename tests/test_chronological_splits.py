@@ -1748,6 +1748,135 @@ def test_rows_must_correspond_to_normalized_assignments():
         forge_result(make_spec(), unordered, rows=unsorted_rows)
 
 
+def assert_is_split_validation_error(fn):
+    """Assert fn() raises exactly SplitValidationError (never a bare
+    DatasetError, TypeError, ValueError, or KeyError)."""
+    with pytest.raises(SplitValidationError) as excinfo:
+        fn()
+    assert type(excinfo.value) is SplitValidationError
+    return excinfo.value
+
+
+def pinned_sample() -> ChronologicalSplitSample:
+    """The exact fixture used to pin the pre-patch identity constants."""
+    return ChronologicalSplitSample(
+        sample_key=sha("s"),
+        sample_version_id=sha("s#v1"),
+        feature_window_close=ny(2024, 6, 28, 16, 0),
+        label_status=LABEL_STATUS_COMPLETE,
+        actual_label_end_time=ny(2024, 6, 28, 21, 0),
+    )
+
+
+def test_content_id_rejects_none_rows():
+    assert_is_split_validation_error(
+        lambda: split_assignment_content_id(None)
+    )
+
+
+def test_content_id_rejects_empty_row_mapping():
+    # A missing-field row must fail as exactly SplitValidationError, never as
+    # a bare DatasetError.
+    assert_is_split_validation_error(
+        lambda: split_assignment_content_id([{}])
+    )
+
+
+def test_content_id_rejects_unknown_field():
+    result = assign_chronological_splits([pinned_sample()], make_spec())
+    forged_row = dict(result.assignment_rows[0])
+    forged_row["bogus_field"] = "x"
+    assert_is_split_validation_error(
+        lambda: split_assignment_content_id([forged_row])
+    )
+
+
+def test_content_id_rejects_wrong_field_type():
+    result = assign_chronological_splits([pinned_sample()], make_spec())
+    forged_row = dict(result.assignment_rows[0])
+    forged_row["sample_key"] = 42
+    assert_is_split_validation_error(
+        lambda: split_assignment_content_id([forged_row])
+    )
+
+
+def test_replace_assignments_none_fails_closed():
+    result = assign_chronological_splits([pinned_sample()], make_spec())
+    assert_is_split_validation_error(
+        lambda: replace(result, assignments=None)
+    )
+
+
+def test_replace_assignment_rows_none_fails_closed():
+    result = assign_chronological_splits([pinned_sample()], make_spec())
+    assert_is_split_validation_error(
+        lambda: replace(result, assignment_rows=None)
+    )
+
+
+def test_non_iterable_container_inputs_fail_closed():
+    result = assign_chronological_splits([pinned_sample()], make_spec())
+    assert_is_split_validation_error(
+        lambda: replace(result, assignment_rows=42)
+    )
+    assert_is_split_validation_error(
+        lambda: replace(result, assignments=42)
+    )
+
+
+def test_valid_content_ids_are_pinned_and_unchanged():
+    # Constants recorded before the error-boundary patch: valid inputs must
+    # produce byte-identical identities.
+    schema_id_pinned = (
+        "19f91ef22e5956047db31fb62e55bc71ec9940f3ba3e93ae61d1ae8388bf1d20"
+    )
+    zero_content_pinned = (
+        "7ca7b8429669e095d957f5ea1edb10b22b083ef2a77b85c8c48182bca5c56789"
+    )
+    one_content_pinned = (
+        "e7d722a2985b0c3bce52de3a4afbcdf7d49a8460c8eec2594aa0bce82b570d43"
+    )
+    one_result_pinned = (
+        "80dd621610d677aca9402b1dce118b0d17db3520b4d76066f33e36930ebd4082"
+    )
+    zero_result_pinned = (
+        "05a22edd71b8a0b9d118aa6e65aa181901394df0b5181224aa5cb2160f49b0f0"
+    )
+    assert split_assignment_schema_id() == schema_id_pinned
+    assert split_assignment_content_id([]) == zero_content_pinned
+    result = assign_chronological_splits([pinned_sample()], make_spec())
+    assert result.assignment_content_id == one_content_pinned
+    assert result.split_result_id == one_result_pinned
+    zero = assign_chronological_splits([], make_spec())
+    assert zero.split_result_id == zero_result_pinned
+
+
+def test_assign_output_identities_are_unchanged_by_the_patch():
+    # The normal assign path still produces exactly one assignment and one
+    # row for the pinned sample, with every identity recomputed identically.
+    result = assign_chronological_splits([pinned_sample()], make_spec())
+    assert len(result.assignments) == 1
+    assert len(result.assignment_rows) == 1
+    assignment = result.assignments[0]
+    assert assignment.nominal_split == SPLIT_TRAIN
+    assert assignment.final_split == SPLIT_TRAIN
+    assert assignment.assignment_status == SPLIT_STATUS_ASSIGNED
+    assert result.assignment_schema_id == split_assignment_schema_id()
+    assert result.assignment_content_id == split_assignment_content_id(
+        result.assignment_rows
+    )
+    assert result.split_result_id == chronological_split_result_id(
+        splitter_version=CHRONOLOGICAL_SPLITTER_VERSION,
+        split_spec_content_id=chronological_split_spec_pin(
+            make_spec()
+        ).content_sha256,
+        assignment_schema_version=SPLIT_ASSIGNMENT_SCHEMA_VERSION,
+        assignment_schema_id=result.assignment_schema_id,
+        assignment_content_id=result.assignment_content_id,
+        sample_count=1,
+    )
+
+
 def test_result_ids_are_sensitive_to_contract_versions():
     spec = make_spec()
     result = assign_chronological_splits([make_sample("s")], spec)

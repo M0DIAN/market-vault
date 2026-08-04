@@ -325,10 +325,13 @@ Duplicate `sample_key` values in one split result fail closed — even when the
 
 All split-layer failures surface as `SplitValidationError` (a subclass of the
 existing `DatasetError`). `ZoneInfoNotFoundError`, `TypeError`, `ValueError`,
-`KeyError`, and unexpected `DatasetError` shapes never leak. Unknown schema
-versions, invalid timezones, naive instants, malformed sample identities,
-inconsistent assignments, tampered IDs, and tampered diagnostics all fail
-closed.
+`KeyError`, and unexpected `DatasetError` shapes never leak — including from
+the public identity helpers (`split_assignment_content_id`,
+`chronological_split_spec_pin`) and from `ChronologicalSplitResult`
+construction with invalid `assignments` / `assignment_rows` containers.
+Unknown schema versions, invalid timezones, naive instants, malformed sample
+identities, inconsistent assignments, tampered IDs, and tampered diagnostics
+all fail closed.
 
 ## 20. No random split / no shuffle
 
