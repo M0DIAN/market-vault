@@ -365,7 +365,7 @@ Threats the dataset layer must defend against:
   sidecar, resolution JSONL, immutable manifest, atomic commit, and EMPTY
   builds — see
   [contracts/canonical_market_bar_materialization.md](contracts/canonical_market_bar_materialization.md).
-- PR-5 (dataset manifest/identity core) in progress: explicit logical Dataset
+- PR-5 (dataset manifest/identity core) merged: explicit logical Dataset
   schema model, deterministic schema and content identities, canonical-build
   provenance pins, Feature/Label/Split/Transform fingerprints, scope and
   `dataset_as_of` normalization, completion and gap references,
@@ -373,9 +373,16 @@ Threats the dataset layer must defend against:
   serialization, strict validation, and atomic standalone manifest writing —
   see
   [contracts/derived_dataset_manifest.md](contracts/derived_dataset_manifest.md).
-  PIT sample assembly (PR-6), Feature/Label spec versioning (PR-7), splits
-  and actual-label-end purging (PR-8), and Dataset Parquet export are not
-  implemented yet.
+- PR-6 (two-clock point-in-time sample assembly) in progress: the verified
+  Canonical build reader and the deterministic PIT assembly foundation —
+  Feature/Label observation windows under the market clock and the optional
+  archive clock, `dataset_as_of` cutoffs, cross-build reconciliation,
+  `sample_key` / `sample_version_id`, the fixed sample-to-row association
+  content contract, CanonicalBuildPins and GapReferences from verified
+  manifests and actually selected rows — see
+  [contracts/point_in_time_sample_assembly.md](contracts/point_in_time_sample_assembly.md).
+  Feature/Label spec versioning (PR-7), splits and actual-label-end purging
+  (PR-8), and Dataset Parquet export are not implemented yet.
 
 ## 14. Proposed PR sequence
 

@@ -6,8 +6,11 @@ The in-memory canonical market-bar builder core lives in
 layer (explicit-schema Canonical Parquet, conservative gap sidecar,
 resolution JSONL, immutable manifest, atomic commit, EMPTY builds) lives in
 :mod:`market_vault.canonical.materialization` and
-:mod:`market_vault.canonical.schema`. Features, labels, samples, and datasets
-are not implemented yet.
+:mod:`market_vault.canonical.schema`; verified read-only access to committed
+build artifacts lives in :mod:`market_vault.canonical.reader`. The
+point-in-time sample association foundation exists in
+:mod:`market_vault.dataset.pit`; Feature/Label transforms and exported
+datasets are not implemented yet.
 """
 
 from .bars import (
@@ -44,6 +47,11 @@ from .models import (
     CanonicalSnapshotInput,
     CanonicalSourceRef,
 )
+from .reader import (
+    CanonicalArtifactValidationError,
+    VerifiedCanonicalBuild,
+    load_verified_canonical_build,
+)
 from .schema import (
     CANONICAL_MATERIALIZER_VERSION,
     CANONICAL_SCHEMA_VERSION,
@@ -57,6 +65,7 @@ __all__ = [
     "DEFAULT_DATASET_KIND",
     "GAP_POLICY_VERSION",
     "MANIFEST_SCHEMA_VERSION",
+    "CanonicalArtifactValidationError",
     "CanonicalBar",
     "CanonicalBuildError",
     "CanonicalBuildResult",
@@ -69,6 +78,7 @@ __all__ = [
     "CanonicalResolutionEntry",
     "CanonicalSnapshotInput",
     "CanonicalSourceRef",
+    "VerifiedCanonicalBuild",
     "build_canonical_market_bars",
     "canonical_bar_key",
     "canonical_build_id",
@@ -78,6 +88,7 @@ __all__ = [
     "derive_internal_gap_ranges",
     "gap_content_id",
     "load_canonical_snapshot_inputs",
+    "load_verified_canonical_build",
     "materialize_build_result",
     "materialize_canonical_market_bars",
     "resolution_content_id",
