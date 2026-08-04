@@ -104,8 +104,10 @@ runtime magic, and no network.
 - Automatic re-collection or repair of Raw/Curated/Canonical data at build
   time.
 - Arbitrary user-code execution from specs (see the transform registry).
-- A large indicator catalog; v0.5 starts with the minimal OHLCV transform
-  set from ADR 0002, and implementation PRs may narrow it further.
+- A large indicator catalog; v0.5 starts with the candidate initial OHLCV
+  transform catalog from ADR 0002; each implementation PR may deliver a
+  reviewed subset while the v0.5.0 acceptance scope is finalized
+  explicitly.
 
 ## 5. Dataset build inputs and outputs
 
@@ -119,35 +121,55 @@ ChronologicalSplitSpec
 optional dataset_as_of (UTC)
 dataset scope (code, trade dates, interval, adjustment NONE, requested_session)
 transform implementation versions (registry-bound)
-output schema version
-serialization format version
+final DatasetSchema      # dataset_schema_id via the existing v0.4 contract
+serialization format / version   # existing DatasetIdentityInput fields
 ```
 
 All identity-bearing inputs enter `DatasetIdentityInput` and therefore
-`dataset_id`. The builder never scans "the latest Canonical directory".
+`dataset_id`. The builder never scans "the latest Canonical directory". The
+builder explicitly receives the final `DatasetSchema`; its fields, order,
+types, and nullability generate the existing `dataset_schema_id`
+(`DATASET_SCHEMA_ID_VERSION` is fixed by the v0.4 identity contract), which
+enters the existing `DatasetIdentityInput.dataset_schema_id`. No new
+`DatasetIdentityInput` field is added and no existing identity algorithm or
+identity version is modified.
 
-Outputs (initial materialized layout):
+Outputs (formal materialized layout):
 
 ```text
 data/datasets/<dataset_id>/
     dataset.parquet       # the sample matrix, fixed schema
     manifest.json         # versioned DatasetManifest (dataset_id recomputed)
     build_report.json     # recorded facts only, never identity-bearing
-    feature_spec.yaml     # normalized feature spec content + content ID
-    label_spec.yaml       # normalized label spec content + content ID
-    split_spec.yaml       # normalized split spec content + content ID
+    feature_specs/        # one normalized spec file per FeatureSpec
+    label_specs/          # one normalized spec file per LabelSpec
+    split_spec.yaml       # normalized split spec content
+    _SUCCESS              # marker written last, before the atomic rename
 ```
 
 ## 6. Transform registry
 
 - Built-in, registered, versioned transforms only; the registry is the sole
   resolution authority for `transform_ref`.
+- **Lookup key.** The exact lookup key is the complete `transform_ref`
+  string of the v1 spec format (`module.path:function`). The v1 YAML format
+  is unchanged; short names such as `simple_return` are never
+  reinterpreted as a new `transform_ref` syntax. Built-in transforms
+  register under stable full references; registry metadata may carry a
+  human-readable display name, but that name never replaces the
+  identity-bearing `transform_ref`.
 - Each implementation declares: stable transform name; implementation
   version; input requirements; output column names and dtypes; parameter
   schema; lookback / lookforward requirement; session / trading-day boundary
   policy; null / incomplete policy; and a deterministic implementation
-  fingerprint (stable SHA-256 over canonical source and registration
-  metadata, never a memory address).
+  fingerprint.
+- **Fingerprint versioning.** PR-2 must define a versioned fingerprint
+  payload contract (e.g. `TRANSFORM_IMPLEMENTATION_FINGERPRINT_VERSION`): a
+  stable SHA-256 over the implementation's canonical source bytes and its
+  registration metadata under that contract, excluding absolute file paths,
+  the checkout directory, memory addresses, `repr()`, import order,
+  filesystem mtimes, and local newline differences — a normalized byte
+  contract, not just "hash the source code".
 - The registry emits `ImplementationPin(name, version, content_sha256)`
   entries into `DatasetIdentityInput.implementations`.
 - Forbidden: YAML-imported arbitrary modules, `eval`, `exec`, dynamic user
@@ -179,6 +201,19 @@ data/datasets/<dataset_id>/
   nominal horizon.
 - INCOMPLETE labels are excluded from TRAIN/VALIDATION/TEST samples by
   default (`incomplete_label_policy: EXCLUDE` in the split spec).
+- **COMPLETE proof boundary.** `label_status: COMPLETE` is declared only
+  when completeness can be proved from the actual label input rows: each
+  Label transform registration declares its required-input semantics, and
+  the builder verifies the required cardinality, alignment, and
+  target/end input are all satisfied. Observed partial PIT rows, "some rows
+  were seen", or the absence of gap records never prove completeness, and
+  early-close / session-boundary cases are never completed by unsupported
+  inference — when completeness cannot be proved, the label is INCOMPLETE.
+- **Unsupported in v0.5 (fail closed).** A `LabelSpec` with a
+  `TRADING_DAYS` horizon, or with `cross_trading_day.allow: true`, fails
+  closed as unsupported at build configuration time; the v1 opt-in
+  mechanism exists in the spec contract, but no execution path implements it
+  in v0.5.
 
 ## 9. `actual_label_end_time` and INCOMPLETE
 
@@ -186,8 +221,9 @@ data/datasets/<dataset_id>/
   label input row became available (its `market_available_at`), normalized
   to UTC microseconds. It must not precede `feature_window_close`.
 - `label_status`: COMPLETE or INCOMPLETE, decided by the Label execution
-  from actual inputs — never by the absence of gap records, never inferred
-  from PIT diagnostics alone.
+  from actual inputs and the declared required-input semantics — never by
+  the absence of gap records, never inferred from partial PIT rows or PIT
+  diagnostics alone.
 - These are the exact facts the split layer requires on
   `ChronologicalSplitSample`; the builder constructs them explicitly from
   PIT + Label results (the construction path documented in the v0.4.0 split
@@ -211,7 +247,7 @@ The Dataset sample matrix uses a fixed logical `DatasetSchema` with
 authoritative field order grouped as:
 
 ```text
-sample identity     sample_key, sample_version_id
+sample identity     code, sample_key, sample_version_id
 timing facts        feature_window_close, actual_label_end_time (nullable),
                     label_status, dataset_as_of (when enabled)
 feature outputs     <per FeatureSpec, fixed name/type>
@@ -220,11 +256,17 @@ split assignment    feature_window_close_date, nominal_split, final_split,
                     assignment_status, reason_code, purge_boundary
 ```
 
+- `code` is a formal Dataset column in every row's sample identity — never
+  reconstructed by parsing `sample_key` — so a multi-symbol Dataset can
+  always distinguish symbols directly.
 - Fixed column order; fixed dtypes (the v0.4.0 scalar set: string, int64,
   float64, bool, date32, timestamp_us_utc); time fields UTC only.
 - Null representation is `null`, never NaN; NaN / ±Infinity fail closed.
-- Row order is deterministic: sort by `code`, then `feature_window_close`,
-  then `sample_key`.
+- The physical row sort is fixed: `code` ASC, then `feature_window_close`
+  ASC, then `sample_key` ASC — for stable Parquet output and a stable
+  reading experience. It never modifies any identity algorithm:
+  `logical_dataset_content_id` remains row-order-independent per the v0.4
+  contract.
 - The logical content hash is the existing `logical_dataset_content_id`
   over this schema and its rows.
 
@@ -255,15 +297,25 @@ absolute output paths in `dataset_id`.
 ## 14. Atomic materialization
 
 - Staging directory on the same filesystem; write dataset.parquet,
-  manifest.json, spec files; compute and record file SHA-256s; commit with
-  an atomic rename; `_SUCCESS` semantics follow the Canonical pattern.
+  manifest.json, build_report.json, and the spec artifacts
+  (`feature_specs/`, `label_specs/`, `split_spec.yaml`); compute and record
+  file SHA-256s; write `_SUCCESS` **last** with the fixed empty UTF-8
+  format (mirroring Canonical); perform the atomic rename only after all
+  files including `_SUCCESS` are complete.
 - Immutable final directories, no overwrite.
 - Existing verified identical build -> idempotent return
-  (`created_new_build=False`), nothing rewritten.
+  (`created_new_build=False`), nothing rewritten: identity and the formal
+  artifacts (`dataset_id` directory, manifest, `_SUCCESS`, verified
+  content) decide idempotency. The new staging `build_report.json` — which
+  may contain `built_at`, timing, and diagnostics, and is never
+  identity-bearing — is discarded, never identity-compared with the
+  existing report; non-identity timing differences are never misjudged as
+  a conflicting Dataset.
 - Existing conflicting build -> fail closed; the conflict is reported, never
   silently overwritten.
 - Staging residue (a leftover staging directory from a crashed build) is
-  detected and reported as a failure condition, never silently adopted.
+  detected and reported as a failure condition, never silently adopted; a
+  staging directory missing or corrupt `_SUCCESS` is never adopted.
 
 ## 15. Verified Dataset reader
 
@@ -271,13 +323,18 @@ One public read entry point (planned: `load_verified_dataset(build_dir)`),
 fail-closed on:
 
 - directory name vs `dataset_id`;
+- `_SUCCESS` presence and fixed format (regular file, not a symlink) — a
+  formal directory with missing or corrupt `_SUCCESS` fails closed;
 - manifest schema version and shape;
 - recomputed `dataset_id` from identity-bearing fields;
 - recomputed logical content hash from the actual Parquet rows;
 - Parquet schema, column order, dtypes, row count;
 - recorded file SHA-256s vs actual bytes;
 - spec pins, canonical pins, gap references, split identity;
-- exact file whitelist — unexpected files fail;
+- the exact file whitelist derived from the contract:
+  `dataset.parquet`, `manifest.json`, `build_report.json`, `_SUCCESS`,
+  `split_spec.yaml`, and exactly the spec files implied by the manifest
+  `SpecPin`s — any unexpected file fails;
 - NaN / Infinity presence — any occurrence fails (per the final contract).
 
 The reader never writes, repairs, or rewrites anything.
@@ -393,7 +450,9 @@ PR-1   docs: plan v0.5.0 deterministic dataset builder
 
 PR-2   feat: transform implementation registry and execution contracts
        - registry protocol, registration metadata, parameter validation,
-         implementation fingerprints; no Dataset computation
+         versioned implementation fingerprints
+         (TRANSFORM_IMPLEMENTATION_FINGERPRINT_VERSION); no Dataset
+         computation
 
 PR-3   feat: execute deterministic built-in Feature transforms
        - the minimal OHLCV feature set; strict
@@ -455,4 +514,4 @@ split/purge, Dataset identity/manifest — but no final Dataset builder, no
 Dataset Parquet output, and no Dataset CLI exist. This v0.5.0 direction
 proposes the executable pipeline that connects them. After PR-10, v0.5.0
 ships the pipeline itself; ML training, backtesting, and trading remain out
-of scope for the project.
+of scope for v0.5.0.

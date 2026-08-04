@@ -56,8 +56,14 @@ Constraints:
    - the dataset scope (symbols, trade dates, interval, adjustment,
      requested_session),
    - transform implementation versions (registry-bound),
-   - the output schema version,
-   - the serialization format version.
+   - the final `DatasetSchema` (fields, order, types, and nullability;
+     its `dataset_schema_id` is derived by the existing v0.4 identity
+     contract and enters the existing
+     `DatasetIdentityInput.dataset_schema_id` — no new identity input field
+     is added and no existing identity algorithm or identity version is
+     modified),
+   - the serialization format and serialization format version (existing
+     `DatasetIdentityInput` fields).
 
    The builder never scans for "the latest directory" and builds from
    whatever it finds; every input is pinned into `DatasetIdentityInput` and
@@ -81,10 +87,25 @@ Constraints:
    - lookback / lookforward requirement,
    - session / trading-day boundary policy,
    - null / incomplete policy (including warm-up handling),
-   - deterministic implementation fingerprint (a stable SHA-256 over the
-     canonical source of the implementation and its registration metadata,
-     computed at registry validation time; never a memory address, `repr()`,
-     or a hash of an arbitrary object identity).
+   - deterministic implementation fingerprint (see below).
+
+   **Registry lookup key.** The exact lookup key is the complete
+   `transform_ref` string of the existing FeatureSpec/LabelSpec v1 format
+   (`module.path:function`). The v1 YAML format is unchanged; short names
+   such as `simple_return` are never reinterpreted as a new `transform_ref`
+   syntax. Built-in transforms register under stable full references;
+   registry metadata may carry a human-readable display name, but that name
+   never replaces the identity-bearing `transform_ref`.
+
+   **Implementation fingerprint versioning.** PR-2 must define a versioned
+   fingerprint payload contract, including a constant such as
+   `TRANSFORM_IMPLEMENTATION_FINGERPRINT_VERSION`. The fingerprint is a
+   stable SHA-256 over the implementation's canonical source bytes and its
+   registration metadata under that contract. It must exclude: absolute
+   file paths, the checkout directory, memory addresses, `repr()`, import
+   order, filesystem mtimes, and local newline differences — a normalized
+   byte contract is required; "hash the source code" alone is not
+   sufficient.
 
    The registry produces `ImplementationPin(name, version, content_sha256)`
    entries that enter `DatasetIdentityInput.implementations`.
@@ -124,18 +145,38 @@ Constraints:
      samples by default;
    - label completeness is never inferred from the absence of gap records.
 
+   **COMPLETE proof boundary.** Label execution may declare
+   `label_status: COMPLETE` only when completeness can be proved from the
+   actual label input rows: each Label transform registration declares its
+   required-input semantics, and the builder must verify the required
+   cardinality, alignment, and target/end input are all satisfied. Observed
+   partial PIT rows alone never prove completeness, and early-close or
+   session-boundary cases are never completed by unsupported inference;
+   when completeness cannot be proved, the label is INCOMPLETE.
+
+   **Unsupported in v0.5 (fail closed).** A `LabelSpec` with a
+   `TRADING_DAYS` horizon, or with `cross_trading_day.allow: true`, fails
+   closed as unsupported at build configuration time: the v1 opt-in
+   mechanism exists in the spec contract, but no execution path implements
+   it in v0.5. `actual_label_end_time` remains the market availability
+   instant of the last actually consumed label input; the nominal horizon
+   close can never substitute for it.
+
 6. **Initial built-in transform scope.** The first v0.5 longitudinal
    pipeline covers only basic OHLCV transforms; it does not attempt a large
    indicator catalog at once.
 
-   Minimum Feature transform types: `simple_return`, `log_return`,
-   `rolling_mean`, `rolling_std`, `rolling_volume_mean`, `volume_ratio`,
-   `candle_range`, `candle_body`, `time_of_day`, `session`.
+   Candidate initial Feature transform catalog: `simple_return`,
+   `log_return`, `rolling_mean`, `rolling_std`, `rolling_volume_mean`,
+   `volume_ratio`, `candle_range`, `candle_body`, `time_of_day`, `session`.
 
-   Minimum Label transform types: `forward_return`, `forward_direction`,
-   `maximum_favorable_excursion`, `maximum_adverse_excursion`.
+   Candidate initial Label transform catalog: `forward_return`,
+   `forward_direction`, `maximum_favorable_excursion`,
+   `maximum_adverse_excursion`.
 
-   Implementation PRs may further narrow the first batch. No TA-Lib, no model
+   Each implementation PR may deliver a reviewed subset of the candidate
+   catalog while the v0.5.0 acceptance scope is finalized explicitly; the
+   catalog is a starting point, not a binding minimum. No TA-Lib, no model
    library, and no subjective trading signal is added. Transform outputs are
    numeric facts (returns, ratios, ranges, times, sessions), never
    "bullish/bearish" advice.
@@ -159,14 +200,20 @@ Constraints:
 
 8. **Dataset logical content.** The Dataset sample matrix uses a fixed
    logical `DatasetSchema` (v0.4.0 model) with authoritative field order:
-   sample identity, timing facts, Feature outputs, Label outputs, and split
-   assignment. Row ordering rules are fixed and consider at least
-   `code`, `feature_window_close`, `sample_key`. The materialized column
-   order, dtypes, UTC time fields, and null representation (`null`, never
-   NaN) are fixed. NaN and positive/negative Infinity are never allowed to
-   enter the final training Dataset silently: non-finite Feature or Label
-   output fails the build. The logical content hash is the existing
-   `logical_dataset_content_id` over the final schema and rows.
+   sample identity (including `code`), timing facts, Feature outputs, Label
+   outputs, and split assignment. `code` is a formal Dataset column in every
+   row's sample identity — never reconstructed by parsing `sample_key` — so
+   a multi-symbol Dataset can always distinguish symbols directly. The
+   physical row sort is fixed: `code` ASC, then `feature_window_close` ASC,
+   then `sample_key` ASC; the physical sort exists for stable Parquet output
+   and a stable reading experience and never modifies any identity algorithm
+   (`logical_dataset_content_id` remains row-order-independent per the v0.4
+   contract). The materialized column order, dtypes, UTC time fields, and
+   null representation (`null`, never NaN) are fixed. NaN and
+   positive/negative Infinity are never allowed to enter the final training
+   Dataset silently: non-finite Feature or Label output fails the build. The
+   logical content hash is the existing `logical_dataset_content_id` over
+   the final schema and rows.
 
 9. **`dataset_id` lifecycle.** The builder resolves the potential cycle
    (content hash depends on the build; the ID depends on the content hash)
@@ -185,34 +232,57 @@ Constraints:
    `built_at` entering `dataset_id`; absolute output file paths entering
    `dataset_id`.
 
-10. **Dataset materialization.** Initial layout:
+10. **Dataset materialization.** Formal layout:
 
     ```text
     data/datasets/<dataset_id>/
         dataset.parquet
         manifest.json
         build_report.json
-        feature_spec.yaml
-        label_spec.yaml
+        feature_specs/
+            <name>--<version>--<content_sha256>.yaml
+        label_specs/
+            <name>--<version>--<content_sha256>.yaml
         split_spec.yaml
+        _SUCCESS
     ```
 
-    Decision on spec storage: the directory stores the **normalized spec
-    content** (deterministic serialization of the typed model, including the
-    spec schema version and the semantic content ID) — not a byte copy of
-    the raw input YAML. The reason: `dataset_id` binds the semantic content
-    hash, and two semantically identical YAML documents (differing only in
-    comments, key order, or line endings) must produce the same identity;
-    a byte copy would leave ambiguous "which bytes are authoritative"
-    provenance. Raw spec YAML remains in the user's spec directory and is
-    referenced by `SpecPin(kind, name, version, content_sha256)`.
+    **Plural spec artifacts.** Each `feature_specs/` and `label_specs/`
+    file corresponds to exactly one existing `FeatureSpec` / `LabelSpec`.
+    The file content is the normalized deterministic serialization of the
+    typed model (including the spec schema version and the semantic content
+    ID). The file name is built only from the verified safe `name`,
+    `version`, and `content_sha256`; the file set is generated in the stable
+    `SpecPin` order, and the manifest `SpecPin`s correspond one-to-one with
+    the stored files — missing, duplicate, extra, or hash-mismatched files
+    fail closed. Raw YAML bytes and raw file paths never enter the Dataset
+    identity. `SpecPin` records only `kind`, `name`, `version`, and
+    `content_sha256` — never a path — and nothing in the Dataset directory
+    is addressed by a raw source path. `split_spec.yaml` follows the same
+    normalized-content rule for the single `ChronologicalSplitSpec`.
 
-    `build_report.json` is a recorded, human-readable build report (timing,
-    counts, diagnostics); it is never identity-bearing and never enters
-    `dataset_id`. The contract further fixes: a staging directory (same
-    filesystem), an atomic commit (rename), an immutable final directory,
-    no overwrite, idempotent return of an existing verified identical build,
-    and fail-closed rejection of an existing conflicting build.
+    **`_SUCCESS` contract.** `_SUCCESS` is a marker file written **last**,
+    after every other artifact, with the same fixed empty UTF-8 format the
+    Canonical layer uses; the atomic rename happens only after all files
+    including `_SUCCESS` are complete. `_SUCCESS` is **not** an entry in
+    `DatasetOutputFile`, which records data artifacts with row counts and
+    content roles (mirroring the Canonical manifest). Staging without a
+    valid `_SUCCESS` is never adopted; a formal directory with a missing or
+    corrupt `_SUCCESS` fails closed in the verified reader.
+
+    **Build report.** `build_report.json` is a recorded, human-readable
+    build report and may contain `built_at`, elapsed time, and diagnostics;
+    none of these fields ever enter `dataset_id` or any identity. Rebuild
+    idempotency is decided by identity and the formal artifacts (`dataset_id`
+    directory, manifest, `_SUCCESS`, verified content): when the builder
+    finds a verified directory for the same `dataset_id`, it discards the
+    new staging report and returns idempotently — the new staging report is
+    never identity-compared with the existing report, and non-identity
+    timing differences are never misjudged as a conflicting Dataset. The
+    contract further fixes: a staging directory (same filesystem), an
+    atomic commit (rename), an immutable final directory, no overwrite,
+    idempotent return of an existing verified identical build, and
+    fail-closed rejection of an existing conflicting build.
 
 11. **Parquet determinism boundary.** Continuing v0.4: logical content
     determinism is guaranteed; schema, column order, row order, and dtypes
@@ -223,12 +293,15 @@ Constraints:
 
 12. **Verified Dataset reader.** One public read entry point (planned:
     `load_verified_dataset(build_dir)`). The reader fails closed on:
-    directory name vs `dataset_id`; manifest schema; recomputed
-    `dataset_id`; logical content hash; Parquet schema; column order; row
-    count; file SHA-256; spec pins; canonical pins; split identity; and —
-    per the contract decision — **no unexpected files** (the file whitelist
-    is exact: any extra file fails) and **no NaN/Infinity** in the Dataset
-    Parquet.
+    directory name vs `dataset_id`; manifest schema; `_SUCCESS` presence
+    and fixed format (regular file, not a symlink); recomputed `dataset_id`;
+    logical content hash; Parquet schema; column order; row count; file
+    SHA-256; spec pins; canonical pins; split identity; and — per the
+    contract decision — **no unexpected files** and **no NaN/Infinity** in
+    the Dataset Parquet. The exact file whitelist is derived from the
+    contract: `dataset.parquet`, `manifest.json`, `build_report.json`,
+    `_SUCCESS`, `split_spec.yaml`, and exactly the spec files implied by
+    the manifest `SpecPin`s — any other file fails.
 
 13. **CLI boundary.** Planned, not implemented by this ADR:
     `dataset-build`, `dataset-verify`, `dataset-inspect`. The CLI never
