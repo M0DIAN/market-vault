@@ -80,7 +80,7 @@ Public types and functions:
 | `TransformParameterContract` | One typed parameter contract. |
 | `TransformWindowRequirement` | One typed lookback / lookforward requirement. |
 | `TransformRegistration` | One frozen registration of a module-level implementation. |
-| `ResolvedTransform` | One successful resolution: original frozen spec, registration, validated parameters, `ImplementationPin`. |
+| `ResolvedTransform` | Strictly validated result of one resolution: original frozen spec, registration, validated parameters, `ImplementationPin`. |
 | `TransformRegistry(registrations)` | Immutable exact-key registry with `resolve_spec`, `resolve_feature_spec`, `resolve_label_spec`. |
 | `transform_implementation_fingerprint(registration)` | 64-character lowercase SHA-256 of the versioned fingerprint. |
 | `transform_implementation_pin(registration)` | Existing `ImplementationPin(name=transform_ref, version=implementation_version, content_sha256=<fingerprint>)`. |
@@ -202,6 +202,18 @@ is typed and version-stable. Sources:
   registration's lookforward; the declared unit must equal the spec's unit
   at preflight.
 
+A `PARAMETER` window size is a positive integer, enforced at both
+construction and resolve time:
+
+- at registration construction, the referenced parameter contract must be
+  `value_type == int64`, `nullable == false`, must declare a numeric
+  `lower_bound >= 1`; an existing `upper_bound` must not be below the
+  `lower_bound`; and existing `allowed_values` must all be real positive
+  ints;
+- at spec resolve, the actual `SpecParameter` value is re-validated: it
+  must be a real `int` with `value >= 1` — bool, null, zero, and negative
+  values fail closed.
+
 Units are `NONE | BARS | MINUTES`. `TRADING_DAYS` is not part of the v0.5
 execution scope and has no unit constant; a TRADING_DAYS label fails closed
 (section 11). `boundary` records the inclusive/exclusive semantics of the
@@ -267,24 +279,24 @@ and shared calculation code participate. The normalization contract:
 3. UTF-8 encoding;
 4. Unicode NFC normalization;
 5. CRLF and CR normalized to LF;
-6. trailing spaces and tabs stripped per line;
-7. leading and trailing blank lines removed;
-8. exactly one final LF;
-9. NUL and unsafe control characters (C0 except tab/newline, DEL, C1)
+6. leading and trailing blank lines removed;
+7. exactly one final LF;
+8. NUL and unsafe control characters (C0 except tab/newline, DEL, C1)
    are rejected — fail closed rather than guess;
-10. the normalized UTF-8 bytes are SHA-256 hashed.
+9. the normalized UTF-8 bytes are SHA-256 hashed.
 
-Explicitly excluded from the fingerprint: absolute paths, checkout
-directories, filesystem mtimes, file owners, memory addresses,
-`repr(function)`, `id(function)`, import order, registry insertion order,
-and local line-ending style. Source content changes change the
-fingerprint; CRLF/LF-only, path, or mtime changes never do. Bytecode /
-`co_code` is never used: it varies across Python versions and does not
-fully cover semantic dependencies.
-
-Known limitation, documented by design: trailing whitespace is not
-semantic for the fingerprint, so implementations must not rely on
-trailing whitespace inside string literals.
+No per-line trimming is applied: every character of the source content,
+including trailing whitespace inside string literals and on ordinary code
+lines, is preserved intact. Explicitly excluded from the fingerprint:
+absolute paths, checkout directories, filesystem mtimes, file owners,
+memory addresses, `repr(function)`, `id(function)`, import order, registry
+insertion order, and local line-ending style. Only newline-style, path,
+and mtime differences are guaranteed fingerprint-neutral; any other source
+character change — including whitespace inside a string literal — may
+change the fingerprint (conservatively, trailing whitespace on ordinary
+code lines may also change it). Bytecode / `co_code` is never used: it
+varies across Python versions and does not fully cover semantic
+dependencies.
 
 ## 14. Fingerprint payload
 
@@ -345,6 +357,9 @@ reimplementation of the existing identity serializer.
 - resolves unknown `transform_ref` values fail closed;
 - an **empty registry is allowed** and fails closed on every resolve
   (unknown transform) — documented decision;
+- every construction failure — including a non-iterable `registrations`
+  argument (`None`, a bare int, a bare object) — surfaces as
+  `TransformRegistryError`; no bare `TypeError` leaks;
 - has no global decorator registration, no import side-effect
   registration, no package / entry-point / filesystem scanning, and no
   network access; importing the package creates no global registry.
@@ -360,8 +375,16 @@ reimplementation of the existing identity serializer.
   defaults);
 - the generated `ImplementationPin`.
 
-The full preflight of section 8 runs before any result is produced.
-Resolution never executes the transform.
+`ResolvedTransform` is a strictly validated public result model: its
+`__post_init__` verifies (fail closed) that the spec is a `FeatureSpec` or
+`LabelSpec`, the registration is a `TransformRegistration` whose `kind`
+and `transform_ref` match the spec, the parameters are a tuple of
+`SpecParameter` equal to the spec's own parameters exactly, and the pin is
+an `ImplementationPin` equal to
+`transform_implementation_pin(registration)`. Any inconsistency raises
+`TransformRegistryError`; the object stays frozen. The full preflight of
+section 8 runs before any result is produced, and resolution never
+executes the transform.
 
 ## 18. Errors / fail-closed behavior
 

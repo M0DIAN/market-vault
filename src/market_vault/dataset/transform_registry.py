@@ -43,6 +43,7 @@ from .transform_models import (
     TransformRegistryError,
     WINDOW_SOURCE_LABEL_HORIZON,
     WINDOW_SOURCE_LABEL_OBSERVATION_WINDOW,
+    WINDOW_SOURCE_PARAMETER,
     transform_implementation_pin,
 )
 
@@ -68,7 +69,14 @@ class TransformRegistry:
     registrations: tuple[TransformRegistration, ...]
 
     def __post_init__(self) -> None:
-        items = tuple(self.registrations)
+        try:
+            items = tuple(self.registrations)
+        except TypeError as exc:
+            raise TransformRegistryError(
+                "registry registrations must be an iterable of "
+                "TransformRegistration instances, "
+                f"got {type(self.registrations).__name__}"
+            ) from exc
         for item in items:
             if not isinstance(item, TransformRegistration):
                 raise TransformRegistryError(
@@ -146,6 +154,7 @@ class TransformRegistry:
         if isinstance(spec, LabelSpec):
             _preflight_label_boundaries(spec)
         _preflight_window_requirements(spec, registration)
+        _preflight_parameter_window_values(spec, registration)
         return ResolvedTransform(
             spec=spec,
             registration=registration,
@@ -323,6 +332,33 @@ def _preflight_label_boundaries(spec: LabelSpec) -> None:
             f"label spec {spec.name!r} uses a TRADING_DAYS horizon, which is "
             "unsupported in the v0.5 execution scope; resolve fails closed"
         )
+
+
+def _preflight_parameter_window_values(
+    spec, registration: TransformRegistration
+) -> None:
+    """Resolve-time re-validation of every PARAMETER-derived window size.
+
+    The actual spec value must be a real positive int (bool and null are
+    never accepted; 0 and negatives fail closed). No window is computed and
+    no PIT row is read.
+    """
+    for requirement in (registration.lookback, registration.lookforward):
+        if requirement.source != WINDOW_SOURCE_PARAMETER:
+            continue
+        parameter = next(
+            parameter
+            for parameter in spec.parameters
+            if parameter.name == requirement.parameter_name
+        )
+        value = parameter.value
+        if type(value) is not int or value < 1:
+            raise TransformRegistryError(
+                f"spec {spec.name!r} window requirement parameter "
+                f"{requirement.parameter_name!r} must be a real positive int, "
+                f"got {value!r}; bool, null, zero, and negative window sizes "
+                "fail closed"
+            )
 
 
 def _preflight_window_requirements(

@@ -538,12 +538,79 @@ def test_parameter_source_window_requirement_checks(impl):
             parameters=(TransformParameterContract("window", PARAMETER_TYPE_INT64, True),),
             lookback=lookback,
         )
+    # int64 contract without a lower_bound rejected (a window size must be a
+    # positive integer contract)
+    with pytest.raises(TransformRegistryError):
+        registration(
+            module,
+            parameters=(TransformParameterContract("window", PARAMETER_TYPE_INT64, False),),
+            lookback=lookback,
+        )
+    # lower_bound 0 or negative rejected
+    for lower in (0, -1):
+        with pytest.raises(TransformRegistryError):
+            registration(
+                module,
+                parameters=(TransformParameterContract(
+                    "window", PARAMETER_TYPE_INT64, False, lower_bound=lower),),
+                lookback=lookback,
+            )
+    # allowed_values containing 0 or a negative rejected
+    with pytest.raises(TransformRegistryError):
+        registration(
+            module,
+            parameters=(TransformParameterContract(
+                "window", PARAMETER_TYPE_INT64, False,
+                lower_bound=1, allowed_values=(1, 0)),),
+            lookback=lookback,
+        )
+    with pytest.raises(TransformRegistryError):
+        registration(
+            module,
+            parameters=(TransformParameterContract(
+                "window", PARAMETER_TYPE_INT64, False,
+                lower_bound=1, allowed_values=(1, -2)),),
+            lookback=lookback,
+        )
+    # positive contract with positive allowed_values accepted
     reg = registration(
         module,
-        parameters=(TransformParameterContract("window", PARAMETER_TYPE_INT64, False),),
+        parameters=(TransformParameterContract(
+            "window", PARAMETER_TYPE_INT64, False,
+            lower_bound=1, upper_bound=10, allowed_values=(1, 2, 5)),),
         lookback=lookback,
     )
     assert reg.lookback.parameter_name == "window"
+
+
+def test_parameter_window_spec_value_must_be_positive(impl):
+    module = impl(FEATURE_SOURCE)
+    reg = registration(
+        module,
+        parameters=(TransformParameterContract(
+            "window", PARAMETER_TYPE_INT64, False, lower_bound=1),),
+        lookback=TransformWindowRequirement(
+            WINDOW_SOURCE_PARAMETER, WINDOW_UNIT_BARS, parameter_name="window"),
+    )
+    registry = make_registry(reg)
+    # zero, negative, null, and bool all fail closed
+    for value in (0, -1):
+        with pytest.raises(TransformRegistryError):
+            registry.resolve_spec(feature_spec(
+                reg.transform_ref, parameters=(SpecParameter("window", value),)))
+    with pytest.raises(TransformRegistryError):
+        registry.resolve_spec(feature_spec(
+            reg.transform_ref, parameters=(SpecParameter("window", None),)))
+    with pytest.raises(TransformRegistryError):
+        registry.resolve_spec(feature_spec(
+            reg.transform_ref, parameters=(SpecParameter("window", True),)))
+    # a positive value resolves
+    resolved = registry.resolve_spec(feature_spec(
+        reg.transform_ref, parameters=(SpecParameter("window", 1),)))
+    assert resolved.parameters[0].value == 1
+    resolved_big = registry.resolve_spec(feature_spec(
+        reg.transform_ref, parameters=(SpecParameter("window", 120),)))
+    assert resolved_big.parameters[0].value == 120
 
 
 def test_display_name_validation(impl):
@@ -739,6 +806,18 @@ def test_registry_immutable_after_construction(impl):
     with pytest.raises(FrozenInstanceError):
         setattr(registry, "registrations", ())
     assert isinstance(registry.registrations, tuple)
+
+
+def test_registry_construction_type_errors_wrapped():
+    """Non-iterable registrations fail as TransformRegistryError; no bare
+    TypeError leaks."""
+    for bad in (None, 1, object()):
+        with pytest.raises(TransformRegistryError) as caught:
+            TransformRegistry(bad)
+        assert isinstance(caught.value, DatasetError)
+    # Bare strings must not be treated as a list of registrations either.
+    with pytest.raises(TransformRegistryError):
+        TransformRegistry("not a registration")
 
 
 def test_resolve_never_imports_transform_ref(impl, monkeypatch):
@@ -1039,6 +1118,76 @@ def test_resolve_typed_wrappers(impl):
         registry.resolve_label_spec("not a spec")
 
 
+def test_resolved_transform_direct_construction_validation(impl):
+    module = impl(FEATURE_SOURCE)
+    reg = registration(module)
+    registry = make_registry(reg)
+    spec = feature_spec(reg.transform_ref)
+    resolved = registry.resolve_spec(spec)
+    # A consistent reconstruction is accepted and equal.
+    assert ResolvedTransform(
+        spec=spec, registration=reg,
+        parameters=spec.parameters, pin=resolved.pin,
+    ) == resolved
+    # wrong spec type
+    for bad_spec in ("not a spec", object(), None):
+        with pytest.raises(TransformRegistryError):
+            ResolvedTransform(spec=bad_spec, registration=reg,
+                              parameters=(), pin=resolved.pin)
+    # FeatureSpec + LABEL registration rejected
+    label_module = impl(LABEL_SOURCE, func_name="my_label")
+    label_reg = registration(label_module, func_name="my_label",
+                              kind=SPEC_KIND_LABEL)
+    with pytest.raises(TransformRegistryError):
+        ResolvedTransform(spec=spec, registration=label_reg,
+                          parameters=spec.parameters, pin=resolved.pin)
+    # transform_ref mismatch rejected
+    other_module = impl(FEATURE_SOURCE, module_name="other_mod")
+    other_reg = registration(other_module)
+    with pytest.raises(TransformRegistryError):
+        ResolvedTransform(spec=spec, registration=other_reg,
+                          parameters=spec.parameters, pin=resolved.pin)
+    # parameter mismatch rejected (missing, wrong value, non-tuple) — the
+    # spec must declare parameters for the mismatch to be observable
+    param_reg = registration(
+        module,
+        parameters=(TransformParameterContract("n", PARAMETER_TYPE_INT64, False),),
+        implementation_version="v2",
+    )
+    param_spec = feature_spec(param_reg.transform_ref,
+                              parameters=(SpecParameter("n", 5),))
+    param_resolved = make_registry(param_reg).resolve_spec(param_spec)
+    with pytest.raises(TransformRegistryError):
+        ResolvedTransform(spec=param_spec, registration=param_reg, parameters=(),
+                          pin=param_resolved.pin)
+    with pytest.raises(TransformRegistryError):
+        ResolvedTransform(spec=param_spec, registration=param_reg,
+                          parameters=(SpecParameter("n", 6),), pin=param_resolved.pin)
+    with pytest.raises(TransformRegistryError):
+        ResolvedTransform(spec=param_spec, registration=param_reg,
+                          parameters="abc", pin=param_resolved.pin)
+    # a consistent parameterized reconstruction is accepted
+    assert ResolvedTransform(
+        spec=param_spec, registration=param_reg,
+        parameters=param_spec.parameters, pin=param_resolved.pin,
+    ) == param_resolved
+    # unrelated pin rejected
+    other_pin = transform_implementation_pin(other_reg)
+    with pytest.raises(TransformRegistryError):
+        ResolvedTransform(spec=spec, registration=reg,
+                          parameters=spec.parameters, pin=other_pin)
+    # non-ImplementationPin rejected
+    for bad_pin in ("not a pin", object(), None):
+        with pytest.raises(TransformRegistryError):
+            ResolvedTransform(spec=spec, registration=reg,
+                              parameters=spec.parameters, pin=bad_pin)
+    # frozen behavior preserved
+    with pytest.raises(FrozenInstanceError):
+        resolved.registration = reg
+    with pytest.raises(FrozenInstanceError):
+        setattr(resolved, "pin", other_pin)
+
+
 # ---------------------------------------------------------------------------
 # E. v0.5 Label boundaries.
 # ---------------------------------------------------------------------------
@@ -1169,12 +1318,35 @@ def test_crlf_lf_normalization_equivalence(tmp_path, impl):
     assert lf_reg.implementation_fingerprint == crlf_reg.implementation_fingerprint
 
 
-def test_trailing_whitespace_normalization_equivalence(impl):
-    clean = '"""doc"""\n\ndef my_transform(rows):\n    return 1\n'
-    dirty = '"""doc"""   \n\ndef my_transform(rows):  \n    return 1   \n'
-    assert registration(impl(clean, module_name="ws_mod")).implementation_fingerprint == \
-        registration(impl(dirty, module_name="ws_mod",
-                          file_name="dirty_file.py")).implementation_fingerprint
+def test_triple_quoted_string_whitespace_is_preserved(impl):
+    """Trailing whitespace inside a triple-quoted string literal is source
+    content and must change the fingerprint (no per-line trimming)."""
+    base = ('"""doc"""\n'
+            '\n'
+            'def my_transform(rows):\n'
+            '    value = """prefix  \n'
+            '    suffix"""\n'
+            '    return value\n')
+    changed = ('"""doc"""\n'
+               '\n'
+               'def my_transform(rows):\n'
+               '    value = """prefix \n'
+               '    suffix"""\n'
+               '    return value\n')
+    base_reg = registration(impl(base, module_name="str_mod"))
+    changed_reg = registration(
+        impl(changed, module_name="str_mod", file_name="str_file.py"))
+    assert base_reg.implementation_fingerprint != changed_reg.implementation_fingerprint
+
+
+def test_ordinary_line_trailing_whitespace_changes_fingerprint(impl):
+    """Trailing whitespace on ordinary code lines is source content; the
+    conservative contract lets it change the fingerprint."""
+    base = '"""doc"""\n\ndef my_transform(rows):\n    return 1\n'
+    changed = '"""doc"""\n\ndef my_transform(rows):\n    return 1  \n'
+    assert registration(impl(base, module_name="ws2_mod")).implementation_fingerprint != \
+        registration(impl(changed, module_name="ws2_mod",
+                          file_name="ws2_file.py")).implementation_fingerprint
 
 
 def test_source_semantic_change_changes_fingerprint(impl):

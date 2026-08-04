@@ -677,13 +677,66 @@ class ResolvedTransform:
     registration, the spec's own validated parameters in stable name order
     (the v1 registry provides no implicit defaults, so the values are
     exactly the spec's), and the generated :class:`ImplementationPin`.
-    Resolution never executes the transform.
+    Construction is strictly validated (fail closed): the spec must be a
+    FeatureSpec or LabelSpec, the registration must match the spec kind and
+    ``transform_ref``, the parameters must equal the spec's own parameters
+    exactly, and the pin must be exactly
+    ``transform_implementation_pin(registration)``. Resolution never
+    executes the transform.
     """
 
     spec: FeatureSpec | LabelSpec
     registration: TransformRegistration
     parameters: tuple[SpecParameter, ...]
     pin: ImplementationPin
+
+    def __post_init__(self) -> None:
+        if isinstance(self.spec, FeatureSpec):
+            kind = SPEC_KIND_FEATURE
+        elif isinstance(self.spec, LabelSpec):
+            kind = SPEC_KIND_LABEL
+        else:
+            raise TransformRegistryError(
+                "ResolvedTransform spec must be a FeatureSpec or LabelSpec, "
+                f"got {type(self.spec).__name__}"
+            )
+        if not isinstance(self.registration, TransformRegistration):
+            raise TransformRegistryError(
+                "ResolvedTransform registration must be a "
+                f"TransformRegistration, got {type(self.registration).__name__}"
+            )
+        if not isinstance(self.parameters, tuple) or not all(
+            isinstance(parameter, SpecParameter) for parameter in self.parameters
+        ):
+            raise TransformRegistryError(
+                "ResolvedTransform parameters must be a tuple of SpecParameter"
+            )
+        if tuple(self.parameters) != self.spec.parameters:
+            raise TransformRegistryError(
+                "ResolvedTransform parameters must equal the spec parameters "
+                "exactly"
+            )
+        if self.registration.kind != kind:
+            raise TransformRegistryError(
+                f"ResolvedTransform registration kind {self.registration.kind!r} "
+                f"must match the spec kind {kind!r}"
+            )
+        if self.registration.transform_ref != self.spec.transform_ref:
+            raise TransformRegistryError(
+                f"ResolvedTransform registration transform_ref "
+                f"{self.registration.transform_ref!r} must match the spec "
+                f"transform_ref {self.spec.transform_ref!r}"
+            )
+        if not isinstance(self.pin, ImplementationPin):
+            raise TransformRegistryError(
+                "ResolvedTransform pin must be an ImplementationPin, "
+                f"got {type(self.pin).__name__}"
+            )
+        if self.pin != transform_implementation_pin(self.registration):
+            raise TransformRegistryError(
+                "ResolvedTransform pin must equal "
+                "transform_implementation_pin(registration)"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -773,6 +826,36 @@ def _validate_window_cross_references(
                 f"registration {transform_ref!r} window requirement parameter "
                 f"{requirement.parameter_name!r} must not be nullable"
             )
+        # A window size is a positive integer: the referenced contract must
+        # declare a lower bound of at least 1, any upper bound must respect
+        # it, and any allowed values must all be positive real ints.
+        if contract.lower_bound is None:
+            raise TransformRegistryError(
+                f"registration {transform_ref!r} window requirement parameter "
+                f"{requirement.parameter_name!r} must declare a numeric "
+                "lower_bound"
+            )
+        if contract.lower_bound < 1:
+            raise TransformRegistryError(
+                f"registration {transform_ref!r} window requirement parameter "
+                f"{requirement.parameter_name!r} lower_bound must be >= 1, "
+                f"got {contract.lower_bound}"
+            )
+        if contract.upper_bound is not None and contract.upper_bound < contract.lower_bound:
+            raise TransformRegistryError(
+                f"registration {transform_ref!r} window requirement parameter "
+                f"{requirement.parameter_name!r} upper_bound must not be below "
+                f"lower_bound, got {contract.upper_bound} < "
+                f"{contract.lower_bound}"
+            )
+        if contract.allowed_values:
+            for value in contract.allowed_values:
+                if type(value) is not int or value < 1:
+                    raise TransformRegistryError(
+                        f"registration {transform_ref!r} window requirement "
+                        f"parameter {requirement.parameter_name!r} allowed "
+                        f"values must all be positive ints, got {value!r}"
+                    )
 
 
 def _validate_callable(implementation) -> None:
@@ -852,11 +935,12 @@ def _normalize_source_text(text: str) -> str:
     Steps: reject non-string input; Unicode NFC; CRLF / CR normalized to LF;
     reject NUL and unsafe control characters (C0 except tab/newline, DEL,
     C1 — the raw bytes are unlikely but a fail-closed contract is safer
-    than guessing); strip trailing spaces and tabs per line; drop leading
-    and trailing blank lines; exactly one final LF. The result is UTF-8
-    encoded and hashed. Trailing whitespace is not semantic for the
-    fingerprint; implementation authors must not rely on trailing whitespace
-    inside string literals.
+    than guessing); drop leading and trailing blank lines; exactly one
+    final LF. No per-line trimming is applied: every character inside the
+    text, including trailing whitespace inside string literals and on
+    ordinary code lines, is preserved intact — any character change of the
+    source content may change the fingerprint. Only newline-style,
+    path, and mtime differences are guaranteed to be fingerprint-neutral.
     """
     if not isinstance(text, str):
         raise TransformRegistryError(
@@ -877,7 +961,7 @@ def _normalize_source_text(text: str) -> str:
                 f"unsafe control character U+{codepoint:04X} in implementation "
                 "module source; fail closed rather than guess"
             )
-    lines = [line.rstrip(" \t") for line in text.split("\n")]
+    lines = text.split("\n")
     while lines and not lines[0].strip():
         lines.pop(0)
     while lines and not lines[-1].strip():
