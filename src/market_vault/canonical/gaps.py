@@ -23,7 +23,7 @@ from datetime import date
 
 import pandas as pd
 
-from .models import CanonicalBar
+from .models import CanonicalBar, CanonicalGapArithmeticError
 
 GAP_POLICY_VERSION = "internal-nominal-interval-gap-v1"
 GAP_IDENTITY_ENCODING_VERSION = "v1"
@@ -96,19 +96,20 @@ def derive_internal_gap_ranges(bars: tuple[CanonicalBar, ...], interval_seconds:
         )
         groups.setdefault(key, []).append(bar)
 
+    nominal = pd.Timedelta(seconds=interval_seconds)
     for key in sorted(groups):
         group_bars = sorted(groups[key], key=lambda bar: (bar.event_time, bar.canonical_bar_key))
         for previous, current in zip(group_bars, group_bars[1:]):
-            delta_seconds = int((current.event_time - previous.event_time).total_seconds())
-            if delta_seconds <= interval_seconds:
+            delta = current.event_time - previous.event_time
+            if delta <= nominal:
                 continue
-            if delta_seconds % interval_seconds != 0:
-                raise ValueError(
+            if delta % nominal != pd.Timedelta(0):
+                raise CanonicalGapArithmeticError(
                     "internal adjacent delta is not an exact nominal-interval "
                     f"multiple: {previous.event_time} -> {current.event_time} "
-                    f"({delta_seconds}s for interval {interval_seconds}s)"
+                    f"({delta} for interval {nominal})"
                 )
-            missing_count = delta_seconds // interval_seconds - 1
+            missing_count = int(delta // nominal) - 1
             (
                 dataset_kind,
                 code,

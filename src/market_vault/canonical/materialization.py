@@ -30,7 +30,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from ..storage import Catalog
-from .bars import CANONICAL_BUILDER_VERSION, DEFAULT_DATASET_KIND, build_canonical_market_bars, parse_intraday_interval
+from .bars import DEFAULT_DATASET_KIND, build_canonical_market_bars, parse_intraday_interval
 from .gaps import GAP_POLICY_VERSION, derive_internal_gap_ranges
 from .identity import (
     canonical_build_id,
@@ -49,6 +49,7 @@ from .models import (
     CanonicalMaterializationError,
     CanonicalMaterializationRequest,
     CanonicalMaterializationResult,
+    CanonicalRequestKey,
     CanonicalSnapshotInput,
 )
 from .schema import (
@@ -67,6 +68,152 @@ def _file_sha256(path: Path) -> str:
         for chunk in iter(lambda: fh.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+_CANONICAL_SEPARATORS = ("\x1e", "\x1f", "|")
+
+
+def _reject_unsafe_string(value: str, label: str) -> None:
+    if any(ord(character) < 32 for character in value):
+        raise CanonicalMaterializationError(
+            f"control character in {label}: {value!r}"
+        )
+    for separator in _CANONICAL_SEPARATORS:
+        if separator in value:
+            raise CanonicalMaterializationError(
+                f"canonical encoding separator in {label}: {value!r}"
+            )
+
+
+def _normalize_symbol(value: str, label: str) -> str:
+    text = str(value).strip().upper()
+    if not text:
+        raise CanonicalMaterializationError(f"empty {label}")
+    _reject_unsafe_string(text, label)
+    return text
+
+
+def _normalize_upper(value: str, label: str) -> str:
+    text = str(value).strip().upper()
+    if not text:
+        raise CanonicalMaterializationError(f"empty {label}")
+    _reject_unsafe_string(text, label)
+    return text
+
+
+def _normalize_interval(value: str) -> str:
+    text = str(value).strip().lower()
+    if not text:
+        raise CanonicalMaterializationError("empty interval")
+    _reject_unsafe_string(text, "interval")
+    try:
+        parse_intraday_interval(text)
+    except ValueError as exc:
+        raise CanonicalMaterializationError(str(exc)) from exc
+    return text
+
+
+def _normalize_schema(value: str) -> str:
+    text = str(value).strip()
+    if not text:
+        raise CanonicalMaterializationError("empty source_schema_version")
+    _reject_unsafe_string(text, "source_schema_version")
+    return text
+
+
+def _normalize_trade_date(value) -> date:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(str(value))
+    except ValueError as exc:
+        raise CanonicalMaterializationError(f"invalid trade date: {value!r}") from exc
+
+
+def normalize_materialization_request(
+    symbols: list[str],
+    trade_dates: list[date],
+    request_key,
+) -> CanonicalMaterializationRequest:
+    """Normalize the public request once and validate every string value."""
+    normalized_symbols = sorted({_normalize_symbol(symbol, "symbol") for symbol in symbols})
+    if not normalized_symbols:
+        raise CanonicalMaterializationError("at least one symbol is required")
+    normalized_dates = sorted({_normalize_trade_date(value) for value in trade_dates})
+    if not normalized_dates:
+        raise CanonicalMaterializationError("at least one trade date is required")
+    normalized_key = CanonicalRequestKey(
+        interval=_normalize_interval(request_key.interval),
+        requested_session=_normalize_upper(request_key.requested_session, "requested_session"),
+        adjustment=_normalize_upper(request_key.adjustment, "adjustment"),
+        source_schema_version=_normalize_schema(request_key.source_schema_version),
+    )
+    return CanonicalMaterializationRequest(
+        symbols=normalized_symbols,
+        trade_dates=normalized_dates,
+        request_key=normalized_key,
+    )
+
+
+def _normalize_created_at(value: datetime | None) -> datetime:
+    if value is None:
+        return datetime.now(timezone.utc)
+    if value.tzinfo is None:
+        raise CanonicalMaterializationError("created_at must be timezone-aware")
+    return value.astimezone(timezone.utc)
+
+
+def _validate_build_result(build_result, request: CanonicalMaterializationRequest) -> None:
+    """Validate the canonical build result against the normalized request."""
+    builder_version = build_result.builder_version
+    if not builder_version:
+        raise CanonicalMaterializationError("build_result.builder_version must be non-empty")
+    if build_result.source_snapshot_count < 0:
+        raise CanonicalMaterializationError("source_snapshot_count cannot be negative")
+    bars = build_result.bars
+    if not bars:
+        if build_result.resolution:
+            raise CanonicalMaterializationError(
+                "an empty build must have no resolution entries"
+            )
+        return
+    emitted_keys = {bar.canonical_bar_key for bar in bars}
+    resolution_keys = {entry.canonical_bar_key for entry in build_result.resolution}
+    if resolution_keys != emitted_keys:
+        raise CanonicalMaterializationError(
+            "resolution canonical_bar_key values do not exactly match emitted bar keys"
+        )
+    requested_symbols = set(request.symbols)
+    requested_dates = set(request.trade_dates)
+    key = request.request_key
+    for bar in bars:
+        if bar.canonical_builder_version != builder_version:
+            raise CanonicalMaterializationError(
+                "bar canonical_builder_version does not match build result version"
+            )
+        if bar.dataset_kind != DEFAULT_DATASET_KIND:
+            raise CanonicalMaterializationError(
+                f"unexpected dataset_kind {bar.dataset_kind!r}"
+            )
+        if bar.code not in requested_symbols:
+            raise CanonicalMaterializationError(
+                f"bar code {bar.code!r} not in requested symbols"
+            )
+        if bar.requested_trade_date not in requested_dates:
+            raise CanonicalMaterializationError(
+                f"bar requested_trade_date {bar.requested_trade_date} not in requested dates"
+            )
+        if (
+            bar.interval != key.interval
+            or bar.adjustment != key.adjustment
+            or bar.requested_session != key.requested_session
+            or bar.source_schema_version != key.source_schema_version
+        ):
+            raise CanonicalMaterializationError(
+                "bar request-key fields do not match the normalized request"
+            )
 
 
 def _safe_partition_value(value: str, label: str) -> str:
@@ -186,7 +333,8 @@ def _write_bars_partition(partition_dir: Path, frame: pd.DataFrame) -> Path:
     return path
 
 
-def _write_bars(build_dir: Path, bars) -> list[Path]:
+def _write_bars(build_dir: Path, bars) -> list[tuple[Path, int]]:
+    """Write bars partitions; returns (path, actual row count) per file."""
     if not bars:
         return []
     groups: dict[tuple, list] = {}
@@ -198,7 +346,7 @@ def _write_bars(build_dir: Path, bars) -> list[Path]:
             bar.market_calendar_date,
         )
         groups.setdefault(key, []).append(bar)
-    written: list[Path] = []
+    written: list[tuple[Path, int]] = []
     for key in sorted(groups, key=lambda item: (item[0], item[1], item[2], item[3])):
         interval_value, adjustment, code, market_calendar_date = key
         group_bars = sorted(groups[key], key=lambda bar: (bar.event_time, bar.canonical_bar_key))
@@ -211,7 +359,7 @@ def _write_bars(build_dir: Path, bars) -> list[Path]:
             / f"code={_safe_partition_value(code, 'code')}"
             / f"market_calendar_date={market_calendar_date.isoformat()}"
         )
-        written.append(_write_bars_partition(partition_dir, frame))
+        written.append((_write_bars_partition(partition_dir, frame), len(frame)))
     return written
 
 
@@ -275,14 +423,15 @@ def _gap_dataframe(gaps) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=list(GAP_COLUMNS))
 
 
-def _write_gaps(build_dir: Path, gaps) -> list[Path]:
+def _write_gaps(build_dir: Path, gaps) -> list[tuple[Path, int]]:
+    """Write gaps partitions; returns (path, actual row count) per file."""
     if not gaps:
         return []
     groups: dict[tuple, list] = {}
     for gap in gaps:
         key = (gap.interval, gap.adjustment, gap.code, gap.market_calendar_date)
         groups.setdefault(key, []).append(gap)
-    written: list[Path] = []
+    written: list[tuple[Path, int]] = []
     for key in sorted(groups, key=lambda item: (item[0], item[1], item[2], item[3])):
         interval_value, adjustment, code, market_calendar_date = key
         group_gaps = sorted(
@@ -301,7 +450,7 @@ def _write_gaps(build_dir: Path, gaps) -> list[Path]:
         table = pa.Table.from_pandas(frame, schema=gap_schema(), preserve_index=False)
         path = partition_dir / "part-00000.parquet"
         pq.write_table(table, path, compression="zstd")
-        written.append(path)
+        written.append((path, len(frame)))
     return written
 
 
@@ -403,6 +552,10 @@ def _materialize_build(
     output_root: Path,
     created_at: datetime,
 ) -> CanonicalMaterializationResult:
+    _validate_build_result(build_result, request)
+    builder_version = build_result.builder_version
+    created_at = _normalize_created_at(created_at)
+
     interval_seconds = int(parse_intraday_interval(request.request_key.interval).total_seconds())
     bars = build_result.bars
     gaps = (
@@ -422,7 +575,7 @@ def _materialize_build(
         resolution_content_id=resolution_id,
         gap_content_id=gap_id,
         selected_row_version_ids=selected_row_version_ids,
-        canonical_builder_version=CANONICAL_BUILDER_VERSION,
+        canonical_builder_version=builder_version,
         canonical_schema_version=CANONICAL_SCHEMA_VERSION,
         materializer_version=CANONICAL_MATERIALIZER_VERSION,
         gap_policy_version=GAP_POLICY_VERSION,
@@ -430,9 +583,29 @@ def _materialize_build(
 
     build_root = output_root / f"build_id={build_id}"
     if build_root.exists():
-        return _existing_build_result(build_root, build_id)
+        return _existing_build_result(
+            build_root,
+            expected={
+                "build_id": build_id,
+                "content_id": content_id,
+                "resolution_id": resolution_id,
+                "gap_id": gap_id,
+                "builder_version": builder_version,
+                "schema_version": CANONICAL_SCHEMA_VERSION,
+                "materializer_version": CANONICAL_MATERIALIZER_VERSION,
+                "gap_policy_version": GAP_POLICY_VERSION,
+                "request": request,
+                "source_snapshot_count": build_result.source_snapshot_count,
+                "row_count": len(bars),
+                "gap_count": len(gaps),
+                "resolution_count": len(build_result.resolution),
+                "min_event_time": min((bar.event_time for bar in bars), default=None),
+                "max_event_time": max((bar.event_time for bar in bars), default=None),
+                "min_archive_available_at": min((bar.archive_available_at for bar in bars), default=None),
+                "max_archive_available_at": max((bar.archive_available_at for bar in bars), default=None),
+            },
+        )
 
-    created_at = created_at.astimezone(timezone.utc)
     temp_dir = output_root / f".{build_id}.tmp-{uuid.uuid4().hex[:12]}"
     temp_dir.mkdir(parents=True, exist_ok=False)
     try:
@@ -442,12 +615,12 @@ def _materialize_build(
 
         file_records = []
         file_records.extend(
-            _file_record(path, temp_dir, file_role="bars", row_count=None, content_role=CANONICAL_SCHEMA_VERSION)
-            for path in bar_files
+            _file_record(path, temp_dir, file_role="bars", row_count=count, content_role=CANONICAL_SCHEMA_VERSION)
+            for path, count in bar_files
         )
         file_records.extend(
-            _file_record(path, temp_dir, file_role="gaps", row_count=None, content_role="canonical-internal-gaps")
-            for path in gap_files
+            _file_record(path, temp_dir, file_role="gaps", row_count=count, content_role="canonical-internal-gaps")
+            for path, count in gap_files
         )
         file_records.append(
             _file_record(resolution_path, temp_dir, file_role="resolution", row_count=len(build_result.resolution), content_role="canonical-resolution-jsonl")
@@ -465,7 +638,7 @@ def _materialize_build(
             canonical_content_id=content_id,
             resolution_content_id=resolution_id,
             gap_content_id=gap_id,
-            canonical_builder_version=CANONICAL_BUILDER_VERSION,
+            canonical_builder_version=builder_version,
             canonical_schema_version=CANONICAL_SCHEMA_VERSION,
             materializer_version=CANONICAL_MATERIALIZER_VERSION,
             gap_policy_version=GAP_POLICY_VERSION,
@@ -507,7 +680,69 @@ def _materialize_build(
     )
 
 
-def _existing_build_result(build_root: Path, build_id: str) -> CanonicalMaterializationResult:
+def _validate_existing_output_files(build_root: Path, payload: dict) -> None:
+    """Strictly validate manifest output file records and actual files."""
+    output_files = payload.get("output_files")
+    if not isinstance(output_files, list):
+        raise CanonicalMaterializationError(
+            f"existing build output_files must be a list: {build_root}"
+        )
+    seen_paths: set[str] = set()
+    for record in output_files:
+        if not isinstance(record, dict):
+            raise CanonicalMaterializationError(
+                f"malformed output file record: {build_root}"
+            )
+        relative = record.get("relative_path")
+        sha256 = record.get("sha256")
+        byte_size = record.get("byte_size")
+        file_role = record.get("file_role")
+        if not isinstance(relative, str) or not relative or not isinstance(sha256, str) or not sha256:
+            raise CanonicalMaterializationError(
+                f"output file record missing relative_path or sha256: {build_root}"
+            )
+        if relative in seen_paths:
+            raise CanonicalMaterializationError(
+                f"duplicate output file relative_path {relative!r}: {build_root}"
+            )
+        seen_paths.add(relative)
+        parts = relative.split("/")
+        if (
+            relative.startswith("/")
+            or "\\" in relative
+            or not parts
+            or any(part in ("", ".", "..") for part in parts)
+            or any(part.startswith("/") for part in parts)
+        ):
+            raise CanonicalMaterializationError(
+                f"unsafe output file relative_path {relative!r}: {build_root}"
+            )
+        path = (build_root / relative).resolve()
+        if not path.is_relative_to(build_root.resolve()):
+            raise CanonicalMaterializationError(
+                f"output file path escapes build root: {relative!r}"
+            )
+        if not path.is_file() or path.is_symlink():
+            raise CanonicalMaterializationError(
+                f"output file is not a regular file: {relative!r}"
+            )
+        actual_size = path.stat().st_size
+        if isinstance(byte_size, int) and actual_size != byte_size:
+            raise CanonicalMaterializationError(
+                f"output file byte size mismatch: {relative!r}"
+            )
+        if _file_sha256(path) != sha256:
+            raise CanonicalMaterializationError(
+                f"output file sha256 mismatch: {relative!r}"
+            )
+    roles = {record["file_role"] for record in output_files}
+    if "resolution" not in roles:
+        raise CanonicalMaterializationError(
+            f"existing build is missing its resolution file: {build_root}"
+        )
+
+
+def _existing_build_result(build_root: Path, expected: dict) -> CanonicalMaterializationResult:
     manifest_path = build_root / "manifest.json"
     success_path = build_root / "_SUCCESS"
     if not (manifest_path.exists() and success_path.exists()):
@@ -524,32 +759,86 @@ def _existing_build_result(build_root: Path, build_id: str) -> CanonicalMaterial
         raise CanonicalMaterializationError(
             f"existing build manifest schema mismatch: {build_root}"
         )
-    if payload.get("canonical_build_id") != build_id:
+    _require_equal(payload, "canonical_build_id", expected["build_id"], build_root)
+    _require_equal(payload, "canonical_content_id", expected["content_id"], build_root)
+    _require_equal(payload, "resolution_content_id", expected["resolution_id"], build_root)
+    _require_equal(payload, "gap_content_id", expected["gap_id"], build_root)
+    _require_equal(payload, "canonical_builder_version", expected["builder_version"], build_root)
+    _require_equal(payload, "canonical_schema_version", expected["schema_version"], build_root)
+    _require_equal(payload, "materializer_version", expected["materializer_version"], build_root)
+    _require_equal(payload, "gap_policy_version", expected["gap_policy_version"], build_root)
+    _require_equal(payload, "source_snapshot_count", expected["source_snapshot_count"], build_root)
+    _require_equal(payload, "canonical_row_count", expected["row_count"], build_root)
+    _require_equal(payload, "gap_range_count", expected["gap_count"], build_root)
+    _require_equal(payload, "resolution_row_count", expected["resolution_count"], build_root)
+    _require_equal(payload, "min_event_time", _utc_iso_or_none(expected["min_event_time"]), build_root)
+    _require_equal(payload, "max_event_time", _utc_iso_or_none(expected["max_event_time"]), build_root)
+    _require_equal(payload, "min_archive_available_at", _utc_iso_or_none(expected["min_archive_available_at"]), build_root)
+    _require_equal(payload, "max_archive_available_at", _utc_iso_or_none(expected["max_archive_available_at"]), build_root)
+
+    request = expected["request"]
+    request_section = payload.get("normalized_request")
+    if not isinstance(request_section, dict):
         raise CanonicalMaterializationError(
-            f"existing build conflicts with the expected build id: {build_root}"
+            f"existing build missing normalized_request: {build_root}"
         )
-    # Optionally validate recorded file hashes against actual bytes.
-    for record in payload.get("output_files", []):
-        relative = record.get("relative_path")
-        expected = record.get("sha256")
-        if not relative or not expected:
-            continue
-        path = build_root / relative
-        if not path.exists() or _file_sha256(path) != expected:
+    expected_request = {
+        "symbols": request.symbols,
+        "trade_dates": sorted(value.isoformat() for value in request.trade_dates),
+        "interval": request.request_key.interval,
+        "requested_session": request.request_key.requested_session,
+        "adjustment": request.request_key.adjustment,
+        "source_schema_version": request.request_key.source_schema_version,
+    }
+    if request_section != expected_request:
+        raise CanonicalMaterializationError(
+            f"existing build normalized_request mismatch: {build_root}"
+        )
+
+    status = payload.get("status")
+    _require_equal(payload, "status", expected["status"] if "status" in expected else (STATUS_COMPLETE if expected["row_count"] else STATUS_EMPTY), build_root)
+    _validate_existing_output_files(build_root, payload)
+    bar_files = [r for r in payload["output_files"] if r.get("file_role") == "bars"]
+    gap_files = [r for r in payload["output_files"] if r.get("file_role") == "gaps"]
+    if status == STATUS_COMPLETE:
+        if not bar_files:
             raise CanonicalMaterializationError(
-                f"existing build file hash mismatch: {build_root / relative}"
+                f"COMPLETE build must contain bar files: {build_root}"
             )
+        if gap_files and expected["gap_count"] == 0:
+            raise CanonicalMaterializationError(
+                f"unexpected gap files in build: {build_root}"
+            )
+    elif status == STATUS_EMPTY:
+        if bar_files or gap_files:
+            raise CanonicalMaterializationError(
+                f"EMPTY build must contain no bar/gap files: {build_root}"
+            )
+
     return CanonicalMaterializationResult(
-        canonical_build_id=payload.get("canonical_build_id", build_id),
-        canonical_content_id=payload.get("canonical_content_id", ""),
-        status=payload.get("status", STATUS_EMPTY),
+        canonical_build_id=payload["canonical_build_id"],
+        canonical_content_id=payload["canonical_content_id"],
+        status=status,
         build_path=build_root.resolve(),
         manifest_path=manifest_path.resolve(),
-        row_count=int(payload.get("canonical_row_count", 0)),
-        gap_count=int(payload.get("gap_range_count", 0)),
-        source_snapshot_count=int(payload.get("source_snapshot_count", 0)),
+        row_count=int(payload["canonical_row_count"]),
+        gap_count=int(payload["gap_range_count"]),
+        source_snapshot_count=int(payload["source_snapshot_count"]),
         created_new_build=False,
     )
+
+
+def _require_equal(payload: dict, key: str, expected, build_root: Path) -> None:
+    if payload.get(key) != expected:
+        raise CanonicalMaterializationError(
+            f"existing build {key} mismatch: {build_root}"
+        )
+
+
+def _utc_iso_or_none(value) -> str | None:
+    if value is None:
+        return None
+    return value.tz_convert("UTC").isoformat()
 
 
 def materialize_canonical_market_bars(
@@ -565,20 +854,18 @@ def materialize_canonical_market_bars(
 
     Loads COMPLETE snapshots, builds canonical rows, derives gaps and
     identities, and atomically commits one immutable build directory. An
-    empty COMPLETE selection produces a valid explicit EMPTY build.
+    empty COMPLETE selection produces a valid explicit EMPTY build. The
+    public request is normalized once and used for selection, builder inputs,
+    validation, identities, the manifest, and partitioning.
     """
+    request = normalize_materialization_request(symbols, trade_dates, request_key)
     inputs = load_canonical_snapshot_inputs(
         catalog,
-        symbols=symbols,
-        trade_dates=trade_dates,
-        request_key=request_key,
+        symbols=request.symbols,
+        trade_dates=request.trade_dates,
+        request_key=request.request_key,
     )
     build_result = build_canonical_market_bars(list(inputs))
-    request = CanonicalMaterializationRequest(
-        symbols=sorted(set(symbols)),
-        trade_dates=sorted(set(trade_dates)),
-        request_key=request_key,
-    )
     root = output_root or (
         catalog.settings.data_root / "canonical" / DATASET_DIR_NAME
     )
@@ -586,7 +873,7 @@ def materialize_canonical_market_bars(
         build_result,
         request,
         output_root=root,
-        created_at=created_at or datetime.now(timezone.utc),
+        created_at=created_at,
     )
 
 
@@ -600,11 +887,17 @@ def materialize_build_result(
     """Lower-level writer accepting an existing CanonicalBuildResult.
 
     Provided for deterministic offline tests and callers that already hold a
-    built result.
+    built result. The request is normalized again so equivalent casing or
+    whitespace cannot change the build identity.
     """
+    normalized_request = normalize_materialization_request(
+        request.symbols,
+        request.trade_dates,
+        request.request_key,
+    )
     return _materialize_build(
         build_result,
-        request,
+        normalized_request,
         output_root=output_root,
         created_at=created_at,
     )

@@ -191,3 +191,7 @@ class CanonicalMaterializationRequest:
 
 class CanonicalMaterializationError(ValueError):
     """Structured materialization failure (fail-closed)."""
+
+
+class CanonicalGapArithmeticError(CanonicalMaterializationError):
+    """Internal adjacent gap delta that is not an exact nominal multiple."""

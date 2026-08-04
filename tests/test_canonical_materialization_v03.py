@@ -14,9 +14,12 @@ from market_vault.canonical import (
     CANONICAL_SCHEMA_VERSION,
     GAP_POLICY_VERSION,
     MANIFEST_SCHEMA_VERSION,
+    CanonicalGapArithmeticError,
     CanonicalMaterializationError,
+    CanonicalMaterializationRequest,
     CanonicalRequestKey,
     CanonicalSnapshotInput,
+    build_canonical_market_bars,
     canonical_build_id,
     load_canonical_snapshot_inputs,
     materialize_build_result,
@@ -603,7 +606,7 @@ def test_existing_conflicting_build_fails_closed(tmp_path):
         json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True) + "\n",
         encoding="utf-8",
     )
-    with pytest.raises(CanonicalMaterializationError, match="conflicts"):
+    with pytest.raises(CanonicalMaterializationError, match="canonical_build_id mismatch"):
         materialize(cfg)
 
 
@@ -639,3 +642,278 @@ def test_resolution_content_id_ignores_paths(tmp_path):
     result = materialize(cfg)
     payload = json.loads((result.build_path / "manifest.json").read_text(encoding="utf-8"))
     assert len(payload["resolution_content_id"]) == 64
+
+
+# --- Bounded correctness patch ----------------------------------------------
+
+
+def mutate_manifest(cfg: Settings, result, mutate) -> None:
+    manifest_path = result.build_path / "manifest.json"
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    mutate(payload)
+    manifest_path.write_text(
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def test_naive_created_at_fails_closed(tmp_path):
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 1))
+    with pytest.raises(CanonicalMaterializationError, match="created_at must be timezone-aware"):
+        materialize(cfg, created_at=datetime(2026, 8, 4, 12, 0))
+
+
+def test_equivalent_request_casing_same_build(tmp_path):
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 1))
+    result = materialize(cfg)
+    lowered = materialize(
+        cfg,
+        symbols=[" us.mu "],
+        key=CanonicalRequestKey(
+            interval=" 1M ", requested_session=" all ", adjustment=" none ",
+            source_schema_version=" 10.9 ",
+        ),
+    )
+    assert lowered.canonical_build_id == result.canonical_build_id
+
+
+def test_request_symbol_control_character_fails(tmp_path):
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    with pytest.raises(CanonicalMaterializationError, match="control character"):
+        materialize(cfg, symbols=["US\x00MU"])
+
+
+def test_request_separator_fails(tmp_path):
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    with pytest.raises(CanonicalMaterializationError, match="separator"):
+        materialize(cfg, symbols=["US|MU"])
+
+
+def test_gap_120_5s_delta_fails(tmp_path):
+    cfg = settings(tmp_path)
+    calendar(cfg)
+
+    def shift_second_row(df):
+        df = df.copy()
+        time_utc = pd.to_datetime(df["time_utc"]).copy()
+        time_market = pd.to_datetime(df["time_market"]).copy()
+        time_utc.iloc[1] = time_utc.iloc[1] + pd.Timedelta(seconds=120) + pd.Timedelta(milliseconds=500)
+        time_market.iloc[1] = time_market.iloc[1] + pd.Timedelta(seconds=120) + pd.Timedelta(milliseconds=500)
+        return df.assign(time_utc=time_utc, time_market=time_market)
+
+    write_snapshot(
+        cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
+        time_keys=["2026-07-01 09:30:00", "2026-07-01 09:31:00"],
+        mutate=shift_second_row,
+    )
+    with pytest.raises(CanonicalGapArithmeticError, match="not an exact nominal-interval multiple"):
+        materialize(cfg)
+
+
+def test_gap_119_999999s_delta_fails(tmp_path):
+    cfg = settings(tmp_path)
+    calendar(cfg)
+
+    def shift_second_row(df):
+        df = df.copy()
+        time_utc = pd.to_datetime(df["time_utc"]).copy()
+        time_market = pd.to_datetime(df["time_market"]).copy()
+        time_utc.iloc[1] = time_utc.iloc[1] + pd.Timedelta(seconds=119) + pd.Timedelta(microseconds=999999)
+        time_market.iloc[1] = time_market.iloc[1] + pd.Timedelta(seconds=119) + pd.Timedelta(microseconds=999999)
+        return df.assign(time_utc=time_utc, time_market=time_market)
+
+    write_snapshot(
+        cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
+        time_keys=["2026-07-01 09:30:00", "2026-07-01 09:31:00"],
+        mutate=shift_second_row,
+    )
+    with pytest.raises(CanonicalGapArithmeticError, match="not an exact nominal-interval multiple"):
+        materialize(cfg)
+
+
+def test_gap_exact_120s_delta_valid(tmp_path):
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    result = _build_with_gap(cfg, time_keys=["2026-07-01 09:30:00", "2026-07-01 09:32:00"])
+    assert result.gap_count == 1
+
+
+def test_manifest_output_files_missing_fails(tmp_path):
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    result = _build_with_gap(cfg)
+    mutate_manifest(cfg, result, lambda payload: payload.pop("output_files"))
+    with pytest.raises(CanonicalMaterializationError, match="output_files"):
+        materialize(cfg)
+
+
+def test_manifest_complete_without_bar_files_fails(tmp_path):
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    result = _build_with_gap(cfg)
+    mutate_manifest(cfg, result, lambda payload: payload.__setitem__("output_files", []))
+
+    with pytest.raises(CanonicalMaterializationError):
+        materialize(cfg)
+
+
+def test_manifest_record_missing_fields_fails(tmp_path):
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    result = _build_with_gap(cfg)
+
+    def mutate(payload):
+        record = payload["output_files"][0]
+        record.pop("sha256")
+
+    mutate_manifest(cfg, result, mutate)
+    with pytest.raises(CanonicalMaterializationError, match="missing relative_path or sha256"):
+        materialize(cfg)
+
+
+def test_manifest_unsafe_relative_path_fails(tmp_path):
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    result = _build_with_gap(cfg)
+    outside = tmp_path / "outside.parquet"
+    outside.write_bytes(b"x")
+
+    def mutate(payload):
+        payload["output_files"].append({
+            "relative_path": "../../outside.parquet",
+            "file_role": "bars",
+            "row_count": 1,
+            "byte_size": outside.stat().st_size,
+            "sha256": file_sha256(outside),
+            "content_role": "x",
+        })
+
+    mutate_manifest(cfg, result, mutate)
+    with pytest.raises(CanonicalMaterializationError, match="unsafe output file relative_path"):
+        materialize(cfg)
+    assert outside.read_bytes() == b"x"  # never read/opened
+
+
+def test_manifest_absolute_path_fails(tmp_path):
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    result = _build_with_gap(cfg)
+    absolute = (tmp_path / "abs.parquet").resolve()
+    absolute.write_bytes(b"x")
+
+    def mutate(payload):
+        payload["output_files"].append({
+            "relative_path": absolute.as_posix(),
+            "file_role": "bars",
+            "row_count": 1,
+            "byte_size": absolute.stat().st_size,
+            "sha256": file_sha256(absolute),
+            "content_role": "x",
+        })
+
+    mutate_manifest(cfg, result, mutate)
+    with pytest.raises(CanonicalMaterializationError):
+        materialize(cfg)
+
+
+def test_manifest_duplicate_relative_path_fails(tmp_path):
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    result = _build_with_gap(cfg)
+
+    def mutate(payload):
+        first = dict(payload["output_files"][0])
+        payload["output_files"].append(first)
+
+    mutate_manifest(cfg, result, mutate)
+    with pytest.raises(CanonicalMaterializationError, match="duplicate"):
+        materialize(cfg)
+
+
+def test_manifest_content_id_mismatch_fails(tmp_path):
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    result = _build_with_gap(cfg)
+    mutate_manifest(cfg, result, lambda payload: payload.__setitem__("canonical_content_id", "x" * 64))
+    with pytest.raises(CanonicalMaterializationError, match="canonical_content_id mismatch"):
+        materialize(cfg)
+
+
+def test_manifest_request_mismatch_fails(tmp_path):
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    result = _build_with_gap(cfg)
+
+    def mutate(payload):
+        payload["normalized_request"]["symbols"] = ["US.NVDA"]
+
+    mutate_manifest(cfg, result, mutate)
+    with pytest.raises(CanonicalMaterializationError, match="normalized_request mismatch"):
+        materialize(cfg)
+
+
+def test_manifest_count_mismatch_fails(tmp_path):
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    result = _build_with_gap(cfg)
+    mutate_manifest(cfg, result, lambda payload: payload.__setitem__("canonical_row_count", 99))
+    with pytest.raises(CanonicalMaterializationError, match="canonical_row_count mismatch"):
+        materialize(cfg)
+
+
+def test_manifest_file_size_mismatch_fails(tmp_path):
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    result = _build_with_gap(cfg)
+
+    def mutate(payload):
+        payload["output_files"][0]["byte_size"] = payload["output_files"][0]["byte_size"] + 1
+
+    mutate_manifest(cfg, result, mutate)
+    with pytest.raises(CanonicalMaterializationError, match="byte size mismatch"):
+        materialize(cfg)
+
+
+def test_manifest_row_counts_match_parquet(tmp_path):
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    result = _build_with_gap(cfg)
+    payload = json.loads((result.build_path / "manifest.json").read_text(encoding="utf-8"))
+    for record in payload["output_files"]:
+        if record["file_role"] not in ("bars", "gaps"):
+            continue
+        path = result.build_path / record["relative_path"]
+        actual = len(pd.read_parquet(path))
+        assert record["row_count"] == actual
+
+
+def test_builder_version_propagates_to_build_id(tmp_path):
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 1))
+    inputs = load_canonical_snapshot_inputs(
+        Catalog(cfg), symbols=["US.MU"], trade_dates=[date(2026, 7, 1)], request_key=DEFAULT_KEY
+    )
+    custom_version = "market-bars-canonical-custom-v1"
+    build_result = build_canonical_market_bars(
+        list(inputs), canonical_builder_version=custom_version
+    )
+    result = materialize_build_result(
+        build_result,
+        request=CanonicalMaterializationRequest(
+            symbols=["US.MU"], trade_dates=[date(2026, 7, 1)], request_key=DEFAULT_KEY
+        ),
+        output_root=output_root(cfg),
+        created_at=CREATED_AT,
+    )
+    payload = json.loads((result.build_path / "manifest.json").read_text(encoding="utf-8"))
+    assert payload["canonical_builder_version"] == custom_version
