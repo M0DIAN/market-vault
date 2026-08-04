@@ -100,11 +100,11 @@ count is whatever the release-prep PR's own CI run reports.
 
 ```text
 Local environment: Python 3.14.4, PyArrow 25.0.0
-Release-prep branch: 1152 passed / 2 skipped / 0 failed
+Release-prep branch: 1157 passed / 2 skipped / 0 failed
 Baseline 6d3e8d2:    1137 passed / 2 skipped / 0 failed
 ```
 
-- The release-prep branch passes 15 more tests than the baseline commit
+- The release-prep branch passes 20 more tests than the baseline commit
   under the same environment; those extra tests are the release-prep tests
   added by this PR.
 - No new failures appeared and no previously passing test regressed.
