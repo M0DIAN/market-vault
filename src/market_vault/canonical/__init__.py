@@ -49,7 +49,9 @@ from .models import (
 )
 from .reader import (
     CanonicalArtifactValidationError,
+    GapBoundaryBars,
     VerifiedCanonicalBuild,
+    VerifiedCanonicalRequest,
     load_verified_canonical_build,
 )
 from .schema import (
@@ -78,7 +80,9 @@ __all__ = [
     "CanonicalResolutionEntry",
     "CanonicalSnapshotInput",
     "CanonicalSourceRef",
+    "GapBoundaryBars",
     "VerifiedCanonicalBuild",
+    "VerifiedCanonicalRequest",
     "build_canonical_market_bars",
     "canonical_bar_key",
     "canonical_build_id",

@@ -11,14 +11,21 @@ The file-level validation reuses the strict output-file and provenance
 validators of :mod:`market_vault.canonical.materialization` — the same code
 that validates existing builds on idempotent materialization — so the read
 side and the write side share one artifact contract instead of drifting into
-two. The reader additionally verifies the exact bars Parquet schema,
-reconstructs every canonical row, and recomputes all logical identities
-(``canonical_bar_key``, ``canonical_row_version_id``, ``canonical_content_id``,
-``resolution_content_id``, ``gap_content_id``, ``canonical_build_id``) from
-the actual contents before comparing them with the manifest.
+two. The reader additionally verifies that the stored ``normalized_request``
+is in canonical form, that every reconstructed row satisfies the manifest and
+request contract, that each resolution entry binds exactly to its bar, that
+the gap sidecar exactly equals the gaps re-derived from the bars (and that
+each gap's boundary bars resolve uniquely), that the exact bars Parquet
+schema matches ``canonical_bars_schema()``, and that all logical identities
+(``canonical_bar_key``, ``canonical_row_version_id``,
+``canonical_content_id``, ``resolution_content_id``, ``gap_content_id``,
+``canonical_build_id``) are recomputed from the actual contents and match the
+manifest.
 
-The returned ``build_path`` is descriptive metadata only; it never
-participates in any identity.
+The returned ``VerifiedCanonicalBuild`` is deeply immutable: the normalized
+request is a frozen typed model and the manifest payload is stored as the
+deterministic immutable bytes of the verified manifest file. ``build_path``
+is descriptive metadata only; it never participates in any identity.
 """
 
 from __future__ import annotations
@@ -32,8 +39,9 @@ from pathlib import Path
 import pandas as pd
 import pyarrow.parquet as pq
 
+from ..intraday_audit import parse_intraday_interval
 from .bars import DEFAULT_DATASET_KIND
-from .gaps import GAP_POLICY_VERSION, GapRange
+from .gaps import GAP_POLICY_VERSION, GapRange, derive_internal_gap_ranges
 from .identity import (
     canonical_bar_key,
     canonical_build_id,
@@ -55,12 +63,16 @@ from .materialization import (
 )
 from .models import (
     CanonicalBar,
+    CanonicalGapArithmeticError,
     CanonicalMaterializationError,
     CanonicalRequestKey,
     CanonicalResolutionEntry,
     CanonicalSourceRef,
 )
 from .schema import OPTIONAL_MARKET_COLUMNS, canonical_bars_schema
+
+#: Reserved encoding separators of the Canonical identity layer.
+_CANONICAL_SEPARATORS = ("\x1e", "\x1f", "|")
 
 #: Exact top-level manifest field set written by the v1 canonical materializer.
 MANIFEST_TOP_LEVEL_FIELDS = frozenset(
@@ -144,6 +156,61 @@ class CanonicalArtifactValidationError(CanonicalMaterializationError):
 
 
 @dataclass(frozen=True)
+class VerifiedCanonicalRequest:
+    """Frozen, deeply immutable normalized request of a verified build.
+
+    Produced by the reader only after strict canonical-form validation of the
+    stored ``normalized_request``: ``symbols`` are non-empty, uppercase,
+    whitespace-free, sorted, deduplicated strings; ``trade_dates`` are
+    sorted, deduplicated ISO dates; ``interval`` is normalized lowercase and
+    parseable as an intraday interval; ``requested_session`` and
+    ``adjustment`` are normalized uppercase; ``source_schema_version`` is a
+    non-empty canonical string; control characters and reserved encoding
+    separators are rejected.
+    """
+
+    symbols: tuple[str, ...]
+    trade_dates: tuple[date, ...]
+    interval: str
+    requested_session: str
+    adjustment: str
+    source_schema_version: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "symbols", tuple(self.symbols))
+        object.__setattr__(self, "trade_dates", tuple(self.trade_dates))
+        for name in (
+            "interval",
+            "requested_session",
+            "adjustment",
+            "source_schema_version",
+        ):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value:
+                raise CanonicalArtifactValidationError(
+                    f"VerifiedCanonicalRequest {name} must be a non-empty string"
+                )
+
+
+@dataclass(frozen=True)
+class GapBoundaryBars:
+    """The boundary bars of one internal gap, resolved from the same build.
+
+    ``previous_archive_available_at`` is the archive availability of the bar
+    before the gap; ``next_market_available_at`` is the market availability
+    of the bar after the gap (the earliest instant the gap could be
+    confirmed); ``next_archive_available_at`` is that bar's archive
+    availability. The reader fails closed when a gap's boundary bars cannot
+    be resolved uniquely.
+    """
+
+    gap_id: str
+    previous_archive_available_at: pd.Timestamp
+    next_market_available_at: pd.Timestamp
+    next_archive_available_at: pd.Timestamp
+
+
+@dataclass(frozen=True)
 class VerifiedCanonicalBuild:
     """A fully verified immutable Canonical build artifact.
 
@@ -154,8 +221,13 @@ class VerifiedCanonicalBuild:
     ``canonical_row_version_ids`` is the sorted, deduplicated row-version set
     of this build. ``source_snapshot_provenance`` mirrors the manifest's
     ordered provenance records as typed source references.
-    ``manifest_payload`` is the raw verified manifest; ``build_path`` is
-    descriptive metadata only and never participates in any identity.
+    ``gap_ranges`` are the verified gap sidecar rows (each proven equal to
+    the gaps re-derived from the bars); ``gap_boundaries`` carries one
+    :class:`GapBoundaryBars` per gap, aligned by index. The build is deeply
+    immutable: ``normalized_request`` is a frozen typed model and
+    ``manifest_payload`` is the deterministic immutable manifest bytes.
+    ``build_path`` is descriptive metadata only and never participates in
+    any identity.
     """
 
     canonical_build_id: str
@@ -167,13 +239,14 @@ class VerifiedCanonicalBuild:
     materializer_version: str
     gap_policy_version: str
     status: str
-    normalized_request: dict
+    normalized_request: VerifiedCanonicalRequest
     bars: tuple[CanonicalBar, ...]
     canonical_row_version_ids: tuple[str, ...]
     source_snapshot_provenance: tuple[CanonicalSourceRef, ...]
     gap_ranges: tuple[GapRange, ...]
+    gap_boundaries: tuple[GapBoundaryBars, ...]
     gap_count: int
-    manifest_payload: dict
+    manifest_payload: bytes
     build_path: Path
 
 
@@ -232,6 +305,22 @@ def _require_sha256(value, label: str) -> str:
     if not isinstance(value, str) or not _SHA256_HEX_RE.fullmatch(value):
         _fail(f"{label} must be a 64-character lowercase SHA-256 hex string, got {value!r}")
     return value
+
+
+def _require_non_negative_int(value, label: str) -> int:
+    if type(value) is not int or value < 0:
+        _fail(f"{label} must be a non-negative integer, got {value!r}")
+    return value
+
+
+def _reject_unsafe_text(value: str, label: str) -> None:
+    """Control characters (C0 range) and reserved encoding separators fail,
+    mirroring the Canonical materialization contract."""
+    if any(ord(character) < 32 for character in value):
+        _fail(f"control character in {label}: {value!r}")
+    for separator in _CANONICAL_SEPARATORS:
+        if separator in value:
+            _fail(f"canonical encoding separator in {label}: {value!r}")
 
 
 def _verified_timestamp(value, label: str) -> pd.Timestamp:
@@ -510,18 +599,83 @@ def _source_stable_identity(ref: CanonicalSourceRef) -> tuple:
     )
 
 
-def _bar_stable_identity(bar: CanonicalBar) -> tuple:
-    """Bar-level stable source identity, matching ``_source_stable_identity``."""
+def _gap_equals(derived: GapRange, actual: GapRange) -> bool:
+    """Exact field-by-field equality of one re-derived and one sidecar gap."""
     return (
-        bar.ingestion_run_id,
-        bar.physical_snapshot_hash,
-        bar.logical_source_rows_hash,
-        bar.requested_trade_date,
-        bar.requested_session,
+        derived.gap_id == actual.gap_id
+        and derived.gap_policy_version == actual.gap_policy_version
+        and derived.dataset_kind == actual.dataset_kind
+        and derived.code == actual.code
+        and derived.interval == actual.interval
+        and derived.adjustment == actual.adjustment
+        and derived.market_calendar_date == actual.market_calendar_date
+        and derived.session == actual.session
+        and derived.previous_event_time == actual.previous_event_time
+        and derived.next_event_time == actual.next_event_time
+        and derived.missing_from_event_time == actual.missing_from_event_time
+        and derived.missing_to_event_time == actual.missing_to_event_time
+        and derived.missing_bar_count == actual.missing_bar_count
     )
 
 
-def _validate_normalized_request(section) -> dict:
+def _resolve_gap_boundaries(
+    bars: list[CanonicalBar], gap_ranges: list[GapRange]
+) -> tuple[GapBoundaryBars, ...]:
+    """Resolve each gap's previous/next boundary bars from the same build.
+
+    A boundary bar must exist in the same (dataset_kind, code, interval,
+    adjustment, market_calendar_date, session) group with the exact boundary
+    event time; any gap that cannot be resolved uniquely fails closed.
+    """
+    by_group_and_time: dict[tuple, CanonicalBar] = {}
+    for bar in bars:
+        group = (
+            bar.dataset_kind,
+            bar.code,
+            bar.interval,
+            bar.adjustment,
+            bar.market_calendar_date,
+            bar.session,
+        )
+        by_group_and_time[(group, bar.event_time)] = bar
+    boundaries = []
+    for gap in gap_ranges:
+        group = (
+            gap.dataset_kind,
+            gap.code,
+            gap.interval,
+            gap.adjustment,
+            gap.market_calendar_date,
+            gap.session,
+        )
+        previous = by_group_and_time.get((group, gap.previous_event_time))
+        next_bar = by_group_and_time.get((group, gap.next_event_time))
+        if previous is None or next_bar is None:
+            _fail(
+                f"gap {gap.gap_id} boundary bars cannot be resolved uniquely "
+                "from the build contents"
+            )
+        boundaries.append(
+            GapBoundaryBars(
+                gap_id=gap.gap_id,
+                previous_archive_available_at=previous.archive_available_at,
+                next_market_available_at=next_bar.market_available_at,
+                next_archive_available_at=next_bar.archive_available_at,
+            )
+        )
+    return tuple(boundaries)
+
+
+def _validate_normalized_request(section) -> VerifiedCanonicalRequest:
+    """Strict canonical-form validation of the stored normalized request.
+
+    The stored representation must already be normalized exactly as the
+    materializer normalizes it (uppercase stripped symbols, sorted and
+    deduplicated; sorted ISO trade dates; lowercase parseable interval;
+    uppercase session/adjustment; stripped schema version; no control
+    characters or encoding separators). A non-canonical stored
+    representation fails closed; it is never silently re-sorted or accepted.
+    """
     if not isinstance(section, dict):
         _fail("manifest normalized_request must be an object")
     unknown = sorted(set(section) - _NORMALIZED_REQUEST_FIELDS)
@@ -530,25 +684,86 @@ def _validate_normalized_request(section) -> dict:
     missing = sorted(_NORMALIZED_REQUEST_FIELDS - set(section))
     if missing:
         _fail(f"manifest normalized_request missing field(s): {', '.join(missing)}")
+
     symbols = section["symbols"]
-    if not isinstance(symbols, list) or not symbols or any(
-        not isinstance(item, str) or not item for item in symbols
-    ):
-        _fail("manifest normalized_request symbols must be a non-empty list of non-empty strings")
+    if not isinstance(symbols, list) or not symbols:
+        _fail("manifest normalized_request symbols must be a non-empty list")
+    seen_symbols: set[str] = set()
+    previous_symbol: str | None = None
+    for item in symbols:
+        if not isinstance(item, str) or not item:
+            _fail(f"manifest normalized_request symbol must be a non-empty string: {item!r}")
+        if item != item.strip().upper():
+            _fail(
+                f"manifest normalized_request symbol is not in canonical form "
+                f"(uppercase, no leading/trailing whitespace): {item!r}"
+            )
+        _reject_unsafe_text(item, "normalized_request symbol")
+        if item in seen_symbols:
+            _fail(f"manifest normalized_request symbols must be deduplicated: {item!r}")
+        seen_symbols.add(item)
+        if previous_symbol is not None and item < previous_symbol:
+            _fail("manifest normalized_request symbols must be sorted ascending")
+        previous_symbol = item
+
     trade_dates = section["trade_dates"]
     if not isinstance(trade_dates, list) or not trade_dates:
         _fail("manifest normalized_request trade_dates must be a non-empty list")
+    seen_dates: set[date] = set()
+    previous_date_text: str | None = None
+    parsed_trade_dates: list[date] = []
     for item in trade_dates:
         if not isinstance(item, str):
             _fail(f"manifest normalized_request trade_dates must be ISO strings, got {item!r}")
         try:
-            date.fromisoformat(item)
+            parsed = date.fromisoformat(item)
         except ValueError as exc:
             _fail(f"manifest normalized_request trade_dates entry is not an ISO date: {item!r}")
             raise AssertionError("unreachable") from exc
-    for name in ("interval", "requested_session", "adjustment", "source_schema_version"):
-        _require_text(section[name], f"manifest normalized_request {name}")
-    return section
+        if item != parsed.isoformat():
+            _fail(f"manifest normalized_request trade_dates entry is not canonical: {item!r}")
+        if parsed in seen_dates:
+            _fail(f"manifest normalized_request trade_dates must be deduplicated: {item!r}")
+        seen_dates.add(parsed)
+        if previous_date_text is not None and item < previous_date_text:
+            _fail("manifest normalized_request trade_dates must be sorted ascending")
+        previous_date_text = item
+        parsed_trade_dates.append(parsed)
+
+    interval = _require_text(section["interval"], "manifest normalized_request interval")
+    if interval != interval.strip().lower():
+        _fail(f"manifest normalized_request interval is not in canonical form: {interval!r}")
+    _reject_unsafe_text(interval, "normalized_request interval")
+    try:
+        parse_intraday_interval(interval)
+    except ValueError as exc:
+        _fail(f"manifest normalized_request interval is not parseable: {interval!r}: {exc}")
+        raise AssertionError("unreachable") from exc
+
+    for name in ("requested_session", "adjustment"):
+        value = _require_text(section[name], f"manifest normalized_request {name}")
+        if value != value.strip().upper():
+            _fail(f"manifest normalized_request {name} is not in canonical form: {value!r}")
+        _reject_unsafe_text(value, f"normalized_request {name}")
+
+    schema_version = _require_text(
+        section["source_schema_version"], "manifest normalized_request source_schema_version"
+    )
+    if schema_version != schema_version.strip():
+        _fail(
+            f"manifest normalized_request source_schema_version is not in canonical form: "
+            f"{schema_version!r}"
+        )
+    _reject_unsafe_text(schema_version, "normalized_request source_schema_version")
+
+    return VerifiedCanonicalRequest(
+        symbols=tuple(symbols),
+        trade_dates=tuple(parsed_trade_dates),
+        interval=interval,
+        requested_session=section["requested_session"],
+        adjustment=section["adjustment"],
+        source_schema_version=schema_version,
+    )
 
 
 def _load_verified_build(build_root: Path) -> VerifiedCanonicalBuild:
@@ -570,14 +785,16 @@ def _load_verified_build(build_root: Path) -> VerifiedCanonicalBuild:
         _fail(f"canonical build _SUCCESS must be a regular file: {build_root}")
 
     try:
-        text = manifest_path.read_text(encoding="utf-8")
-    except UnicodeDecodeError as exc:
-        raise CanonicalArtifactValidationError(
-            f"canonical build manifest.json is not valid UTF-8: {build_root}"
-        ) from exc
+        manifest_bytes = manifest_path.read_bytes()
     except OSError as exc:
         raise CanonicalArtifactValidationError(
             f"failed to read canonical build manifest.json: {build_root}: {exc}"
+        ) from exc
+    try:
+        text = manifest_bytes.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise CanonicalArtifactValidationError(
+            f"canonical build manifest.json is not valid UTF-8: {build_root}"
         ) from exc
     try:
         payload = json.loads(text)
@@ -628,6 +845,15 @@ def _load_verified_build(build_root: Path) -> VerifiedCanonicalBuild:
         "gap_policy_version",
     ):
         _require_text(payload[name], f"manifest {name}")
+
+    # Top-level counts must be real non-negative ints; bools never pass.
+    for name in (
+        "source_snapshot_count",
+        "canonical_row_count",
+        "gap_range_count",
+        "resolution_row_count",
+    ):
+        _require_non_negative_int(payload[name], f"manifest {name}")
 
     request = _validate_normalized_request(payload["normalized_request"])
 
@@ -682,6 +908,52 @@ def _load_verified_build(build_root: Path) -> VerifiedCanonicalBuild:
                 f"{bar.canonical_row_version_id}"
             )
 
+    # Every bar must satisfy the manifest/request contract field by field.
+    for bar in bars:
+        if bar.dataset_kind != payload["dataset_kind"]:
+            _fail(
+                f"bar {bar.canonical_bar_key} dataset_kind does not match the manifest: "
+                f"{bar.dataset_kind!r}"
+            )
+        if bar.code not in request.symbols:
+            _fail(
+                f"bar {bar.canonical_bar_key} code {bar.code!r} is not in the "
+                "normalized request symbols"
+            )
+        if bar.requested_trade_date not in request.trade_dates:
+            _fail(
+                f"bar {bar.canonical_bar_key} requested_trade_date "
+                f"{bar.requested_trade_date} is not in the normalized request trade dates"
+            )
+        if bar.interval != request.interval:
+            _fail(
+                f"bar {bar.canonical_bar_key} interval {bar.interval!r} does not match "
+                f"the normalized request interval {request.interval!r}"
+            )
+        if bar.adjustment != request.adjustment:
+            _fail(
+                f"bar {bar.canonical_bar_key} adjustment {bar.adjustment!r} does not match "
+                f"the normalized request adjustment {request.adjustment!r}"
+            )
+        if bar.requested_session != request.requested_session:
+            _fail(
+                f"bar {bar.canonical_bar_key} requested_session {bar.requested_session!r} "
+                f"does not match the normalized request requested_session "
+                f"{request.requested_session!r}"
+            )
+        if bar.source_schema_version != request.source_schema_version:
+            _fail(
+                f"bar {bar.canonical_bar_key} source_schema_version "
+                f"{bar.source_schema_version!r} does not match the normalized request "
+                f"source_schema_version {request.source_schema_version!r}"
+            )
+        if bar.canonical_builder_version != payload["canonical_builder_version"]:
+            _fail(
+                f"bar {bar.canonical_bar_key} canonical_builder_version "
+                f"{bar.canonical_builder_version!r} does not match the manifest "
+                f"canonical_builder_version {payload['canonical_builder_version']!r}"
+            )
+
     row_count = len(bars)
     if payload["canonical_row_count"] != row_count:
         _fail(
@@ -699,20 +971,45 @@ def _load_verified_build(build_root: Path) -> VerifiedCanonicalBuild:
     if resolution_keys != seen_keys:
         _fail("resolution canonical_bar_key values do not exactly match emitted bar keys")
 
-    # Every bar's stable source identity must be referenced by resolution
-    # (selected or equivalent-discarded); manifest provenance and resolution
-    # identities were already checked equal above.
+    # Every resolution entry must bind exactly to its bar: the entry's
+    # selected source must match the bar's own source field by field, and the
+    # discarded sources must neither duplicate the selected source nor each
+    # other. Manifest provenance and resolution identity sets were already
+    # checked equal above; this per-key binding is the stronger contract.
+    entry_by_key = {entry.canonical_bar_key: entry for entry in resolution}
     resolution_identities: set[tuple] = set()
-    for entry in resolution:
-        resolution_identities.add(_source_stable_identity(entry.selected))
-        for ref in entry.equivalent_discarded:
-            resolution_identities.add(_source_stable_identity(ref))
     for bar in bars:
-        if _bar_stable_identity(bar) not in resolution_identities:
+        entry = entry_by_key[bar.canonical_bar_key]
+        selected = entry.selected
+        if (
+            selected.ingestion_run_id != bar.ingestion_run_id
+            or selected.physical_snapshot_hash != bar.physical_snapshot_hash
+            or selected.logical_source_rows_hash != bar.logical_source_rows_hash
+            or selected.source_schema_version != bar.source_schema_version
+            or selected.requested_trade_date != bar.requested_trade_date
+            or selected.requested_session != bar.requested_session
+            or selected.snapshot_file != bar.snapshot_file
+        ):
             _fail(
-                f"bars row source provenance is not referenced by resolution: "
+                f"resolution selected source does not match its canonical bar: "
                 f"{bar.canonical_bar_key}"
             )
+        resolution_identities.add(_source_stable_identity(selected))
+        seen_discarded: set[tuple] = set()
+        for ref in entry.equivalent_discarded:
+            identity = _source_stable_identity(ref)
+            if identity == _source_stable_identity(selected):
+                _fail(
+                    f"equivalent_discarded_sources must not duplicate the selected "
+                    f"source: {bar.canonical_bar_key}"
+                )
+            if identity in seen_discarded:
+                _fail(
+                    f"equivalent_discarded_sources contains a duplicate stable source "
+                    f"identity: {bar.canonical_bar_key}"
+                )
+            seen_discarded.add(identity)
+            resolution_identities.add(identity)
 
     source_identity_count = len(resolution_identities)
     if payload["source_snapshot_count"] != source_identity_count:
@@ -728,6 +1025,39 @@ def _load_verified_build(build_root: Path) -> VerifiedCanonicalBuild:
             f"manifest gap_range_count {payload['gap_range_count']} does not match "
             f"actual gap range count {len(gap_ranges)}"
         )
+    # Deterministic gap ordering (the materializer's documented order).
+    gap_ranges.sort(
+        key=lambda gap: (
+            gap.dataset_kind,
+            gap.code,
+            gap.interval,
+            gap.adjustment,
+            gap.market_calendar_date,
+            gap.session,
+            gap.previous_event_time,
+        )
+    )
+
+    # The gap sidecar must exactly equal the gaps re-derived from the bars.
+    interval_seconds = int(parse_intraday_interval(request.interval).total_seconds())
+    try:
+        derived_gaps = derive_internal_gap_ranges(tuple(bars), interval_seconds)
+    except CanonicalGapArithmeticError as exc:
+        raise CanonicalArtifactValidationError(
+            f"gap sidecar cannot be re-derived from the bars: {exc}"
+        ) from exc
+    if len(derived_gaps) != len(gap_ranges):
+        _fail(
+            "gap sidecar does not match the gaps re-derived from the bars "
+            "(count mismatch)"
+        )
+    for derived, actual in zip(derived_gaps, gap_ranges):
+        if not _gap_equals(derived, actual):
+            _fail(
+                f"gap sidecar does not match the gaps re-derived from the bars: "
+                f"{actual.gap_id}"
+            )
+    gap_boundaries = _resolve_gap_boundaries(bars, gap_ranges)
 
     # Status/row-count consistency and EMPTY-build invariants.
     if status == STATUS_COMPLETE:
@@ -775,14 +1105,14 @@ def _load_verified_build(build_root: Path) -> VerifiedCanonicalBuild:
     if gap_id != payload["gap_content_id"]:
         _fail("recomputed gap_content_id does not match the manifest")
     request_key = CanonicalRequestKey(
-        interval=request["interval"],
-        requested_session=request["requested_session"],
-        adjustment=request["adjustment"],
-        source_schema_version=request["source_schema_version"],
+        interval=request.interval,
+        requested_session=request.requested_session,
+        adjustment=request.adjustment,
+        source_schema_version=request.source_schema_version,
     )
     recomputed_build_id = canonical_build_id(
-        symbols=request["symbols"],
-        trade_dates=[date.fromisoformat(item) for item in request["trade_dates"]],
+        symbols=list(request.symbols),
+        trade_dates=list(request.trade_dates),
         request_key=request_key,
         canonical_content_id=content_id,
         resolution_content_id=resolution_id,
@@ -830,22 +1160,10 @@ def _load_verified_build(build_root: Path) -> VerifiedCanonicalBuild:
             _fail("source_snapshot_provenance record has no resolution source match")
         provenance_refs.append(resolved)
 
-    # Deterministic output ordering: bars by (event_time, canonical_bar_key)
-    # and gaps by (dataset_kind, code, interval, adjustment,
-    # market_calendar_date, session, previous_event_time), matching the
-    # materializer's documented order.
+    # Deterministic output ordering: bars by (event_time, canonical_bar_key),
+    # matching the materializer's documented order. Gaps were already sorted
+    # above in their documented order before the re-derivation comparison.
     bars.sort(key=lambda bar: (bar.event_time, bar.canonical_bar_key))
-    gap_ranges.sort(
-        key=lambda gap: (
-            gap.dataset_kind,
-            gap.code,
-            gap.interval,
-            gap.adjustment,
-            gap.market_calendar_date,
-            gap.session,
-            gap.previous_event_time,
-        )
-    )
     return VerifiedCanonicalBuild(
         canonical_build_id=build_id,
         canonical_content_id=payload["canonical_content_id"],
@@ -861,8 +1179,9 @@ def _load_verified_build(build_root: Path) -> VerifiedCanonicalBuild:
         canonical_row_version_ids=tuple(sorted(seen_versions)),
         source_snapshot_provenance=tuple(provenance_refs),
         gap_ranges=tuple(gap_ranges),
+        gap_boundaries=gap_boundaries,
         gap_count=len(gap_ranges),
-        manifest_payload=payload,
+        manifest_payload=manifest_bytes,
         build_path=build_root,
     )
 

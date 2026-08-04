@@ -13,7 +13,7 @@ import hashlib
 import json
 import os
 import shutil
-from dataclasses import replace
+from dataclasses import FrozenInstanceError, replace
 from datetime import date, datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -26,11 +26,22 @@ import pytest
 from market_vault.canonical import (
     CanonicalArtifactValidationError,
     CanonicalRequestKey,
+    VerifiedCanonicalRequest,
+    canonical_bar_key,
+    canonical_build_id,
+    canonical_row_version_id,
+    gap_content_id,
     load_verified_canonical_build,
     materialize_canonical_market_bars,
+    resolution_content_id,
 )
+from market_vault.canonical.gaps import GAP_POLICY_VERSION, GapRange
+from market_vault.canonical.materialization import GAP_COLUMNS, gap_schema
+from market_vault.canonical.models import CanonicalResolutionEntry, CanonicalSourceRef
 from market_vault.canonical.schema import canonical_bars_schema
 from market_vault.dataset import (
+    PIT_ASSEMBLER_VERSION,
+    PIT_ASSOCIATION_SCHEMA_VERSION,
     PIT_ROLE_FEATURE,
     PIT_ROLE_LABEL,
     PITAssemblyError,
@@ -226,6 +237,59 @@ def make_gap_build(tmp_path):
     return verified(materialize(cfg))
 
 
+def make_multi_symbol_gap_build(tmp_path):
+    """Build with one internal gap per symbol (US.MU and US.NVDA)."""
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    gap_keys = minute_keys("2026-07-01 09:30:00", 1) + minute_keys("2026-07-01 09:32:00", 1)
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-gap",
+                   time_keys=gap_keys,
+                   run_finished_at=datetime(2026, 7, 1, 14, 0, tzinfo=UTC))
+    write_snapshot(cfg, code="US.NVDA", trade_date=date(2026, 7, 1), run_id="run-gap-nvda",
+                   time_keys=gap_keys,
+                   run_finished_at=datetime(2026, 7, 1, 14, 0, tzinfo=UTC))
+    return verified(materialize(cfg, symbols=["US.MU", "US.NVDA"]))
+
+
+def make_jul2_gap_build(tmp_path):
+    """Build with one internal gap on market-calendar date 2026-07-02."""
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    calendar(cfg, trade_date=date(2026, 7, 2))
+    write_snapshot(cfg, code="US.NVDA", trade_date=date(2026, 7, 2), run_id="run-gap-d2",
+                   time_keys=minute_keys("2026-07-02 09:30:00", 1)
+                   + minute_keys("2026-07-02 09:32:00", 1),
+                   run_finished_at=datetime(2026, 7, 2, 14, 0, tzinfo=UTC))
+    return verified(materialize(cfg, symbols=["US.NVDA"], trade_dates=[date(2026, 7, 2)]))
+
+
+def make_duplicate_gap_artifacts(tmp_path):
+    """The same gap build materialized into two output roots."""
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-gap",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 1)
+                   + minute_keys("2026-07-01 09:32:00", 1),
+                   run_finished_at=datetime(2026, 7, 1, 14, 0, tzinfo=UTC))
+    first = materialize(cfg, root=output_root(cfg) / "root-one")
+    second = materialize(cfg, root=output_root(cfg) / "root-two")
+    return verified(first), verified(second)
+
+
+def make_two_symbol_build(tmp_path):
+    """Build whose bars come from two different source snapshots (one per
+    symbol), so resolution entries carry distinct selected sources."""
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 2),
+                   run_finished_at=datetime(2026, 7, 1, 14, 0, tzinfo=UTC))
+    write_snapshot(cfg, code="US.NVDA", trade_date=date(2026, 7, 1), run_id="run-b",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 2),
+                   run_finished_at=datetime(2026, 7, 1, 16, 0, tzinfo=UTC))
+    return verified(materialize(cfg, symbols=["US.MU", "US.NVDA"]))
+
+
 def make_empty_build(tmp_path):
     cfg = settings(tmp_path)
     calendar(cfg)
@@ -297,6 +361,241 @@ def rewrite_bars(build, mutate) -> None:
     manifest_path.write_text(
         json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True) + "\n",
         encoding="utf-8",
+    )
+
+
+def recompute_and_rewrite_bars(build, mutate) -> None:
+    """Rewrite bars parquets through a mutator, then recompute every row's
+    canonical_bar_key / canonical_row_version_id from its own (mutated)
+    fields and re-sync the manifest hashes, so the rows remain internally
+    consistent and only the mutated fields are left inconsistent with the
+    manifest/request contract."""
+    payload = json.loads((build.build_path / "manifest.json").read_text(encoding="utf-8"))
+    for record in payload["output_files"]:
+        if record["file_role"] != "bars":
+            continue
+        path = build.build_path / record["relative_path"]
+        frame = pd.read_parquet(path)
+        frame = mutate(frame)
+        frame = frame.copy()
+        keys = []
+        versions = []
+        for _, row in frame.iterrows():
+            key = canonical_bar_key(
+                dataset_kind=row["dataset_kind"],
+                code=row["code"],
+                interval=row["interval"],
+                adjustment=row["adjustment"],
+                event_time=pd.Timestamp(row["event_time"]),
+            )
+            version = canonical_row_version_id(
+                canonical_bar_key=key,
+                ingestion_run_id=row["ingestion_run_id"],
+                source_snapshot_content_hash=row["physical_snapshot_hash"],
+                source_schema_version=row["source_schema_version"],
+                canonical_builder_version=row["canonical_builder_version"],
+            )
+            keys.append(key)
+            versions.append(version)
+        frame["canonical_bar_key"] = keys
+        frame["canonical_row_version_id"] = versions
+        table = pa.Table.from_pandas(frame, schema=canonical_bars_schema(), preserve_index=False)
+        pq.write_table(table, path, compression="zstd")
+        record["byte_size"] = path.stat().st_size
+        record["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+    manifest_path = build.build_path / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _ref_from_json(ref: dict) -> CanonicalSourceRef:
+    return CanonicalSourceRef(
+        ingestion_run_id=ref["ingestion_run_id"],
+        physical_snapshot_hash=ref["physical_snapshot_hash"],
+        logical_source_rows_hash=ref["logical_source_rows_hash"],
+        source_schema_version=ref["source_schema_version"],
+        snapshot_file=ref["snapshot_file"],
+        requested_trade_date=date.fromisoformat(ref["requested_trade_date"]),
+        requested_session=ref["requested_session"],
+    )
+
+
+def _entry_from_json(row: dict) -> CanonicalResolutionEntry:
+    return CanonicalResolutionEntry(
+        canonical_bar_key=row["canonical_bar_key"],
+        selected=_ref_from_json(row["selected"]),
+        equivalent_discarded=tuple(
+            _ref_from_json(ref) for ref in row["equivalent_discarded_sources"]
+        ),
+    )
+
+
+def _recompute_build_id(payload: dict, root: Path) -> str:
+    req = payload["normalized_request"]
+    request_key = CanonicalRequestKey(
+        req["interval"], req["requested_session"], req["adjustment"], req["source_schema_version"]
+    )
+    versions = sorted(
+        {
+            version
+            for path in root.rglob("bars/**/*.parquet")
+            for version in pd.read_parquet(path)["canonical_row_version_id"]
+        }
+    )
+    return canonical_build_id(
+        symbols=req["symbols"],
+        trade_dates=[date.fromisoformat(item) for item in req["trade_dates"]],
+        request_key=request_key,
+        canonical_content_id=payload["canonical_content_id"],
+        resolution_content_id=payload["resolution_content_id"],
+        gap_content_id=payload["gap_content_id"],
+        selected_row_version_ids=versions,
+        canonical_builder_version=payload["canonical_builder_version"],
+        canonical_schema_version=payload["canonical_schema_version"],
+        materializer_version=payload["materializer_version"],
+        gap_policy_version=payload["gap_policy_version"],
+    )
+
+
+def _write_manifest_and_rename(root: Path, payload: dict) -> Path:
+    manifest_path = root / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True) + "\n",
+        encoding="utf-8",
+    )
+    new_root = root.parent / f"build_id={payload['canonical_build_id']}"
+    root.rename(new_root)
+    return new_root
+
+
+def resync_resolution(build, mutated_rows) -> Path:
+    """Rewrite resolution.jsonl with swapped rows and re-sync every identity:
+    resolution_content_id, canonical_build_id, output hashes, and the build
+    directory name, so only the per-key binding is left wrong."""
+    root = build.build_path
+    payload = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+    (root / "resolution.jsonl").write_text(
+        "\n".join(
+            json.dumps(row, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+            for row in mutated_rows
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    for record in payload["output_files"]:
+        if record["file_role"] != "resolution":
+            continue
+        record["row_count"] = len(mutated_rows)
+        record["byte_size"] = (root / "resolution.jsonl").stat().st_size
+        record["sha256"] = hashlib.sha256((root / "resolution.jsonl").read_bytes()).hexdigest()
+    payload["resolution_content_id"] = resolution_content_id(
+        tuple(_entry_from_json(row) for row in mutated_rows)
+    )
+    payload["canonical_build_id"] = _recompute_build_id(payload, root)
+    return _write_manifest_and_rename(root, payload)
+
+
+def _gap_from_row(row: dict) -> GapRange:
+    return GapRange(
+        gap_id=row["gap_id"],
+        gap_policy_version=row["gap_policy_version"],
+        dataset_kind=row["dataset_kind"],
+        code=row["code"],
+        interval=row["interval"],
+        adjustment=row["adjustment"],
+        market_calendar_date=row["market_calendar_date"],
+        session=row["session"],
+        previous_event_time=pd.Timestamp(row["previous_event_time"]),
+        next_event_time=pd.Timestamp(row["next_event_time"]),
+        missing_from_event_time=pd.Timestamp(row["missing_from_event_time"]),
+        missing_to_event_time=pd.Timestamp(row["missing_to_event_time"]),
+        missing_bar_count=row["missing_bar_count"],
+    )
+
+
+def _gap_table(rows: list[dict]) -> pa.Table:
+    arrays = []
+    for field in gap_schema():
+        arrays.append(pa.array([row[field.name] for row in rows], type=field.type))
+    return pa.table(arrays, schema=gap_schema())
+
+
+def resync_gap_sidecar(build, gap_rows) -> Path:
+    """Rewrite the gap parquet and re-sync gap_content_id, canonical_build_id,
+    output hashes/counts, and the build directory name, so the sidecar stays
+    internally consistent and only the mismatch against the bars remains."""
+    root = build.build_path
+    payload = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+    gap_file = next(root.rglob("gaps/**/part-00000.parquet"))
+    pq.write_table(_gap_table(gap_rows), gap_file, compression="zstd")
+    for record in payload["output_files"]:
+        if record["file_role"] != "gaps":
+            continue
+        record["row_count"] = len(gap_rows)
+        record["byte_size"] = gap_file.stat().st_size
+        record["sha256"] = hashlib.sha256(gap_file.read_bytes()).hexdigest()
+    gaps = tuple(_gap_from_row(row) for row in gap_rows)
+    payload["gap_range_count"] = len(gaps)
+    payload["gap_content_id"] = gap_content_id(gaps, GAP_POLICY_VERSION)
+    payload["canonical_build_id"] = _recompute_build_id(payload, root)
+    return _write_manifest_and_rename(root, payload)
+
+
+def relocate_snapshot_files(build) -> None:
+    """Consistently relocate snapshot_file across bars parquet, resolution
+    JSONL, and manifest provenance (path is descriptive everywhere)."""
+    rewrite_bars(build, lambda frame: set_column(frame, "snapshot_file", "curated/moved.parquet"))
+    root = build.build_path
+    payload = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+    rows = [
+        json.loads(line)
+        for line in (root / "resolution.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    for row in rows:
+        row["selected"]["snapshot_file"] = "curated/moved.parquet"
+        for ref in row["equivalent_discarded_sources"]:
+            ref["snapshot_file"] = "curated/moved.parquet"
+    (root / "resolution.jsonl").write_text(
+        "\n".join(
+            json.dumps(row, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+            for row in rows
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    for row in payload["source_snapshot_provenance"]:
+        row["snapshot_file"] = "curated/moved.parquet"
+    for record in payload["output_files"]:
+        path = root / record["relative_path"]
+        record["byte_size"] = path.stat().st_size
+        record["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+    (root / "manifest.json").write_text(
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def version_id(
+    *,
+    sample_key: str | None = None,
+    dataset_as_of=None,
+    feature=(),
+    label=(),
+    considered=(),
+    assembler_version: str | None = None,
+    association_schema_version: str | None = None,
+) -> str:
+    return pit_sample_version_id(
+        sample_key=sample_key or sha("sample"),
+        dataset_as_of=dataset_as_of,
+        feature_canonical_row_version_ids=feature,
+        label_canonical_row_version_ids=label,
+        considered_canonical_build_ids=considered,
+        assembler_version=assembler_version or PIT_ASSEMBLER_VERSION,
+        association_schema_version=association_schema_version
+        or PIT_ASSOCIATION_SCHEMA_VERSION,
     )
 
 
@@ -698,18 +997,20 @@ def test_row_version_not_covered_by_build_provenance_fails(tmp_path):
 
 def test_valid_complete_build_loads(tmp_path):
     _, a, *_ = make_builds(tmp_path)
+    payload = json.loads(a.manifest_payload)
     assert a.status == "COMPLETE"
     assert len(a.bars) == 4
     assert a.gap_count == 0
-    assert a.canonical_build_id == a.manifest_payload["canonical_build_id"]
-    assert a.canonical_content_id == a.manifest_payload["canonical_content_id"]
-    assert a.resolution_content_id == a.manifest_payload["resolution_content_id"]
-    assert a.gap_content_id == a.manifest_payload["gap_content_id"]
+    assert a.canonical_build_id == payload["canonical_build_id"]
+    assert a.canonical_content_id == payload["canonical_content_id"]
+    assert a.resolution_content_id == payload["resolution_content_id"]
+    assert a.gap_content_id == payload["gap_content_id"]
     assert tuple(sorted(a.canonical_row_version_ids)) == a.canonical_row_version_ids
     assert {bar.canonical_row_version_id for bar in a.bars} == set(a.canonical_row_version_ids)
-    assert a.normalized_request["symbols"] == ["US.MU"]
+    assert a.normalized_request.symbols == ("US.MU",)
+    assert a.normalized_request.trade_dates == (date(2026, 7, 1),)
     assert len(a.source_snapshot_provenance) == 1
-    assert a.manifest_payload["source_snapshot_count"] == 1
+    assert payload["source_snapshot_count"] == 1
     # Bars are in deterministic event_time order.
     assert [bar.event_time for bar in a.bars] == sorted(bar.event_time for bar in a.bars)
 
@@ -746,7 +1047,7 @@ def test_wrong_manifest_schema_version_fails(tmp_path):
 
 def test_build_dir_id_mismatch_fails(tmp_path):
     _, a, *_ = make_builds(tmp_path)
-    build_id = a.manifest_payload["canonical_build_id"]
+    build_id = json.loads(a.manifest_payload)["canonical_build_id"]
     wrong = a.build_path.parent / f"build_id={sha('wrong')}"
     a.build_path.rename(wrong)
     with pytest.raises(CanonicalArtifactValidationError, match="does not match manifest"):
@@ -848,6 +1149,13 @@ def test_tampered_canonical_build_id_fails(tmp_path):
     a.build_path.rename(moved)
     with pytest.raises(CanonicalArtifactValidationError, match="canonical_build_id"):
         load_verified_canonical_build(moved)
+
+
+def test_bool_top_level_count_fails(tmp_path):
+    _, a, *_ = make_builds(tmp_path)
+    mutate_manifest(a, lambda payload: payload.__setitem__("canonical_row_count", True))
+    with pytest.raises(CanonicalArtifactValidationError, match="non-negative integer"):
+        load_verified_canonical_build(a.build_path)
 
 
 def test_path_traversal_output_record_fails(tmp_path):
@@ -1004,7 +1312,10 @@ def test_unselected_source_snapshots_excluded_from_pins(tmp_path):
 
 def test_snapshot_path_change_does_not_affect_identity(tmp_path):
     _, a, *_ = make_builds(tmp_path)
-    rewrite_bars(a, lambda frame: set_column(frame, "snapshot_file", "curated/moved.parquet"))
+    # Relocate snapshot_file consistently across the whole artifact; the
+    # reader re-verifies the fully relocated artifact (an inconsistent
+    # relocation would fail the per-key resolution binding).
+    relocate_snapshot_files(a)
     moved = load_verified_canonical_build(a.build_path)
     first = assemble([a], [request()])
     second = assemble([moved], [request()])
@@ -1013,14 +1324,19 @@ def test_snapshot_path_change_does_not_affect_identity(tmp_path):
 
 def test_gap_reference_matches_manifest(tmp_path):
     gap_build = make_gap_build(tmp_path)
+    payload = json.loads(gap_build.manifest_payload)
     assert gap_build.gap_count == 1
     result = assemble([gap_build], [request()])
     ref = result.gap_references[0]
     assert ref.canonical_build_id == gap_build.canonical_build_id
-    assert ref.gap_content_id == gap_build.gap_content_id == gap_build.manifest_payload["gap_content_id"]
-    assert ref.gap_range_count == 1 == gap_build.manifest_payload["gap_range_count"]
-    # The overlapping window records the known gap ID.
-    sample = result.samples[0]
+    assert ref.gap_content_id == gap_build.gap_content_id == payload["gap_content_id"]
+    assert ref.gap_range_count == 1 == payload["gap_range_count"]
+    # With a window that closes exactly at the next boundary bar's market
+    # availability, the overlapping gap is recorded as a known gap ID.
+    sample = assemble(
+        [gap_build],
+        [request(feature_close=datetime(2026, 7, 1, 13, 33, tzinfo=UTC))],
+    ).samples[0]
     assert sample.diagnostics.known_feature_gap_ids == tuple(
         gap.gap_id for gap in gap_build.gap_ranges
     )
@@ -1098,3 +1414,389 @@ def test_roles_and_positions_in_association_rows(tmp_path):
     assert [row["position"] for row in label_rows] == [0, 1]
     assert all(row["code"] == "US.MU" for row in rows)
     assert all(row["canonical_build_id"] in (a.canonical_build_id, c.canonical_build_id) for row in rows)
+
+
+# ---------------------------------------------------------------------------
+# G. Reader semantic contract (request / bar / resolution / gap re-derivation).
+# ---------------------------------------------------------------------------
+
+
+def test_swapped_resolution_selected_fails(tmp_path):
+    build = make_two_symbol_build(tmp_path)
+    rows = [
+        json.loads(line)
+        for line in (build.build_path / "resolution.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    mu_bar = next(bar for bar in build.bars if bar.code == "US.MU")
+    nvda_bar = next(bar for bar in build.bars if bar.code == "US.NVDA")
+    mu_idx = next(i for i, row in enumerate(rows) if row["canonical_bar_key"] == mu_bar.canonical_bar_key)
+    nvda_idx = next(i for i, row in enumerate(rows) if row["canonical_bar_key"] == nvda_bar.canonical_bar_key)
+    rows[mu_idx]["selected"], rows[nvda_idx]["selected"] = (
+        rows[nvda_idx]["selected"],
+        rows[mu_idx]["selected"],
+    )
+    new_root = resync_resolution(build, rows)
+    with pytest.raises(CanonicalArtifactValidationError, match="does not match its canonical bar"):
+        load_verified_canonical_build(new_root)
+
+
+def test_bar_code_not_in_manifest_symbols_fails(tmp_path):
+    _, a, *_ = make_builds(tmp_path)
+    recompute_and_rewrite_bars(
+        a,
+        lambda frame: set_column(
+            frame, "code", ["US.ZZZ" if i == 0 else value for i, value in enumerate(frame["code"])]
+        ),
+    )
+    with pytest.raises(CanonicalArtifactValidationError, match="not in the normalized request symbols"):
+        load_verified_canonical_build(a.build_path)
+
+
+def test_bar_trade_date_not_in_manifest_dates_fails(tmp_path):
+    _, a, *_ = make_builds(tmp_path)
+    recompute_and_rewrite_bars(
+        a,
+        lambda frame: set_column(
+            frame, "requested_trade_date",
+            [date(2026, 7, 2) if i == 0 else value for i, value in enumerate(frame["requested_trade_date"])],
+        ),
+    )
+    with pytest.raises(CanonicalArtifactValidationError, match="not in the normalized request trade dates"):
+        load_verified_canonical_build(a.build_path)
+
+
+def test_bar_request_key_field_mismatch_fails(tmp_path):
+    _, a, *_ = make_builds(tmp_path)
+    recompute_and_rewrite_bars(
+        a,
+        lambda frame: set_column(
+            frame, "interval", ["5m" if i == 0 else value for i, value in enumerate(frame["interval"])]
+        ),
+    )
+    with pytest.raises(CanonicalArtifactValidationError, match="does not match the normalized request interval"):
+        load_verified_canonical_build(a.build_path)
+
+
+def test_bar_builder_version_mismatch_fails(tmp_path):
+    _, a, *_ = make_builds(tmp_path)
+    recompute_and_rewrite_bars(
+        a,
+        lambda frame: set_column(
+            frame, "canonical_builder_version",
+            ["market-bars-canonical-x-v1" if i == 0 else value for i, value in enumerate(frame["canonical_builder_version"])],
+        ),
+    )
+    with pytest.raises(CanonicalArtifactValidationError, match="does not match the manifest canonical_builder_version"):
+        load_verified_canonical_build(a.build_path)
+
+
+def test_non_normalized_request_symbols_fail(tmp_path):
+    _, a, *_ = make_builds(tmp_path)
+    mutate_manifest(
+        a,
+        lambda payload: payload["normalized_request"].__setitem__("symbols", ["US.MU", "US.MU"]),
+    )
+    with pytest.raises(CanonicalArtifactValidationError, match="deduplicated"):
+        load_verified_canonical_build(a.build_path)
+    _, b, *_ = make_builds(tmp_path)
+    mutate_manifest(
+        b,
+        lambda payload: payload["normalized_request"].__setitem__("symbols", ["US.NVDA", "US.MU"]),
+    )
+    with pytest.raises(CanonicalArtifactValidationError, match="sorted ascending"):
+        load_verified_canonical_build(b.build_path)
+
+
+def test_non_normalized_request_trade_dates_fail(tmp_path):
+    _, a, *_ = make_builds(tmp_path)
+    mutate_manifest(
+        a,
+        lambda payload: payload["normalized_request"].__setitem__(
+            "trade_dates", ["2026-07-02", "2026-07-01"]
+        ),
+    )
+    with pytest.raises(CanonicalArtifactValidationError, match="sorted ascending"):
+        load_verified_canonical_build(a.build_path)
+
+
+def test_gap_sidecar_tampered_with_synced_identity_fails(tmp_path):
+    gap_build = make_gap_build(tmp_path)
+    gap_file = next(gap_build.build_path.rglob("gaps/**/part-00000.parquet"))
+    rows = pq.read_table(gap_file).to_pylist()
+    rows[0]["missing_bar_count"] = 2
+    new_root = resync_gap_sidecar(gap_build, rows)
+    with pytest.raises(CanonicalArtifactValidationError, match="re-derived from the bars"):
+        load_verified_canonical_build(new_root)
+
+
+def test_gap_sidecar_removed_with_synced_identity_fails(tmp_path):
+    gap_build = make_gap_build(tmp_path)
+    new_root = resync_gap_sidecar(gap_build, [])
+    with pytest.raises(CanonicalArtifactValidationError, match="re-derived from the bars"):
+        load_verified_canonical_build(new_root)
+
+
+# ---------------------------------------------------------------------------
+# H. Known-gap dimensions and PIT clocks.
+# ---------------------------------------------------------------------------
+
+
+def test_known_gap_other_symbol_excluded(tmp_path):
+    gap_build = make_multi_symbol_gap_build(tmp_path)
+    sample = assemble(
+        [gap_build],
+        [request(feature_close=datetime(2026, 7, 1, 13, 33, tzinfo=UTC))],
+    ).samples[0]
+    mu_gap_id = next(gap.gap_id for gap in gap_build.gap_ranges if gap.code == "US.MU")
+    nvda_gap_id = next(gap.gap_id for gap in gap_build.gap_ranges if gap.code == "US.NVDA")
+    assert sample.diagnostics.known_feature_gap_ids == (mu_gap_id,)
+    assert nvda_gap_id not in sample.diagnostics.known_feature_gap_ids
+
+
+def test_known_gap_other_date_excluded(tmp_path):
+    gap_build = make_jul2_gap_build(tmp_path)
+    sample = assemble(
+        [gap_build],
+        [
+            request(
+                code="US.NVDA",
+                feature_start=datetime(2026, 7, 2, 13, 30, tzinfo=UTC),
+                feature_close=datetime(2026, 7, 2, 13, 33, tzinfo=UTC),
+            )
+        ],
+    ).samples[0]
+    # Rows on 2026-07-02 are visible as features, but the gap's
+    # market-calendar date differs from the 2026-07-01 anchor, so it is not
+    # a known gap of this sample.
+    assert sample.diagnostics.feature_selected_count == 2
+    assert sample.diagnostics.known_feature_gap_ids == ()
+
+
+def test_known_gap_other_session_excluded(tmp_path):
+    gap_build = make_gap_build(tmp_path)
+    sample = assemble(
+        [gap_build],
+        [request(requested_session="MORNING",
+                 feature_close=datetime(2026, 7, 1, 13, 33, tzinfo=UTC))],
+    ).samples[0]
+    assert sample.diagnostics.known_feature_gap_ids == ()
+
+
+def test_known_gap_other_interval_excluded(tmp_path):
+    gap_build = make_gap_build(tmp_path)
+    sample = assemble(
+        [gap_build],
+        [request(interval="5m",
+                 feature_close=datetime(2026, 7, 1, 13, 33, tzinfo=UTC))],
+    ).samples[0]
+    assert sample.diagnostics.known_feature_gap_ids == ()
+
+
+def test_known_gap_requires_next_boundary_market_available(tmp_path):
+    gap_build = make_gap_build(tmp_path)
+    # The next boundary bar (09:32) is market-available at 13:33Z; a window
+    # closing before that never sees the gap as known.
+    early = assemble([gap_build], [request()]).samples[0]
+    assert early.diagnostics.known_feature_gap_ids == ()
+    # A window closing exactly at the next boundary's market availability
+    # records the gap.
+    boundary = assemble(
+        [gap_build],
+        [request(feature_close=datetime(2026, 7, 1, 13, 33, tzinfo=UTC))],
+    ).samples[0]
+    assert boundary.diagnostics.known_feature_gap_ids == tuple(
+        gap.gap_id for gap in gap_build.gap_ranges
+    )
+
+
+def test_known_gap_archive_cutoff(tmp_path):
+    gap_build = make_gap_build(tmp_path)
+    close = datetime(2026, 7, 1, 13, 33, tzinfo=UTC)
+    before = assemble(
+        [gap_build], [request(feature_close=close)],
+        dataset_as_of=datetime(2026, 7, 1, 13, 0, tzinfo=UTC),
+    ).samples[0]
+    assert before.diagnostics.known_feature_gap_ids == ()
+    # Boundary bars archived exactly at the cutoff allow the gap.
+    at_cutoff = assemble(
+        [gap_build], [request(feature_close=close)],
+        dataset_as_of=datetime(2026, 7, 1, 14, 0, tzinfo=UTC),
+    ).samples[0]
+    assert at_cutoff.diagnostics.known_feature_gap_ids == tuple(
+        gap.gap_id for gap in gap_build.gap_ranges
+    )
+
+
+def test_known_gap_identical_across_builds_deduped(tmp_path):
+    first, second = make_duplicate_gap_artifacts(tmp_path)
+    sample = assemble(
+        [first, second],
+        [request(feature_close=datetime(2026, 7, 1, 13, 33, tzinfo=UTC))],
+    ).samples[0]
+    assert sample.diagnostics.known_feature_gap_ids == tuple(
+        gap.gap_id for gap in first.gap_ranges
+    )
+    assert len(sample.diagnostics.known_feature_gap_ids) == 1
+
+
+def test_known_gap_conflicting_facts_fail(tmp_path):
+    gap_build = make_gap_build(tmp_path)
+    tampered = replace(
+        gap_build,
+        gap_boundaries=(
+            replace(
+                gap_build.gap_boundaries[0],
+                next_archive_available_at=pd.Timestamp("2026-07-01T16:00:00Z"),
+            ),
+        ),
+    )
+    with pytest.raises(PITAssemblyError, match="conflicting facts for known gap id"):
+        assemble(
+            [gap_build, tampered],
+            [request(feature_close=datetime(2026, 7, 1, 13, 33, tzinfo=UTC))],
+        )
+
+
+# ---------------------------------------------------------------------------
+# I. Public sample-version-id input validation.
+# ---------------------------------------------------------------------------
+
+
+def test_sample_version_id_rejects_non_hash_values():
+    with pytest.raises(PITAssemblyError, match="SHA-256"):
+        version_id(feature=("a", "b"))
+
+
+def test_sample_version_id_rejects_separator_values():
+    with pytest.raises(PITAssemblyError, match="SHA-256"):
+        version_id(feature=("\x1e" * 64,))
+
+
+def test_sample_version_id_rejects_non_hex():
+    with pytest.raises(PITAssemblyError, match="SHA-256"):
+        version_id(considered=("z" * 64,))
+
+
+def test_sample_version_id_rejects_uppercase_hash():
+    with pytest.raises(PITAssemblyError, match="SHA-256"):
+        version_id(label=(sha("x").upper(),))
+
+
+def test_sample_version_id_rejects_duplicate_feature_ids():
+    with pytest.raises(PITAssemblyError, match="duplicate"):
+        version_id(feature=(sha("a"), sha("a")))
+
+
+def test_sample_version_id_rejects_duplicate_label_ids():
+    with pytest.raises(PITAssemblyError, match="duplicate"):
+        version_id(label=(sha("a"), sha("a")))
+
+
+def test_sample_version_id_rejects_duplicate_considered_ids():
+    with pytest.raises(PITAssemblyError, match="duplicate"):
+        version_id(considered=(sha("a"), sha("a")))
+
+
+def test_sample_version_id_rejects_feature_label_overlap():
+    with pytest.raises(PITAssemblyError, match="both the feature and label"):
+        version_id(feature=(sha("a"),), label=(sha("a"),))
+
+
+def test_sample_version_id_rejects_bad_assembler_version():
+    with pytest.raises(PITAssemblyError, match="assembler_version"):
+        version_id(assembler_version="market-vault-pit-assembler-v1\x1f")
+
+
+# ---------------------------------------------------------------------------
+# J. Association schema contract version.
+# ---------------------------------------------------------------------------
+
+
+def test_association_schema_version_changes_sample_version_id():
+    base = version_id(feature=(sha("a"),))
+    changed = version_id(
+        feature=(sha("a"),), association_schema_version="pit-association-schema-v2"
+    )
+    assert base != changed
+
+
+def test_association_schema_version_pinned():
+    assert PIT_ASSOCIATION_SCHEMA_VERSION == "pit-association-schema-v1"
+    assert version_id(feature=(sha("a"),)) == pit_sample_version_id(
+        sample_key=sha("sample"),
+        dataset_as_of=None,
+        feature_canonical_row_version_ids=(sha("a"),),
+        label_canonical_row_version_ids=(),
+        considered_canonical_build_ids=(),
+    )
+
+
+# ---------------------------------------------------------------------------
+# K. Empty observation semantics.
+# ---------------------------------------------------------------------------
+
+
+def test_empty_observation_when_no_candidates(tmp_path):
+    _, a, *_ = make_builds(tmp_path)
+    sample = assemble([a], [request(code="US.QQQ")]).samples[0]
+    assert sample.diagnostics.feature_candidate_count == 0
+    assert sample.diagnostics.empty_observation_window is True
+
+
+def test_empty_observation_when_all_market_excluded(tmp_path):
+    _, a, *_ = make_builds(tmp_path)
+    sample = assemble(
+        [a],
+        [
+            request(
+                feature_start=datetime(2026, 7, 1, 13, 31, tzinfo=UTC),
+                feature_close=datetime(2026, 7, 1, 13, 31, 30, tzinfo=UTC),
+            )
+        ],
+    ).samples[0]
+    assert sample.diagnostics.feature_candidate_count == 1
+    assert sample.diagnostics.feature_selected_count == 0
+    assert sample.diagnostics.feature_market_future_excluded_count == 1
+    assert sample.diagnostics.empty_observation_window is True
+
+
+def test_empty_observation_when_all_archive_excluded(tmp_path):
+    _, a, b, *_ = make_builds(tmp_path)
+    sample = assemble(
+        [a, b], [request(code="US.NVDA")],
+        dataset_as_of=datetime(2026, 7, 1, 14, 0, tzinfo=UTC),
+    ).samples[0]
+    assert sample.diagnostics.feature_candidate_count == 2
+    assert sample.diagnostics.feature_selected_count == 0
+    assert sample.diagnostics.feature_archive_future_excluded_count == 2
+    assert sample.diagnostics.empty_observation_window is True
+
+
+def test_empty_observation_false_when_selected(tmp_path):
+    _, a, *_ = make_builds(tmp_path)
+    sample = assemble([a], [request()]).samples[0]
+    assert sample.diagnostics.feature_selected_count == 2
+    assert sample.diagnostics.empty_observation_window is False
+
+
+# ---------------------------------------------------------------------------
+# L. Deep immutability of the verified build.
+# ---------------------------------------------------------------------------
+
+
+def test_normalized_request_deeply_immutable(tmp_path):
+    _, a, *_ = make_builds(tmp_path)
+    assert isinstance(a.normalized_request, VerifiedCanonicalRequest)
+    assert isinstance(a.normalized_request.symbols, tuple)
+    assert isinstance(a.normalized_request.trade_dates, tuple)
+    with pytest.raises(FrozenInstanceError):
+        a.normalized_request.symbols = ("US.NVDA",)
+
+
+def test_manifest_payload_immutable_bytes(tmp_path):
+    _, a, *_ = make_builds(tmp_path)
+    assert isinstance(a.manifest_payload, bytes)
+    with pytest.raises(TypeError):
+        a.manifest_payload[0] = ord("x")
+    payload = json.loads(a.manifest_payload)
+    assert payload["canonical_build_id"] == a.canonical_build_id

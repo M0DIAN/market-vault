@@ -23,6 +23,17 @@ Two clocks are enforced per row:
   have ``archive_available_at <= dataset_as_of``. Rows archived exactly at
   the cutoff are allowed; later rows are excluded and counted.
 
+Known internal gaps are reported per sample and role only when the gap's
+dimensions match the request (code, interval, adjustment, market-calendar
+date, and session — ``requested_session == "ALL"`` accepts every actual
+session), its missing range overlaps the window, and the gap was actually
+confirmable under both clocks: an internal gap is only known once the next
+boundary bar is market-available (``next_boundary_bar.market_available_at``)
+and, under ``dataset_as_of``, once both boundary bars are archived
+(``max(previous, next).archive_available_at <= dataset_as_of``). Identical
+gap facts across builds deduplicate deterministically; the same gap ID with
+conflicting facts fails closed. Known gaps never imply a complete session.
+
 This module never computes Feature or Label values, never writes Dataset
 Parquet, never builds a DatasetManifest, and never accesses OpenD or the
 network.
@@ -165,15 +176,13 @@ def assemble_point_in_time_samples(builds, requests, *, dataset_as_of=None) -> P
         candidate["bar"].canonical_row_version_id: candidate for candidate in candidates
     }
     considered_build_ids = tuple(sorted({build.canonical_build_id for build in builds_sorted}))
+    gap_facts = _reconcile_gaps(builds_sorted)
 
-    all_gap_ranges = tuple(
-        gap for build in builds_sorted for gap in build.gap_ranges
-    )
     samples = []
     selected_versions: set[str] = set()
     for request in requests_sorted:
         sample = _assemble_sample(
-            request, dataset_as_of, candidates, considered_build_ids, all_gap_ranges
+            request, dataset_as_of, candidates, considered_build_ids, gap_facts
         )
         samples.append(sample)
         selected_versions.update(sample.feature_canonical_row_version_ids)
@@ -348,12 +357,89 @@ def _gap_overlaps(gap, window_start, window_close) -> bool:
     )
 
 
+def _reconcile_gaps(builds: tuple) -> dict:
+    """Deterministic cross-build reconciliation of known-gap facts.
+
+    Each verified gap keeps its build association through its resolved
+    boundary bars: ``market_known_at`` is the next boundary bar's
+    ``market_available_at`` and ``archive_known_at`` is the maximum archive
+    availability of both boundary bars. The same gap ID with identical facts
+    across builds deduplicates deterministically; the same gap ID with
+    conflicting facts fails closed instead of silently picking a winner.
+    """
+    reconciled: dict[str, dict] = {}
+    for build in builds:
+        for gap, boundary in zip(build.gap_ranges, build.gap_boundaries):
+            facts = {
+                "gap": gap,
+                "market_known_at": boundary.next_market_available_at,
+                "archive_known_at": max(
+                    boundary.previous_archive_available_at,
+                    boundary.next_archive_available_at,
+                ),
+            }
+            existing = reconciled.get(gap.gap_id)
+            if existing is None:
+                reconciled[gap.gap_id] = facts
+            elif (
+                existing["gap"] == facts["gap"]
+                and existing["market_known_at"] == facts["market_known_at"]
+                and existing["archive_known_at"] == facts["archive_known_at"]
+            ):
+                continue
+            else:
+                raise PITAssemblyError(
+                    f"conflicting facts for known gap id {gap.gap_id}: the same gap "
+                    "id from different canonical builds disagrees; fail closed"
+                )
+    return reconciled
+
+
+def _gap_dimension_matches(gap, request: PITSampleRequest) -> bool:
+    """Dimension match: code, interval, adjustment, market-calendar date, and
+    session. ``requested_session == "ALL"`` accepts every actual session."""
+    if (
+        gap.code != request.code
+        or gap.interval != request.interval
+        or gap.adjustment != request.adjustment
+        or gap.market_calendar_date != request.anchor_market_calendar_date
+    ):
+        return False
+    if request.requested_session == "ALL":
+        return True
+    return gap.session == request.requested_session
+
+
+def _known_gap_ids(
+    request: PITSampleRequest,
+    gap_facts: dict,
+    window_start,
+    window_close,
+    dataset_as_of,
+) -> tuple:
+    """Known gap IDs of one role window under dimension, overlap, and
+    market/archive clock rules. Sorted and deduplicated."""
+    known = []
+    for facts in gap_facts.values():
+        gap = facts["gap"]
+        if not _gap_dimension_matches(gap, request):
+            continue
+        if not _gap_overlaps(gap, window_start, window_close):
+            continue
+        if facts["market_known_at"] > window_close:
+            continue
+        if dataset_as_of is not None and facts["archive_known_at"] > dataset_as_of:
+            continue
+        known.append(gap.gap_id)
+    return tuple(sorted(set(known)))
+
+
 def _assemble_sample(
     request: PITSampleRequest,
     dataset_as_of,
     candidates: list[dict],
     considered_build_ids: tuple,
-    all_gap_ranges: tuple,
+    gap_facts: dict,
 ) -> PITSample:
     feature_window = request.feature_window
     label_window = request.label_window
@@ -419,23 +505,18 @@ def _assemble_sample(
         assembler_version=PIT_ASSEMBLER_VERSION,
     )
 
-    # Known internal gaps overlapping the window. Absence of known gaps never
-    # implies a complete session: without an authoritative session schedule
-    # only observed rows, known gaps, and exclusion counts are recorded.
-    feature_gap_ids = sorted(
-        {
-            gap.gap_id
-            for gap in all_gap_ranges
-            if _gap_overlaps(gap, feature_window.start, feature_window.close)
-        }
+    # Known internal gaps: dimension-matched, window-overlapping, and
+    # confirmable under both clocks (the next boundary bar must be
+    # market-available and, under dataset_as_of, both boundary bars must be
+    # archived). Absence of known gaps never implies a complete session:
+    # without an authoritative session schedule only observed rows, known
+    # gaps, and exclusion counts are recorded.
+    feature_gap_ids = _known_gap_ids(
+        request, gap_facts, feature_window.start, feature_window.close, dataset_as_of
     )
     label_gap_ids = (
-        sorted(
-            {
-                gap.gap_id
-                for gap in all_gap_ranges
-                if _gap_overlaps(gap, label_window.start, label_window.close)
-            }
+        _known_gap_ids(
+            request, gap_facts, label_window.start, label_window.close, dataset_as_of
         )
         if label_window is not None
         else ()
@@ -452,7 +533,9 @@ def _assemble_sample(
         label_archive_future_excluded_count=label_archive_excluded,
         known_feature_gap_ids=feature_gap_ids,
         known_label_gap_ids=label_gap_ids,
-        empty_observation_window=not feature_candidates,
+        # PIT-visible Feature observation is empty when no Feature row
+        # survives the clocks, not merely when the candidate set is empty.
+        empty_observation_window=not feature_selected,
     )
     return PITSample(
         sample_key=sample_key,

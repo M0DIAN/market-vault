@@ -64,6 +64,13 @@ class PITAssemblyError(ValueError):
 def _normalize_text(value, label: str, *, upper: bool = False, lower: bool = False) -> str:
     if not isinstance(value, str):
         raise PITAssemblyError(f"{label} must be a string, got {type(value).__name__}")
+    # Reject control characters and encoding separators on the raw value:
+    # Python treats U+001C-U+001F as whitespace, so strip() below would
+    # silently erase them before any safety check.
+    try:
+        reject_unsafe_text(value, label)
+    except DatasetError as exc:
+        raise PITAssemblyError(str(exc)) from exc
     text = unicodedata.normalize("NFC", value).strip()
     if upper:
         text = text.upper()
@@ -71,10 +78,6 @@ def _normalize_text(value, label: str, *, upper: bool = False, lower: bool = Fal
         text = text.lower()
     if not text:
         raise PITAssemblyError(f"{label} must not be empty")
-    try:
-        reject_unsafe_text(text, label)
-    except DatasetError as exc:
-        raise PITAssemblyError(str(exc)) from exc
     return text
 
 
@@ -207,8 +210,13 @@ class PITDiagnostics:
     exclusions are counted before archive-clock exclusions, so
     ``<role>_candidate_count == <role>_selected_count +
     <role>_market_future_excluded_count + <role>_archive_future_excluded_count``.
-    Known gap IDs are the sorted, deduplicated internal gap ranges that
-    overlap the window; their absence never implies a complete session.
+    Known gap IDs are the sorted, deduplicated internal gap ranges that match
+    the request dimensions, overlap the window, and are confirmable under
+    both clocks; their absence never implies a complete session.
+    ``empty_observation_window`` means the PIT-visible Feature observation is
+    empty: no Feature row survived the market/archive clocks (no candidates
+    and candidates fully clock-excluded both count as empty); it never means
+    merely that the event-time candidate set is empty.
     """
 
     feature_candidate_count: int
@@ -273,11 +281,11 @@ class PITSample:
 
     ``sample_key`` is the stable logical sample definition (no provenance);
     ``sample_version_id`` binds it to the normalized ``dataset_as_of``, the
-    ordered feature/label canonical row-version IDs, and the considered
-    Canonical build IDs under the current assembler version. Feature and
-    label row-version IDs are in deterministic position order. This PR never
-    claims a label horizon is COMPLETE: only observed rows, known gaps, and
-    clock-exclusion counts are recorded.
+    ordered feature/label canonical row-version IDs, the considered Canonical
+    build IDs, and the association schema contract version under the current
+    assembler version. Feature and label row-version IDs are in deterministic
+    position order. This PR never claims a label horizon is COMPLETE: only
+    observed rows, known gaps, and clock-exclusion counts are recorded.
     """
 
     sample_key: str
