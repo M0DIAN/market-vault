@@ -1,6 +1,6 @@
-# MarketVault v0.3
+# MarketVault v0.4
 
-MarketVault is a local historical market database for moomoo OpenD. V0.1 focused on closed-date stock, ETF, and option candlesticks. V0.2 added option contract static metadata and daily option volatility datasets. V0.3 adds the trading-calendar-driven collection and audit toolchain: a local trading calendar, resumable historical backfill, immutable snapshots, inventory reports, trading-day coverage audits, and intraday integrity audits.
+MarketVault is a local historical market database for moomoo OpenD. V0.1 focused on closed-date stock, ETF, and option candlesticks. V0.2 added option contract static metadata and daily option volatility datasets. V0.3 adds the trading-calendar-driven collection and audit toolchain: a local trading calendar, resumable historical backfill, immutable snapshots, inventory reports, trading-day coverage audits, and intraday integrity audits. V0.4 adds the Canonical Dataset and ML Foundation: immutable Canonical builds from audited COMPLETE snapshots, a verified Canonical reader, three-clock market-bar semantics, two-clock point-in-time sample assembly, versioned Feature/Label spec contracts, deterministic Dataset identity/manifest contracts, chronological splits with actual-label-end purging, and the leakage threat-model regression suite.
 
 ## What this version does
 
@@ -21,9 +21,16 @@ MarketVault is a local historical market database for moomoo OpenD. V0.1 focused
 - Reports local storage, snapshot, and per-combination coverage through `inventory`.
 - Audits trading-day coverage with COMPLETE / INCOMPLETE / MISSING classification through `audit`.
 - Selects the latest complete physical snapshot and audits intraday structure, timestamps, timezones, session labels, duplicate bars, minute-grid alignment, and internal gaps through `intraday-audit`.
-- Runs CI on Python 3.11, 3.12, 3.13, and 3.14.
+- Builds immutable Canonical market-bar builds from audited COMPLETE snapshots and reads them back through a strict verified reader.
+- Adds `event_time` / `market_available_at` / `archive_available_at` three-clock semantics with an optional `dataset_as_of` archive cutoff.
+- Provides deterministic Dataset schema/content/dataset identities and the versioned Dataset manifest contracts.
+- Provides versioned Feature and Label spec contracts with strict fail-closed YAML parsing and semantic content IDs.
+- Assembles point-in-time Feature/Label observation associations under the market and archive clocks.
+- Assigns chronological TRAIN / VALIDATION / TEST splits and purges samples by actual label end.
+- Adds an eight-threat offline leakage regression suite.
+- Runs CI on Python 3.11 and 3.14, plus a package build/install job.
 
-## Recommended V0.3 workflow
+## Recommended collection and audit workflow
 
 ```text
 1. init-catalog
@@ -44,6 +51,43 @@ MarketVault is a local historical market database for moomoo OpenD. V0.1 focused
 This project can backfill historical candlesticks, option-chain static metadata, and daily volatility analysis where OpenD and the account permissions allow it. It cannot reconstruct historical minute-by-minute Bid/Ask, order-book depth, Greeks, or complete intraday IV after the fact. Those fields require a live capture and subscription pipeline.
 
 MarketVault does not include real-time subscriptions, live Bid/Ask, live Greeks, positions, signals, execution, or automatic trading.
+
+## V0.4 canonical and dataset foundation
+
+V0.4 adds the Canonical Dataset and ML Foundation on top of the audited V0.3 collection layer:
+
+```text
+Raw / Curated
+    → audited COMPLETE snapshots
+    → immutable Canonical builds
+    → verified PIT sample assembly
+    → Feature / Label specs
+    → chronological split and purge
+    → deterministic Dataset identity / manifest contracts
+```
+
+- Canonical builds are derived only from audited COMPLETE snapshots. INCOMPLETE or MISSING keys never produce Canonical rows. A request with no eligible COMPLETE snapshots produces a deterministic EMPTY build; completion states are not converted into synthetic rows or internal-gap sidecar entries.
+- The Canonical gap sidecar records only confirmable internal nominal-spacing gaps between observed Canonical bars; it never infers leading/trailing/session gaps and never generates synthetic bars.
+- A strict verified Canonical reader (`load_verified_canonical_build`) is the only public read path into committed Canonical builds; it fails closed on any inconsistency.
+- Bars carry three instants: `event_time` (the adopted interval-start instant, UTC), `market_available_at` (computed as `event_time + nominal interval`; exact for bars known to span the complete nominal interval, and a conservative leakage-safe not-before bound for bars that may be truncated at a session boundary or an early close — the market clock used by point-in-time feature assembly), and `archive_available_at` (`run_finished_at`, the archive clock). An optional `dataset_as_of` selects archive-time reproducibility.
+- Deterministic Dataset schema/content/dataset identities and the versioned Dataset manifest are the contract foundation of derived datasets; the final Dataset builder is not implemented.
+- Feature and Label definitions are versioned spec contracts with deterministic semantic content IDs; no Feature or Label value is computed by this layer.
+- PIT sample assembly binds verified Canonical rows to Feature/Label observation windows under the market clock and the optional archive clock.
+- Chronological TRAIN / VALIDATION / TEST splits are assigned by feature window close; samples whose actual label end crosses a boundary are purged.
+- Eight leakage threats (future-bar, archive-time, label-cross-split, adjustment/corporate-action, snapshot substitution, spec drift, completion ambiguity, timezone misattribution) are pinned by an offline regression suite. The default leakage-safe dataset policy is `adjustment = NONE`; adjusted-price PIT reconstruction is not implemented.
+
+The V0.4 layer is currently used through the Python API and the contract modules. There is no final Dataset CLI, no automatic Feature/Label value computation, and no final Dataset Parquet export; the Dataset manifest/identity contracts are the foundation, not a complete Dataset builder.
+
+Contract details:
+
+- [ADR 0001: Canonical ML Dataset Boundary](docs/adr/0001-canonical-ml-dataset-boundary.md)
+- [Market-bar timestamp semantics](docs/contracts/market_bar_timestamp_semantics.md)
+- [Canonical market-bar materialization](docs/contracts/canonical_market_bar_materialization.md)
+- [Derived dataset manifest](docs/contracts/derived_dataset_manifest.md)
+- [Point-in-time sample assembly](docs/contracts/point_in_time_sample_assembly.md)
+- [Feature/Label spec versioning](docs/contracts/feature_label_spec_versioning.md)
+- [Chronological splits and purging](docs/contracts/chronological_splits_and_purging.md)
+- [Leakage threat-model regression](docs/contracts/leakage_threat_model_regression.md)
 
 ## Requirements
 
@@ -480,6 +524,15 @@ pytest
 ```
 
 The tests are offline and do not require OpenD.
+
+## Upgrade from v0.3
+
+- No destructive data migration. V0.3 Raw/Curated data, the DuckDB catalog, manifests, and CLI continue to work unchanged.
+- Existing data does not need to be deleted or rebuilt.
+- Canonical builds are new, independent immutable artifacts; v0.4 never modifies old Raw/Curated data.
+- Legacy `batch-<batch_key>.parquet` compatibility is preserved.
+- Existing CLI names and behavior do not change because of the v0.4 foundation; users can keep using only the V0.3 collection/audit workflow.
+- V0.4 capabilities never run automatically in the background.
 
 ## Upgrade from v0.2
 

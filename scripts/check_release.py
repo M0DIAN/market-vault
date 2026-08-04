@@ -1,8 +1,8 @@
 """Read-only release-readiness checker for MarketVault.
 
-Verifies that pyproject.toml, the package version module, documentation, and
-build hygiene agree before tagging. Never modifies files. Uses only the
-Python 3.11 standard library.
+Verifies that pyproject.toml, the package version module, documentation, CI
+package assertions, and build hygiene agree before tagging. Never modifies
+files. Uses only the Python 3.11 standard library.
 
 Exit code 0 with "RELEASE_CHECK_OK version=..." on success; exit code 1 with
 every failure listed otherwise.
@@ -17,12 +17,21 @@ import sys
 import tomllib
 from pathlib import Path
 
-EXPECTED_VERSION = "0.3.0"
+EXPECTED_VERSION = "0.4.0"
 PEP440_RE = re.compile(
     r"^([1-9]\d*!)?(0|[1-9]\d*)(\.(0|[1-9]\d*))*((a|b|rc)(0|[1-9]\d*))?"
     r"(\.post(0|[1-9]\d*))?(\.dev(0|[1-9]\d*))?$"
 )
 FORBIDDEN_TRACKED = ("build/", "dist/", ".whl", "data/", "catalog/", "manifests/", "reports/")
+# The CI fresh-wheel step asserts the installed package module version and the
+# installed distribution metadata version separately; both must be present.
+CI_PACKAGE_VERSION_MARKERS = (
+    f'assert market_vault.__version__ == "{EXPECTED_VERSION}"',
+    f"assert market_vault.__version__ == '{EXPECTED_VERSION}'",
+)
+CI_METADATA_VERSION_MARKERS = (
+    f"assert version('market-vault') == '{EXPECTED_VERSION}'",
+)
 
 
 def tracked_files(root: Path) -> list[str]:
@@ -68,8 +77,8 @@ def check_readme_title(root: Path) -> list[str]:
     if not path.exists():
         return ["README.md is missing"]
     first_line = path.read_text(encoding="utf-8").splitlines()[0]
-    if first_line.strip() != "# MarketVault v0.3":
-        return [f"README first line is {first_line.strip()!r}, expected '# MarketVault v0.3'"]
+    if first_line.strip() != "# MarketVault v0.4":
+        return [f"README first line is {first_line.strip()!r}, expected '# MarketVault v0.4'"]
     return []
 
 
@@ -78,8 +87,8 @@ def check_changelog(root: Path) -> list[str]:
     if not path.exists():
         return ["CHANGELOG.md is missing"]
     text = path.read_text(encoding="utf-8")
-    if "## [0.3.0] - 2026-08-04" not in text:
-        return ["CHANGELOG.md is missing '## [0.3.0] - 2026-08-04'"]
+    if "## [0.4.0] - 2026-08-05" not in text:
+        return ["CHANGELOG.md is missing '## [0.4.0] - 2026-08-05'"]
     return []
 
 
@@ -89,8 +98,12 @@ def check_readme_no_development_wording(root: Path) -> list[str]:
         return ["README.md is missing"]
     text = path.read_text(encoding="utf-8")
     failures = []
-    if "V0.3 development" in text:
-        failures.append("README still contains 'V0.3 development'")
+    if "V0.4 development" in text:
+        failures.append("README still contains 'V0.4 development'")
+    if "V0.4 remains under development" in text:
+        failures.append("README still contains 'V0.4 remains under development'")
+    if "release preparation pending" in text:
+        failures.append("README still contains 'release preparation pending'")
     if "one calendar day after" in text:
         failures.append("README still contains the outdated 'one calendar day after' phrasing")
     if "next trading date" not in text and "first trading date strictly after" not in text:
@@ -99,10 +112,71 @@ def check_readme_no_development_wording(root: Path) -> list[str]:
 
 
 def check_release_notes(root: Path) -> list[str]:
+    path = root / "docs" / "release_v0_4_0.md"
+    if not path.exists():
+        return ["docs/release_v0_4_0.md is missing"]
+    return []
+
+
+def check_old_release_notes(root: Path) -> list[str]:
     path = root / "docs" / "release_v0_3_0.md"
     if not path.exists():
         return ["docs/release_v0_3_0.md is missing"]
     return []
+
+
+def check_readme_upgrade_from_v03(root: Path) -> list[str]:
+    path = root / "README.md"
+    if not path.exists():
+        return ["README.md is missing"]
+    text = path.read_text(encoding="utf-8")
+    if "Upgrade from v0.3" not in text:
+        return ["README does not contain 'Upgrade from v0.3'"]
+    return []
+
+
+def check_readme_no_final_dataset_builder(root: Path) -> list[str]:
+    path = root / "README.md"
+    if not path.exists():
+        return ["README.md is missing"]
+    text = path.read_text(encoding="utf-8")
+    if "final Dataset builder" not in text or "not implemented" not in text:
+        return ["README does not state that the final Dataset builder is not implemented"]
+    return []
+
+
+def check_readme_adjustment_none(root: Path) -> list[str]:
+    path = root / "README.md"
+    if not path.exists():
+        return ["README.md is missing"]
+    text = path.read_text(encoding="utf-8")
+    failures = []
+    if "adjustment" not in text or "NONE" not in text:
+        failures.append("README does not mention the adjustment NONE default")
+    if "adjusted-price" not in text:
+        failures.append("README does not mention the no-adjusted-price boundary")
+    return failures
+
+
+def check_ci_version_assertions(root: Path) -> list[str]:
+    path = root / ".github" / "workflows" / "ci.yml"
+    if not path.exists():
+        return [".github/workflows/ci.yml is missing"]
+    text = path.read_text(encoding="utf-8")
+    failures = []
+    if not any(marker in text for marker in CI_PACKAGE_VERSION_MARKERS):
+        failures.append(
+            ".github/workflows/ci.yml wheel package module version assertion "
+            f"is missing or wrong (expected {EXPECTED_VERSION!r})"
+        )
+    if not any(marker in text for marker in CI_METADATA_VERSION_MARKERS):
+        failures.append(
+            ".github/workflows/ci.yml wheel distribution metadata assertion "
+            f"is missing or wrong (expected {EXPECTED_VERSION!r})"
+        )
+    if "0.3.0" in text:
+        failures.append(".github/workflows/ci.yml still references the old version 0.3.0")
+    return failures
 
 
 def check_build_artifacts_untracked(root: Path) -> list[str]:
@@ -154,6 +228,11 @@ def main() -> int:
         ("CHANGELOG entry", check_changelog),
         ("README wording", check_readme_no_development_wording),
         ("release notes", check_release_notes),
+        ("old release notes", check_old_release_notes),
+        ("README upgrade notes", check_readme_upgrade_from_v03),
+        ("README dataset boundary", check_readme_no_final_dataset_builder),
+        ("README adjustment boundary", check_readme_adjustment_none),
+        ("CI version assertions", check_ci_version_assertions),
         ("build artifacts untracked", check_build_artifacts_untracked),
         ("PEP 440 version", check_pep440),
         ("CLI version output", check_cli_version),

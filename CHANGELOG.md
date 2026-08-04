@@ -4,6 +4,65 @@ All notable changes to MarketVault are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-08-05
+
+### Added
+
+- Canonical market-bar builder core: `canonical_bar_key` business identity
+  and `canonical_row_version_id` physical row-version identity, deterministic
+  reconciliation, provenance, and the COMPLETE audit gate.
+- Immutable Canonical materialization: deterministic build identities,
+  explicit Parquet schema, conservative gap sidecar, resolution JSONL,
+  atomic commit, and EMPTY builds.
+- Strict verified Canonical artifact reader (`load_verified_canonical_build`)
+  with fail-closed validation.
+- Three-clock market-bar semantics contract: `event_time`,
+  `market_available_at`, and `archive_available_at`, plus the optional
+  `dataset_as_of` archive cutoff.
+- Deterministic derived Dataset schema/content/dataset identity core and the
+  versioned Dataset manifest contract with provenance pins.
+- Two-clock point-in-time sample assembly foundation binding Canonical rows
+  to Feature/Label observation windows.
+- Versioned Feature and Label spec contracts with strict fail-closed YAML
+  parsing and semantic content IDs.
+- Chronological TRAIN / VALIDATION / TEST split foundation with
+  actual-label-end purging.
+- Eight-threat leakage threat-model regression suite with cross-layer
+  provenance canary.
+- MIT License with the M0DIAN copyright holder.
+
+### Changed
+
+- CI matrix simplified from Python 3.11/3.12/3.13/3.14 to 3.11 and 3.14 plus
+  the package build/install job.
+- Dataset and Canonical public packages/exports added
+  (`market_vault.canonical`, `market_vault.dataset`).
+- V0.4 documentation and contracts added (ADR 0001, contract documents,
+  direction document).
+
+### Compatibility
+
+- V0.3 CLI behavior is unchanged.
+- V0.3 Raw/Curated data is not migrated, overwritten, or repaired.
+- V0.2 legacy `batch-<batch_key>.parquet` filenames continue to be supported.
+- No runtime ML dependency is added.
+- `requires-python` remains `>=3.11`.
+- Runtime dependencies do not change for this release preparation.
+
+### Known boundaries
+
+- No final Dataset builder orchestration.
+- No Feature/Label value computation.
+- No Dataset Parquet writer or Dataset CLI.
+- PIT supports `adjustment = NONE` only; no adjusted-price corporate-action
+  reconstruction.
+- No cross-trading-day Label execution.
+- No label-completeness inference.
+- No authoritative per-date exchange session schedule.
+- No automatic gap repair, synthetic OHLCV, or interpolation.
+- No ML/backtest framework.
+- No automatic trading.
+
 ## [0.3.0] - 2026-08-04
 
 ### Added
@@ -83,5 +142,6 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Historical K-line collection for closed dates (`collect`), query layer
   (`query`), and option datasets.
 
+[0.4.0]: https://github.com/M0DIAN/market-vault/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/M0DIAN/market-vault/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/M0DIAN/market-vault/releases/tag/v0.2.0
