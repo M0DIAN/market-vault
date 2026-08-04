@@ -340,6 +340,25 @@ def test_readme_describes_ci_matrix():
     assert "Runs CI on Python 3.11 and 3.14" in text
 
 
+def test_readme_contains_empty_build_semantics():
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "no eligible COMPLETE snapshots" in text
+    assert "deterministic EMPTY build" in text
+    assert "not converted into synthetic rows or internal-gap sidecar entries" in text
+
+
+def test_readme_contains_gap_sidecar_scope():
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "internal nominal-spacing gaps" in text
+    assert "never infers leading/trailing/session gaps" in text
+
+
+def test_readme_contains_market_available_at_precision():
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "exact for bars known to span the complete nominal interval" in text
+    assert "conservative leakage-safe not-before bound" in text
+
+
 def test_upgrade_notes_contain_legacy_compatibility():
     text = (ROOT / "README.md").read_text(encoding="utf-8")
     assert "Upgrade from v0.2" in text
@@ -445,8 +464,45 @@ def test_release_checker_fails_on_old_ci_version_assertion(tmp_path):
     ci.write_text(text.replace("'0.4.0'", "'0.3.0'"), encoding="utf-8")
     result = run_check_release(repo)
     assert result.returncode == 1
-    assert "wheel-installed assertions" in result.stdout
+    assert "package module version assertion" in result.stdout
+    assert "distribution metadata assertion" in result.stdout
     assert "old version 0.3.0" in result.stdout
+
+
+def test_release_checker_fails_on_wrong_package_assertion_only(tmp_path):
+    repo = copy_repo(tmp_path)
+    ci = repo / ".github" / "workflows" / "ci.yml"
+    text = ci.read_text(encoding="utf-8")
+    ci.write_text(
+        text.replace(
+            "assert market_vault.__version__ == '0.4.0'",
+            "assert market_vault.__version__ == '9.9.9'",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "package module version assertion" in result.stdout
+    assert "distribution metadata assertion" not in result.stdout
+    assert "old version 0.3.0" not in result.stdout
+
+
+def test_release_checker_fails_on_wrong_metadata_assertion_only(tmp_path):
+    repo = copy_repo(tmp_path)
+    ci = repo / ".github" / "workflows" / "ci.yml"
+    text = ci.read_text(encoding="utf-8")
+    ci.write_text(
+        text.replace(
+            "assert version('market-vault') == '0.4.0'",
+            "assert version('market-vault') == '9.9.9'",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "distribution metadata assertion" in result.stdout
+    assert "package module version assertion" not in result.stdout
+    assert "old version 0.3.0" not in result.stdout
 
 
 def test_release_checker_reports_all_failures_at_once(tmp_path):

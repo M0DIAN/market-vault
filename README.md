@@ -66,9 +66,10 @@ Raw / Curated
     → deterministic Dataset identity / manifest contracts
 ```
 
-- Canonical builds are new, independent immutable artifacts derived only from audited COMPLETE snapshots; INCOMPLETE or MISSING keys never produce canonical rows and are recorded as gaps.
+- Canonical builds are derived only from audited COMPLETE snapshots. INCOMPLETE or MISSING keys never produce Canonical rows. A request with no eligible COMPLETE snapshots produces a deterministic EMPTY build; completion states are not converted into synthetic rows or internal-gap sidecar entries.
+- The Canonical gap sidecar records only confirmable internal nominal-spacing gaps between observed Canonical bars; it never infers leading/trailing/session gaps and never generates synthetic bars.
 - A strict verified Canonical reader (`load_verified_canonical_build`) is the only public read path into committed Canonical builds; it fails closed on any inconsistency.
-- Bars carry three instants: `event_time` (interval start, UTC), `market_available_at` (`event_time + interval`, the market clock used by point-in-time feature assembly), and `archive_available_at` (`run_finished_at`, the archive clock). An optional `dataset_as_of` selects archive-time reproducibility.
+- Bars carry three instants: `event_time` (the adopted interval-start instant, UTC), `market_available_at` (computed as `event_time + nominal interval`; exact for bars known to span the complete nominal interval, and a conservative leakage-safe not-before bound for bars that may be truncated at a session boundary or an early close — the market clock used by point-in-time feature assembly), and `archive_available_at` (`run_finished_at`, the archive clock). An optional `dataset_as_of` selects archive-time reproducibility.
 - Deterministic Dataset schema/content/dataset identities and the versioned Dataset manifest are the contract foundation of derived datasets; the final Dataset builder is not implemented.
 - Feature and Label definitions are versioned spec contracts with deterministic semantic content IDs; no Feature or Label value is computed by this layer.
 - PIT sample assembly binds verified Canonical rows to Feature/Label observation windows under the market clock and the optional archive clock.

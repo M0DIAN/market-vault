@@ -96,23 +96,34 @@ git diff --check passed
 This is the baseline measured before the release-prep PR; the final test
 count is whatever the release-prep PR's own CI run reports.
 
-## Local PyArrow environment note
+## Local release-prep validation
 
 ```text
-Local environment: Python 3.14.4, PyArrow 24.0.0
-Baseline local result: 1025 passed / 113 failed / 1 skipped
+Local environment: Python 3.14.4, PyArrow 25.0.0
+Release-prep branch: 1152 passed / 2 skipped / 0 failed
+Baseline 6d3e8d2:    1137 passed / 2 skipped / 0 failed
 ```
 
-- The 113 local failures are all the same `pyarrow.lib.ArrowTypeError`
-  (`Field interval has incompatible types: string vs
-  dictionary<values=string, indices=int32, ordered=0>`) in known
-  reader/PIT/leakage fixtures caused by a local PyArrow dictionary-encoded
+- The release-prep branch passes 15 more tests than the baseline commit
+  under the same environment; those extra tests are the release-prep tests
+  added by this PR.
+- No new failures appeared and no previously passing test regressed.
+- No PIT/leakage tests were modified, no tests were skipped or xfailed, and
+  PyArrow is neither pinned nor downgraded.
+
+## Historical PyArrow 24 environment note
+
+- A previous local environment (Python 3.14.4, PyArrow 24.0.0) observed 113
+  failures with the same signature
+  (`pyarrow.lib.ArrowTypeError: Field interval has incompatible types:
+  string vs dictionary<values=string, indices=int32, ordered=0>`) in known
+  reader/PIT/leakage fixtures, caused by a local PyArrow dictionary-encoded
   partition/string schema merge difference.
-- GitHub CI environments are fully green (1139 passed on both 3.11 and
-  3.14).
-- The v0.4.0 release preparation does not pin, downgrade, or bypass PyArrow.
-- This record documents a local environment difference; it is not a
-  description of product test results.
+- That difference did not reproduce in the current PyArrow 25.0.0
+  environment; this is not the result of a code fix in this PR.
+- The project keeps `pyarrow>=16` and does not pin a version for this.
+- This historical record documents a previous local environment difference;
+  it does not describe the current release-prep test result.
 
 ## Compatibility
 

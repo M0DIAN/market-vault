@@ -23,10 +23,14 @@ PEP440_RE = re.compile(
     r"(\.post(0|[1-9]\d*))?(\.dev(0|[1-9]\d*))?$"
 )
 FORBIDDEN_TRACKED = ("build/", "dist/", ".whl", "data/", "catalog/", "manifests/", "reports/")
-CI_ASSERTION_MARKERS = (
-    'assert market_vault.__version__ == "0.4.0"',
-    "assert market_vault.__version__ == '0.4.0'",
-    "assert version('market-vault') == '0.4.0'",
+# The CI fresh-wheel step asserts the installed package module version and the
+# installed distribution metadata version separately; both must be present.
+CI_PACKAGE_VERSION_MARKERS = (
+    f'assert market_vault.__version__ == "{EXPECTED_VERSION}"',
+    f"assert market_vault.__version__ == '{EXPECTED_VERSION}'",
+)
+CI_METADATA_VERSION_MARKERS = (
+    f"assert version('market-vault') == '{EXPECTED_VERSION}'",
 )
 
 
@@ -160,9 +164,15 @@ def check_ci_version_assertions(root: Path) -> list[str]:
         return [".github/workflows/ci.yml is missing"]
     text = path.read_text(encoding="utf-8")
     failures = []
-    if not any(marker in text for marker in CI_ASSERTION_MARKERS):
+    if not any(marker in text for marker in CI_PACKAGE_VERSION_MARKERS):
         failures.append(
-            f".github/workflows/ci.yml wheel-installed assertions are not {EXPECTED_VERSION!r}"
+            ".github/workflows/ci.yml wheel package module version assertion "
+            f"is missing or wrong (expected {EXPECTED_VERSION!r})"
+        )
+    if not any(marker in text for marker in CI_METADATA_VERSION_MARKERS):
+        failures.append(
+            ".github/workflows/ci.yml wheel distribution metadata assertion "
+            f"is missing or wrong (expected {EXPECTED_VERSION!r})"
         )
     if "0.3.0" in text:
         failures.append(".github/workflows/ci.yml still references the old version 0.3.0")
