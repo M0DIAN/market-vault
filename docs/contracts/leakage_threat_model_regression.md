@@ -150,12 +150,15 @@ non-semantic requirements-list order) hashes identically. Every semantic
 change — input fields or their authoritative order, `transform_ref`,
 parameter values/types, required versions, output logical type/nullability,
 observation window, horizon, alignment rule, cross-trading-day policy and
-boundary rule — changes the content ID, the SpecPin, and `dataset_id`.
-Duplicate `(kind, name, version)` pins fail closed; pins reject wrong
-containers (FEATURE/LABEL/SPLIT). `ImplementationPin` hash or version
-changes change `dataset_id`. `transform_ref` is a declaration only: never
-imported, never executed, never network-fetched. Unknown/future schema
-versions fail closed.
+boundary rule — is covered by the parameterized drift tests, which assert
+each change propagates through the content ID, the SpecPin, and `dataset_id`
+(one legal case per semantic surface; the `cross_trading_day.allow` case
+switches the observation/horizon contract to MINUTES so that `allow=false`
+stays a legal combination). Duplicate `(kind, name, version)` pins fail
+closed; pins reject wrong containers (FEATURE/LABEL/SPLIT). `ImplementationPin`
+hash or version changes change `dataset_id`. `transform_ref` is a
+declaration only: never imported, never executed, never network-fetched.
+Unknown/future schema versions fail closed.
 
 ## 12. Completion and known-gap limitations
 
@@ -198,16 +201,32 @@ audited COMPLETE synthetic snapshot
     -> dataset_id
 ```
 
+The canary's `DatasetIdentityInput` carries the actual `PITAssemblyResult`
+provenance: `canonical_build_pins`, `canonical_row_version_ids`,
+`gap_references`, and `dataset_as_of` are copied from the assembly output
+into the identity input (the identity asserts equality with the assembly
+fields). Row-version coverage is validated on the identity input itself by
+`dataset_id` — not only by a separate assembly-side check — and the
+Feature/Label implementation pins also enter the identity. The identity
+carries an explicit `CompletionSummary`, the Feature/Label/Split SpecPins in
+their correct containers, and a `DatasetScope` that matches the PIT request
+(symbol, date, interval, session, adjustment).
+
 The canary asserts: Feature association rows are exactly the PIT-visible
-rows; Label rows are separated from Feature rows; selected canonical row
-versions are covered by the build pins; `adjustment == NONE`; the label
-status is explicit; the actual label end decides the purge; Feature/Label/
-Split pins enter the correct containers; `dataset_id` is a 64-character
-lowercase SHA-256; identical inputs (including input-order changes) produce
-identical results; and any identity-bearing threat mutation changes
-`dataset_id` or fails closed. This is an offline combination check of
-existing contracts — it is not the final Dataset builder and it neither
-constructs a DatasetManifest nor writes Dataset Parquet.
+rows; Label rows are separated from Feature rows; `adjustment == NONE`; the
+label status is explicit; the actual label end decides the purge;
+`dataset_id` is a 64-character lowercase SHA-256; identical inputs (including
+container input-order changes of implementations and spec pins) produce
+identical results; and every identity-bearing threat mutation changes
+`dataset_id` or fails closed — a changed `SourceSnapshotPin`
+`physical_snapshot_hash`, a changed `dataset_as_of`, a real Feature SpecPin
+semantic change, an `ImplementationPin` hash/version change, and the
+ASSIGNED-vs-PURGED split assignment content all change the canary ID. This
+is an offline combination check of existing contracts — it is not the final
+Dataset builder and it neither constructs a DatasetManifest nor writes
+Dataset Parquet. It proves the correct future-builder transfer path; it does
+not claim that omitting every canonical pin fails closed, because the
+current identity core has no such non-empty contract.
 
 ## 15. Deterministic / offline test guarantees
 

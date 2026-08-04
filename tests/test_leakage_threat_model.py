@@ -174,6 +174,7 @@ THREAT_COVERAGE = {
             "test_archive_time_as_of_binds_version_not_key_and_rejects_naive",
             "test_archive_time_gap_known_only_when_boundary_rows_archived",
             "test_archive_time_late_rows_cannot_jump_cutoff_by_input_order",
+            "test_cross_layer_canary_mutation_dataset_as_of",
         ],
     },
     "LEAKAGE_LABEL_CROSS_SPLIT": {
@@ -222,11 +223,13 @@ THREAT_COVERAGE = {
             "test_snapshot_substitution_uncovered_row_version_fails_closed",
             "test_snapshot_substitution_bad_gap_reference_fails_closed",
             "test_snapshot_substitution_renamed_build_dir_rejected",
+            "test_cross_layer_canary_mutation_source_physical_hash",
         ],
     },
     "LEAKAGE_SPEC_DRIFT": {
         "control": [
             "test_spec_drift_equivalent_yaml_same_identity",
+            "test_cross_layer_canary_input_order_never_changes_identity",
         ],
         "defense": [
             "test_spec_drift_semantic_change_changes_identity",
@@ -235,6 +238,10 @@ THREAT_COVERAGE = {
             "test_spec_drift_implementation_change_changes_dataset_id",
             "test_spec_drift_transform_ref_is_never_executed",
             "test_spec_drift_unknown_schema_version_fails_closed",
+            "test_spec_drift_feature_semantic_change_propagates",
+            "test_spec_drift_label_semantic_change_propagates",
+            "test_cross_layer_canary_mutation_feature_spec_semantics",
+            "test_cross_layer_canary_mutation_implementation_pin",
         ],
     },
     "LEAKAGE_COMPLETION_AMBIGUITY": {
@@ -603,7 +610,7 @@ def split_sample(key_text: str, *, close=None, status=LABEL_STATUS_COMPLETE,
 def identity_input(*, split_pin=None, feature_pins=(), label_pins=(),
                    implementations=(), schema=None, rows=None, completion=None,
                    gap_refs=(), builds=(), row_versions=(),
-                   adjustment="NONE") -> DatasetIdentityInput:
+                   adjustment="NONE", dataset_as_of=None) -> DatasetIdentityInput:
     schema = schema or DatasetSchema((DatasetField("x", "int64", False),))
     rows = rows if rows is not None else []
     scope = DatasetScope(
@@ -616,7 +623,7 @@ def identity_input(*, split_pin=None, feature_pins=(), label_pins=(),
     return DatasetIdentityInput(
         dataset_kind="market-samples-dataset",
         scope=scope,
-        dataset_as_of=None,
+        dataset_as_of=dataset_as_of,
         schema=schema,
         dataset_schema_id=dataset_schema_id(schema),
         logical_dataset_content_id=logical_dataset_content_id(schema, rows),
@@ -1608,6 +1615,156 @@ def test_spec_drift_unknown_schema_version_fails_closed(parse, schema_version):
         ))
 
 
+# One entry per legal Feature spec semantic change: (case id, base, changed).
+# Every entry must differ only in the semantic surface it names; the
+# parameterized test asserts the change propagates through the content ID,
+# the SpecPin, and dataset_id. Each case is constructed with dataclasses
+# replace() on the typed model, never by mutating the base object.
+FEATURE_SPEC_DRIFT_CASES = (
+    (
+        "input-canonical-field",
+        feature_spec(),
+        replace(feature_spec(), input_canonical_fields=("close", "open")),
+    ),
+    (
+        "authoritative-input-order",
+        replace(feature_spec(), input_canonical_fields=("close", "open")),
+        replace(feature_spec(), input_canonical_fields=("open", "close")),
+    ),
+    (
+        "transform-ref",
+        feature_spec(),
+        replace(
+            feature_spec(),
+            transform_ref="market_vault.features.transforms:other_return",
+        ),
+    ),
+    (
+        "parameter-value",
+        feature_spec(),
+        replace(feature_spec(), parameters=(SpecParameter("lookback", 10),)),
+    ),
+    (
+        "parameter-type",
+        feature_spec(),
+        replace(feature_spec(), parameters=(SpecParameter("lookback", 5.0),)),
+    ),
+    (
+        "required-canonical-schema-version",
+        feature_spec(),
+        replace(
+            feature_spec(),
+            requirements=SpecVersionRequirements(
+                ("market-bars-canonical-schema-v2",), ("10.9",)
+            ),
+        ),
+    ),
+    (
+        "required-source-schema-version",
+        feature_spec(),
+        replace(
+            feature_spec(),
+            requirements=SpecVersionRequirements(
+                ("market-bars-canonical-schema-v1",), ("10.10",)
+            ),
+        ),
+    ),
+    (
+        "output-logical-type",
+        feature_spec(),
+        replace(feature_spec(), output=DatasetField("close_return", "int64", True)),
+    ),
+    (
+        "output-nullability",
+        feature_spec(),
+        replace(feature_spec(), output=DatasetField("close_return", "float64", False)),
+    ),
+)
+
+# One entry per legal Label spec semantic change. The cross_trading_day.allow
+# case switches the whole observation/horizon contract to MINUTES so that
+# allow=false stays a legal combination (a TRADING_DAYS horizon requires
+# allow=true); the test never constructs a model-illegal LabelSpec.
+LABEL_SPEC_DRIFT_CASES = (
+    (
+        "observation-window",
+        label_spec(),
+        replace(
+            label_spec(),
+            observation_window=LabelObservationWindow("TRADING_DAYS", 0, 2),
+        ),
+    ),
+    (
+        "horizon",
+        label_spec(),
+        replace(label_spec(), horizon=LabelHorizon("TRADING_DAYS", 2)),
+    ),
+    (
+        "alignment-rule",
+        label_spec(),
+        replace(label_spec(), alignment_rule="ALIGN_OPEN"),
+    ),
+    (
+        "cross-trading-day-boundary-rule",
+        label_spec(),
+        replace(
+            label_spec(),
+            cross_trading_day=CrossTradingDayPolicy(True, "END_OF_LAST_BAR"),
+        ),
+    ),
+    (
+        "cross-trading-day-allow",
+        label_spec(),
+        replace(
+            label_spec(),
+            observation_window=LabelObservationWindow("MINUTES", 0, 30),
+            horizon=LabelHorizon("MINUTES", 30),
+            cross_trading_day=CrossTradingDayPolicy(False, None),
+        ),
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    "case_id, base, changed",
+    FEATURE_SPEC_DRIFT_CASES,
+    ids=[case[0] for case in FEATURE_SPEC_DRIFT_CASES],
+)
+def test_spec_drift_feature_semantic_change_propagates(case_id, base, changed):
+    """Every legal Feature spec semantic change propagates through the content
+    ID, the SpecPin, and dataset_id."""
+    base_content_id = feature_label_spec_content_id(base)
+    changed_content_id = feature_label_spec_content_id(changed)
+    assert changed_content_id != base_content_id, case_id
+    base_pin = feature_label_spec_pin(base)
+    changed_pin = feature_label_spec_pin(changed)
+    assert changed_pin != base_pin, case_id
+    assert changed_pin.content_sha256 == changed_content_id
+    assert dataset_id(identity_input(feature_pins=(base_pin,))) != dataset_id(
+        identity_input(feature_pins=(changed_pin,))
+    ), case_id
+
+
+@pytest.mark.parametrize(
+    "case_id, base, changed",
+    LABEL_SPEC_DRIFT_CASES,
+    ids=[case[0] for case in LABEL_SPEC_DRIFT_CASES],
+)
+def test_spec_drift_label_semantic_change_propagates(case_id, base, changed):
+    """Every legal Label spec semantic change propagates through the content
+    ID, the SpecPin, and dataset_id."""
+    base_content_id = feature_label_spec_content_id(base)
+    changed_content_id = feature_label_spec_content_id(changed)
+    assert changed_content_id != base_content_id, case_id
+    base_pin = feature_label_spec_pin(base)
+    changed_pin = feature_label_spec_pin(changed)
+    assert changed_pin != base_pin, case_id
+    assert changed_pin.content_sha256 == changed_content_id
+    assert dataset_id(identity_input(label_pins=(base_pin,))) != dataset_id(
+        identity_input(label_pins=(changed_pin,))
+    ), case_id
+
+
 # ---------------------------------------------------------------------------
 # 9. LEAKAGE_COMPLETION_AMBIGUITY: incomplete data must never masquerade.
 # ---------------------------------------------------------------------------
@@ -1946,13 +2103,17 @@ def test_timezone_microsecond_truncation_is_consistent():
 # ---------------------------------------------------------------------------
 
 
-def test_cross_layer_canary_full_offline_chain(tmp_path):
-    """COMPLETE synthetic snapshot -> Canonical materialization -> verified
-    reader -> PIT assembly -> Feature/Label SpecPin -> explicit split facts ->
-    chronological split assignment -> DatasetIdentityInput -> dataset_id.
+def make_canary_chain(tmp_path):
+    """One offline canary chain: synthetic snapshot -> Canonical
+    materialization -> verified reader -> PIT assembly (with dataset_as_of) ->
+    explicit split facts -> chronological split assignment.
 
-    This is an offline combination check of existing contracts, not the final
-    Dataset builder and not a DatasetManifest/Parquet writer.
+    Returns ``(assembly, kept, purged, canary_identity)`` where the split
+    results are the ASSIGNED and PURGED outcomes for the same sample and
+    ``canary_identity(result)`` builds the DatasetIdentityInput with the
+    actual PITAssemblyResult provenance copied in (build pins, row versions,
+    gap references, dataset_as_of) plus explicit completion facts and the
+    Feature/Label implementation pins.
     """
     _, build = make_primary_build(tmp_path)
     as_of = utc(2026, 7, 1, 14, 0)
@@ -1962,6 +2123,91 @@ def test_cross_layer_canary_full_offline_chain(tmp_path):
         label_close=utc(2026, 7, 1, 13, 35),
     )
     assembly = assemble_point_in_time_samples([build], [request], dataset_as_of=as_of)
+    spec = split_spec()
+    pit_sample = assembly.samples[0]
+
+    def split_facts(actual_label_end):
+        return assign_chronological_splits(
+            [
+                ChronologicalSplitSample(
+                    sample_key=pit_sample.sample_key,
+                    sample_version_id=pit_sample.sample_version_id,
+                    feature_window_close=request.feature_window_close,
+                    label_status=LABEL_STATUS_COMPLETE,
+                    actual_label_end_time=actual_label_end,
+                )
+            ],
+            spec,
+        )
+
+    kept = split_facts(utc(2026, 7, 1, 15, 0))
+    purged = split_facts(utc(2026, 8, 1, 5, 0))
+    feature_pin = feature_label_spec_pin(feature_spec())
+    label_pin = feature_label_spec_pin(label_spec())
+    split_pin = chronological_split_spec_pin(spec)
+    implementation_pins = (
+        ImplementationPin(
+            name="feature-transform-impl", version="v1",
+            content_sha256=sha("feature-transform-impl-v1"),
+        ),
+        ImplementationPin(
+            name="label-transform-impl", version="v1",
+            content_sha256=sha("label-transform-impl-v1"),
+        ),
+    )
+    completion = CompletionSummary(
+        complete_count=1,
+        incomplete_count=0,
+        missing_count=0,
+        entries=(
+            CompletionEntry(
+                code="US.MU",
+                trade_date=date(2026, 7, 1),
+                status="COMPLETE",
+            ),
+        ),
+    )
+
+    def canary_identity(result):
+        return identity_input(
+            split_pin=split_pin,
+            feature_pins=(feature_pin,),
+            label_pins=(label_pin,),
+            implementations=implementation_pins,
+            schema=result.assignment_schema,
+            rows=result.assignment_rows,
+            builds=assembly.canonical_build_pins,
+            row_versions=assembly.canonical_row_version_ids,
+            gap_refs=assembly.gap_references,
+            dataset_as_of=as_of,
+            completion=completion,
+        )
+
+    return assembly, kept, purged, canary_identity
+
+
+def test_cross_layer_canary_full_offline_chain(tmp_path):
+    """COMPLETE synthetic snapshot -> Canonical materialization -> verified
+    reader -> PIT assembly -> Feature/Label SpecPin -> explicit split facts ->
+    chronological split assignment -> DatasetIdentityInput -> dataset_id.
+
+    The canary's DatasetIdentityInput carries the actual PITAssemblyResult
+    provenance: ``canonical_build_pins``, ``canonical_row_version_ids``,
+    ``gap_references`` and ``dataset_as_of`` are copied in, Feature/Label
+    implementation pins and an explicit completion summary are identity-
+    bearing, and the split assignment schema/content come from the real split
+    result. Coverage is validated on the identity input itself (by
+    ``dataset_id``), not only by a separate assembly-side check.
+
+    This is an offline combination check of existing contracts, not the final
+    Dataset builder and not a DatasetManifest/Parquet writer. It proves the
+    correct future-builder transfer path; it does not claim that omitting
+    every canonical pin fails closed, because the current identity core has
+    no such non-empty contract.
+    """
+    assembly, kept, purged, canary_identity = make_canary_chain(tmp_path)
+    request = assembly.samples[0].request
+    as_of = assembly.samples[0].dataset_as_of
 
     # Feature association rows are exactly the PIT-visible rows.
     for row in assembly.association_rows:
@@ -1981,74 +2227,131 @@ def test_cross_layer_canary_full_offline_chain(tmp_path):
         if row["role"] == "LABEL"
     }
     assert feature_versions.isdisjoint(label_versions)
-    # Every selected canonical row version is covered by a build pin.
-    covered = set()
-    for pin in assembly.canonical_build_pins:
-        covered.update(pin.canonical_row_version_ids)
-    assert set(assembly.canonical_row_version_ids) <= covered
     # The default adjustment policy is NONE end to end.
     assert request.adjustment == "NONE"
-
-    # Explicit split facts derived from the assembled sample: label status and
-    # the actual label end are always caller-provided.
-    pit_sample = assembly.samples[0]
-    spec = split_spec()
-    kept = assign_chronological_splits(
-        [
-            ChronologicalSplitSample(
-                sample_key=pit_sample.sample_key,
-                sample_version_id=pit_sample.sample_version_id,
-                feature_window_close=request.feature_window_close,
-                label_status=LABEL_STATUS_COMPLETE,
-                actual_label_end_time=utc(2026, 7, 1, 15, 0),
-            )
-        ],
-        spec,
-    )
+    # Explicit split facts decide the purge.
     assert kept.assignments[0].assignment_status == SPLIT_STATUS_ASSIGNED
-    # The actual label end decides the purge.
-    purged = assign_chronological_splits(
-        [
-            ChronologicalSplitSample(
-                sample_key=pit_sample.sample_key,
-                sample_version_id=pit_sample.sample_version_id,
-                feature_window_close=request.feature_window_close,
-                label_status=LABEL_STATUS_COMPLETE,
-                actual_label_end_time=utc(2026, 8, 1, 5, 0),
-            )
-        ],
-        spec,
-    )
     assert purged.assignments[0].assignment_status == SPLIT_STATUS_PURGED
 
-    # Feature/Label/Split pins enter the correct identity containers.
-    feature_pin = feature_label_spec_pin(feature_spec())
-    label_pin = feature_label_spec_pin(label_spec())
-    split_pin = chronological_split_spec_pin(spec)
+    identity = canary_identity(kept)
 
-    def canary_identity(result):
-        return identity_input(
-            split_pin=split_pin,
-            feature_pins=(feature_pin,),
-            label_pins=(label_pin,),
-            schema=result.assignment_schema,
-            rows=result.assignment_rows,
-        )
+    # The PIT provenance is actually copied into the DatasetIdentityInput.
+    assert identity.dataset_as_of == assembly.samples[0].dataset_as_of
+    assert identity.canonical_builds == assembly.canonical_build_pins
+    assert identity.canonical_row_version_ids == assembly.canonical_row_version_ids
+    assert identity.gap_references == assembly.gap_references
+    # Coverage is enforced on the identity input itself: every identity row
+    # version is covered by the identity's own canonical build pins.
+    covered = set()
+    for pin in identity.canonical_builds:
+        covered.update(pin.canonical_row_version_ids)
+    assert set(identity.canonical_row_version_ids) <= covered
+    # Split/Feature/Label pins sit in the correct containers.
+    assert identity.split_spec is not None and identity.split_spec.kind == "SPLIT"
+    assert {pin.kind for pin in identity.feature_specs} == {"FEATURE"}
+    assert {pin.kind for pin in identity.label_specs} == {"LABEL"}
+    # Feature/Label implementation pins entered the identity.
+    assert {pin.name for pin in identity.implementations} == {
+        "feature-transform-impl",
+        "label-transform-impl",
+    }
+    # The explicit completion summary is carried.
+    assert identity.completion.complete_count == 1
+    assert identity.completion.incomplete_count == 0
+    assert identity.completion.missing_count == 0
+    assert identity.completion.entries == (
+        CompletionEntry("US.MU", date(2026, 7, 1), "COMPLETE"),
+    )
+    # The scope matches the PIT request.
+    assert identity.scope.symbols == (request.code,)
+    assert identity.scope.trade_dates == (request.anchor_market_calendar_date,)
+    assert identity.scope.interval == request.interval
+    assert identity.scope.requested_session == request.requested_session
+    assert identity.scope.adjustment == request.adjustment
 
-    dataset_id_kept = dataset_id(canary_identity(kept))
+    dataset_id_kept = dataset_id(identity)
     assert SHA_HEX.fullmatch(dataset_id_kept)
-    # Identical inputs, including a different input order, give the same ID.
+    # Identical inputs give the same ID.
     assert dataset_id(canary_identity(kept)) == dataset_id_kept
-    assert dataset_id(identity_input(
-        split_pin=split_pin,
-        feature_pins=(feature_pin,),
-        label_pins=(label_pin,),
-        schema=kept.assignment_schema,
-        rows=list(kept.assignment_rows),
-    )) == dataset_id_kept
     # Any identity-bearing threat mutation changes the ID: the purge decision
-    # changed the assignment content.
+    # changed the split assignment content.
     assert dataset_id(canary_identity(purged)) != dataset_id_kept
+
+
+def test_cross_layer_canary_mutation_source_physical_hash(tmp_path):
+    """On top of the actual assembly build pins, changing only one
+    SourceSnapshotPin's physical_snapshot_hash (keeping every other field and
+    the row-version coverage legal) changes the canary dataset_id."""
+    assembly, kept, _, canary_identity = make_canary_chain(tmp_path)
+    identity = canary_identity(kept)
+    pin = assembly.canonical_build_pins[0]
+    snapshot = pin.source_snapshots[0]
+    tampered = replace(
+        pin,
+        source_snapshots=(
+            replace(snapshot, physical_snapshot_hash=sha("physical-tampered")),
+        ),
+    )
+    changed = replace(identity, canonical_builds=(tampered,))
+    assert changed.canonical_builds != identity.canonical_builds
+    assert dataset_id(changed) != dataset_id(identity)
+
+
+def test_cross_layer_canary_mutation_dataset_as_of(tmp_path):
+    """A different PIT dataset_as_of changes the canary dataset_id."""
+    _, kept, _, canary_identity = make_canary_chain(tmp_path)
+    identity = canary_identity(kept)
+    later = replace(identity, dataset_as_of=utc(2026, 7, 1, 15, 0))
+    assert later.dataset_as_of != identity.dataset_as_of
+    assert dataset_id(later) != dataset_id(identity)
+
+
+def test_cross_layer_canary_mutation_feature_spec_semantics(tmp_path):
+    """A real semantic change of the Feature SpecPin (parameter value) changes
+    the canary dataset_id."""
+    _, kept, _, canary_identity = make_canary_chain(tmp_path)
+    identity = canary_identity(kept)
+    drifted = feature_label_spec_pin(
+        replace(feature_spec(), parameters=(SpecParameter("lookback", 10),))
+    )
+    changed = replace(identity, feature_specs=(drifted,))
+    assert changed.feature_specs != identity.feature_specs
+    assert dataset_id(changed) != dataset_id(identity)
+
+
+def test_cross_layer_canary_mutation_implementation_pin(tmp_path):
+    """ImplementationPin hash or version changes change the canary
+    dataset_id."""
+    _, kept, _, canary_identity = make_canary_chain(tmp_path)
+    identity = canary_identity(kept)
+    other_hash = ImplementationPin(
+        name="feature-transform-impl", version="v1", content_sha256=sha("other-impl")
+    )
+    other_version = ImplementationPin(
+        name="feature-transform-impl", version="v2",
+        content_sha256=sha("feature-transform-impl-v1"),
+    )
+    for mutated in (other_hash, other_version):
+        changed = replace(identity, implementations=(mutated, identity.implementations[1]))
+        assert dataset_id(changed) != dataset_id(identity)
+
+
+def test_cross_layer_canary_input_order_never_changes_identity(tmp_path):
+    """Identical semantics with different container input order (implementations
+    and spec pins) produce the identical canary dataset_id."""
+    _, kept, _, canary_identity = make_canary_chain(tmp_path)
+    identity = canary_identity(kept)
+    # Implementations are canonically sorted by (name, version).
+    swapped_implementations = replace(
+        identity, implementations=tuple(reversed(identity.implementations))
+    )
+    assert swapped_implementations.implementations == identity.implementations
+    assert dataset_id(swapped_implementations) == dataset_id(identity)
+    # Spec pins are canonically sorted by (kind, name, version).
+    second_feature = feature_label_spec_pin(replace(feature_spec(), version="v2"))
+    forward = replace(identity, feature_specs=(identity.feature_specs[0], second_feature))
+    backward = replace(identity, feature_specs=(second_feature, identity.feature_specs[0]))
+    assert dataset_id(forward) == dataset_id(backward)
 
 
 # ---------------------------------------------------------------------------
