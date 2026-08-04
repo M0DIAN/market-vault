@@ -373,16 +373,15 @@ Threats the dataset layer must defend against:
   serialization, strict validation, and atomic standalone manifest writing —
   see
   [contracts/derived_dataset_manifest.md](contracts/derived_dataset_manifest.md).
-- PR-6 (two-clock point-in-time sample assembly) in progress: the verified
-  Canonical build reader and the deterministic PIT assembly foundation —
-  Feature/Label observation windows under the market clock and the optional
-  archive clock, `dataset_as_of` cutoffs, cross-build reconciliation,
-  `sample_key` / `sample_version_id`, the fixed sample-to-row association
-  content contract, CanonicalBuildPins and GapReferences from verified
-  manifests and actually selected rows — see
+- PR-6 (two-clock point-in-time sample assembly) implemented and merged: the
+  verified Canonical build reader and the deterministic PIT assembly
+  foundation — Feature/Label observation windows under the market clock and
+  the optional archive clock, `dataset_as_of` cutoffs, cross-build
+  reconciliation, `sample_key` / `sample_version_id`, the fixed
+  sample-to-row association content contract, CanonicalBuildPins and
+  GapReferences from verified manifests and actually selected rows — see
   [contracts/point_in_time_sample_assembly.md](contracts/point_in_time_sample_assembly.md).
-  Splits and actual-label-end purging (PR-8) and Dataset Parquet export are
-  not implemented yet.
+  Dataset Parquet export is not implemented yet.
 - PR-7 (feature and label spec versioning) implemented: frozen typed
   Feature/Label spec models, strict fail-closed YAML parsing, deterministic
   semantic content hashing, and conversion to the existing SpecPin /
@@ -390,6 +389,18 @@ Threats the dataset layer must defend against:
   [contracts/feature_label_spec_versioning.md](contracts/feature_label_spec_versioning.md).
   No Feature or Label value is computed, no transform is imported or
   executed, and no Dataset is built by this PR.
+- PR-8 (chronological splits and actual-label-end purging) implemented: the
+  deterministic split/purge contract foundation — frozen
+  `ChronologicalSplitSpec`, explicit IANA boundary timezone,
+  feature-window-close local-date assignment, explicit caller-provided label
+  status, TRAIN/VALIDATION purge by the actual label end against DST-safe
+  next-local-midnight exclusive boundaries, INCOMPLETE-label exclusion, the
+  fixed split-assignment logical schema/content, the deterministic split
+  result identity, and SpecPin(kind=SPLIT) / dataset_id integration — see
+  [contracts/chronological_splits_and_purging.md](contracts/chronological_splits_and_purging.md).
+  No Feature or Label value is computed, no label completeness is inferred
+  from PIT, no Dataset is built, and no Dataset Parquet is written by this
+  PR.
 
 ## 14. Proposed PR sequence
 
