@@ -360,11 +360,22 @@ Threats the dataset layer must defend against:
   timestamp behaviors are resolved and pinned by offline tests.
 - PR-3 (canonical builder core) merged: in-memory canonical rows, two-level
   identity model, reconciliation, and conflicts.
-- PR-4 (materialization) in progress: immutable canonical build directories,
+- PR-4 (materialization) merged: immutable canonical build directories,
   explicit Parquet schema, logical build identities, conservative gap
   sidecar, resolution JSONL, immutable manifest, atomic commit, and EMPTY
   builds — see
   [contracts/canonical_market_bar_materialization.md](contracts/canonical_market_bar_materialization.md).
+- PR-5 (dataset manifest/identity core) in progress: explicit logical Dataset
+  schema model, deterministic schema and content identities, canonical-build
+  provenance pins, Feature/Label/Split/Transform fingerprints, scope and
+  `dataset_as_of` normalization, completion and gap references,
+  deterministic `dataset_id`, the versioned Dataset manifest, deterministic
+  serialization, strict validation, and atomic standalone manifest writing —
+  see
+  [contracts/derived_dataset_manifest.md](contracts/derived_dataset_manifest.md).
+  PIT sample assembly (PR-6), Feature/Label spec versioning (PR-7), splits
+  and actual-label-end purging (PR-8), and Dataset Parquet export are not
+  implemented yet.
 
 ## 14. Proposed PR sequence
 
