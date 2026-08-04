@@ -33,6 +33,19 @@ the existing ``SpecPin``(kind=SPLIT) for ``dataset_id`` integration. Label
 completeness is never inferred; ``actual_label_end_time`` is the only purge
 time fact.
 
+The explicit immutable Transform Implementation Registry
+(:mod:`market_vault.dataset.transform_models` and
+:mod:`market_vault.dataset.transform_registry`) provides frozen transform
+registration models, the exact-key registry (the complete v1
+``module.path:function`` ``transform_ref`` string is the only lookup key),
+strict FeatureSpec/LabelSpec compatibility preflight, exact parameter-schema
+validation, and versioned deterministic implementation fingerprints that map
+to the existing ``ImplementationPin`` entries of
+``DatasetIdentityInput.implementations``. The registry resolves only explicit
+built-in registrations; it never imports ``transform_ref``, never executes
+an implementation, contains no built-in Feature or Label transform, and
+does not compute any Feature or Label value.
+
 This layer does not compute features or labels, execute transforms, build
 samples or datasets, export Dataset Parquet, build the final DatasetManifest,
 create DuckDB views, add CLI commands, or train models. The Canonical
@@ -158,8 +171,43 @@ from .splits import (
     split_assignment_schema,
     split_assignment_schema_id,
 )
+from .transform_models import (
+    BOUNDARY_POLICY_NO_CROSS_TRADING_DAY,
+    BOUNDARY_POLICY_PIT_WINDOW_ONLY,
+    BOUNDARY_POLICY_SAME_MARKET_CALENDAR_DATE,
+    MISSING_POLICY_EXCLUDE_SAMPLE,
+    MISSING_POLICY_FAIL,
+    MISSING_POLICY_LABEL_INCOMPLETE,
+    PARAMETER_TYPE_BOOL,
+    PARAMETER_TYPE_FLOAT64,
+    PARAMETER_TYPE_INT64,
+    PARAMETER_TYPE_STRING,
+    TRANSFORM_IMPLEMENTATION_FINGERPRINT_VERSION,
+    TRANSFORM_REGISTRY_CONTRACT_VERSION,
+    ResolvedTransform,
+    TransformParameterContract,
+    TransformRegistration,
+    TransformRegistryError,
+    TransformWindowRequirement,
+    WINDOW_BOUNDARY_EXCLUSIVE,
+    WINDOW_BOUNDARY_INCLUSIVE,
+    WINDOW_SOURCE_FIXED,
+    WINDOW_SOURCE_LABEL_HORIZON,
+    WINDOW_SOURCE_LABEL_OBSERVATION_WINDOW,
+    WINDOW_SOURCE_NONE,
+    WINDOW_SOURCE_PARAMETER,
+    WINDOW_UNIT_BARS,
+    WINDOW_UNIT_MINUTES,
+    WINDOW_UNIT_NONE,
+    transform_implementation_fingerprint,
+    transform_implementation_pin,
+)
+from .transform_registry import TransformRegistry
 
 __all__ = [
+    "BOUNDARY_POLICY_NO_CROSS_TRADING_DAY",
+    "BOUNDARY_POLICY_PIT_WINDOW_ONLY",
+    "BOUNDARY_POLICY_SAME_MARKET_CALENDAR_DATE",
     "CHRONOLOGICAL_SPLIT_RESULT_ID_VERSION",
     "CHRONOLOGICAL_SPLIT_SPEC_CONTENT_ID_VERSION",
     "CHRONOLOGICAL_SPLIT_SPEC_SCHEMA_VERSION",
@@ -173,6 +221,13 @@ __all__ = [
     "LABEL_SPEC_SCHEMA_VERSION",
     "LABEL_STATUS_COMPLETE",
     "LABEL_STATUS_INCOMPLETE",
+    "MISSING_POLICY_EXCLUDE_SAMPLE",
+    "MISSING_POLICY_FAIL",
+    "MISSING_POLICY_LABEL_INCOMPLETE",
+    "PARAMETER_TYPE_BOOL",
+    "PARAMETER_TYPE_FLOAT64",
+    "PARAMETER_TYPE_INT64",
+    "PARAMETER_TYPE_STRING",
     "PIT_ASSEMBLER_VERSION",
     "PIT_ASSOCIATION_COLUMNS",
     "PIT_ASSOCIATION_SCHEMA_VERSION",
@@ -204,6 +259,18 @@ __all__ = [
     "STATUS_COMPLETE",
     "STATUS_EMPTY",
     "SUPPORTED_LOGICAL_TYPES",
+    "TRANSFORM_IMPLEMENTATION_FINGERPRINT_VERSION",
+    "TRANSFORM_REGISTRY_CONTRACT_VERSION",
+    "WINDOW_BOUNDARY_EXCLUSIVE",
+    "WINDOW_BOUNDARY_INCLUSIVE",
+    "WINDOW_SOURCE_FIXED",
+    "WINDOW_SOURCE_LABEL_HORIZON",
+    "WINDOW_SOURCE_LABEL_OBSERVATION_WINDOW",
+    "WINDOW_SOURCE_NONE",
+    "WINDOW_SOURCE_PARAMETER",
+    "WINDOW_UNIT_BARS",
+    "WINDOW_UNIT_MINUTES",
+    "WINDOW_UNIT_NONE",
     "CanonicalBuildPin",
     "ChronologicalSplitAssignment",
     "ChronologicalSplitDiagnostics",
@@ -220,10 +287,18 @@ __all__ = [
     "LabelHorizon",
     "LabelObservationWindow",
     "LabelSpec",
+    "ResolvedTransform",
+    "SourceSnapshotPin",
     "SpecParameter",
+    "SpecPin",
     "SpecValidationError",
     "SpecVersionRequirements",
     "SplitValidationError",
+    "TransformParameterContract",
+    "TransformRegistration",
+    "TransformRegistry",
+    "TransformRegistryError",
+    "TransformWindowRequirement",
     "DatasetField",
     "DatasetIdentityInput",
     "DatasetManifest",
@@ -237,8 +312,6 @@ __all__ = [
     "PITObservationWindow",
     "PITSample",
     "PITSampleRequest",
-    "SourceSnapshotPin",
-    "SpecPin",
     "assign_chronological_splits",
     "assemble_point_in_time_samples",
     "build_dataset_manifest",
@@ -263,6 +336,8 @@ __all__ = [
     "split_assignment_content_id",
     "split_assignment_schema",
     "split_assignment_schema_id",
+    "transform_implementation_fingerprint",
+    "transform_implementation_pin",
     "validate_dataset_manifest",
     "write_dataset_manifest_atomic",
 ]

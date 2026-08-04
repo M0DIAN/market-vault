@@ -515,3 +515,23 @@ Dataset Parquet output, and no Dataset CLI exist. This v0.5.0 direction
 proposes the executable pipeline that connects them. After PR-10, v0.5.0
 ships the pipeline itself; ML training, backtesting, and trading remain out
 of scope for v0.5.0.
+
+## 25. Progress
+
+- **PR-1** (`docs: plan v0.5.0 deterministic dataset builder`) — merged:
+  ADR 0002 and this direction document.
+- **PR-2** (`feat: add transform implementation registry contracts`) —
+  implemented in this branch: the explicit immutable Transform
+  Implementation Registry, frozen registration models, exact
+  `transform_ref` resolution (the complete v1 `module.path:function`
+  string is the only key), strict FeatureSpec/LabelSpec compatibility
+  preflight, exact parameter-schema validation, and versioned deterministic
+  implementation fingerprints mapped to the existing `ImplementationPin` /
+  `DatasetIdentityInput` integration. See
+  [contracts/transform_implementation_registry.md](contracts/transform_implementation_registry.md).
+- Registry, preflight, and fingerprint work is complete. Built-in Feature
+  and Label transforms (PR-3 / PR-4) and the transform executor are **not
+  implemented yet**; no Feature or Label value is computed and no Dataset
+  builder, Parquet, or CLI exists.
+- The package version remains **0.4.0** (it stays 0.4.0 through PR-9 of
+  this sequence; the bump to 0.5.0 happens only in PR-10).
