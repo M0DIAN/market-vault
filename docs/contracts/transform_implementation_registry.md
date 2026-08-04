@@ -277,26 +277,33 @@ and shared calculation code participate. The normalization contract:
 1. obtain the module source with `inspect.getsource(module)`;
 2. no absolute path, checkout directory, or filename enters the payload;
 3. UTF-8 encoding;
-4. Unicode NFC normalization;
-5. CRLF and CR normalized to LF;
-6. leading and trailing blank lines removed;
-7. exactly one final LF;
-8. NUL and unsafe control characters (C0 except tab/newline, DEL, C1)
+4. CRLF and CR normalized to LF;
+5. leading and trailing blank lines removed;
+6. exactly one final LF;
+7. NUL and unsafe control characters (C0 except tab/newline, DEL, C1)
    are rejected — fail closed rather than guess;
-9. the normalized UTF-8 bytes are SHA-256 hashed.
+8. the normalized UTF-8 bytes are SHA-256 hashed.
 
-No per-line trimming is applied: every character of the source content,
-including trailing whitespace inside string literals and on ordinary code
-lines, is preserved intact. Explicitly excluded from the fingerprint:
-absolute paths, checkout directories, filesystem mtimes, file owners,
-memory addresses, `repr(function)`, `id(function)`, import order, registry
+**No Unicode normalization is applied to the Python source.** Every code
+point of the source — including string-literal contents, where composed
+and decomposed Unicode forms stay distinct — is preserved intact outside
+the newline normalization. A composed / decomposed difference inside a
+string literal changes the fingerprint; source string literals are never
+Unicode-normalized. (Structured registration metadata, such as parameter
+names and version strings, still follows its own NFC contract from the
+model validation layer — that is a separate, explicit normalization, never
+an implicit rewrite of the source.) No per-line trimming is applied either:
+trailing whitespace inside string literals and on ordinary code lines is
+preserved intact. Explicitly excluded from the fingerprint: absolute
+paths, checkout directories, filesystem mtimes, file owners, memory
+addresses, `repr(function)`, `id(function)`, import order, registry
 insertion order, and local line-ending style. Only newline-style, path,
 and mtime differences are guaranteed fingerprint-neutral; any other source
-character change — including whitespace inside a string literal — may
-change the fingerprint (conservatively, trailing whitespace on ordinary
-code lines may also change it). Bytecode / `co_code` is never used: it
-varies across Python versions and does not fully cover semantic
-dependencies.
+character change — including whitespace or composed/decomposed Unicode
+inside a string literal — may change the fingerprint (conservatively,
+trailing whitespace on ordinary code lines may also change it). Bytecode /
+`co_code` is never used: it varies across Python versions and does not
+fully cover semantic dependencies.
 
 ## 14. Fingerprint payload
 

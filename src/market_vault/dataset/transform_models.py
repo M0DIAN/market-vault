@@ -45,7 +45,6 @@ import numbers
 import re
 import sys
 import types
-import unicodedata
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -932,21 +931,21 @@ def _module_source_sha256(implementation, transform_ref: str) -> str:
 def _normalize_source_text(text: str) -> str:
     """Deterministic normalization of one module source text.
 
-    Steps: reject non-string input; Unicode NFC; CRLF / CR normalized to LF;
-    reject NUL and unsafe control characters (C0 except tab/newline, DEL,
-    C1 — the raw bytes are unlikely but a fail-closed contract is safer
-    than guessing); drop leading and trailing blank lines; exactly one
-    final LF. No per-line trimming is applied: every character inside the
-    text, including trailing whitespace inside string literals and on
-    ordinary code lines, is preserved intact — any character change of the
-    source content may change the fingerprint. Only newline-style,
-    path, and mtime differences are guaranteed to be fingerprint-neutral.
+    Steps: reject non-string input; CRLF / CR normalized to LF; reject NUL
+    and unsafe control characters (C0 except tab/newline, DEL, C1 — the
+    raw bytes are unlikely but a fail-closed contract is safer than
+    guessing); drop leading and trailing blank lines; exactly one final LF.
+    No per-line trimming and **no Unicode normalization** is applied: every
+    code point of the source, including string-literal contents (where
+    composed and decomposed forms stay distinct), is preserved intact — any
+    character change of the source content may change the fingerprint. Only
+    newline-style, path, and mtime differences are guaranteed to be
+    fingerprint-neutral.
     """
     if not isinstance(text, str):
         raise TransformRegistryError(
             f"implementation module source must be text, got {type(text).__name__}"
         )
-    text = unicodedata.normalize("NFC", text)
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     for character in text:
         codepoint = ord(character)
