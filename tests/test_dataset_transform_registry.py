@@ -1321,18 +1321,42 @@ def test_crlf_lf_normalization_equivalence(tmp_path, impl):
 def test_unicode_string_literal_normalization_does_not_collide(impl):
     """Composed and decomposed Unicode inside a string literal are distinct
     source code points and must produce distinct fingerprints: source code
-    is never Unicode-normalized. The source texts are built from explicit
-    ``\\u`` escapes so the test cannot be corrupted by editor or literal
-    normalization."""
-    # Decomposed "e\u0301" (U+0065 U+0301) vs composed "\u00e9" (U+00E9):
-    # NFC normalization would collapse these two values onto each other.
-    decomposed_src = 'TEXT = "e\\u0301"\n\ndef my_transform(rows):\n    return TEXT\n'
-    composed_src = 'TEXT = "\\u00e9"\n\ndef my_transform(rows):\n    return TEXT\n'
-    # The source texts really differ in code points (the escape sequences
-    # are present verbatim in the generated source).
-    assert "\\u0301" in decomposed_src
-    assert "\\u00e9" in composed_src
+    is never Unicode-normalized.
+
+    The values are built with chr() so the generated source text really
+    contains the distinct code points (U+0065 U+0301 vs U+00E9) — never
+    ASCII escape sequences, and never literal characters in this test file
+    that an editor could re-normalize. Under the old whole-source NFC
+    normalization these two source texts collapse onto each other (proved
+    below), so the distinct-fingerprint assertions are the regression guard:
+    if _normalize_source_text ever restores whole-source NFC normalization,
+    this test must fail.
+    """
+    import unicodedata as _unicodedata
+
+    decomposed_value = "e" + chr(0x0301)
+    composed_value = chr(0x00E9)
+    assert tuple(map(ord, decomposed_value)) == (0x65, 0x0301)
+    assert tuple(map(ord, composed_value)) == (0x00E9,)
+    decomposed_src = (
+        'TEXT = "' + decomposed_value + '"\n\n'
+        "def my_transform(rows):\n"
+        "    return TEXT\n"
+    )
+    composed_src = (
+        'TEXT = "' + composed_value + '"\n\n'
+        "def my_transform(rows):\n"
+        "    return TEXT\n"
+    )
+    # The source texts really differ in code points, and the ASCII escape
+    # forms are absent (the characters are real, not escape sequences).
     assert tuple(map(ord, decomposed_src)) != tuple(map(ord, composed_src))
+    assert "\\u0301" not in decomposed_src
+    assert "\\u00e9" not in composed_src
+    # Direct proof that the old whole-source NFC algorithm collides: NFC
+    # collapses the decomposed source text onto the composed one, so the
+    # old implementation would produce one identical fingerprint.
+    assert _unicodedata.normalize("NFC", decomposed_src) == composed_src
     # Same transform_ref (same module name, different source files), so only
     # the string literal differs. Register each module before building the
     # next one: the second build replaces the sys.modules entry.
@@ -1346,10 +1370,6 @@ def test_unicode_string_literal_normalization_does_not_collide(impl):
     assert value_dec != value_cmp
     assert tuple(map(ord, value_dec)) == (0x65, 0x0301)
     assert tuple(map(ord, value_cmp)) == (0xE9,)
-    # Sanity: NFC would indeed collapse them (proving the collision the
-    # fingerprint contract must avoid).
-    import unicodedata as _unicodedata
-    assert _unicodedata.normalize("NFC", value_dec) == value_cmp
     # The two fingerprints (and pins) must stay distinct.
     assert reg_dec.implementation_fingerprint != reg_cmp.implementation_fingerprint
     assert transform_implementation_pin(reg_dec) != transform_implementation_pin(reg_cmp)
