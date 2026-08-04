@@ -1,6 +1,7 @@
 # MarketVault v0.4.0 Direction: Canonical Dataset and ML Foundation
 
-Status: proposed (planning only, no runtime changes)
+Status: implementation in progress (PR-5 through PR-9 implemented; release
+preparation pending)
 
 This document defines the scope, non-goals, and design direction for the
 V0.4.0 "Canonical Dataset and ML Foundation" phase. It is a planning document;
@@ -354,6 +355,10 @@ Threats the dataset layer must defend against:
    explicit offsets, pending resolution of the timestamp semantics noted in
    section 5).
 
+All eight threats now have offline regression coverage — the cross-contract
+leakage threat-model regression suite
+([contracts/leakage_threat_model_regression.md](contracts/leakage_threat_model_regression.md)).
+
 ## 13a. Progress
 
 - PR-1/PR-2 (planning + timestamp-semantics contract) merged: the six
@@ -401,6 +406,18 @@ Threats the dataset layer must defend against:
   No Feature or Label value is computed, no label completeness is inferred
   from PIT, no Dataset is built, and no Dataset Parquet is written by this
   PR.
+- PR-9 (leakage threat-model regression suite) implemented: the eight stable
+  threat IDs (future-bar, archive-time, label-cross-split,
+  adjustment/corporate-action, snapshot substitution, spec drift, completion
+  ambiguity, timezone misattribution) are covered by an offline cross-
+  contract regression matrix with positive controls and defenses per threat,
+  a cross-layer canary (Canonical -> PIT -> SpecPin -> Split/Purge ->
+  DatasetIdentityInput -> dataset_id), and offline/no-network/no-write
+  boundary assertions — see
+  [contracts/leakage_threat_model_regression.md](contracts/leakage_threat_model_regression.md).
+  Tests and documentation only: no runtime API, identity algorithm, version
+  constant, dependency, CLI, OpenD, network, or Dataset writer changes; the
+  final Dataset builder is still not implemented.
 
 ## 14. Proposed PR sequence
 
