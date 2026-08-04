@@ -946,15 +946,19 @@ def test_archive_time_late_rows_cannot_jump_cutoff_by_input_order(tmp_path):
     cfg, first, second = make_two_run_builds(tmp_path)
     request = pit_request(feature_close=utc(2026, 7, 1, 13, 33))
     cutoff = utc(2026, 7, 1, 14, 30)
-    forward = assemble_point_in_time_samples([first, second], [request], dataset_as_of=cutoff)
-    reversed_input = assemble_point_in_time_samples(
-        [second, first], [request], dataset_as_of=cutoff
-    )
-    assert forward.association_rows == reversed_input.association_rows
-    assert forward.association_content_id == reversed_input.association_content_id
-    # Rows archived after the cutoff (run-a2, 15:00 UTC) never appear.
-    for row in forward.association_rows:
-        assert row["archive_available_at"] <= cutoff
+    # The same bars from two runs share canonical_bar_key but differ in row
+    # version: assembling both fails closed in either input order instead of
+    # silently choosing the "newest" or last-archived row.
+    with pytest.raises(PITAssemblyError):
+        assemble_point_in_time_samples([first, second], [request], dataset_as_of=cutoff)
+    with pytest.raises(PITAssemblyError):
+        assemble_point_in_time_samples([second, first], [request], dataset_as_of=cutoff)
+    # The later-archived run's rows never pass the cutoff on their own: they
+    # are archive-excluded and counted, never admitted by an input-order or
+    # archive-order trick.
+    late = assemble_point_in_time_samples([second], [request], dataset_as_of=cutoff)
+    assert late.samples[0].diagnostics.feature_archive_future_excluded_count == 3
+    assert late.samples[0].diagnostics.feature_selected_count == 0
 
 
 # ---------------------------------------------------------------------------
@@ -1313,11 +1317,14 @@ def test_snapshot_substitution_conflicting_rows_fail_closed(tmp_path):
 
 
 def test_snapshot_substitution_build_input_order_irrelevant(tmp_path):
-    cfg, first, second = make_two_run_builds(tmp_path)
+    # Two legal builds with disjoint canonical_bar_keys: input order never
+    # changes the assembled content or identities.
+    cfg, build_a, build_d = make_multi_day_builds(tmp_path)
     request = pit_request()
-    forward = assemble_point_in_time_samples([first, second], [request])
-    reversed_input = assemble_point_in_time_samples([second, first], [request])
+    forward = assemble_point_in_time_samples([build_a, build_d], [request])
+    reversed_input = assemble_point_in_time_samples([build_d, build_a], [request])
     assert forward.samples == reversed_input.samples
+    assert forward.association_rows == reversed_input.association_rows
     assert forward.association_content_id == reversed_input.association_content_id
 
 
