@@ -9,8 +9,11 @@ facts.
 
 Serialization is deterministic: UTF-8, sorted JSON keys, compact separators,
 ``ensure_ascii=True`` (fixed and documented), stable list ordering, UTC
-microsecond ISO timestamps, and a trailing newline. ``built_at`` and output
-file byte hashes are recorded facts; they never enter ``dataset_id``.
+microsecond ISO timestamps, and a trailing newline. Every manifest is
+re-validated for identity consistency before serialization, and only the
+current manifest schema version may be built, serialized, or parsed.
+``built_at`` and output file byte hashes are recorded facts; they never enter
+``dataset_id``.
 
 This core writes exactly one standalone manifest file. It does not commit a
 Dataset build directory, does not create ``_SUCCESS``, and does not read or
@@ -247,6 +250,12 @@ def build_dataset_manifest(
     Parquet writer exists yet; ``output_files`` may be empty.
     """
     normalized = normalize_dataset_identity_input(identity_input)
+    if normalized.manifest_schema_version != DATASET_MANIFEST_SCHEMA_VERSION:
+        raise DatasetError(
+            f"manifest schema version {normalized.manifest_schema_version!r} is not "
+            f"supported; only {DATASET_MANIFEST_SCHEMA_VERSION!r} is supported by "
+            f"this manifest core"
+        )
     computed_id = dataset_id(normalized)
     built_at = normalize_utc_datetime(built_at, "built_at")
     if status not in (STATUS_COMPLETE, STATUS_EMPTY):
@@ -279,15 +288,75 @@ def build_dataset_manifest(
     )
 
 
+def _validate_manifest_consistency(manifest: DatasetManifest) -> None:
+    """Re-validate one manifest before serialization or after parsing.
+
+    A manually constructed or ``dataclasses.replace``-modified inconsistent
+    manifest must never serialize. At minimum re-verifies: the stored
+    ``dataset_schema_id`` equals the schema recomputation; the stored
+    ``dataset_id`` equals the identity-bearing-field recomputation; spec
+    containers hold the right kinds; Canonical build pins are unique; row
+    versions are covered by the pinned builds; gap references are unique and
+    consistent with the pinned builds; status/``logical_row_count``
+    combinations are valid; ``built_at`` is timezone-aware; and output
+    relative paths are unique.
+    """
+    if not isinstance(manifest, DatasetManifest):
+        raise DatasetError(
+            f"manifest must be a DatasetManifest, got {type(manifest).__name__}"
+        )
+    if manifest.manifest_schema_version != DATASET_MANIFEST_SCHEMA_VERSION:
+        raise DatasetError(
+            f"manifest schema version {manifest.manifest_schema_version!r} is not "
+            f"supported; only {DATASET_MANIFEST_SCHEMA_VERSION!r} is supported by "
+            f"this manifest core"
+        )
+    if manifest.status not in (STATUS_COMPLETE, STATUS_EMPTY):
+        raise DatasetError(
+            f"manifest status must be COMPLETE or EMPTY, got {manifest.status!r}"
+        )
+    if manifest.status == STATUS_EMPTY and manifest.logical_row_count != 0:
+        raise DatasetError("status EMPTY requires logical_row_count == 0")
+    if manifest.status == STATUS_COMPLETE and manifest.logical_row_count == 0:
+        raise DatasetError(
+            "status COMPLETE requires at least one logical row; zero rows must be EMPTY"
+        )
+    if not isinstance(manifest.built_at, datetime) or manifest.built_at.tzinfo is None:
+        raise DatasetError("manifest built_at must be a timezone-aware datetime")
+    expected_schema_id = dataset_schema_id(manifest.schema)
+    if manifest.dataset_schema_id != expected_schema_id:
+        raise DatasetError(
+            "stored dataset_schema_id does not match the declared schema"
+        )
+    expected_dataset_id = dataset_id(_identity_input_from_manifest(manifest))
+    if manifest.dataset_id != expected_dataset_id:
+        raise DatasetError(
+            "stored dataset_id does not match the identity-bearing fields"
+        )
+    for record in manifest.output_files:
+        if not isinstance(record, DatasetOutputFile):
+            raise DatasetError(
+                f"output_files must contain DatasetOutputFile instances, "
+                f"got {type(record).__name__}"
+            )
+    paths = [record.relative_path for record in manifest.output_files]
+    if len(set(paths)) != len(paths):
+        raise DatasetError("duplicate output file relative_path")
+
+
 def serialize_dataset_manifest(manifest: DatasetManifest) -> bytes:
     """Deterministic UTF-8 JSON with sorted keys, compact separators,
     ``ensure_ascii=True``, stable list ordering, UTC microsecond ISO
-    timestamps, and a trailing newline."""
+    timestamps, and a trailing newline.
+
+    The manifest is re-validated for identity consistency first: an
+    inconsistent or unsupported-version manifest is never serialized."""
     if not isinstance(manifest, DatasetManifest):
         raise DatasetError(
             f"serialize_dataset_manifest requires a DatasetManifest, "
             f"got {type(manifest).__name__}"
         )
+    _validate_manifest_consistency(manifest)
     text = json.dumps(
         _manifest_payload(manifest),
         sort_keys=True,
@@ -648,17 +717,21 @@ def _parse_manifest(payload: dict) -> DatasetManifest:
 def validate_dataset_manifest(payload) -> DatasetManifest:
     """Strictly validate a serialized Dataset manifest and return the model.
 
-    Accepts bytes, str, or an already-parsed object. Missing or unknown
-    top-level fields fail; nested record shapes are validated; the stored
-    ``dataset_schema_id`` must match the declared schema; ``dataset_id`` is
-    recomputed from the identity-bearing fields and must equal the stored
-    value; duplicate pins or output paths fail; invalid status/count
-    combinations fail. Round-tripping
+    Accepts bytes, str, or an already-parsed object. Invalid UTF-8 bytes are
+    reported as DatasetError, never as UnicodeDecodeError. Missing or unknown
+    top-level fields fail; unsupported manifest schema versions are rejected
+    before v1-shaped parsing; nested record shapes are validated; identity
+    consistency is re-verified (schema ID and dataset ID recomputation,
+    spec-container kinds, duplicate pins, row-version coverage, gap-reference
+    uniqueness, status/count combinations, output paths). Round-tripping
     ``manifest -> deterministic JSON -> validated manifest`` preserves every
     logical field and identity.
     """
     if isinstance(payload, bytes):
-        payload = payload.decode("utf-8")
+        try:
+            payload = payload.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise DatasetError(f"manifest payload is not valid UTF-8: {exc}") from exc
     if isinstance(payload, str):
         try:
             payload = json.loads(payload)
@@ -674,20 +747,37 @@ def validate_dataset_manifest(payload) -> DatasetManifest:
     missing = sorted(_TOP_LEVEL_FIELDS - set(payload))
     if missing:
         raise DatasetError(f"missing manifest field(s): {', '.join(missing)}")
+    # Reject unsupported schema versions before attempting v1-shaped parsing.
+    if payload["manifest_schema_version"] != DATASET_MANIFEST_SCHEMA_VERSION:
+        raise DatasetError(
+            f"unsupported manifest schema version "
+            f"{payload['manifest_schema_version']!r}; only "
+            f"{DATASET_MANIFEST_SCHEMA_VERSION!r} is supported"
+        )
 
     manifest = _parse_manifest(payload)
-
-    expected_schema_id = dataset_schema_id(manifest.schema)
-    if manifest.dataset_schema_id != expected_schema_id:
-        raise DatasetError(
-            "stored dataset_schema_id does not match the declared schema"
-        )
-    expected_dataset_id = dataset_id(_identity_input_from_manifest(manifest))
-    if manifest.dataset_id != expected_dataset_id:
-        raise DatasetError(
-            "stored dataset_id does not match the identity-bearing fields"
-        )
+    _validate_manifest_consistency(manifest)
     return manifest
+
+
+def _handle_existing_destination(path: Path, data: bytes, idempotent: bool) -> None:
+    """Apply the overwrite policy to an existing destination.
+
+    Default mode refuses; idempotent mode accepts only byte-identical
+    content. Never touches or replaces the existing content otherwise.
+    """
+    if not idempotent:
+        raise DatasetError(f"destination already exists: {path}")
+    try:
+        existing = path.read_bytes()
+    except OSError as exc:
+        raise DatasetError(
+            f"failed to read existing destination {path}: {exc}"
+        ) from exc
+    if existing != data:
+        raise DatasetError(
+            f"destination exists with different manifest content: {path}"
+        )
 
 
 def write_dataset_manifest_atomic(
@@ -696,32 +786,25 @@ def write_dataset_manifest_atomic(
     *,
     idempotent: bool = False,
 ) -> None:
-    """Write exactly one manifest file atomically.
+    """Write exactly one manifest file atomically and never overwrite.
 
-    The parent directory is created deliberately; the payload is serialized
-    before the destination is touched; a unique temporary sibling file is
-    written, flushed, and closed; ``os.replace`` performs the atomic
-    same-filesystem replacement; temporary files are cleaned up after
-    exceptions. The default overwrite policy refuses an existing destination;
-    ``idempotent=True`` accepts an existing byte-identical manifest and never
-    silently replaces different content. This helper does not commit a Dataset
-    build directory and does not create ``_SUCCESS``.
+    The payload is serialized (and its identity consistency validated)
+    before the destination is touched. A unique temporary sibling file is
+    written, flushed, and closed, then published with ``os.link`` — an
+    atomic same-filesystem no-replace operation that fails with
+    ``FileExistsError`` if the destination exists. A destination that
+    appears during the race window between the existence check and the link
+    is therefore never overwritten; the overwrite policy is simply
+    re-applied. Temporary files are cleaned up after exceptions. The default
+    overwrite policy refuses an existing destination; ``idempotent=True``
+    accepts an existing byte-identical manifest and never silently replaces
+    different content. This helper does not commit a Dataset build directory
+    and does not create ``_SUCCESS``.
     """
     data = serialize_dataset_manifest(manifest)
     path = Path(path)
     if path.exists():
-        if not idempotent:
-            raise DatasetError(f"destination already exists: {path}")
-        try:
-            existing = path.read_bytes()
-        except OSError as exc:
-            raise DatasetError(
-                f"failed to read existing destination {path}: {exc}"
-            ) from exc
-        if existing != data:
-            raise DatasetError(
-                f"destination exists with different manifest content: {path}"
-            )
+        _handle_existing_destination(path, data, idempotent)
         return
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -738,10 +821,26 @@ def write_dataset_manifest_atomic(
         _cleanup_temp(temp)
         raise DatasetError(f"failed to write temporary manifest {temp}: {exc}") from exc
     try:
-        os.replace(temp, path)
+        # Atomic no-replace publication (works on POSIX and Windows/NTFS).
+        os.link(temp, path)
+    except FileExistsError:
+        # The destination appeared during the race window; re-apply the
+        # overwrite policy without ever touching its contents.
+        _cleanup_temp(temp)
+        _handle_existing_destination(path, data, idempotent)
+        return
     except OSError as exc:
         _cleanup_temp(temp)
-        raise DatasetError(f"failed to atomically replace destination {path}: {exc}") from exc
+        raise DatasetError(
+            f"failed to atomically publish manifest {path}: {exc}"
+        ) from exc
+    try:
+        temp.unlink()
+    except OSError as exc:
+        raise DatasetError(
+            f"manifest published at {path} but failed to clean temporary "
+            f"file {temp}: {exc}"
+        ) from exc
 
 
 def _cleanup_temp(temp: Path) -> None:

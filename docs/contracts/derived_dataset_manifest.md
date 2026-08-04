@@ -65,14 +65,25 @@ nullable)`. Field order is authoritative and participates in
 - `timestamp_us_utc`
 
 Rules: duplicate field names are rejected; names must be non-empty strings
-without control characters or encoding separators, NFC-normalized; `nullable`
-must be a real bool; no inferred schema; no object/JSON/list/map values yet;
-no timezone other than UTC for `timestamp_us_utc`; missing values are `null`,
+that are NFC-normalized, reject the full Unicode Cc control-character range
+(U+0000-U+001F, U+007F, U+0080-U+009F) and the reserved encoding separators,
+and reject whitespace-only or leading/trailing-whitespace names (names are
+identity-bearing, so they are never silently changed); `nullable` must be a
+real bool; no inferred schema; no object/JSON/list/map values yet; no
+timezone other than UTC for `timestamp_us_utc`; missing values are `null`,
 never NaN; float NaN and positive/negative infinity are rejected; negative
-zero normalizes to ordinary zero; bool is never accepted as int64; datetime
-values must be timezone-aware and are normalized to UTC; timestamp precision
-is truncated to microseconds; `date32` accepts `date` but rejects `datetime`
-unless deliberately converted before calling the identity layer.
+zero normalizes to ordinary zero; `int64` accepts only the closed range
+[-2**63, 2**63-1] (Python ints and in-range numpy integers encode
+identically, bool is never accepted); datetime values must be timezone-aware
+and are normalized to UTC; timestamp precision is truncated to microseconds;
+`date32` accepts `date` but rejects `datetime` unless deliberately converted
+before calling the identity layer.
+
+Canonical scalar encoding: floats encode as explicit IEEE-754 binary64
+big-endian hex (`struct.pack(">d", value).hex()`), never `repr()` or
+locale-dependent display formatting — equal binary64 values always encode
+identically; `int64` encodes as decimal `i:<value>` after the range check;
+`bool` and `int` stay distinct (`b:` vs `i:`); `null` is explicit (`n`).
 
 ## 4. `dataset_schema_id`
 
@@ -130,11 +141,14 @@ FEATURE | LABEL | SPLIT, and `ImplementationPin(name, version,
 content_sha256 | None)`. Identifiers are non-empty normalized strings; hashes
 are lowercase 64-character SHA-256; ordering is deterministic; duplicate
 (kind, name, version) spec entries and duplicate (name, version)
-implementation entries fail closed. No Feature/Label YAML syntax is defined
-and no transform is executed by this PR. Empty Feature/Label/Split lists are
-allowed so the low-level identity core can be tested before the spec
-framework lands; the future real dataset builder must populate the pins
-required by its dataset contract.
+implementation entries fail closed. Container semantics are enforced:
+`feature_specs` may only contain FEATURE pins, `label_specs` only LABEL pins,
+and `split_spec` must be null or a SPLIT pin — a misplaced pin fails closed in
+`DatasetIdentityInput`, `DatasetManifest`, and manifest deserialization. No
+Feature/Label YAML syntax is defined and no transform is executed by this PR.
+Empty Feature/Label/Split lists are allowed so the low-level identity core can
+be tested before the spec framework lands; the future real dataset builder
+must populate the pins required by its dataset contract.
 
 ## 8. Scope and `dataset_as_of`
 
@@ -157,9 +171,12 @@ reasons are stable codes, not free-form stack traces.
 
 `GapReference(canonical_build_id, gap_content_id, gap_range_count)` records
 ordered references to pinned Canonical gap sidecars. Each reference must name
-a pinned build and agree with that build's `gap_content_id`; identical
-duplicate references are deduplicated. Gap Parquet contents are never
-duplicated into the Dataset manifest.
+a pinned build and agree with that build's `gap_content_id`. Strictly one
+reference per Canonical build: duplicate `canonical_build_id` entries fail
+closed — even byte-identical duplicates are never silently deduplicated, and
+a same-build pair with different `gap_range_count` values is a duplicate
+build ID and fails the same way. Gap Parquet contents are never duplicated
+into the Dataset manifest.
 
 ## 10. Deterministic `dataset_id`
 
@@ -225,42 +242,72 @@ references, serialization format and version, `logical_row_count`, and
 
 `DatasetOutputFile(relative_path, file_role, row_count, byte_size, sha256,
 content_role)` is the future-compatible immutable output record: safe
-relative POSIX paths only (no absolute paths, backslashes, ".", "..", empty
-components, control characters, or duplicates); non-negative integer counts
-(bools rejected); lowercase 64-character hex SHA-256; records sorted
-deterministically. File hashes are recorded facts, excluded from
+relative paths only, validated with `PurePosixPath`/`PureWindowsPath` without
+touching the filesystem. Rejected: absolute paths; backslashes (Windows
+separators and UNC); empty components, ".", ".."; Windows drive/root
+semantics ("C:/...", "C:..."); NTFS ADS colon forms ("file.txt:stream"); and
+control characters. Non-negative integer counts (bools rejected); lowercase
+64-character hex SHA-256; records sorted deterministically by relative path
+with duplicates rejected. File hashes are recorded facts, excluded from
 `dataset_id`; no actual filesystem bytes are validated because no Dataset
 artifact writer exists yet.
 
-## 12. Deterministic serialization and strict validation
+## 12. Deterministic serialization, version gating, and strict validation
+
+Only the current manifest schema version
+(`DATASET_MANIFEST_SCHEMA_VERSION = "market-vault-dataset-manifest-v1"`) may
+be built, serialized, or parsed: `build_dataset_manifest` rejects identity
+inputs carrying another version, `serialize_dataset_manifest` rejects
+manifests carrying another version, and `validate_dataset_manifest` rejects
+another version before attempting v1-shaped parsing. The low-level
+`dataset_id` remains version-flexible by design — changing
+`manifest_schema_version` demonstrably changes the identity — but the v1
+manifest builder/serializer/parser never claims to support unknown versions.
 
 `serialize_dataset_manifest` produces deterministic UTF-8 JSON: sorted keys,
 compact separators, `ensure_ascii=True` (fixed and documented), stable list
-ordering, UTC microsecond ISO timestamps, trailing newline.
+ordering, UTC microsecond ISO timestamps, trailing newline. Before
+serialization it re-validates identity consistency through a shared
+`_validate_manifest_consistency` (also used by `validate_dataset_manifest`
+and, via the serializer, by the atomic writer): the stored
+`dataset_schema_id` must equal the schema recomputation; the stored
+`dataset_id` must equal the identity-bearing-field recomputation; spec
+containers must hold the right kinds; Canonical build pins must be unique;
+row versions must be covered by the pinned builds; gap references must be
+unique and consistent with the pinned builds; status/`logical_row_count`
+combinations must be valid; `built_at` must be timezone-aware; and output
+paths must be unique. A manually constructed or `dataclasses.replace`-modified
+inconsistent `DatasetManifest` is therefore never serialized.
 
 `validate_dataset_manifest` strictly validates a payload (bytes, str, or
-already-parsed object): missing and unknown top-level fields fail; nested
-record shapes are validated; `dataset_schema_id` is recomputed from the
-declared schema; logical constraints are recomputed (completion counts,
-status/count invariants, duplicate pins and output paths); `dataset_id` is
-recomputed from the identity-bearing fields and must equal the stored value.
+already-parsed object): invalid UTF-8 bytes are reported as `DatasetError`
+(never `UnicodeDecodeError`); missing and unknown top-level fields fail;
+unsupported manifest schema versions are rejected before v1-shaped parsing;
+nested record shapes are validated; then the same consistency re-verification
+as serialization runs.
 
 Round-tripping `manifest -> deterministic JSON -> validated manifest`
 preserves every logical field and identity.
 
-## 13. Atomic standalone manifest writing
+## 13. Race-safe atomic standalone manifest writing
 
 `write_dataset_manifest_atomic(path, manifest, *, idempotent=False)`:
 
+- the payload is serialized (and its identity consistency validated) before
+  the destination is touched;
 - the parent directory may be created deliberately;
-- the payload is serialized before the destination is touched;
 - a unique temporary sibling file is written, flushed, and closed;
-- `os.replace` performs the atomic same-filesystem replacement;
+- the temporary file is published with `os.link` — an atomic same-filesystem
+  **no-replace** operation that fails with `FileExistsError` when the
+  destination exists — and the temporary file is then removed;
+- a destination that appears during the race window between the existence
+  check and the link is never overwritten: the overwrite policy is simply
+  re-applied (`os.replace`-style overwrite-after-check is never used);
 - temporary files are cleaned after exceptions;
 - an existing destination is refused by default;
 - `idempotent=True` accepts an existing byte-identical manifest and never
   silently replaces different content;
-- the destination is never partially overwritten on failure.
+- the destination is never partially overwritten on any failure.
 
 This helper writes exactly one manifest file. It does not commit a Dataset
 build directory and does not create `_SUCCESS`.

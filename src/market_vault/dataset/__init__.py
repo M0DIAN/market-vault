@@ -17,12 +17,8 @@ stable identities.
 """
 
 from .content import dataset_schema_id, logical_dataset_content_id
-from .encoding import (
-    DATASET_IDENTITY_ENCODING_VERSION,
-    DatasetError,
-    encode_scalar,
-)
-from .identity import dataset_id, normalize_dataset_identity_input
+from .encoding import DATASET_IDENTITY_ENCODING_VERSION, DatasetError
+from .identity import dataset_id
 from .manifest import (
     build_dataset_manifest,
     serialize_dataset_manifest,
@@ -86,9 +82,7 @@ __all__ = [
     "build_dataset_manifest",
     "dataset_id",
     "dataset_schema_id",
-    "encode_scalar",
     "logical_dataset_content_id",
-    "normalize_dataset_identity_input",
     "serialize_dataset_manifest",
     "validate_dataset_manifest",
     "write_dataset_manifest_atomic",

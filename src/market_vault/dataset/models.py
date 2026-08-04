@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import date, datetime
+from pathlib import PurePosixPath, PureWindowsPath
 
 from .encoding import (
     DATASET_IDENTITY_ENCODING_VERSION,
@@ -129,6 +130,70 @@ def _require_int_non_negative(value, label: str) -> None:
         raise DatasetError(f"{label} must be a non-negative integer")
 
 
+def _validate_output_relative_path(value: str, label: str) -> str:
+    """Validate one output relative path against POSIX and Windows safety.
+
+    Rejects absolute paths, backslashes, empty components, ".", "..",
+    Windows drive/root semantics ("C:/...", "C:..."), and NTFS ADS colon
+    forms ("file.txt:stream"). PurePath parsing is used without touching the
+    filesystem.
+    """
+    if not isinstance(value, str):
+        raise DatasetError(f"{label} must be a string, got {type(value).__name__}")
+    if ":" in value or "\\" in value:
+        # ":" covers Windows drive letters and NTFS ADS ("file:stream")
+        # forms; "\\" covers Windows absolute/UNC paths and separators.
+        raise DatasetError(f"unsafe output relative_path {value!r}")
+    posix = PurePosixPath(value)
+    windows = PureWindowsPath(value)
+    if posix.is_absolute() or posix.drive or posix.root:
+        raise DatasetError(f"unsafe output relative_path {value!r}")
+    if windows.drive or windows.root:
+        raise DatasetError(f"unsafe output relative_path {value!r}")
+    # Raw split, not PurePath parts: pathlib collapses "//" and "a/./b",
+    # so empty components and "." must be rejected on the raw string.
+    parts = value.split("/")
+    if not parts or any(part in ("", ".", "..") for part in parts):
+        raise DatasetError(f"unsafe output relative_path {value!r}")
+    return value
+
+
+def _normalize_specs(values, expected_kind: str, label: str) -> tuple:
+    """Container-enforced spec pins: every pin must be a SpecPin of the
+    expected kind, deterministically sorted by (kind, name, version)."""
+    items = tuple(values)
+    for item in items:
+        if not isinstance(item, SpecPin):
+            raise DatasetError(
+                f"{label} must contain SpecPin instances, got {type(item).__name__}"
+            )
+        if item.kind != expected_kind:
+            raise DatasetError(
+                f"{label} may only contain {expected_kind} spec pins, got kind {item.kind!r}"
+            )
+    return tuple(sorted(items, key=lambda item: (item.kind, item.name, item.version)))
+
+
+def _normalize_gap_references(values, label: str) -> tuple:
+    """Gap references: strictly one per canonical build. Duplicate
+    canonical_build_id entries fail even when byte-identical (never silently
+    deduplicated); deterministically sorted by canonical_build_id."""
+    refs = tuple(values)
+    for ref in refs:
+        if not isinstance(ref, GapReference):
+            raise DatasetError(
+                f"{label} must contain GapReference instances, got {type(ref).__name__}"
+            )
+    seen: set[str] = set()
+    for ref in refs:
+        if ref.canonical_build_id in seen:
+            raise DatasetError(
+                f"duplicate gap reference for canonical build {ref.canonical_build_id}"
+            )
+        seen.add(ref.canonical_build_id)
+    return tuple(sorted(refs, key=lambda item: item.canonical_build_id))
+
+
 @dataclass(frozen=True)
 class DatasetField:
     """One explicit logical field of a derived dataset schema."""
@@ -145,6 +210,13 @@ class DatasetField:
         name = normalize_nfc(self.name)
         if not name:
             raise DatasetError("field name must not be empty")
+        if not name.strip():
+            raise DatasetError("field name must not be whitespace-only")
+        if name != name.strip():
+            # Names are identity-bearing; never silently change them.
+            raise DatasetError(
+                "field name must not have leading or trailing whitespace"
+            )
         reject_unsafe_text(name, "field name")
         object.__setattr__(self, "name", name)
         if self.logical_type not in SUPPORTED_LOGICAL_TYPES:
@@ -441,7 +513,9 @@ class GapReference:
 @dataclass(frozen=True)
 class DatasetOutputFile:
     """Immutable record of one output file (recorded fact; hashes never
-    enter ``dataset_id``). Safe relative POSIX paths only."""
+    enter ``dataset_id``). Safe relative paths only: POSIX-relative with no
+    absolute paths, backslashes, empty components, ".", "..", Windows
+    drive/root semantics, or NTFS ADS colon forms."""
 
     relative_path: str
     file_role: str
@@ -452,11 +526,7 @@ class DatasetOutputFile:
 
     def __post_init__(self) -> None:
         path = _require_text(self.relative_path, "output relative_path")
-        if path.startswith("/") or "\\" in path:
-            raise DatasetError(f"unsafe output relative_path {path!r}")
-        parts = path.split("/")
-        if not parts or any(part in ("", ".", "..") for part in parts):
-            raise DatasetError(f"unsafe output relative_path {path!r}")
+        _validate_output_relative_path(path, "output relative_path")
         object.__setattr__(self, "relative_path", path)
         object.__setattr__(self, "file_role", _require_text(self.file_role, "output file_role"))
         _require_int_non_negative(self.row_count, "output row_count")
@@ -526,19 +596,25 @@ class DatasetIdentityInput:
         )
         object.__setattr__(self, "canonical_row_version_ids", row_versions)
 
-        def _specs(values, label):
-            items = tuple(values)
-            for item in items:
-                if not isinstance(item, SpecPin):
-                    raise DatasetError(f"{label} must contain SpecPin instances, got {type(item).__name__}")
-            return tuple(sorted(items, key=lambda item: (item.kind, item.name, item.version)))
-
-        object.__setattr__(self, "feature_specs", _specs(self.feature_specs, "feature_specs"))
-        object.__setattr__(self, "label_specs", _specs(self.label_specs, "label_specs"))
-        if self.split_spec is not None and not isinstance(self.split_spec, SpecPin):
-            raise DatasetError(
-                f"split_spec must be a SpecPin or None, got {type(self.split_spec).__name__}"
-            )
+        object.__setattr__(
+            self,
+            "feature_specs",
+            _normalize_specs(self.feature_specs, SPEC_KIND_FEATURE, "feature_specs"),
+        )
+        object.__setattr__(
+            self,
+            "label_specs",
+            _normalize_specs(self.label_specs, SPEC_KIND_LABEL, "label_specs"),
+        )
+        if self.split_spec is not None:
+            if not isinstance(self.split_spec, SpecPin):
+                raise DatasetError(
+                    f"split_spec must be a SpecPin or None, got {type(self.split_spec).__name__}"
+                )
+            if self.split_spec.kind != SPEC_KIND_SPLIT:
+                raise DatasetError(
+                    f"split_spec may only be a SPLIT spec pin, got kind {self.split_spec.kind!r}"
+                )
 
         implementations = tuple(self.implementations)
         for item in implementations:
@@ -558,23 +634,11 @@ class DatasetIdentityInput:
                 f"completion must be a CompletionSummary, got {type(self.completion).__name__}"
             )
 
-        gap_references = tuple(self.gap_references)
-        for ref in gap_references:
-            if not isinstance(ref, GapReference):
-                raise DatasetError(
-                    f"gap_references must contain GapReference instances, "
-                    f"got {type(ref).__name__}"
-                )
-        # Identical duplicate gap references are deduplicated (documented rule).
-        deduped: list[GapReference] = []
-        seen: set[tuple] = set()
-        for ref in sorted(gap_references, key=lambda item: (item.canonical_build_id, item.gap_content_id)):
-            identity = (ref.canonical_build_id, ref.gap_content_id, ref.gap_range_count)
-            if identity in seen:
-                continue
-            seen.add(identity)
-            deduped.append(ref)
-        object.__setattr__(self, "gap_references", tuple(deduped))
+        object.__setattr__(
+            self,
+            "gap_references",
+            _normalize_gap_references(self.gap_references, "gap_references"),
+        )
 
         object.__setattr__(self, "manifest_schema_version", _require_text(self.manifest_schema_version, "manifest_schema_version"))
         object.__setattr__(self, "serialization_format", _require_text(self.serialization_format, "serialization_format", lower=True))
@@ -661,19 +725,25 @@ class DatasetManifest:
         )
         object.__setattr__(self, "canonical_row_version_ids", row_versions)
 
-        def _specs(values, label):
-            items = tuple(values)
-            for item in items:
-                if not isinstance(item, SpecPin):
-                    raise DatasetError(f"manifest {label} must contain SpecPin instances, got {type(item).__name__}")
-            return tuple(sorted(items, key=lambda item: (item.kind, item.name, item.version)))
-
-        object.__setattr__(self, "feature_specs", _specs(self.feature_specs, "feature_specs"))
-        object.__setattr__(self, "label_specs", _specs(self.label_specs, "label_specs"))
-        if self.split_spec is not None and not isinstance(self.split_spec, SpecPin):
-            raise DatasetError(
-                f"manifest split_spec must be a SpecPin or None, got {type(self.split_spec).__name__}"
-            )
+        object.__setattr__(
+            self,
+            "feature_specs",
+            _normalize_specs(self.feature_specs, SPEC_KIND_FEATURE, "feature_specs"),
+        )
+        object.__setattr__(
+            self,
+            "label_specs",
+            _normalize_specs(self.label_specs, SPEC_KIND_LABEL, "label_specs"),
+        )
+        if self.split_spec is not None:
+            if not isinstance(self.split_spec, SpecPin):
+                raise DatasetError(
+                    f"manifest split_spec must be a SpecPin or None, got {type(self.split_spec).__name__}"
+                )
+            if self.split_spec.kind != SPEC_KIND_SPLIT:
+                raise DatasetError(
+                    f"manifest split_spec may only be a SPLIT spec pin, got kind {self.split_spec.kind!r}"
+                )
 
         implementations = tuple(self.implementations)
         for item in implementations:
@@ -688,23 +758,11 @@ class DatasetManifest:
             tuple(sorted(implementations, key=lambda item: (item.name, item.version))),
         )
 
-        gap_references = tuple(self.gap_references)
-        for ref in gap_references:
-            if not isinstance(ref, GapReference):
-                raise DatasetError(
-                    f"manifest gap_references must contain GapReference instances, "
-                    f"got {type(ref).__name__}"
-                )
-        # Identical duplicate gap references are deduplicated (documented rule).
-        deduped: list[GapReference] = []
-        seen: set[tuple] = set()
-        for ref in sorted(gap_references, key=lambda item: (item.canonical_build_id, item.gap_content_id)):
-            identity = (ref.canonical_build_id, ref.gap_content_id, ref.gap_range_count)
-            if identity in seen:
-                continue
-            seen.add(identity)
-            deduped.append(ref)
-        object.__setattr__(self, "gap_references", tuple(deduped))
+        object.__setattr__(
+            self,
+            "gap_references",
+            _normalize_gap_references(self.gap_references, "gap_references"),
+        )
 
         output_files = tuple(self.output_files)
         for record in output_files:

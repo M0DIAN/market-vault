@@ -74,7 +74,13 @@ def _coerce_scalar(field: DatasetField, value) -> str:
             raise DatasetError(
                 f"field {field.name!r} expects int64, got {type(value).__name__}"
             )
-        return encode_scalar(int(value))
+        integer = int(value)
+        if not -(2**63) <= integer <= 2**63 - 1:
+            raise DatasetError(
+                f"field {field.name!r} int64 value out of range "
+                f"[-2**63, 2**63-1]: {integer}"
+            )
+        return encode_scalar(integer)
     if logical_type == "float64":
         if type(value) is bool or not isinstance(value, numbers.Real):
             raise DatasetError(

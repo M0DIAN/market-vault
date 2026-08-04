@@ -43,12 +43,12 @@ from market_vault.dataset import (
     build_dataset_manifest,
     dataset_id,
     dataset_schema_id,
-    encode_scalar,
     logical_dataset_content_id,
     serialize_dataset_manifest,
     validate_dataset_manifest,
     write_dataset_manifest_atomic,
 )
+from market_vault.dataset.encoding import encode_scalar
 
 UTC = timezone.utc
 NY = "America/New_York"
@@ -363,7 +363,7 @@ def test_int64_accepts_numpy_integers():
 
 
 def test_negative_zero_normalizes():
-    assert encode_scalar(-0.0) == encode_scalar(0.0) == "f:0.0"
+    assert encode_scalar(-0.0) == encode_scalar(0.0) == "f:0000000000000000"
     assert content_id(row(close=-0.0)) == content_id(row(close=0.0))
 
 
@@ -402,10 +402,20 @@ def test_explicit_tagged_formats_pinned():
     assert encode_scalar(None) == "n"
     assert encode_scalar(False) == "b:false"
     assert encode_scalar(42) == "i:42"
-    assert encode_scalar(100.5) == "f:100.5"
     assert encode_scalar("abc") == "s:abc"
     assert encode_scalar(date(2026, 7, 1)) == "d:2026-07-01"
     assert encode_scalar(datetime(2026, 7, 1, 0, 0, tzinfo=UTC)) == "t:2026-07-01T00:00:00+00:00"
+
+
+def test_float_uses_fixed_ieee754_binary64_encoding():
+    # Explicit IEEE-754 binary64 big-endian hex, never repr() or locale
+    # dependent display formatting.
+    assert encode_scalar(0.0) == "f:0000000000000000"
+    assert encode_scalar(1.0) == "f:3ff0000000000000"
+    assert encode_scalar(100.5) == "f:4059200000000000"
+    assert encode_scalar(100.0) == "f:4059000000000000"
+    assert encode_scalar(-3.25) == "f:c00a000000000000"
+    assert encode_scalar(100.5) != encode_scalar(100.25)
 
 
 def test_unsupported_scalar_type_fails():
@@ -886,12 +896,21 @@ def test_reordered_gap_references_same_dataset_id():
     )
 
 
-def test_duplicate_gap_references_deduplicated():
+def test_duplicate_gap_references_fail():
     pin = build_pin("a")
     ref = GapReference(pin.canonical_build_id, pin.gap_content_id, 0)
-    assert dataset_id(base_input(gap_references=(ref, ref))) == dataset_id(
-        base_input(gap_references=(ref,))
+    with pytest.raises(DatasetError, match="duplicate gap reference"):
+        base_input(gap_references=(ref, ref))
+
+
+def test_same_build_conflicting_gap_range_count_fails():
+    pin = build_pin("a")
+    refs = (
+        GapReference(pin.canonical_build_id, pin.gap_content_id, 0),
+        GapReference(pin.canonical_build_id, pin.gap_content_id, 1),
     )
+    with pytest.raises(DatasetError, match="duplicate gap reference"):
+        base_input(gap_references=refs)
 
 
 def test_gap_reference_to_unknown_build_fails():
@@ -974,8 +993,14 @@ def test_deterministic_json_with_trailing_newline():
     assert list(payload.keys()) == sorted(payload.keys())
     assert b'{"' in first  # compact separators, no spaces after braces
     assert b'"built_at":"2026-07-03T10:00:00.000000+00:00"' in first
-    # ensure_ascii is fixed and documented.
-    unicode_manifest = replace(base_manifest(), dataset_kind="caf\u00e9_kind")
+    # ensure_ascii is fixed and documented (built consistently so the
+    # identity recomputation passes the pre-serialization consistency check).
+    unicode_manifest = build_dataset_manifest(
+        base_input(dataset_kind="caf\u00e9_kind"),
+        built_at=datetime(2026, 7, 3, 10, 0, tzinfo=UTC),
+        status=STATUS_COMPLETE,
+        logical_row_count=2,
+    )
     assert "caf\\u00e9".encode("utf-8") in serialize_dataset_manifest(unicode_manifest)
 
 
@@ -1134,30 +1159,77 @@ def test_atomic_write_idempotent_rejects_conflicting_content(tmp_path: Path):
     assert path.read_bytes() == serialize_dataset_manifest(base_manifest())
 
 
-def test_atomic_write_injected_replace_failure_leaves_destination_unchanged(tmp_path: Path, monkeypatch):
-    """Simulate a replace-stage failure with a pre-existing destination.
+def test_atomic_write_injected_link_failure_publishes_nothing(tmp_path: Path, monkeypatch):
+    """A failure at the no-replace publication stage must never leave a
+    destination or a temporary file behind."""
+    path = tmp_path / "manifest.json"
 
-    The existence check runs before os.replace, so a failure at the replace
-    stage is a TOCTOU race: the destination already exists on disk but the
-    check reports otherwise. The writer must fail with a structured error,
-    clean its temporary file, and never partially overwrite the existing
-    destination.
-    """
+    def fail_link(source, destination):
+        raise OSError("injected link failure")
+
+    monkeypatch.setattr(os, "link", fail_link)
+    with pytest.raises(DatasetError, match="atomically publish"):
+        write_dataset_manifest_atomic(path, base_manifest())
+    assert not path.exists()
+    assert not list(tmp_path.glob(".manifest.json.tmp-*"))
+
+
+def test_atomic_write_default_mode_does_not_overwrite_raced_destination(tmp_path: Path, monkeypatch):
+    """A destination that appears after the existence check (the race window)
+    must never be overwritten in default mode: the publication is refused."""
     path = tmp_path / "manifest.json"
     write_dataset_manifest_atomic(path, base_manifest())
     original = path.read_bytes()
-
-    def fail_replace(source, destination):
-        raise OSError("injected failure")
-
-    monkeypatch.setattr(Path, "exists", lambda self: False)
-    monkeypatch.setattr(os, "replace", fail_replace)
     other = build_dataset_manifest(
         base_input(), built_at=datetime(2026, 7, 4, tzinfo=UTC),
         status=STATUS_COMPLETE, logical_row_count=2,
     )
-    with pytest.raises(DatasetError, match="atomically replace"):
+
+    def racing_link(source, destination):
+        path.write_bytes(original)  # the destination appears mid-write
+        raise FileExistsError("destination appeared in the race window")
+
+    monkeypatch.setattr(os, "link", racing_link)
+    with pytest.raises(DatasetError, match="already exists"):
         write_dataset_manifest_atomic(path, other)
+    assert path.read_bytes() == original
+    assert not list(tmp_path.glob(".manifest.json.tmp-*"))
+
+
+def test_atomic_write_idempotent_race_same_content_passes(tmp_path: Path, monkeypatch):
+    path = tmp_path / "manifest.json"
+    other = build_dataset_manifest(
+        base_input(), built_at=datetime(2026, 7, 4, tzinfo=UTC),
+        status=STATUS_COMPLETE, logical_row_count=2,
+    )
+    data = serialize_dataset_manifest(other)
+
+    def racing_link(source, destination):
+        path.write_bytes(data)  # identical content appears mid-write
+        raise FileExistsError("destination appeared in the race window")
+
+    monkeypatch.setattr(os, "link", racing_link)
+    write_dataset_manifest_atomic(path, other, idempotent=True)
+    assert path.read_bytes() == data
+    assert not list(tmp_path.glob(".manifest.json.tmp-*"))
+
+
+def test_atomic_write_idempotent_race_different_content_fails(tmp_path: Path, monkeypatch):
+    path = tmp_path / "manifest.json"
+    write_dataset_manifest_atomic(path, base_manifest())
+    original = path.read_bytes()
+    other = build_dataset_manifest(
+        base_input(), built_at=datetime(2026, 7, 4, tzinfo=UTC),
+        status=STATUS_COMPLETE, logical_row_count=2,
+    )
+
+    def racing_link(source, destination):
+        path.write_bytes(original)  # different content appears mid-write
+        raise FileExistsError("destination appeared in the race window")
+
+    monkeypatch.setattr(os, "link", racing_link)
+    with pytest.raises(DatasetError, match="different manifest content"):
+        write_dataset_manifest_atomic(path, other, idempotent=True)
     assert path.read_bytes() == original
     assert not list(tmp_path.glob(".manifest.json.tmp-*"))
 
@@ -1173,3 +1245,144 @@ def test_atomic_write_injected_write_failure_cleans_temp(tmp_path: Path, monkeyp
         write_dataset_manifest_atomic(path, base_manifest())
     assert not path.exists()
     assert not list(tmp_path.glob(".manifest.json.tmp-*"))
+
+
+# ---------------------------------------------------------------------------
+# Contract completeness: scalar bounds, container kinds, version gating,
+# pre-serialization consistency, race-safe publication, public API.
+# ---------------------------------------------------------------------------
+
+
+def int_count_schema() -> DatasetSchema:
+    return DatasetSchema(
+        (DatasetField("ts", "timestamp_us_utc", False), DatasetField("sym", "string", False),
+         DatasetField("count", "int64", False))
+    )
+
+
+def count_row(value) -> dict:
+    return {"ts": INSTANT, "sym": "US.MU", "count": value}
+
+
+def test_int64_boundaries_accepted():
+    low, high = -(2**63), 2**63 - 1
+    low_id = logical_dataset_content_id(int_count_schema(), (count_row(low),))
+    high_id = logical_dataset_content_id(int_count_schema(), (count_row(high),))
+    assert low_id != high_id
+    # Python int and in-range numpy integers produce the same identity.
+    assert logical_dataset_content_id(int_count_schema(), (count_row(np.int64(low)),)) == low_id
+    assert logical_dataset_content_id(int_count_schema(), (count_row(np.int64(high)),)) == high_id
+
+
+def test_int64_out_of_range_fails():
+    with pytest.raises(DatasetError, match="out of range"):
+        logical_dataset_content_id(int_count_schema(), (count_row(2**63),))
+    with pytest.raises(DatasetError, match="out of range"):
+        logical_dataset_content_id(int_count_schema(), (count_row(-(2**63) - 1),))
+
+
+def test_del_and_c1_control_characters_fail():
+    with pytest.raises(DatasetError, match="control character"):
+        DatasetField("sym\x7fname", "string", False)
+    with pytest.raises(DatasetError, match="control character"):
+        DatasetField("sym\x85name", "string", False)
+    with pytest.raises(DatasetError, match="control character"):
+        content_id(row(sym="US\x7fMU"))
+    with pytest.raises(DatasetError, match="control character"):
+        content_id(row(sym="US\x9fMU"))
+
+
+def test_whitespace_only_and_padded_field_names_fail():
+    with pytest.raises(DatasetError, match="whitespace-only"):
+        DatasetField("   ", "string", False)
+    with pytest.raises(DatasetError, match="leading or trailing whitespace"):
+        DatasetField(" sym", "string", False)
+    with pytest.raises(DatasetError, match="leading or trailing whitespace"):
+        DatasetField("sym ", "string", False)
+
+
+@pytest.mark.parametrize(
+    "path_text",
+    [r"C:/windows.parquet", r"C:drive.parquet", r"file.txt:stream",
+     r"C:\windows\x.parquet", r"\\server\share.parquet", r"//server/share.parquet"],
+)
+def test_windows_drive_and_ads_paths_fail(path_text):
+    with pytest.raises(DatasetError, match="unsafe output relative_path"):
+        DatasetOutputFile(path_text, "dataset", 1, 10, sha("x"), "parquet")
+
+
+def test_spec_kind_container_enforcement():
+    with pytest.raises(DatasetError, match="FEATURE"):
+        base_input(feature_specs=(SpecPin("LABEL", "x", "v1", sha("x")),))
+    with pytest.raises(DatasetError, match="LABEL"):
+        base_input(label_specs=(SpecPin("FEATURE", "x", "v1", sha("x")),))
+    with pytest.raises(DatasetError, match="SPLIT"):
+        base_input(split_spec=SpecPin("FEATURE", "split", "v1", sha("s")))
+
+
+def test_split_spec_pin_supported():
+    split = SpecPin("SPLIT", "chronological", "v1", sha("split-v1"))
+    base = base_input()
+    with_split = base_input(split_spec=split)
+    assert dataset_id(base) != dataset_id(with_split)
+    manifest = build_dataset_manifest(
+        with_split, built_at=datetime(2026, 7, 3, tzinfo=UTC),
+        status=STATUS_COMPLETE, logical_row_count=2,
+    )
+    assert validate_dataset_manifest(serialize_dataset_manifest(manifest)) == manifest
+
+
+def test_unknown_manifest_schema_version_rejected_everywhere():
+    v2_input = base_input(manifest_schema_version="market-vault-dataset-manifest-v2")
+    with pytest.raises(DatasetError, match="not supported"):
+        build_dataset_manifest(
+            v2_input, built_at=datetime(2026, 7, 3, tzinfo=UTC),
+            status=STATUS_COMPLETE, logical_row_count=2,
+        )
+    v2_manifest = replace(base_manifest(), manifest_schema_version="market-vault-dataset-manifest-v2")
+    with pytest.raises(DatasetError, match="not supported"):
+        serialize_dataset_manifest(v2_manifest)
+    payload = json.loads(serialize_dataset_manifest(base_manifest()))
+    payload["manifest_schema_version"] = "market-vault-dataset-manifest-v2"
+    with pytest.raises(DatasetError, match="unsupported manifest schema version"):
+        validate_dataset_manifest(payload)
+
+
+def test_inconsistent_manifest_cannot_be_serialized():
+    with pytest.raises(DatasetError, match="dataset_id does not match"):
+        serialize_dataset_manifest(replace(base_manifest(), dataset_id=sha("tampered")))
+    with pytest.raises(DatasetError, match="dataset_schema_id does not match"):
+        serialize_dataset_manifest(replace(base_manifest(), dataset_schema_id=sha("tampered")))
+    with pytest.raises(DatasetError, match="FEATURE"):
+        serialize_dataset_manifest(
+            replace(base_manifest(), feature_specs=(SpecPin("LABEL", "x", "v1", sha("x")),))
+        )
+    pin = build_pin("a")
+    ref = GapReference(pin.canonical_build_id, pin.gap_content_id, 0)
+    with pytest.raises(DatasetError, match="duplicate gap reference"):
+        serialize_dataset_manifest(replace(base_manifest(), gap_references=(ref, ref)))
+    with pytest.raises(DatasetError, match="EMPTY requires"):
+        serialize_dataset_manifest(replace(base_manifest(), status=STATUS_EMPTY))
+
+
+def test_invalid_utf8_payload_is_dataset_error():
+    with pytest.raises(DatasetError, match="not valid UTF-8"):
+        validate_dataset_manifest(b"\xff\xfe\x00\x01")
+
+
+def test_public_api_keeps_internals_private():
+    import market_vault.dataset as dataset_package
+
+    for name in ("encode_scalar", "normalize_dataset_identity_input"):
+        assert name not in dataset_package.__all__
+        assert not hasattr(dataset_package, name)
+    for name in (
+        "dataset_schema_id",
+        "logical_dataset_content_id",
+        "dataset_id",
+        "build_dataset_manifest",
+        "serialize_dataset_manifest",
+        "validate_dataset_manifest",
+        "write_dataset_manifest_atomic",
+    ):
+        assert name in dataset_package.__all__

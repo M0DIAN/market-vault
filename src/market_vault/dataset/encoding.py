@@ -7,12 +7,15 @@ serialization:
 - UTF-8 with NFC-normalized strings;
 - sorted object keys (insertion order never matters);
 - compact separators with an explicit tagged representation per scalar;
+- floats encoded as explicit IEEE-754 binary64 big-endian hex
+  (``struct.pack(">d", value).hex()``), never ``repr()`` or locale-dependent
+  display formatting;
 - timestamps converted to UTC and truncated to microseconds;
 - dates encoded as ISO date;
 - integers and booleans stay distinct;
 - null has an explicit representation;
-- ``allow_nan=False``: float NaN and infinities are rejected and negative
-  zero is normalized to ordinary zero.
+- ``allow_nan=False``: float NaN and positive/negative infinity are rejected
+  and negative zero is normalized to ordinary zero.
 
 Python's process-randomized builtin ``hash()``, dict insertion order, local
 timezones, locale, platform path formatting, pandas display formatting, and
@@ -26,6 +29,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import struct
 import unicodedata
 from datetime import date, datetime, timezone
 from typing import Mapping
@@ -50,9 +54,12 @@ class DatasetError(ValueError):
 
 
 def reject_unsafe_text(value: str, label: str) -> None:
-    """Fail on control characters and reserved encoding separators."""
-    if any(ord(character) < 32 for character in value):
-        raise DatasetError(f"control character in {label}: {value!r}")
+    """Fail on full Unicode Cc control characters (U+0000-U+001F, U+007F,
+    U+0080-U+009F) and reserved encoding separators."""
+    for character in value:
+        codepoint = ord(character)
+        if codepoint <= 0x1F or 0x7F <= codepoint <= 0x9F:
+            raise DatasetError(f"control character in {label}: {value!r}")
     for separator in _RESERVED_SEPARATORS:
         if separator in value:
             raise DatasetError(f"encoding separator in {label}: {value!r}")
@@ -89,7 +96,10 @@ def _float_text(value: float) -> str:
         )
     if value == 0.0:
         value = 0.0  # normalize negative zero to ordinary zero for identity
-    return repr(value)
+    # Explicit IEEE-754 binary64 big-endian hex: deterministic across
+    # platforms, locales, and Python display formatting. Equal binary64
+    # values always encode identically.
+    return struct.pack(">d", value).hex()
 
 
 def _utc_timestamp_text(value) -> str:
@@ -106,7 +116,8 @@ def encode_scalar(value) -> str:
     """Explicit tagged scalar encoding: ``n``, ``b:``, ``i:``, ``f:``, ``s:``,
     ``d:``, ``t:``. ``None`` is explicit; bool and int are distinct; datetime
     must be timezone-aware (UTC-normalized to microseconds); date and
-    datetime are never confused; float NaN/infinity fail and -0.0 normalizes.
+    datetime are never confused; float NaN/infinity fail, -0.0 normalizes,
+    and floats encode as fixed IEEE-754 binary64 hex.
     """
     if value is None:
         return "n"
