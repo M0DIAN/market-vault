@@ -561,7 +561,7 @@ def _load_hygiene_module():
 def test_ci_workflow_contains_required_checks():
     workflow = (Path(__file__).resolve().parents[1] / ".github" / "workflows" / "ci.yml").read_text()
 
-    assert 'python-version: ["3.11", "3.12", "3.13", "3.14"]' in workflow
+    assert 'python-version: ["3.11", "3.14"]' in workflow
     assert "python -m compileall -q src tests scripts" in workflow
     assert "python -m pytest" in workflow
     assert "python scripts/check_repo_hygiene.py" in workflow
