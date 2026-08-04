@@ -275,11 +275,30 @@ purge_boundary                timestamp_us_utc, nullable
   count. It never contains input order, `built_at`, current time, local
   timezone, file paths, manifest paths, or Python `repr()`.
 - `ChronologicalSplitResult` recomputes every identity at construction: the
-  spec pin, the per-sample `feature_window_close_date` (re-derived from the
-  spec boundary timezone), PURGED `purge_boundary` values (re-derived from
-  the spec dates), the schema, the schema/content/result IDs, the assignment
-  rows, and the diagnostics. A manually constructed or
-  `dataclasses.replace`-modified inconsistent result fails closed.
+  spec pin, the schema, the schema/content/result IDs, the assignment rows,
+  and the diagnostics.
+- `ChronologicalSplitResult` additionally **re-derives the full expected
+  assignment for every carried assignment** from the split spec,
+  `feature_window_close`, `label_status`, and `actual_label_end_time` via
+  the same shared classification rule the assigner uses (one rule, two
+  paths: construction and validation can never drift). This re-derivation
+  covers the nominal split implied by the feature close local date, the
+  INCOMPLETE-label exclusion, the out-of-range exclusion, the TRAIN /
+  VALIDATION actual-label-end purge (including the exact purge boundary),
+  and the TEST no-fourth-split rule. **Identity self-consistency is never a
+  substitute for business-semantic correctness**: a hand-built wrong nominal
+  split, wrong purge state, wrong exclusion reason, wrong
+  `feature_window_close_date`, or wrong `purge_boundary` fails closed even
+  when every ID, row, and diagnostic count was recomputed to match the
+  forged assignment.
+- Assignment order is normalized at construction: assignments are sorted by
+  `sample_key` (input order is never semantic), `assignment_rows` are
+  normalized to the canonical tuple, and the rows must exactly correspond to
+  the normalized assignments — unsorted rows fail closed. The assignment
+  content ID contract remains row-order-independent.
+
+A manually constructed or `dataclasses.replace`-modified inconsistent result
+fails closed.
 
 ## 17. SpecPin / dataset_id integration
 

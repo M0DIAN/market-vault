@@ -23,6 +23,10 @@ import pandas as pd
 import pytest
 
 import market_vault.dataset as dataset_pkg
+from market_vault.dataset.split_models import (
+    _assignment_rows,
+    _derive_diagnostics,
+)
 from market_vault.dataset import (
     CHRONOLOGICAL_SPLIT_RESULT_ID_VERSION,
     CHRONOLOGICAL_SPLIT_SPEC_CONTENT_ID_VERSION,
@@ -172,6 +176,47 @@ def assignment_of(result, key_text: str) -> ChronologicalSplitAssignment:
         assignment
         for assignment in result.assignments
         if assignment.sample_key == sha(key_text)
+    )
+
+
+def forge_result(spec, assignments, *, rows=None) -> ChronologicalSplitResult:
+    """Rebuild a ChronologicalSplitResult from (possibly forged) assignments
+    with every identity fully recomputed: rows, schema/content IDs, result
+    ID, and diagnostics all match the forged assignments, so only the
+    business-semantic re-derivation inside
+    ``ChronologicalSplitResult.__post_init__`` can reject the result.
+
+    ``rows`` must correspond to the canonical (sample_key-sorted) assignment
+    order when the assignments are passed unordered; it defaults to the
+    canonical rows of the given assignments.
+    """
+    assignments = tuple(assignments)
+    if rows is None:
+        rows = _assignment_rows(
+            tuple(sorted(assignments, key=lambda a: a.sample_key))
+        )
+    pin = chronological_split_spec_pin(spec)
+    schema = split_assignment_schema()
+    schema_id = split_assignment_schema_id()
+    content_id = split_assignment_content_id(rows)
+    return ChronologicalSplitResult(
+        split_spec=spec,
+        split_spec_pin=pin,
+        splitter_version=CHRONOLOGICAL_SPLITTER_VERSION,
+        assignments=assignments,
+        assignment_schema=schema,
+        assignment_rows=rows,
+        assignment_schema_id=schema_id,
+        assignment_content_id=content_id,
+        split_result_id=chronological_split_result_id(
+            splitter_version=CHRONOLOGICAL_SPLITTER_VERSION,
+            split_spec_content_id=pin.content_sha256,
+            assignment_schema_version=SPLIT_ASSIGNMENT_SCHEMA_VERSION,
+            assignment_schema_id=schema_id,
+            assignment_content_id=content_id,
+            sample_count=len(assignments),
+        ),
+        diagnostics=_derive_diagnostics(assignments),
     )
 
 
@@ -1504,6 +1549,205 @@ def test_tampered_assignment_status_combinations_fail_closed():
         replace(result, assignments=(assignment, assignment))
 
 
+def test_semantically_wrong_nominal_split_is_rejected_with_consistent_identities():
+    # TRAIN feature close forged as ASSIGNED VALIDATION: every ID, row, and
+    # diagnostic count is recomputed, so only the semantic re-derivation can
+    # reject it.
+    spec = make_spec()
+    base = assign_chronological_splits(
+        [make_sample("s", close=ny(2024, 6, 28))], spec
+    )
+    forged = replace(
+        base.assignments[0],
+        nominal_split=SPLIT_VALIDATION,
+        final_split=SPLIT_VALIDATION,
+    )
+    assert forged != base.assignments[0]
+    with pytest.raises(SplitValidationError):
+        forge_result(spec, (forged,))
+
+
+def test_crossing_actual_end_forged_as_assigned_train_is_rejected():
+    # TRAIN sample whose actual label end crosses the train boundary, forged
+    # as ASSIGNED TRAIN with all identities recomputed.
+    spec = make_spec()
+    base = assign_chronological_splits(
+        [
+            make_sample(
+                "s",
+                close=ny(2024, 6, 28),
+                actual_end=datetime(2024, 6, 29, 5, 0, tzinfo=UTC),
+            )
+        ],
+        spec,
+    )
+    assert base.assignments[0].assignment_status == SPLIT_STATUS_PURGED
+    forged = replace(
+        base.assignments[0],
+        assignment_status=SPLIT_STATUS_ASSIGNED,
+        final_split=SPLIT_TRAIN,
+        reason_code=None,
+        purge_boundary=None,
+    )
+    with pytest.raises(SplitValidationError):
+        forge_result(spec, (forged,))
+
+
+def test_kept_actual_end_forged_as_purged_is_rejected():
+    # TRAIN sample whose actual label end stays below the boundary, forged as
+    # PURGED with the correct boundary and reason and all identities
+    # recomputed.
+    spec = make_spec()
+    base = assign_chronological_splits(
+        [make_sample("s", close=ny(2024, 6, 28), actual_end=ny(2024, 6, 28, 21))],
+        spec,
+    )
+    assert base.assignments[0].assignment_status == SPLIT_STATUS_ASSIGNED
+    forged = replace(
+        base.assignments[0],
+        assignment_status=SPLIT_STATUS_PURGED,
+        final_split=None,
+        reason_code=REASON_CODE_ACTUAL_LABEL_END_CROSSES_TRAIN_BOUNDARY,
+        purge_boundary=TRAIN_BOUNDARY_UTC,
+    )
+    with pytest.raises(SplitValidationError):
+        forge_result(spec, (forged,))
+
+
+def test_out_of_range_close_forged_as_assigned_test_is_rejected():
+    # Feature close after test_end forged as ASSIGNED TEST with all
+    # identities recomputed.
+    spec = make_spec()
+    base = assign_chronological_splits(
+        [make_sample("s", close=ny(2024, 8, 31))], spec
+    )
+    assert base.assignments[0].assignment_status == SPLIT_STATUS_EXCLUDED
+    forged = replace(
+        base.assignments[0],
+        nominal_split=SPLIT_TEST,
+        final_split=SPLIT_TEST,
+        assignment_status=SPLIT_STATUS_ASSIGNED,
+        reason_code=None,
+        purge_boundary=None,
+    )
+    with pytest.raises(SplitValidationError):
+        forge_result(spec, (forged,))
+
+
+def test_in_range_close_forged_as_out_of_range_is_rejected():
+    # In-range TRAIN close forged as EXCLUDED with
+    # FEATURE_CLOSE_AFTER_TEST_END and all identities recomputed.
+    spec = make_spec()
+    base = assign_chronological_splits(
+        [make_sample("s", close=ny(2024, 6, 28))], spec
+    )
+    forged = replace(
+        base.assignments[0],
+        nominal_split=None,
+        final_split=None,
+        assignment_status=SPLIT_STATUS_EXCLUDED,
+        reason_code=REASON_CODE_FEATURE_CLOSE_AFTER_TEST_END,
+        purge_boundary=None,
+    )
+    with pytest.raises(SplitValidationError):
+        forge_result(spec, (forged,))
+
+
+def test_incomplete_sample_with_wrong_nominal_split_is_rejected():
+    # INCOMPLETE TRAIN sample forged with nominal VALIDATION (still
+    # EXCLUDED/INCOMPLETE_LABEL, all identities recomputed).
+    spec = make_spec()
+    base = assign_chronological_splits(
+        [
+            make_sample(
+                "s", close=ny(2024, 6, 28), status=LABEL_STATUS_INCOMPLETE
+            )
+        ],
+        spec,
+    )
+    assert base.assignments[0].nominal_split == SPLIT_TRAIN
+    forged = replace(base.assignments[0], nominal_split=SPLIT_VALIDATION)
+    with pytest.raises(SplitValidationError):
+        forge_result(spec, (forged,))
+
+
+def test_tampered_feature_window_close_date_is_rejected_by_re_derivation():
+    spec = make_spec()
+    base = assign_chronological_splits(
+        [make_sample("s", close=ny(2024, 6, 28))], spec
+    )
+    forged = replace(
+        base.assignments[0], feature_window_close_date=date(2024, 6, 29)
+    )
+    with pytest.raises(SplitValidationError):
+        forge_result(spec, (forged,))
+
+
+def test_tampered_purge_boundary_instant_is_rejected_by_re_derivation():
+    spec = make_spec()
+    base = assign_chronological_splits(
+        [
+            make_sample(
+                "s",
+                close=ny(2024, 6, 28),
+                actual_end=datetime(2024, 6, 29, 5, 0, tzinfo=UTC),
+            )
+        ],
+        spec,
+    )
+    assert base.assignments[0].assignment_status == SPLIT_STATUS_PURGED
+    forged = replace(
+        base.assignments[0],
+        purge_boundary=datetime(2024, 6, 29, 6, 0, tzinfo=UTC),
+    )
+    with pytest.raises(SplitValidationError):
+        forge_result(spec, (forged,))
+
+
+def test_unordered_assignments_are_normalized_to_sample_key_order():
+    samples = [
+        make_sample("a", close=ny(2024, 6, 28)),
+        make_sample("b", close=ny(2024, 7, 31)),
+        make_sample("c", close=ny(2024, 8, 30)),
+    ]
+    result = assign_chronological_splits(samples, make_spec())
+    unordered = (
+        result.assignments[2],
+        result.assignments[0],
+        result.assignments[1],
+    )
+    sorted_assignments = tuple(
+        sorted(unordered, key=lambda assignment: assignment.sample_key)
+    )
+    # Rows are provided in canonical order; only the assignment order is
+    # unordered, so the result normalizes instead of failing.
+    rebuilt = forge_result(
+        make_spec(), unordered, rows=_assignment_rows(sorted_assignments)
+    )
+    assert rebuilt.assignments == sorted_assignments
+    assert rebuilt.assignments == result.assignments
+    assert rebuilt.assignment_rows == result.assignment_rows
+    assert rebuilt.split_result_id == result.split_result_id
+    # Rows passed as a list are normalized to the canonical tuple.
+    rebuilt_list = forge_result(
+        make_spec(), unordered, rows=list(_assignment_rows(sorted_assignments))
+    )
+    assert isinstance(rebuilt_list.assignment_rows, tuple)
+    assert rebuilt_list.assignment_rows == result.assignment_rows
+
+
+def test_rows_must_correspond_to_normalized_assignments():
+    samples = [
+        make_sample("a", close=ny(2024, 6, 28)),
+        make_sample("b", close=ny(2024, 7, 31)),
+    ]
+    result = assign_chronological_splits(samples, make_spec())
+    unordered = (result.assignments[1], result.assignments[0])
+    unsorted_rows = _assignment_rows(unordered)
+    with pytest.raises(SplitValidationError):
+        forge_result(make_spec(), unordered, rows=unsorted_rows)
+
+
 def test_result_ids_are_sensitive_to_contract_versions():
     spec = make_spec()
     result = assign_chronological_splits([make_sample("s")], spec)
@@ -1584,7 +1828,7 @@ def test_public_exports_leak_no_private_helpers():
         "_assignment_rows",
         "_derive_diagnostics",
         "_next_local_midnight_utc",
-        "_assign_sample",
+        "_expected_split_assignment",
         "_nominal_split_for_date",
     ):
         assert not hasattr(dataset_pkg, private)

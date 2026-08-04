@@ -33,25 +33,10 @@ keys fail closed.
 
 from __future__ import annotations
 
-from zoneinfo import ZoneInfo
-
 from .split_models import (
     CHRONOLOGICAL_SPLITTER_VERSION,
-    LABEL_STATUS_INCOMPLETE,
-    REASON_CODE_ACTUAL_LABEL_END_CROSSES_TRAIN_BOUNDARY,
-    REASON_CODE_ACTUAL_LABEL_END_CROSSES_VALIDATION_BOUNDARY,
-    REASON_CODE_FEATURE_CLOSE_AFTER_TEST_END,
-    REASON_CODE_INCOMPLETE_LABEL,
     SPLIT_ASSIGNMENT_SCHEMA_VERSION,
     SPLIT_ASSIGNMENT_COLUMNS,
-    SPLIT_STATUS_ASSIGNED,
-    SPLIT_STATUS_EXCLUDED,
-    SPLIT_STATUS_PURGED,
-    SPLIT_TEST,
-    SPLIT_TRAIN,
-    SPLIT_VALIDATION,
-    ChronologicalSplitAssignment,
-    ChronologicalSplitDiagnostics,
     ChronologicalSplitResult,
     ChronologicalSplitSample,
     ChronologicalSplitSpec,
@@ -64,6 +49,7 @@ from .split_models import (
     split_assignment_schema_id,
     _assignment_rows,
     _derive_diagnostics,
+    _expected_split_assignment,
     _next_local_midnight_utc,
 )
 
@@ -77,124 +63,6 @@ __all__ = [
     "split_assignment_schema",
     "split_assignment_schema_id",
 ]
-
-
-def _nominal_split_for_date(close_date, spec: ChronologicalSplitSpec) -> str | None:
-    """Nominal split by the local-market date of the feature window close.
-
-    ``close_date <= train_end_date`` -> TRAIN;
-    ``train_end_date < close_date <= validation_end_date`` -> VALIDATION;
-    ``validation_end_date < close_date <= test_end_date`` -> TEST;
-    otherwise None (out of range).
-    """
-    if close_date <= spec.train_end_date:
-        return SPLIT_TRAIN
-    if close_date <= spec.validation_end_date:
-        return SPLIT_VALIDATION
-    if close_date <= spec.test_end_date:
-        return SPLIT_TEST
-    return None
-
-
-def _assign_sample(
-    sample: ChronologicalSplitSample,
-    spec: ChronologicalSplitSpec,
-    boundary_timezone: str,
-    train_boundary,
-    validation_boundary,
-) -> ChronologicalSplitAssignment:
-    """Fixed per-sample processing order:
-
-    1. nominal split by the feature close local-market date;
-    2. feature close after test end -> EXCLUDED (FEATURE_CLOSE_AFTER_TEST_END);
-    3. INCOMPLETE label -> EXCLUDED (INCOMPLETE_LABEL);
-    4. TRAIN with actual label end crossing the train boundary -> PURGED;
-    5. VALIDATION with actual label end crossing the validation boundary ->
-       PURGED;
-    6. otherwise ASSIGNED with ``final_split == nominal_split``.
-    """
-    feature_close = sample.feature_window_close
-    close_date = feature_close.astimezone(ZoneInfo(boundary_timezone)).date()
-
-    nominal = _nominal_split_for_date(close_date, spec)
-
-    if nominal is None:
-        return ChronologicalSplitAssignment(
-            sample_key=sample.sample_key,
-            sample_version_id=sample.sample_version_id,
-            feature_window_close=feature_close,
-            feature_window_close_date=close_date,
-            label_status=sample.label_status,
-            actual_label_end_time=sample.actual_label_end_time,
-            nominal_split=None,
-            final_split=None,
-            assignment_status=SPLIT_STATUS_EXCLUDED,
-            reason_code=REASON_CODE_FEATURE_CLOSE_AFTER_TEST_END,
-            purge_boundary=None,
-        )
-
-    if sample.label_status == LABEL_STATUS_INCOMPLETE:
-        return ChronologicalSplitAssignment(
-            sample_key=sample.sample_key,
-            sample_version_id=sample.sample_version_id,
-            feature_window_close=feature_close,
-            feature_window_close_date=close_date,
-            label_status=sample.label_status,
-            actual_label_end_time=sample.actual_label_end_time,
-            nominal_split=nominal,
-            final_split=None,
-            assignment_status=SPLIT_STATUS_EXCLUDED,
-            reason_code=REASON_CODE_INCOMPLETE_LABEL,
-            purge_boundary=None,
-        )
-
-    actual_end = sample.actual_label_end_time
-    if nominal == SPLIT_TRAIN and actual_end is not None and actual_end >= train_boundary:
-        return ChronologicalSplitAssignment(
-            sample_key=sample.sample_key,
-            sample_version_id=sample.sample_version_id,
-            feature_window_close=feature_close,
-            feature_window_close_date=close_date,
-            label_status=sample.label_status,
-            actual_label_end_time=actual_end,
-            nominal_split=SPLIT_TRAIN,
-            final_split=None,
-            assignment_status=SPLIT_STATUS_PURGED,
-            reason_code=REASON_CODE_ACTUAL_LABEL_END_CROSSES_TRAIN_BOUNDARY,
-            purge_boundary=train_boundary,
-        )
-    if (
-        nominal == SPLIT_VALIDATION
-        and actual_end is not None
-        and actual_end >= validation_boundary
-    ):
-        return ChronologicalSplitAssignment(
-            sample_key=sample.sample_key,
-            sample_version_id=sample.sample_version_id,
-            feature_window_close=feature_close,
-            feature_window_close_date=close_date,
-            label_status=sample.label_status,
-            actual_label_end_time=actual_end,
-            nominal_split=SPLIT_VALIDATION,
-            final_split=None,
-            assignment_status=SPLIT_STATUS_PURGED,
-            reason_code=REASON_CODE_ACTUAL_LABEL_END_CROSSES_VALIDATION_BOUNDARY,
-            purge_boundary=validation_boundary,
-        )
-
-    return ChronologicalSplitAssignment(
-        sample_key=sample.sample_key,
-        sample_version_id=sample.sample_version_id,
-        feature_window_close=feature_close,
-        feature_window_close_date=close_date,
-        label_status=sample.label_status,
-        actual_label_end_time=actual_end,
-        nominal_split=nominal,
-        final_split=nominal,
-        assignment_status=SPLIT_STATUS_ASSIGNED,
-        reason_code=None,
-        purge_boundary=None,
-    )
 
 
 def assign_chronological_splits(
@@ -246,13 +114,19 @@ def assign_chronological_splits(
         spec.validation_end_date, spec.boundary_timezone
     )
 
+    # The single shared classification rule (also used by
+    # ChronologicalSplitResult.__post_init__ for semantic re-derivation) so
+    # construction and validation can never drift.
     assignments = [
-        _assign_sample(
-            sample,
-            spec,
-            spec.boundary_timezone,
-            train_boundary,
-            validation_boundary,
+        _expected_split_assignment(
+            sample_key=sample.sample_key,
+            sample_version_id=sample.sample_version_id,
+            feature_window_close=sample.feature_window_close,
+            label_status=sample.label_status,
+            actual_label_end_time=sample.actual_label_end_time,
+            spec=spec,
+            train_boundary=train_boundary,
+            validation_boundary=validation_boundary,
         )
         for sample in samples_sorted
     ]

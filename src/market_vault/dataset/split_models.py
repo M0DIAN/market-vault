@@ -720,18 +720,154 @@ class ChronologicalSplitDiagnostics:
             )
 
 
+def _nominal_split_for_date(close_date, spec: ChronologicalSplitSpec) -> str | None:
+    """Nominal split by the local-market date of the feature window close.
+
+    ``close_date <= train_end_date`` -> TRAIN;
+    ``train_end_date < close_date <= validation_end_date`` -> VALIDATION;
+    ``validation_end_date < close_date <= test_end_date`` -> TEST;
+    otherwise None (out of range).
+    """
+    if close_date <= spec.train_end_date:
+        return SPLIT_TRAIN
+    if close_date <= spec.validation_end_date:
+        return SPLIT_VALIDATION
+    if close_date <= spec.test_end_date:
+        return SPLIT_TEST
+    return None
+
+
+def _expected_split_assignment(
+    sample_key: str,
+    sample_version_id: str,
+    feature_window_close,
+    label_status: str,
+    actual_label_end_time,
+    spec: ChronologicalSplitSpec,
+    train_boundary,
+    validation_boundary,
+) -> ChronologicalSplitAssignment:
+    """The single shared chronological classification rule.
+
+    Both the assignment construction path (:func:`market_vault.dataset.splits.
+    assign_chronological_splits`) and the result validation path
+    (:class:`ChronologicalSplitResult`) depend on exactly this function, so
+    the rules can never drift between construction and validation. Fixed
+    per-sample processing order:
+
+    1. nominal split by the feature close local-market date;
+    2. feature close after test end -> EXCLUDED (FEATURE_CLOSE_AFTER_TEST_END);
+    3. INCOMPLETE label -> EXCLUDED (INCOMPLETE_LABEL);
+    4. TRAIN with actual label end crossing the train boundary -> PURGED;
+    5. VALIDATION with actual label end crossing the validation boundary ->
+       PURGED;
+    6. otherwise ASSIGNED with ``final_split == nominal_split``.
+
+    ``actual_label_end_time`` is the only purge time fact: no nominal
+    horizon, no ``LabelSpec.horizon``, no fixed minutes or bars, and no
+    embargo ever participates.
+    """
+    close_date = feature_window_close.astimezone(
+        ZoneInfo(spec.boundary_timezone)
+    ).date()
+    nominal = _nominal_split_for_date(close_date, spec)
+
+    if nominal is None:
+        return ChronologicalSplitAssignment(
+            sample_key=sample_key,
+            sample_version_id=sample_version_id,
+            feature_window_close=feature_window_close,
+            feature_window_close_date=close_date,
+            label_status=label_status,
+            actual_label_end_time=actual_label_end_time,
+            nominal_split=None,
+            final_split=None,
+            assignment_status=SPLIT_STATUS_EXCLUDED,
+            reason_code=REASON_CODE_FEATURE_CLOSE_AFTER_TEST_END,
+            purge_boundary=None,
+        )
+
+    if label_status == LABEL_STATUS_INCOMPLETE:
+        return ChronologicalSplitAssignment(
+            sample_key=sample_key,
+            sample_version_id=sample_version_id,
+            feature_window_close=feature_window_close,
+            feature_window_close_date=close_date,
+            label_status=label_status,
+            actual_label_end_time=actual_label_end_time,
+            nominal_split=nominal,
+            final_split=None,
+            assignment_status=SPLIT_STATUS_EXCLUDED,
+            reason_code=REASON_CODE_INCOMPLETE_LABEL,
+            purge_boundary=None,
+        )
+
+    actual_end = actual_label_end_time
+    if nominal == SPLIT_TRAIN and actual_end is not None and actual_end >= train_boundary:
+        return ChronologicalSplitAssignment(
+            sample_key=sample_key,
+            sample_version_id=sample_version_id,
+            feature_window_close=feature_window_close,
+            feature_window_close_date=close_date,
+            label_status=label_status,
+            actual_label_end_time=actual_end,
+            nominal_split=SPLIT_TRAIN,
+            final_split=None,
+            assignment_status=SPLIT_STATUS_PURGED,
+            reason_code=REASON_CODE_ACTUAL_LABEL_END_CROSSES_TRAIN_BOUNDARY,
+            purge_boundary=train_boundary,
+        )
+    if (
+        nominal == SPLIT_VALIDATION
+        and actual_end is not None
+        and actual_end >= validation_boundary
+    ):
+        return ChronologicalSplitAssignment(
+            sample_key=sample_key,
+            sample_version_id=sample_version_id,
+            feature_window_close=feature_window_close,
+            feature_window_close_date=close_date,
+            label_status=label_status,
+            actual_label_end_time=actual_end,
+            nominal_split=SPLIT_VALIDATION,
+            final_split=None,
+            assignment_status=SPLIT_STATUS_PURGED,
+            reason_code=REASON_CODE_ACTUAL_LABEL_END_CROSSES_VALIDATION_BOUNDARY,
+            purge_boundary=validation_boundary,
+        )
+
+    return ChronologicalSplitAssignment(
+        sample_key=sample_key,
+        sample_version_id=sample_version_id,
+        feature_window_close=feature_window_close,
+        feature_window_close_date=close_date,
+        label_status=label_status,
+        actual_label_end_time=actual_end,
+        nominal_split=nominal,
+        final_split=nominal,
+        assignment_status=SPLIT_STATUS_ASSIGNED,
+        reason_code=None,
+        purge_boundary=None,
+    )
+
+
 @dataclass(frozen=True)
 class ChronologicalSplitResult:
     """Deterministic output of one chronological split assignment.
 
     Every identity is recomputed at construction and must match the carried
-    values; assignments must be unique and sorted by ``sample_key``; the
-    assignment rows must exactly match the assignments; the local
-    ``feature_window_close_date`` is re-derived from the spec's boundary
-    timezone; PURGED purge boundaries are re-derived from the spec dates; and
-    the diagnostics must match the actual assignment states. A manually
-    assembled or ``dataclasses.replace``-modified inconsistent result fails
-    closed.
+    values; assignments must be unique and are normalized to ``sample_key``
+    order (input order is never semantic); the assignment rows must exactly
+    match the normalized assignments and are normalized to the canonical
+    tuple; the diagnostics must match the actual assignment states; and —
+    most importantly — every assignment is re-derived from the split spec,
+    ``feature_window_close``, ``label_status``, and
+    ``actual_label_end_time`` via the shared classification rule
+    (:func:`_expected_split_assignment`). Identity self-consistency is never
+    a substitute for business-semantic correctness: a hand-built wrong
+    nominal split, wrong purge state, wrong exclusion reason, wrong
+    ``feature_window_close_date``, or wrong ``purge_boundary`` fails closed
+    even when every ID, row, and diagnostic count was recomputed to match.
     """
 
     split_spec: ChronologicalSplitSpec
@@ -783,34 +919,46 @@ class ChronologicalSplitResult:
             sorted(assignments, key=lambda assignment: assignment.sample_key)
         )
 
-        # Re-derive the boundary-timezone facts from the spec so a tampered
-        # feature_window_close_date or purge_boundary fails closed.
         train_boundary = _next_local_midnight_utc(
             spec.train_end_date, spec.boundary_timezone
         )
         validation_boundary = _next_local_midnight_utc(
             spec.validation_end_date, spec.boundary_timezone
         )
-        tz = ZoneInfo(spec.boundary_timezone)
+
+        # Business-semantic re-derivation: for every assignment, recompute the
+        # full expected assignment from the split spec and the sample facts
+        # with the same shared classification rule the assigner uses. A
+        # mismatch between the carried assignment and the re-derived
+        # expectation fails closed even when rows, content ID, result ID, and
+        # diagnostics are all internally consistent.
         for assignment in assignments_sorted:
-            expected_date = assignment.feature_window_close.astimezone(tz).date()
-            if assignment.feature_window_close_date != expected_date:
+            expected = _expected_split_assignment(
+                sample_key=assignment.sample_key,
+                sample_version_id=assignment.sample_version_id,
+                feature_window_close=assignment.feature_window_close,
+                label_status=assignment.label_status,
+                actual_label_end_time=assignment.actual_label_end_time,
+                spec=spec,
+                train_boundary=train_boundary,
+                validation_boundary=validation_boundary,
+            )
+            if assignment != expected:
                 raise SplitValidationError(
-                    f"feature_window_close_date of sample "
-                    f"{assignment.sample_key} does not match the split spec "
-                    "boundary timezone"
+                    f"assignment for sample {assignment.sample_key} does not "
+                    "match the semantics re-derived from the split spec: "
+                    "expected "
+                    f"assignment_status={expected.assignment_status}, "
+                    f"nominal_split={expected.nominal_split!r}, "
+                    f"final_split={expected.final_split!r}, "
+                    f"reason_code={expected.reason_code!r}, "
+                    f"purge_boundary={expected.purge_boundary!r}; got "
+                    f"assignment_status={assignment.assignment_status}, "
+                    f"nominal_split={assignment.nominal_split!r}, "
+                    f"final_split={assignment.final_split!r}, "
+                    f"reason_code={assignment.reason_code!r}, "
+                    f"purge_boundary={assignment.purge_boundary!r}"
                 )
-            if assignment.assignment_status == SPLIT_STATUS_PURGED:
-                expected_boundary = (
-                    train_boundary
-                    if assignment.nominal_split == SPLIT_TRAIN
-                    else validation_boundary
-                )
-                if assignment.purge_boundary != expected_boundary:
-                    raise SplitValidationError(
-                        f"purge_boundary of sample {assignment.sample_key} "
-                        "does not match the split spec boundary"
-                    )
 
         schema = self.assignment_schema
         if not isinstance(schema, DatasetSchema):
@@ -826,12 +974,15 @@ class ChronologicalSplitResult:
             raise SplitValidationError(
                 "assignment_schema_id does not match the carried assignment schema"
             )
-        rows = tuple(self.assignment_rows)
-        if rows != _assignment_rows(assignments_sorted):
+        expected_rows = _assignment_rows(assignments_sorted)
+        if tuple(self.assignment_rows) != expected_rows:
             raise SplitValidationError(
-                "assignment_rows do not match the carried assignments"
+                "assignment_rows must exactly match the normalized "
+                "(sample_key-sorted) assignments"
             )
-        if self.assignment_content_id != logical_dataset_content_id(schema, rows):
+        if self.assignment_content_id != logical_dataset_content_id(
+            schema, expected_rows
+        ):
             raise SplitValidationError(
                 "assignment_content_id does not match the carried assignment rows"
             )
@@ -856,6 +1007,12 @@ class ChronologicalSplitResult:
             raise SplitValidationError(
                 "diagnostics do not match the actual assignment states"
             )
+
+        # Normalize: input assignment and row order is never semantic. The
+        # carried rows were verified against the sorted assignments, so this
+        # only canonicalizes what was already validated.
+        object.__setattr__(self, "assignments", assignments_sorted)
+        object.__setattr__(self, "assignment_rows", expected_rows)
 
 
 # ---------------------------------------------------------------------------
