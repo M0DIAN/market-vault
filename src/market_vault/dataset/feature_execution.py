@@ -41,9 +41,10 @@ from .feature_models import (
     FeatureValueResult,
 )
 from .feature_registry import built_in_feature_registry
+from .models import CanonicalBuildPin, SourceSnapshotPin
 from .pit import _row_comparator
 from .pit_models import PITAssemblyResult, PITSample
-from .spec_models import FeatureSpec
+from .spec_models import FeatureSpec, SpecValidationError
 from .specs import feature_label_spec_pin
 from .transform_models import (
     MISSING_POLICY_EXCLUDE_SAMPLE,
@@ -82,7 +83,12 @@ def execute_builtin_features(builds, pit_result, feature_specs) -> FeatureExecut
     duplicate-free in name and SpecPin. An empty spec set is allowed and
     produces COMPLETE samples with no Feature values (documented decision).
     """
-    registry = built_in_feature_registry()
+    try:
+        registry = built_in_feature_registry()
+    except TransformRegistryError as exc:
+        raise FeatureExecutionError(
+            f"failed to construct built-in Feature registry: {exc}"
+        ) from exc
     build_items = _normalize_builds(builds)
     if not isinstance(pit_result, PITAssemblyResult):
         raise FeatureExecutionError(
@@ -91,8 +97,10 @@ def execute_builtin_features(builds, pit_result, feature_specs) -> FeatureExecut
         )
     spec_items = _normalize_feature_specs(feature_specs)
     builds_by_id = {build.canonical_build_id: build for build in build_items}
-    _verify_pin_binding(pit_result, builds_by_id)
+    # Row reconciliation runs first; the exact Pin verification below
+    # reconstructs the expected pins from the reconciled rows.
     rows_by_version = _reconcile_rows(build_items)
+    _verify_pin_binding(pit_result, builds_by_id, rows_by_version)
 
     resolved_items = []
     for spec in spec_items:
@@ -157,7 +165,7 @@ def execute_builtin_features(builds, pit_result, feature_specs) -> FeatureExecut
     )
     return FeatureExecutionResult(
         samples=tuple(samples),
-        feature_spec_pins=tuple(feature_label_spec_pin(spec) for spec in spec_items),
+        feature_spec_pins=tuple(_spec_pin(spec) for spec in spec_items),
         implementation_pins=tuple(resolved.pin for _, resolved in resolved_items),
         diagnostics=diagnostics,
         execution_contract_version=FEATURE_EXECUTION_CONTRACT_VERSION,
@@ -191,6 +199,16 @@ def _normalize_builds(builds) -> tuple[VerifiedCanonicalBuild, ...]:
     return tuple(sorted(items, key=lambda build: build.canonical_build_id))
 
 
+def _spec_pin(spec: FeatureSpec) -> SpecPin:
+    """SpecPin generation that always surfaces as FeatureExecutionError."""
+    try:
+        return feature_label_spec_pin(spec)
+    except SpecValidationError as exc:
+        raise FeatureExecutionError(
+            f"cannot compute the SpecPin of feature spec {spec.name!r}: {exc}"
+        ) from exc
+
+
 def _normalize_feature_specs(feature_specs) -> tuple[FeatureSpec, ...]:
     """FeatureSpecs only (LabelSpecs fail closed), order-insensitive,
     duplicate-free in name and SpecPin, ordered by stable SpecPin key."""
@@ -213,7 +231,7 @@ def _normalize_feature_specs(feature_specs) -> tuple[FeatureSpec, ...]:
         raise FeatureExecutionError(
             "feature_specs must not contain duplicate spec names"
         )
-    pins = [feature_label_spec_pin(spec) for spec in items]
+    pins = [_spec_pin(spec) for spec in items]
     pin_keys = [(pin.kind, pin.name, pin.version, pin.content_sha256) for pin in pins]
     if len(set(pin_keys)) != len(pin_keys):
         raise FeatureExecutionError(
@@ -223,43 +241,146 @@ def _normalize_feature_specs(feature_specs) -> tuple[FeatureSpec, ...]:
     return tuple(item for item, _ in ordered)
 
 
-def _verify_pin_binding(pit_result: PITAssemblyResult, builds_by_id: dict) -> None:
-    """The PIT result's CanonicalBuildPins must correspond exactly to the
-    supplied builds: identical build ids, identical identity fields, and
-    pin row-version sets covered by the build's declared provenance. No
-    "newest build", mtime, or input order ever picks a winner."""
-    pins = tuple(pit_result.canonical_build_pins)
-    pin_ids = {pin.canonical_build_id for pin in pins}
-    build_ids = set(builds_by_id)
-    if pin_ids != build_ids:
+def _verify_pin_binding(
+    pit_result: PITAssemblyResult,
+    builds_by_id: dict,
+    rows_by_version: dict,
+) -> None:
+    """Exact bidirectional Pin verification against the PIT facts.
+
+    The PIT assembly result's own provenance facts are re-verified, never
+    re-selected: the union of every sample's Feature and Label row version
+    ids must equal ``pit_result.canonical_row_version_ids`` exactly; the
+    Pin set must be exactly one Pin per supplied build (no duplicates, no
+    extras); and every Pin must equal the Pin **exactly reconstructed**
+    from the supplied build and the actually selected rows — identity
+    fields, the selected row-version intersection, and the per-row
+    ``SourceSnapshotPin`` provenance (``ingestion_run_id``,
+    ``physical_snapshot_hash``, ``logical_source_rows_hash``,
+    ``source_schema_version``, ``requested_trade_date``,
+    ``requested_session``), mirroring the PIT ``_build_pins`` rules. Label
+    rows never enter Feature transforms, but they are original PIT assembly
+    provenance and therefore participate in this exact Pin verification.
+    ``pit_result.diagnostics.considered_canonical_build_ids`` and every
+    sample's ``considered_canonical_build_ids`` must equal the supplied
+    build ids exactly. No "newest build", mtime, or input order ever picks
+    a winner.
+    """
+    try:
+        samples = tuple(pit_result.samples)
+    except TypeError as exc:
+        raise FeatureExecutionError(
+            "pit_result.samples must be iterable"
+        ) from exc
+    selected: set[str] = set()
+    for sample in samples:
+        selected.update(sample.feature_canonical_row_version_ids)
+        selected.update(sample.label_canonical_row_version_ids)
+
+    try:
+        declared_row_version_ids = tuple(pit_result.canonical_row_version_ids)
+    except TypeError as exc:
+        raise FeatureExecutionError(
+            "pit_result.canonical_row_version_ids must be iterable"
+        ) from exc
+    if declared_row_version_ids != tuple(sorted(selected)):
+        raise FeatureExecutionError(
+            "pit_result.canonical_row_version_ids must equal the sorted union "
+            "of all selected Feature and Label row version ids; missing or "
+            "extra row versions fail closed"
+        )
+
+    try:
+        pins = tuple(pit_result.canonical_build_pins)
+    except TypeError as exc:
+        raise FeatureExecutionError(
+            "pit_result.canonical_build_pins must be iterable"
+        ) from exc
+    pin_ids = [pin.canonical_build_id for pin in pins]
+    if len(set(pin_ids)) != len(pin_ids):
+        raise FeatureExecutionError(
+            "pit_result canonical_build_pins must not contain duplicate "
+            "canonical_build_id values"
+        )
+    supplied_ids = tuple(sorted(builds_by_id))
+    if set(pin_ids) != set(builds_by_id):
         raise FeatureExecutionError(
             "pit_result canonical_build_pins must correspond exactly to the "
-            f"supplied builds; pinned {sorted(pin_ids)} vs supplied "
-            f"{sorted(build_ids)}"
+            f"supplied builds; pinned {sorted(set(pin_ids))} vs supplied "
+            f"{list(supplied_ids)}"
         )
-    for pin in pins:
-        build = builds_by_id[pin.canonical_build_id]
-        for field in (
-            "canonical_content_id",
-            "canonical_builder_version",
-            "canonical_schema_version",
-            "materializer_version",
-            "gap_policy_version",
-            "gap_content_id",
-            "status",
-        ):
-            if getattr(pin, field) != getattr(build, field):
-                raise FeatureExecutionError(
-                    f"canonical build pin {pin.canonical_build_id} field "
-                    f"{field!r} does not match the supplied build"
-                )
-        if not set(pin.canonical_row_version_ids).issubset(
-            set(build.canonical_row_version_ids)
-        ):
+    for build_id in supplied_ids:
+        build = builds_by_id[build_id]
+        pin = next(pin for pin in pins if pin.canonical_build_id == build_id)
+        expected = _expected_build_pin(build, selected, rows_by_version)
+        if pin != expected:
             raise FeatureExecutionError(
-                f"canonical build pin {pin.canonical_build_id} declares row "
-                "versions not covered by the supplied build's provenance"
+                f"canonical build pin {build_id} does not exactly equal the "
+                "pin reconstructed from the supplied build and the actually "
+                "selected rows; identity fields, selected row versions, or "
+                "source snapshot provenance mismatch"
             )
+
+    if pit_result.diagnostics.considered_canonical_build_ids != supplied_ids:
+        raise FeatureExecutionError(
+            "pit_result diagnostics considered_canonical_build_ids must equal "
+            f"the supplied build ids exactly; got "
+            f"{tuple(pit_result.diagnostics.considered_canonical_build_ids)!r}"
+        )
+    for sample in samples:
+        if sample.considered_canonical_build_ids != supplied_ids:
+            raise FeatureExecutionError(
+                f"sample {sample.sample_key!r} considered_canonical_build_ids "
+                f"must equal the supplied build ids exactly; got "
+                f"{tuple(sample.considered_canonical_build_ids)!r}"
+            )
+
+
+def _expected_build_pin(build, selected: set, rows_by_version: dict) -> CanonicalBuildPin:
+    """Exactly reconstruct the canonical build pin of one supplied build
+    from the actually selected rows, mirroring the PIT ``_build_pins``
+    rules: the row-version intersection with the build's declared set and
+    one source snapshot pin per selected row of the build."""
+    selected_for_build = tuple(
+        sorted(selected & set(build.canonical_row_version_ids))
+    )
+    snapshots: list[SourceSnapshotPin] = []
+    for version in selected_for_build:
+        resolved_row = rows_by_version.get(version)
+        if resolved_row is None:
+            raise FeatureExecutionError(
+                f"PIT assembly selected row version {version} of build "
+                f"{build.canonical_build_id}, which no supplied build contains"
+            )
+        bar = resolved_row.bar
+        snapshots.append(
+            SourceSnapshotPin(
+                ingestion_run_id=bar.ingestion_run_id,
+                physical_snapshot_hash=bar.physical_snapshot_hash,
+                logical_source_rows_hash=bar.logical_source_rows_hash,
+                source_schema_version=bar.source_schema_version,
+                requested_trade_date=bar.requested_trade_date,
+                requested_session=bar.requested_session,
+            )
+        )
+    try:
+        return CanonicalBuildPin(
+            canonical_build_id=build.canonical_build_id,
+            canonical_content_id=build.canonical_content_id,
+            canonical_builder_version=build.canonical_builder_version,
+            canonical_schema_version=build.canonical_schema_version,
+            materializer_version=build.materializer_version,
+            gap_policy_version=build.gap_policy_version,
+            gap_content_id=build.gap_content_id,
+            status=build.status,
+            canonical_row_version_ids=selected_for_build,
+            source_snapshots=snapshots,
+        )
+    except DatasetError as exc:
+        raise FeatureExecutionError(
+            f"cannot reconstruct the expected canonical build pin of build "
+            f"{build.canonical_build_id}: {exc}"
+        ) from exc
 
 
 def _reconcile_rows(build_items: tuple) -> dict[str, _ResolvedRow]:
@@ -509,6 +630,12 @@ def _trailing_window(
     Returns the consumed rows, their version ids (the available trailing
     subset — recorded as consumed provenance even on exclusion), and the
     exclusion reason code, or None when the window is usable.
+
+    The market-calendar-date boundary is checked on every consumed row
+    **before** interval contiguity: when a cross-market-calendar-date
+    violation and a non-nominal interval coexist (for example an overnight
+    gap between the two consumed rows of different dates), the reason code
+    is always CROSS_MARKET_DATE, never NON_CONTIGUOUS_ROWS.
     """
     required = _required_row_count(spec, resolved)
     if len(rows) < required:
@@ -521,6 +648,16 @@ def _trailing_window(
         return [], (), reason
     consumed = rows[-required:]
     consumed_versions = versions[-required:]
+    for row in consumed:
+        bar = row.bar
+        if bar.market_calendar_date != sample.request.anchor_market_calendar_date:
+            reason = _exclusion(
+                resolved.registration,
+                spec.name,
+                sample.sample_key,
+                FEATURE_EXCLUSION_CROSS_MARKET_DATE,
+            )
+            return [], consumed_versions, reason
     if required > 1:
         try:
             interval = parse_intraday_interval(sample.request.interval)
@@ -541,16 +678,6 @@ def _trailing_window(
                 )
                 return [], consumed_versions, reason
             previous = bar
-    for row in consumed:
-        bar = row.bar
-        if bar.market_calendar_date != sample.request.anchor_market_calendar_date:
-            reason = _exclusion(
-                resolved.registration,
-                spec.name,
-                sample.sample_key,
-                FEATURE_EXCLUSION_CROSS_MARKET_DATE,
-            )
-            return [], consumed_versions, reason
     return consumed, consumed_versions, None
 
 
@@ -646,7 +773,7 @@ def _execute_feature_value(
         return (
             FeatureValueResult(
                 feature_name=spec.name,
-                spec_pin=feature_label_spec_pin(spec),
+                spec_pin=_spec_pin(spec),
                 implementation_pin=resolved.pin,
                 status=FEATURE_VALUE_STATUS_EXCLUDED,
                 value=None,
@@ -676,7 +803,7 @@ def _execute_feature_value(
     return (
         FeatureValueResult(
             feature_name=spec.name,
-            spec_pin=feature_label_spec_pin(spec),
+            spec_pin=_spec_pin(spec),
             implementation_pin=resolved.pin,
             status=FEATURE_VALUE_STATUS_COMPLETE,
             value=value,

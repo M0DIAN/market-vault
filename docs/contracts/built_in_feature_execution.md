@@ -276,9 +276,22 @@ semantics (no second winner-selection algorithm):
 - bars not selected by the PIT feature association never enter Feature
   input;
 - `CanonicalBar` objects are never modified;
-- the PIT result's `CanonicalBuildPin`s must correspond exactly to the
-  supplied builds (identical ids, identical identity fields, pin row
-  versions covered by the build's provenance).
+- **exact bidirectional Pin verification** (never a row-subset check):
+  `pit_result.canonical_row_version_ids` must equal the sorted union of
+  every sample's Feature **and** Label row version ids exactly (missing or
+  extra row versions fail closed); the Pin set must be exactly one
+  `CanonicalBuildPin` per supplied build (no duplicate build ids, no
+  extras); and every Pin must equal the Pin **exactly reconstructed** from
+  the supplied build and the actually selected rows — identity fields, the
+  selected row-version intersection, and one `SourceSnapshotPin` per
+  selected row (`ingestion_run_id`, `physical_snapshot_hash`,
+  `logical_source_rows_hash`, `source_schema_version`,
+  `requested_trade_date`, `requested_session`), mirroring the PIT
+  `_build_pins` rule. Empty `source_snapshots` with non-empty selected rows
+  and any snapshot content mismatch fail closed;
+- `pit_result.diagnostics.considered_canonical_build_ids` and every
+  sample's `considered_canonical_build_ids` must equal the supplied build
+  ids exactly.
 
 ## 13. Market and archive clocks
 
@@ -331,7 +344,12 @@ Every consumed row's `market_calendar_date` must equal
 `sample.request.anchor_market_calendar_date`: the required window never
 crosses a market-calendar date, per the `SAME_MARKET_CALENDAR_DATE`
 boundary policy. Violation is a cross-market-date exclusion (section 17),
-never a silent re-window.
+never a silent re-window. The market-calendar-date boundary is checked on
+every consumed row **before** interval contiguity: when a
+cross-market-calendar-date violation and a non-nominal interval coexist
+(for example an overnight gap between the two consumed rows of different
+dates), the reason code is always `CROSS_MARKET_DATE`, never
+`NON_CONTIGUOUS_ROWS`.
 
 ## 17. Missing / exclusion policy
 
@@ -405,25 +423,40 @@ All result models are frozen and validated at construction
 (`FeatureExecutionError` on any inconsistency):
 
 - `FeatureValueResult` — `feature_name`, `spec_pin` (must carry the spec
-  name), `implementation_pin`, `status`, `value`, `reason_code`,
-  `consumed_canonical_row_version_ids`. COMPLETE requires a finite float
-  value, a null reason code, and a non-empty consumed set; EXCLUDED
-  requires a null value and one of the fixed reason codes.
+  name **and** kind FEATURE), `implementation_pin` (must carry a non-null
+  content hash), `status`, `value`, `reason_code`,
+  `consumed_canonical_row_version_ids` (unique, order preserved). COMPLETE
+  requires a finite float value, a null reason code, and a non-empty
+  consumed set; EXCLUDED requires a null value and one of the fixed reason
+  codes.
 - `FeatureSampleResult` — `sample_key`, `sample_version_id`, `code`,
   `feature_window_close` (normalized UTC microseconds), `values`, `status`.
   The sample status is COMPLETE when every Feature value is COMPLETE and
   EXCLUDED when any value is EXCLUDED (recomputed at construction);
-  feature names within a sample are unique; values follow the stable spec
-  execution order.
+  feature names within a sample are unique; values are strictly ordered by
+  the stable SpecPin key (kind, name, version, content_sha256) with no
+  duplicate SpecPin identities.
 - `FeatureExecutionDiagnostics` — `sample_count`, `feature_spec_count`,
   `complete_sample_count`, `excluded_sample_count`, `complete_value_count`,
   `excluded_value_count`, `transform_invocation_count` (exactly one
-  invocation per COMPLETE value, zero for EXCLUDED).
+  invocation per COMPLETE value, zero for EXCLUDED). The value-count
+  matrix must hold: `complete_value_count + excluded_value_count ==
+  sample_count * feature_spec_count`.
 - `FeatureExecutionResult` — `samples` (sorted by `sample_key`),
-  `feature_spec_pins`, `implementation_pins` (sorted, deduplicated),
-  `diagnostics` (must equal the recomputed counts), and
-  `execution_contract_version` (must be
-  `FEATURE_EXECUTION_CONTRACT_VERSION`).
+  `feature_spec_pins` (SpecPins of kind FEATURE only, sorted; duplicate
+  `(kind, name, version)` identities fail — even with conflicting hashes),
+  `implementation_pins` (non-null hashes, sorted; duplicate `(name,
+  version)` identities fail — even with conflicting hashes), `diagnostics`
+  (must equal the recomputed counts), and `execution_contract_version`
+  (must be `FEATURE_EXECUTION_CONTRACT_VERSION`). When samples are
+  non-empty, **complete coverage** is verified: every sample carries
+  exactly the result's `feature_spec_pins` in the same order (missing,
+  extra, or reordered Features fail closed), one FeatureSpec maps to
+  exactly one ImplementationPin across all samples, and the pins actually
+  used by the values equal the result pins exactly (no unused or
+  undeclared pins). An empty sample set with a non-empty spec set is a
+  documented vacuous execution: no value exists, the coverage invariants
+  are vacuous, and the result-level pins stay normalized.
 
 Results carry no absolute file paths, no `built_at`, no new `dataset_id`,
 and no new execution identity hash. Every COMPLETE value records the exact
@@ -453,13 +486,16 @@ content, `window_bars`, Canonical row values, PIT `sample_version_id`, and
 
 ## 23. Error behavior
 
-Every failure surfaces as `FeatureExecutionError` (a `DatasetError`
-subclass); no bare `KeyError`, `TypeError`, `ValueError`,
-`ArithmeticError`, `OverflowError`, or transform implementation exception
-leaks. Transform failure messages include the `transform_ref`, the spec
-name, and the sample key — never memory addresses or unstable `repr`s.
-Nothing is swallowed, nothing is retried, and no warning ever precedes a
-seemingly valid result.
+Every public execution failure surfaces as `FeatureExecutionError` (a
+`DatasetError` subclass); no bare `KeyError`, `TypeError`, `ValueError`,
+`ArithmeticError`, `OverflowError`, `TransformRegistryError`, other
+`DatasetError`, or transform implementation exception leaks. The
+`TransformRegistryError` raised by the built-in registry construction is
+wrapped at the public boundary, and every SpecPin computation is wrapped;
+the `__cause__` chain is never swallowed. Transform failure messages
+include the `transform_ref`, the spec name, and the sample key — never
+memory addresses or unstable `repr`s. Nothing is swallowed, nothing is
+retried, and no warning ever precedes a seemingly valid result.
 
 ## 24. Explicit non-goals
 

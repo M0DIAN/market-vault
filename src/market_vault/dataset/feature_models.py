@@ -33,7 +33,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from .encoding import DatasetError, normalize_utc_datetime
-from .models import ImplementationPin, SpecPin
+from .models import SPEC_KIND_FEATURE, ImplementationPin, SpecPin
 from .spec_models import SpecParameter
 
 __all__ = [
@@ -279,10 +279,20 @@ class FeatureValueResult:
         feature_name = _require_safe_name(self.feature_name, "feature name")
         _require_instance(self.spec_pin, SpecPin, "spec_pin")
         _require_instance(self.implementation_pin, ImplementationPin, "implementation_pin")
+        if self.spec_pin.kind != SPEC_KIND_FEATURE:
+            raise FeatureExecutionError(
+                f"Feature value spec_pin kind must be {SPEC_KIND_FEATURE}, "
+                f"got {self.spec_pin.kind!r}"
+            )
         if self.spec_pin.name != feature_name:
             raise FeatureExecutionError(
                 f"spec_pin name {self.spec_pin.name!r} must match the feature "
                 f"name {feature_name!r}"
+            )
+        if self.implementation_pin.content_sha256 is None:
+            raise FeatureExecutionError(
+                "Feature value implementation_pin must carry a non-null "
+                "content hash"
             )
         if self.status not in _FEATURE_VALUE_STATUSES:
             raise FeatureExecutionError(
@@ -293,6 +303,11 @@ class FeatureValueResult:
             _require_sha256(value, "consumed canonical row version id")
             for value in self.consumed_canonical_row_version_ids
         )
+        if len(set(consumed)) != len(consumed):
+            raise FeatureExecutionError(
+                "consumed canonical row version ids must not contain "
+                "duplicates; the original consumption order is preserved"
+            )
         if self.status == FEATURE_VALUE_STATUS_COMPLETE:
             if self.reason_code is not None:
                 raise FeatureExecutionError(
@@ -371,6 +386,29 @@ class FeatureSampleResult:
             raise FeatureExecutionError(
                 "sample Feature values must not contain duplicate feature names"
             )
+        pin_keys = [
+            (
+                value.spec_pin.kind,
+                value.spec_pin.name,
+                value.spec_pin.version,
+                value.spec_pin.content_sha256,
+            )
+            for value in values
+        ]
+        if pin_keys != sorted(pin_keys):
+            raise FeatureExecutionError(
+                "sample Feature values must be ordered by their stable "
+                "SpecPin key (kind, name, version, content_sha256)"
+            )
+        pin_identities = [
+            (value.spec_pin.kind, value.spec_pin.name, value.spec_pin.version)
+            for value in values
+        ]
+        if len(set(pin_identities)) != len(pin_identities):
+            raise FeatureExecutionError(
+                "sample Feature values must not contain duplicate SpecPin "
+                "identities"
+            )
         if self.status not in _FEATURE_VALUE_STATUSES:
             raise FeatureExecutionError(
                 f"sample status must be one of {', '.join(_FEATURE_VALUE_STATUSES)}, "
@@ -428,24 +466,91 @@ class FeatureExecutionDiagnostics:
                 )
 
 
-def _sorted_unique_pins(pins, label: str, key) -> tuple:
-    """Deterministically sorted, duplicate-free tuple of pins."""
+def _normalize_feature_spec_pins(pins) -> tuple[SpecPin, ...]:
+    """Deterministically sorted, duplicate-free Feature SpecPins.
+
+    Every pin must be a SpecPin of kind FEATURE. Two pins with the same
+    ``(kind, name, version)`` identity are a conflict — even when their
+    content hashes differ — and fail closed.
+    """
     if isinstance(pins, (str, bytes)):
-        raise FeatureExecutionError(f"{label} must be an iterable of pins")
+        raise FeatureExecutionError(
+            "feature_spec_pins must be an iterable of SpecPin"
+        )
     try:
         items = tuple(pins)
     except TypeError as exc:
-        raise FeatureExecutionError(f"{label} must be an iterable of pins") from exc
-    if not items:
-        return ()
+        raise FeatureExecutionError(
+            "feature_spec_pins must be an iterable of SpecPin"
+        ) from exc
     normalized = tuple(
-        _require_instance(item, SpecPin if label.startswith("feature") else ImplementationPin, label.rstrip("s"))
+        _require_instance(item, SpecPin, "feature spec pin") for item in items
+    )
+    for pin in normalized:
+        if pin.kind != SPEC_KIND_FEATURE:
+            raise FeatureExecutionError(
+                f"feature spec pin kind must be {SPEC_KIND_FEATURE}, "
+                f"got {pin.kind!r}"
+            )
+    normalized = tuple(
+        sorted(
+            normalized,
+            key=lambda pin: (pin.kind, pin.name, pin.version, pin.content_sha256),
+        )
+    )
+    for previous, current in zip(normalized, normalized[1:]):
+        if (
+            previous.kind,
+            previous.name,
+            previous.version,
+        ) == (current.kind, current.name, current.version):
+            raise FeatureExecutionError(
+                f"duplicate feature SpecPin identity "
+                f"{(current.kind, current.name, current.version)}; even "
+                "conflicting content hashes are never silently merged"
+            )
+    return normalized
+
+
+def _normalize_implementation_pins(pins) -> tuple[ImplementationPin, ...]:
+    """Deterministically sorted, duplicate-free ImplementationPins.
+
+    Every pin must carry a non-null content hash. Two pins with the same
+    ``(name, version)`` identity are a conflict — even when their content
+    hashes differ — and fail closed.
+    """
+    if isinstance(pins, (str, bytes)):
+        raise FeatureExecutionError(
+            "implementation_pins must be an iterable of ImplementationPin"
+        )
+    try:
+        items = tuple(pins)
+    except TypeError as exc:
+        raise FeatureExecutionError(
+            "implementation_pins must be an iterable of ImplementationPin"
+        ) from exc
+    normalized = tuple(
+        _require_instance(item, ImplementationPin, "implementation pin")
         for item in items
     )
-    normalized = tuple(sorted(normalized, key=key))
+    for pin in normalized:
+        if pin.content_sha256 is None:
+            raise FeatureExecutionError(
+                "implementation_pins must carry non-null content hashes"
+            )
+    normalized = tuple(
+        sorted(
+            normalized,
+            key=lambda pin: (pin.name, pin.version, pin.content_sha256),
+        )
+    )
     for previous, current in zip(normalized, normalized[1:]):
-        if key(previous) == key(current):
-            raise FeatureExecutionError(f"{label} must not contain duplicates")
+        if (previous.name, previous.version) == (current.name, current.version):
+            raise FeatureExecutionError(
+                f"duplicate implementation pin identity "
+                f"{(current.name, current.version)}; even conflicting "
+                "content hashes are never silently merged"
+            )
     return normalized
 
 
@@ -458,9 +563,17 @@ class FeatureExecutionResult:
     executed specs and resolved registrations; ``diagnostics`` must equal
     the counts recomputed from the carried samples and pins;
     ``execution_contract_version`` must be the current
-    :data:`FEATURE_EXECUTION_CONTRACT_VERSION`. Construction re-verifies
-    every invariant (fail closed). The result carries no absolute path, no
-    ``built_at``, no ``dataset_id``, and no new execution identity hash.
+    :data:`FEATURE_EXECUTION_CONTRACT_VERSION`. When samples are
+    non-empty, construction verifies complete coverage: every sample
+    carries exactly the result's ``feature_spec_pins`` in the same order,
+    every FeatureSpec maps to exactly one ImplementationPin across all
+    samples, and the pins actually used by the values equal the result
+    pins exactly (no unused or undeclared pins). An empty sample set with
+    a non-empty spec set is a documented vacuous execution: no value
+    exists, the coverage invariants are vacuous, and the result-level pins
+    stay normalized. Construction re-verifies every invariant (fail
+    closed). The result carries no absolute path, no ``built_at``, no
+    ``dataset_id``, and no new execution identity hash.
     """
 
     samples: tuple[FeatureSampleResult, ...]
@@ -494,15 +607,9 @@ class FeatureExecutionResult:
                 raise FeatureExecutionError(
                     f"duplicate sample_key {current.sample_key!r} in execution result"
                 )
-        spec_pins = _sorted_unique_pins(
-            self.feature_spec_pins,
-            "feature_spec_pins",
-            key=lambda pin: (pin.kind, pin.name, pin.version, pin.content_sha256),
-        )
-        implementation_pins = _sorted_unique_pins(
-            self.implementation_pins,
-            "implementation_pins",
-            key=lambda pin: (pin.name, pin.version, pin.content_sha256),
+        spec_pins = _normalize_feature_spec_pins(self.feature_spec_pins)
+        implementation_pins = _normalize_implementation_pins(
+            self.implementation_pins
         )
         _require_instance(
             self.diagnostics, FeatureExecutionDiagnostics, "diagnostics"
@@ -521,6 +628,13 @@ class FeatureExecutionResult:
             len(sample.values)
             for sample in samples
         ) - complete_values
+        # Diagnostics matrix: every sample carries exactly one value per
+        # feature spec, so the value count is the sample/spec product.
+        if complete_values + excluded_values != len(samples) * len(spec_pins):
+            raise FeatureExecutionError(
+                "complete_value_count + excluded_value_count must equal "
+                "sample_count * feature_spec_count"
+            )
         expected = FeatureExecutionDiagnostics(
             sample_count=len(samples),
             feature_spec_count=len(spec_pins),
@@ -535,21 +649,60 @@ class FeatureExecutionResult:
                 f"diagnostics {self.diagnostics} do not match the counts "
                 f"recomputed from the execution result {expected}"
             )
-        used_spec_pins = {value.spec_pin for sample in samples for value in sample.values}
-        used_implementation_pins = {
-            value.implementation_pin
-            for sample in samples
-            for value in sample.values
-        }
-        if not used_spec_pins.issubset(set(spec_pins)):
-            raise FeatureExecutionError(
-                "every value spec_pin must be among the result feature_spec_pins"
-            )
-        if not used_implementation_pins.issubset(set(implementation_pins)):
-            raise FeatureExecutionError(
-                "every value implementation_pin must be among the result "
-                "implementation_pins"
-            )
+        if samples:
+            # Complete coverage: every sample carries exactly the result's
+            # feature spec pins, in the same order.
+            for sample in samples:
+                if tuple(
+                    value.spec_pin for value in sample.values
+                ) != spec_pins:
+                    raise FeatureExecutionError(
+                        f"sample {sample.sample_key!r} Feature values must "
+                        "cover exactly the result feature_spec_pins, in the "
+                        "same order; missing, extra, or reordered features "
+                        "fail closed"
+                    )
+            # One FeatureSpec maps to exactly one ImplementationPin across
+            # all samples.
+            spec_to_implementation: dict = {}
+            for sample in samples:
+                for value in sample.values:
+                    existing = spec_to_implementation.get(value.spec_pin)
+                    if existing is None:
+                        spec_to_implementation[value.spec_pin] = (
+                            value.implementation_pin
+                        )
+                    elif existing != value.implementation_pin:
+                        raise FeatureExecutionError(
+                            f"feature spec {value.spec_pin.name!r} must map "
+                            "to exactly one implementation pin across all "
+                            "samples"
+                        )
+            used_spec_pins = {
+                value.spec_pin for sample in samples for value in sample.values
+            }
+            used_implementation_pins = {
+                value.implementation_pin
+                for sample in samples
+                for value in sample.values
+            }
+            if used_spec_pins != set(spec_pins):
+                raise FeatureExecutionError(
+                    "the used value spec pins must equal the result "
+                    "feature_spec_pins exactly; unused or undeclared pins "
+                    "fail closed"
+                )
+            if used_implementation_pins != set(implementation_pins):
+                raise FeatureExecutionError(
+                    "the used value implementation pins must equal the "
+                    "result implementation_pins exactly; unused or "
+                    "undeclared pins fail closed"
+                )
+        # Documented decision: an empty sample set with a non-empty spec set
+        # is a vacuous execution — no sample carries values, so the
+        # coverage invariants above are vacuous, while the result-level
+        # pins remain normalized and the diagnostics matrix holds
+        # (0 == 0 * feature_spec_count).
         object.__setattr__(self, "samples", samples)
         object.__setattr__(self, "feature_spec_pins", spec_pins)
         object.__setattr__(self, "implementation_pins", implementation_pins)

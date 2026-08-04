@@ -50,6 +50,7 @@ from market_vault.dataset import (
     BOUNDARY_POLICY_SAME_MARKET_CALENDAR_DATE,
     CanonicalBuildPin,
     CrossTradingDayPolicy,
+    SourceSnapshotPin,
     DatasetField,
     FeatureExecutionDiagnostics,
     FeatureExecutionError,
@@ -384,8 +385,13 @@ def hand_sample(
     *,
     dataset_as_of=None,
     label_versions=(),
+    considered=None,
 ) -> PITSample:
-    considered = tuple(sorted({build.canonical_build_id for build in builds}))
+    considered = (
+        tuple(sorted({build.canonical_build_id for build in builds}))
+        if considered is None
+        else tuple(considered)
+    )
     key = pit_sample_key(req)
     version_id = pit_sample_version_id(
         sample_key=key,
@@ -419,38 +425,91 @@ def hand_sample(
     )
 
 
-def hand_result(builds, samples) -> PITAssemblyResult:
-    """A PITAssemblyResult whose pins correspond exactly to ``builds`` and
-    whose samples reference real (possibly modified) bars. Used to exercise
-    the executor's defensive invariants that the PIT assembler already
+def source_snapshot_of(bar) -> SourceSnapshotPin:
+    """The source snapshot pin of one canonical bar, mirroring the PIT
+    ``_build_pins`` rule."""
+    return SourceSnapshotPin(
+        ingestion_run_id=bar.ingestion_run_id,
+        physical_snapshot_hash=bar.physical_snapshot_hash,
+        logical_source_rows_hash=bar.logical_source_rows_hash,
+        source_schema_version=bar.source_schema_version,
+        requested_trade_date=bar.requested_trade_date,
+        requested_session=bar.requested_session,
+    )
+
+
+def make_pin(
+    build,
+    selected,
+    bars_by_version,
+    *,
+    row_versions=None,
+    source_snapshots=None,
+    **overrides,
+) -> CanonicalBuildPin:
+    """A canonical build pin for ``build`` over the selected row versions,
+    reconstructing the source snapshots from the actual bars; overrides
+    allow deliberate tampering for the fail-closed tests."""
+    selected_for_build = (
+        tuple(sorted(selected & set(build.canonical_row_version_ids)))
+        if row_versions is None
+        else tuple(sorted(row_versions))
+    )
+    snapshots = source_snapshots
+    if snapshots is None:
+        snapshots = [
+            source_snapshot_of(bars_by_version[version])
+            for version in selected_for_build
+        ]
+    fields = dict(
+        canonical_build_id=build.canonical_build_id,
+        canonical_content_id=build.canonical_content_id,
+        canonical_builder_version=build.canonical_builder_version,
+        canonical_schema_version=build.canonical_schema_version,
+        materializer_version=build.materializer_version,
+        gap_policy_version=build.gap_policy_version,
+        gap_content_id=build.gap_content_id,
+        status=build.status,
+        canonical_row_version_ids=selected_for_build,
+        source_snapshots=snapshots,
+    )
+    fields.update(overrides)
+    return CanonicalBuildPin(**fields)
+
+
+def hand_result(
+    builds,
+    samples,
+    *,
+    pins=None,
+    row_version_ids=None,
+    considered_diagnostics=None,
+) -> PITAssemblyResult:
+    """A PITAssemblyResult whose pins are exactly reconstructed from
+    ``builds`` and the samples' selected rows (mirroring the PIT
+    ``_build_pins`` rule) unless overridden. Used to exercise the
+    executor's defensive invariants that the PIT assembler already
     guarantees on its legal path."""
     selected = set()
     for sample in samples:
         selected.update(sample.feature_canonical_row_version_ids)
         selected.update(sample.label_canonical_row_version_ids)
-    pins = []
-    for build in builds:
-        pins.append(
-            CanonicalBuildPin(
-                canonical_build_id=build.canonical_build_id,
-                canonical_content_id=build.canonical_content_id,
-                canonical_builder_version=build.canonical_builder_version,
-                canonical_schema_version=build.canonical_schema_version,
-                materializer_version=build.materializer_version,
-                gap_policy_version=build.gap_policy_version,
-                gap_content_id=build.gap_content_id,
-                status=build.status,
-                canonical_row_version_ids=tuple(
-                    sorted(selected & set(build.canonical_row_version_ids))
-                ),
-                source_snapshots=(),
-            )
-        )
+    bars_by_version = {
+        bar.canonical_row_version_id: bar
+        for build in builds
+        for bar in build.bars
+    }
+    if pins is None:
+        pins = [make_pin(build, selected, bars_by_version) for build in builds]
     schema = pit_association_schema()
     return PITAssemblyResult(
         samples=tuple(samples),
         canonical_build_pins=tuple(pins),
-        canonical_row_version_ids=tuple(sorted(selected)),
+        canonical_row_version_ids=(
+            tuple(sorted(selected))
+            if row_version_ids is None
+            else tuple(row_version_ids)
+        ),
         gap_references=(),
         association_schema=schema,
         association_rows=(),
@@ -468,8 +527,10 @@ def hand_result(builds, samples) -> PITAssemblyResult:
             feature_archive_future_excluded_count=0,
             label_market_future_excluded_count=0,
             label_archive_future_excluded_count=0,
-            considered_canonical_build_ids=tuple(
-                sorted({build.canonical_build_id for build in builds})
+            considered_canonical_build_ids=(
+                tuple(sorted({build.canonical_build_id for build in builds}))
+                if considered_diagnostics is None
+                else tuple(considered_diagnostics)
             ),
         ),
     )
@@ -1676,3 +1737,432 @@ def test_transforms_are_pure_module_level_functions():
         assert fn.__module__.startswith("market_vault.dataset.feature_transforms")
         assert fn.__closure__ is None
         assert fn.__name__ in fn.__qualname__
+
+
+# ---------------------------------------------------------------------------
+# I. Exact PIT Pin binding (bidirectional reconstruction).
+# ---------------------------------------------------------------------------
+
+
+def _single_bar_sample(fixtures, bar):
+    return hand_sample(
+        [fixtures.a], (bar.canonical_row_version_id,), request()
+    )
+
+
+def _bars_by_version(build):
+    return {bar.canonical_row_version_id: bar for bar in build.bars}
+
+
+def test_pin_missing_selected_row_version_rejected(fixtures):
+    bar = bar_of(fixtures.a, "2026-07-01 13:35:00")
+    sample = _single_bar_sample(fixtures, bar)
+    pin = make_pin(
+        fixtures.a, {bar.canonical_row_version_id}, _bars_by_version(fixtures.a),
+        row_versions=(),  # the actually selected row is missing from the pin
+    )
+    pit = hand_result([fixtures.a], [sample], pins=[pin])
+    with pytest.raises(FeatureExecutionError):
+        execute_builtin_features(
+            [fixtures.a], pit, [feature_spec("cb", REF_BODY, ("open", "close"))]
+        )
+
+
+def test_pin_extra_unselected_row_version_rejected(fixtures):
+    bar = bar_of(fixtures.a, "2026-07-01 13:35:00")
+    extra = bar_of(fixtures.a, "2026-07-01 13:34:00")
+    sample = _single_bar_sample(fixtures, bar)
+    pin = make_pin(
+        fixtures.a, {bar.canonical_row_version_id}, _bars_by_version(fixtures.a),
+        row_versions=(bar.canonical_row_version_id, extra.canonical_row_version_id),
+    )
+    pit = hand_result([fixtures.a], [sample], pins=[pin])
+    with pytest.raises(FeatureExecutionError):
+        execute_builtin_features(
+            [fixtures.a], pit, [feature_spec("cb", REF_BODY, ("open", "close"))]
+        )
+
+
+def test_pin_empty_source_snapshots_rejected(fixtures):
+    bar = bar_of(fixtures.a, "2026-07-01 13:35:00")
+    sample = _single_bar_sample(fixtures, bar)
+    pin = make_pin(
+        fixtures.a, {bar.canonical_row_version_id}, _bars_by_version(fixtures.a),
+        source_snapshots=(),  # selected rows exist, so provenance must exist
+    )
+    pit = hand_result([fixtures.a], [sample], pins=[pin])
+    with pytest.raises(FeatureExecutionError):
+        execute_builtin_features(
+            [fixtures.a], pit, [feature_spec("cb", REF_BODY, ("open", "close"))]
+        )
+
+
+def test_pin_source_snapshot_content_mismatch_rejected(fixtures):
+    bar = bar_of(fixtures.a, "2026-07-01 13:35:00")
+    sample = _single_bar_sample(fixtures, bar)
+    wrong_snapshot = replace(source_snapshot_of(bar), ingestion_run_id="wrong-run")
+    pin = make_pin(
+        fixtures.a, {bar.canonical_row_version_id}, _bars_by_version(fixtures.a),
+        source_snapshots=[wrong_snapshot],
+    )
+    pit = hand_result([fixtures.a], [sample], pins=[pin])
+    with pytest.raises(FeatureExecutionError):
+        execute_builtin_features(
+            [fixtures.a], pit, [feature_spec("cb", REF_BODY, ("open", "close"))]
+        )
+
+
+def test_duplicate_canonical_build_pin_rejected(fixtures):
+    bar = bar_of(fixtures.a, "2026-07-01 13:35:00")
+    sample = _single_bar_sample(fixtures, bar)
+    pin = make_pin(
+        fixtures.a, {bar.canonical_row_version_id}, _bars_by_version(fixtures.a)
+    )
+    pit = hand_result([fixtures.a], [sample], pins=[pin, pin])
+    with pytest.raises(FeatureExecutionError):
+        execute_builtin_features(
+            [fixtures.a], pit, [feature_spec("cb", REF_BODY, ("open", "close"))]
+        )
+
+
+def test_canonical_row_version_ids_missing_selected_row_rejected(fixtures):
+    bar = bar_of(fixtures.a, "2026-07-01 13:35:00")
+    sample = _single_bar_sample(fixtures, bar)
+    pit = hand_result([fixtures.a], [sample], row_version_ids=())
+    with pytest.raises(FeatureExecutionError):
+        execute_builtin_features(
+            [fixtures.a], pit, [feature_spec("cb", REF_BODY, ("open", "close"))]
+        )
+
+
+def test_canonical_row_version_ids_extra_row_rejected(fixtures):
+    bar = bar_of(fixtures.a, "2026-07-01 13:35:00")
+    sample = _single_bar_sample(fixtures, bar)
+    pit = hand_result(
+        [fixtures.a], [sample],
+        row_version_ids=(bar.canonical_row_version_id, "b" * 64),
+    )
+    with pytest.raises(FeatureExecutionError):
+        execute_builtin_features(
+            [fixtures.a], pit, [feature_spec("cb", REF_BODY, ("open", "close"))]
+        )
+
+
+def test_sample_considered_build_ids_mismatch_rejected(fixtures):
+    bar = bar_of(fixtures.a, "2026-07-01 13:35:00")
+    sample = hand_sample(
+        [fixtures.a], (bar.canonical_row_version_id,), request(),
+        considered=("a" * 64,),
+    )
+    pit = hand_result([fixtures.a], [sample])
+    with pytest.raises(FeatureExecutionError):
+        execute_builtin_features(
+            [fixtures.a], pit, [feature_spec("cb", REF_BODY, ("open", "close"))]
+        )
+
+
+def test_diagnostics_considered_build_ids_mismatch_rejected(fixtures):
+    bar = bar_of(fixtures.a, "2026-07-01 13:35:00")
+    sample = _single_bar_sample(fixtures, bar)
+    pit = hand_result([fixtures.a], [sample], considered_diagnostics=("b" * 64,))
+    with pytest.raises(FeatureExecutionError):
+        execute_builtin_features(
+            [fixtures.a], pit, [feature_spec("cb", REF_BODY, ("open", "close"))]
+        )
+
+
+def test_normal_assembler_pit_result_passes_exact_pin_binding(fixtures):
+    # A real assembler result (Feature + Label rows, two builds) must pass
+    # the exact reconstruction comparison unchanged.
+    req = request(
+        label_start=datetime(2026, 7, 1, 13, 36, tzinfo=UTC),
+        label_close=datetime(2026, 7, 1, 13, 38, tzinfo=UTC),
+    )
+    pit = assemble([fixtures.a, fixtures.b], [req])
+    result = execute_builtin_features(
+        [fixtures.a, fixtures.b],
+        pit,
+        [feature_spec("sr", REF_SIMPLE, ("close",), parameters=(wb(2),))],
+    )
+    assert result.samples[0].status == FEATURE_VALUE_STATUS_COMPLETE
+
+
+# ---------------------------------------------------------------------------
+# J. Result-model tightening (direct construction).
+# ---------------------------------------------------------------------------
+
+
+def spec_and_impl(name, transform_ref, fields, **kwargs):
+    spec = feature_spec(name, transform_ref, fields, **kwargs)
+    resolved = built_in_feature_registry().resolve_feature_spec(spec)
+    return feature_label_spec_pin(spec), resolved.pin
+
+
+def value_of(spec_pin, impl_pin, *, name=None, consumed=("a" * 64,)):
+    return FeatureValueResult(
+        feature_name=name or spec_pin.name,
+        spec_pin=spec_pin,
+        implementation_pin=impl_pin,
+        status=FEATURE_VALUE_STATUS_COMPLETE,
+        value=1.0,
+        reason_code=None,
+        consumed_canonical_row_version_ids=consumed,
+    )
+
+
+def sample_of(sample_key, values, *, code="US.MU"):
+    values = tuple(values)
+    status = (
+        FEATURE_VALUE_STATUS_COMPLETE
+        if all(v.status == FEATURE_VALUE_STATUS_COMPLETE for v in values)
+        else FEATURE_VALUE_STATUS_EXCLUDED
+    )
+    return FeatureSampleResult(
+        sample_key=sample_key,
+        sample_version_id=sha(sample_key),
+        code=code,
+        feature_window_close=datetime(2026, 7, 1, 13, 36, tzinfo=UTC),
+        values=values,
+        status=status,
+    )
+
+
+def result_of(samples, spec_pins, impl_pins, *, diagnostics=None):
+    samples = tuple(samples)
+    spec_pins = tuple(spec_pins)
+    impl_pins = tuple(impl_pins)
+    complete_samples = sum(
+        1 for s in samples if s.status == FEATURE_VALUE_STATUS_COMPLETE
+    )
+    complete_values = sum(
+        1 for s in samples for v in s.values if v.status == FEATURE_VALUE_STATUS_COMPLETE
+    )
+    excluded_values = sum(len(s.values) for s in samples) - complete_values
+    diagnostics = diagnostics or FeatureExecutionDiagnostics(
+        sample_count=len(samples),
+        feature_spec_count=len(spec_pins),
+        complete_sample_count=complete_samples,
+        excluded_sample_count=len(samples) - complete_samples,
+        complete_value_count=complete_values,
+        excluded_value_count=excluded_values,
+        transform_invocation_count=complete_values,
+    )
+    return FeatureExecutionResult(
+        samples=samples,
+        feature_spec_pins=spec_pins,
+        implementation_pins=impl_pins,
+        diagnostics=diagnostics,
+        execution_contract_version=FEATURE_EXECUTION_CONTRACT_VERSION,
+    )
+
+
+def test_value_rejects_label_spec_pin():
+    spec = feature_spec("cb", REF_BODY, ("open", "close"))
+    resolved = built_in_feature_registry().resolve_feature_spec(spec)
+    label_pin = SpecPin(
+        kind="LABEL", name="cb", version="v1", content_sha256="b" * 64
+    )
+    with pytest.raises(FeatureExecutionError):
+        FeatureValueResult(
+            feature_name="cb",
+            spec_pin=label_pin,
+            implementation_pin=resolved.pin,
+            status=FEATURE_VALUE_STATUS_COMPLETE,
+            value=1.0,
+            reason_code=None,
+            consumed_canonical_row_version_ids=("a" * 64,),
+        )
+
+
+def test_value_rejects_null_implementation_hash():
+    spec = feature_spec("cb", REF_BODY, ("open", "close"))
+    null_hash = ImplementationPin(name=REF_BODY, version="v1", content_sha256=None)
+    with pytest.raises(FeatureExecutionError):
+        FeatureValueResult(
+            feature_name="cb",
+            spec_pin=feature_label_spec_pin(spec),
+            implementation_pin=null_hash,
+            status=FEATURE_VALUE_STATUS_COMPLETE,
+            value=1.0,
+            reason_code=None,
+            consumed_canonical_row_version_ids=("a" * 64,),
+        )
+
+
+def test_value_rejects_duplicate_consumed_ids():
+    spec = feature_spec("cb", REF_BODY, ("open", "close"))
+    resolved = built_in_feature_registry().resolve_feature_spec(spec)
+    with pytest.raises(FeatureExecutionError):
+        FeatureValueResult(
+            feature_name="cb",
+            spec_pin=feature_label_spec_pin(spec),
+            implementation_pin=resolved.pin,
+            status=FEATURE_VALUE_STATUS_COMPLETE,
+            value=1.0,
+            reason_code=None,
+            consumed_canonical_row_version_ids=("a" * 64, "a" * 64),
+        )
+
+
+def test_value_consumed_order_preserved():
+    spec = feature_spec("cb", REF_BODY, ("open", "close"))
+    resolved = built_in_feature_registry().resolve_feature_spec(spec)
+    value = FeatureValueResult(
+        feature_name="cb",
+        spec_pin=feature_label_spec_pin(spec),
+        implementation_pin=resolved.pin,
+        status=FEATURE_VALUE_STATUS_COMPLETE,
+        value=1.0,
+        reason_code=None,
+        consumed_canonical_row_version_ids=("b" * 64, "a" * 64),
+    )
+    assert value.consumed_canonical_row_version_ids == ("b" * 64, "a" * 64)
+
+
+def test_sample_rejects_unsorted_values():
+    pin_a, impl_a = spec_and_impl("aa", REF_BODY, ("open", "close"))
+    pin_z, impl_z = spec_and_impl("zz", REF_SIMPLE, ("close",), parameters=(wb(2),))
+    with pytest.raises(FeatureExecutionError):
+        sample_of("s1", [value_of(pin_z, impl_z), value_of(pin_a, impl_a)])
+
+
+def test_result_rejects_missing_feature_in_sample():
+    pin_a, impl_a = spec_and_impl("aa", REF_BODY, ("open", "close"))
+    pin_b, impl_b = spec_and_impl("bb", REF_SIMPLE, ("close",), parameters=(wb(2),))
+    sample = sample_of("s1", [value_of(pin_a, impl_a)])
+    with pytest.raises(FeatureExecutionError):
+        result_of([sample], [pin_a, pin_b], [impl_a, impl_b])
+
+
+def test_result_rejects_extra_feature_in_sample():
+    pin_a, impl_a = spec_and_impl("aa", REF_BODY, ("open", "close"))
+    pin_b, impl_b = spec_and_impl("bb", REF_SIMPLE, ("close",), parameters=(wb(2),))
+    sample = sample_of("s1", [value_of(pin_a, impl_a), value_of(pin_b, impl_b)])
+    with pytest.raises(FeatureExecutionError):
+        result_of([sample], [pin_a], [impl_a])
+
+
+def test_result_rejects_unused_spec_pin():
+    pin_a, impl_a = spec_and_impl("aa", REF_BODY, ("open", "close"))
+    pin_b, impl_b = spec_and_impl("bb", REF_SIMPLE, ("close",), parameters=(wb(2),))
+    sample = sample_of("s1", [value_of(pin_a, impl_a)])
+    with pytest.raises(FeatureExecutionError):
+        result_of([sample], [pin_a, pin_b], [impl_a, impl_b])
+
+
+def test_result_rejects_unused_implementation_pin():
+    pin_a, impl_a = spec_and_impl("aa", REF_BODY, ("open", "close"))
+    _, impl_b = spec_and_impl("bb", REF_SIMPLE, ("close",), parameters=(wb(2),))
+    sample = sample_of("s1", [value_of(pin_a, impl_a)])
+    with pytest.raises(FeatureExecutionError):
+        result_of([sample], [pin_a], [impl_a, impl_b])
+
+
+def test_result_rejects_spec_implementation_drift_across_samples():
+    pin_a, impl_a = spec_and_impl("aa", REF_BODY, ("open", "close"))
+    _, impl_b = spec_and_impl("bb", REF_SIMPLE, ("close",), parameters=(wb(2),))
+    first = sample_of("s1", [value_of(pin_a, impl_a)])
+    second = sample_of("s2", [value_of(pin_a, impl_b)])
+    with pytest.raises(FeatureExecutionError):
+        result_of([first, second], [pin_a], [impl_a, impl_b])
+
+
+def test_result_rejects_spec_pin_identity_hash_conflict():
+    pin_a, impl_a = spec_and_impl("aa", REF_BODY, ("open", "close"))
+    conflicting = SpecPin(
+        kind=SPEC_KIND_FEATURE, name="aa", version="v1", content_sha256="b" * 64
+    )
+    sample = sample_of("s1", [value_of(pin_a, impl_a)])
+    with pytest.raises(FeatureExecutionError):
+        result_of([sample], [pin_a, conflicting], [impl_a])
+
+
+def test_result_rejects_implementation_pin_identity_hash_conflict():
+    pin_a, impl_a = spec_and_impl("aa", REF_BODY, ("open", "close"))
+    conflicting = ImplementationPin(name=impl_a.name, version="v1", content_sha256="b" * 64)
+    sample = sample_of("s1", [value_of(pin_a, impl_a)])
+    with pytest.raises(FeatureExecutionError):
+        result_of([sample], [pin_a], [impl_a, conflicting])
+
+
+def test_result_empty_samples_nonempty_specs_vacuous_execution():
+    # Documented decision: an empty sample set with a non-empty spec set is
+    # a vacuous execution; the coverage invariants are vacuous and the
+    # result-level pins stay normalized.
+    pin_a, impl_a = spec_and_impl("aa", REF_BODY, ("open", "close"))
+    result = result_of([], [pin_a], [impl_a])
+    assert result.samples == ()
+    assert result.feature_spec_pins == (pin_a,)
+    assert result.diagnostics.sample_count == 0
+    assert result.diagnostics.feature_spec_count == 1
+
+
+def test_diagnostics_matrix_validation():
+    pin_a, impl_a = spec_and_impl("aa", REF_BODY, ("open", "close"))
+    pin_b, impl_b = spec_and_impl("bb", REF_SIMPLE, ("close",), parameters=(wb(2),))
+    sample = sample_of("s1", [value_of(pin_a, impl_a), value_of(pin_b, impl_b)])
+    bad = FeatureExecutionDiagnostics(
+        sample_count=1, feature_spec_count=2, complete_sample_count=1,
+        excluded_sample_count=0, complete_value_count=1,
+        excluded_value_count=0, transform_invocation_count=1,
+    )
+    with pytest.raises(FeatureExecutionError):
+        result_of([sample], [pin_a, pin_b], [impl_a, impl_b], diagnostics=bad)
+
+
+# ---------------------------------------------------------------------------
+# K. Registry construction error wrapping and exclusion priority.
+# ---------------------------------------------------------------------------
+
+
+def test_registry_construction_error_wrapped(fixtures, monkeypatch):
+    import market_vault.dataset.feature_execution as feature_execution_module
+
+    def boom():
+        raise TransformRegistryError("registry exploded")
+
+    monkeypatch.setattr(feature_execution_module, "built_in_feature_registry", boom)
+    with pytest.raises(FeatureExecutionError) as excinfo:
+        execute_builtin_features(
+            [fixtures.a],
+            assemble([fixtures.a], [request()]),
+            [feature_spec("cb", REF_BODY, ("open", "close"))],
+        )
+    assert "failed to construct built-in Feature registry" in str(excinfo.value)
+    assert excinfo.value.__cause__ is not None
+
+
+def test_cross_market_date_priority_over_contiguity(fixtures):
+    # Two consumed rows of different market-calendar dates with a
+    # non-nominal overnight interval between them: the reason must be
+    # CROSS_MARKET_DATE, never NON_CONTIGUOUS_ROWS.
+    bar1 = bar_of(fixtures.a, "2026-07-01 13:35:00")  # market date 2026-07-01
+    bar2 = replace(
+        bar_of(fixtures.d, "2026-07-02 13:30:00"),  # market date 2026-07-02
+        code="US.MU",
+    )
+    second_build = replace(
+        fixtures.d,
+        bars=(bar2,),
+        canonical_row_version_ids=(bar2.canonical_row_version_id,),
+    )
+    req = request(
+        feature_start=datetime(2026, 7, 1, 13, 30, tzinfo=UTC),
+        feature_close=datetime(2026, 7, 2, 13, 31, tzinfo=UTC),
+    )
+    sample = hand_sample(
+        [fixtures.a, second_build],
+        (bar1.canonical_row_version_id, bar2.canonical_row_version_id),
+        req,
+    )
+    pit = hand_result([fixtures.a, second_build], [sample])
+    result = execute_builtin_features(
+        [fixtures.a, second_build],
+        pit,
+        [feature_spec("sr", REF_SIMPLE, ("close",), parameters=(wb(2),))],
+    )
+    value = executed_value(result, sample.sample_key, "sr")
+    assert value.status == FEATURE_VALUE_STATUS_EXCLUDED
+    assert value.reason_code == FEATURE_EXCLUSION_CROSS_MARKET_DATE
+    assert value.value is None
+    assert result.diagnostics.transform_invocation_count == 0
