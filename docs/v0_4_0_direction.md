@@ -1,7 +1,7 @@
 # MarketVault v0.4.0 Direction: Canonical Dataset and ML Foundation
 
-Status: implementation in progress (PR-5 through PR-9 implemented; release
-preparation pending)
+Status: implementation complete (PR-5 through PR-9 implemented; v0.4.0
+release preparation in PR-10)
 
 This document defines the scope, non-goals, and design direction for the
 V0.4.0 "Canonical Dataset and ML Foundation" phase. It is a planning document;
@@ -418,6 +418,10 @@ leakage threat-model regression suite
   Tests and documentation only: no runtime API, identity algorithm, version
   constant, dependency, CLI, OpenD, network, or Dataset writer changes; the
   final Dataset builder is still not implemented.
+- PR-10 (v0.4.0 release preparation) in progress: package version
+  synchronized to 0.4.0; README / CHANGELOG / release notes finalized; the
+  release checker and package validation updated. Tag creation, GitHub
+  Release, and publication are intentionally not performed by this PR.
 
 ## 14. Proposed PR sequence
 
@@ -472,3 +476,12 @@ the six timestamp behaviors.
   behavior are untouched.
 - V0.4.0 version bump happens only in the release-prep PR, not in feature
   PRs.
+
+Shipped-versus-remaining clarification for the criteria above: the shipped
+V0.4.0 foundation implements the contracts and models that record
+Feature/Label/Split/Implementation pins, the two-clock PIT assembly, the
+versioned Feature/Label specs, and the chronological split/purge foundation.
+A final Dataset builder that automatically executes Feature/Label transforms
+for every actual Dataset build, and Dataset Parquet export, remain future
+work; no Dataset build directory or Dataset Parquet file is produced by
+V0.4.0.
