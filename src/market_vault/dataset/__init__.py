@@ -12,12 +12,19 @@ Feature/Label observation windows under the market clock and the optional
 archive clock and produces the association content the future Dataset
 builder consumes.
 
-This layer does not compute features or labels, parse Feature/Label spec
-files, assign train/validation/test splits, purge by actual label end, export
-Dataset Parquet, build the final DatasetManifest, create DuckDB views, add
-CLI commands, or train models. The Canonical manifest remains authoritative
-for Canonical builds; the Dataset layer only references immutable Canonical
-builds and their stable identities.
+The versioned Feature/Label spec contracts (:mod:`market_vault.dataset.
+spec_models`) provide frozen typed spec models, and
+:mod:`market_vault.dataset.specs` provides strict YAML parsing,
+deterministic semantic content identity, and conversion to the existing
+SpecPin, so spec documents bind into ``DatasetIdentityInput`` /
+``dataset_id``. Spec parsing and validation never import or execute
+``transform_ref``.
+
+This layer does not compute features or labels, assign train/validation/test
+splits, purge by actual label end, export Dataset Parquet, build the final
+DatasetManifest, create DuckDB views, add CLI commands, or train models. The
+Canonical manifest remains authoritative for Canonical builds; the Dataset
+layer only references immutable Canonical builds and their stable identities.
 """
 
 from .content import dataset_schema_id, logical_dataset_content_id
@@ -78,12 +85,36 @@ from .pit_models import (
     PITSample,
     PITSampleRequest,
 )
+from .spec_models import (
+    FEATURE_LABEL_SPEC_CONTENT_ID_VERSION,
+    FEATURE_SPEC_SCHEMA_VERSION,
+    LABEL_SPEC_SCHEMA_VERSION,
+    CrossTradingDayPolicy,
+    FeatureSpec,
+    LabelHorizon,
+    LabelObservationWindow,
+    LabelSpec,
+    SpecParameter,
+    SpecValidationError,
+    SpecVersionRequirements,
+)
+from .specs import (
+    feature_label_spec_content_id,
+    feature_label_spec_pin,
+    load_feature_spec,
+    load_label_spec,
+    parse_feature_spec,
+    parse_label_spec,
+)
 
 __all__ = [
     "DATASET_CONTENT_ID_VERSION",
     "DATASET_IDENTITY_ENCODING_VERSION",
     "DATASET_MANIFEST_SCHEMA_VERSION",
     "DATASET_SCHEMA_ID_VERSION",
+    "FEATURE_LABEL_SPEC_CONTENT_ID_VERSION",
+    "FEATURE_SPEC_SCHEMA_VERSION",
+    "LABEL_SPEC_SCHEMA_VERSION",
     "PIT_ASSEMBLER_VERSION",
     "PIT_ASSOCIATION_COLUMNS",
     "PIT_ASSOCIATION_SCHEMA_VERSION",
@@ -102,15 +133,23 @@ __all__ = [
     "CanonicalBuildPin",
     "CompletionEntry",
     "CompletionSummary",
+    "CrossTradingDayPolicy",
     "DatasetError",
+    "FeatureSpec",
+    "GapReference",
+    "ImplementationPin",
+    "LabelHorizon",
+    "LabelObservationWindow",
+    "LabelSpec",
+    "SpecParameter",
+    "SpecValidationError",
+    "SpecVersionRequirements",
     "DatasetField",
     "DatasetIdentityInput",
     "DatasetManifest",
     "DatasetOutputFile",
     "DatasetSchema",
     "DatasetScope",
-    "GapReference",
-    "ImplementationPin",
     "PITAssemblyDiagnostics",
     "PITAssemblyError",
     "PITAssemblyResult",
@@ -124,7 +163,13 @@ __all__ = [
     "build_dataset_manifest",
     "dataset_id",
     "dataset_schema_id",
+    "feature_label_spec_content_id",
+    "feature_label_spec_pin",
+    "load_feature_spec",
+    "load_label_spec",
     "logical_dataset_content_id",
+    "parse_feature_spec",
+    "parse_label_spec",
     "pit_association_content_id",
     "pit_association_schema",
     "pit_association_schema_id",

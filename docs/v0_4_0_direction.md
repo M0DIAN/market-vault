@@ -381,8 +381,15 @@ Threats the dataset layer must defend against:
   content contract, CanonicalBuildPins and GapReferences from verified
   manifests and actually selected rows — see
   [contracts/point_in_time_sample_assembly.md](contracts/point_in_time_sample_assembly.md).
-  Feature/Label spec versioning (PR-7), splits and actual-label-end purging
-  (PR-8), and Dataset Parquet export are not implemented yet.
+  Splits and actual-label-end purging (PR-8) and Dataset Parquet export are
+  not implemented yet.
+- PR-7 (feature and label spec versioning) implemented: frozen typed
+  Feature/Label spec models, strict fail-closed YAML parsing, deterministic
+  semantic content hashing, and conversion to the existing SpecPin /
+  DatasetIdentityInput / dataset_id mechanism — see
+  [contracts/feature_label_spec_versioning.md](contracts/feature_label_spec_versioning.md).
+  No Feature or Label value is computed, no transform is imported or
+  executed, and no Dataset is built by this PR.
 
 ## 14. Proposed PR sequence
 
