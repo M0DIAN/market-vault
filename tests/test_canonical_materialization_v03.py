@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+from dataclasses import replace
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -775,7 +777,7 @@ def test_manifest_record_missing_fields_fails(tmp_path):
         record.pop("sha256")
 
     mutate_manifest(cfg, result, mutate)
-    with pytest.raises(CanonicalMaterializationError, match="missing relative_path or sha256"):
+    with pytest.raises(CanonicalMaterializationError, match="missing required field"):
         materialize(cfg)
 
 
@@ -917,3 +919,413 @@ def test_builder_version_propagates_to_build_id(tmp_path):
     )
     payload = json.loads((result.build_path / "manifest.json").read_text(encoding="utf-8"))
     assert payload["canonical_builder_version"] == custom_version
+
+
+# --- Completeness patch: strict output file records --------------------------
+
+
+def test_manifest_record_unknown_field_fails(tmp_path):
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    result = _build_with_gap(cfg)
+
+    def mutate(payload):
+        payload["output_files"][0]["unexpected"] = 1
+
+    mutate_manifest(cfg, result, mutate)
+    with pytest.raises(CanonicalMaterializationError, match="unknown field"):
+        materialize(cfg)
+
+
+def test_manifest_record_unknown_file_role_fails(tmp_path):
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    result = _build_with_gap(cfg)
+
+    def mutate(payload):
+        payload["output_files"][0]["file_role"] = "sidecar"
+
+    mutate_manifest(cfg, result, mutate)
+    with pytest.raises(CanonicalMaterializationError, match="unknown file_role"):
+        materialize(cfg)
+
+
+def test_manifest_record_non_integer_row_count_fails(tmp_path):
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    result = _build_with_gap(cfg)
+
+    def mutate(payload):
+        payload["output_files"][0]["row_count"] = "2"
+
+    mutate_manifest(cfg, result, mutate)
+    with pytest.raises(CanonicalMaterializationError, match="row_count"):
+        materialize(cfg)
+
+
+def test_manifest_record_negative_byte_size_fails(tmp_path):
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    result = _build_with_gap(cfg)
+
+    def mutate(payload):
+        payload["output_files"][0]["byte_size"] = -1
+
+    mutate_manifest(cfg, result, mutate)
+    with pytest.raises(CanonicalMaterializationError, match="byte_size"):
+        materialize(cfg)
+
+
+def test_manifest_record_empty_content_role_fails(tmp_path):
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    result = _build_with_gap(cfg)
+
+    def mutate(payload):
+        payload["output_files"][0]["content_role"] = ""
+
+    mutate_manifest(cfg, result, mutate)
+    with pytest.raises(CanonicalMaterializationError, match="content_role"):
+        materialize(cfg)
+
+
+def test_manifest_bar_row_count_mismatch_fails(tmp_path):
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    result = _build_with_gap(cfg)
+
+    def mutate(payload):
+        bar = next(r for r in payload["output_files"] if r["file_role"] == "bars")
+        bar["row_count"] = bar["row_count"] + 1
+
+    mutate_manifest(cfg, result, mutate)
+    with pytest.raises(CanonicalMaterializationError, match="row count mismatch"):
+        materialize(cfg)
+
+
+def test_manifest_resolution_row_count_mismatch_fails(tmp_path):
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    result = _build_with_gap(cfg)
+
+    def mutate(payload):
+        resolution = next(
+            r for r in payload["output_files"] if r["file_role"] == "resolution"
+        )
+        resolution["row_count"] = resolution["row_count"] + 1
+
+    mutate_manifest(cfg, result, mutate)
+    with pytest.raises(CanonicalMaterializationError, match="row count mismatch"):
+        materialize(cfg)
+
+
+def test_manifest_file_role_path_mismatch_fails(tmp_path):
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    result = _build_with_gap(cfg)
+
+    def mutate(payload):
+        resolution = next(
+            r for r in payload["output_files"] if r["file_role"] == "resolution"
+        )
+        resolution["file_role"] = "bars"
+
+    mutate_manifest(cfg, result, mutate)
+    with pytest.raises(CanonicalMaterializationError, match="does not match path"):
+        materialize(cfg)
+
+
+def test_manifest_dataset_kind_mismatch_fails(tmp_path):
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    result = _build_with_gap(cfg)
+    mutate_manifest(cfg, result, lambda payload: payload.__setitem__("dataset_kind", "x"))
+    with pytest.raises(CanonicalMaterializationError, match="dataset_kind mismatch"):
+        materialize(cfg)
+
+
+def test_manifest_gap_limitations_mismatch_fails(tmp_path):
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    result = _build_with_gap(cfg)
+    mutate_manifest(
+        cfg, result,
+        lambda payload: payload.__setitem__("gap_policy_limitations", ["x"]),
+    )
+    with pytest.raises(CanonicalMaterializationError, match="gap_policy_limitations mismatch"):
+        materialize(cfg)
+
+
+def test_manifest_provenance_missing_row_fails(tmp_path):
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    result = _build_with_gap(cfg)
+    mutate_manifest(
+        cfg, result, lambda payload: payload.__setitem__("source_snapshot_provenance", [])
+    )
+    with pytest.raises(CanonicalMaterializationError, match="source_snapshot_provenance"):
+        materialize(cfg)
+
+
+def test_manifest_provenance_extra_row_fails(tmp_path):
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    result = _build_with_gap(cfg)
+
+    def mutate(payload):
+        payload["source_snapshot_provenance"].append(
+            {
+                "ingestion_run_id": "fake",
+                "physical_snapshot_hash": "f" * 64,
+                "logical_source_rows_hash": "f" * 64,
+                "requested_trade_date": "2026-07-01",
+                "requested_session": "ALL",
+                "snapshot_file": "curated/fake.parquet",
+            }
+        )
+
+    mutate_manifest(cfg, result, mutate)
+    with pytest.raises(CanonicalMaterializationError, match="source_snapshot_provenance"):
+        materialize(cfg)
+
+
+def test_manifest_provenance_malformed_row_fails(tmp_path):
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    result = _build_with_gap(cfg)
+
+    def mutate(payload):
+        payload["source_snapshot_provenance"][0].pop("snapshot_file")
+
+    mutate_manifest(cfg, result, mutate)
+    with pytest.raises(CanonicalMaterializationError, match="source_snapshot_provenance"):
+        materialize(cfg)
+
+
+def test_empty_build_provenance_must_be_empty(tmp_path):
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    result = materialize(cfg, symbols=["US.NVDA"])
+    assert result.status == "EMPTY"
+    mutate_manifest(
+        cfg, result,
+        lambda payload: payload.__setitem__(
+            "source_snapshot_provenance",
+            [
+                {
+                    "ingestion_run_id": "fake",
+                    "physical_snapshot_hash": "f" * 64,
+                    "logical_source_rows_hash": "f" * 64,
+                    "requested_trade_date": "2026-07-01",
+                    "requested_session": "ALL",
+                    "snapshot_file": "curated/fake.parquet",
+                }
+            ],
+        ),
+    )
+    with pytest.raises(CanonicalMaterializationError, match="source_snapshot_provenance"):
+        materialize(cfg, symbols=["US.NVDA"])
+
+
+def test_manifest_symlinked_file_fails(tmp_path):
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    result = _build_with_gap(cfg)
+    bar_file = next(result.build_path.rglob("bars/**/part-00000.parquet"))
+    outside = tmp_path / "outside.parquet"
+    outside.write_bytes(b"x")
+    try:
+        os.remove(bar_file)
+        os.symlink(outside, bar_file)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks are not available in this environment")
+    with pytest.raises(CanonicalMaterializationError, match="symlink"):
+        materialize(cfg)
+
+
+def test_manifest_symlinked_partition_dir_fails(tmp_path):
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    result = _build_with_gap(cfg)
+    code_dir = next(p for p in result.build_path.rglob("bars/**/code=*") if p.is_dir())
+    moved = tmp_path / "moved-code"
+    try:
+        code_dir.rename(moved)
+        os.symlink(moved, code_dir)
+    except (OSError, NotImplementedError):
+        # Windows without SeCreateSymbolicLinkPrivilege: a directory junction
+        # is created with no special privileges and is rejected the same way.
+        try:
+            import _winapi
+        except ImportError:
+            pytest.skip("symlinks are not available in this environment")
+        try:
+            _winapi.CreateJunction(str(moved), str(code_dir))
+        except OSError:
+            pytest.skip("symlinks are not available in this environment")
+    with pytest.raises(CanonicalMaterializationError, match="symlink"):
+        materialize(cfg)
+
+
+# --- Completeness patch: build result validation -----------------------------
+
+
+def _load_build_result(cfg):
+    catalog = Catalog(cfg)
+    inputs = load_canonical_snapshot_inputs(
+        catalog, symbols=["US.MU"], trade_dates=[date(2026, 7, 1)], request_key=DEFAULT_KEY
+    )
+    return build_canonical_market_bars(list(inputs))
+
+
+def _write_result(cfg, build_result):
+    return materialize_build_result(
+        build_result,
+        request=CanonicalMaterializationRequest(
+            symbols=["US.MU"], trade_dates=[date(2026, 7, 1)], request_key=DEFAULT_KEY
+        ),
+        output_root=output_root(cfg),
+        created_at=CREATED_AT,
+    )
+
+
+def test_duplicate_bar_key_in_build_result_fails(tmp_path):
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 2))
+    build_result = _load_build_result(cfg)
+    bad = replace(build_result, bars=build_result.bars[:1] + build_result.bars[:1])
+    with pytest.raises(CanonicalMaterializationError, match="duplicate"):
+        _write_result(cfg, bad)
+
+
+def test_resolution_missing_entry_fails(tmp_path):
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 1))
+    build_result = _load_build_result(cfg)
+    bad = replace(build_result, resolution=())
+    with pytest.raises(CanonicalMaterializationError, match="exactly one entry"):
+        _write_result(cfg, bad)
+
+
+def test_resolution_extra_entry_fails(tmp_path):
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 1))
+    build_result = _load_build_result(cfg)
+    bad = replace(build_result, resolution=build_result.resolution * 2)
+    with pytest.raises(CanonicalMaterializationError, match="exactly one entry"):
+        _write_result(cfg, bad)
+
+
+def test_selected_provenance_mismatch_fails(tmp_path):
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 1))
+    build_result = _load_build_result(cfg)
+    entry = build_result.resolution[0]
+    wrong_selected = replace(entry.selected, ingestion_run_id="other-run")
+    bad = replace(build_result, resolution=(replace(entry, selected=wrong_selected),))
+    with pytest.raises(CanonicalMaterializationError, match="selected provenance"):
+        _write_result(cfg, bad)
+
+
+def test_source_snapshot_count_mismatch_fails(tmp_path):
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 1))
+    build_result = _load_build_result(cfg)
+    bad = replace(build_result, source_snapshot_count=7)
+    with pytest.raises(CanonicalMaterializationError, match="source_snapshot_count"):
+        _write_result(cfg, bad)
+
+
+def test_empty_build_result_with_sources_fails(tmp_path):
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    empty = build_canonical_market_bars([])
+    bad = replace(empty, source_snapshot_count=1)
+    with pytest.raises(CanonicalMaterializationError, match="zero source snapshots"):
+        _write_result(cfg, bad)
+
+
+# --- Completeness patch: request normalization and I/O wrapping --------------
+
+
+def test_loading_normalizes_request(tmp_path):
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 1))
+    inputs = load_canonical_snapshot_inputs(
+        Catalog(cfg),
+        symbols=[" us.mu "],
+        trade_dates=[date(2026, 7, 1)],
+        request_key=CanonicalRequestKey(
+            interval=" 1M ", requested_session=" all ", adjustment=" none ",
+            source_schema_version=" 10.9 ",
+        ),
+    )
+    assert len(inputs) == 1
+    assert inputs[0].snapshot.code == "US.MU"
+    assert inputs[0].request_key == DEFAULT_KEY
+
+
+def test_non_string_symbol_rejected(tmp_path):
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    with pytest.raises(CanonicalMaterializationError, match="must be a string"):
+        materialize(cfg, symbols=[123])
+
+
+def test_non_string_request_key_field_rejected(tmp_path):
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    with pytest.raises(CanonicalMaterializationError, match="must be a string"):
+        materialize(
+            cfg,
+            key=CanonicalRequestKey(
+                interval=60, requested_session="ALL", adjustment="NONE",
+                source_schema_version="10.9",
+            ),
+        )
+
+
+def test_snapshot_read_failure_wrapped(monkeypatch, tmp_path):
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 1))
+    catalog = Catalog(cfg)
+
+    def boom(snapshot):
+        raise RuntimeError("injected read failure")
+
+    monkeypatch.setattr(catalog, "market_bar_snapshot_rows", boom)
+    with pytest.raises(CanonicalMaterializationError, match="failed to read selected snapshot"):
+        load_canonical_snapshot_inputs(
+            catalog, symbols=["US.MU"], trade_dates=[date(2026, 7, 1)], request_key=DEFAULT_KEY
+        )
+
+
+def test_snapshot_hash_failure_wrapped(monkeypatch, tmp_path):
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 1))
+    catalog = Catalog(cfg)
+
+    def boom(path):
+        raise OSError("injected hash failure")
+
+    monkeypatch.setattr("market_vault.canonical.materialization._file_sha256", boom)
+    with pytest.raises(CanonicalMaterializationError, match="failed to hash selected snapshot"):
+        load_canonical_snapshot_inputs(
+            catalog, symbols=["US.MU"], trade_dates=[date(2026, 7, 1)], request_key=DEFAULT_KEY
+        )

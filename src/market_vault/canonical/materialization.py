@@ -39,6 +39,7 @@ from .identity import (
     resolution_content_id,
 )
 from .manifest import (
+    GAP_POLICY_LIMITATIONS,
     MANIFEST_SCHEMA_VERSION,
     STATUS_COMPLETE,
     STATUS_EMPTY,
@@ -85,8 +86,16 @@ def _reject_unsafe_string(value: str, label: str) -> None:
             )
 
 
+def _require_string(value, label: str) -> str:
+    if not isinstance(value, str):
+        raise CanonicalMaterializationError(
+            f"{label} must be a string, got {type(value).__name__}"
+        )
+    return value
+
+
 def _normalize_symbol(value: str, label: str) -> str:
-    text = str(value).strip().upper()
+    text = _require_string(value, label).strip().upper()
     if not text:
         raise CanonicalMaterializationError(f"empty {label}")
     _reject_unsafe_string(text, label)
@@ -94,7 +103,7 @@ def _normalize_symbol(value: str, label: str) -> str:
 
 
 def _normalize_upper(value: str, label: str) -> str:
-    text = str(value).strip().upper()
+    text = _require_string(value, label).strip().upper()
     if not text:
         raise CanonicalMaterializationError(f"empty {label}")
     _reject_unsafe_string(text, label)
@@ -102,7 +111,7 @@ def _normalize_upper(value: str, label: str) -> str:
 
 
 def _normalize_interval(value: str) -> str:
-    text = str(value).strip().lower()
+    text = _require_string(value, "interval").strip().lower()
     if not text:
         raise CanonicalMaterializationError("empty interval")
     _reject_unsafe_string(text, "interval")
@@ -114,7 +123,7 @@ def _normalize_interval(value: str) -> str:
 
 
 def _normalize_schema(value: str) -> str:
-    text = str(value).strip()
+    text = _require_string(value, "source_schema_version").strip()
     if not text:
         raise CanonicalMaterializationError("empty source_schema_version")
     _reject_unsafe_string(text, "source_schema_version")
@@ -166,29 +175,84 @@ def _normalize_created_at(value: datetime | None) -> datetime:
 
 
 def _validate_build_result(build_result, request: CanonicalMaterializationRequest) -> None:
-    """Validate the canonical build result against the normalized request."""
+    """Validate the canonical build result against the normalized request.
+
+    Every emitted bar key must be unique; resolution must contain exactly one
+    entry per emitted bar whose selected provenance is the emitting bar's own
+    source; and source_snapshot_count must equal the number of stable
+    physical source identities referenced by resolution (selected and
+    discarded, deduplicated).
+    """
     builder_version = build_result.builder_version
     if not builder_version:
         raise CanonicalMaterializationError("build_result.builder_version must be non-empty")
     if build_result.source_snapshot_count < 0:
         raise CanonicalMaterializationError("source_snapshot_count cannot be negative")
     bars = build_result.bars
+    resolution = build_result.resolution
     if not bars:
-        if build_result.resolution:
+        if resolution:
             raise CanonicalMaterializationError(
                 "an empty build must have no resolution entries"
             )
+        if build_result.source_snapshot_count != 0:
+            raise CanonicalMaterializationError(
+                "an empty build must have zero source snapshots"
+            )
         return
+    if len({bar.canonical_bar_key for bar in bars}) != len(bars):
+        raise CanonicalMaterializationError(
+            "build result contains duplicate canonical_bar_key values"
+        )
+    if len(resolution) != len(bars):
+        raise CanonicalMaterializationError(
+            "resolution must contain exactly one entry per emitted bar"
+        )
     emitted_keys = {bar.canonical_bar_key for bar in bars}
-    resolution_keys = {entry.canonical_bar_key for entry in build_result.resolution}
+    resolution_keys = {entry.canonical_bar_key for entry in resolution}
     if resolution_keys != emitted_keys:
         raise CanonicalMaterializationError(
             "resolution canonical_bar_key values do not exactly match emitted bar keys"
         )
+    entry_by_key = {entry.canonical_bar_key: entry for entry in resolution}
     requested_symbols = set(request.symbols)
     requested_dates = set(request.trade_dates)
     key = request.request_key
+    source_identities: set[tuple] = set()
     for bar in bars:
+        entry = entry_by_key[bar.canonical_bar_key]
+        selected = entry.selected
+        if (
+            selected.ingestion_run_id != bar.ingestion_run_id
+            or selected.physical_snapshot_hash != bar.physical_snapshot_hash
+            or selected.logical_source_rows_hash != bar.logical_source_rows_hash
+            or selected.source_schema_version != bar.source_schema_version
+            or selected.requested_trade_date != bar.requested_trade_date
+            or selected.requested_session != bar.requested_session
+            or selected.snapshot_file != bar.snapshot_file
+        ):
+            raise CanonicalMaterializationError(
+                "resolution selected provenance does not match its canonical bar"
+            )
+        source_identities.add(
+            (
+                selected.ingestion_run_id,
+                selected.physical_snapshot_hash,
+                selected.logical_source_rows_hash,
+                selected.requested_trade_date,
+                selected.requested_session,
+            )
+        )
+        for ref in entry.equivalent_discarded:
+            source_identities.add(
+                (
+                    ref.ingestion_run_id,
+                    ref.physical_snapshot_hash,
+                    ref.logical_source_rows_hash,
+                    ref.requested_trade_date,
+                    ref.requested_session,
+                )
+            )
         if bar.canonical_builder_version != builder_version:
             raise CanonicalMaterializationError(
                 "bar canonical_builder_version does not match build result version"
@@ -214,6 +278,10 @@ def _validate_build_result(build_result, request: CanonicalMaterializationReques
             raise CanonicalMaterializationError(
                 "bar request-key fields do not match the normalized request"
             )
+    if build_result.source_snapshot_count != len(source_identities):
+        raise CanonicalMaterializationError(
+            "source_snapshot_count does not match the stable physical source identity count"
+        )
 
 
 def _safe_partition_value(value: str, label: str) -> str:
@@ -236,20 +304,25 @@ def load_canonical_snapshot_inputs(
 ) -> tuple[CanonicalSnapshotInput, ...]:
     """Load audited COMPLETE snapshots into builder inputs.
 
-    Uses Catalog.latest_complete_market_bar_snapshots exactly (no second
+    The public request is normalized exactly once here, the same way
+    materialization normalizes it, so direct loading and full
+    materialization always agree on one request semantics. Uses
+    Catalog.latest_complete_market_bar_snapshots exactly (no second
     definition of COMPLETE). Reads only each selected physical snapshot,
-    computes its full byte SHA-256, and fails closed if the file changes
-    while it is being read. A selected snapshot whose file is missing is an
-    error, never an EMPTY result; missing or incomplete request items are
-    omitted.
+    computes its full byte SHA-256 before and after the read, wraps hash and
+    read I/O failures as structured errors, and fails closed if the file
+    changes while it is being read. A selected snapshot whose file is
+    missing is an error, never an EMPTY result; missing or incomplete
+    request items are omitted.
     """
+    request = normalize_materialization_request(symbols, trade_dates, request_key)
     refs = catalog.latest_complete_market_bar_snapshots(
-        symbols=symbols,
-        trade_dates=trade_dates,
-        interval=request_key.interval,
-        requested_session=request_key.requested_session,
-        adjustment=request_key.adjustment,
-        source_schema_version=request_key.source_schema_version,
+        symbols=request.symbols,
+        trade_dates=request.trade_dates,
+        interval=request.request_key.interval,
+        requested_session=request.request_key.requested_session,
+        adjustment=request.request_key.adjustment,
+        source_schema_version=request.request_key.source_schema_version,
     )
     inputs: list[CanonicalSnapshotInput] = []
     for key in sorted(refs):
@@ -262,14 +335,24 @@ def load_canonical_snapshot_inputs(
             raise CanonicalMaterializationError(
                 f"selected snapshot file is missing: {ref.snapshot_file!r}"
             )
-        hash_before = _file_sha256(path)
+        try:
+            hash_before = _file_sha256(path)
+        except OSError as exc:
+            raise CanonicalMaterializationError(
+                f"failed to hash selected snapshot {ref.snapshot_file!r}: {exc}"
+            ) from exc
         try:
             rows = catalog.market_bar_snapshot_rows(ref).frame
         except Exception as exc:
             raise CanonicalMaterializationError(
                 f"failed to read selected snapshot {ref.snapshot_file!r}: {exc}"
             ) from exc
-        hash_after = _file_sha256(path)
+        try:
+            hash_after = _file_sha256(path)
+        except OSError as exc:
+            raise CanonicalMaterializationError(
+                f"failed to hash selected snapshot {ref.snapshot_file!r}: {exc}"
+            ) from exc
         if hash_before != hash_after:
             raise CanonicalMaterializationError(
                 f"snapshot file changed while being read: {ref.snapshot_file!r}"
@@ -279,7 +362,7 @@ def load_canonical_snapshot_inputs(
                 snapshot=ref,
                 rows=rows,
                 physical_snapshot_hash=hash_before,
-                request_key=request_key,
+                request_key=request.request_key,
             )
         )
     return tuple(inputs)
@@ -680,26 +763,87 @@ def _materialize_build(
     )
 
 
-def _validate_existing_output_files(build_root: Path, payload: dict) -> None:
-    """Strictly validate manifest output file records and actual files."""
+_FILE_RECORD_FIELDS = (
+    "relative_path",
+    "file_role",
+    "row_count",
+    "byte_size",
+    "sha256",
+    "content_role",
+)
+
+_FILE_ROLES = ("bars", "gaps", "resolution")
+
+
+def _validate_existing_output_files(build_root: Path, payload: dict) -> list[dict]:
+    """Strictly validate manifest output file records and actual files.
+
+    Every record is checked for exactly the required fields with strict
+    types; the file_role must match the canonical path location; neither the
+    file itself nor any path component may be a symlink; and the recorded
+    byte size, actual row count (Parquet metadata / JSONL lines), and SHA-256
+    must match the real files. Returns the parsed resolution entries for
+    provenance validation.
+    """
     output_files = payload.get("output_files")
     if not isinstance(output_files, list):
         raise CanonicalMaterializationError(
             f"existing build output_files must be a list: {build_root}"
         )
     seen_paths: set[str] = set()
+    resolution_entries: list[dict] = []
     for record in output_files:
         if not isinstance(record, dict):
             raise CanonicalMaterializationError(
                 f"malformed output file record: {build_root}"
             )
-        relative = record.get("relative_path")
-        sha256 = record.get("sha256")
-        byte_size = record.get("byte_size")
-        file_role = record.get("file_role")
-        if not isinstance(relative, str) or not relative or not isinstance(sha256, str) or not sha256:
+        missing = sorted(field for field in _FILE_RECORD_FIELDS if field not in record)
+        if missing:
             raise CanonicalMaterializationError(
-                f"output file record missing relative_path or sha256: {build_root}"
+                f"output file record missing required field(s): {', '.join(missing)}"
+            )
+        unknown = sorted(set(record) - set(_FILE_RECORD_FIELDS))
+        if unknown:
+            raise CanonicalMaterializationError(
+                f"output file record unknown field(s): {', '.join(unknown)}"
+            )
+        relative = record["relative_path"]
+        file_role = record["file_role"]
+        row_count = record["row_count"]
+        byte_size = record["byte_size"]
+        sha256 = record["sha256"]
+        content_role = record["content_role"]
+        if not isinstance(relative, str) or not relative:
+            raise CanonicalMaterializationError(
+                f"output file record relative_path must be a non-empty string: {build_root}"
+            )
+        if file_role not in _FILE_ROLES:
+            raise CanonicalMaterializationError(
+                f"output file record unknown file_role {file_role!r}: {build_root}"
+            )
+        if (
+            not isinstance(row_count, int)
+            or isinstance(row_count, bool)
+            or row_count < 0
+        ):
+            raise CanonicalMaterializationError(
+                f"output file record row_count must be a non-negative integer: {build_root}"
+            )
+        if (
+            not isinstance(byte_size, int)
+            or isinstance(byte_size, bool)
+            or byte_size < 0
+        ):
+            raise CanonicalMaterializationError(
+                f"output file record byte_size must be a non-negative integer: {build_root}"
+            )
+        if not isinstance(sha256, str) or not sha256:
+            raise CanonicalMaterializationError(
+                f"output file record sha256 must be a non-empty string: {build_root}"
+            )
+        if not isinstance(content_role, str) or not content_role:
+            raise CanonicalMaterializationError(
+                f"output file record content_role must be a non-empty string: {build_root}"
             )
         if relative in seen_paths:
             raise CanonicalMaterializationError(
@@ -717,21 +861,85 @@ def _validate_existing_output_files(build_root: Path, payload: dict) -> None:
             raise CanonicalMaterializationError(
                 f"unsafe output file relative_path {relative!r}: {build_root}"
             )
-        path = (build_root / relative).resolve()
-        if not path.is_relative_to(build_root.resolve()):
+        if file_role == "resolution":
+            if relative != "resolution.jsonl":
+                raise CanonicalMaterializationError(
+                    f"file_role resolution does not match path {relative!r}: {build_root}"
+                )
+        elif not relative.startswith(file_role + "/"):
+            raise CanonicalMaterializationError(
+                f"file_role {file_role!r} does not match path {relative!r}: {build_root}"
+            )
+        # Reject a symlink (or Windows directory junction) in the file itself
+        # and in every path component; a resolved link inside the root would
+        # otherwise pass the escape check.
+        current = build_root
+        for part in parts:
+            current = current / part
+            if current.is_symlink() or (
+                hasattr(current, "is_junction") and current.is_junction()
+            ):
+                raise CanonicalMaterializationError(
+                    f"output file path contains a symlink: {relative!r}"
+                )
+        resolved = current.resolve()
+        if not resolved.is_relative_to(build_root.resolve()):
             raise CanonicalMaterializationError(
                 f"output file path escapes build root: {relative!r}"
             )
-        if not path.is_file() or path.is_symlink():
+        if not current.is_file():
             raise CanonicalMaterializationError(
                 f"output file is not a regular file: {relative!r}"
             )
-        actual_size = path.stat().st_size
-        if isinstance(byte_size, int) and actual_size != byte_size:
+        try:
+            actual_size = current.stat().st_size
+        except OSError as exc:
+            raise CanonicalMaterializationError(
+                f"failed to stat output file {relative!r}: {exc}"
+            ) from exc
+        if actual_size != byte_size:
             raise CanonicalMaterializationError(
                 f"output file byte size mismatch: {relative!r}"
             )
-        if _file_sha256(path) != sha256:
+        if file_role in ("bars", "gaps"):
+            try:
+                actual_rows = pq.read_metadata(current).num_rows
+            except OSError as exc:
+                raise CanonicalMaterializationError(
+                    f"failed to read output file {relative!r}: {exc}"
+                ) from exc
+        else:
+            try:
+                text = current.read_text(encoding="utf-8")
+            except OSError as exc:
+                raise CanonicalMaterializationError(
+                    f"failed to read output file {relative!r}: {exc}"
+                ) from exc
+            lines = text.splitlines()
+            actual_rows = len(lines)
+            for line_number, line in enumerate(lines, start=1):
+                try:
+                    parsed = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise CanonicalMaterializationError(
+                        f"resolution.jsonl line {line_number} is not valid JSON: {relative!r}"
+                    ) from exc
+                if not isinstance(parsed, dict):
+                    raise CanonicalMaterializationError(
+                        f"resolution.jsonl line {line_number} is not an object: {relative!r}"
+                    )
+                resolution_entries.append(parsed)
+        if actual_rows != row_count:
+            raise CanonicalMaterializationError(
+                f"output file row count mismatch: {relative!r}"
+            )
+        try:
+            digest = _file_sha256(current)
+        except OSError as exc:
+            raise CanonicalMaterializationError(
+                f"failed to hash output file {relative!r}: {exc}"
+            ) from exc
+        if digest != sha256:
             raise CanonicalMaterializationError(
                 f"output file sha256 mismatch: {relative!r}"
             )
@@ -739,6 +947,87 @@ def _validate_existing_output_files(build_root: Path, payload: dict) -> None:
     if "resolution" not in roles:
         raise CanonicalMaterializationError(
             f"existing build is missing its resolution file: {build_root}"
+        )
+    return resolution_entries
+
+
+def _validate_manifest_provenance(
+    payload: dict, resolution_entries: list[dict], build_root: Path
+) -> None:
+    """source_snapshot_provenance must be strictly shaped and must exactly
+    match the stable physical source identities referenced by resolution."""
+    provenance = payload.get("source_snapshot_provenance")
+    if not isinstance(provenance, list):
+        raise CanonicalMaterializationError(
+            f"existing build source_snapshot_provenance must be a list: {build_root}"
+        )
+    expected_fields = (
+        "ingestion_run_id",
+        "physical_snapshot_hash",
+        "logical_source_rows_hash",
+        "requested_trade_date",
+        "requested_session",
+        "snapshot_file",
+    )
+    identities: set[tuple] = set()
+    for row in provenance:
+        if not isinstance(row, dict):
+            raise CanonicalMaterializationError(
+                f"malformed source_snapshot_provenance record: {build_root}"
+            )
+        missing = sorted(field for field in expected_fields if field not in row)
+        if missing:
+            raise CanonicalMaterializationError(
+                f"source_snapshot_provenance record missing field(s): {', '.join(missing)}"
+            )
+        for field in (
+            "ingestion_run_id",
+            "physical_snapshot_hash",
+            "logical_source_rows_hash",
+            "requested_session",
+            "snapshot_file",
+        ):
+            value = row[field]
+            if not isinstance(value, str) or not value:
+                raise CanonicalMaterializationError(
+                    f"source_snapshot_provenance {field} must be a non-empty string: {build_root}"
+                )
+        trade_date = row["requested_trade_date"]
+        try:
+            date.fromisoformat(trade_date)
+        except (TypeError, ValueError) as exc:
+            raise CanonicalMaterializationError(
+                f"source_snapshot_provenance requested_trade_date must be an ISO date: {build_root}"
+            ) from exc
+        identities.add(
+            (
+                row["ingestion_run_id"],
+                row["physical_snapshot_hash"],
+                row["logical_source_rows_hash"],
+                trade_date,
+                row["requested_session"],
+            )
+        )
+    resolution_identities: set[tuple] = set()
+    for entry in resolution_entries:
+        refs = [entry.get("selected")] + list(entry.get("equivalent_discarded_sources") or ())
+        for ref in refs:
+            if not isinstance(ref, dict):
+                raise CanonicalMaterializationError(
+                    f"resolution source reference is not an object: {build_root}"
+                )
+            resolution_identities.add(
+                (
+                    ref.get("ingestion_run_id"),
+                    ref.get("physical_snapshot_hash"),
+                    ref.get("logical_source_rows_hash"),
+                    ref.get("requested_trade_date"),
+                    ref.get("requested_session"),
+                )
+            )
+    if identities != resolution_identities:
+        raise CanonicalMaterializationError(
+            f"source_snapshot_provenance does not match resolution sources: {build_root}"
         )
 
 
@@ -759,6 +1048,13 @@ def _existing_build_result(build_root: Path, expected: dict) -> CanonicalMateria
         raise CanonicalMaterializationError(
             f"existing build manifest schema mismatch: {build_root}"
         )
+    _require_equal(payload, "dataset_kind", DEFAULT_DATASET_KIND, build_root)
+    _require_equal(
+        payload,
+        "gap_policy_limitations",
+        list(GAP_POLICY_LIMITATIONS),
+        build_root,
+    )
     _require_equal(payload, "canonical_build_id", expected["build_id"], build_root)
     _require_equal(payload, "canonical_content_id", expected["content_id"], build_root)
     _require_equal(payload, "resolution_content_id", expected["resolution_id"], build_root)
@@ -797,7 +1093,8 @@ def _existing_build_result(build_root: Path, expected: dict) -> CanonicalMateria
 
     status = payload.get("status")
     _require_equal(payload, "status", expected["status"] if "status" in expected else (STATUS_COMPLETE if expected["row_count"] else STATUS_EMPTY), build_root)
-    _validate_existing_output_files(build_root, payload)
+    resolution_entries = _validate_existing_output_files(build_root, payload)
+    _validate_manifest_provenance(payload, resolution_entries, build_root)
     bar_files = [r for r in payload["output_files"] if r.get("file_role") == "bars"]
     gap_files = [r for r in payload["output_files"] if r.get("file_role") == "gaps"]
     if status == STATUS_COMPLETE:

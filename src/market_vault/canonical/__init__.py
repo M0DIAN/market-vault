@@ -2,9 +2,12 @@
 
 The in-memory canonical market-bar builder core lives in
 :mod:`market_vault.canonical.bars`; identity encodings in
-:mod:`market_vault.canonical.identity`; data models in
-:mod:`market_vault.canonical.models`. No materialization, features, labels,
-samples, or datasets are implemented yet.
+:mod:`market_vault.canonical.identity`; the immutable build materialization
+layer (explicit-schema Canonical Parquet, conservative gap sidecar,
+resolution JSONL, immutable manifest, atomic commit, EMPTY builds) lives in
+:mod:`market_vault.canonical.materialization` and
+:mod:`market_vault.canonical.schema`. Features, labels, samples, and datasets
+are not implemented yet.
 """
 
 from .bars import (
