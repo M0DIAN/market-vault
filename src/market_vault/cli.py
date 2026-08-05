@@ -11,6 +11,11 @@ from .audit import FAILED, WARN, run_audit, run_inventory
 from .backfill import collect_history_backfill
 from .config import load_settings, load_universe
 from .collectors.moomoo_calendar import SUPPORTED_TRADE_DATE_MARKETS
+from .dataset.cli import (
+    DATASET_COMMANDS,
+    add_dataset_subparsers,
+    run_dataset_command,
+)
 from .doctor import run_doctor
 from .intraday_audit import run_intraday_audit
 from .service import collect_history, collect_option_chain, collect_option_volatility, collect_trading_calendar
@@ -57,6 +62,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show the market-vault version and exit",
     )
     sub = parser.add_subparsers(dest="command", required=True)
+
+    add_dataset_subparsers(sub)
 
     init = sub.add_parser("init-catalog", help="Create DuckDB metadata tables")
     init.set_defaults(command="init-catalog")
@@ -204,6 +211,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command in DATASET_COMMANDS:
+        # Dataset commands are settings-independent: they never load
+        # settings.yaml, never connect to OpenD, and never access the
+        # network. They are dispatched before load_settings so a missing
+        # settings file can never block a Dataset command.
+        return run_dataset_command(args.command, args)
     settings = load_settings(args.settings)
 
     if args.command == "init-catalog":

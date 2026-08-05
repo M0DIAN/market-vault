@@ -141,11 +141,27 @@ final directory remain non-identity recorded facts validated by shape,
 exact canonical bytes, the fixed diagnostics matrix, and every artifact-
 observable cross-check.
 
-This layer does not create DuckDB views, does not add CLI commands, and
-does not train models. The Canonical manifest remains authoritative for
-Canonical builds; the Dataset layer only references immutable Canonical
-builds and their stable identities. MarketVault's future read-only
-data-serving and ML usage are outside this layer.
+The Dataset CLI (v0.5.0 PR-8; :mod:`market_vault.dataset.cli` and
+:mod:`market_vault.dataset.cli_models`) exposes three formal commands —
+``dataset-build``, ``dataset-verify``, and ``dataset-inspect`` — as a thin
+wrapper over the formal public chain: the verified Canonical reader, the
+Feature / Label spec parsers, the typed PIT request / scope / split-spec
+construction, the authoritative schema builder, the orchestrator, the
+materializer, and the verified Dataset reader. ``dataset-build`` consumes
+one strict, versioned build-plan JSON document whose bytes never enter any
+Dataset identity; the CLI adds no second builder, no second validator, no
+latest-directory scan, no automatic sample generation, no scope inference,
+no settings.yaml / OpenD / network dependency, and no current time.
+``dataset-verify`` and ``dataset-inspect`` are strictly read-only. The
+end-to-end determinism and leakage regression (PR-9) and the v0.5.0 release
+preparation (PR-10) are not implemented yet.
+
+This layer does not create DuckDB views, does not add an API server or a
+Python client, and does not train models, backtest, or trade. The Canonical
+manifest remains authoritative for Canonical builds; the Dataset layer only
+references immutable Canonical builds and their stable identities.
+MarketVault's future read-only data-serving and ML usage are outside this
+layer.
 """
 
 from .content import dataset_schema_id, logical_dataset_content_id
