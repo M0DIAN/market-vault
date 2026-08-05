@@ -634,7 +634,7 @@ of scope for v0.5.0.
   scans for a `latest` directory, and never writes, repairs, or deletes
   any file. See
   [contracts/verified_dataset_reader.md](contracts/verified_dataset_reader.md).
-- **PR-8** (`feat: add Dataset CLI`) — implemented in this branch:
+- **PR-8** (`feat: add Dataset CLI`) — merged:
   `market-vault dataset-build --plan`, `market-vault dataset-verify
   --build-dir`, and `market-vault dataset-inspect --build-dir` — a thin
   wrapper over the formal public chain with a strict versioned build-plan
@@ -644,12 +644,30 @@ of scope for v0.5.0.
   boundary (plan bytes, paths, `output_root`, `built_at`, and CLI versions
   never enter `dataset_id`). See
   [contracts/dataset_cli.md](contracts/dataset_cli.md).
-- **PR-1 through PR-7 are merged.** PR-8 is implemented in this branch
-  (`dataset-build` implemented, `dataset-verify` implemented,
-  `dataset-inspect` implemented). **PR-9 has not started** (end-to-end
-  determinism and leakage regression). **PR-10 has not started** (v0.5.0
-  release preparation). The v0.6.0 read-only data-serving / API / Python
-  client direction is not part of this PR; v0.5.1 maintenance optimization
-  has not started. The package version remains **0.4.0** (it stays 0.4.0
-  through PR-9 of this sequence; the bump to 0.5.0 happens only in
-  PR-10).
+- **PR-9** (`test: add end-to-end Dataset determinism and leakage
+  regression`) — implemented in this branch: the offline, deterministic,
+  end-to-end regression suite
+  `tests/test_dataset_end_to_end_regression.py` with the seventeen fixed
+  `E2E_*` regression IDs, each with positive controls and defenses tracked
+  by a fixed coverage matrix guard. It exercises the complete public chain
+  (verified Canonical builds -> PIT sample assembly -> Feature execution ->
+  Label execution -> split / purge -> Dataset orchestration -> immutable
+  materialization -> verified Dataset reader) and proves the defenses
+  through final Dataset rows and verified-reader results: future-feature
+  leakage, archive cutoff, incomplete labels, actual label end, cross-day
+  rejection, split-crossing purge, transform drift, spec drift, source
+  snapshot substitution, row/column order, staging crash residue,
+  immutable conflict, rebuild equivalence, corrupted Parquet, corrupted
+  manifest, NaN/Infinity, and timezone/DST. It adds a full COMPLETE
+  canary, a full EMPTY canary, and a `dataset-build` ->
+  `dataset-verify` -> `dataset-inspect` CLI entry-combination canary.
+  Tests and documentation only: no `src/` change, no identity or version
+  change, no dependency, no CI change, no Dataset repair. See
+  [contracts/dataset_end_to_end_regression.md](contracts/dataset_end_to_end_regression.md).
+- **PR-1 through PR-8 are merged.** PR-9 is implemented in this branch
+  (end-to-end determinism and leakage regression, as above). **PR-10 has
+  not started** (v0.5.0 release preparation). The v0.6.0 read-only
+  data-serving / API / Python client direction is not part of this PR;
+  v0.5.1 maintenance optimization has not started. The package version
+  remains **0.4.0** (it stays 0.4.0 through PR-9 of this sequence; the
+  bump to 0.5.0 happens only in PR-10).
