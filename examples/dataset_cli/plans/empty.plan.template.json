@@ -1,0 +1,40 @@
+{
+  "plan_schema_version": "market-vault-dataset-build-plan-v1",
+  "canonical_build_dirs": [
+    "<CANONICAL_BUILD_DIR>"
+  ],
+  "feature_spec_files": [
+    "specs/feature_simple_return_v1.yaml"
+  ],
+  "label_spec_files": [
+    "specs/label_forward_return_v1.yaml"
+  ],
+  "requests": [],
+  "scope": {
+    "symbols": [
+      "US.MU"
+    ],
+    "trade_dates": [
+      "2026-07-01"
+    ],
+    "interval": "1m",
+    "adjustment": "NONE",
+    "requested_session": "ALL"
+  },
+  "split_spec": {
+    "spec_schema_version": "market-vault-chronological-split-spec-v1",
+    "name": "chrono",
+    "version": "v1",
+    "boundary_timezone": "America/New_York",
+    "train_end_date": "2026-06-30",
+    "validation_end_date": "2026-07-01",
+    "test_end_date": "2026-07-02",
+    "assignment_rule": "FEATURE_WINDOW_CLOSE_DATE",
+    "purge_rule": "ACTUAL_LABEL_END",
+    "incomplete_label_policy": "EXCLUDE",
+    "out_of_range_policy": "EXCLUDE"
+  },
+  "dataset_as_of": null,
+  "output_root": "<OUTPUT_ROOT>",
+  "built_at": "<BUILT_AT>"
+}
