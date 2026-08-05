@@ -811,7 +811,7 @@ def test_release_checker_fails_when_v051_direction_reverts_to_planned(tmp_path):
     path = repo / "docs" / "v0_5_1_direction.md"
     path.write_text(
         path.read_text(encoding="utf-8").replace(
-            "Status: implementation complete; v0.5.1 release preparation",
+            "Status: released on 2026-08-06 JST",
             "Status: planned",
         ),
         encoding="utf-8",
@@ -819,10 +819,260 @@ def test_release_checker_fails_when_v051_direction_reverts_to_planned(tmp_path):
     result = run_check_release(repo)
     assert result.returncode == 1
     assert (
-        "does not state the fact "
-        "'Status: implementation complete; v0.5.1 release preparation'"
+        "does not state the fact 'Status: released on 2026-08-06 JST'"
     ) in result.stdout
     assert "still contains the stale wording 'Status: planned'" in result.stdout
+
+
+def test_release_checker_fails_when_v051_direction_reverts_to_release_preparation(
+    tmp_path,
+):
+    # Restoring the pre-release release-preparation top status must fail the
+    # checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_5_1_direction.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "Status: released on 2026-08-06 JST",
+            "Status: implementation complete; v0.5.1 release preparation",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the fact 'Status: released on 2026-08-06 JST'"
+    ) in result.stdout
+    assert (
+        "still contains the stale wording "
+        "'Status: implementation complete; v0.5.1 release preparation'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_v051_direction_missing_release_commit(tmp_path):
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_5_1_direction.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "a978eef291d5e26d20e5cf977bc76609c227cb52",
+            "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the fact 'a978eef291d5e26d20e5cf977bc76609c227cb52'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_v051_direction_missing_main_ci_run(tmp_path):
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_5_1_direction.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "31029709970",
+            "00000000000000000000",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "does not state the fact '31029709970'" in result.stdout
+
+
+def test_release_checker_fails_when_release_notes_missing_pr33_merged(tmp_path):
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "release_v0_5_1.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace("MERGED", "OPEN"),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "does not state the fact 'MERGED'" in result.stdout
+
+
+def test_release_checker_fails_when_release_notes_claim_pr4_still_open(tmp_path):
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "release_v0_5_1.md"
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        + "\nPR-4 is open and not merged.\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "PR-4 is open and not merged" in result.stdout
+
+
+def test_release_checker_fails_when_release_notes_missing_wheel_hash(tmp_path):
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "release_v0_5_1.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "80965A671AEEF75F315386D9BD4B62EC5DC08E552CB3430AEF92F83C562248C1",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the fact "
+        "'80965A671AEEF75F315386D9BD4B62EC5DC08E552CB3430AEF92F83C562248C1'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_release_notes_missing_sdist_hash(tmp_path):
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "release_v0_5_1.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "FE82FB4FD254C493EC00519EDEB438533C0C5E8D5A7690E1F14AEA39DE4CCDAB",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the fact "
+        "'FE82FB4FD254C493EC00519EDEB438533C0C5E8D5A7690E1F14AEA39DE4CCDAB'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_without_v060_direction(tmp_path):
+    repo = copy_repo(tmp_path)
+    (repo / "docs" / "v0_6_0_direction.md").unlink()
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "docs/v0_6_0_direction.md is missing" in result.stdout
+
+
+def test_release_checker_fails_when_v060_direction_missing_planned_status(tmp_path):
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_6_0_direction.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "Status: planned",
+            "Status: released",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "does not state the fact 'Status: planned'" in result.stdout
+
+
+def test_release_checker_fails_when_v060_direction_claims_sample_generator_implemented(
+    tmp_path,
+):
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_6_0_direction.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "neither the Sample Generator nor the Dataset Catalog is implemented",
+            "the Sample Generator and the Dataset Catalog are implemented",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "must state that neither the Sample Generator" in result.stdout
+
+
+def test_release_checker_fails_when_v060_direction_includes_python_client_in_v06(
+    tmp_path,
+):
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_6_0_direction.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "not part of v0.6",
+            "part of v0.6",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "does not state the fact 'not part of v0.6'" in result.stdout
+
+
+def test_release_checker_fails_when_v060_direction_missing_pr_number(tmp_path):
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_6_0_direction.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace("PR-5", "PX-5"),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "does not state the fact 'PR-5'" in result.stdout
+
+
+def test_release_checker_fails_without_v060_adr(tmp_path):
+    repo = copy_repo(tmp_path)
+    (repo / "docs" / "adr" / "0003-project-boundaries-and-v060-data-discovery.md").unlink()
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "docs/adr/0003-project-boundaries-and-v060-data-discovery.md is missing"
+    ) in result.stdout
+
+
+def test_release_checker_fails_without_sample_generation_contract(tmp_path):
+    repo = copy_repo(tmp_path)
+    (repo / "docs" / "contracts" / "sample_generation.md").unlink()
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "docs/contracts/sample_generation.md is missing" in result.stdout
+
+
+def test_release_checker_fails_without_dataset_catalog_contract(tmp_path):
+    repo = copy_repo(tmp_path)
+    (repo / "docs" / "contracts" / "dataset_catalog.md").unlink()
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "docs/contracts/dataset_catalog.md is missing" in result.stdout
+
+
+def test_release_checker_fails_when_sample_generation_contract_claims_implemented(
+    tmp_path,
+):
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "contracts" / "sample_generation.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "not implemented in v0.5.1",
+            "implemented in v0.5.1",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the planned-contract marker 'not implemented in v0.5.1'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_dataset_catalog_contract_claims_implemented(
+    tmp_path,
+):
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "contracts" / "dataset_catalog.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "not implemented in v0.5.1",
+            "implemented in v0.5.1",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the planned-contract marker 'not implemented in v0.5.1'"
+    ) in result.stdout
 
 
 def test_release_checker_fails_when_v051_direction_claims_sample_generator_implemented(
@@ -1053,15 +1303,54 @@ def test_market_vault_api_still_importable():
     assert MarketVault is not None
 
 
-# --- V0.5.1 release preparation facts ---------------------------------------
+# --- V0.5.1 released facts --------------------------------------------------
 
 
-def test_direction_document_is_release_preparation():
+def test_v051_direction_document_is_released():
     text = (ROOT / "docs" / "v0_5_1_direction.md").read_text(encoding="utf-8")
-    assert "Status: implementation complete; v0.5.1 release preparation" in text
+    assert "Status: released on 2026-08-06 JST" in text
     assert "Status: planned" not in text
     assert "Status: proposed" not in text
     assert "have not started" in text
+    assert "a978eef291d5e26d20e5cf977bc76609c227cb52" in text
+    assert "MarketVault v0.5.1" in text
+    assert "31029709970" in text
+    assert "v0.6.0" in text
+
+
+def test_v060_direction_document_exists_and_is_planned():
+    text = (ROOT / "docs" / "v0_6_0_direction.md").read_text(encoding="utf-8")
+    assert "Status: planned" in text
+    assert "Deterministic Sample Generation and Dataset Catalog" in text
+    assert "a978eef291d5e26d20e5cf977bc76609c227cb52" in text
+    assert "not part of v0.6" in text
+    for number in range(1, 10):
+        assert f"PR-{number}" in text
+    assert "neither the Sample Generator nor the Dataset Catalog is implemented" in text
+    assert "Quant Research" in text
+    assert "Trading Execution" in text
+
+
+def test_v060_direction_docs_are_boundary_contracts():
+    for rel in (
+        "docs/contracts/sample_generation.md",
+        "docs/contracts/dataset_catalog.md",
+    ):
+        text = (ROOT / rel).read_text(encoding="utf-8")
+        assert "not implemented in v0.5.1" in text
+        assert "Target release: v0.6.0" in text
+
+
+def test_v060_adr_exists_and_is_accepted():
+    text = (ROOT / "docs" / "adr" / "0003-project-boundaries-and-v060-data-discovery.md").read_text(
+        encoding="utf-8"
+    )
+    assert "Status: Accepted" in text
+    assert "MarketVault" in text
+    assert "Quant Research" in text
+    assert "Trading Execution" in text
+    assert "Sample Generator" in text
+    assert "Dataset Catalog" in text
 
 
 def test_release_notes_v051_contain_pr_facts():
@@ -1069,17 +1358,26 @@ def test_release_notes_v051_contain_pr_facts():
     assert "PR #30" in text
     assert "PR #31" in text
     assert "PR #32" in text
+    assert "PR #33" in text
     assert "8de57d497ae5d922e3df29d9475f14b9407865f0" in text
     assert "2d9c8a539f04ee2d75e5482c858ec6c3364af135" in text
     assert "240f7ccac89a773366a510f10a13d6de801051ea" in text
+    assert "a978eef291d5e26d20e5cf977bc76609c227cb52" in text
+    assert "2026-08-05T17:22:15Z" in text
     assert "3b4d03c785123e204885faea08df7b9d7ed07ec0" in text
 
 
 def test_release_notes_v051_contain_expected_artifacts():
     text = (ROOT / "docs" / "release_v0_5_1.md").read_text(encoding="utf-8")
+    assert "Formal release status" in text
     assert "market_vault-0.5.1-py3-none-any.whl" in text
     assert "market_vault-0.5.1.tar.gz" in text
+    assert "80965A671AEEF75F315386D9BD4B62EC5DC08E552CB3430AEF92F83C562248C1" in text
+    assert "FE82FB4FD254C493EC00519EDEB438533C0C5E8D5A7690E1F14AEA39DE4CCDAB" in text
+    assert "MarketVault v0.5.1" in text
+    assert "31029709970" in text
     assert "PyPI" in text
+    assert "TestPyPI" in text
     assert "release preparation" in text
 
 

@@ -1,11 +1,20 @@
 # MarketVault v0.5.1 Direction: Stability and Usability Maintenance
 
-Status: implementation complete; v0.5.1 release preparation
+Status: released on 2026-08-06 JST
 
 This document defines the scope, non-goals, and PR sequence for the V0.5.1
-"Stability and Usability Maintenance" patch release. It is the single
-maintenance direction for everything after the v0.5.0 release; v0.6 has not
-started and is not planned in this document.
+"Stability and Usability Maintenance" patch release. The release is
+complete: all four PRs are merged, the annotated `v0.5.1` tag points at the
+release commit, the GitHub Release `MarketVault v0.5.1` is published with
+the wheel and sdist assets, and PyPI is not published. The final release
+facts are recorded in the [Progress](#6-progress) section and in
+[release_v0_5_1.md](release_v0_5_1.md). V0.6.0 continues from the separate
+[v0_6_0_direction.md](v0_6_0_direction.md); Sample Generator, Dataset
+Catalog, Python Client, and ML Experiment have not started.
+
+The planning sections below describe the original v0.5.1 plan and are kept
+as historical planning records; the authoritative current state is the
+released state recorded in the Progress section.
 
 ## 1. Baseline
 
@@ -86,7 +95,8 @@ direction outside this maintenance release:
 
 ## 4. Proposed PR sequence
 
-The sequence is fixed:
+The sequence is fixed (historical plan; the final merged state is recorded
+in the Progress section):
 
 ```text
 PR-1 — post-release state alignment and v0.5.1 direction
@@ -138,11 +148,28 @@ The v0.5.1 release must keep, unchanged:
   Windows PowerShell usage flow, common-error documentation, example
   regression tests, and the renderer hardening follow-up
   (`1f48efde963a5aee2b9bf55fd093db677e296abe`).
-- **PR-4** (`chore: prepare v0.5.1 release`) — in progress on the
-  `release/v0.5.1` branch: version sync to **0.5.1**, README, CHANGELOG,
-  release notes, direction document, release checker, release tests, and
-  CI package updates.
-- The package version is now **0.5.1**; no dependency changes.
-- The `v0.5.1` tag has not been created; no GitHub Release exists; PyPI is
-  not published.
-- Sample Generator, Dataset Catalog, Python Client, and ML Experiment have not started.
+- **PR-4** (`chore: prepare v0.5.1 release`) — merged (GitHub PR #33,
+  squash merge commit `a978eef291d5e26d20e5cf977bc76609c227cb52`): the
+  v0.5.1 release preparation synced the package version to **0.5.1** and
+  updated the README, CHANGELOG, release notes, direction document, release
+  checker, release tests, and CI package updates.
+
+Final release facts:
+
+- The package version is **0.5.1**; no dependency changes.
+- PR #33 mergedAt: `2026-08-05T17:22:15Z`; the release commit is
+  `a978eef291d5e26d20e5cf977bc76609c227cb52`, which is also the final
+  `main` HEAD.
+- The annotated `v0.5.1` tag was created after the merge; the peeled tag
+  commit equals the release commit.
+- The GitHub Release `MarketVault v0.5.1` is published
+  (publishedAt `2026-08-05T17:33:12Z`, not a draft, not a prerelease) with
+  exactly the `market_vault-0.5.1-py3-none-any.whl` and
+  `market_vault-0.5.1.tar.gz` assets.
+- The main push CI run `31029709970` succeeded: test (3.11) 2286 passed,
+  7 skipped, test (3.14) 2286 passed, 7 skipped, and the package job.
+- PyPI is not published; TestPyPI is not published.
+- The v0.5.1 release is formally sealed; v0.6.0 continues from the
+  separate [v0_6_0_direction.md](v0_6_0_direction.md).
+- Sample Generator, Dataset Catalog, Python Client, and ML Experiment have
+  not started.

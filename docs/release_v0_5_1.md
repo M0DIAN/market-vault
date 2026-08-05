@@ -1,20 +1,70 @@
 # MarketVault v0.5.1 Release Notes
 
-## Release preparation status
+## Formal release status
+
+The v0.5.1 maintenance release is formally released and sealed.
 
 ```text
-v0.5.1 release preparation
-PR-4 is open and not merged
+PR #33: MERGED
+mergedAt: 2026-08-05T17:22:15Z
+release commit: a978eef291d5e26d20e5cf977bc76609c227cb52
+main HEAD: a978eef291d5e26d20e5cf977bc76609c227cb52
+tag: v0.5.1
+GitHub Release: MarketVault v0.5.1
+publishedAt: 2026-08-05T17:33:12Z
+draft: false
+prerelease: false
+PyPI: not published
+TestPyPI: not published
 ```
 
-This document describes the v0.5.1 maintenance release preparation. The
-`v0.5.1` tag does not exist yet, no GitHub Release exists, and nothing is
-published to PyPI: those remain separate, explicit actions after the
-release-preparation PR merges.
+The annotated `v0.5.1` tag was created after the merge and points at the
+release commit: the peeled tag commit equals the release commit. The GitHub
+Release assets are exactly the wheel and the sdist.
+
+```text
+market_vault-0.5.1-py3-none-any.whl
+SHA-256:
+80965A671AEEF75F315386D9BD4B62EC5DC08E552CB3430AEF92F83C562248C1
+
+market_vault-0.5.1.tar.gz
+SHA-256:
+FE82FB4FD254C493EC00519EDEB438533C0C5E8D5A7690E1F14AEA39DE4CCDAB
+```
+
+### Main CI
+
+The main push CI run succeeded (run `31029709970`, event `push`, head
+`a978eef291d5e26d20e5cf977bc76609c227cb52`):
+
+```text
+Python 3.11: 2286 passed, 7 skipped
+Python 3.14: 2286 passed, 7 skipped
+package: success
+```
+
+### Verification distinction
+
+- The main push CI validation (run `31029709970`) is the authoritative
+  post-merge run.
+- The release-preparation branch validation below is a historical record.
+- The formal artifacts are the GitHub Release assets with the SHA-256s
+  above; they were built by the release-preparation PR, twine-checked, and
+  uploaded as Release assets after the merge.
+- PyPI and TestPyPI are not published; publication remains a separate,
+  explicit decision.
+
+## Historical release-preparation record
+
+The sections below record the release preparation work and the state of the
+release-preparation PR at the time it was opened. This is the v0.5.1 release
+preparation history; the preparation merged as GitHub PR #33, and the
+tag and GitHub Release were created after the merge. The Formal release
+status section above is authoritative.
 
 ## Release preparation boundary
 
-- The package version is bumped to 0.5.1 by this release-preparation PR.
+- The package version was bumped to 0.5.1 by the release-preparation PR.
 - No Dataset / Canonical identity, schema, contract, or CLI behavior
   changes; no dependency changes; `requires-python >=3.11` unchanged.
 - No Sample Generator, Dataset Catalog, Python Client, REST API, ML
@@ -49,12 +99,19 @@ GitHub PR numbers (not the internal roadmap PR-1..PR-4 sequence):
   templates, the stdlib-only renderer, the PowerShell usage flow, common
   error documentation, and the example regression tests, plus the renderer
   hardening follow-up commit (`1f48efde963a5aee2b9bf55fd093db677e296abe`).
+- PR #33 — chore: prepare v0.5.1 release
+  (merged 2026-08-05T17:22:15Z, squash merge commit
+  `a978eef291d5e26d20e5cf977bc76609c227cb52`): the v0.5.1 release
+  preparation. See the Formal release status section for the final state.
 
-## PR-4 current status
+## PR-4 release-preparation history
 
-PR-4 (`chore: prepare v0.5.1 release`) is the current release-preparation
-PR on the `release/v0.5.1` branch; it is open and not merged. No merge
-commit exists for it.
+PR-4 (`chore: prepare v0.5.1 release`) was the release-preparation PR on
+the `release/v0.5.1` branch. It merged as GitHub PR #33 at
+2026-08-05T17:22:15Z with the squash merge commit
+`a978eef291d5e26d20e5cf977bc76609c227cb52`. At the time the PR was opened,
+the `v0.5.1` tag and the GitHub Release had not yet been created; both were
+created after the merge.
 
 ## Compatibility cleanup
 
@@ -96,10 +153,12 @@ commit exists for it.
 - Existing v0.5.0 Dataset and Canonical artifacts are never migrated,
   overwritten, or rewritten.
 
-## Validation
+## Historical validation records
 
-Local and GitHub Actions results are reported separately because
-platform-dependent skips differ between Windows and Linux.
+The local and release-preparation-branch CI results are reported separately
+because platform-dependent skips differ between Windows and Linux; the
+authoritative post-merge run is the main push CI in the Formal release
+status section.
 
 ### Local validation
 
@@ -127,7 +186,9 @@ wheel contents: WHEEL_CONTENTS_OK
 
 Recorded by the final CI run on the release-preparation branch
 (ubuntu-latest); the run corresponds to the final head after the release
-notes were updated.
+notes were updated. This is a release-preparation-branch record; the
+authoritative post-merge run is the main push CI
+(run `31029709970`).
 
 ```text
 test (3.11): 2286 passed, 7 skipped
@@ -145,7 +206,7 @@ package: success
 
 ## Packaging
 
-Expected artifacts:
+Final artifacts (the GitHub Release assets):
 
 ```text
 market_vault-0.5.1-py3-none-any.whl
@@ -168,9 +229,10 @@ market_vault-0.5.1.tar.gz
 
 ## Non-actions
 
-This release-preparation PR does not create the `v0.5.1` tag, does not
-create a GitHub Release, and does not publish to PyPI. Those remain
-separate, explicit actions after the release PR merges.
+The release-preparation PR itself did not create the `v0.5.1` tag and did
+not create the GitHub Release; both were created after the merge (see the
+Formal release status section). PyPI publication remains a separate,
+explicit decision.
 
 ## Release checklist
 
@@ -179,6 +241,7 @@ separate, explicit actions after the release PR merges.
 - [x] README, CHANGELOG, release notes, and direction document updated.
 - [x] Release checker and release tests updated to 0.5.1.
 - [x] Wheel and sdist built and twine-checked; fresh-wheel validated.
-- [ ] Tag `v0.5.1` created (after merge).
-- [ ] GitHub Release `MarketVault v0.5.1` created (after merge).
+- [x] Tag `v0.5.1` created (annotated, points at the release commit).
+- [x] GitHub Release `MarketVault v0.5.1` published with the wheel and
+      sdist assets.
 - [ ] PyPI publication (separate, explicit decision).

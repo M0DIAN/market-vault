@@ -1,0 +1,270 @@
+# MarketVault v0.6.0 Direction: Deterministic Sample Generation and Dataset Catalog
+
+Status: planned
+
+This document defines the scope, non-goals, and fixed PR sequence for the
+V0.6.0 "Deterministic Sample Generation and Dataset Catalog" minor feature
+release. It fixes the architecture boundary for v0.6.0 and the two product
+capabilities: the Deterministic Sample Generator and the immutable Dataset
+Catalog. This PR is documentation only and implements no product code:
+neither the Sample Generator nor the Dataset Catalog is implemented
+by it; the direction only fixes boundaries, and the precise schemas are
+defined by the subsequent contract PRs.
+
+## 1. Baseline
+
+```text
+base version: v0.5.1
+base commit: a978eef291d5e26d20e5cf977bc76609c227cb52
+package version at planning time: 0.5.1
+```
+
+- The v0.5.1 maintenance release is formally released and sealed (GitHub
+  PR #33 merged, the annotated `v0.5.1` tag created, and the GitHub Release
+  `MarketVault v0.5.1` published with the wheel and sdist assets; PyPI is
+  not published).
+- V0.6.0 is a minor feature release. It does not modify the existing
+  Dataset or Canonical identity algorithms.
+- V0.6.0 does not rewrite any existing artifacts and does not change the
+  existing `dataset-build` formal contract
+  (`market-vault-dataset-build-plan-v1`).
+- The package version stays 0.5.1 through PR-8 and is bumped to 0.6.0 only
+  in PR-9 (the final release-preparation PR).
+
+## 2. V0.6.0 goals
+
+V0.6.0 contains exactly two product capabilities.
+
+### A. Deterministic Sample Generator
+
+Responsibility:
+
+```text
+verified Canonical builds
++ explicit generation plan
++ explicit scope
++ explicit window / stride rules
++ explicit Dataset build facts
+→ deterministic PITSampleRequest sequence
+→ ordinary market-vault-dataset-build-plan-v1
+```
+
+The generator must:
+
+- generate only requests and an ordinary Dataset build-plan;
+- never compute Feature values;
+- never compute Label values;
+- never build a Dataset;
+- never train a model;
+- never modify Canonical;
+- produce output that can be handed directly to the existing
+  `market-vault dataset-build --plan <PATH>` command;
+- neither upgrade nor replace the current
+  `market-vault-dataset-build-plan-v1`;
+- not add a second implicit input set for `dataset-build`;
+- keep every input explicit;
+- never read the current time;
+- never scan for `latest`;
+- never connect to OpenD automatically;
+- never access the network;
+- never load settings;
+- never automatically collect or repair data;
+- never generate cross-trading-day Labels;
+- keep the v1 boundary that only `adjustment = NONE` is supported;
+- restrict the v1 generation rules to the currently formally supported
+  BARS-style research boundary;
+- produce a byte-identical request order and build-plan content for the
+  same verified inputs and the same generation plan;
+- construct every request as a formal `PITSampleRequest` and pass its
+  validation;
+- sort the output requests by a stable key and reject duplicates.
+
+This direction only fixes the boundary; PR-1 does not determine all JSON
+fields. The precise schema is defined by PR-2.
+
+### B. Immutable Dataset Catalog
+
+Responsibility:
+
+```text
+explicit Dataset root / explicit candidate set
+→ load_verified_dataset for every candidate
+→ extract verified metadata
+→ deterministic immutable Catalog snapshot
+→ verified Catalog reader
+→ read-only discovery and query
+```
+
+The new Dataset Catalog must:
+
+- be fully independent of the existing
+  `market_vault.storage.catalog.Catalog`;
+- leave the legacy Catalog responsible for ingestion runs, quality,
+  snapshot views, and DuckDB views;
+- index only formal immutable Dataset builds;
+- admit a build into the Catalog only when it passes
+  `load_verified_dataset`;
+- never trust an unverified manifest directly;
+- never repair a Dataset;
+- never rewrite a Dataset;
+- never delete a Dataset;
+- never auto-select `latest`;
+- never scan the whole disk; the scan scope must be bounded by an explicit
+  root or an explicit candidate set;
+- have queries read an explicit Catalog snapshot;
+- never allow a Catalog snapshot to be overwritten;
+- produce the same Catalog content identity for the same verified Dataset
+  set;
+- never let paths, machine names, or the current time pollute Dataset
+  identity;
+- never let Catalog identity flow back into Dataset identity;
+- not modify an original Dataset when it is moved or re-indexed;
+- fail closed on invalid, corrupted, conflicting, or symlink /
+  reparse-point candidates;
+- keep discovery and query strictly read-only.
+
+The precise Catalog schema, identity, and physical layout are defined by
+the subsequent PRs.
+
+## 3. CLI direction
+
+The following command names are reserved as v0.6.0 planning targets; they
+are not implemented in the current PR:
+
+```text
+market-vault sample-generate
+market-vault dataset-catalog-build
+market-vault dataset-catalog-verify
+market-vault dataset-catalog-list
+market-vault dataset-catalog-show
+```
+
+- The command names are v0.6.0 planning goals; the commands do not exist
+  in the current PR.
+- Subsequent contract PRs may finalize the parameters without changing the
+  responsibility boundaries.
+- These commands must not be confused with the existing `init-catalog`
+  command; `init-catalog` remains the legacy ingestion DuckDB catalog
+  command (`market_vault.storage.catalog.Catalog`).
+
+## 4. Relationship to future projects
+
+The adopted three-project boundary:
+
+```text
+MarketVault
+→ trusted data, Canonical, Feature/Label, Dataset,
+  Sample Generator, Dataset Catalog, future Python Client
+
+Future Quant Research repository
+→ experiment management, training, evaluation, prediction,
+  research backtests
+
+Future Trading Execution repository
+→ signal consumption, risk management, paper trading,
+  order and live execution
+```
+
+- The Quant Research repository does not exist yet and has not been
+  created.
+- The Trading Execution repository does not exist yet and has not been
+  created.
+- The project names are not yet final.
+- V0.6.0 does not create any new repository.
+- V0.6.0 does not implement research or trading functionality.
+
+## 5. V0.6.0 explicit non-goals
+
+The following are explicit v0.6.0 non-goals; none is implemented:
+
+- Python Client — fixed as a later v0.7 direction; it is not part of v0.6
+- REST API
+- ML Experiment
+- Experiment Runner
+- model training
+- hyperparameter tuning
+- feature importance
+- Model Registry
+- prediction service
+- backtesting
+- walk-forward
+- signal
+- position sizing
+- risk engine
+- paper trading
+- live execution
+- broker order API
+- real-time subscription
+- automatic trading
+- arbitrary user transforms
+- adjusted-price PIT
+- cross-trading-day Label
+- TRADING_DAYS Label execution
+- Dataset identity algorithm changes
+- Canonical identity algorithm changes
+- schema migration
+- dependency modernization
+- PyPI publication
+
+Python Client is fixed as a later v0.7 direction and is not part of v0.6.
+
+## 6. Fixed PR sequence
+
+```text
+PR-1 — post-release alignment, v0.6.0 direction, architecture boundary
+
+PR-2 — Sample Generation contract, strict schema, frozen models,
+       normalization and content identity
+
+PR-3 — deterministic Sample Generator core over verified Canonical builds
+
+PR-4 — Sample Generator CLI, ordinary build-plan output,
+       COMPLETE / EMPTY / determinism E2E
+
+PR-5 — Dataset Catalog contract, strict schema, frozen models,
+       metadata projection and Catalog identity
+
+PR-6 — immutable Dataset Catalog builder, materializer,
+       verified Catalog reader
+
+PR-7 — Dataset Catalog verify/list/show/query CLI
+
+PR-8 — integrated determinism, corruption, recovery, portability,
+       security and usability E2E documentation
+
+PR-9 — v0.6.0 release preparation
+```
+
+Each PR is independent:
+
+- one PR completes exactly one stage;
+- a PR never starts the next stage as a side effect;
+- PR-2 does not implement the engine;
+- PR-3 does not implement the CLI;
+- PR-4 does not implement the Catalog;
+- PR-5 does not implement Catalog writes;
+- PR-6 does not implement the Query CLI;
+- PR-7 does not implement the Python Client;
+- PR-8 does not expand the product scope;
+- the version is bumped to 0.6.0 only in PR-9.
+
+## 7. Acceptance principles
+
+V0.6.0 keeps, unchanged:
+
+- Python 3.11
+- Python 3.14
+- offline deterministic tests
+- fail closed
+- no current time
+- no hidden latest
+- no network / OpenD / settings
+- targeted -> related -> full pytest -> CI
+- one PR at a time
+- immutable artifacts
+- verified readers as trust boundaries
+- clean worktree
+- package smoke
+- public API smoke
+- wheel hygiene
+- no unrequested merge
