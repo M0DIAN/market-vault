@@ -35,3 +35,6 @@ where = ["src"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+filterwarnings = [
+  "error:The 'generic' unit for NumPy timedelta is deprecated.*:DeprecationWarning",
+]

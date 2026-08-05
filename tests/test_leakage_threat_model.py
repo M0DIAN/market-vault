@@ -331,7 +331,7 @@ def calendar(cfg: Settings, *, trade_date: date = date(2026, 7, 1)) -> None:
 def minute_keys(start: str, count: int) -> list[str]:
     base = pd.Timestamp(start, tz=NY)
     return [
-        (base + pd.Timedelta(minutes=i)).strftime("%Y-%m-%d %H:%M:%S")
+        (base + pd.Timedelta(int(i), unit="m")).strftime("%Y-%m-%d %H:%M:%S")
         for i in range(count)
     ]
 
@@ -597,7 +597,7 @@ def split_sample(key_text: str, *, close=None, status=LABEL_STATUS_COMPLETE,
     """Split fact sample; COMPLETE defaults its actual end to close + 1h."""
     close = close if close is not None else datetime(2026, 6, 30, 16, 0, tzinfo=NY_ZONE)
     if actual_end is None and status == LABEL_STATUS_COMPLETE:
-        actual_end = close + pd.Timedelta(hours=1)
+        actual_end = close + pd.Timedelta(1, unit="h")
     return ChronologicalSplitSample(
         sample_key=sha(key_text),
         sample_version_id=sha(version_text if version_text is not None else key_text + "#v1"),
@@ -1044,7 +1044,7 @@ def test_label_cross_split_train_below_boundary_assigned():
             split_sample(
                 "train-ok",
                 close=datetime(2026, 6, 30, 16, 0, tzinfo=NY_ZONE),
-                actual_end=TRAIN_BOUNDARY_UTC - pd.Timedelta(microseconds=1),
+                actual_end=TRAIN_BOUNDARY_UTC - pd.Timedelta(1, unit="us"),
             )
         ],
         split_spec(),
@@ -1077,7 +1077,7 @@ def test_label_cross_split_validation_boundary_assigned():
             split_sample(
                 "val-ok",
                 close=datetime(2026, 7, 31, 16, 0, tzinfo=NY_ZONE),
-                actual_end=VALIDATION_BOUNDARY_UTC - pd.Timedelta(microseconds=1),
+                actual_end=VALIDATION_BOUNDARY_UTC - pd.Timedelta(1, unit="us"),
             )
         ],
         split_spec(),
@@ -1136,7 +1136,7 @@ def test_label_cross_split_same_close_different_end_different_outcome():
     close = datetime(2026, 6, 30, 16, 0, tzinfo=NY_ZONE)
     result = assign_chronological_splits(
         [
-            split_sample("kept", close=close, actual_end=TRAIN_BOUNDARY_UTC - pd.Timedelta(microseconds=1)),
+            split_sample("kept", close=close, actual_end=TRAIN_BOUNDARY_UTC - pd.Timedelta(1, unit="us")),
             split_sample("purged", close=close, actual_end=TRAIN_BOUNDARY_UTC),
         ],
         split_spec(),
@@ -1151,7 +1151,7 @@ def test_label_cross_split_forged_assignment_fails_closed():
     # A hand-built assignment with a wrong purge state still fails closed
     # even when every identity, row, and diagnostic count is recomputed.
     spec = split_spec()
-    sample = split_sample("s", actual_end=TRAIN_BOUNDARY_UTC - pd.Timedelta(microseconds=1))
+    sample = split_sample("s", actual_end=TRAIN_BOUNDARY_UTC - pd.Timedelta(1, unit="us"))
     base = assign_chronological_splits([sample], spec)
     forged = replace(
         base.assignments[0],

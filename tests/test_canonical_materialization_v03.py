@@ -73,7 +73,7 @@ def calendar(cfg: Settings, *, trade_date: date = date(2026, 7, 1)) -> None:
 def minute_keys(start: str, count: int, step_minutes: int = 1) -> list[str]:
     base = pd.Timestamp(start, tz=NY)
     return [
-        (base + pd.Timedelta(minutes=step_minutes * i)).strftime("%Y-%m-%d %H:%M:%S")
+        (base + pd.Timedelta(int(step_minutes * i), unit="m")).strftime("%Y-%m-%d %H:%M:%S")
         for i in range(count)
     ]
 
@@ -468,8 +468,8 @@ def test_gap_non_integral_delta_fails_closed(tmp_path):
         df = df.copy()
         time_utc = pd.to_datetime(df["time_utc"]).copy()
         time_market = pd.to_datetime(df["time_market"]).copy()
-        time_utc.iloc[1] = time_utc.iloc[1] + pd.Timedelta(seconds=30)
-        time_market.iloc[1] = time_market.iloc[1] + pd.Timedelta(seconds=30)
+        time_utc.iloc[1] = time_utc.iloc[1] + pd.Timedelta(30, unit="s")
+        time_market.iloc[1] = time_market.iloc[1] + pd.Timedelta(30, unit="s")
         return df.assign(time_utc=time_utc, time_market=time_market)
 
     write_snapshot(
@@ -707,8 +707,8 @@ def test_gap_120_5s_delta_fails(tmp_path):
         df = df.copy()
         time_utc = pd.to_datetime(df["time_utc"]).copy()
         time_market = pd.to_datetime(df["time_market"]).copy()
-        time_utc.iloc[1] = time_utc.iloc[1] + pd.Timedelta(seconds=120) + pd.Timedelta(milliseconds=500)
-        time_market.iloc[1] = time_market.iloc[1] + pd.Timedelta(seconds=120) + pd.Timedelta(milliseconds=500)
+        time_utc.iloc[1] = time_utc.iloc[1] + pd.Timedelta(120, unit="s") + pd.Timedelta(500, unit="ms")
+        time_market.iloc[1] = time_market.iloc[1] + pd.Timedelta(120, unit="s") + pd.Timedelta(500, unit="ms")
         return df.assign(time_utc=time_utc, time_market=time_market)
 
     write_snapshot(
@@ -728,8 +728,8 @@ def test_gap_119_999999s_delta_fails(tmp_path):
         df = df.copy()
         time_utc = pd.to_datetime(df["time_utc"]).copy()
         time_market = pd.to_datetime(df["time_market"]).copy()
-        time_utc.iloc[1] = time_utc.iloc[1] + pd.Timedelta(seconds=119) + pd.Timedelta(microseconds=999999)
-        time_market.iloc[1] = time_market.iloc[1] + pd.Timedelta(seconds=119) + pd.Timedelta(microseconds=999999)
+        time_utc.iloc[1] = time_utc.iloc[1] + pd.Timedelta(119, unit="s") + pd.Timedelta(999999, unit="us")
+        time_market.iloc[1] = time_market.iloc[1] + pd.Timedelta(119, unit="s") + pd.Timedelta(999999, unit="us")
         return df.assign(time_utc=time_utc, time_market=time_market)
 
     write_snapshot(
