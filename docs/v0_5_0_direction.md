@@ -365,14 +365,26 @@ documented in
 
 ## 16. Dataset CLI
 
-Planned commands (not implemented in this PR):
+Implemented commands (v0.5.0 PR-8):
 
-- `dataset-build` — execute a pinned Dataset build (explicit inputs; never
-  auto-download, never auto-refresh Canonical).
-- `dataset-verify` — run the verified reader against a Dataset directory.
-- `dataset-inspect` — print the manifest and logical summary.
+- `market-vault dataset-build --plan <PATH>` — execute one pinned,
+  immutable Dataset build from a single explicit, versioned build-plan
+  JSON document (all inputs are declared in the plan; the CLI is a thin
+  wrapper over the verified Canonical reader, the spec parsers, the
+  orchestrator, the materializer, and the verified Dataset reader; never
+  auto-downloads and never auto-refreshes Canonical).
+- `market-vault dataset-verify --build-dir <PATH>` — run the verified
+  Dataset reader against one explicit final Dataset directory
+  (`<output_root>/<dataset_id>`); strictly read-only.
+- `market-vault dataset-inspect --build-dir <PATH> [--offset N]
+  [--limit N]` — verified read-only inspection of one Dataset directory:
+  manifest summary, scope, schema, spec pins, split spec, split
+  diagnostics, build report, and offset/limit logical rows as
+  deterministic JSON.
 
-The CLI never trains, backtests, or trades.
+The Dataset CLI contract is documented in
+[contracts/dataset_cli.md](contracts/dataset_cli.md). The CLI never trains,
+backtests, or trades.
 
 ## 17. Failure model
 
@@ -603,8 +615,8 @@ of scope for v0.5.0.
   trusted output; it never re-executes Canonical reads, PIT assembly,
   Feature / Label execution, or split / purge. See
   [contracts/dataset_materialization.md](contracts/dataset_materialization.md).
-- **PR-7** (`feat: add verified Dataset reader`) — implemented in this
-  branch: the one public, read-only, fail-closed Dataset artifact reader
+- **PR-7** (`feat: add verified Dataset reader`) — merged: the one public,
+  read-only, fail-closed Dataset artifact reader
   `load_verified_dataset(build_dir)` rebuilds and verifies the complete
   Dataset facts from one explicit committed Dataset directory's own
   artifacts — canonical manifest validation and bytes, the
@@ -622,13 +634,22 @@ of scope for v0.5.0.
   scans for a `latest` directory, and never writes, repairs, or deletes
   any file. See
   [contracts/verified_dataset_reader.md](contracts/verified_dataset_reader.md).
-- PIT + Feature + Label + Split orchestration, Dataset materialization
-  (Parquet, manifest, build report, spec artifacts, `_SUCCESS`, staging,
-  atomic commit, idempotency), and the verified Dataset reader are
-  implemented. The Dataset CLI (PR-8) is **not implemented yet**: no
-  `dataset-build` / `dataset-verify` / `dataset-inspect` commands and no
-  API server or Python client exist. The v0.6.0 read-only data-serving
-  direction is not part of this PR; v0.5.1 maintenance optimization has
-  not started.
-- The package version remains **0.4.0** (it stays 0.4.0 through PR-9 of
-  this sequence; the bump to 0.5.0 happens only in PR-10).
+- **PR-8** (`feat: add Dataset CLI`) — implemented in this branch:
+  `market-vault dataset-build --plan`, `market-vault dataset-verify
+  --build-dir`, and `market-vault dataset-inspect --build-dir` — a thin
+  wrapper over the formal public chain with a strict versioned build-plan
+  JSON contract, settings-independent dispatch, deterministic JSON
+  success / failure output, stable exit codes, path / symlink / junction
+  safety, the unified `DatasetCLIError` boundary, and the CLI identity
+  boundary (plan bytes, paths, `output_root`, `built_at`, and CLI versions
+  never enter `dataset_id`). See
+  [contracts/dataset_cli.md](contracts/dataset_cli.md).
+- **PR-1 through PR-7 are merged.** PR-8 is implemented in this branch
+  (`dataset-build` implemented, `dataset-verify` implemented,
+  `dataset-inspect` implemented). **PR-9 has not started** (end-to-end
+  determinism and leakage regression). **PR-10 has not started** (v0.5.0
+  release preparation). The v0.6.0 read-only data-serving / API / Python
+  client direction is not part of this PR; v0.5.1 maintenance optimization
+  has not started. The package version remains **0.4.0** (it stays 0.4.0
+  through PR-9 of this sequence; the bump to 0.5.0 happens only in
+  PR-10).
