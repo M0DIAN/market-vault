@@ -540,7 +540,7 @@ of scope for v0.5.0.
   EXCLUDED Feature result models. See
   [contracts/built_in_feature_execution.md](contracts/built_in_feature_execution.md).
 - **PR-4** (`feat: execute deterministic built-in label transforms`) —
-  implemented in this branch: the four built-in Label transforms
+  merged: the four built-in Label transforms
   (forward_return, forward_direction, maximum_favorable_excursion,
   maximum_adverse_excursion), their immutable built-in registrations, the
   frozen Label transform invocation contract, the pure in-memory Label
@@ -551,11 +551,25 @@ of scope for v0.5.0.
   codes, `actual_label_end_time` from the last actually consumed Label
   row, and the deterministic Label result models. See
   [contracts/built_in_label_execution.md](contracts/built_in_label_execution.md).
-- Built-in Feature and Label execution are both implemented. Dataset
-  orchestration (PR-5), Dataset materialization/Parquet (PR-6), the
-  verified Dataset reader (PR-7), and the Dataset CLI (PR-8) are **not
-  implemented yet**: no chronological split is invoked, no Dataset is
-  built, no `dataset_id` is generated, and no Dataset builder, Parquet, or
-  CLI exists.
+- **PR-5** (`feat: orchestrate deterministic dataset builds`) —
+  implemented in this branch: the pure in-memory Dataset orchestration
+  pipeline connects verified Canonical builds, PIT sample assembly, built-in
+  Feature execution, built-in Label execution, and chronological split /
+  purge. It computes the authoritative logical Dataset schema, the final
+  logical rows under the fixed physical sort (`code`,
+  `feature_window_close`, `sample_key`), the scope-wide CompletionSummary,
+  the merged Feature/Label ImplementationPins,
+  `logical_dataset_content_id`, `DatasetIdentityInput`, and the
+  deterministic `dataset_id` — in memory only, fail closed, with the
+  unified `DatasetOrchestrationError` boundary. See
+  [contracts/dataset_orchestration.md](contracts/dataset_orchestration.md).
+- PIT + Feature + Label + Split orchestration is implemented; the logical
+  Dataset schema, logical rows, content ID, `DatasetIdentityInput`, and
+  `dataset_id` are computed in memory. Dataset materialization and Dataset
+  Parquet (PR-6), the verified Dataset reader (PR-7), and the Dataset CLI
+  (PR-8) are **not implemented yet**: no Dataset directory, no Parquet, no
+  DatasetManifest, no `build_dataset_manifest` call, and no Dataset
+  builder CLI exist. The v0.6.0 read-only data-serving direction is not
+  part of this PR.
 - The package version remains **0.4.0** (it stays 0.4.0 through PR-9 of
   this sequence; the bump to 0.5.0 happens only in PR-10).
