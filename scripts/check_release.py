@@ -6,6 +6,10 @@ files. Uses only the Python 3.11 standard library.
 
 Exit code 0 with "RELEASE_CHECK_OK version=..." on success; exit code 1 with
 every failure listed otherwise.
+
+This checker never requires a git tag, a GitHub Release, or a PyPI
+publication to exist: those actions remain separate, explicit, and are not
+part of release readiness.
 """
 
 from __future__ import annotations
@@ -17,7 +21,7 @@ import sys
 import tomllib
 from pathlib import Path
 
-EXPECTED_VERSION = "0.4.0"
+EXPECTED_VERSION = "0.5.0"
 PEP440_RE = re.compile(
     r"^([1-9]\d*!)?(0|[1-9]\d*)(\.(0|[1-9]\d*))*((a|b|rc)(0|[1-9]\d*))?"
     r"(\.post(0|[1-9]\d*))?(\.dev(0|[1-9]\d*))?$"
@@ -31,6 +35,24 @@ CI_PACKAGE_VERSION_MARKERS = (
 )
 CI_METADATA_VERSION_MARKERS = (
     f"assert version('market-vault') == '{EXPECTED_VERSION}'",
+)
+# The CI fresh-wheel public API smoke marker must use the v0.5 release marker.
+CI_PUBLIC_API_MARKER = "V050_PUBLIC_API_IMPORT_OK"
+# Stale v0.4-era claims that must never appear in the current README.
+STALE_README_PHRASES = (
+    "final Dataset builder is not implemented",
+    "no final Dataset CLI",
+    "no automatic Feature/Label value computation",
+    "no final Dataset Parquet export",
+    "V0.5 development",
+    "V0.5 remains under development",
+    "release preparation pending",
+)
+# Stale v0.5.0 direction status wording that must never appear in the current
+# direction document.
+STALE_DIRECTION_PHRASES = (
+    "Status: proposed",
+    "PR-10 has not started",
 )
 
 
@@ -77,8 +99,8 @@ def check_readme_title(root: Path) -> list[str]:
     if not path.exists():
         return ["README.md is missing"]
     first_line = path.read_text(encoding="utf-8").splitlines()[0]
-    if first_line.strip() != "# MarketVault v0.4":
-        return [f"README first line is {first_line.strip()!r}, expected '# MarketVault v0.4'"]
+    if first_line.strip() != "# MarketVault v0.5":
+        return [f"README first line is {first_line.strip()!r}, expected '# MarketVault v0.5'"]
     return []
 
 
@@ -87,23 +109,23 @@ def check_changelog(root: Path) -> list[str]:
     if not path.exists():
         return ["CHANGELOG.md is missing"]
     text = path.read_text(encoding="utf-8")
+    failures = []
+    if "## [0.5.0] - 2026-08-05" not in text:
+        failures.append("CHANGELOG.md is missing '## [0.5.0] - 2026-08-05'")
     if "## [0.4.0] - 2026-08-05" not in text:
-        return ["CHANGELOG.md is missing '## [0.4.0] - 2026-08-05'"]
-    return []
+        failures.append("CHANGELOG.md no longer contains '## [0.4.0] - 2026-08-05'")
+    return failures
 
 
-def check_readme_no_development_wording(root: Path) -> list[str]:
+def check_readme_no_stale_wording(root: Path) -> list[str]:
     path = root / "README.md"
     if not path.exists():
         return ["README.md is missing"]
     text = path.read_text(encoding="utf-8")
     failures = []
-    if "V0.4 development" in text:
-        failures.append("README still contains 'V0.4 development'")
-    if "V0.4 remains under development" in text:
-        failures.append("README still contains 'V0.4 remains under development'")
-    if "release preparation pending" in text:
-        failures.append("README still contains 'release preparation pending'")
+    for phrase in STALE_README_PHRASES:
+        if phrase in text:
+            failures.append(f"README still contains the outdated wording {phrase!r}")
     if "one calendar day after" in text:
         failures.append("README still contains the outdated 'one calendar day after' phrasing")
     if "next trading date" not in text and "first trading date strictly after" not in text:
@@ -111,37 +133,76 @@ def check_readme_no_development_wording(root: Path) -> list[str]:
     return failures
 
 
-def check_release_notes(root: Path) -> list[str]:
-    path = root / "docs" / "release_v0_4_0.md"
+def check_direction_status(root: Path) -> list[str]:
+    path = root / "docs" / "v0_5_0_direction.md"
     if not path.exists():
-        return ["docs/release_v0_4_0.md is missing"]
+        return ["docs/v0_5_0_direction.md is missing"]
+    text = path.read_text(encoding="utf-8")
+    failures = []
+    if "release preparation" not in text:
+        failures.append("docs/v0_5_0_direction.md does not state the release-preparation status")
+    for phrase in STALE_DIRECTION_PHRASES:
+        if phrase in text:
+            failures.append(
+                f"docs/v0_5_0_direction.md still contains the stale wording {phrase!r}"
+            )
+    return failures
+
+
+def check_release_notes(root: Path) -> list[str]:
+    path = root / "docs" / "release_v0_5_0.md"
+    if not path.exists():
+        return ["docs/release_v0_5_0.md is missing"]
     return []
 
 
 def check_old_release_notes(root: Path) -> list[str]:
-    path = root / "docs" / "release_v0_3_0.md"
-    if not path.exists():
-        return ["docs/release_v0_3_0.md is missing"]
-    return []
+    failures = []
+    if not (root / "docs" / "release_v0_4_0.md").exists():
+        failures.append("docs/release_v0_4_0.md is missing")
+    if not (root / "docs" / "release_v0_3_0.md").exists():
+        failures.append("docs/release_v0_3_0.md is missing")
+    return failures
 
 
-def check_readme_upgrade_from_v03(root: Path) -> list[str]:
+def check_readme_upgrade_sections(root: Path) -> list[str]:
     path = root / "README.md"
     if not path.exists():
         return ["README.md is missing"]
     text = path.read_text(encoding="utf-8")
+    failures = []
+    if "Upgrade from v0.4" not in text:
+        failures.append("README does not contain 'Upgrade from v0.4'")
     if "Upgrade from v0.3" not in text:
-        return ["README does not contain 'Upgrade from v0.3'"]
-    return []
+        failures.append("README does not contain 'Upgrade from v0.3'")
+    return failures
 
 
-def check_readme_no_final_dataset_builder(root: Path) -> list[str]:
+def check_readme_dataset_builder_section(root: Path) -> list[str]:
     path = root / "README.md"
     if not path.exists():
         return ["README.md is missing"]
     text = path.read_text(encoding="utf-8")
-    if "final Dataset builder" not in text or "not implemented" not in text:
-        return ["README does not state that the final Dataset builder is not implemented"]
+    failures = []
+    if "V0.5 deterministic Dataset builder" not in text:
+        failures.append("README does not contain the 'V0.5 deterministic Dataset builder' section")
+    for command in ("dataset-build", "dataset-verify", "dataset-inspect"):
+        if command not in text:
+            failures.append(f"README does not describe the {command} command")
+    if "verified Dataset reader" not in text:
+        failures.append("README does not mention the verified Dataset reader")
+    if "immutable Dataset materialization" not in text:
+        failures.append("README does not mention immutable Dataset materialization")
+    return failures
+
+
+def check_readme_explicit_build_plan(root: Path) -> list[str]:
+    path = root / "README.md"
+    if not path.exists():
+        return ["README.md is missing"]
+    text = path.read_text(encoding="utf-8")
+    if "explicit" not in text or "build-plan JSON" not in text:
+        return ["README does not describe the explicit, pinned build-plan JSON input"]
     return []
 
 
@@ -155,6 +216,23 @@ def check_readme_adjustment_none(root: Path) -> list[str]:
         failures.append("README does not mention the adjustment NONE default")
     if "adjusted-price" not in text:
         failures.append("README does not mention the no-adjusted-price boundary")
+    return failures
+
+
+def check_readme_dataset_boundaries(root: Path) -> list[str]:
+    path = root / "README.md"
+    if not path.exists():
+        return ["README.md is missing"]
+    text = path.read_text(encoding="utf-8")
+    failures = []
+    if "cross-trading-day" not in text:
+        failures.append("README does not mention the no-cross-trading-day boundary")
+    if "arbitrary user code" not in text:
+        failures.append("README does not mention the no-arbitrary-user-code boundary")
+    if "ML training" not in text or "backtest" not in text or "automatic trading" not in text:
+        failures.append(
+            "README does not mention the no-ML/backtest/trading boundary"
+        )
     return failures
 
 
@@ -173,6 +251,11 @@ def check_ci_version_assertions(root: Path) -> list[str]:
         failures.append(
             ".github/workflows/ci.yml wheel distribution metadata assertion "
             f"is missing or wrong (expected {EXPECTED_VERSION!r})"
+        )
+    if CI_PUBLIC_API_MARKER not in text:
+        failures.append(
+            f".github/workflows/ci.yml public API smoke marker {CI_PUBLIC_API_MARKER!r} "
+            "is missing or outdated"
         )
     if "0.3.0" in text:
         failures.append(".github/workflows/ci.yml still references the old version 0.3.0")
@@ -226,12 +309,15 @@ def main() -> int:
         ("package __version__", check_package_version),
         ("README title", check_readme_title),
         ("CHANGELOG entry", check_changelog),
-        ("README wording", check_readme_no_development_wording),
+        ("README wording", check_readme_no_stale_wording),
+        ("direction status", check_direction_status),
         ("release notes", check_release_notes),
         ("old release notes", check_old_release_notes),
-        ("README upgrade notes", check_readme_upgrade_from_v03),
-        ("README dataset boundary", check_readme_no_final_dataset_builder),
+        ("README upgrade notes", check_readme_upgrade_sections),
+        ("README dataset builder", check_readme_dataset_builder_section),
+        ("README explicit plan", check_readme_explicit_build_plan),
         ("README adjustment boundary", check_readme_adjustment_none),
+        ("README dataset boundaries", check_readme_dataset_boundaries),
         ("CI version assertions", check_ci_version_assertions),
         ("build artifacts untracked", check_build_artifacts_untracked),
         ("PEP 440 version", check_pep440),

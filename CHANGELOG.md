@@ -4,6 +4,98 @@ All notable changes to MarketVault are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-08-05
+
+### Added
+
+- Immutable Transform Implementation Registry as the sole resolution
+  authority for `transform_ref` (the complete v1 `module.path:function`
+  string), with frozen registration models and strict FeatureSpec/LabelSpec
+  compatibility preflight.
+- Deterministic implementation fingerprints
+  (`TRANSFORM_IMPLEMENTATION_FINGERPRINT_VERSION`) emitted as versioned
+  `ImplementationPin` entries into the Dataset identity.
+- Eight built-in Feature transforms: `simple_return`, `log_return`,
+  `rolling_mean`, `rolling_std`, `rolling_volume_mean`, `volume_ratio`,
+  `candle_range`, `candle_body`, with strict PIT clock binding, trailing
+  contiguity, output-type, and finite-value validation.
+- Four built-in Label transforms: `forward_return`, `forward_direction`,
+  `maximum_favorable_excursion`, `maximum_adverse_excursion`, with exact
+  Feature-close anchor binding and horizon/observation-window alignment
+  (BARS, FEATURE_CLOSE_ALIGNED).
+- Real `label_status` (COMPLETE / INCOMPLETE) decided from the actual label
+  input rows with fixed reason codes — never inferred from partial PIT rows
+  or the absence of gap records.
+- Real `actual_label_end_time` from the last actually consumed label input
+  row's `market_available_at`, normalized to UTC microseconds.
+- End-to-end Dataset orchestration connecting verified Canonical builds,
+  PIT sample assembly, built-in Feature execution, built-in Label execution,
+  and chronological split / purge into one fail-closed pipeline with the
+  deterministic `dataset_id`.
+- Immutable Dataset Parquet materialization: explicit schema, fixed writer
+  options, staging on the same filesystem, `_SUCCESS` written last, atomic
+  no-overwrite rename, idempotent identical rebuilds, fail-closed conflict
+  and staging-residue handling, and empty-Dataset materialization.
+- Verified Dataset reader (`load_verified_dataset`) — the one public,
+  read-only, fail-closed read path into committed Dataset artifacts; it
+  never re-executes PIT / Feature / Label / materialization work, never
+  scans for a `latest` directory, and never writes, repairs, or deletes.
+- Dataset CLI (`dataset-build --plan`, `dataset-verify --build-dir`,
+  `dataset-inspect --build-dir`) with the strict versioned build-plan JSON
+  contract, settings-independent dispatch, deterministic JSON output,
+  stable exit codes, and path/symlink/junction safety.
+- Seventeen-category end-to-end Dataset determinism and leakage regression
+  suite (`tests/test_dataset_end_to_end_regression.py`) with fixed
+  `E2E_*` regression IDs, positive controls, and defenses tracked by a
+  fixed coverage-matrix guard.
+- Full COMPLETE canary, full EMPTY canary, and a
+  `dataset-build` -> `dataset-verify` -> `dataset-inspect` CLI
+  entry-combination canary.
+- MIT License with the M0DIAN copyright holder.
+
+### Changed
+
+- Dataset contracts evolved from the V0.4 foundation into the executable
+  V0.5 pipeline: the transform registry, Feature execution, Label
+  execution, orchestration, materialization, verified reader, and Dataset
+  CLI are now implemented and shipped.
+- Package version moved to 0.5.0 (`pyproject.toml`, `_version.py`, release
+  checker, CI assertions, release tests).
+- README, CHANGELOG, v0.5.0 release notes, and the v0.5.0 direction document
+  updated for the shipped pipeline; release checker, release tests, and CI
+  package smoke updated to the V0.5 surface.
+
+### Compatibility
+
+- V0.1-V0.4 CLI behavior is unchanged; Raw/Curated data, the DuckDB
+  catalog, and manifests are not migrated, overwritten, or repaired.
+- V0.4 Canonical builds, their readers, and all published identities are
+  unchanged; existing manifests remain valid.
+- The v0.4.0 Dataset identity core, its algorithms, and version constants
+  are unchanged; the V0.5 builder computes through the existing identity
+  contracts.
+- `requires-python` remains `>=3.11`; runtime dependencies do not change
+  for this release preparation.
+- `adjustment = NONE` remains the default leakage-safe dataset policy.
+
+### Known boundaries
+
+- No arbitrary user transforms: only the fixed built-in registry executes;
+  no YAML-imported modules, `eval`, `exec`, or dynamic callbacks.
+- No cross-trading-day Label execution; a `TRADING_DAYS` Label horizon
+  fails closed as unsupported.
+- No adjusted-price PIT reconstruction (`adjustment = NONE` only).
+- No automatic repair or re-collection of Raw/Curated/Canonical data at
+  build time.
+- No automatic sample generation: requests are explicit and never inferred
+  from the scope.
+- No `latest`-directory inference: every build and read input is an
+  explicit path.
+- No ML training, model selection, or hyperparameter tuning.
+- No backtesting, walk-forward frameworks, or feature importance.
+- No API server or Python client.
+- No automatic trading.
+
 ## [0.4.0] - 2026-08-05
 
 ### Added
@@ -142,6 +234,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Historical K-line collection for closed dates (`collect`), query layer
   (`query`), and option datasets.
 
+[0.5.0]: https://github.com/M0DIAN/market-vault/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/M0DIAN/market-vault/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/M0DIAN/market-vault/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/M0DIAN/market-vault/releases/tag/v0.2.0

@@ -20,18 +20,16 @@ from market_vault.storage import Catalog, ParquetStore
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
-EXPECTED_VERSION = "0.4.0"
+EXPECTED_VERSION = "0.5.0"
 PUBLIC_API_IMPORT_CODE = "\n".join(
     [
         "from market_vault.canonical import load_verified_canonical_build",
         "from market_vault.dataset import (",
-        "    DatasetIdentityInput,",
-        "    assemble_point_in_time_samples,",
-        "    parse_feature_spec,",
-        "    ChronologicalSplitSpec,",
-        "    SplitValidationError,",
+        "    orchestrate_dataset_build,",
+        "    materialize_dataset_artifacts,",
+        "    load_verified_dataset,",
         ")",
-        "print('V040_PUBLIC_API_IMPORT_OK')",
+        "print('V050_PUBLIC_API_IMPORT_OK')",
     ]
 )
 PEP440_RE = re.compile(
@@ -51,6 +49,9 @@ CLI_COMMANDS = [
     "inventory",
     "audit",
     "intraday-audit",
+    "dataset-build",
+    "dataset-verify",
+    "dataset-inspect",
 ]
 
 
@@ -230,6 +231,16 @@ def test_help_and_version_do_not_construct_collectors():
     assert "Traceback" not in run_cli("--version").stderr
 
 
+def test_dataset_cli_helps_do_not_require_settings():
+    # The Dataset commands are dispatched before settings loading; --help must
+    # parse from an empty directory with no settings file, no OpenD, and no
+    # network.
+    for command in ("dataset-build", "dataset-verify", "dataset-inspect"):
+        result = run_cli(command, "--help")
+        assert result.returncode == 0, result.stderr
+        assert "Traceback" not in result.stderr
+
+
 def test_cli_success_branches_return_zero():
     text = (ROOT / "src" / "market_vault" / "cli.py").read_text(encoding="utf-8")
     # No bare success returns remain; failures still use explicit 1/2 codes.
@@ -246,15 +257,15 @@ def test_cli_existing_failure_exit_codes_unchanged():
 # --- Documentation ----------------------------------------------------------
 
 
-def test_readme_title_is_v04():
+def test_readme_title_is_v05():
     first_line = (ROOT / "README.md").read_text(encoding="utf-8").splitlines()[0]
-    assert first_line.strip() == "# MarketVault v0.4"
+    assert first_line.strip() == "# MarketVault v0.5"
 
 
 def test_readme_no_development_wording():
     text = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "V0.4 development" not in text
-    assert "V0.4 remains under development" not in text
+    assert "V0.5 development" not in text
+    assert "V0.5 remains under development" not in text
     assert "release preparation pending" not in text
 
 
@@ -280,17 +291,21 @@ def test_readme_does_not_claim_fixed_bar_counts():
     assert "requires 390" not in text
 
 
-def test_changelog_contains_040():
+def test_changelog_contains_050():
+    text = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert "## [0.5.0] - 2026-08-05" in text
+
+
+def test_changelog_still_contains_040():
     text = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
     assert "## [0.4.0] - 2026-08-05" in text
 
 
-def test_changelog_still_contains_030():
-    text = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-    assert "## [0.3.0] - 2026-08-04" in text
+def test_release_notes_v05_exist():
+    assert (ROOT / "docs" / "release_v0_5_0.md").is_file()
 
 
-def test_release_notes_v04_exist():
+def test_release_notes_v04_still_present():
     assert (ROOT / "docs" / "release_v0_4_0.md").is_file()
 
 
@@ -299,20 +314,23 @@ def test_release_notes_v03_still_present():
 
 
 def test_release_notes_contain_base_commits():
-    text = (ROOT / "docs" / "release_v0_4_0.md").read_text(encoding="utf-8")
-    assert "6d3e8d255f082fb8fef1324e87d18804d57d3ae1" in text
-    assert "458b29f521518c9b6420ed8e1309b01847b2345d" in text
+    text = (ROOT / "docs" / "release_v0_5_0.md").read_text(encoding="utf-8")
+    # The v0.4.0 release-preparation base commit.
+    assert "1225b0ae0c96ef7a27b4eae92d676c65394ee85e" in text
+    # The PR-9 squash merge commit on main.
+    assert "583db37b4f04014674a51b9908bf2409767fb291" in text
 
 
 def test_release_notes_contain_development_prs():
-    text = (ROOT / "docs" / "release_v0_4_0.md").read_text(encoding="utf-8")
-    for number in range(8, 19):
+    text = (ROOT / "docs" / "release_v0_5_0.md").read_text(encoding="utf-8")
+    for number in range(20, 29):
         assert f"PR #{number}" in text
 
 
-def test_release_notes_contain_dataset_boundary():
-    text = (ROOT / "docs" / "release_v0_4_0.md").read_text(encoding="utf-8")
-    assert "No final Dataset builder orchestration" in text
+def test_release_notes_contain_dataset_boundaries():
+    text = (ROOT / "docs" / "release_v0_5_0.md").read_text(encoding="utf-8")
+    assert "No arbitrary user transforms" in text
+    assert "No cross-trading-day Label" in text
 
 
 def test_readme_contains_v04_foundation():
@@ -325,14 +343,56 @@ def test_readme_contains_upgrade_from_v03():
     assert "Upgrade from v0.3" in text
 
 
-def test_readme_does_not_claim_final_dataset_builder():
+def test_readme_contains_upgrade_from_v04():
     text = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "final Dataset builder is not implemented" in text
+    assert "Upgrade from v0.4" in text
 
 
-def test_readme_does_not_claim_feature_label_computation():
+def test_readme_does_not_claim_builder_not_implemented():
     text = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "no automatic Feature/Label value computation" in text
+    assert "final Dataset builder is not implemented" not in text
+    assert "no final Dataset CLI" not in text
+    assert "no automatic Feature/Label value computation" not in text
+    assert "no final Dataset Parquet export" not in text
+
+
+def test_readme_contains_v05_builder_section():
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "V0.5 deterministic Dataset builder" in text
+
+
+def test_readme_describes_dataset_cli_commands():
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "dataset-build --plan" in text
+    assert "dataset-verify --build-dir" in text
+    assert "dataset-inspect --build-dir" in text
+
+
+def test_readme_describes_full_dataset_chain():
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "verified Canonical builds" in text
+    assert "verified Dataset reader" in text
+    assert "immutable Dataset materialization" in text
+    assert "label_status" in text
+    assert "actual_label_end_time" in text
+
+
+def test_readme_describes_explicit_build_plan():
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "explicit" in text
+    assert "build-plan JSON" in text
+
+
+def test_readme_does_not_claim_v06():
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "v0.6" not in text
+
+
+def test_direction_document_is_release_preparation():
+    text = (ROOT / "docs" / "v0_5_0_direction.md").read_text(encoding="utf-8")
+    assert "Status: proposed" not in text
+    assert "PR-10 has not started" not in text
+    assert "release preparation" in text
 
 
 def test_readme_describes_ci_matrix():
@@ -359,22 +419,32 @@ def test_readme_contains_market_available_at_precision():
     assert "conservative leakage-safe not-before bound" in text
 
 
+def test_readme_contains_dataset_boundaries():
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "adjustment = NONE" in text
+    assert "cross-trading-day" in text
+    assert "arbitrary user code" in text
+    assert "ML training" in text
+    assert "backtest" in text
+    assert "automatic trading" in text
+
+
 def test_upgrade_notes_contain_legacy_compatibility():
     text = (ROOT / "README.md").read_text(encoding="utf-8")
     assert "Upgrade from v0.2" in text
     assert "batch-<batch_key>.parquet" in text
 
 
-# --- V0.4 public API imports ------------------------------------------------
+# --- V0.5 public API imports ------------------------------------------------
 
 
-def test_v04_public_api_imports_succeed(tmp_path):
+def test_v05_public_api_imports_succeed(tmp_path):
     result = run_code_in(tmp_path, PUBLIC_API_IMPORT_CODE)
     assert result.returncode == 0, result.stderr
-    assert "V040_PUBLIC_API_IMPORT_OK" in result.stdout
+    assert "V050_PUBLIC_API_IMPORT_OK" in result.stdout
 
 
-def test_v04_public_api_imports_do_not_connect_opend(tmp_path):
+def test_v05_public_api_imports_do_not_connect_opend(tmp_path):
     # The imports run from an empty directory without any settings file or
     # OpenD host; a collector connection attempt would fail loudly.
     result = run_code_in(tmp_path, PUBLIC_API_IMPORT_CODE)
@@ -382,7 +452,7 @@ def test_v04_public_api_imports_do_not_connect_opend(tmp_path):
     assert "Traceback" not in result.stderr
 
 
-def test_v04_public_api_imports_do_not_write_data(tmp_path):
+def test_v05_public_api_imports_do_not_write_data(tmp_path):
     result = run_code_in(tmp_path, PUBLIC_API_IMPORT_CODE)
     assert result.returncode == 0, result.stderr
     leftovers = {p.name for p in tmp_path.iterdir()}
@@ -390,6 +460,13 @@ def test_v04_public_api_imports_do_not_write_data(tmp_path):
     assert "catalog" not in leftovers
     assert "manifests" not in leftovers
     assert "reports" not in leftovers
+
+
+def test_v05_dataset_exports_are_public():
+    import market_vault.dataset as dataset
+
+    for name in ("orchestrate_dataset_build", "materialize_dataset_artifacts", "load_verified_dataset"):
+        assert name in dataset.__all__
 
 
 # --- Release checker --------------------------------------------------------
@@ -417,10 +494,10 @@ def test_release_checker_fails_on_version_mismatch(tmp_path):
     repo = copy_repo(tmp_path)
     pyproject = repo / "pyproject.toml"
     text = pyproject.read_text(encoding="utf-8")
-    pyproject.write_text(text.replace('version = "0.4.0"', 'version = "9.9.9"'), encoding="utf-8")
+    pyproject.write_text(text.replace('version = "0.5.0"', 'version = "9.9.9"'), encoding="utf-8")
     version_file = repo / "src" / "market_vault" / "_version.py"
     version_file.write_text(
-        version_file.read_text(encoding="utf-8").replace('"0.4.0"', '"9.9.9"'),
+        version_file.read_text(encoding="utf-8").replace('"0.5.0"', '"9.9.9"'),
         encoding="utf-8",
     )
     result = run_check_release(repo)
@@ -429,16 +506,41 @@ def test_release_checker_fails_on_version_mismatch(tmp_path):
     assert "package __version__" in result.stdout
 
 
-def test_release_checker_fails_on_development_wording(tmp_path):
+def test_release_checker_fails_on_cli_version_mismatch(tmp_path):
     repo = copy_repo(tmp_path)
-    readme = repo / "README.md"
-    readme.write_text(
-        readme.read_text(encoding="utf-8") + "\nV0.4 development leftover\n",
+    version_file = repo / "src" / "market_vault" / "_version.py"
+    version_file.write_text(
+        version_file.read_text(encoding="utf-8").replace('"0.5.0"', '"9.9.9"'),
         encoding="utf-8",
     )
     result = run_check_release(repo)
     assert result.returncode == 1
-    assert "V0.4 development" in result.stdout
+    assert "CLI --version output" in result.stdout
+
+
+def test_release_checker_fails_on_development_wording(tmp_path):
+    repo = copy_repo(tmp_path)
+    readme = repo / "README.md"
+    readme.write_text(
+        readme.read_text(encoding="utf-8") + "\nV0.5 development leftover\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "V0.5 development" in result.stdout
+
+
+def test_release_checker_fails_on_stale_builder_wording(tmp_path):
+    repo = copy_repo(tmp_path)
+    readme = repo / "README.md"
+    readme.write_text(
+        readme.read_text(encoding="utf-8")
+        + "\nfinal Dataset builder is not implemented\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "final Dataset builder is not implemented" in result.stdout
 
 
 def test_release_checker_fails_without_changelog(tmp_path):
@@ -449,6 +551,14 @@ def test_release_checker_fails_without_changelog(tmp_path):
     assert "CHANGELOG.md" in result.stdout
 
 
+def test_release_checker_fails_without_v05_release_notes(tmp_path):
+    repo = copy_repo(tmp_path)
+    (repo / "docs" / "release_v0_5_0.md").unlink()
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "release_v0_5_0.md" in result.stdout
+
+
 def test_release_checker_fails_without_v04_release_notes(tmp_path):
     repo = copy_repo(tmp_path)
     (repo / "docs" / "release_v0_4_0.md").unlink()
@@ -457,11 +567,25 @@ def test_release_checker_fails_without_v04_release_notes(tmp_path):
     assert "release_v0_4_0.md" in result.stdout
 
 
+def test_release_checker_fails_on_readme_title_mismatch(tmp_path):
+    repo = copy_repo(tmp_path)
+    readme = repo / "README.md"
+    readme.write_text(
+        readme.read_text(encoding="utf-8").replace(
+            "# MarketVault v0.5", "# MarketVault v9.9"
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "README first line" in result.stdout
+
+
 def test_release_checker_fails_on_old_ci_version_assertion(tmp_path):
     repo = copy_repo(tmp_path)
     ci = repo / ".github" / "workflows" / "ci.yml"
     text = ci.read_text(encoding="utf-8")
-    ci.write_text(text.replace("'0.4.0'", "'0.3.0'"), encoding="utf-8")
+    ci.write_text(text.replace("'0.5.0'", "'0.3.0'"), encoding="utf-8")
     result = run_check_release(repo)
     assert result.returncode == 1
     assert "package module version assertion" in result.stdout
@@ -475,7 +599,7 @@ def test_release_checker_fails_on_wrong_package_assertion_only(tmp_path):
     text = ci.read_text(encoding="utf-8")
     ci.write_text(
         text.replace(
-            "assert market_vault.__version__ == '0.4.0'",
+            "assert market_vault.__version__ == '0.5.0'",
             "assert market_vault.__version__ == '9.9.9'",
         ),
         encoding="utf-8",
@@ -493,7 +617,7 @@ def test_release_checker_fails_on_wrong_metadata_assertion_only(tmp_path):
     text = ci.read_text(encoding="utf-8")
     ci.write_text(
         text.replace(
-            "assert version('market-vault') == '0.4.0'",
+            "assert version('market-vault') == '0.5.0'",
             "assert version('market-vault') == '9.9.9'",
         ),
         encoding="utf-8",
@@ -505,18 +629,42 @@ def test_release_checker_fails_on_wrong_metadata_assertion_only(tmp_path):
     assert "old version 0.3.0" not in result.stdout
 
 
+def test_release_checker_fails_on_wrong_public_api_marker(tmp_path):
+    repo = copy_repo(tmp_path)
+    ci = repo / ".github" / "workflows" / "ci.yml"
+    text = ci.read_text(encoding="utf-8")
+    ci.write_text(text.replace("V050_PUBLIC_API_IMPORT_OK", "V040_PUBLIC_API_IMPORT_OK"), encoding="utf-8")
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "public API smoke marker" in result.stdout
+
+
+def test_release_checker_fails_on_tracked_artifact(tmp_path):
+    repo = copy_repo(tmp_path)
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    tracked = repo / "data" / "tracked.txt"
+    tracked.parent.mkdir(parents=True, exist_ok=True)
+    tracked.write_text("x", encoding="utf-8")
+    # data/ is gitignored; -f is required to make the artifact tracked.
+    subprocess.run(["git", "add", "-f", "data/tracked.txt"], cwd=repo, check=True)
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "tracked build artifact" in result.stdout
+
+
 def test_release_checker_reports_all_failures_at_once(tmp_path):
     repo = copy_repo(tmp_path)
     pyproject = repo / "pyproject.toml"
     pyproject.write_text(
-        pyproject.read_text(encoding="utf-8").replace('version = "0.4.0"', 'version = "9.9.9"'),
+        pyproject.read_text(encoding="utf-8").replace('version = "0.5.0"', 'version = "9.9.9"'),
         encoding="utf-8",
     )
     (repo / "CHANGELOG.md").unlink()
     readme = repo / "README.md"
     readme.write_text(
         readme.read_text(encoding="utf-8").replace(
-            "# MarketVault v0.4", "# MarketVault v9.9"
+            "# MarketVault v0.5", "# MarketVault v9.9"
         ),
         encoding="utf-8",
     )

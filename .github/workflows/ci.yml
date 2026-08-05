@@ -83,21 +83,22 @@ jobs:
           .release-venv/bin/python -m pip install dist/*.whl
           .release-venv/bin/market-vault --version
           .release-venv/bin/market-vault --help
-          .release-venv/bin/python -c "import market_vault; assert market_vault.__version__ == '0.4.0'"
-          .release-venv/bin/python -c "from importlib.metadata import version; assert version('market-vault') == '0.4.0'"
+          .release-venv/bin/market-vault dataset-build --help
+          .release-venv/bin/market-vault dataset-verify --help
+          .release-venv/bin/market-vault dataset-inspect --help
+          .release-venv/bin/python -c "import market_vault; assert market_vault.__version__ == '0.5.0'"
+          .release-venv/bin/python -c "from importlib.metadata import version; assert version('market-vault') == '0.5.0'"
 
       - name: Fresh-wheel public API smoke check
         run: |
           .release-venv/bin/python -c "
           from market_vault.canonical import load_verified_canonical_build
           from market_vault.dataset import (
-              DatasetIdentityInput,
-              assemble_point_in_time_samples,
-              parse_feature_spec,
-              ChronologicalSplitSpec,
-              SplitValidationError,
+              orchestrate_dataset_build,
+              materialize_dataset_artifacts,
+              load_verified_dataset,
           )
-          print('V040_PUBLIC_API_IMPORT_OK')
+          print('V050_PUBLIC_API_IMPORT_OK')
           "
 
       - name: Check wheel contents exclude local data
