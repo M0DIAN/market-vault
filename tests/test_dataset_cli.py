@@ -1083,23 +1083,48 @@ def test_inner_dotdot_path_rejected(fixtures, tmp_path, capsys):
 
 
 def test_feature_spec_symlink_rejected(fixtures, tmp_path, capsys):
-    plan_path = make_bundle(tmp_path, fixtures)
+    # The plan must actually reference the symlink: the CLI rejects a
+    # symlinked Feature file before reading it, and a plan pointing at the
+    # real target would (correctly) succeed.
+    plan_path = make_bundle(
+        tmp_path,
+        fixtures,
+        plan_overrides={"feature_spec_files": ["specs/feature-linked.yaml"]},
+    )
     real_spec = plan_path.parent / "specs" / "feature_sr.yaml"
     link = plan_path.parent / "specs" / "feature-linked.yaml"
     _make_symlink_or_skip(real_spec, link)
     code, out, err = run_cli(["dataset-build", "--plan", str(plan_path)], capsys)
     assert code == 1
-    assert "symlink or junction" in json.loads(err)["error"]
+    assert out == ""
+    failure = json.loads(err)  # a single valid FAILED JSON object
+    assert failure["result"] == "FAILED"
+    assert failure["command"] == "dataset-build"
+    assert failure["error_type"] == "DatasetCLIError"
+    assert "symlink or junction" in failure["error"]
+    assert "feature-linked.yaml" in failure["error"]
 
 
 def test_label_spec_symlink_rejected(fixtures, tmp_path, capsys):
-    plan_path = make_bundle(tmp_path, fixtures)
+    # The plan must actually reference the symlink (see the Feature
+    # symlink test above).
+    plan_path = make_bundle(
+        tmp_path,
+        fixtures,
+        plan_overrides={"label_spec_files": ["specs/label-linked.yaml"]},
+    )
     real_spec = plan_path.parent / "specs" / "label_fr.yaml"
     link = plan_path.parent / "specs" / "label-linked.yaml"
     _make_symlink_or_skip(real_spec, link)
     code, out, err = run_cli(["dataset-build", "--plan", str(plan_path)], capsys)
     assert code == 1
-    assert "symlink or junction" in json.loads(err)["error"]
+    assert out == ""
+    failure = json.loads(err)  # a single valid FAILED JSON object
+    assert failure["result"] == "FAILED"
+    assert failure["command"] == "dataset-build"
+    assert failure["error_type"] == "DatasetCLIError"
+    assert "symlink or junction" in failure["error"]
+    assert "label-linked.yaml" in failure["error"]
 
 
 def test_spec_parent_junction_rejected(fixtures, tmp_path, capsys):
