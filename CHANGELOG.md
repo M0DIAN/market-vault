@@ -51,7 +51,6 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Full COMPLETE canary, full EMPTY canary, and a
   `dataset-build` -> `dataset-verify` -> `dataset-inspect` CLI
   entry-combination canary.
-- MIT License with the M0DIAN copyright holder.
 
 ### Changed
 

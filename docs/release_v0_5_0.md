@@ -44,8 +44,10 @@ PR-10 release-preparation branch.
 PR-10 is the current release-preparation branch `release/v0.5.0` (commit
 `chore: prepare v0.5.0 release`); it syncs the package version to 0.5.0 and
 updates the README, CHANGELOG, release notes, direction document, release
-checker, release tests, and CI package smoke. The PR is open and waiting
-for CI; it has **not** been merged yet. No `v0.5.0` tag exists, no GitHub
+checker, release tests, and CI package smoke. GitHub PR #29 is still
+**OPEN** and **not merged**; the release-preparation branch has completed
+its GitHub Actions validation with all three jobs successful — test
+(3.11), test (3.14), and package. No `v0.5.0` tag exists, no GitHub
 Release is published, and nothing is uploaded to PyPI: those remain
 separate, explicit actions after PR-10 merges.
 
@@ -230,7 +232,12 @@ entry-combination canary.
 
 ## Release validation
 
-Verified on the PR-10 branch before opening the PR:
+Local and GitHub Actions results are reported separately because
+platform-dependent skips differ between Windows and Linux.
+
+### Local validation
+
+Verified on the PR-10 branch before opening the PR (Windows):
 
 ```text
 Full offline pytest: 2226 passed, 11 skipped
@@ -250,7 +257,23 @@ pip check: no broken requirements
 wheel contents: WHEEL_CONTENTS_OK
 ```
 
-The final authoritative numbers are the ones reported by the PR-10 CI run.
+### GitHub Actions validation
+
+Verified on the release-preparation branch by the PR-10 CI workflow
+(ubuntu-latest):
+
+```text
+test (3.11): 2230 passed, 7 skipped
+test (3.14): 2230 passed, 7 skipped
+package: success
+    RELEASE_CHECK_OK version=0.5.0
+    market-vault 0.5.0
+    market_vault-0.5.0-py3-none-any.whl
+    market_vault-0.5.0.tar.gz
+    twine check: PASSED
+    V050_PUBLIC_API_IMPORT_OK
+    WHEEL_CONTENTS_OK
+```
 
 ## Explicit non-actions
 
