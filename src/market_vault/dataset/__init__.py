@@ -93,12 +93,31 @@ deterministic ``dataset_id``. Orchestration computes logical rows and
 identities in memory only: it never writes files, never creates Dataset
 directories, never writes Parquet, and never builds a DatasetManifest.
 
-This layer does not materialize datasets or export Dataset Parquet, does
-not build the final DatasetManifest, does not create DuckDB views, does not
-add CLI commands, and does not train models. The Canonical manifest remains
-authoritative for Canonical builds; the Dataset layer only references
-immutable Canonical builds and their stable identities. MarketVault's
-future read-only data-serving and ML usage are outside this layer.
+The deterministic Dataset materialization core (v0.5.0 PR-6;
+:mod:`market_vault.dataset.materialization` and
+:mod:`market_vault.dataset.materialization_models`) materializes one
+verified :class:`DatasetOrchestrationResult` into an immutable, traceable,
+fail-closed Dataset build directory: a single ``dataset.parquet`` with the
+explicit logical schema mapped to PyArrow and fixed writer options and
+metadata, deterministic Feature / Label / Split spec artifacts, the
+deterministic non-identity ``build_report.json``, the existing
+DatasetManifest core with exact :class:`DatasetOutputFile` byte facts, a
+fixed same-filesystem staging directory, ``_SUCCESS`` written last, an
+atomic no-overwrite rename to ``output_root / <dataset_id>``, strict
+existing-build verification with idempotent return, and fail-closed
+rejection of staging residue, conflicts, corruption, symlinks, and
+junctions. The materializer re-verifies the PR-5 result and consumes only
+its trusted output; it never re-executes Canonical reads, PIT assembly,
+Feature / Label execution, or split / purge, and it never recomputes an
+identity algorithm. ``built_at`` and output byte hashes are recorded facts
+that never enter ``dataset_id``.
+
+This layer does not implement a Dataset reader (the verified Dataset reader
+is PR-7), does not create DuckDB views, does not add CLI commands, and does
+not train models. The Canonical manifest remains authoritative for
+Canonical builds; the Dataset layer only references immutable Canonical
+builds and their stable identities. MarketVault's future read-only
+data-serving and ML usage are outside this layer.
 """
 
 from .content import dataset_schema_id, logical_dataset_content_id
@@ -149,6 +168,31 @@ from .manifest import (
     serialize_dataset_manifest,
     validate_dataset_manifest,
     write_dataset_manifest_atomic,
+)
+from .materialization import materialize_dataset_artifacts
+from .materialization_models import (
+    DATASET_BUILD_REPORT_FILENAME,
+    DATASET_BUILD_REPORT_SCHEMA_VERSION,
+    DATASET_CONTENT_ROLE_BUILD_REPORT,
+    DATASET_CONTENT_ROLE_FEATURE_SPEC,
+    DATASET_CONTENT_ROLE_LABEL_SPEC,
+    DATASET_CONTENT_ROLE_LOGICAL_ROWS,
+    DATASET_CONTENT_ROLE_SPLIT_SPEC,
+    DATASET_FEATURE_SPECS_DIRNAME,
+    DATASET_LABEL_SPECS_DIRNAME,
+    DATASET_MANIFEST_FILENAME,
+    DATASET_MATERIALIZER_VERSION,
+    DATASET_OUTPUT_ROLE_BUILD_REPORT,
+    DATASET_OUTPUT_ROLE_DATASET,
+    DATASET_OUTPUT_ROLE_FEATURE_SPEC,
+    DATASET_OUTPUT_ROLE_LABEL_SPEC,
+    DATASET_OUTPUT_ROLE_SPLIT_SPEC,
+    DATASET_PARQUET_FILENAME,
+    DATASET_SPEC_ARTIFACT_VERSION,
+    DATASET_SPLIT_SPEC_FILENAME,
+    DATASET_SUCCESS_FILENAME,
+    DatasetMaterializationError,
+    DatasetMaterializationResult,
 )
 from .models import (
     DATASET_CONTENT_ID_VERSION,
@@ -311,12 +355,32 @@ __all__ = [
     "BOUNDARY_POLICY_PIT_WINDOW_ONLY",
     "BOUNDARY_POLICY_SAME_MARKET_CALENDAR_DATE",
     "CHRONOLOGICAL_SPLIT_RESULT_ID_VERSION",
+    "DATASET_BUILD_REPORT_FILENAME",
+    "DATASET_BUILD_REPORT_SCHEMA_VERSION",
     "DATASET_COMPLETION_REASON_FEATURE_EXCLUDED",
     "DATASET_COMPLETION_REASON_FEATURE_EXCLUDED_AND_LABEL_INCOMPLETE",
     "DATASET_COMPLETION_REASON_LABEL_INCOMPLETE",
     "DATASET_COMPLETION_REASON_NO_SAMPLE_REQUEST",
+    "DATASET_CONTENT_ROLE_BUILD_REPORT",
+    "DATASET_CONTENT_ROLE_FEATURE_SPEC",
+    "DATASET_CONTENT_ROLE_LABEL_SPEC",
+    "DATASET_CONTENT_ROLE_LOGICAL_ROWS",
+    "DATASET_CONTENT_ROLE_SPLIT_SPEC",
+    "DATASET_FEATURE_SPECS_DIRNAME",
     "DATASET_KIND_SUPERVISED",
+    "DATASET_LABEL_SPECS_DIRNAME",
+    "DATASET_MANIFEST_FILENAME",
+    "DATASET_MATERIALIZER_VERSION",
     "DATASET_ORCHESTRATION_CONTRACT_VERSION",
+    "DATASET_OUTPUT_ROLE_BUILD_REPORT",
+    "DATASET_OUTPUT_ROLE_DATASET",
+    "DATASET_OUTPUT_ROLE_FEATURE_SPEC",
+    "DATASET_OUTPUT_ROLE_LABEL_SPEC",
+    "DATASET_OUTPUT_ROLE_SPLIT_SPEC",
+    "DATASET_PARQUET_FILENAME",
+    "DATASET_SPEC_ARTIFACT_VERSION",
+    "DATASET_SPLIT_SPEC_FILENAME",
+    "DATASET_SUCCESS_FILENAME",
     "CHRONOLOGICAL_SPLIT_SPEC_CONTENT_ID_VERSION",
     "CHRONOLOGICAL_SPLIT_SPEC_SCHEMA_VERSION",
     "CHRONOLOGICAL_SPLITTER_VERSION",
@@ -404,6 +468,8 @@ __all__ = [
     "CompletionSummary",
     "CrossTradingDayPolicy",
     "DatasetError",
+    "DatasetMaterializationError",
+    "DatasetMaterializationResult",
     "DatasetOrchestrationDiagnostics",
     "DatasetOrchestrationError",
     "DatasetOrchestrationResult",
@@ -470,6 +536,7 @@ __all__ = [
     "load_feature_spec",
     "load_label_spec",
     "logical_dataset_content_id",
+    "materialize_dataset_artifacts",
     "orchestrate_dataset_build",
     "parse_feature_spec",
     "parse_label_spec",

@@ -551,25 +551,41 @@ of scope for v0.5.0.
   codes, `actual_label_end_time` from the last actually consumed Label
   row, and the deterministic Label result models. See
   [contracts/built_in_label_execution.md](contracts/built_in_label_execution.md).
-- **PR-5** (`feat: orchestrate deterministic dataset builds`) —
-  implemented in this branch: the pure in-memory Dataset orchestration
-  pipeline connects verified Canonical builds, PIT sample assembly, built-in
-  Feature execution, built-in Label execution, and chronological split /
-  purge. It computes the authoritative logical Dataset schema, the final
-  logical rows under the fixed physical sort (`code`,
-  `feature_window_close`, `sample_key`), the scope-wide CompletionSummary,
-  the merged Feature/Label ImplementationPins,
-  `logical_dataset_content_id`, `DatasetIdentityInput`, and the
-  deterministic `dataset_id` — in memory only, fail closed, with the
-  unified `DatasetOrchestrationError` boundary. See
+- **PR-5** (`feat: orchestrate deterministic dataset builds`) — merged:
+  the pure in-memory Dataset orchestration pipeline connects verified
+  Canonical builds, PIT sample assembly, built-in Feature execution,
+  built-in Label execution, and chronological split / purge. It computes
+  the authoritative logical Dataset schema, the final logical rows under
+  the fixed physical sort (`code`, `feature_window_close`, `sample_key`),
+  the scope-wide CompletionSummary, the merged Feature/Label
+  ImplementationPins, `logical_dataset_content_id`, `DatasetIdentityInput`,
+  and the deterministic `dataset_id` — in memory only, fail closed, with
+  the unified `DatasetOrchestrationError` boundary. See
   [contracts/dataset_orchestration.md](contracts/dataset_orchestration.md).
-- PIT + Feature + Label + Split orchestration is implemented; the logical
-  Dataset schema, logical rows, content ID, `DatasetIdentityInput`, and
-  `dataset_id` are computed in memory. Dataset materialization and Dataset
-  Parquet (PR-6), the verified Dataset reader (PR-7), and the Dataset CLI
-  (PR-8) are **not implemented yet**: no Dataset directory, no Parquet, no
-  DatasetManifest, no `build_dataset_manifest` call, and no Dataset
-  builder CLI exist. The v0.6.0 read-only data-serving direction is not
+- **PR-6** (`feat: materialize immutable dataset artifacts`) — implemented
+  in this branch: the deterministic Dataset materialization layer
+  materializes one verified `DatasetOrchestrationResult` into an immutable
+  Dataset build directory — Dataset Parquet (single file, explicit
+  logical-to-PyArrow schema mapping, fixed writer options and metadata),
+  `manifest.json` (existing DatasetManifest core with exact
+  `DatasetOutputFile` byte facts), `build_report.json` (deterministic
+  non-identity recorded facts), deterministic Feature / Label / Split spec
+  artifacts, the fixed same-filesystem staging directory, `_SUCCESS`
+  written last, an atomic no-overwrite rename to
+  `output_root / <dataset_id>`, strict existing-build verification with
+  idempotent return, fail-closed rejection of staging residue, conflicts,
+  corruption, symlinks, and junctions, and empty-Dataset materialization.
+  The materializer re-verifies the PR-5 result and consumes only its
+  trusted output; it never re-executes Canonical reads, PIT assembly,
+  Feature / Label execution, or split / purge. See
+  [contracts/dataset_materialization.md](contracts/dataset_materialization.md).
+- PIT + Feature + Label + Split orchestration and Dataset materialization
+  (Parquet, manifest, build report, spec artifacts, `_SUCCESS`, staging,
+  atomic commit, idempotency) are implemented. The verified Dataset reader
+  (PR-7) and the Dataset CLI (PR-8) are **not implemented yet**: no public
+  `load_verified_dataset` reader, no `dataset-build` /
+  `dataset-verify` / `dataset-inspect` commands, and no API server or
+  Python client exist. The v0.6.0 read-only data-serving direction is not
   part of this PR.
 - The package version remains **0.4.0** (it stays 0.4.0 through PR-9 of
   this sequence; the bump to 0.5.0 happens only in PR-10).
