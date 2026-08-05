@@ -76,11 +76,29 @@ PIT-to-Canonical binding and provenance verification lives in the private
 :mod:`market_vault.dataset.execution_provenance` module, reused by both
 executors.
 
-This layer does not run chronological split execution, build samples or
-datasets, export Dataset Parquet, build the final DatasetManifest, create
-DuckDB views, add CLI commands, or train models. The Canonical manifest
-remains authoritative for Canonical builds; the Dataset layer only
-references immutable Canonical builds and their stable identities.
+The deterministic Dataset orchestration core (v0.5.0 PR-5;
+:mod:`market_vault.dataset.orchestration_models` and
+:mod:`market_vault.dataset.orchestration`) connects the shipped layers in
+one pure in-memory, fail-closed pipeline: explicit supervised-build inputs,
+scope/request validation, the authoritative logical Dataset schema
+derivation, one PIT assembly, one built-in Feature execution and one
+built-in Label execution over the same PIT result, strict cross-layer
+sample binding, Feature EXCLUDED filtering, explicit
+ChronologicalSplitSample construction, one chronological split / purge
+invocation, the scope-wide CompletionSummary, the final logical rows under
+the fixed physical sort (``code``, ``feature_window_close``,
+``sample_key``), the merged Feature/Label ImplementationPins,
+``logical_dataset_content_id``, ``DatasetIdentityInput``, and the
+deterministic ``dataset_id``. Orchestration computes logical rows and
+identities in memory only: it never writes files, never creates Dataset
+directories, never writes Parquet, and never builds a DatasetManifest.
+
+This layer does not materialize datasets or export Dataset Parquet, does
+not build the final DatasetManifest, does not create DuckDB views, does not
+add CLI commands, and does not train models. The Canonical manifest remains
+authoritative for Canonical builds; the Dataset layer only references
+immutable Canonical builds and their stable identities. MarketVault's
+future read-only data-serving and ML usage are outside this layer.
 """
 
 from .content import dataset_schema_id, logical_dataset_content_id
@@ -157,6 +175,20 @@ from .models import (
     ImplementationPin,
     SourceSnapshotPin,
     SpecPin,
+)
+from .orchestration import orchestrate_dataset_build
+from .orchestration_models import (
+    DATASET_COMPLETION_REASON_FEATURE_EXCLUDED,
+    DATASET_COMPLETION_REASON_FEATURE_EXCLUDED_AND_LABEL_INCOMPLETE,
+    DATASET_COMPLETION_REASON_LABEL_INCOMPLETE,
+    DATASET_COMPLETION_REASON_NO_SAMPLE_REQUEST,
+    DATASET_KIND_SUPERVISED,
+    DATASET_ORCHESTRATION_CONTRACT_VERSION,
+    DATASET_ROW_ORDER_CODE_FEATURE_CLOSE_SAMPLE_KEY,
+    DatasetOrchestrationDiagnostics,
+    DatasetOrchestrationError,
+    DatasetOrchestrationResult,
+    dataset_orchestration_schema,
 )
 from .pit import (
     PIT_ASSOCIATION_COLUMNS,
@@ -279,6 +311,12 @@ __all__ = [
     "BOUNDARY_POLICY_PIT_WINDOW_ONLY",
     "BOUNDARY_POLICY_SAME_MARKET_CALENDAR_DATE",
     "CHRONOLOGICAL_SPLIT_RESULT_ID_VERSION",
+    "DATASET_COMPLETION_REASON_FEATURE_EXCLUDED",
+    "DATASET_COMPLETION_REASON_FEATURE_EXCLUDED_AND_LABEL_INCOMPLETE",
+    "DATASET_COMPLETION_REASON_LABEL_INCOMPLETE",
+    "DATASET_COMPLETION_REASON_NO_SAMPLE_REQUEST",
+    "DATASET_KIND_SUPERVISED",
+    "DATASET_ORCHESTRATION_CONTRACT_VERSION",
     "CHRONOLOGICAL_SPLIT_SPEC_CONTENT_ID_VERSION",
     "CHRONOLOGICAL_SPLIT_SPEC_SCHEMA_VERSION",
     "CHRONOLOGICAL_SPLITTER_VERSION",
@@ -323,6 +361,7 @@ __all__ = [
     "REASON_CODE_ACTUAL_LABEL_END_CROSSES_VALIDATION_BOUNDARY",
     "REASON_CODE_FEATURE_CLOSE_AFTER_TEST_END",
     "REASON_CODE_INCOMPLETE_LABEL",
+    "DATASET_ROW_ORDER_CODE_FEATURE_CLOSE_SAMPLE_KEY",
     "SERIALIZATION_FORMAT_PARQUET",
     "SERIALIZATION_FORMAT_VERSION_PARQUET",
     "SPEC_KIND_FEATURE",
@@ -365,6 +404,9 @@ __all__ = [
     "CompletionSummary",
     "CrossTradingDayPolicy",
     "DatasetError",
+    "DatasetOrchestrationDiagnostics",
+    "DatasetOrchestrationError",
+    "DatasetOrchestrationResult",
     "FeatureExecutionDiagnostics",
     "FeatureExecutionError",
     "FeatureExecutionResult",
@@ -419,6 +461,7 @@ __all__ = [
     "chronological_split_spec_content_id",
     "chronological_split_spec_pin",
     "dataset_id",
+    "dataset_orchestration_schema",
     "dataset_schema_id",
     "execute_builtin_features",
     "execute_builtin_labels",
@@ -427,6 +470,7 @@ __all__ = [
     "load_feature_spec",
     "load_label_spec",
     "logical_dataset_content_id",
+    "orchestrate_dataset_build",
     "parse_feature_spec",
     "parse_label_spec",
     "pit_association_content_id",
