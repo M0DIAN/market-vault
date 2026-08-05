@@ -285,3 +285,21 @@ V0.6.0 keeps, unchanged:
 - public API smoke
 - wheel hygiene
 - no unrequested merge
+
+## 8. Progress
+
+- PR #34 (`docs: define v0.6.0 sample and catalog direction`) was merged
+  on 2026-08-05T22:50:10Z via the squash commit
+  `6bc03d76078c8355322e65d6ca05cc986b4dbe23`; the v0.6.0 direction, the
+  three-project boundary ADR, and the two boundary contracts are now on
+  main.
+- PR-2 (this PR, branch `feat/v0.6.0-sample-generation-contract`)
+  implements the Sample Generation contract foundation: the strict
+  generation-plan JSON schema, the frozen typed models, the deterministic
+  normalization, the canonical generation-plan serialization, the semantic
+  content identity, the public Python contract entry points, and the formal
+  v1 contract document. The Sample Generator core (PR-3) is not
+  implemented, the Sample Generation CLI (PR-4) is not implemented, and the
+  Dataset Catalog has not started.
+- The package version remains 0.5.1; the bump to 0.6.0 happens only in
+  PR-9.

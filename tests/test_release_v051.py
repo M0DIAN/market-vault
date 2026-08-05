@@ -1731,3 +1731,203 @@ def test_release_checker_fails_without_warning_guard(tmp_path):
     assert result.returncode == 1
     assert "warning-as-error guard" in result.stdout
     assert "must not ignore DeprecationWarnings" in result.stdout
+
+
+# --- V0.6.0 Sample Generation contract (PR-2) -------------------------------
+
+
+def test_release_checker_fails_without_sample_generation_modules(tmp_path):
+    repo = copy_repo(tmp_path)
+    (repo / "src" / "market_vault" / "dataset" / "sample_generation.py").unlink()
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "sample_generation.py is missing" in result.stdout
+
+
+def _mutate_models_version(repo: Path, old: str, new: str) -> None:
+    path = repo / "src" / "market_vault" / "dataset" / "sample_generation_models.py"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(old, new), encoding="utf-8"
+    )
+
+
+def test_release_checker_fails_when_plan_schema_version_constant_removed(tmp_path):
+    # Mutation 1: deleting the generation-plan schema version constant must
+    # fail the checker.
+    repo = copy_repo(tmp_path)
+    _mutate_models_version(
+        repo,
+        "market-vault-sample-generation-plan-v1",
+        "market-vault-sample-generation-plan-v9",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not define the exact version constant "
+        "'market-vault-sample-generation-plan-v1'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_rule_schema_version_constant_removed(tmp_path):
+    # Mutation 2: deleting the generation-rule schema version constant must
+    # fail the checker.
+    repo = copy_repo(tmp_path)
+    _mutate_models_version(
+        repo,
+        "market-vault-sample-generation-rule-v1",
+        "market-vault-sample-generation-rule-v9",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not define the exact version constant "
+        "'market-vault-sample-generation-rule-v1'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_content_id_version_constant_removed(tmp_path):
+    # Mutation 3: deleting the content-ID version constant must fail the
+    # checker.
+    repo = copy_repo(tmp_path)
+    _mutate_models_version(
+        repo,
+        "market-vault-sample-generation-content-v1",
+        "market-vault-sample-generation-content-v9",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not define the exact version constant "
+        "'market-vault-sample-generation-content-v1'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_contract_doc_claims_generator_core_implemented(
+    tmp_path,
+):
+    # Mutation 4: a contract document claiming the generator core is
+    # implemented must fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "contracts" / "sample_generation.md"
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        + "\nThe Sample Generator core is implemented.\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "false claim 'Sample Generator core is implemented'" in result.stdout
+
+
+def test_release_checker_fails_when_contract_doc_claims_cli_implemented(tmp_path):
+    # Mutation 5: a contract document claiming the CLI is implemented must
+    # fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "contracts" / "sample_generation.md"
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        + "\nThe Sample Generation CLI is implemented.\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "false claim 'Sample Generation CLI is implemented'" in result.stdout
+
+
+def test_release_checker_fails_when_contract_doc_singular_feature_spec_paths(
+    tmp_path,
+):
+    # Mutation 6: shrinking the plural Feature spec input to a single file
+    # must fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "contracts" / "sample_generation.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "one or more explicit Feature spec file paths",
+            "one explicit Feature spec file path",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the plural input fact "
+        "'one or more explicit Feature spec file paths'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_contract_doc_singular_label_spec_paths(
+    tmp_path,
+):
+    # Mutation 7: shrinking the plural Label spec input to a single file
+    # must fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "contracts" / "sample_generation.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "one or more explicit Label spec file paths",
+            "one explicit Label spec file path",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the plural input fact "
+        "'one or more explicit Label spec file paths'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_contract_doc_claims_paths_enter_identity(
+    tmp_path,
+):
+    # Mutation 8: a contract document claiming paths enter the content
+    # identity must fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "contracts" / "sample_generation.md"
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        + "\nPaths enter the Sample Generation content identity.\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "false claim 'Paths enter the Sample Generation content identity'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_contract_doc_claims_built_at_enters_identity(
+    tmp_path,
+):
+    # Mutation 9: a contract document claiming built_at enters the content
+    # identity must fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "contracts" / "sample_generation.md"
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        + "\nbuilt_at enters the Sample Generation content identity.\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "false claim 'built_at enters the Sample Generation content identity'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_contract_doc_claims_generation_id_enters_dataset_identity(
+    tmp_path,
+):
+    # Mutation 10: a contract document claiming the Generation content ID
+    # enters the Dataset identity must fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "contracts" / "sample_generation.md"
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        + "\nGeneration content ID enters dataset_id.\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "false claim 'Generation content ID enters dataset_id'" in result.stdout
