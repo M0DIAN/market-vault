@@ -112,6 +112,25 @@ junction detection (the `FILE_ATTRIBUTE_REPARSE_POINT` attribute through
 On Python 3.11 Windows, junctions are detected through the Windows API
 reparse-point attribute; when the API cannot be queried the check fails
 closed. A path whose link status cannot be verified is never trusted.
+The safe entry enumerator applies the same detection to every root entry
+and every spec-directory entry before any descent, so a junction can
+never be walked before it is rejected.
+
+## 10a. Safe non-recursive entry enumeration
+
+The reader does not use the materializer's recursive
+`_list_build_entries` (which walks the tree first and checks links
+afterwards). Its private `_list_verified_dataset_entries_safely` enumerates
+the formal layout in exactly two controlled levels: one `os.scandir` on
+the build root, each root entry rejected as a symlink / Windows junction /
+reparse point before any classification or descent and required to be a
+regular file or one of the two spec directories; then one single-level
+`os.scandir` per spec directory after the directory was confirmed a
+regular non-link directory, with spec entries required to be regular
+non-link files and any nested directory rejected without recursion.
+`os.walk`, `Path.rglob`, `glob("**/*")`, and `followlinks` are never
+used; no link target is ever enumerated or read. Both the first and the
+final verification pass use the same enumerator.
 
 ## 11. `_SUCCESS`
 
@@ -159,6 +178,16 @@ Missing files, extra files, extra directories, a second Parquet, nested
 Dataset directories, temp / backup / lock / log files, `.DS_Store`,
 `Thumbs.db`, `__pycache__`, symlinks, junctions, FIFOs, sockets, and
 non-regular entries fail closed. Nothing is ever deleted or ignored.
+
+The entries are enumerated by the reader's own safe non-recursive
+enumerator (see section 9a): `os.scandir` on the build root only, every
+root entry rejected as a symlink / junction / reparse point *before* any
+classification or descent, exactly the two spec directories allowed as
+subdirectories, each spec directory scanned exactly once after being
+confirmed a regular non-link directory, and spec entries required to be
+regular non-link files (any nested directory fails without recursion).
+`os.walk`, `Path.rglob`, `glob("**/*")`, and `followlinks` are never used,
+so no link target is ever traversed or enumerated.
 
 ## 16. `DatasetOutputFile` full records
 
@@ -246,7 +275,15 @@ nullability, and NaN / Infinity rejection through the identity encoding).
 The physical row order must be exactly `code` ASC,
 `feature_window_close` ASC, `sample_key` ASC. A wrong physical order is
 rejected even when the logical content ID is unchanged (the content ID is
-row-order-independent by contract).
+row-order-independent by contract). The public reader and
+`VerifiedDatasetBuild` construction share the same pure row
+self-validation helper (`_verify_verified_rows`), so the model
+independently verifies the fixed physical row order — together with the
+strict tuple-of-tuples shape, field count, logical content identity,
+`sample_key` uniqueness, scope binding, and the `dataset_as_of` contract —
+and a `dataclasses.replace` of the rows into a different physical order
+fails closed at construction. Field indexes are resolved from schema
+field names, never from hardcoded numeric positions.
 
 ## 27. Sample uniqueness
 
@@ -359,10 +396,21 @@ the entry set before and after successful and failed reads.
 ## 39. Second-pass verification
 
 Before the result is constructed the reader re-verifies the path
-contract, the exact whitelist, `_SUCCESS`, and every manifest file size /
-hash. A concurrent modification between the first pass and the final
-pass is detected and fails closed; a mixed-instant partial result is
-never returned.
+contract, the exact whitelist (same safe non-recursive enumerator),
+`_SUCCESS`, and every manifest output-file size / hash. A concurrent
+modification between the first pass and the final pass is detected and
+fails closed; a mixed-instant partial result is never returned.
+
+`manifest.json` is not a member of `manifest.output_files` (a self-hash
+cycle is impossible), so its byte facts cannot be re-verified through the
+output-file hashes. The final pass therefore re-reads the raw
+`manifest.json` bytes and requires: (1) byte equality with the initially
+verified payload; (2) `validate_dataset_manifest` of the current payload
+reproducing the initially parsed manifest; (3) canonical
+re-serialization of the re-validated manifest reproducing the current
+payload; (4) the directory-name / `dataset_id` binding; and (5) the
+regular non-link file contract. Comparing only file size, mtime, or the
+in-memory first-read object is never sufficient.
 
 ## 40. Fail-closed errors
 

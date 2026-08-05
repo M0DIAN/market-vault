@@ -251,6 +251,111 @@ def _verify_row_assignment_columns(
                 )
 
 
+def _verify_verified_rows(rows, *, schema: DatasetSchema, manifest) -> None:
+    """The single shared independent row self-validation of a verified
+    Dataset (fail closed).
+
+    Used by the public reader (``market_vault.dataset.reader``) and by
+    :class:`VerifiedDatasetBuild` construction, so the two contracts can
+    never drift. Verifies:
+
+    1. strict tuple-of-tuples rows with the exact schema field count;
+    2. the recomputed ``logical_dataset_content_id`` under the
+       authoritative schema (this also enforces every scalar type,
+       nullability, and NaN / Infinity rejection through the identity
+       encoding);
+    3. globally unique ``sample_key`` values;
+    4. every row ``code`` belongs to ``manifest.scope.symbols``;
+    5. the ``dataset_as_of`` contract (field absent when the manifest
+       value is null; present and exactly equal to the manifest value on
+       every row otherwise);
+    6. the fixed physical row order ``code`` ASC,
+       ``feature_window_close`` ASC, ``sample_key`` ASC.
+
+    Field indexes are always resolved from the schema field names, never
+    from hardcoded numeric positions. The physical-order check is
+    independent of the logical content ID, which is row-order-irrelevant
+    by contract: a reversed but otherwise identical row set keeps the
+    same content ID and must still fail.
+    """
+    if not isinstance(rows, tuple):
+        raise DatasetArtifactValidationError(
+            "rows must be a tuple of schema-ordered immutable tuples"
+        )
+    for row in rows:
+        if not isinstance(row, tuple):
+            raise DatasetArtifactValidationError(
+                "every row must be an immutable tuple; list, generator, "
+                "string, and bytes rows are rejected and never silently "
+                "converted"
+            )
+        if len(row) != len(schema.fields):
+            raise DatasetArtifactValidationError(
+                f"every row must carry exactly the schema field count, got "
+                f"{len(row)} for a schema with {len(schema.fields)} fields"
+            )
+    mappings = tuple(
+        dict(zip((field.name for field in schema.fields), row)) for row in rows
+    )
+    if (
+        logical_dataset_content_id(schema, mappings)
+        != manifest.logical_dataset_content_id
+    ):
+        raise DatasetArtifactValidationError(
+            "recomputed logical_dataset_content_id does not match the "
+            "manifest"
+        )
+    indexes = _row_field_indexes(schema)
+    code_index = indexes["code"]
+    sample_key_index = indexes["sample_key"]
+    feature_close_index = indexes["feature_window_close"]
+    if len({row[sample_key_index] for row in rows}) != len(rows):
+        raise DatasetArtifactValidationError(
+            "Dataset rows must not contain duplicate sample_key values"
+        )
+    symbols = set(manifest.scope.symbols)
+    for row in rows:
+        if row[code_index] not in symbols:
+            raise DatasetArtifactValidationError(
+                f"Dataset row code {row[code_index]!r} is outside the "
+                f"manifest scope symbols"
+            )
+    if manifest.dataset_as_of is None:
+        if "dataset_as_of" in indexes:
+            raise DatasetArtifactValidationError(
+                "manifest dataset_as_of is null but the schema carries a "
+                "dataset_as_of field"
+            )
+    else:
+        if "dataset_as_of" not in indexes:
+            raise DatasetArtifactValidationError(
+                "manifest dataset_as_of is set but the schema carries no "
+                "dataset_as_of field"
+            )
+        as_of_index = indexes["dataset_as_of"]
+        for row in rows:
+            if row[as_of_index] != manifest.dataset_as_of:
+                raise DatasetArtifactValidationError(
+                    "Dataset row dataset_as_of must equal the manifest "
+                    "dataset_as_of"
+                )
+    ordered = tuple(
+        sorted(
+            rows,
+            key=lambda row: (
+                row[code_index],
+                row[feature_close_index],
+                row[sample_key_index],
+            ),
+        )
+    )
+    if rows != ordered:
+        raise DatasetArtifactValidationError(
+            "Dataset physical row order must be exactly code ASC, "
+            "feature_window_close ASC, sample_key ASC"
+        )
+
+
 @dataclass(frozen=True)
 class DatasetOutputLayoutRecord:
     """The fixed output layout of one Dataset build directory.
@@ -607,6 +712,30 @@ class VerifiedDatasetBuild:
                 f"build_report_payload must be bytes, got "
                 f"{type(self.build_report_payload).__name__}"
             )
+        # Timestamps are normalized to UTC microseconds at construction so
+        # an equivalent non-canonical representation of the same instant
+        # (any UTC offset) never bypasses the model contract, while a
+        # different instant or a naive value fails.
+        if not isinstance(self.built_at, datetime) or self.built_at.tzinfo is None:
+            raise DatasetArtifactValidationError(
+                "built_at must be a timezone-aware datetime"
+            )
+        object.__setattr__(
+            self, "built_at", normalize_utc_datetime(self.built_at, "built_at")
+        )
+        if self.dataset_as_of is not None:
+            if (
+                not isinstance(self.dataset_as_of, datetime)
+                or self.dataset_as_of.tzinfo is None
+            ):
+                raise DatasetArtifactValidationError(
+                    "dataset_as_of must be a timezone-aware datetime or null"
+                )
+            object.__setattr__(
+                self,
+                "dataset_as_of",
+                normalize_utc_datetime(self.dataset_as_of, "dataset_as_of"),
+            )
         build_path = self.build_path
         if not isinstance(build_path, Path) or not build_path.is_absolute():
             raise DatasetArtifactValidationError(
@@ -635,24 +764,11 @@ class VerifiedDatasetBuild:
                 "must be EMPTY"
             )
 
-        # Rows: strict tuple-of-tuples with the exact schema field count.
-        if not isinstance(self.rows, tuple):
-            raise DatasetArtifactValidationError(
-                "rows must be a tuple of schema-ordered immutable tuples"
-            )
-        for row in self.rows:
-            if not isinstance(row, tuple):
-                raise DatasetArtifactValidationError(
-                    "every row must be an immutable tuple; list, generator, "
-                    "string, and bytes rows are rejected and never silently "
-                    "converted"
-                )
-            if len(row) != len(self.schema.fields):
-                raise DatasetArtifactValidationError(
-                    f"every row must carry exactly the schema field count, "
-                    f"got {len(row)} for a schema with "
-                    f"{len(self.schema.fields)} fields"
-                )
+        # Independent row self-validation (strict tuples, field count,
+        # logical content identity, sample uniqueness, scope binding,
+        # dataset_as_of contract, and the fixed physical row order) via
+        # the shared helper the public reader also uses.
+        _verify_verified_rows(self.rows, schema=self.schema, manifest=self.manifest)
 
         # Manifest bindings with the explicit model fields.
         if self.manifest.dataset_id != self.dataset_id:
@@ -691,20 +807,6 @@ class VerifiedDatasetBuild:
             raise DatasetArtifactValidationError(
                 "manifest_payload must be the exact canonical serialization "
                 "of the validated manifest"
-            )
-
-        # Logical content recomputation under the authoritative schema.
-        mappings = tuple(
-            dict(zip((field.name for field in self.schema.fields), row))
-            for row in self.rows
-        )
-        if (
-            logical_dataset_content_id(self.schema, mappings)
-            != self.manifest.logical_dataset_content_id
-        ):
-            raise DatasetArtifactValidationError(
-                "recomputed logical_dataset_content_id does not match the "
-                "manifest"
             )
 
         # Specs: typed tuples, pins in manifest order, unique names.

@@ -998,6 +998,71 @@ def test_no_mutable_containers_in_result(built):
     assert_immutable(verified_build, "verified")
 
 
+def test_model_valid_multi_row_rows_pass(built_multi):
+    verified_build = read_verified(built_multi)
+    assert len(verified_build.rows) == 2
+    assert replace(verified_build, rows=verified_build.rows) == verified_build
+
+
+def test_model_reversed_rows_rejected_despite_unchanged_content_id(built_multi):
+    verified_build = read_verified(built_multi)
+    reversed_rows = tuple(reversed(verified_build.rows))
+    names = schema_names(verified_build.schema)
+    mappings = tuple(dict(zip(names, row)) for row in reversed_rows)
+    # logical_dataset_content_id is row-order-irrelevant by contract, so a
+    # reversed row set keeps the exact same content ID...
+    assert dataset_pkg.logical_dataset_content_id(
+        verified_build.schema, mappings
+    ) == verified_build.manifest.logical_dataset_content_id
+    # ...and only the model's independent fixed-physical-order
+    # self-validation can catch the tamper.
+    with pytest.raises(DatasetArtifactValidationError):
+        replace(verified_build, rows=reversed_rows)
+
+
+def test_model_duplicate_sample_key_rejected(built_multi):
+    verified_build = read_verified(built_multi)
+    with pytest.raises(DatasetArtifactValidationError):
+        replace(verified_build, rows=verified_build.rows + verified_build.rows[:1])
+
+
+def test_model_scope_outer_code_rejected(built_multi):
+    verified_build = read_verified(built_multi)
+    names = schema_names(verified_build.schema)
+    row = list(verified_build.rows[0])
+    row[names.index("code")] = "US.XXX"
+    with pytest.raises(DatasetArtifactValidationError):
+        replace(verified_build, rows=(tuple(row), verified_build.rows[1]))
+
+
+def test_model_dataset_as_of_value_tamper_rejected(built_as_of):
+    verified_build = read_verified(built_as_of)
+    names = schema_names(verified_build.schema)
+    row = list(verified_build.rows[0])
+    row[names.index("dataset_as_of")] = datetime(2000, 1, 1, tzinfo=UTC)
+    with pytest.raises(DatasetArtifactValidationError):
+        replace(verified_build, rows=(tuple(row),))
+
+
+def test_model_built_at_normalized_equivalent_representation(built):
+    verified_build = read_verified(built)
+    equivalent = BUILT_AT.astimezone(timezone(timedelta(hours=5, minutes=30)))
+    replaced = replace(verified_build, built_at=equivalent)
+    assert replaced.built_at == verified_build.built_at == BUILT_AT
+
+
+def test_model_naive_built_at_rejected(built):
+    verified_build = read_verified(built)
+    with pytest.raises(DatasetArtifactValidationError):
+        replace(verified_build, built_at=datetime(2026, 8, 5, 12, 0))
+
+
+def test_model_naive_dataset_as_of_rejected(built_as_of):
+    verified_build = read_verified(built_as_of)
+    with pytest.raises(DatasetArtifactValidationError):
+        replace(verified_build, dataset_as_of=datetime(2026, 8, 1, 12, 0))
+
+
 # ---------------------------------------------------------------------------
 # C. Path safety.
 # ---------------------------------------------------------------------------
@@ -1421,6 +1486,115 @@ def test_junction_entry_rejected(built, tmp_path):
     )
     with pytest.raises(DatasetArtifactValidationError):
         load_verified_dataset(built.build)
+
+
+def _move_out_and_link(built, tmp_path, dirname: str, link_target) -> None:
+    """Move a spec directory out of the build and place a link at its
+    former path."""
+    moved = tmp_path / f"moved_{dirname}"
+    (built.build / dirname).rename(moved)
+    _make_symlink_or_skip(link_target, built.build / dirname)
+
+
+def test_feature_specs_symlink_rejected_before_descent(built, tmp_path, monkeypatch):
+    """A feature_specs symlink pointing at an external directory with
+    nested files must be rejected before any descent, and the link target
+    must never be enumerated or read."""
+    external = tmp_path / "external_feature_specs"
+    (external / "nested").mkdir(parents=True)
+    (external / "nested" / "deep.yaml").write_text("x")
+    _move_out_and_link(built, tmp_path, DATASET_FEATURE_SPECS_DIRNAME, external)
+
+    scanned = []
+    real_scandir = os.scandir
+
+    def spy_scandir(path, *args, **kwargs):
+        scanned.append(os.fspath(path))
+        return real_scandir(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "scandir", spy_scandir)
+    read_paths = []
+    real_read = reader_mod._read_artifact_bytes
+
+    def spy_read(path, *args, **kwargs):
+        read_paths.append(os.fspath(path))
+        return real_read(path, *args, **kwargs)
+
+    monkeypatch.setattr(reader_mod, "_read_artifact_bytes", spy_read)
+    with pytest.raises(DatasetArtifactValidationError):
+        load_verified_dataset(built.build)
+    assert str(external) not in scanned
+    assert not any(str(external) in path for path in read_paths)
+
+
+def test_label_specs_symlink_rejected_before_descent(built, tmp_path, monkeypatch):
+    external = tmp_path / "external_label_specs"
+    (external / "nested").mkdir(parents=True)
+    (external / "nested" / "deep.yaml").write_text("x")
+    _move_out_and_link(built, tmp_path, DATASET_LABEL_SPECS_DIRNAME, external)
+
+    scanned = []
+    real_scandir = os.scandir
+
+    def spy_scandir(path, *args, **kwargs):
+        scanned.append(os.fspath(path))
+        return real_scandir(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "scandir", spy_scandir)
+    with pytest.raises(DatasetArtifactValidationError):
+        load_verified_dataset(built.build)
+    assert str(external) not in scanned
+
+
+def test_feature_specs_junction_rejected_before_descent(built, tmp_path):
+    """A real Windows junction at feature_specs must be rejected before
+    any descent (Python 3.11 reparse-point path included)."""
+    if os.name != "nt":
+        pytest.skip("Windows junction required")
+    import _winapi
+
+    external = tmp_path / "external_feature_specs"
+    external.mkdir()
+    (external / "nested").mkdir()
+    moved = tmp_path / "moved_feature_specs"
+    (built.build / DATASET_FEATURE_SPECS_DIRNAME).rename(moved)
+    _winapi.CreateJunction(
+        str(external.absolute()),
+        str((built.build / DATASET_FEATURE_SPECS_DIRNAME).absolute()),
+    )
+    with pytest.raises(DatasetArtifactValidationError):
+        load_verified_dataset(built.build)
+
+
+def test_label_specs_junction_rejected_before_descent(built, tmp_path):
+    if os.name != "nt":
+        pytest.skip("Windows junction required")
+    import _winapi
+
+    external = tmp_path / "external_label_specs"
+    external.mkdir()
+    (external / "nested").mkdir()
+    moved = tmp_path / "moved_label_specs"
+    (built.build / DATASET_LABEL_SPECS_DIRNAME).rename(moved)
+    _winapi.CreateJunction(
+        str(external.absolute()),
+        str((built.build / DATASET_LABEL_SPECS_DIRNAME).absolute()),
+    )
+    with pytest.raises(DatasetArtifactValidationError):
+        load_verified_dataset(built.build)
+
+
+def test_spec_directory_nested_subdirectory_rejected(built):
+    nested = built.build / DATASET_FEATURE_SPECS_DIRNAME / "nested"
+    nested.mkdir()
+    (nested / "x.yaml").write_text("x")
+    with pytest.raises(DatasetArtifactValidationError):
+        load_verified_dataset(built.build)
+
+
+def test_safe_enumerator_normal_two_level_layout(built):
+    entries = reader_mod._list_verified_dataset_entries_safely(built.build)
+    assert set(entries) == set(reader_mod._expected_build_entries(built.manifest))
 
 
 # ---------------------------------------------------------------------------
@@ -3112,7 +3286,9 @@ def test_programming_error_not_swallowed(built, monkeypatch):
     def fail(*args, **kwargs):
         raise RuntimeError("programming error")
 
-    monkeypatch.setattr(reader_mod, "_list_build_entries", fail)
+    monkeypatch.setattr(
+        reader_mod, "_list_verified_dataset_entries_safely", fail
+    )
     with pytest.raises(RuntimeError):
         load_verified_dataset(built.build)
 
@@ -3150,6 +3326,91 @@ def test_second_pass_detects_whitelist_change(built, monkeypatch):
 
     def tamper_and_continue(*args, **kwargs):
         (built.build / "sneaky.txt").write_text("x", encoding="utf-8")
+        return real_verify_split(*args, **kwargs)
+
+    monkeypatch.setattr(reader_mod, "_verify_split_rows", tamper_and_continue)
+    with pytest.raises(DatasetArtifactValidationError):
+        load_verified_dataset(built.build)
+
+
+# ---------------------------------------------------------------------------
+# P2. Second-pass manifest re-verification.
+# ---------------------------------------------------------------------------
+
+
+def test_second_pass_manifest_content_replace_rejected(built, monkeypatch):
+    """The manifest is not a member of output_files, so the second pass
+    must re-read and re-validate it: a mid-read content replacement fails
+    closed without writing or repairing anything."""
+    real_verify_split = reader_mod._verify_split_rows
+
+    def tamper_and_continue(*args, **kwargs):
+        (built.build / DATASET_MANIFEST_FILENAME).write_bytes(b"{}")
+        return real_verify_split(*args, **kwargs)
+
+    monkeypatch.setattr(reader_mod, "_verify_split_rows", tamper_and_continue)
+    with pytest.raises(DatasetArtifactValidationError):
+        load_verified_dataset(built.build)
+    # Nothing was repaired or rewritten by the reader.
+    assert (built.build / DATASET_MANIFEST_FILENAME).read_bytes() == b"{}"
+
+
+def test_second_pass_manifest_canonical_replace_rejected(
+    fixtures, tmp_path, monkeypatch
+):
+    """Replacing the manifest with another canonical, fully
+    validate_dataset_manifest-passing manifest fails closed because the
+    bytes differ from the initially verified payload — even when every
+    output-file record is unchanged."""
+    _, mresult_a = materialize_once(fixtures, tmp_path)
+    build_a = build_path(mresult_a)
+    _, mresult_b = materialize_once(
+        fixtures, tmp_path / "other_root", built_at=BUILT_AT + timedelta(seconds=1)
+    )
+    other_payload = mresult_b.manifest_path.read_bytes()
+    # The other manifest is canonical and validates against its own build.
+    dataset_pkg.validate_dataset_manifest(other_payload)
+
+    real_verify_split = reader_mod._verify_split_rows
+
+    def tamper_and_continue(*args, **kwargs):
+        (build_a / DATASET_MANIFEST_FILENAME).write_bytes(other_payload)
+        return real_verify_split(*args, **kwargs)
+
+    monkeypatch.setattr(reader_mod, "_verify_split_rows", tamper_and_continue)
+    with pytest.raises(DatasetArtifactValidationError):
+        load_verified_dataset(build_a)
+
+
+def test_second_pass_manifest_whitespace_change_rejected(built, monkeypatch):
+    original = (built.build / DATASET_MANIFEST_FILENAME).read_bytes()
+    real_verify_split = reader_mod._verify_split_rows
+
+    def tamper_and_continue(*args, **kwargs):
+        (built.build / DATASET_MANIFEST_FILENAME).write_bytes(original + b" ")
+        return real_verify_split(*args, **kwargs)
+
+    monkeypatch.setattr(reader_mod, "_verify_split_rows", tamper_and_continue)
+    with pytest.raises(DatasetArtifactValidationError):
+        load_verified_dataset(built.build)
+
+
+def test_second_pass_manifest_unchanged_passes(built):
+    verified_build = read_verified(built)
+    assert verified_build.dataset_id == built.result.dataset_id
+
+
+def test_second_pass_manifest_symlink_race_rejected(built, tmp_path, monkeypatch):
+    """A manifest.json that becomes a symlink between the passes fails
+    closed on the final pass and the link target is never entered."""
+    target = tmp_path / "manifest_backup.json"
+    target.write_bytes((built.build / DATASET_MANIFEST_FILENAME).read_bytes())
+    real_verify_split = reader_mod._verify_split_rows
+
+    def tamper_and_continue(*args, **kwargs):
+        manifest_path = built.build / DATASET_MANIFEST_FILENAME
+        manifest_path.unlink()
+        _make_symlink_or_skip(target, manifest_path)
         return real_verify_split(*args, **kwargs)
 
     monkeypatch.setattr(reader_mod, "_verify_split_rows", tamper_and_continue)

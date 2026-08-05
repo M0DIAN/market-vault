@@ -56,12 +56,11 @@ from .artifact_serialization import (
     read_dataset_parquet,
     split_spec_artifact,
 )
-from .content import dataset_schema_id, logical_dataset_content_id
+from .content import dataset_schema_id
 from .encoding import DatasetError, normalize_utc_datetime
 from .manifest import serialize_dataset_manifest, validate_dataset_manifest
 from .materialization import (
     _is_junction_or_reparse,
-    _list_build_entries,
     _verify_success,
 )
 from .materialization_models import (
@@ -94,6 +93,7 @@ from .models import (
     STATUS_COMPLETE,
     STATUS_EMPTY,
     DatasetOutputFile,
+    _validate_output_relative_path,
 )
 from .orchestration_models import (
     DATASET_KIND_SUPERVISED,
@@ -109,6 +109,7 @@ from .reader_models import (
     VerifiedDatasetBuild,
     _report_payload_from_record,
     _split_samples_from_rows,
+    _verify_verified_rows,
 )
 from .spec_models import FeatureSpec, LabelSpec
 from .specs import feature_label_spec_pin, parse_feature_spec, parse_label_spec
@@ -211,10 +212,15 @@ def load_verified_dataset(build_dir) -> VerifiedDatasetBuild:
     the split result re-derived from the actual rows, the build report's
     canonical bytes and observable-fact bindings, and the fixed
     diagnostics matrix. A second pass re-verifies the path contract, the
-    whitelist, and every file size and hash before the
+    whitelist, ``_SUCCESS``, the manifest (re-read and re-validated
+    against the initially parsed manifest and payload —
+    ``manifest.json`` is not in ``output_files``, so it must be verified
+    independently), and every output-file size and hash before the
     :class:`VerifiedDatasetBuild` is constructed, so a concurrent
     modification is detected and no mixed-instant partial result is ever
-    returned.
+    returned. Entries are enumerated by the reader's own safe
+    non-recursive enumerator, which rejects symlinks and junctions before
+    any descent.
 
     Any inconsistency raises :class:`DatasetArtifactValidationError`.
     Nothing is written, repaired, rewritten, or deleted; no current time,
@@ -381,10 +387,12 @@ def _load_verified_dataset(build_dir) -> VerifiedDatasetBuild:
     _verify_report_split_facts(manifest, split_spec, split_result, report)
     _verify_diagnostics_matrix(manifest, report)
 
-    # 27. Second pass: path contract, exact whitelist, _SUCCESS, and every
-    # manifest file size / hash re-verified (a concurrent modification
-    # fails closed; no mixed-instant partial result is ever returned).
-    _second_pass_verify(build, manifest)
+    # 27. Second pass: path contract, exact whitelist, _SUCCESS, the
+    # manifest re-read and re-validated against the initially parsed
+    # manifest and payload, and every output-file size / hash re-verified
+    # (a concurrent modification fails closed; no mixed-instant partial
+    # result is ever returned).
+    _second_pass_verify(build, manifest, manifest_payload)
 
     # 28-30. Construct the VerifiedDatasetBuild; construction re-verifies
     # every invariant (fail closed) and only then is the result returned.
@@ -535,11 +543,85 @@ def _spec_artifact_filename(pin) -> str:
     return f"{pin.name}--{pin.version}--{pin.content_sha256}.yaml"
 
 
+def _list_verified_dataset_entries_safely(build: Path) -> dict[str, Path]:
+    """Safe non-recursive enumeration of one build directory.
+
+    The formal layout is enumerated in exactly two controlled levels and
+    never with a recursive walk:
+
+    - ``os.scandir`` enumerates the build root only;
+    - every root entry is rejected as a symlink or Windows junction /
+      reparse point *before* any classification or descent, and must be a
+      regular file or one of the two spec directories;
+    - only ``feature_specs/`` and ``label_specs/`` may exist as
+      directories, and each is scanned exactly once (a second single-level
+      ``os.scandir``) after it was confirmed to be a regular non-link
+      directory;
+    - spec directory entries must be regular non-link files; any nested
+      directory, symlink, junction, FIFO, or socket fails closed without
+      recursion.
+
+    ``os.walk``, ``Path.rglob``, ``glob("**/*")``, and ``followlinks`` are
+    never used, so no link target is ever traversed or enumerated. Returns
+    the safe relative POSIX path -> Path mapping.
+    """
+    entries: dict[str, Path] = {}
+    with os.scandir(build) as iterator:
+        root_items = sorted(iterator, key=lambda item: item.name)
+    for item in root_items:
+        path = Path(item.path)
+        # Reject symlinks and junctions before any descent or target
+        # enumeration (Python 3.11 Windows reparse-point detection).
+        _reject_symlink(path, f"dataset entry {item.name}")
+        if item.is_dir(follow_symlinks=False):
+            if item.name not in (
+                DATASET_FEATURE_SPECS_DIRNAME,
+                DATASET_LABEL_SPECS_DIRNAME,
+            ):
+                _fail(
+                    f"dataset build directory may contain only the "
+                    f"{DATASET_FEATURE_SPECS_DIRNAME}/ and "
+                    f"{DATASET_LABEL_SPECS_DIRNAME}/ subdirectories, got "
+                    f"{item.name!r}"
+                )
+            entries[item.name] = path
+            continue
+        if item.is_file(follow_symlinks=False):
+            _validate_output_relative_path(item.name, "dataset entry")
+            entries[item.name] = path
+            continue
+        _fail(
+            f"dataset entry must be a regular file or directory: {item.name}"
+        )
+    for dirname in (DATASET_FEATURE_SPECS_DIRNAME, DATASET_LABEL_SPECS_DIRNAME):
+        if dirname not in entries:
+            continue  # a missing directory is reported by the whitelist
+        with os.scandir(entries[dirname]) as iterator:
+            spec_items = sorted(iterator, key=lambda item: item.name)
+        for item in spec_items:
+            rel = f"{dirname}/{item.name}"
+            spec_path = Path(item.path)
+            _reject_symlink(spec_path, f"dataset entry {rel}")
+            if item.is_dir(follow_symlinks=False):
+                _fail(
+                    f"spec directory {dirname} must contain only regular "
+                    f"files, got nested directory {item.name!r}"
+                )
+            if not item.is_file(follow_symlinks=False):
+                _fail(
+                    f"spec directory {dirname} entry must be a regular "
+                    f"file: {item.name}"
+                )
+            _validate_output_relative_path(rel, "dataset entry")
+            entries[rel] = spec_path
+    return entries
+
+
 def _verify_entries(build: Path, expected_entries: dict[str, str]) -> None:
     """Every entry under ``build`` must be expected and regular;
     unexpected files or directories, symlinks, junctions, and non-regular
     entries fail closed. Nothing is ever deleted or ignored."""
-    actual_entries = _list_build_entries(build)
+    actual_entries = _list_verified_dataset_entries_safely(build)
     if set(actual_entries) != set(expected_entries):
         extra = sorted(set(actual_entries) - set(expected_entries))
         missing = sorted(set(expected_entries) - set(actual_entries))
@@ -762,69 +844,12 @@ def _verify_parquet(table, manifest) -> None:
 
 
 def _verify_rows(rows, manifest) -> None:
-    """Logical content identity, sample-key uniqueness, scope binding,
-    ``dataset_as_of`` binding, and the fixed physical row order."""
-    mappings = tuple(
-        dict(zip((field.name for field in manifest.schema.fields), row))
-        for row in rows
-    )
-    if (
-        logical_dataset_content_id(manifest.schema, mappings)
-        != manifest.logical_dataset_content_id
-    ):
-        _fail(
-            "Dataset Parquet logical content does not match the manifest "
-            "logical_dataset_content_id"
-        )
-    indexes = {
-        field.name: index for index, field in enumerate(manifest.schema.fields)
-    }
-    code_index = indexes["code"]
-    sample_key_index = indexes["sample_key"]
-    feature_close_index = indexes["feature_window_close"]
-    if len({row[sample_key_index] for row in rows}) != len(rows):
-        _fail("Dataset rows must not contain duplicate sample_key values")
-    symbols = set(manifest.scope.symbols)
-    for row in rows:
-        if row[code_index] not in symbols:
-            _fail(
-                f"Dataset row code {row[code_index]!r} is outside the "
-                f"manifest scope symbols"
-            )
-    if manifest.dataset_as_of is None:
-        if "dataset_as_of" in indexes:
-            _fail(
-                "manifest dataset_as_of is null but the schema carries a "
-                "dataset_as_of field"
-            )
-    else:
-        if "dataset_as_of" not in indexes:
-            _fail(
-                "manifest dataset_as_of is set but the schema carries no "
-                "dataset_as_of field"
-            )
-        as_of_index = indexes["dataset_as_of"]
-        for row in rows:
-            if row[as_of_index] != manifest.dataset_as_of:
-                _fail(
-                    "Dataset row dataset_as_of must equal the manifest "
-                    "dataset_as_of"
-                )
-    ordered = tuple(
-        sorted(
-            rows,
-            key=lambda row: (
-                row[code_index],
-                row[feature_close_index],
-                row[sample_key_index],
-            ),
-        )
-    )
-    if rows != ordered:
-        _fail(
-            "Dataset physical row order must be exactly code ASC, "
-            "feature_window_close ASC, sample_key ASC"
-        )
+    """Shared row self-validation: strict tuples, field count, logical
+    content identity, sample-key uniqueness, scope binding,
+    ``dataset_as_of`` binding, and the fixed physical row order. The
+    public reader and :class:`VerifiedDatasetBuild` share exactly this
+    helper so the two contracts can never drift."""
+    _verify_verified_rows(rows, schema=manifest.schema, manifest=manifest)
 
 
 def _verify_split_rows(rows, schema, split_result: ChronologicalSplitResult) -> None:
@@ -1083,13 +1108,60 @@ def _verify_diagnostics_matrix(manifest, report) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _second_pass_verify(build: Path, manifest) -> None:
+def _second_pass_verify(build: Path, manifest, manifest_payload: bytes) -> None:
     """Final re-verification before the result is constructed: the path
-    contract, the exact whitelist, ``_SUCCESS``, and every manifest file
-    size / hash must still hold (a concurrent modification fails closed)."""
+    contract, the exact whitelist, ``_SUCCESS``, the manifest re-read and
+    re-validated against the initially parsed manifest and payload, and
+    every output-file size / hash must still hold (a concurrent
+    modification fails closed; no mixed-instant partial result is ever
+    returned).
+
+    ``manifest.json`` is not a member of ``manifest.output_files`` (a
+    self-hash cycle is impossible), so its byte facts cannot be
+    re-verified through the output-file hashes: the second pass re-reads
+    the raw bytes and requires (1) byte equality with the initially read
+    payload, (2) re-validation through ``validate_dataset_manifest``
+    reproducing the initially parsed manifest, (3) canonical
+    re-serialization of the re-validated manifest reproducing the current
+    payload, (4) the directory-name / ``dataset_id`` binding, and (5) the
+    regular non-link file contract. Comparing only file size, mtime, or
+    the in-memory first-read object is never sufficient.
+    """
     _verify_build_dir_safety(build)
     _verify_entries(build, _expected_build_entries(manifest))
     _verify_success(build / DATASET_SUCCESS_FILENAME)
+    manifest_path = build / DATASET_MANIFEST_FILENAME
+    _reject_symlink(manifest_path, "dataset manifest")
+    if not manifest_path.is_file():
+        _fail(
+            f"dataset manifest must be a regular file on final "
+            f"verification: {manifest_path}"
+        )
+    current_payload = _read_artifact_bytes(manifest_path, "manifest.json")
+    if current_payload != manifest_payload:
+        _fail(
+            "manifest.json changed between the first and the final "
+            "verification pass (the raw bytes no longer match the "
+            "initially verified payload)"
+        )
+    current_manifest = validate_dataset_manifest(current_payload)
+    if current_manifest != manifest:
+        _fail(
+            "manifest.json changed between the first and the final "
+            "verification pass (re-validation no longer reproduces the "
+            "initially parsed manifest)"
+        )
+    if serialize_dataset_manifest(current_manifest) != current_payload:
+        _fail(
+            "manifest.json must be the exact canonical serialization of "
+            "the re-validated manifest on final verification"
+        )
+    if current_manifest.dataset_id != build.name:
+        _fail(
+            f"manifest dataset_id {current_manifest.dataset_id!r} does not "
+            f"equal the build directory name {build.name!r} on final "
+            f"verification"
+        )
     for record in manifest.output_files:
         path = build / record.relative_path
         _reject_symlink(path, f"output file {record.relative_path}")
