@@ -1,0 +1,38 @@
+# Verified example LabelSpec: forward_return over a 2-bar BARS horizon.
+#
+# This document is parsed by the formal Label spec parser
+# (market-vault-label-spec-v1) and passes the built-in transform registry
+# preflight. The horizon is BARS (never TRADING_DAYS); the label never
+# crosses trading days; gaps are never filled (missing_data_policy is
+# INCOMPLETE only).
+spec_schema_version: market-vault-label-spec-v1
+kind: LABEL
+name: forward_return_2
+version: v1
+output:
+  name: forward_return_2
+  logical_type: float64
+  nullable: false
+inputs:
+  canonical_fields:
+    - close
+transform:
+  ref: market_vault.dataset.label_transforms.forward_return:forward_return
+parameters: {}
+requirements:
+  canonical_schema_versions:
+    - market-bars-canonical-schema-v1
+  source_schema_versions:
+    - "10.9"
+observation_window:
+  unit: BARS
+  start_offset: 1
+  end_offset: 1
+horizon:
+  unit: BARS
+  value: 2
+alignment_rule: FEATURE_CLOSE_ALIGNED
+missing_data_policy: INCOMPLETE
+cross_trading_day:
+  allow: false
+  boundary_rule: null

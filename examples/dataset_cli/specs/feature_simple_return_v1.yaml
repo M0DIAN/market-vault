@@ -1,0 +1,26 @@
+# Verified example FeatureSpec: simple_return over a 2-bar window.
+#
+# This document is parsed by the formal Feature spec parser
+# (market-vault-feature-spec-v1) and passes the built-in transform registry
+# preflight. The transform is a fixed built-in registration; no arbitrary
+# user code is ever executed.
+spec_schema_version: market-vault-feature-spec-v1
+kind: FEATURE
+name: simple_return_2
+version: v1
+output:
+  name: simple_return_2
+  logical_type: float64
+  nullable: false
+inputs:
+  canonical_fields:
+    - close
+transform:
+  ref: market_vault.dataset.feature_transforms.simple_return:simple_return
+parameters:
+  window_bars: 2
+requirements:
+  canonical_schema_versions:
+    - market-bars-canonical-schema-v1
+  source_schema_versions:
+    - "10.9"

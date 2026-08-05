@@ -27,6 +27,7 @@ import os
 import re
 import shutil
 import socket
+import subprocess
 import sys
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -51,10 +52,15 @@ from market_vault.dataset.cli_models import (
     DatasetCLIError,
 )
 from market_vault.dataset.encoding import DatasetError
+from market_vault.dataset.feature_registry import built_in_feature_registrations
+from market_vault.dataset.label_registry import built_in_label_registrations
+from market_vault.dataset.specs import parse_feature_spec, parse_label_spec
+from market_vault.dataset.split_models import ChronologicalSplitSpec
 from market_vault.models import QualityResult, RunManifest, Settings
 from market_vault.normalization import normalize_bars, normalize_trading_calendar
 from market_vault.storage import Catalog, ParquetStore
 
+ROOT = Path(__file__).resolve().parents[1]
 UTC = timezone.utc
 NY = "America/New_York"
 
@@ -2134,3 +2140,643 @@ def test_semantic_feature_change_changes_dataset_id(fixtures, tmp_path, capsys):
     assert code == 0, err
     assert second["dataset_id"] != first["dataset_id"]
     assert second["created_new_build"] is True
+
+
+# ---------------------------------------------------------------------------
+# I. Verified Dataset CLI examples (v0.5.1 PR-3).
+#
+# The examples directory is documentation material for the current formal
+# CLI and schema. These tests prove every example file passes the real
+# parser / registry / plan parser, that the renderer is deterministic and
+# conservative, and that a bundle rendered from the templates drives the
+# real dataset-build -> dataset-verify -> dataset-inspect chain to COMPLETE
+# and EMPTY results.
+# ---------------------------------------------------------------------------
+
+EXAMPLES_DIR = ROOT / "examples" / "dataset_cli"
+
+#: Every ``--flag`` token the example README may legitimately mention.
+#: The CLI-only flags are real commands; the negated flags and
+#: ``--split-spec`` appear only as "not supported" statements, never as
+#: usable options.
+_KNOWN_EXAMPLE_FLAGS = frozenset(
+    {
+        "--plan",
+        "--build-dir",
+        "--offset",
+        "--limit",
+        "--canonical-build-dir",
+        "--output-root",
+        "--built-at",
+        "--dataset-as-of",
+        "--destination",
+        "--help",
+        "--version",
+        "--split-spec",
+        "--latest",
+        "--force",
+        "--repair",
+        "--discover",
+        "--now",
+    }
+)
+
+
+def run_renderer(
+    tmp_path: Path,
+    *,
+    canonical_dirs: list,
+    output_root,
+    built_at,
+    destination,
+    dataset_as_of=None,
+) -> subprocess.CompletedProcess:
+    cmd = [sys.executable, str(EXAMPLES_DIR / "render_plans.py")]
+    for directory in canonical_dirs:
+        cmd += ["--canonical-build-dir", str(directory)]
+    cmd += [
+        "--output-root",
+        str(output_root),
+        "--built-at",
+        built_at,
+        "--destination",
+        str(destination),
+    ]
+    if dataset_as_of is not None:
+        cmd += ["--dataset-as-of", dataset_as_of]
+    return subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        # The renderer writes UTF-8; locale codecs (e.g. gbk) cannot decode
+        # localized Windows OSError texts.
+        encoding="utf-8",
+        errors="replace",
+        cwd=ROOT,
+    )
+
+
+def render_bundle(tmp_path: Path, fixtures, *, dataset_as_of=None) -> Path:
+    destination = tmp_path / "example-bundle"
+    result = run_renderer(
+        tmp_path,
+        canonical_dirs=[
+            fixtures.a.build_path.as_posix(),
+            fixtures.f.build_path.as_posix(),
+        ],
+        output_root=str(tmp_path / "out"),
+        built_at=BUILT_AT_ISO,
+        destination=destination,
+        dataset_as_of=dataset_as_of,
+    )
+    assert result.returncode == 0, result.stderr
+    return destination
+
+
+# --- Static example files ---------------------------------------------------
+
+
+def test_examples_directory_structure():
+    assert (EXAMPLES_DIR / "README.md").is_file()
+    assert (EXAMPLES_DIR / "render_plans.py").is_file()
+    assert (EXAMPLES_DIR / "plans" / "complete.plan.template.json").is_file()
+    assert (EXAMPLES_DIR / "plans" / "empty.plan.template.json").is_file()
+    assert (EXAMPLES_DIR / "specs" / "feature_simple_return_v1.yaml").is_file()
+    assert (EXAMPLES_DIR / "specs" / "label_forward_return_v1.yaml").is_file()
+    assert (EXAMPLES_DIR / "split_specs" / "chronological_v1.json").is_file()
+
+
+def test_example_feature_spec_parses_by_formal_parser():
+    text = (EXAMPLES_DIR / "specs" / "feature_simple_return_v1.yaml").read_text(
+        encoding="utf-8"
+    )
+    spec = parse_feature_spec(text)
+    assert spec.name == "simple_return_2"
+    assert spec.version == "v1"
+    assert spec.output.logical_type == "float64"
+    assert spec.output.nullable is False
+    assert spec.input_canonical_fields == ("close",)
+    assert (
+        spec.transform_ref
+        == "market_vault.dataset.feature_transforms.simple_return:simple_return"
+    )
+    assert {p.name: p.value for p in spec.parameters} == {"window_bars": 2}
+
+
+def test_example_label_spec_parses_by_formal_parser():
+    text = (EXAMPLES_DIR / "specs" / "label_forward_return_v1.yaml").read_text(
+        encoding="utf-8"
+    )
+    spec = parse_label_spec(text)
+    assert spec.name == "forward_return_2"
+    assert spec.version == "v1"
+    assert spec.output.logical_type == "float64"
+    assert spec.output.nullable is False
+    assert spec.input_canonical_fields == ("close",)
+    assert (
+        spec.transform_ref
+        == "market_vault.dataset.label_transforms.forward_return:forward_return"
+    )
+    assert spec.observation_window.unit == "BARS"
+    assert spec.observation_window.start_offset == 1
+    assert spec.observation_window.end_offset == 1
+    assert spec.horizon.unit == "BARS"
+    assert spec.horizon.value == 2
+    assert spec.alignment_rule == "FEATURE_CLOSE_ALIGNED"
+    assert spec.missing_data_policy == "INCOMPLETE"
+    assert spec.cross_trading_day.allow is False
+    assert spec.cross_trading_day.boundary_rule is None
+
+
+def test_example_specs_use_builtin_registered_transforms():
+    feature_text = (EXAMPLES_DIR / "specs" / "feature_simple_return_v1.yaml").read_text(
+        encoding="utf-8"
+    )
+    label_text = (EXAMPLES_DIR / "specs" / "label_forward_return_v1.yaml").read_text(
+        encoding="utf-8"
+    )
+    feature = parse_feature_spec(feature_text)
+    label = parse_label_spec(label_text)
+    feature_refs = {r.transform_ref for r in built_in_feature_registrations()}
+    label_refs = {r.transform_ref for r in built_in_label_registrations()}
+    assert feature.transform_ref in feature_refs
+    assert label.transform_ref in label_refs
+    assert feature.requirements.canonical_schema_versions == (
+        "market-bars-canonical-schema-v1",
+    )
+    assert feature.requirements.source_schema_versions == ("10.9",)
+    assert label.requirements.canonical_schema_versions == (
+        "market-bars-canonical-schema-v1",
+    )
+    assert label.requirements.source_schema_versions == ("10.9",)
+
+
+def test_example_split_spec_constructs_formal_split_spec():
+    payload = json.loads(
+        (EXAMPLES_DIR / "split_specs" / "chronological_v1.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    split = ChronologicalSplitSpec(
+        spec_schema_version=payload["spec_schema_version"],
+        name=payload["name"],
+        version=payload["version"],
+        boundary_timezone=payload["boundary_timezone"],
+        train_end_date=date.fromisoformat(payload["train_end_date"]),
+        validation_end_date=date.fromisoformat(payload["validation_end_date"]),
+        test_end_date=date.fromisoformat(payload["test_end_date"]),
+        assignment_rule=payload["assignment_rule"],
+        purge_rule=payload["purge_rule"],
+        incomplete_label_policy=payload["incomplete_label_policy"],
+        out_of_range_policy=payload["out_of_range_policy"],
+    )
+    assert split.boundary_timezone == NY
+    assert split.assignment_rule == "FEATURE_WINDOW_CLOSE_DATE"
+    assert split.purge_rule == "ACTUAL_LABEL_END"
+
+
+def test_example_plan_templates_have_exact_root_fields():
+    for name in ("complete.plan.template.json", "empty.plan.template.json"):
+        payload = json.loads(
+            (EXAMPLES_DIR / "plans" / name).read_text(encoding="utf-8")
+        )
+        assert set(payload) == {
+            "plan_schema_version",
+            "canonical_build_dirs",
+            "feature_spec_files",
+            "label_spec_files",
+            "requests",
+            "scope",
+            "split_spec",
+            "dataset_as_of",
+            "output_root",
+            "built_at",
+        }
+        assert payload["plan_schema_version"] == DATASET_BUILD_PLAN_SCHEMA_VERSION
+        assert payload["feature_spec_files"] == [
+            "specs/feature_simple_return_v1.yaml"
+        ]
+        assert payload["label_spec_files"] == ["specs/label_forward_return_v1.yaml"]
+
+
+def test_example_readme_documents_three_formal_commands():
+    text = (EXAMPLES_DIR / "README.md").read_text(encoding="utf-8")
+    assert "market-vault dataset-build --plan <PATH>" in text
+    assert "market-vault dataset-verify --build-dir <PATH>" in text
+    assert "market-vault dataset-inspect --build-dir <PATH>" in text
+
+
+def test_example_readme_mentions_no_fake_cli_flags():
+    text = (EXAMPLES_DIR / "README.md").read_text(encoding="utf-8")
+    flags = set(re.findall(r"--[a-z][a-z0-9-]*", text))
+    assert flags <= _KNOWN_EXAMPLE_FLAGS, sorted(flags - _KNOWN_EXAMPLE_FLAGS)
+
+
+# --- Renderer ---------------------------------------------------------------
+
+
+def test_renderer_renders_complete_bundle(tmp_path):
+    destination = tmp_path / "bundle"
+    result = run_renderer(
+        tmp_path,
+        canonical_dirs=["D:/data/canonical/build"],
+        output_root="D:/data/datasets",
+        built_at=BUILT_AT_ISO,
+        destination=destination,
+    )
+    assert result.returncode == 0, result.stderr
+    assert (destination / "complete.plan.json").is_file()
+    assert (destination / "empty.plan.json").is_file()
+    assert (destination / "specs" / "feature_simple_return_v1.yaml").is_file()
+    assert (destination / "specs" / "label_forward_return_v1.yaml").is_file()
+    assert (destination / "split_specs" / "chronological_v1.json").is_file()
+
+
+def test_renderer_rendered_plan_keeps_explicit_facts(tmp_path):
+    canonical = [
+        "D:/data/canonical/dataset=market_bars_canonical/build-one",
+        "D:/data/canonical/dataset=market_bars_canonical/build-two",
+    ]
+    destination = tmp_path / "bundle"
+    result = run_renderer(
+        tmp_path,
+        canonical_dirs=canonical,
+        output_root="D:/data/datasets",
+        built_at="2026-08-05T15:00:00+00:00",
+        destination=destination,
+    )
+    assert result.returncode == 0, result.stderr
+    plan = json.loads((destination / "complete.plan.json").read_text(encoding="utf-8"))
+    assert plan["canonical_build_dirs"] == canonical
+    assert plan["output_root"] == "D:/data/datasets"
+    assert plan["built_at"] == "2026-08-05T15:00:00.000000+00:00"
+    assert plan["feature_spec_files"] == ["specs/feature_simple_return_v1.yaml"]
+    assert plan["label_spec_files"] == ["specs/label_forward_return_v1.yaml"]
+    assert plan["dataset_as_of"] is None
+    split = json.loads(
+        (EXAMPLES_DIR / "split_specs" / "chronological_v1.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert plan["split_spec"] == split
+    empty = json.loads((destination / "empty.plan.json").read_text(encoding="utf-8"))
+    assert empty["requests"] == []
+    assert empty["canonical_build_dirs"] == canonical
+    assert empty["split_spec"] == split
+
+
+def test_renderer_rendered_plan_contains_no_placeholders(tmp_path):
+    destination = tmp_path / "bundle"
+    result = run_renderer(
+        tmp_path,
+        canonical_dirs=["D:/data/canonical/build"],
+        output_root="D:/data/datasets",
+        built_at=BUILT_AT_ISO,
+        destination=destination,
+    )
+    assert result.returncode == 0, result.stderr
+    for name in ("complete.plan.json", "empty.plan.json"):
+        text = (destination / name).read_text(encoding="utf-8")
+        assert "<" not in text and ">" not in text
+
+
+def test_renderer_normalizes_built_at_to_utc(tmp_path):
+    destination = tmp_path / "bundle"
+    result = run_renderer(
+        tmp_path,
+        canonical_dirs=["D:/data/canonical/build"],
+        output_root="D:/data/datasets",
+        built_at="2026-08-05T15:00:00+08:00",
+        destination=destination,
+    )
+    assert result.returncode == 0, result.stderr
+    plan = json.loads((destination / "complete.plan.json").read_text(encoding="utf-8"))
+    # UTC with a fixed six-digit microsecond field.
+    assert plan["built_at"] == "2026-08-05T07:00:00.000000+00:00"
+
+
+def test_renderer_fixed_six_digit_microseconds(tmp_path):
+    destination = tmp_path / "bundle"
+    result = run_renderer(
+        tmp_path,
+        canonical_dirs=["D:/data/canonical/build"],
+        output_root="D:/data/datasets",
+        built_at="2026-08-05T15:00:00.123456+08:00",
+        destination=destination,
+    )
+    assert result.returncode == 0, result.stderr
+    plan = json.loads((destination / "complete.plan.json").read_text(encoding="utf-8"))
+    assert plan["built_at"] == "2026-08-05T07:00:00.123456+00:00"
+
+
+def test_renderer_accepts_timezone_aware_dataset_as_of(tmp_path):
+    destination = tmp_path / "bundle"
+    result = run_renderer(
+        tmp_path,
+        canonical_dirs=["D:/data/canonical/build"],
+        output_root="D:/data/datasets",
+        built_at=BUILT_AT_ISO,
+        dataset_as_of="2026-08-04T16:00:00-04:00",
+        destination=destination,
+    )
+    assert result.returncode == 0, result.stderr
+    plan = json.loads((destination / "complete.plan.json").read_text(encoding="utf-8"))
+    assert plan["dataset_as_of"] == "2026-08-04T20:00:00.000000+00:00"
+
+
+def test_renderer_rejects_naive_built_at(tmp_path):
+    result = run_renderer(
+        tmp_path,
+        canonical_dirs=["D:/data/canonical/build"],
+        output_root="D:/data/datasets",
+        built_at="2026-08-05T15:00:00",
+        destination=tmp_path / "bundle",
+    )
+    assert result.returncode == 1
+    assert "timezone-aware" in result.stderr
+
+
+def test_renderer_rejects_naive_dataset_as_of(tmp_path):
+    result = run_renderer(
+        tmp_path,
+        canonical_dirs=["D:/data/canonical/build"],
+        output_root="D:/data/datasets",
+        built_at=BUILT_AT_ISO,
+        dataset_as_of="2026-08-04T16:00:00",
+        destination=tmp_path / "bundle",
+    )
+    assert result.returncode == 1
+    assert "timezone-aware" in result.stderr
+
+
+def test_renderer_refuses_existing_non_empty_destination(tmp_path):
+    destination = tmp_path / "bundle"
+    destination.mkdir()
+    (destination / "leftover.txt").write_text("x", encoding="utf-8")
+    result = run_renderer(
+        tmp_path,
+        canonical_dirs=["D:/data/canonical/build"],
+        output_root="D:/data/datasets",
+        built_at=BUILT_AT_ISO,
+        destination=destination,
+    )
+    assert result.returncode == 1
+    assert "refusing to overwrite" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert result.stdout == ""
+    assert (destination / "leftover.txt").read_text(encoding="utf-8") == "x"
+
+
+def test_renderer_destination_is_regular_file(tmp_path):
+    destination = tmp_path / "bundle"
+    destination.write_text("fixed bytes", encoding="utf-8")
+    result = run_renderer(
+        tmp_path,
+        canonical_dirs=["D:/data/canonical/build"],
+        output_root="D:/data/datasets",
+        built_at=BUILT_AT_ISO,
+        destination=destination,
+    )
+    assert result.returncode == 1
+    assert "destination exists and is not a directory" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert result.stdout == ""
+    assert destination.read_text(encoding="utf-8") == "fixed bytes"
+
+
+def test_renderer_existing_empty_directory_renders(tmp_path):
+    destination = tmp_path / "bundle"
+    destination.mkdir()
+    result = run_renderer(
+        tmp_path,
+        canonical_dirs=["D:/data/canonical/build"],
+        output_root="D:/data/datasets",
+        built_at=BUILT_AT_ISO,
+        destination=destination,
+    )
+    assert result.returncode == 0, result.stderr
+    assert (destination / "complete.plan.json").is_file()
+    assert (destination / "empty.plan.json").is_file()
+    assert (destination / "specs" / "feature_simple_return_v1.yaml").is_file()
+
+
+def test_renderer_rejects_blank_arguments(tmp_path):
+    cases = [
+        ["--canonical-build-dir", "", "--output-root", "D:/data/datasets",
+         "--built-at", BUILT_AT_ISO, "--destination", str(tmp_path / "b1")],
+        ["--canonical-build-dir", "   ", "--output-root", "D:/data/datasets",
+         "--built-at", BUILT_AT_ISO, "--destination", str(tmp_path / "b2")],
+        ["--canonical-build-dir", "D:/data/canonical/build", "--output-root", "",
+         "--built-at", BUILT_AT_ISO, "--destination", str(tmp_path / "b3")],
+        ["--canonical-build-dir", "D:/data/canonical/build", "--output-root", "   ",
+         "--built-at", BUILT_AT_ISO, "--destination", str(tmp_path / "b4")],
+        ["--canonical-build-dir", "D:/data/canonical/build", "--output-root",
+         "D:/data/datasets", "--built-at", BUILT_AT_ISO, "--destination", ""],
+        ["--canonical-build-dir", "D:/data/canonical/build", "--output-root",
+         "D:/data/datasets", "--built-at", BUILT_AT_ISO, "--destination", "   "],
+    ]
+    for argv in cases:
+        result = subprocess.run(
+            [sys.executable, str(EXAMPLES_DIR / "render_plans.py"), *argv],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=ROOT,
+        )
+        assert result.returncode == 1, argv
+        assert "render_plans: error:" in result.stderr, argv
+        assert "Traceback" not in result.stderr, argv
+        assert result.stdout == "", argv
+
+
+def test_renderer_filesystem_error_reports_cleanly(tmp_path):
+    # A regular file as the destination's parent forces mkdir to fail with
+    # a platform-independent OSError; no chmod-based permission tricks.
+    parent = tmp_path / "not-a-directory"
+    parent.write_text("x", encoding="utf-8")
+    destination = parent / "bundle"
+    result = run_renderer(
+        tmp_path,
+        canonical_dirs=["D:/data/canonical/build"],
+        output_root="D:/data/datasets",
+        built_at=BUILT_AT_ISO,
+        destination=destination,
+    )
+    assert result.returncode == 1
+    assert result.stderr.startswith("render_plans: error:")
+    assert "Traceback" not in result.stderr
+    assert result.stdout == ""
+
+
+def test_renderer_parser_datetime_semantics_unchanged(tmp_path):
+    destination = tmp_path / "bundle"
+    result = run_renderer(
+        tmp_path,
+        canonical_dirs=["D:/data/canonical/build"],
+        output_root="D:/data/datasets",
+        built_at="2026-08-05T15:00:00.123456+08:00",
+        dataset_as_of="2026-08-04T16:00:00-04:00",
+        destination=destination,
+    )
+    assert result.returncode == 0, result.stderr
+    plan = dcli.parse_build_plan_bytes(
+        (destination / "complete.plan.json").read_bytes()
+    )
+    # The parsed datetimes represent exactly the input instants; only the
+    # JSON text is normalized to UTC with six-digit microseconds.
+    assert plan.built_at == datetime(2026, 8, 5, 7, 0, 0, 123456, tzinfo=UTC)
+    assert plan.dataset_as_of == datetime(2026, 8, 4, 20, 0, 0, tzinfo=UTC)
+    text = (destination / "complete.plan.json").read_text(encoding="utf-8")
+    assert '"built_at": "2026-08-05T07:00:00.123456+00:00"' in text
+    assert '"dataset_as_of": "2026-08-04T20:00:00.000000+00:00"' in text
+
+
+def test_renderer_is_deterministic(tmp_path):
+    canonical = [
+        "D:/data/canonical/dataset=market_bars_canonical/build-one",
+        "D:/data/canonical/dataset=market_bars_canonical/build-two",
+    ]
+    first = tmp_path / "bundle-1"
+    result = run_renderer(
+        tmp_path,
+        canonical_dirs=canonical,
+        output_root="D:/data/datasets",
+        built_at=BUILT_AT_ISO,
+        destination=first,
+    )
+    assert result.returncode == 0, result.stderr
+    second = tmp_path / "bundle-2"
+    result = run_renderer(
+        tmp_path,
+        canonical_dirs=canonical,
+        output_root="D:/data/datasets",
+        built_at=BUILT_AT_ISO,
+        destination=second,
+    )
+    assert result.returncode == 0, result.stderr
+    first_files = sorted(p.relative_to(first).as_posix() for p in first.rglob("*") if p.is_file())
+    second_files = sorted(p.relative_to(second).as_posix() for p in second.rglob("*") if p.is_file())
+    assert first_files == second_files
+    for rel in first_files:
+        assert (first / rel).read_bytes() == (second / rel).read_bytes()
+
+
+def test_renderer_uses_explicit_built_at_only(tmp_path):
+    destination = tmp_path / "bundle"
+    result = run_renderer(
+        tmp_path,
+        canonical_dirs=["D:/data/canonical/build"],
+        output_root="D:/data/datasets",
+        built_at=BUILT_AT_ISO,
+        destination=destination,
+    )
+    assert result.returncode == 0, result.stderr
+    plan = json.loads((destination / "complete.plan.json").read_text(encoding="utf-8"))
+    # The renderer normalizes to UTC with a fixed six-digit microsecond
+    # field, which the formal plan parser accepts.
+    assert plan["built_at"] == "2026-08-05T12:00:00.000000+00:00"
+
+
+def test_renderer_rendered_plan_parses_by_formal_parser(tmp_path, fixtures):
+    destination = render_bundle(tmp_path, fixtures)
+    payload = (destination / "complete.plan.json").read_bytes()
+    plan = dcli.parse_build_plan_bytes(payload)
+    assert plan.plan_schema_version == DATASET_BUILD_PLAN_SCHEMA_VERSION
+    assert len(plan.canonical_build_dirs) == 2
+    assert len(plan.requests) == 1
+    assert plan.built_at == BUILT_AT
+
+
+def test_renderer_requires_arguments(tmp_path):
+    result = subprocess.run(
+        [sys.executable, str(EXAMPLES_DIR / "render_plans.py")],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        cwd=ROOT,
+    )
+    assert result.returncode == 2
+
+
+# --- Example canaries through the real CLI ----------------------------------
+
+
+def test_example_complete_canary(fixtures, tmp_path, capsys):
+    destination = render_bundle(tmp_path, fixtures)
+    code, out, err = run_cli(
+        ["dataset-build", "--plan", str(destination / "complete.plan.json")], capsys
+    )
+    assert code == 0, err
+    built = json.loads(out)
+    assert built["dataset_status"] == "COMPLETE"
+    assert built["logical_row_count"] == 1
+    assert built["result"] == "SUCCESS"
+    assert built["created_new_build"] is True
+
+    build_path = Path(built["build_path"])
+    before = snapshot(build_path)
+    code, out, err = run_cli(
+        ["dataset-verify", "--build-dir", built["build_path"]], capsys
+    )
+    assert code == 0, err
+    assert json.loads(out)["result"] == "VERIFIED"
+    assert snapshot(build_path) == before
+
+    code, out, err = run_cli(
+        [
+            "dataset-inspect",
+            "--build-dir",
+            built["build_path"],
+            "--offset",
+            "0",
+            "--limit",
+            "20",
+        ],
+        capsys,
+    )
+    assert code == 0, err
+    inspected = json.loads(out)
+    assert inspected["result"] == "INSPECTED"
+    assert inspected["dataset_id"] == built["dataset_id"]
+    assert snapshot(build_path) == before
+
+
+def test_example_complete_canary_idempotent_rebuild(fixtures, tmp_path, capsys):
+    destination = render_bundle(tmp_path, fixtures)
+    plan_path = destination / "complete.plan.json"
+    code, out, err = run_cli(["dataset-build", "--plan", str(plan_path)], capsys)
+    first = json.loads(out)
+    assert first["created_new_build"] is True
+    before = snapshot(Path(first["build_path"]))
+    code, out, err = run_cli(["dataset-build", "--plan", str(plan_path)], capsys)
+    second = json.loads(out)
+    assert code == 0, err
+    assert second["created_new_build"] is False
+    assert second["dataset_id"] == first["dataset_id"]
+    assert snapshot(Path(second["build_path"])) == before
+
+
+def test_example_empty_canary(fixtures, tmp_path, capsys):
+    destination = render_bundle(tmp_path, fixtures)
+    code, out, err = run_cli(
+        ["dataset-build", "--plan", str(destination / "empty.plan.json")], capsys
+    )
+    assert code == 0, err
+    built = json.loads(out)
+    assert built["dataset_status"] == "EMPTY"
+    assert built["logical_row_count"] == 0
+    assert built["result"] == "SUCCESS"
+
+    code, out, err = run_cli(
+        ["dataset-verify", "--build-dir", built["build_path"]], capsys
+    )
+    assert code == 0, err
+    assert json.loads(out)["result"] == "VERIFIED"
+
+    code, out, err = run_cli(
+        ["dataset-inspect", "--build-dir", built["build_path"]], capsys
+    )
+    assert code == 0, err
+    assert json.loads(out)["result"] == "INSPECTED"

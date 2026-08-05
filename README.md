@@ -87,6 +87,8 @@ market-vault dataset-inspect --build-dir <PATH>
 
 The Dataset commands never load `settings.yaml`, never connect to OpenD, and never access the network.
 
+**Verified Dataset CLI examples** — copyable FeatureSpec / LabelSpec / split-spec files, COMPLETE and EMPTY build-plan templates, a stdlib-only renderer, and a full Windows PowerShell flow live in [examples/dataset_cli/](examples/dataset_cli/README.md). The examples document the current formal CLI and schema only; they add no new Dataset capability.
+
 ### How a build works
 
 - `dataset-build` accepts only `--plan`. There is no `--output-root`, `--latest`, `--force`, `--repair`, or any other override: every formal fact comes from the plan, so the command line and the file can never be two sources of truth.

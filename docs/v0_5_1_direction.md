@@ -124,13 +124,19 @@ The v0.5.1 release must keep, unchanged:
   of the v0.5.0 direction and release notes, this direction document, and
   the release checker / release tests switched to verifying the released
   state.
-- **PR-2** (`fix: remove NumPy timedelta deprecation warnings`) — in
-  progress on the `fix/v0.5.1-numpy-timedelta-deprecations` branch:
-  explicit-unit `pd.Timedelta` construction in production and tests, the
-  precise warning-as-error pytest guard, and the
+- **PR-2** (`fix: remove NumPy timedelta deprecation warnings`) — merged
+  (GitHub PR #31, squash merge commit
+  `2d9c8a539f04ee2d75e5482c858ec6c3364af135`): explicit-unit
+  `pd.Timedelta` construction in production and tests, the precise
+  warning-as-error pytest guard, and the
   `tests/test_deprecation_compatibility_v051.py` regression suite.
+- **PR-3** (`docs: add verified Dataset CLI examples`) — in progress on the
+  `docs/v0.5.1-dataset-cli-examples` branch: verified FeatureSpec /
+  LabelSpec / split-spec examples, COMPLETE and EMPTY build-plan templates,
+  the stdlib-only `examples/dataset_cli/render_plans.py` renderer, the
+  Windows PowerShell usage flow, common-error documentation, and example
+  regression tests.
 - The package version is still **0.5.0**; no dependency changes.
-- PR-3 (Dataset CLI examples) and PR-4 (v0.5.1 release preparation) have
-  not started.
+- PR-4 (v0.5.1 release preparation) has not started.
 - Sample Generator, Dataset Catalog, Python Client, and ML Experiment have
   not started.
