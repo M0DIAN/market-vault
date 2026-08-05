@@ -521,17 +521,29 @@ of scope for v0.5.0.
 - **PR-1** (`docs: plan v0.5.0 deterministic dataset builder`) — merged:
   ADR 0002 and this direction document.
 - **PR-2** (`feat: add transform implementation registry contracts`) —
-  implemented in this branch: the explicit immutable Transform
-  Implementation Registry, frozen registration models, exact
-  `transform_ref` resolution (the complete v1 `module.path:function`
-  string is the only key), strict FeatureSpec/LabelSpec compatibility
-  preflight, exact parameter-schema validation, and versioned deterministic
-  implementation fingerprints mapped to the existing `ImplementationPin` /
-  `DatasetIdentityInput` integration. See
+  merged: the explicit immutable Transform Implementation Registry, frozen
+  registration models, exact `transform_ref` resolution (the complete v1
+  `module.path:function` string is the only key), strict
+  FeatureSpec/LabelSpec compatibility preflight, exact parameter-schema
+  validation, and versioned deterministic implementation fingerprints
+  mapped to the existing `ImplementationPin` / `DatasetIdentityInput`
+  integration. See
   [contracts/transform_implementation_registry.md](contracts/transform_implementation_registry.md).
-- Registry, preflight, and fingerprint work is complete. Built-in Feature
-  and Label transforms (PR-3 / PR-4) and the transform executor are **not
-  implemented yet**; no Feature or Label value is computed and no Dataset
-  builder, Parquet, or CLI exists.
+- **PR-3** (`feat: execute deterministic built-in feature transforms`) —
+  implemented in this branch: the eight built-in basic OHLCV Feature
+  transforms (simple_return, log_return, rolling_mean, rolling_std,
+  rolling_volume_mean, volume_ratio, candle_range, candle_body), their
+  immutable built-in registrations, the frozen Feature transform invocation
+  contract, the pure in-memory Feature execution core with strict PIT row
+  binding, market/archive clock, provenance, trailing-window contiguity,
+  output-type, and finite-value validation, and the explicit COMPLETE /
+  EXCLUDED Feature result models. See
+  [contracts/built_in_feature_execution.md](contracts/built_in_feature_execution.md).
+- Built-in Feature execution is implemented. Label transforms and Label
+  execution (PR-4), Dataset orchestration (PR-5), Dataset
+  materialization/Parquet (PR-6), the verified Dataset reader (PR-7), and
+  the Dataset CLI (PR-8) are **not implemented yet**; no Label value is
+  computed, no `label_status` or `actual_label_end_time` is produced, and
+  no Dataset builder, Parquet, or CLI exists.
 - The package version remains **0.4.0** (it stays 0.4.0 through PR-9 of
   this sequence; the bump to 0.5.0 happens only in PR-10).

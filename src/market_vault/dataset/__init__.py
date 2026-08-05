@@ -42,19 +42,53 @@ strict FeatureSpec/LabelSpec compatibility preflight, exact parameter-schema
 validation, and versioned deterministic implementation fingerprints that map
 to the existing ``ImplementationPin`` entries of
 ``DatasetIdentityInput.implementations``. The registry resolves only explicit
-built-in registrations; it never imports ``transform_ref``, never executes
-an implementation, contains no built-in Feature or Label transform, and
-does not compute any Feature or Label value.
+built-in registrations; it never imports ``transform_ref`` and never executes
+an implementation.
 
-This layer does not compute features or labels, execute transforms, build
-samples or datasets, export Dataset Parquet, build the final DatasetManifest,
-create DuckDB views, add CLI commands, or train models. The Canonical
-manifest remains authoritative for Canonical builds; the Dataset layer only
-references immutable Canonical builds and their stable identities.
+The deterministic built-in Feature execution core (v0.5.0 PR-3;
+:mod:`market_vault.dataset.feature_models`,
+:mod:`market_vault.dataset.feature_registry`,
+:mod:`market_vault.dataset.feature_execution`, and
+:mod:`market_vault.dataset.feature_transforms`) executes eight basic OHLCV
+Feature transforms (simple_return, log_return, rolling_mean, rolling_std,
+rolling_volume_mean, volume_ratio, candle_range, candle_body) over the
+PIT-selected Canonical rows with strict row binding, market/archive clock,
+provenance, trailing-window contiguity, output-type, and finite-value
+validation, producing explicit COMPLETE / EXCLUDED results under the frozen
+invocation contract. The executor calls only the built-in registry's
+function objects; no external registration can be injected.
+
+This layer does not compute labels, execute Label transforms, produce
+``label_status`` or ``actual_label_end_time``, run chronological split
+execution, build samples or datasets, export Dataset Parquet, build the
+final DatasetManifest, create DuckDB views, add CLI commands, or train
+models. The Canonical manifest remains authoritative for Canonical builds;
+the Dataset layer only references immutable Canonical builds and their
+stable identities.
 """
 
 from .content import dataset_schema_id, logical_dataset_content_id
 from .encoding import DATASET_IDENTITY_ENCODING_VERSION, DatasetError
+from .feature_execution import execute_builtin_features
+from .feature_models import (
+    FEATURE_EXECUTION_CONTRACT_VERSION,
+    FEATURE_EXCLUSION_CROSS_MARKET_DATE,
+    FEATURE_EXCLUSION_INSUFFICIENT_ROWS,
+    FEATURE_EXCLUSION_NON_CONTIGUOUS_ROWS,
+    FEATURE_TRANSFORM_CALL_CONTRACT_VERSION,
+    FEATURE_VALUE_STATUS_COMPLETE,
+    FEATURE_VALUE_STATUS_EXCLUDED,
+    FeatureExecutionDiagnostics,
+    FeatureExecutionError,
+    FeatureExecutionResult,
+    FeatureSampleResult,
+    FeatureTransformInput,
+    FeatureValueResult,
+)
+from .feature_registry import (
+    built_in_feature_registrations,
+    built_in_feature_registry,
+)
 from .identity import dataset_id
 from .manifest import (
     build_dataset_manifest,
@@ -217,7 +251,14 @@ __all__ = [
     "DATASET_MANIFEST_SCHEMA_VERSION",
     "DATASET_SCHEMA_ID_VERSION",
     "FEATURE_LABEL_SPEC_CONTENT_ID_VERSION",
+    "FEATURE_EXECUTION_CONTRACT_VERSION",
+    "FEATURE_EXCLUSION_CROSS_MARKET_DATE",
+    "FEATURE_EXCLUSION_INSUFFICIENT_ROWS",
+    "FEATURE_EXCLUSION_NON_CONTIGUOUS_ROWS",
     "FEATURE_SPEC_SCHEMA_VERSION",
+    "FEATURE_TRANSFORM_CALL_CONTRACT_VERSION",
+    "FEATURE_VALUE_STATUS_COMPLETE",
+    "FEATURE_VALUE_STATUS_EXCLUDED",
     "LABEL_SPEC_SCHEMA_VERSION",
     "LABEL_STATUS_COMPLETE",
     "LABEL_STATUS_INCOMPLETE",
@@ -281,7 +322,13 @@ __all__ = [
     "CompletionSummary",
     "CrossTradingDayPolicy",
     "DatasetError",
+    "FeatureExecutionDiagnostics",
+    "FeatureExecutionError",
+    "FeatureExecutionResult",
+    "FeatureSampleResult",
     "FeatureSpec",
+    "FeatureTransformInput",
+    "FeatureValueResult",
     "GapReference",
     "ImplementationPin",
     "LabelHorizon",
@@ -315,11 +362,14 @@ __all__ = [
     "assign_chronological_splits",
     "assemble_point_in_time_samples",
     "build_dataset_manifest",
+    "built_in_feature_registrations",
+    "built_in_feature_registry",
     "chronological_split_result_id",
     "chronological_split_spec_content_id",
     "chronological_split_spec_pin",
     "dataset_id",
     "dataset_schema_id",
+    "execute_builtin_features",
     "feature_label_spec_content_id",
     "feature_label_spec_pin",
     "load_feature_spec",
