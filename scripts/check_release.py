@@ -21,7 +21,7 @@ import sys
 import tomllib
 from pathlib import Path
 
-EXPECTED_VERSION = "0.5.0"
+EXPECTED_VERSION = "0.5.1"
 PEP440_RE = re.compile(
     r"^([1-9]\d*!)?(0|[1-9]\d*)(\.(0|[1-9]\d*))*((a|b|rc)(0|[1-9]\d*))?"
     r"(\.post(0|[1-9]\d*))?(\.dev(0|[1-9]\d*))?$"
@@ -36,8 +36,13 @@ CI_PACKAGE_VERSION_MARKERS = (
 CI_METADATA_VERSION_MARKERS = (
     f"assert version('market-vault') == '{EXPECTED_VERSION}'",
 )
-# The CI fresh-wheel public API smoke marker must use the v0.5 release marker.
-CI_PUBLIC_API_MARKER = "V050_PUBLIC_API_IMPORT_OK"
+# The CI fresh-wheel public API smoke marker must use the v0.5.1 marker.
+CI_PUBLIC_API_MARKER = "V051_PUBLIC_API_IMPORT_OK"
+# The exact NumPy timedelta warning-as-error guard that must stay in
+# pyproject.toml; an ignore-based substitute is never accepted.
+WARNING_GUARD_MARKER = (
+    "error:The 'generic' unit for NumPy timedelta is deprecated"
+)
 # Stale v0.4-era claims that must never appear in the current README.
 STALE_README_PHRASES = (
     "final Dataset builder is not implemented",
@@ -89,24 +94,84 @@ RELEASE_NOTES_STALE_PHRASES = (
     "No v0.5.0 tag exists",
     "No GitHub Release is published",
 )
-# Facts the v0.5.1 direction document must state.
+# Facts the v0.5.1 direction document must state during the release
+# preparation.
 DIRECTION_V051_FACTS = (
-    "Status: planned",
+    "Status: implementation complete; v0.5.1 release preparation",
     "Stability and Usability Maintenance",
     "PR-1",
     "PR-2",
     "PR-3",
     "PR-4",
+    "0.5.1",
+    "8de57d497ae5d922e3df29d9475f14b9407865f0",
+    "2d9c8a539f04ee2d75e5482c858ec6c3364af135",
+    "240f7ccac89a773366a510f10a13d6de801051ea",
     "Sample Generator",
     "Dataset Catalog",
     "Python Client",
     "ML Experiment",
 )
 # The v0.5.1 direction document must mark the future capabilities as
-# non-goals, not as implemented work.
+# non-goals and explicitly state they have not started.
 DIRECTION_V051_NONGOAL_MARKERS = (
     "Explicit non-goals",
     "does not implement",
+    "have not started",
+)
+# Stale v0.5.1 direction status wording that must never appear in the
+# current direction document.
+STALE_V051_DIRECTION_PHRASES = (
+    "Status: planned",
+    "Status: proposed",
+)
+# Facts the v0.5.1 release notes must state.
+RELEASE_V051_FACTS = (
+    "v0.5.1",
+    "release preparation",
+    "3b4d03c785123e204885faea08df7b9d7ed07ec0",
+    "PR #30",
+    "PR #31",
+    "PR #32",
+    "8de57d497ae5d922e3df29d9475f14b9407865f0",
+    "2d9c8a539f04ee2d75e5482c858ec6c3364af135",
+    "240f7ccac89a773366a510f10a13d6de801051ea",
+    "warning-as-error",
+    "Dataset CLI examples",
+    "Renderer hardening",
+    "market_vault-0.5.1-py3-none-any.whl",
+    "market_vault-0.5.1.tar.gz",
+    "PyPI",
+)
+# Stale v0.5.1 wording that must never appear in the current release notes.
+RELEASE_V051_STALE_PHRASES = (
+    "v0.5.1 is released",
+    "v0.5.1 released",
+)
+# Facts the v0.5.1 maintenance section of the README must state.
+README_MAINTENANCE_FACTS = (
+    "V0.5.1 stability and usability maintenance",
+    "Compatibility cleanup",
+    "warning-as-error",
+    "examples/dataset_cli/README.md",
+    "stdlib-only",
+)
+# The example files that must exist, and the renderer markers that prove the
+# hardened boundaries stayed in place.
+EXAMPLES_REQUIRED = (
+    "examples/dataset_cli/README.md",
+    "examples/dataset_cli/render_plans.py",
+    "examples/dataset_cli/plans/complete.plan.template.json",
+    "examples/dataset_cli/plans/empty.plan.template.json",
+    "examples/dataset_cli/specs/feature_simple_return_v1.yaml",
+    "examples/dataset_cli/specs/label_forward_return_v1.yaml",
+    "examples/dataset_cli/split_specs/chronological_v1.json",
+)
+RENDERER_MARKERS = (
+    'isoformat(timespec="microseconds")',
+    "destination exists and is not a directory",
+    "refusing to overwrite",
+    "render_plans: error:",
 )
 
 
@@ -153,8 +218,8 @@ def check_readme_title(root: Path) -> list[str]:
     if not path.exists():
         return ["README.md is missing"]
     first_line = path.read_text(encoding="utf-8").splitlines()[0]
-    if first_line.strip() != "# MarketVault v0.5":
-        return [f"README first line is {first_line.strip()!r}, expected '# MarketVault v0.5'"]
+    if first_line.strip() != "# MarketVault v0.5.1":
+        return [f"README first line is {first_line.strip()!r}, expected '# MarketVault v0.5.1'"]
     return []
 
 
@@ -164,10 +229,14 @@ def check_changelog(root: Path) -> list[str]:
         return ["CHANGELOG.md is missing"]
     text = path.read_text(encoding="utf-8")
     failures = []
+    if "## [0.5.1] - 2026-08-06" not in text:
+        failures.append("CHANGELOG.md is missing '## [0.5.1] - 2026-08-06'")
     if "## [0.5.0] - 2026-08-05" not in text:
-        failures.append("CHANGELOG.md is missing '## [0.5.0] - 2026-08-05'")
+        failures.append("CHANGELOG.md no longer contains '## [0.5.0] - 2026-08-05'")
     if "## [0.4.0] - 2026-08-05" not in text:
         failures.append("CHANGELOG.md no longer contains '## [0.4.0] - 2026-08-05'")
+    if "[0.5.1]: https://github.com/M0DIAN/market-vault/compare/v0.5.0...v0.5.1" not in text:
+        failures.append("CHANGELOG.md is missing the v0.5.1 compare link")
     return failures
 
 
@@ -240,15 +309,97 @@ def check_v051_direction(root: Path) -> list[str]:
                 "docs/v0_5_1_direction.md does not mark the future capabilities "
                 f"as non-goals ({marker!r})"
             )
+    for phrase in STALE_V051_DIRECTION_PHRASES:
+        if phrase in text:
+            failures.append(
+                f"docs/v0_5_1_direction.md still contains the stale wording {phrase!r}"
+            )
+    return failures
+
+
+def check_v051_release_notes(root: Path) -> list[str]:
+    path = root / "docs" / "release_v0_5_1.md"
+    if not path.exists():
+        return ["docs/release_v0_5_1.md is missing"]
+    text = path.read_text(encoding="utf-8")
+    failures = []
+    for fact in RELEASE_V051_FACTS:
+        if fact not in text:
+            failures.append(
+                f"docs/release_v0_5_1.md does not state the fact {fact!r}"
+            )
+    for phrase in RELEASE_V051_STALE_PHRASES:
+        if phrase in text:
+            failures.append(
+                f"docs/release_v0_5_1.md still contains the stale wording {phrase!r}"
+            )
     return failures
 
 
 def check_old_release_notes(root: Path) -> list[str]:
     failures = []
+    if not (root / "docs" / "release_v0_5_0.md").exists():
+        failures.append("docs/release_v0_5_0.md is missing")
     if not (root / "docs" / "release_v0_4_0.md").exists():
         failures.append("docs/release_v0_4_0.md is missing")
     if not (root / "docs" / "release_v0_3_0.md").exists():
         failures.append("docs/release_v0_3_0.md is missing")
+    return failures
+
+
+def check_readme_maintenance_section(root: Path) -> list[str]:
+    path = root / "README.md"
+    if not path.exists():
+        return ["README.md is missing"]
+    text = path.read_text(encoding="utf-8")
+    failures = []
+    for fact in README_MAINTENANCE_FACTS:
+        if fact not in text:
+            failures.append(f"README does not state the v0.5.1 maintenance fact {fact!r}")
+    return failures
+
+
+def check_warning_guard(root: Path) -> list[str]:
+    path = root / "pyproject.toml"
+    if not path.exists():
+        return ["pyproject.toml is missing"]
+    text = path.read_text(encoding="utf-8")
+    failures = []
+    if WARNING_GUARD_MARKER not in text:
+        failures.append(
+            "pyproject.toml is missing the exact NumPy timedelta "
+            "warning-as-error guard"
+        )
+    if "ignore::DeprecationWarning" in text or "ignore:.*:DeprecationWarning" in text:
+        failures.append(
+            "pyproject.toml must not ignore DeprecationWarnings instead of "
+            "the exact warning-as-error guard"
+        )
+    return failures
+
+
+def check_examples(root: Path) -> list[str]:
+    failures = []
+    for rel in EXAMPLES_REQUIRED:
+        if not (root / rel).exists():
+            failures.append(f"{rel} is missing")
+    readme = root / "examples" / "dataset_cli" / "README.md"
+    if readme.exists():
+        text = readme.read_text(encoding="utf-8")
+        if "market-vault 0.5.1" not in text:
+            failures.append(
+                "examples/dataset_cli/README.md does not state the install "
+                "version 'market-vault 0.5.1'"
+            )
+    renderer = root / "examples" / "dataset_cli" / "render_plans.py"
+    if renderer.exists():
+        text = renderer.read_text(encoding="utf-8")
+        for marker in RENDERER_MARKERS:
+            if marker not in text:
+                failures.append(
+                    f"examples/dataset_cli/render_plans.py is missing the "
+                    f"marker {marker!r}"
+                )
     return failures
 
 
@@ -346,6 +497,15 @@ def check_ci_version_assertions(root: Path) -> list[str]:
         )
     if "0.3.0" in text:
         failures.append(".github/workflows/ci.yml still references the old version 0.3.0")
+    if "compileall -q src tests scripts examples" not in text:
+        failures.append(
+            ".github/workflows/ci.yml compile step must cover the examples "
+            "directory"
+        )
+    if "render_plans.py --help" not in text:
+        failures.append(
+            ".github/workflows/ci.yml is missing the example renderer help smoke"
+        )
     return failures
 
 
@@ -397,10 +557,14 @@ def main() -> int:
         ("README title", check_readme_title),
         ("CHANGELOG entry", check_changelog),
         ("README wording", check_readme_no_stale_wording),
+        ("README maintenance section", check_readme_maintenance_section),
         ("direction status", check_direction_status),
         ("release notes", check_release_notes),
+        ("v0.5.1 release notes", check_v051_release_notes),
         ("v0.5.1 direction", check_v051_direction),
         ("old release notes", check_old_release_notes),
+        ("warning guard", check_warning_guard),
+        ("examples", check_examples),
         ("README upgrade notes", check_readme_upgrade_sections),
         ("README dataset builder", check_readme_dataset_builder_section),
         ("README explicit plan", check_readme_explicit_build_plan),
