@@ -58,13 +58,29 @@ validation, producing explicit COMPLETE / EXCLUDED results under the frozen
 invocation contract. The executor calls only the built-in registry's
 function objects; no external registration can be injected.
 
-This layer does not compute labels, execute Label transforms, produce
-``label_status`` or ``actual_label_end_time``, run chronological split
-execution, build samples or datasets, export Dataset Parquet, build the
-final DatasetManifest, create DuckDB views, add CLI commands, or train
-models. The Canonical manifest remains authoritative for Canonical builds;
-the Dataset layer only references immutable Canonical builds and their
-stable identities.
+The deterministic built-in Label execution core (v0.5.0 PR-4;
+:mod:`market_vault.dataset.label_models`,
+:mod:`market_vault.dataset.label_registry`,
+:mod:`market_vault.dataset.label_execution`, and
+:mod:`market_vault.dataset.label_transforms`) executes four built-in Label
+transforms (forward_return, forward_direction,
+maximum_favorable_excursion, maximum_adverse_excursion) over the exact
+Feature-close anchor row and the PIT-selected future Label rows under the
+FEATURE_CLOSE_ALIGNED alignment rule, proving required-input completeness
+(exact horizon target, contiguous excursion observation window) and
+producing explicit COMPLETE / INCOMPLETE results with
+``actual_label_end_time`` taken from the last actually consumed Label row.
+BARS horizons and observation windows only; MINUTES, TRADING_DAYS, and
+cross-trading-day execution fail closed at registry preflight. The shared
+PIT-to-Canonical binding and provenance verification lives in the private
+:mod:`market_vault.dataset.execution_provenance` module, reused by both
+executors.
+
+This layer does not run chronological split execution, build samples or
+datasets, export Dataset Parquet, build the final DatasetManifest, create
+DuckDB views, add CLI commands, or train models. The Canonical manifest
+remains authoritative for Canonical builds; the Dataset layer only
+references immutable Canonical builds and their stable identities.
 """
 
 from .content import dataset_schema_id, logical_dataset_content_id
@@ -90,6 +106,26 @@ from .feature_registry import (
     built_in_feature_registry,
 )
 from .identity import dataset_id
+from .label_execution import execute_builtin_labels
+from .label_models import (
+    LABEL_ALIGNMENT_FEATURE_CLOSE_ALIGNED,
+    LABEL_EXECUTION_CONTRACT_VERSION,
+    LABEL_INCOMPLETE_INSUFFICIENT_ROWS,
+    LABEL_INCOMPLETE_MISSING_ANCHOR_ROW,
+    LABEL_INCOMPLETE_MISSING_TARGET_ROW,
+    LABEL_INCOMPLETE_NON_CONTIGUOUS_ROWS,
+    LABEL_TRANSFORM_CALL_CONTRACT_VERSION,
+    LabelExecutionDiagnostics,
+    LabelExecutionError,
+    LabelExecutionResult,
+    LabelSampleResult,
+    LabelTransformInput,
+    LabelValueResult,
+)
+from .label_registry import (
+    built_in_label_registrations,
+    built_in_label_registry,
+)
 from .manifest import (
     build_dataset_manifest,
     serialize_dataset_manifest,
@@ -259,9 +295,16 @@ __all__ = [
     "FEATURE_TRANSFORM_CALL_CONTRACT_VERSION",
     "FEATURE_VALUE_STATUS_COMPLETE",
     "FEATURE_VALUE_STATUS_EXCLUDED",
+    "LABEL_ALIGNMENT_FEATURE_CLOSE_ALIGNED",
+    "LABEL_EXECUTION_CONTRACT_VERSION",
+    "LABEL_INCOMPLETE_INSUFFICIENT_ROWS",
+    "LABEL_INCOMPLETE_MISSING_ANCHOR_ROW",
+    "LABEL_INCOMPLETE_MISSING_TARGET_ROW",
+    "LABEL_INCOMPLETE_NON_CONTIGUOUS_ROWS",
     "LABEL_SPEC_SCHEMA_VERSION",
     "LABEL_STATUS_COMPLETE",
     "LABEL_STATUS_INCOMPLETE",
+    "LABEL_TRANSFORM_CALL_CONTRACT_VERSION",
     "MISSING_POLICY_EXCLUDE_SAMPLE",
     "MISSING_POLICY_FAIL",
     "MISSING_POLICY_LABEL_INCOMPLETE",
@@ -331,9 +374,15 @@ __all__ = [
     "FeatureValueResult",
     "GapReference",
     "ImplementationPin",
+    "LabelExecutionDiagnostics",
+    "LabelExecutionError",
+    "LabelExecutionResult",
     "LabelHorizon",
     "LabelObservationWindow",
+    "LabelSampleResult",
     "LabelSpec",
+    "LabelTransformInput",
+    "LabelValueResult",
     "ResolvedTransform",
     "SourceSnapshotPin",
     "SpecParameter",
@@ -364,12 +413,15 @@ __all__ = [
     "build_dataset_manifest",
     "built_in_feature_registrations",
     "built_in_feature_registry",
+    "built_in_label_registrations",
+    "built_in_label_registry",
     "chronological_split_result_id",
     "chronological_split_spec_content_id",
     "chronological_split_spec_pin",
     "dataset_id",
     "dataset_schema_id",
     "execute_builtin_features",
+    "execute_builtin_labels",
     "feature_label_spec_content_id",
     "feature_label_spec_pin",
     "load_feature_spec",

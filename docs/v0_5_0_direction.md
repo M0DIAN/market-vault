@@ -530,8 +530,8 @@ of scope for v0.5.0.
   integration. See
   [contracts/transform_implementation_registry.md](contracts/transform_implementation_registry.md).
 - **PR-3** (`feat: execute deterministic built-in feature transforms`) —
-  implemented in this branch: the eight built-in basic OHLCV Feature
-  transforms (simple_return, log_return, rolling_mean, rolling_std,
+  merged: the eight built-in basic OHLCV Feature transforms
+  (simple_return, log_return, rolling_mean, rolling_std,
   rolling_volume_mean, volume_ratio, candle_range, candle_body), their
   immutable built-in registrations, the frozen Feature transform invocation
   contract, the pure in-memory Feature execution core with strict PIT row
@@ -539,11 +539,23 @@ of scope for v0.5.0.
   output-type, and finite-value validation, and the explicit COMPLETE /
   EXCLUDED Feature result models. See
   [contracts/built_in_feature_execution.md](contracts/built_in_feature_execution.md).
-- Built-in Feature execution is implemented. Label transforms and Label
-  execution (PR-4), Dataset orchestration (PR-5), Dataset
-  materialization/Parquet (PR-6), the verified Dataset reader (PR-7), and
-  the Dataset CLI (PR-8) are **not implemented yet**; no Label value is
-  computed, no `label_status` or `actual_label_end_time` is produced, and
-  no Dataset builder, Parquet, or CLI exists.
+- **PR-4** (`feat: execute deterministic built-in label transforms`) —
+  implemented in this branch: the four built-in Label transforms
+  (forward_return, forward_direction, maximum_favorable_excursion,
+  maximum_adverse_excursion), their immutable built-in registrations, the
+  frozen Label transform invocation contract, the pure in-memory Label
+  execution core with exact Feature-close anchor binding, exact
+  horizon-target and observation-window alignment (BARS only,
+  FEATURE_CLOSE_ALIGNED only), the shared PIT/Canonical provenance
+  verification, explicit COMPLETE / INCOMPLETE results with fixed reason
+  codes, `actual_label_end_time` from the last actually consumed Label
+  row, and the deterministic Label result models. See
+  [contracts/built_in_label_execution.md](contracts/built_in_label_execution.md).
+- Built-in Feature and Label execution are both implemented. Dataset
+  orchestration (PR-5), Dataset materialization/Parquet (PR-6), the
+  verified Dataset reader (PR-7), and the Dataset CLI (PR-8) are **not
+  implemented yet**: no chronological split is invoked, no Dataset is
+  built, no `dataset_id` is generated, and no Dataset builder, Parquet, or
+  CLI exists.
 - The package version remains **0.4.0** (it stays 0.4.0 through PR-9 of
   this sequence; the bump to 0.5.0 happens only in PR-10).
