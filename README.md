@@ -1,6 +1,6 @@
-# MarketVault v0.4
+# MarketVault v0.5
 
-MarketVault is a local historical market database for moomoo OpenD. V0.1 focused on closed-date stock, ETF, and option candlesticks. V0.2 added option contract static metadata and daily option volatility datasets. V0.3 adds the trading-calendar-driven collection and audit toolchain: a local trading calendar, resumable historical backfill, immutable snapshots, inventory reports, trading-day coverage audits, and intraday integrity audits. V0.4 adds the Canonical Dataset and ML Foundation: immutable Canonical builds from audited COMPLETE snapshots, a verified Canonical reader, three-clock market-bar semantics, two-clock point-in-time sample assembly, versioned Feature/Label spec contracts, deterministic Dataset identity/manifest contracts, chronological splits with actual-label-end purging, and the leakage threat-model regression suite.
+MarketVault is a local historical market database for moomoo OpenD. V0.1 focused on closed-date stock, ETF, and option candlesticks. V0.2 added option contract static metadata and daily option volatility datasets. V0.3 adds the trading-calendar-driven collection and audit toolchain: a local trading calendar, resumable historical backfill, immutable snapshots, inventory reports, trading-day coverage audits, and intraday integrity audits. V0.4 adds the Canonical Dataset and ML Foundation: immutable Canonical builds from audited COMPLETE snapshots, a verified Canonical reader, three-clock market-bar semantics, two-clock point-in-time sample assembly, versioned Feature/Label spec contracts, deterministic Dataset identity/manifest contracts, chronological splits with actual-label-end purging, and the leakage threat-model regression suite. V0.5 adds the Deterministic Dataset Builder: an executable, verified, fail-closed pipeline that runs built-in Feature and Label transforms over verified Canonical builds, computes real `label_status` and `actual_label_end_time`, assigns chronological splits with actual-label-end purge, orchestrates immutable Dataset materialization, and reads the results back through a verified Dataset reader and three formal CLI commands.
 
 ## What this version does
 
@@ -28,6 +28,10 @@ MarketVault is a local historical market database for moomoo OpenD. V0.1 focused
 - Assembles point-in-time Feature/Label observation associations under the market and archive clocks.
 - Assigns chronological TRAIN / VALIDATION / TEST splits and purges samples by actual label end.
 - Adds an eight-threat offline leakage regression suite.
+- Executes the deterministic Dataset pipeline: verified Canonical builds → PIT sample assembly → built-in Feature execution → built-in Label execution → real `label_status` / `actual_label_end_time` → chronological split / purge → Dataset orchestration → immutable Dataset materialization → verified Dataset reader → Dataset CLI.
+- Runs the fixed built-in Feature and Label transform registries with versioned deterministic implementation fingerprints.
+- Provides `dataset-build`, `dataset-verify`, and `dataset-inspect` as settings-independent CLI commands.
+- Adds a seventeen-category end-to-end Dataset determinism and leakage regression suite.
 - Runs CI on Python 3.11 and 3.14, plus a package build/install job.
 
 ## Recommended collection and audit workflow
@@ -52,9 +56,84 @@ This project can backfill historical candlesticks, option-chain static metadata,
 
 MarketVault does not include real-time subscriptions, live Bid/Ask, live Greeks, positions, signals, execution, or automatic trading.
 
+## V0.5 deterministic Dataset builder
+
+V0.5 turns the V0.4 contract chain into one executable, verifiable, reproducible pipeline:
+
+```text
+verified Canonical builds
+    → PIT sample assembly
+    → built-in Feature execution
+    → built-in Label execution
+    → label_status / actual_label_end_time
+    → chronological split / purge
+    → Dataset orchestration
+    → immutable Dataset materialization
+    → verified Dataset reader
+    → Dataset CLI
+```
+
+### The three formal commands
+
+```text
+market-vault dataset-build --plan <PATH>
+market-vault dataset-verify --build-dir <PATH>
+market-vault dataset-inspect --build-dir <PATH>
+```
+
+- `dataset-build` executes one pinned, immutable Dataset build from a single explicit, fixed, versioned build-plan JSON document (`market-vault-dataset-build-plan-v1`). Every formal input — verified Canonical build directories, Feature/Label spec files, sample requests, scope, split spec, optional `dataset_as_of`, and `output_root` — is declared in the plan. The CLI is a thin wrapper over the formal public chain and never duplicates PIT, Feature, Label, Split, Parquet, manifest, staging, or rename logic.
+- `dataset-verify` runs the verified Dataset reader against one explicit final Dataset directory (`<output_root>/<dataset_id>`) and is strictly read-only.
+- `dataset-inspect` verifies the same way and additionally prints the scope, schema, spec pins, split spec, split diagnostics, build report, and an offset/limit slice of the logical rows as deterministic JSON.
+
+The Dataset commands never load `settings.yaml`, never connect to OpenD, and never access the network.
+
+### How a build works
+
+- `dataset-build` accepts only `--plan`. There is no `--output-root`, `--latest`, `--force`, `--repair`, or any other override: every formal fact comes from the plan, so the command line and the file can never be two sources of truth.
+- The plan is explicit and fixed: no parent directory is scanned, no `latest` directory is ever selected, no Canonical build is auto-chosen, and no feature/label/split spec is inferred. Relative plan paths are anchored to the plan file's parent directory.
+- The build never auto-refreshes or re-collects data, never repairs Raw/Curated/Canonical inputs, and never connects to OpenD or the network. It reads only the pinned local inputs and writes only through the materializer.
+- The final Dataset directory is named by the deterministic `dataset_id` (`<output_root>/<dataset_id>`), never by a timestamp. Materialization is atomic: staging on the same filesystem, `_SUCCESS` written last, then a no-overwrite rename. An existing conflicting final directory fails closed and is never overwritten; an identical existing build returns idempotently without rewriting anything.
+- Every build ends with exactly one `load_verified_dataset` call on the committed build path; SUCCESS is printed only when that verification passes and the orchestration / materialization / reader `dataset_id` binding holds.
+- `dataset-verify` and `dataset-inspect` are read-only: they never write, repair, or delete any artifact. The verified Dataset reader never fixes or rewrites anything and never scans for a `latest` directory.
+
+### Built-in transforms only
+
+- Features and Labels are executed only through the fixed built-in Transform Implementation Registry, which is the sole resolution authority for `transform_ref` and emits versioned `ImplementationPin` entries (with deterministic implementation fingerprints) into the Dataset identity.
+- The eight built-in Feature transforms: `simple_return`, `log_return`, `rolling_mean`, `rolling_std`, `rolling_volume_mean`, `volume_ratio`, `candle_range`, `candle_body`.
+- The four built-in Label transforms: `forward_return`, `forward_direction`, `maximum_favorable_excursion`, `maximum_adverse_excursion`.
+- No arbitrary user code is ever executed: no YAML-imported modules, no `eval`/`exec`, no dynamic callbacks. Unknown or unregistered transforms fail the build.
+
+### Leakage-safe dataset policy
+
+- `adjustment = NONE` is the only dataset policy; adjusted-price PIT reconstruction is not implemented.
+- Labels never span trading days: no cross-trading-day Label execution, and a `TRADING_DAYS` Label horizon fails closed as unsupported.
+- `label_status` (COMPLETE / INCOMPLETE) is decided from the actual label input rows; INCOMPLETE labels are excluded from TRAIN/VALIDATION/TEST samples by default.
+- `actual_label_end_time` is the market-availability instant of the last actual label input row — never a nominal horizon guess.
+- TRAIN/VALIDATION samples are purged by the real `actual_label_end_time` against DST-safe split boundaries; TEST has no fourth-split purge.
+- NaN and ±Infinity never enter a Dataset; non-finite Feature or Label output fails the build.
+
+### What the Dataset layer is not
+
+- No ML training, model selection, or hyperparameter tuning.
+- No backtesting, walk-forward frameworks, or feature importance.
+- No signals, online feature store, real-time inference, or automatic trading.
+- No API server and no Python client in this release.
+
+### Dataset contracts
+
+- [ADR 0002: Deterministic Dataset Builder boundary](docs/adr/0002-deterministic-dataset-builder-boundary.md)
+- [Transform implementation registry](docs/contracts/transform_implementation_registry.md)
+- [Built-in Feature execution](docs/contracts/built_in_feature_execution.md)
+- [Built-in Label execution](docs/contracts/built_in_label_execution.md)
+- [Dataset orchestration](docs/contracts/dataset_orchestration.md)
+- [Dataset materialization](docs/contracts/dataset_materialization.md)
+- [Verified Dataset reader](docs/contracts/verified_dataset_reader.md)
+- [Dataset CLI](docs/contracts/dataset_cli.md)
+- [Dataset E2E determinism and leakage regression](docs/contracts/dataset_end_to_end_regression.md)
+
 ## V0.4 canonical and dataset foundation
 
-V0.4 adds the Canonical Dataset and ML Foundation on top of the audited V0.3 collection layer:
+V0.4 delivered the Canonical Dataset and ML Foundation that V0.5 executes:
 
 ```text
 Raw / Curated
@@ -70,15 +149,13 @@ Raw / Curated
 - The Canonical gap sidecar records only confirmable internal nominal-spacing gaps between observed Canonical bars; it never infers leading/trailing/session gaps and never generates synthetic bars.
 - A strict verified Canonical reader (`load_verified_canonical_build`) is the only public read path into committed Canonical builds; it fails closed on any inconsistency.
 - Bars carry three instants: `event_time` (the adopted interval-start instant, UTC), `market_available_at` (computed as `event_time + nominal interval`; exact for bars known to span the complete nominal interval, and a conservative leakage-safe not-before bound for bars that may be truncated at a session boundary or an early close — the market clock used by point-in-time feature assembly), and `archive_available_at` (`run_finished_at`, the archive clock). An optional `dataset_as_of` selects archive-time reproducibility.
-- Deterministic Dataset schema/content/dataset identities and the versioned Dataset manifest are the contract foundation of derived datasets; the final Dataset builder is not implemented.
-- Feature and Label definitions are versioned spec contracts with deterministic semantic content IDs; no Feature or Label value is computed by this layer.
+- Deterministic Dataset schema/content/dataset identities and the versioned Dataset manifest bind every derived Dataset to its inputs; the V0.5 builder executes this foundation end to end.
+- Feature and Label definitions are versioned spec contracts with deterministic semantic content IDs; V0.5 executes values through the fixed built-in registry.
 - PIT sample assembly binds verified Canonical rows to Feature/Label observation windows under the market clock and the optional archive clock.
 - Chronological TRAIN / VALIDATION / TEST splits are assigned by feature window close; samples whose actual label end crosses a boundary are purged.
 - Eight leakage threats (future-bar, archive-time, label-cross-split, adjustment/corporate-action, snapshot substitution, spec drift, completion ambiguity, timezone misattribution) are pinned by an offline regression suite. The default leakage-safe dataset policy is `adjustment = NONE`; adjusted-price PIT reconstruction is not implemented.
 
-The V0.4 layer is currently used through the Python API and the contract modules. There is no final Dataset CLI, no automatic Feature/Label value computation, and no final Dataset Parquet export; the Dataset manifest/identity contracts are the foundation, not a complete Dataset builder.
-
-Contract details:
+V0.4 contracts:
 
 - [ADR 0001: Canonical ML Dataset Boundary](docs/adr/0001-canonical-ml-dataset-boundary.md)
 - [Market-bar timestamp semantics](docs/contracts/market_bar_timestamp_semantics.md)
@@ -509,13 +586,23 @@ data/
 ├─ curated/source=moomoo/dataset=market_bars/...
 ├─ curated/option_contracts/underlying_code=US.MU/capture_date=YYYY-MM-DD/...
 ├─ curated/option_volatility_daily/start_date=YYYY-MM-DD/end_date=YYYY-MM-DD/...
-└─ curated/trading_calendar/scope_type=MARKET/scope_value=US/...
+├─ curated/trading_calendar/scope_type=MARKET/scope_value=US/...
+└─ datasets/<dataset_id>/
+    ├─ dataset.parquet
+    ├─ manifest.json
+    ├─ build_report.json
+    ├─ feature_specs/
+    ├─ label_specs/
+    ├─ split_spec.yaml
+    └─ _SUCCESS
 catalog/market_vault.duckdb
 manifests/*.json
 reports/data_quality/*.json
 ```
 
 Market-bar raw and curated files are written as `batch-<batch_key>-<run_id>.parquet`: each collection run gets its own immutable snapshot, so re-collecting the same date/parameters never overwrites an earlier snapshot. Files from before the snapshot naming (`batch-<batch_key>.parquet`) remain readable and are treated as legacy snapshots. The DuckDB view `market_bars_snapshots` exposes every snapshot row; the public `market_bars` view deduplicates bars by `(code, interval, adjustment, time_utc)` and keeps the newest `ingested_at` row, so the query layer always returns the latest snapshot. The `option_volatility_daily` view deduplicates by `(option_code, trade_date, source)` and chooses the latest row by `captured_at DESC NULLS LAST`, with `ingestion_run_id` only as a secondary tie-breaker.
+
+Dataset final directories live under `data/datasets/<dataset_id>/`; the directory name is the deterministic `dataset_id` itself. The final directory is written only through the atomic materializer, `_SUCCESS` is written last, and a conflicting final directory is never overwritten.
 
 ## Tests
 
@@ -525,14 +612,25 @@ pytest
 
 The tests are offline and do not require OpenD.
 
+## Upgrade from v0.4
+
+- No destructive data migration. V0.4 Raw/Curated data, Canonical builds, the DuckDB catalog, manifests, and CLI continue to work unchanged.
+- Existing data does not need to be deleted or rebuilt.
+- V0.4 Canonical builds, their readers, and all published identities are unchanged; existing manifests remain valid.
+- The v0.4.0 Dataset identity core, its algorithms, and version constants are unchanged; the V0.5 builder computes through the existing identity contracts.
+- Dataset builds are new, independent immutable artifacts; V0.5 never modifies old Raw/Curated/Canonical data.
+- Legacy `batch-<batch_key>.parquet` compatibility is preserved.
+- Existing CLI names and behavior do not change because of the V0.5 pipeline; users can keep using only the V0.1–V0.4 collection/audit workflow.
+- V0.5 capabilities never run automatically in the background.
+
 ## Upgrade from v0.3
 
 - No destructive data migration. V0.3 Raw/Curated data, the DuckDB catalog, manifests, and CLI continue to work unchanged.
 - Existing data does not need to be deleted or rebuilt.
-- Canonical builds are new, independent immutable artifacts; v0.4 never modifies old Raw/Curated data.
+- Canonical builds are new, independent immutable artifacts; v0.4 and v0.5 never modify old Raw/Curated data.
 - Legacy `batch-<batch_key>.parquet` compatibility is preserved.
-- Existing CLI names and behavior do not change because of the v0.4 foundation; users can keep using only the V0.3 collection/audit workflow.
-- V0.4 capabilities never run automatically in the background.
+- Existing CLI names and behavior do not change because of the v0.4/v0.5 layers; users can keep using only the V0.3 collection/audit workflow.
+- V0.4/V0.5 capabilities never run automatically in the background.
 
 ## Upgrade from v0.2
 
@@ -553,3 +651,6 @@ The tests are offline and do not require OpenD.
 - Trading-day coverage (`audit`) classifies each requested date as COMPLETE, INCOMPLETE, or MISSING; `intraday-audit` validates the structure of the latest complete physical snapshot and the internal continuity of observed session segments. Session leading/trailing boundaries are still not validated, wholly missing sessions are not judged, no fixed daily bar counts (390, 1201, 1440) are assumed, and early closes are not recognized. Internal gaps are reported as WARN and are never automatically re-collected.
 - Incremental mode never re-examines gaps before a symbol's latest completed date; fill them with an explicit range backfill.
 - Run one backfill process at a time per dataset; concurrent processes may collect the same items.
+- Dataset transforms are limited to the fixed built-in registry: no arbitrary user transforms, no YAML-imported modules, and no cross-trading-day or `TRADING_DAYS` Label execution.
+- Dataset builds never auto-refresh or auto-collect data; they consume only the pinned local inputs declared in the build plan.
+- The Dataset layer is a data-pipeline interface only: no ML training, no backtest, no signals, and no automatic trading in this release.
