@@ -19,7 +19,7 @@ import math
 import os
 import re
 from dataclasses import FrozenInstanceError, replace
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -2128,3 +2128,490 @@ def test_public_api_surface():
         "ResolvedRow",
     ):
         assert private not in dataset.__all__
+
+
+# ---------------------------------------------------------------------------
+# N. Spec preflight independent of samples.
+# ---------------------------------------------------------------------------
+
+
+def test_alignment_rule_must_be_feature_close_aligned(fixtures):
+    pit = assemble([fixtures.a, fixtures.f], [request()])
+    bad = label_spec(
+        "fr_align", REF_FORWARD_RETURN, ("close",), "float64",
+        horizon=2, start_offset=1, end_offset=1, alignment="ALIGN_OPEN",
+    )
+    with pytest.raises(LabelExecutionError):
+        execute_builtin_labels([fixtures.a, fixtures.f], pit, [bad])
+
+
+def test_alignment_rule_rejected_with_empty_samples(fixtures):
+    pit = hand_result([], [])
+    bad = label_spec(
+        "fr_align", REF_FORWARD_RETURN, ("close",), "float64",
+        horizon=2, start_offset=1, end_offset=1, alignment="ALIGN_OPEN",
+    )
+    with pytest.raises(LabelExecutionError):
+        execute_builtin_labels([], pit, [bad])
+
+
+def test_forward_shape_violation_rejected_with_empty_samples(fixtures):
+    pit = hand_result([], [])
+    bad = label_spec(
+        "fr_bad", REF_FORWARD_RETURN, ("close",), "float64",
+        horizon=3, start_offset=0, end_offset=1,
+    )
+    with pytest.raises(LabelExecutionError):
+        execute_builtin_labels([], pit, [bad])
+
+
+def test_excursion_shape_violation_rejected_with_empty_samples(fixtures):
+    pit = hand_result([], [])
+    bad = label_spec(
+        "mfe_bad", REF_MFE, ("close", "high"), "float64",
+        horizon=5, start_offset=0, end_offset=3,
+    )
+    with pytest.raises(LabelExecutionError):
+        execute_builtin_labels([], pit, [bad])
+
+
+def test_spec_preflight_raises_before_any_invocation(fixtures):
+    # The preflight rejection aborts the execution before the sample loop:
+    # the error is raised even with zero samples, so no transform can ever
+    # have been invoked (invocation count stays structurally zero).
+    pit = hand_result([], [])
+    bad = label_spec(
+        "fr_align", REF_FORWARD_RETURN, ("close",), "float64",
+        horizon=2, start_offset=1, end_offset=1, alignment="ALIGN_OPEN",
+    )
+    with pytest.raises(LabelExecutionError):
+        execute_builtin_labels([], pit, [bad])
+
+
+def test_legal_empty_samples_with_legal_specs_still_succeed():
+    pit = hand_result([], [])
+    result = execute_builtin_labels(
+        [], pit, [forward_spec("fr", horizon=2), mfe_spec("mfe", horizon=5)]
+    )
+    assert result.samples == ()
+    assert result.diagnostics.transform_invocation_count == 0
+
+
+# ---------------------------------------------------------------------------
+# O. Anchor-missing must not skip Label-row validation.
+# ---------------------------------------------------------------------------
+
+
+def missing_anchor_pit(fixtures, label_bar):
+    """A PIT result whose sample carries no exact anchor (only the 13:34
+    Feature row) but includes the given (possibly tampered) Label bar.
+
+    Returns ``(pit_result, sample, builds)`` where ``builds`` is the exact
+    build set the PIT result was assembled from (the untampered ``a`` build
+    plus the single-bar tampered Label build)."""
+    req = request()
+    versions = versions_of(fixtures.a, "2026-07-01 13:34:00")
+    builds = [fixtures.a, label_bar.build]
+    sample = hand_sample(
+        builds,
+        versions,
+        req,
+        label_versions=(label_bar.bar.canonical_row_version_id,),
+    )
+    return hand_result(builds, [sample]), sample, builds
+
+
+class TamperedBuild:
+    """A build carrying exactly one (possibly tampered) Label bar."""
+
+    def __init__(self, fixtures, bar):
+        self.build = replace(
+            fixtures.f,
+            bars=(bar,),
+            canonical_row_version_ids=(bar.canonical_row_version_id,),
+        )
+        self.bar = bar
+
+
+def test_missing_anchor_valid_label_rows_incomplete(fixtures):
+    # The exact 13:35 anchor is absent from the Feature list while the
+    # selected Label rows are perfectly legal: the label is INCOMPLETE
+    # (MISSING_ANCHOR_ROW) and no transform is invoked.
+    req = request()
+    versions = versions_of(fixtures.a, "2026-07-01 13:30:00", "2026-07-01 13:31:00")
+    sample = hand_sample(
+        [fixtures.a, fixtures.f], versions, req,
+        label_versions=versions_of(fixtures.f, "2026-07-01 13:36:00"),
+    )
+    pit = hand_result([fixtures.a, fixtures.f], [sample])
+    result = execute_builtin_labels(
+        [fixtures.a, fixtures.f], pit, [forward_spec("fr", horizon=1)]
+    )
+    value = executed_value(result, sample.sample_key, "fr")
+    assert value.status == LABEL_STATUS_INCOMPLETE
+    assert value.reason_code == LABEL_INCOMPLETE_MISSING_ANCHOR_ROW
+    assert value.anchor_canonical_row_version_id is None
+    assert value.consumed_label_canonical_row_version_ids == ()
+    assert value.actual_label_end_time is None
+    assert result.diagnostics.transform_invocation_count == 0
+
+
+def test_missing_anchor_cross_market_date_label_row_rejected(fixtures):
+    bar = replace(
+        bar_of(fixtures.f, "2026-07-01 13:36:00"),
+        market_calendar_date=date(2026, 7, 2),
+    )
+    pit, _sample, builds = missing_anchor_pit(
+        fixtures, TamperedBuild(fixtures, bar)
+    )
+    with pytest.raises(LabelExecutionError):
+        execute_builtin_labels(builds, pit, [forward_spec("fr", horizon=1)])
+
+
+def test_missing_anchor_wrong_code_label_row_rejected(fixtures):
+    bar = replace(bar_of(fixtures.f, "2026-07-01 13:36:00"), code="US.NVDA")
+    pit, _sample, builds = missing_anchor_pit(
+        fixtures, TamperedBuild(fixtures, bar)
+    )
+    with pytest.raises(LabelExecutionError):
+        execute_builtin_labels(builds, pit, [forward_spec("fr", horizon=1)])
+
+
+def test_missing_anchor_wrong_interval_label_row_rejected(fixtures):
+    bar = replace(bar_of(fixtures.f, "2026-07-01 13:36:00"), interval="5m")
+    pit, _sample, builds = missing_anchor_pit(
+        fixtures, TamperedBuild(fixtures, bar)
+    )
+    with pytest.raises(LabelExecutionError):
+        execute_builtin_labels(builds, pit, [forward_spec("fr", horizon=1)])
+
+
+def test_missing_anchor_wrong_session_label_row_rejected(fixtures):
+    bar = replace(
+        bar_of(fixtures.f, "2026-07-01 13:36:00"), requested_session="REGULAR"
+    )
+    pit, _sample, builds = missing_anchor_pit(
+        fixtures, TamperedBuild(fixtures, bar)
+    )
+    with pytest.raises(LabelExecutionError):
+        execute_builtin_labels(builds, pit, [forward_spec("fr", horizon=1)])
+
+
+def test_missing_anchor_wrong_adjustment_label_row_rejected(fixtures):
+    bar = replace(bar_of(fixtures.f, "2026-07-01 13:36:00"), adjustment="DIV")
+    pit, _sample, builds = missing_anchor_pit(
+        fixtures, TamperedBuild(fixtures, bar)
+    )
+    with pytest.raises(LabelExecutionError):
+        execute_builtin_labels(builds, pit, [forward_spec("fr", horizon=1)])
+
+
+def test_missing_anchor_market_future_label_row_rejected(fixtures):
+    bar = replace(
+        bar_of(fixtures.f, "2026-07-01 13:36:00"),
+        market_available_at=datetime(2026, 7, 1, 13, 43, tzinfo=UTC),
+    )
+    pit, _sample, builds = missing_anchor_pit(
+        fixtures, TamperedBuild(fixtures, bar)
+    )
+    with pytest.raises(LabelExecutionError):
+        execute_builtin_labels(builds, pit, [forward_spec("fr", horizon=1)])
+
+
+def test_missing_anchor_archive_future_label_row_rejected(fixtures):
+    bar = bar_of(fixtures.f, "2026-07-01 13:36:00")
+    req = request()
+    versions = versions_of(fixtures.a, "2026-07-01 13:34:00")
+    sample = hand_sample(
+        [fixtures.a, fixtures.f],
+        versions,
+        req,
+        label_versions=(bar.canonical_row_version_id,),
+        dataset_as_of=datetime(2026, 7, 1, 13, 59, tzinfo=UTC),
+    )
+    pit = hand_result([fixtures.a, fixtures.f], [sample])
+    with pytest.raises(LabelExecutionError):
+        execute_builtin_labels(
+            [fixtures.a, fixtures.f], pit, [forward_spec("fr", horizon=1)]
+        )
+
+
+def test_missing_anchor_source_schema_mismatch_label_row_rejected(fixtures):
+    bar = replace(
+        bar_of(fixtures.f, "2026-07-01 13:36:00"), source_schema_version="9.9"
+    )
+    pit, _sample, builds = missing_anchor_pit(
+        fixtures, TamperedBuild(fixtures, bar)
+    )
+    with pytest.raises(LabelExecutionError):
+        execute_builtin_labels(builds, pit, [forward_spec("fr", horizon=1)])
+
+
+# ---------------------------------------------------------------------------
+# P. Safe horizon time arithmetic.
+# ---------------------------------------------------------------------------
+
+
+def test_huge_horizon_rejected_fast_without_overflow_leak(fixtures):
+    # A horizon far beyond any realizable window fails the safe capacity
+    # comparison immediately — no giant timedelta multiplication, no
+    # range(horizon) loop, no OverflowError leak.
+    pit = assemble([fixtures.a, fixtures.f], [request()])
+    huge = label_spec(
+        "mfe_huge", REF_MFE, ("close", "high"), "float64",
+        horizon=2**40, start_offset=0, end_offset=2**40 - 1,
+    )
+    with pytest.raises(LabelExecutionError):
+        execute_builtin_labels([fixtures.a, fixtures.f], pit, [huge])
+
+
+def test_huge_horizon_with_covering_window_does_not_loop(fixtures):
+    # A window can legally span ~4e9 minutes; with the excursion check
+    # iterating actual rows only, the huge horizon is decided instantly
+    # (target missing) instead of looping range(4e9).
+    span = 4_000_000_000
+    close = datetime(2026, 7, 1, 13, 36, tzinfo=UTC)
+    label_close = close + timedelta(minutes=span)
+    req = request(feature_close=close, label_close=label_close)
+    anchor = bar_of(fixtures.a, "2026-07-01 13:35:00")
+    sample = hand_sample(
+        [fixtures.a, fixtures.f],
+        (anchor.canonical_row_version_id,),
+        req,
+        label_versions=versions_of(fixtures.f, "2026-07-01 13:36:00", "2026-07-01 13:37:00"),
+    )
+    pit = hand_result([fixtures.a, fixtures.f], [sample])
+    huge = label_spec(
+        "mfe_huge", REF_MFE, ("close", "high"), "float64",
+        horizon=span, start_offset=0, end_offset=span - 1,
+    )
+    result = execute_builtin_labels([fixtures.a, fixtures.f], pit, [huge])
+    value = executed_value(result, sample.sample_key, "mfe_huge")
+    assert value.status == LABEL_STATUS_INCOMPLETE
+    assert value.reason_code == LABEL_INCOMPLETE_MISSING_TARGET_ROW
+    assert value.consumed_label_canonical_row_version_ids == versions_of(
+        fixtures.f, "2026-07-01 13:36:00", "2026-07-01 13:37:00"
+    )
+
+
+def test_feature_close_near_datetime_min_anchor_underflow_wrapped(fixtures):
+    # The anchor subtraction underflows datetime.min; the raw OverflowError
+    # never leaks past the public executor.
+    req = request(
+        feature_start=datetime(1, 1, 1, 0, 0, 0, tzinfo=UTC),
+        feature_close=datetime(1, 1, 1, 0, 0, 30, tzinfo=UTC),
+        label_start=datetime(1, 1, 1, 0, 0, 30, tzinfo=UTC),
+        label_close=datetime(1, 1, 1, 0, 1, 30, tzinfo=UTC),
+    )
+    sample = hand_sample([fixtures.a], (), req)
+    pit = hand_result([fixtures.a], [sample])
+    with pytest.raises(LabelExecutionError) as exc_info:
+        execute_builtin_labels([fixtures.a], pit, [forward_spec("fr", horizon=1)])
+    assert isinstance(exc_info.value.__cause__, OverflowError)
+
+
+def test_feature_close_near_datetime_max_safe(fixtures):
+    # Near datetime.max the window capacity and the anchor subtraction stay
+    # exact and fail closed instead of leaking a raw date arithmetic error.
+    close = datetime(9999, 12, 31, 23, 58, 0, tzinfo=UTC)
+    req = request(
+        feature_start=datetime(9999, 12, 31, 23, 57, 0, tzinfo=UTC),
+        feature_close=close,
+        label_start=close,
+        label_close=datetime(9999, 12, 31, 23, 59, 0, tzinfo=UTC),
+    )
+    sample = hand_sample([fixtures.a], (), req)
+    pit = hand_result([fixtures.a], [sample])
+    result = execute_builtin_labels([fixtures.a], pit, [forward_spec("fr", horizon=1)])
+    value = executed_value(result, sample.sample_key, "fr")
+    assert value.status == LABEL_STATUS_INCOMPLETE
+    assert value.reason_code == LABEL_INCOMPLETE_MISSING_ANCHOR_ROW
+
+
+def test_normal_horizons_unchanged_and_reason_priority_unchanged(fixtures):
+    # H=1 / H=2 / H=5 results and the excursion reason priority are
+    # unchanged by the actual-row traversal.
+    pit = assemble([fixtures.a, fixtures.f], [request()])
+    result = execute_builtin_labels(
+        [fixtures.a, fixtures.f],
+        pit,
+        [
+            forward_spec("fr1", horizon=1),
+            forward_spec("fr2", horizon=2),
+            mfe_spec("mfe", horizon=5),
+        ],
+    )
+    assert result.samples[0].status == LABEL_STATUS_COMPLETE
+    values = {value.label_name: value for value in result.samples[0].values}
+    assert values["fr1"].value == pytest.approx(100.0 / 110.0 - 1.0)
+    assert values["fr2"].value == pytest.approx(0.0)
+    assert values["mfe"].value == pytest.approx(142.0 / 110.0 - 1.0)
+    # Priority: target missing wins over the missing first row.
+    pit_gap = assemble([fixtures.a, fixtures.ftarget], [request()])
+    gap_result = execute_builtin_labels(
+        [fixtures.a, fixtures.ftarget], pit_gap, [mfe_spec("mfe", horizon=5)]
+    )
+    assert gap_result.samples[0].values[0].reason_code == (
+        LABEL_INCOMPLETE_MISSING_TARGET_ROW
+    )
+    # Priority: interior gap with the target present is NON_CONTIGUOUS.
+    pit_mid = assemble([fixtures.a, fixtures.fgap], [request()])
+    mid_result = execute_builtin_labels(
+        [fixtures.a, fixtures.fgap], pit_mid, [mfe_spec("mfe", horizon=5)]
+    )
+    assert mid_result.samples[0].values[0].reason_code == (
+        LABEL_INCOMPLETE_NON_CONTIGUOUS_ROWS
+    )
+
+
+# ---------------------------------------------------------------------------
+# Q. INCOMPLETE LabelValueResult structural invariants.
+# ---------------------------------------------------------------------------
+
+
+def incomplete_value(
+    *,
+    reason: str,
+    value=None,
+    anchor=None,
+    consumed=(),
+    actual_end=None,
+) -> LabelValueResult:
+    label_pin = SpecPin(kind="LABEL", name="x", version="v1", content_sha256=sha("x"))
+    implementation = ImplementationPin(name="i", version="v1", content_sha256=sha("i"))
+    return LabelValueResult(
+        label_name="x",
+        spec_pin=label_pin,
+        implementation_pin=implementation,
+        status=LABEL_STATUS_INCOMPLETE,
+        value=value,
+        reason_code=reason,
+        anchor_canonical_row_version_id=anchor,
+        consumed_label_canonical_row_version_ids=consumed,
+        actual_label_end_time=actual_end,
+    )
+
+
+def test_incomplete_missing_anchor_must_be_fully_empty():
+    with pytest.raises(LabelExecutionError):
+        incomplete_value(
+            reason=LABEL_INCOMPLETE_MISSING_ANCHOR_ROW,
+            anchor=sha("a"),
+            consumed=(),
+            actual_end=None,
+        )
+    with pytest.raises(LabelExecutionError):
+        incomplete_value(
+            reason=LABEL_INCOMPLETE_MISSING_ANCHOR_ROW,
+            anchor=None,
+            consumed=(sha("c"),),
+            actual_end=datetime(2026, 7, 1, 13, 37, tzinfo=UTC),
+        )
+    with pytest.raises(LabelExecutionError):
+        incomplete_value(
+            reason=LABEL_INCOMPLETE_MISSING_ANCHOR_ROW,
+            anchor=None,
+            consumed=(),
+            actual_end=datetime(2026, 7, 1, 13, 37, tzinfo=UTC),
+        )
+    ok = incomplete_value(reason=LABEL_INCOMPLETE_MISSING_ANCHOR_ROW)
+    assert ok.anchor_canonical_row_version_id is None
+    assert ok.consumed_label_canonical_row_version_ids == ()
+    assert ok.actual_label_end_time is None
+
+
+def test_incomplete_non_anchor_reasons_require_anchor_id():
+    with pytest.raises(LabelExecutionError):
+        incomplete_value(
+            reason=LABEL_INCOMPLETE_MISSING_TARGET_ROW,
+            anchor=None,
+            consumed=(),
+            actual_end=None,
+        )
+    with pytest.raises(LabelExecutionError):
+        incomplete_value(
+            reason=LABEL_INCOMPLETE_INSUFFICIENT_ROWS,
+            anchor=None,
+            consumed=(sha("c"),),
+            actual_end=datetime(2026, 7, 1, 13, 37, tzinfo=UTC),
+        )
+    with pytest.raises(LabelExecutionError):
+        incomplete_value(
+            reason=LABEL_INCOMPLETE_NON_CONTIGUOUS_ROWS,
+            anchor=None,
+            consumed=(sha("c"),),
+            actual_end=datetime(2026, 7, 1, 13, 37, tzinfo=UTC),
+        )
+
+
+def test_incomplete_consumed_and_actual_end_coupled():
+    end = datetime(2026, 7, 1, 13, 37, tzinfo=UTC)
+    with pytest.raises(LabelExecutionError):
+        incomplete_value(
+            reason=LABEL_INCOMPLETE_MISSING_TARGET_ROW,
+            anchor=sha("a"),
+            consumed=(sha("c"),),
+            actual_end=None,
+        )
+    with pytest.raises(LabelExecutionError):
+        incomplete_value(
+            reason=LABEL_INCOMPLETE_MISSING_TARGET_ROW,
+            anchor=sha("a"),
+            consumed=(),
+            actual_end=end,
+        )
+
+
+def test_incomplete_excursion_reasons_require_consumed_rows():
+    end = datetime(2026, 7, 1, 13, 37, tzinfo=UTC)
+    with pytest.raises(LabelExecutionError):
+        incomplete_value(
+            reason=LABEL_INCOMPLETE_NON_CONTIGUOUS_ROWS,
+            anchor=sha("a"),
+            consumed=(),
+            actual_end=None,
+        )
+    with pytest.raises(LabelExecutionError):
+        incomplete_value(
+            reason=LABEL_INCOMPLETE_INSUFFICIENT_ROWS,
+            anchor=sha("a"),
+            consumed=(),
+            actual_end=None,
+        )
+    ok = incomplete_value(
+        reason=LABEL_INCOMPLETE_NON_CONTIGUOUS_ROWS,
+        anchor=sha("a"),
+        consumed=(sha("c"), sha("d")),
+        actual_end=end,
+    )
+    assert ok.status == LABEL_STATUS_INCOMPLETE
+
+
+def test_execution_result_rejects_empty_pins():
+    diagnostics = LabelExecutionDiagnostics(
+        sample_count=0,
+        label_spec_count=0,
+        complete_sample_count=0,
+        incomplete_sample_count=0,
+        complete_value_count=0,
+        incomplete_value_count=0,
+        transform_invocation_count=0,
+    )
+    pin = SpecPin(kind="LABEL", name="x", version="v1", content_sha256=sha("x"))
+    implementation = ImplementationPin(name="i", version="v1", content_sha256=sha("i"))
+    with pytest.raises(LabelExecutionError):
+        LabelExecutionResult(
+            samples=(),
+            label_spec_pins=(),
+            implementation_pins=(implementation,),
+            diagnostics=diagnostics,
+            execution_contract_version=LABEL_EXECUTION_CONTRACT_VERSION,
+        )
+    with pytest.raises(LabelExecutionError):
+        LabelExecutionResult(
+            samples=(),
+            label_spec_pins=(pin,),
+            implementation_pins=(),
+            diagnostics=diagnostics,
+            execution_contract_version=LABEL_EXECUTION_CONTRACT_VERSION,
+        )

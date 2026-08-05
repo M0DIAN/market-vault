@@ -159,9 +159,38 @@ silently completed label.
 ## 8. Alignment rule
 
 The only alignment rule this PR executes is
-`LABEL_ALIGNMENT_FEATURE_CLOSE_ALIGNED = "FEATURE_CLOSE_ALIGNED"`. Any
-other `alignment_rule` value on a LabelSpec fails closed as a
-configuration-contract error (not INCOMPLETE).
+`LABEL_ALIGNMENT_FEATURE_CLOSE_ALIGNED = "FEATURE_CLOSE_ALIGNED"`.
+`spec.alignment_rule` must be **exactly** that value; any other value
+fails closed as a configuration-contract error (not INCOMPLETE) and is
+never silently converted to `FEATURE_CLOSE_ALIGNED`. The alignment rule is
+verified by the execution-independent built-in Label spec preflight
+(section 8a), which runs for every LabelSpec after Registry resolution and
+before any sample is processed — an empty PIT sample set can never bypass
+the spec contracts.
+
+## 8a. Execution-independent spec preflight
+
+After every LabelSpec is resolved against the built-in registry (and before
+the callable-contract validation and the sample loop), the executor runs
+the full built-in Label spec configuration contract per `(spec,
+registration)` pair:
+
+1. `spec.alignment_rule == LABEL_ALIGNMENT_FEATURE_CLOSE_ALIGNED` (exactly;
+   no other value, no silent normalization);
+2. `observation_window.end_offset == horizon.value - 1`;
+3. forward transforms (`forward_return`, `forward_direction`):
+   `start_offset == horizon.value - 1` (only the horizon target row is
+   required);
+4. excursion transforms (`maximum_favorable_excursion`,
+   `maximum_adverse_excursion`): `start_offset == 0` (the full window from
+   the first future bar);
+5. `transform_ref` belongs to the fixed built-in catalog.
+
+These checks run even when the PIT sample set is empty, so a vacuous
+execution can never bypass a spec contract; a violation raises
+`LabelExecutionError` and is never marked INCOMPLETE and never partially
+executed (no transform is invoked). The per-value path repeats the same
+deterministic check defensively.
 
 ## 9. Anchor row semantics
 
@@ -184,6 +213,14 @@ configuration-contract error (not INCOMPLETE).
 - When the exact anchor does not exist the label is INCOMPLETE
   (`MISSING_ANCHOR_ROW`) and the transform is never invoked; an older
   Feature row never substitutes for the anchor.
+- **Validation order:** the PIT-selected Label rows of the sample are
+  resolved and defensively validated **before** the anchor is resolved. A
+  missing anchor never skips the Label-row invariant checks, so
+  `MISSING_ANCHOR_ROW` is only ever the honest outcome of a legal PIT
+  input whose exact anchor row genuinely does not exist; any Label-row
+  invariant violation (dimensions, clocks, market calendar date, schema
+  requirements) raises `LabelExecutionError` first. No alternative anchor
+  or Label row is ever searched for inside the full builds.
 
 ## 10. 0-based observation offsets
 
@@ -213,14 +250,30 @@ complete Label window:
 
 - `label_window_start` and `label_window_close` are both non-null;
 - `label_window_start == feature_window_close`;
-- for every LabelSpec,
-  `label_window_close >= feature_window_close + horizon.value * nominal_interval`.
+- for every LabelSpec, the window's actual capacity covers the horizon
+  (see the safe window-capacity comparison below).
 
 A wider PIT Label window can serve multiple LabelSpecs of different
 horizons; the executor consumes only each spec's own required rows and
 never passes farther rows to a transform. A missing or insufficient Label
 window is a builder/request configuration error: it raises
 `LabelExecutionError` and is never recorded as ordinary INCOMPLETE data.
+
+**Safe window-capacity comparison.** Coverage is proven with the actual
+window length, never with a giant `horizon.value * nominal_interval`
+timedelta multiplication:
+
+```text
+window_span        = label_window_close - feature_window_close
+max_covered_bars   = window_span // nominal_interval     # floor, positive
+horizon.value <= max_covered_bars                        # required, else fail
+```
+
+The interval must be positive; a degenerate window fails closed; and all
+datetime/timedelta arithmetic failures are wrapped into
+`LabelExecutionError` (no raw `OverflowError` / `ValueError` /
+`ZeroDivisionError` leaks, even for horizons and windows near the
+`datetime` range boundary).
 
 ## 13. Exact formulas
 
@@ -390,6 +443,28 @@ computation can continue.
   exact nominal `event_time`; adjacent expected rows differ by exactly the
   nominal interval by construction (only exact event times are accepted).
 
+**Excursion checks iterate the actual PIT rows, never `range(H)`.** Each
+actual future row's grid position is derived as
+
+```text
+position = (row.event_time - feature_window_close) // nominal_interval
+```
+
+and the executor verifies: the delta is non-negative, the delta is an exact
+multiple of the nominal interval, the position is unique, positions
+`0` and `H - 1` exist, the actual grid-position count equals `H`, and the
+sorted adjacent positions differ by exactly 1. Rows at position `>= H` are
+extra later rows and never enter the required window. A horizon far beyond
+any realizable window fails the safe capacity comparison immediately — no
+`range(horizon)` traversal and no giant timedelta multiplication is ever
+performed, so pathological horizons terminate fast and fail closed.
+
+All horizon-derived times (anchor, target, excursion boundaries) are
+computed through a fail-closed bar-time helper that converts raw
+`OverflowError` / `ValueError` / `ZeroDivisionError` / `TypeError` from
+datetime arithmetic into `LabelExecutionError` with spec/sample context;
+no bare date arithmetic exception leaks from the public executor.
+
 PIT known-gap emptiness, a gap sidecar with no records, "there look like
 enough rows", a nearby row standing in for the target, or a farther row
 replacing a missing one never prove completeness. Only exact required event
@@ -417,13 +492,29 @@ LABEL_INCOMPLETE_NON_CONTIGUOUS_ROWS   = "NON_CONTIGUOUS_ROWS"
 ```
 
 - `MISSING_ANCHOR_ROW` — the exact Feature-close anchor does not exist in
-  the PIT Feature rows; no future row is consumed.
+  the PIT Feature rows. Because the PIT-selected Label rows are validated
+  **before** the anchor, this reason is only ever the honest outcome of a
+  legal PIT input whose exact anchor genuinely does not exist; a Label-row
+  invariant violation is never masked by it. It records a null anchor ID,
+  an empty consumed set, and a null `actual_label_end_time`.
 - `MISSING_TARGET_ROW` — the exact horizon target row does not exist in
-  the PIT Label rows (any transform).
+  the PIT Label rows (any transform); it records the anchor ID and the
+  actually present required subset (which may be empty for forward
+  transforms).
 - `INSUFFICIENT_ROWS` — an excursion window whose first boundary row
-  (offset 0) is missing while the target exists.
+  (offset 0) is missing while the target exists; at least one required row
+  is consumed.
 - `NON_CONTIGUOUS_ROWS` — an excursion window with a missing interior row
-  (offset 1..H-2) while the target exists.
+  (offset 1..H-2) while the target exists; at least one required row is
+  consumed.
+
+**Reason-specific structural invariants.** Every INCOMPLETE
+`LabelValueResult` additionally verifies at construction: consumed rows and
+`actual_label_end_time` are coupled (both present or both absent);
+`MISSING_ANCHOR_ROW` carries a null anchor ID, no consumed rows, and a null
+end; `MISSING_TARGET_ROW` / `INSUFFICIENT_ROWS` / `NON_CONTIGUOUS_ROWS`
+carry their anchor ID; and `INSUFFICIENT_ROWS` / `NON_CONTIGUOUS_ROWS`
+carry at least one consumed row (and therefore a non-null end).
 
 ## 22. Forward target completeness
 
@@ -456,7 +547,9 @@ Every `LabelValueResult` carries `actual_label_end_time`:
   the target row's `market_available_at`;
 - INCOMPLETE values carry it only when a required subset was actually
   consumed (then it is the subset's last row's availability); it never
-  changes the status.
+  changes the status. **Consumed rows and the actual end are coupled**: a
+  non-empty consumed set always carries a non-null end and an empty
+  consumed set never does (enforced at model construction).
 
 The sample-level `actual_label_end_time` is the max of the non-null value
 ends (`None` when every value end is null), recomputed and verified at
@@ -492,7 +585,10 @@ All result models are frozen and validated at construction
   (unique, order preserved), `actual_label_end_time`. COMPLETE requires a
   real float64/int64 value, a null reason code, a non-null anchor ID, a
   non-empty consumed set, and a non-null end; INCOMPLETE requires a null
-  value and one of the fixed reason codes.
+  value, one of the fixed reason codes, and the reason-specific structural
+  invariants of section 21 (consumed/end coupling, null anchor for
+  `MISSING_ANCHOR_ROW`, non-null anchor for the other reasons, non-empty
+  consumed rows for the excursion reasons).
 - `LabelSampleResult` — `sample_key`, `sample_version_id`, `code`,
   `feature_window_close` (normalized UTC microseconds), `values`, `status`,
   `actual_label_end_time`. Values are strictly ordered by the stable
@@ -514,8 +610,12 @@ All result models are frozen and validated at construction
   `(kind, name, version)` identities fail — even with conflicting hashes),
   `implementation_pins`, `diagnostics` (must equal the recomputed counts),
   and `execution_contract_version` (must be
-  `LABEL_EXECUTION_CONTRACT_VERSION`). When samples are non-empty,
-  complete coverage is verified: every sample carries exactly the result's
+  `LABEL_EXECUTION_CONTRACT_VERSION`). The v1 execution contract requires
+  **at least one LabelSpec**: an empty `label_spec_pins` and an empty
+  `implementation_pins` are rejected even when the result model is
+  constructed directly (the executor's non-empty spec requirement cannot
+  be bypassed through the model). When samples are non-empty, complete
+  coverage is verified: every sample carries exactly the result's
   `label_spec_pins` in the same order, one LabelSpec maps to exactly one
   ImplementationPin across all samples, and the pins actually used by the
   values equal the result pins exactly. An empty sample set with a
@@ -561,15 +661,17 @@ defines no new `LabelExecutionResult` identity hash.
 Every public execution failure surfaces as `LabelExecutionError` (a
 `DatasetError` subclass); no bare `KeyError`, `TypeError`, `ValueError`,
 `ArithmeticError`, `OverflowError`, `TransformRegistryError`, other
-`DatasetError`, provenance-helper error, or transform implementation
-exception leaks. The `TransformRegistryError` raised by the built-in
-registry construction and by spec resolution is wrapped at the public
-boundary, and every SpecPin computation is wrapped; the `__cause__` chain
-is never swallowed. Transform failure messages include the
-`transform_ref`, the spec name, and the sample key — never memory
-addresses or unstable `repr`s. Nothing is swallowed, nothing is retried,
-and no warning ever precedes a seemingly valid result. Fail closed
-everywhere; there is no "warn and continue" path.
+`DatasetError`, provenance-helper error, transform implementation
+exception, or raw datetime/timedelta arithmetic exception leaks. The
+`TransformRegistryError` raised by the built-in registry construction and
+by spec resolution is wrapped at the public boundary, and every SpecPin
+computation is wrapped; the `__cause__` chain is never swallowed. All
+horizon-derived time arithmetic (anchor, target, excursion boundaries,
+window capacity) is wrapped with spec/sample context. Transform failure
+messages include the `transform_ref`, the spec name, and the sample key —
+never memory addresses or unstable `repr`s. Nothing is swallowed, nothing
+is retried, and no warning ever precedes a seemingly valid result. Fail
+closed everywhere; there is no "warn and continue" path.
 
 ## 31. PR-5 handoff
 

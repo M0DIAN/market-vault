@@ -425,6 +425,40 @@ class LabelValueResult:
                     f"codes {', '.join(_LABEL_INCOMPLETE_REASON_CODES)}, "
                     f"got {self.reason_code!r}"
                 )
+            # Consumed rows and the actual end must be coupled: a non-empty
+            # consumed set always carries the last row's actual availability
+            # and an empty consumed set never does.
+            if bool(consumed) != (actual_end is not None):
+                raise LabelExecutionError(
+                    "an INCOMPLETE label's consumed label canonical row "
+                    "version ids and actual_label_end_time must be both "
+                    "present or both absent"
+                )
+            if self.reason_code == LABEL_INCOMPLETE_MISSING_ANCHOR_ROW:
+                if anchor is not None:
+                    raise LabelExecutionError(
+                        "a MISSING_ANCHOR_ROW label must carry a null anchor "
+                        "canonical row version id"
+                    )
+                if consumed:
+                    raise LabelExecutionError(
+                        "a MISSING_ANCHOR_ROW label must not carry consumed "
+                        "label canonical row version ids"
+                    )
+            else:
+                if anchor is None:
+                    raise LabelExecutionError(
+                        f"an {self.reason_code} label must carry its anchor "
+                        "canonical row version id"
+                    )
+                if self.reason_code in (
+                    LABEL_INCOMPLETE_INSUFFICIENT_ROWS,
+                    LABEL_INCOMPLETE_NON_CONTIGUOUS_ROWS,
+                ) and not consumed:
+                    raise LabelExecutionError(
+                        f"an {self.reason_code} label must carry at least "
+                        "one consumed label canonical row version id"
+                    )
         object.__setattr__(self, "label_name", label_name)
         object.__setattr__(self, "anchor_canonical_row_version_id", anchor)
         object.__setattr__(self, "consumed_label_canonical_row_version_ids", consumed)
@@ -733,6 +767,20 @@ class LabelExecutionResult:
         implementation_pins = _normalize_implementation_pins(
             self.implementation_pins
         )
+        # The v1 execution contract requires at least one LabelSpec. Even a
+        # directly constructed result model cannot bypass the executor's
+        # non-empty spec requirement, and an execution with no implementation
+        # is never a valid Label execution result.
+        if not spec_pins:
+            raise LabelExecutionError(
+                "label_spec_pins must not be empty; Label execution requires "
+                "at least one LabelSpec"
+            )
+        if not implementation_pins:
+            raise LabelExecutionError(
+                "implementation_pins must not be empty; Label execution "
+                "requires at least one resolved implementation"
+            )
         _require_instance(
             self.diagnostics, LabelExecutionDiagnostics, "diagnostics"
         )

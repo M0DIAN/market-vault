@@ -149,6 +149,13 @@ def _execute_builtin_labels(builds, pit_result, label_specs) -> LabelExecutionRe
         resolved_items.append((spec, resolved))
     for _, resolved in resolved_items:
         _validate_callable_contract(resolved.registration)
+    # Built-in Label spec preflight runs for every (spec, resolved) pair
+    # after resolution and before any sample is processed. These are
+    # configuration-contract checks: they fail closed even when the PIT
+    # sample set is empty, so an empty-sample execution can never bypass
+    # the alignment / observation-window / catalog contracts.
+    for spec, resolved in resolved_items:
+        _validate_builtin_label_spec_contract(spec, resolved.registration)
 
     samples: list[LabelSampleResult] = []
     invocation_count = 0
@@ -378,10 +385,14 @@ def _validate_label_window(
 ) -> None:
     """Every PIT sample request must carry a complete Label window covering
     every LabelSpec's horizon: ``label_window_start == feature_window_close``
-    and ``label_window_close >= feature_window_close + horizon.value *
-    nominal_interval`` for every spec. A missing or insufficient Label
-    window is a builder/request configuration error and fails closed — it
-    is never recorded as ordinary INCOMPLETE data."""
+    and the window's actual capacity
+    ``(label_window_close - feature_window_close) // nominal_interval``
+    must be at least ``horizon.value``. Coverage is proven with a safe
+    capacity comparison on the actual window length — never by a giant
+    ``horizon.value * interval`` timedelta multiplication — and all
+    datetime/timedelta arithmetic failures are wrapped. A missing or
+    insufficient Label window is a builder/request configuration error and
+    fails closed — it is never recorded as ordinary INCOMPLETE data."""
     request = sample.request
     if request.label_window_start is None or request.label_window_close is None:
         raise LabelExecutionError(
@@ -402,29 +413,64 @@ def _validate_label_window(
             f"sample {sample.sample_key!r} interval {request.interval!r} is "
             f"not parseable: {exc}"
         ) from exc
-    for spec, resolved in resolved_items:
-        required_close = request.feature_window_close + (
-            spec.horizon.value * interval
+    if interval <= timedelta(0):
+        raise LabelExecutionError(
+            f"sample {sample.sample_key!r} interval must be positive, got "
+            f"{request.interval!r}"
         )
-        if request.label_window_close < required_close:
+    context = f"sample {sample.sample_key!r} label window"
+    try:
+        window_span = request.label_window_close - request.feature_window_close
+        max_covered_bars = window_span // interval
+    except (OverflowError, ValueError, ZeroDivisionError, TypeError) as exc:
+        raise LabelExecutionError(
+            f"{context}: cannot compute the label window capacity: {exc}"
+        ) from exc
+    if max_covered_bars <= 0:
+        raise LabelExecutionError(
+            f"{context} must span at least one nominal bar of "
+            f"{request.interval}"
+        )
+    for spec, _resolved in resolved_items:
+        if spec.horizon.value > max_covered_bars:
             raise LabelExecutionError(
-                f"sample {sample.sample_key!r} label_window_close "
-                f"{request.label_window_close} does not cover the horizon of "
-                f"label spec {spec.name!r}, which requires "
-                f"{required_close}"
+                f"{context} of {request.label_window_close} covers at most "
+                f"{max_covered_bars} bar(s) of {request.interval}, but label "
+                f"spec {spec.name!r} requires a horizon of "
+                f"{spec.horizon.value} bar(s)"
             )
 
 
-def _validate_spec_shape(spec: LabelSpec, registration: TransformRegistration) -> None:
-    """Fixed LabelSpec shape contracts of this PR's built-in catalog.
+def _validate_builtin_label_spec_contract(
+    spec: LabelSpec,
+    registration: TransformRegistration,
+) -> None:
+    """Full built-in Label spec configuration contract of this PR.
 
-    Every built-in LabelSpec must satisfy
-    ``observation_window.end_offset == horizon.value - 1``; the forward
-    transforms additionally require ``start_offset == end_offset`` (only the
-    horizon target row is required) and the excursion transforms require
-    ``start_offset == 0`` (the full window from the first future bar). A
-    spec violating its transform's shape is a configuration-contract error
-    and fails closed — it is never marked INCOMPLETE."""
+    This preflight runs for every (spec, resolved) pair after Registry
+    resolution and **before any sample is processed** (and therefore also
+    for an empty PIT sample set). A violation is a configuration-contract
+    error and fails closed — it is never marked INCOMPLETE and never
+    silently normalized:
+
+    1. ``alignment_rule`` must be exactly
+       :data:`LABEL_ALIGNMENT_FEATURE_CLOSE_ALIGNED`; any other value is
+       rejected (never converted);
+    2. ``observation_window.end_offset == horizon.value - 1``;
+    3. the forward transforms additionally require
+       ``start_offset == end_offset`` (only the horizon target row is
+       required);
+    4. the excursion transforms require ``start_offset == 0`` (the full
+       window from the first future bar);
+    5. ``transform_ref`` must belong to the fixed built-in catalog.
+    """
+    if spec.alignment_rule != LABEL_ALIGNMENT_FEATURE_CLOSE_ALIGNED:
+        raise LabelExecutionError(
+            f"label spec {spec.name!r} alignment_rule must be exactly "
+            f"{LABEL_ALIGNMENT_FEATURE_CLOSE_ALIGNED}, got "
+            f"{spec.alignment_rule!r}; no other alignment rule is executed "
+            "or silently normalized"
+        )
     horizon = spec.horizon.value
     window = spec.observation_window
     if window.end_offset != horizon - 1:
@@ -456,6 +502,35 @@ def _validate_spec_shape(spec: LabelSpec, registration: TransformRegistration) -
         f"registration {registration.transform_ref!r} is not a supported "
         "built-in Label transform of this catalog"
     )
+
+
+def _safe_bar_time(
+    base: datetime,
+    offset_bars: int,
+    interval: timedelta,
+    *,
+    context: str,
+) -> datetime:
+    """``base + offset_bars * interval`` with fail-closed arithmetic.
+
+    ``offset_bars`` must be a real ``int`` (negative offsets are permitted
+    for the exact anchor subtraction). ``OverflowError`` / ``ValueError`` /
+    ``ZeroDivisionError`` / ``TypeError`` from the timedelta arithmetic are
+    converted to a :class:`LabelExecutionError` carrying ``context``; a raw
+    date arithmetic exception never leaks past the public executor.
+    """
+    if type(offset_bars) is not int:
+        raise LabelExecutionError(
+            f"{context}: bar offset must be a real int, got "
+            f"{type(offset_bars).__name__}"
+        )
+    try:
+        return base + offset_bars * interval
+    except (OverflowError, ValueError, ZeroDivisionError, TypeError) as exc:
+        raise LabelExecutionError(
+            f"{context}: cannot compute the nominal bar time at offset "
+            f"{offset_bars}: {exc}"
+        ) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -658,7 +733,10 @@ def _execute_label_value(
     whether the transform was invoked (exactly once per COMPLETE value,
     never for INCOMPLETE)."""
     registration = resolved.registration
-    _validate_spec_shape(spec, registration)
+    # Defensive repeat of the execution-independent configuration contract
+    # (already preflighted before the sample loop); deterministic and never
+    # the sole check location.
+    _validate_builtin_label_spec_contract(spec, registration)
     try:
         interval = parse_intraday_interval(sample.request.interval)
     except ValueError as exc:
@@ -666,6 +744,12 @@ def _execute_label_value(
             f"sample {sample.sample_key!r} interval "
             f"{sample.request.interval!r} is not parseable: {exc}"
         ) from exc
+
+    # The PIT-selected Label rows are resolved and defensively validated
+    # before the anchor: a missing anchor must never skip the Label-row
+    # invariant checks. MISSING_ANCHOR_ROW is only the honest outcome of a
+    # legal PIT input where the exact anchor row genuinely does not exist.
+    future_rows = _resolve_label_rows(sample, spec, rows_by_version, builds_by_id)
 
     anchor = _resolve_anchor(sample, spec, rows_by_version, builds_by_id, interval)
     if anchor is None:
@@ -677,8 +761,6 @@ def _execute_label_value(
             anchor_id=None,
             consumed_rows=(),
         )
-
-    future_rows = _resolve_label_rows(sample, spec, rows_by_version, builds_by_id)
 
     if registration.transform_ref in _FORWARD_SHAPE_REFS:
         outcome = _select_forward_target(sample, spec, interval, future_rows)
@@ -812,7 +894,12 @@ def _resolve_anchor(
                 f"feature rows of sample {sample.sample_key!r} are not in "
                 "strictly ascending event_time order"
             )
-    anchor_time = sample.request.feature_window_close - interval
+    anchor_time = _safe_bar_time(
+        sample.request.feature_window_close,
+        -1,
+        interval,
+        context=f"sample {sample.sample_key!r} anchor row",
+    )
     matches = [
         row for row in rows if row.bar.event_time == anchor_time
     ]
@@ -869,8 +956,11 @@ def _select_forward_target(
     nominal_interval``. Middle future bars are not required inputs; their
     absence never makes a forward target label INCOMPLETE, and a nearby
     other row never substitutes for the exact target."""
-    target_time = sample.request.feature_window_close + (
-        (spec.horizon.value - 1) * interval
+    target_time = _safe_bar_time(
+        sample.request.feature_window_close,
+        spec.horizon.value - 1,
+        interval,
+        context=f"sample {sample.sample_key!r} label spec {spec.name!r}",
     )
     target = next(
         (row for row in future_rows if row.bar.event_time == target_time),
@@ -888,42 +978,82 @@ def _select_excursion_window(
     future_rows: list[ResolvedRow],
 ) -> _Selection:
     """Excursion transforms require every expected future bar from offset 0
-    to ``horizon.value - 1`` (their exact nominal event times). The target
-    row is the horizon target; a missing target is MISSING_TARGET_ROW, a
-    missing first row is INSUFFICIENT_ROWS, and a missing interior row with
-    the target present is NON_CONTIGUOUS_ROWS. Only exact event times are
-    accepted; nothing is interpolated or substituted. The consumed subset
-    records every actually present required row in expected position order,
-    so an INCOMPLETE excursion still carries the real observed subset and
-    its last row's actual availability."""
+    to ``horizon.value - 1`` (their exact nominal event times).
+
+    The check iterates the **actual** PIT future rows only — never
+    ``range(horizon)`` — and derives each row's grid position
+    ``(event_time - feature_window_close) // nominal_interval``. Every
+    actual row must be on the nominal grid and at a unique non-negative
+    position; rows at position ``>= horizon`` are extra later rows and are
+    ignored (they never enter the required window). The target row is the
+    horizon target; a missing target is MISSING_TARGET_ROW (checked first),
+    a missing first row with the target present is INSUFFICIENT_ROWS, and a
+    missing interior row with both boundaries present is
+    NON_CONTIGUOUS_ROWS. Only exact event times are accepted; nothing is
+    interpolated or substituted. The consumed subset records every actually
+    present required row in expected position order, so an INCOMPLETE
+    excursion still carries the real observed subset and its last row's
+    actual availability."""
     horizon = spec.horizon.value
-    by_time = {row.bar.event_time: row for row in future_rows}
-    present: list[ResolvedRow] = []
-    for index in range(horizon):
-        row = by_time.get(
-            sample.request.feature_window_close + (index * interval)
-        )
-        if row is not None:
-            present.append(row)
-    target_time = sample.request.feature_window_close + (
-        (horizon - 1) * interval
-    )
-    if target_time not in by_time:
-        return _Selection(
-            tuple(present), False, LABEL_INCOMPLETE_MISSING_TARGET_ROW
-        )
-    for index in range(horizon):
-        row = by_time.get(
-            sample.request.feature_window_close + (index * interval)
-        )
-        if row is None:
-            reason = (
-                LABEL_INCOMPLETE_INSUFFICIENT_ROWS
-                if index == 0
-                else LABEL_INCOMPLETE_NON_CONTIGUOUS_ROWS
+    base = sample.request.feature_window_close
+    context = f"sample {sample.sample_key!r} label spec {spec.name!r}"
+    grid: dict[int, ResolvedRow] = {}
+    for row in future_rows:
+        delta = row.bar.event_time - base
+        if delta < timedelta(0):
+            raise LabelExecutionError(
+                f"{context}: label row {row.bar.canonical_row_version_id} has "
+                f"event_time {row.bar.event_time} before the feature window "
+                f"close {base}"
             )
-            return _Selection(tuple(present), False, reason)
-    return _Selection(tuple(present), True, None)
+        try:
+            position, remainder = divmod(delta, interval)
+        except (OverflowError, ValueError, ZeroDivisionError, TypeError) as exc:
+            raise LabelExecutionError(
+                f"{context}: cannot compute the grid position of label row "
+                f"{row.bar.canonical_row_version_id}: {exc}"
+            ) from exc
+        if remainder != timedelta(0):
+            raise LabelExecutionError(
+                f"{context}: label row {row.bar.canonical_row_version_id} has "
+                f"event_time {row.bar.event_time}, off the nominal "
+                f"{sample.request.interval} grid"
+            )
+        if position >= horizon:
+            continue
+        if position in grid:
+            raise LabelExecutionError(
+                f"{context}: duplicate grid position {position}; label rows "
+                "of the sample must be unique and strictly ascending"
+            )
+        grid[position] = row
+
+    def present_rows() -> tuple:
+        return tuple(grid[position] for position in sorted(grid))
+
+    if horizon - 1 not in grid:
+        return _Selection(
+            present_rows(), False, LABEL_INCOMPLETE_MISSING_TARGET_ROW
+        )
+    if 0 not in grid:
+        return _Selection(
+            present_rows(), False, LABEL_INCOMPLETE_INSUFFICIENT_ROWS
+        )
+    positions = sorted(grid)
+    if len(positions) != horizon:
+        return _Selection(
+            present_rows(), False, LABEL_INCOMPLETE_NON_CONTIGUOUS_ROWS
+        )
+    # With both boundaries present and exactly horizon unique positions in
+    # 0..horizon-1, the grid is complete; verify the adjacent-position
+    # invariant defensively (a violation is an impossible provenance state).
+    for previous, current in zip(positions, positions[1:]):
+        if current - previous != 1:
+            raise LabelExecutionError(
+                f"{context}: excursion grid positions {positions} are not "
+                "contiguous; provenance inconsistency"
+            )
+    return _Selection(present_rows(), True, None)
 
 
 def _actual_end(sample: PITSample, bar) -> datetime:
