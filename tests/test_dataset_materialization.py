@@ -2282,17 +2282,18 @@ def test_existing_conflict_never_rewritten(built, tmp_path):
 
 
 def test_rename_race_valid_identical_final(fixtures, tmp_path, monkeypatch):
+    """A complete identical final appearing inside the true no-replace
+    primitive verifies strictly and returns created_new_build=False; the
+    raced final is untouched and our staging is cleaned up."""
     result, first = materialize_once(fixtures, tmp_path)
     other_root = datasets_root(tmp_path) / "race"
-    real_rename = os.rename
     raced = {}
 
-    def racing_rename(staging, final):
+    def racer(staging, final):
         shutil.copytree(staging, final)
         raced["final"] = final
-        raise FileExistsError("final appeared concurrently")
 
-    monkeypatch.setattr(mat_mod.os, "rename", racing_rename)
+    _racing_atomic_publication(monkeypatch, racer)
     second = materialize_dataset_artifacts(
         result, output_root=other_root, built_at=BUILT_AT
     )
@@ -2304,17 +2305,19 @@ def test_rename_race_valid_identical_final(fixtures, tmp_path, monkeypatch):
 
 
 def test_rename_race_corrupt_final_fails(fixtures, tmp_path, monkeypatch):
+    """A conflicting final appearing inside the true no-replace primitive
+    fails closed; the conflicting final is never modified or deleted and
+    our staging is cleaned up."""
     result, _ = materialize_once(fixtures, tmp_path)
     other_root = datasets_root(tmp_path) / "race2"
     raced = {}
 
-    def racing_rename(staging, final):
+    def racer(staging, final):
         shutil.copytree(staging, final)
         (final / DATASET_SUCCESS_FILENAME).unlink()
         raced["final"] = final
-        raise FileExistsError("final appeared concurrently")
 
-    monkeypatch.setattr(mat_mod.os, "rename", racing_rename)
+    _racing_atomic_publication(monkeypatch, racer)
     with pytest.raises(DatasetMaterializationError):
         materialize_dataset_artifacts(
             result, output_root=other_root, built_at=BUILT_AT
@@ -2326,15 +2329,15 @@ def test_rename_race_corrupt_final_fails(fixtures, tmp_path, monkeypatch):
 
 
 def test_final_never_overwritten_by_rename(fixtures, tmp_path, monkeypatch):
+    """The raced final stays byte-identical; the true no-replace primitive
+    never overwrites it."""
     result, _ = materialize_once(fixtures, tmp_path)
     other_root = datasets_root(tmp_path) / "race3"
-    real_rename = os.rename
 
-    def racing_rename(staging, final):
+    def racer(staging, final):
         shutil.copytree(staging, final)
-        raise FileExistsError("final appeared concurrently")
 
-    monkeypatch.setattr(mat_mod.os, "rename", racing_rename)
+    _racing_atomic_publication(monkeypatch, racer)
     second = materialize_dataset_artifacts(
         result, output_root=other_root, built_at=BUILT_AT
     )
@@ -2343,6 +2346,7 @@ def test_final_never_overwritten_by_rename(fixtures, tmp_path, monkeypatch):
     assert file_hashes(second.build_path) == file_hashes(
         datasets_root(tmp_path) / result.dataset_id
     )
+    assert not (other_root / f".staging-{result.dataset_id}").exists()
 
 
 def _racing_atomic_publication(monkeypatch, racer):
@@ -2408,51 +2412,6 @@ def test_race_empty_final_before_publish_precheck_path(fixtures, tmp_path, monke
     assert not (root / f".staging-{result.dataset_id}").exists()
 
 
-def test_race_identical_final_returns_idempotent(fixtures, tmp_path, monkeypatch):
-    """A complete identical final appearing inside the true no-replace call
-    verifies strictly and returns created_new_build=False; the raced final
-    is untouched and our staging is cleaned up."""
-    result, first = materialize_once(fixtures, tmp_path)
-    root = datasets_root(tmp_path) / "race-identical"
-    raced = {}
-
-    def racer(staging, final):
-        shutil.copytree(staging, final)
-        raced["final"] = final
-
-    _racing_atomic_publication(monkeypatch, racer)
-    second = materialize_dataset_artifacts(
-        result, output_root=root, built_at=BUILT_AT
-    )
-    assert second.created_new_build is False
-    assert second.build_path == raced["final"]
-    assert file_hashes(raced["final"]) == file_hashes(first.build_path)
-    assert not (root / f".staging-{result.dataset_id}").exists()
-
-
-def test_race_conflicting_final_rejected_and_untouched(fixtures, tmp_path, monkeypatch):
-    """A conflicting final appearing inside the true no-replace call fails
-    closed; the conflicting final is never modified or deleted and our
-    staging is cleaned up."""
-    result, _ = materialize_once(fixtures, tmp_path)
-    root = datasets_root(tmp_path) / "race-conflict"
-    raced = {}
-
-    def racer(staging, final):
-        shutil.copytree(staging, final)
-        (final / DATASET_SUCCESS_FILENAME).unlink()
-        raced["final"] = final
-
-    _racing_atomic_publication(monkeypatch, racer)
-    with pytest.raises(DatasetMaterializationError):
-        materialize_dataset_artifacts(
-            result, output_root=root, built_at=BUILT_AT
-        )
-    assert raced["final"].is_dir()
-    assert not (raced["final"] / DATASET_SUCCESS_FILENAME).exists()
-    assert not (root / f".staging-{result.dataset_id}").exists()
-
-
 def test_no_replace_unavailable_fails_closed(fixtures, tmp_path, monkeypatch):
     """When no safe no-replace primitive is available the build fails
     closed and a plain overwriting os.rename is never used as a fallback."""
@@ -2481,7 +2440,14 @@ def test_no_replace_unavailable_fails_closed(fixtures, tmp_path, monkeypatch):
 
 def test_no_replace_dispatcher_unsupported_platform(monkeypatch):
     """The dispatcher fails closed on any platform without a safe
-    no-replace primitive; it never degrades to a plain rename."""
+    no-replace primitive; it never degrades to a plain rename.
+
+    The Path arguments are constructed before ``os.name`` is patched: on a
+    POSIX host, pathlib instantiates ``WindowsPath`` while ``os.name`` is
+    ``"nt"``, so no Path may be built inside the patched window.
+    """
+    source = Path("s")
+    destination = Path("f")
 
     def unsupported(*args, **kwargs):
         raise mat_mod._NoReplaceUnsupportedError("nope")
@@ -2495,10 +2461,10 @@ def test_no_replace_dispatcher_unsupported_platform(monkeypatch):
     monkeypatch.setattr(mat_mod.os, "name", "posix")
     monkeypatch.setattr(mat_mod.sys, "platform", "darwin")
     with pytest.raises(mat_mod._NoReplaceUnsupportedError):
-        mat_mod._atomic_rename_directory_no_replace(Path("s"), Path("f"))
+        mat_mod._atomic_rename_directory_no_replace(source, destination)
     monkeypatch.setattr(mat_mod.os, "name", "nt")
     with pytest.raises(mat_mod._NoReplaceUnsupportedError):
-        mat_mod._atomic_rename_directory_no_replace(Path("s"), Path("f"))
+        mat_mod._atomic_rename_directory_no_replace(source, destination)
 
 
 def test_linux_renameat2_errno_mapping(monkeypatch):
