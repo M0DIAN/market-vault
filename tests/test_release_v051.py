@@ -893,12 +893,18 @@ def test_release_checker_fails_when_release_notes_missing_pr33_merged(tmp_path):
     assert "does not state the fact 'MERGED'" in result.stdout
 
 
-def test_release_checker_fails_when_release_notes_claim_pr4_still_open(tmp_path):
+def test_release_checker_fails_when_formal_section_claims_pr4_still_open(tmp_path):
+    # A stale current-state sentence in the formal region (before the
+    # historical release-preparation record) must fail the checker.
     repo = copy_repo(tmp_path)
     path = repo / "docs" / "release_v0_5_1.md"
     path.write_text(
-        path.read_text(encoding="utf-8")
-        + "\nPR-4 is open and not merged.\n",
+        path.read_text(encoding="utf-8").replace(
+            "## Historical release-preparation record",
+            "PR-4 is open and not merged.\n\n"
+            "## Historical release-preparation record",
+            1,
+        ),
         encoding="utf-8",
     )
     result = run_check_release(repo)
@@ -940,6 +946,59 @@ def test_release_checker_fails_when_release_notes_missing_sdist_hash(tmp_path):
         "does not state the fact "
         "'FE82FB4FD254C493EC00519EDEB438533C0C5E8D5A7690E1F14AEA39DE4CCDAB'"
     ) in result.stdout
+
+
+def test_release_checker_fails_when_asset_source_reverts_to_release_preparation_build(
+    tmp_path,
+):
+    # Reverting the formal asset source to "built by the release-preparation
+    # PR" must fail the checker: the formal assets were rebuilt after the
+    # merge from the exact release commit.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "release_v0_5_1.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "rebuilt from the exact release commit",
+            "built by the release-preparation PR",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the fact 'rebuilt from the exact release commit'"
+    ) in result.stdout
+
+
+def test_release_notes_allow_released_phrase_in_formal_section(tmp_path):
+    # "v0.5.1 is released" is now a legal formal-state expression in the
+    # current-state region of the release notes.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "release_v0_5_1.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "## Historical release-preparation record",
+            "v0.5.1 is released.\n\n## Historical release-preparation record",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_release_checker_allows_historical_pr4_open_sentence(tmp_path):
+    # The historical release-preparation record may quote the
+    # preparation-time state verbatim; the checker must not reject it.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "release_v0_5_1.md"
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        + "\nPR-4 is open and not merged.\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_release_checker_fails_without_v060_direction(tmp_path):
@@ -1035,6 +1094,191 @@ def test_release_checker_fails_without_dataset_catalog_contract(tmp_path):
     result = run_check_release(repo)
     assert result.returncode == 1
     assert "docs/contracts/dataset_catalog.md is missing" in result.stdout
+
+
+def test_release_checker_fails_when_v060_direction_appends_sample_generator_implemented(
+    tmp_path,
+):
+    # An appended contradictory claim must fail even when the required
+    # not-implemented markers are still present.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_6_0_direction.md"
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        + "\nThe Sample Generator is implemented and available now.\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "false claim 'Sample Generator is implemented'" in result.stdout
+
+
+def test_release_checker_fails_when_v060_direction_appends_dataset_catalog_implemented(
+    tmp_path,
+):
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_6_0_direction.md"
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        + "\nThe Dataset Catalog is implemented and available now.\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "false claim 'Dataset Catalog is implemented'" in result.stdout
+
+
+def test_release_checker_fails_when_sample_contract_singular_canonical_dirs(
+    tmp_path,
+):
+    # Shrinking the plural Canonical build directory input back to a single
+    # directory must fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "contracts" / "sample_generation.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "one or more explicit verified Canonical build directories",
+            "one explicit verified Canonical build directory",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the plural input fact "
+        "'one or more explicit verified Canonical build directories'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_sample_contract_singular_feature_spec_paths(
+    tmp_path,
+):
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "contracts" / "sample_generation.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "one or more explicit Feature spec file paths",
+            "one explicit Feature spec file path",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the plural input fact "
+        "'one or more explicit Feature spec file paths'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_sample_contract_singular_label_spec_paths(
+    tmp_path,
+):
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "contracts" / "sample_generation.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "one or more explicit Label spec file paths",
+            "one explicit Label spec file path",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the plural input fact "
+        "'one or more explicit Label spec file paths'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_sample_contract_appends_implemented_in_v051(
+    tmp_path,
+):
+    # An affirmative "implemented in v0.5.1" claim appended next to the
+    # required planned markers must still fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "contracts" / "sample_generation.md"
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        + "\nThe Sample Generator is implemented in v0.5.1.\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "affirmative 'implemented in v0.5.1'" in result.stdout
+
+
+def test_release_checker_fails_when_catalog_contract_appends_available_now(
+    tmp_path,
+):
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "contracts" / "dataset_catalog.md"
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        + "\nThe Dataset Catalog is available now.\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "stale claim 'available now'" in result.stdout
+
+
+def test_release_checker_fails_when_catalog_contract_claims_built_at_enters_identity(
+    tmp_path,
+):
+    # A contradictory claim that built_at enters Catalog content identity
+    # must fail even when the identity facts are present.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "contracts" / "dataset_catalog.md"
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        + "\nbuilt_at enters Catalog content identity.\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "false identity claim 'built_at enters Catalog content identity'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_catalog_contract_claims_output_directory_enters_identity(
+    tmp_path,
+):
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "contracts" / "dataset_catalog.md"
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        + "\nThe physical output directory enters Catalog content identity.\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "false identity claim "
+        "'physical output directory enters Catalog content identity'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_catalog_contract_missing_separate_materialization_identity(
+    tmp_path,
+):
+    # Deleting the separate materialization / snapshot identity distinction
+    # must fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "contracts" / "dataset_catalog.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "separate materialization or snapshot identity",
+            "materialization metadata",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the Catalog identity fact "
+        "'separate materialization or snapshot identity'"
+    ) in result.stdout
 
 
 def test_release_checker_fails_when_sample_generation_contract_claims_implemented(
@@ -1339,6 +1583,55 @@ def test_v060_direction_docs_are_boundary_contracts():
         text = (ROOT / rel).read_text(encoding="utf-8")
         assert "not implemented in v0.5.1" in text
         assert "Target release: v0.6.0" in text
+
+
+def test_release_notes_state_formal_asset_source():
+    text = (ROOT / "docs" / "release_v0_5_1.md").read_text(encoding="utf-8")
+    assert "rebuilt from the exact release commit" in text
+    assert "candidate validation only" in text
+    assert "downloaded again" in text
+    assert "a978eef291d5e26d20e5cf977bc76609c227cb52" in text
+
+
+def test_sample_generation_contract_supports_multiple_canonical_dirs():
+    text = (ROOT / "docs" / "contracts" / "sample_generation.md").read_text(
+        encoding="utf-8"
+    )
+    assert "one or more explicit verified Canonical build directories" in text
+
+
+def test_sample_generation_contract_supports_multiple_feature_spec_paths():
+    text = (ROOT / "docs" / "contracts" / "sample_generation.md").read_text(
+        encoding="utf-8"
+    )
+    assert "one or more explicit Feature spec file paths" in text
+    assert "feature_spec_files" in text
+
+
+def test_sample_generation_contract_supports_multiple_label_spec_paths():
+    text = (ROOT / "docs" / "contracts" / "sample_generation.md").read_text(
+        encoding="utf-8"
+    )
+    assert "one or more explicit Label spec file paths" in text
+    assert "label_spec_files" in text
+
+
+def test_v060_direction_distinguishes_catalog_identity_layers():
+    text = (ROOT / "docs" / "v0_6_0_direction.md").read_text(encoding="utf-8")
+    assert "Catalog content identity" in text
+    assert "built_at" in text
+    assert "never enter Catalog content identity" in text
+    assert "separate materialization or snapshot identity" in text
+
+
+def test_dataset_catalog_contract_distinguishes_identity_layers():
+    text = (ROOT / "docs" / "contracts" / "dataset_catalog.md").read_text(
+        encoding="utf-8"
+    )
+    assert "Catalog content identity" in text
+    assert "physical paths" in text
+    assert "never enter Catalog content identity" in text
+    assert "separate materialization or snapshot identity" in text
 
 
 def test_v060_adr_exists_and_is_accepted():

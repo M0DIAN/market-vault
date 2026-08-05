@@ -37,7 +37,9 @@ The new Dataset Catalog layer is fully independent of the existing
 ## 3. Indexed facts
 
 The future Catalog may index the following verified facts (high-level
-list; the exact schema is determined by PR-5):
+list; the exact schema is determined by PR-5). `built_at` and build
+path / location metadata are recorded as non-content metadata only; see
+the identity boundary in section 4.
 
 ```text
 dataset_id
@@ -58,15 +60,33 @@ build path/location metadata
 
 ## 4. Identity
 
-- the Catalog has its own versioned identity;
-- a Dataset path never enters Dataset identity;
-- Catalog identity never enters Dataset identity;
-- the same verified Dataset set under the same Catalog contract produces
-  the same Catalog content identity;
-- whether `built_at` and the physical output directory enter Catalog
-  identity is decided by PR-5, but they must never pollute Dataset
-  identity;
+### Catalog content identity
+
+- the Catalog has its own versioned content identity, independent of every
+  indexed Dataset identity;
+- Catalog content identity is determined only by the normalized set of
+  verified Dataset facts under the versioned Catalog contract;
+- `built_at`, the Catalog `output_root`, the Catalog snapshot path,
+  Dataset build paths / location metadata, the machine name,
+  host-specific filesystem representation, the current time, scan order,
+  and candidate input order never enter Catalog content identity;
+- the same verified Dataset facts under the same Catalog contract version
+  produce the same Catalog content identity, even when the Dataset or the
+  Catalog snapshot moves to another directory;
+- a Dataset path never enters any Dataset identity;
+- Catalog content identity never flows back into any Dataset identity;
 - a duplicate `dataset_id` with conflicting metadata fails closed.
+
+### Materialization / snapshot metadata
+
+- `built_at`, the output directory, and location metadata may be recorded
+  as non-content metadata;
+- PR-5 may define a separate materialization or snapshot identity, but
+  `built_at`, physical paths, output directories, machine names, and
+  location metadata never enter Catalog content identity;
+- materialization metadata never enters any Dataset identity, never
+  changes an indexed Dataset, and never makes the same Dataset set produce
+  a different content identity merely because the directory changed.
 
 ## 5. Materialization
 

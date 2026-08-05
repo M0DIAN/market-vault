@@ -14,12 +14,13 @@ Generation contract PR (PR-2).
 
 The generator requires explicit, high-level inputs:
 
-- an explicit verified Canonical build directory (read through
-  `load_verified_canonical_build`);
+- one or more explicit verified Canonical build directories (each read
+  through `load_verified_canonical_build`);
 - an explicit scope;
 - an explicit generation rule (window / stride rules);
-- an explicit Feature/Label spec path;
-- an explicit split spec;
+- one or more explicit Feature spec file paths;
+- one or more explicit Label spec file paths;
+- one explicit split spec file/path;
 - an explicit `dataset_as_of`;
 - an explicit `output_root`;
 - an explicit `built_at`;
@@ -27,7 +28,15 @@ The generator requires explicit, high-level inputs:
 
 Every input is explicit; there is no current time input. The generator
 never scans for `latest`, never auto-discovers Canonical, never reads the
-current time, and never accesses the network, OpenD, or settings.
+current time, and never accesses the network, OpenD, or settings. The
+Canonical build directories and the Feature / Label spec lists are all
+explicit; nothing is auto-scanned or auto-discovered, and the input order
+is deterministically normalized under the PR-2 contract. The plural
+Feature and Label spec lists mirror the existing formal build-plan fields
+`feature_spec_files` and `label_spec_files`; this boundary contract never
+shrinks the existing build-plan array capability into a single input and
+never merges Feature and Label spec paths into one mixed field. The final
+JSON field names are not fixed by this document; PR-2 defines them.
 
 ## 2. Output
 

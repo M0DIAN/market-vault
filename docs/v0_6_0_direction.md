@@ -123,6 +123,23 @@ The new Dataset Catalog must:
   reparse-point candidates;
 - keep discovery and query strictly read-only.
 
+**Catalog content identity.** Catalog content identity is determined only
+by the normalized set of verified Dataset facts under the versioned
+Catalog contract. `built_at`, the Catalog `output_root`, the Catalog
+snapshot path, Dataset build paths / location metadata, the machine name,
+host-specific filesystem representation, the current time, scan order,
+and candidate input order never enter Catalog content identity. The same
+verified Dataset facts under the same Catalog contract version always
+produce the same Catalog content identity, even when the Dataset or the
+Catalog snapshot is moved to another directory.
+
+**Materialization / snapshot metadata.** `built_at`, the output directory,
+and location metadata may be recorded as non-content metadata, or PR-5 may
+define a separate materialization or snapshot identity. They never enter
+Catalog content identity, never enter any Dataset identity, never change
+an indexed Dataset, and never make the same Dataset set produce a
+different content identity merely because the directory changed.
+
 The precise Catalog schema, identity, and physical layout are defined by
 the subsequent PRs.
 

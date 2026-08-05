@@ -49,8 +49,15 @@ package: success
   post-merge run.
 - The release-preparation branch validation below is a historical record.
 - The formal artifacts are the GitHub Release assets with the SHA-256s
-  above; they were built by the release-preparation PR, twine-checked, and
-  uploaded as Release assets after the merge.
+  above. The release-preparation branch and PR CI built and validated
+  release candidates. After PR #33 merged and the main push CI succeeded,
+  the formal wheel and sdist were rebuilt from the exact release commit
+  `a978eef291d5e26d20e5cf977bc76609c227cb52`, twine-checked, fresh-wheel
+  validated, uploaded as GitHub Release assets, downloaded again, and
+  SHA-256 verified.
+- release-preparation branch artifacts: candidate validation only.
+- formal GitHub Release assets: rebuilt after merge from the exact
+  release commit.
 - PyPI and TestPyPI are not published; publication remains a separate,
   explicit decision.
 
