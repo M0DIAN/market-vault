@@ -47,9 +47,11 @@ constant, dependency, or CI configuration is modified by this PR.
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 import os
 import shutil
+import time
 from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -65,6 +67,13 @@ import market_vault.cli as cli_module
 import market_vault.dataset as dataset_pkg
 import market_vault.dataset.feature_execution as fe_mod
 import market_vault.dataset.label_execution as le_mod
+
+#: The loaded forward_return module (importlib is used because the package
+#: re-exports the transform function under the same name, which would
+#: shadow a plain ``import ... as`` binding).
+_FORWARD_RETURN_MODULE = importlib.import_module(
+    "market_vault.dataset.label_transforms.forward_return"
+)
 from market_vault.canonical import (
     CanonicalRequestKey,
     load_verified_canonical_build,
@@ -74,12 +83,14 @@ from market_vault.dataset import (
     BOUNDARY_POLICY_NO_CROSS_TRADING_DAY,
     BOUNDARY_POLICY_SAME_MARKET_CALENDAR_DATE,
     CHRONOLOGICAL_SPLIT_SPEC_SCHEMA_VERSION,
+    DATASET_BUILD_REPORT_FILENAME,
     DATASET_FEATURE_SPECS_DIRNAME,
     DATASET_KIND_SUPERVISED,
     DATASET_LABEL_SPECS_DIRNAME,
     DATASET_MANIFEST_FILENAME,
     DATASET_MANIFEST_SCHEMA_VERSION,
     DATASET_PARQUET_FILENAME,
+    DATASET_SPLIT_SPEC_FILENAME,
     DATASET_SUCCESS_FILENAME,
     FEATURE_SPEC_SCHEMA_VERSION,
     FEATURE_VALUE_STATUS_COMPLETE,
@@ -381,7 +392,8 @@ E2E_COVERAGE = {
         ],
         "defense": [
             "test_e2e_non_finite_feature_nan_inf_fails_closed",
-            "test_e2e_non_finite_label_impl_cannot_enter_chain",
+            "test_e2e_non_finite_label_nan_inf_fails_closed",
+            "test_e2e_non_finite_label_catalog_boundary_fails_closed",
             "test_e2e_non_finite_tampered_nan_rejected",
         ],
     },
@@ -403,13 +415,26 @@ E2E_COVERAGE = {
 
 
 def test_e2e_coverage_matrix_keeps_control_and_defense_per_category():
+    assert set(DATASET_E2E_REGRESSION_IDS) == set(E2E_COVERAGE)
+    seen_anywhere: set[str] = set()
     for category in DATASET_E2E_REGRESSION_IDS:
         coverage = E2E_COVERAGE[category]
         assert coverage["control"], f"{category}: no positive control test"
         assert coverage["defense"], f"{category}: no defense test"
+        assert len(coverage["control"]) == len(set(coverage["control"])), (
+            f"{category}: duplicate control test names"
+        )
+        assert len(coverage["defense"]) == len(set(coverage["defense"])), (
+            f"{category}: duplicate defense test names"
+        )
         for name in coverage["control"] + coverage["defense"]:
             assert name in globals(), f"{category}: missing test function {name}"
-    assert set(DATASET_E2E_REGRESSION_IDS) == set(E2E_COVERAGE)
+            assert callable(globals()[name]), f"{category}: {name} is not callable"
+            assert name not in seen_anywhere, (
+                f"{category}: test function {name} is declared in more than one "
+                "category"
+            )
+            seen_anywhere.add(name)
 
 
 # ---------------------------------------------------------------------------
@@ -1392,7 +1417,6 @@ def test_e2e_actual_label_end_utc_microseconds(fixtures):
     assert end is not None
     assert end.tzinfo is not None
     assert end.utcoffset() == timedelta(0)
-    assert end.microsecond % 1 == 0
     assert end == end.astimezone(NY_ZONE).astimezone(UTC)
 
 
@@ -1949,40 +1973,54 @@ def test_e2e_row_column_order_physical_sort_and_schema(fixtures, tmp_path):
 
 def test_e2e_row_column_order_reordered_rows_rejected(fixtures, tmp_path):
     """Manually reversing the physical Parquet rows is rejected by the
-    verified reader."""
+    verified reader at the physical-row-order contract (the logical
+    content id is order-independent, so the reader must reach the
+    order check itself)."""
     _, mresult = two_row_dataset(fixtures, tmp_path)
     parquet = mresult.build_path / DATASET_PARQUET_FILENAME
     table = pq.read_table(parquet)
     assert table.num_rows >= 2
     reversed_rows = table.take(list(range(table.num_rows - 1, -1, -1)))
-    write_parquet_back(parquet, reversed_rows)
-    with pytest.raises(DatasetArtifactValidationError):
+    rewrite_parquet_with_coordinated_record(mresult, reversed_rows)
+    with pytest.raises(DatasetArtifactValidationError) as exc_info:
         load_verified_dataset(mresult.build_path)
+    assert "physical row order" in str(exc_info.value)
+    assert "code ASC" in str(exc_info.value)
 
 
 def test_e2e_row_column_order_reordered_columns_rejected(fixtures, tmp_path):
-    """Manually reordering the Parquet columns is rejected."""
+    """Manually reordering the Parquet columns is rejected at the
+    authoritative-schema contract: the reader compares the Arrow field
+    order against the manifest facts."""
     result, mresult = materialize_once(fixtures, tmp_path)
     parquet = mresult.build_path / DATASET_PARQUET_FILENAME
     table = pq.read_table(parquet)
     names = list(table.schema.names)
     reordered = table.select(names[::-1])
-    write_parquet_back(parquet, reordered)
-    with pytest.raises(DatasetArtifactValidationError):
+    rewrite_parquet_with_coordinated_record(mresult, reordered)
+    with pytest.raises(DatasetArtifactValidationError) as exc_info:
         load_verified_dataset(mresult.build_path)
+    assert "Parquet schema" in str(exc_info.value)
+    assert "field order" in str(exc_info.value)
 
 
 def test_e2e_row_column_order_dtype_change_rejected(fixtures, tmp_path):
-    """Changing a field dtype in the Parquet is rejected."""
+    """Changing a field dtype in the Parquet is rejected at the
+    authoritative-schema contract (Arrow types)."""
     result, mresult = materialize_once(fixtures, tmp_path)
     parquet = mresult.build_path / DATASET_PARQUET_FILENAME
     table = pq.read_table(parquet)
     index = table.schema.get_field_index("sr")
+    field = table.schema.field(index)
     column = table.column("sr").cast(pa.float32())
-    table = table.set_column(index, "sr", column)
-    write_parquet_back(parquet, table)
-    with pytest.raises(DatasetArtifactValidationError):
+    table = table.set_column(
+        index, pa.field("sr", column.type, field.nullable), column
+    )
+    rewrite_parquet_with_coordinated_record(mresult, table)
+    with pytest.raises(DatasetArtifactValidationError) as exc_info:
         load_verified_dataset(mresult.build_path)
+    assert "Parquet schema" in str(exc_info.value)
+    assert "Arrow types" in str(exc_info.value)
 
 
 # ---------------------------------------------------------------------------
@@ -2059,19 +2097,45 @@ def test_e2e_staging_residue_corrupt_success_fails_closed(fixtures, tmp_path):
 
 
 def test_e2e_staging_residue_complete_uncommitted_fails_closed(fixtures, tmp_path):
-    """A staging directory that is a full copy of a valid final build (even
-    including _SUCCESS) is never adopted: it was never atomically
-    committed."""
-    result = orchestrate(fixtures, requests=[request()])
-    root = _residue_root(tmp_path, result)
-    staging = root / f".staging-{result.dataset_id}"
+    """A staging directory holding a complete, formally valid build copy —
+    every artifact of a real final Dataset produced by the public chain
+    through a separate output root, `_SUCCESS` included — is never adopted:
+    it was never atomically committed under the final path. The residue is
+    neither adopted, nor repaired, nor deleted, nor rewritten, and no final
+    is published."""
+    # 1. Produce one fully valid final Dataset through the public chain in
+    #    its own output root.
+    _, mresult = materialize_once(fixtures, tmp_path)
+    # 2. Copy its complete content into a staging directory under a NEW
+    #    target output root; the target final path does not exist yet.
+    root = _residue_root(tmp_path, mresult)
+    staging = root / f".staging-{mresult.dataset_id}"
     staging.mkdir(parents=True, exist_ok=True)
-    (staging / DATASET_SUCCESS_FILENAME).write_bytes(b"")
-    (staging / "manifest.json").write_bytes(b"{}")
+    shutil.copytree(mresult.build_path, staging, dirs_exist_ok=True)
+    # 3. The staging itself now holds the complete artifact set.
+    for rel in (
+        DATASET_PARQUET_FILENAME,
+        DATASET_MANIFEST_FILENAME,
+        DATASET_BUILD_REPORT_FILENAME,
+        DATASET_SPLIT_SPEC_FILENAME,
+        DATASET_SUCCESS_FILENAME,
+    ):
+        assert (staging / rel).is_file(), f"staging is missing {rel}"
+    for rel in (DATASET_FEATURE_SPECS_DIRNAME, DATASET_LABEL_SPECS_DIRNAME):
+        assert (staging / rel).is_dir(), f"staging is missing {rel}/"
+    assert not (root / mresult.dataset_id).exists()
+    # 4. The materializer must fail closed on the residue.
+    before = _snapshot_state(staging)
     with pytest.raises(DatasetMaterializationError):
-        materialize_dataset_artifacts(result, output_root=root, built_at=BUILT_AT)
+        materialize_dataset_artifacts(
+            orchestrate(fixtures, requests=[request()]),
+            output_root=root, built_at=BUILT_AT,
+        )
+    # 5. The residue is untouched (hashes, sizes, mtimes, entries) and the
+    #    target final was never published.
+    assert _snapshot_state(staging) == before
     assert staging.is_dir()
-    assert not (root / result.dataset_id).exists()
+    assert not (root / mresult.dataset_id).exists()
 
 
 # ---------------------------------------------------------------------------
@@ -2256,6 +2320,16 @@ def _rewrite_with_coordinated_records(mresult, path: Path, new_bytes: bytes) -> 
     tamper_json(manifest_path, mutate)
 
 
+def rewrite_parquet_with_coordinated_record(mresult, table: pa.Table) -> None:
+    """Rewrite the Dataset Parquet once and synchronize the manifest
+    byte facts (size/SHA-256) so the reader passes the outer output-file
+    record checks and reaches the deep Parquet contract the test
+    declares."""
+    parquet = mresult.build_path / DATASET_PARQUET_FILENAME
+    write_parquet_back(parquet, table)
+    _rewrite_with_coordinated_records(mresult, parquet, parquet.read_bytes())
+
+
 def test_e2e_corrupted_parquet_arbitrary_bytes_rejected(fixtures, tmp_path):
     """Arbitrary byte corruption is rejected with the original Arrow
     exception preserved as __cause__ (the reader reaches the Parquet read
@@ -2278,55 +2352,73 @@ def test_e2e_corrupted_parquet_arbitrary_bytes_rejected(fixtures, tmp_path):
 
 def test_e2e_corrupted_parquet_value_change_rejected(fixtures, tmp_path):
     """A legal Parquet file whose logical values were changed is rejected
-    by the logical content identity."""
+    at the recomputed logical-content contract, after the coordinated byte
+    facts pass."""
     _, mresult = materialize_once(fixtures, tmp_path)
     parquet = mresult.build_path / DATASET_PARQUET_FILENAME
     table = pq.read_table(parquet)
     values = table.column("fr").to_pylist()
     values[0] = values[0] + 1.0 if values[0] is not None else 1.0
     table = replace_column_preserving_schema(table, "fr", values)
-    write_parquet_back(parquet, table)
-    with pytest.raises(DatasetArtifactValidationError):
+    rewrite_parquet_with_coordinated_record(mresult, table)
+    with pytest.raises(DatasetArtifactValidationError) as exc_info:
         load_verified_dataset(mresult.build_path)
+    assert "logical_dataset_content_id" in str(exc_info.value)
+    assert "does not match the manifest" in str(exc_info.value)
 
 
 def test_e2e_corrupted_parquet_row_order_rejected(fixtures, tmp_path):
-    """Changing the physical row order is rejected even though the logical
-    content id is order-independent."""
+    """Changing the physical row order is rejected at the physical-row-order
+    contract: the logical content id is order-independent, so the reader
+    must reach the order check itself."""
     _, mresult = two_row_dataset(fixtures, tmp_path)
     parquet = mresult.build_path / DATASET_PARQUET_FILENAME
     table = pq.read_table(parquet)
     n = table.num_rows
     table = table.take(list(range(n - 1, -1, -1)))
-    write_parquet_back(parquet, table)
-    with pytest.raises(DatasetArtifactValidationError):
+    rewrite_parquet_with_coordinated_record(mresult, table)
+    with pytest.raises(DatasetArtifactValidationError) as exc_info:
         load_verified_dataset(mresult.build_path)
+    assert "physical row order" in str(exc_info.value)
+    assert "code ASC" in str(exc_info.value)
 
 
 def test_e2e_corrupted_parquet_column_order_rejected(fixtures, tmp_path):
+    """Reordering the Parquet columns is rejected at the
+    authoritative-schema contract (field order)."""
     _, mresult = materialize_once(fixtures, tmp_path)
     parquet = mresult.build_path / DATASET_PARQUET_FILENAME
     table = pq.read_table(parquet)
     table = table.select(list(reversed(table.schema.names)))
-    write_parquet_back(parquet, table)
-    with pytest.raises(DatasetArtifactValidationError):
+    rewrite_parquet_with_coordinated_record(mresult, table)
+    with pytest.raises(DatasetArtifactValidationError) as exc_info:
         load_verified_dataset(mresult.build_path)
+    assert "Parquet schema" in str(exc_info.value)
+    assert "field order" in str(exc_info.value)
 
 
 def test_e2e_corrupted_parquet_dtype_change_rejected(fixtures, tmp_path):
+    """Changing a field dtype is rejected at the authoritative-schema
+    contract (Arrow types)."""
     _, mresult = materialize_once(fixtures, tmp_path)
     parquet = mresult.build_path / DATASET_PARQUET_FILENAME
     table = pq.read_table(parquet)
     index = table.schema.get_field_index("sample_version_id")
-    table = table.set_column(index, "sample_version_id",
-                             table.column("sample_version_id").cast(pa.large_string()))
-    write_parquet_back(parquet, table)
-    with pytest.raises(DatasetArtifactValidationError):
+    field = table.schema.field(index)
+    column = table.column("sample_version_id").cast(pa.large_string())
+    table = table.set_column(
+        index, pa.field("sample_version_id", column.type, field.nullable), column
+    )
+    rewrite_parquet_with_coordinated_record(mresult, table)
+    with pytest.raises(DatasetArtifactValidationError) as exc_info:
         load_verified_dataset(mresult.build_path)
+    assert "Parquet schema" in str(exc_info.value)
+    assert "Arrow types" in str(exc_info.value)
 
 
 def test_e2e_corrupted_parquet_metadata_change_rejected(fixtures, tmp_path):
-    """Changing the Parquet metadata key set is rejected."""
+    """Changing the Parquet metadata key set is rejected at the exact
+    metadata-key-set contract."""
     _, mresult = materialize_once(fixtures, tmp_path)
     parquet = mresult.build_path / DATASET_PARQUET_FILENAME
     table = pq.read_table(parquet)
@@ -2335,25 +2427,32 @@ def test_e2e_corrupted_parquet_metadata_change_rejected(fixtures, tmp_path):
     assert key in metadata
     del metadata[key]
     table = table.replace_schema_metadata(metadata)
-    write_parquet_back(parquet, table)
-    with pytest.raises(DatasetArtifactValidationError):
+    rewrite_parquet_with_coordinated_record(mresult, table)
+    with pytest.raises(DatasetArtifactValidationError) as exc_info:
         load_verified_dataset(mresult.build_path)
+    assert "Parquet metadata" in str(exc_info.value)
+    assert "exact key set and values" in str(exc_info.value)
 
 
 def test_e2e_corrupted_parquet_no_write_repair(fixtures, tmp_path):
-    """A rejected Dataset is never written, repaired, or regenerated by the
-    reader: bytes and entries stay exactly as found."""
+    """A Dataset rejected at the deep logical-content contract is never
+    written, repaired, or regenerated by the reader: bytes, sizes, mtimes,
+    and the entry set stay exactly as found (the test's own coordinated
+    tamper is the only mutation)."""
     _, mresult = materialize_once(fixtures, tmp_path)
     parquet = mresult.build_path / DATASET_PARQUET_FILENAME
     table = pq.read_table(parquet)
     values = table.column("sr").to_pylist()
     values[0] = values[0] + 1.0
     table = replace_column_preserving_schema(table, "sr", values)
-    write_parquet_back(parquet, table)
-    before = file_hashes(mresult.build_path)
-    with pytest.raises(DatasetArtifactValidationError):
+    rewrite_parquet_with_coordinated_record(mresult, table)
+    # State snapshot after the test's own coordinated tamper: the reader
+    # must leave hashes, sizes, mtimes, and entries untouched.
+    before = _snapshot_state(mresult.build_path)
+    with pytest.raises(DatasetArtifactValidationError) as exc_info:
         load_verified_dataset(mresult.build_path)
-    assert file_hashes(mresult.build_path) == before
+    assert "logical_dataset_content_id" in str(exc_info.value)
+    assert _snapshot_state(mresult.build_path) == before
 
 
 # ---------------------------------------------------------------------------
@@ -2473,8 +2572,16 @@ def _neg_inf_feature_impl(input_: FeatureTransformInput) -> float:
     return float("-inf")
 
 
-def _nan_label_impl(input_: LabelTransformInput) -> float:
+def _nan_forward_return_impl(input_: LabelTransformInput) -> float:
     return float("nan")
+
+
+def _pos_inf_forward_return_impl(input_: LabelTransformInput) -> float:
+    return float("inf")
+
+
+def _neg_inf_forward_return_impl(input_: LabelTransformInput) -> float:
+    return float("-inf")
 
 
 def _non_finite_feature_registration(impl) -> TransformRegistration:
@@ -2502,7 +2609,56 @@ def _non_finite_feature_registration(impl) -> TransformRegistration:
     )
 
 
-def _non_finite_label_registration(impl) -> TransformRegistration:
+def _non_finite_forward_return_registration(impl, monkeypatch) -> TransformRegistration:
+    """Bind one test implementation under the fixed built-in
+    ``forward_return`` transform_ref.
+
+    The registry's exact-key binding requires ``transform_ref ==
+    implementation.__module__ + ":" + implementation.__name__`` and that
+    ``getattr(module, __name__) is implementation``; the test seam
+    temporarily gives the implementation function the built-in module/name
+    identity and patches the loaded ``forward_return`` module attribute to
+    it, so the production Label executor resolves the fixed built-in ref
+    and really invokes this implementation (whose non-finite output the
+    production output validation must reject). The implementation
+    fingerprint hashes the real module source, so registration remains
+    deterministic. All patches are restored by ``monkeypatch`` at test
+    teardown; no production source, eval, exec, or dynamic import is used.
+    """
+    monkeypatch.setattr(impl, "__module__", _FORWARD_RETURN_MODULE.__name__)
+    monkeypatch.setattr(impl, "__name__", "forward_return")
+    monkeypatch.setattr(_FORWARD_RETURN_MODULE, "forward_return", impl)
+    return TransformRegistration(
+        transform_ref=(
+            "market_vault.dataset.label_transforms.forward_return:forward_return"
+        ),
+        kind=SPEC_KIND_LABEL,
+        implementation_version="v1",
+        implementation=impl,
+        input_canonical_fields=("close",),
+        supported_canonical_schema_versions=("market-bars-canonical-schema-v1",),
+        supported_source_schema_versions=("10.9",),
+        output_logical_type="float64",
+        output_nullable=False,
+        parameters=(),
+        lookback=TransformWindowRequirement(
+            source=WINDOW_SOURCE_FIXED, unit=WINDOW_UNIT_BARS, value=1,
+            parameter_name=None, boundary=WINDOW_BOUNDARY_INCLUSIVE,
+        ),
+        lookforward=TransformWindowRequirement(
+            source=WINDOW_SOURCE_LABEL_HORIZON, unit=WINDOW_UNIT_BARS,
+            value=None, parameter_name=None, boundary=WINDOW_BOUNDARY_INCLUSIVE,
+        ),
+        boundary_policy=BOUNDARY_POLICY_NO_CROSS_TRADING_DAY,
+        missing_policy=MISSING_POLICY_LABEL_INCOMPLETE,
+        display_name="test non-finite forward return",
+    )
+
+
+def _non_finite_label_registration_unknown_ref(impl) -> TransformRegistration:
+    """A Label registration under a transform_ref outside the fixed
+    built-in catalog (the function's own module identity). It constructs
+    cleanly but Label execution must refuse it at the catalog boundary."""
     return TransformRegistration(
         transform_ref=impl.__module__ + ":" + impl.__name__,
         kind=SPEC_KIND_LABEL,
@@ -2524,7 +2680,7 @@ def _non_finite_label_registration(impl) -> TransformRegistration:
         ),
         boundary_policy=BOUNDARY_POLICY_NO_CROSS_TRADING_DAY,
         missing_policy=MISSING_POLICY_LABEL_INCOMPLETE,
-        display_name="test non-finite label",
+        display_name="test non-finite label outside catalog",
     )
 
 
@@ -2563,13 +2719,35 @@ def test_e2e_non_finite_feature_nan_inf_fails_closed(fixtures, tmp_path, monkeyp
     assert not datasets_root(tmp_path).exists()
 
 
-def test_e2e_non_finite_label_impl_cannot_enter_chain(fixtures, tmp_path, monkeypatch):
-    """A non-finite-producing Label implementation cannot enter the v0.5
-    execution chain at all: Label execution structurally refuses any
-    registration outside the four fixed built-in transforms, so a
-    NaN/Infinity Label output is unreachable by construction (fail closed
-    at build configuration, nothing published)."""
-    registration = _non_finite_label_registration(_nan_label_impl)
+@pytest.mark.parametrize(
+    "impl",
+    [_nan_forward_return_impl, _pos_inf_forward_return_impl, _neg_inf_forward_return_impl],
+)
+def test_e2e_non_finite_label_nan_inf_fails_closed(
+    fixtures, tmp_path, monkeypatch, impl
+):
+    """The production Label executor really invokes an implementation that
+    returns NaN / +Infinity / -Infinity under the fixed built-in
+    ``forward_return`` transform_ref, and the production output validation
+    rejects the non-finite value before anything is published."""
+    registration = _non_finite_forward_return_registration(impl, monkeypatch)
+    monkeypatch.setattr(
+        le_mod, "built_in_label_registry", lambda: TransformRegistry((registration,))
+    )
+    with pytest.raises(DatasetOrchestrationError) as exc_info:
+        orchestrate(fixtures, requests=[request()])
+    message = str(exc_info.value)
+    assert "NaN" in message or "infinity" in message
+    assert not datasets_root(tmp_path).exists()
+    assert not list(tmp_path.rglob(DATASET_SUCCESS_FILENAME))
+
+
+def test_e2e_non_finite_label_catalog_boundary_fails_closed(fixtures, tmp_path, monkeypatch):
+    """A Label transform_ref outside the fixed built-in catalog fails
+    closed at orchestration even when a registry seam would otherwise
+    resolve it. This is the structural catalog boundary, separate from the
+    output-validation defense exercised above."""
+    registration = _non_finite_label_registration_unknown_ref(_nan_forward_return_impl)
     spec = LabelSpec(
         spec_schema_version=LABEL_SPEC_SCHEMA_VERSION,
         name="fr",
@@ -2638,30 +2816,56 @@ def test_e2e_timezone_equivalent_representations_same_identity(fixtures, tmp_pat
     assert ny.rows == base.rows
 
 
-def test_e2e_timezone_tz_env_no_effect(fixtures, tmp_path, monkeypatch):
-    """Setting a process TZ environment variable never changes the built
-    Dataset: no code path consults the local timezone."""
+def test_e2e_timezone_tz_env_no_effect(fixtures, tmp_path):
+    """Really switching the process timezone (POSIX ``time.tzset`` with
+    ``TZ=Asia/Tokyo``) never changes the built Dataset: no code path
+    consults the local timezone. Skipped on platforms without
+    ``time.tzset`` (e.g. Windows)."""
+    if not hasattr(time, "tzset"):
+        pytest.skip("time.tzset is not available on this platform")
     base, base_m = materialize_once(fixtures, tmp_path)
-    monkeypatch.setenv("TZ", "Asia/Tokyo")
-    other_root = tmp_path / "tz-out"
-    again = materialize_dataset_artifacts(
-        orchestrate(fixtures, requests=[request()]),
-        output_root=other_root, built_at=BUILT_AT,
-    )
+    original_tz = os.environ.get("TZ")
+    again = None
+    try:
+        os.environ["TZ"] = "Asia/Tokyo"
+        time.tzset()
+        other_root = tmp_path / "tz-out"
+        again = materialize_dataset_artifacts(
+            orchestrate(fixtures, requests=[request()]),
+            output_root=other_root, built_at=BUILT_AT,
+        )
+    finally:
+        if original_tz is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = original_tz
+        time.tzset()
+    assert again is not None
     assert again.dataset_id == base.dataset_id
     assert read_verified(again).rows == read_verified(base_m).rows
 
 
 def test_e2e_timezone_utc_microsecond_output(fixtures, tmp_path):
-    """The final Dataset timing columns are exact UTC microseconds."""
+    """The materialized Dataset carries UTC-microsecond timestamp
+    semantics: the Arrow fields are ``pa.timestamp("us", tz="UTC")``, the
+    read-back values equal the expected UTC instants exactly, and the
+    authoritative logical schema still declares the timestamp logical
+    type."""
     result, mresult = materialize_once(fixtures, tmp_path)
+    parquet = mresult.build_path / DATASET_PARQUET_FILENAME
+    table = pq.read_table(parquet)
+    assert table.schema.field("feature_window_close").type == pa.timestamp("us", tz="UTC")
+    assert table.schema.field("actual_label_end_time").type == pa.timestamp("us", tz="UTC")
+    assert table.column("feature_window_close")[0].as_py() == utc(2026, 7, 1, 13, 36)
+    assert table.column("actual_label_end_time")[0].as_py() == utc(2026, 7, 1, 13, 38)
+    # The authoritative logical schema still matches the DatasetSchema.
+    field_types = {f.name: f.logical_type for f in result.schema.fields}
+    assert field_types["feature_window_close"] == "timestamp_us_utc"
+    assert field_types["actual_label_end_time"] == "timestamp_us_utc"
     verified_build = read_verified(mresult)
     facts = row_by_name(verified_build.schema, verified_build.rows[0])
     assert facts["feature_window_close"] == utc(2026, 7, 1, 13, 36)
-    assert facts["feature_window_close"].tzinfo is not None
-    assert facts["feature_window_close"].utcoffset() == timedelta(0)
     assert facts["actual_label_end_time"] == utc(2026, 7, 1, 13, 38)
-    assert result.identity_input.dataset_as_of is None
 
 
 def test_e2e_timezone_naive_datetime_rejected(fixtures):
