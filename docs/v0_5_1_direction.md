@@ -115,3 +115,22 @@ The v0.5.1 release must keep, unchanged:
 - the public API smoke
 - wheel contents hygiene
 - no unrequested merge
+
+## 6. Progress
+
+- **PR-1** (`docs: define v0.5.1 maintenance direction`) — merged (GitHub
+  PR #30, squash merge commit
+  `8de57d497ae5d922e3df29d9475f14b9407865f0`): post-release state alignment
+  of the v0.5.0 direction and release notes, this direction document, and
+  the release checker / release tests switched to verifying the released
+  state.
+- **PR-2** (`fix: remove NumPy timedelta deprecation warnings`) — in
+  progress on the `fix/v0.5.1-numpy-timedelta-deprecations` branch:
+  explicit-unit `pd.Timedelta` construction in production and tests, the
+  precise warning-as-error pytest guard, and the
+  `tests/test_deprecation_compatibility_v051.py` regression suite.
+- The package version is still **0.5.0**; no dependency changes.
+- PR-3 (Dataset CLI examples) and PR-4 (v0.5.1 release preparation) have
+  not started.
+- Sample Generator, Dataset Catalog, Python Client, and ML Experiment have
+  not started.

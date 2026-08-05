@@ -61,7 +61,8 @@ def bar_available_at(market_time: pd.Timestamp, interval_seconds: int) -> pd.Tim
     is the v0.4 ``market_available_at`` rule; it is a pure computation and is
     not part of any canonical materialization.
     """
-    return (market_time + pd.Timedelta(seconds=interval_seconds)).tz_convert("UTC")
+    interval_delta = pd.Timedelta(int(interval_seconds), unit="s")
+    return (market_time + interval_delta).tz_convert("UTC")
 
 
 def market_session_label(ts: pd.Timestamp) -> str:

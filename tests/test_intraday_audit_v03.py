@@ -81,7 +81,7 @@ def us_calendar(cfg: Settings) -> None:
 def minute_keys(start: str, count: int, step_minutes: int = 1) -> list[str]:
     base = pd.Timestamp(start, tz="America/New_York")
     return [
-        (base + pd.Timedelta(minutes=step_minutes * index)).strftime("%Y-%m-%d %H:%M:%S")
+        (base + pd.Timedelta(int(step_minutes * index), unit="m")).strftime("%Y-%m-%d %H:%M:%S")
         for index in range(count)
     ]
 
@@ -803,7 +803,7 @@ def test_structure_timezone_instant_mismatch_fails(tmp_path):
     us_calendar(cfg)
     write_snapshot(cfg, codes=["US.MU"], trade_date=date(2026, 7, 1), run_id="run-a",
                    time_keys=minute_keys("2026-07-01 09:30:00", 5),
-                   mutate=lambda df: df.assign(time_utc=pd.to_datetime(df["time_utc"]) + pd.Timedelta(hours=1)))
+                   mutate=lambda df: df.assign(time_utc=pd.to_datetime(df["time_utc"]) + pd.Timedelta(1, unit="h")))
     report = intraday_mu(cfg)
     item = report.symbols[0].items[0]
     check = next(c for c in item.checks if c.name == "TIMEZONE_INSTANT_CONSISTENCY")
@@ -915,8 +915,8 @@ def test_structure_non_zero_seconds_fail(tmp_path):
         run_id="run-a",
         time_keys=minute_keys("2026-07-01 09:30:00", 5),
         mutate=lambda df: df.assign(
-            time_utc=pd.to_datetime(df["time_utc"]) + pd.Timedelta(seconds=30),
-            time_market=pd.to_datetime(df["time_market"]) + pd.Timedelta(seconds=30),
+            time_utc=pd.to_datetime(df["time_utc"]) + pd.Timedelta(30, unit="s"),
+            time_market=pd.to_datetime(df["time_market"]) + pd.Timedelta(30, unit="s"),
         ),
     )
     report = intraday_mu(cfg)
@@ -935,8 +935,8 @@ def test_structure_non_zero_microseconds_fail(tmp_path):
         run_id="run-a",
         time_keys=minute_keys("2026-07-01 09:30:00", 5),
         mutate=lambda df: df.assign(
-            time_utc=pd.to_datetime(df["time_utc"]) + pd.Timedelta(milliseconds=500),
-            time_market=pd.to_datetime(df["time_market"]) + pd.Timedelta(milliseconds=500),
+            time_utc=pd.to_datetime(df["time_utc"]) + pd.Timedelta(500, unit="ms"),
+            time_market=pd.to_datetime(df["time_market"]) + pd.Timedelta(500, unit="ms"),
         ),
     )
     report = intraday_mu(cfg)
@@ -950,8 +950,8 @@ def _shift_row_30s(df: pd.DataFrame) -> pd.DataFrame:
     integer multiple of the 1m interval while all other checks stay valid."""
     time_utc = pd.to_datetime(df["time_utc"]).copy()
     time_market = pd.to_datetime(df["time_market"]).copy()
-    time_utc.iloc[1] = time_utc.iloc[1] + pd.Timedelta(seconds=30)
-    time_market.iloc[1] = time_market.iloc[1] + pd.Timedelta(seconds=30)
+    time_utc.iloc[1] = time_utc.iloc[1] + pd.Timedelta(30, unit="s")
+    time_market.iloc[1] = time_market.iloc[1] + pd.Timedelta(30, unit="s")
     return df.assign(time_utc=time_utc, time_market=time_market)
 
 

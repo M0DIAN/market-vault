@@ -44,7 +44,7 @@ def settings(tmp_path) -> Settings:
 
 def minute_keys(start: str, count: int) -> list[str]:
     base = pd.Timestamp(start, tz=NY)
-    return [(base + pd.Timedelta(minutes=i)).strftime("%Y-%m-%d %H:%M:%S") for i in range(count)]
+    return [(base + pd.Timedelta(int(i), unit="m")).strftime("%Y-%m-%d %H:%M:%S") for i in range(count)]
 
 
 def raw_frame(code: str, time_keys: list[str], close: float = 100.5) -> pd.DataFrame:
@@ -506,7 +506,7 @@ def test_event_time_market_time_mismatch_fails(tmp_path):
     rows = Catalog(cfg).market_bar_snapshot_rows(ref).frame.assign(
         time_utc=pd.to_datetime(
             Catalog(cfg).market_bar_snapshot_rows(ref).frame["time_utc"]
-        ) + pd.Timedelta(hours=1)
+        ) + pd.Timedelta(1, unit="h")
     )
     with pytest.raises(CanonicalBuildError, match="disagreement"):
         build_inputs(cfg, [make_input(cfg, ref=ref, rows=rows)])

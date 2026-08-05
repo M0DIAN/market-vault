@@ -482,7 +482,7 @@ def calendar(cfg: Settings, *, trade_date: date = date(2026, 7, 1)) -> None:
 def minute_keys(start: str, count: int) -> list[str]:
     base = pd.Timestamp(start, tz=NY)
     return [
-        (base + pd.Timedelta(minutes=i)).strftime("%Y-%m-%d %H:%M:%S")
+        (base + pd.Timedelta(int(i), unit="m")).strftime("%Y-%m-%d %H:%M:%S")
         for i in range(count)
     ]
 

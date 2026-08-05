@@ -96,7 +96,8 @@ def derive_internal_gap_ranges(bars: tuple[CanonicalBar, ...], interval_seconds:
         )
         groups.setdefault(key, []).append(bar)
 
-    nominal = pd.Timedelta(seconds=interval_seconds)
+    interval_seconds_int = int(interval_seconds)
+    nominal = pd.Timedelta(interval_seconds_int, unit="s")
     for key in sorted(groups):
         group_bars = sorted(groups[key], key=lambda bar: (bar.event_time, bar.canonical_bar_key))
         for previous, current in zip(group_bars, group_bars[1:]):
@@ -140,8 +141,8 @@ def derive_internal_gap_ranges(bars: tuple[CanonicalBar, ...], interval_seconds:
                 session=session,
                 previous_event_time=previous_time,
                 next_event_time=current_time,
-                missing_from_event_time=previous_time + pd.Timedelta(seconds=interval_seconds),
-                missing_to_event_time=current_time - pd.Timedelta(seconds=interval_seconds),
+                missing_from_event_time=previous_time + nominal,
+                missing_to_event_time=current_time - nominal,
                 missing_bar_count=missing_count,
             )
             gaps.append(gap)

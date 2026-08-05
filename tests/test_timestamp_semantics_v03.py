@@ -82,7 +82,7 @@ def test_time_key_preserves_consecutive_market_instants(tmp_path):
     cfg = settings(tmp_path)
     curated = normalize(cfg, ["US.MU"], ["2026-07-01 09:30:00", "2026-07-01 09:31:00"])
     deltas = curated["time_market"].diff().dropna()
-    assert (deltas == pd.Timedelta(minutes=1)).all()
+    assert (deltas == pd.Timedelta(1, unit="m")).all()
     assert curated["time_market"].iloc[0] == pd.Timestamp("2026-07-01 09:30:00", tz=NY)
 
 
@@ -106,7 +106,7 @@ def test_market_available_at_consistent_with_normalized_event_time(tmp_path):
     cfg = settings(tmp_path)
     curated = normalize(cfg, ["US.MU"], ["2026-07-01 09:30:00"])
     event_time = curated["time_market"].iloc[0].tz_convert("UTC")
-    assert bar_available_at(curated["time_market"].iloc[0], 60) == event_time + pd.Timedelta(minutes=1)
+    assert bar_available_at(curated["time_market"].iloc[0], 60) == event_time + pd.Timedelta(1, unit="m")
 
 
 # --- UTC / NY conversion and DST --------------------------------------------
