@@ -31,6 +31,11 @@ import pytest
 
 import market_vault.dataset as dataset_pkg
 import market_vault.dataset.orchestration as orch_mod
+from market_vault.dataset.orchestration_models import (
+    _build_completion,
+    _build_diagnostics,
+    _verify_unique_sample_keys,
+)
 from market_vault.canonical import (
     CanonicalRequestKey,
     load_verified_canonical_build,
@@ -74,6 +79,7 @@ from market_vault.dataset import (
     CompletionSummary,
     CrossTradingDayPolicy,
     DatasetField,
+    DatasetIdentityInput,
     DatasetOrchestrationDiagnostics,
     DatasetOrchestrationError,
     DatasetOrchestrationResult,
@@ -2598,3 +2604,269 @@ def test_deterministic_rebuild_equivalence(fixtures):
     assert first == second
     assert first.dataset_id == second.dataset_id
     assert first.rows == second.rows
+
+
+# ---------------------------------------------------------------------------
+# Q. Scope / request revalidation inside the result model.
+# ---------------------------------------------------------------------------
+
+
+def scope_tampered_candidate(
+    result: DatasetOrchestrationResult, new_scope: DatasetScope
+) -> DatasetOrchestrationResult:
+    """A fully self-consistent candidate result under ``new_scope``.
+
+    Completion, diagnostics, DatasetIdentityInput, and ``dataset_id`` are
+    all rebuilt for the new scope while the PIT samples, Feature/Label
+    results, and rows keep the original code/date facts. The only
+    inconsistency left is the Scope/PIT request binding, so a rejection of
+    this candidate can only come from the result model's own
+    scope/request re-verification — never from a shallow
+    identity/completion/diagnostics/dataset_id mismatch.
+    """
+    completion = _build_completion(
+        new_scope, result.pit_result, result.feature_result, result.label_result
+    )
+    diagnostics = _build_diagnostics(
+        new_scope,
+        len(result.pit_result.samples),
+        result.pit_result,
+        result.feature_result,
+        result.label_result,
+        result.split_result,
+        result.rows,
+        completion,
+    )
+    identity_input = DatasetIdentityInput(
+        dataset_kind=result.dataset_kind,
+        scope=new_scope,
+        dataset_as_of=result.dataset_as_of,
+        schema=result.schema,
+        dataset_schema_id=result.dataset_schema_id,
+        logical_dataset_content_id=result.logical_dataset_content_id,
+        canonical_builds=result.pit_result.canonical_build_pins,
+        canonical_row_version_ids=result.pit_result.canonical_row_version_ids,
+        feature_specs=result.feature_result.feature_spec_pins,
+        label_specs=result.label_result.label_spec_pins,
+        split_spec=result.split_result.split_spec_pin,
+        implementations=result.identity_input.implementations,
+        completion=completion,
+        gap_references=result.pit_result.gap_references,
+        manifest_schema_version=result.manifest_schema_version,
+        serialization_format=result.serialization_format,
+        serialization_format_version=result.serialization_format_version,
+    )
+    return DatasetOrchestrationResult(
+        status=result.status,
+        dataset_kind=result.dataset_kind,
+        scope=new_scope,
+        dataset_as_of=result.dataset_as_of,
+        feature_specs=result.feature_specs,
+        label_specs=result.label_specs,
+        split_spec=result.split_spec,
+        pit_result=result.pit_result,
+        feature_result=result.feature_result,
+        label_result=result.label_result,
+        split_result=result.split_result,
+        schema=result.schema,
+        rows=result.rows,
+        dataset_schema_id=result.dataset_schema_id,
+        logical_dataset_content_id=result.logical_dataset_content_id,
+        identity_input=identity_input,
+        dataset_id=dataset_id(identity_input),
+        completion=completion,
+        diagnostics=diagnostics,
+        manifest_schema_version=result.manifest_schema_version,
+        serialization_format=result.serialization_format,
+        serialization_format_version=result.serialization_format_version,
+        row_order=result.row_order,
+        orchestration_contract_version=result.orchestration_contract_version,
+    )
+
+
+def test_scope_tamper_candidate_is_self_consistent(fixtures):
+    """Positive control: with the correct scope the rebuilt candidate
+    equals the original result, proving the helper is genuinely
+    self-consistent and only the binding check can fail it."""
+    result = orchestrate(fixtures, requests=[request()])
+    rebuilt = scope_tampered_candidate(result, result.scope)
+    assert rebuilt == result
+    assert rebuilt.dataset_id == result.dataset_id
+
+
+def test_result_revalidates_scope_symbol_binding(fixtures):
+    result = orchestrate(fixtures, requests=[request()])
+    wrong = dataset_scope(
+        symbols=("US.OTHER",), trade_dates=(date(2026, 7, 1),)
+    )
+    with pytest.raises(DatasetOrchestrationError):
+        scope_tampered_candidate(result, wrong)
+
+
+def test_result_revalidates_scope_trade_date_binding(fixtures):
+    result = orchestrate(fixtures, requests=[request()])
+    wrong = dataset_scope(
+        symbols=("US.MU",), trade_dates=(date(2026, 7, 2),)
+    )
+    with pytest.raises(DatasetOrchestrationError):
+        scope_tampered_candidate(result, wrong)
+
+
+def test_result_revalidates_scope_interval_binding(fixtures):
+    result = orchestrate(fixtures, requests=[request()])
+    wrong = DatasetScope(
+        symbols=("US.MU",),
+        trade_dates=(date(2026, 7, 1),),
+        interval="5m",
+        adjustment="NONE",
+        requested_session="ALL",
+    )
+    with pytest.raises(DatasetOrchestrationError):
+        scope_tampered_candidate(result, wrong)
+
+
+def test_result_revalidates_scope_adjustment_binding(fixtures):
+    result = orchestrate(fixtures, requests=[request()])
+    wrong = DatasetScope(
+        symbols=("US.MU",),
+        trade_dates=(date(2026, 7, 1),),
+        interval="1m",
+        adjustment="SPLIT",
+        requested_session="ALL",
+    )
+    with pytest.raises(DatasetOrchestrationError):
+        scope_tampered_candidate(result, wrong)
+
+
+def test_result_revalidates_scope_session_binding(fixtures):
+    result = orchestrate(fixtures, requests=[request()])
+    wrong = DatasetScope(
+        symbols=("US.MU",),
+        trade_dates=(date(2026, 7, 1),),
+        interval="1m",
+        adjustment="NONE",
+        requested_session="REG",
+    )
+    with pytest.raises(DatasetOrchestrationError):
+        scope_tampered_candidate(result, wrong)
+
+
+def test_scope_with_extra_unrequested_keys_still_valid(fixtures):
+    """A scope may contain extra symbols/dates without requests; they
+    produce MISSING completion entries and the build stays legal."""
+    result = orchestrate(
+        fixtures,
+        requests=[request()],
+        scope_value=dataset_scope(
+            symbols=("US.MU", "US.NVDA"),
+            trade_dates=(date(2026, 7, 1), date(2026, 7, 2)),
+        ),
+    )
+    by_key = {
+        (entry.code, entry.trade_date): entry
+        for entry in result.completion.entries
+    }
+    assert by_key[("US.MU", date(2026, 7, 1))].status == "COMPLETE"
+    assert by_key[("US.MU", date(2026, 7, 2))].status == "MISSING"
+    assert by_key[("US.NVDA", date(2026, 7, 1))].status == "MISSING"
+    assert by_key[("US.NVDA", date(2026, 7, 2))].status == "MISSING"
+    assert result.diagnostics.completion_missing_key_count == 3
+    assert result.status == STATUS_COMPLETE
+
+
+# ---------------------------------------------------------------------------
+# R. sample_key uniqueness by schema field-name index.
+# ---------------------------------------------------------------------------
+
+
+def test_sample_key_index_resolved_from_field_names(fixtures):
+    result = orchestrate(fixtures, requests=[request()])
+    field_indexes = {
+        field.name: index for index, field in enumerate(result.schema.fields)
+    }
+    assert field_indexes["sample_key"] == 1  # second fixed field, after code
+    assert result.schema.fields[field_indexes["sample_key"]].name == "sample_key"
+    assert result.schema.fields[0].name == "code"
+
+
+def test_unique_sample_keys_rejects_duplicate(fixtures):
+    result = orchestrate(fixtures, requests=[request()])
+    row = result.rows[0]
+    duplicate = (row[0], row[1], "other-version") + row[3:]
+    with pytest.raises(DatasetOrchestrationError):
+        _verify_unique_sample_keys((row, duplicate), result.schema)
+
+
+def test_unique_sample_keys_passes_distinct_keys(fixtures):
+    result = orchestrate(fixtures, requests=[request()])
+    row = result.rows[0]
+    other = (row[0], "d" * 64, row[2]) + row[3:]
+    _verify_unique_sample_keys((row, other), result.schema)
+
+
+def test_sample_version_id_not_mistaken_for_sample_key(fixtures):
+    """Rows that share a sample_key but differ in sample_version_id must
+    fail; rows that differ only in sample_key must pass."""
+    result = orchestrate(fixtures, requests=[request()])
+    row = result.rows[0]
+    same_key_diff_version = (row[0], row[1], "other-version") + row[3:]
+    with pytest.raises(DatasetOrchestrationError):
+        _verify_unique_sample_keys(
+            (row, same_key_diff_version), result.schema
+        )
+    diff_key = (row[0], "e" * 64, row[2]) + row[3:]
+    _verify_unique_sample_keys((row, diff_key), result.schema)
+
+
+# ---------------------------------------------------------------------------
+# S. Strict tuple-only row boundary.
+# ---------------------------------------------------------------------------
+
+
+def test_rows_outer_list_rejected(fixtures):
+    result = orchestrate(fixtures, requests=[request()])
+    with pytest.raises(DatasetOrchestrationError):
+        replace(result, rows=list(result.rows))
+
+
+def test_rows_inner_list_rejected(fixtures):
+    result = orchestrate(fixtures, requests=[request()])
+    with pytest.raises(DatasetOrchestrationError):
+        replace(result, rows=(list(result.rows[0]),))
+
+
+def test_rows_inner_generator_rejected(fixtures):
+    result = orchestrate(fixtures, requests=[request()])
+    with pytest.raises(DatasetOrchestrationError):
+        replace(result, rows=((value for value in result.rows[0]),))
+
+
+def test_rows_string_row_rejected(fixtures):
+    result = orchestrate(fixtures, requests=[request()])
+    with pytest.raises(DatasetOrchestrationError):
+        replace(result, rows=("US.MU",))
+
+
+def test_rows_bytes_row_rejected(fixtures):
+    result = orchestrate(fixtures, requests=[request()])
+    with pytest.raises(DatasetOrchestrationError):
+        replace(result, rows=(b"US.MU",))
+
+
+def test_rows_tuple_of_tuples_accepted(fixtures):
+    result = orchestrate(fixtures, requests=[request()])
+    rebuilt = replace(result, rows=tuple(result.rows))
+    assert rebuilt == result
+    assert all(isinstance(row, tuple) for row in rebuilt.rows)
+
+
+def test_logical_row_mappings_do_not_mutate_rows(fixtures):
+    result = orchestrate(fixtures, requests=[request()])
+    mappings = result.logical_row_mappings()
+    assert len(mappings) == len(result.rows)
+    for mapping in mappings:
+        assert isinstance(mapping, dict)
+    # Mutating a returned temporary mapping never affects internal rows.
+    mappings[0]["code"] = "HACKED"
+    row_map = dict(zip(schema_names(result.schema), result.rows[0]))
+    assert row_map["code"] == "US.MU"

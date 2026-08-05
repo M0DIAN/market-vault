@@ -61,7 +61,7 @@ from .models import (
     ImplementationPin,
     SpecPin,
 )
-from .pit_models import PITAssemblyResult
+from .pit_models import PITAssemblyResult, PITSampleRequest
 from .spec_models import FeatureSpec, LabelSpec
 from .specs import feature_label_spec_pin
 from .split_models import (
@@ -339,6 +339,68 @@ def _spec_pin_keys(specs) -> tuple[SpecPin, ...]:
     """The stable SpecPin tuple of a normalized spec tuple, in the same
     order (``(kind, name, version, content_sha256)``)."""
     return tuple(feature_label_spec_pin(spec) for spec in specs)
+
+
+def _verify_scope_request_binding(scope: DatasetScope, requests) -> None:
+    """Strict scope / request binding shared by the public orchestration
+    entry and the result model.
+
+    Every item must be a ``PITSampleRequest``; ``code`` must belong to
+    ``scope.symbols``, ``anchor_market_calendar_date`` to
+    ``scope.trade_dates``, and interval / adjustment / requested_session
+    must equal the scope's. The scope may legally contain additional keys
+    without requests (they produce MISSING completion entries), but a
+    request outside the scope always fails closed. No field is ever
+    recovered by parsing ``sample_key``; neither the requests nor the
+    scope are modified and no request is recreated. All failures raise
+    :class:`DatasetOrchestrationError`.
+    """
+    for item in requests:
+        _require_instance(item, PITSampleRequest, "request")
+        if item.code not in scope.symbols:
+            raise DatasetOrchestrationError(
+                f"request {item.code!r} is outside the scope symbols"
+            )
+        if item.anchor_market_calendar_date not in scope.trade_dates:
+            raise DatasetOrchestrationError(
+                f"request anchor date "
+                f"{item.anchor_market_calendar_date.isoformat()} for "
+                f"{item.code!r} is outside the scope trade dates"
+            )
+        if item.interval != scope.interval:
+            raise DatasetOrchestrationError(
+                f"request interval {item.interval!r} must equal the scope "
+                f"interval {scope.interval!r}"
+            )
+        if item.adjustment != scope.adjustment:
+            raise DatasetOrchestrationError(
+                f"request adjustment {item.adjustment!r} must equal the "
+                f"scope adjustment {scope.adjustment!r}"
+            )
+        if item.requested_session != scope.requested_session:
+            raise DatasetOrchestrationError(
+                f"request requested_session {item.requested_session!r} must "
+                f"equal the scope requested_session "
+                f"{scope.requested_session!r}"
+            )
+
+
+def _verify_unique_sample_keys(rows, schema: DatasetSchema) -> None:
+    """Duplicate ``sample_key`` rows fail closed.
+
+    The ``sample_key`` column index is resolved from the schema field names
+    (``field_indexes["sample_key"]``), never from a hardcoded numeric
+    offset, so a future fixed-schema change cannot silently break the
+    check. ``sample_version_id`` is never mistaken for ``sample_key``.
+    """
+    field_indexes = {
+        field.name: index for index, field in enumerate(schema.fields)
+    }
+    sample_key_index = field_indexes["sample_key"]
+    if len({row[sample_key_index] for row in rows}) != len(rows):
+        raise DatasetOrchestrationError(
+            "rows must not contain duplicate sample_key values"
+        )
 
 
 def _verify_sample_binding(
@@ -857,15 +919,19 @@ class DatasetOrchestrationResult:
     independently re-verifies every invariant from the carried raw inputs
     (fail closed): contract and row-order constants, dataset kind, the
     manifest / serialization contract values, spec types and pins, the
-    PIT / Feature / Label sample binding, the split-handoff equality, the
-    re-derived authoritative schema, the rebuilt final rows (including
-    field count, schema type/nullability via the identity encoding, and the
-    fixed physical sort), every identity recomputation, the completion
-    summary, the diagnostics matrix, and the status / row-count
-    consistency. A manually constructed or ``dataclasses.replace``-modified
-    inconsistent object fails. The result never carries ``built_at``, an
-    output path, a DatasetManifest, Parquet bytes, a temporary directory,
-    ``created_new_build``, current time, or filesystem facts.
+    scope / request binding re-checked from the PIT samples' requests via
+    the same shared helper the public entry uses, the PIT / Feature /
+    Label sample binding, the split-handoff equality, the re-derived
+    authoritative schema, the rebuilt final rows (strict ``tuple``-of-
+    ``tuple`` rows with field count, schema type/nullability via the
+    identity encoding, duplicate ``sample_key`` rejection by schema field
+    name index, and the fixed physical sort), every identity
+    recomputation, the completion summary, the diagnostics matrix, and the
+    status / row-count consistency. A manually constructed or
+    ``dataclasses.replace``-modified inconsistent object fails. The result
+    never carries ``built_at``, an output path, a DatasetManifest, Parquet
+    bytes, a temporary directory, ``created_new_build``, current time, or
+    filesystem facts.
     """
 
     status: str
@@ -1008,14 +1074,20 @@ class DatasetOrchestrationResult:
             raise DatasetOrchestrationError(
                 "rows must be a tuple of schema-ordered immutable tuples"
             )
-        rows = tuple(tuple(row) for row in self.rows)
-        for row in rows:
+        for row in self.rows:
+            if not isinstance(row, tuple):
+                raise DatasetOrchestrationError(
+                    "every row must be an immutable tuple; list, generator, "
+                    "string, and bytes rows are rejected and never silently "
+                    "converted"
+                )
             if len(row) != len(self.schema.fields):
                 raise DatasetOrchestrationError(
                     "every row must carry exactly the schema field count, got "
                     f"{len(row)} for a schema with {len(self.schema.fields)} "
                     "fields"
                 )
+        rows = self.rows
         object.__setattr__(self, "rows", rows)
 
         # Spec pins must equal the pins of the carried execution results.
@@ -1034,6 +1106,15 @@ class DatasetOrchestrationResult:
             raise DatasetOrchestrationError(
                 "split_result.split_spec_pin must match the split spec content"
             )
+
+        # Scope / request binding re-verified from the PIT samples' requests
+        # (the same shared helper the public entry runs before PIT assembly),
+        # so a directly constructed or dataclasses.replace-modified object
+        # can never carry PIT samples whose requests fall outside the scope.
+        _verify_scope_request_binding(
+            self.scope,
+            tuple(sample.request for sample in self.pit_result.samples),
+        )
 
         # Cross-layer sample binding (keys, version IDs, code, close, cutoff).
         _verify_sample_binding(
@@ -1104,11 +1185,7 @@ class DatasetOrchestrationResult:
                 "schema, in the fixed physical order (code, "
                 "feature_window_close, sample_key)"
             )
-        if len({row[2] for row in rows}) != len(rows):
-            # sample_key is the third schema field (index 2).
-            raise DatasetOrchestrationError(
-                "rows must not contain duplicate sample_key values"
-            )
+        _verify_unique_sample_keys(rows, expected_schema)
 
         # Identity recomputation.
         expected_schema_id = dataset_schema_id(expected_schema)

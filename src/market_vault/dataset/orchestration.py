@@ -59,6 +59,7 @@ from .orchestration_models import (
     _merge_implementation_pins,
     _row_mappings,
     _verify_sample_binding,
+    _verify_scope_request_binding,
     dataset_orchestration_schema,
 )
 from .pit import assemble_point_in_time_samples
@@ -237,33 +238,9 @@ def _orchestrate(
         f"{serialization_format_version!r}",
     )
 
-    # 3. Scope / request consistency preflight.
-    for item in request_items:
-        _require(
-            item.code in scope.symbols,
-            f"request {item.code!r} is outside the scope symbols",
-        )
-        _require(
-            item.anchor_market_calendar_date in scope.trade_dates,
-            f"request anchor date "
-            f"{item.anchor_market_calendar_date.isoformat()} for "
-            f"{item.code!r} is outside the scope trade dates",
-        )
-        _require(
-            item.interval == scope.interval,
-            f"request interval {item.interval!r} must equal the scope "
-            f"interval {scope.interval!r}",
-        )
-        _require(
-            item.adjustment == scope.adjustment,
-            f"request adjustment {item.adjustment!r} must equal the scope "
-            f"adjustment {scope.adjustment!r}",
-        )
-        _require(
-            item.requested_session == scope.requested_session,
-            f"request requested_session {item.requested_session!r} must "
-            f"equal the scope requested_session {scope.requested_session!r}",
-        )
+    # 3. Scope / request consistency preflight (shared helper, re-used by
+    # the result model's re-verification so the two can never drift).
+    _verify_scope_request_binding(scope, request_items)
 
     # 4. Specs deterministic ordering and authoritative schema derivation.
     expected_schema = dataset_orchestration_schema(

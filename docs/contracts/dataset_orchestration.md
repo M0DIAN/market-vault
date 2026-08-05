@@ -162,7 +162,16 @@ No retry and no second "better" result set is ever executed.
 Requests are validated against the scope before any pipeline call: code in
 symbols, anchor date in trade dates, interval / adjustment / requested
 session equal. Scope keys without any request produce MISSING completion
-entries; requests outside the scope fail closed.
+entries; requests outside the scope fail closed. The same shared
+`_verify_scope_request_binding` helper is re-run by
+`DatasetOrchestrationResult` construction over the PIT samples' requests, so
+the public entry and the result model can never drift: a directly
+constructed or `dataclasses.replace`-modified object cannot carry a scope
+that contradicts its PIT samples. The scope may legally contain extra
+symbols/trade dates without requests (they produce MISSING completion
+entries), but every PIT request must belong to the scope. Neither requests
+nor the scope are modified, no field is recovered by parsing `sample_key`,
+and no request is ever recreated.
 
 ## 10. Schema derivation
 
@@ -271,7 +280,10 @@ nulls, and the split assignment fields are copied exactly. When some Labels
 are COMPLETE and others INCOMPLETE, the COMPLETE values are kept and the
 incomplete fields are null while the sample `label_status` stays INCOMPLETE.
 `logical_row_mappings()` generates temporary schema-ordered dicts on demand
-and is never an identity cache or mutable state.
+and is never an identity cache or mutable state. The rows boundary is
+strict `tuple`-of-`tuple`: the outer container must be a tuple, every row
+must be exactly a tuple, and list, generator, string, and bytes rows are
+rejected — never silently converted or "fixed" into tuples.
 
 ## 21. Physical row sort
 
@@ -281,7 +293,10 @@ ASC, then `sample_key` ASC
 order, and spec order never change it. `logical_dataset_content_id` stays
 row-order-independent, but the result still verifies the physical order so
 PR-6 receives a fixed input for stable Parquet output. Duplicate
-`sample_key` rows fail: one sample_key yields exactly one final row.
+`sample_key` rows fail: one sample_key yields exactly one final row. The
+duplicate check resolves the `sample_key` column index from the schema
+field names (`field_indexes["sample_key"]`), never from a hardcoded numeric
+position, and never mistakes `sample_version_id` for `sample_key`.
 
 ## 22. Completion semantics
 
@@ -389,14 +404,19 @@ the rows, `dataset_schema_id`, `logical_dataset_content_id`,
 schema version, the serialization format/version, the row-order code, and
 the orchestration contract version. Construction independently re-verifies:
 contract version, dataset kind, row order, spec types/order/pins, the
-cross-layer sample binding, the split-set equality and per-assignment
-facts, the re-derived schema, the rebuilt rows (field count, schema
-type/nullability, physical sort, `sample_key` uniqueness), every identity
-recomputation, completion, diagnostics, `identity_input`, and status/row
-count consistency. Manually constructed or `dataclasses.replace`-modified
-inconsistent objects fail. Results never carry `built_at`, output paths,
-DatasetManifest, `DatasetOutputFile`, Parquet bytes, temporary directories,
-`created_new_build`, current time, or filesystem facts.
+scope / request binding re-checked from the PIT samples' requests via the
+same shared helper the public entry runs, the cross-layer sample binding,
+the split-set equality and per-assignment facts, the re-derived schema,
+the rebuilt rows (strict `tuple`-of-`tuple` boundary, field count, schema
+type/nullability, `sample_key` uniqueness by schema field-name index,
+physical sort), every identity recomputation, completion, diagnostics,
+`identity_input`, and status/row count consistency. Manually constructed or
+`dataclasses.replace`-modified inconsistent objects fail — including
+objects whose completion, diagnostics, identity input, and `dataset_id`
+were all consistently rebuilt for a wrong scope, which still fail on the
+scope/PIT request binding alone. Results never carry `built_at`, output
+paths, DatasetManifest, `DatasetOutputFile`, Parquet bytes, temporary
+directories, `created_new_build`, current time, or filesystem facts.
 
 `DatasetOrchestrationDiagnostics` is frozen and verifies its fixed count
 matrix at construction (PIT == Feature complete + excluded, PIT == Label
