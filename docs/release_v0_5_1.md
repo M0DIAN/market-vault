@@ -126,12 +126,12 @@ wheel contents: WHEEL_CONTENTS_OK
 ### GitHub Actions validation
 
 Recorded by the final CI run on the release-preparation branch
-(ubuntu-latest); the run is the final head's CI after the release notes
-were updated.
+(ubuntu-latest); the run corresponds to the final head after the release
+notes were updated.
 
 ```text
-test (3.11): passed, with counts recorded from the final run
-test (3.14): passed, with counts recorded from the final run
+test (3.11): 2286 passed, 7 skipped
+test (3.14): 2286 passed, 7 skipped
 package: success
     RELEASE_CHECK_OK version=0.5.1
     market-vault 0.5.1
