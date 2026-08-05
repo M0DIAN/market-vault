@@ -1513,6 +1513,7 @@ def test_empty_feature_spec_set_allowed(fixtures):
     assert result.diagnostics.complete_value_count == 0
     assert result.diagnostics.transform_invocation_count == 0
     assert result.feature_spec_pins == ()
+    assert result.implementation_pins == ()
 
 
 # ---------------------------------------------------------------------------
@@ -2165,4 +2166,120 @@ def test_cross_market_date_priority_over_contiguity(fixtures):
     assert value.status == FEATURE_VALUE_STATUS_EXCLUDED
     assert value.reason_code == FEATURE_EXCLUSION_CROSS_MARKET_DATE
     assert value.value is None
+    assert result.diagnostics.transform_invocation_count == 0
+
+
+# ---------------------------------------------------------------------------
+# L. Shared transform implementation across multiple FeatureSpecs.
+# ---------------------------------------------------------------------------
+
+
+def test_shared_implementation_multiple_specs(fixtures):
+    # Two FeatureSpecs legally share the simple_return implementation with
+    # different windows: the implementation pin is deduplicated, the spec
+    # pins stay distinct, and both formulas are exact.
+    specs = [
+        feature_spec("return_2bars", REF_SIMPLE, ("close",), parameters=(wb(2),)),
+        feature_spec("return_5bars", REF_SIMPLE, ("close",), parameters=(wb(5),)),
+    ]
+    pit = assemble([fixtures.a], [request()])
+    result = execute_builtin_features([fixtures.a], pit, specs)
+    sample = result.samples[0]
+    assert len(sample.values) == 2
+    spec_pins = [value.spec_pin for value in sample.values]
+    assert spec_pins[0] != spec_pins[1]
+    implementation_pins = [value.implementation_pin for value in sample.values]
+    assert implementation_pins[0] == implementation_pins[1]
+    assert len(result.feature_spec_pins) == 2
+    assert len(result.implementation_pins) == 1
+    assert len(result.implementation_pins) <= len(result.feature_spec_pins)
+    by_name = {value.feature_name: value for value in sample.values}
+    assert by_name["return_2bars"].value == 110.0 / 120.0 - 1.0
+    assert by_name["return_5bars"].value == 110.0 / 110.0 - 1.0
+    assert by_name["return_2bars"].status == FEATURE_VALUE_STATUS_COMPLETE
+    assert by_name["return_5bars"].status == FEATURE_VALUE_STATUS_COMPLETE
+
+
+def test_shared_rolling_mean_multiple_windows(fixtures):
+    specs = [
+        feature_spec("mean_1bar", REF_MEAN, ("close",), parameters=(wb(1),)),
+        feature_spec("mean_3bars", REF_MEAN, ("close",), parameters=(wb(3),)),
+    ]
+    pit = assemble([fixtures.a], [request()])
+    result = execute_builtin_features([fixtures.a], pit, specs)
+    by_name = {value.feature_name: value for value in result.samples[0].values}
+    assert by_name["mean_1bar"].value == 110.0
+    assert by_name["mean_3bars"].value == (118.0 + 120.0 + 110.0) / 3.0
+    assert (
+        by_name["mean_1bar"].implementation_pin
+        == by_name["mean_3bars"].implementation_pin
+    )
+    assert len(result.implementation_pins) == 1
+
+
+def test_shared_implementation_spec_permutation_equivalence(fixtures):
+    specs = [
+        feature_spec("return_2bars", REF_SIMPLE, ("close",), parameters=(wb(2),)),
+        feature_spec("return_5bars", REF_SIMPLE, ("close",), parameters=(wb(5),)),
+    ]
+    pit = assemble([fixtures.a], [request()])
+    forward = execute_builtin_features([fixtures.a], pit, specs)
+    reverse = execute_builtin_features([fixtures.a], pit, list(reversed(specs)))
+    assert forward == reverse
+    assert forward.implementation_pins == reverse.implementation_pins
+    assert len(forward.implementation_pins) == 1
+
+
+def test_multiple_distinct_implementations(fixtures):
+    pit = assemble([fixtures.a], [request()])
+    result = execute_builtin_features(
+        [fixtures.a],
+        pit,
+        [
+            feature_spec("ret", REF_SIMPLE, ("close",), parameters=(wb(2),)),
+            feature_spec("body", REF_BODY, ("open", "close")),
+        ],
+    )
+    assert len(result.implementation_pins) == 2
+    assert len(result.feature_spec_pins) == 2
+
+
+def test_result_rejects_duplicate_identical_implementation_pins():
+    # The public result model keeps its fail-closed duplicate validation:
+    # even two byte-identical pins passed directly are rejected.
+    pin_a, impl_a = spec_and_impl("aa", REF_BODY, ("open", "close"))
+    sample = sample_of("s1", [value_of(pin_a, impl_a)])
+    with pytest.raises(FeatureExecutionError):
+        result_of([sample], [pin_a], [impl_a, impl_a])
+
+
+def test_result_rejects_implementation_hash_conflict():
+    # Same name/version with a different content hash stays a conflict.
+    pin_a, impl_a = spec_and_impl("aa", REF_BODY, ("open", "close"))
+    conflicting = ImplementationPin(
+        name=impl_a.name, version="v1", content_sha256="b" * 64
+    )
+    sample = sample_of("s1", [value_of(pin_a, impl_a)])
+    with pytest.raises(FeatureExecutionError):
+        result_of([sample], [pin_a], [impl_a, conflicting])
+
+
+def test_empty_samples_shared_implementations(fixtures):
+    # No samples, several specs sharing one implementation: the executor
+    # still reports the unique implementation set and consistent
+    # diagnostics (the documented vacuous execution).
+    pit = assemble([fixtures.a], [])
+    assert pit.samples == ()
+    specs = [
+        feature_spec("return_2bars", REF_SIMPLE, ("close",), parameters=(wb(2),)),
+        feature_spec("return_5bars", REF_SIMPLE, ("close",), parameters=(wb(5),)),
+    ]
+    result = execute_builtin_features([fixtures.a], pit, specs)
+    assert result.samples == ()
+    assert len(result.feature_spec_pins) == 2
+    assert len(result.implementation_pins) == 1
+    assert result.diagnostics.sample_count == 0
+    assert result.diagnostics.feature_spec_count == 2
+    assert result.diagnostics.complete_value_count == 0
+    assert result.diagnostics.excluded_value_count == 0
     assert result.diagnostics.transform_invocation_count == 0

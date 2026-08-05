@@ -41,7 +41,7 @@ from .feature_models import (
     FeatureValueResult,
 )
 from .feature_registry import built_in_feature_registry
-from .models import CanonicalBuildPin, SourceSnapshotPin
+from .models import CanonicalBuildPin, ImplementationPin, SourceSnapshotPin
 from .pit import _row_comparator
 from .pit_models import PITAssemblyResult, PITSample
 from .spec_models import FeatureSpec, SpecValidationError
@@ -166,7 +166,7 @@ def execute_builtin_features(builds, pit_result, feature_specs) -> FeatureExecut
     return FeatureExecutionResult(
         samples=tuple(samples),
         feature_spec_pins=tuple(_spec_pin(spec) for spec in spec_items),
-        implementation_pins=tuple(resolved.pin for _, resolved in resolved_items),
+        implementation_pins=_unique_implementation_pins(resolved_items),
         diagnostics=diagnostics,
         execution_contract_version=FEATURE_EXECUTION_CONTRACT_VERSION,
     )
@@ -485,6 +485,51 @@ def _validate_callable_contract(registration: TransformRegistration) -> None:
 # ---------------------------------------------------------------------------
 # Per-value execution.
 # ---------------------------------------------------------------------------
+
+
+def _unique_implementation_pins(resolved_items) -> tuple[ImplementationPin, ...]:
+    """Deterministic deduplication of the resolved implementation pins.
+
+    Multiple FeatureSpecs may legally share one transform implementation
+    (for example the same ``rolling_mean`` with different ``window_bars``),
+    in which case their ResolvedTransforms carry the identical
+    ``ImplementationPin``. The result contract records the **unique set of
+    implementations actually used**: identical pins (same name, version,
+    and content hash) deduplicate deterministically, while the same
+    ``(name, version)`` identity with a different content hash is a
+    conflict and fails closed. The output is sorted by ``(name, version,
+    content_sha256)``. The result model's own fail-closed duplicate
+    validation stays untouched; the executor builds the correct unique set
+    before entering the public result model.
+    """
+    by_key: dict[tuple[str, str], ImplementationPin] = {}
+    for _, resolved in resolved_items:
+        pin = resolved.pin
+        if not isinstance(pin, ImplementationPin):
+            raise FeatureExecutionError(
+                "resolved implementation pin must be an ImplementationPin, "
+                f"got {type(pin).__name__}"
+            )
+        if pin.content_sha256 is None:
+            raise FeatureExecutionError(
+                "resolved implementation pin must carry a non-null content hash"
+            )
+        key = (pin.name, pin.version)
+        existing = by_key.get(key)
+        if existing is None:
+            by_key[key] = pin
+        elif existing != pin:
+            raise FeatureExecutionError(
+                f"conflicting implementation pins share the identity {key}: "
+                "the same name/version with different content hashes fails "
+                "closed"
+            )
+    return tuple(
+        sorted(
+            by_key.values(),
+            key=lambda pin: (pin.name, pin.version, pin.content_sha256),
+        )
+    )
 
 
 def _required_row_count(spec: FeatureSpec, resolved) -> int:

@@ -445,18 +445,34 @@ All result models are frozen and validated at construction
 - `FeatureExecutionResult` — `samples` (sorted by `sample_key`),
   `feature_spec_pins` (SpecPins of kind FEATURE only, sorted; duplicate
   `(kind, name, version)` identities fail — even with conflicting hashes),
-  `implementation_pins` (non-null hashes, sorted; duplicate `(name,
-  version)` identities fail — even with conflicting hashes), `diagnostics`
-  (must equal the recomputed counts), and `execution_contract_version`
-  (must be `FEATURE_EXECUTION_CONTRACT_VERSION`). When samples are
-  non-empty, **complete coverage** is verified: every sample carries
-  exactly the result's `feature_spec_pins` in the same order (missing,
-  extra, or reordered Features fail closed), one FeatureSpec maps to
-  exactly one ImplementationPin across all samples, and the pins actually
-  used by the values equal the result pins exactly (no unused or
-  undeclared pins). An empty sample set with a non-empty spec set is a
-  documented vacuous execution: no value exists, the coverage invariants
-  are vacuous, and the result-level pins stay normalized.
+  `implementation_pins`, `diagnostics` (must equal the recomputed counts),
+  and `execution_contract_version` (must be
+  `FEATURE_EXECUTION_CONTRACT_VERSION`). When samples are non-empty,
+  **complete coverage** is verified: every sample carries exactly the
+  result's `feature_spec_pins` in the same order (missing, extra, or
+  reordered Features fail closed), one FeatureSpec maps to exactly one
+  ImplementationPin across all samples, and the pins actually used by the
+  values equal the result pins exactly (no unused or undeclared pins). An
+  empty sample set with a non-empty spec set is a documented vacuous
+  execution: no value exists, the coverage invariants are vacuous, and the
+  result-level pins stay normalized.
+
+**`implementation_pins` is the unique set of implementations actually
+used, not one pin per FeatureSpec.** Multiple FeatureSpecs may legally
+share one transform implementation (the typical example is the same
+`rolling_mean` used with different `window_bars`), in which case their
+resolved `ImplementationPin`s are byte-identical. The executor
+deterministically deduplicates identical pins (same name, version, and
+content hash — kept exactly once, sorted by `(name, version,
+content_sha256)`) before constructing the result model; the same
+`(name, version)` identity with a different content hash is a conflict
+and fails closed. The result model's own fail-closed duplicate validation
+stays untouched — the executor builds the correct unique set first.
+Consequently `len(implementation_pins) <= len(feature_spec_pins)` (they
+are equal only when every FeatureSpec uses a distinct implementation),
+`feature_spec_pins` stays one pin per spec, and an empty spec set implies
+an empty `implementation_pins`. Every `FeatureValueResult` still carries
+its own `implementation_pin` — shared pins simply repeat across values.
 
 Results carry no absolute file paths, no `built_at`, no new `dataset_id`,
 and no new execution identity hash. Every COMPLETE value records the exact
