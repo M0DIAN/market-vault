@@ -56,10 +56,20 @@ class RendererError(Exception):
     """Documented renderer failure with a stable message."""
 
 
+def _reject_blank(text: str, label: str) -> None:
+    """Reject an empty or whitespace-only path argument.
+
+    The check uses ``strip()`` only to decide blankness; the plan always
+    carries the user's original non-empty path string unchanged."""
+    if not text or not text.strip():
+        raise RendererError(f"{label} must not be empty or whitespace-only")
+
+
 def _parse_aware_datetime(text: str, label: str) -> str:
     """Parse one timezone-aware ISO 8601 datetime and normalize it to UTC
-    microseconds, exactly like the Dataset CLI's ``built_at`` handling.
-    Naive values are rejected; the system local timezone is never used."""
+    with a fixed six-digit microsecond field, exactly like the Dataset
+    CLI's ``built_at`` handling. Naive values are rejected; the system
+    local timezone is never used; ``Z`` is never emitted."""
     try:
         parsed = datetime.fromisoformat(text)
     except ValueError as exc:
@@ -68,7 +78,7 @@ def _parse_aware_datetime(text: str, label: str) -> str:
         raise RendererError(
             f"{label} must be timezone-aware, got a naive value {text!r}"
         )
-    return parsed.astimezone(timezone.utc).isoformat()
+    return parsed.astimezone(timezone.utc).isoformat(timespec="microseconds")
 
 
 def _load_json(path: Path, label: str) -> dict:
@@ -129,11 +139,16 @@ def render(
     or must be empty)."""
     if not canonical_dirs:
         raise RendererError("at least one --canonical-build-dir is required")
-    if destination.exists() and any(destination.iterdir()):
-        raise RendererError(
-            f"destination must be empty or not exist, refusing to overwrite: "
-            f"{destination}"
-        )
+    if destination.exists():
+        if not destination.is_dir():
+            raise RendererError(
+                f"destination exists and is not a directory: {destination}"
+            )
+        if any(destination.iterdir()):
+            raise RendererError(
+                "destination must be empty or not exist, "
+                f"refusing to overwrite: {destination}"
+            )
 
     built_at_utc = _parse_aware_datetime(built_at, "built_at")
     dataset_as_of_utc = (
@@ -207,6 +222,13 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
+        # Blank checks run on the raw argument strings so that an empty
+        # destination can never be silently interpreted as the current
+        # directory by Path("").
+        for directory in args.canonical_build_dir:
+            _reject_blank(directory, "--canonical-build-dir")
+        _reject_blank(args.output_root, "--output-root")
+        _reject_blank(args.destination, "--destination")
         render(
             canonical_dirs=args.canonical_build_dir,
             output_root=args.output_root,
@@ -216,6 +238,12 @@ def main(argv: list[str] | None = None) -> int:
         )
     except RendererError as exc:
         print(f"render_plans: error: {exc}", file=sys.stderr)
+        return 1
+    except OSError as exc:
+        print(
+            f"render_plans: error: filesystem operation failed: {exc}",
+            file=sys.stderr,
+        )
         return 1
     print(f"rendered example bundle to {Path(args.destination)}")
     return 0

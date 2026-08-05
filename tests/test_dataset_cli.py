@@ -2204,7 +2204,16 @@ def run_renderer(
     ]
     if dataset_as_of is not None:
         cmd += ["--dataset-as-of", dataset_as_of]
-    return subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT)
+    return subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        # The renderer writes UTF-8; locale codecs (e.g. gbk) cannot decode
+        # localized Windows OSError texts.
+        encoding="utf-8",
+        errors="replace",
+        cwd=ROOT,
+    )
 
 
 def render_bundle(tmp_path: Path, fixtures, *, dataset_as_of=None) -> Path:
@@ -2400,7 +2409,7 @@ def test_renderer_rendered_plan_keeps_explicit_facts(tmp_path):
     plan = json.loads((destination / "complete.plan.json").read_text(encoding="utf-8"))
     assert plan["canonical_build_dirs"] == canonical
     assert plan["output_root"] == "D:/data/datasets"
-    assert plan["built_at"] == "2026-08-05T15:00:00+00:00"
+    assert plan["built_at"] == "2026-08-05T15:00:00.000000+00:00"
     assert plan["feature_spec_files"] == ["specs/feature_simple_return_v1.yaml"]
     assert plan["label_spec_files"] == ["specs/label_forward_return_v1.yaml"]
     assert plan["dataset_as_of"] is None
@@ -2442,7 +2451,22 @@ def test_renderer_normalizes_built_at_to_utc(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     plan = json.loads((destination / "complete.plan.json").read_text(encoding="utf-8"))
-    assert plan["built_at"] == "2026-08-05T07:00:00+00:00"
+    # UTC with a fixed six-digit microsecond field.
+    assert plan["built_at"] == "2026-08-05T07:00:00.000000+00:00"
+
+
+def test_renderer_fixed_six_digit_microseconds(tmp_path):
+    destination = tmp_path / "bundle"
+    result = run_renderer(
+        tmp_path,
+        canonical_dirs=["D:/data/canonical/build"],
+        output_root="D:/data/datasets",
+        built_at="2026-08-05T15:00:00.123456+08:00",
+        destination=destination,
+    )
+    assert result.returncode == 0, result.stderr
+    plan = json.loads((destination / "complete.plan.json").read_text(encoding="utf-8"))
+    assert plan["built_at"] == "2026-08-05T07:00:00.123456+00:00"
 
 
 def test_renderer_accepts_timezone_aware_dataset_as_of(tmp_path):
@@ -2457,7 +2481,7 @@ def test_renderer_accepts_timezone_aware_dataset_as_of(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     plan = json.loads((destination / "complete.plan.json").read_text(encoding="utf-8"))
-    assert plan["dataset_as_of"] == "2026-08-04T20:00:00+00:00"
+    assert plan["dataset_as_of"] == "2026-08-04T20:00:00.000000+00:00"
 
 
 def test_renderer_rejects_naive_built_at(tmp_path):
@@ -2498,7 +2522,114 @@ def test_renderer_refuses_existing_non_empty_destination(tmp_path):
     )
     assert result.returncode == 1
     assert "refusing to overwrite" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert result.stdout == ""
     assert (destination / "leftover.txt").read_text(encoding="utf-8") == "x"
+
+
+def test_renderer_destination_is_regular_file(tmp_path):
+    destination = tmp_path / "bundle"
+    destination.write_text("fixed bytes", encoding="utf-8")
+    result = run_renderer(
+        tmp_path,
+        canonical_dirs=["D:/data/canonical/build"],
+        output_root="D:/data/datasets",
+        built_at=BUILT_AT_ISO,
+        destination=destination,
+    )
+    assert result.returncode == 1
+    assert "destination exists and is not a directory" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert result.stdout == ""
+    assert destination.read_text(encoding="utf-8") == "fixed bytes"
+
+
+def test_renderer_existing_empty_directory_renders(tmp_path):
+    destination = tmp_path / "bundle"
+    destination.mkdir()
+    result = run_renderer(
+        tmp_path,
+        canonical_dirs=["D:/data/canonical/build"],
+        output_root="D:/data/datasets",
+        built_at=BUILT_AT_ISO,
+        destination=destination,
+    )
+    assert result.returncode == 0, result.stderr
+    assert (destination / "complete.plan.json").is_file()
+    assert (destination / "empty.plan.json").is_file()
+    assert (destination / "specs" / "feature_simple_return_v1.yaml").is_file()
+
+
+def test_renderer_rejects_blank_arguments(tmp_path):
+    cases = [
+        ["--canonical-build-dir", "", "--output-root", "D:/data/datasets",
+         "--built-at", BUILT_AT_ISO, "--destination", str(tmp_path / "b1")],
+        ["--canonical-build-dir", "   ", "--output-root", "D:/data/datasets",
+         "--built-at", BUILT_AT_ISO, "--destination", str(tmp_path / "b2")],
+        ["--canonical-build-dir", "D:/data/canonical/build", "--output-root", "",
+         "--built-at", BUILT_AT_ISO, "--destination", str(tmp_path / "b3")],
+        ["--canonical-build-dir", "D:/data/canonical/build", "--output-root", "   ",
+         "--built-at", BUILT_AT_ISO, "--destination", str(tmp_path / "b4")],
+        ["--canonical-build-dir", "D:/data/canonical/build", "--output-root",
+         "D:/data/datasets", "--built-at", BUILT_AT_ISO, "--destination", ""],
+        ["--canonical-build-dir", "D:/data/canonical/build", "--output-root",
+         "D:/data/datasets", "--built-at", BUILT_AT_ISO, "--destination", "   "],
+    ]
+    for argv in cases:
+        result = subprocess.run(
+            [sys.executable, str(EXAMPLES_DIR / "render_plans.py"), *argv],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=ROOT,
+        )
+        assert result.returncode == 1, argv
+        assert "render_plans: error:" in result.stderr, argv
+        assert "Traceback" not in result.stderr, argv
+        assert result.stdout == "", argv
+
+
+def test_renderer_filesystem_error_reports_cleanly(tmp_path):
+    # A regular file as the destination's parent forces mkdir to fail with
+    # a platform-independent OSError; no chmod-based permission tricks.
+    parent = tmp_path / "not-a-directory"
+    parent.write_text("x", encoding="utf-8")
+    destination = parent / "bundle"
+    result = run_renderer(
+        tmp_path,
+        canonical_dirs=["D:/data/canonical/build"],
+        output_root="D:/data/datasets",
+        built_at=BUILT_AT_ISO,
+        destination=destination,
+    )
+    assert result.returncode == 1
+    assert result.stderr.startswith("render_plans: error:")
+    assert "Traceback" not in result.stderr
+    assert result.stdout == ""
+
+
+def test_renderer_parser_datetime_semantics_unchanged(tmp_path):
+    destination = tmp_path / "bundle"
+    result = run_renderer(
+        tmp_path,
+        canonical_dirs=["D:/data/canonical/build"],
+        output_root="D:/data/datasets",
+        built_at="2026-08-05T15:00:00.123456+08:00",
+        dataset_as_of="2026-08-04T16:00:00-04:00",
+        destination=destination,
+    )
+    assert result.returncode == 0, result.stderr
+    plan = dcli.parse_build_plan_bytes(
+        (destination / "complete.plan.json").read_bytes()
+    )
+    # The parsed datetimes represent exactly the input instants; only the
+    # JSON text is normalized to UTC with six-digit microseconds.
+    assert plan.built_at == datetime(2026, 8, 5, 7, 0, 0, 123456, tzinfo=UTC)
+    assert plan.dataset_as_of == datetime(2026, 8, 4, 20, 0, 0, tzinfo=UTC)
+    text = (destination / "complete.plan.json").read_text(encoding="utf-8")
+    assert '"built_at": "2026-08-05T07:00:00.123456+00:00"' in text
+    assert '"dataset_as_of": "2026-08-04T20:00:00.000000+00:00"' in text
 
 
 def test_renderer_is_deterministic(tmp_path):
@@ -2542,9 +2673,9 @@ def test_renderer_uses_explicit_built_at_only(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     plan = json.loads((destination / "complete.plan.json").read_text(encoding="utf-8"))
-    # The renderer normalizes to UTC microseconds; a zero microsecond field
-    # is omitted by isoformat(), which the formal plan parser accepts.
-    assert plan["built_at"] == "2026-08-05T12:00:00+00:00"
+    # The renderer normalizes to UTC with a fixed six-digit microsecond
+    # field, which the formal plan parser accepts.
+    assert plan["built_at"] == "2026-08-05T12:00:00.000000+00:00"
 
 
 def test_renderer_rendered_plan_parses_by_formal_parser(tmp_path, fixtures):
@@ -2562,6 +2693,8 @@ def test_renderer_requires_arguments(tmp_path):
         [sys.executable, str(EXAMPLES_DIR / "render_plans.py")],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         cwd=ROOT,
     )
     assert result.returncode == 2
