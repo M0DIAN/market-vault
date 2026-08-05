@@ -94,10 +94,9 @@ RELEASE_NOTES_STALE_PHRASES = (
     "No v0.5.0 tag exists",
     "No GitHub Release is published",
 )
-# Facts the v0.5.1 direction document must state during the release
-# preparation.
-DIRECTION_V051_FACTS = (
-    "Status: implementation complete; v0.5.1 release preparation",
+# Facts the v0.5.1 direction document must state after the release.
+DIRECTION_V051_RELEASED_FACTS = (
+    "Status: released on 2026-08-06 JST",
     "Stability and Usability Maintenance",
     "PR-1",
     "PR-2",
@@ -107,6 +106,12 @@ DIRECTION_V051_FACTS = (
     "8de57d497ae5d922e3df29d9475f14b9407865f0",
     "2d9c8a539f04ee2d75e5482c858ec6c3364af135",
     "240f7ccac89a773366a510f10a13d6de801051ea",
+    "a978eef291d5e26d20e5cf977bc76609c227cb52",
+    "v0.5.1",
+    "MarketVault v0.5.1",
+    "31029709970",
+    "PyPI",
+    "v0.6.0",
     "Sample Generator",
     "Dataset Catalog",
     "Python Client",
@@ -120,14 +125,35 @@ DIRECTION_V051_NONGOAL_MARKERS = (
     "have not started",
 )
 # Stale v0.5.1 direction status wording that must never appear in the
-# current direction document.
+# current direction document. The release-preparation history may describe
+# the preparation itself, but the precise current-state sentences below are
+# forbidden.
 STALE_V051_DIRECTION_PHRASES = (
     "Status: planned",
     "Status: proposed",
+    "Status: implementation complete; v0.5.1 release preparation",
+    "PR-4 is in progress on the release/v0.5.1 branch",
+    "The v0.5.1 tag has not been created",
+    "no GitHub Release exists",
 )
-# Facts the v0.5.1 release notes must state.
+# Facts the v0.5.1 release notes must state after the release.
 RELEASE_V051_FACTS = (
+    "Formal release status",
+    "PR #33",
+    "MERGED",
+    "2026-08-05T17:22:15Z",
+    "a978eef291d5e26d20e5cf977bc76609c227cb52",
     "v0.5.1",
+    "MarketVault v0.5.1",
+    "2026-08-05T17:33:12Z",
+    "31029709970",
+    "2286 passed, 7 skipped",
+    "market_vault-0.5.1-py3-none-any.whl",
+    "market_vault-0.5.1.tar.gz",
+    "80965A671AEEF75F315386D9BD4B62EC5DC08E552CB3430AEF92F83C562248C1",
+    "FE82FB4FD254C493EC00519EDEB438533C0C5E8D5A7690E1F14AEA39DE4CCDAB",
+    "PyPI",
+    "TestPyPI",
     "release preparation",
     "3b4d03c785123e204885faea08df7b9d7ed07ec0",
     "PR #30",
@@ -139,15 +165,154 @@ RELEASE_V051_FACTS = (
     "warning-as-error",
     "Dataset CLI examples",
     "Renderer hardening",
-    "market_vault-0.5.1-py3-none-any.whl",
-    "market_vault-0.5.1.tar.gz",
-    "PyPI",
+    # The formal artifacts must be rebuilt after the merge from the exact
+    # release commit; the release-preparation branch artifacts are
+    # candidate validation only.
+    "rebuilt from the exact release commit",
+    "candidate validation only",
 )
-# Stale v0.5.1 wording that must never appear in the current release notes.
+# Stale v0.5.1 wording that must never appear in the current-state region
+# of the release notes (the formal text before the historical
+# release-preparation record). The historical sections may quote the
+# preparation-time state verbatim, but these precise current-state
+# sentences are forbidden in the formal region. "v0.5.1 is released" and
+# "v0.5.1 released" are now legal formal-state expressions and are not
+# stale.
 RELEASE_V051_STALE_PHRASES = (
-    "v0.5.1 is released",
-    "v0.5.1 released",
+    "PR-4 is open and not merged",
+    "The v0.5.1 tag does not exist yet",
+    "no GitHub Release exists",
 )
+# The marker that separates the current-state region of the v0.5.1 release
+# notes from the historical release-preparation record.
+HISTORICAL_RELEASE_PREPARATION_HEADER = "## Historical release-preparation record"
+# Facts the v0.6.0 direction document must state.
+V060_DIRECTION_FACTS = (
+    "Status: planned",
+    "Deterministic Sample Generation and Dataset Catalog",
+    "a978eef291d5e26d20e5cf977bc76609c227cb52",
+    "PR-1",
+    "PR-2",
+    "PR-3",
+    "PR-4",
+    "PR-5",
+    "PR-6",
+    "PR-7",
+    "PR-8",
+    "PR-9",
+    "Sample Generator",
+    "Dataset Catalog",
+    "Python Client",
+    "Quant Research",
+    "Trading Execution",
+    "not part of v0.6",
+    "bumped to 0.6.0 only in PR-9",
+    "package version at planning time: 0.5.1",
+)
+# The v0.6.0 direction document must mark the explicit non-goals.
+V060_DIRECTION_NONGOAL_MARKERS = (
+    "explicit non-goals",
+    "model training",
+    "backtesting",
+    "automatic trading",
+)
+# The v0.6.0 direction document must explicitly state that neither
+# capability is implemented yet.
+V060_NOT_IMPLEMENTED_MARKER = (
+    "neither the Sample Generator nor the Dataset Catalog is implemented"
+)
+# Facts the v0.6.0 architecture ADR must state.
+ADR_V060_FACTS = (
+    "Status: Accepted",
+    "MarketVault",
+    "Quant Research",
+    "Trading Execution",
+    "Sample Generator",
+    "Dataset Catalog",
+)
+# Both v0.6.0 boundary contracts must state that they are planned and not
+# implemented in v0.5.1.
+CONTRACT_PLANNED_MARKERS = (
+    "not implemented in v0.5.1",
+    "Target release: v0.6.0",
+)
+# Facts the Sample Generation boundary contract must state.
+SAMPLE_GENERATION_CONTRACT_FACTS = (
+    "market-vault-dataset-build-plan-v1",
+    "PITSampleRequest",
+    "load_verified",
+    "no current time",
+)
+# Facts the Dataset Catalog boundary contract must state.
+DATASET_CATALOG_CONTRACT_FACTS = (
+    "market_vault.storage.catalog.Catalog",
+    "load_verified_dataset",
+    "immutable",
+    "_SUCCESS",
+    "no-overwrite",
+    "no latest",
+)
+# Explicit false claims that the boundary contracts must never contain.
+# The word "implemented" itself is allowed in explanatory text; only these
+# precise claim phrasings are rejected.
+CONTRACT_STALE_PHRASES = (
+    "Status: implemented",
+    "available now",
+    "released in v0.5.1",
+)
+# "implemented in v0.5.1" is legal only after a negation: "not implemented
+# in v0.5.1" is the required planned marker. An affirmative form is a false
+# claim and is rejected even when the planned markers are present.
+AFFIRMATIVE_IMPLEMENTED_IN_V051_RE = re.compile(
+    r"(?<!not )(?<!never )implemented in v0\.5\.1"
+)
+# The Sample Generation contract must support plural explicit inputs that
+# mirror the existing build-plan array fields feature_spec_files and
+# label_spec_files; the boundary must never shrink them into single inputs.
+SAMPLE_GENERATION_PLURAL_FACTS = (
+    "one or more explicit verified Canonical build directories",
+    "one or more explicit Feature spec file paths",
+    "one or more explicit Label spec file paths",
+    "one explicit split spec file/path",
+    "feature_spec_files",
+    "label_spec_files",
+)
+# The Dataset Catalog contract must separate Catalog content identity from
+# materialization / snapshot metadata.
+DATASET_CATALOG_IDENTITY_FACTS = (
+    "Catalog content identity",
+    "built_at",
+    "physical paths",
+    "never enter Catalog content identity",
+    "separate materialization or snapshot identity",
+)
+# Contradictory identity claims that must never appear in the Dataset
+# Catalog contract even when the identity facts are present.
+DATASET_CATALOG_FALSE_IDENTITY_CLAIMS = (
+    "built_at enters Catalog content identity",
+    "physical output directory enters Catalog content identity",
+)
+# The v0.6.0 direction must state the same two-layer identity distinction.
+V060_DIRECTION_IDENTITY_FACTS = (
+    "Catalog content identity",
+    "built_at",
+    "never enter Catalog content identity",
+    "separate materialization or snapshot identity",
+)
+# Explicit false claims that the v0.6.0 direction must never contain even
+# when the required not-implemented markers are present. The Dataset
+# Catalog variant is matched as a regex because the required marker
+# "neither the Sample Generator nor the Dataset Catalog is implemented by
+# it" legitimately contains the sub-string "Dataset Catalog is
+# implemented"; only an affirmative claim that does not continue with
+# "by" is rejected.
+V060_FALSE_IMPLEMENTATION_PHRASES = (
+    "Sample Generator is implemented",
+    "Sample Generator and the Dataset Catalog are implemented",
+    "available now",
+    "released in v0.5.1",
+)
+V060_CATALOG_IMPLEMENTED_RE = re.compile(r"Dataset Catalog is implemented(?!\s+by\b)")
 # Facts the v0.5.1 maintenance section of the README must state.
 README_MAINTENANCE_FACTS = (
     "V0.5.1 stability and usability maintenance",
@@ -294,13 +459,27 @@ def check_release_notes(root: Path) -> list[str]:
     return failures
 
 
+def _v051_direction_current_state(text: str) -> str:
+    # The current-state regions are the header (title, status, and intro,
+    # up to the first planning section) and the Progress section. The
+    # historical planning sections (Baseline, Goals, Non-goals, Proposed PR
+    # sequence) describe the past and must not be rejected for accurately
+    # quoting the preparation-time state.
+    regions: list[str] = []
+    if "## 1. Baseline" in text:
+        regions.append(text.split("## 1. Baseline", 1)[0])
+    if "## 6. Progress" in text:
+        regions.append(text.split("## 6. Progress", 1)[1])
+    return "\n".join(regions)
+
+
 def check_v051_direction(root: Path) -> list[str]:
     path = root / "docs" / "v0_5_1_direction.md"
     if not path.exists():
         return ["docs/v0_5_1_direction.md is missing"]
     text = path.read_text(encoding="utf-8")
     failures = []
-    for fact in DIRECTION_V051_FACTS:
+    for fact in DIRECTION_V051_RELEASED_FACTS:
         if fact not in text:
             failures.append(f"docs/v0_5_1_direction.md does not state the fact {fact!r}")
     for marker in DIRECTION_V051_NONGOAL_MARKERS:
@@ -309,8 +488,9 @@ def check_v051_direction(root: Path) -> list[str]:
                 "docs/v0_5_1_direction.md does not mark the future capabilities "
                 f"as non-goals ({marker!r})"
             )
+    current_state = _v051_direction_current_state(text)
     for phrase in STALE_V051_DIRECTION_PHRASES:
-        if phrase in text:
+        if phrase in current_state:
             failures.append(
                 f"docs/v0_5_1_direction.md still contains the stale wording {phrase!r}"
             )
@@ -322,6 +502,12 @@ def check_v051_release_notes(root: Path) -> list[str]:
     if not path.exists():
         return ["docs/release_v0_5_1.md is missing"]
     text = path.read_text(encoding="utf-8")
+    # Required facts are checked against the full document (several facts
+    # live in the historical record), but stale current-state sentences are
+    # checked only in the formal region before the historical
+    # release-preparation record: the historical sections may quote the
+    # preparation-time state verbatim.
+    formal_text = text.split(HISTORICAL_RELEASE_PREPARATION_HEADER, 1)[0]
     failures = []
     for fact in RELEASE_V051_FACTS:
         if fact not in text:
@@ -329,10 +515,145 @@ def check_v051_release_notes(root: Path) -> list[str]:
                 f"docs/release_v0_5_1.md does not state the fact {fact!r}"
             )
     for phrase in RELEASE_V051_STALE_PHRASES:
-        if phrase in text:
+        if phrase in formal_text:
             failures.append(
                 f"docs/release_v0_5_1.md still contains the stale wording {phrase!r}"
             )
+    return failures
+
+
+def check_v060_direction(root: Path) -> list[str]:
+    path = root / "docs" / "v0_6_0_direction.md"
+    if not path.exists():
+        return ["docs/v0_6_0_direction.md is missing"]
+    text = path.read_text(encoding="utf-8")
+    failures = []
+    for fact in V060_DIRECTION_FACTS:
+        if fact not in text:
+            failures.append(f"docs/v0_6_0_direction.md does not state the fact {fact!r}")
+    for marker in V060_DIRECTION_NONGOAL_MARKERS:
+        if marker not in text:
+            failures.append(
+                "docs/v0_6_0_direction.md does not mark the v0.6.0 "
+                f"non-goals ({marker!r})"
+            )
+    if V060_NOT_IMPLEMENTED_MARKER not in text:
+        failures.append(
+            "docs/v0_6_0_direction.md must state that neither the Sample "
+            "Generator nor the Dataset Catalog is implemented"
+        )
+    for fact in V060_DIRECTION_IDENTITY_FACTS:
+        if fact not in text:
+            failures.append(
+                "docs/v0_6_0_direction.md does not state the Catalog "
+                f"identity fact {fact!r}"
+            )
+    # False implementation claims are rejected even when the required
+    # not-implemented markers are still present.
+    for phrase in V060_FALSE_IMPLEMENTATION_PHRASES:
+        if phrase in text:
+            failures.append(
+                f"docs/v0_6_0_direction.md contains the false claim {phrase!r}"
+            )
+    if V060_CATALOG_IMPLEMENTED_RE.search(text):
+        failures.append(
+            "docs/v0_6_0_direction.md contains the false claim "
+            "'Dataset Catalog is implemented'"
+        )
+    return failures
+
+
+def check_v060_adr(root: Path) -> list[str]:
+    path = root / "docs" / "adr" / "0003-project-boundaries-and-v060-data-discovery.md"
+    if not path.exists():
+        return ["docs/adr/0003-project-boundaries-and-v060-data-discovery.md is missing"]
+    text = path.read_text(encoding="utf-8")
+    failures = []
+    for fact in ADR_V060_FACTS:
+        if fact not in text:
+            failures.append(f"docs/adr/0003 does not state the fact {fact!r}")
+    return failures
+
+
+def check_sample_generation_contract(root: Path) -> list[str]:
+    path = root / "docs" / "contracts" / "sample_generation.md"
+    if not path.exists():
+        return ["docs/contracts/sample_generation.md is missing"]
+    text = path.read_text(encoding="utf-8")
+    failures = []
+    for marker in CONTRACT_PLANNED_MARKERS:
+        if marker not in text:
+            failures.append(
+                "docs/contracts/sample_generation.md does not state the "
+                f"planned-contract marker {marker!r}"
+            )
+    for fact in SAMPLE_GENERATION_CONTRACT_FACTS:
+        if fact not in text:
+            failures.append(
+                "docs/contracts/sample_generation.md does not state the "
+                f"fact {fact!r}"
+            )
+    for fact in SAMPLE_GENERATION_PLURAL_FACTS:
+        if fact not in text:
+            failures.append(
+                "docs/contracts/sample_generation.md does not state the "
+                f"plural input fact {fact!r}"
+            )
+    for phrase in CONTRACT_STALE_PHRASES:
+        if phrase in text:
+            failures.append(
+                "docs/contracts/sample_generation.md still contains the "
+                f"stale claim {phrase!r}"
+            )
+    if AFFIRMATIVE_IMPLEMENTED_IN_V051_RE.search(text):
+        failures.append(
+            "docs/contracts/sample_generation.md claims an affirmative "
+            "'implemented in v0.5.1' implementation"
+        )
+    return failures
+
+
+def check_dataset_catalog_contract(root: Path) -> list[str]:
+    path = root / "docs" / "contracts" / "dataset_catalog.md"
+    if not path.exists():
+        return ["docs/contracts/dataset_catalog.md is missing"]
+    text = path.read_text(encoding="utf-8")
+    failures = []
+    for marker in CONTRACT_PLANNED_MARKERS:
+        if marker not in text:
+            failures.append(
+                "docs/contracts/dataset_catalog.md does not state the "
+                f"planned-contract marker {marker!r}"
+            )
+    for fact in DATASET_CATALOG_CONTRACT_FACTS:
+        if fact not in text:
+            failures.append(
+                "docs/contracts/dataset_catalog.md does not state the "
+                f"fact {fact!r}"
+            )
+    for fact in DATASET_CATALOG_IDENTITY_FACTS:
+        if fact not in text:
+            failures.append(
+                "docs/contracts/dataset_catalog.md does not state the "
+                f"Catalog identity fact {fact!r}"
+            )
+    for claim in DATASET_CATALOG_FALSE_IDENTITY_CLAIMS:
+        if claim in text:
+            failures.append(
+                "docs/contracts/dataset_catalog.md contains the false "
+                f"identity claim {claim!r}"
+            )
+    for phrase in CONTRACT_STALE_PHRASES:
+        if phrase in text:
+            failures.append(
+                "docs/contracts/dataset_catalog.md still contains the "
+                f"stale claim {phrase!r}"
+            )
+    if AFFIRMATIVE_IMPLEMENTED_IN_V051_RE.search(text):
+        failures.append(
+            "docs/contracts/dataset_catalog.md claims an affirmative "
+            "'implemented in v0.5.1' implementation"
+        )
     return failures
 
 
@@ -562,6 +883,10 @@ def main() -> int:
         ("release notes", check_release_notes),
         ("v0.5.1 release notes", check_v051_release_notes),
         ("v0.5.1 direction", check_v051_direction),
+        ("v0.6.0 direction", check_v060_direction),
+        ("v0.6.0 ADR", check_v060_adr),
+        ("sample generation contract", check_sample_generation_contract),
+        ("dataset catalog contract", check_dataset_catalog_contract),
         ("old release notes", check_old_release_notes),
         ("warning guard", check_warning_guard),
         ("examples", check_examples),
