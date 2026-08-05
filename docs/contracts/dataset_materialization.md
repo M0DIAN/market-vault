@@ -497,16 +497,34 @@ The build directory, every entry, `_SUCCESS`, every manifest-listed output
 file, **`output_root` itself, and every existing path component from the
 existing ancestors down to `output_root`** reject `is_symlink()` and
 junction / reparse-point status; a file, FIFO, or other special type in the
-path is rejected too. `output_root` is verified both before and after it
-is created, so a link can never escape into another directory.
+path is rejected too.
+
+**The `output_root` safety verification runs immediately after path
+coercion — before any final / staging existence query, before any
+existing-build access, before the staging-residue judgement, before any
+artifact read, and before any directory creation.** The existing-build
+idempotency path therefore shares exactly the same link boundary as the
+new-build path: an `output_root` that is itself a symlink or Windows
+junction, or that has a symlink / junction path component, fails closed
+even when a logically valid Dataset already exists at the link target —
+a valid existing Dataset never makes a linked output root acceptable. The
+existing-build private boundary additionally re-verifies the build
+directory's parent chain defensively before any artifact is read, so a
+Dataset can never be reached through a link even if the public entry is
+bypassed. A second `output_root` verification runs immediately after the
+directory is created, detecting path replacement that happened during
+creation. The private existing-build validator is not a public Dataset
+reader, and its verification of a logically valid Dataset never
+re-authorizes access through a linked path.
 
 Junction detection is compatible with **Python 3.11**: where
 `Path.is_junction` does not exist (pre-3.12), a Windows junction /
 reparse-point is detected through the `FILE_ATTRIBUTE_REPARSE_POINT`
 attribute via `ctypes`, and a path whose link status cannot be verified
-fails closed. Relative paths are validated by the existing output
-relative-path safety validator (no absolute paths, no backslashes, no
-`.` / `..`, no Windows drive / root semantics, no NTFS ADS forms).
+fails closed. `resolve()` is never used to mask a link. Relative paths are
+validated by the existing output relative-path safety validator (no
+absolute paths, no backslashes, no `.` / `..`, no Windows drive / root
+semantics, no NTFS ADS forms).
 
 ## 33. Empty Dataset
 

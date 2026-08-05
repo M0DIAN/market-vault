@@ -202,9 +202,18 @@ def _materialize(
             f"{type(result).__name__}"
         )
     output_root = _coerce_output_root(output_root)
+    # 2. Output-root safety runs immediately after coercion — before ANY
+    # final / staging existence query, before any existing-build access,
+    # before the staging-residue judgement, before any artifact read, and
+    # before any directory creation. The existing-build idempotency path
+    # therefore shares exactly the same link boundary as the new-build
+    # path: an output_root that is itself a symlink or Windows junction, or
+    # that has a symlink / junction path component, fails closed even when
+    # a logically valid Dataset already exists at the link target.
+    _verify_output_root_safety(output_root)
     built_at = normalize_utc_datetime(built_at, "built_at")
 
-    # 2. Re-trigger the complete PR-5 self-validation: never trust the
+    # 3. Re-trigger the complete PR-5 self-validation: never trust the
     # object type or cached fields, never re-execute the orchestrator.
     revalidated = dataclasses.replace(result)
     if revalidated != result:
@@ -214,16 +223,17 @@ def _materialize(
         )
     _verify_revalidated_result(result)
 
-    # 3. Fixed final and staging paths (same filesystem, no random names).
+    # 4. Fixed final and staging paths (same filesystem, no random names).
     final = output_root / result.dataset_id
     staging = output_root / f".staging-{result.dataset_id}"
 
-    # 4. Existing final directory: strict verification, idempotent return;
-    # no staging is created and nothing is ever rewritten.
+    # 5. Existing final directory: strict verification, idempotent return;
+    # no staging is created and nothing is ever rewritten. The parent chain
+    # is defensively re-verified at the existing-build boundary as well.
     if final.exists() or final.is_symlink():
         return _existing_build_result(final, result)
 
-    # 5. Pre-existing staging is residue or a concurrent build: fail closed,
+    # 6. Pre-existing staging is residue or a concurrent build: fail closed,
     # never delete, never adopt, never overwrite.
     if staging.exists() or staging.is_symlink():
         raise DatasetMaterializationError(
@@ -231,11 +241,11 @@ def _materialize(
             f"build): {staging}; refusing to build over it"
         )
 
-    # 6. Create the output root and the fixed staging directory. The
-    # output root and every existing path component are verified before and
-    # after creation: symlinks, junctions, files, and special types are
-    # rejected so no link can escape into another directory.
-    _verify_output_root_safety(output_root)
+    # 7. Create the output root and the fixed staging directory. The output
+    # root and every existing path component were verified before any
+    # access; the post-creation re-verification detects path replacement
+    # during creation (symlinks, junctions, files, and special types are
+    # rejected so no link can escape into another directory).
     try:
         output_root.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
@@ -254,7 +264,7 @@ def _materialize(
             f"failed to create staging directory {staging}: {exc}"
         ) from exc
 
-    # 7. Commit; ordinary exceptions clean up only the staging created here.
+    # 8. Commit; ordinary exceptions clean up only the staging created here.
     try:
         return _commit_new_build(staging, final, result, built_at)
     except _DOCUMENTED_ERRORS:
@@ -565,6 +575,7 @@ def _handle_concurrent_final(final: Path, staging: Path, result) -> DatasetMater
     never overwritten or deleted.
     """
     try:
+        _verify_build_parent_chain_safety(final)
         manifest = _verify_build_directory(final, result, None, require_success=True)
     except _DOCUMENTED_ERRORS as exc:
         _remove_tree(staging)
@@ -598,9 +609,36 @@ def _result_from_manifest(
     )
 
 
+def _verify_build_parent_chain_safety(build_path: Path) -> None:
+    """Defensive parent-chain link check before any existing-build access.
+
+    The entry already verifies ``output_root`` before any existence query;
+    this private boundary re-verifies the build directory's parent chain
+    (``build_path.parent`` and every existing ancestor) so an existing
+    Dataset can never be reached through a symlink or Windows junction
+    path, even if a caller bypasses the public entry. ``build_path`` itself
+    is left to the existing-build verifier. ``resolve()`` is never used to
+    mask a link, and a path whose link status cannot be verified fails
+    closed (Python 3.11 Windows reparse-point detection included).
+    """
+    for component in (build_path.parent, *build_path.parent.parents):
+        _reject_symlink(component, "build parent path component")
+        if component.exists() and not component.is_dir():
+            raise DatasetMaterializationError(
+                f"build parent path component must be a regular directory: "
+                f"{component}"
+            )
+
+
 def _existing_build_result(final: Path, result) -> DatasetMaterializationResult:
     """Strict verification of an existing final directory (idempotent
-    return; nothing is rewritten, repaired, updated, or deleted)."""
+    return; nothing is rewritten, repaired, updated, or deleted).
+
+    The parent chain is defensively re-verified before any artifact is read:
+    a logically valid existing Dataset never makes a linked output root
+    acceptable.
+    """
+    _verify_build_parent_chain_safety(final)
     manifest = _verify_build_directory(final, result, None, require_success=True)
     return _result_from_manifest(final, result, manifest, created_new_build=False)
 

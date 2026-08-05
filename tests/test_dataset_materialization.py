@@ -2928,3 +2928,134 @@ def test_legal_plain_directory_output_root_passes(fixtures, tmp_path):
     result, mresult = materialize_once(fixtures, tmp_path)
     assert mresult.created_new_build is True
     assert mresult.build_path.parent == datasets_root(tmp_path)
+
+
+def _make_junction_or_skip(target: Path, link: Path) -> None:
+    """Create only a real Windows junction (never a symlink); skip when
+    junctions are unavailable."""
+    if os.name == "nt":
+        try:
+            import _winapi
+
+            _winapi.CreateJunction(str(target.absolute()), str(link.absolute()))
+            return
+        except (OSError, TypeError, ImportError):
+            pass
+    pytest.skip("Windows junctions are not available in this environment")
+
+
+def test_output_root_symlink_with_valid_existing_dataset_rejected(fixtures, tmp_path):
+    """A symlink output_root whose target already contains a fully valid
+    Dataset must fail closed: the existing-build path shares the same link
+    boundary as the new-build path, and a valid Dataset never makes a
+    linked output root acceptable."""
+    result, first = materialize_once(fixtures, tmp_path)
+    real_parent = datasets_root(tmp_path)
+    link = tmp_path / "linked_root"
+    _make_symlink_or_skip(real_parent, link)
+    hashes_before = file_hashes(first.build_path)
+    mtimes_before = {
+        rel: (first.build_path / rel).stat().st_mtime_ns
+        for rel in hashes_before
+    }
+    with pytest.raises(DatasetMaterializationError) as excinfo:
+        materialize_dataset_artifacts(
+            result, output_root=link, built_at=BUILT_AT
+        )
+    assert "must not be a symlink or junction" in str(excinfo.value)
+    # The existing Dataset is untouched and no staging was created.
+    assert file_hashes(first.build_path) == hashes_before
+    assert {
+        rel: (first.build_path / rel).stat().st_mtime_ns
+        for rel in hashes_before
+    } == mtimes_before
+    assert not list(real_parent.glob(".staging-*"))
+
+
+def test_output_root_nested_link_ancestor_with_valid_existing_rejected(fixtures, tmp_path):
+    """A nested symlink / junction ancestor in the output root path is
+    rejected even when the link target contains a valid existing Dataset."""
+    result, first = materialize_once(fixtures, tmp_path)
+    link = tmp_path / "linked_parent"
+    _make_symlink_or_skip(tmp_path, link)
+    hashes_before = file_hashes(first.build_path)
+    # link / "datasets" resolves into the real datasets directory that
+    # already holds the valid Dataset.
+    with pytest.raises(DatasetMaterializationError) as excinfo:
+        materialize_dataset_artifacts(
+            result, output_root=link / "datasets", built_at=BUILT_AT
+        )
+    assert "must not be a symlink or junction" in str(excinfo.value)
+    assert file_hashes(first.build_path) == hashes_before
+    assert not list((link / "datasets").glob(".staging-*"))
+
+
+def test_output_root_junction_with_valid_existing_dataset_rejected(fixtures, tmp_path):
+    """A real Windows junction as output_root whose target contains a valid
+    existing Dataset is rejected (junction-only test; the Python 3.11
+    reparse-point detection path is exercised on Windows)."""
+    result, first = materialize_once(fixtures, tmp_path)
+    real_parent = datasets_root(tmp_path)
+    junction = tmp_path / "junction_root"
+    _make_junction_or_skip(real_parent, junction)
+    hashes_before = file_hashes(first.build_path)
+    with pytest.raises(DatasetMaterializationError) as excinfo:
+        materialize_dataset_artifacts(
+            result, output_root=junction, built_at=BUILT_AT
+        )
+    assert "must not be a symlink or junction" in str(excinfo.value)
+    assert file_hashes(first.build_path) == hashes_before
+    assert not list(real_parent.glob(".staging-*"))
+
+
+def test_regular_output_root_existing_build_positive_control(fixtures, tmp_path):
+    """Positive control: with a regular output root the existing-build
+    idempotency is intact — first call creates, second returns
+    created_new_build=False, hashes and mtimes are unchanged, and a
+    different built_at is still idempotent."""
+    result, first = materialize_once(fixtures, tmp_path)
+    assert first.created_new_build is True
+    build = first.build_path
+    hashes_before = file_hashes(build)
+    mtimes_before = {
+        rel: (build / rel).stat().st_mtime_ns for rel in hashes_before
+    }
+    second = materialize_dataset_artifacts(
+        result, output_root=datasets_root(tmp_path), built_at=BUILT_AT
+    )
+    assert second.created_new_build is False
+    assert file_hashes(build) == hashes_before
+    assert {
+        rel: (build / rel).stat().st_mtime_ns for rel in hashes_before
+    } == mtimes_before
+    other = datetime(2026, 9, 1, 0, 0, 0, 123456, tzinfo=UTC)
+    third = materialize_dataset_artifacts(
+        result, output_root=datasets_root(tmp_path), built_at=other
+    )
+    assert third.created_new_build is False
+    assert file_hashes(build) == hashes_before
+    assert not list(datasets_root(tmp_path).glob(".staging-*"))
+
+
+def test_staging_residue_under_linked_output_root_rejected_without_touching(
+    fixtures, tmp_path
+):
+    """Even when the link target holds only a staging residue, the call
+    fails at the output-root link check before the residue state is read,
+    and the residue is never deleted."""
+    result = orchestrate(fixtures, requests=[request()])
+    real = datasets_root(tmp_path) / "real"
+    real.mkdir(parents=True)
+    residue = real / f".staging-{result.dataset_id}"
+    residue.mkdir()
+    (residue / "junk.txt").write_text("residue", encoding="utf-8")
+    link = tmp_path / "linked_residue_root"
+    _make_symlink_or_skip(real, link)
+    with pytest.raises(DatasetMaterializationError) as excinfo:
+        materialize_dataset_artifacts(
+            result, output_root=link, built_at=BUILT_AT
+        )
+    assert "must not be a symlink or junction" in str(excinfo.value)
+    assert residue.is_dir()
+    assert (residue / "junk.txt").exists()
+    assert not (real / result.dataset_id).exists()
