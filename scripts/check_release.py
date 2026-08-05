@@ -54,6 +54,60 @@ STALE_DIRECTION_PHRASES = (
     "Status: proposed",
     "PR-10 has not started",
 )
+# Stale v0.5.0 pre-release wording that must never appear in the current
+# direction document after the v0.5.0 release.
+STALE_POST_RELEASE_PHRASES = (
+    "Status: implementation complete; v0.5.0 release preparation",
+    "PR-10 is the current release-preparation branch",
+    "GitHub PR #29 is still OPEN",
+    "No v0.5.0 tag exists",
+    "No GitHub Release is published",
+)
+# Facts the v0.5.0 direction document must state after the release.
+DIRECTION_RELEASED_FACTS = (
+    "Status: released",
+    "3b4d03c785123e204885faea08df7b9d7ed07ec0",
+    "v0.5.0",
+    "GitHub Release",
+    "PyPI",
+)
+# Facts the v0.5.0 release notes must state after the release.
+RELEASE_NOTES_FACTS = (
+    "PR #29",
+    "MERGED",
+    "3b4d03c785123e204885faea08df7b9d7ed07ec0",
+    "v0.5.0",
+    "MarketVault v0.5.0",
+    "market_vault-0.5.0-py3-none-any.whl",
+    "market_vault-0.5.0.tar.gz",
+    "PyPI",
+)
+# Stale pre-release wording that must never appear in the current release
+# notes.
+RELEASE_NOTES_STALE_PHRASES = (
+    "GitHub PR #29 is still OPEN",
+    "No v0.5.0 tag exists",
+    "No GitHub Release is published",
+)
+# Facts the v0.5.1 direction document must state.
+DIRECTION_V051_FACTS = (
+    "Status: planned",
+    "Stability and Usability Maintenance",
+    "PR-1",
+    "PR-2",
+    "PR-3",
+    "PR-4",
+    "Sample Generator",
+    "Dataset Catalog",
+    "Python Client",
+    "ML Experiment",
+)
+# The v0.5.1 direction document must mark the future capabilities as
+# non-goals, not as implemented work.
+DIRECTION_V051_NONGOAL_MARKERS = (
+    "Explicit non-goals",
+    "does not implement",
+)
 
 
 def tracked_files(root: Path) -> list[str]:
@@ -139,9 +193,12 @@ def check_direction_status(root: Path) -> list[str]:
         return ["docs/v0_5_0_direction.md is missing"]
     text = path.read_text(encoding="utf-8")
     failures = []
-    if "release preparation" not in text:
-        failures.append("docs/v0_5_0_direction.md does not state the release-preparation status")
-    for phrase in STALE_DIRECTION_PHRASES:
+    for fact in DIRECTION_RELEASED_FACTS:
+        if fact not in text:
+            failures.append(
+                f"docs/v0_5_0_direction.md does not state the released fact {fact!r}"
+            )
+    for phrase in STALE_DIRECTION_PHRASES + STALE_POST_RELEASE_PHRASES:
         if phrase in text:
             failures.append(
                 f"docs/v0_5_0_direction.md still contains the stale wording {phrase!r}"
@@ -153,7 +210,37 @@ def check_release_notes(root: Path) -> list[str]:
     path = root / "docs" / "release_v0_5_0.md"
     if not path.exists():
         return ["docs/release_v0_5_0.md is missing"]
-    return []
+    text = path.read_text(encoding="utf-8")
+    failures = []
+    for fact in RELEASE_NOTES_FACTS:
+        if fact not in text:
+            failures.append(
+                f"docs/release_v0_5_0.md does not state the release fact {fact!r}"
+            )
+    for phrase in RELEASE_NOTES_STALE_PHRASES:
+        if phrase in text:
+            failures.append(
+                f"docs/release_v0_5_0.md still contains the stale wording {phrase!r}"
+            )
+    return failures
+
+
+def check_v051_direction(root: Path) -> list[str]:
+    path = root / "docs" / "v0_5_1_direction.md"
+    if not path.exists():
+        return ["docs/v0_5_1_direction.md is missing"]
+    text = path.read_text(encoding="utf-8")
+    failures = []
+    for fact in DIRECTION_V051_FACTS:
+        if fact not in text:
+            failures.append(f"docs/v0_5_1_direction.md does not state the fact {fact!r}")
+    for marker in DIRECTION_V051_NONGOAL_MARKERS:
+        if marker not in text:
+            failures.append(
+                "docs/v0_5_1_direction.md does not mark the future capabilities "
+                f"as non-goals ({marker!r})"
+            )
+    return failures
 
 
 def check_old_release_notes(root: Path) -> list[str]:
@@ -312,6 +399,7 @@ def main() -> int:
         ("README wording", check_readme_no_stale_wording),
         ("direction status", check_direction_status),
         ("release notes", check_release_notes),
+        ("v0.5.1 direction", check_v051_direction),
         ("old release notes", check_old_release_notes),
         ("README upgrade notes", check_readme_upgrade_sections),
         ("README dataset builder", check_readme_dataset_builder_section),
