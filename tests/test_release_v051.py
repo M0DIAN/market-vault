@@ -20,7 +20,7 @@ from market_vault.storage import Catalog, ParquetStore
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
-EXPECTED_VERSION = "0.5.0"
+EXPECTED_VERSION = "0.5.1"
 PUBLIC_API_IMPORT_CODE = "\n".join(
     [
         "from market_vault.canonical import load_verified_canonical_build",
@@ -29,7 +29,7 @@ PUBLIC_API_IMPORT_CODE = "\n".join(
         "    materialize_dataset_artifacts,",
         "    load_verified_dataset,",
         ")",
-        "print('V050_PUBLIC_API_IMPORT_OK')",
+        "print('V051_PUBLIC_API_IMPORT_OK')",
     ]
 )
 PEP440_RE = re.compile(
@@ -257,9 +257,9 @@ def test_cli_existing_failure_exit_codes_unchanged():
 # --- Documentation ----------------------------------------------------------
 
 
-def test_readme_title_is_v05():
+def test_readme_title_is_v051():
     first_line = (ROOT / "README.md").read_text(encoding="utf-8").splitlines()[0]
-    assert first_line.strip() == "# MarketVault v0.5"
+    assert first_line.strip() == "# MarketVault v0.5.1"
 
 
 def test_readme_no_development_wording():
@@ -291,7 +291,12 @@ def test_readme_does_not_claim_fixed_bar_counts():
     assert "requires 390" not in text
 
 
-def test_changelog_contains_050():
+def test_changelog_contains_051():
+    text = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert "## [0.5.1] - 2026-08-06" in text
+
+
+def test_changelog_still_contains_050():
     text = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
     assert "## [0.5.0] - 2026-08-05" in text
 
@@ -301,7 +306,19 @@ def test_changelog_still_contains_040():
     assert "## [0.4.0] - 2026-08-05" in text
 
 
-def test_release_notes_v05_exist():
+def test_changelog_contains_051_compare_link():
+    text = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert (
+        "[0.5.1]: https://github.com/M0DIAN/market-vault/compare/v0.5.0...v0.5.1"
+        in text
+    )
+
+
+def test_release_notes_v051_exist():
+    assert (ROOT / "docs" / "release_v0_5_1.md").is_file()
+
+
+def test_release_notes_v050_still_present():
     assert (ROOT / "docs" / "release_v0_5_0.md").is_file()
 
 
@@ -440,13 +457,13 @@ def test_upgrade_notes_contain_legacy_compatibility():
 # --- V0.5 public API imports ------------------------------------------------
 
 
-def test_v05_public_api_imports_succeed(tmp_path):
+def test_v051_public_api_imports_succeed(tmp_path):
     result = run_code_in(tmp_path, PUBLIC_API_IMPORT_CODE)
     assert result.returncode == 0, result.stderr
-    assert "V050_PUBLIC_API_IMPORT_OK" in result.stdout
+    assert "V051_PUBLIC_API_IMPORT_OK" in result.stdout
 
 
-def test_v05_public_api_imports_do_not_connect_opend(tmp_path):
+def test_v051_public_api_imports_do_not_connect_opend(tmp_path):
     # The imports run from an empty directory without any settings file or
     # OpenD host; a collector connection attempt would fail loudly.
     result = run_code_in(tmp_path, PUBLIC_API_IMPORT_CODE)
@@ -454,7 +471,7 @@ def test_v05_public_api_imports_do_not_connect_opend(tmp_path):
     assert "Traceback" not in result.stderr
 
 
-def test_v05_public_api_imports_do_not_write_data(tmp_path):
+def test_v051_public_api_imports_do_not_write_data(tmp_path):
     result = run_code_in(tmp_path, PUBLIC_API_IMPORT_CODE)
     assert result.returncode == 0, result.stderr
     leftovers = {p.name for p in tmp_path.iterdir()}
@@ -464,7 +481,7 @@ def test_v05_public_api_imports_do_not_write_data(tmp_path):
     assert "reports" not in leftovers
 
 
-def test_v05_dataset_exports_are_public():
+def test_v051_dataset_exports_are_public():
     import market_vault.dataset as dataset
 
     for name in ("orchestrate_dataset_build", "materialize_dataset_artifacts", "load_verified_dataset"):
@@ -492,20 +509,20 @@ def test_release_checker_passes_on_current_repo():
     assert f"RELEASE_CHECK_OK version={EXPECTED_VERSION}" in result.stdout
 
 
-def test_release_checker_output_is_exactly_release_check_ok_v050():
+def test_release_checker_output_is_exactly_release_check_ok_v051():
     result = run_check_release(ROOT)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert result.stdout.strip() == "RELEASE_CHECK_OK version=0.5.0"
+    assert result.stdout.strip() == "RELEASE_CHECK_OK version=0.5.1"
 
 
 def test_release_checker_fails_on_version_mismatch(tmp_path):
     repo = copy_repo(tmp_path)
     pyproject = repo / "pyproject.toml"
     text = pyproject.read_text(encoding="utf-8")
-    pyproject.write_text(text.replace('version = "0.5.0"', 'version = "9.9.9"'), encoding="utf-8")
+    pyproject.write_text(text.replace('version = "0.5.1"', 'version = "9.9.9"'), encoding="utf-8")
     version_file = repo / "src" / "market_vault" / "_version.py"
     version_file.write_text(
-        version_file.read_text(encoding="utf-8").replace('"0.5.0"', '"9.9.9"'),
+        version_file.read_text(encoding="utf-8").replace('"0.5.1"', '"9.9.9"'),
         encoding="utf-8",
     )
     result = run_check_release(repo)
@@ -518,7 +535,7 @@ def test_release_checker_fails_on_cli_version_mismatch(tmp_path):
     repo = copy_repo(tmp_path)
     version_file = repo / "src" / "market_vault" / "_version.py"
     version_file.write_text(
-        version_file.read_text(encoding="utf-8").replace('"0.5.0"', '"9.9.9"'),
+        version_file.read_text(encoding="utf-8").replace('"0.5.1"', '"9.9.9"'),
         encoding="utf-8",
     )
     result = run_check_release(repo)
@@ -593,7 +610,7 @@ def test_release_checker_fails_on_old_ci_version_assertion(tmp_path):
     repo = copy_repo(tmp_path)
     ci = repo / ".github" / "workflows" / "ci.yml"
     text = ci.read_text(encoding="utf-8")
-    ci.write_text(text.replace("'0.5.0'", "'0.3.0'"), encoding="utf-8")
+    ci.write_text(text.replace("'0.5.1'", "'0.3.0'"), encoding="utf-8")
     result = run_check_release(repo)
     assert result.returncode == 1
     assert "package module version assertion" in result.stdout
@@ -607,7 +624,7 @@ def test_release_checker_fails_on_wrong_package_assertion_only(tmp_path):
     text = ci.read_text(encoding="utf-8")
     ci.write_text(
         text.replace(
-            "assert market_vault.__version__ == '0.5.0'",
+            "assert market_vault.__version__ == '0.5.1'",
             "assert market_vault.__version__ == '9.9.9'",
         ),
         encoding="utf-8",
@@ -625,7 +642,7 @@ def test_release_checker_fails_on_wrong_metadata_assertion_only(tmp_path):
     text = ci.read_text(encoding="utf-8")
     ci.write_text(
         text.replace(
-            "assert version('market-vault') == '0.5.0'",
+            "assert version('market-vault') == '0.5.1'",
             "assert version('market-vault') == '9.9.9'",
         ),
         encoding="utf-8",
@@ -641,7 +658,7 @@ def test_release_checker_fails_on_wrong_public_api_marker(tmp_path):
     repo = copy_repo(tmp_path)
     ci = repo / ".github" / "workflows" / "ci.yml"
     text = ci.read_text(encoding="utf-8")
-    ci.write_text(text.replace("V050_PUBLIC_API_IMPORT_OK", "V040_PUBLIC_API_IMPORT_OK"), encoding="utf-8")
+    ci.write_text(text.replace("V051_PUBLIC_API_IMPORT_OK", "V040_PUBLIC_API_IMPORT_OK"), encoding="utf-8")
     result = run_check_release(repo)
     assert result.returncode == 1
     assert "public API smoke marker" in result.stdout
@@ -665,7 +682,7 @@ def test_release_checker_reports_all_failures_at_once(tmp_path):
     repo = copy_repo(tmp_path)
     pyproject = repo / "pyproject.toml"
     pyproject.write_text(
-        pyproject.read_text(encoding="utf-8").replace('version = "0.5.0"', 'version = "9.9.9"'),
+        pyproject.read_text(encoding="utf-8").replace('version = "0.5.1"', 'version = "9.9.9"'),
         encoding="utf-8",
     )
     (repo / "CHANGELOG.md").unlink()
@@ -787,16 +804,25 @@ def test_release_checker_fails_without_v051_direction(tmp_path):
     assert "docs/v0_5_1_direction.md is missing" in result.stdout
 
 
-def test_release_checker_fails_when_v051_direction_not_planned(tmp_path):
+def test_release_checker_fails_when_v051_direction_reverts_to_planned(tmp_path):
+    # Reverting the v0.5.1 direction top status to the pre-release
+    # "Status: planned" must fail the checker.
     repo = copy_repo(tmp_path)
     path = repo / "docs" / "v0_5_1_direction.md"
     path.write_text(
-        path.read_text(encoding="utf-8").replace("Status: planned", "Status: drafted"),
+        path.read_text(encoding="utf-8").replace(
+            "Status: implementation complete; v0.5.1 release preparation",
+            "Status: planned",
+        ),
         encoding="utf-8",
     )
     result = run_check_release(repo)
     assert result.returncode == 1
-    assert "does not state the fact 'Status: planned'" in result.stdout
+    assert (
+        "does not state the fact "
+        "'Status: implementation complete; v0.5.1 release preparation'"
+    ) in result.stdout
+    assert "still contains the stale wording 'Status: planned'" in result.stdout
 
 
 def test_release_checker_fails_when_v051_direction_claims_sample_generator_implemented(
@@ -1025,3 +1051,92 @@ def test_v02_settings_load_without_new_keys(tmp_path):
 
 def test_market_vault_api_still_importable():
     assert MarketVault is not None
+
+
+# --- V0.5.1 release preparation facts ---------------------------------------
+
+
+def test_direction_document_is_release_preparation():
+    text = (ROOT / "docs" / "v0_5_1_direction.md").read_text(encoding="utf-8")
+    assert "Status: implementation complete; v0.5.1 release preparation" in text
+    assert "Status: planned" not in text
+    assert "Status: proposed" not in text
+    assert "have not started" in text
+
+
+def test_release_notes_v051_contain_pr_facts():
+    text = (ROOT / "docs" / "release_v0_5_1.md").read_text(encoding="utf-8")
+    assert "PR #30" in text
+    assert "PR #31" in text
+    assert "PR #32" in text
+    assert "8de57d497ae5d922e3df29d9475f14b9407865f0" in text
+    assert "2d9c8a539f04ee2d75e5482c858ec6c3364af135" in text
+    assert "240f7ccac89a773366a510f10a13d6de801051ea" in text
+    assert "3b4d03c785123e204885faea08df7b9d7ed07ec0" in text
+
+
+def test_release_notes_v051_contain_expected_artifacts():
+    text = (ROOT / "docs" / "release_v0_5_1.md").read_text(encoding="utf-8")
+    assert "market_vault-0.5.1-py3-none-any.whl" in text
+    assert "market_vault-0.5.1.tar.gz" in text
+    assert "PyPI" in text
+    assert "release preparation" in text
+
+
+def test_examples_readme_states_install_version():
+    text = (ROOT / "examples" / "dataset_cli" / "README.md").read_text(
+        encoding="utf-8"
+    )
+    assert "market-vault 0.5.1" in text
+
+
+def test_warning_guard_retained():
+    text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert (
+        "error:The 'generic' unit for NumPy timedelta is deprecated"
+        in text
+    )
+    assert "ignore::DeprecationWarning" not in text
+
+
+def test_renderer_contains_hardening_markers():
+    text = (ROOT / "examples" / "dataset_cli" / "render_plans.py").read_text(
+        encoding="utf-8"
+    )
+    assert 'isoformat(timespec="microseconds")' in text
+    assert "destination exists and is not a directory" in text
+    assert "refusing to overwrite" in text
+    assert "render_plans: error:" in text
+
+
+def test_ci_contains_051_assertions_and_marker():
+    text = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert "assert market_vault.__version__ == '0.5.1'" in text
+    assert "assert version('market-vault') == '0.5.1'" in text
+    assert "V051_PUBLIC_API_IMPORT_OK" in text
+    assert "compileall -q src tests scripts examples" in text
+    assert "render_plans.py --help" in text
+
+
+def test_release_checker_fails_without_v051_release_notes(tmp_path):
+    repo = copy_repo(tmp_path)
+    (repo / "docs" / "release_v0_5_1.md").unlink()
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "docs/release_v0_5_1.md is missing" in result.stdout
+
+
+def test_release_checker_fails_without_warning_guard(tmp_path):
+    repo = copy_repo(tmp_path)
+    pyproject = repo / "pyproject.toml"
+    pyproject.write_text(
+        pyproject.read_text(encoding="utf-8").replace(
+            "error:The 'generic' unit for NumPy timedelta is deprecated.*:DeprecationWarning",
+            "ignore::DeprecationWarning",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "warning-as-error guard" in result.stdout
+    assert "must not ignore DeprecationWarnings" in result.stdout

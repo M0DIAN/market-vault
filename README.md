@@ -1,6 +1,30 @@
-# MarketVault v0.5
+# MarketVault v0.5.1
 
-MarketVault is a local historical market database for moomoo OpenD. V0.1 focused on closed-date stock, ETF, and option candlesticks. V0.2 added option contract static metadata and daily option volatility datasets. V0.3 adds the trading-calendar-driven collection and audit toolchain: a local trading calendar, resumable historical backfill, immutable snapshots, inventory reports, trading-day coverage audits, and intraday integrity audits. V0.4 adds the Canonical Dataset and ML Foundation: immutable Canonical builds from audited COMPLETE snapshots, a verified Canonical reader, three-clock market-bar semantics, two-clock point-in-time sample assembly, versioned Feature/Label spec contracts, deterministic Dataset identity/manifest contracts, chronological splits with actual-label-end purging, and the leakage threat-model regression suite. V0.5 adds the Deterministic Dataset Builder: an executable, verified, fail-closed pipeline that runs built-in Feature and Label transforms over verified Canonical builds, computes real `label_status` and `actual_label_end_time`, assigns chronological splits with actual-label-end purge, orchestrates immutable Dataset materialization, and reads the results back through a verified Dataset reader and three formal CLI commands.
+MarketVault is a local historical market database for moomoo OpenD. V0.1 focused on closed-date stock, ETF, and option candlesticks. V0.2 added option contract static metadata and daily option volatility datasets. V0.3 adds the trading-calendar-driven collection and audit toolchain: a local trading calendar, resumable historical backfill, immutable snapshots, inventory reports, trading-day coverage audits, and intraday integrity audits. V0.4 adds the Canonical Dataset and ML Foundation: immutable Canonical builds from audited COMPLETE snapshots, a verified Canonical reader, three-clock market-bar semantics, two-clock point-in-time sample assembly, versioned Feature/Label spec contracts, deterministic Dataset identity/manifest contracts, chronological splits with actual-label-end purging, and the leakage threat-model regression suite. V0.5 adds the Deterministic Dataset Builder: an executable, verified, fail-closed pipeline that runs built-in Feature and Label transforms over verified Canonical builds, computes real `label_status` and `actual_label_end_time`, assigns chronological splits with actual-label-end purge, orchestrates immutable Dataset materialization, and reads the results back through a verified Dataset reader and three formal CLI commands. V0.5.1 is the stability and usability maintenance release on top of V0.5.0.
+
+## V0.5.1 stability and usability maintenance
+
+- **Compatibility cleanup** — the NumPy generic-timedelta
+  `DeprecationWarning` raised by MarketVault's own production code and tests
+  is removed: `pd.Timedelta` constructions use explicit units, Python `int`
+  and NumPy integer inputs are equivalent, and gap content, gap identity,
+  Canonical schema, and Dataset identity are unchanged. A precise
+  warning-as-error pytest guard prevents regression. GitHub Actions' own
+  Node deprecations are runner-environment messages, not MarketVault
+  warnings, and are not claimed as fixed.
+- **Dataset CLI usability** — verified examples under
+  [examples/dataset_cli/](examples/dataset_cli/README.md): FeatureSpec /
+  LabelSpec / ChronologicalSplitSpec example files, COMPLETE and EMPTY
+  build-plan templates, a stdlib-only plan renderer with fixed UTC
+  six-digit microsecond serialization, a complete Windows PowerShell flow,
+  and common-error documentation. The renderer fails closed on existing
+  destinations, regular-file destinations, blank path arguments, and
+  filesystem errors.
+- **Compatibility** — v0.1–v0.5.0 CLI behavior is unchanged; Dataset and
+  Canonical identity, schema versions, and the build-plan / Feature / Label
+  / split contracts are unchanged; runtime dependencies and
+  `requires-python >=3.11` are unchanged; existing v0.5.0 Dataset and
+  Canonical artifacts are never migrated or rewritten.
 
 ## What this version does
 

@@ -1,6 +1,6 @@
 # MarketVault v0.5.1 Direction: Stability and Usability Maintenance
 
-Status: planned
+Status: implementation complete; v0.5.1 release preparation
 
 This document defines the scope, non-goals, and PR sequence for the V0.5.1
 "Stability and Usability Maintenance" patch release. It is the single
@@ -130,13 +130,19 @@ The v0.5.1 release must keep, unchanged:
   `pd.Timedelta` construction in production and tests, the precise
   warning-as-error pytest guard, and the
   `tests/test_deprecation_compatibility_v051.py` regression suite.
-- **PR-3** (`docs: add verified Dataset CLI examples`) — in progress on the
-  `docs/v0.5.1-dataset-cli-examples` branch: verified FeatureSpec /
+- **PR-3** (`docs: add verified Dataset CLI examples`) — merged (GitHub
+  PR #32, squash merge commit
+  `240f7ccac89a773366a510f10a13d6de801051ea`): verified FeatureSpec /
   LabelSpec / split-spec examples, COMPLETE and EMPTY build-plan templates,
   the stdlib-only `examples/dataset_cli/render_plans.py` renderer, the
-  Windows PowerShell usage flow, common-error documentation, and example
-  regression tests.
-- The package version is still **0.5.0**; no dependency changes.
-- PR-4 (v0.5.1 release preparation) has not started.
-- Sample Generator, Dataset Catalog, Python Client, and ML Experiment have
-  not started.
+  Windows PowerShell usage flow, common-error documentation, example
+  regression tests, and the renderer hardening follow-up
+  (`1f48efde963a5aee2b9bf55fd093db677e296abe`).
+- **PR-4** (`chore: prepare v0.5.1 release`) — in progress on the
+  `release/v0.5.1` branch: version sync to **0.5.1**, README, CHANGELOG,
+  release notes, direction document, release checker, release tests, and
+  CI package updates.
+- The package version is now **0.5.1**; no dependency changes.
+- The `v0.5.1` tag has not been created; no GitHub Release exists; PyPI is
+  not published.
+- Sample Generator, Dataset Catalog, Python Client, and ML Experiment have not started.

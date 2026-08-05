@@ -33,7 +33,7 @@ jobs:
           python -m pip install -e ".[dev]"
 
       - name: Compile Python
-        run: python -m compileall -q src tests scripts
+        run: python -m compileall -q src tests scripts examples
 
       - name: Run offline tests
         run: python -m pytest
@@ -67,6 +67,9 @@ jobs:
       - name: Run release checker
         run: python scripts/check_release.py
 
+      - name: Example renderer help smoke
+        run: python examples/dataset_cli/render_plans.py --help
+
       - name: Build wheel and sdist
         run: |
           python -m build
@@ -86,8 +89,8 @@ jobs:
           .release-venv/bin/market-vault dataset-build --help
           .release-venv/bin/market-vault dataset-verify --help
           .release-venv/bin/market-vault dataset-inspect --help
-          .release-venv/bin/python -c "import market_vault; assert market_vault.__version__ == '0.5.0'"
-          .release-venv/bin/python -c "from importlib.metadata import version; assert version('market-vault') == '0.5.0'"
+          .release-venv/bin/python -c "import market_vault; assert market_vault.__version__ == '0.5.1'"
+          .release-venv/bin/python -c "from importlib.metadata import version; assert version('market-vault') == '0.5.1'"
 
       - name: Fresh-wheel public API smoke check
         run: |
@@ -98,7 +101,7 @@ jobs:
               materialize_dataset_artifacts,
               load_verified_dataset,
           )
-          print('V050_PUBLIC_API_IMPORT_OK')
+          print('V051_PUBLIC_API_IMPORT_OK')
           "
 
       - name: Check wheel contents exclude local data
@@ -107,7 +110,7 @@ jobs:
           import glob, zipfile
           wheel = glob.glob("dist/*.whl")[0]
           names = zipfile.ZipFile(wheel).namelist()
-          forbidden = ("data/", "catalog/", "manifests/", "reports/", ".venv/", ".duckdb", ".parquet")
+          forbidden = ("data/", "catalog/", "manifests/", "reports/", ".venv/", ".duckdb", ".parquet", "examples/", "tests/")
           violations = [n for n in names if any(f in n for f in forbidden)]
           assert not violations, f"wheel contains forbidden paths: {violations}"
           print("WHEEL_CONTENTS_OK")

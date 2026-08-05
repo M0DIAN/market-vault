@@ -4,6 +4,53 @@ All notable changes to MarketVault are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-08-06
+
+### Fixed
+
+- Removed the NumPy generic-timedelta `DeprecationWarning` raised by
+  MarketVault's own production code and tests: `pd.Timedelta` constructions
+  now use explicit values and units, and Python `int` / NumPy integer inputs
+  are equivalent (`bar_available_at`, `derive_internal_gap_ranges`).
+- Added `tests/test_deprecation_compatibility_v051.py` regression tests
+  proving Python `int` / NumPy integer equivalence, gap identity, and the
+  non-multiple fail-closed boundary.
+- Added a precise warning-as-error pytest guard for the exact NumPy
+  generic-timedelta warning.
+- Hardened the Dataset example renderer: fixed UTC six-digit microsecond
+  serialization, rejection of existing destinations, regular-file
+  destinations, blank path arguments, and clean filesystem error reporting.
+
+### Added
+
+- Verified Dataset CLI examples under
+  [examples/dataset_cli/](examples/dataset_cli/README.md): FeatureSpec,
+  LabelSpec, and ChronologicalSplitSpec example files, COMPLETE and EMPTY
+  build-plan templates, a stdlib-only plan renderer, a complete Windows
+  PowerShell flow, and 24 documented common errors.
+- Example regression tests: static-file parser validation, deterministic
+  rendering, no-overwrite behavior, and real COMPLETE / EMPTY / idempotent
+  canaries through the formal CLI.
+
+### Compatibility
+
+- Dataset identity, Canonical identity, schema versions, and the
+  build-plan / Feature / Label / split contracts are unchanged.
+- CLI command surface, exit codes, and JSON output contracts are unchanged.
+- Runtime dependencies and `requires-python >=3.11` are unchanged;
+  Python 3.11 and Python 3.14 remain supported.
+- Existing v0.5.0 Dataset and Canonical artifacts are never migrated,
+  overwritten, or rewritten.
+
+### Known boundaries
+
+- No Sample Generator, Dataset Catalog, Python Client, REST API, ML
+  training, backtesting, or automatic trading.
+- No arbitrary user transforms, no adjusted-price PIT
+  (`adjustment = NONE` only), no cross-trading-day Label execution, and no
+  `TRADING_DAYS` Label horizon.
+- No `latest`-directory discovery and no automatic Canonical discovery.
+
 ## [0.5.0] - 2026-08-05
 
 ### Added
@@ -233,6 +280,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Historical K-line collection for closed dates (`collect`), query layer
   (`query`), and option datasets.
 
+[0.5.1]: https://github.com/M0DIAN/market-vault/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/M0DIAN/market-vault/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/M0DIAN/market-vault/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/M0DIAN/market-vault/compare/v0.2.0...v0.3.0

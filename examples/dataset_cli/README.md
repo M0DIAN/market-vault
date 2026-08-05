@@ -38,7 +38,7 @@ examples/dataset_cli/
 ## 1. Prerequisites
 
 - The project is installed (`pip install -e .` or the equivalent editable
-  install) and `market-vault --version` prints `market-vault 0.5.0`.
+  install) and `market-vault --version` prints `market-vault 0.5.1`.
 - One or more **verified Canonical final build directories** exist. Pass
   the final build directory itself (`.../canonical/dataset=market_bars_canonical/<canonical_build_id>`),
   never its parent and never a `latest` path.
