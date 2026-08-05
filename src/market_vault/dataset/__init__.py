@@ -112,9 +112,37 @@ Feature / Label execution, or split / purge, and it never recomputes an
 identity algorithm. ``built_at`` and output byte hashes are recorded facts
 that never enter ``dataset_id``.
 
-This layer does not implement a Dataset reader (the verified Dataset reader
-is PR-7), does not create DuckDB views, does not add CLI commands, and does
-not train models. The Canonical manifest remains authoritative for
+The verified Dataset reader (v0.5.0 PR-7;
+:mod:`market_vault.dataset.reader` and
+:mod:`market_vault.dataset.reader_models`) is the one public, read-only,
+fail-closed read path into committed Dataset build directories:
+``load_verified_dataset(build_dir)`` accepts one explicit final Dataset
+directory (``<output_root>/<dataset_id>``) and independently rebuilds and
+verifies the complete Dataset facts from the directory's own
+``dataset.parquet``, ``manifest.json``, ``build_report.json``,
+``feature_specs/``, ``label_specs/``, ``split_spec.yaml``, and
+``_SUCCESS``: canonical manifest validation and bytes, the directory-name
+binding, the exact artifact whitelist, ``_SUCCESS``, full
+:class:`DatasetOutputFile` records with sizes and SHA-256s, Feature /
+Label / Split artifact parse / pin / canonical-bytes verification, the
+authoritative schema re-derivation, Parquet schema / metadata / rows /
+logical content identity, physical row order, sample-key uniqueness,
+scope and ``dataset_as_of`` binding, the split result re-derived from the
+actual rows, the typed build-report record with its canonical bytes and
+observable-fact bindings, and the fixed diagnostics matrix. It returns a
+deeply immutable :class:`VerifiedDatasetBuild`; it never accepts a
+``DatasetOrchestrationResult``, never re-executes PIT / Feature / Label /
+split-or-materialization work, never scans for a ``latest`` directory,
+and never writes, repairs, or deletes any file. Canonical pins, row-
+version IDs, and gap references are verified through the manifest identity
+contract; upstream Canonical build directories are never reloaded or
+audited. Build-report execution counts that cannot be re-derived from the
+final directory remain non-identity recorded facts validated by shape,
+exact canonical bytes, the fixed diagnostics matrix, and every artifact-
+observable cross-check.
+
+This layer does not create DuckDB views, does not add CLI commands, and
+does not train models. The Canonical manifest remains authoritative for
 Canonical builds; the Dataset layer only references immutable Canonical
 builds and their stable identities. MarketVault's future read-only
 data-serving and ML usage are outside this layer.
@@ -257,6 +285,14 @@ from .pit_models import (
     PITSample,
     PITSampleRequest,
 )
+from .reader import load_verified_dataset
+from .reader_models import (
+    DATASET_READER_CONTRACT_VERSION,
+    DatasetArtifactValidationError,
+    DatasetBuildReportRecord,
+    DatasetOutputLayoutRecord,
+    VerifiedDatasetBuild,
+)
 from .spec_models import (
     FEATURE_LABEL_SPEC_CONTENT_ID_VERSION,
     FEATURE_SPEC_SCHEMA_VERSION,
@@ -378,6 +414,7 @@ __all__ = [
     "DATASET_OUTPUT_ROLE_LABEL_SPEC",
     "DATASET_OUTPUT_ROLE_SPLIT_SPEC",
     "DATASET_PARQUET_FILENAME",
+    "DATASET_READER_CONTRACT_VERSION",
     "DATASET_SPEC_ARTIFACT_VERSION",
     "DATASET_SPLIT_SPEC_FILENAME",
     "DATASET_SUCCESS_FILENAME",
@@ -467,12 +504,15 @@ __all__ = [
     "CompletionEntry",
     "CompletionSummary",
     "CrossTradingDayPolicy",
+    "DatasetArtifactValidationError",
+    "DatasetBuildReportRecord",
     "DatasetError",
     "DatasetMaterializationError",
     "DatasetMaterializationResult",
     "DatasetOrchestrationDiagnostics",
     "DatasetOrchestrationError",
     "DatasetOrchestrationResult",
+    "DatasetOutputLayoutRecord",
     "FeatureExecutionDiagnostics",
     "FeatureExecutionError",
     "FeatureExecutionResult",
@@ -535,6 +575,7 @@ __all__ = [
     "feature_label_spec_pin",
     "load_feature_spec",
     "load_label_spec",
+    "load_verified_dataset",
     "logical_dataset_content_id",
     "materialize_dataset_artifacts",
     "orchestrate_dataset_build",
@@ -552,5 +593,6 @@ __all__ = [
     "transform_implementation_fingerprint",
     "transform_implementation_pin",
     "validate_dataset_manifest",
+    "VerifiedDatasetBuild",
     "write_dataset_manifest_atomic",
 ]

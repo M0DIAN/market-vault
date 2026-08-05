@@ -2816,15 +2816,19 @@ def test_no_partial_result_after_failure(fixtures, tmp_path, monkeypatch):
 
 
 def test_no_public_reader_or_cli_or_server():
+    # The verified Dataset reader became public in PR-7
+    # (market_vault.dataset.load_verified_dataset); the materialization
+    # module itself never exposes a reader and the Dataset CLI / API
+    # server / Python client do not exist yet (PR-8).
+    assert callable(dataset_pkg.load_verified_dataset)
+    assert not hasattr(mat_mod, "load_verified_dataset")
     for name in (
-        "load_verified_dataset",
         "verify_dataset",
         "dataset_build",
         "dataset_verify",
         "dataset_inspect",
     ):
         assert not hasattr(dataset_pkg, name)
-    assert not hasattr(mat_mod, "load_verified_dataset")
 
 
 def test_only_writes_inside_output_root(fixtures, tmp_path):

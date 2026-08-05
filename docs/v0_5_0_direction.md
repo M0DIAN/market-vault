@@ -319,25 +319,49 @@ absolute output paths in `dataset_id`.
 
 ## 15. Verified Dataset reader
 
-One public read entry point (planned: `load_verified_dataset(build_dir)`),
-fail-closed on:
+One public read entry point: `load_verified_dataset(build_dir) ->`
+`VerifiedDatasetBuild`, implemented in PR-7. It accepts one explicit final
+Dataset directory (`<output_root>/<dataset_id>`) and is fail-closed on:
 
-- directory name vs `dataset_id`;
-- `_SUCCESS` presence and fixed format (regular file, not a symlink) — a
-  formal directory with missing or corrupt `_SUCCESS` fails closed;
-- manifest schema version and shape;
-- recomputed `dataset_id` from identity-bearing fields;
+- the raw and lexical path contract: no `.` / `..` components, no symlink
+  or Windows junction on any path component (Python 3.11 reparse-point
+  detection), a regular directory whose name is the lowercase 64-hex
+  `dataset_id`;
+- `_SUCCESS` presence and fixed format (regular file, exactly empty, not
+  a symlink) — a formal directory with missing or corrupt `_SUCCESS`
+  fails closed;
+- manifest schema version, shape, and canonical bytes
+  (`payload == serialize_dataset_manifest(validate(payload))`);
+- directory name vs the recomputed `dataset_id` from the identity-bearing
+  fields;
 - recomputed logical content hash from the actual Parquet rows;
-- Parquet schema, column order, dtypes, row count;
-- recorded file SHA-256s vs actual bytes;
-- spec pins, canonical pins, gap references, split identity;
-- the exact file whitelist derived from the contract:
-  `dataset.parquet`, `manifest.json`, `build_report.json`, `_SUCCESS`,
-  `split_spec.yaml`, and exactly the spec files implied by the manifest
-  `SpecPin`s — any unexpected file fails;
-- NaN / Infinity presence — any occurrence fails (per the final contract).
+- Parquet schema, column order, dtypes, nullability, the exact metadata
+  key set, row count, and the physical row order
+  (`code`, `feature_window_close`, `sample_key` ASC);
+- recorded `DatasetOutputFile` byte facts (all six fields) vs the actual
+  files;
+- Feature / Label / Split artifact parse, pins, and canonical artifact
+  bytes;
+- the authoritative schema re-derived from the parsed typed specs;
+- the split result re-derived from the actual rows (pure
+  `assign_chronological_splits` verification; Feature / Label execution
+  is never re-run) and the split result ID;
+- the build report's typed record, canonical bytes, observable-fact
+  bindings, and the fixed orchestration diagnostics matrix;
+- spec pins, canonical pins, gap references (through the manifest
+  identity contract — upstream Canonical directories are never reloaded);
+- the exact file whitelist derived from the manifest `SpecPin`s — any
+  unexpected file fails;
+- NaN / Infinity presence — any occurrence fails (per the final
+  contract);
+- a second-pass re-verification of the path contract, the whitelist, and
+  every file size / hash before the result is constructed.
 
-The reader never writes, repairs, or rewrites anything.
+The reader never writes, repairs, or rewrites anything, never scans for a
+`latest` directory, and never requires a `DatasetOrchestrationResult`; it
+returns a deeply immutable `VerifiedDatasetBuild`. The full contract is
+documented in
+[contracts/verified_dataset_reader.md](contracts/verified_dataset_reader.md).
 
 ## 16. Dataset CLI
 
@@ -562,8 +586,8 @@ of scope for v0.5.0.
   and the deterministic `dataset_id` — in memory only, fail closed, with
   the unified `DatasetOrchestrationError` boundary. See
   [contracts/dataset_orchestration.md](contracts/dataset_orchestration.md).
-- **PR-6** (`feat: materialize immutable dataset artifacts`) — implemented
-  in this branch: the deterministic Dataset materialization layer
+- **PR-6** (`feat: materialize immutable dataset artifacts`) — merged:
+  the deterministic Dataset materialization layer
   materializes one verified `DatasetOrchestrationResult` into an immutable
   Dataset build directory — Dataset Parquet (single file, explicit
   logical-to-PyArrow schema mapping, fixed writer options and metadata),
@@ -579,13 +603,32 @@ of scope for v0.5.0.
   trusted output; it never re-executes Canonical reads, PIT assembly,
   Feature / Label execution, or split / purge. See
   [contracts/dataset_materialization.md](contracts/dataset_materialization.md).
-- PIT + Feature + Label + Split orchestration and Dataset materialization
+- **PR-7** (`feat: add verified Dataset reader`) — implemented in this
+  branch: the one public, read-only, fail-closed Dataset artifact reader
+  `load_verified_dataset(build_dir)` rebuilds and verifies the complete
+  Dataset facts from one explicit committed Dataset directory's own
+  artifacts — canonical manifest validation and bytes, the
+  directory-name / `dataset_id` binding, the exact artifact whitelist,
+  `_SUCCESS`, full `DatasetOutputFile` records with sizes and SHA-256s,
+  Feature / Label / Split artifact parse / pin / canonical-bytes
+  verification, the authoritative schema re-derivation, Parquet schema /
+  metadata / rows / logical content identity, physical row order, sample
+  uniqueness, scope and `dataset_as_of` binding, the split result
+  re-derived from the actual rows, the typed build-report record with
+  canonical bytes and observable-fact bindings, and the fixed
+  diagnostics matrix — and returns a deeply immutable
+  `VerifiedDatasetBuild`. It never accepts a `DatasetOrchestrationResult`,
+  never re-executes PIT / Feature / Label / materialization work, never
+  scans for a `latest` directory, and never writes, repairs, or deletes
+  any file. See
+  [contracts/verified_dataset_reader.md](contracts/verified_dataset_reader.md).
+- PIT + Feature + Label + Split orchestration, Dataset materialization
   (Parquet, manifest, build report, spec artifacts, `_SUCCESS`, staging,
-  atomic commit, idempotency) are implemented. The verified Dataset reader
-  (PR-7) and the Dataset CLI (PR-8) are **not implemented yet**: no public
-  `load_verified_dataset` reader, no `dataset-build` /
-  `dataset-verify` / `dataset-inspect` commands, and no API server or
-  Python client exist. The v0.6.0 read-only data-serving direction is not
-  part of this PR.
+  atomic commit, idempotency), and the verified Dataset reader are
+  implemented. The Dataset CLI (PR-8) is **not implemented yet**: no
+  `dataset-build` / `dataset-verify` / `dataset-inspect` commands and no
+  API server or Python client exist. The v0.6.0 read-only data-serving
+  direction is not part of this PR; v0.5.1 maintenance optimization has
+  not started.
 - The package version remains **0.4.0** (it stays 0.4.0 through PR-9 of
   this sequence; the bump to 0.5.0 happens only in PR-10).
