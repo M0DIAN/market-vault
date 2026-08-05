@@ -6,7 +6,7 @@
 base tag: v0.4.0
 v0.4.0 release merge/base: 1225b0ae0c96ef7a27b4eae92d676c65394ee85e
 latest main after PR-9: 583db37b4f04014674a51b9908bf2409767fb291
-PR-10 base (this branch): 583db37b4f04014674a51b9908bf2409767fb291
+PR-10 base (release branch): 583db37b4f04014674a51b9908bf2409767fb291
 
 release version: 0.5.0
 release date: 2026-08-05
@@ -34,22 +34,33 @@ GitHub PR numbers (not the internal roadmap PR-1..PR-10 sequence):
   (merge commit `6c17ce130656ba343ce49690017e01a332b96744`)
 - PR #28 — test: add end-to-end Dataset determinism and leakage regression
   (merge commit `583db37b4f04014674a51b9908bf2409767fb291`)
+- PR #29 — chore: prepare v0.5.0 release
+  (squash merge commit `3b4d03c785123e204885faea08df7b9d7ed07ec0`)
 
 PR #28 was squash-merged into main on 2026-08-05; the resulting main HEAD
-is `583db37b4f04014674a51b9908bf2409767fb291`, which is the base of the
-PR-10 release-preparation branch.
+`583db37b4f04014674a51b9908bf2409767fb291` is the base of the PR-10
+release-preparation branch. PR #29 was squash-merged into main on
+2026-08-05T13:32:42Z; the resulting main HEAD is
+`3b4d03c785123e204885faea08df7b9d7ed07ec0`.
 
-## PR-10 release preparation status
+## Release status (formal)
 
-PR-10 is the current release-preparation branch `release/v0.5.0` (commit
-`chore: prepare v0.5.0 release`); it syncs the package version to 0.5.0 and
-updates the README, CHANGELOG, release notes, direction document, release
-checker, release tests, and CI package smoke. GitHub PR #29 is still
-**OPEN** and **not merged**; the release-preparation branch has completed
-its GitHub Actions validation with all three jobs successful — test
-(3.11), test (3.14), and package. No `v0.5.0` tag exists, no GitHub
-Release is published, and nothing is uploaded to PyPI: those remain
-separate, explicit actions after PR-10 merges.
+GitHub PR #29 (`chore: prepare v0.5.0 release`) is **MERGED** — merged on
+**2026-08-05T13:32:42Z**. The squash merge commit is
+`3b4d03c785123e204885faea08df7b9d7ed07ec0`, which is also the current main
+HEAD.
+
+- The annotated `v0.5.0` tag is created; the tag peeled commit equals the
+  release commit `3b4d03c785123e204885faea08df7b9d7ed07ec0`.
+- The GitHub Release **MarketVault v0.5.0** is published on
+  **2026-08-05T13:42:01Z** at
+  <https://github.com/M0DIAN/market-vault/releases/tag/v0.5.0>; it is not a
+  draft and not a prerelease.
+- Release assets:
+  - `market_vault-0.5.0-py3-none-any.whl`
+  - `market_vault-0.5.0.tar.gz`
+- PyPI is not published; a PyPI publication remains a separate, explicit
+  decision.
 
 ## Shipped architecture
 
@@ -237,7 +248,7 @@ platform-dependent skips differ between Windows and Linux.
 
 ### Local validation
 
-Verified on the PR-10 branch before opening the PR (Windows):
+Recorded on the PR-10 branch before the release (Windows):
 
 ```text
 Full offline pytest: 2226 passed, 11 skipped
@@ -259,8 +270,8 @@ wheel contents: WHEEL_CONTENTS_OK
 
 ### GitHub Actions validation
 
-Verified on the release-preparation branch by the PR-10 CI workflow
-(ubuntu-latest):
+Recorded on the release-preparation branch by the PR-10 CI workflow before
+the release (ubuntu-latest):
 
 ```text
 test (3.11): 2230 passed, 7 skipped
@@ -275,9 +286,11 @@ package: success
     WHEEL_CONTENTS_OK
 ```
 
-## Explicit non-actions
+## Post-release actions
 
-PR-10 does not create the `v0.5.0` tag, does not create a GitHub Release,
-does not publish to PyPI, does not upload any package, and does not start
-v0.5.1 or v0.6 work. Those remain separate, explicit actions after the
-release PR merges.
+PR-10 itself did not create the `v0.5.0` tag, did not create the GitHub
+Release, and did not publish to PyPI: those remained separate, explicit
+actions after the release PR merged. The annotated `v0.5.0` tag and the
+GitHub Release `MarketVault v0.5.0` (with the wheel and sdist assets) were
+created as those separate post-merge actions. PyPI is still not published; a
+PyPI publication remains a separate, explicit decision.

@@ -1,15 +1,21 @@
 # MarketVault v0.5.0 Direction: Deterministic Dataset Builder
 
-Status: implementation complete; v0.5.0 release preparation (PR-10)
+Status: released on 2026-08-05
 
 This document defines the scope, non-goals, and design direction for the
 V0.5.0 "Deterministic Dataset Builder" phase. The full pipeline — transform
 registry, Feature execution, Label execution, orchestration, materialization,
-verified reader, Dataset CLI, and the end-to-end regression suite — is now
-implemented and merged (PRs #20 through #28). This PR is the v0.5.0 release
-preparation: version sync to 0.5.0 plus README, CHANGELOG, release notes,
-release checker, release tests, and CI package smoke. The authoritative
-boundary decision is captured separately in
+verified reader, Dataset CLI, and the end-to-end regression suite — is
+implemented and merged (PRs #20 through #28), and the v0.5.0 release was
+shipped by the release preparation (PR-10, GitHub PR #29, squash merge
+commit `3b4d03c785123e204885faea08df7b9d7ed07ec0`). The annotated `v0.5.0`
+tag points at the same commit as the release. The GitHub Release
+`MarketVault v0.5.0` is published — not a draft, not a prerelease — with the
+wheel (`market_vault-0.5.0-py3-none-any.whl`) and sdist
+(`market_vault-0.5.0.tar.gz`) assets; PyPI is not published. V0.5.1
+maintenance continues from the separate
+[v0_5_1_direction.md](v0_5_1_direction.md); v0.6 has not started. The
+authoritative boundary decision is captured separately in
 [ADR 0002](adr/0002-deterministic-dataset-builder-boundary.md). The v0.4.0
 foundation this phase builds on is documented in
 [v0_4_0_direction.md](v0_4_0_direction.md) and its contracts under
@@ -461,8 +467,8 @@ The v0.4.0 eight-threat model is extended by execution-layer regressions:
   unchanged; existing manifests remain valid.
 - The v0.4.0 tag and Release remain as-is; no existing identity algorithm or
   version constant is modified.
-- The package version stayed 0.4.0 through PR-9 of this sequence; PR-10
-  (this release-preparation PR) bumps it to 0.5.0.
+- The package version stayed 0.4.0 through PR-9 of this sequence; the
+  v0.5.0 release preparation (PR-10, GitHub PR #29) bumped it to 0.5.0.
 
 ## 21. Test strategy
 
@@ -486,7 +492,7 @@ executed in its own Claude Code session; no two phases share one PR:
 
 ```text
 PR-1   docs: plan v0.5.0 deterministic dataset builder
-       (this PR: ADR 0002 + direction document only)
+       (PR-1: ADR 0002 + direction document only)
 
 PR-2   feat: transform implementation registry and execution contracts
        - registry protocol, registration metadata, parameter validation,
@@ -525,12 +531,12 @@ PR-9   test: add end-to-end Dataset determinism and leakage regression
 
 PR-10  chore: prepare v0.5.0 release
        - version sync, README, CHANGELOG, release notes, package smoke
-       (this PR)
+       (merged as GitHub PR #29)
 ```
 
-The package version remained 0.4.0 through PR-9; PR-10 (this PR) bumps it
-to 0.5.0. A Dataset builder, CLI, and ML are never implemented in the same
-PR.
+The package version remained 0.4.0 through PR-9; PR-10 (the v0.5.0 release
+preparation, GitHub PR #29) bumped it to 0.5.0. A Dataset builder, CLI, and
+ML are never implemented in the same PR.
 
 ## 23. Acceptance criteria
 
@@ -555,9 +561,9 @@ Canonical builds, PIT assembly, versioned Feature/Label specs, chronological
 split/purge, Dataset identity/manifest. V0.5.0 ships the executable pipeline
 that connects them: the transform registry, built-in Feature/Label
 execution, orchestration, materialization, verified reader, Dataset CLI, and
-the end-to-end regression suite (PRs #20 through #28, merged). PR-10 (this
-PR) is the v0.5.0 release preparation. ML training, backtesting, and trading
-remain out of scope for v0.5.0.
+the end-to-end regression suite (PRs #20 through #28, merged). The v0.5.0
+release preparation (PR-10, GitHub PR #29) shipped the v0.5.0 release. ML
+training, backtesting, and trading remain out of scope for v0.5.0.
 
 ## 25. Progress
 
@@ -672,13 +678,13 @@ remain out of scope for v0.5.0.
   Tests and documentation only: no `src/` change, no identity or version
   change, no dependency, no CI change, no Dataset repair. See
   [contracts/dataset_end_to_end_regression.md](contracts/dataset_end_to_end_regression.md).
-- **PR-1 through PR-9 are merged** (GitHub PRs #20 through #28). **PR-10
-  (v0.5.0 release preparation) is in progress in this branch:**
-  `release/v0.5.0`, based on the PR-9 merge commit
-  `583db37b4f04014674a51b9908bf2409767fb291`. The package version is
-  updated to **0.5.0** in this PR, together with the README, CHANGELOG,
-  release notes, release checker, release tests, and CI package smoke.
-  The v0.6.0 read-only data-serving / API / Python client direction is
-  not part of this PR; v0.5.1 maintenance optimization has not started.
-  The `v0.5.0` tag, GitHub Release, and PyPI publication are not created
-  by this PR and remain separate, explicit actions.
+- **PR-10** (`chore: prepare v0.5.0 release`) — merged (GitHub PR #29,
+  squash merge commit `3b4d03c785123e204885faea08df7b9d7ed07ec0`): the
+  v0.5.0 release preparation synced the package version to **0.5.0** and
+  updated the README, CHANGELOG, release notes, direction document, release
+  checker, release tests, and CI package smoke. The annotated `v0.5.0` tag
+  points at the same commit; the GitHub Release `MarketVault v0.5.0` is
+  published with the wheel (`market_vault-0.5.0-py3-none-any.whl`) and
+  sdist (`market_vault-0.5.0.tar.gz`) assets; PyPI is not published.
+  V0.5.1 maintenance continues from the separate
+  [v0_5_1_direction.md](v0_5_1_direction.md); v0.6 has not started.

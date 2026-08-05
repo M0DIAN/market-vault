@@ -388,11 +388,13 @@ def test_readme_does_not_claim_v06():
     assert "v0.6" not in text
 
 
-def test_direction_document_is_release_preparation():
+def test_direction_document_is_released():
     text = (ROOT / "docs" / "v0_5_0_direction.md").read_text(encoding="utf-8")
+    assert "Status: released" in text
     assert "Status: proposed" not in text
     assert "PR-10 has not started" not in text
-    assert "release preparation" in text
+    assert "Status: implementation complete; v0.5.0 release preparation" not in text
+    assert "3b4d03c785123e204885faea08df7b9d7ed07ec0" in text
 
 
 def test_readme_describes_ci_matrix():
@@ -488,6 +490,12 @@ def test_release_checker_passes_on_current_repo():
     result = run_check_release(ROOT)
     assert result.returncode == 0, result.stdout + result.stderr
     assert f"RELEASE_CHECK_OK version={EXPECTED_VERSION}" in result.stdout
+
+
+def test_release_checker_output_is_exactly_release_check_ok_v050():
+    result = run_check_release(ROOT)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.strip() == "RELEASE_CHECK_OK version=0.5.0"
 
 
 def test_release_checker_fails_on_version_mismatch(tmp_path):
@@ -673,6 +681,141 @@ def test_release_checker_reports_all_failures_at_once(tmp_path):
     assert "pyproject.toml version" in result.stdout
     assert "CHANGELOG.md" in result.stdout
     assert "README first line" in result.stdout
+
+
+def test_release_checker_fails_on_old_direction_status(tmp_path):
+    # Reverting the v0.5.0 direction top status to the old
+    # release-preparation wording must fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_5_0_direction.md"
+    text = path.read_text(encoding="utf-8")
+    path.write_text(
+        text.replace(
+            "Status: released on 2026-08-05",
+            "Status: implementation complete; v0.5.0 release preparation (PR-10)",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "does not state the released fact 'Status: released'" in result.stdout
+    assert (
+        "still contains the stale wording "
+        "'Status: implementation complete; v0.5.0 release preparation'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_direction_missing_release_commit(tmp_path):
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_5_0_direction.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "3b4d03c785123e204885faea08df7b9d7ed07ec0",
+            "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the released fact '3b4d03c785123e204885faea08df7b9d7ed07ec0'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_release_notes_missing_pr29_merged(tmp_path):
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "release_v0_5_0.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace("MERGED", "OPEN"),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "does not state the release fact 'MERGED'" in result.stdout
+
+
+def test_release_checker_fails_when_release_notes_claim_pr29_still_open(tmp_path):
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "release_v0_5_0.md"
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        + "\nGitHub PR #29 is still OPEN and not merged.\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "GitHub PR #29 is still OPEN" in result.stdout
+
+
+def test_release_checker_fails_when_release_notes_missing_wheel_asset(tmp_path):
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "release_v0_5_0.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "market_vault-0.5.0-py3-none-any.whl",
+            "market_vault-0.5.0-py3-none-any.egg",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the release fact 'market_vault-0.5.0-py3-none-any.whl'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_release_notes_missing_sdist_asset(tmp_path):
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "release_v0_5_0.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "market_vault-0.5.0.tar.gz",
+            "market_vault-0.5.0.tar.bz2",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "does not state the release fact 'market_vault-0.5.0.tar.gz'" in result.stdout
+
+
+def test_release_checker_fails_without_v051_direction(tmp_path):
+    repo = copy_repo(tmp_path)
+    (repo / "docs" / "v0_5_1_direction.md").unlink()
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "docs/v0_5_1_direction.md is missing" in result.stdout
+
+
+def test_release_checker_fails_when_v051_direction_not_planned(tmp_path):
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_5_1_direction.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace("Status: planned", "Status: drafted"),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "does not state the fact 'Status: planned'" in result.stdout
+
+
+def test_release_checker_fails_when_v051_direction_claims_sample_generator_implemented(
+    tmp_path,
+):
+    # A v0.5.1 direction that claims the future capabilities are implemented
+    # instead of non-goals must fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_5_1_direction.md"
+    text = path.read_text(encoding="utf-8")
+    text = text.replace("## 3. Explicit non-goals", "## 3. Implemented in v0.5.1")
+    text = text.replace(
+        "V0.5.1 does not implement any of the following",
+        "V0.5.1 has implemented all of the following",
+    )
+    path.write_text(text, encoding="utf-8")
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "does not mark the future capabilities as non-goals" in result.stdout
 
 
 # --- Package metadata -------------------------------------------------------
