@@ -14,9 +14,14 @@ spec artifacts, ``split_spec.yaml``, ``build_report.json``, byte facts
 ``build_dataset_manifest`` / ``serialize_dataset_manifest`` /
 ``validate_dataset_manifest`` core, a full private verification of the
 staging directory, ``_SUCCESS`` written last (empty, regular, not a
-symlink), a re-verification of ``_SUCCESS``, and an atomic same-filesystem
-no-overwrite rename of staging onto the final directory
-``output_root / <dataset_id>``.
+symlink), a re-verification of ``_SUCCESS``, and a true no-replace atomic
+publication of staging onto the final directory ``output_root /
+<dataset_id>`` (section 23 of the materialization contract: the platform
+primitive itself refuses an existing destination — Windows native
+directory-move semantics or Linux ``renameat2(..., RENAME_NOREPLACE)`` —
+and platforms or filesystems without a safe primitive fail closed; the
+existence pre-check is never the safety guarantee and a plain overwriting
+``os.rename`` is never a fallback).
 
 An existing final directory is never trusted by its name alone: it is
 strictly verified against the expected result (exact whitelist, symlink /
@@ -37,10 +42,13 @@ output byte hashes are recorded facts that never enter ``dataset_id``.
 
 from __future__ import annotations
 
+import ctypes
 import dataclasses
+import errno
 import json
 import os
 import shutil
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -76,7 +84,6 @@ from .manifest import (
 )
 from .materialization_models import (
     DATASET_BUILD_REPORT_FILENAME,
-    DATASET_BUILD_REPORT_SCHEMA_VERSION,
     DATASET_CONTENT_ROLE_BUILD_REPORT,
     DATASET_CONTENT_ROLE_FEATURE_SPEC,
     DATASET_CONTENT_ROLE_LABEL_SPEC,
@@ -121,6 +128,15 @@ _DOCUMENTED_ERRORS = (
 )
 
 
+class _DestinationExistsError(Exception):
+    """The no-replace publication found an existing destination."""
+
+
+class _NoReplaceUnsupportedError(Exception):
+    """No safe no-replace directory publication exists on this platform or
+    filesystem; falling back to an overwriting rename is forbidden."""
+
+
 def materialize_dataset_artifacts(
     result: DatasetOrchestrationResult,
     *,
@@ -153,9 +169,24 @@ def materialize_dataset_artifacts(
     try:
         return _materialize(result, output_root=output_root, built_at=built_at)
     except _DOCUMENTED_ERRORS as exc:
-        _as_materialization_error(
-            exc, "materialize_dataset_artifacts failed"
-        )
+        _convert_documented_error(exc, "materialize_dataset_artifacts failed")
+
+
+def _convert_documented_error(exc, context: str) -> None:
+    """Convert every documented failure, including PyArrow exceptions, to
+    :class:`DatasetMaterializationError` with the ``__cause__`` preserved.
+
+    ``pa.ArrowException`` (which is not a ``DatasetError`` and is not part
+    of the generic conversion set) is explicitly converted here so an Arrow
+    failure that surfaced without an internal wrapper — for example during
+    ``pa.array`` / ``pa.Table.from_arrays`` construction — still fails
+    closed at the public boundary. An already-raised
+    :class:`DatasetMaterializationError` passes through unchanged (never
+    double-wrapped).
+    """
+    if isinstance(exc, pa.ArrowException):
+        raise DatasetMaterializationError(f"{context}: {exc}") from exc
+    _as_materialization_error(exc, context)
 
 
 def _materialize(
@@ -200,13 +231,18 @@ def _materialize(
             f"build): {staging}; refusing to build over it"
         )
 
-    # 6. Create the output root and the fixed staging directory.
+    # 6. Create the output root and the fixed staging directory. The
+    # output root and every existing path component are verified before and
+    # after creation: symlinks, junctions, files, and special types are
+    # rejected so no link can escape into another directory.
+    _verify_output_root_safety(output_root)
     try:
         output_root.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
         raise DatasetMaterializationError(
             f"failed to create output root {output_root}: {exc}"
         ) from exc
+    _verify_output_root_safety(output_root)
     try:
         staging.mkdir(exist_ok=False)
     except FileExistsError as exc:
@@ -392,26 +428,130 @@ def _commit_new_build(
     return _result_from_manifest(final, result, manifest, created_new_build=True)
 
 
+def _rename_directory_no_replace_windows(staging: Path, final: Path) -> None:
+    """True no-replace atomic directory publication on Windows.
+
+    ``os.rename`` on Windows uses the platform's own atomic directory-move
+    semantics (``MoveFileExW`` without ``MOVEFILE_REPLACE_EXISTING``): an
+    existing destination directory is never replaced and surfaces as
+    ``FileExistsError`` (``ERROR_ALREADY_EXISTS``, winerror 183). The
+    winerror is mapped to :class:`_DestinationExistsError` so the result
+    flows into the concurrent-final handling; any other ``OSError``
+    propagates.
+    """
+    try:
+        os.rename(staging, final)
+    except FileExistsError:
+        raise _DestinationExistsError(str(final))
+    except OSError as exc:
+        if getattr(exc, "winerror", None) == 183:  # ERROR_ALREADY_EXISTS
+            raise _DestinationExistsError(str(final)) from exc
+        raise
+
+
+def _rename_directory_no_replace_linux(staging: Path, final: Path) -> None:
+    """True no-replace atomic directory publication on Linux.
+
+    Calls ``renameat2(AT_FDCWD, staging, AT_FDCWD, final,
+    RENAME_NOREPLACE)`` through the standard-library ``ctypes`` with strict
+    ``errno`` handling:
+
+    - success: the staging directory was atomically published;
+    - ``EEXIST`` / ``ENOTEMPTY``: the destination exists — the atomic
+      no-replace syscall itself refused, never a pre-check;
+    - ``EINVAL`` / ``ENOSYS`` / ``ENOTSUP`` / ``EOPNOTSUPP`` or a missing
+      ``renameat2`` symbol: no-replace is unavailable on this kernel /
+      filesystem — fail closed, never degrade to a plain overwriting
+      ``rename``.
+    """
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+        renameat2 = libc.renameat2
+    except (AttributeError, OSError) as exc:
+        raise _NoReplaceUnsupportedError(
+            f"renameat2 is not available in libc: {exc}"
+        ) from exc
+    renameat2.argtypes = [
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_uint,
+    ]
+    renameat2.restype = ctypes.c_int
+    at_fdcwd = -100
+    rename_noreplace = 1
+    result = renameat2(
+        at_fdcwd,
+        os.fsencode(str(staging)),
+        at_fdcwd,
+        os.fsencode(str(final)),
+        rename_noreplace,
+    )
+    if result == 0:
+        return
+    error_number = ctypes.get_errno()
+    if error_number in (errno.EEXIST, errno.ENOTEMPTY):
+        raise _DestinationExistsError(str(final))
+    if error_number in (
+        errno.EINVAL,
+        errno.ENOSYS,
+        errno.ENOTSUP,
+        errno.EOPNOTSUPP,
+    ):
+        raise _NoReplaceUnsupportedError(
+            f"renameat2 RENAME_NOREPLACE is not supported on this kernel or "
+            f"filesystem (errno {error_number})"
+        )
+    raise OSError(error_number, os.strerror(error_number), str(final))
+
+
+def _atomic_rename_directory_no_replace(staging: Path, final: Path) -> None:
+    """True no-replace atomic directory publication (platform dispatcher).
+
+    Safety never depends on an existence pre-check: the atomic primitive
+    itself refuses an existing destination. On Windows the platform's own
+    atomic directory-move semantics apply (existing destination ->
+    destination-exists result); on Linux ``renameat2`` with
+    ``RENAME_NOREPLACE`` is used; any other platform fails closed. Plain
+    ``os.rename`` (which may replace an empty destination directory on
+    POSIX), ``os.replace``, ``shutil.move``, delete-then-rename, and
+    cross-filesystem fallbacks are never used for publication.
+    """
+    if os.name == "nt":
+        _rename_directory_no_replace_windows(staging, final)
+        return
+    if os.name == "posix" and sys.platform.startswith("linux"):
+        _rename_directory_no_replace_linux(staging, final)
+        return
+    raise _NoReplaceUnsupportedError(
+        f"no safe no-replace directory publication is available on platform "
+        f"{sys.platform!r}"
+    )
+
+
 def _publish_staging(staging: Path, final: Path, result) -> DatasetMaterializationResult | None:
     """Atomic no-overwrite publication of staging onto final.
 
-    Returns None when the rename published the new build, or an idempotent
-    result when the final directory appeared concurrently and verified as
-    the same logical Dataset. Never uses ``os.replace``, never deletes or
-    overwrites an existing final directory, and never falls back to a
-    cross-filesystem move.
+    Returns None when the atomic no-replace publication published the new
+    build, or an idempotent result when the final directory appeared
+    concurrently and verified as the same logical Dataset. The existence
+    pre-check is only a fast path; the safety guarantee comes from the
+    atomic no-replace primitive itself, whose destination-exists result
+    (never ``os.replace``, never delete-then-rename, never a fallback to an
+    overwriting rename) flows into the concurrent-final handling.
     """
     if final.exists() or final.is_symlink():
         return _handle_concurrent_final(final, staging, result)
     try:
-        os.rename(staging, final)
-    except FileExistsError:
-        # The final directory appeared between the check and the rename
-        # (Windows enforces no-replace natively); verify, never overwrite.
+        _atomic_rename_directory_no_replace(staging, final)
+    except _DestinationExistsError:
         return _handle_concurrent_final(final, staging, result)
-    except OSError as exc:
+    except _NoReplaceUnsupportedError as exc:
         raise DatasetMaterializationError(
-            f"failed to atomically rename staging {staging} to {final}: {exc}"
+            f"safe no-replace directory publication is unavailable on this "
+            f"platform or filesystem; refusing to fall back to an "
+            f"overwriting rename: {exc}"
         ) from exc
     return None
 
@@ -737,11 +877,60 @@ def _list_build_entries(build_dir: Path) -> dict[str, Path]:
     return entries
 
 
+def _is_junction_or_reparse(path: Path) -> bool:
+    """Windows junction / reparse-point detection compatible with Python
+    3.11.
+
+    ``Path.is_junction`` exists only from Python 3.12 onward; on Python 3.11
+    (and below) a Windows junction is detected through the
+    ``FILE_ATTRIBUTE_REPARSE_POINT`` attribute via ``ctypes``. Non-Windows
+    platforms have no junction concept and return False. When the Windows
+    API cannot be queried the check fails closed: a path whose link status
+    cannot be verified is never trusted.
+    """
+    if hasattr(path, "is_junction"):  # Python 3.12+
+        return path.is_junction()
+    if os.name != "nt":
+        return False
+    import ctypes as _ctypes
+
+    file_attribute_reparse_point = 0x400
+    try:
+        attributes = _ctypes.windll.kernel32.GetFileAttributesW(str(path))
+    except (AttributeError, OSError, TypeError) as exc:
+        raise DatasetMaterializationError(
+            f"cannot verify the Windows reparse-point status of {path}; "
+            "failing closed"
+        ) from exc
+    if attributes == 0xFFFFFFFF:  # INVALID_FILE_ATTRIBUTES: not present
+        return False
+    return bool(attributes & file_attribute_reparse_point)
+
+
 def _reject_symlink(path: Path, label: str) -> None:
-    if path.is_symlink() or (hasattr(path, "is_junction") and path.is_junction()):
+    if path.is_symlink() or _is_junction_or_reparse(path):
         raise DatasetMaterializationError(
             f"{label} must not be a symlink or junction: {path}"
         )
+
+
+def _verify_output_root_safety(output_root: Path) -> None:
+    """``output_root`` and every path component must be a real, regular
+    directory.
+
+    Called both before and after the output root is created: ``output_root``
+    itself and every existing ancestor are rejected when they are a
+    symlink, a Windows junction / reparse point, or a file / FIFO / other
+    special type, so a link can never escape into another directory. A
+    component whose link status cannot be verified fails closed.
+    """
+    for component in (output_root, *output_root.parents):
+        _reject_symlink(component, "output root or path component")
+        if component.exists() and not component.is_dir():
+            raise DatasetMaterializationError(
+                f"output root or path component must be a regular "
+                f"directory: {component}"
+            )
 
 
 def _verify_success(success_path: Path) -> None:
@@ -876,11 +1065,17 @@ def _verify_build_directory(
     if require_success:
         _verify_success(build_dir / DATASET_SUCCESS_FILENAME)
 
-    # Manifest: strict validation and identity binding.
+    # Manifest: strict validation, identity binding, and canonical bytes.
     manifest_payload = _read_artifact_bytes(
         build_dir / DATASET_MANIFEST_FILENAME, "manifest.json"
     )
     manifest = validate_dataset_manifest(manifest_payload)
+    if manifest_payload != serialize_dataset_manifest(manifest):
+        raise DatasetMaterializationError(
+            "manifest.json must be the exact canonical serialization of the "
+            "validated manifest (any formatting, key-order, whitespace, or "
+            "timestamp-representation difference is rejected)"
+        )
     # The final directory name must be exactly the dataset_id; the staging
     # directory carries the fixed ".staging-<dataset_id>" prefix and is
     # verified before publication, so the binding applies only to verified
@@ -896,19 +1091,24 @@ def _verify_build_directory(
             "existing manifest built_at does not match the expected built_at"
         )
 
-    # Output-file records must exactly cover the formal artifacts (all but
-    # manifest.json and _SUCCESS) with byte size, SHA-256, and row counts.
-    expected_output_paths = sorted(
-        rel
-        for rel, kind in expected_entries.items()
-        if kind == "file"
-        and rel not in (DATASET_MANIFEST_FILENAME, DATASET_SUCCESS_FILENAME)
+    # Output-file records must exactly equal the authoritative records
+    # rebuilt from the actual build directory — the full record
+    # (relative_path, file_role, content_role, row_count, byte_size,
+    # sha256), not only path/hash/count — normalized by the DatasetManifest
+    # sort rule (relative path). A correct path/hash with wrong semantic
+    # records (file_role, content_role) is rejected.
+    expected_records = tuple(
+        sorted(
+            _build_output_file_records(build_dir, expected),
+            key=lambda record: record.relative_path,
+        )
     )
-    manifest_paths = [record.relative_path for record in manifest.output_files]
-    if manifest_paths != expected_output_paths:
+    if manifest.output_files != expected_records:
         raise DatasetMaterializationError(
-            "manifest output_files must exactly cover the formal artifact "
-            "files"
+            "manifest.output_files must exactly equal the authoritative "
+            "output file records rebuilt from the build directory "
+            "(relative_path, file_role, content_role, row_count, byte_size, "
+            "sha256)"
         )
     for record in manifest.output_files:
         path = build_dir / record.relative_path
@@ -989,12 +1189,21 @@ def _verify_build_directory(
             "rows in order and value"
         )
 
-    # Spec artifacts: Feature / Label round-trip through the existing typed
-    # parse contracts with identical SpecPins; split through the strict
-    # package-internal parser with the existing split SpecPin.
+    # Spec artifacts: the exact canonical artifact bytes of each typed
+    # model, then the Feature / Label round-trip through the existing typed
+    # parse contracts with identical SpecPins and the split through the
+    # strict package-internal parser with the existing split SpecPin.
     for spec in expected.feature_specs:
         rel = f"{DATASET_FEATURE_SPECS_DIRNAME}/{_feature_spec_filename(spec)}"
-        parsed = parse_feature_spec(_read_artifact_text(build_dir / rel, rel))
+        artifact_path = build_dir / rel
+        if _read_artifact_bytes(artifact_path, rel) != feature_spec_artifact(
+            spec
+        ):
+            raise DatasetMaterializationError(
+                f"Feature spec artifact {rel} is not the canonical artifact "
+                "bytes of the expected FeatureSpec"
+            )
+        parsed = parse_feature_spec(_read_artifact_text(artifact_path, rel))
         if parsed != spec:
             raise DatasetMaterializationError(
                 f"Feature spec artifact {rel} does not reproduce the "
@@ -1006,7 +1215,15 @@ def _verify_build_directory(
             )
     for spec in expected.label_specs:
         rel = f"{DATASET_LABEL_SPECS_DIRNAME}/{_label_spec_filename(spec)}"
-        parsed = parse_label_spec(_read_artifact_text(build_dir / rel, rel))
+        artifact_path = build_dir / rel
+        if _read_artifact_bytes(artifact_path, rel) != label_spec_artifact(
+            spec
+        ):
+            raise DatasetMaterializationError(
+                f"Label spec artifact {rel} is not the canonical artifact "
+                "bytes of the expected LabelSpec"
+            )
+        parsed = parse_label_spec(_read_artifact_text(artifact_path, rel))
         if parsed != spec:
             raise DatasetMaterializationError(
                 f"Label spec artifact {rel} does not reproduce the expected "
@@ -1016,10 +1233,16 @@ def _verify_build_directory(
             raise DatasetMaterializationError(
                 f"Label spec artifact {rel} pin mismatch"
             )
-    split_parsed = parse_split_spec_artifact(
-        _read_artifact_text(
-            build_dir / DATASET_SPLIT_SPEC_FILENAME, "split_spec.yaml"
+    split_path = build_dir / DATASET_SPLIT_SPEC_FILENAME
+    if _read_artifact_bytes(split_path, "split_spec.yaml") != split_spec_artifact(
+        expected.split_spec
+    ):
+        raise DatasetMaterializationError(
+            "split_spec.yaml is not the canonical artifact bytes of the "
+            "expected ChronologicalSplitSpec"
         )
+    split_parsed = parse_split_spec_artifact(
+        _read_artifact_text(split_path, "split_spec.yaml")
     )
     if split_parsed != expected.split_spec:
         raise DatasetMaterializationError(
@@ -1031,40 +1254,29 @@ def _verify_build_directory(
             "split_spec.yaml pin does not match the expected split SpecPin"
         )
 
-    # Build report: fixed schema version, materializer version, dataset_id,
-    # status, row count, and built_at bound to the manifest's built_at.
+    # Build report: the exact canonical bytes of the expected build report
+    # for the manifest's own built_at, and the parsed payload must equal the
+    # full expected payload field by field (never only a few fields). The
+    # explicit built_at binding is therefore report == payload(manifest
+    # built_at); a different requested built_at is ignored by construction.
+    report_path = build_dir / DATASET_BUILD_REPORT_FILENAME
+    report_bytes = _read_artifact_bytes(report_path, "build_report.json")
+    expected_report_payload = build_report_payload(expected, manifest.built_at)
+    if report_bytes != build_report_bytes(expected, manifest.built_at):
+        raise DatasetMaterializationError(
+            "build_report.json is not the canonical serialization of the "
+            "expected build report (any formatting, key-order, whitespace, "
+            "or timestamp-representation difference is rejected)"
+        )
     report = _parse_build_report(
-        _read_artifact_bytes(
-            build_dir / DATASET_BUILD_REPORT_FILENAME, "build_report.json"
-        ),
-        frozenset(build_report_payload(expected, manifest.built_at).keys()),
+        report_bytes, frozenset(expected_report_payload.keys())
     )
-    if report["report_schema_version"] != DATASET_BUILD_REPORT_SCHEMA_VERSION:
+    if report != expected_report_payload:
         raise DatasetMaterializationError(
-            "build_report.json report_schema_version mismatch"
-        )
-    if report["materializer_version"] != DATASET_MATERIALIZER_VERSION:
-        raise DatasetMaterializationError(
-            "build_report.json materializer_version mismatch"
-        )
-    if report["dataset_id"] != expected.dataset_id:
-        raise DatasetMaterializationError(
-            "build_report.json dataset_id does not match the expected result"
-        )
-    if report["status"] != manifest.status:
-        raise DatasetMaterializationError(
-            "build_report.json status does not match the manifest"
-        )
-    if report["logical_row_count"] != manifest.logical_row_count:
-        raise DatasetMaterializationError(
-            "build_report.json logical_row_count does not match the manifest"
-        )
-    report_built_at = (
-        datetime.fromisoformat(report["built_at"]) if report["built_at"] is not None else None
-    )
-    if report_built_at != manifest.built_at:
-        raise DatasetMaterializationError(
-            "build_report.json built_at does not match the manifest built_at"
+            "build_report.json must exactly equal the expected build report "
+            "payload (every field, including diagnostics, completion "
+            "counts, split facts, schema / content IDs, and the output "
+            "layout)"
         )
 
     return manifest

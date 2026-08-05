@@ -114,6 +114,16 @@ pointers, or symlinks. The staging directory is the fixed
 `<output_root>/.staging-<dataset_id>`; the staging name is an
 implementation fact that never enters any identity.
 
+`DatasetMaterializationResult` artifact paths are **fixed direct children**
+of the build directory: `dataset_path` must be exactly
+`build_path / "dataset.parquet"`, `manifest_path` exactly
+`build_path / "manifest.json"`, `build_report_path` exactly
+`build_path / "build_report.json"`, and `success_path` exactly
+`build_path / "_SUCCESS"`. A path that merely shares the build directory as
+an ancestor — for example `build_path / ".." / "outside" /
+"dataset.parquet"` — is rejected, and no path may carry a `.` / `..`
+lexical component.
+
 ## 8. PyArrow schema mapping
 
 The logical `DatasetSchema` maps explicitly, field order and nullability
@@ -209,7 +219,10 @@ exactly the result's spec pins: one artifact per Feature / Label pin.
 `ChronologicalSplitSpec`. It is validated by a strict, exact-field
 package-internal parser that reconstructs the identical
 `ChronologicalSplitSpec` and the identical existing
-`chronological_split_spec_pin`; no second split identity exists.
+`chronological_split_spec_pin`; no second split identity exists. The
+`kind` field must be exactly `SPEC_KIND_SPLIT`: any other kind —
+`FEATURE`, `LABEL`, empty, unknown, or a non-string value — is rejected
+and never silently converted to SPLIT.
 
 ## 15. Build report schema
 
@@ -329,13 +342,35 @@ a symlink / junction, and its content is exactly empty bytes. After
 `_SUCCESS` is written no other artifact is ever modified in that staging
 directory. `_SUCCESS` never enters `manifest.output_files`.
 
-## 23. Atomic rename
+## 23. True no-replace publication
 
-Publication is a same-filesystem atomic rename (`os.rename`) of the fixed
-staging directory onto the final directory, executed only after the full
-staging verification and `_SUCCESS` are complete. `os.replace` is never
-used, there is no delete-then-rename, no overwrite mode, and no
-cross-filesystem fallback move.
+Publication is a **true no-replace atomic directory move**, executed only
+after the full staging verification and `_SUCCESS` are complete. The safety
+guarantee never comes from an existence pre-check: the atomic primitive
+itself refuses an existing destination. `os.replace`, `shutil.move`,
+delete-then-rename, overwrite modes, and cross-filesystem fallbacks are
+never used, and a plain `os.rename` — which can replace an empty destination
+directory on POSIX — is never a fallback.
+
+- **Windows**: the platform's own atomic directory-move semantics apply
+  (`MoveFileExW` without `MOVEFILE_REPLACE_EXISTING`); an existing
+  destination directory is never replaced and surfaces as
+  `FileExistsError` (`ERROR_ALREADY_EXISTS`, winerror 183).
+- **Linux**: `renameat2(..., RENAME_NOREPLACE)` is called through the
+  standard-library `ctypes` with strict `errno` handling — `EEXIST` /
+  `ENOTEMPTY` are destination-exists results; `EINVAL` / `ENOSYS` /
+  `ENOTSUP` / `EOPNOTSUPP` and a missing `renameat2` symbol mean the
+  primitive is unavailable.
+- **Unsupported platforms / filesystems fail closed**: there is no
+  equivalent exclusive rename and no safe primitive -> the publication
+  fails with `DatasetMaterializationError`; it never degrades to an
+  overwriting rename.
+
+A destination-exists result from the atomic primitive (never a
+monkeypatched or pre-checked assumption) enters the concurrent-final
+handling: an identical verified final returns `created_new_build=False`,
+a corrupt or conflicting final fails closed, and the final directory is
+never overwritten or deleted.
 
 ## 24. No overwrite
 
@@ -383,7 +418,12 @@ checks, all fail closed:
 6. every identity-bearing manifest fact equals the expected result's
    identity input;
 7. manifest status and row count equal the result's;
-8. `output_files` exactly covers the formal artifact files;
+8. **`output_files` equals the authoritative records rebuilt from the
+   actual build directory — the full record (`relative_path`,
+   `file_role`, `content_role`, `row_count`, `byte_size`, `sha256`),
+   normalized by the DatasetManifest sort rule — not only path / hash /
+   count**. A correct path/hash with a wrong `file_role` or
+   `content_role` is rejected;
 9. every listed output file exists;
 10. no symlink / junction path components anywhere;
 11. byte sizes match the records;
@@ -393,12 +433,27 @@ checks, all fail closed:
 15. Parquet metadata matches exactly;
 16. Parquet rows match the expected logical rows in physical order and
     value, and the recomputed `logical_dataset_content_id` matches;
-17. Feature spec artifact set, filenames, and content match the pins;
-18. Label spec artifacts likewise;
-19. `split_spec.yaml` matches the split pin;
-20. build report shape, schema version, materializer version, and
-    `dataset_id` match;
-21. report `built_at` equals the manifest `built_at`;
+17. **formal artifacts carry their exact canonical bytes**: `manifest.json`
+    equals `serialize_dataset_manifest(validated manifest)`, each Feature
+    artifact equals `feature_spec_artifact(expected spec)`, each Label
+    artifact equals `label_spec_artifact(expected spec)`,
+    `split_spec.yaml` equals `split_spec_artifact(expected split spec)`,
+    and `build_report.json` equals
+    `build_report_bytes(expected, manifest.built_at)` — any formatting,
+    key-order, whitespace, or timestamp-representation difference is
+    rejected;
+18. Feature spec artifacts parse back to the expected `FeatureSpec` with
+    the identical SpecPin;
+19. Label spec artifacts likewise;
+20. `split_spec.yaml` parses (kind must be exactly SPLIT) to the expected
+    `ChronologicalSplitSpec` with the existing split SpecPin;
+21. **the parsed build report payload equals `build_report_payload(
+    expected, manifest.built_at)` field by field** — every field,
+    including all diagnostics, completion counts, split facts, schema /
+    content IDs, and the output layout; a rewritten or re-canonicalized
+    field is rejected (the report `built_at` binding is part of this
+    equality; a different requested `built_at` is ignored by
+    construction);
 22. no unexpected files or directories.
 
 Any failure raises `DatasetMaterializationError`. Nothing is rewritten,
@@ -438,11 +493,20 @@ Windows junctions, path escapes, and non-regular entries.
 
 ## 32. Symlink / junction rejection
 
-The build directory, every entry, `_SUCCESS`, and every manifest-listed
-output file reject `is_symlink()` and (where available) `is_junction()`.
-Relative paths are validated by the existing output relative-path safety
-validator (no absolute paths, no backslashes, no `.` / `..`, no Windows
-drive / root semantics, no NTFS ADS forms).
+The build directory, every entry, `_SUCCESS`, every manifest-listed output
+file, **`output_root` itself, and every existing path component from the
+existing ancestors down to `output_root`** reject `is_symlink()` and
+junction / reparse-point status; a file, FIFO, or other special type in the
+path is rejected too. `output_root` is verified both before and after it
+is created, so a link can never escape into another directory.
+
+Junction detection is compatible with **Python 3.11**: where
+`Path.is_junction` does not exist (pre-3.12), a Windows junction /
+reparse-point is detected through the `FILE_ATTRIBUTE_REPARSE_POINT`
+attribute via `ctypes`, and a path whose link status cannot be verified
+fails closed. Relative paths are validated by the existing output
+relative-path safety validator (no absolute paths, no backslashes, no
+`.` / `..`, no Windows drive / root semantics, no NTFS ADS forms).
 
 ## 33. Empty Dataset
 
@@ -460,10 +524,16 @@ verified, and the empty build supports idempotent return.
 public error boundary. `DatasetError`, `OSError`, `UnicodeError`, JSON
 validation errors, documented PyArrow validation / write / read errors
 (`pa.ArrowException`), and the documented `TypeError` / `ValueError` /
-`KeyError` are wrapped with their `__cause__` preserved. No bare validation
-exception leaks, no partial result is ever returned, and broad
-`except Exception` is never used: real programming errors are not hidden,
-not wrapped, and not cleaned up silently.
+`KeyError` are wrapped with their `__cause__` preserved. PyArrow
+exceptions are converted **explicitly at the public boundary** — an Arrow
+failure that surfaces without an internal wrapper (for example during
+`pa.array` or `pa.Table.from_arrays` construction) still becomes a
+`DatasetMaterializationError` whose `__cause__` is the original Arrow
+exception; an already-raised `DatasetMaterializationError` is never
+double-wrapped, staging is cleaned up under the ordinary documented
+policy, and no partial result is ever returned. Broad `except Exception`
+is never used: real programming errors are not hidden, not wrapped, and
+not cleaned up silently.
 
 ## 35. No hidden current time
 

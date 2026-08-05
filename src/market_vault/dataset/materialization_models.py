@@ -155,14 +155,39 @@ def _require_materialization_error(exc, context: str) -> None:
     _as_materialization_error(exc, context)
 
 
-def _require_absolute_artifact_path(path: Path, build_path: Path, label: str) -> None:
+def _reject_dot_components(path: Path, label: str) -> None:
+    """Reject any lexical ``.`` / ``..`` component of a path.
+
+    pathlib never collapses these components, so a path such as
+    ``build / ".." / "outside" / "dataset.parquet"`` is rejected outright —
+    artifact paths are fixed direct children of the build directory, not
+    general relative paths.
+    """
+    for part in path.parts:
+        if part in (".", ".."):
+            raise DatasetMaterializationError(
+                f"{label} must not contain '.' or '..' path components: "
+                f"{path!r}"
+            )
+
+
+def _require_exact_artifact_child(
+    path: Path, build_path: Path, filename: str, label: str
+) -> None:
+    """One artifact path must be exactly ``build_path / <fixed filename>``.
+
+    Only the fixed direct-child form is accepted: a path that merely shares
+    ``build_path`` as an ancestor (for example
+    ``build_path / ".." / "outside" / "dataset.parquet"``) is rejected.
+    """
     if not isinstance(path, Path) or not path.is_absolute():
         raise DatasetMaterializationError(
             f"{label} must be an absolute Path, got {path!r}"
         )
-    if not path.is_relative_to(build_path):
+    _reject_dot_components(path, label)
+    if path != build_path / filename:
         raise DatasetMaterializationError(
-            f"{label} {path} escapes the build directory {build_path}"
+            f"{label} must be exactly build_path / {filename!r}, got {path!r}"
         )
 
 
@@ -177,10 +202,12 @@ class DatasetMaterializationResult:
     invariant (fail closed): ``dataset_id`` is strict lowercase 64-hex;
     ``status`` is COMPLETE or EMPTY and consistent with the row count (EMPTY
     requires zero rows, COMPLETE requires at least one); every path is an
-    absolute :class:`pathlib.Path` whose final name is the fixed artifact
-    name; every artifact path lies inside ``build_path`` and
-    ``build_path.name`` is exactly ``dataset_id``; counts are real
-    non-negative integers; ``created_new_build`` is a real bool; and
+    absolute :class:`pathlib.Path`; ``build_path.name`` is exactly
+    ``dataset_id`` and no path carries a ``.`` / ``..`` lexical component;
+    every artifact path is exactly ``build_path / <fixed artifact name>``
+    (fixed direct children — a path that merely shares the build directory
+    as an ancestor is rejected, never merely "relative to" it); counts are
+    real non-negative integers; ``created_new_build`` is a real bool; and
     ``materializer_version`` is the current constant.
 
     The model never carries a mutable dict, a temporary path, elapsed time,
@@ -233,44 +260,30 @@ class DatasetMaterializationResult:
             raise DatasetMaterializationError(
                 f"build_path must be an absolute Path, got {build_path!r}"
             )
+        _reject_dot_components(build_path, "build_path")
         if build_path.name != self.dataset_id:
             raise DatasetMaterializationError(
                 f"build_path.name must be exactly {self.dataset_id!r}, got "
                 f"{build_path.name!r}"
             )
-        _require_absolute_artifact_path(
-            self.dataset_path, build_path, "dataset_path"
+        # Artifact paths are fixed direct children of the build directory:
+        # only the exact ``build_path / <fixed filename>`` form is accepted.
+        _require_exact_artifact_child(
+            self.dataset_path, build_path, DATASET_PARQUET_FILENAME,
+            "dataset_path",
         )
-        _require_absolute_artifact_path(
-            self.manifest_path, build_path, "manifest_path"
+        _require_exact_artifact_child(
+            self.manifest_path, build_path, DATASET_MANIFEST_FILENAME,
+            "manifest_path",
         )
-        _require_absolute_artifact_path(
-            self.build_report_path, build_path, "build_report_path"
+        _require_exact_artifact_child(
+            self.build_report_path, build_path, DATASET_BUILD_REPORT_FILENAME,
+            "build_report_path",
         )
-        _require_absolute_artifact_path(
-            self.success_path, build_path, "success_path"
+        _require_exact_artifact_child(
+            self.success_path, build_path, DATASET_SUCCESS_FILENAME,
+            "success_path",
         )
-        if self.dataset_path.name != DATASET_PARQUET_FILENAME:
-            raise DatasetMaterializationError(
-                f"dataset_path.name must be {DATASET_PARQUET_FILENAME}, got "
-                f"{self.dataset_path.name!r}"
-            )
-        if self.manifest_path.name != DATASET_MANIFEST_FILENAME:
-            raise DatasetMaterializationError(
-                f"manifest_path.name must be {DATASET_MANIFEST_FILENAME}, got "
-                f"{self.manifest_path.name!r}"
-            )
-        if self.build_report_path.name != DATASET_BUILD_REPORT_FILENAME:
-            raise DatasetMaterializationError(
-                f"build_report_path.name must be "
-                f"{DATASET_BUILD_REPORT_FILENAME}, got "
-                f"{self.build_report_path.name!r}"
-            )
-        if self.success_path.name != DATASET_SUCCESS_FILENAME:
-            raise DatasetMaterializationError(
-                f"success_path.name must be {DATASET_SUCCESS_FILENAME}, got "
-                f"{self.success_path.name!r}"
-            )
         if self.status == STATUS_EMPTY and self.logical_row_count != 0:
             raise DatasetMaterializationError(
                 "status EMPTY requires logical_row_count == 0"

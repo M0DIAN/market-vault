@@ -55,7 +55,7 @@ from .materialization_models import (
     DATASET_SUCCESS_FILENAME,
     DatasetMaterializationError,
 )
-from .models import DatasetField, DatasetSchema
+from .models import SPEC_KIND_SPLIT, DatasetField, DatasetSchema
 from .spec_models import FeatureSpec, LabelSpec
 from .split_models import ChronologicalSplitSpec, chronological_split_spec_pin
 
@@ -506,6 +506,9 @@ def parse_split_spec_artifact(text: str) -> ChronologicalSplitSpec:
     :class:`ChronologicalSplitSpec` through its own fail-closed model
     validation; the resulting SpecPin is the existing
     ``chronological_split_spec_pin`` — no second split identity exists.
+    The ``kind`` field must be exactly :data:`SPEC_KIND_SPLIT`: any other
+    kind (``FEATURE``, ``LABEL``, empty, unknown, or a non-string value) is
+    rejected and never silently converted to SPLIT.
     """
     if not isinstance(text, str):
         raise DatasetMaterializationError(
@@ -522,6 +525,16 @@ def parse_split_spec_artifact(text: str) -> ChronologicalSplitSpec:
         raise DatasetMaterializationError(
             f"split spec artifact must be a JSON object, got "
             f"{type(payload).__name__}"
+        )
+    if not isinstance(payload.get("kind"), str):
+        raise DatasetMaterializationError(
+            f"split spec artifact kind must be a string, got "
+            f"{payload.get('kind')!r}"
+        )
+    if payload["kind"] != SPEC_KIND_SPLIT:
+        raise DatasetMaterializationError(
+            f"split spec artifact kind must be {SPEC_KIND_SPLIT}, got "
+            f"{payload['kind']!r}"
         )
     required = {
         "spec_schema_version",

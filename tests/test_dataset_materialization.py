@@ -20,6 +20,7 @@ and no real market data.
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import shutil
@@ -88,6 +89,7 @@ from market_vault.dataset import (
     DatasetField,
     DatasetMaterializationError,
     DatasetMaterializationResult,
+    DatasetOutputFile,
     DatasetOrchestrationError,
     DatasetOrchestrationResult,
     DatasetSchema,
@@ -559,6 +561,21 @@ def read_json(path: Path) -> dict:
 
 def all_artifact_files(build: Path) -> set[str]:
     return set(file_hashes(build))
+
+
+def _load_output_records(build: Path) -> tuple[DatasetOutputFile, ...]:
+    manifest = read_json(build / DATASET_MANIFEST_FILENAME)
+    return tuple(
+        DatasetOutputFile(
+            relative_path=record["relative_path"],
+            file_role=record["file_role"],
+            row_count=record["row_count"],
+            byte_size=record["byte_size"],
+            sha256=record["sha256"],
+            content_role=record["content_role"],
+        )
+        for record in manifest["output_files"]
+    )
 
 
 def _make_symlink_or_skip(target: Path, link: Path) -> None:
@@ -1230,6 +1247,31 @@ def test_split_spec_artifact_roundtrip():
         parse_split_spec_artifact("{not json")
 
 
+def test_split_artifact_kind_must_be_split():
+    from market_vault.dataset.artifact_serialization import (
+        parse_split_spec_artifact,
+        split_spec_artifact,
+    )
+    from market_vault.dataset.split_models import chronological_split_spec_pin
+
+    spec = chronological_spec()
+    payload = json.loads(split_spec_artifact(spec))
+    for bad_kind in ("FEATURE", "LABEL", "", "UNKNOWN", 123, None, []):
+        tampered = dict(payload)
+        tampered["kind"] = bad_kind
+        with pytest.raises(DatasetMaterializationError):
+            parse_split_spec_artifact(json.dumps(tampered))
+    # A missing kind is also rejected (non-string check first).
+    tampered = dict(payload)
+    del tampered["kind"]
+    with pytest.raises(DatasetMaterializationError):
+        parse_split_spec_artifact(json.dumps(tampered))
+    # The correct SPLIT artifact passes and rebuilds the same spec and pin.
+    parsed = parse_split_spec_artifact(split_spec_artifact(spec).decode("utf-8"))
+    assert parsed == spec
+    assert chronological_split_spec_pin(parsed) == chronological_split_spec_pin(spec)
+
+
 def test_staged_spec_artifacts_reproduce_pins(fixtures, tmp_path):
     result, mresult = materialize_once(fixtures, tmp_path)
     build = build_path(mresult)
@@ -1461,6 +1503,95 @@ def test_output_file_byte_facts_match_disk(fixtures, tmp_path):
         assert path.stat().st_size == record["byte_size"]
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         assert digest == record["sha256"]
+
+
+def _rewrite_manifest_with_records(result, build: Path, records) -> None:
+    """Replace manifest.json with a canonical manifest carrying the given
+    records (paths, hashes, sizes, counts untouched where not overridden).
+    The manifest itself stays canonical and identity-valid, so the rejection
+    under test is the full output-record equality, not the canonical-bytes
+    or manifest-validation checks."""
+    manifest = dataset_pkg.validate_dataset_manifest(
+        (build / DATASET_MANIFEST_FILENAME).read_bytes()
+    )
+    rebuilt = dataset_pkg.build_dataset_manifest(
+        result.identity_input,
+        built_at=manifest.built_at,
+        status=manifest.status,
+        logical_row_count=manifest.logical_row_count,
+        output_files=records,
+    )
+    (build / DATASET_MANIFEST_FILENAME).write_bytes(
+        dataset_pkg.serialize_dataset_manifest(rebuilt)
+    )
+
+
+def test_output_file_role_tamper_rejected(built, tmp_path):
+    """A manifest whose dataset.parquet record has the wrong file_role —
+    with correct path, hash, size, and row count — is rejected by the full
+    record equality."""
+    result, _, build = built
+    records = _load_output_records(build)
+    tampered = tuple(
+        replace(record, file_role=DATASET_OUTPUT_ROLE_LABEL_SPEC)
+        if record.relative_path == DATASET_PARQUET_FILENAME
+        else record
+        for record in records
+    )
+    _rewrite_manifest_with_records(result, build, tampered)
+    with pytest.raises(DatasetMaterializationError):
+        materialize_dataset_artifacts(
+            result, output_root=datasets_root(tmp_path), built_at=BUILT_AT
+        )
+    assert build.is_dir()
+
+
+def test_output_file_content_role_tamper_rejected(built, tmp_path):
+    """A manifest whose build_report record has the wrong content_role is
+    rejected even when every other record fact is correct."""
+    result, _, build = built
+    records = _load_output_records(build)
+    tampered = tuple(
+        replace(record, content_role="wrong-content-role")
+        if record.relative_path == DATASET_BUILD_REPORT_FILENAME
+        else record
+        for record in records
+    )
+    _rewrite_manifest_with_records(result, build, tampered)
+    with pytest.raises(DatasetMaterializationError):
+        materialize_dataset_artifacts(
+            result, output_root=datasets_root(tmp_path), built_at=BUILT_AT
+        )
+
+
+def test_output_file_feature_label_role_swap_rejected(built, tmp_path):
+    """Feature and Label spec records with swapped file_roles are
+    rejected."""
+    result, _, build = built
+    records = _load_output_records(build)
+    feature_path = next(
+        record.relative_path
+        for record in records
+        if record.file_role == DATASET_OUTPUT_ROLE_FEATURE_SPEC
+    )
+    label_path = next(
+        record.relative_path
+        for record in records
+        if record.file_role == DATASET_OUTPUT_ROLE_LABEL_SPEC
+    )
+
+    def swapped(record):
+        if record.relative_path == feature_path:
+            return replace(record, file_role=DATASET_OUTPUT_ROLE_LABEL_SPEC)
+        if record.relative_path == label_path:
+            return replace(record, file_role=DATASET_OUTPUT_ROLE_FEATURE_SPEC)
+        return record
+
+    _rewrite_manifest_with_records(result, build, tuple(swapped(r) for r in records))
+    with pytest.raises(DatasetMaterializationError):
+        materialize_dataset_artifacts(
+            result, output_root=datasets_root(tmp_path), built_at=BUILT_AT
+        )
 
 
 def test_manifest_facts_match_result(fixtures, tmp_path):
@@ -1982,6 +2113,119 @@ def test_corruption_report_built_at_mismatch(built, tmp_path):
     _expect_fail(built, tmp_path)
 
 
+def test_corruption_manifest_noncanonical_bytes(built, tmp_path):
+    """manifest.json with an extra trailing newline (semantically identical)
+    is rejected: the exact canonical bytes are the contract."""
+    _, _, build = built
+    path = build / DATASET_MANIFEST_FILENAME
+    path.write_bytes(path.read_bytes() + b"\n")
+    _expect_fail(built, tmp_path)
+
+
+def test_corruption_manifest_pretty_printed(built, tmp_path):
+    _, _, build = built
+    payload = read_json(build / DATASET_MANIFEST_FILENAME)
+    (build / DATASET_MANIFEST_FILENAME).write_text(
+        json.dumps(payload, sort_keys=True, indent=2), encoding="utf-8"
+    )
+    _expect_fail(built, tmp_path)
+
+
+def test_corruption_feature_artifact_noncanonical_bytes(built, tmp_path):
+    _, _, build = built
+    path = next((build / DATASET_FEATURE_SPECS_DIRNAME).iterdir())
+    path.write_bytes(path.read_bytes() + b"\n")
+    _expect_fail(built, tmp_path)
+
+
+def test_corruption_label_artifact_noncanonical_bytes(built, tmp_path):
+    _, _, build = built
+    path = next((build / DATASET_LABEL_SPECS_DIRNAME).iterdir())
+    path.write_bytes(path.read_bytes() + b"\n")
+    _expect_fail(built, tmp_path)
+
+
+def test_corruption_split_artifact_noncanonical_bytes(built, tmp_path):
+    _, _, build = built
+    path = build / DATASET_SPLIT_SPEC_FILENAME
+    path.write_bytes(path.read_bytes() + b"\n")
+    _expect_fail(built, tmp_path)
+
+
+def test_corruption_report_diagnostics_rewritten(built, tmp_path):
+    """A rewritten diagnostic count in build_report.json is rejected even
+    when the manifest is untouched (the report is never identity-bearing,
+    but its canonical bytes and full payload are part of the build)."""
+    _, _, build = built
+    report = read_json(build / DATASET_BUILD_REPORT_FILENAME)
+    report["pit_sample_count"] = 999
+    (build / DATASET_BUILD_REPORT_FILENAME).write_text(
+        json.dumps(report, sort_keys=True), encoding="utf-8"
+    )
+    _expect_fail(built, tmp_path)
+
+
+def test_corruption_report_completion_count_rewritten(built, tmp_path):
+    _, _, build = built
+    report = read_json(build / DATASET_BUILD_REPORT_FILENAME)
+    report["completion_complete_key_count"] = 999
+    (build / DATASET_BUILD_REPORT_FILENAME).write_text(
+        json.dumps(report, sort_keys=True), encoding="utf-8"
+    )
+    _expect_fail(built, tmp_path)
+
+
+def test_corruption_report_split_result_id_rewritten(built, tmp_path):
+    _, _, build = built
+    report = read_json(build / DATASET_BUILD_REPORT_FILENAME)
+    report["split_result_id"] = "1" * 64
+    (build / DATASET_BUILD_REPORT_FILENAME).write_text(
+        json.dumps(report, sort_keys=True), encoding="utf-8"
+    )
+    _expect_fail(built, tmp_path)
+
+
+def test_corruption_report_schema_content_id_rewritten(built, tmp_path):
+    _, _, build = built
+    report = read_json(build / DATASET_BUILD_REPORT_FILENAME)
+    report["dataset_schema_id"] = "2" * 64
+    report["logical_dataset_content_id"] = "3" * 64
+    (build / DATASET_BUILD_REPORT_FILENAME).write_text(
+        json.dumps(report, sort_keys=True), encoding="utf-8"
+    )
+    _expect_fail(built, tmp_path)
+
+
+def test_corruption_report_output_layout_rewritten(built, tmp_path):
+    _, _, build = built
+    report = read_json(build / DATASET_BUILD_REPORT_FILENAME)
+    report["output_layout"]["manifest_filename"] = "other.json"
+    (build / DATASET_BUILD_REPORT_FILENAME).write_text(
+        json.dumps(report, sort_keys=True), encoding="utf-8"
+    )
+    _expect_fail(built, tmp_path)
+
+
+def test_corruption_report_extra_field(built, tmp_path):
+    _, _, build = built
+    report = read_json(build / DATASET_BUILD_REPORT_FILENAME)
+    report["extra_field"] = 1
+    (build / DATASET_BUILD_REPORT_FILENAME).write_text(
+        json.dumps(report, sort_keys=True), encoding="utf-8"
+    )
+    _expect_fail(built, tmp_path)
+
+
+def test_corruption_report_missing_field(built, tmp_path):
+    _, _, build = built
+    report = read_json(build / DATASET_BUILD_REPORT_FILENAME)
+    del report["row_order"]
+    (build / DATASET_BUILD_REPORT_FILENAME).write_text(
+        json.dumps(report, sort_keys=True), encoding="utf-8"
+    )
+    _expect_fail(built, tmp_path)
+
+
 def test_corruption_unexpected_file(built, tmp_path):
     _, _, build = built
     (build / "junk.txt").write_text("junk", encoding="utf-8")
@@ -2101,6 +2345,216 @@ def test_final_never_overwritten_by_rename(fixtures, tmp_path, monkeypatch):
     )
 
 
+def _racing_atomic_publication(monkeypatch, racer):
+    """Wrap the true no-replace publication so ``racer`` runs inside the
+    race window (after the pre-check), then the real no-replace primitive
+    executes against the raced destination — the destination-exists result
+    is real, never a monkeypatched FileExistsError."""
+    real_atomic = mat_mod._atomic_rename_directory_no_replace
+
+    def racing(staging, final):
+        racer(staging, final)
+        return real_atomic(staging, final)
+
+    monkeypatch.setattr(
+        mat_mod, "_atomic_rename_directory_no_replace", racing
+    )
+    return real_atomic
+
+
+def test_race_empty_final_before_publish_rejected(fixtures, tmp_path, monkeypatch):
+    """An empty final directory appearing before publication (after the
+    pre-check, inside the true no-replace call) is never replaced: the real
+    primitive refuses it, strict verification fails, the empty final stays
+    empty, and our staging is cleaned up."""
+    result, _ = materialize_once(fixtures, tmp_path)
+    root = datasets_root(tmp_path) / "race-empty-before"
+    raced = {}
+
+    def racer(staging, final):
+        final.mkdir()
+        raced["final"] = final
+
+    _racing_atomic_publication(monkeypatch, racer)
+    with pytest.raises(DatasetMaterializationError):
+        materialize_dataset_artifacts(
+            result, output_root=root, built_at=BUILT_AT
+        )
+    assert raced["final"].is_dir()
+    assert not list(raced["final"].iterdir())  # untouched, still empty
+    assert not (root / f".staging-{result.dataset_id}").exists()
+
+
+def test_race_empty_final_before_publish_precheck_path(fixtures, tmp_path, monkeypatch):
+    """An empty final directory appearing before the pre-check is caught by
+    the existing-build path: rejected, untouched, staging cleaned."""
+    result, _ = materialize_once(fixtures, tmp_path)
+    root = datasets_root(tmp_path) / "race-empty-precheck"
+    raced = {}
+    real_publish = mat_mod._publish_staging
+
+    def racing_publish(staging, final, result_value):
+        final.mkdir()
+        raced["final"] = final
+        return real_publish(staging, final, result_value)
+
+    monkeypatch.setattr(mat_mod, "_publish_staging", racing_publish)
+    with pytest.raises(DatasetMaterializationError):
+        materialize_dataset_artifacts(
+            result, output_root=root, built_at=BUILT_AT
+        )
+    assert raced["final"].is_dir()
+    assert not list(raced["final"].iterdir())
+    assert not (root / f".staging-{result.dataset_id}").exists()
+
+
+def test_race_identical_final_returns_idempotent(fixtures, tmp_path, monkeypatch):
+    """A complete identical final appearing inside the true no-replace call
+    verifies strictly and returns created_new_build=False; the raced final
+    is untouched and our staging is cleaned up."""
+    result, first = materialize_once(fixtures, tmp_path)
+    root = datasets_root(tmp_path) / "race-identical"
+    raced = {}
+
+    def racer(staging, final):
+        shutil.copytree(staging, final)
+        raced["final"] = final
+
+    _racing_atomic_publication(monkeypatch, racer)
+    second = materialize_dataset_artifacts(
+        result, output_root=root, built_at=BUILT_AT
+    )
+    assert second.created_new_build is False
+    assert second.build_path == raced["final"]
+    assert file_hashes(raced["final"]) == file_hashes(first.build_path)
+    assert not (root / f".staging-{result.dataset_id}").exists()
+
+
+def test_race_conflicting_final_rejected_and_untouched(fixtures, tmp_path, monkeypatch):
+    """A conflicting final appearing inside the true no-replace call fails
+    closed; the conflicting final is never modified or deleted and our
+    staging is cleaned up."""
+    result, _ = materialize_once(fixtures, tmp_path)
+    root = datasets_root(tmp_path) / "race-conflict"
+    raced = {}
+
+    def racer(staging, final):
+        shutil.copytree(staging, final)
+        (final / DATASET_SUCCESS_FILENAME).unlink()
+        raced["final"] = final
+
+    _racing_atomic_publication(monkeypatch, racer)
+    with pytest.raises(DatasetMaterializationError):
+        materialize_dataset_artifacts(
+            result, output_root=root, built_at=BUILT_AT
+        )
+    assert raced["final"].is_dir()
+    assert not (raced["final"] / DATASET_SUCCESS_FILENAME).exists()
+    assert not (root / f".staging-{result.dataset_id}").exists()
+
+
+def test_no_replace_unavailable_fails_closed(fixtures, tmp_path, monkeypatch):
+    """When no safe no-replace primitive is available the build fails
+    closed and a plain overwriting os.rename is never used as a fallback."""
+    result = orchestrate(fixtures, requests=[request()])
+    output_root = datasets_root(tmp_path) / "noreplace"
+
+    def unsupported(staging, final):
+        raise mat_mod._NoReplaceUnsupportedError("no renameat2 here")
+
+    monkeypatch.setattr(
+        mat_mod, "_atomic_rename_directory_no_replace", unsupported
+    )
+
+    def fail_rename(*args, **kwargs):
+        raise AssertionError("plain overwriting rename must never be used")
+
+    monkeypatch.setattr(os, "rename", fail_rename)
+    with pytest.raises(DatasetMaterializationError) as excinfo:
+        materialize_dataset_artifacts(
+            result, output_root=output_root, built_at=BUILT_AT
+        )
+    assert "no-replace" in str(excinfo.value)
+    assert not (output_root / result.dataset_id).exists()
+    assert not (output_root / f".staging-{result.dataset_id}").exists()
+
+
+def test_no_replace_dispatcher_unsupported_platform(monkeypatch):
+    """The dispatcher fails closed on any platform without a safe
+    no-replace primitive; it never degrades to a plain rename."""
+
+    def unsupported(*args, **kwargs):
+        raise mat_mod._NoReplaceUnsupportedError("nope")
+
+    monkeypatch.setattr(
+        mat_mod, "_rename_directory_no_replace_windows", unsupported
+    )
+    monkeypatch.setattr(
+        mat_mod, "_rename_directory_no_replace_linux", unsupported
+    )
+    monkeypatch.setattr(mat_mod.os, "name", "posix")
+    monkeypatch.setattr(mat_mod.sys, "platform", "darwin")
+    with pytest.raises(mat_mod._NoReplaceUnsupportedError):
+        mat_mod._atomic_rename_directory_no_replace(Path("s"), Path("f"))
+    monkeypatch.setattr(mat_mod.os, "name", "nt")
+    with pytest.raises(mat_mod._NoReplaceUnsupportedError):
+        mat_mod._atomic_rename_directory_no_replace(Path("s"), Path("f"))
+
+
+def test_linux_renameat2_errno_mapping(monkeypatch):
+    """The Linux renameat2 helper maps errno strictly: EEXIST / ENOTEMPTY
+    are destination-exists results, EINVAL / ENOSYS / ENOTSUP / EOPNOTSUPP
+    and a missing renameat2 symbol fail closed, and the RENAME_NOREPLACE
+    flag is always passed."""
+    calls = {}
+
+    class FakeLibc:
+        pass
+
+    def make_libc(errno_value):
+        def renameat2(*args):
+            calls["args"] = args
+            return -1
+
+        libc = FakeLibc()
+        libc.renameat2 = renameat2
+        return libc
+
+    monkeypatch.setattr(
+        mat_mod.ctypes, "CDLL", lambda *a, **k: make_libc(0)
+    )
+    for error_number in (errno.EEXIST, errno.ENOTEMPTY):
+        monkeypatch.setattr(
+            mat_mod.ctypes, "get_errno", lambda e=error_number: e
+        )
+        with pytest.raises(mat_mod._DestinationExistsError):
+            mat_mod._rename_directory_no_replace_linux(Path("s"), Path("f"))
+    for error_number in (errno.EINVAL, errno.ENOSYS, errno.ENOTSUP, errno.EOPNOTSUPP):
+        monkeypatch.setattr(
+            mat_mod.ctypes, "get_errno", lambda e=error_number: e
+        )
+        with pytest.raises(mat_mod._NoReplaceUnsupportedError):
+            mat_mod._rename_directory_no_replace_linux(Path("s"), Path("f"))
+    monkeypatch.setattr(mat_mod.ctypes, "get_errno", lambda: errno.EACCES)
+    with pytest.raises(OSError):
+        mat_mod._rename_directory_no_replace_linux(Path("s"), Path("f"))
+    # The flag is RENAME_NOREPLACE == 1 with AT_FDCWD == -100.
+    assert calls["args"][0] == -100
+    assert calls["args"][4] == 1
+    # A libc without the renameat2 symbol fails closed.
+    monkeypatch.setattr(mat_mod.ctypes, "CDLL", lambda *a, **k: object())
+    with pytest.raises(mat_mod._NoReplaceUnsupportedError):
+        mat_mod._rename_directory_no_replace_linux(Path("s"), Path("f"))
+    # Success path returns without raising.
+    def make_success(*a, **k):
+        libc = FakeLibc()
+        libc.renameat2 = lambda *args: 0
+        return libc
+
+    monkeypatch.setattr(mat_mod.ctypes, "CDLL", make_success)
+    mat_mod._rename_directory_no_replace_linux(Path("s"), Path("f"))
+
+
 # ---------------------------------------------------------------------------
 # N. Determinism.
 # ---------------------------------------------------------------------------
@@ -2201,6 +2655,28 @@ def test_result_model_wrong_build_path_name(tmp_path):
         _sample_result_model(tmp_path, build_path=build)
 
 
+def test_result_model_dotdot_artifact_escape_rejected(tmp_path):
+    """An artifact path that merely shares the build directory as an
+    ancestor — build / '..' / 'outside' / 'dataset.parquet' — is rejected:
+    artifact paths must be fixed direct children."""
+    build = (tmp_path / "dummy" / ("0" * 64)).absolute()
+    escaped = build / ".." / "outside" / DATASET_PARQUET_FILENAME
+    with pytest.raises(DatasetMaterializationError):
+        _sample_result_model(tmp_path, dataset_path=escaped)
+
+
+def test_result_model_dotdot_build_path_rejected(tmp_path):
+    build = (tmp_path.absolute() / ".." / ("0" * 64))
+    with pytest.raises(DatasetMaterializationError):
+        _sample_result_model(tmp_path, build_path=build)
+
+
+def test_result_model_dot_component_rejected(tmp_path):
+    build = (tmp_path.absolute() / "." / ("0" * 64))
+    with pytest.raises(DatasetMaterializationError):
+        _sample_result_model(tmp_path, build_path=build)
+
+
 def test_result_model_nonabsolute_paths(tmp_path):
     relative = Path("dummy") / ("0" * 64)
     with pytest.raises(DatasetMaterializationError):
@@ -2278,6 +2754,72 @@ def test_pyarrow_error_wrapped(fixtures, tmp_path, monkeypatch):
     assert isinstance(excinfo.value.__cause__, pa.ArrowInvalid)
 
 
+def test_arrow_array_error_wrapped_at_public_boundary(fixtures, tmp_path, monkeypatch):
+    """A pa.ArrowInvalid raised from pa.array (no internal wrapper) still
+    fails closed at the public entry: DatasetMaterializationError with the
+    Arrow exception as __cause__, no final, and our staging cleaned up."""
+    import market_vault.dataset.artifact_serialization as ser_mod
+
+    result = orchestrate(fixtures, requests=[request()])
+    output_root = datasets_root(tmp_path)
+
+    def boom(*args, **kwargs):
+        raise pa.ArrowInvalid("array construction failed")
+
+    monkeypatch.setattr(ser_mod.pa, "array", boom)
+    with pytest.raises(DatasetMaterializationError) as excinfo:
+        materialize_dataset_artifacts(
+            result, output_root=output_root, built_at=BUILT_AT
+        )
+    assert isinstance(excinfo.value.__cause__, pa.ArrowInvalid)
+    assert not (output_root / result.dataset_id).exists()
+    assert not (output_root / f".staging-{result.dataset_id}").exists()
+
+
+def test_arrow_table_construction_error_wrapped_at_public_boundary(
+    fixtures, tmp_path, monkeypatch
+):
+    """A pa.ArrowInvalid raised from pa.Table.from_arrays is wrapped the
+    same way at the public boundary."""
+    import market_vault.dataset.artifact_serialization as ser_mod
+
+    result = orchestrate(fixtures, requests=[request()])
+    output_root = datasets_root(tmp_path)
+
+    class BoomTable:
+        @classmethod
+        def from_arrays(cls, *args, **kwargs):
+            raise pa.ArrowInvalid("table construction failed")
+
+    monkeypatch.setattr(ser_mod.pa, "Table", BoomTable)
+    with pytest.raises(DatasetMaterializationError) as excinfo:
+        materialize_dataset_artifacts(
+            result, output_root=output_root, built_at=BUILT_AT
+        )
+    assert isinstance(excinfo.value.__cause__, pa.ArrowInvalid)
+    assert not (output_root / result.dataset_id).exists()
+    assert not (output_root / f".staging-{result.dataset_id}").exists()
+
+
+def test_arrow_error_not_double_wrapped(fixtures, tmp_path, monkeypatch):
+    """A DatasetMaterializationError already raised inside the layer is
+    never double-wrapped by the Arrow branch of the public boundary."""
+    import market_vault.dataset.artifact_serialization as ser_mod
+
+    result = orchestrate(fixtures, requests=[request()])
+
+    def boom(*args, **kwargs):
+        raise DatasetMaterializationError("materialization failure")
+
+    monkeypatch.setattr(ser_mod.pa, "array", boom)
+    with pytest.raises(DatasetMaterializationError) as excinfo:
+        materialize_dataset_artifacts(
+            result, output_root=datasets_root(tmp_path), built_at=BUILT_AT
+        )
+    assert isinstance(excinfo.value, DatasetMaterializationError)
+    assert "materialization failure" in str(excinfo.value)
+
+
 def test_naive_built_at_wrapped_with_cause(fixtures, tmp_path):
     result = orchestrate(fixtures, requests=[request()])
     with pytest.raises(DatasetMaterializationError) as excinfo:
@@ -2351,3 +2893,72 @@ def test_no_identity_or_version_changes():
     assert dataset_pkg.DATASET_ORCHESTRATION_CONTRACT_VERSION == (
         "market-vault-dataset-orchestration-v1"
     )
+
+
+def test_output_root_symlink_rejected(fixtures, tmp_path):
+    """output_root itself must be a real directory: a symlink or junction
+    is rejected and nothing is written through the link."""
+    result = orchestrate(fixtures, requests=[request()])
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    link = tmp_path / "linkroot"
+    _make_symlink_or_skip(elsewhere, link)
+    with pytest.raises(DatasetMaterializationError):
+        materialize_dataset_artifacts(
+            result, output_root=link / "datasets", built_at=BUILT_AT
+        )
+    assert not (elsewhere / "datasets").exists()
+
+
+def test_output_root_nested_link_ancestor_rejected(fixtures, tmp_path):
+    """A symlink / junction anywhere from an existing ancestor down to
+    output_root is rejected (no link escape into another directory)."""
+    result = orchestrate(fixtures, requests=[request()])
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    link = tmp_path / "linkancestor"
+    _make_symlink_or_skip(elsewhere, link)
+    output_root = link / "nested" / "datasets"
+    with pytest.raises(DatasetMaterializationError):
+        materialize_dataset_artifacts(
+            result, output_root=output_root, built_at=BUILT_AT
+        )
+    assert not (elsewhere / "nested").exists()
+
+
+def test_output_root_file_rejected(fixtures, tmp_path):
+    """output_root or any existing ancestor that is a file (not a regular
+    directory) is rejected."""
+    result = orchestrate(fixtures, requests=[request()])
+    file_root = tmp_path / "afile"
+    file_root.write_text("not a directory", encoding="utf-8")
+    with pytest.raises(DatasetMaterializationError):
+        materialize_dataset_artifacts(
+            result, output_root=file_root, built_at=BUILT_AT
+        )
+    with pytest.raises(DatasetMaterializationError):
+        materialize_dataset_artifacts(
+            result, output_root=file_root / "datasets", built_at=BUILT_AT
+        )
+
+
+def test_output_root_junction_rejected(fixtures, tmp_path):
+    """A Windows junction as output_root is rejected on Windows (the test
+    falls back to a junction when symlinks need privileges)."""
+    result = orchestrate(fixtures, requests=[request()])
+    elsewhere = tmp_path / "junction-target"
+    elsewhere.mkdir()
+    link = tmp_path / "junction-root"
+    _make_symlink_or_skip(elsewhere, link)
+    with pytest.raises(DatasetMaterializationError):
+        materialize_dataset_artifacts(
+            result, output_root=link / "datasets", built_at=BUILT_AT
+        )
+    assert not (elsewhere / "datasets").exists()
+
+
+def test_legal_plain_directory_output_root_passes(fixtures, tmp_path):
+    """A legal plain directory (no links anywhere in the path) works."""
+    result, mresult = materialize_once(fixtures, tmp_path)
+    assert mresult.created_new_build is True
+    assert mresult.build_path.parent == datasets_root(tmp_path)
