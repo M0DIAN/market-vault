@@ -273,15 +273,51 @@ SAMPLE_GENERATION_VERSION_CONSTANTS = (
     "market-vault-sample-generation-content-v1",
 )
 # The formal v1 Sample Generation contract document must state the contract
-# foundation status and the not-implemented boundaries.
+# foundation + generator-core status and the not-implemented boundaries.
 SAMPLE_GENERATION_CONTRACT_V1_STATUS = (
-    "Status: v0.6.0 contract foundation implemented; generator core not implemented",
+    "Status: Sample Generation contract foundation and generator core implemented; Sample Generation CLI not implemented",
     "Target release: v0.6.0",
     "Not available in released v0.5.1",
-    "generator core not implemented",
     "CLI is not implemented",
     "PR-3",
     "PR-4",
+)
+# The v0.6.0 Sample Generator core production modules that must exist.
+SAMPLE_GENERATOR_CORE_MODULES = (
+    "src/market_vault/dataset/sample_generation_core.py",
+    "src/market_vault/dataset/sample_generation_core_models.py",
+)
+# The exact core version constant the core models module must define.
+SAMPLE_GENERATOR_CORE_VERSION = "market-vault-sample-generator-core-v1"
+# The core contract facts the formal Sample Generation contract document
+# must state (the implemented core, its public entry, and its segment /
+# stride / anchor / gap boundaries).
+SAMPLE_GENERATION_CORE_FACTS = (
+    "SAMPLE_GENERATOR_CORE_VERSION",
+    "market-vault-sample-generator-core-v1",
+    "generate_sample_requests",
+    "SampleGenerationResult",
+    "contiguous segment",
+    "stride origin",
+    "anchor",
+    "gap terminates the segment",
+    "no request is generated when the label future is insufficient",
+    "never claims a sample is COMPLETE",
+    "writes no file",
+    "explicit absolute path_base",
+    "Overlapping Canonical rows never become a segment boundary",
+    "Shared Label configuration contract",
+    "recomputes the Generation content ID",
+)
+# Contradictory claims that must never appear in the formal Sample
+# Generation contract document even when the required facts are present.
+SAMPLE_GENERATION_CORE_FALSE_CLAIMS = (
+    "Sample Generation CLI is implemented",
+    "the generator writes the Dataset build plan",
+    "gaps are skipped",
+    "gaps are filled",
+    "cross-day windows are allowed",
+    "Generation content ID enters dataset_id",
 )
 # The exact root field set and rule field set must be stated in the formal
 # contract document.
@@ -329,7 +365,6 @@ SAMPLE_GENERATION_V1_BOUNDARY_FACTS = (
 # Contradictory claims that must never appear in the formal Sample
 # Generation contract document even when the required facts are present.
 SAMPLE_GENERATION_FALSE_CLAIMS = (
-    "Sample Generator core is implemented",
     "Sample Generation CLI is implemented",
     "Paths enter the Sample Generation content identity",
     "built_at enters the Sample Generation content identity",
@@ -743,6 +778,45 @@ def check_sample_generation_contract(root: Path) -> list[str]:
     return failures
 
 
+def check_sample_generation_core(root: Path) -> list[str]:
+    failures = []
+    for rel in SAMPLE_GENERATOR_CORE_MODULES:
+        if not (root / rel).exists():
+            failures.append(f"{rel} is missing")
+    core_models = root / "src" / "market_vault" / "dataset" / "sample_generation_core_models.py"
+    if core_models.exists():
+        text = core_models.read_text(encoding="utf-8")
+        if f'"{SAMPLE_GENERATOR_CORE_VERSION}"' not in text:
+            failures.append(
+                "sample_generation_core_models.py does not define the exact "
+                f"core version constant {SAMPLE_GENERATOR_CORE_VERSION!r}"
+            )
+    core = root / "src" / "market_vault" / "dataset" / "sample_generation_core.py"
+    if core.exists():
+        text = core.read_text(encoding="utf-8")
+        if "def generate_sample_requests" not in text:
+            failures.append(
+                "sample_generation_core.py does not define "
+                "generate_sample_requests"
+            )
+    contract = root / "docs" / "contracts" / "sample_generation.md"
+    if contract.exists():
+        text = contract.read_text(encoding="utf-8")
+        for fact in SAMPLE_GENERATION_CORE_FACTS:
+            if fact not in text:
+                failures.append(
+                    "docs/contracts/sample_generation.md does not state the "
+                    f"core fact {fact!r}"
+                )
+        for claim in SAMPLE_GENERATION_CORE_FALSE_CLAIMS:
+            if claim in text:
+                failures.append(
+                    "docs/contracts/sample_generation.md contains the false "
+                    f"core claim {claim!r}"
+                )
+    return failures
+
+
 def check_dataset_catalog_contract(root: Path) -> list[str]:
     path = root / "docs" / "contracts" / "dataset_catalog.md"
     if not path.exists():
@@ -1017,6 +1091,7 @@ def main() -> int:
         ("v0.6.0 ADR", check_v060_adr),
         ("sample generation modules", check_sample_generation_modules),
         ("sample generation contract", check_sample_generation_contract),
+        ("sample generator core", check_sample_generation_core),
         ("dataset catalog contract", check_dataset_catalog_contract),
         ("old release notes", check_old_release_notes),
         ("warning guard", check_warning_guard),

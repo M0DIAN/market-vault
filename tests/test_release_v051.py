@@ -1802,11 +1802,9 @@ def test_release_checker_fails_when_content_id_version_constant_removed(tmp_path
     ) in result.stdout
 
 
-def test_release_checker_fails_when_contract_doc_claims_generator_core_implemented(
-    tmp_path,
-):
-    # Mutation 4: a contract document claiming the generator core is
-    # implemented must fail the checker.
+def test_release_checker_accepts_core_implemented_claim(tmp_path):
+    # The Sample Generator core is now implemented: the affirmative
+    # core-implemented claim must NOT fail the checker.
     repo = copy_repo(tmp_path)
     path = repo / "docs" / "contracts" / "sample_generation.md"
     path.write_text(
@@ -1815,8 +1813,7 @@ def test_release_checker_fails_when_contract_doc_claims_generator_core_implement
         encoding="utf-8",
     )
     result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "false claim 'Sample Generator core is implemented'" in result.stdout
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_release_checker_fails_when_contract_doc_claims_cli_implemented(tmp_path):
@@ -1832,6 +1829,108 @@ def test_release_checker_fails_when_contract_doc_claims_cli_implemented(tmp_path
     result = run_check_release(repo)
     assert result.returncode == 1
     assert "false claim 'Sample Generation CLI is implemented'" in result.stdout
+
+
+def test_release_checker_fails_without_generator_core_module(tmp_path):
+    # Mutation 11: deleting the Sample Generator core module must fail the
+    # checker.
+    repo = copy_repo(tmp_path)
+    (repo / "src" / "market_vault" / "dataset" / "sample_generation_core.py").unlink()
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "sample_generation_core.py is missing" in result.stdout
+
+
+def test_release_checker_fails_when_generator_core_version_constant_removed(
+    tmp_path,
+):
+    # Mutation 12: deleting the generator core version constant must fail
+    # the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "src" / "market_vault" / "dataset" / "sample_generation_core_models.py"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "market-vault-sample-generator-core-v1",
+            "market-vault-sample-generator-core-v9",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not define the exact core version constant "
+        "'market-vault-sample-generator-core-v1'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_contract_doc_claims_generator_writes_dataset(
+    tmp_path,
+):
+    # Mutation 13: a contract document claiming the generator writes the
+    # Dataset build plan must fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "contracts" / "sample_generation.md"
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        + "\nthe generator writes the Dataset build plan.\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "false core claim 'the generator writes the Dataset build plan'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_contract_doc_claims_gaps_are_skipped(
+    tmp_path,
+):
+    # Mutation 14: a contract document claiming gaps are skipped must fail
+    # the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "contracts" / "sample_generation.md"
+    path.write_text(
+        path.read_text(encoding="utf-8") + "\ngaps are skipped.\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "false core claim 'gaps are skipped'" in result.stdout
+
+
+def test_release_checker_fails_when_contract_doc_claims_gaps_are_filled(
+    tmp_path,
+):
+    # Mutation 15: a contract document claiming gaps are filled must fail
+    # the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "contracts" / "sample_generation.md"
+    path.write_text(
+        path.read_text(encoding="utf-8") + "\ngaps are filled.\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "false core claim 'gaps are filled'" in result.stdout
+
+
+def test_release_checker_fails_when_contract_doc_claims_cross_day_allowed(
+    tmp_path,
+):
+    # Mutation 16: a contract document claiming cross-day windows are
+    # allowed must fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "contracts" / "sample_generation.md"
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        + "\ncross-day windows are allowed.\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "false core claim 'cross-day windows are allowed'" in result.stdout
+
+
 
 
 def test_release_checker_fails_when_contract_doc_singular_feature_spec_paths(
@@ -1931,3 +2030,87 @@ def test_release_checker_fails_when_contract_doc_claims_generation_id_enters_dat
     result = run_check_release(repo)
     assert result.returncode == 1
     assert "false claim 'Generation content ID enters dataset_id'" in result.stdout
+
+
+def test_release_checker_fails_when_path_base_absolute_declaration_removed(
+    tmp_path,
+):
+    # Mutation 18: deleting the explicit absolute path_base declaration must
+    # fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "contracts" / "sample_generation.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "explicit absolute path_base", "path_base"
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the core fact 'explicit absolute path_base'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_overlap_segment_declaration_removed(
+    tmp_path,
+):
+    # Mutation 19: deleting the overlapping-rows boundary declaration must
+    # fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "contracts" / "sample_generation.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "Overlapping Canonical rows never become a segment boundary",
+            "Overlapping Canonical rows may become a segment boundary",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the core fact 'Overlapping Canonical rows never "
+        "become a segment boundary'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_shared_label_contract_declaration_removed(
+    tmp_path,
+):
+    # Mutation 20: deleting the shared Label configuration contract
+    # declaration must fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "contracts" / "sample_generation.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "Shared Label configuration contract",
+            "Generator-local Label configuration",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the core fact 'Shared Label configuration contract'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_generation_id_recompute_declaration_removed(
+    tmp_path,
+):
+    # Mutation 21: deleting the Generation-ID recomputation declaration must
+    # fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "contracts" / "sample_generation.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "recomputes the Generation content ID",
+            "accepts the carried Generation content ID",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the core fact 'recomputes the Generation content ID'"
+    ) in result.stdout

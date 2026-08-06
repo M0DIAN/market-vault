@@ -155,6 +155,24 @@ orchestrates a Dataset build; the generation content ID never enters
 ``dataset_id`` and the generated output remains an ordinary
 ``market-vault-dataset-build-plan-v1`` document.
 
+The deterministic Sample Generator core (v0.6.0 PR-3;
+:mod:`market_vault.dataset.sample_generation_core` and
+:mod:`market_vault.dataset.sample_generation_core_models`) consumes one
+frozen generation plan plus an explicit ``path_base`` and produces the
+frozen :class:`SampleGenerationResult`: the deterministic
+:class:`PITSampleRequest` sequence under the v1 BARS-style rule. The core
+loads Canonical builds through the formal verified reader, Feature / Label
+specs through the formal loaders and the built-in registry preflight, and
+the split spec through a strict JSON reader; it preflights BARS window
+coverage, filters in-scope bars, builds contiguous segments, walks
+stride-based candidate anchors with exact half-open window geometry,
+rejects duplicate sample keys, and computes the Generation content
+identity from the verified normalized inputs. The core never executes PIT
+assembly, never computes Feature or Label values, never claims a sample is
+COMPLETE, never writes any file, never orchestrates or materializes a
+Dataset build, and never uses the current time; the Sample Generation CLI
+(PR-4) and the Dataset Catalog (PR-5+) remain not implemented.
+
 The Dataset CLI (v0.5.0 PR-8; :mod:`market_vault.dataset.cli` and
 :mod:`market_vault.dataset.cli_models`) exposes three formal commands —
 ``dataset-build``, ``dataset-verify``, and ``dataset-inspect`` — as a thin
@@ -327,6 +345,12 @@ from .sample_generation import (
     parse_sample_generation_plan_bytes,
     sample_generation_content_id,
     serialize_sample_generation_plan,
+)
+from .sample_generation_core import generate_sample_requests
+from .sample_generation_core_models import (
+    SAMPLE_GENERATOR_CORE_VERSION,
+    SampleGenerationDiagnostics,
+    SampleGenerationResult,
 )
 from .sample_generation_models import (
     SAMPLE_GENERATION_CONTRACT_VERSION,
@@ -511,6 +535,7 @@ __all__ = [
     "SAMPLE_GENERATION_CONTENT_ID_VERSION",
     "SAMPLE_GENERATION_PLAN_SCHEMA_VERSION",
     "SAMPLE_GENERATION_RULE_SCHEMA_VERSION",
+    "SAMPLE_GENERATOR_CORE_VERSION",
     "DATASET_ROW_ORDER_CODE_FEATURE_CLOSE_SAMPLE_KEY",
     "SERIALIZATION_FORMAT_PARQUET",
     "SERIALIZATION_FORMAT_VERSION_PARQUET",
@@ -581,9 +606,11 @@ __all__ = [
     "LabelTransformInput",
     "LabelValueResult",
     "ResolvedTransform",
+    "SampleGenerationDiagnostics",
     "SampleGenerationError",
     "SampleGenerationIdentityInput",
     "SampleGenerationPlan",
+    "SampleGenerationResult",
     "SampleGenerationRule",
     "SourceSnapshotPin",
     "SpecParameter",
@@ -626,6 +653,7 @@ __all__ = [
     "execute_builtin_labels",
     "feature_label_spec_content_id",
     "feature_label_spec_pin",
+    "generate_sample_requests",
     "load_feature_spec",
     "load_label_spec",
     "load_verified_dataset",
