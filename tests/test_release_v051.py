@@ -1816,9 +1816,9 @@ def test_release_checker_accepts_core_implemented_claim(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_release_checker_fails_when_contract_doc_claims_cli_implemented(tmp_path):
-    # Mutation 5: a contract document claiming the CLI is implemented must
-    # fail the checker.
+def test_release_checker_accepts_cli_implemented_claim(tmp_path):
+    # The Sample Generation CLI is now implemented: the affirmative
+    # CLI-implemented claim must NOT fail the checker.
     repo = copy_repo(tmp_path)
     path = repo / "docs" / "contracts" / "sample_generation.md"
     path.write_text(
@@ -1827,8 +1827,7 @@ def test_release_checker_fails_when_contract_doc_claims_cli_implemented(tmp_path
         encoding="utf-8",
     )
     result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "false claim 'Sample Generation CLI is implemented'" in result.stdout
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_release_checker_fails_without_generator_core_module(tmp_path):
@@ -2113,4 +2112,307 @@ def test_release_checker_fails_when_generation_id_recompute_declaration_removed(
     assert result.returncode == 1
     assert (
         "does not state the core fact 'recomputes the Generation content ID'"
+    ) in result.stdout
+
+
+# --- V0.6.0 Sample Generation CLI (PR-4) ------------------------------------
+
+
+def _mutate_cli_models_version(repo: Path, old: str, new: str) -> None:
+    path = repo / "src" / "market_vault" / "dataset" / "sample_generation_cli_models.py"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(old, new), encoding="utf-8"
+    )
+
+
+def _mutate_contract_doc(repo: Path, claim: str) -> None:
+    path = repo / "docs" / "contracts" / "sample_generation.md"
+    path.write_text(
+        path.read_text(encoding="utf-8") + f"\n{claim}\n", encoding="utf-8"
+    )
+
+
+def test_release_checker_fails_without_sample_generation_cli_module(tmp_path):
+    # Mutation: deleting the CLI module must fail the checker.
+    repo = copy_repo(tmp_path)
+    (repo / "src" / "market_vault" / "dataset" / "sample_generation_cli.py").unlink()
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "sample_generation_cli.py is missing" in result.stdout
+
+
+def test_release_checker_fails_without_sample_generation_output_module(tmp_path):
+    # Mutation: deleting the pure renderer module must fail the checker.
+    repo = copy_repo(tmp_path)
+    (repo / "src" / "market_vault" / "dataset" / "sample_generation_output.py").unlink()
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "sample_generation_output.py is missing" in result.stdout
+
+
+def test_release_checker_fails_when_cli_contract_version_removed(tmp_path):
+    # Mutation: changing the CLI contract version constant must fail the
+    # checker.
+    repo = copy_repo(tmp_path)
+    _mutate_cli_models_version(
+        repo,
+        "market-vault-sample-generation-cli-v1",
+        "market-vault-sample-generation-cli-v9",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not define the exact CLI version constant "
+        "'market-vault-sample-generation-cli-v1'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_cli_result_schema_version_removed(tmp_path):
+    # Mutation: changing the CLI result schema version constant must fail
+    # the checker.
+    repo = copy_repo(tmp_path)
+    _mutate_cli_models_version(
+        repo,
+        "market-vault-sample-generation-cli-result-v1",
+        "market-vault-sample-generation-cli-result-v9",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not define the exact CLI version constant "
+        "'market-vault-sample-generation-cli-result-v1'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_sample_generate_registration_removed(tmp_path):
+    # Mutation: deleting the sample-generate subparser registration must
+    # fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "src" / "market_vault" / "dataset" / "sample_generation_cli.py"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            'add_parser(\n        "sample-generate",',
+            'add_parser(\n        "sample-generate-renamed",',
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "does not register sample-generate" in result.stdout
+
+
+def test_release_checker_fails_when_sample_generate_gains_a_business_option(
+    tmp_path,
+):
+    # Mutation: registering a second business option must fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "src" / "market_vault" / "dataset" / "sample_generation_cli.py"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            'add_argument(\n        "--plan",',
+            'add_argument(\n        "--output",',
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "registers the business option '--output'" in result.stdout
+
+
+def test_release_checker_fails_when_cli_module_calls_orchestration(tmp_path):
+    # Mutation: the CLI module calling the orchestrator must fail the
+    # checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "src" / "market_vault" / "dataset" / "sample_generation_cli.py"
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        + "\nresult = orchestrate_dataset_build()\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "must never call orchestrate_dataset_build" in result.stdout
+
+
+def test_release_checker_fails_when_contract_doc_claims_generator_builds_dataset(
+    tmp_path,
+):
+    # Mutation: a contract document claiming the Sample Generator builds the
+    # Dataset must fail the checker.
+    repo = copy_repo(tmp_path)
+    _mutate_contract_doc(repo, "The Sample Generator builds the Dataset.")
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "contains the false PR-4 claim 'Sample Generator builds the Dataset'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_contract_doc_claims_cli_builds_dataset(
+    tmp_path,
+):
+    repo = copy_repo(tmp_path)
+    _mutate_contract_doc(repo, "the CLI builds the Dataset.")
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "contains the false PR-4 claim 'the CLI builds the Dataset'" in result.stdout
+
+
+def test_release_checker_fails_when_contract_doc_claims_cli_calls_orchestration(
+    tmp_path,
+):
+    repo = copy_repo(tmp_path)
+    _mutate_contract_doc(repo, "the CLI calls orchestrate_dataset_build.")
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "contains the false PR-4 claim 'the CLI calls orchestrate_dataset_build'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_contract_doc_claims_cli_implements_catalog(
+    tmp_path,
+):
+    repo = copy_repo(tmp_path)
+    _mutate_contract_doc(repo, "the CLI implements Dataset Catalog.")
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "contains the false PR-4 claim 'the CLI implements Dataset Catalog'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_contract_doc_claims_output_overwrites(
+    tmp_path,
+):
+    repo = copy_repo(tmp_path)
+    _mutate_contract_doc(repo, "The output plan overwrites existing files.")
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "contains the false PR-4 claim 'output plan overwrites existing files'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_contract_doc_claims_relative_paths_move(
+    tmp_path,
+):
+    repo = copy_repo(tmp_path)
+    _mutate_contract_doc(repo, "relative paths may move to another parent.")
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "contains the false PR-4 claim 'relative paths may move to another parent'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_contract_doc_claims_current_time_built_at(
+    tmp_path,
+):
+    repo = copy_repo(tmp_path)
+    _mutate_contract_doc(repo, "The current time supplies built_at.")
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "contains the false PR-4 claim 'current time supplies built_at'" in result.stdout
+
+
+def test_release_checker_fails_when_contract_doc_claims_output_path_enters_identity(
+    tmp_path,
+):
+    repo = copy_repo(tmp_path)
+    _mutate_contract_doc(
+        repo, "The output_plan_path enters the Generation content identity."
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "contains the false PR-4 claim "
+        "'output_plan_path enters the Generation content identity'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_contract_doc_reverts_cli_status(tmp_path):
+    # Mutation: reverting the formal status to the pre-PR-4 wording must
+    # fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "contracts" / "sample_generation.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "Status: Sample Generation contract, generator core, and CLI implemented",
+            "Status: Sample Generation contract foundation and generator core "
+            "implemented; Sample Generation CLI not implemented",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the formal v1 contract marker 'Status: Sample "
+        "Generation contract, generator core, and CLI implemented'"
+    ) in result.stdout
+    assert "contains the false PR-4 claim 'CLI not implemented'" in result.stdout
+
+
+def test_release_checker_fails_when_direction_reverts_pr4_stage(tmp_path):
+    # Mutation: reverting the progress record to the pre-PR-4 wording must
+    # fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_6_0_direction.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "PR-3 is complete",
+            "PR-3 is not complete",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "does not state the PR-4 progress fact 'PR-3 is complete'" in result.stdout
+
+
+def test_release_checker_fails_when_direction_claims_pr5_started(tmp_path):
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_6_0_direction.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "PR-5 (Dataset Catalog) has not started",
+            "PR-5 (Dataset Catalog) has started",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "contains the false PR-4 claim 'PR-5 (Dataset Catalog) has started'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_direction_claims_v060_released(tmp_path):
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_6_0_direction.md"
+    path.write_text(
+        path.read_text(encoding="utf-8") + "\nV0.6.0 is released.\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "contains the false PR-4 claim 'V0.6.0 is released'" in result.stdout
+
+
+def test_release_checker_fails_when_ci_loses_sample_generate_smoke(tmp_path):
+    # Mutation: deleting the fresh-wheel sample-generate help smoke must
+    # fail the checker.
+    repo = copy_repo(tmp_path)
+    ci = repo / ".github" / "workflows" / "ci.yml"
+    ci.write_text(
+        ci.read_text(encoding="utf-8").replace(
+            ".release-venv/bin/market-vault sample-generate --help",
+            ".release-venv/bin/market-vault dataset-build --help",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "fresh-wheel smoke must cover 'market-vault sample-generate --help'"
     ) in result.stdout

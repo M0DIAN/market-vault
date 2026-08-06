@@ -15,7 +15,8 @@ candidate anchors come only from verified Canonical bars
 (``anchor_source == VERIFIED_CANONICAL_BARS``); no synthetic bars,
 interpolation, or forward-fill is ever fabricated; and cross-day windows
 are rejected. The Sample Generator core (PR-3) and the Sample Generation
-CLI (PR-4) are not implemented.
+CLI (PR-4) are implemented by their own modules; this module remains the
+contract foundation only.
 
 This module contains only version constants, the error type, and frozen
 models with construction-time normalization and validation. It never

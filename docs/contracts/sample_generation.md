@@ -1,6 +1,6 @@
 # Sample Generation Contract
 
-Status: Sample Generation contract foundation and generator core implemented; Sample Generation CLI not implemented
+Status: Sample Generation contract, generator core, and CLI implemented
 Target release: v0.6.0
 Not available in released v0.5.1
 
@@ -14,8 +14,11 @@ the public Python contract entry points, and this document. PR-3
 Generator core: the verified input chain, the BARS window-coverage
 preflight, the contiguous-segment traversal, the stride-based candidate
 anchors, the exact request geometry, and the frozen
-`SampleGenerationResult`. The Sample Generation CLI (PR-4) is not
-implemented. Sample Generation is not implemented in v0.5.1.
+`SampleGenerationResult`. PR-4 (`feat/v0.6.0-sample-generator-cli`)
+implements the Sample Generation CLI (`market-vault sample-generate`), the
+pure ordinary Dataset build-plan renderer, the shared split-spec loading
+authority, and the COMPLETE / EMPTY / determinism end-to-end proof. The
+Dataset Catalog (PR-5+) is not implemented. Sample Generation is not implemented in v0.5.1.
 
 ## 1. Four version constants
 
@@ -463,13 +466,202 @@ or Label values, never claims a sample is COMPLETE, and writes no file.
 A gap never causes a window boundary to move; a missing scope key or an
 EMPTY Canonical build simply produces zero requests.
 
-## 24. PR-4: CLI and build-plan output
+## 24. PR-4: Sample Generation CLI and ordinary build-plan output
 
-PR-4 implements the Sample Generation CLI (`market-vault sample-generate`),
-writes the ordinary `market-vault-dataset-build-plan-v1` document to
-`output_plan_path`, and proves COMPLETE / EMPTY / determinism end to end.
-The CLI is not implemented; the generator core itself writes no file and no
-build plan.
+PR-4 implements the Sample Generation CLI (`market-vault sample-generate
+--plan`), writes the ordinary `market-vault-dataset-build-plan-v1` document
+to `output_plan_path`, and proves COMPLETE / EMPTY / determinism end to
+end. The fixed execution chain:
+
+```text
+explicit generation-plan file
+-> parse_sample_generation_plan_bytes
+-> generate_sample_requests(plan, path_base=absolute_plan_parent)
+-> verified split-spec model
+-> ordinary market-vault-dataset-build-plan-v1 bytes
+-> strict parse_build_plan_bytes round-trip validation
+-> safe / idempotent output_plan_path materialization
+-> deterministic CLI result JSON
+```
+
+**Exact syntax.** The CLI accepts exactly one command form:
+
+```text
+market-vault sample-generate --plan <PATH>
+```
+
+`--plan` is the only business option. There is no `--output`,
+`--output-root`, `--built-at`, `--dataset-as-of`, `--canonical-build`,
+`--feature-spec`, `--label-spec`, `--split-spec`, `--symbol`, `--date`,
+`--force`, `--overwrite`, or `--latest`: every business input lives in the
+explicit generation-plan file, so the command line and the file never form
+two sources of truth. Argparse usage errors keep the standard argparse
+stderr and exit code 2.
+
+**CLI version constants.** The CLI owns two exact constants, independent of
+the Dataset CLI contract:
+
+```python
+SAMPLE_GENERATION_CLI_CONTRACT_VERSION = "market-vault-sample-generation-cli-v1"
+SAMPLE_GENERATION_CLI_RESULT_SCHEMA_VERSION = "market-vault-sample-generation-cli-result-v1"
+```
+
+Neither enters `generation_content_id`, `dataset_id`, the generated
+build-plan bytes, or any artifact. The CLI never reuses
+`DATASET_CLI_CONTRACT_VERSION` / `DATASET_CLI_RESULT_SCHEMA_VERSION`.
+
+**Settings-independent dispatch.** `sample-generate` is dispatched from the
+top-level `main()` before any settings file is read, exactly like the
+Dataset commands: a missing or damaged `--settings` path never affects it,
+settings loading is never performed, the moomoo daemon is never connected,
+and no network access ever happens.
+
+**One core call.** Each successful run calls the generator core exactly
+once:
+
+```python
+result = generate_sample_requests(plan, path_base=generation_plan_path.parent)
+```
+
+The CLI copies none of the core logic: Canonical validation, cross-build
+reconciliation, Feature / Label coverage, the shared Label contract,
+segment splitting, stride origins, request window geometry, request
+ordering, the Generation identity, and the result self-validation all
+remain the PR-3 core's responsibility. The CLI consumes only the formal
+`SampleGenerationPlan`, `SampleGenerationResult`, `PITSampleRequest`,
+`DatasetScope`, `SpecPin`, and `ChronologicalSplitSpec` models.
+
+**Shared split-spec authority.** The strict split-spec JSON loader is one
+private shared authority
+(`load_sample_generation_split_spec`, PR-4 extraction from the PR-3 core):
+strict UTF-8 without BOM, any-depth duplicate-key rejection, the exact
+field set, strict `YYYY-MM-DD` dates, and the formal
+`ChronologicalSplitSpec` validation never exist in two places. Both the
+generator core and the PR-4 writer consume the same loader. The writer
+verifies before serialization that
+`chronological_split_spec_pin(split_spec) == result.split_spec_pin` and
+fails closed on any mismatch.
+
+**Pure renderer.** The ordinary build-plan bytes are produced by a pure
+function over the frozen models only: no file reads, no file writes, no
+current time, no path metadata, no generator-core calls, and no Dataset
+build / orchestration / materialization calls. The output root carries
+exactly the existing build-plan field set:
+
+```text
+plan_schema_version
+canonical_build_dirs
+feature_spec_files
+label_spec_files
+requests
+scope
+split_spec
+dataset_as_of
+output_root
+built_at
+```
+
+Nothing else is added: no `generation_content_id`, no
+`generator_core_version`, no `generation_rule`, no `output_plan_path`, no
+CLI version, no `path_base`, no cwd, no machine, no mtime, and no
+diagnostics. `plan_schema_version` is exactly
+`market-vault-dataset-build-plan-v1`; `canonical_build_dirs`,
+`feature_spec_files`, `label_spec_files`, and `output_root` are copied
+verbatim from the plan (relative paths stay relative); `requests` is the
+result's canonical stable request order; `scope` is the result's normalized
+`DatasetScope`; `split_spec` is the full formal `ChronologicalSplitSpec`;
+`dataset_as_of` is the result's normalized value; `built_at` is the plan's
+explicit execution-record instant (never current time). Each request
+carries exactly `code`, `interval`, `adjustment`, `requested_session`,
+`anchor_market_calendar_date`, `feature_window_start`,
+`feature_window_close`, `label_window_start`, and `label_window_close`.
+Instants serialize as UTC with microsecond precision and the explicit
+`+00:00` offset (never `Z`); dates as strict `YYYY-MM-DD`. The byte
+contract is UTF-8 without BOM, `ensure_ascii=True`, `sort_keys=True`,
+`separators=(",", ":")`, exactly one trailing newline, no indent; the same
+normalized model always serializes byte-identically.
+
+**Output acceptance.** Before any file is written, the rendered bytes must
+pass the existing strict build-plan parser
+(`parse_build_plan_bytes`) — that parser, never a second validator, is the
+format authority of the ordinary build plan — and every parsed field is
+verified against the expectation item by item (schema version, Canonical /
+Feature / Label path arrays, the request sequence, scope, split spec,
+`dataset_as_of`, `output_root`, `built_at`). After materialization the file
+is read back, must equal the generated bytes exactly, and must parse again.
+
+**Relative-path / output-parent policy.** The existing `dataset-build`
+anchors relative build-plan paths to the build-plan file's parent, while
+the Sample Generation contract copies path strings into the ordinary build
+plan unchanged. If any copied path (`canonical_build_dirs`,
+`feature_spec_files`, `label_spec_files`, `output_root`) is relative, the
+output plan file's lexical parent must equal the generation-plan file's
+parent directory; otherwise the CLI fails closed with:
+
+```text
+relative Dataset build-plan paths require output_plan_path to share
+the generation-plan parent directory
+```
+
+When every copied path is absolute, the output plan may live in any other
+explicit directory. `split_spec_file` is embedded as the formal
+`split_spec` object, never copied as a path, and does not participate.
+Relative paths are never silently rewritten into absolute paths or into a
+different relative form; `resolve()` is never used to compare directories.
+
+**Safe, idempotent output.** `output_plan_path` is lexically joined to the
+generation-plan parent directory. `resolve()` is never called, parents are
+never auto-created, no `latest` / `current` pointer and no sidecar /
+manifest / report / cache / lock file is ever written, and symlinks /
+junctions / reparse points fail closed on the file and every parent
+component. When the file does not exist the exact bytes are written with an
+exclusive create (`created_new_plan = true`). When the file exists as a
+regular non-link file with exactly the same bytes the run succeeds without
+rewriting (`created_new_plan = false`, file bytes and mtime unchanged).
+When the file exists with different bytes the CLI fails closed —
+refusing to overwrite the existing file — and never overwrites, never
+truncates, and never modifies it. A write failure is converted to
+`SampleGenerationCLIError` and any partial file produced by the round is
+cleaned up; pre-existing files are never touched. No nondeterministic
+identifier, current-time fact, mtime, or machine name is used anywhere.
+
+**Result JSON.** Success writes exactly one JSON object to stdout (stderr
+stays empty, exit 0): `ensure_ascii=False`, indent 2, fixed key order,
+exactly one trailing newline, `command = sample-generate`,
+`result = SUCCESS`, `dataset_build_plan_schema_version =
+market-vault-dataset-build-plan-v1`, plus the generation-plan schema
+version, generator core version, Generation content ID, the lexical
+absolute POSIX-slash `output_plan_path`, `created_new_plan`, the generated
+request count, the Canonical / Feature / Label counts, the `split_spec_pin`,
+`dataset_as_of`, and the diagnostics block taken verbatim from the formal
+`SampleGenerationResult.diagnostics` (never re-derived or fabricated):
+`canonical_build_count`, `canonical_bar_count`, `in_scope_bar_count`,
+`contiguous_segment_count`, `candidate_anchor_count`,
+`generated_request_count`, `insufficient_feature_history_count`, and
+`insufficient_label_future_count`. Formal failure writes exactly one JSON
+object to stderr (stdout stays empty, exit 1) with the fixed fields
+`result_schema_version`, `cli_contract_version`, `command`,
+`result = FAILED`, `error_type = SampleGenerationCLIError`, and `error`;
+documented failures (`SampleGenerationError`, `DatasetCLIError`,
+`SplitValidationError`, `OSError`, `UnicodeError`, `json.JSONDecodeError`,
+formal path-safety errors, formal write errors) are converted with their
+`__cause__` preserved and never double-wrapped; broad `except Exception` is
+never used and real programming errors are never caught. Failure never
+leaves a new output file behind.
+
+**The CLI never builds a Dataset.** `sample-generate` never executes
+`dataset-build`, never runs PIT assembly, never computes Feature or Label
+values, never calls orchestration / materialization / the verified Dataset
+reader, never builds a Dataset, and never implements a Catalog. COMPLETE /
+EMPTY are facts only a real subsequent `market-vault dataset-build --plan
+<OUTPUT_PLAN_PATH>` plus the verified reader can prove; the CLI never
+claims them. The E2E proof runs the two commands as separate invocations:
+`sample-generate` produces an ordinary build plan with `request_count > 0`,
+and the second invocation produces `dataset_status == COMPLETE` with
+`logical_row_count > 0`; a legal EMPTY Canonical input produces a plan with
+`requests == []` and a second invocation with `dataset_status == EMPTY` and
+`logical_row_count == 0`. EMPTY is a success, never a failure, and no bar
+is ever fabricated to force a request.
 
 ## 25. Unsupported boundaries
 
