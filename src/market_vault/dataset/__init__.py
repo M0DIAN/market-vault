@@ -141,6 +141,20 @@ final directory remain non-identity recorded facts validated by shape,
 exact canonical bytes, the fixed diagnostics matrix, and every artifact-
 observable cross-check.
 
+The Sample Generation contract foundation (v0.6.0 PR-2;
+:mod:`market_vault.dataset.sample_generation_models` and
+:mod:`market_vault.dataset.sample_generation`) defines the frozen
+generation-plan models, the strict generation-plan JSON parser, the
+canonical generation-plan serializer, and the deterministic semantic
+content identity over versioned generation inputs. It is the contract
+foundation only: the Sample Generator core (PR-3), the Sample Generation
+CLI (PR-4), and the Dataset Catalog (PR-5+) are not implemented. This layer
+never reads or writes files, never reads specs or Canonical builds, never
+uses the current time, never constructs a sample request, and never
+orchestrates a Dataset build; the generation content ID never enters
+``dataset_id`` and the generated output remains an ordinary
+``market-vault-dataset-build-plan-v1`` document.
+
 The Dataset CLI (v0.5.0 PR-8; :mod:`market_vault.dataset.cli` and
 :mod:`market_vault.dataset.cli_models`) exposes three formal commands —
 ``dataset-build``, ``dataset-verify``, and ``dataset-inspect`` — as a thin
@@ -308,6 +322,21 @@ from .reader_models import (
     DatasetBuildReportRecord,
     DatasetOutputLayoutRecord,
     VerifiedDatasetBuild,
+)
+from .sample_generation import (
+    parse_sample_generation_plan_bytes,
+    sample_generation_content_id,
+    serialize_sample_generation_plan,
+)
+from .sample_generation_models import (
+    SAMPLE_GENERATION_CONTRACT_VERSION,
+    SAMPLE_GENERATION_CONTENT_ID_VERSION,
+    SAMPLE_GENERATION_PLAN_SCHEMA_VERSION,
+    SAMPLE_GENERATION_RULE_SCHEMA_VERSION,
+    SampleGenerationError,
+    SampleGenerationIdentityInput,
+    SampleGenerationPlan,
+    SampleGenerationRule,
 )
 from .spec_models import (
     FEATURE_LABEL_SPEC_CONTENT_ID_VERSION,
@@ -478,6 +507,10 @@ __all__ = [
     "REASON_CODE_ACTUAL_LABEL_END_CROSSES_VALIDATION_BOUNDARY",
     "REASON_CODE_FEATURE_CLOSE_AFTER_TEST_END",
     "REASON_CODE_INCOMPLETE_LABEL",
+    "SAMPLE_GENERATION_CONTRACT_VERSION",
+    "SAMPLE_GENERATION_CONTENT_ID_VERSION",
+    "SAMPLE_GENERATION_PLAN_SCHEMA_VERSION",
+    "SAMPLE_GENERATION_RULE_SCHEMA_VERSION",
     "DATASET_ROW_ORDER_CODE_FEATURE_CLOSE_SAMPLE_KEY",
     "SERIALIZATION_FORMAT_PARQUET",
     "SERIALIZATION_FORMAT_VERSION_PARQUET",
@@ -548,6 +581,10 @@ __all__ = [
     "LabelTransformInput",
     "LabelValueResult",
     "ResolvedTransform",
+    "SampleGenerationError",
+    "SampleGenerationIdentityInput",
+    "SampleGenerationPlan",
+    "SampleGenerationRule",
     "SourceSnapshotPin",
     "SpecParameter",
     "SpecPin",
@@ -597,12 +634,15 @@ __all__ = [
     "orchestrate_dataset_build",
     "parse_feature_spec",
     "parse_label_spec",
+    "parse_sample_generation_plan_bytes",
     "pit_association_content_id",
     "pit_association_schema",
     "pit_association_schema_id",
     "pit_sample_key",
     "pit_sample_version_id",
+    "sample_generation_content_id",
     "serialize_dataset_manifest",
+    "serialize_sample_generation_plan",
     "split_assignment_content_id",
     "split_assignment_schema",
     "split_assignment_schema_id",

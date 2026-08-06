@@ -260,6 +260,83 @@ CONTRACT_STALE_PHRASES = (
     "available now",
     "released in v0.5.1",
 )
+# The v0.6.0 Sample Generation contract production modules that must exist.
+SAMPLE_GENERATION_MODULES = (
+    "src/market_vault/dataset/sample_generation_models.py",
+    "src/market_vault/dataset/sample_generation.py",
+)
+# The exact version constants the contract models module must define.
+SAMPLE_GENERATION_VERSION_CONSTANTS = (
+    "market-vault-sample-generation-contract-v1",
+    "market-vault-sample-generation-plan-v1",
+    "market-vault-sample-generation-rule-v1",
+    "market-vault-sample-generation-content-v1",
+)
+# The formal v1 Sample Generation contract document must state the contract
+# foundation status and the not-implemented boundaries.
+SAMPLE_GENERATION_CONTRACT_V1_STATUS = (
+    "Status: v0.6.0 contract foundation implemented; generator core not implemented",
+    "Target release: v0.6.0",
+    "Not available in released v0.5.1",
+    "generator core not implemented",
+    "CLI is not implemented",
+    "PR-3",
+    "PR-4",
+)
+# The exact root field set and rule field set must be stated in the formal
+# contract document.
+SAMPLE_GENERATION_ROOT_FIELDS = (
+    "generation_plan_schema_version",
+    "canonical_build_dirs",
+    "feature_spec_files",
+    "label_spec_files",
+    "split_spec_file",
+    "scope",
+    "generation_rule",
+    "dataset_as_of",
+    "output_root",
+    "built_at",
+    "output_plan_path",
+)
+SAMPLE_GENERATION_RULE_FIELDS = (
+    "rule_schema_version",
+    "feature_window_bars",
+    "label_window_bars",
+    "stride_bars",
+    "anchor_source",
+    "anchor_rule",
+    "cross_day_policy",
+)
+# Identity facts the formal contract document must state: the identity
+# binds the verified canonical build identity and the spec content hashes,
+# and path / built_at / output facts never enter it.
+SAMPLE_GENERATION_IDENTITY_FACTS = (
+    "canonical_build_id",
+    "content_sha256",
+    "never enter the Sample Generation content identity",
+    "never enters dataset_id",
+)
+# Boundary facts the formal contract document must state.
+SAMPLE_GENERATION_V1_BOUNDARY_FACTS = (
+    "never reads the current time",
+    "no current time",
+    "no latest",
+    "no network",
+    "never loads settings",
+    "never connects to OpenD",
+    "ordinary `market-vault-dataset-build-plan-v1` document",
+)
+# Contradictory claims that must never appear in the formal Sample
+# Generation contract document even when the required facts are present.
+SAMPLE_GENERATION_FALSE_CLAIMS = (
+    "Sample Generator core is implemented",
+    "Sample Generation CLI is implemented",
+    "Paths enter the Sample Generation content identity",
+    "built_at enters the Sample Generation content identity",
+    "output_root enters the Sample Generation content identity",
+    "output_plan_path enters the Sample Generation content identity",
+    "Generation content ID enters dataset_id",
+)
 # "implemented in v0.5.1" is legal only after a negation: "not implemented
 # in v0.5.1" is the required planned marker. An affirmative form is a false
 # claim and is rejected even when the planned markers are present.
@@ -575,6 +652,23 @@ def check_v060_adr(root: Path) -> list[str]:
     return failures
 
 
+def check_sample_generation_modules(root: Path) -> list[str]:
+    failures = []
+    for rel in SAMPLE_GENERATION_MODULES:
+        if not (root / rel).exists():
+            failures.append(f"{rel} is missing")
+    models_path = root / "src" / "market_vault" / "dataset" / "sample_generation_models.py"
+    if models_path.exists():
+        text = models_path.read_text(encoding="utf-8")
+        for version in SAMPLE_GENERATION_VERSION_CONSTANTS:
+            if f'"{version}"' not in text:
+                failures.append(
+                    "sample_generation_models.py does not define the exact "
+                    f"version constant {version!r}"
+                )
+    return failures
+
+
 def check_sample_generation_contract(root: Path) -> list[str]:
     path = root / "docs" / "contracts" / "sample_generation.md"
     if not path.exists():
@@ -586,6 +680,12 @@ def check_sample_generation_contract(root: Path) -> list[str]:
             failures.append(
                 "docs/contracts/sample_generation.md does not state the "
                 f"planned-contract marker {marker!r}"
+            )
+    for marker in SAMPLE_GENERATION_CONTRACT_V1_STATUS:
+        if marker not in text:
+            failures.append(
+                "docs/contracts/sample_generation.md does not state the "
+                f"formal v1 contract marker {marker!r}"
             )
     for fact in SAMPLE_GENERATION_CONTRACT_FACTS:
         if fact not in text:
@@ -599,11 +699,41 @@ def check_sample_generation_contract(root: Path) -> list[str]:
                 "docs/contracts/sample_generation.md does not state the "
                 f"plural input fact {fact!r}"
             )
+    for field in SAMPLE_GENERATION_ROOT_FIELDS:
+        if field not in text:
+            failures.append(
+                "docs/contracts/sample_generation.md does not state the "
+                f"exact root field {field!r}"
+            )
+    for field in SAMPLE_GENERATION_RULE_FIELDS:
+        if field not in text:
+            failures.append(
+                "docs/contracts/sample_generation.md does not state the "
+                f"exact generation_rule field {field!r}"
+            )
+    for fact in SAMPLE_GENERATION_IDENTITY_FACTS:
+        if fact not in text:
+            failures.append(
+                "docs/contracts/sample_generation.md does not state the "
+                f"identity fact {fact!r}"
+            )
+    for fact in SAMPLE_GENERATION_V1_BOUNDARY_FACTS:
+        if fact not in text:
+            failures.append(
+                "docs/contracts/sample_generation.md does not state the "
+                f"boundary fact {fact!r}"
+            )
     for phrase in CONTRACT_STALE_PHRASES:
         if phrase in text:
             failures.append(
                 "docs/contracts/sample_generation.md still contains the "
                 f"stale claim {phrase!r}"
+            )
+    for claim in SAMPLE_GENERATION_FALSE_CLAIMS:
+        if claim in text:
+            failures.append(
+                "docs/contracts/sample_generation.md contains the false "
+                f"claim {claim!r}"
             )
     if AFFIRMATIVE_IMPLEMENTED_IN_V051_RE.search(text):
         failures.append(
@@ -885,6 +1015,7 @@ def main() -> int:
         ("v0.5.1 direction", check_v051_direction),
         ("v0.6.0 direction", check_v060_direction),
         ("v0.6.0 ADR", check_v060_adr),
+        ("sample generation modules", check_sample_generation_modules),
         ("sample generation contract", check_sample_generation_contract),
         ("dataset catalog contract", check_dataset_catalog_contract),
         ("old release notes", check_old_release_notes),
