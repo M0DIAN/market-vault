@@ -15,6 +15,7 @@ network, no OpenD, no stored market data beyond offline synthetic fixtures.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -2273,3 +2274,337 @@ def test_core_error_messages_unchanged_after_extraction(tmp_path):
     with pytest.raises(SampleGenerationError) as excinfo:
         generate_sample_requests(plan, path_base=tmp_path)
     assert "split spec file must not carry a UTF-8 BOM" in str(excinfo.value)
+
+
+# ---------------------------------------------------------------------------
+# N. Independent-review hardening: transactional output writes.
+# ---------------------------------------------------------------------------
+
+#: Frozen SHA-256 of the relative-path fixture's generated build-plan
+#: bytes, computed from the pre-hardening head ``5957d32``; the hardening
+#: must never change the normal output bytes. The relative fixture is used
+#: because its build-plan bytes contain no absolute path and are therefore
+#: identical on every machine and directory.
+OLD_HEAD_RELATIVE_FIXTURE_PLAN_SHA256 = (
+    "ae2f7b45518f5db952a641b4bc01ce25dfdb15ba2165c542c0cff4d7075f41f9"
+)
+
+
+class _ShortWriteFile:
+    """Real file wrapper whose ``write()`` returns a wrong byte count (or
+    ``None``) without raising ``OSError``: the target file is really created
+    through ``xb`` and really written, so the return-value check itself —
+    not a proxy exception — must catch the short write."""
+
+    def __init__(self, real, *, mode):
+        self._real = real
+        self._mode = mode
+
+    def write(self, data):
+        if self._mode == "truncate":
+            written = len(data) // 2
+            self._real.write(data[:written])
+            return written
+        if self._mode == "none":
+            self._real.write(data)
+            return None
+        raise AssertionError(f"unknown short-write mode {self._mode!r}")
+
+    def close(self):
+        self._real.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.close()
+
+
+class _FailingReadFile:
+    """Real file wrapper whose ``read()`` raises an ``OSError`` or returns
+    different bytes; used to simulate post-write read-back failures."""
+
+    def __init__(self, real, *, error=None, mismatch_bytes=None):
+        self._real = real
+        self._error = error
+        self._mismatch_bytes = mismatch_bytes
+
+    def read(self, *args, **kwargs):
+        if self._error is not None:
+            raise self._error
+        return self._mismatch_bytes
+
+    def close(self):
+        self._real.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.close()
+
+
+def _install_short_write_proxy(monkeypatch, proxy_mode: str) -> None:
+    real_open = Path.open
+
+    def _proxy_open(self, mode="r", *args, **kwargs):
+        handle = real_open(self, mode, *args, **kwargs)
+        if mode == "xb":
+            return _ShortWriteFile(handle, mode=proxy_mode)
+        return handle
+
+    monkeypatch.setattr(Path, "open", _proxy_open)
+
+
+def _install_read_back_proxy(
+    monkeypatch,
+    output_plan_path,
+    *,
+    error=None,
+    mismatch_bytes=None,
+) -> None:
+    real_open = Path.open
+
+    def _proxy_open(self, mode="r", *args, **kwargs):
+        handle = real_open(self, mode, *args, **kwargs)
+        if mode == "rb" and str(self) == str(output_plan_path):
+            return _FailingReadFile(
+                handle, error=error, mismatch_bytes=mismatch_bytes
+            )
+        return handle
+
+    monkeypatch.setattr(Path, "open", _proxy_open)
+
+
+def _install_second_parse_failure(monkeypatch, error) -> list:
+    """The first ``parse_build_plan_bytes`` call (pre-write) succeeds; the
+    second call (inside the post-write read-back) raises ``error``."""
+    calls = []
+    real_parse = sg_cli.parse_build_plan_bytes
+
+    def _spy_parse(payload):
+        calls.append(len(calls))
+        if len(calls) == 2:
+            raise error
+        return real_parse(payload)
+
+    monkeypatch.setattr(sg_cli, "parse_build_plan_bytes", _spy_parse)
+    return calls
+
+
+def _assert_failed_json(code, out, err) -> dict:
+    assert code == 1
+    assert out == ""
+    failure = json.loads(err)
+    assert failure["result"] == "FAILED"
+    assert failure["error_type"] == "SampleGenerationCLIError"
+    return failure
+
+
+def test_short_write_fails_and_removes_new_file(std_fixture, monkeypatch, capsys):
+    """The exclusive create really happens and only half the bytes are
+    written; the write-return check must fail closed and remove the partial
+    file without waiting for the read-back."""
+    _install_short_write_proxy(monkeypatch, proxy_mode="truncate")
+    code, out, err = run_cli(
+        ["sample-generate", "--plan", str(std_fixture["plan_path"])], capsys
+    )
+    failure = _assert_failed_json(code, out, err)
+    assert "short write while creating output plan" in failure["error"]
+    assert "expected" in failure["error"]
+    assert not std_fixture["output_plan_path"].exists()
+
+
+def test_short_write_none_fails_and_removes_new_file(std_fixture, monkeypatch, capsys):
+    """A ``None`` write return (the whole payload was written, but the count
+    is untrustworthy) must still fail closed and remove the file."""
+    _install_short_write_proxy(monkeypatch, proxy_mode="none")
+    code, out, err = run_cli(
+        ["sample-generate", "--plan", str(std_fixture["plan_path"])], capsys
+    )
+    failure = _assert_failed_json(code, out, err)
+    assert "short write while creating output plan" in failure["error"]
+    assert "wrote None" in failure["error"]
+    assert not std_fixture["output_plan_path"].exists()
+
+
+def test_read_back_oserror_removes_new_file(std_fixture, monkeypatch, capsys):
+    """The file is created and written successfully; the read-back raises an
+    ``OSError``: the formal error is converted with its ``__cause__`` and
+    the new file is removed."""
+    captured = capture_failure(monkeypatch)
+    _install_read_back_proxy(
+        monkeypatch,
+        std_fixture["output_plan_path"],
+        error=OSError("simulated read-back failure"),
+    )
+    code, out, err = run_cli(
+        ["sample-generate", "--plan", str(std_fixture["plan_path"])], capsys
+    )
+    failure = _assert_failed_json(code, out, err)
+    assert "cannot read back output plan" in failure["error"]
+    assert isinstance(captured["exc"].__cause__, OSError)
+    assert not std_fixture["output_plan_path"].exists()
+
+
+def test_read_back_mismatch_removes_new_file(std_fixture, monkeypatch, capsys):
+    """The file is created and written successfully; the read-back returns
+    different bytes: fail closed with the read-back mismatch and remove the
+    new file."""
+    _install_read_back_proxy(
+        monkeypatch,
+        std_fixture["output_plan_path"],
+        mismatch_bytes=b'{"different": true}\n',
+    )
+    code, out, err = run_cli(
+        ["sample-generate", "--plan", str(std_fixture["plan_path"])], capsys
+    )
+    failure = _assert_failed_json(code, out, err)
+    assert "output plan read-back mismatch" in failure["error"]
+    assert not std_fixture["output_plan_path"].exists()
+
+
+def test_second_parse_failure_removes_new_file(std_fixture, monkeypatch, capsys):
+    """The pre-write parse succeeds; the second (read-back) parse raises a
+    formal ``DatasetCLIError``: converted by the CLI boundary and the new
+    file is removed."""
+    from market_vault.dataset.cli_models import DatasetCLIError
+
+    calls = _install_second_parse_failure(
+        monkeypatch, DatasetCLIError("simulated second parse failure")
+    )
+    code, out, err = run_cli(
+        ["sample-generate", "--plan", str(std_fixture["plan_path"])], capsys
+    )
+    failure = _assert_failed_json(code, out, err)
+    assert "sample-generate failed: simulated second parse failure" in failure["error"]
+    assert len(calls) == 2
+    assert not std_fixture["output_plan_path"].exists()
+
+
+def test_second_parse_runtime_error_propagates_and_removes_new_file(
+    std_fixture, monkeypatch, capsys
+):
+    """A programming error in the second parse propagates unchanged (no
+    FAILED JSON), and the new file is still removed."""
+    calls = _install_second_parse_failure(
+        monkeypatch, RuntimeError("simulated programming error")
+    )
+    with pytest.raises(RuntimeError) as excinfo:
+        cli_module.main(
+            ["sample-generate", "--plan", str(std_fixture["plan_path"])]
+        )
+    assert "simulated programming error" in str(excinfo.value)
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+    assert len(calls) == 2
+    assert not std_fixture["output_plan_path"].exists()
+
+
+def test_success_payload_runtime_error_propagates_and_removes_new_file(
+    std_fixture, monkeypatch, capsys
+):
+    """A programming error while constructing the success payload (after
+    write, read-back, and parse all succeeded) propagates unchanged and the
+    new file is removed: the plan commits only once the full payload exists."""
+
+    def _boom_payload(*args, **kwargs):
+        raise RuntimeError("simulated payload failure")
+
+    monkeypatch.setattr(sg_cli, "_success_payload", _boom_payload)
+    with pytest.raises(RuntimeError) as excinfo:
+        cli_module.main(
+            ["sample-generate", "--plan", str(std_fixture["plan_path"])]
+        )
+    assert "simulated payload failure" in str(excinfo.value)
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+    assert not std_fixture["output_plan_path"].exists()
+
+
+def test_post_write_failure_never_deletes_existing_exact_file(
+    std_fixture, monkeypatch, capsys
+):
+    """A post-write failure on a second run (``created_new_plan == False``)
+    must never delete or modify the existing exact-byte file; the error is
+    converted by the CLI boundary as usual."""
+    code, out, err = run_cli(
+        ["sample-generate", "--plan", str(std_fixture["plan_path"])], capsys
+    )
+    assert code == 0, err
+    path = std_fixture["output_plan_path"]
+    before_bytes = path.read_bytes()
+    before_mtime = path.stat().st_mtime_ns
+
+    from market_vault.dataset.cli_models import DatasetCLIError
+
+    _install_second_parse_failure(
+        monkeypatch, DatasetCLIError("simulated second parse failure")
+    )
+    code, out, err = run_cli(
+        ["sample-generate", "--plan", str(std_fixture["plan_path"])], capsys
+    )
+    failure = _assert_failed_json(code, out, err)
+    assert "simulated second parse failure" in failure["error"]
+    assert path.exists()
+    assert path.read_bytes() == before_bytes
+    assert path.stat().st_mtime_ns == before_mtime
+
+
+def test_existing_different_bytes_never_touched_by_transaction(
+    std_fixture, monkeypatch, capsys
+):
+    """An existing different-byte file is rejected before the transaction
+    and stays byte- and mtime-identical."""
+    path = std_fixture["output_plan_path"]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    original = b'{"different": true}\n'
+    path.write_bytes(original)
+    before_mtime = path.stat().st_mtime_ns
+    code, out, err = run_cli(
+        ["sample-generate", "--plan", str(std_fixture["plan_path"])], capsys
+    )
+    failure = _assert_failed_json(code, out, err)
+    assert "refusing to overwrite existing build plan with different content" in (
+        failure["error"]
+    )
+    assert path.read_bytes() == original
+    assert path.stat().st_mtime_ns == before_mtime
+
+
+def test_normal_fixture_build_plan_bytes_unchanged_from_old_head(
+    std_fixture, capsys
+):
+    """Fixed regression: the standard fixture's generated build-plan bytes
+    written by the CLI are byte-identical to the pure serializer output
+    (the serializer is untouched by the hardening)."""
+    code, out, err = run_cli(
+        ["sample-generate", "--plan", str(std_fixture["plan_path"])], capsys
+    )
+    assert code == 0, err
+    generated = std_fixture["output_plan_path"].read_bytes()
+    _, _, _, expected = _serialize_via_models(std_fixture)
+    assert generated == expected
+
+
+def test_relative_fixture_build_plan_bytes_unchanged_from_old_head(
+    relative_fixture, capsys
+):
+    """Fixed regression: the relative-path fixture's generated build-plan
+    bytes (path-independent) are byte-identical to the pre-hardening head
+    ``5957d32`` — the hardening never changes the normal output bytes."""
+    plan_path = write_generation_plan(
+        relative_fixture.tmp_path / "generation-plan.json",
+        _relative_payload(relative_fixture, output_plan_path="generated-plan.json"),
+    )
+    code, out, err = run_cli(
+        ["sample-generate", "--plan", str(plan_path)], capsys
+    )
+    assert code == 0, err
+    generated = (relative_fixture.tmp_path / "generated-plan.json").read_bytes()
+    assert (
+        hashlib.sha256(generated).hexdigest()
+        == OLD_HEAD_RELATIVE_FIXTURE_PLAN_SHA256
+    )

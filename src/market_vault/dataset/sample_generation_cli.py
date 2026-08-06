@@ -315,6 +315,19 @@ def _verify_output_parent(output_plan_path: Path) -> None:
         )
 
 
+def _remove_partial_output(output_plan_path: Path) -> None:
+    """Best-effort removal of this round's exclusively created file.
+
+    Never raises: a cleanup failure must never mask the original error. The
+    caller only ever invokes this for a file this round created; a
+    pre-existing file is never targeted.
+    """
+    try:
+        output_plan_path.unlink()
+    except OSError:
+        pass
+
+
 def _materialize_output_plan(output_plan_path: Path, generated_bytes: bytes) -> bool:
     """Exact-byte idempotent no-overwrite materialization.
 
@@ -323,11 +336,19 @@ def _materialize_output_plan(output_plan_path: Path, generated_bytes: bytes) -> 
     identical bytes: success without rewriting, ``created_new_plan ==
     False``. Existing file with different bytes: fail closed, never
     overwrite, never truncate, never modify. A concurrently appearing file
-    fails closed instead of overwriting. A write failure is converted to
-    :class:`SampleGenerationCLIError` and the partial file produced by this
-    round is cleaned up; pre-existing files are never touched. No
-    nondeterministic identifier, current-time fact, mtime, or machine name
-    is used anywhere.
+    fails closed instead of overwriting.
+
+    The exclusive create is checked for short writes: the ``write()``
+    return value must be a real ``int`` equal to ``len(generated_bytes)``.
+    ``None``, ``0``, a smaller or larger count, a bool, or any other type
+    fails closed with
+    ``short write while creating output plan: expected <N> bytes, wrote
+    <VALUE>`` and the partial file of this round is removed — a truncated
+    file is never left behind and the failure is never deferred to the
+    read-back. A write ``OSError`` is converted to
+    :class:`SampleGenerationCLIError` with the partial file of this round
+    cleaned up; pre-existing files are never touched. No nondeterministic
+    identifier, current-time fact, mtime, or machine name is used anywhere.
     """
     _verify_output_parent(output_plan_path)
     _reject_link(output_plan_path, "output plan path")
@@ -362,17 +383,23 @@ def _materialize_output_plan(output_plan_path: Path, generated_bytes: bytes) -> 
         ) from exc
     try:
         with handle:
-            handle.write(generated_bytes)
+            written = handle.write(generated_bytes)
     except OSError as exc:
         # The partial file was produced by this round: clean it up and never
         # touch any pre-existing file.
-        try:
-            output_plan_path.unlink()
-        except OSError:
-            pass
+        _remove_partial_output(output_plan_path)
         raise SampleGenerationCLIError(
             f"cannot write output plan {output_plan_path}: {exc}"
         ) from exc
+    if type(written) is not int or written != len(generated_bytes):
+        # ``None``, ``0``, a bool, a wrong count, or any other type: the
+        # exclusive-create file of this round is partial or untrustworthy
+        # and must never be committed.
+        _remove_partial_output(output_plan_path)
+        raise SampleGenerationCLIError(
+            "short write while creating output plan: expected "
+            f"{len(generated_bytes)} bytes, wrote {written!r}"
+        )
     return True
 
 
@@ -390,6 +417,49 @@ def _verify_read_back(output_plan_path: Path, generated_bytes: bytes) -> None:
             f"output plan read-back mismatch: {output_plan_path}"
         )
     parse_build_plan_bytes(read_back_bytes)
+
+
+def _run_output_transaction(
+    output_plan_path: Path,
+    generated_bytes: bytes,
+    plan: SampleGenerationPlan,
+    result: SampleGenerationResult,
+) -> dict:
+    """The post-write output-plan transaction.
+
+    A file exclusively created by this round commits only after the
+    complete success payload has been constructed:
+
+    ``exclusive create -> exact write -> close/flush -> read-back ->
+    exact-byte equality -> parse_build_plan_bytes -> success payload
+    construction -> commit``
+
+    Any failure before commit — a formal error
+    (:class:`SampleGenerationCLIError`, :class:`DatasetCLIError` from the
+    second parser call, ``OSError``, ``UnicodeError``,
+    ``json.JSONDecodeError``) or a programming error (``AssertionError``,
+    ``RuntimeError``, ``TypeError``, and friends) — removes the new file
+    when ``created_new_plan`` is true, then propagates unchanged through the
+    existing CLI boundary: formal errors are converted by the caller,
+    programming errors are never converted. A pre-existing exact-byte file
+    (``created_new_plan == False``) is never deleted, and an existing
+    different-byte file is never modified. Broad ``except Exception`` is
+    never used: the cleanup is driven by the ``created_new_plan`` and
+    ``transaction_committed`` flags in a ``finally`` block.
+    """
+    created_new_plan = False
+    transaction_committed = False
+    try:
+        created_new_plan = _materialize_output_plan(
+            output_plan_path, generated_bytes
+        )
+        _verify_read_back(output_plan_path, generated_bytes)
+        payload = _success_payload(plan, result, output_plan_path, created_new_plan)
+        transaction_committed = True
+        return payload
+    finally:
+        if created_new_plan and not transaction_committed:
+            _remove_partial_output(output_plan_path)
 
 
 # ---------------------------------------------------------------------------
@@ -535,9 +605,12 @@ def _run_sample_generate(plan_arg: str) -> dict:
     The generator core is called exactly once; the shared split loader is
     the single split-spec authority of both the core and this writer; the
     existing ``parse_build_plan_bytes`` accepts the rendered bytes before
-    and after materialization; every documented failure is converted to
-    :class:`SampleGenerationCLIError` with the ``__cause__`` preserved; real
-    programming errors pass through.
+    materialization and inside the post-write transaction; the output-plan
+    write, read-back, second parse, and payload construction run as one
+    transactional unit (:func:`_run_output_transaction`) whose new-file
+    cleanup never touches a pre-existing file; every documented failure is
+    converted to :class:`SampleGenerationCLIError` with the ``__cause__``
+    preserved; real programming errors pass through.
     """
     try:
         generation_plan_path = _coerce_generation_plan_path(plan_arg)
@@ -558,9 +631,9 @@ def _run_sample_generate(plan_arg: str) -> dict:
         )
         parsed = parse_build_plan_bytes(generated_bytes)
         _verify_parsed_plan(parsed, plan, result, split_spec)
-        created_new_plan = _materialize_output_plan(output_plan_path, generated_bytes)
-        _verify_read_back(output_plan_path, generated_bytes)
-        return _success_payload(plan, result, output_plan_path, created_new_plan)
+        return _run_output_transaction(
+            output_plan_path, generated_bytes, plan, result
+        )
     except _DOCUMENTED_ERRORS as exc:
         _as_cli_error(exc, "sample-generate failed")
 
