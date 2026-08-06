@@ -193,7 +193,8 @@ def _coerce_path_base(path_base) -> Path:
 def _resolve_path(raw: str, base: Path, label: str) -> Path:
     """Absolute plan paths are used as-is; relative paths are lexically
     joined to the absolute ``base``. ``resolve()`` is never called and
-    nothing is expanded; the loaders perform their own formal link checks."""
+    nothing is expanded. This layer makes no claim about how the operating
+    system opens files."""
     path = Path(raw)
     if not path.is_absolute():
         path = base / path

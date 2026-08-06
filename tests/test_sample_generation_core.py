@@ -34,11 +34,13 @@ from market_vault.dataset import (
     PITSampleRequest,
     SampleGenerationDiagnostics,
     SampleGenerationError,
+    SampleGenerationIdentityInput,
     SampleGenerationPlan,
     SampleGenerationResult,
     SampleGenerationRule,
     generate_sample_requests,
     parse_sample_generation_plan_bytes,
+    sample_generation_content_id,
     serialize_sample_generation_plan,
 )
 from market_vault.models import QualityResult, RunManifest, Settings
@@ -2210,3 +2212,49 @@ def test_programming_errors_pass_through_unaltered(std_fixture, monkeypatch, tmp
         )
         with pytest.raises(type(error)):
             generate_sample_requests(std_fixture["plan"], path_base=tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# Independent-review closure: window arithmetic overflow containment.
+# ---------------------------------------------------------------------------
+
+
+def _tampered_with_huge_rule(std_fixture, tmp_path, field: str):
+    """A result whose generation rule uses a huge legal positive window
+    count and whose Generation content ID is recomputed to match it, so the
+    failure must come from the request window arithmetic boundary and never
+    from an identity mismatch."""
+    result = generate_sample_requests(std_fixture["plan"], path_base=tmp_path)
+    rule = dataclasses.replace(result.generation_rule, **{field: 10**100})
+    identity_input = SampleGenerationIdentityInput(
+        canonical_build_pins=result.canonical_build_pins,
+        feature_spec_pins=result.feature_spec_pins,
+        label_spec_pins=result.label_spec_pins,
+        split_spec_pin=result.split_spec_pin,
+        scope=result.scope,
+        generation_rule=rule,
+        dataset_as_of=result.dataset_as_of,
+    )
+    new_id = sample_generation_content_id(identity_input)
+    return dataclasses.replace(
+        result, generation_rule=rule, generation_content_id=new_id
+    )
+
+
+def test_huge_feature_window_bars_overflow_is_contained(std_fixture, tmp_path):
+    # 10**100 is a legal positive int for the frozen rule; the expected-span
+    # timedelta multiplication overflows and must surface as
+    # SampleGenerationError with the original OverflowError as __cause__.
+    with pytest.raises(SampleGenerationError) as exc_info:
+        _tampered_with_huge_rule(
+            std_fixture, tmp_path, "feature_window_bars"
+        )
+    assert "request window arithmetic failed" in str(exc_info.value)
+    assert isinstance(exc_info.value.__cause__, OverflowError)
+
+
+def test_huge_label_window_bars_overflow_is_contained(std_fixture, tmp_path):
+    with pytest.raises(SampleGenerationError) as exc_info:
+        _tampered_with_huge_rule(std_fixture, tmp_path, "label_window_bars")
+    assert "request window arithmetic failed" in str(exc_info.value)
+    assert isinstance(exc_info.value.__cause__, OverflowError)

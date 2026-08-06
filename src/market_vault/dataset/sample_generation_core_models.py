@@ -130,17 +130,21 @@ def _validate_request_bindings(
             raise SampleGenerationError(
                 "request label_window_start must equal feature_window_close"
             )
+        # Every window computation — including the expected-span timedelta
+        # multiplication, which can overflow for huge positive window
+        # counts — lies inside one controlled arithmetic boundary, so a raw
+        # OverflowError can never cross the public model boundary.
         try:
             feature_span = (
                 request.feature_window_close - request.feature_window_start
             )
             label_span = request.label_window_close - request.label_window_start
-        except (OverflowError, ValueError, TypeError) as exc:
+            expected_feature_span = rule.feature_window_bars * interval_delta
+            expected_label_span = rule.label_window_bars * interval_delta
+        except (OverflowError, ValueError, TypeError, ZeroDivisionError) as exc:
             raise SampleGenerationError(
                 f"request window arithmetic failed: {exc}"
             ) from exc
-        expected_feature_span = rule.feature_window_bars * interval_delta
-        expected_label_span = rule.label_window_bars * interval_delta
         if feature_span != expected_feature_span:
             raise SampleGenerationError(
                 f"request feature window span {feature_span} does not equal "
