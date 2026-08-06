@@ -1,19 +1,21 @@
 # Sample Generation Contract
 
-Status: v0.6.0 contract foundation implemented; generator core not implemented
+Status: Sample Generation contract foundation and generator core implemented; Sample Generation CLI not implemented
 Target release: v0.6.0
 Not available in released v0.5.1
 
 This document is the formal v1 contract of the deterministic Sample
-Generator planned for v0.6.0. PR-2 (this branch,
-`feat/v0.6.0-sample-generation-contract`) implements the contract
-foundation only: the strict generation-plan JSON schema, the frozen typed
-models, the deterministic normalization, the canonical generation-plan
-serialization, the semantic content identity, the public Python contract
-entry points, and this document. The Sample Generator core (PR-3) is not
-implemented, the Sample Generation CLI (PR-4) is not implemented, and
-nothing here reads Canonical or spec files, generates a sample request, or
-writes a file. Sample Generation is not implemented in v0.5.1.
+Generator planned for v0.6.0. PR-2 (`feat/v0.6.0-sample-generation-contract`)
+implements the contract foundation: the strict generation-plan JSON
+schema, the frozen typed models, the deterministic normalization, the
+canonical generation-plan serialization, the semantic content identity,
+the public Python contract entry points, and this document. PR-3
+(`feat/v0.6.0-sample-generator-core`) implements the deterministic Sample
+Generator core: the verified input chain, the BARS window-coverage
+preflight, the contiguous-segment traversal, the stride-based candidate
+anchors, the exact request geometry, and the frozen
+`SampleGenerationResult`. The Sample Generation CLI (PR-4) is not
+implemented. Sample Generation is not implemented in v0.5.1.
 
 ## 1. Four version constants
 
@@ -359,26 +361,79 @@ explicit; nothing is auto-discovered or auto-scanned.
 
 The contract foundation generates no sample request. Request generation
 (anchor candidates, window traversal, `PITSampleRequest` construction) is
-PR-3's responsibility. Every generated request of PR-3 will be constructed
-as a formal `PITSampleRequest` and pass its validation; the generator never
+PR-3's responsibility. Every generated request of PR-3 is constructed as a
+formal `PITSampleRequest` and passes its validation; the generator never
 copies PIT validation logic and never claims a sample is necessarily
 COMPLETE.
 
 ## 23. PR-3: Sample Generator core
 
-PR-3 implements the deterministic Sample Generator core over verified
-Canonical builds: candidate anchors from verified Canonical bars under the
-explicit BARS-style rule, deterministic window traversal, and the
-deterministic request sequence. It will verify the spec-coverage
-constraints fixed in section 4, sort output requests by a stable key, and
-reject duplicates.
+PR-3 implements the deterministic Sample Generator core
+(`SAMPLE_GENERATOR_CORE_VERSION = "market-vault-sample-generator-core-v1"`,
+public entry `generate_sample_requests(plan, *, path_base)`, output
+`SampleGenerationResult`).
+
+The core pipeline:
+
+1. every `canonical_build_dirs` entry is read through the formal verified
+   reader; every Feature / Label file through the formal loaders and the
+   built-in registry preflight; `split_spec_file` through a strict JSON
+   reader into the formal `ChronologicalSplitSpec`;
+2. the BARS window-coverage preflight: the maximum Feature lookback
+   (NONE -> 1, FIXED -> the declared BARS value, PARAMETER -> the spec's
+   declared positive int parameter) must fit `feature_window_bars`, and the
+   maximum Label horizon (BARS only, no `TRADING_DAYS` / `MINUTES`, no
+   cross-trading-day opt-in) must fit `label_window_bars`;
+3. the v1 Generation content identity from the verified normalized inputs;
+4. deterministic bar filtering, contiguous-segment traversal, stride-based
+   candidate anchors, exact window geometry, and formal
+   `PITSampleRequest` construction;
+5. the canonical stable request order with duplicate rejection.
+
+**Contiguous segment.** Bars are ordered by code, market-calendar date,
+session, event_time, canonical bar key, canonical row version id. A
+segment continues only while code, market-calendar date, session, and the
+interval / adjustment / requested_session dimensions are unchanged and
+every adjacent event-time delta equals the nominal interval exactly. A
+market-calendar-date change, a session change, a non-nominal delta
+(including duplicate or out-of-order event times), or a known or actual
+gap terminates the segment. Bars are never spliced across gaps, sessions,
+or market-calendar dates, and a missing bar is never replaced by the Nth
+existing bar.
+
+**Stride origin.** Every new contiguous segment establishes its own
+deterministic stride origin: the first usable anchor index of a segment is
+`feature_window_bars - 1` and anchors then advance by `stride_bars`. A
+candidate anchor must be a real verified Canonical bar at that position.
+
+**Window geometry.** For a candidate anchor the feature slice is the
+half-open window `segment[anchor_index - feature_window_bars + 1 :
+anchor_index + 1]` and the label slice is `segment[anchor_index + 1 :
+anchor_index + 1 + label_window_bars]`. Both slices must be complete:
+insufficient feature history produces no request and is counted in the
+diagnostics, and no request is generated when the label future is insufficient.
+Windows are never shortened to force a request. `feature_window_start` is
+the first feature bar's event time, `feature_window_close` is the anchor
+bar's event time plus one nominal interval, `label_window_start` equals
+`feature_window_close`, and the label window is exactly
+`label_window_bars` nominal intervals; every window assertion is
+re-verified at construction, so a gap can never silently move a window
+boundary and no window ever crosses a market-calendar date.
+
+**Output.** The core output is the frozen `SampleGenerationResult` only:
+requests, verified pins, scope, rule, `dataset_as_of`, and deterministic
+diagnostics. The core never executes PIT assembly, never computes Feature
+or Label values, never claims a sample is COMPLETE, and writes no file.
+A gap never causes a window boundary to move; a missing scope key or an
+EMPTY Canonical build simply produces zero requests.
 
 ## 24. PR-4: CLI and build-plan output
 
 PR-4 implements the Sample Generation CLI (`market-vault sample-generate`),
 writes the ordinary `market-vault-dataset-build-plan-v1` document to
 `output_plan_path`, and proves COMPLETE / EMPTY / determinism end to end.
-The CLI is not implemented.
+The CLI is not implemented; the generator core itself writes no file and no
+build plan.
 
 ## 25. Unsupported boundaries
 
