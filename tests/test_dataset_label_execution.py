@@ -2197,6 +2197,36 @@ def test_legal_empty_samples_with_legal_specs_still_succeed():
     assert result.diagnostics.transform_invocation_count == 0
 
 
+def test_shared_label_contract_module_is_the_executor_authority():
+    """The executor's built-in spec preflight now delegates to the single
+    shared label contract module: the same legal spec passes both entry
+    points and the same violations fail both with equivalent semantics."""
+    from market_vault.dataset.label_contract import (
+        LabelContractError,
+        validate_builtin_label_spec_contract,
+    )
+    from market_vault.dataset.label_registry import built_in_label_registry
+
+    registry = built_in_label_registry()
+    legal = forward_spec("fr", horizon=2)
+    resolved = registry.resolve_label_spec(legal)
+    validate_builtin_label_spec_contract(legal, resolved.registration)  # passes
+
+    bad = label_spec(
+        "fr_align", REF_FORWARD_RETURN, ("close",), "float64",
+        horizon=2, start_offset=1, end_offset=1, alignment="ALIGN_OPEN",
+    )
+    resolved_bad = registry.resolve_label_spec(bad)
+    with pytest.raises(LabelContractError):
+        validate_builtin_label_spec_contract(bad, resolved_bad.registration)
+    # The executor surfaces the same violation as its own public error type
+    # with the shared contract message preserved.
+    pit = hand_result([], [])
+    with pytest.raises(LabelExecutionError) as exc_info:
+        execute_builtin_labels([], pit, [bad])
+    assert "alignment_rule must be exactly" in str(exc_info.value)
+
+
 # ---------------------------------------------------------------------------
 # O. Anchor-missing must not skip Label-row validation.
 # ---------------------------------------------------------------------------

@@ -42,6 +42,12 @@ from .execution_provenance import (
     reconcile_canonical_rows,
     verify_pit_pin_binding,
 )
+from .label_contract import (
+    EXCURSION_SHAPE_REFS,
+    FORWARD_SHAPE_REFS,
+    LabelContractError,
+    validate_builtin_label_spec_contract,
+)
 from .label_models import (
     LABEL_ALIGNMENT_FEATURE_CLOSE_ALIGNED,
     LABEL_EXECUTION_CONTRACT_VERSION,
@@ -72,28 +78,10 @@ __all__ = ["execute_builtin_labels"]
 #: The Canonical market float fields a built-in Label may consume.
 _CANONICAL_INPUT_FIELDS = ("open", "high", "low", "close", "volume")
 
-#: Exact transform_ref values of the four built-in Label transforms; the
-#: executor uses them for the fixed observation-window shapes and the
-#: forward_direction output range check.
-_REF_FORWARD_RETURN = (
-    "market_vault.dataset.label_transforms.forward_return:forward_return"
-)
-_REF_FORWARD_DIRECTION = (
-    "market_vault.dataset.label_transforms.forward_direction:forward_direction"
-)
-_REF_MAXIMUM_FAVORABLE_EXCURSION = (
-    "market_vault.dataset.label_transforms."
-    "maximum_favorable_excursion:maximum_favorable_excursion"
-)
-_REF_MAXIMUM_ADVERSE_EXCURSION = (
-    "market_vault.dataset.label_transforms."
-    "maximum_adverse_excursion:maximum_adverse_excursion"
-)
-_FORWARD_SHAPE_REFS = (_REF_FORWARD_RETURN, _REF_FORWARD_DIRECTION)
-_EXCURSION_SHAPE_REFS = (
-    _REF_MAXIMUM_FAVORABLE_EXCURSION,
-    _REF_MAXIMUM_ADVERSE_EXCURSION,
-)
+#: The forward-direction transform_ref used by the output range check; the
+#: fixed shape groups themselves come from the shared label contract
+#: module, which is the single authority.
+_REF_FORWARD_DIRECTION = FORWARD_SHAPE_REFS[1]
 
 _INT64_MIN = -(2**63)
 _INT64_MAX = 2**63 - 1
@@ -445,63 +433,21 @@ def _validate_builtin_label_spec_contract(
     spec: LabelSpec,
     registration: TransformRegistration,
 ) -> None:
-    """Full built-in Label spec configuration contract of this PR.
+    """The shared built-in Label configuration contract of this catalog.
 
-    This preflight runs for every (spec, resolved) pair after Registry
-    resolution and **before any sample is processed** (and therefore also
-    for an empty PIT sample set). A violation is a configuration-contract
-    error and fails closed — it is never marked INCOMPLETE and never
-    silently normalized:
-
-    1. ``alignment_rule`` must be exactly
-       :data:`LABEL_ALIGNMENT_FEATURE_CLOSE_ALIGNED`; any other value is
-       rejected (never converted);
-    2. ``observation_window.end_offset == horizon.value - 1``;
-    3. the forward transforms additionally require
-       ``start_offset == end_offset`` (only the horizon target row is
-       required);
-    4. the excursion transforms require ``start_offset == 0`` (the full
-       window from the first future bar);
-    5. ``transform_ref`` must belong to the fixed built-in catalog.
+    This is a thin wrapper over the single shared authority
+    (:func:`market_vault.dataset.label_contract.validate_builtin_label_spec_contract`)
+    so the executor and the Sample Generator core can never drift into two
+    implementations. The contract runs for every (spec, resolved) pair
+    after Registry resolution and **before any sample is processed** (and
+    therefore also for an empty PIT sample set); a violation is converted
+    to :class:`LabelExecutionError` with the message preserved and the
+    ``__cause__`` chain intact.
     """
-    if spec.alignment_rule != LABEL_ALIGNMENT_FEATURE_CLOSE_ALIGNED:
-        raise LabelExecutionError(
-            f"label spec {spec.name!r} alignment_rule must be exactly "
-            f"{LABEL_ALIGNMENT_FEATURE_CLOSE_ALIGNED}, got "
-            f"{spec.alignment_rule!r}; no other alignment rule is executed "
-            "or silently normalized"
-        )
-    horizon = spec.horizon.value
-    window = spec.observation_window
-    if window.end_offset != horizon - 1:
-        raise LabelExecutionError(
-            f"label spec {spec.name!r} observation_window.end_offset "
-            f"{window.end_offset} must equal horizon.value - 1 ({horizon - 1}) "
-            "for every built-in Label transform"
-        )
-    if registration.transform_ref in _FORWARD_SHAPE_REFS:
-        if window.start_offset != horizon - 1:
-            raise LabelExecutionError(
-                f"label spec {spec.name!r} observation_window.start_offset "
-                f"{window.start_offset} must equal horizon.value - 1 "
-                f"({horizon - 1}) for the forward transform "
-                f"{registration.transform_ref!r}: only the horizon target row "
-                "is required"
-            )
-        return
-    if registration.transform_ref in _EXCURSION_SHAPE_REFS:
-        if window.start_offset != 0:
-            raise LabelExecutionError(
-                f"label spec {spec.name!r} observation_window.start_offset "
-                f"{window.start_offset} must be 0 for the excursion transform "
-                f"{registration.transform_ref!r}: every future bar from "
-                "offset 0 to the horizon target is required"
-            )
-        return
-    raise LabelExecutionError(
-        f"registration {registration.transform_ref!r} is not a supported "
-        "built-in Label transform of this catalog"
-    )
+    try:
+        validate_builtin_label_spec_contract(spec, registration)
+    except LabelContractError as exc:
+        raise LabelExecutionError(str(exc)) from exc
 
 
 def _safe_bar_time(
@@ -762,7 +708,7 @@ def _execute_label_value(
             consumed_rows=(),
         )
 
-    if registration.transform_ref in _FORWARD_SHAPE_REFS:
+    if registration.transform_ref in FORWARD_SHAPE_REFS:
         outcome = _select_forward_target(sample, spec, interval, future_rows)
     else:
         outcome = _select_excursion_window(sample, spec, interval, future_rows)

@@ -24,11 +24,13 @@ The pipeline is pure and fail-closed:
    :class:`PITSampleRequest` construction;
 7. the canonical stable request order with duplicate rejection.
 
-Path semantics: absolute plan paths are used as-is; relative plan paths are
-lexically joined to the explicit ``path_base`` (never the current working
-directory). ``path_base`` has no implicit default. ``resolve()`` is never
-called, no directory is scanned, no ``latest`` is selected, and ``~``,
-environment variables, and wildcard patterns are never expanded.
+Path semantics: ``path_base`` must be an explicit absolute path (an empty
+or relative ``path_base``, including ``"."``, fails; the current working
+directory never participates in input location). Absolute plan paths are
+used as-is; relative plan paths are lexically joined to the absolute
+``path_base``. ``path_base`` has no implicit default. ``resolve()`` is
+never called, no directory is scanned, no ``latest`` is selected, and
+``~``, environment variables, and wildcard patterns are never expanded.
 ``path_base`` and every path never enter the Generation content identity.
 
 The generator defines request windows only: it never executes PIT
@@ -52,7 +54,16 @@ from ..canonical.reader import (
 )
 from ..intraday_audit import parse_intraday_interval
 from .encoding import DatasetError
+from .execution_provenance import (
+    ExecutionProvenanceError,
+    normalize_verified_builds,
+    reconcile_canonical_rows,
+)
 from .feature_registry import built_in_feature_registry
+from .label_contract import (
+    LabelContractError,
+    validate_builtin_label_spec_contract,
+)
 from .label_registry import built_in_label_registry
 from .models import CanonicalBuildPin, DatasetScope, SourceSnapshotPin
 from .pit_identity import pit_sample_key
@@ -111,8 +122,11 @@ _SPLIT_FIELDS = frozenset(
 _STRICT_ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 #: Documented failures converted to :class:`SampleGenerationError` at the
-#: core boundary. ``json.JSONDecodeError`` is a ``ValueError`` subclass and
-#: is listed explicitly for contract clarity; ``DatasetError`` (and
+#: core boundary. Only the formal public errors of each layer are listed —
+#: no broad ``ValueError`` / ``TypeError`` catch exists, so a programming
+#: error inside a formal loader can never be disguised as an input error.
+#: ``json.JSONDecodeError`` is a ``ValueError`` subclass and is listed
+#: explicitly for contract clarity; ``DatasetError`` (and
 #: ``SampleGenerationError``) pass through their own path. Broad ``except
 #: Exception`` is never used.
 _DOCUMENTED_ERRORS = (
@@ -120,8 +134,8 @@ _DOCUMENTED_ERRORS = (
     SpecValidationError,
     TransformRegistryError,
     SplitValidationError,
-    ValueError,
-    TypeError,
+    ExecutionProvenanceError,
+    LabelContractError,
     OSError,
     UnicodeError,
     json.JSONDecodeError,
@@ -152,19 +166,34 @@ def _as_generation_error(exc, context: str) -> None:
 
 
 def _coerce_path_base(path_base) -> Path:
+    """The explicit absolute base directory of every relative plan path.
+
+    Only ``str`` or ``Path`` is accepted; an empty string fails; a relative
+    ``path_base`` (including ``"."``) fails with
+    ``path_base must be an explicit absolute path``. ``resolve()`` is never
+    called, the current working directory is never used implicitly, and
+    nothing is completed, expanded, or normalized against the current
+    directory. The returned path is lexically absolute.
+    """
     if isinstance(path_base, Path):
-        return path_base
-    if isinstance(path_base, str):
-        return Path(path_base)
-    raise SampleGenerationError(
-        f"path_base must be a str or Path, got {type(path_base).__name__}"
-    )
+        value = path_base
+    elif isinstance(path_base, str):
+        value = Path(path_base)
+    else:
+        raise SampleGenerationError(
+            f"path_base must be a str or Path, got {type(path_base).__name__}"
+        )
+    if not value.is_absolute():
+        raise SampleGenerationError(
+            "path_base must be an explicit absolute path"
+        )
+    return value
 
 
 def _resolve_path(raw: str, base: Path, label: str) -> Path:
     """Absolute plan paths are used as-is; relative paths are lexically
-    joined to ``base``. ``resolve()`` is never called, links are never
-    followed, and nothing is expanded."""
+    joined to the absolute ``base``. ``resolve()`` is never called and
+    nothing is expanded; the loaders perform their own formal link checks."""
     path = Path(raw)
     if not path.is_absolute():
         path = base / path
@@ -386,13 +415,15 @@ def _preflight_feature_coverage(feature_specs, rule: SampleGenerationRule) -> in
 
 
 def _preflight_label_coverage(label_specs, rule: SampleGenerationRule) -> int:
-    """Every Label spec must use the BARS horizon / observation window with
-    no cross-trading-day opt-in; the maximum horizon must be covered by
-    ``label_window_bars``."""
+    """Every Label spec must pass the shared built-in Label configuration
+    contract (alignment rule, observation-window shape, fixed catalog) and
+    use the BARS horizon / observation window with no cross-trading-day
+    opt-in; the maximum horizon must be covered by ``label_window_bars``."""
     registry = built_in_label_registry()
     required = 0
     for spec in label_specs:
         resolved = registry.resolve_label_spec(spec)
+        validate_builtin_label_spec_contract(spec, resolved.registration)
         if spec.horizon.unit != "BARS":
             raise SampleGenerationError(
                 f"label spec {spec.name!r} uses unsupported horizon unit "
@@ -423,7 +454,50 @@ def _preflight_label_coverage(label_specs, rule: SampleGenerationRule) -> int:
 # ---------------------------------------------------------------------------
 
 
-def _in_scope_bars(builds, scope: DatasetScope) -> list:
+def _unique_canonical_rows(reconciled) -> tuple:
+    """The unique, conflict-free Canonical bar sequence (hardening).
+
+    Every reconciled row version is a distinct verified fact. The same
+    ``canonical_bar_key`` must not resolve to multiple row-version facts,
+    and the same logical event slot (code, market_calendar_date, session,
+    event_time, interval, adjustment, requested_session) must not retain
+    two different Canonical bars. A duplicate event time is therefore a
+    fail-closed conflict — never a segment boundary, never a silent
+    first/last pick, never a build-time or path-based winner.
+    """
+    bars = [resolved.bar for resolved in reconciled.values()]
+    by_key: dict = {}
+    for bar in bars:
+        existing = by_key.get(bar.canonical_bar_key)
+        if existing is not None and existing is not bar:
+            raise SampleGenerationError(
+                f"canonical_bar_key {bar.canonical_bar_key!r} resolves to "
+                "multiple canonical row-version facts; overlapping builds "
+                "conflict"
+            )
+        by_key[bar.canonical_bar_key] = bar
+    by_slot: dict = {}
+    for bar in bars:
+        slot = (
+            bar.code,
+            bar.market_calendar_date,
+            bar.session,
+            bar.event_time,
+            bar.interval,
+            bar.adjustment,
+            bar.requested_session,
+        )
+        existing = by_slot.get(slot)
+        if existing is not None and existing is not bar:
+            raise SampleGenerationError(
+                f"logical event slot {slot!r} retains two different "
+                "Canonical bars; overlapping builds conflict"
+            )
+        by_slot[slot] = bar
+    return tuple(bars)
+
+
+def _in_scope_bars(rows, scope: DatasetScope) -> list:
     """Bars matching the plan scope exactly (B8).
 
     Other bars are never candidates and never modified; a scope key with no
@@ -431,17 +505,16 @@ def _in_scope_bars(builds, scope: DatasetScope) -> list:
     record the key as MISSING).
     """
     bars = []
-    for build in builds:
-        for bar in build.bars:
-            if (
-                bar.code in scope.symbols
-                and bar.market_calendar_date is not None
-                and bar.market_calendar_date in scope.trade_dates
-                and bar.interval == scope.interval
-                and bar.adjustment == scope.adjustment
-                and bar.requested_session == scope.requested_session
-            ):
-                bars.append(bar)
+    for bar in rows:
+        if (
+            bar.code in scope.symbols
+            and bar.market_calendar_date is not None
+            and bar.market_calendar_date in scope.trade_dates
+            and bar.interval == scope.interval
+            and bar.adjustment == scope.adjustment
+            and bar.requested_session == scope.requested_session
+        ):
+            bars.append(bar)
     return bars
 
 
@@ -558,6 +631,11 @@ def _build_request(
             label_window_start=label_window_start,
             label_window_close=label_window_close,
         )
+    except SampleGenerationError:
+        # An explicitly raised generation error (for example the PIT model
+        # conversion) passes through unwrapped; it is never re-wrapped as
+        # "window geometry arithmetic failed".
+        raise
     except (OverflowError, ValueError, TypeError, ZeroDivisionError) as exc:
         raise SampleGenerationError(
             f"window geometry arithmetic failed: {exc}"
@@ -657,7 +735,7 @@ def generate_sample_requests(
         )
     base = _coerce_path_base(path_base)
     try:
-        builds = tuple(
+        loaded_builds = tuple(
             load_verified_canonical_build(_resolve_path(raw, base, "canonical build dir"))
             for raw in plan.canonical_build_dirs
         )
@@ -674,16 +752,32 @@ def generate_sample_requests(
         )
     except SampleGenerationError:
         raise
-    except (DatasetError, ValueError, TypeError, OSError, UnicodeError, json.JSONDecodeError) as exc:
+    except _DOCUMENTED_ERRORS as exc:
         _as_generation_error(exc, "cannot load generation inputs")
 
-    # BARS window-coverage preflight over the resolved specs.
+    # Verified-build normalization and row-version reconciliation: builds
+    # are deterministically sorted by build id (input order never matters),
+    # duplicate build ids fail, identical overlapping rows merge, and
+    # conflicting rows fail closed. The segment input is the reconciled
+    # unique Canonical bar sequence, never the direct concatenation of all
+    # build bars — overlapping rows can therefore never be mistaken for
+    # gaps, never silently change a stride origin, and never silently drop
+    # generated samples.
+    try:
+        builds = normalize_verified_builds(loaded_builds)
+        reconciled = reconcile_canonical_rows(builds)
+        unique_rows = _unique_canonical_rows(reconciled)
+    except ExecutionProvenanceError as exc:
+        raise SampleGenerationError(str(exc)) from exc
+
+    # BARS window-coverage preflight over the resolved specs (including the
+    # shared built-in Label configuration contract).
     try:
         _preflight_feature_coverage(feature_specs, plan.generation_rule)
         _preflight_label_coverage(label_specs, plan.generation_rule)
     except SampleGenerationError:
         raise
-    except (TransformRegistryError, SpecValidationError, DatasetError, TypeError, ValueError) as exc:
+    except _DOCUMENTED_ERRORS as exc:
         _as_generation_error(exc, "window coverage preflight failed")
 
     # Generation identity from the verified normalized inputs (never from
@@ -699,15 +793,15 @@ def generate_sample_requests(
     )
     generation_content_id = sample_generation_content_id(identity_input)
 
-    # Deterministic bar filtering, segments, stride anchors, request
-    # generation.
+    # Deterministic bar filtering over the reconciled unique Canonical bar
+    # sequence, then segments, stride anchors, request generation.
     try:
         interval_delta = parse_intraday_interval(plan.scope.interval)
     except ValueError as exc:
         raise SampleGenerationError(
             f"cannot parse scope interval {plan.scope.interval!r}: {exc}"
         ) from exc
-    scope_bars = _in_scope_bars(builds, plan.scope)
+    scope_bars = _in_scope_bars(unique_rows, plan.scope)
     segments = _contiguous_segments(scope_bars, interval_delta)
     generated, candidate_anchors, insufficient_feature, insufficient_label = (
         _generate_requests(segments, plan.generation_rule, plan.scope, interval_delta)

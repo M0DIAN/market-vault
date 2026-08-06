@@ -304,6 +304,10 @@ SAMPLE_GENERATION_CORE_FACTS = (
     "no request is generated when the label future is insufficient",
     "never claims a sample is COMPLETE",
     "writes no file",
+    "explicit absolute path_base",
+    "Overlapping Canonical rows never become a segment boundary",
+    "Shared Label configuration contract",
+    "recomputes the Generation content ID",
 )
 # Contradictory claims that must never appear in the formal Sample
 # Generation contract document even when the required facts are present.

@@ -420,6 +420,42 @@ bar's event time plus one nominal interval, `label_window_start` equals
 re-verified at construction, so a gap can never silently move a window
 boundary and no window ever crosses a market-calendar date.
 
+**Path base.** The generator requires an explicit absolute path_base: an
+empty or relative `path_base` (including `"."`) fails, and the current
+working directory never participates in input location. Absolute plan
+paths are used as-is; relative plan paths are lexically joined to the
+absolute `path_base`; `resolve()` is never called and nothing is expanded.
+
+**Cross-build row reconciliation.** Loaded verified builds are normalized
+through the shared cross-build authority (deterministically sorted by
+`canonical_build_id`, duplicate build ids fail), and Canonical rows are
+reconciled across builds before any segment is constructed: identical row
+versions merge deterministically, conflicting rows fail closed, and the
+same `canonical_bar_key` or the same logical event slot (code,
+market-calendar date, session, event_time, interval, adjustment,
+requested_session) must never resolve to multiple different Canonical
+bars. Overlapping Canonical rows never become a segment boundary, never
+silently change a stride origin, and never silently drop requests; a
+duplicate event time is a fail-closed conflict, never a gap, never a
+silent first/last pick, and never a build-time or path-based winner.
+
+**Shared Label configuration contract.** Every Label spec must pass the
+single shared built-in Label configuration contract (alignment rule
+`FEATURE_CLOSE_ALIGNED`, `observation_window.end_offset ==
+horizon.value - 1`, forward shape `start_offset == end_offset`, excursion
+shape `start_offset == 0`, fixed built-in transform catalog) — the exact
+contract the Label executor enforces — before any request is generated, so
+the generator can never emit a request the formal executor would reject.
+
+**Self-validating result.** `SampleGenerationResult` re-derives its
+identity input from its carried fields through the formal
+`SampleGenerationIdentityInput` (pins, scope, rule, `dataset_as_of`) and
+recomputes the Generation content ID; a format-valid but
+content-mismatching ID fails closed. Every request must bind to the scope
+(symbols, trade dates, interval, adjustment, requested_session) and its
+feature and label spans must equal the rule's window sizes times the
+nominal interval.
+
 **Output.** The core output is the frozen `SampleGenerationResult` only:
 requests, verified pins, scope, rule, `dataset_as_of`, and deterministic
 diagnostics. The core never executes PIT assembly, never computes Feature

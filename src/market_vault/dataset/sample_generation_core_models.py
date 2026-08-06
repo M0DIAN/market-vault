@@ -28,12 +28,15 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 
+from ..intraday_audit import parse_intraday_interval
 from .encoding import DatasetError, normalize_utc_datetime
 from .models import CanonicalBuildPin, DatasetScope, SpecPin
 from .pit_identity import pit_sample_key
 from .pit_models import PITSampleRequest
+from .sample_generation import sample_generation_content_id
 from .sample_generation_models import (
     SampleGenerationError,
+    SampleGenerationIdentityInput,
     SampleGenerationRule,
 )
 
@@ -74,6 +77,82 @@ def _require_instance(value, cls: type, label: str):
             f"{label} must be a {cls.__name__}, got {type(value).__name__}"
         )
     return value
+
+
+def _validate_request_bindings(
+    requests: tuple,
+    scope: DatasetScope,
+    rule: SampleGenerationRule,
+) -> None:
+    """Every request must bind to the carried scope and rule exactly.
+
+    Each request's code / anchor market-calendar date / interval /
+    adjustment / requested_session must equal the scope's dimensions;
+    ``label_window_start == feature_window_close``; and the feature and
+    label spans must equal the rule's window sizes times the nominal
+    interval. All arithmetic failures are converted to
+    :class:`SampleGenerationError`; programming errors are never swallowed.
+    """
+    try:
+        interval_delta = parse_intraday_interval(scope.interval)
+    except ValueError as exc:
+        raise SampleGenerationError(
+            f"cannot parse scope interval {scope.interval!r}: {exc}"
+        ) from exc
+    for request in requests:
+        if request.code not in scope.symbols:
+            raise SampleGenerationError(
+                f"request code {request.code!r} is not in the scope symbols"
+            )
+        if request.anchor_market_calendar_date not in scope.trade_dates:
+            raise SampleGenerationError(
+                "request anchor_market_calendar_date "
+                f"{request.anchor_market_calendar_date} is not in the scope "
+                "trade dates"
+            )
+        if request.interval != scope.interval:
+            raise SampleGenerationError(
+                f"request interval {request.interval!r} does not match the "
+                f"scope interval {scope.interval!r}"
+            )
+        if request.adjustment != scope.adjustment:
+            raise SampleGenerationError(
+                f"request adjustment {request.adjustment!r} does not match "
+                f"the scope adjustment {scope.adjustment!r}"
+            )
+        if request.requested_session != scope.requested_session:
+            raise SampleGenerationError(
+                f"request requested_session {request.requested_session!r} "
+                "does not match the scope requested_session "
+                f"{scope.requested_session!r}"
+            )
+        if request.label_window_start != request.feature_window_close:
+            raise SampleGenerationError(
+                "request label_window_start must equal feature_window_close"
+            )
+        try:
+            feature_span = (
+                request.feature_window_close - request.feature_window_start
+            )
+            label_span = request.label_window_close - request.label_window_start
+        except (OverflowError, ValueError, TypeError) as exc:
+            raise SampleGenerationError(
+                f"request window arithmetic failed: {exc}"
+            ) from exc
+        expected_feature_span = rule.feature_window_bars * interval_delta
+        expected_label_span = rule.label_window_bars * interval_delta
+        if feature_span != expected_feature_span:
+            raise SampleGenerationError(
+                f"request feature window span {feature_span} does not equal "
+                f"feature_window_bars ({rule.feature_window_bars}) times the "
+                f"nominal interval ({interval_delta})"
+            )
+        if label_span != expected_label_span:
+            raise SampleGenerationError(
+                f"request label window span {label_span} does not equal "
+                f"label_window_bars ({rule.label_window_bars}) times the "
+                f"nominal interval ({interval_delta})"
+            )
 
 
 def _request_sort_key(request: PITSampleRequest):
@@ -180,11 +259,43 @@ class SampleGenerationResult:
                 f"unsupported generator_core_version {self.generator_core_version!r}; "
                 f"only {SAMPLE_GENERATOR_CORE_VERSION} is accepted"
             )
-        object.__setattr__(
-            self,
-            "generation_content_id",
-            _require_lower_sha256(self.generation_content_id, "generation_content_id"),
+        _require_lower_sha256(self.generation_content_id, "generation_content_id")
+
+        # Semantic self-validation through the formal identity input model:
+        # the pins, scope, rule, and dataset_as_of are normalized exactly as
+        # the generation identity normalizes them (sorting, duplicate and
+        # kind rejection, v1 scope policy, UTC microseconds).
+        identity_input = SampleGenerationIdentityInput(
+            canonical_build_pins=self.canonical_build_pins,
+            feature_spec_pins=self.feature_spec_pins,
+            label_spec_pins=self.label_spec_pins,
+            split_spec_pin=self.split_spec_pin,
+            scope=self.scope,
+            generation_rule=self.generation_rule,
+            dataset_as_of=self.dataset_as_of,
         )
+        object.__setattr__(
+            self, "canonical_build_pins", identity_input.canonical_build_pins
+        )
+        object.__setattr__(self, "feature_spec_pins", identity_input.feature_spec_pins)
+        object.__setattr__(self, "label_spec_pins", identity_input.label_spec_pins)
+        object.__setattr__(self, "split_spec_pin", identity_input.split_spec_pin)
+        object.__setattr__(self, "scope", identity_input.scope)
+        object.__setattr__(self, "generation_rule", identity_input.generation_rule)
+        object.__setattr__(self, "dataset_as_of", identity_input.dataset_as_of)
+
+        # The Generation content ID is recomputed from the carried identity
+        # fields; a format-valid but content-mismatching ID fails closed.
+        expected_id = sample_generation_content_id(identity_input)
+        if self.generation_content_id != expected_id:
+            raise SampleGenerationError(
+                "generation_content_id does not match the carried identity "
+                "fields"
+            )
+
+        # Request validation: types, complete label windows, the canonical
+        # stable order, duplicate sample keys, scope binding, and exact rule
+        # window geometry.
         requests = tuple(self.requests)
         for request in requests:
             if not isinstance(request, PITSampleRequest):
@@ -206,64 +317,26 @@ class SampleGenerationResult:
                 "requests must be in the canonical stable request order"
             )
         object.__setattr__(self, "requests", ordered)
-        if not isinstance(self.canonical_build_pins, tuple):
-            raise SampleGenerationError(
-                "canonical_build_pins must be a tuple of CanonicalBuildPin"
-            )
-        for pin in self.canonical_build_pins:
-            if not isinstance(pin, CanonicalBuildPin):
-                raise SampleGenerationError(
-                    f"canonical_build_pins must contain CanonicalBuildPin "
-                    f"instances, got {type(pin).__name__}"
-                )
-        object.__setattr__(
-            self,
-            "canonical_build_pins",
-            tuple(
-                sorted(self.canonical_build_pins, key=lambda pin: pin.canonical_build_id)
-            ),
+        _validate_request_bindings(
+            requests, self.scope, self.generation_rule
         )
-        object.__setattr__(self, "feature_spec_pins", tuple(self.feature_spec_pins))
-        for pin in self.feature_spec_pins:
-            if not isinstance(pin, SpecPin) or pin.kind != "FEATURE":
-                raise SampleGenerationError(
-                    f"feature_spec_pins must contain FEATURE SpecPin instances, "
-                    f"got {pin!r}"
-                )
-        object.__setattr__(self, "label_spec_pins", tuple(self.label_spec_pins))
-        for pin in self.label_spec_pins:
-            if not isinstance(pin, SpecPin) or pin.kind != "LABEL":
-                raise SampleGenerationError(
-                    f"label_spec_pins must contain LABEL SpecPin instances, "
-                    f"got {pin!r}"
-                )
-        split_pin = self.split_spec_pin
-        if not isinstance(split_pin, SpecPin) or split_pin.kind != "SPLIT":
-            raise SampleGenerationError(
-                f"split_spec_pin must be a SPLIT SpecPin, got {split_pin!r}"
-            )
-        object.__setattr__(self, "split_spec_pin", split_pin)
-        _require_instance(self.scope, DatasetScope, "scope")
-        if self.scope.adjustment != "NONE":
-            raise SampleGenerationError(
-                f"scope must use adjustment == NONE, got {self.scope.adjustment!r}"
-            )
-        _require_instance(self.generation_rule, SampleGenerationRule, "generation_rule")
-        if self.dataset_as_of is not None:
-            try:
-                object.__setattr__(
-                    self,
-                    "dataset_as_of",
-                    normalize_utc_datetime(self.dataset_as_of, "dataset_as_of"),
-                )
-            except DatasetError as exc:
-                raise SampleGenerationError(str(exc)) from exc
+
         if not isinstance(self.diagnostics, SampleGenerationDiagnostics):
             raise SampleGenerationError(
                 f"diagnostics must be a SampleGenerationDiagnostics, "
                 f"got {type(self.diagnostics).__name__}"
             )
-        if self.diagnostics.generated_request_count != len(self.requests):
+        # Verifiable model-internal diagnostics bindings. Bar / segment
+        # counts that cannot be re-derived from the result fields alone are
+        # never fabricated.
+        if self.diagnostics.canonical_build_count != len(
+            identity_input.canonical_build_pins
+        ):
+            raise SampleGenerationError(
+                "diagnostics.canonical_build_count must equal "
+                "len(canonical_build_pins)"
+            )
+        if self.diagnostics.generated_request_count != len(requests):
             raise SampleGenerationError(
                 "diagnostics.generated_request_count must equal len(requests)"
             )

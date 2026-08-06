@@ -58,7 +58,7 @@ BUILT_AT = datetime(2026, 8, 5, 1, 0, tzinfo=UTC)
 
 #: Frozen Generation content ID of the standard fixture (computed once and
 #: fixed; see test_identity_frozen_fixture).
-FIXTURE_GENERATION_ID = "1ccc7266e9f548db3e5c67098c5ad758c4ef965d71e7d8c5fc9579922dc1bf4a"
+FIXTURE_GENERATION_ID = "f70e0c89793a1ccfb51d8a16720a8446a74989415ad7c491608d19e2dd759fb3"
 
 
 @pytest.fixture(autouse=True)
@@ -324,12 +324,28 @@ def label_spec_yaml(
     unit: str = "BARS",
     cross_day: bool = False,
     output_type: str = "float64",
+    shape: str = "forward",
+    alignment_rule: str = "FEATURE_CLOSE_ALIGNED",
+    inputs: tuple = ("close",),
 ) -> str:
+    """One Label spec document in the formal built-in executable shape:
+    ``FEATURE_CLOSE_ALIGNED`` alignment, observation window ``[horizon-1,
+    horizon-1]`` for the forward transforms and ``[0, horizon-1]`` for the
+    excursion transforms, and ``cross_trading_day.allow: false`` by
+    default."""
+    if shape == "forward":
+        start_offset = horizon - 1
+    elif shape == "excursion":
+        start_offset = 0
+    else:
+        raise ValueError(f"unknown label shape {shape!r}")
+    end_offset = horizon - 1
     boundary = (
         "  allow: true\n  boundary_rule: END_OF_TRADING_DAY"
         if cross_day
         else "  allow: false\n  boundary_rule: null"
     )
+    inputs_yaml = "\n".join(f"    - {field}" for field in inputs)
     return f"""\
 spec_schema_version: market-vault-label-spec-v1
 kind: LABEL
@@ -341,7 +357,7 @@ output:
   nullable: false
 inputs:
   canonical_fields:
-    - close
+{inputs_yaml}
 transform:
   ref: market_vault.dataset.label_transforms.{name}:{name}
 parameters: {{}}
@@ -352,12 +368,12 @@ requirements:
     - "{SOURCE_SCHEMA_VERSION}"
 observation_window:
   unit: {unit}
-  start_offset: 0
-  end_offset: {horizon}
+  start_offset: {start_offset}
+  end_offset: {end_offset}
 horizon:
   unit: {unit}
   value: {horizon}
-alignment_rule: ALIGN_CLOSE
+alignment_rule: {alignment_rule}
 missing_data_policy: INCOMPLETE
 cross_trading_day:
 {boundary}
@@ -477,8 +493,10 @@ def make_plan(
 @pytest.fixture()
 def std_fixture(tmp_path):
     """The standard fixture: one 10-bar build, one Feature spec
-    (window_bars=2), one Label spec (horizon=5), one split spec; the plan
-    uses feature_window_bars=3, label_window_bars=2, stride_bars=2."""
+    (window_bars=2), one Label spec in the formal executable shape
+    (horizon=2, FEATURE_CLOSE_ALIGNED, observation window [1, 1]), one
+    split spec; the plan uses feature_window_bars=3, label_window_bars=2,
+    stride_bars=2."""
     build = make_build(tmp_path, count=10)
     feature_paths, label_paths, split_path = write_fixture_files(tmp_path)
     plan = make_plan(
@@ -1322,22 +1340,50 @@ def test_identity_output_plan_path_change_does_not_change(std_fixture, tmp_path)
     assert other.generation_content_id == base.generation_content_id
 
 
-def test_identity_path_base_change_does_not_change(tmp_path):
-    """Relocating the whole fixture tree (path_base) with identical content
-    never changes the identity."""
-    build = make_build(tmp_path, count=10)
-    feature_paths, label_paths, split_path = write_fixture_files(tmp_path)
+def test_identity_real_input_order_invariance(tmp_path):
+    """Two different builds, two Feature specs, and two Label specs in
+    reversed input orders produce identical results."""
+    build_a = make_build(tmp_path, code="US.MU", count=10, run_id="run-a")
+    build_b = make_build(
+        tmp_path, code="US.NVDA", count=6, run_id="run-b", cfg=settings(tmp_path)
+    )
+    spec_dir = tmp_path / "specs"
+    spec_dir.mkdir(parents=True, exist_ok=True)
+    rolling = spec_dir / "rolling_mean.yaml"
+    rolling.write_text(
+        feature_spec_yaml(name="rolling_mean", window_bars=2),
+        encoding="utf-8",
+    )
+    direction = spec_dir / "forward_direction.yaml"
+    direction.write_text(
+        label_spec_yaml(
+            name="forward_direction", horizon=2, output_type="int64"
+        ),
+        encoding="utf-8",
+    )
+    base_feature, base_label, split_path = write_fixture_files(tmp_path)
+    feature_paths = (str(rolling),) + base_feature
+    label_paths = (str(direction),) + base_label
     plan_a = make_plan(
-        build_paths=(str(build.build_path),),
+        build_paths=(str(build_a.build_path), str(build_b.build_path)),
         feature_paths=feature_paths,
         label_paths=label_paths,
         split_path=split_path,
+        symbols=("US.MU", "US.NVDA"),
+    )
+    plan_b = make_plan(
+        build_paths=(str(build_b.build_path), str(build_a.build_path)),
+        feature_paths=tuple(reversed(feature_paths)),
+        label_paths=tuple(reversed(label_paths)),
+        split_path=split_path,
+        symbols=("US.NVDA", "US.MU"),
     )
     result_a = generate_sample_requests(plan_a, path_base=tmp_path)
-    # The same absolute paths with a different path_base still resolve to
-    # the same files, so the identity is unchanged.
-    result_b = generate_sample_requests(plan_a, path_base=Path(tmp_path) / "..")
+    result_b = generate_sample_requests(plan_b, path_base=tmp_path)
+    assert result_a == result_b
+    assert result_a.requests == result_b.requests
     assert result_a.generation_content_id == result_b.generation_content_id
+    assert result_a.diagnostics == result_b.diagnostics
 
 
 def test_identity_dataset_as_of_semantic_change_changes(std_fixture, tmp_path):
@@ -1374,13 +1420,131 @@ def test_identity_rule_change_changes(std_fixture, tmp_path):
     assert other.generation_content_id != base.generation_content_id
 
 
-def test_identity_spec_content_change_changes(std_fixture, tmp_path):
-    base = generate_sample_requests(std_fixture["plan"], path_base=tmp_path)
-    build = make_build(tmp_path, count=10, run_id="run-other")
-    other = _recompute_with(
-        std_fixture, tmp_path, build_paths=(str(build.build_path),)
+def _plan_with_specs(
+    tmp_path, *, build_paths, feature_paths, label_paths, split_path, **plan_changes
+):
+    return make_plan(
+        build_paths=build_paths,
+        feature_paths=feature_paths,
+        label_paths=label_paths,
+        split_path=split_path,
+        **plan_changes,
     )
+
+
+def test_identity_feature_spec_semantic_change_changes(std_fixture, tmp_path):
+    base = generate_sample_requests(std_fixture["plan"], path_base=tmp_path)
+    spec_dir = tmp_path / "specs"
+    spec_dir.mkdir(parents=True, exist_ok=True)
+    changed = spec_dir / "simple_return_changed.yaml"
+    changed.write_text(
+        feature_spec_yaml(name="simple_return", window_bars=3),
+        encoding="utf-8",
+    )
+    plan = _plan_with_specs(
+        tmp_path,
+        build_paths=(str(std_fixture["build"].build_path),),
+        feature_paths=(str(changed),),
+        label_paths=std_fixture["label_paths"],
+        split_path=std_fixture["split_path"],
+    )
+    other = generate_sample_requests(plan, path_base=tmp_path)
     assert other.generation_content_id != base.generation_content_id
+
+
+def test_identity_label_spec_semantic_change_changes(std_fixture, tmp_path):
+    base = generate_sample_requests(std_fixture["plan"], path_base=tmp_path)
+    spec_dir = tmp_path / "specs"
+    spec_dir.mkdir(parents=True, exist_ok=True)
+    changed = spec_dir / "forward_return_changed.yaml"
+    changed.write_text(
+        label_spec_yaml(name="forward_return", horizon=3),
+        encoding="utf-8",
+    )
+    plan = _plan_with_specs(
+        tmp_path,
+        build_paths=(str(std_fixture["build"].build_path),),
+        feature_paths=std_fixture["feature_paths"],
+        label_paths=(str(changed),),
+        split_path=std_fixture["split_path"],
+        label_window_bars=3,
+    )
+    other = generate_sample_requests(plan, path_base=tmp_path)
+    assert other.generation_content_id != base.generation_content_id
+
+
+def test_identity_split_spec_semantic_change_changes(std_fixture, tmp_path):
+    base = generate_sample_requests(std_fixture["plan"], path_base=tmp_path)
+    spec_dir = tmp_path / "specs"
+    spec_dir.mkdir(parents=True, exist_ok=True)
+    changed = spec_dir / "chronological_split_changed.json"
+    payload = json.loads(split_spec_json())
+    payload["train_end_date"] = "2026-07-01"
+    changed.write_text(json.dumps(payload), encoding="utf-8")
+    plan = _plan_with_specs(
+        tmp_path,
+        build_paths=(str(std_fixture["build"].build_path),),
+        feature_paths=std_fixture["feature_paths"],
+        label_paths=std_fixture["label_paths"],
+        split_path=str(changed),
+    )
+    other = generate_sample_requests(plan, path_base=tmp_path)
+    assert other.generation_content_id != base.generation_content_id
+
+
+def test_identity_spec_path_change_same_semantics_does_not_change(
+    std_fixture, tmp_path
+):
+    """Relocating a spec file (same semantics) never changes the ID."""
+    base = generate_sample_requests(std_fixture["plan"], path_base=tmp_path)
+    relocated_dir = tmp_path / "relocated_specs"
+    relocated_dir.mkdir(parents=True, exist_ok=True)
+    relocated = []
+    for path in std_fixture["feature_paths"] + std_fixture["label_paths"]:
+        target = relocated_dir / Path(path).name
+        target.write_text(Path(path).read_text(encoding="utf-8"), encoding="utf-8")
+        relocated.append(str(target))
+    split_target = relocated_dir / "split.json"
+    split_target.write_text(
+        Path(std_fixture["split_path"]).read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    plan = _plan_with_specs(
+        tmp_path,
+        build_paths=(str(std_fixture["build"].build_path),),
+        feature_paths=tuple(relocated[:1]),
+        label_paths=tuple(relocated[1:2]),
+        split_path=str(split_target),
+    )
+    other = generate_sample_requests(plan, path_base=tmp_path)
+    assert other.generation_content_id == base.generation_content_id
+
+
+def test_identity_real_path_relocation(tmp_path):
+    """Two different absolute roots with semantically identical fixtures
+    (relative plan paths, different absolute path_base) produce identical
+    results."""
+    root_a = tmp_path / "root-a"
+    root_b = tmp_path / "root-b"
+    results = []
+    for root in (root_a, root_b):
+        build = make_build(root, count=10, run_id="run-a")
+        feature_paths, label_paths, split_path = write_fixture_files(root)
+        plan = make_plan(
+            build_paths=(str(build.build_path.relative_to(root)),),
+            feature_paths=tuple(
+                str(Path(path).relative_to(root)) for path in feature_paths
+            ),
+            label_paths=tuple(
+                str(Path(path).relative_to(root)) for path in label_paths
+            ),
+            split_path=str(Path(split_path).relative_to(root)),
+        )
+        results.append(generate_sample_requests(plan, path_base=root))
+    first, second = results
+    assert second.generation_content_id == first.generation_content_id
+    assert second.requests == first.requests
+    assert second.diagnostics == first.diagnostics
+    assert second == first
 
 
 def test_identity_canonical_build_change_changes(tmp_path):
@@ -1581,3 +1745,468 @@ def test_shuffled_input_orders_give_identical_results(tmp_path):
     result_a = generate_sample_requests(plan_a, path_base=tmp_path)
     result_b = generate_sample_requests(plan_b, path_base=tmp_path)
     assert result_a == result_b
+
+
+# ---------------------------------------------------------------------------
+# Independent-review hardening: absolute path_base.
+# ---------------------------------------------------------------------------
+
+
+def test_path_base_empty_string_fails(std_fixture):
+    with pytest.raises(SampleGenerationError):
+        generate_sample_requests(std_fixture["plan"], path_base="")
+
+
+def test_path_base_dot_fails(std_fixture):
+    with pytest.raises(SampleGenerationError):
+        generate_sample_requests(std_fixture["plan"], path_base=".")
+
+
+def test_path_base_relative_path_fails(std_fixture):
+    with pytest.raises(SampleGenerationError):
+        generate_sample_requests(std_fixture["plan"], path_base=Path("relative"))
+
+
+def test_path_base_none_fails(std_fixture):
+    with pytest.raises(SampleGenerationError):
+        generate_sample_requests(std_fixture["plan"], path_base=None)  # type: ignore[arg-type]
+
+
+def test_path_base_absolute_succeeds(std_fixture, tmp_path):
+    result = generate_sample_requests(std_fixture["plan"], path_base=tmp_path)
+    assert result.requests
+
+
+def test_path_base_cwd_independent(std_fixture, monkeypatch):
+    """Changing the process working directory never changes the result of
+    the same absolute path_base."""
+    import os
+
+    from market_vault.dataset import sample_generation_core as core
+
+    original = os.getcwd()
+    try:
+        first = generate_sample_requests(
+            std_fixture["plan"], path_base=std_fixture["tmp_path"]
+        )
+        os.chdir(std_fixture["tmp_path"])
+        second = generate_sample_requests(
+            std_fixture["plan"], path_base=std_fixture["tmp_path"]
+        )
+    finally:
+        os.chdir(original)
+    assert second == first
+
+
+def test_path_base_never_uses_cwd_or_resolve(std_fixture):
+    # ``Path.cwd`` and ``resolve`` are not monkeypatched (pytest's own
+    # traceback rendering relies on cwd, and the verified Canonical reader
+    # legitimately resolves internally); the generator core's own path
+    # handling statically contains neither call.
+    core_source = (
+        ROOT / "src" / "market_vault" / "dataset" / "sample_generation_core.py"
+    ).read_text(encoding="utf-8")
+    assert "Path.cwd" not in core_source
+    assert ".resolve(" not in core_source
+    result = generate_sample_requests(std_fixture["plan"], path_base=std_fixture["tmp_path"])
+    assert result.requests
+
+
+# ---------------------------------------------------------------------------
+# Independent-review hardening: Canonical overlap reconciliation.
+# ---------------------------------------------------------------------------
+
+
+def make_partial_overlap_builds(tmp_path):
+    """Two different build ids with partially overlapping rows of identical
+    content: the first build covers US.MU run-a bars 09:30-09:33; the
+    second build covers the same US.MU run-a bars (identical row versions)
+    plus US.NVDA run-b bars."""
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    write_snapshot(
+        cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
+        time_keys=minute_keys("2026-07-01 09:30:00", 4),
+    )
+    first = load_verified_canonical_build(
+        materialize(cfg, symbols=["US.MU"], trade_dates=[date(2026, 7, 1)]).build_path
+    )
+    write_snapshot(
+        cfg, code="US.NVDA", trade_date=date(2026, 7, 1), run_id="run-b",
+        time_keys=minute_keys("2026-07-01 09:30:00", 2),
+    )
+    second = load_verified_canonical_build(
+        materialize(
+            cfg,
+            symbols=["US.MU", "US.NVDA"],
+            trade_dates=[date(2026, 7, 1)],
+        ).build_path
+    )
+    return first, second
+
+
+def test_identical_overlap_reconciles_to_unique_rows(tmp_path):
+    """Partially overlapping builds with identical row content reconcile to
+    one unique bar sequence: the overlap is never interpreted as a gap,
+    never splits the segment, never changes the stride origin, and never
+    drops requests."""
+    first, second = make_partial_overlap_builds(tmp_path)
+    assert first.canonical_build_id != second.canonical_build_id
+    feature_paths, label_paths, split_path = write_fixture_files(tmp_path, horizon=1)
+    plan = make_plan(
+        build_paths=(str(first.build_path), str(second.build_path)),
+        feature_paths=feature_paths,
+        label_paths=label_paths,
+        split_path=split_path,
+        feature_window_bars=2,
+        label_window_bars=1,
+        stride_bars=1,
+    )
+    result = generate_sample_requests(plan, path_base=tmp_path)
+    # The US.MU rows are identical row versions across both builds and
+    # reconcile to one unique 4-bar sequence: the overlap is never
+    # interpreted as a gap, never splits the segment, and never drops
+    # requests.
+    assert result.diagnostics.canonical_bar_count == 10
+    assert result.diagnostics.in_scope_bar_count == 4
+    assert result.diagnostics.contiguous_segment_count == 1
+    # Anchors 09:31 and 09:32 (fwb=2, stride=1); 09:33 has no label bar.
+    assert result.diagnostics.generated_request_count == 2
+    # The first request window is anchored at 09:31 (stride origin intact).
+    assert result.requests[0].feature_window_close == utc(13, 32)
+
+
+def test_conflicting_overlap_same_key_fails(tmp_path):
+    """Two builds whose bars share canonical_bar_key values with different
+    row-version facts fail closed; a duplicate event time is never a
+    segment boundary."""
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    write_snapshot(
+        cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",
+        time_keys=minute_keys("2026-07-01 09:30:00", 4),
+    )
+    first = load_verified_canonical_build(
+        materialize(cfg, symbols=["US.MU"], trade_dates=[date(2026, 7, 1)]).build_path
+    )
+    write_snapshot(
+        cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a2",
+        time_keys=minute_keys("2026-07-01 09:30:00", 4),
+    )
+    second = load_verified_canonical_build(
+        materialize(cfg, symbols=["US.MU"], trade_dates=[date(2026, 7, 1)]).build_path
+    )
+    assert first.canonical_build_id != second.canonical_build_id
+    feature_paths, label_paths, split_path = write_fixture_files(tmp_path)
+    plan = make_plan(
+        build_paths=(str(first.build_path), str(second.build_path)),
+        feature_paths=feature_paths,
+        label_paths=label_paths,
+        split_path=split_path,
+    )
+    with pytest.raises(SampleGenerationError):
+        generate_sample_requests(plan, path_base=tmp_path)
+
+
+def test_overlap_build_input_order_reversed_identical(tmp_path):
+    first, second = make_partial_overlap_builds(tmp_path)
+    feature_paths, label_paths, split_path = write_fixture_files(tmp_path, horizon=1)
+    plan_a = make_plan(
+        build_paths=(str(first.build_path), str(second.build_path)),
+        feature_paths=feature_paths,
+        label_paths=label_paths,
+        split_path=split_path,
+        feature_window_bars=2,
+        label_window_bars=1,
+        stride_bars=1,
+    )
+    plan_b = make_plan(
+        build_paths=(str(second.build_path), str(first.build_path)),
+        feature_paths=feature_paths,
+        label_paths=label_paths,
+        split_path=split_path,
+        feature_window_bars=2,
+        label_window_bars=1,
+        stride_bars=1,
+    )
+    result_a = generate_sample_requests(plan_a, path_base=tmp_path)
+    result_b = generate_sample_requests(plan_b, path_base=tmp_path)
+    assert result_a == result_b
+    assert result_a.generation_content_id == result_b.generation_content_id
+
+
+# ---------------------------------------------------------------------------
+# Independent-review hardening: shared Label configuration contract.
+# ---------------------------------------------------------------------------
+
+
+def _write_spec_and_generate(tmp_path, spec_yaml, *, build_count=10, **plan_changes):
+    build = make_build(tmp_path, count=build_count)
+    spec_dir = tmp_path / "specs"
+    spec_dir.mkdir(parents=True, exist_ok=True)
+    label = spec_dir / "custom_label.yaml"
+    label.write_text(spec_yaml, encoding="utf-8")
+    feature_paths, _label_paths, split_path = write_fixture_files(tmp_path)
+    plan = make_plan(
+        build_paths=(str(build.build_path),),
+        feature_paths=feature_paths,
+        label_paths=(str(label),),
+        split_path=split_path,
+        **plan_changes,
+    )
+    return generate_sample_requests(plan, path_base=tmp_path)
+
+
+def test_label_bad_alignment_rule_fails(tmp_path):
+    with pytest.raises(SampleGenerationError):
+        _write_spec_and_generate(
+            tmp_path,
+            label_spec_yaml(alignment_rule="ALIGN_CLOSE"),
+        )
+
+
+def test_label_end_offset_equal_horizon_fails(tmp_path):
+    with pytest.raises(SampleGenerationError):
+        _write_spec_and_generate(
+            tmp_path,
+            label_spec_yaml(horizon=2).replace(
+                "  start_offset: 1\n  end_offset: 1",
+                "  start_offset: 1\n  end_offset: 2",
+            ),
+        )
+
+
+def test_label_forward_start_offset_wrong_fails(tmp_path):
+    with pytest.raises(SampleGenerationError):
+        _write_spec_and_generate(
+            tmp_path,
+            label_spec_yaml(horizon=2).replace(
+                "  start_offset: 1\n  end_offset: 1",
+                "  start_offset: 0\n  end_offset: 1",
+            ),
+        )
+
+
+def test_label_excursion_start_offset_wrong_fails(tmp_path):
+    with pytest.raises(SampleGenerationError):
+        _write_spec_and_generate(
+            tmp_path,
+            label_spec_yaml(
+                name="maximum_favorable_excursion",
+                horizon=2,
+                shape="excursion",
+            ).replace(
+                "  start_offset: 0\n  end_offset: 1",
+                "  start_offset: 1\n  end_offset: 1",
+            ),
+        )
+
+
+def test_legal_forward_return_succeeds(std_fixture):
+    result = generate_sample_requests(std_fixture["plan"], path_base=std_fixture["tmp_path"])
+    assert result.requests
+
+
+def test_legal_forward_direction_succeeds(tmp_path):
+    build = make_build(tmp_path, count=10)
+    spec_dir = tmp_path / "specs"
+    spec_dir.mkdir(parents=True, exist_ok=True)
+    direction = spec_dir / "forward_direction.yaml"
+    direction.write_text(
+        label_spec_yaml(
+            name="forward_direction", horizon=2, output_type="int64"
+        ),
+        encoding="utf-8",
+    )
+    feature_paths, _label_paths, split_path = write_fixture_files(tmp_path)
+    plan = make_plan(
+        build_paths=(str(build.build_path),),
+        feature_paths=feature_paths,
+        label_paths=(str(direction),),
+        split_path=split_path,
+    )
+    result = generate_sample_requests(plan, path_base=tmp_path)
+    assert result.requests
+
+
+def test_legal_excursion_specs_succeed(tmp_path):
+    for name in (
+        "maximum_favorable_excursion",
+        "maximum_adverse_excursion",
+    ):
+        spec_dir = tmp_path / "specs"
+        spec_dir.mkdir(parents=True, exist_ok=True)
+        excursion = spec_dir / f"{name}.yaml"
+        inputs = (
+            ("close", "high")
+            if name == "maximum_favorable_excursion"
+            else ("close", "low")
+        )
+        excursion.write_text(
+            label_spec_yaml(
+                name=name, horizon=2, shape="excursion", inputs=inputs
+            ),
+            encoding="utf-8",
+        )
+        build = make_build(tmp_path, count=10, run_id=f"run-{name}")
+        feature_paths, _label_paths, split_path = write_fixture_files(tmp_path)
+        plan = make_plan(
+            build_paths=(str(build.build_path),),
+            feature_paths=feature_paths,
+            label_paths=(str(excursion),),
+            split_path=split_path,
+        )
+        result = generate_sample_requests(plan, path_base=tmp_path)
+        assert result.requests
+
+
+# ---------------------------------------------------------------------------
+# Independent-review hardening: SampleGenerationResult semantic self-check.
+# ---------------------------------------------------------------------------
+
+
+def _tamper(std_fixture, tmp_path, **changes):
+    result = generate_sample_requests(std_fixture["plan"], path_base=tmp_path)
+    return dataclasses.replace(result, **changes)
+
+
+def test_result_rejects_replaced_generation_id(std_fixture, tmp_path):
+    with pytest.raises(SampleGenerationError):
+        _tamper(std_fixture, tmp_path, generation_content_id="0" * 64)
+
+
+def test_result_rejects_duplicate_canonical_pin(std_fixture, tmp_path):
+    result = generate_sample_requests(std_fixture["plan"], path_base=tmp_path)
+    pins = (result.canonical_build_pins[0],) * 2
+    with pytest.raises(SampleGenerationError):
+        _tamper(std_fixture, tmp_path, canonical_build_pins=pins)
+
+
+def test_result_normalizes_shuffled_canonical_pins(std_fixture, tmp_path):
+    """Shuffled canonical pins are deterministically normalized (the result
+    equals one built with the sorted pins)."""
+    result = generate_sample_requests(std_fixture["plan"], path_base=tmp_path)
+    if len(result.canonical_build_pins) > 1:
+        shuffled = tuple(reversed(result.canonical_build_pins))
+        assert (
+            dataclasses.replace(result, canonical_build_pins=shuffled)
+            == result
+        )
+
+
+def test_result_rejects_duplicate_feature_pin(std_fixture, tmp_path):
+    result = generate_sample_requests(std_fixture["plan"], path_base=tmp_path)
+    pins = (result.feature_spec_pins[0],) * 2
+    with pytest.raises(SampleGenerationError):
+        _tamper(std_fixture, tmp_path, feature_spec_pins=pins)
+
+
+def test_result_rejects_duplicate_label_pin(std_fixture, tmp_path):
+    result = generate_sample_requests(std_fixture["plan"], path_base=tmp_path)
+    pins = (result.label_spec_pins[0],) * 2
+    with pytest.raises(SampleGenerationError):
+        _tamper(std_fixture, tmp_path, label_spec_pins=pins)
+
+
+def test_result_rejects_request_symbol_outside_scope(std_fixture, tmp_path):
+    result = generate_sample_requests(std_fixture["plan"], path_base=tmp_path)
+    request = dataclasses.replace(result.requests[0], code="US.OTHER")
+    with pytest.raises(SampleGenerationError):
+        _tamper(std_fixture, tmp_path, requests=(request,))
+
+
+def test_result_rejects_request_date_outside_scope(std_fixture, tmp_path):
+    result = generate_sample_requests(std_fixture["plan"], path_base=tmp_path)
+    request = dataclasses.replace(
+        result.requests[0], anchor_market_calendar_date=date(2026, 7, 2)
+    )
+    with pytest.raises(SampleGenerationError):
+        _tamper(std_fixture, tmp_path, requests=(request,))
+
+
+def test_result_rejects_request_interval_mismatch(std_fixture, tmp_path):
+    result = generate_sample_requests(std_fixture["plan"], path_base=tmp_path)
+    request = dataclasses.replace(result.requests[0], interval="5m")
+    with pytest.raises(SampleGenerationError):
+        _tamper(std_fixture, tmp_path, requests=(request,))
+
+
+def test_result_rejects_feature_span_mismatch(std_fixture, tmp_path):
+    result = generate_sample_requests(std_fixture["plan"], path_base=tmp_path)
+    request = dataclasses.replace(
+        result.requests[0], feature_window_start=utc(13, 29)
+    )
+    with pytest.raises(SampleGenerationError):
+        _tamper(std_fixture, tmp_path, requests=(request,))
+
+
+def test_result_rejects_label_span_mismatch(std_fixture, tmp_path):
+    result = generate_sample_requests(std_fixture["plan"], path_base=tmp_path)
+    request = dataclasses.replace(
+        result.requests[0], label_window_close=utc(13, 36)
+    )
+    with pytest.raises(SampleGenerationError):
+        _tamper(std_fixture, tmp_path, requests=(request,))
+
+
+def test_result_rejects_build_count_mismatch(std_fixture, tmp_path):
+    result = generate_sample_requests(std_fixture["plan"], path_base=tmp_path)
+    with pytest.raises(SampleGenerationError):
+        _tamper(
+            std_fixture,
+            tmp_path,
+            diagnostics=SampleGenerationDiagnostics(
+                canonical_build_count=2,
+                canonical_bar_count=result.diagnostics.canonical_bar_count,
+                in_scope_bar_count=result.diagnostics.in_scope_bar_count,
+                contiguous_segment_count=result.diagnostics.contiguous_segment_count,
+                candidate_anchor_count=result.diagnostics.candidate_anchor_count,
+                generated_request_count=result.diagnostics.generated_request_count,
+                insufficient_feature_history_count=(
+                    result.diagnostics.insufficient_feature_history_count
+                ),
+                insufficient_label_future_count=(
+                    result.diagnostics.insufficient_label_future_count
+                ),
+            ),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Independent-review hardening: error boundaries.
+# ---------------------------------------------------------------------------
+
+
+def test_double_wrap_never_happens(std_fixture, monkeypatch, tmp_path):
+    """A SampleGenerationError raised inside request construction (for
+    example by the PIT model) is never re-wrapped as a window-geometry
+    arithmetic error."""
+    from market_vault.dataset import pit_models
+    from market_vault.dataset import sample_generation_core as core
+
+    real_constructor = pit_models.PITSampleRequest
+
+    def _raising_constructor(*args, **kwargs):
+        raise SampleGenerationError("PIT model rejected the request")
+
+    monkeypatch.setattr(core, "PITSampleRequest", _raising_constructor)
+    with pytest.raises(SampleGenerationError) as exc_info:
+        generate_sample_requests(std_fixture["plan"], path_base=tmp_path)
+    assert "window geometry arithmetic failed" not in str(exc_info.value)
+    assert "PIT model rejected the request" in str(exc_info.value)
+
+
+def test_programming_errors_pass_through_unaltered(std_fixture, monkeypatch, tmp_path):
+    """An unexpected AssertionError / RuntimeError / non-contractual
+    TypeError inside a formal loader is never disguised as an input
+    error."""
+    from market_vault.dataset import sample_generation_core as core
+
+    for error in (AssertionError("boom"), RuntimeError("boom"), TypeError("boom")):
+        monkeypatch.setattr(
+            core,
+            "load_feature_spec",
+            lambda path, error=error: (_ for _ in ()).throw(error),
+        )
+        with pytest.raises(type(error)):
+            generate_sample_requests(std_fixture["plan"], path_base=tmp_path)

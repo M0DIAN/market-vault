@@ -2030,3 +2030,87 @@ def test_release_checker_fails_when_contract_doc_claims_generation_id_enters_dat
     result = run_check_release(repo)
     assert result.returncode == 1
     assert "false claim 'Generation content ID enters dataset_id'" in result.stdout
+
+
+def test_release_checker_fails_when_path_base_absolute_declaration_removed(
+    tmp_path,
+):
+    # Mutation 18: deleting the explicit absolute path_base declaration must
+    # fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "contracts" / "sample_generation.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "explicit absolute path_base", "path_base"
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the core fact 'explicit absolute path_base'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_overlap_segment_declaration_removed(
+    tmp_path,
+):
+    # Mutation 19: deleting the overlapping-rows boundary declaration must
+    # fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "contracts" / "sample_generation.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "Overlapping Canonical rows never become a segment boundary",
+            "Overlapping Canonical rows may become a segment boundary",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the core fact 'Overlapping Canonical rows never "
+        "become a segment boundary'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_shared_label_contract_declaration_removed(
+    tmp_path,
+):
+    # Mutation 20: deleting the shared Label configuration contract
+    # declaration must fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "contracts" / "sample_generation.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "Shared Label configuration contract",
+            "Generator-local Label configuration",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the core fact 'Shared Label configuration contract'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_generation_id_recompute_declaration_removed(
+    tmp_path,
+):
+    # Mutation 21: deleting the Generation-ID recomputation declaration must
+    # fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "contracts" / "sample_generation.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "recomputes the Generation content ID",
+            "accepts the carried Generation content ID",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the core fact 'recomputes the Generation content ID'"
+    ) in result.stdout
