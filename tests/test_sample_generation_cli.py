@@ -1177,19 +1177,24 @@ def relative_fixture(tmp_path):
 def _relative_payload(relative_fixture, *, output_plan_path):
     """A generation plan whose copied paths are all relative to the fixture
     root (build dir under ``data/``, specs under ``specs/``, output_root
-    ``datasets``)."""
+    ``datasets``).
+
+    Every relative path is rendered in POSIX slash form (``as_posix()``) so
+    the copied path strings — and therefore the generated build-plan bytes —
+    are identical on every platform.
+    """
     root = relative_fixture.tmp_path
     return generation_plan_dict(
-        build_dirs=(str(relative_fixture.build.build_path.relative_to(root)),),
+        build_dirs=(relative_fixture.build.build_path.relative_to(root).as_posix(),),
         feature_paths=tuple(
-            str(Path(path).relative_to(root))
+            Path(path).relative_to(root).as_posix()
             for path in relative_fixture.feature_paths
         ),
         label_paths=tuple(
-            str(Path(path).relative_to(root))
+            Path(path).relative_to(root).as_posix()
             for path in relative_fixture.label_paths
         ),
-        split_path=str(Path(relative_fixture.split_path).relative_to(root)),
+        split_path=Path(relative_fixture.split_path).relative_to(root).as_posix(),
         output_root="datasets",
         output_plan_path=output_plan_path,
     )
@@ -2283,10 +2288,11 @@ def test_core_error_messages_unchanged_after_extraction(tmp_path):
 #: Frozen SHA-256 of the relative-path fixture's generated build-plan
 #: bytes, computed from the pre-hardening head ``5957d32``; the hardening
 #: must never change the normal output bytes. The relative fixture is used
-#: because its build-plan bytes contain no absolute path and are therefore
-#: identical on every machine and directory.
+#: because its build-plan bytes contain no absolute path and are rendered
+#: with POSIX separators, so they are identical on every machine, directory,
+#: and platform (verified on Windows and Linux CI).
 OLD_HEAD_RELATIVE_FIXTURE_PLAN_SHA256 = (
-    "ae2f7b45518f5db952a641b4bc01ce25dfdb15ba2165c542c0cff4d7075f41f9"
+    "78cd9e895ee966722c83db8d5388a49c635b8fd448fe8de796e2b56dcebf964b"
 )
 
 
