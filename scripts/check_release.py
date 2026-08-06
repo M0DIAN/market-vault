@@ -273,14 +273,15 @@ SAMPLE_GENERATION_VERSION_CONSTANTS = (
     "market-vault-sample-generation-content-v1",
 )
 # The formal v1 Sample Generation contract document must state the contract
-# foundation + generator-core status and the not-implemented boundaries.
+# foundation + generator-core + CLI status and the not-implemented
+# boundaries.
 SAMPLE_GENERATION_CONTRACT_V1_STATUS = (
-    "Status: Sample Generation contract foundation and generator core implemented; Sample Generation CLI not implemented",
+    "Status: Sample Generation contract, generator core, and CLI implemented",
     "Target release: v0.6.0",
     "Not available in released v0.5.1",
-    "CLI is not implemented",
     "PR-3",
     "PR-4",
+    "PR-5+",
 )
 # The v0.6.0 Sample Generator core production modules that must exist.
 SAMPLE_GENERATOR_CORE_MODULES = (
@@ -312,12 +313,84 @@ SAMPLE_GENERATION_CORE_FACTS = (
 # Contradictory claims that must never appear in the formal Sample
 # Generation contract document even when the required facts are present.
 SAMPLE_GENERATION_CORE_FALSE_CLAIMS = (
-    "Sample Generation CLI is implemented",
     "the generator writes the Dataset build plan",
     "gaps are skipped",
     "gaps are filled",
     "cross-day windows are allowed",
     "Generation content ID enters dataset_id",
+)
+# The v0.6.0 Sample Generation CLI production modules that must exist.
+SAMPLE_GENERATION_CLI_MODULES = (
+    "src/market_vault/dataset/sample_generation_cli.py",
+    "src/market_vault/dataset/sample_generation_cli_models.py",
+    "src/market_vault/dataset/sample_generation_output.py",
+    "src/market_vault/dataset/sample_generation_split.py",
+)
+# The exact CLI version constants the CLI models module must define.
+SAMPLE_GENERATION_CLI_VERSION_CONSTANTS = (
+    "market-vault-sample-generation-cli-v1",
+    "market-vault-sample-generation-cli-result-v1",
+)
+# The CLI business options that must never be registered.
+SAMPLE_GENERATION_CLI_FORBIDDEN_OPTIONS = (
+    "--output",
+    "--output-root",
+    "--built-at",
+    "--dataset-as-of",
+    "--canonical-build",
+    "--feature-spec",
+    "--label-spec",
+    "--split-spec",
+    "--symbol",
+    "--date",
+    "--force",
+    "--overwrite",
+    "--latest",
+)
+# Facts the formal Sample Generation contract document must state about the
+# PR-4 CLI and its ordinary build-plan output.
+SAMPLE_GENERATION_CLI_CONTRACT_FACTS = (
+    "market-vault sample-generate --plan",
+    "market-vault-sample-generation-cli-v1",
+    "market-vault-sample-generation-cli-result-v1",
+    "parse_build_plan_bytes",
+    "relative Dataset build-plan paths require output_plan_path to share",
+    "refusing to overwrite",
+    "created_new_plan",
+    "never builds a Dataset",
+    "never implements a Catalog",
+    "EMPTY is a success",
+)
+# Contradictory PR-4 claims that must never appear in the formal Sample
+# Generation contract document even when the required facts are present.
+SAMPLE_GENERATION_CLI_FALSE_CLAIMS = (
+    "CLI is not implemented",
+    "CLI not implemented",
+    "Sample Generator builds the Dataset",
+    "the CLI builds the Dataset",
+    "the CLI calls orchestrate_dataset_build",
+    "the CLI implements Dataset Catalog",
+    "output plan overwrites existing files",
+    "relative paths may move to another parent",
+    "current time supplies built_at",
+    "output_plan_path enters the Generation content identity",
+)
+# Facts the v0.6.0 direction document must state about the PR-4 stage.
+V060_DIRECTION_PR4_FACTS = (
+    "PR #36",
+    "2026-08-06T06:59:35Z",
+    "4d5124fa1f1c30db5dcc5b8bb72c7e4f04f1109c",
+    "PR-3 is complete",
+    "PR-4 (this PR",
+    "PR-5 (Dataset Catalog) has not started",
+    "not released",
+)
+# Contradictory claims that must never appear in the v0.6.0 direction
+# document's progress record.
+V060_DIRECTION_PR4_FALSE_CLAIMS = (
+    "V0.6.0 is released",
+    "PR-4 is complete",
+    "PR-5 (Dataset Catalog) has started",
 )
 # The exact root field set and rule field set must be stated in the formal
 # contract document.
@@ -365,7 +438,6 @@ SAMPLE_GENERATION_V1_BOUNDARY_FACTS = (
 # Contradictory claims that must never appear in the formal Sample
 # Generation contract document even when the required facts are present.
 SAMPLE_GENERATION_FALSE_CLAIMS = (
-    "Sample Generation CLI is implemented",
     "Paths enter the Sample Generation content identity",
     "built_at enters the Sample Generation content identity",
     "output_root enters the Sample Generation content identity",
@@ -817,6 +889,115 @@ def check_sample_generation_core(root: Path) -> list[str]:
     return failures
 
 
+def check_sample_generation_cli(root: Path) -> list[str]:
+    """Static PR-4 checks: the CLI production modules exist, the two CLI
+    version constants are exact, ``sample-generate`` is registered in the
+    top-level CLI with ``--plan`` as the only business option, the CLI
+    never calls orchestration / materialization / the verified Dataset
+    reader, the formal contract document states the PR-4 facts and no
+    false claim, the direction document records the PR-4 stage, and the CI
+    fresh-wheel smoke covers ``sample-generate --help``."""
+    failures = []
+    for rel in SAMPLE_GENERATION_CLI_MODULES:
+        if not (root / rel).exists():
+            failures.append(f"{rel} is missing")
+    cli_models = root / "src" / "market_vault" / "dataset" / "sample_generation_cli_models.py"
+    if cli_models.exists():
+        text = cli_models.read_text(encoding="utf-8")
+        for version in SAMPLE_GENERATION_CLI_VERSION_CONSTANTS:
+            if f'"{version}"' not in text:
+                failures.append(
+                    "sample_generation_cli_models.py does not define the exact "
+                    f"CLI version constant {version!r}"
+                )
+    cli_module = root / "src" / "market_vault" / "dataset" / "sample_generation_cli.py"
+    if cli_module.exists():
+        text = cli_module.read_text(encoding="utf-8")
+        if 'add_parser(\n        "sample-generate",' not in text:
+            failures.append(
+                "sample_generation_cli.py does not register sample-generate"
+            )
+        if "add_argument(\n        \"--plan\"," not in text:
+            failures.append(
+                "sample_generation_cli.py does not declare --plan"
+            )
+        for option in SAMPLE_GENERATION_CLI_FORBIDDEN_OPTIONS:
+            if option in text:
+                failures.append(
+                    f"sample_generation_cli.py registers the business option {option!r}"
+                )
+        for forbidden in (
+            "orchestrate_dataset_build",
+            "materialize_dataset_artifacts",
+            "load_verified_dataset",
+        ):
+            if forbidden in text:
+                failures.append(
+                    f"sample_generation_cli.py must never call {forbidden}"
+                )
+        if "Path.cwd()" not in text:
+            failures.append(
+                "sample_generation_cli.py must locate an explicit relative "
+                "--plan argument against the current working directory"
+            )
+    top_cli = root / "src" / "market_vault" / "cli.py"
+    if top_cli.exists():
+        text = top_cli.read_text(encoding="utf-8")
+        for marker in (
+            "add_sample_generation_subparsers",
+            "SAMPLE_GENERATION_COMMANDS",
+            "run_sample_generation_command",
+        ):
+            if marker not in text:
+                failures.append(
+                    "top-level cli.py is missing the Sample Generation CLI "
+                    f"marker {marker!r}"
+                )
+        if "dataset-catalog" in text:
+            failures.append(
+                "top-level cli.py must not register a Dataset Catalog command"
+            )
+    contract = root / "docs" / "contracts" / "sample_generation.md"
+    if contract.exists():
+        text = contract.read_text(encoding="utf-8")
+        for fact in SAMPLE_GENERATION_CLI_CONTRACT_FACTS:
+            if fact not in text:
+                failures.append(
+                    "docs/contracts/sample_generation.md does not state the "
+                    f"PR-4 fact {fact!r}"
+                )
+        for claim in SAMPLE_GENERATION_CLI_FALSE_CLAIMS:
+            if claim in text:
+                failures.append(
+                    "docs/contracts/sample_generation.md contains the false "
+                    f"PR-4 claim {claim!r}"
+                )
+    direction = root / "docs" / "v0_6_0_direction.md"
+    if direction.exists():
+        text = direction.read_text(encoding="utf-8")
+        for fact in V060_DIRECTION_PR4_FACTS:
+            if fact not in text:
+                failures.append(
+                    "docs/v0_6_0_direction.md does not state the PR-4 "
+                    f"progress fact {fact!r}"
+                )
+        for claim in V060_DIRECTION_PR4_FALSE_CLAIMS:
+            if claim in text:
+                failures.append(
+                    "docs/v0_6_0_direction.md contains the false PR-4 "
+                    f"claim {claim!r}"
+                )
+    ci = root / ".github" / "workflows" / "ci.yml"
+    if ci.exists():
+        text = ci.read_text(encoding="utf-8")
+        if "market-vault sample-generate --help" not in text:
+            failures.append(
+                ".github/workflows/ci.yml fresh-wheel smoke must cover "
+                "'market-vault sample-generate --help'"
+            )
+    return failures
+
+
 def check_dataset_catalog_contract(root: Path) -> list[str]:
     path = root / "docs" / "contracts" / "dataset_catalog.md"
     if not path.exists():
@@ -1092,6 +1273,7 @@ def main() -> int:
         ("sample generation modules", check_sample_generation_modules),
         ("sample generation contract", check_sample_generation_contract),
         ("sample generator core", check_sample_generation_core),
+        ("sample generation cli", check_sample_generation_cli),
         ("dataset catalog contract", check_dataset_catalog_contract),
         ("old release notes", check_old_release_notes),
         ("warning guard", check_warning_guard),

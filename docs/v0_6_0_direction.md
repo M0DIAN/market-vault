@@ -298,12 +298,21 @@ V0.6.0 keeps, unchanged:
   `0f66c61407c8ba4f122ad1e5d0463ab2f8f66883`; the Sample Generation
   contract foundation (strict schema, frozen models, normalization,
   canonical serialization, semantic content identity) is on main.
-- PR-3 (this PR, branch `feat/v0.6.0-sample-generator-core`) implements
-  the deterministic Sample Generator core: the verified input chain, the
-  BARS window-coverage preflight, the contiguous-segment traversal, the
+- PR #36 (`feat: implement deterministic sample generator core`) was
+  merged on 2026-08-06T06:59:35Z via the squash commit
+  `4d5124fa1f1c30db5dcc5b8bb72c7e4f04f1109c`; the deterministic Sample
+  Generator core is complete: the verified input chain, the BARS
+  window-coverage preflight, the contiguous-segment traversal, the
   stride-based candidate anchors, the exact half-open window geometry, the
   duplicate rejection, the Generation content identity, and the frozen
-  `SampleGenerationResult`. The Sample Generation CLI (PR-4) is not
-  implemented, and the Dataset Catalog has not started.
+  `SampleGenerationResult`. PR-3 is complete.
+- PR-4 (this PR, branch `feat/v0.6.0-sample-generator-cli`) is the current
+  implementation stage: the Sample Generation CLI
+  (`market-vault sample-generate --plan`), the pure ordinary
+  `market-vault-dataset-build-plan-v1` renderer, the shared split-spec
+  loading authority, the safe / idempotent no-overwrite output
+  materialization, and the COMPLETE / EMPTY / determinism end-to-end proof.
+  PR-5 (Dataset Catalog) has not started; the Dataset Catalog is not
+  implemented.
 - The package version remains 0.5.1; the bump to 0.6.0 happens only in
-  PR-9.
+  PR-9. V0.6.0 as a whole is not released.

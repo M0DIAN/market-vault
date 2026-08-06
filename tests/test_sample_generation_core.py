@@ -1666,13 +1666,22 @@ def test_no_file_writes(std_fixture, monkeypatch, tmp_path):
     assert result.requests
 
 
-def test_no_cli_registration():
+def test_cli_registration_lives_in_the_sample_generation_module():
+    """PR-4: ``sample-generate`` is registered by the dedicated Sample
+    Generation CLI module, never by the Dataset CLI layer, and the top-level
+    CLI dispatches it through that module's own command set."""
     text = (ROOT / "src" / "market_vault" / "cli.py").read_text(encoding="utf-8")
-    assert "sample-generate" not in text
+    assert "add_sample_generation_subparsers" in text
+    assert "SAMPLE_GENERATION_COMMANDS" in text
+    assert "run_sample_generation_command" in text
     text = (ROOT / "src" / "market_vault" / "dataset" / "cli.py").read_text(
         encoding="utf-8"
     )
     assert "sample-generate" not in text
+    text = (
+        ROOT / "src" / "market_vault" / "dataset" / "sample_generation_cli.py"
+    ).read_text(encoding="utf-8")
+    assert "sample-generate" in text
 
 
 def test_core_sources_have_no_forbidden_calls():

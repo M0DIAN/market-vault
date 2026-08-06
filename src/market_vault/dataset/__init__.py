@@ -146,9 +146,7 @@ The Sample Generation contract foundation (v0.6.0 PR-2;
 :mod:`market_vault.dataset.sample_generation`) defines the frozen
 generation-plan models, the strict generation-plan JSON parser, the
 canonical generation-plan serializer, and the deterministic semantic
-content identity over versioned generation inputs. It is the contract
-foundation only: the Sample Generator core (PR-3), the Sample Generation
-CLI (PR-4), and the Dataset Catalog (PR-5+) are not implemented. This layer
+content identity over versioned generation inputs. This layer
 never reads or writes files, never reads specs or Canonical builds, never
 uses the current time, never constructs a sample request, and never
 orchestrates a Dataset build; the generation content ID never enters
@@ -170,8 +168,25 @@ rejects duplicate sample keys, and computes the Generation content
 identity from the verified normalized inputs. The core never executes PIT
 assembly, never computes Feature or Label values, never claims a sample is
 COMPLETE, never writes any file, never orchestrates or materializes a
-Dataset build, and never uses the current time; the Sample Generation CLI
-(PR-4) and the Dataset Catalog (PR-5+) remain not implemented.
+Dataset build, and never uses the current time.
+
+The Sample Generation CLI (v0.6.0 PR-4;
+:mod:`market_vault.dataset.sample_generation_cli`,
+:mod:`market_vault.dataset.sample_generation_cli_models`,
+:mod:`market_vault.dataset.sample_generation_output`, and
+:mod:`market_vault.dataset.sample_generation_split`) exposes the single
+``sample-generate --plan`` command, dispatched before any settings file is
+read. It parses the generation plan, calls the generator core exactly
+once with ``path_base`` equal to the generation-plan file's parent, loads
+the split spec through the shared split authority (also consumed by the
+core), renders the ordinary ``market-vault-dataset-build-plan-v1`` bytes
+through the pure serializer, accepts them with the existing strict
+``parse_build_plan_bytes`` parser, and materializes ``output_plan_path``
+exact-byte idempotently with no overwrite. The CLI never executes
+``dataset-build``, never runs PIT assembly, never computes Feature or Label
+values, never calls orchestration / materialization / the verified Dataset
+reader, never builds a Dataset, and never implements a Catalog; the
+Dataset Catalog (PR-5+) is not implemented.
 
 The Dataset CLI (v0.5.0 PR-8; :mod:`market_vault.dataset.cli` and
 :mod:`market_vault.dataset.cli_models`) exposes three formal commands —

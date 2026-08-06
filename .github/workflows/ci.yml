@@ -89,6 +89,7 @@ jobs:
           .release-venv/bin/market-vault dataset-build --help
           .release-venv/bin/market-vault dataset-verify --help
           .release-venv/bin/market-vault dataset-inspect --help
+          .release-venv/bin/market-vault sample-generate --help
           .release-venv/bin/python -c "import market_vault; assert market_vault.__version__ == '0.5.1'"
           .release-venv/bin/python -c "from importlib.metadata import version; assert version('market-vault') == '0.5.1'"
 
