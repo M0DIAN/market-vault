@@ -44,7 +44,6 @@ from .sample_generation_models import (
     SAMPLE_GENERATION_CONTENT_ID_VERSION,
     SAMPLE_GENERATION_PLAN_SCHEMA_VERSION,
     SAMPLE_GENERATION_RULE_SCHEMA_VERSION,
-    SCOPE_ADJUSTMENT_NONE,
     SampleGenerationError,
     SampleGenerationIdentityInput,
     SampleGenerationPlan,
@@ -269,11 +268,10 @@ def _parse_scope(value) -> DatasetScope:
         )
     except DatasetError as exc:
         raise SampleGenerationError(str(exc)) from exc
-    if scope.adjustment != SCOPE_ADJUSTMENT_NONE:
-        raise SampleGenerationError(
-            f"v1 generation plans accept only adjustment == "
-            f"{SCOPE_ADJUSTMENT_NONE}, got {scope.adjustment!r}"
-        )
+    # The v1 adjustment policy is enforced by the frozen model
+    # (SampleGenerationPlan.__post_init__ via the shared
+    # _require_v1_scope helper), which is the single authority for both the
+    # parser path and direct Python construction.
     return scope
 
 

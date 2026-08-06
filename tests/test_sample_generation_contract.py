@@ -288,6 +288,63 @@ def test_equivalent_timezone_representations_equal():
     assert plan_a == plan_b
 
 
+# --- Model-level v1 scope policy (independent-review hardening) -------------
+
+
+def test_plan_direct_construction_rejects_non_none_adjustment():
+    # The frozen SampleGenerationPlan.__post_init__ itself must reject an
+    # unsupported adjustment; the rejection must not depend on the parser.
+    with pytest.raises(SampleGenerationError):
+        sample_plan(scope=sample_scope(adjustment="ADJUSTED"))
+
+
+def test_identity_input_rejects_non_none_adjustment():
+    # An unsupported scope must never reach the v1 Generation content
+    # identity; the frozen SampleGenerationIdentityInput.__post_init__
+    # itself must reject it.
+    with pytest.raises(SampleGenerationError):
+        identity_input(scope=sample_scope(adjustment="ADJUSTED"))
+
+
+def test_lowercase_none_is_legal():
+    # The existing DatasetScope normalizes "none" to "NONE"; a directly
+    # constructed plan with the lowercase form is legal.
+    scope = sample_scope(adjustment="none")
+    plan = sample_plan(scope=scope)
+    assert plan.scope.adjustment == "NONE"
+
+
+def test_direct_model_construction_roundtrip():
+    # The round-trip must hold for a plan built directly through the public
+    # Python API (not produced by the parser).
+    plan = sample_plan()
+    serialized = serialize_sample_generation_plan(plan)
+    assert parse_sample_generation_plan_bytes(serialized) == plan
+
+
+def test_serializer_cannot_receive_out_of_contract_plan():
+    # No out-of-contract plan can be produced through the normal public API:
+    # every successfully constructed plan passes the model-level v1 policy,
+    # so the serializer output always round-trips through the parser. (The
+    # contract is proven through construction-time rejection; forged objects
+    # via object.__new__ / __setattr__ bypasses are not part of the API.)
+    with pytest.raises(SampleGenerationError):
+        sample_plan(scope=sample_scope(adjustment="ADJUSTED"))
+    for plan in (
+        sample_plan(),
+        sample_plan(dataset_as_of=datetime(2026, 8, 1, tzinfo=timezone.utc)),
+        sample_plan(canonical_build_dirs=("canonical/b", "canonical/a")),
+        sample_plan(
+            scope=sample_scope(symbols=("US.AAPL", "US.MU")),
+            generation_rule=generation_rule(feature_window_bars=120),
+        ),
+    ):
+        assert (
+            parse_sample_generation_plan_bytes(serialize_sample_generation_plan(plan))
+            == plan
+        )
+
+
 # ---------------------------------------------------------------------------
 # B. Strict parser.
 # ---------------------------------------------------------------------------
@@ -527,6 +584,13 @@ def test_adjustment_other_than_none_fails():
     payload["scope"]["adjustment"] = "ADJUSTED"
     with pytest.raises(SampleGenerationError):
         parse_sample_generation_plan_bytes(parse_payload(payload))
+
+
+def test_json_lowercase_none_normalizes_and_succeeds():
+    payload = json.loads(json.dumps(VALID_PLAN))
+    payload["scope"]["adjustment"] = "none"
+    plan = parse_sample_generation_plan_bytes(parse_payload(payload))
+    assert plan.scope.adjustment == "NONE"
 
 
 def test_string_payload_rejected():

@@ -103,6 +103,30 @@ def _normalize_instant(value, label: str) -> datetime:
         raise SampleGenerationError(str(exc)) from exc
 
 
+def _require_v1_scope(value, label: str) -> DatasetScope:
+    """The one model-level v1 scope policy: type check plus
+    ``adjustment == NONE``.
+
+    Every frozen model that carries a scope (and every parser path that
+    constructs one) must pass through exactly this helper, so the supported
+    model set equals the parser-accepted set and no unsupported scope ever
+    reaches serialization or the content identity. Only the existing
+    :class:`DatasetScope` normalization is trusted (symbols, dates, case,
+    and sorting are never re-implemented); the original frozen scope is
+    returned unchanged; the filesystem is never accessed.
+    """
+    if not isinstance(value, DatasetScope):
+        raise SampleGenerationError(
+            f"{label} must be a DatasetScope, got {type(value).__name__}"
+        )
+    if value.adjustment != SCOPE_ADJUSTMENT_NONE:
+        raise SampleGenerationError(
+            f"{label} must use adjustment == {SCOPE_ADJUSTMENT_NONE}, "
+            f"got {value.adjustment!r}"
+        )
+    return value
+
+
 def _normalize_path_text(value, label: str) -> str:
     """One path string under the contract's safety boundaries.
 
@@ -329,10 +353,7 @@ class SampleGenerationPlan:
             "split_spec_file",
             _normalize_path_text(self.split_spec_file, "split_spec_file"),
         )
-        if not isinstance(self.scope, DatasetScope):
-            raise SampleGenerationError(
-                f"scope must be a DatasetScope, got {type(self.scope).__name__}"
-            )
+        _require_v1_scope(self.scope, "scope")
         if not isinstance(self.generation_rule, SampleGenerationRule):
             raise SampleGenerationError(
                 f"generation_rule must be a SampleGenerationRule, "
@@ -422,10 +443,7 @@ class SampleGenerationIdentityInput:
                 f"split_spec_pin may only be a SPLIT spec pin, got kind {split_pin.kind!r}"
             )
         object.__setattr__(self, "split_spec_pin", split_pin)
-        if not isinstance(self.scope, DatasetScope):
-            raise SampleGenerationError(
-                f"scope must be a DatasetScope, got {type(self.scope).__name__}"
-            )
+        _require_v1_scope(self.scope, "scope")
         if not isinstance(self.generation_rule, SampleGenerationRule):
             raise SampleGenerationError(
                 f"generation_rule must be a SampleGenerationRule, "
