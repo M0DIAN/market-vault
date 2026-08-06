@@ -1454,14 +1454,20 @@ def test_write_failure_converts_and_cleans_partial_file(std_fixture, monkeypatch
         def __exit__(self, exc_type, exc, tb):
             self.close()
 
-    class _FailingWritePath(Path):
-        def open(self, mode="r", *args, **kwargs):
-            handle = super().open(mode, *args, **kwargs)
-            if mode == "xb":
-                return _FailingWriteFile(handle)
-            return handle
+    # Every exclusive-create open of the run is intercepted; the file is
+    # really created, but writing to it fails. ``Path.open`` is patched on
+    # the class (the same pattern the existing tests use for
+    # ``write_bytes`` / ``write_text``) so the behavior is identical on
+    # every supported Python version.
+    real_open = Path.open
 
-    monkeypatch.setattr(sg_cli, "Path", _FailingWritePath)
+    def _failing_open(self, mode="r", *args, **kwargs):
+        handle = real_open(self, mode, *args, **kwargs)
+        if mode == "xb":
+            return _FailingWriteFile(handle)
+        return handle
+
+    monkeypatch.setattr(Path, "open", _failing_open)
     captured = capture_failure(monkeypatch)
     code, out, err = run_cli(
         ["sample-generate", "--plan", str(std_fixture["plan_path"])], capsys
