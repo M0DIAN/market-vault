@@ -203,6 +203,24 @@ no settings.yaml / OpenD / network dependency, and no current time.
 end-to-end determinism and leakage regression (PR-9) and the v0.5.0 release
 preparation (PR-10) are not implemented yet.
 
+The Dataset Catalog contract foundation (v0.6.0 PR-5;
+:mod:`market_vault.dataset.dataset_catalog_models`,
+:mod:`market_vault.dataset.dataset_catalog_identity`, and
+:mod:`market_vault.dataset.dataset_catalog_projection`) defines the frozen
+:class:`DatasetCatalogDatasetFacts` (identity-bearing verified Dataset
+facts), the structurally disjoint :class:`DatasetCatalogObservedMetadata`
+(non-content ``built_at`` / location facts), the self-validating
+:class:`DatasetCatalogEntry`, the deterministic per-Dataset content digest
+and the normalized-set Catalog content identity with the exact-duplicate
+merge / fail-closed conflict policy, and the pure projection
+:func:`project_dataset_catalog_entry` accepting only a verified
+:class:`VerifiedDatasetBuild`. The projection never scans directories,
+never reads Dataset Parquet, never re-derives the Dataset, and never
+accesses OpenD / the network / settings / the current time; the Catalog
+content identity never flows back into any Dataset or Canonical identity.
+The Catalog snapshot builder, materializer, verified reader, and CLI are
+PR-6 / PR-7 and are not implemented.
+
 This layer does not create DuckDB views, does not add an API server or a
 Python client, and does not train models, backtest, or trade. The Canonical
 manifest remains authoritative for Canonical builds; the Dataset layer only
@@ -212,6 +230,20 @@ layer.
 """
 
 from .content import dataset_schema_id, logical_dataset_content_id
+from .dataset_catalog_identity import (
+    catalog_dataset_content_id,
+    dataset_catalog_content_id,
+)
+from .dataset_catalog_models import (
+    DATASET_CATALOG_CONTRACT_VERSION,
+    DATASET_CATALOG_CONTENT_ID_VERSION,
+    DATASET_CATALOG_ENTRY_SCHEMA_VERSION,
+    DatasetCatalogDatasetFacts,
+    DatasetCatalogEntry,
+    DatasetCatalogError,
+    DatasetCatalogObservedMetadata,
+)
+from .dataset_catalog_projection import project_dataset_catalog_entry
 from .encoding import DATASET_IDENTITY_ENCODING_VERSION, DatasetError
 from .feature_execution import execute_builtin_features
 from .feature_models import (
@@ -477,6 +509,9 @@ __all__ = [
     "CHRONOLOGICAL_SPLIT_RESULT_ID_VERSION",
     "DATASET_BUILD_REPORT_FILENAME",
     "DATASET_BUILD_REPORT_SCHEMA_VERSION",
+    "DATASET_CATALOG_CONTRACT_VERSION",
+    "DATASET_CATALOG_CONTENT_ID_VERSION",
+    "DATASET_CATALOG_ENTRY_SCHEMA_VERSION",
     "DATASET_COMPLETION_REASON_FEATURE_EXCLUDED",
     "DATASET_COMPLETION_REASON_FEATURE_EXCLUDED_AND_LABEL_INCOMPLETE",
     "DATASET_COMPLETION_REASON_LABEL_INCOMPLETE",
@@ -594,6 +629,10 @@ __all__ = [
     "CompletionSummary",
     "CrossTradingDayPolicy",
     "DatasetArtifactValidationError",
+    "DatasetCatalogDatasetFacts",
+    "DatasetCatalogEntry",
+    "DatasetCatalogError",
+    "DatasetCatalogObservedMetadata",
     "DatasetBuildReportRecord",
     "DatasetError",
     "DatasetMaterializationError",
@@ -658,9 +697,11 @@ __all__ = [
     "built_in_feature_registry",
     "built_in_label_registrations",
     "built_in_label_registry",
+    "catalog_dataset_content_id",
     "chronological_split_result_id",
     "chronological_split_spec_content_id",
     "chronological_split_spec_pin",
+    "dataset_catalog_content_id",
     "dataset_id",
     "dataset_orchestration_schema",
     "dataset_schema_id",
@@ -683,6 +724,7 @@ __all__ = [
     "pit_association_schema_id",
     "pit_sample_key",
     "pit_sample_version_id",
+    "project_dataset_catalog_entry",
     "sample_generation_content_id",
     "serialize_dataset_manifest",
     "serialize_sample_generation_plan",
