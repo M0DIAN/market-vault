@@ -38,9 +38,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Canonical single-file Parquet verified-reader fix (GitHub PR #38):
   reads canonical parquet files directly and avoids Hive-style parent
   partition inference.
-- PR-8 test-only single-file Parquet portability fix: static acceptance
-  fixtures are read without partition inference on newer PyArrow runtimes.
-  Test-only; no production behavior change is claimed.
+- PR-8 test-only Parquet portability hardening: two single-file reads in
+  `tests/test_pit_sample_assembly.py` use `pq.ParquetFile(...).read()`
+  instead of `pq.read_table(...)`, avoiding PyArrow 24.0.0 Hive-style
+  parent partition inference in those regression helpers. Test-only;
+  production behavior is unchanged.
 
 ### Compatibility
 
