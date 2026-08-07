@@ -8,8 +8,10 @@ release. It fixes the architecture boundary for v0.6.0 and the two product
 capabilities: the Deterministic Sample Generator and the immutable Dataset
 Catalog. The direction PR itself is documentation only and implements no
 product code; the precise schemas are defined by the subsequent contract
-PRs. The Dataset Catalog CLI is implemented by PR-7 (build / verify /
-list / show); PR-8 has not started.
+PRs. The Dataset Catalog CLI was implemented by PR-7 (build / verify /
+list / show), merged in PR #41; PR-8 (this PR) is the integrated
+determinism / corruption / recovery / portability / security / usability
+E2E hardening and v0.6.0 acceptance stage; PR-9 has not started.
 
 ## 1. Baseline
 
@@ -146,8 +148,8 @@ the subsequent PRs.
 ## 3. CLI direction
 
 The following command names are the v0.6.0 CLI surface. `sample-generate`
-is implemented by PR-4; the four Dataset Catalog commands are implemented
-by PR-7 (this PR):
+is implemented by PR-4; the four Dataset Catalog commands were implemented
+by PR-7:
 
 ```text
 market-vault sample-generate
@@ -343,9 +345,11 @@ V0.6.0 keeps, unchanged:
   no-replace publication, existing-snapshot idempotency), and the
   verified Catalog snapshot reader (historical recorded build locations,
   never reloaded) are on main and the PR-6 main CI fully passed.
-- PR-7 (this PR, branch `feat/v0.6.0-dataset-catalog-cli`) is the current
-  implementation stage and implements the Dataset Catalog CLI: the four
-  formal commands `dataset-catalog-build`, `dataset-catalog-verify`,
+- PR-7 merged (GitHub PR #41, `feat: add Dataset Catalog CLI`) on
+  2026-08-07T13:25:52Z via the squash commit
+  `15ce0efc5a61a34772bf426f77386bd1bcfe449b`; PR-7 COMPLETE; main verified
+  at the squash commit. The four formal commands
+  `dataset-catalog-build`, `dataset-catalog-verify`,
   `dataset-catalog-list`, and `dataset-catalog-show`; the
   settings-independent dispatch (never settings.yaml, never OpenD, never
   the network); the real Builder -> Materializer -> Reader build chain
@@ -357,8 +361,20 @@ V0.6.0 keeps, unchanged:
   order); and the exact `dataset_id` show lookup with the full lossless
   14-field facts record and the historical recorded build path (never
   followed). There is no standalone `dataset-catalog-query` command: the
-  query surface is fixed as the read-only list filters. PR-8 has not
-  started; PR-9 not started; the Python Client is a v0.7 direction and is
-  not part of v0.6.0.
+  query surface is fixed as the read-only list filters.
+- PR-8 (this PR, branch `feat/v0.6.0-integrated-e2e-hardening`) is the
+  current stage: the integrated determinism / corruption / recovery /
+  portability / security / usability E2E hardening and the v0.6.0
+  integrated acceptance documentation (`docs/v0_6_0_acceptance.md`).
+  It is tests / docs / CI only: no production code, no new CLI command,
+  no schema change, no identity change, no dependency change. It proves
+  the two v0.6.0 product capabilities (the Deterministic Sample
+  Generator and the immutable Dataset Catalog) work together through the
+  complete offline chain on every supported PyArrow writer (the
+  `portability-pyarrow24` CI job audits `pyarrow==24.0.0` against the
+  static reference artifact frozen from PyArrow 25.0.0). PR-8 does not
+  release v0.6.0; the package version stays 0.5.1 throughout PR-8.
+  PR-9 not started; the Python Client is a v0.7 direction and is not
+  part of v0.6.0.
 - The package version remains 0.5.1; the bump to 0.6.0 happens only in
   PR-9. V0.6.0 as a whole is not released.

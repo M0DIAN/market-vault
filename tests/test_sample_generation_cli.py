@@ -65,6 +65,8 @@ from market_vault.models import QualityResult, RunManifest, Settings
 from market_vault.normalization import normalize_bars, normalize_trading_calendar
 from market_vault.storage import Catalog, ParquetStore
 
+from v060_acceptance_helpers import decode_canonical_fixture
+
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 UTC = timezone.utc
@@ -2290,7 +2292,11 @@ def test_core_error_messages_unchanged_after_extraction(tmp_path):
 #: must never change the normal output bytes. The relative fixture is used
 #: because its build-plan bytes contain no absolute path and are rendered
 #: with POSIX separators, so they are identical on every machine, directory,
-#: and platform (verified on Windows and Linux CI).
+#: and platform (verified on Windows and Linux CI). The regression now
+#: reproduces the bytes from the static reference Canonical artifact
+#: (PyArrow25-produced base64 fixture), independent of the local
+#: materializer and of the running PyArrow runtime/reader; see
+#: tests/fixtures/v060_portability/.
 OLD_HEAD_RELATIVE_FIXTURE_PLAN_SHA256 = (
     "78cd9e895ee966722c83db8d5388a49c635b8fd448fe8de796e2b56dcebf964b"
 )
@@ -2596,20 +2602,31 @@ def test_normal_fixture_build_plan_bytes_unchanged_from_old_head(
 
 
 def test_relative_fixture_build_plan_bytes_unchanged_from_old_head(
-    relative_fixture, capsys
+    tmp_path, capsys
 ):
     """Fixed regression: the relative-path fixture's generated build-plan
     bytes (path-independent) are byte-identical to the pre-hardening head
-    ``5957d32`` — the hardening never changes the normal output bytes."""
+    ``5957d32`` — reproduced from the static reference Canonical artifact
+    (PyArrow25-produced base64 fixture), so the regression no longer depends
+    on the local materializer or the running PyArrow runtime/reader."""
+    build_dir = decode_canonical_fixture(tmp_path, under_dataset=True)
+    write_fixture_files(tmp_path)
     plan_path = write_generation_plan(
-        relative_fixture.tmp_path / "generation-plan.json",
-        _relative_payload(relative_fixture, output_plan_path="generated-plan.json"),
+        tmp_path / "generation-plan.json",
+        generation_plan_dict(
+            build_dirs=(build_dir.relative_to(tmp_path).as_posix(),),
+            feature_paths=("specs/simple_return.yaml",),
+            label_paths=("specs/forward_return.yaml",),
+            split_path="specs/chronological_split.json",
+            output_root="datasets",
+            output_plan_path="generated-plan.json",
+        ),
     )
     code, out, err = run_cli(
         ["sample-generate", "--plan", str(plan_path)], capsys
     )
     assert code == 0, err
-    generated = (relative_fixture.tmp_path / "generated-plan.json").read_bytes()
+    generated = (tmp_path / "generated-plan.json").read_bytes()
     assert (
         hashlib.sha256(generated).hexdigest()
         == OLD_HEAD_RELATIVE_FIXTURE_PLAN_SHA256
