@@ -609,6 +609,67 @@ def test_invalid_recorded_location_text_fails(complete_build, tmp_path, bad_text
         reader_mod.load_verified_dataset_catalog(mresult.snapshot_path)
 
 
+def test_posix_recorded_location_text_accepted(complete_build, tmp_path):
+    """A POSIX absolute path (leading root slash) is accepted as
+    historical location text — the root slash must not be mistaken for an
+    empty path component."""
+    mresult = make_snapshot(tmp_path, complete_build)
+    from market_vault.dataset.dataset_catalog_reader_models import (
+        _validate_recorded_build_path,
+    )
+
+    text = _validate_recorded_build_path(
+        f"/tmp/data/{complete_build.dataset_id}", complete_build.dataset_id
+    )
+    assert text.endswith(complete_build.dataset_id)
+    with pytest.raises(DatasetCatalogArtifactValidationError):
+        _validate_recorded_build_path(
+            f"/tmp//data/{complete_build.dataset_id}", complete_build.dataset_id
+        )
+    with pytest.raises(DatasetCatalogArtifactValidationError):
+        _validate_recorded_build_path(
+            f"/tmp/data/{complete_build.dataset_id}/", complete_build.dataset_id
+        )
+    # The full E2E round trip with a POSIX-style recorded location: a
+    # consistent manifest (recomputed snapshot ID over the new catalog
+    # bytes) must verify successfully.
+    from market_vault.dataset.dataset_catalog_snapshot_identity import (
+        dataset_catalog_snapshot_id,
+    )
+    import json as _json
+
+    catalog_path = mresult.snapshot_path / DATASET_CATALOG_CATALOG_FILENAME
+    payload = _json.loads(catalog_path.read_text(encoding="utf-8"))
+    payload["datasets"][0]["observed_metadata"]["build_path"] = (
+        f"/home/tester/out/{complete_build.dataset_id}"
+    )
+    new_bytes = canonical_json_bytes(payload)
+    catalog_path.write_bytes(new_bytes)
+    manifest_path = mresult.snapshot_path / DATASET_CATALOG_MANIFEST_FILENAME
+    manifest = _json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["catalog_file"]["byte_size"] = len(new_bytes)
+    manifest["catalog_file"]["sha256"] = hashlib.sha256(new_bytes).hexdigest()
+    manifest["snapshot_id"] = dataset_catalog_snapshot_id(
+        catalog_content_id=manifest["catalog_content_id"],
+        dataset_count=manifest["dataset_count"],
+        built_at=datetime.fromisoformat(manifest["built_at"]),
+        catalog_file_byte_size=len(new_bytes),
+        catalog_file_sha256=hashlib.sha256(new_bytes).hexdigest(),
+    )
+    manifest_path.write_bytes(canonical_json_bytes(manifest))
+    # The physical snapshot ID changed with the new catalog bytes: the
+    # directory is rebuilt under the new snapshot_id (like a fresh
+    # materialization of the relocated Dataset set).
+    new_snapshot_id = manifest["snapshot_id"]
+    rebuilt = mresult.snapshot_path.parent / new_snapshot_id
+    shutil.move(str(mresult.snapshot_path), str(rebuilt))
+    verified = reader_mod.load_verified_dataset_catalog(rebuilt)
+    assert verified.snapshot_id == new_snapshot_id
+    assert verified.entries[0].recorded_build_path == (
+        f"/home/tester/out/{complete_build.dataset_id}"
+    )
+
+
 def test_valid_recorded_location_text_accepted(complete_build, tmp_path):
     """Forward-slash text from any OS is accepted as historical text."""
     mresult = make_snapshot(tmp_path, complete_build)

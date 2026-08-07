@@ -214,12 +214,14 @@ def _validate_recorded_build_path(text: str, dataset_id: str) -> str:
     observed location only).
 
     Requires: a non-empty string; forward-slash representation (no
-    backslash); no ``.`` / ``..`` path component; and the final component
-    exactly equal to ``dataset_id``. The text is never resolved,
-    stat'ed, checked for existence, or used to reload the Dataset: the
-    snapshot must stay self-verifying after the original Dataset moved,
-    went offline, was deleted, or after the snapshot was relocated to a
-    machine with different path semantics.
+    backslash); no ``.`` / ``..`` path component; no interior empty
+    component (a single leading empty component from the root slash of a
+    POSIX absolute path such as ``/tmp/...`` is legal); and the final
+    component exactly equal to ``dataset_id``. The text is never
+    resolved, stat'ed, checked for existence, or used to reload the
+    Dataset: the snapshot must stay self-verifying after the original
+    Dataset moved, went offline, was deleted, or after the snapshot was
+    relocated to a machine with different path semantics.
     """
     if not isinstance(text, str) or not text:
         raise DatasetCatalogArtifactValidationError(
@@ -231,6 +233,8 @@ def _validate_recorded_build_path(text: str, dataset_id: str) -> str:
             f"got backslash: {text!r}"
         )
     parts = text.split("/")
+    if parts and parts[0] == "":
+        parts = parts[1:]  # the leading root slash of a POSIX absolute path
     if any(part in ("", ".", "..") for part in parts):
         raise DatasetCatalogArtifactValidationError(
             f"recorded build location must not contain empty, '.', or '..' "
