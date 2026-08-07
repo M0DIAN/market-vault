@@ -2725,3 +2725,92 @@ def test_release_checker_fails_when_direction_starts_pr6(tmp_path):
     result = run_check_release(repo)
     assert result.returncode == 1
     assert "contains the false PR-5 claim 'PR-6 has started'" in result.stdout
+
+
+def _mutate_catalog_models_marker(repo: Path, old: str, new: str) -> None:
+    path = repo / "src" / "market_vault" / "dataset" / "dataset_catalog_models.py"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(old, new), encoding="utf-8"
+    )
+
+
+def test_release_checker_fails_when_row_version_coverage_reversed(tmp_path):
+    # Mutation: reversing the coverage direction (pinned rows must be a
+    # subset of the top-level list) must fail the checker.
+    repo = copy_repo(tmp_path)
+    _mutate_catalog_models_marker(
+        repo,
+        "uncovered = sorted(set(canonical_row_version_ids) - covered)",
+        "uncovered = sorted(covered - set(canonical_row_version_ids))",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "is missing the independent-review hardening marker "
+        "'set(canonical_row_version_ids) - covered'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_specpin_business_key_drifts(tmp_path):
+    # Mutation: content_sha256 joining the SpecPin duplicate business key
+    # must fail the checker.
+    repo = copy_repo(tmp_path)
+    _mutate_catalog_models_marker(
+        repo,
+        "key = (pin.kind, pin.name, pin.version)",
+        "key = (pin.kind, pin.name, pin.version, pin.content_sha256)",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "is missing the independent-review hardening marker "
+        "'key = (pin.kind, pin.name, pin.version)'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_unsafe_identity_text_rejection_lost(
+    tmp_path,
+):
+    # Mutation: dropping the unsafe identity text rejection must fail.
+    repo = copy_repo(tmp_path)
+    _mutate_catalog_models_marker(
+        repo,
+        "reject_unsafe_text(text, label)",
+        "reject_unsafe_text_nothing(text, label)",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "is missing the independent-review hardening marker "
+        "'reject_unsafe_text(text, label)'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_location_binding_lost(tmp_path):
+    # Mutation: dropping the build_path basename binding must fail.
+    repo = copy_repo(tmp_path)
+    _mutate_catalog_models_marker(
+        repo,
+        "!= self.dataset_facts.dataset_id",
+        "== self.dataset_facts.dataset_id",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "is missing the independent-review hardening marker "
+        "'!= self.dataset_facts.dataset_id'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_contract_claims_metadata_enters_identity(
+    tmp_path,
+):
+    # Mutation: a document claim that metadata enters the content identity
+    # must fail (the legitimate wording never claims this).
+    repo = copy_repo(tmp_path)
+    _mutate_catalog_contract_doc(
+        repo, "built_at enters Catalog content identity"
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "contains the false identity claim" in result.stdout

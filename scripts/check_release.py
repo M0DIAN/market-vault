@@ -493,6 +493,18 @@ DATASET_CATALOG_EXPORTS = (
     "dataset_catalog_content_id",
     "project_dataset_catalog_entry",
 )
+# Hardening markers the contract models module must keep: the row-version
+# coverage direction (Catalog-level list must be a subset of the pinned
+# union, exactly like the Dataset identity contract), the SpecPin business
+# key (kind, name, version — never content_sha256), the unsafe identity
+# text rejection, and the entry location binding (build_path basename must
+# equal dataset_id).
+DATASET_CATALOG_HARDENING_MARKERS = (
+    "set(canonical_row_version_ids) - covered",
+    "key = (pin.kind, pin.name, pin.version)",
+    "reject_unsafe_text(text, label)",
+    "!= self.dataset_facts.dataset_id",
+)
 # The exact root field set and rule field set must be stated in the formal
 # contract document.
 SAMPLE_GENERATION_ROOT_FIELDS = (
@@ -1212,6 +1224,12 @@ def check_dataset_catalog(root: Path) -> list[str]:
             if marker not in text:
                 failures.append(
                     f"dataset_catalog_models.py is missing {marker}"
+                )
+        for marker in DATASET_CATALOG_HARDENING_MARKERS:
+            if marker not in text:
+                failures.append(
+                    "dataset_catalog_models.py is missing the independent-"
+                    f"review hardening marker {marker!r}"
                 )
     identity_path = root / "src" / "market_vault" / "dataset" / "dataset_catalog_identity.py"
     if identity_path.exists():

@@ -92,10 +92,17 @@ completion                      # frozen CompletionSummary
 `canonical_row_version_ids` is included because it has long-term
 discovery value (the exact canonical row versions covered by the Dataset)
 and is already a verified, deterministically normalized fact of the
-manifest identity contract. No other manifest facts are copied into the
-Catalog record: `implementations`, `gap_references`,
-`manifest_schema_version`, `serialization_format`, and `serialization_format_version`
-remain Dataset-internal build facts and are not indexed.
+manifest identity contract. **Coverage direction (identical to the
+existing `DatasetIdentityInput` contract):** the Catalog-level
+`canonical_row_version_ids` must be a subset of the union of the pinned
+canonical builds' row versions — every Catalog-level row-version ID must
+be covered by `canonical_build_pins`. A `CanonicalBuildPin` may declare
+more row versions than the Dataset-level list uses; the Catalog contract
+never adds a private "every pinned row version must be used" restriction.
+No other manifest facts are copied into the Catalog record:
+`implementations`, `gap_references`, `manifest_schema_version`,
+`serialization_format`, and `serialization_format_version` remain
+Dataset-internal build facts and are not indexed.
 
 ### 3.2 `DatasetCatalogObservedMetadata` (non-content metadata)
 
@@ -119,10 +126,16 @@ content_id           # 64-char lowercase SHA-256, recomputed and
                      #   self-validated at construction
 ```
 
-The entry combines the two without making the metadata identity-bearing:
-`content_id` is recomputed from `dataset_facts` only at construction, so
-`dataclasses.replace` tampering (a substituted content ID, substituted
-facts, or substituted metadata) fails closed.
+The entry combines the two without making the metadata identity-bearing.
+`content_id` binds only `dataset_facts` and is recomputed at construction,
+so `dataclasses.replace` tampering with the content ID or the facts fails
+closed. A legal observed-metadata change never changes `content_id`: a
+different `built_at` or a move to another parent directory (same
+`dataset_id` basename) is accepted and keeps the same content ID.
+Metadata fails closed only when its own shape is invalid (naive `built_at`,
+relative or unclean `build_path`) or when the `build_path` basename does
+not equal `dataset_facts.dataset_id` (a Dataset's facts are never bound to
+another Dataset's location).
 
 ## 4. Content facts vs non-content metadata: the boundary
 
@@ -175,12 +188,22 @@ normalized set of per-Dataset content digests, keyed and sorted by dataset_id
 
 ### 5.3 Normalization
 
-Normalization is deterministic and happens at the formal boundaries:
+Normalization is deterministic and happens at the formal boundaries,
+following the existing Dataset identity contract:
 
 - every SHA-256 field is normalized to lowercase 64-hex;
-- every sequence (scope symbols / trade dates, spec pins, canonical build
-  pins, canonical row-version IDs, completion entries) is sorted and
-  deduplicated at construction, so input order never matters;
+- raw identity text (`dataset_kind`) is NFC-normalized, deterministically
+  stripped, and rejected when it contains control characters or reserved
+  encoding separators;
+- set-like facts (canonical row-version IDs) are normalized and
+  deduplicated as a set;
+- structures with a business unique key — spec pins under
+  `(kind, name, version)`, canonical build pins under
+  `canonical_build_id`, completion entries under their key — are sorted
+  deterministically and fail closed on duplicate or conflicting entries;
+  conflicting entries are never silently deduplicated. Spec pins with the
+  same `(kind, name, version)` but different content hashes are
+  conflicting duplicates and fail closed;
 - every instant is normalized to UTC microseconds, so timezone-equivalent
   representations of the same instant produce the same identity;
 - nested pins use the existing frozen typed models
@@ -214,19 +237,27 @@ invalid SHA-256 IDs
 unsupported status
 negative / non-real counts
 wrong pin kinds
+duplicate or conflicting spec pins (same kind/name/version)
 duplicate conflicting pins / facts
 scope inconsistency (completion entries outside the scope)
-canonical row-version coverage loss
+Catalog row-version IDs not covered by the pinned canonical builds
 malformed / non-UTC datetimes
-mutable / untyped payloads
+unsafe identity text (control characters / reserved separators)
+untyped / invalid element payloads
+non-iterable container inputs
 content ID mismatch
+wrong build_path basename (not equal to dataset_id)
 unsupported contract or entry schema versions
 ```
 
 `DatasetCatalogError` (a subclass of `DatasetError`) is the unified
-failure type. Low-level documented validation exceptions are converted to
-it; `AssertionError` / `RuntimeError` and other programming errors are
-never swallowed.
+failure type for formal input validation. Low-level documented validation
+exceptions (``DatasetError``, ``TypeError`` from a non-iterable container,
+``ValueError``, ``KeyError``) are converted to it; `AssertionError` /
+`RuntimeError` and other programming errors are never swallowed and never
+converted to business errors. Iterable container input is accepted at the
+construction boundary and frozen into immutable tuples; the models never
+store a mutable container.
 
 ## 7. Not implemented by PR-5 (PR-6 / PR-7)
 

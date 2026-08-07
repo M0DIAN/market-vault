@@ -1014,11 +1014,14 @@ def test_scope_inconsistency_fails(dataset_build):
 
 
 def test_row_version_coverage_loss_fails(dataset_build):
+    """The Catalog-level row-version list must be covered by the pinned
+    canonical builds: adding an ID that belongs to no pin fails closed
+    (identical direction to the Dataset identity contract)."""
     facts = facts_kwargs(dataset_build)
     covered = facts["canonical_row_version_ids"]
     with pytest.raises(DatasetCatalogError):
         DatasetCatalogDatasetFacts(
-            **{**facts, "canonical_row_version_ids": covered[:1]}
+            **{**facts, "canonical_row_version_ids": covered + ("a" * 64,)}
         )
 
 
@@ -1111,3 +1114,208 @@ def test_catalog_identity_never_flows_into_dataset_identity(dataset_build):
     assert entry.dataset_facts.dataset_id == dataset_build.manifest.dataset_id
     assert len(entry.content_id) == 64
     assert entry.content_id != entry.dataset_facts.dataset_id
+
+
+# ---------------------------------------------------------------------------
+# L. Independent-review hardening regressions.
+# ---------------------------------------------------------------------------
+
+
+def test_pin_may_declare_extra_row_versions(dataset_build):
+    """A CanonicalBuildPin may declare more row versions than the
+    Catalog-level list uses; the Catalog contract never adds a private
+    "every pinned row version must be used" restriction."""
+    facts = project(dataset_build).dataset_facts
+    pin = facts.canonical_build_pins[0]
+    extra_pin = replace(
+        pin,
+        canonical_row_version_ids=pin.canonical_row_version_ids + ("b" * 64,),
+    )
+    # Construction succeeds: the extra pinned row version is simply unused
+    # by the Dataset-level list.
+    relaxed = replace(
+        facts,
+        canonical_build_pins=(
+            extra_pin,
+        ) + tuple(
+            other for other in facts.canonical_build_pins if other is not pin
+        ),
+    )
+    by_id = {other.canonical_build_id: other for other in relaxed.canonical_build_pins}
+    assert by_id[pin.canonical_build_id].canonical_row_version_ids == (
+        tuple(sorted(set(pin.canonical_row_version_ids + ("b" * 64,))))
+    )
+    assert relaxed.canonical_row_version_ids == facts.canonical_row_version_ids
+
+
+def test_real_projection_still_passes(dataset_build):
+    """The corrected coverage direction keeps the real verified projection
+    valid."""
+    entry = project(dataset_build)
+    covered = set()
+    for pin in entry.dataset_facts.canonical_build_pins:
+        covered.update(pin.canonical_row_version_ids)
+    assert set(entry.dataset_facts.canonical_row_version_ids) <= covered
+
+
+def test_exact_duplicate_spec_pin_fails(dataset_build):
+    facts = facts_kwargs(dataset_build)
+    pin = facts["feature_spec_pins"][0]
+    with pytest.raises(DatasetCatalogError):
+        DatasetCatalogDatasetFacts(
+            **{**facts, "feature_spec_pins": (pin, pin)}
+        )
+
+
+def test_conflicting_spec_pin_hash_fails(dataset_build):
+    """Same (kind, name, version) with a different content hash is a
+    conflicting duplicate and fails closed (never silently deduplicated)."""
+    facts = facts_kwargs(dataset_build)
+    pin = facts["feature_spec_pins"][0]
+    conflicting = SpecPin(
+        kind=pin.kind, name=pin.name, version=pin.version,
+        content_sha256=("1" if pin.content_sha256[0] != "1" else "2")
+        + pin.content_sha256[1:],
+    )
+    assert conflicting != pin
+    with pytest.raises(DatasetCatalogError):
+        DatasetCatalogDatasetFacts(
+            **{**facts, "feature_spec_pins": (pin, conflicting)}
+        )
+
+
+def test_different_spec_pin_versions_are_legal(dataset_build):
+    facts = facts_kwargs(dataset_build)
+    pin = facts["feature_spec_pins"][0]
+    other_version = SpecPin(
+        kind=pin.kind, name=pin.name, version="v2",
+        content_sha256=pin.content_sha256,
+    )
+    constructed = DatasetCatalogDatasetFacts(
+        **{**facts, "feature_spec_pins": (pin, other_version)}
+    )
+    assert len(constructed.feature_spec_pins) == 2
+
+
+def test_unsafe_identity_text_separators_fail(dataset_build):
+    for marker in ("\x1e", "\x1f", "|"):
+        with pytest.raises(DatasetCatalogError):
+            DatasetCatalogDatasetFacts(
+                **{**facts_kwargs(dataset_build), "dataset_kind": f"a{marker}b"}
+            )
+
+
+def test_unsafe_identity_text_control_char_fails(dataset_build):
+    for marker in ("\x00", "\x01", "\x7f"):
+        with pytest.raises(DatasetCatalogError):
+            DatasetCatalogDatasetFacts(
+                **{**facts_kwargs(dataset_build), "dataset_kind": f"a{marker}b"}
+            )
+
+
+def test_identity_text_whitespace_normalized(dataset_build):
+    facts = facts_kwargs(dataset_build)
+    padded = DatasetCatalogDatasetFacts(
+        **{**facts, "dataset_kind": f"  {facts['dataset_kind']}  "}
+    )
+    assert padded.dataset_kind == facts["dataset_kind"]
+    assert (
+        catalog_dataset_content_id(padded)
+        == catalog_dataset_content_id(
+            DatasetCatalogDatasetFacts(**facts)
+        )
+    )
+
+
+def test_nfc_equivalent_identity_text_same_identity(dataset_build):
+    facts = facts_kwargs(dataset_build)
+    composed = DatasetCatalogDatasetFacts(
+        **{**facts, "dataset_kind": "café"}
+    )
+    decomposed = DatasetCatalogDatasetFacts(
+        **{**facts, "dataset_kind": "café"}
+    )
+    assert composed.dataset_kind == decomposed.dataset_kind
+    assert (
+        catalog_dataset_content_id(composed)
+        == catalog_dataset_content_id(decomposed)
+    )
+
+
+def test_none_sequence_inputs_become_catalog_error(dataset_build):
+    """Formal bad inputs (None containers) must surface as
+    DatasetCatalogError, never a raw TypeError."""
+    facts = facts_kwargs(dataset_build)
+    for field in (
+        "feature_spec_pins",
+        "label_spec_pins",
+        "canonical_build_pins",
+        "canonical_row_version_ids",
+    ):
+        with pytest.raises(DatasetCatalogError):
+            DatasetCatalogDatasetFacts(**{**facts, field: None})
+
+
+def test_programming_errors_are_not_converted(dataset_build, monkeypatch):
+    """RuntimeError / AssertionError from the implementation must propagate
+    and never be converted into a business DatasetCatalogError."""
+    import market_vault.dataset.dataset_catalog_models as models_mod
+
+    def boom_runtime(*args, **kwargs):
+        raise RuntimeError("programming failure")
+
+    def boom_assertion(*args, **kwargs):
+        raise AssertionError("programming failure")
+
+    monkeypatch.setattr(models_mod, "_normalize_sha256", boom_runtime)
+    with pytest.raises(RuntimeError):
+        DatasetCatalogDatasetFacts(**facts_kwargs(dataset_build))
+    monkeypatch.setattr(models_mod, "_normalize_sha256", boom_assertion)
+    with pytest.raises(AssertionError):
+        DatasetCatalogDatasetFacts(**facts_kwargs(dataset_build))
+
+
+def test_wrong_build_path_basename_fails_closed(dataset_build, tmp_path):
+    """A Dataset's facts must never be bound to another Dataset's
+    location: a build_path whose basename is not the dataset_id fails."""
+    entry = project(dataset_build)
+    wrong_location = DatasetCatalogObservedMetadata(
+        built_at=entry.observed_metadata.built_at,
+        build_path=tmp_path / "other-parent" / ("f" * 64),
+    )
+    with pytest.raises(DatasetCatalogError):
+        DatasetCatalogEntry(
+            dataset_facts=entry.dataset_facts,
+            observed_metadata=wrong_location,
+            content_id=entry.content_id,
+        )
+
+
+def test_relocated_parent_keeps_binding_and_content_id(dataset_build, tmp_path):
+    """A move to a different parent with the same dataset_id basename is
+    legal and keeps the content ID."""
+    entry = project(dataset_build)
+    relocated = DatasetCatalogEntry(
+        dataset_facts=entry.dataset_facts,
+        observed_metadata=DatasetCatalogObservedMetadata(
+            built_at=entry.observed_metadata.built_at,
+            build_path=tmp_path / "moved-parent" / entry.dataset_facts.dataset_id,
+        ),
+        content_id=entry.content_id,
+    )
+    assert relocated.content_id == entry.content_id
+
+
+def test_built_at_change_keeps_binding_and_content_id(dataset_build, tmp_path):
+    """A legal built_at change keeps the location binding and the content
+    ID."""
+    entry = project(dataset_build)
+    rebuilt = DatasetCatalogEntry(
+        dataset_facts=entry.dataset_facts,
+        observed_metadata=DatasetCatalogObservedMetadata(
+            built_at=datetime(2026, 9, 1, 0, 0, tzinfo=UTC),
+            build_path=entry.observed_metadata.build_path,
+        ),
+        content_id=entry.content_id,
+    )
+    assert rebuilt.content_id == entry.content_id

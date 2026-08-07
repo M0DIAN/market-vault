@@ -2,29 +2,52 @@
 (PR-5).
 
 Every model is frozen, validates at construction, and normalizes
-deterministically at construction (lowercase SHA-256 text, deterministic
-sorting, explicit duplicate rejection, UTC microsecond instants, typed
-nested models), so the metadata projection and the Catalog content
-identity layer can trust their inputs. All failures raise the unified
-:class:`DatasetCatalogError` (a subclass of :class:`DatasetError`);
-unknown, future, or old schema versions fail closed and are never
-"best-effort" interpreted.
+deterministically at construction (lowercase SHA-256 text, NFC +
+deterministic-strip + unsafe-text rejection for raw identity text,
+deterministic sorting under the existing Dataset identity business keys,
+UTC microsecond instants, typed nested models), so the metadata
+projection and the Catalog content identity layer can trust their
+inputs. All failures raise the unified :class:`DatasetCatalogError` (a
+subclass of :class:`DatasetError`); unknown, future, or old schema
+versions fail closed and are never "best-effort" interpreted.
+
+Normalization semantics follow the existing Dataset identity contract:
+
+- set-like facts (canonical row-version IDs) are normalized and
+  deduplicated as a set;
+- structures with a business unique key (SpecPins under
+  ``(kind, name, version)``, CanonicalBuildPins under
+  ``canonical_build_id``, Completion entries under their key) are sorted
+  deterministically and fail closed on duplicate or conflicting entries;
+  conflicting entries are never silently deduplicated;
+- iterable container input is accepted and frozen into an immutable
+  tuple at the formal construction boundary; the model never stores a
+  mutable container, and untyped / invalid element payloads fail closed.
 
 The contract split is structural:
 
 - :class:`DatasetCatalogDatasetFacts` — identity-bearing, normalized,
   verified Dataset facts only. These facts are the exact inputs of the
-  Catalog content identity; nothing else may ever enter it.
+  Catalog content identity; nothing else may ever enter it. The
+  Catalog-level ``canonical_row_version_ids`` must be a subset of the
+  pinned Canonical builds' row versions, exactly like the existing
+  ``DatasetIdentityInput`` contract; a pin may declare more row versions
+  than the Dataset-level list uses.
 - :class:`DatasetCatalogObservedMetadata` — non-content observed
   metadata only (``built_at`` and the Dataset build location). The two
   types are disjoint by construction: no field of the observed-metadata
   type exists on the facts type, so ``built_at`` / location facts can
-  never be accidentally mixed into the content identity.
+  never be accidentally mixed into the content identity. The content ID
+  binds only the facts: a legal observed-metadata change (a different
+  ``built_at`` or a move to another parent directory) never changes it;
+  invalid metadata shape or a ``build_path`` basename that does not
+  equal ``dataset_id`` fails closed.
 - :class:`DatasetCatalogEntry` — the projection result combining one
   facts object with one observed-metadata object; it carries the
   self-validated content ID of its facts and recomputes it at
   construction (and therefore after any ``dataclasses.replace``
-  tampering).
+  tampering), and it binds the metadata location to the facts'
+  ``dataset_id``.
 
 This module contains only version constants, the error type, and frozen
 models with construction-time normalization and validation. It never
@@ -43,7 +66,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from .encoding import DatasetError, normalize_utc_datetime
+from .encoding import (
+    DatasetError,
+    normalize_nfc,
+    normalize_utc_datetime,
+    reject_unsafe_text,
+)
 from .models import (
     SPEC_KIND_FEATURE,
     SPEC_KIND_LABEL,
@@ -114,11 +142,38 @@ def _normalize_sha256(value, label: str) -> str:
 
 
 def _require_text(value, label: str) -> str:
+    """Formal identity text under the existing Dataset encoding contract:
+    a string that is NFC-normalized, deterministically stripped, and free
+    of control characters and reserved encoding separators. The raw input
+    is never accepted; the normalized text is what enters the Catalog
+    content identity."""
     if not isinstance(value, str):
         raise DatasetCatalogError(f"{label} must be a string, got {type(value).__name__}")
-    if not value:
+    text = normalize_nfc(value).strip()
+    if not text:
         raise DatasetCatalogError(f"{label} must not be empty")
-    return value
+    try:
+        reject_unsafe_text(text, label)
+    except DatasetError as exc:
+        raise DatasetCatalogError(str(exc)) from exc
+    return text
+
+
+def _freeze_tuple(values, label: str) -> tuple:
+    """Safe container freeze at the formal construction boundary.
+
+    Iterable container input is accepted and frozen into an immutable
+    tuple; a non-iterable formal input is converted to
+    :class:`DatasetCatalogError` (never a raw ``TypeError``). The frozen
+    tuple is what the model keeps; no mutable container is ever stored.
+    """
+    try:
+        return tuple(values)
+    except TypeError as exc:
+        raise DatasetCatalogError(
+            f"{label} must be an iterable of typed values, got "
+            f"{type(values).__name__}"
+        ) from exc
 
 
 def _require_non_negative_int(value, label: str) -> int:
@@ -146,7 +201,15 @@ def _normalize_instant(value, label: str) -> datetime:
 
 
 def _normalize_spec_pins(values, expected_kind: str, label: str) -> tuple:
-    pins = tuple(values)
+    """Spec pins under the existing Dataset identity contract: every pin
+    must be a SpecPin of the expected kind; ``(kind, name, version)`` is
+    the business duplicate key — the same key with the same content hash
+    is a duplicate and the same key with a different content hash is a
+    conflicting duplicate; both fail closed and are never silently
+    deduplicated. Pins are deterministically sorted by
+    ``(kind, name, version, content_sha256)`` (the content hash is a
+    stable tie-breaker only and never part of the business key)."""
+    pins = _freeze_tuple(values, label)
     for pin in pins:
         if not isinstance(pin, SpecPin):
             raise DatasetCatalogError(
@@ -164,14 +227,20 @@ def _normalize_spec_pins(values, expected_kind: str, label: str) -> tuple:
             key=lambda pin: (pin.kind, pin.name, pin.version, pin.content_sha256),
         )
     )
-    keys = [(pin.kind, pin.name, pin.version, pin.content_sha256) for pin in ordered]
-    if len(set(keys)) != len(keys):
-        raise DatasetCatalogError(f"{label} must not contain duplicate pins")
+    seen: set[tuple] = set()
+    for pin in ordered:
+        key = (pin.kind, pin.name, pin.version)
+        if key in seen:
+            raise DatasetCatalogError(
+                f"{label} must not contain duplicate or conflicting pins for "
+                f"({pin.kind}, {pin.name!r}, {pin.version!r})"
+            )
+        seen.add(key)
     return ordered
 
 
 def _normalize_canonical_build_pins(values) -> tuple:
-    pins = tuple(values)
+    pins = _freeze_tuple(values, "canonical_build_pins")
     for pin in pins:
         if not isinstance(pin, CanonicalBuildPin):
             raise DatasetCatalogError(
@@ -193,7 +262,7 @@ def _normalize_row_version_ids(values) -> tuple:
         sorted(
             {
                 _normalize_sha256(value, "canonical row version id")
-                for value in values
+                for value in _freeze_tuple(values, "canonical_row_version_ids")
             }
         )
     )
@@ -225,21 +294,25 @@ def _validate_completion_scope(completion: CompletionSummary, scope: DatasetScop
 def _validate_row_version_coverage(
     canonical_build_pins: tuple, canonical_row_version_ids: tuple
 ) -> None:
-    """Cross-check: every pinned canonical row-version ID must be covered.
+    """Cross-check: every Catalog-level canonical row-version ID must be
+    covered by the pinned Canonical builds.
 
-    The manifest's canonical row-version list is the union over all pinned
-    Canonical builds; a tampered pin or row-version list that loses this
-    coverage is inconsistent verified content and fails closed.
+    This is exactly the existing Dataset identity contract direction
+    (:func:`market_vault.dataset.identity.normalize_dataset_identity_input`):
+    the Catalog-level ``canonical_row_version_ids`` must be a subset of the
+    union of the pinned builds' row versions. A ``CanonicalBuildPin`` may
+    declare more row versions than the Dataset-level list uses; the Catalog
+    contract never adds a private "every pinned row version must be used"
+    restriction.
     """
-    pinned = set()
+    covered: set[str] = set()
     for pin in canonical_build_pins:
-        pinned.update(pin.canonical_row_version_ids)
-    covered = set(canonical_row_version_ids)
-    missing = pinned - covered
-    if missing:
+        covered.update(pin.canonical_row_version_ids)
+    uncovered = sorted(set(canonical_row_version_ids) - covered)
+    if uncovered:
         raise DatasetCatalogError(
-            "canonical_row_version_ids do not cover every pinned canonical "
-            "build row version"
+            "canonical row-version ID(s) not covered by the pinned canonical "
+            f"builds: {uncovered}"
         )
 
 
@@ -250,15 +323,20 @@ class DatasetCatalogDatasetFacts:
     Exactly the fields that enter the Catalog content identity, projected
     from a verified :class:`~market_vault.dataset.reader_models.
     VerifiedDatasetBuild` by :func:`market_vault.dataset.dataset_catalog_projection.
-    project_dataset_catalog_entry`. Every string is normalized, every
-    sequence is deterministically ordered and deduplicated, every instant
-    is UTC-microsecond normalized, and every nested value is an existing
+    project_dataset_catalog_entry`. Raw identity text is NFC-normalized,
+    deterministically stripped, and unsafe-text rejected; set-like facts
+    (canonical row-version IDs) are normalized and deduplicated;
+    business-key structures (spec pins under ``(kind, name, version)``,
+    canonical build pins, completion entries) are deterministically sorted
+    and fail closed on duplicate / conflicting entries; every instant is
+    UTC-microsecond normalized; and every nested value is an existing
     frozen typed model of the Dataset layer (``DatasetScope``, ``SpecPin``,
-    ``CanonicalBuildPin``, ``CompletionSummary``) — no raw dict, no mutable
-    list, no untyped payload is accepted. ``built_at``, build paths, and
-    all location facts are deliberately absent from this type: they live
-    only in :class:`DatasetCatalogObservedMetadata` and can never reach
-    the content identity through the model structure.
+    ``CanonicalBuildPin``, ``CompletionSummary``) — no raw dict and no
+    untyped payload is accepted, while iterable container input is frozen
+    into tuples at the boundary. ``built_at``, build paths, and all
+    location facts are deliberately absent from this type: they live only
+    in :class:`DatasetCatalogObservedMetadata` and can never reach the
+    content identity through the model structure.
     """
 
     dataset_id: str
@@ -419,8 +497,12 @@ class DatasetCatalogEntry:
     ``content_id`` is the 64-character lowercase SHA-256 of the
     deterministic Catalog content identity over ``dataset_facts`` only and
     is recomputed at construction, so a ``dataclasses.replace`` tamper
-    (wrong content ID, substituted facts, substituted metadata) fails
-    closed. The observed metadata never enters ``content_id``.
+    (wrong content ID or substituted facts) fails closed. The observed
+    metadata never enters ``content_id``: a legal metadata change (a
+    different ``built_at`` or a move to another parent directory with the
+    same ``dataset_id`` basename) never changes it. Metadata fails closed
+    only when its own shape is invalid or when the ``build_path`` basename
+    does not equal ``dataset_facts.dataset_id``.
     """
 
     dataset_facts: DatasetCatalogDatasetFacts
@@ -437,6 +519,19 @@ class DatasetCatalogEntry:
             raise DatasetCatalogError(
                 f"observed_metadata must be a DatasetCatalogObservedMetadata, "
                 f"got {type(self.observed_metadata).__name__}"
+            )
+        # Location binding: the verified Dataset build path contract fixes
+        # ``build_path.name == dataset_id``. The observed metadata is never
+        # identity-bearing, but a Dataset's facts must never be bound to
+        # another Dataset's location; moving to a different parent keeps the
+        # basename and stays legal.
+        if (
+            self.observed_metadata.build_path.name
+            != self.dataset_facts.dataset_id
+        ):
+            raise DatasetCatalogError(
+                "observed_metadata.build_path basename must equal "
+                "dataset_facts.dataset_id"
             )
         content_id = _normalize_sha256(self.content_id, "content_id")
         object.__setattr__(self, "content_id", content_id)
