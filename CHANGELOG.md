@@ -4,6 +4,71 @@ All notable changes to MarketVault are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-08-08
+
+### Added
+
+- Deterministic Sample Generation contract/core: frozen generation-plan
+  models, strict plan parsing, deterministic semantic content identity, and
+  the deterministic PITSampleRequest generator core over verified Canonical
+  builds and explicit generation plans.
+- `sample-generate` CLI: renders ordinary
+  `market-vault-dataset-build-plan-v1` documents from one explicit
+  generation plan, ready to hand directly to `dataset-build`.
+- Immutable Dataset Catalog contract: verified Dataset facts projection,
+  per-Dataset content digest, and normalized-set Catalog content identity
+  with exact-duplicate merge / fail-closed conflict policy.
+- Catalog builder / materializer / verified reader: deterministic Catalog
+  content, immutable physical snapshots (`catalog.json` / `manifest.json` /
+  `_SUCCESS`) with atomic no-replace publication, and a verified snapshot
+  reader that recomputes every identity from the snapshot's own bytes.
+- Catalog `dataset-catalog-build` / `dataset-catalog-verify` /
+  `dataset-catalog-list` / `dataset-catalog-show` CLI with read-only
+  discovery, filters, and pagination.
+- Read-only Catalog filtering and pagination through
+  `dataset-catalog-list`.
+- Integrated acceptance suite: COMPLETE + EMPTY E2E, determinism,
+  corruption fail-closed, recovery != repair, security/read-only, and
+  usability coverage.
+- PyArrow24 compatibility CI gate (`pyarrow==24.0.0`) running the full test
+  suite.
+
+### Fixed
+
+- Canonical single-file Parquet verified-reader fix (GitHub PR #38):
+  reads canonical parquet files directly and avoids Hive-style parent
+  partition inference.
+- PR-8 test-only single-file Parquet portability fix: static acceptance
+  fixtures are read without partition inference on newer PyArrow runtimes.
+  Test-only; no production behavior change is claimed.
+
+### Compatibility
+
+- Existing Canonical identity algorithms are unchanged.
+- Existing Dataset identity algorithms are unchanged.
+- The existing Dataset build-plan contract
+  (`market-vault-dataset-build-plan-v1`) is unchanged; generated sample
+  requests are ordinary build plans.
+- No migration or rewrite of existing artifacts: existing Canonical builds,
+  Datasets, manifests, and Catalog inputs are never modified.
+- Runtime dependencies are unchanged.
+- `pyarrow>=16` remains unchanged.
+- `requires-python >=3.11` remains unchanged.
+- Python 3.11 and Python 3.14 remain the normal CI matrix.
+- PyArrow24 adds an additional full-suite compatibility gate.
+
+### Known boundaries
+
+- No Python Client.
+- No REST API.
+- No ML training.
+- No backtesting.
+- No automatic trading.
+- No standalone `dataset-catalog-query`: `dataset-catalog-list` filters are
+  the formal query surface.
+- No `latest` pointer.
+- No automatic repair.
+
 ## [0.5.1] - 2026-08-06
 
 ### Fixed
@@ -280,6 +345,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Historical K-line collection for closed dates (`collect`), query layer
   (`query`), and option datasets.
 
+[0.6.0]: https://github.com/M0DIAN/market-vault/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/M0DIAN/market-vault/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/M0DIAN/market-vault/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/M0DIAN/market-vault/compare/v0.3.0...v0.4.0
