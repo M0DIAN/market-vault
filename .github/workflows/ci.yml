@@ -130,8 +130,8 @@ jobs:
           .release-venv/bin/market-vault dataset-catalog-verify --help
           .release-venv/bin/market-vault dataset-catalog-list --help
           .release-venv/bin/market-vault dataset-catalog-show --help
-          .release-venv/bin/python -c "import market_vault; assert market_vault.__version__ == '0.5.1'"
-          .release-venv/bin/python -c "from importlib.metadata import version; assert version('market-vault') == '0.5.1'"
+          .release-venv/bin/python -c "import market_vault; assert market_vault.__version__ == '0.6.0'"
+          .release-venv/bin/python -c "from importlib.metadata import version; assert version('market-vault') == '0.6.0'"
 
       - name: Fresh-wheel public API smoke check
         run: |
@@ -141,8 +141,9 @@ jobs:
               orchestrate_dataset_build,
               materialize_dataset_artifacts,
               load_verified_dataset,
+              generate_sample_requests,
           )
-          print('V051_PUBLIC_API_IMPORT_OK')
+          print('V060_PUBLIC_API_IMPORT_OK')
           "
           .release-venv/bin/python -c "
           from market_vault.dataset import (
@@ -165,6 +166,7 @@ jobs:
           "
           echo 'PR7_CATALOG_CLI_HELP_OK'
           echo 'PR8_INTEGRATED_ACCEPTANCE_OK'
+          echo 'V060_RELEASE_PREP_OK'
 
       - name: Check wheel contents exclude local data
         run: |
@@ -172,7 +174,7 @@ jobs:
           import glob, zipfile
           wheel = glob.glob("dist/*.whl")[0]
           names = zipfile.ZipFile(wheel).namelist()
-          forbidden = ("data/", "catalog/", "manifests/", "reports/", ".venv/", ".duckdb", ".parquet", "examples/", "tests/")
+          forbidden = ("data/", "catalog/", "manifests/", "reports/", ".venv/", ".duckdb", ".parquet", "examples/", "tests/", ".b64")
           violations = [n for n in names if any(f in n for f in forbidden)]
           assert not violations, f"wheel contains forbidden paths: {violations}"
           print("WHEEL_CONTENTS_OK")

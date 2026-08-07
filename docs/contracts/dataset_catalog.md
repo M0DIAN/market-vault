@@ -4,7 +4,7 @@ Status: Dataset Catalog contract, frozen models, metadata projection,
 Catalog content identity, the immutable snapshot builder, the snapshot
 materializer, the verified snapshot reader implemented by PR-5 and
 PR-6, and the Dataset Catalog CLI (build / verify / list / show)
-implemented by PR-7 (this PR)
+implemented by PR-7
 Target release: v0.6.0
 Not available in released v0.5.1. The Dataset Catalog is not implemented in v0.5.1.
 
@@ -17,12 +17,14 @@ fail-closed validation rules. Part B (PR-6) fixes the deterministic
 Catalog builder, the exact physical snapshot schema, the separation of
 the Catalog content identity from the physical snapshot identity, the
 materialization transaction, and the verified snapshot reader. Part C
-(PR-7, this PR) fixes the Dataset Catalog CLI: the four formal commands,
+(PR-7) fixes the Dataset Catalog CLI: the four formal commands,
 the settings-independent dispatch, the exact build / verify / list /
 show surfaces, the deterministic JSON output, and the exit-code
-contract. There is no standalone `dataset-catalog-query` command: the
-query surface is fixed as the read-only list filters of
-`dataset-catalog-list` over one verified snapshot.
+contract. PR-7 completed the CLI; PR-8 completed integrated acceptance;
+PR-9 is the v0.6.0 release preparation. There is no standalone
+`dataset-catalog-query` command: the query surface is fixed as the
+read-only list filters of `dataset-catalog-list` over one verified
+snapshot.
 
 The PR-5 production modules are:
 
@@ -734,7 +736,7 @@ programming errors are never converted.
 ## 15. PR-6 boundary: the CLI is PR-7
 
 PR-6 does not implement any Catalog CLI; the Catalog CLI is implemented
-by PR-7 (this PR) and fixed in Part C:
+by PR-7 and fixed in Part C:
 
 ```text
 dataset-catalog-build CLI       -> implemented by PR-7 (Part C, section 19)
@@ -748,14 +750,17 @@ The following remain not implemented and outside v0.6.0 scope:
 ```text
 any standalone Catalog query CLI  (the query surface is fixed as the
                                   read-only list filters of
-                                  dataset-catalog-list; PR-8 has not
-                                  started)
+                                  dataset-catalog-list)
 Python Client                    (a v0.7 direction)
 REST API
 latest pointer
 DuckDB Catalog tables / views
 legacy Catalog integration
 ```
+
+PR-8 integrated acceptance completed; no standalone
+`dataset-catalog-query` exists because `dataset-catalog-list` filters are
+the fixed query surface.
 
 ## 16. Version constants
 
@@ -1044,4 +1049,4 @@ swallowed and never converted.
 - The CLI never changes Dataset identity, Canonical identity, or any
   PR-5 / PR-6 Catalog identity.
 - The Python Client is a v0.7 direction and is not part of v0.6.0;
-  PR-8 has not started.
+  PR-8 integrated acceptance completed in PR #42.

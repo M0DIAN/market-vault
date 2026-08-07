@@ -185,8 +185,10 @@ through the pure serializer, accepts them with the existing strict
 exact-byte idempotently with no overwrite. The CLI never executes
 ``dataset-build``, never runs PIT assembly, never computes Feature or Label
 values, never calls orchestration / materialization / the verified Dataset
-reader, never builds a Dataset, and never implements a Catalog; the
-Dataset Catalog (PR-5+) is not implemented.
+reader, never builds a Dataset, and never implements a Catalog. The Sample
+Generation contract / core / CLI are implemented in v0.6.0 (PR-2/3/4) and
+remain independent from the Dataset Catalog, which is implemented separately
+in PR-5/6/7.
 
 The Dataset CLI (v0.5.0 PR-8; :mod:`market_vault.dataset.cli` and
 :mod:`market_vault.dataset.cli_models`) exposes three formal commands —
@@ -200,8 +202,9 @@ Dataset identity; the CLI adds no second builder, no second validator, no
 latest-directory scan, no automatic sample generation, no scope inference,
 no settings.yaml / OpenD / network dependency, and no current time.
 ``dataset-verify`` and ``dataset-inspect`` are strictly read-only. The
-end-to-end determinism and leakage regression (PR-9) and the v0.5.0 release
-preparation (PR-10) are not implemented yet.
+v0.5.0 end-to-end determinism and leakage regression and the v0.5.0 release
+preparation are historical stages, completed in the v0.5 development line
+before v0.6.0.
 
 The Dataset Catalog contract foundation (v0.6.0 PR-5;
 :mod:`market_vault.dataset.dataset_catalog_models`,
@@ -233,8 +236,12 @@ bytes and treats the recorded Dataset build locations as historical text
 that is never reloaded. The physical snapshot identity
 (:func:`market_vault.dataset.dataset_catalog_snapshot_identity.
 dataset_catalog_snapshot_id`) is independent of the PR-5 Catalog content
-identity and never flows back into any Dataset fact. The Catalog
-verify / list / show / query CLI remains PR-7 and is not implemented.
+identity and never flows back into any Dataset fact. The Catalog CLI
+exposes the four formal commands — ``dataset-catalog-build``,
+``dataset-catalog-verify``, ``dataset-catalog-list``, and
+``dataset-catalog-show`` — implemented in PR-7 with integrated acceptance
+completed in PR-8; there is no standalone ``dataset-catalog-query``, and the
+read-only ``dataset-catalog-list`` filters are the formal query surface.
 
 This layer does not create DuckDB views, does not add an API server or a
 Python client, and does not train models, backtest, or trade. The Canonical

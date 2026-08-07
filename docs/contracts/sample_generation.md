@@ -18,7 +18,10 @@ anchors, the exact request geometry, and the frozen
 implements the Sample Generation CLI (`market-vault sample-generate`), the
 pure ordinary Dataset build-plan renderer, the shared split-spec loading
 authority, and the COMPLETE / EMPTY / determinism end-to-end proof. The
-Dataset Catalog (PR-5+) is not implemented. Sample Generation is not implemented in v0.5.1.
+Sample Generation contract / core / CLI are complete (PR-2/3/4). The
+Dataset Catalog was separately completed in PR-5/6/7 and remains
+independent of Sample Generation; integrated acceptance was completed in
+PR-8, and PR-9 performs the v0.6.0 release preparation. Sample Generation is not implemented in v0.5.1.
 
 ## 1. Four version constants
 
@@ -683,7 +686,7 @@ The v0.6.0 Sample Generator does not support:
 ## 26. Relationship to the future Catalog
 
 The generator produces build plans that, when executed, produce immutable
-Datasets; those Datasets are what the future Dataset Catalog indexes. The
+Datasets; those Datasets are what the Dataset Catalog indexes. The
 generator itself never reads or writes a Catalog.
 
 ## 27. Complete example

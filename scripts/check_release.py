@@ -21,7 +21,7 @@ import sys
 import tomllib
 from pathlib import Path
 
-EXPECTED_VERSION = "0.5.1"
+EXPECTED_VERSION = "0.6.0"
 PEP440_RE = re.compile(
     r"^([1-9]\d*!)?(0|[1-9]\d*)(\.(0|[1-9]\d*))*((a|b|rc)(0|[1-9]\d*))?"
     r"(\.post(0|[1-9]\d*))?(\.dev(0|[1-9]\d*))?$"
@@ -36,8 +36,8 @@ CI_PACKAGE_VERSION_MARKERS = (
 CI_METADATA_VERSION_MARKERS = (
     f"assert version('market-vault') == '{EXPECTED_VERSION}'",
 )
-# The CI fresh-wheel public API smoke marker must use the v0.5.1 marker.
-CI_PUBLIC_API_MARKER = "V051_PUBLIC_API_IMPORT_OK"
+# The CI fresh-wheel public API smoke marker must use the v0.6.0 marker.
+CI_PUBLIC_API_MARKER = "V060_PUBLIC_API_IMPORT_OK"
 # The exact NumPy timedelta warning-as-error guard that must stay in
 # pyproject.toml; an ignore-based substitute is never accepted.
 WARNING_GUARD_MARKER = (
@@ -188,9 +188,10 @@ RELEASE_V051_STALE_PHRASES = (
 HISTORICAL_RELEASE_PREPARATION_HEADER = "## Historical release-preparation record"
 # Facts the v0.6.0 direction document must state.
 V060_DIRECTION_FACTS = (
-    "Status: planned",
+    "Status: implementation complete; v0.6.0 release preparation",
     "Deterministic Sample Generation and Dataset Catalog",
     "a978eef291d5e26d20e5cf977bc76609c227cb52",
+    "package version at planning time: 0.5.1",
     "PR-1",
     "PR-2",
     "PR-3",
@@ -207,7 +208,14 @@ V060_DIRECTION_FACTS = (
     "Trading Execution",
     "not part of v0.6",
     "bumped to 0.6.0 only in PR-9",
-    "package version at planning time: 0.5.1",
+    "release preparation",
+    "not formally released",
+    "24a2243031b5f16fdbb9334f1a1722e56eb7a2f7",
+    "PR #42",
+    "2026-08-07T18:32:32Z",
+    "PR-8 COMPLETE",
+    "main verified",
+    "31207428151",
 )
 # The v0.6.0 direction document must mark the explicit non-goals.
 V060_DIRECTION_NONGOAL_MARKERS = (
@@ -216,11 +224,66 @@ V060_DIRECTION_NONGOAL_MARKERS = (
     "backtesting",
     "automatic trading",
 )
-# The v0.6.0 direction document must explicitly state that PR-9 has not
-# started (the v0.6.0 release preparation is the only PR that bumps the
-# version; PR-8 does not release v0.6.0).
-V060_NOT_IMPLEMENTED_MARKER = (
-    "PR-9 has not started"
+# Stale lifecycle wording that must never appear in the current-state
+# regions of the v0.6.0 direction document (the header and the Progress
+# section). The planning sections may quote the pre-PR-9 state, but the
+# current-state regions must describe the release preparation exactly.
+V060_DIRECTION_STALE_PHRASES = (
+    "PR-8 (this PR)",
+    "PR-9 has not started",
+    "every supported PyArrow writer",
+    "v0.6.0 is formally released",
+)
+# Affirmative release claims that must never appear anywhere in the
+# v0.6.0 direction document: the release preparation does not create the
+# tag, the GitHub Release, or a PyPI publication.
+V060_DIRECTION_RELEASE_CLAIMS = (
+    "v0.6.0 tag exists",
+    "GitHub Release published",
+    "PyPI published",
+    "TestPyPI published",
+)
+# Facts the v0.6.0 release notes must state during the release-preparation
+# stage. The final formal facts (tag, GitHub Release, PyPI, merge SHA,
+# formal asset hashes) are intentionally absent: PR-9 must not fabricate
+# them.
+RELEASE_V060_FACTS = (
+    "Release preparation status",
+    "v0.6.0 release preparation",
+    "PR-9",
+    "0.6.0",
+    "24a2243031b5f16fdbb9334f1a1722e56eb7a2f7",
+    "PR #42",
+    "2026-08-07T18:32:32Z",
+    "31207428151",
+    "Deterministic Sample Generator",
+    "Dataset Catalog",
+    "sample-generate",
+    "dataset-catalog-build",
+    "dataset-catalog-verify",
+    "dataset-catalog-list",
+    "dataset-catalog-show",
+    "PyArrow 24.0.0",
+    "PyArrow 25.0.0",
+    "pyarrow>=16",
+    "candidate validation only",
+    "exact release commit",
+    "PyPI",
+    "TestPyPI",
+    "not published",
+)
+# Formal-state phrasing that must never appear in the v0.6.0 release
+# notes: PR-9 is the release preparation, and the tag / GitHub Release /
+# PyPI facts are not created by it.
+RELEASE_V060_STALE_PHRASES = (
+    "Formal release status",
+    "v0.6.0 is formally released",
+    "tag: v0.6.0",
+    "GitHub Release: MarketVault v0.6.0",
+    "PyPI: published",
+    "PR-8 (this PR)",
+    "PR-9 has not started",
+    "every supported PyArrow writer",
 )
 # Facts the v0.6.0 architecture ADR must state.
 ADR_V060_FACTS = (
@@ -261,6 +324,20 @@ CONTRACT_STALE_PHRASES = (
     "available now",
     "released in v0.5.1",
 )
+# Stale lifecycle wording that must never appear in the Sample Generation
+# contract document: the Dataset Catalog was separately implemented in
+# PR-5/6/7 and is no longer a not-implemented dependency.
+SAMPLE_GENERATION_CONTRACT_STALE_PHRASES = (
+    "Dataset Catalog (PR-5+) is not implemented",
+)
+# Stale lifecycle wording that must never appear in the Dataset Catalog
+# contract document: PR-8 has started and completed, and the CLI is
+# implemented by PR-7.
+DATASET_CATALOG_CONTRACT_STALE_PHRASES = (
+    "PR-8 has not started",
+    "Catalog CLI is not implemented",
+    "CLI remains PR-7 and is not implemented",
+)
 # The v0.6.0 Sample Generation contract production modules that must exist.
 SAMPLE_GENERATION_MODULES = (
     "src/market_vault/dataset/sample_generation_models.py",
@@ -282,7 +359,6 @@ SAMPLE_GENERATION_CONTRACT_V1_STATUS = (
     "Not available in released v0.5.1",
     "PR-3",
     "PR-4",
-    "PR-5+",
 )
 # The v0.6.0 Sample Generator core production modules that must exist.
 SAMPLE_GENERATOR_CORE_MODULES = (
@@ -413,8 +489,6 @@ V060_DIRECTION_PR7_FACTS = (
     "15ce0ef",
     "PR-7 COMPLETE",
     "main verified",
-    "PR-9 not started",
-    "not released",
 )
 # Contradictory claims that must never appear in the v0.6.0 direction
 # document's PR-7 record.
@@ -423,19 +497,20 @@ V060_DIRECTION_PR7_FALSE_CLAIMS = (
 )
 # Facts the v0.6.0 direction document must state about the PR-8 stage.
 V060_DIRECTION_PR8_FACTS = (
-    "PR #41",
-    "15ce0ef",
-    "PR-7 COMPLETE",
-    "PR-8",
-    "PR-9 not started",
-    "not released",
+    "PR #42",
+    "2026-08-07T18:32:32Z",
+    "24a2243031b5f16fdbb9334f1a1722e56eb7a2f7",
+    "PR-8 COMPLETE",
+    "main verified",
+    "31207428151",
     "0.5.1",
+    "release preparation",
+    "not formally released",
 )
 # Contradictory claims that must never appear in the v0.6.0 direction
 # document's PR-8 record.
 V060_DIRECTION_PR8_FALSE_CLAIMS = (
     "V0.6.0 is released",
-    "PR-9 has started",
 )
 # Required facts the v0.6.0 integrated acceptance document must state.
 V060_ACCEPTANCE_FACTS = (
@@ -650,7 +725,6 @@ DATASET_CATALOG_CLI_CONTRACT_FACTS = (
     "no standalone `dataset-catalog-query`",
     "historical",
     "exit 0 / 1 / 2",
-    "PR-8 has not started",
 )
 # Contradictory PR-7 claims that must never appear in the formal Dataset
 # Catalog contract document even when the required facts are present.
@@ -664,6 +738,11 @@ DATASET_CATALOG_CLI_FALSE_CLAIMS = (
 )
 # The CI fresh-wheel smoke must cover the four Catalog CLI help commands.
 CI_PR7_API_MARKER = "PR7_CATALOG_CLI_HELP_OK"
+# The CI package job must carry the v0.6.0 release-preparation marker, the
+# v0.6.0 public API smoke must import generate_sample_requests, and the
+# wheel contents check must forbid *.b64 fixture bundles.
+CI_V060_RELEASE_PREP_MARKER = "V060_RELEASE_PREP_OK"
+CI_V060_PUBLIC_API_IMPORT_LINES = ("generate_sample_requests",)
 CI_PR7_HELP_COMMANDS = (
     "market-vault dataset-catalog-build --help",
     "market-vault dataset-catalog-verify --help",
@@ -942,8 +1021,8 @@ def check_readme_title(root: Path) -> list[str]:
     if not path.exists():
         return ["README.md is missing"]
     first_line = path.read_text(encoding="utf-8").splitlines()[0]
-    if first_line.strip() != "# MarketVault v0.5.1":
-        return [f"README first line is {first_line.strip()!r}, expected '# MarketVault v0.5.1'"]
+    if first_line.strip() != "# MarketVault v0.6.0":
+        return [f"README first line is {first_line.strip()!r}, expected '# MarketVault v0.6.0'"]
     return []
 
 
@@ -953,14 +1032,18 @@ def check_changelog(root: Path) -> list[str]:
         return ["CHANGELOG.md is missing"]
     text = path.read_text(encoding="utf-8")
     failures = []
+    if "## [0.6.0] - 2026-08-08" not in text:
+        failures.append("CHANGELOG.md is missing '## [0.6.0] - 2026-08-08'")
     if "## [0.5.1] - 2026-08-06" not in text:
-        failures.append("CHANGELOG.md is missing '## [0.5.1] - 2026-08-06'")
+        failures.append("CHANGELOG.md no longer contains '## [0.5.1] - 2026-08-06'")
     if "## [0.5.0] - 2026-08-05" not in text:
         failures.append("CHANGELOG.md no longer contains '## [0.5.0] - 2026-08-05'")
     if "## [0.4.0] - 2026-08-05" not in text:
         failures.append("CHANGELOG.md no longer contains '## [0.4.0] - 2026-08-05'")
+    if "[0.6.0]: https://github.com/M0DIAN/market-vault/compare/v0.5.1...v0.6.0" not in text:
+        failures.append("CHANGELOG.md is missing the v0.6.0 compare link")
     if "[0.5.1]: https://github.com/M0DIAN/market-vault/compare/v0.5.0...v0.5.1" not in text:
-        failures.append("CHANGELOG.md is missing the v0.5.1 compare link")
+        failures.append("CHANGELOG.md no longer contains the v0.5.1 compare link")
     return failures
 
 
@@ -1081,6 +1164,20 @@ def check_v051_release_notes(root: Path) -> list[str]:
     return failures
 
 
+def _v060_direction_current_state(text: str) -> str:
+    # The current-state regions are the header (title, status, and intro,
+    # up to the first planning section) and the Progress section. The
+    # historical planning sections (Baseline, Goals, CLI direction,
+    # non-goals, fixed PR sequence) describe the past and must not be
+    # rejected for accurately quoting the preparation-time state.
+    regions: list[str] = []
+    if "## 1. Baseline" in text:
+        regions.append(text.split("## 1. Baseline", 1)[0])
+    if "## 8. Progress" in text:
+        regions.append(text.split("## 8. Progress", 1)[1])
+    return "\n".join(regions)
+
+
 def check_v060_direction(root: Path) -> list[str]:
     path = root / "docs" / "v0_6_0_direction.md"
     if not path.exists():
@@ -1096,10 +1193,19 @@ def check_v060_direction(root: Path) -> list[str]:
                 "docs/v0_6_0_direction.md does not mark the v0.6.0 "
                 f"non-goals ({marker!r})"
             )
-    if V060_NOT_IMPLEMENTED_MARKER not in text:
-        failures.append(
-            "docs/v0_6_0_direction.md must state that PR-9 has not started"
-        )
+    current_state = _v060_direction_current_state(text)
+    for phrase in V060_DIRECTION_STALE_PHRASES:
+        if phrase in current_state:
+            failures.append(
+                "docs/v0_6_0_direction.md still contains the stale "
+                f"wording {phrase!r}"
+            )
+    for claim in V060_DIRECTION_RELEASE_CLAIMS:
+        if claim in text:
+            failures.append(
+                "docs/v0_6_0_direction.md contains the false release "
+                f"claim {claim!r}"
+            )
     for fact in V060_DIRECTION_PR8_FACTS:
         if fact not in text:
             failures.append(
@@ -1130,6 +1236,25 @@ def check_v060_direction(root: Path) -> list[str]:
             "docs/v0_6_0_direction.md contains the false claim "
             "'Dataset Catalog is implemented'"
         )
+    return failures
+
+
+def check_v060_release_notes(root: Path) -> list[str]:
+    path = root / "docs" / "release_v0_6_0.md"
+    if not path.exists():
+        return ["docs/release_v0_6_0.md is missing"]
+    text = path.read_text(encoding="utf-8")
+    failures = []
+    for fact in RELEASE_V060_FACTS:
+        if fact not in text:
+            failures.append(
+                f"docs/release_v0_6_0.md does not state the fact {fact!r}"
+            )
+    for phrase in RELEASE_V060_STALE_PHRASES:
+        if phrase in text:
+            failures.append(
+                f"docs/release_v0_6_0.md still contains the stale wording {phrase!r}"
+            )
     return failures
 
 
@@ -1217,6 +1342,12 @@ def check_sample_generation_contract(root: Path) -> list[str]:
                 f"boundary fact {fact!r}"
             )
     for phrase in CONTRACT_STALE_PHRASES:
+        if phrase in text:
+            failures.append(
+                "docs/contracts/sample_generation.md still contains the "
+                f"stale claim {phrase!r}"
+            )
+    for phrase in SAMPLE_GENERATION_CONTRACT_STALE_PHRASES:
         if phrase in text:
             failures.append(
                 "docs/contracts/sample_generation.md still contains the "
@@ -1449,6 +1580,12 @@ def check_dataset_catalog_contract(root: Path) -> list[str]:
             "reuses the legacy Catalog's tables"
         )
     for phrase in CONTRACT_STALE_PHRASES:
+        if phrase in text:
+            failures.append(
+                "docs/contracts/dataset_catalog.md still contains the "
+                f"stale claim {phrase!r}"
+            )
+    for phrase in DATASET_CATALOG_CONTRACT_STALE_PHRASES:
         if phrase in text:
             failures.append(
                 "docs/contracts/dataset_catalog.md still contains the "
@@ -2006,6 +2143,33 @@ def check_ci_pr8(root: Path) -> list[str]:
     return failures
 
 
+def check_ci_v060_release_prep(root: Path) -> list[str]:
+    """The CI package job carries the ``V060_RELEASE_PREP_OK`` marker, the
+    public API smoke imports ``generate_sample_requests``, and the wheel
+    hygiene step forbids ``.b64`` files (the frozen static reference
+    artifact fixture must never ship inside the wheel)."""
+    path = root / ".github" / "workflows" / "ci.yml"
+    if not path.exists():
+        return [".github/workflows/ci.yml is missing"]
+    text = path.read_text(encoding="utf-8")
+    failures = []
+    if CI_V060_RELEASE_PREP_MARKER not in text:
+        failures.append(
+            "CI package job must carry the "
+            f"{CI_V060_RELEASE_PREP_MARKER} marker"
+        )
+    for import_line in CI_V060_PUBLIC_API_IMPORT_LINES:
+        if import_line not in text:
+            failures.append(
+                f"CI public API smoke must import {import_line!r}"
+            )
+    if '".b64"' not in text:
+        failures.append(
+            "CI wheel hygiene forbidden tuple must include \".b64\""
+        )
+    return failures
+
+
 def check_old_release_notes(root: Path) -> list[str]:
     failures = []
     if not (root / "docs" / "release_v0_5_0.md").exists():
@@ -2056,10 +2220,10 @@ def check_examples(root: Path) -> list[str]:
     readme = root / "examples" / "dataset_cli" / "README.md"
     if readme.exists():
         text = readme.read_text(encoding="utf-8")
-        if "market-vault 0.5.1" not in text:
+        if "market-vault 0.6.0" not in text:
             failures.append(
                 "examples/dataset_cli/README.md does not state the install "
-                "version 'market-vault 0.5.1'"
+                "version 'market-vault 0.6.0'"
             )
     renderer = root / "examples" / "dataset_cli" / "render_plans.py"
     if renderer.exists():
@@ -2231,6 +2395,7 @@ def main() -> int:
         ("direction status", check_direction_status),
         ("release notes", check_release_notes),
         ("v0.5.1 release notes", check_v051_release_notes),
+        ("v0.6.0 release notes", check_v060_release_notes),
         ("v0.5.1 direction", check_v051_direction),
         ("v0.6.0 direction", check_v060_direction),
         ("v0.6.0 ADR", check_v060_adr),
@@ -2246,6 +2411,7 @@ def main() -> int:
         ("v0.6.0 frozen fixture", check_v060_frozen_fixture),
         ("pyarrow dependency", check_pyarrow_dependency),
         ("CI PR-8 portability", check_ci_pr8),
+        ("CI v0.6.0 release prep", check_ci_v060_release_prep),
         ("old release notes", check_old_release_notes),
         ("warning guard", check_warning_guard),
         ("examples", check_examples),

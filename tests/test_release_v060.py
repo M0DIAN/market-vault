@@ -20,7 +20,7 @@ from market_vault.storage import Catalog, ParquetStore
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
-EXPECTED_VERSION = "0.5.1"
+EXPECTED_VERSION = "0.6.0"
 PUBLIC_API_IMPORT_CODE = "\n".join(
     [
         "from market_vault.canonical import load_verified_canonical_build",
@@ -28,8 +28,9 @@ PUBLIC_API_IMPORT_CODE = "\n".join(
         "    orchestrate_dataset_build,",
         "    materialize_dataset_artifacts,",
         "    load_verified_dataset,",
+        "    generate_sample_requests,",
         ")",
-        "print('V051_PUBLIC_API_IMPORT_OK')",
+        "print('V060_PUBLIC_API_IMPORT_OK')",
     ]
 )
 PEP440_RE = re.compile(
@@ -257,9 +258,9 @@ def test_cli_existing_failure_exit_codes_unchanged():
 # --- Documentation ----------------------------------------------------------
 
 
-def test_readme_title_is_v051():
+def test_readme_title_is_v060():
     first_line = (ROOT / "README.md").read_text(encoding="utf-8").splitlines()[0]
-    assert first_line.strip() == "# MarketVault v0.5.1"
+    assert first_line.strip() == "# MarketVault v0.6.0"
 
 
 def test_readme_no_development_wording():
@@ -291,7 +292,12 @@ def test_readme_does_not_claim_fixed_bar_counts():
     assert "requires 390" not in text
 
 
-def test_changelog_contains_051():
+def test_changelog_contains_060():
+    text = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert "## [0.6.0] - 2026-08-08" in text
+
+
+def test_changelog_still_contains_051():
     text = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
     assert "## [0.5.1] - 2026-08-06" in text
 
@@ -306,7 +312,15 @@ def test_changelog_still_contains_040():
     assert "## [0.4.0] - 2026-08-05" in text
 
 
-def test_changelog_contains_051_compare_link():
+def test_changelog_contains_060_compare_link():
+    text = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert (
+        "[0.6.0]: https://github.com/M0DIAN/market-vault/compare/v0.5.1...v0.6.0"
+        in text
+    )
+
+
+def test_changelog_still_contains_051_compare_link():
     text = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
     assert (
         "[0.5.1]: https://github.com/M0DIAN/market-vault/compare/v0.5.0...v0.5.1"
@@ -400,9 +414,13 @@ def test_readme_describes_explicit_build_plan():
     assert "build-plan JSON" in text
 
 
-def test_readme_does_not_claim_v06():
+def test_readme_claims_v06_capabilities():
     text = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "v0.6" not in text
+    assert "# MarketVault v0.6.0" in text
+    assert "deterministic sample generation" in text
+    assert "Dataset Catalog" in text
+    assert "sample-generate" in text
+    assert "dataset-catalog-build" in text
 
 
 def test_direction_document_is_released():
@@ -416,7 +434,8 @@ def test_direction_document_is_released():
 
 def test_readme_describes_ci_matrix():
     text = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "Runs CI on Python 3.11 and 3.14" in text
+    assert "Normal CI on Python 3.11 and 3.14" in text
+    assert "PyArrow24 full-suite compatibility gate" in text
 
 
 def test_readme_contains_empty_build_semantics():
@@ -454,16 +473,16 @@ def test_upgrade_notes_contain_legacy_compatibility():
     assert "batch-<batch_key>.parquet" in text
 
 
-# --- V0.5 public API imports ------------------------------------------------
+# --- V0.6 public API imports ------------------------------------------------
 
 
-def test_v051_public_api_imports_succeed(tmp_path):
+def test_v060_public_api_imports_succeed(tmp_path):
     result = run_code_in(tmp_path, PUBLIC_API_IMPORT_CODE)
     assert result.returncode == 0, result.stderr
-    assert "V051_PUBLIC_API_IMPORT_OK" in result.stdout
+    assert "V060_PUBLIC_API_IMPORT_OK" in result.stdout
 
 
-def test_v051_public_api_imports_do_not_connect_opend(tmp_path):
+def test_v060_public_api_imports_do_not_connect_opend(tmp_path):
     # The imports run from an empty directory without any settings file or
     # OpenD host; a collector connection attempt would fail loudly.
     result = run_code_in(tmp_path, PUBLIC_API_IMPORT_CODE)
@@ -471,7 +490,7 @@ def test_v051_public_api_imports_do_not_connect_opend(tmp_path):
     assert "Traceback" not in result.stderr
 
 
-def test_v051_public_api_imports_do_not_write_data(tmp_path):
+def test_v060_public_api_imports_do_not_write_data(tmp_path):
     result = run_code_in(tmp_path, PUBLIC_API_IMPORT_CODE)
     assert result.returncode == 0, result.stderr
     leftovers = {p.name for p in tmp_path.iterdir()}
@@ -481,10 +500,15 @@ def test_v051_public_api_imports_do_not_write_data(tmp_path):
     assert "reports" not in leftovers
 
 
-def test_v051_dataset_exports_are_public():
+def test_v060_dataset_exports_are_public():
     import market_vault.dataset as dataset
 
-    for name in ("orchestrate_dataset_build", "materialize_dataset_artifacts", "load_verified_dataset"):
+    for name in (
+        "orchestrate_dataset_build",
+        "materialize_dataset_artifacts",
+        "load_verified_dataset",
+        "generate_sample_requests",
+    ):
         assert name in dataset.__all__
 
 
@@ -509,20 +533,20 @@ def test_release_checker_passes_on_current_repo():
     assert f"RELEASE_CHECK_OK version={EXPECTED_VERSION}" in result.stdout
 
 
-def test_release_checker_output_is_exactly_release_check_ok_v051():
+def test_release_checker_output_is_exactly_release_check_ok_v060():
     result = run_check_release(ROOT)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert result.stdout.strip() == "RELEASE_CHECK_OK version=0.5.1"
+    assert result.stdout.strip() == "RELEASE_CHECK_OK version=0.6.0"
 
 
 def test_release_checker_fails_on_version_mismatch(tmp_path):
     repo = copy_repo(tmp_path)
     pyproject = repo / "pyproject.toml"
     text = pyproject.read_text(encoding="utf-8")
-    pyproject.write_text(text.replace('version = "0.5.1"', 'version = "9.9.9"'), encoding="utf-8")
+    pyproject.write_text(text.replace('version = "0.6.0"', 'version = "9.9.9"'), encoding="utf-8")
     version_file = repo / "src" / "market_vault" / "_version.py"
     version_file.write_text(
-        version_file.read_text(encoding="utf-8").replace('"0.5.1"', '"9.9.9"'),
+        version_file.read_text(encoding="utf-8").replace('"0.6.0"', '"9.9.9"'),
         encoding="utf-8",
     )
     result = run_check_release(repo)
@@ -535,7 +559,7 @@ def test_release_checker_fails_on_cli_version_mismatch(tmp_path):
     repo = copy_repo(tmp_path)
     version_file = repo / "src" / "market_vault" / "_version.py"
     version_file.write_text(
-        version_file.read_text(encoding="utf-8").replace('"0.5.1"', '"9.9.9"'),
+        version_file.read_text(encoding="utf-8").replace('"0.6.0"', '"9.9.9"'),
         encoding="utf-8",
     )
     result = run_check_release(repo)
@@ -597,7 +621,7 @@ def test_release_checker_fails_on_readme_title_mismatch(tmp_path):
     readme = repo / "README.md"
     readme.write_text(
         readme.read_text(encoding="utf-8").replace(
-            "# MarketVault v0.5", "# MarketVault v9.9"
+            "# MarketVault v0.6", "# MarketVault v9.9"
         ),
         encoding="utf-8",
     )
@@ -610,7 +634,7 @@ def test_release_checker_fails_on_old_ci_version_assertion(tmp_path):
     repo = copy_repo(tmp_path)
     ci = repo / ".github" / "workflows" / "ci.yml"
     text = ci.read_text(encoding="utf-8")
-    ci.write_text(text.replace("'0.5.1'", "'0.3.0'"), encoding="utf-8")
+    ci.write_text(text.replace("'0.6.0'", "'0.3.0'"), encoding="utf-8")
     result = run_check_release(repo)
     assert result.returncode == 1
     assert "package module version assertion" in result.stdout
@@ -624,7 +648,7 @@ def test_release_checker_fails_on_wrong_package_assertion_only(tmp_path):
     text = ci.read_text(encoding="utf-8")
     ci.write_text(
         text.replace(
-            "assert market_vault.__version__ == '0.5.1'",
+            "assert market_vault.__version__ == '0.6.0'",
             "assert market_vault.__version__ == '9.9.9'",
         ),
         encoding="utf-8",
@@ -642,7 +666,7 @@ def test_release_checker_fails_on_wrong_metadata_assertion_only(tmp_path):
     text = ci.read_text(encoding="utf-8")
     ci.write_text(
         text.replace(
-            "assert version('market-vault') == '0.5.1'",
+            "assert version('market-vault') == '0.6.0'",
             "assert version('market-vault') == '9.9.9'",
         ),
         encoding="utf-8",
@@ -658,7 +682,7 @@ def test_release_checker_fails_on_wrong_public_api_marker(tmp_path):
     repo = copy_repo(tmp_path)
     ci = repo / ".github" / "workflows" / "ci.yml"
     text = ci.read_text(encoding="utf-8")
-    ci.write_text(text.replace("V051_PUBLIC_API_IMPORT_OK", "V040_PUBLIC_API_IMPORT_OK"), encoding="utf-8")
+    ci.write_text(text.replace("V060_PUBLIC_API_IMPORT_OK", "V040_PUBLIC_API_IMPORT_OK"), encoding="utf-8")
     result = run_check_release(repo)
     assert result.returncode == 1
     assert "public API smoke marker" in result.stdout
@@ -682,14 +706,14 @@ def test_release_checker_reports_all_failures_at_once(tmp_path):
     repo = copy_repo(tmp_path)
     pyproject = repo / "pyproject.toml"
     pyproject.write_text(
-        pyproject.read_text(encoding="utf-8").replace('version = "0.5.1"', 'version = "9.9.9"'),
+        pyproject.read_text(encoding="utf-8").replace('version = "0.6.0"', 'version = "9.9.9"'),
         encoding="utf-8",
     )
     (repo / "CHANGELOG.md").unlink()
     readme = repo / "README.md"
     readme.write_text(
         readme.read_text(encoding="utf-8").replace(
-            "# MarketVault v0.5", "# MarketVault v9.9"
+            "# MarketVault v0.6", "# MarketVault v9.9"
         ),
         encoding="utf-8",
     )
@@ -1009,43 +1033,90 @@ def test_release_checker_fails_without_v060_direction(tmp_path):
     assert "docs/v0_6_0_direction.md is missing" in result.stdout
 
 
-def test_release_checker_fails_when_v060_direction_missing_planned_status(tmp_path):
+def test_release_checker_fails_when_v060_direction_reverts_to_planned(
+    tmp_path,
+):
+    # Reverting the v0.6.0 direction top status back to the old
+    # pre-PR-9 "Status: planned" wording must fail the checker.
     repo = copy_repo(tmp_path)
     path = repo / "docs" / "v0_6_0_direction.md"
     path.write_text(
         path.read_text(encoding="utf-8").replace(
+            "Status: implementation complete; v0.6.0 release preparation",
             "Status: planned",
-            "Status: released",
         ),
         encoding="utf-8",
     )
     result = run_check_release(repo)
     assert result.returncode == 1
-    assert "does not state the fact 'Status: planned'" in result.stdout
+    assert (
+        "does not state the fact 'Status: implementation complete; "
+        "v0.6.0 release preparation'"
+    ) in result.stdout
 
 
-def test_release_checker_fails_when_v060_direction_claims_pr9_started(
+def test_release_checker_fails_when_v060_direction_reclaims_pr9_not_started(
     tmp_path,
 ):
-    # PR-8 is the current stage; claiming PR-9 has started in the
-    # direction document must fail the checker.
+    # "PR-9 has not started" is stale wording in the current-state
+    # regions (header / Progress section); reintroducing it must fail.
     repo = copy_repo(tmp_path)
     path = repo / "docs" / "v0_6_0_direction.md"
     path.write_text(
-        path.read_text(encoding="utf-8")
-        .replace("PR-9 not started", "PR-9 has started")
-        .replace("PR-9 has not started", "PR-9 has started"),
+        path.read_text(encoding="utf-8") + "\nPR-9 has not started.\n",
         encoding="utf-8",
     )
     result = run_check_release(repo)
     assert result.returncode == 1
     assert (
-        "must state that PR-9 has not started"
+        "still contains the stale wording 'PR-9 has not started'"
     ) in result.stdout
+
+
+def test_release_checker_fails_when_v060_direction_reclaims_v060_released(
+    tmp_path,
+):
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_6_0_direction.md"
+    path.write_text(
+        path.read_text(encoding="utf-8") + "\nv0.6.0 is formally released.\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
     assert (
-        "does not state the PR-8 progress fact 'PR-9 not started'"
+        "still contains the stale wording 'v0.6.0 is formally released'"
     ) in result.stdout
-    assert "contains the false PR-8 claim 'PR-9 has started'" in result.stdout
+
+
+def test_release_checker_fails_when_v060_direction_reclaims_pr8_this_pr(
+    tmp_path,
+):
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_6_0_direction.md"
+    path.write_text(
+        path.read_text(encoding="utf-8") + "\nPR-8 (this PR) is complete.\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "still contains the stale wording 'PR-8 (this PR)'" in result.stdout
+
+
+def test_release_checker_fails_when_v060_direction_claims_release_published(
+    tmp_path,
+):
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_6_0_direction.md"
+    path.write_text(
+        path.read_text(encoding="utf-8") + "\nGitHub Release published.\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "contains the false release claim 'GitHub Release published'"
+    ) in result.stdout
 
 
 def test_release_checker_fails_when_v060_direction_includes_python_client_in_v06(
@@ -1569,30 +1640,38 @@ def test_v051_direction_document_is_released():
     assert "v0.6.0" in text
 
 
-def test_v060_direction_document_exists_and_is_planned():
+def test_v060_direction_document_is_in_release_preparation():
     text = (ROOT / "docs" / "v0_6_0_direction.md").read_text(encoding="utf-8")
-    assert "Status: planned" in text
+    assert "Status: implementation complete; v0.6.0 release preparation" in text
     assert "Deterministic Sample Generation and Dataset Catalog" in text
     assert "a978eef291d5e26d20e5cf977bc76609c227cb52" in text
+    assert "package version at planning time: 0.5.1" in text
+    assert "bumped to 0.6.0 only in PR-9" in text
     assert "not part of v0.6" in text
+    assert "not formally released" in text
     for number in range(1, 10):
         assert f"PR-{number}" in text
-    assert "PR-9 not started" in text
+    assert "PR-9 not started" not in text
+    assert "Status: planned" not in text
     assert "Quant Research" in text
     assert "Trading Execution" in text
 
 
-def test_v060_direction_records_pr7_merged_and_pr8_stage():
+def test_v060_direction_records_pr7_complete_and_pr8_merged():
     text = (ROOT / "docs" / "v0_6_0_direction.md").read_text(encoding="utf-8")
     assert "PR #41" in text
     assert "2026-08-07T13:25:52Z" in text
     assert "15ce0ef" in text
     assert "PR-7 COMPLETE" in text
+    assert "PR #42" in text
+    assert "2026-08-07T18:32:32Z" in text
+    assert "24a2243031b5f16fdbb9334f1a1722e56eb7a2f7" in text
+    assert "PR-8 COMPLETE" in text
     assert "main verified" in text
-    assert "PR-8" in text
-    assert "PR-9 not started" in text
+    assert "31207428151" in text
     assert "0.5.1" in text
-    assert "not released" in text
+    assert "not formally released" in text
+    assert "PR-9 is the current v0.6.0 release-preparation stage" in text
 
 
 def test_v060_direction_docs_are_boundary_contracts():
@@ -1698,7 +1777,7 @@ def test_examples_readme_states_install_version():
     text = (ROOT / "examples" / "dataset_cli" / "README.md").read_text(
         encoding="utf-8"
     )
-    assert "market-vault 0.5.1" in text
+    assert "market-vault 0.6.0" in text
 
 
 def test_warning_guard_retained():
@@ -1720,13 +1799,161 @@ def test_renderer_contains_hardening_markers():
     assert "render_plans: error:" in text
 
 
-def test_ci_contains_051_assertions_and_marker():
+def test_ci_contains_060_assertions_and_marker():
     text = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    assert "assert market_vault.__version__ == '0.5.1'" in text
-    assert "assert version('market-vault') == '0.5.1'" in text
-    assert "V051_PUBLIC_API_IMPORT_OK" in text
+    assert "assert market_vault.__version__ == '0.6.0'" in text
+    assert "assert version('market-vault') == '0.6.0'" in text
+    assert "V060_PUBLIC_API_IMPORT_OK" in text
+    assert "V060_RELEASE_PREP_OK" in text
+    assert "generate_sample_requests" in text
+    assert '".b64"' in text
     assert "compileall -q src tests scripts examples" in text
     assert "render_plans.py --help" in text
+
+
+def test_release_notes_v060_state_release_preparation_facts():
+    text = (ROOT / "docs" / "release_v0_6_0.md").read_text(encoding="utf-8")
+    assert "## Release preparation status" in text
+    assert "v0.6.0 release preparation" in text
+    assert "PR-9" in text
+    assert "24a2243031b5f16fdbb9334f1a1722e56eb7a2f7" in text
+    assert "PR #42" in text
+    assert "2026-08-07T18:32:32Z" in text
+    assert "31207428151" in text
+    assert "candidate validation only" in text
+    assert "exact release commit" in text
+    assert "not published" in text
+    assert "PyArrow 24.0.0" in text
+    assert "PyArrow 25.0.0" in text
+    assert "pyarrow>=16" in text
+    assert "no standalone" in text
+    assert "dataset-catalog-query" in text
+    assert "Formal release status" not in text
+    assert "tag: v0.6.0" not in text
+
+
+def test_release_checker_fails_without_v060_release_notes(tmp_path):
+    repo = copy_repo(tmp_path)
+    (repo / "docs" / "release_v0_6_0.md").unlink()
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "docs/release_v0_6_0.md is missing" in result.stdout
+
+
+def _append_release_notes_claim(tmp_path, claim: str) -> subprocess.CompletedProcess:
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "release_v0_6_0.md"
+    path.write_text(
+        path.read_text(encoding="utf-8") + f"\n{claim}\n",
+        encoding="utf-8",
+    )
+    return run_check_release(repo)
+
+
+def test_release_checker_fails_when_release_notes_claim_tag_exists(tmp_path):
+    result = _append_release_notes_claim(tmp_path, "tag: v0.6.0")
+    assert result.returncode == 1
+    assert "still contains the stale wording 'tag: v0.6.0'" in result.stdout
+
+
+def test_release_checker_fails_when_release_notes_claim_github_release(tmp_path):
+    result = _append_release_notes_claim(
+        tmp_path, "GitHub Release: MarketVault v0.6.0"
+    )
+    assert result.returncode == 1
+    assert (
+        "still contains the stale wording 'GitHub Release: MarketVault v0.6.0'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_release_notes_claim_pypi_published(tmp_path):
+    result = _append_release_notes_claim(tmp_path, "PyPI: published")
+    assert result.returncode == 1
+    assert "still contains the stale wording 'PyPI: published'" in result.stdout
+
+
+def test_release_checker_fails_when_release_notes_claim_every_writer(tmp_path):
+    result = _append_release_notes_claim(tmp_path, "every supported PyArrow writer")
+    assert result.returncode == 1
+    assert (
+        "still contains the stale wording 'every supported PyArrow writer'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_release_notes_lose_candidate_wording(
+    tmp_path,
+):
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "release_v0_6_0.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "candidate validation only",
+            "candidate validation",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "does not state the fact 'candidate validation only'" in result.stdout
+
+
+def test_release_checker_fails_when_release_notes_lose_pr42(tmp_path):
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "release_v0_6_0.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace("PR #42", "PR #4x"),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "does not state the fact 'PR #42'" in result.stdout
+
+
+def test_release_checker_fails_when_ci_reverts_to_v051(tmp_path):
+    repo = copy_repo(tmp_path)
+    ci = repo / ".github" / "workflows" / "ci.yml"
+    text = ci.read_text(encoding="utf-8")
+    ci.write_text(text.replace("'0.6.0'", "'0.5.1'"), encoding="utf-8")
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "package module version assertion" in result.stdout
+    assert "distribution metadata assertion" in result.stdout
+
+
+def test_release_checker_fails_when_ci_loses_release_prep_marker(tmp_path):
+    repo = copy_repo(tmp_path)
+    ci = repo / ".github" / "workflows" / "ci.yml"
+    text = ci.read_text(encoding="utf-8")
+    ci.write_text(
+        text.replace("echo 'V060_RELEASE_PREP_OK'", "echo 'V060_PREP_OK'"),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "must carry the V060_RELEASE_PREP_OK marker" in result.stdout
+
+
+def test_release_checker_fails_when_ci_loses_b64_forbidden(tmp_path):
+    repo = copy_repo(tmp_path)
+    ci = repo / ".github" / "workflows" / "ci.yml"
+    text = ci.read_text(encoding="utf-8")
+    ci.write_text(text.replace('".b64"', '".b64x"'), encoding="utf-8")
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert 'wheel hygiene forbidden tuple must include ".b64"' in result.stdout
+
+
+def test_release_checker_fails_when_ci_loses_generate_sample_requests(tmp_path):
+    repo = copy_repo(tmp_path)
+    ci = repo / ".github" / "workflows" / "ci.yml"
+    text = ci.read_text(encoding="utf-8")
+    ci.write_text(
+        text.replace("generate_sample_requests", "generate_sample_plan"),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "CI public API smoke must import 'generate_sample_requests'" in result.stdout
 
 
 def test_release_checker_fails_without_v051_release_notes(tmp_path):
@@ -2974,24 +3201,57 @@ def test_release_checker_fails_when_contract_doc_loses_and_semantics(
     ) in result.stdout
 
 
-def test_release_checker_fails_when_contract_doc_claims_pr8_started(
+def test_release_checker_fails_when_contract_doc_reclaims_pr8_not_started(
     tmp_path,
 ):
-    # Mutation: claiming PR-8 has started in the contract document must
-    # fail the checker (the "PR-8 has not started" fact disappears).
+    # Mutation: "PR-8 has not started" is stale wording now that PR-8 is
+    # complete; reintroducing it in the contract document must fail.
     repo = copy_repo(tmp_path)
     path = repo / "docs" / "contracts" / "dataset_catalog.md"
     path.write_text(
-        path.read_text(encoding="utf-8").replace(
-            "PR-8 has not started",
-            "PR-8 has started",
-        ),
+        path.read_text(encoding="utf-8")
+        + "\nPR-8 has not started.\n",
         encoding="utf-8",
     )
     result = run_check_release(repo)
     assert result.returncode == 1
     assert (
-        "does not state the PR-7 fact 'PR-8 has not started'"
+        "still contains the stale claim 'PR-8 has not started'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_contract_doc_reclaims_catalog_cli_missing(
+    tmp_path,
+):
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "contracts" / "dataset_catalog.md"
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        + "\nCatalog CLI is not implemented.\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "still contains the stale claim 'Catalog CLI is not implemented'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_sample_contract_reclaims_catalog_missing(
+    tmp_path,
+):
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "contracts" / "sample_generation.md"
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        + "\nDataset Catalog (PR-5+) is not implemented.\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "still contains the stale claim "
+        "'Dataset Catalog (PR-5+) is not implemented'"
     ) in result.stdout
 
 

@@ -1,6 +1,90 @@
-# MarketVault v0.5.1
+# MarketVault v0.6.0
 
-MarketVault is a local historical market database for moomoo OpenD. V0.1 focused on closed-date stock, ETF, and option candlesticks. V0.2 added option contract static metadata and daily option volatility datasets. V0.3 adds the trading-calendar-driven collection and audit toolchain: a local trading calendar, resumable historical backfill, immutable snapshots, inventory reports, trading-day coverage audits, and intraday integrity audits. V0.4 adds the Canonical Dataset and ML Foundation: immutable Canonical builds from audited COMPLETE snapshots, a verified Canonical reader, three-clock market-bar semantics, two-clock point-in-time sample assembly, versioned Feature/Label spec contracts, deterministic Dataset identity/manifest contracts, chronological splits with actual-label-end purging, and the leakage threat-model regression suite. V0.5 adds the Deterministic Dataset Builder: an executable, verified, fail-closed pipeline that runs built-in Feature and Label transforms over verified Canonical builds, computes real `label_status` and `actual_label_end_time`, assigns chronological splits with actual-label-end purge, orchestrates immutable Dataset materialization, and reads the results back through a verified Dataset reader and three formal CLI commands. V0.5.1 is the stability and usability maintenance release on top of V0.5.0.
+MarketVault is a local historical market database for moomoo OpenD. V0.1 focused on closed-date stock, ETF, and option candlesticks. V0.2 added option contract static metadata and daily option volatility datasets. V0.3 adds the trading-calendar-driven collection and audit toolchain: a local trading calendar, resumable historical backfill, immutable snapshots, inventory reports, trading-day coverage audits, and intraday integrity audits. V0.4 adds the Canonical Dataset and ML Foundation: immutable Canonical builds from audited COMPLETE snapshots, a verified Canonical reader, three-clock market-bar semantics, two-clock point-in-time sample assembly, versioned Feature/Label spec contracts, deterministic Dataset identity/manifest contracts, chronological splits with actual-label-end purging, and the leakage threat-model regression suite. V0.5 adds the Deterministic Dataset Builder: an executable, verified, fail-closed pipeline that runs built-in Feature and Label transforms over verified Canonical builds, computes real `label_status` and `actual_label_end_time`, assigns chronological splits with actual-label-end purge, orchestrates immutable Dataset materialization, and reads the results back through a verified Dataset reader and three formal CLI commands. V0.5.1 is the stability and usability maintenance release on top of V0.5.0. V0.6 adds the Deterministic Sample Generator and the immutable Dataset Catalog: explicit generation plans produce deterministic PITSampleRequest sequences as ordinary Dataset build plans, and verified immutable Datasets project into immutable Catalog snapshots with a verified reader and read-only build/verify/list/show CLI discovery.
+
+## V0.6.0 deterministic sample generation and Dataset Catalog
+
+V0.6 delivers exactly two product capabilities, both built on the existing
+verified, immutable V0.5 foundation.
+
+### A. Deterministic Sample Generator
+
+Formal command:
+
+```text
+market-vault sample-generate --plan <PATH>
+```
+
+The Sample Generator chain is:
+
+```text
+verified Canonical builds
+    + explicit generation plan
+    → deterministic PITSampleRequest sequence
+    → ordinary market-vault-dataset-build-plan-v1
+    → hand directly to dataset-build
+```
+
+- The generator reads only verified Canonical builds through the formal
+  verified reader and the explicitly pinned Feature / Label / split inputs.
+- The generated document is an ordinary
+  `market-vault-dataset-build-plan-v1`; you hand it directly to the existing
+  `dataset-build` command.
+- `sample-generate` does not build a Dataset itself, does not execute PIT
+  assembly or any Feature / Label value computation, and never claims a
+  sample is COMPLETE.
+- It uses no current time, no `latest` discovery, no `settings.yaml`, no
+  OpenD, and no network.
+
+### B. Immutable Dataset Catalog
+
+Formal commands:
+
+```text
+market-vault dataset-catalog-build
+market-vault dataset-catalog-verify
+market-vault dataset-catalog-list
+market-vault dataset-catalog-show
+```
+
+The Catalog chain is:
+
+```text
+verified immutable Datasets
+    → deterministic Catalog content
+    → immutable snapshot
+    → verified reader
+    → read-only list/show discovery
+```
+
+- The Catalog builder projects a verified, immutable set of Datasets into a
+  deterministic Catalog content identity and an immutable physical snapshot
+  (`catalog.json` / `manifest.json` / `_SUCCESS`) with atomic, no-replace
+  publication.
+- The verified Catalog reader recomputes every content and physical identity
+  from the snapshot's own bytes and never reloads or rewrites the recorded
+  Dataset locations.
+- `dataset-catalog-list` / `dataset-catalog-show` are strictly read-only
+  discovery over the immutable snapshot, with read-only filters and
+  pagination.
+- There is no standalone `dataset-catalog-query`: the read-only
+  `dataset-catalog-list` filters are the formal query surface.
+- There is no repair, no `latest` pointer, and no Dataset rewrite: the
+  Catalog never modifies any Dataset or Canonical artifact.
+
+### C. Integrated acceptance
+
+- COMPLETE + EMPTY end-to-end canaries.
+- Corruption fails closed in the verified Catalog reader.
+- Recovery is never repair: a failed snapshot is rejected and rebuilt
+  explicitly, never patched in place.
+- Security / read-only guarantees: no write, repair, or delete paths on the
+  read side.
+- Normal CI on Python 3.11 and 3.14.
+- A PyArrow24 full-suite compatibility gate (`pyarrow==24.0.0`) runs the
+  complete test suite.
+- Static artifact read-portability audited on PyArrow 24.0.0 and 25.0.0
+  readers/runtimes with frozen values unchanged.
 
 ## V0.5.1 stability and usability maintenance
 
@@ -56,7 +140,12 @@ MarketVault is a local historical market database for moomoo OpenD. V0.1 focused
 - Runs the fixed built-in Feature and Label transform registries with versioned deterministic implementation fingerprints.
 - Provides `dataset-build`, `dataset-verify`, and `dataset-inspect` as settings-independent CLI commands.
 - Adds a seventeen-category end-to-end Dataset determinism and leakage regression suite.
-- Runs CI on Python 3.11 and 3.14, plus a package build/install job.
+- Generates deterministic PITSampleRequest sequences through explicit generation plans and the `sample-generate` CLI, emitted as ordinary `market-vault-dataset-build-plan-v1` documents.
+- Builds immutable Dataset Catalog snapshots from verified immutable Datasets with a deterministic content identity.
+- Reads Catalog snapshots back through a verified Catalog reader that recomputes every identity from the snapshot's own bytes.
+- Provides `dataset-catalog-build`, `dataset-catalog-verify`, `dataset-catalog-list`, and `dataset-catalog-show` as read-only discovery commands over immutable snapshots.
+- Filters and paginates Catalog entries read-only through `dataset-catalog-list`.
+- Runs a PyArrow24 full-suite compatibility gate in CI alongside the normal Python 3.11 / 3.14 matrix and the package build/install job.
 
 ## Recommended collection and audit workflow
 
