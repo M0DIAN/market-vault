@@ -90,6 +90,10 @@ jobs:
           .release-venv/bin/market-vault dataset-verify --help
           .release-venv/bin/market-vault dataset-inspect --help
           .release-venv/bin/market-vault sample-generate --help
+          .release-venv/bin/market-vault dataset-catalog-build --help
+          .release-venv/bin/market-vault dataset-catalog-verify --help
+          .release-venv/bin/market-vault dataset-catalog-list --help
+          .release-venv/bin/market-vault dataset-catalog-show --help
           .release-venv/bin/python -c "import market_vault; assert market_vault.__version__ == '0.5.1'"
           .release-venv/bin/python -c "from importlib.metadata import version; assert version('market-vault') == '0.5.1'"
 
@@ -112,6 +116,18 @@ jobs:
           )
           print('PR6_CATALOG_API_IMPORT_OK')
           "
+          .release-venv/bin/python -c "
+          from market_vault.dataset.dataset_catalog_cli import (
+              DATASET_CATALOG_COMMANDS,
+          )
+          assert DATASET_CATALOG_COMMANDS == frozenset({
+              'dataset-catalog-build',
+              'dataset-catalog-verify',
+              'dataset-catalog-list',
+              'dataset-catalog-show',
+          })
+          "
+          echo 'PR7_CATALOG_CLI_HELP_OK'
 
       - name: Check wheel contents exclude local data
         run: |

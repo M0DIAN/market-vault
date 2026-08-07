@@ -216,10 +216,11 @@ V060_DIRECTION_NONGOAL_MARKERS = (
     "backtesting",
     "automatic trading",
 )
-# The v0.6.0 direction document must explicitly state that the Catalog
-# query CLI (PR-7) has not started.
+# The v0.6.0 direction document must explicitly state that PR-8 has not
+# started (the PR-7 query surface is fixed as the read-only
+# dataset-catalog-list filters; there is no standalone query CLI).
 V060_NOT_IMPLEMENTED_MARKER = (
-    "PR-7 (Dataset Catalog verify/list/show/query CLI) has not started"
+    "PR-8 has not started"
 )
 # Facts the v0.6.0 architecture ADR must state.
 ADR_V060_FACTS = (
@@ -392,17 +393,31 @@ V060_DIRECTION_PR6_FACTS = (
     "PR-5 merged",
     "PR #39",
     "2958697dd434c536c39267b6a654dabb762c74f9",
-    "PR-6 (this PR",
-    "feat/v0.6.0-dataset-catalog-snapshot",
-    "PR-7 (Dataset Catalog verify/list/show/query CLI) has not started",
+    "PR-6 merged",
+    "PR #40",
+    "997bb337f73f1205d9180c4c532a6679666a312f",
+    "PR-6 is complete",
     "not released",
 )
 # Contradictory claims that must never appear in the v0.6.0 direction
 # document's PR-6 record.
 V060_DIRECTION_PR6_FALSE_CLAIMS = (
     "V0.6.0 is released",
-    "PR-6 is complete",
-    "PR-7 has started",
+)
+# Facts the v0.6.0 direction document must state about the PR-7 stage.
+V060_DIRECTION_PR7_FACTS = (
+    "PR-7 (this PR",
+    "feat/v0.6.0-dataset-catalog-cli",
+    "implements the Dataset Catalog CLI",
+    "PR-8 has not started",
+    "PR-9 not started",
+    "not released",
+)
+# Contradictory claims that must never appear in the v0.6.0 direction
+# document's PR-7 record.
+V060_DIRECTION_PR7_FALSE_CLAIMS = (
+    "V0.6.0 is released",
+    "PR-8 has started",
 )
 # The v0.6.0 Dataset Catalog contract production modules that must exist.
 DATASET_CATALOG_MODULES = (
@@ -504,9 +519,79 @@ DATASET_CATALOG_PR6_FUNCTIONS = (
     "def materialize_dataset_catalog_snapshot",
     "def load_verified_dataset_catalog",
 )
-# The PR-7 CLI production file that must never exist yet.
-DATASET_CATALOG_PR7_FORBIDDEN_FILES = (
+# The PR-7 CLI production modules that must exist.
+DATASET_CATALOG_CLI_MODULES = (
     "src/market_vault/dataset/dataset_catalog_cli.py",
+    "src/market_vault/dataset/dataset_catalog_cli_models.py",
+)
+# The four formal PR-7 commands that must be registered.
+DATASET_CATALOG_CLI_COMMANDS = (
+    "dataset-catalog-build",
+    "dataset-catalog-verify",
+    "dataset-catalog-list",
+    "dataset-catalog-show",
+)
+# The exact CLI version constants the CLI models module must define.
+DATASET_CATALOG_CLI_VERSION_CONSTANTS = (
+    "market-vault-dataset-catalog-cli-v1",
+    "market-vault-dataset-catalog-cli-result-v1",
+)
+# The CLI must call exactly the formal Builder -> Materializer -> Reader
+# chain; it never implements a second builder / validator / reader.
+DATASET_CATALOG_CLI_FUNCTIONS = (
+    "build_dataset_catalog(",
+    "materialize_dataset_catalog_snapshot(",
+    "load_verified_dataset_catalog(",
+)
+# Forbidden patterns in the CLI module (mutation guards). The exact
+# "load_verified_dataset(" pattern can never match the formal
+# "load_verified_dataset_catalog(" reader call.
+DATASET_CATALOG_CLI_FORBIDDEN_PATTERNS = (
+    "dataset-catalog-query",
+    "--latest",
+    "--force",
+    "--overwrite",
+    "load_settings(",
+    "storage.catalog",
+    "from market_vault.storage import Catalog",
+    "duckdb",
+    "load_verified_dataset(",
+    '"catalog.json"',
+    '"manifest.json"',
+)
+# Facts the formal Dataset Catalog contract document must state about the
+# PR-7 CLI (Part C).
+DATASET_CATALOG_CLI_CONTRACT_FACTS = (
+    "market-vault dataset-catalog-build",
+    "market-vault dataset-catalog-verify",
+    "market-vault dataset-catalog-list",
+    "market-vault dataset-catalog-show",
+    "market-vault-dataset-catalog-cli-v1",
+    "market-vault-dataset-catalog-cli-result-v1",
+    "settings-independent",
+    "AND semantics",
+    "no standalone `dataset-catalog-query`",
+    "historical",
+    "exit 0 / 1 / 2",
+    "PR-8 has not started",
+)
+# Contradictory PR-7 claims that must never appear in the formal Dataset
+# Catalog contract document even when the required facts are present.
+# The "a latest pointer" phrase of Part A / Part B always appears in a
+# negated context ("... are never implicit inputs", "no latest pointer");
+# the false claim is therefore the affirmative maintenance wording, which
+# never occurs in the PR-5 / PR-6 text.
+DATASET_CATALOG_CLI_FALSE_CLAIMS = (
+    "repairs the snapshot",
+    "maintains a latest pointer",
+)
+# The CI fresh-wheel smoke must cover the four Catalog CLI help commands.
+CI_PR7_API_MARKER = "PR7_CATALOG_CLI_HELP_OK"
+CI_PR7_HELP_COMMANDS = (
+    "market-vault dataset-catalog-build --help",
+    "market-vault dataset-catalog-verify --help",
+    "market-vault dataset-catalog-list --help",
+    "market-vault dataset-catalog-show --help",
 )
 # The dataset package must export the PR-6 public API.
 DATASET_CATALOG_PR6_EXPORTS = (
@@ -936,8 +1021,7 @@ def check_v060_direction(root: Path) -> list[str]:
             )
     if V060_NOT_IMPLEMENTED_MARKER not in text:
         failures.append(
-            "docs/v0_6_0_direction.md must state that PR-7 (the Catalog "
-            "query CLI) has not started"
+            "docs/v0_6_0_direction.md must state that PR-8 has not started"
         )
     for fact in V060_DIRECTION_IDENTITY_FACTS:
         if fact not in text:
@@ -1167,8 +1251,13 @@ def check_sample_generation_cli(root: Path) -> list[str]:
                     f"marker {marker!r}"
                 )
         if "dataset-catalog" in text:
+            # PR-7 registers the four Catalog commands in
+            # dataset_catalog_cli.py; a hyphenated "dataset-catalog" string
+            # in cli.py means an inline registration instead.
             failures.append(
-                "top-level cli.py must not register a Dataset Catalog command"
+                "top-level cli.py must never inline-register a Dataset "
+                "Catalog command; registration goes through "
+                "add_dataset_catalog_subparsers"
             )
     contract = root / "docs" / "contracts" / "sample_generation.md"
     if contract.exists():
@@ -1288,8 +1377,8 @@ def check_dataset_catalog(root: Path) -> list[str]:
     """Static PR-5 checks: the three contract production modules exist, the
     exact version constants and public functions are defined, the modules
     never import the legacy Catalog, the dataset package exports the PR-5
-    public API, the formal contract document states the PR-5 facts and no
-    false claim, and no PR-7 CLI production file exists yet."""
+    public API, and the formal contract document states the PR-5 facts and
+    no false claim."""
     failures = []
     for rel in DATASET_CATALOG_MODULES:
         if not (root / rel).exists():
@@ -1359,11 +1448,6 @@ def check_dataset_catalog(root: Path) -> list[str]:
                     "market_vault.dataset does not export the PR-5 public "
                     f"API {export!r}"
                 )
-    for rel in DATASET_CATALOG_PR7_FORBIDDEN_FILES:
-        if (root / rel).exists():
-            failures.append(
-                f"PR-7 CLI production file must not exist yet: {rel}"
-            )
     failures.extend(check_dataset_catalog_contract(root))
     return failures
 
@@ -1550,6 +1634,154 @@ def check_dataset_catalog_pr6(root: Path) -> list[str]:
                 failures.append(
                     f".github/workflows/ci.yml PR-6 smoke must import "
                     f"{line}"
+                )
+    return failures
+
+
+def check_dataset_catalog_cli(root: Path) -> list[str]:
+    """Static PR-7 checks: the two CLI production modules exist, the exact
+    CLI version constants and the four command registrations are present,
+    the CLI calls exactly the formal Builder -> Materializer -> Reader
+    chain, the CLI keeps the forbidden patterns out (no fifth
+    dataset-catalog-query command, no latest / force / overwrite, no
+    settings loading, no legacy Catalog, no DuckDB, no Dataset reload, no
+    raw catalog.json / manifest.json access), the top-level CLI dispatches
+    the four commands before load_settings (settings-independent), the
+    formal contract document states the Part C facts and no false claim,
+    the direction document records the PR-7 stage and no false claim, and
+    the CI fresh-wheel smoke covers the four help commands with the
+    PR7_CATALOG_CLI_HELP_OK marker."""
+    failures = []
+    for rel in DATASET_CATALOG_CLI_MODULES:
+        if not (root / rel).exists():
+            failures.append(f"{rel} is missing")
+    cli_models = (
+        root
+        / "src"
+        / "market_vault"
+        / "dataset"
+        / "dataset_catalog_cli_models.py"
+    )
+    if cli_models.exists():
+        text = cli_models.read_text(encoding="utf-8")
+        for version in DATASET_CATALOG_CLI_VERSION_CONSTANTS:
+            if f'"{version}"' not in text:
+                failures.append(
+                    "dataset_catalog_cli_models.py does not define the exact "
+                    f"CLI version constant {version!r}"
+                )
+        if "class DatasetCatalogCLIError" not in text:
+            failures.append(
+                "dataset_catalog_cli_models.py is missing "
+                "DatasetCatalogCLIError"
+            )
+    cli_module = (
+        root
+        / "src"
+        / "market_vault"
+        / "dataset"
+        / "dataset_catalog_cli.py"
+    )
+    if cli_module.exists():
+        text = cli_module.read_text(encoding="utf-8")
+        for command in DATASET_CATALOG_CLI_COMMANDS:
+            if f'add_parser(\n        "{command}",' not in text:
+                failures.append(
+                    f"dataset_catalog_cli.py does not register {command}"
+                )
+        if '"dataset-catalog-query"' in text:
+            failures.append(
+                "dataset_catalog_cli.py must never register a fifth "
+                "dataset-catalog-query command"
+            )
+        for function in DATASET_CATALOG_CLI_FUNCTIONS:
+            if function not in text:
+                failures.append(
+                    "dataset_catalog_cli.py must call the formal function "
+                    f"{function!r}"
+                )
+        for pattern in DATASET_CATALOG_CLI_FORBIDDEN_PATTERNS:
+            if pattern in text:
+                failures.append(
+                    "dataset_catalog_cli.py must not contain the forbidden "
+                    f"pattern {pattern!r}"
+                )
+    top_cli = root / "src" / "market_vault" / "cli.py"
+    if top_cli.exists():
+        text = top_cli.read_text(encoding="utf-8")
+        for marker in (
+            "add_dataset_catalog_subparsers",
+            "DATASET_CATALOG_COMMANDS",
+            "run_dataset_catalog_command",
+        ):
+            if marker not in text:
+                failures.append(
+                    "top-level cli.py is missing the Dataset Catalog CLI "
+                    f"marker {marker!r}"
+                )
+        try:
+            # The dispatch site is the ``if args.command in
+            # DATASET_CATALOG_COMMANDS`` statement; the import at the top
+            # of cli.py must never satisfy this ordering check.
+            dispatch_index = text.index(
+                "if args.command in DATASET_CATALOG_COMMANDS"
+            )
+            settings_index = text.index("load_settings(args.settings)")
+        except ValueError:
+            failures.append(
+                "top-level cli.py must dispatch the Dataset Catalog commands "
+                "before load_settings"
+            )
+        else:
+            if dispatch_index > settings_index:
+                failures.append(
+                    "top-level cli.py must dispatch the Dataset Catalog "
+                    "commands before load_settings (the dispatch marker "
+                    "appears after the settings load)"
+                )
+    contract = root / "docs" / "contracts" / "dataset_catalog.md"
+    if contract.exists():
+        text = contract.read_text(encoding="utf-8")
+        for fact in DATASET_CATALOG_CLI_CONTRACT_FACTS:
+            if fact not in text:
+                failures.append(
+                    "docs/contracts/dataset_catalog.md does not state the "
+                    f"PR-7 fact {fact!r}"
+                )
+        for claim in DATASET_CATALOG_CLI_FALSE_CLAIMS:
+            if claim in text:
+                failures.append(
+                    "docs/contracts/dataset_catalog.md contains the false "
+                    f"PR-7 claim {claim!r}"
+                )
+    direction = root / "docs" / "v0_6_0_direction.md"
+    if direction.exists():
+        text = direction.read_text(encoding="utf-8")
+        for fact in V060_DIRECTION_PR7_FACTS:
+            if fact not in text:
+                failures.append(
+                    "docs/v0_6_0_direction.md does not state the PR-7 "
+                    f"progress fact {fact!r}"
+                )
+        for claim in V060_DIRECTION_PR7_FALSE_CLAIMS:
+            if claim in text:
+                failures.append(
+                    "docs/v0_6_0_direction.md contains the false PR-7 "
+                    f"claim {claim!r}"
+                )
+    ci = root / ".github" / "workflows" / "ci.yml"
+    if ci.exists():
+        text = ci.read_text(encoding="utf-8")
+        if CI_PR7_API_MARKER not in text:
+            failures.append(
+                f".github/workflows/ci.yml PR-7 CLI help smoke marker "
+                f"{CI_PR7_API_MARKER!r} is missing"
+            )
+        for command in CI_PR7_HELP_COMMANDS:
+            if command not in text:
+                failures.append(
+                    ".github/workflows/ci.yml fresh-wheel smoke must cover "
+                    f"'{command}'"
                 )
     return failures
 
@@ -1789,6 +2021,7 @@ def main() -> int:
         ("dataset catalog contract", check_dataset_catalog_contract),
         ("dataset catalog", check_dataset_catalog),
         ("dataset catalog pr6", check_dataset_catalog_pr6),
+        ("dataset catalog cli", check_dataset_catalog_cli),
         ("old release notes", check_old_release_notes),
         ("warning guard", check_warning_guard),
         ("examples", check_examples),

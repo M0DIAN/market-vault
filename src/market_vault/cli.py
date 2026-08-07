@@ -16,6 +16,11 @@ from .dataset.cli import (
     add_dataset_subparsers,
     run_dataset_command,
 )
+from .dataset.dataset_catalog_cli import (
+    DATASET_CATALOG_COMMANDS,
+    add_dataset_catalog_subparsers,
+    run_dataset_catalog_command,
+)
 from .dataset.sample_generation_cli import (
     SAMPLE_GENERATION_COMMANDS,
     add_sample_generation_subparsers,
@@ -70,6 +75,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     add_dataset_subparsers(sub)
     add_sample_generation_subparsers(sub)
+    add_dataset_catalog_subparsers(sub)
 
     init = sub.add_parser("init-catalog", help="Create DuckDB metadata tables")
     init.set_defaults(command="init-catalog")
@@ -230,6 +236,14 @@ def main(argv: list[str] | None = None) -> int:
         # load_settings with its own contract version constants and never
         # falls under the Dataset CLI contract.
         return run_sample_generation_command(args.command, args)
+    if args.command in DATASET_CATALOG_COMMANDS:
+        # The Dataset Catalog CLI is settings-independent exactly like the
+        # Dataset commands and the Sample Generation CLI: it never loads
+        # settings.yaml, never connects to OpenD, and never accesses the
+        # network. It is dispatched before load_settings with its own
+        # contract version constants and never falls under the Dataset CLI
+        # or the Sample Generation CLI contract.
+        return run_dataset_catalog_command(args.command, args)
     settings = load_settings(args.settings)
 
     if args.command == "init-catalog":
