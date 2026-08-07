@@ -1024,21 +1024,23 @@ def test_release_checker_fails_when_v060_direction_missing_planned_status(tmp_pa
     assert "does not state the fact 'Status: planned'" in result.stdout
 
 
-def test_release_checker_fails_when_v060_direction_claims_sample_generator_implemented(
+def test_release_checker_fails_when_v060_direction_claims_pr7_started(
     tmp_path,
 ):
     repo = copy_repo(tmp_path)
     path = repo / "docs" / "v0_6_0_direction.md"
     path.write_text(
         path.read_text(encoding="utf-8").replace(
-            "neither the Sample Generator nor the Dataset Catalog is implemented",
-            "the Sample Generator and the Dataset Catalog are implemented",
+            "PR-7 (Dataset Catalog verify/list/show/query CLI) has not started",
+            "PR-7 (Dataset Catalog verify/list/show/query CLI) has started",
         ),
         encoding="utf-8",
     )
     result = run_check_release(repo)
     assert result.returncode == 1
-    assert "must state that neither the Sample Generator" in result.stdout
+    assert (
+        "must state that PR-7 (the Catalog query CLI) has not started"
+    ) in result.stdout
 
 
 def test_release_checker_fails_when_v060_direction_includes_python_client_in_v06(
@@ -1570,7 +1572,7 @@ def test_v060_direction_document_exists_and_is_planned():
     assert "not part of v0.6" in text
     for number in range(1, 10):
         assert f"PR-{number}" in text
-    assert "neither the Sample Generator nor the Dataset Catalog is implemented" in text
+    assert "PR-7 (Dataset Catalog verify/list/show/query CLI) has not started" in text
     assert "Quant Research" in text
     assert "Trading Execution" in text
 
@@ -2370,17 +2372,17 @@ def test_release_checker_fails_when_direction_reverts_pr4_stage(tmp_path):
     assert "does not state the PR-4 progress fact 'PR-4 is complete'" in result.stdout
 
 
-def test_release_checker_fails_when_direction_claims_pr5_complete(tmp_path):
-    # Mutation: claiming PR-5 is already complete must fail the checker.
+def test_release_checker_fails_when_direction_claims_pr6_complete(tmp_path):
+    # Mutation: claiming PR-6 is already complete must fail the checker.
     repo = copy_repo(tmp_path)
     path = repo / "docs" / "v0_6_0_direction.md"
     path.write_text(
-        path.read_text(encoding="utf-8") + "\nPR-5 is complete.\n",
+        path.read_text(encoding="utf-8") + "\nPR-6 is complete.\n",
         encoding="utf-8",
     )
     result = run_check_release(repo)
     assert result.returncode == 1
-    assert "contains the false PR-5 claim 'PR-5 is complete'" in result.stdout
+    assert "contains the false PR-6 claim 'PR-6 is complete'" in result.stdout
 
 
 def test_release_checker_fails_when_direction_claims_v060_released(tmp_path):
@@ -2582,15 +2584,15 @@ def test_release_checker_fails_when_package_loses_catalog_export(tmp_path):
     ) in result.stdout
 
 
-def test_release_checker_fails_when_pr6_builder_file_exists(tmp_path):
-    # Mutation: a PR-6 production file appearing must fail the checker.
+def test_release_checker_fails_when_pr7_cli_file_exists(tmp_path):
+    # Mutation: a PR-7 CLI production file appearing must fail the checker.
     repo = copy_repo(tmp_path)
-    (repo / "src" / "market_vault" / "dataset" / "dataset_catalog_builder.py").write_text(
-        "# PR-6 work\n", encoding="utf-8"
+    (repo / "src" / "market_vault" / "dataset" / "dataset_catalog_cli.py").write_text(
+        "# PR-7 work\n", encoding="utf-8"
     )
     result = run_check_release(repo)
     assert result.returncode == 1
-    assert "PR-6 / PR-7 production file must not exist yet" in result.stdout
+    assert "PR-7 CLI production file must not exist yet" in result.stdout
 
 
 def test_release_checker_fails_when_contract_trusts_manifest_directly(
@@ -2696,35 +2698,35 @@ def test_release_checker_fails_when_contract_loses_facts_field(tmp_path):
     ) in result.stdout
 
 
-def test_release_checker_fails_when_direction_reverts_pr5_stage(tmp_path):
-    # Mutation: reverting the progress record to the pre-PR-5 wording must
+def test_release_checker_fails_when_direction_reverts_pr6_stage(tmp_path):
+    # Mutation: reverting the progress record to the pre-PR-6 wording must
     # fail the checker.
     repo = copy_repo(tmp_path)
     path = repo / "docs" / "v0_6_0_direction.md"
     path.write_text(
         path.read_text(encoding="utf-8").replace(
-            "PR-5 (this PR, branch `feat/v0.6.0-dataset-catalog-contract`)",
-            "PR-5 (Dataset Catalog) has not started",
+            "PR-6 (this PR, branch `feat/v0.6.0-dataset-catalog-snapshot`)",
+            "PR-6 (Dataset Catalog snapshot layer) has not started",
         ),
         encoding="utf-8",
     )
     result = run_check_release(repo)
     assert result.returncode == 1
-    assert "does not state the PR-5 progress fact 'PR-5 (this PR'" in result.stdout
+    assert "does not state the PR-6 progress fact 'PR-6 (this PR'" in result.stdout
 
 
-def test_release_checker_fails_when_direction_starts_pr6(tmp_path):
-    # Mutation: claiming PR-6 has started must fail the checker.
+def test_release_checker_fails_when_direction_starts_pr7(tmp_path):
+    # Mutation: claiming PR-7 has started must fail the checker.
     repo = copy_repo(tmp_path)
     path = repo / "docs" / "v0_6_0_direction.md"
     path.write_text(
         path.read_text(encoding="utf-8")
-        + "\nPR-6 has started.\n",
+        + "\nPR-7 has started.\n",
         encoding="utf-8",
     )
     result = run_check_release(repo)
     assert result.returncode == 1
-    assert "contains the false PR-5 claim 'PR-6 has started'" in result.stdout
+    assert "contains the false PR-6 claim 'PR-7 has started'" in result.stdout
 
 
 def _mutate_catalog_models_marker(repo: Path, old: str, new: str) -> None:
@@ -2814,3 +2816,389 @@ def test_release_checker_fails_when_contract_claims_metadata_enters_identity(
     result = run_check_release(repo)
     assert result.returncode == 1
     assert "contains the false identity claim" in result.stdout
+
+
+# --- V0.6.0 Dataset Catalog snapshot layer (PR-6) ----------------------------
+
+
+def _mutate_catalog_builder(repo: Path, old: str, new: str) -> None:
+    path = repo / "src" / "market_vault" / "dataset" / "dataset_catalog_builder.py"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(old, new), encoding="utf-8"
+    )
+
+
+def test_release_checker_fails_without_pr6_builder_module(tmp_path):
+    repo = copy_repo(tmp_path)
+    (repo / "src" / "market_vault" / "dataset" / "dataset_catalog_builder.py").unlink()
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "dataset_catalog_builder.py is missing" in result.stdout
+
+
+def test_release_checker_fails_without_pr6_reader_module(tmp_path):
+    repo = copy_repo(tmp_path)
+    (repo / "src" / "market_vault" / "dataset" / "dataset_catalog_reader.py").unlink()
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "dataset_catalog_reader.py is missing" in result.stdout
+
+
+def test_release_checker_fails_without_pr6_materializer_module(tmp_path):
+    repo = copy_repo(tmp_path)
+    (
+        repo
+        / "src"
+        / "market_vault"
+        / "dataset"
+        / "dataset_catalog_materialization.py"
+    ).unlink()
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "dataset_catalog_materialization.py is missing" in result.stdout
+
+
+def test_release_checker_fails_when_builder_version_constant_removed(tmp_path):
+    repo = copy_repo(tmp_path)
+    path = (
+        repo
+        / "src"
+        / "market_vault"
+        / "dataset"
+        / "dataset_catalog_builder_models.py"
+    )
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "market-vault-dataset-catalog-builder-v1",
+            "market-vault-dataset-catalog-builder-v9",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not define the exact builder version constant "
+        "'market-vault-dataset-catalog-builder-v1'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_snapshot_id_version_constant_removed(
+    tmp_path,
+):
+    repo = copy_repo(tmp_path)
+    path = (
+        repo
+        / "src"
+        / "market_vault"
+        / "dataset"
+        / "dataset_catalog_snapshot_identity.py"
+    )
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "market-vault-dataset-catalog-snapshot-id-v1",
+            "market-vault-dataset-catalog-snapshot-id-v9",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not define the exact version constant "
+        "'market-vault-dataset-catalog-snapshot-id-v1'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_reader_version_constant_removed(tmp_path):
+    repo = copy_repo(tmp_path)
+    path = (
+        repo
+        / "src"
+        / "market_vault"
+        / "dataset"
+        / "dataset_catalog_snapshot_identity.py"
+    )
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "market-vault-verified-dataset-catalog-reader-v1",
+            "market-vault-verified-dataset-catalog-reader-v9",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not define the exact version constant "
+        "'market-vault-verified-dataset-catalog-reader-v1'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_builder_trusts_manifest_directly(
+    tmp_path,
+):
+    repo = copy_repo(tmp_path)
+    _mutate_catalog_builder(
+        repo,
+        "verified = load_verified_dataset(candidate)",
+        "verified = _parse_manifest(candidate)",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "missing the contract marker 'load_verified_dataset(candidate)'" in (
+        result.stdout
+    )
+
+
+def test_release_checker_fails_when_builder_skips_verified_reader(tmp_path):
+    repo = copy_repo(tmp_path)
+    _mutate_catalog_builder(
+        repo,
+        "project_dataset_catalog_entry(verified)",
+        "project_dataset_catalog_entry(None)",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "missing the contract marker 'project_dataset_catalog_entry(verified)'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_root_scan_becomes_recursive(tmp_path):
+    repo = copy_repo(tmp_path)
+    _mutate_catalog_builder(
+        repo,
+        "with os.scandir(dataset_root) as iterator:",
+        "for entry in dataset_root.rglob('*'):",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "must not contain the forbidden pattern 'rglob'" in result.stdout
+    assert "missing the contract marker 'os.scandir(dataset_root)'" in result.stdout
+
+
+def test_release_checker_fails_when_builder_reads_cwd_for_inputs(tmp_path):
+    # Mutation: the builder reverting to a Path.cwd()-based relative
+    # coercion of a formal input must fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "src" / "market_vault" / "dataset" / "dataset_catalog_builder.py"
+    text = path.read_text(encoding="utf-8")
+    text = text.replace(
+        "    if not raw.is_absolute():\n"
+        "        raise DatasetCatalogBuildError(\n"
+        "            f\"{label} must be a lexically absolute path (cwd is never an \"\n"
+        "            f\"implicit input), got {dataset_root!r}\"\n"
+        "        )\n"
+        "    return raw",
+        "    if raw.is_absolute():\n"
+        "        return raw\n"
+        "    return Path.cwd() / raw",
+    )
+    path.write_text(text, encoding="utf-8")
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "must not contain the forbidden pattern 'Path.cwd()'" in result.stdout
+
+
+def test_release_checker_fails_when_content_identity_includes_path(tmp_path):
+    repo = copy_repo(tmp_path)
+    path = repo / "src" / "market_vault" / "dataset" / "dataset_catalog_identity.py"
+    path.write_text(
+        path.read_text(encoding="utf-8") + '\n    "build_path": facts.build_path,\n',
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "must not contain the forbidden pattern '\"build_path\":'" in (
+        result.stdout
+    )
+
+
+def test_release_checker_fails_when_content_identity_includes_built_at(
+    tmp_path,
+):
+    repo = copy_repo(tmp_path)
+    path = repo / "src" / "market_vault" / "dataset" / "dataset_catalog_identity.py"
+    path.write_text(
+        path.read_text(encoding="utf-8") + '\n    "built_at": facts.built_at,\n',
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "must not contain the forbidden pattern '\"built_at\":'" in result.stdout
+
+
+def test_release_checker_fails_when_snapshot_identity_includes_output_root(
+    tmp_path,
+):
+    repo = copy_repo(tmp_path)
+    path = (
+        repo
+        / "src"
+        / "market_vault"
+        / "dataset"
+        / "dataset_catalog_snapshot_identity.py"
+    )
+    path.write_text(
+        path.read_text(encoding="utf-8") + '\n    "output_root": output_root,\n',
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "must not contain the forbidden pattern '\"output_root\"'" in (
+        result.stdout
+    )
+
+
+def test_release_checker_fails_when_reader_reloads_recorded_paths(tmp_path):
+    repo = copy_repo(tmp_path)
+    path = repo / "src" / "market_vault" / "dataset" / "dataset_catalog_reader.py"
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        + "\nload_verified_dataset(entry.recorded_build_path)\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "must not contain the forbidden pattern 'load_verified_dataset('" in (
+        result.stdout
+    )
+
+
+def test_release_checker_fails_when_reader_loses_historical_location_contract(
+    tmp_path,
+):
+    repo = copy_repo(tmp_path)
+    path = repo / "src" / "market_vault" / "dataset" / "dataset_catalog_reader.py"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "historical observed location text", "live dataset path"
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "missing the contract marker 'historical observed location'" in (
+        result.stdout
+    )
+
+
+def test_release_checker_fails_when_success_not_written_last(tmp_path):
+    repo = copy_repo(tmp_path)
+    path = (
+        repo
+        / "src"
+        / "market_vault"
+        / "dataset"
+        / "dataset_catalog_materialization.py"
+    )
+    text = path.read_text(encoding="utf-8")
+    text = text.replace(
+        "    _write_empty_success(success_path)",
+        "    raced = _publish_staging(\n"
+        "        staging, final, result=result,\n"
+        "        built_at=built_at, snapshot_id=snapshot_id,\n"
+        "        catalog_bytes=catalog_bytes,\n"
+        "    )\n"
+        "    if raced is not None:\n"
+        "        return raced\n"
+        "    _write_empty_success(success_path)",
+        1,
+    )
+    path.write_text(text, encoding="utf-8")
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "must write _SUCCESS before the atomic publication" in result.stdout
+
+
+def test_release_checker_fails_when_publication_allows_overwrite(tmp_path):
+    repo = copy_repo(tmp_path)
+    path = (
+        repo
+        / "src"
+        / "market_vault"
+        / "dataset"
+        / "dataset_catalog_materialization.py"
+    )
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "_atomic_rename_directory_no_replace(staging, final)",
+            "os.replace(staging, final)",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "must not contain the forbidden pattern 'os.replace('" in result.stdout
+    assert "missing the contract marker '_atomic_rename_directory_no_replace(" in (
+        result.stdout
+    )
+
+
+def test_release_checker_fails_when_latest_appears(tmp_path):
+    repo = copy_repo(tmp_path)
+    path = (
+        repo
+        / "src"
+        / "market_vault"
+        / "dataset"
+        / "dataset_catalog_materialization.py"
+    )
+    path.write_text(
+        path.read_text(encoding="utf-8") + '\nlatest = final.parent / "latest"\n',
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "must not contain the forbidden pattern '\"latest\"'" in result.stdout
+
+
+def test_release_checker_fails_when_write_return_validation_lost(tmp_path):
+    repo = copy_repo(tmp_path)
+    path = (
+        repo
+        / "src"
+        / "market_vault"
+        / "dataset"
+        / "dataset_catalog_materialization.py"
+    )
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "type(written) is not int or written != len(data)",
+            "written is None",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "missing the contract marker 'type(written) is not int" in result.stdout
+
+
+def test_release_checker_fails_when_package_loses_pr6_export(tmp_path):
+    repo = copy_repo(tmp_path)
+    path = repo / "src" / "market_vault" / "dataset" / "__init__.py"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "build_dataset_catalog",
+            "missing_catalog_builder",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "market_vault.dataset does not export the PR-6 public API "
+        "'build_dataset_catalog'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_ci_loses_pr6_smoke(tmp_path):
+    repo = copy_repo(tmp_path)
+    ci = repo / ".github" / "workflows" / "ci.yml"
+    ci.write_text(
+        ci.read_text(encoding="utf-8").replace(
+            "PR6_CATALOG_API_IMPORT_OK", "PR6_MISSING_MARKER"
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "PR-6 public API smoke marker" in result.stdout

@@ -6,10 +6,9 @@ This document defines the scope, non-goals, and fixed PR sequence for the
 V0.6.0 "Deterministic Sample Generation and Dataset Catalog" minor feature
 release. It fixes the architecture boundary for v0.6.0 and the two product
 capabilities: the Deterministic Sample Generator and the immutable Dataset
-Catalog. This PR is documentation only and implements no product code:
-neither the Sample Generator nor the Dataset Catalog is implemented
-by it; the direction only fixes boundaries, and the precise schemas are
-defined by the subsequent contract PRs.
+Catalog. The direction PR itself is documentation only and implements no
+product code; the precise schemas are defined by the subsequent contract
+PRs, and the Catalog query CLI (PR-7) has not started.
 
 ## 1. Baseline
 
@@ -317,11 +316,19 @@ V0.6.0 keeps, unchanged:
   inference`) was also merged on 2026-08-07T03:10:49Z via the squash
   commit `b4c3618d631b2950934acbae4a72e00b2adf7350`; it is a standalone
   verified-reader fix outside the fixed v0.6.0 PR sequence.
-- PR-5 (this PR, branch `feat/v0.6.0-dataset-catalog-contract`) is the
-  current implementation stage: the Dataset Catalog contract, strict
-  entry schema, frozen models, the metadata projection, and the Catalog
-  content identity. PR-6 (immutable Dataset Catalog builder, materializer,
-  verified Catalog reader) has not started; the Dataset Catalog snapshot
-  is not implemented.
+- PR-5 merged (GitHub PR #39, `feat: define Dataset Catalog contract,
+  frozen models, projection and Catalog identity`) on
+  2026-08-07T08:54:32Z via the squash commit
+  `2958697dd434c536c39267b6a654dabb762c74f9`; PR-5 is complete: the
+  Dataset Catalog contract, strict entry schema, frozen models, the
+  metadata projection, and the Catalog content identity are on main.
+- PR-6 (this PR, branch `feat/v0.6.0-dataset-catalog-snapshot`) is the
+  current implementation stage: the immutable Dataset Catalog builder
+  (explicit Dataset root / explicit candidate set), the snapshot
+  materializer (catalog.json / manifest.json / _SUCCESS, staging,
+  _SUCCESS written last, atomic no-replace publication, existing-snapshot
+  idempotency), and the verified Catalog snapshot reader (historical
+  recorded build locations, never reloaded). PR-7 (Dataset Catalog verify/list/show/query CLI) has not started; the Catalog query CLI is
+  not implemented.
 - The package version remains 0.5.1; the bump to 0.6.0 happens only in
   PR-9. V0.6.0 as a whole is not released.

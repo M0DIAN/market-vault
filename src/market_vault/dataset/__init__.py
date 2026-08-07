@@ -218,8 +218,23 @@ merge / fail-closed conflict policy, and the pure projection
 never reads Dataset Parquet, never re-derives the Dataset, and never
 accesses OpenD / the network / settings / the current time; the Catalog
 content identity never flows back into any Dataset or Canonical identity.
-The Catalog snapshot builder, materializer, verified reader, and CLI are
-PR-6 / PR-7 and are not implemented.
+
+The immutable Dataset Catalog snapshot layer (v0.6.0 PR-6;
+:mod:`market_vault.dataset.dataset_catalog_builder`,
+:mod:`market_vault.dataset.dataset_catalog_materialization`, and
+:mod:`market_vault.dataset.dataset_catalog_reader`) implements the
+deterministic Catalog builder over the formal verified Dataset reader,
+the physical snapshot materialization (``catalog.json`` / ``manifest.json``
+/ ``_SUCCESS`` under ``<output_root>/<snapshot_id>``, staging with
+``_SUCCESS`` written last, atomic no-replace publication, strict
+existing-snapshot idempotency), and the verified snapshot reader that
+recomputes every content and physical identity from the snapshot's own
+bytes and treats the recorded Dataset build locations as historical text
+that is never reloaded. The physical snapshot identity
+(:func:`market_vault.dataset.dataset_catalog_snapshot_identity.
+dataset_catalog_snapshot_id`) is independent of the PR-5 Catalog content
+identity and never flows back into any Dataset fact. The Catalog
+verify / list / show / query CLI remains PR-7 and is not implemented.
 
 This layer does not create DuckDB views, does not add an API server or a
 Python client, and does not train models, backtest, or trade. The Canonical
@@ -230,9 +245,38 @@ layer.
 """
 
 from .content import dataset_schema_id, logical_dataset_content_id
+from .dataset_catalog_builder import build_dataset_catalog
+from .dataset_catalog_builder_models import (
+    DATASET_CATALOG_BUILDER_VERSION,
+    DatasetCatalogBuildError,
+    DatasetCatalogBuildResult,
+)
 from .dataset_catalog_identity import (
     catalog_dataset_content_id,
     dataset_catalog_content_id,
+)
+from .dataset_catalog_materialization import materialize_dataset_catalog_snapshot
+from .dataset_catalog_materialization_models import (
+    DATASET_CATALOG_CATALOG_FILENAME,
+    DATASET_CATALOG_MANIFEST_FILENAME,
+    DATASET_CATALOG_SUCCESS_FILENAME,
+    DatasetCatalogMaterializationError,
+    DatasetCatalogMaterializationResult,
+)
+from .dataset_catalog_reader import load_verified_dataset_catalog
+from .dataset_catalog_reader_models import (
+    DatasetCatalogArtifactValidationError,
+    DatasetCatalogFileRecord,
+    DatasetCatalogSnapshotEntryRecord,
+    DatasetCatalogSnapshotManifestRecord,
+    VerifiedDatasetCatalogSnapshot,
+)
+from .dataset_catalog_snapshot_identity import (
+    DATASET_CATALOG_MATERIALIZER_VERSION,
+    DATASET_CATALOG_READER_CONTRACT_VERSION,
+    DATASET_CATALOG_SNAPSHOT_ID_VERSION,
+    DATASET_CATALOG_SNAPSHOT_MANIFEST_VERSION,
+    DATASET_CATALOG_SNAPSHOT_SCHEMA_VERSION,
 )
 from .dataset_catalog_models import (
     DATASET_CATALOG_CONTRACT_VERSION,
@@ -509,9 +553,18 @@ __all__ = [
     "CHRONOLOGICAL_SPLIT_RESULT_ID_VERSION",
     "DATASET_BUILD_REPORT_FILENAME",
     "DATASET_BUILD_REPORT_SCHEMA_VERSION",
+    "DATASET_CATALOG_BUILDER_VERSION",
+    "DATASET_CATALOG_CATALOG_FILENAME",
     "DATASET_CATALOG_CONTRACT_VERSION",
     "DATASET_CATALOG_CONTENT_ID_VERSION",
     "DATASET_CATALOG_ENTRY_SCHEMA_VERSION",
+    "DATASET_CATALOG_MANIFEST_FILENAME",
+    "DATASET_CATALOG_MATERIALIZER_VERSION",
+    "DATASET_CATALOG_READER_CONTRACT_VERSION",
+    "DATASET_CATALOG_SNAPSHOT_ID_VERSION",
+    "DATASET_CATALOG_SNAPSHOT_MANIFEST_VERSION",
+    "DATASET_CATALOG_SNAPSHOT_SCHEMA_VERSION",
+    "DATASET_CATALOG_SUCCESS_FILENAME",
     "DATASET_COMPLETION_REASON_FEATURE_EXCLUDED",
     "DATASET_COMPLETION_REASON_FEATURE_EXCLUDED_AND_LABEL_INCOMPLETE",
     "DATASET_COMPLETION_REASON_LABEL_INCOMPLETE",
@@ -629,10 +682,18 @@ __all__ = [
     "CompletionSummary",
     "CrossTradingDayPolicy",
     "DatasetArtifactValidationError",
+    "DatasetCatalogArtifactValidationError",
+    "DatasetCatalogBuildError",
+    "DatasetCatalogBuildResult",
     "DatasetCatalogDatasetFacts",
     "DatasetCatalogEntry",
     "DatasetCatalogError",
+    "DatasetCatalogFileRecord",
+    "DatasetCatalogMaterializationError",
+    "DatasetCatalogMaterializationResult",
     "DatasetCatalogObservedMetadata",
+    "DatasetCatalogSnapshotEntryRecord",
+    "DatasetCatalogSnapshotManifestRecord",
     "DatasetBuildReportRecord",
     "DatasetError",
     "DatasetMaterializationError",
@@ -693,6 +754,7 @@ __all__ = [
     "assign_chronological_splits",
     "assemble_point_in_time_samples",
     "build_dataset_manifest",
+    "build_dataset_catalog",
     "built_in_feature_registrations",
     "built_in_feature_registry",
     "built_in_label_registrations",
@@ -713,8 +775,10 @@ __all__ = [
     "load_feature_spec",
     "load_label_spec",
     "load_verified_dataset",
+    "load_verified_dataset_catalog",
     "logical_dataset_content_id",
     "materialize_dataset_artifacts",
+    "materialize_dataset_catalog_snapshot",
     "orchestrate_dataset_build",
     "parse_feature_spec",
     "parse_label_spec",
@@ -735,5 +799,6 @@ __all__ = [
     "transform_implementation_pin",
     "validate_dataset_manifest",
     "VerifiedDatasetBuild",
+    "VerifiedDatasetCatalogSnapshot",
     "write_dataset_manifest_atomic",
 ]

@@ -216,10 +216,10 @@ V060_DIRECTION_NONGOAL_MARKERS = (
     "backtesting",
     "automatic trading",
 )
-# The v0.6.0 direction document must explicitly state that neither
-# capability is implemented yet.
+# The v0.6.0 direction document must explicitly state that the Catalog
+# query CLI (PR-7) has not started.
 V060_NOT_IMPLEMENTED_MARKER = (
-    "neither the Sample Generator nor the Dataset Catalog is implemented"
+    "PR-7 (Dataset Catalog verify/list/show/query CLI) has not started"
 )
 # Facts the v0.6.0 architecture ADR must state.
 ADR_V060_FACTS = (
@@ -387,20 +387,22 @@ V060_DIRECTION_PR4_FACTS = (
 V060_DIRECTION_PR4_FALSE_CLAIMS = (
     "V0.6.0 is released",
 )
-# Facts the v0.6.0 direction document must state about the PR-5 stage.
-V060_DIRECTION_PR5_FACTS = (
-    "PR-5 (this PR",
-    "feat/v0.6.0-dataset-catalog-contract",
-    "PR-6 (immutable Dataset Catalog builder, materializer,",
-    "verified Catalog reader) has not started",
+# Facts the v0.6.0 direction document must state about the PR-6 stage.
+V060_DIRECTION_PR6_FACTS = (
+    "PR-5 merged",
+    "PR #39",
+    "2958697dd434c536c39267b6a654dabb762c74f9",
+    "PR-6 (this PR",
+    "feat/v0.6.0-dataset-catalog-snapshot",
+    "PR-7 (Dataset Catalog verify/list/show/query CLI) has not started",
     "not released",
 )
 # Contradictory claims that must never appear in the v0.6.0 direction
-# document's PR-5 record.
-V060_DIRECTION_PR5_FALSE_CLAIMS = (
+# document's PR-6 record.
+V060_DIRECTION_PR6_FALSE_CLAIMS = (
     "V0.6.0 is released",
-    "PR-5 is complete",
-    "PR-6 has started",
+    "PR-6 is complete",
+    "PR-7 has started",
 )
 # The v0.6.0 Dataset Catalog contract production modules that must exist.
 DATASET_CATALOG_MODULES = (
@@ -476,12 +478,110 @@ DATASET_CATALOG_PR5_FALSE_CLAIMS = (
 DATASET_CATALOG_REUSES_LEGACY_RE = re.compile(
     r"(?<!never )(?<!not )reuses the legacy Catalog's tables"
 )
-# Production files that must never exist yet (PR-6 / PR-7 work).
-DATASET_CATALOG_FORBIDDEN_FILES = (
+# The PR-6 production modules that must exist.
+DATASET_CATALOG_PR6_MODULES = (
     "src/market_vault/dataset/dataset_catalog_builder.py",
+    "src/market_vault/dataset/dataset_catalog_builder_models.py",
+    "src/market_vault/dataset/dataset_catalog_serialization.py",
+    "src/market_vault/dataset/dataset_catalog_snapshot_identity.py",
+    "src/market_vault/dataset/dataset_catalog_materialization.py",
+    "src/market_vault/dataset/dataset_catalog_materialization_models.py",
     "src/market_vault/dataset/dataset_catalog_reader.py",
-    "src/market_vault/dataset/dataset_catalog_snapshot.py",
+    "src/market_vault/dataset/dataset_catalog_reader_models.py",
+)
+# The exact PR-6 version constants the modules must define.
+DATASET_CATALOG_PR6_VERSION_CONSTANTS = (
+    "market-vault-dataset-catalog-builder-v1",
+    "market-vault-dataset-catalog-snapshot-v1",
+    "market-vault-dataset-catalog-snapshot-manifest-v1",
+    "market-vault-dataset-catalog-snapshot-id-v1",
+    "market-vault-dataset-catalog-materializer-v1",
+    "market-vault-verified-dataset-catalog-reader-v1",
+)
+# The public PR-6 functions the modules must define.
+DATASET_CATALOG_PR6_FUNCTIONS = (
+    "def build_dataset_catalog",
+    "def materialize_dataset_catalog_snapshot",
+    "def load_verified_dataset_catalog",
+)
+# The PR-7 CLI production file that must never exist yet.
+DATASET_CATALOG_PR7_FORBIDDEN_FILES = (
     "src/market_vault/dataset/dataset_catalog_cli.py",
+)
+# The dataset package must export the PR-6 public API.
+DATASET_CATALOG_PR6_EXPORTS = (
+    "build_dataset_catalog",
+    "materialize_dataset_catalog_snapshot",
+    "load_verified_dataset_catalog",
+    "DatasetCatalogBuildResult",
+    "DatasetCatalogBuildError",
+    "DatasetCatalogMaterializationResult",
+    "DatasetCatalogMaterializationError",
+    "DatasetCatalogArtifactValidationError",
+    "VerifiedDatasetCatalogSnapshot",
+    "DATASET_CATALOG_BUILDER_VERSION",
+    "DATASET_CATALOG_SNAPSHOT_SCHEMA_VERSION",
+    "DATASET_CATALOG_SNAPSHOT_MANIFEST_VERSION",
+    "DATASET_CATALOG_SNAPSHOT_ID_VERSION",
+    "DATASET_CATALOG_MATERIALIZER_VERSION",
+    "DATASET_CATALOG_READER_CONTRACT_VERSION",
+)
+# Contract-fact markers the PR-6 modules must keep (mutation guards for
+# the fixed trust and identity boundaries).
+DATASET_CATALOG_PR6_TRUST_MARKERS = (
+    # The builder admits a candidate only through the formal verified
+    # Dataset reader and the projection.
+    "load_verified_dataset(candidate)",
+    "project_dataset_catalog_entry(verified)",
+    # The root discovery is a bounded direct-children scan.
+    "os.scandir(dataset_root)",
+    # The reader treats the recorded location as historical text.
+    "historical observed location",
+    "never reloaded",
+    # The materializer commits with a true no-replace atomic publication.
+    "_atomic_rename_directory_no_replace(staging, final)",
+    # Write-return validation (never silently accepting a bad write).
+    "type(written) is not int or written != len(data)",
+)
+# Forbidden patterns in the PR-6 modules (mutation guards).
+DATASET_CATALOG_PR6_FORBIDDEN_PATTERNS = {
+    "src/market_vault/dataset/dataset_catalog_builder.py": (
+        "rglob",
+        "os.walk",
+        "json.loads",  # the builder never parses a manifest itself
+        '"manifest.json"',
+        "Path.cwd()",  # cwd is never a formal-input dependency
+    ),
+    "src/market_vault/dataset/dataset_catalog_reader.py": (
+        "load_verified_dataset(",
+        "Path.resolve(",
+    ),
+    "src/market_vault/dataset/dataset_catalog_materialization.py": (
+        "os.replace(",
+        "shutil.move(",
+        '"latest"',
+    ),
+    "src/market_vault/dataset/dataset_catalog_identity.py": (
+        '"built_at":',
+        '"build_path":',
+    ),
+    "src/market_vault/dataset/dataset_catalog_snapshot_identity.py": (
+        '"output_root"',
+        '"snapshot_path"',
+    ),
+}
+# The CI fresh-wheel smoke must also cover the PR-6 public API imports.
+CI_PR6_API_MARKER = "PR6_CATALOG_API_IMPORT_OK"
+CI_PR6_API_IMPORT_LINES = (
+    "build_dataset_catalog",
+    "materialize_dataset_catalog_snapshot",
+    "load_verified_dataset_catalog",
+)
+# The formal contract document must state the explicit-absolute builder
+# input contract (the formal-input boundary never depends on cwd).
+DATASET_CATALOG_PR6_PATH_CONTRACT_MARKERS = (
+    "lexically absolute safe path",
+    "never an implicit input",
 )
 # The dataset package must export the PR-5 public API.
 DATASET_CATALOG_EXPORTS = (
@@ -836,8 +936,8 @@ def check_v060_direction(root: Path) -> list[str]:
             )
     if V060_NOT_IMPLEMENTED_MARKER not in text:
         failures.append(
-            "docs/v0_6_0_direction.md must state that neither the Sample "
-            "Generator nor the Dataset Catalog is implemented"
+            "docs/v0_6_0_direction.md must state that PR-7 (the Catalog "
+            "query CLI) has not started"
         )
     for fact in V060_DIRECTION_IDENTITY_FACTS:
         if fact not in text:
@@ -1100,18 +1200,6 @@ def check_sample_generation_cli(root: Path) -> list[str]:
                     "docs/v0_6_0_direction.md contains the false PR-4 "
                     f"claim {claim!r}"
                 )
-        for fact in V060_DIRECTION_PR5_FACTS:
-            if fact not in text:
-                failures.append(
-                    "docs/v0_6_0_direction.md does not state the PR-5 "
-                    f"progress fact {fact!r}"
-                )
-        for claim in V060_DIRECTION_PR5_FALSE_CLAIMS:
-            if claim in text:
-                failures.append(
-                    "docs/v0_6_0_direction.md contains the false PR-5 "
-                    f"claim {claim!r}"
-                )
     ci = root / ".github" / "workflows" / "ci.yml"
     if ci.exists():
         text = ci.read_text(encoding="utf-8")
@@ -1201,8 +1289,7 @@ def check_dataset_catalog(root: Path) -> list[str]:
     exact version constants and public functions are defined, the modules
     never import the legacy Catalog, the dataset package exports the PR-5
     public API, the formal contract document states the PR-5 facts and no
-    false claim, the direction document records the PR-5 stage, and no
-    PR-6 / PR-7 production file exists yet."""
+    false claim, and no PR-7 CLI production file exists yet."""
     failures = []
     for rel in DATASET_CATALOG_MODULES:
         if not (root / rel).exists():
@@ -1272,24 +1359,197 @@ def check_dataset_catalog(root: Path) -> list[str]:
                     "market_vault.dataset does not export the PR-5 public "
                     f"API {export!r}"
                 )
-    for rel in DATASET_CATALOG_FORBIDDEN_FILES:
+    for rel in DATASET_CATALOG_PR7_FORBIDDEN_FILES:
         if (root / rel).exists():
-            failures.append(f"PR-6 / PR-7 production file must not exist yet: {rel}")
+            failures.append(
+                f"PR-7 CLI production file must not exist yet: {rel}"
+            )
     failures.extend(check_dataset_catalog_contract(root))
+    return failures
+
+
+def check_dataset_catalog_pr6(root: Path) -> list[str]:
+    """Static PR-6 checks: the eight production modules exist, the exact
+    version constants and public functions are defined, the dataset
+    package exports the PR-6 public API, the modules keep the fixed trust
+    / identity / safety markers and stay free of the forbidden patterns
+    (mutation guards for the builder trust boundary, the bounded scan,
+    the content / snapshot identity separation, the reader no-reload
+    contract, the _SUCCESS-last order, the no-overwrite publication, and
+    the absence of ``latest``), the direction document records the PR-6
+    stage and no false claim, and the CI fresh-wheel smoke covers the
+    PR-6 public API imports."""
+    failures = []
+    for rel in DATASET_CATALOG_PR6_MODULES:
+        if not (root / rel).exists():
+            failures.append(f"{rel} is missing")
+    builder = root / "src" / "market_vault" / "dataset" / "dataset_catalog_builder.py"
+    if builder.exists():
+        text = builder.read_text(encoding="utf-8")
+        if "def build_dataset_catalog" not in text:
+            failures.append(
+                "dataset_catalog_builder.py is missing build_dataset_catalog"
+            )
+        if "exactly one of dataset_root or candidate_build_dirs" not in text:
+            failures.append(
+                "dataset_catalog_builder.py must enforce the exactly-one "
+                "input mode contract"
+            )
+    identity_path = (
+        root / "src" / "market_vault" / "dataset" / "dataset_catalog_snapshot_identity.py"
+    )
+    if identity_path.exists():
+        text = identity_path.read_text(encoding="utf-8")
+        for version in (
+            "market-vault-dataset-catalog-snapshot-v1",
+            "market-vault-dataset-catalog-snapshot-manifest-v1",
+            "market-vault-dataset-catalog-snapshot-id-v1",
+            "market-vault-dataset-catalog-materializer-v1",
+            "market-vault-verified-dataset-catalog-reader-v1",
+        ):
+            if f'"{version}"' not in text:
+                failures.append(
+                    "dataset_catalog_snapshot_identity.py does not define "
+                    f"the exact version constant {version!r}"
+                )
+        if "def dataset_catalog_snapshot_id" not in text:
+            failures.append(
+                "dataset_catalog_snapshot_identity.py is missing "
+                "dataset_catalog_snapshot_id"
+            )
+    builder_models = (
+        root / "src" / "market_vault" / "dataset" / "dataset_catalog_builder_models.py"
+    )
+    if builder_models.exists():
+        text = builder_models.read_text(encoding="utf-8")
+        if f'"market-vault-dataset-catalog-builder-v1"' not in text:
+            failures.append(
+                "dataset_catalog_builder_models.py does not define the exact "
+                "builder version constant "
+                "'market-vault-dataset-catalog-builder-v1'"
+            )
+        for marker in ("class DatasetCatalogBuildError", "class DatasetCatalogBuildResult"):
+            if marker not in text:
+                failures.append(
+                    f"dataset_catalog_builder_models.py is missing {marker}"
+                )
+    materialization = (
+        root / "src" / "market_vault" / "dataset" / "dataset_catalog_materialization.py"
+    )
+    if materialization.exists():
+        text = materialization.read_text(encoding="utf-8")
+        if "def materialize_dataset_catalog_snapshot" not in text:
+            failures.append(
+                "dataset_catalog_materialization.py is missing "
+                "materialize_dataset_catalog_snapshot"
+            )
+        # _SUCCESS must be written last: the staging verification precedes
+        # the _SUCCESS write, and the _SUCCESS write precedes publication
+        # (the calls are the indented call sites, never the def lines).
+        success_index = text.index("    _write_empty_success(")
+        if text.index("    _verify_staging_snapshot(") > success_index:
+            failures.append(
+                "dataset_catalog_materialization.py must verify the staging "
+                "directory before _SUCCESS is written"
+            )
+        if success_index > text.index("raced = _publish_staging("):
+            failures.append(
+                "dataset_catalog_materialization.py must write _SUCCESS "
+                "before the atomic publication"
+            )
+    reader = (
+        root / "src" / "market_vault" / "dataset" / "dataset_catalog_reader.py"
+    )
+    if reader.exists():
+        text = reader.read_text(encoding="utf-8")
+        if "def load_verified_dataset_catalog" not in text:
+            failures.append(
+                "dataset_catalog_reader.py is missing "
+                "load_verified_dataset_catalog"
+            )
+        if "def _second_pass_verify" not in text:
+            failures.append(
+                "dataset_catalog_reader.py is missing the second verification "
+                "pass"
+            )
+    # Fixed trust / identity / safety markers.
+    for rel, marker in (
+        (builder, "load_verified_dataset(candidate)"),
+        (builder, "project_dataset_catalog_entry(verified)"),
+        (builder, "os.scandir(dataset_root)"),
+        (reader, "historical observed location"),
+        (reader, "never reloaded"),
+        (materialization, "_atomic_rename_directory_no_replace(staging, final)"),
+        (materialization, "type(written) is not int or written != len(data)"),
+    ):
+        if rel is not None and rel.exists():
+            text = rel.read_text(encoding="utf-8")
+            if marker not in text:
+                failures.append(
+                    f"{rel.name} is missing the contract marker {marker!r}"
+                )
+    # Forbidden patterns (mutation guards).
+    for rel, patterns in DATASET_CATALOG_PR6_FORBIDDEN_PATTERNS.items():
+        path = root / rel
+        if not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8")
+        for pattern in patterns:
+            if pattern in text:
+                failures.append(
+                    f"{rel} must not contain the forbidden pattern {pattern!r}"
+                )
+    # The dataset package exports the PR-6 public API.
+    package = root / "src" / "market_vault" / "dataset" / "__init__.py"
+    if package.exists():
+        text = package.read_text(encoding="utf-8")
+        for export in DATASET_CATALOG_PR6_EXPORTS:
+            if export not in text:
+                failures.append(
+                    "market_vault.dataset does not export the PR-6 public "
+                    f"API {export!r}"
+                )
+    # The formal contract document must state the explicit-absolute input
+    # contract.
+    contract = root / "docs" / "contracts" / "dataset_catalog.md"
+    if contract.exists():
+        text = contract.read_text(encoding="utf-8")
+        for marker in DATASET_CATALOG_PR6_PATH_CONTRACT_MARKERS:
+            if marker not in text:
+                failures.append(
+                    "docs/contracts/dataset_catalog.md does not state the "
+                    f"builder path-contract marker {marker!r}"
+                )
+    # The direction document records the PR-6 stage and no false claim.
     direction = root / "docs" / "v0_6_0_direction.md"
     if direction.exists():
         text = direction.read_text(encoding="utf-8")
-        for fact in V060_DIRECTION_PR5_FACTS:
+        for fact in V060_DIRECTION_PR6_FACTS:
             if fact not in text:
                 failures.append(
-                    "docs/v0_6_0_direction.md does not state the PR-5 "
+                    "docs/v0_6_0_direction.md does not state the PR-6 "
                     f"progress fact {fact!r}"
                 )
-        for claim in V060_DIRECTION_PR5_FALSE_CLAIMS:
+        for claim in V060_DIRECTION_PR6_FALSE_CLAIMS:
             if claim in text:
                 failures.append(
-                    "docs/v0_6_0_direction.md contains the false PR-5 "
+                    "docs/v0_6_0_direction.md contains the false PR-6 "
                     f"claim {claim!r}"
+                )
+    # The CI fresh-wheel smoke covers the PR-6 public API imports.
+    ci = root / ".github" / "workflows" / "ci.yml"
+    if ci.exists():
+        text = ci.read_text(encoding="utf-8")
+        if CI_PR6_API_MARKER not in text:
+            failures.append(
+                f".github/workflows/ci.yml PR-6 public API smoke marker "
+                f"{CI_PR6_API_MARKER!r} is missing"
+            )
+        for line in CI_PR6_API_IMPORT_LINES:
+            if line not in text:
+                failures.append(
+                    f".github/workflows/ci.yml PR-6 smoke must import "
+                    f"{line}"
                 )
     return failures
 
@@ -1528,6 +1788,7 @@ def main() -> int:
         ("sample generation cli", check_sample_generation_cli),
         ("dataset catalog contract", check_dataset_catalog_contract),
         ("dataset catalog", check_dataset_catalog),
+        ("dataset catalog pr6", check_dataset_catalog_pr6),
         ("old release notes", check_old_release_notes),
         ("warning guard", check_warning_guard),
         ("examples", check_examples),
