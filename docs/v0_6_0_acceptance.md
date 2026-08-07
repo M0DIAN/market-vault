@@ -183,21 +183,21 @@ The audit result (logical content and identity values):
 | canonical_build_id | DIFFER |
 | generation_content_id | DIFFER |
 
-Interpretation, recorded as the acceptance wording: the upstream source
-snapshot's physical bytes are formal provenance/version identity input.
-The upstream source snapshot physical bytes are formal
-provenance/version identity input: the physical row payload of the
-verified Canonical snapshot (the Parquet bytes) feeds the physical source
-provenance identities (`physical_snapshot_hash`,
-`canonical_row_version_id`), and those identities feed the build /
-generation identities; a different but logical-content-equal writer
-therefore changes physical source provenance and build / generation
-identity values while leaving logical content (`logical_source_rows_hash`,
-`canonical_bar_key`, `gap_content_id`) equal. This is not "PyArrow changed
-the Canonical serializer": the Canonical serializer and identity
-algorithms are unchanged; the physical bytes of the upstream source
-snapshot are simply part of the formal identity input, exactly as
-designed.
+Interpretation, recorded as the acceptance wording: the
+upstream source / curated snapshot Parquet bytes are identity-bearing
+physical source provenance. Their digest feeds `physical_snapshot_hash` /
+`source_snapshot_content_hash` and therefore the row-version and
+downstream provenance/version identity chain. A different but
+logical-content-equal writer therefore changes physical source
+provenance and build / generation identity values while leaving logical
+content (`logical_source_rows_hash`, `canonical_bar_key`,
+`gap_content_id`) equal. The serialized byte layout / serializer
+metadata of the Canonical output Parquet artifact itself does not
+independently enter Canonical logical identity. This is not "PyArrow
+changed the Canonical serializer": the Canonical serializer and identity
+algorithms are unchanged; the physical bytes of the upstream source /
+curated snapshot are simply part of the formal identity input, exactly
+as designed.
 
 The eight required acceptance statements for portability:
 
@@ -228,20 +228,23 @@ member list, logical content facts).
 
 The decoder applies strict member checks (no `.`, `..`, empty parts,
 leading `/`, drive prefixes, or OS separators) and verifies every member's
-byte size and sha256; it reproduces, unchanged, on every supported PyArrow
-writer:
+byte size and sha256; the artifact is read (never re-written) by the
+tests, and reproduces, unchanged, on both audited PyArrow runtimes /
+readers — PyArrow 24.0.0 and PyArrow 25.0.0:
 
 - the frozen generation content id `f70e0c89793a1ccfb51d8a16720a8446a74989415ad7c491608d19e2dd759fb3`
   (core chain, CORE split payload);
 - the frozen relative build-plan sha256 `78cd9e895ee966722c83db8d5388a49c635b8fd448fe8de796e2b56dcebf964b`
   (CLI chain, CLI split payload, relative plan paths).
 
-The two hard-coded frozen regression tests migrated in PR-8
+This proves the two audited runtimes; it does not claim every version in
+the supported `pyarrow>=16` range or future versions. The two hard-coded
+frozen regression tests migrated in PR-8
 (`test_identity_frozen_fixture`,
 `test_relative_fixture_build_plan_bytes_unchanged_from_old_head`) now read
 the artifact through the same decoder, so the regression values are
-frozen in exactly one place and proven on both audited writers by the CI
-`portability-pyarrow24` job.
+frozen in exactly one place and proven on both audited runtimes / readers
+by the CI `portability-pyarrow24` job.
 
 ## 9. Security matrix
 
@@ -261,8 +264,12 @@ All fail closed (exit 1, `result: FAILED`, no access through the alias):
   both candidate locations) fails with the explicit
   "ambiguous duplicate Dataset location" error — the builder never picks
   a winner;
-- `_SUCCESS` semantics: existence, regular file, link-free (a deleted
-  `_SUCCESS` fails; content is not part of the check);
+- `_SUCCESS` semantics, layered per contract:
+  - Canonical build `_SUCCESS`: exists, regular file, link-free; the
+    current Canonical reader does not bind content bytes (a deleted
+    `_SUCCESS` fails; content is not part of the check);
+  - Dataset Catalog snapshot `_SUCCESS`: exists, regular non-link file,
+    bytes exactly empty; a non-empty `_SUCCESS` fails closed;
 - a stored `None` requested_session never matches a string filter; no
   implicit case folding, no fuzzy search.
 
@@ -296,11 +303,11 @@ build-plan, Dataset, Catalog-build, and Catalog-read failure paths.
 The existing matrix stays exactly `["3.11", "3.14"]`. A new
 `portability-pyarrow24` job (ubuntu-latest, Python 3.11) installs
 `pyarrow==24.0.0` explicitly after the dev install, asserts the installed
-version, and runs the portability surface (canonical reader tests, the
-frozen portability tests, and `test_v060_portability.py`). The package job
-requires both the test job and the portability job, and marks the
-integrated acceptance with the `PR8_INTEGRATED_ACCEPTANCE_OK` marker once
-green.
+version, runs the audited portability tests, the canonical reader and
+frozen regression surface, and then the full offline suite under
+PyArrow 24.0.0. The package job requires both the test job and the
+portability job, and marks the integrated acceptance with the
+`PR8_INTEGRATED_ACCEPTANCE_OK` marker once green.
 
 ## 13. Test inventory and how to run
 
@@ -347,6 +354,14 @@ All acceptance gates passed at PR-8 time on the PR branch:
   alias-creation test on a host that cannot create symlinks or junctions);
 - both migrated frozen regression tests pass on PyArrow 25.0.0 and on the
   PyArrow 24.0.0 audit environment;
+- the full offline suite passes on both PyArrow 25.0.0 (the normal
+  matrix) and PyArrow 24.0.0 (the `portability-pyarrow24` CI job and the
+  local isolated audit): PyArrow 24.0.0 full suite **PASS, 0 failed**;
+- historical note: the initial PR-8 audit exposed two pre-existing
+  test-only `pq.read_table(single-file)` Hive-partition-inference
+  failures in `tests/test_pit_sample_assembly.py`; PR-8 corrected those
+  test helpers to `pq.ParquetFile(...).read()`. Production code remained
+  unchanged;
 - full offline suite passes, `compileall` passes, repo hygiene passes
   (no forbidden tracked artifacts), `git diff --check` is clean,
   `scripts/check_release.py` passes, `market-vault --version` reports

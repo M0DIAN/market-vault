@@ -67,13 +67,18 @@ jobs:
       - name: Assert the audited writer version
         run: python -c "import pyarrow; assert pyarrow.__version__ == '24.0.0'"
 
-      - name: Run the portability surface (canonical reader, frozen regressions, v0.6.0 portability)
+      - name: Run audited PyArrow 24 portability tests
+        run: python -m pytest tests/test_v060_portability.py -q
+
+      - name: Run the canonical reader and frozen regression surface
         run: |
           python -m pytest tests/test_canonical_reader.py -q
-          python -m pytest tests/test_v060_portability.py -q
           python -m pytest \
             tests/test_sample_generation_core.py \
             tests/test_sample_generation_cli.py -q
+
+      - name: Run full offline suite under PyArrow 24.0.0
+        run: python -m pytest
 
   package:
     runs-on: ubuntu-latest

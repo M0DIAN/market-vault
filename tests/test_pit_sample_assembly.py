@@ -1093,7 +1093,7 @@ def test_row_count_mismatch_fails(tmp_path):
 def test_parquet_schema_mismatch_fails(tmp_path):
     _, a, *_ = make_builds(tmp_path)
     bar_file = next(a.build_path.rglob("bars/**/part-00000.parquet"))
-    table = pq.read_table(bar_file)
+    table = pq.ParquetFile(bar_file).read()
     reordered = table.select(list(reversed(table.column_names)))
     pq.write_table(reordered, bar_file, compression="zstd")
     mutate_manifest(
@@ -1522,7 +1522,7 @@ def test_non_normalized_request_trade_dates_fail(tmp_path):
 def test_gap_sidecar_tampered_with_synced_identity_fails(tmp_path):
     gap_build = make_gap_build(tmp_path)
     gap_file = next(gap_build.build_path.rglob("gaps/**/part-00000.parquet"))
-    rows = pq.read_table(gap_file).to_pylist()
+    rows = pq.ParquetFile(gap_file).read().to_pylist()
     rows[0]["missing_bar_count"] = 2
     new_root = resync_gap_sidecar(gap_build, rows)
     with pytest.raises(CanonicalArtifactValidationError, match="re-derived from the bars"):

@@ -3773,3 +3773,118 @@ def test_release_checker_allows_negated_release_wording_in_acceptance_doc(
     )
     result = run_check_release(repo)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_release_checker_fails_when_acceptance_doc_loses_upstream_curated_provenance(
+    tmp_path,
+):
+    # Mutation: losing the upstream source / curated provenance wording
+    # must fail the checker (the source Parquet bytes are identity-bearing
+    # physical source provenance).
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_6_0_acceptance.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "upstream source / curated snapshot",
+            "upstream source snapshot",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "does not state the fact 'upstream source / curated'" in result.stdout
+
+
+def test_release_checker_fails_when_acceptance_doc_loses_canonical_output_parquet(
+    tmp_path,
+):
+    # Mutation: blurring the Canonical output Parquet artifact into the
+    # source provenance input must fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_6_0_acceptance.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "Canonical output Parquet",
+            "Canonical output artifact",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "does not state the fact 'Canonical output Parquet'" in result.stdout
+
+
+def test_release_checker_fails_when_acceptance_doc_loses_exactly_empty_success(
+    tmp_path,
+):
+    # Mutation: relaxing the Catalog snapshot _SUCCESS contract (bytes
+    # exactly empty) must fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_6_0_acceptance.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "bytes exactly empty",
+            "bytes empty",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "does not state the fact 'exactly empty'" in result.stdout
+
+
+def test_release_checker_fails_when_acceptance_doc_claims_every_supported_writer(
+    tmp_path,
+):
+    # Mutation: the over-strong "every supported PyArrow writer" claim
+    # must fail the checker (only 24.0.0 and 25.0.0 are audited).
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_6_0_acceptance.md"
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        + "\nevery supported PyArrow writer version is proven.\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "false claim 'every supported PyArrow writer'" in result.stdout
+
+
+def test_release_checker_fails_when_portability_job_loses_full_suite_step(
+    tmp_path,
+):
+    # Mutation: removing the PyArrow 24 full offline suite step must fail
+    # the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / ".github" / "workflows" / "ci.yml"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "Run full offline suite under PyArrow 24.0.0",
+            "Run full offline suite",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "must include the full offline suite step" in result.stdout
+
+
+def test_release_checker_fails_when_portability_full_suite_step_loses_pytest(
+    tmp_path,
+):
+    # Mutation: the PyArrow 24 full offline suite step must run the plain
+    # `python -m pytest` (the whole suite, not a subset).
+    repo = copy_repo(tmp_path)
+    path = repo / ".github" / "workflows" / "ci.yml"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "Run full offline suite under PyArrow 24.0.0\n"
+            "        run: python -m pytest\n",
+            "Run full offline suite under PyArrow 24.0.0\n"
+            "        run: python -m pytest tests/test_v060_portability.py -q\n",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "full-suite step must run python -m pytest" in result.stdout

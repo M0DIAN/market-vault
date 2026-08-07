@@ -64,7 +64,7 @@ BUILT_AT = datetime(2026, 8, 5, 1, 0, tzinfo=UTC)
 #: fixed; see test_identity_frozen_fixture). The regression now reproduces
 #: the ID from the static reference Canonical artifact (PyArrow25-produced
 #: base64 fixture), so it is independent of the local materializer and of
-#: the running PyArrow writer; see tests/fixtures/v060_portability/.
+#: the running PyArrow runtime/reader; see tests/fixtures/v060_portability/.
 FIXTURE_GENERATION_ID = "f70e0c89793a1ccfb51d8a16720a8446a74989415ad7c491608d19e2dd759fb3"
 
 
@@ -1313,8 +1313,9 @@ def test_identity_frozen_fixture(tmp_path):
     """Fixed regression: the frozen Generation content ID reproduces exactly
     from the static reference Canonical artifact (PyArrow25-produced base64
     fixture). The artifact decodes with strict member checks and yields the
-    same canonical_build_id on every supported PyArrow writer, so the ID is
-    writer- and machine-independent (PR-8 portability audit)."""
+    same canonical_build_id under both audited PyArrow runtimes/readers
+    (24.0.0 and 25.0.0), so the ID is runtime- and machine-independent
+    (PR-8 portability audit)."""
     build_dir = decode_canonical_fixture(tmp_path)
     feature_paths, label_paths, split_path = write_fixture_files(tmp_path)
     plan = make_plan(

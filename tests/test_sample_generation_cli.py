@@ -2295,7 +2295,7 @@ def test_core_error_messages_unchanged_after_extraction(tmp_path):
 #: and platform (verified on Windows and Linux CI). The regression now
 #: reproduces the bytes from the static reference Canonical artifact
 #: (PyArrow25-produced base64 fixture), independent of the local
-#: materializer and of the running PyArrow writer; see
+#: materializer and of the running PyArrow runtime/reader; see
 #: tests/fixtures/v060_portability/.
 OLD_HEAD_RELATIVE_FIXTURE_PLAN_SHA256 = (
     "78cd9e895ee966722c83db8d5388a49c635b8fd448fe8de796e2b56dcebf964b"
@@ -2608,7 +2608,7 @@ def test_relative_fixture_build_plan_bytes_unchanged_from_old_head(
     bytes (path-independent) are byte-identical to the pre-hardening head
     ``5957d32`` — reproduced from the static reference Canonical artifact
     (PyArrow25-produced base64 fixture), so the regression no longer depends
-    on the local materializer or the running PyArrow writer."""
+    on the local materializer or the running PyArrow runtime/reader."""
     build_dir = decode_canonical_fixture(tmp_path, under_dataset=True)
     write_fixture_files(tmp_path)
     plan_path = write_generation_plan(

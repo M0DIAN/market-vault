@@ -3,8 +3,10 @@
 The static Canonical artifact frozen at PR-8 time (``tests/fixtures/
 v060_portability/canonical_fixture.b64``, produced by PyArrow 25.0.0) must
 decode, verify, and reproduce both frozen regression values unchanged on
-every supported PyArrow writer version — in particular on the CI
-``portability-pyarrow24`` job (``pyarrow==24.0.0``).
+both audited PyArrow runtimes/readers (24.0.0 and 25.0.0) — in
+particular on the CI ``portability-pyarrow24`` job
+(``pyarrow==24.0.0``). The artifact is read, never re-written, so this is
+runtime/reader portability, not writer portability.
 
 Covers: bundle well-formedness and provenance metadata, strict decode,
 ``load_verified_canonical_build`` over the decoded artifact, the frozen
@@ -24,7 +26,6 @@ import shutil
 from datetime import date
 from pathlib import Path
 
-import pyarrow
 import pytest
 
 from market_vault.canonical import load_verified_canonical_build
@@ -111,15 +112,6 @@ def test_fixture_metadata_records_provenance_and_frozen_values():
         CANONICAL_RESOLUTION_REL,
         CANONICAL_BARS_REL,
     }
-
-
-def test_fixture_reproduces_under_audited_pyarrow_writer():
-    """The artifact was frozen under PyArrow 25.0.0 and the portability
-    audit covers exactly the two audited writer versions (24.0.0 and
-    25.0.0); the CI ``portability-pyarrow24`` job therefore proves the
-    frozen regression values on the other audited writer."""
-    major, minor, _ = (int(part) for part in pyarrow.__version__.split("."))
-    assert (major, minor) in ((24, 0), (25, 0)), pyarrow.__version__
 
 
 # ---------------------------------------------------------------------------
@@ -213,7 +205,8 @@ def test_manifest_paths_are_posix_text(tmp_path):
 
 def test_frozen_generation_content_id_reproduces(tmp_path):
     """The core chain over the decoded artifact reproduces the frozen
-    generation content id exactly (PyArrow-writer independent)."""
+    generation content id exactly under both audited PyArrow runtimes
+    (24.0.0 and 25.0.0)."""
     build_dir = decode_canonical_fixture(tmp_path)
     feature_paths, label_paths, split_path = write_fixture_files(
         tmp_path, split_payload=SPLIT_SPEC_CORE_PAYLOAD

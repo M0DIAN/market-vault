@@ -451,6 +451,14 @@ V060_ACCEPTANCE_FACTS = (
     "pyarrow>=16",
     "static reference artifact",
     "physical source provenance",
+    # The upstream source / curated snapshot Parquet bytes are the
+    # identity-bearing physical source provenance.
+    "upstream source / curated",
+    # The Canonical output Parquet artifact layout is distinct from the
+    # upstream source provenance input.
+    "Canonical output Parquet",
+    # Catalog snapshot _SUCCESS must be exactly empty bytes.
+    "exactly empty",
     "PR-9",
     "0.5.1",
     "not released",
@@ -458,6 +466,9 @@ V060_ACCEPTANCE_FACTS = (
 # Contradictory claims that must never appear in the v0.6.0 integrated
 # acceptance document even when the required facts are present.
 V060_ACCEPTANCE_FALSE_CLAIMS = (
+    # Over-strong portability claim: only the two audited PyArrow
+    # runtimes/readers (24.0.0 and 25.0.0) are proven.
+    "every supported PyArrow writer",
     # False cross-writer claim: the source Parquet physical bytes DIFFER.
     "byte-identical across writers",
     "identical physical bytes across writers",
@@ -1959,9 +1970,9 @@ def check_pyarrow_dependency(root: Path) -> list[str]:
 
 def check_ci_pr8(root: Path) -> list[str]:
     """The CI matrix stays exactly ``["3.11", "3.14"]``, the new
-    ``portability-pyarrow24`` job installs ``pyarrow==24.0.0`` explicitly,
-    and the package job carries the ``PR8_INTEGRATED_ACCEPTANCE_OK``
-    marker."""
+    ``portability-pyarrow24`` job installs ``pyarrow==24.0.0`` explicitly
+    and runs the full offline suite under PyArrow 24.0.0, and the package
+    job carries the ``PR8_INTEGRATED_ACCEPTANCE_OK`` marker."""
     path = root / ".github" / "workflows" / "ci.yml"
     if not path.exists():
         return [".github/workflows/ci.yml is missing"]
@@ -1979,6 +1990,19 @@ def check_ci_pr8(root: Path) -> list[str]:
         failures.append(
             "CI package job must carry the PR8_INTEGRATED_ACCEPTANCE_OK marker"
         )
+    full_suite_step = "Run full offline suite under PyArrow 24.0.0"
+    if full_suite_step not in text:
+        failures.append(
+            "CI portability-pyarrow24 job must include the full offline "
+            "suite step (Run full offline suite under PyArrow 24.0.0)"
+        )
+    else:
+        after = text.split(full_suite_step, 1)[1]
+        if not re.search(r"(?m)^\s*run: python -m pytest\s*$", after[:400]):
+            failures.append(
+                "CI portability-pyarrow24 full-suite step must run "
+                "python -m pytest"
+            )
     return failures
 
 
