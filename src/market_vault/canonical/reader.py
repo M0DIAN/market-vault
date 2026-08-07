@@ -418,11 +418,29 @@ def _verified_bar(row: dict) -> CanonicalBar:
 
 
 def _read_bars(build_root: Path, records: list[dict]) -> list[CanonicalBar]:
+    """Read every manifest-listed bars Parquet file as one explicit file.
+
+    Each record names one concrete Parquet file; the file is opened with
+    :class:`pyarrow.parquet.ParquetFile` — the explicit single-file reader —
+    whose schema is strictly compared to :func:`canonical_bars_schema`.
+    ``pq.read_table`` is never used here: on some PyArrow versions its
+    internal dataset path inspects the parent directory and interprets
+    Hive-style ``key=value`` components (``interval=1m``,
+    ``adjustment=NONE``, ``session=ALL``, ...) as dictionary-encoded
+    partition columns, which then conflict with the same-named string
+    columns inside the file (``Unable to merge: Field interval has
+    incompatible types: string vs dictionary<...>``). A single file named by
+    the manifest must never be read through a partition-inferring entry
+    point. No directory is scanned, no partition is discovered, and a truly
+    corrupt file still fails closed with the unchanged
+    :class:`CanonicalArtifactValidationError` contract.
+    """
     bars: list[CanonicalBar] = []
     for record in sorted(records, key=lambda item: item["relative_path"]):
         path = build_root / record["relative_path"]
         try:
-            schema = pq.read_schema(path)
+            parquet_file = pq.ParquetFile(path)
+            schema = parquet_file.schema_arrow
         except Exception as exc:
             _fail(f"failed to read bars parquet schema {record['relative_path']!r}: {exc}")
         if not schema.equals(canonical_bars_schema(), check_metadata=False):
@@ -431,7 +449,7 @@ def _read_bars(build_root: Path, records: list[dict]) -> list[CanonicalBar]:
                 "exactly equal canonical_bars_schema()"
             )
         try:
-            table = pq.read_table(path)
+            table = parquet_file.read()
         except Exception as exc:
             _fail(f"failed to read bars parquet {record['relative_path']!r}: {exc}")
         for row in table.to_pylist():
@@ -492,11 +510,16 @@ def _gap_from_row(row: dict) -> GapRange:
 
 
 def _read_gaps(build_root: Path, records: list[dict]) -> list[GapRange]:
+    """Read every manifest-listed gaps Parquet file as one explicit file
+    (same single-file contract as :func:`_read_bars`: the gaps files also
+    live under Hive-style ``key=value`` parent directories, so a
+    partition-inferring entry point must never be used)."""
     gaps: list[GapRange] = []
     for record in sorted(records, key=lambda item: item["relative_path"]):
         path = build_root / record["relative_path"]
         try:
-            schema = pq.read_schema(path)
+            parquet_file = pq.ParquetFile(path)
+            schema = parquet_file.schema_arrow
         except Exception as exc:
             _fail(f"failed to read gaps parquet schema {record['relative_path']!r}: {exc}")
         if not schema.equals(gap_schema(), check_metadata=False):
@@ -505,7 +528,7 @@ def _read_gaps(build_root: Path, records: list[dict]) -> list[GapRange]:
                 "exactly equal gap_schema()"
             )
         try:
-            table = pq.read_table(path)
+            table = parquet_file.read()
         except Exception as exc:
             _fail(f"failed to read gaps parquet {record['relative_path']!r}: {exc}")
         for row in table.to_pylist():
