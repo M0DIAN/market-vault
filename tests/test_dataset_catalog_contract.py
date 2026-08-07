@@ -464,14 +464,14 @@ def test_entry_tampered_facts_fails(dataset_build):
         replace(entry, dataset_facts=other)
 
 
-def test_entry_metadata_tamper_keeps_content_id(dataset_build):
+def test_entry_metadata_tamper_keeps_content_id(dataset_build, tmp_path):
     """Metadata is non-content: substituting it must not change content_id."""
     entry = project(dataset_build)
     moved = replace(
         entry,
         observed_metadata=DatasetCatalogObservedMetadata(
             built_at=entry.observed_metadata.built_at,
-            build_path=Path("D:/other/parent") / entry.dataset_facts.dataset_id,
+            build_path=tmp_path / "other" / "parent" / entry.dataset_facts.dataset_id,
         ),
     )
     assert moved.content_id == entry.content_id
@@ -485,12 +485,12 @@ def test_metadata_requires_absolute_path(dataset_build):
         )
 
 
-def test_metadata_requires_clean_path(dataset_build):
+def test_metadata_requires_clean_path(dataset_build, tmp_path):
     entry = project(dataset_build)
     with pytest.raises(DatasetCatalogError):
         DatasetCatalogObservedMetadata(
             built_at=entry.observed_metadata.built_at,
-            build_path=Path("D:/a/../b"),
+            build_path=tmp_path / "a" / ".." / "b",
         )
 
 
