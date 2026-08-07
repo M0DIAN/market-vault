@@ -198,6 +198,36 @@ def catalog_dataset_content_id(
         raise DatasetCatalogError(str(exc)) from exc
 
 
+def _dataset_catalog_content_id_from_facts(facts_by_id: dict) -> str:
+    """The deterministic Catalog content identity over one normalized
+    ``dataset_id`` -> :class:`DatasetCatalogDatasetFacts`` mapping.
+
+    Private pure helper shared by :func:`dataset_catalog_content_id` (the
+    PR-5 public entry) and the PR-6 snapshot verified reader (which
+    recomputes the identity from parsed facts without any
+    :class:`DatasetCatalogEntry` objects, so the reader never needs the
+    observed build location of another machine). The algorithm, the domain
+    prefix, the field set, and the ordering are exactly those of the PR-5
+    identity: unique records encoded in ``dataset_id`` order under the
+    Catalog contract / content-ID versions; the mapping is expected to
+    carry one facts object per ``dataset_id``.
+    """
+    dataset_digests = "\x1e".join(
+        f"{dataset_id}:{catalog_dataset_content_id(facts)}"
+        for dataset_id, facts in sorted(facts_by_id.items())
+    )
+    fields = {
+        "contract_version": DATASET_CATALOG_CONTRACT_VERSION,
+        "content_id_version": DATASET_CATALOG_CONTENT_ID_VERSION,
+        "dataset_count": len(facts_by_id),
+        "datasets": dataset_digests,
+    }
+    try:
+        return encode_identity(DATASET_CATALOG_CONTENT_ID_VERSION, fields)
+    except DatasetError as exc:
+        raise DatasetCatalogError(str(exc)) from exc
+
+
 def dataset_catalog_content_id(
     entries: tuple,
 ) -> str:
@@ -237,17 +267,4 @@ def dataset_catalog_content_id(
                 f"conflicting DatasetCatalogDatasetFacts for dataset_id "
                 f"{facts.dataset_id}"
             )
-    dataset_digests = "\x1e".join(
-        f"{dataset_id}:{catalog_dataset_content_id(facts)}"
-        for dataset_id, facts in sorted(by_id.items())
-    )
-    fields = {
-        "contract_version": DATASET_CATALOG_CONTRACT_VERSION,
-        "content_id_version": DATASET_CATALOG_CONTENT_ID_VERSION,
-        "dataset_count": len(by_id),
-        "datasets": dataset_digests,
-    }
-    try:
-        return encode_identity(DATASET_CATALOG_CONTENT_ID_VERSION, fields)
-    except DatasetError as exc:
-        raise DatasetCatalogError(str(exc)) from exc
+    return _dataset_catalog_content_id_from_facts(by_id)

@@ -104,6 +104,14 @@ jobs:
           )
           print('V051_PUBLIC_API_IMPORT_OK')
           "
+          .release-venv/bin/python -c "
+          from market_vault.dataset import (
+              build_dataset_catalog,
+              materialize_dataset_catalog_snapshot,
+              load_verified_dataset_catalog,
+          )
+          print('PR6_CATALOG_API_IMPORT_OK')
+          "
 
       - name: Check wheel contents exclude local data
         run: |
