@@ -1024,23 +1024,24 @@ def test_release_checker_fails_when_v060_direction_missing_planned_status(tmp_pa
     assert "does not state the fact 'Status: planned'" in result.stdout
 
 
-def test_release_checker_fails_when_v060_direction_claims_pr7_started(
+def test_release_checker_fails_when_v060_direction_claims_pr8_started(
     tmp_path,
 ):
     repo = copy_repo(tmp_path)
     path = repo / "docs" / "v0_6_0_direction.md"
     path.write_text(
         path.read_text(encoding="utf-8").replace(
-            "PR-7 (Dataset Catalog verify/list/show/query CLI) has not started",
-            "PR-7 (Dataset Catalog verify/list/show/query CLI) has started",
+            "PR-8 has not started",
+            "PR-8 has started",
         ),
         encoding="utf-8",
     )
     result = run_check_release(repo)
     assert result.returncode == 1
     assert (
-        "must state that PR-7 (the Catalog query CLI) has not started"
+        "does not state the PR-7 progress fact 'PR-8 has not started'"
     ) in result.stdout
+    assert "contains the false PR-7 claim 'PR-8 has started'" in result.stdout
 
 
 def test_release_checker_fails_when_v060_direction_includes_python_client_in_v06(
@@ -1572,7 +1573,7 @@ def test_v060_direction_document_exists_and_is_planned():
     assert "not part of v0.6" in text
     for number in range(1, 10):
         assert f"PR-{number}" in text
-    assert "PR-7 (Dataset Catalog verify/list/show/query CLI) has not started" in text
+    assert "PR-8 has not started" in text
     assert "Quant Research" in text
     assert "Trading Execution" in text
 
@@ -2372,17 +2373,23 @@ def test_release_checker_fails_when_direction_reverts_pr4_stage(tmp_path):
     assert "does not state the PR-4 progress fact 'PR-4 is complete'" in result.stdout
 
 
-def test_release_checker_fails_when_direction_claims_pr6_complete(tmp_path):
-    # Mutation: claiming PR-6 is already complete must fail the checker.
+def test_release_checker_fails_when_direction_loses_pr6_complete(tmp_path):
+    # Mutation: removing the required "PR-6 is complete" progress fact must
+    # fail the checker.
     repo = copy_repo(tmp_path)
     path = repo / "docs" / "v0_6_0_direction.md"
     path.write_text(
-        path.read_text(encoding="utf-8") + "\nPR-6 is complete.\n",
+        path.read_text(encoding="utf-8").replace(
+            "PR-6 is complete",
+            "PR-6 is not complete",
+        ),
         encoding="utf-8",
     )
     result = run_check_release(repo)
     assert result.returncode == 1
-    assert "contains the false PR-6 claim 'PR-6 is complete'" in result.stdout
+    assert (
+        "does not state the PR-6 progress fact 'PR-6 is complete'"
+    ) in result.stdout
 
 
 def test_release_checker_fails_when_direction_claims_v060_released(tmp_path):
@@ -2584,15 +2591,16 @@ def test_release_checker_fails_when_package_loses_catalog_export(tmp_path):
     ) in result.stdout
 
 
-def test_release_checker_fails_when_pr7_cli_file_exists(tmp_path):
-    # Mutation: a PR-7 CLI production file appearing must fail the checker.
+def test_release_checker_fails_without_catalog_cli_module(tmp_path):
+    # Mutation: removing the PR-7 CLI production module must fail the
+    # checker.
     repo = copy_repo(tmp_path)
-    (repo / "src" / "market_vault" / "dataset" / "dataset_catalog_cli.py").write_text(
-        "# PR-7 work\n", encoding="utf-8"
-    )
+    (repo / "src" / "market_vault" / "dataset" / "dataset_catalog_cli.py").unlink()
     result = run_check_release(repo)
     assert result.returncode == 1
-    assert "PR-7 CLI production file must not exist yet" in result.stdout
+    assert (
+        "src/market_vault/dataset/dataset_catalog_cli.py is missing"
+    ) in result.stdout
 
 
 def test_release_checker_fails_when_contract_trusts_manifest_directly(
@@ -2699,34 +2707,332 @@ def test_release_checker_fails_when_contract_loses_facts_field(tmp_path):
 
 
 def test_release_checker_fails_when_direction_reverts_pr6_stage(tmp_path):
-    # Mutation: reverting the progress record to the pre-PR-6 wording must
-    # fail the checker.
+    # Mutation: reverting the PR-6 progress record to the pre-PR-6 wording
+    # must fail the checker.
     repo = copy_repo(tmp_path)
     path = repo / "docs" / "v0_6_0_direction.md"
     path.write_text(
         path.read_text(encoding="utf-8").replace(
-            "PR-6 (this PR, branch `feat/v0.6.0-dataset-catalog-snapshot`)",
-            "PR-6 (Dataset Catalog snapshot layer) has not started",
+            "PR-6 merged",
+            "PR-6 has not started",
         ),
         encoding="utf-8",
     )
     result = run_check_release(repo)
     assert result.returncode == 1
-    assert "does not state the PR-6 progress fact 'PR-6 (this PR'" in result.stdout
+    assert "does not state the PR-6 progress fact 'PR-6 merged'" in result.stdout
 
 
-def test_release_checker_fails_when_direction_starts_pr7(tmp_path):
-    # Mutation: claiming PR-7 has started must fail the checker.
+def test_release_checker_fails_when_direction_loses_pr7_record(tmp_path):
+    # Mutation: removing the PR-7 implementation claim from the progress
+    # record must fail the checker.
     repo = copy_repo(tmp_path)
     path = repo / "docs" / "v0_6_0_direction.md"
     path.write_text(
-        path.read_text(encoding="utf-8")
-        + "\nPR-7 has started.\n",
+        path.read_text(encoding="utf-8").replace(
+            "implements the Dataset Catalog CLI",
+            "defines the Dataset Catalog CLI roadmap",
+        ),
         encoding="utf-8",
     )
     result = run_check_release(repo)
     assert result.returncode == 1
-    assert "contains the false PR-6 claim 'PR-7 has started'" in result.stdout
+    assert (
+        "does not state the PR-7 progress fact "
+        "'implements the Dataset Catalog CLI'"
+    ) in result.stdout
+
+
+def _mutate_catalog_cli_append(repo: Path, snippet: str) -> None:
+    path = repo / "src" / "market_vault" / "dataset" / "dataset_catalog_cli.py"
+    path.write_text(
+        path.read_text(encoding="utf-8") + f"\n{snippet}\n", encoding="utf-8"
+    )
+
+
+def _move_catalog_dispatch_after_settings(repo: Path) -> None:
+    path = repo / "src" / "market_vault" / "cli.py"
+    text = path.read_text(encoding="utf-8")
+    old = (
+        "    if args.command in DATASET_CATALOG_COMMANDS:\n"
+        "        # The Dataset Catalog CLI is settings-independent exactly like the\n"
+        "        # Dataset commands and the Sample Generation CLI: it never loads\n"
+        "        # settings.yaml, never connects to OpenD, and never accesses the\n"
+        "        # network. It is dispatched before load_settings with its own\n"
+        "        # contract version constants and never falls under the Dataset CLI\n"
+        "        # or the Sample Generation CLI contract.\n"
+        "        return run_dataset_catalog_command(args.command, args)\n"
+        "    settings = load_settings(args.settings)"
+    )
+    new = (
+        "    settings = load_settings(args.settings)\n"
+        "    if args.command in DATASET_CATALOG_COMMANDS:\n"
+        "        # The Dataset Catalog CLI is settings-independent exactly like the\n"
+        "        # Dataset commands and the Sample Generation CLI: it never loads\n"
+        "        # settings.yaml, never connects to OpenD, and never accesses the\n"
+        "        # network. It is dispatched before load_settings with its own\n"
+        "        # contract version constants and never falls under the Dataset CLI\n"
+        "        # or the Sample Generation CLI contract.\n"
+        "        return run_dataset_catalog_command(args.command, args)"
+    )
+    assert old in text
+    path.write_text(text.replace(old, new), encoding="utf-8")
+
+
+def test_release_checker_fails_without_catalog_cli_models_module(tmp_path):
+    # Mutation: removing the PR-7 CLI models module must fail the checker.
+    repo = copy_repo(tmp_path)
+    (repo / "src" / "market_vault" / "dataset" / "dataset_catalog_cli_models.py").unlink()
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "src/market_vault/dataset/dataset_catalog_cli_models.py is missing"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_catalog_cli_registration_removed(
+    tmp_path,
+):
+    # Mutation: renaming one of the four command registrations must fail
+    # the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "src" / "market_vault" / "dataset" / "dataset_catalog_cli.py"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            'add_parser(\n        "dataset-catalog-build",',
+            'add_parser(\n        "dataset-catalog-buidl",',
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "dataset_catalog_cli.py does not register dataset-catalog-build"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_catalog_cli_adds_query_command(
+    tmp_path,
+):
+    # Mutation: adding a fifth dataset-catalog-query command must fail the
+    # checker.
+    repo = copy_repo(tmp_path)
+    _mutate_catalog_cli_append(
+        repo, 'subparsers.add_parser("dataset-catalog-query")'
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "must never register a fifth dataset-catalog-query command"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_catalog_cli_dispatched_after_settings(
+    tmp_path,
+):
+    # Mutation: moving the Dataset Catalog dispatch below load_settings
+    # must fail the checker.
+    repo = copy_repo(tmp_path)
+    _move_catalog_dispatch_after_settings(repo)
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "must dispatch the Dataset Catalog commands before load_settings"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_catalog_cli_reloads_dataset(tmp_path):
+    # Mutation: the CLI calling load_verified_dataset (instead of the
+    # verified reader) must fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "src" / "market_vault" / "dataset" / "dataset_catalog_cli.py"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "load_verified_dataset_catalog(",
+            "load_verified_dataset(",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "must not contain the forbidden pattern 'load_verified_dataset('"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_catalog_cli_reads_catalog_json(
+    tmp_path,
+):
+    # Mutation: the CLI reading the raw catalog.json must fail the checker.
+    repo = copy_repo(tmp_path)
+    _mutate_catalog_cli_append(repo, 'raw = snapshot_dir / "catalog.json"')
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        'must not contain the forbidden pattern \'"catalog.json"\''
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_catalog_cli_gains_latest(tmp_path):
+    repo = copy_repo(tmp_path)
+    _mutate_catalog_cli_append(repo, 'parser.add_argument("--latest")')
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "must not contain the forbidden pattern '--latest'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_catalog_cli_gains_force(tmp_path):
+    repo = copy_repo(tmp_path)
+    _mutate_catalog_cli_append(repo, 'parser.add_argument("--force")')
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "must not contain the forbidden pattern '--force'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_catalog_cli_gains_overwrite(tmp_path):
+    repo = copy_repo(tmp_path)
+    _mutate_catalog_cli_append(repo, 'parser.add_argument("--overwrite")')
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "must not contain the forbidden pattern '--overwrite'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_catalog_cli_loads_settings(tmp_path):
+    repo = copy_repo(tmp_path)
+    _mutate_catalog_cli_append(repo, "settings = load_settings(args.settings)")
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "must not contain the forbidden pattern 'load_settings('"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_catalog_cli_references_legacy_storage(
+    tmp_path,
+):
+    repo = copy_repo(tmp_path)
+    _mutate_catalog_cli_append(
+        repo, "legacy = market_vault.storage.catalog.Catalog"
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "must not contain the forbidden pattern 'storage.catalog'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_catalog_cli_uses_duckdb(tmp_path):
+    repo = copy_repo(tmp_path)
+    _mutate_catalog_cli_append(repo, "import duckdb")
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "must not contain the forbidden pattern 'duckdb'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_contract_doc_loses_and_semantics(
+    tmp_path,
+):
+    # Mutation: removing the AND-semantics fact from the contract document
+    # must fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "contracts" / "dataset_catalog.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "AND semantics",
+            "combined semantics",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the PR-7 fact 'AND semantics'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_contract_doc_claims_pr8_started(
+    tmp_path,
+):
+    # Mutation: claiming PR-8 has started in the contract document must
+    # fail the checker (the "PR-8 has not started" fact disappears).
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "contracts" / "dataset_catalog.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "PR-8 has not started",
+            "PR-8 has started",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the PR-7 fact 'PR-8 has not started'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_contract_doc_claims_repairs(
+    tmp_path,
+):
+    repo = copy_repo(tmp_path)
+    _mutate_catalog_contract_doc(repo, "The CLI repairs the snapshot.")
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "contains the false PR-7 claim 'repairs the snapshot'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_contract_doc_gains_latest_pointer(
+    tmp_path,
+):
+    repo = copy_repo(tmp_path)
+    _mutate_catalog_contract_doc(repo, "The CLI maintains a latest pointer.")
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "contains the false PR-7 claim 'maintains a latest pointer'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_ci_loses_pr7_smoke(tmp_path):
+    repo = copy_repo(tmp_path)
+    ci = repo / ".github" / "workflows" / "ci.yml"
+    ci.write_text(
+        ci.read_text(encoding="utf-8").replace(
+            "PR7_CATALOG_CLI_HELP_OK", "PR7_MISSING_MARKER"
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "PR-7 CLI help smoke marker" in result.stdout
+
+
+def test_release_checker_fails_when_ci_loses_catalog_help_command(
+    tmp_path,
+):
+    repo = copy_repo(tmp_path)
+    ci = repo / ".github" / "workflows" / "ci.yml"
+    ci.write_text(
+        ci.read_text(encoding="utf-8").replace(
+            "market-vault dataset-catalog-show --help\n", ""
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "must cover 'market-vault dataset-catalog-show --help'"
+    ) in result.stdout
 
 
 def _mutate_catalog_models_marker(repo: Path, old: str, new: str) -> None:

@@ -8,7 +8,8 @@ release. It fixes the architecture boundary for v0.6.0 and the two product
 capabilities: the Deterministic Sample Generator and the immutable Dataset
 Catalog. The direction PR itself is documentation only and implements no
 product code; the precise schemas are defined by the subsequent contract
-PRs, and the Catalog query CLI (PR-7) has not started.
+PRs. The Dataset Catalog CLI is implemented by PR-7 (build / verify /
+list / show); PR-8 has not started.
 
 ## 1. Baseline
 
@@ -144,8 +145,9 @@ the subsequent PRs.
 
 ## 3. CLI direction
 
-The following command names are reserved as v0.6.0 planning targets; they
-are not implemented in the current PR:
+The following command names are the v0.6.0 CLI surface. `sample-generate`
+is implemented by PR-4; the four Dataset Catalog commands are implemented
+by PR-7 (this PR):
 
 ```text
 market-vault sample-generate
@@ -155,10 +157,20 @@ market-vault dataset-catalog-list
 market-vault dataset-catalog-show
 ```
 
-- The command names are v0.6.0 planning goals; the commands do not exist
-  in the current PR.
-- Subsequent contract PRs may finalize the parameters without changing the
-  responsibility boundaries.
+- `dataset-catalog-build` accepts exactly one candidate mode (`--dataset-root`
+  or repeated `--candidate-build-dir`) plus the explicit `--output-root` and
+  the explicit timezone-aware `--built-at`; `dataset-catalog-verify` and
+  `dataset-catalog-list` and `dataset-catalog-show` accept an explicit
+  `--snapshot-dir` (show additionally the exact `--dataset-id`); the list
+  query surface is the read-only filters (`--status`, `--dataset-kind`,
+  `--symbol`, `--trade-date`, `--interval`, `--adjustment`,
+  `--requested-session`) with AND semantics and fixed pagination
+  (`--offset` / `--limit`).
+- There is no standalone `dataset-catalog-query` command: the query
+  surface is fixed as the read-only list filters of
+  `dataset-catalog-list` over one verified snapshot.
+- All five commands are settings-independent: they never load
+  settings.yaml, never connect to OpenD, and never access the network.
 - These commands must not be confused with the existing `init-catalog`
   command; `init-catalog` remains the legacy ingestion DuckDB catalog
   command (`market_vault.storage.catalog.Catalog`).
@@ -322,13 +334,31 @@ V0.6.0 keeps, unchanged:
   `2958697dd434c536c39267b6a654dabb762c74f9`; PR-5 is complete: the
   Dataset Catalog contract, strict entry schema, frozen models, the
   metadata projection, and the Catalog content identity are on main.
-- PR-6 (this PR, branch `feat/v0.6.0-dataset-catalog-snapshot`) is the
-  current implementation stage: the immutable Dataset Catalog builder
-  (explicit Dataset root / explicit candidate set), the snapshot
-  materializer (catalog.json / manifest.json / _SUCCESS, staging,
-  _SUCCESS written last, atomic no-replace publication, existing-snapshot
-  idempotency), and the verified Catalog snapshot reader (historical
-  recorded build locations, never reloaded). PR-7 (Dataset Catalog verify/list/show/query CLI) has not started; the Catalog query CLI is
-  not implemented.
+- PR-6 merged (GitHub PR #40, `feat: add immutable Dataset Catalog
+  snapshots`) via the squash commit
+  `997bb337f73f1205d9180c4c532a6679666a312f`; PR-6 is complete: the
+  immutable Dataset Catalog builder (explicit Dataset root / explicit
+  candidate set), the snapshot materializer (catalog.json /
+  manifest.json / _SUCCESS, staging, _SUCCESS written last, atomic
+  no-replace publication, existing-snapshot idempotency), and the
+  verified Catalog snapshot reader (historical recorded build locations,
+  never reloaded) are on main and the PR-6 main CI fully passed.
+- PR-7 (this PR, branch `feat/v0.6.0-dataset-catalog-cli`) is the current
+  implementation stage and implements the Dataset Catalog CLI: the four
+  formal commands `dataset-catalog-build`, `dataset-catalog-verify`,
+  `dataset-catalog-list`, and `dataset-catalog-show`; the
+  settings-independent dispatch (never settings.yaml, never OpenD, never
+  the network); the real Builder -> Materializer -> Reader build chain
+  with the explicit `--dataset-root` / repeated `--candidate-build-dir`
+  modes, the explicit `--output-root` and the explicit timezone-aware
+  `--built-at`; the read-only verify / list / show surface over one
+  verified snapshot; the pure in-memory list filters (exact equality and
+  scope membership, AND semantics, fixed pagination, fixed dataset_id
+  order); and the exact `dataset_id` show lookup with the full lossless
+  14-field facts record and the historical recorded build path (never
+  followed). There is no standalone `dataset-catalog-query` command: the
+  query surface is fixed as the read-only list filters. PR-8 has not
+  started; PR-9 not started; the Python Client is a v0.7 direction and is
+  not part of v0.6.0.
 - The package version remains 0.5.1; the bump to 0.6.0 happens only in
   PR-9. V0.6.0 as a whole is not released.

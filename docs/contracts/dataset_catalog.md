@@ -1,10 +1,10 @@
-# Dataset Catalog Contract (v0.6.0 PR-5 + PR-6)
+# Dataset Catalog Contract (v0.6.0 PR-5 + PR-6 + PR-7)
 
 Status: Dataset Catalog contract, frozen models, metadata projection,
 Catalog content identity, the immutable snapshot builder, the snapshot
-materializer, and the verified snapshot reader implemented by PR-5 and
-PR-6; the Catalog verify / list / show / query CLI is not implemented
-(PR-7)
+materializer, the verified snapshot reader implemented by PR-5 and
+PR-6, and the Dataset Catalog CLI (build / verify / list / show)
+implemented by PR-7 (this PR)
 Target release: v0.6.0
 Not available in released v0.5.1. The Dataset Catalog is not implemented in v0.5.1.
 
@@ -16,8 +16,13 @@ conflict policy, the trust boundary of the metadata projection, and the
 fail-closed validation rules. Part B (PR-6) fixes the deterministic
 Catalog builder, the exact physical snapshot schema, the separation of
 the Catalog content identity from the physical snapshot identity, the
-materialization transaction, and the verified snapshot reader. PR-7 (the
-Catalog query CLI) is not implemented.
+materialization transaction, and the verified snapshot reader. Part C
+(PR-7, this PR) fixes the Dataset Catalog CLI: the four formal commands,
+the settings-independent dispatch, the exact build / verify / list /
+show surfaces, the deterministic JSON output, and the exit-code
+contract. There is no standalone `dataset-catalog-query` command: the
+query surface is fixed as the read-only list filters of
+`dataset-catalog-list` over one verified snapshot.
 
 The PR-5 production modules are:
 
@@ -38,6 +43,13 @@ src/market_vault/dataset/dataset_catalog_materialization.py
 src/market_vault/dataset/dataset_catalog_materialization_models.py
 src/market_vault/dataset/dataset_catalog_reader.py
 src/market_vault/dataset/dataset_catalog_reader_models.py
+```
+
+The PR-7 production modules are:
+
+```text
+src/market_vault/dataset/dataset_catalog_cli.py
+src/market_vault/dataset/dataset_catalog_cli_models.py
 ```
 
 ---
@@ -719,24 +731,31 @@ programming errors are never converted.
   untouched. The Catalog never scans for a latest snapshot and there is
   no latest pointer anywhere in the physical layout.
 
-## 15. Not implemented by PR-6 (PR-7)
+## 15. PR-6 boundary: the CLI is PR-7
 
-PR-6 does not implement any Catalog CLI:
+PR-6 does not implement any Catalog CLI; the Catalog CLI is implemented
+by PR-7 (this PR) and fixed in Part C:
 
 ```text
-dataset-catalog-build CLI
-dataset-catalog-verify CLI
-dataset-catalog-list CLI
-dataset-catalog-show CLI
-any Catalog query CLI
-Python Client
+dataset-catalog-build CLI       -> implemented by PR-7 (Part C, section 19)
+dataset-catalog-verify CLI      -> implemented by PR-7 (Part C, section 20)
+dataset-catalog-list CLI        -> implemented by PR-7 (Part C, section 21)
+dataset-catalog-show CLI        -> implemented by PR-7 (Part C, section 22)
+```
+
+The following remain not implemented and outside v0.6.0 scope:
+
+```text
+any standalone Catalog query CLI  (the query surface is fixed as the
+                                  read-only list filters of
+                                  dataset-catalog-list; PR-8 has not
+                                  started)
+Python Client                    (a v0.7 direction)
 REST API
 latest pointer
 DuckDB Catalog tables / views
 legacy Catalog integration
 ```
-
-The Catalog CLI is PR-7.
 
 ## 16. Version constants
 
@@ -753,8 +772,276 @@ DATASET_CATALOG_SNAPSHOT_MANIFEST_VERSION = market-vault-dataset-catalog-snapsho
 DATASET_CATALOG_SNAPSHOT_ID_VERSION   = market-vault-dataset-catalog-snapshot-id-v1
 DATASET_CATALOG_MATERIALIZER_VERSION  = market-vault-dataset-catalog-materializer-v1
 DATASET_CATALOG_READER_CONTRACT_VERSION = market-vault-verified-dataset-catalog-reader-v1
+
+# PR-7
+DATASET_CATALOG_CLI_CONTRACT_VERSION        = market-vault-dataset-catalog-cli-v1
+DATASET_CATALOG_CLI_RESULT_SCHEMA_VERSION   = market-vault-dataset-catalog-cli-result-v1
 ```
 
 Changing a version constant changes every Catalog identity that
 references it; it never changes any Dataset or Canonical identity. The
-PR-6 constants never enter the PR-5 Catalog content identity.
+PR-6 constants never enter the PR-5 Catalog content identity, and the
+PR-7 constants bind the CLI result JSON only — they never enter the
+Catalog content identity, the snapshot identity, or any Dataset or
+Canonical identity.
+
+---
+
+# Part C — PR-7 Dataset Catalog CLI
+
+## 17. CLI scope and versioned result contract
+
+The PR-7 CLI is a thin formal command surface over the PR-6 verified
+chain. It defines exactly four commands:
+
+```text
+market-vault dataset-catalog-build
+market-vault dataset-catalog-verify
+market-vault dataset-catalog-list
+market-vault dataset-catalog-show
+```
+
+There is no standalone `dataset-catalog-query` command: the query
+surface is fixed as the read-only list filters of
+`dataset-catalog-list` over one verified snapshot. The CLI never
+implements a second builder, validator, or reader: the build command
+calls exactly the formal chain `build_dataset_catalog` ->
+`materialize_dataset_catalog_snapshot` ->
+`load_verified_dataset_catalog`; verify, list, and show call exactly
+`load_verified_dataset_catalog`. The CLI never parses a manifest, never
+reads `catalog.json` or `manifest.json` itself, never reads Dataset
+Parquet, never calls `load_verified_dataset`, never uses DuckDB, never
+runs SQL, never uses pandas, and never accesses the network.
+
+The CLI is governed by two version constants (defined in
+`dataset_catalog_cli_models.py`):
+
+```text
+DATASET_CATALOG_CLI_CONTRACT_VERSION      = market-vault-dataset-catalog-cli-v1
+DATASET_CATALOG_CLI_RESULT_SCHEMA_VERSION = market-vault-dataset-catalog-cli-result-v1
+```
+
+Every CLI result JSON — success and failure — carries
+`result_schema_version` and `cli_contract_version` as its first two
+keys. The formal failure type is `DatasetCatalogCLIError`, a subclass of
+`DatasetCatalogError`.
+
+## 18. Settings-independent dispatch
+
+The four Catalog commands are settings-independent, exactly like the
+Dataset commands and the Sample Generation CLI: they never load
+settings.yaml, never connect to OpenD, and never access the network.
+The top-level `market-vault` parser dispatches
+`DATASET_CATALOG_COMMANDS` **before** `load_settings(args.settings)`, so
+a missing or invalid settings file can never block a Catalog command.
+The commands never resolve a default Dataset root, never scan for a
+`latest` snapshot, and never consult environment variables.
+
+## 19. `dataset-catalog-build`
+
+```text
+market-vault dataset-catalog-build
+    --dataset-root <PATH>
+    | (--candidate-build-dir <PATH> repeated)
+    --output-root <PATH>
+    --built-at <ISO8601>
+```
+
+- **Exactly one candidate mode.** `--dataset-root` and repeated
+  `--candidate-build-dir` are mutually exclusive; exactly one must be
+  given (argparse exit 2 otherwise). `--candidate-build-dir` must be
+  given at least once; candidate input order never matters.
+- **`--output-root`** is required and explicit; the committed snapshot
+  is `<output_root>/<snapshot_id>`.
+- **`--built-at`** is required and must be a timezone-aware ISO 8601
+  instant; a naive datetime or an empty value is an argparse error
+  (exit 2). The CLI never supplies the current time — `datetime.now()`
+  is never used.
+- **CLI path boundary.** Every CLI path is coerced lexically: `.` and
+  `..` lexical components are rejected before `Path` construction as a
+  formal CLI path-validation failure (exit 1); a relative path is made
+  lexically absolute against `Path.cwd()`, and `resolve()` /
+  `expanduser()` / `expandvars()` / globbing / scanning are never used
+  by the CLI. The builder's absolute-input contract is unchanged: the
+  CLI completes relative inputs at the CLI boundary only, and the
+  formal builder functions still receive lexically absolute paths.
+- **Forbidden options.** The build command never accepts `--latest`,
+  `--force`, `--overwrite`, `--repair`, or any repair / overwrite /
+  latest pointer flag: there is no latest pointer and no snapshot is
+  ever repaired or overwritten.
+- **Idempotency.** A second identical build against the same
+  `output_root` and the same explicit `built_at` verifies the existing
+  final snapshot and returns `created_new_snapshot = false` with zero
+  rewrites and zero mtime touches; the output root is never modified in
+  that case.
+- **Success JSON** (stdout, exit 0): the fixed result envelope with
+  `command` `dataset-catalog-build`, `result` `SUCCESS`, and the facts
+  of the final verified snapshot — `created_new_snapshot` (the one fact
+  from the materialization result), `snapshot_id`,
+  `catalog_content_id`, `dataset_count`, `snapshot_path` (lexical
+  forward-slash text), `built_at` (UTC microseconds),
+  `builder_version`, `materializer_version`, and
+  `reader_contract_version`.
+- An empty Catalog (empty root or zero candidates) is a legal build and
+  exits 0; it is never an error.
+
+## 20. `dataset-catalog-verify`
+
+```text
+market-vault dataset-catalog-verify --snapshot-dir <PATH>
+```
+
+`--snapshot-dir` is the only option: one explicit final snapshot
+directory. The command runs the full verified reader
+(`load_verified_dataset_catalog`) and prints a summary only — it never
+carries entries. The success JSON (stdout, exit 0) has `result`
+`VERIFIED` with the same snapshot facts as the build success payload
+minus `created_new_snapshot`. Any corruption of the snapshot — missing
+artifacts, extra files, non-empty `_SUCCESS`, hash / byte-size /
+identity mismatches, symlinked artifacts — is a formal failure (exit 1,
+stderr JSON); the snapshot itself is never modified.
+
+## 21. `dataset-catalog-list`
+
+```text
+market-vault dataset-catalog-list
+    --snapshot-dir <PATH>
+    [--status COMPLETE|EMPTY]
+    [--dataset-kind <TEXT>]
+    [--symbol <TEXT>]
+    [--trade-date YYYY-MM-DD]
+    [--interval <TEXT>]
+    [--adjustment <TEXT>]
+    [--requested-session <TEXT>]
+    [--offset N] [--limit N]
+```
+
+- **Read-only query boundary.** The list command loads one verified
+  snapshot through `load_verified_dataset_catalog` and filters
+  `verified.entries` purely in memory. It never re-reads
+  `catalog.json` / `manifest.json`, never stats or scans the snapshot,
+  never calls `load_verified_dataset`, never touches the recorded build
+  paths (historical text), never uses DuckDB, SQL, pandas, or the
+  network, and never writes anything.
+- **Filter semantics.** `--status`, `--dataset-kind`, `--interval`,
+  `--adjustment`, and `--requested-session` are exact equality against
+  the stored facts; `--symbol` is membership in `scope.symbols`;
+  `--trade-date` is strict `YYYY-MM-DD` membership in
+  `scope.trade_dates`. There is no case folding and no substring
+  matching. A stored `None` `requested_session` never matches a string
+  filter. All provided filters are combined with **AND semantics**.
+- **Pagination.** `--offset` defaults to 0, `--limit` defaults to 20;
+  `--limit 0` is legal (returns no entries); `--limit` above 1000 or a
+  negative `--offset` / `--limit` is an argparse error (exit 2). The
+  page is a slice of the filtered list: the underlying order stays
+  `dataset_id`-ascending and is never reordered.
+- **Success JSON** (stdout, exit 0): the fixed envelope with `result`
+  `LISTED`, the fixed `filters` object (every filter key always present,
+  unused filters `null`, `trade_date` as strict `YYYY-MM-DD`),
+  `matched_count`, `offset`, `limit`, `returned_count`, and `datasets` —
+  each item is the discovery summary (dataset_id, content_id,
+  dataset_kind, status, logical_row_count, dataset_as_of, scope,
+  recorded_built_at, recorded_build_path). The full facts record with
+  the nested pins belongs to `dataset-catalog-show` only.
+- An empty snapshot or a zero-match filter result is a legal empty page
+  and exits 0.
+
+## 22. `dataset-catalog-show`
+
+```text
+market-vault dataset-catalog-show
+    --snapshot-dir <PATH>
+    --dataset-id <64-hex>
+```
+
+`--dataset-id` must match the strict pattern `^[0-9a-f]{64}$` (argparse
+exit 2 otherwise — uppercase, short, long, or non-hex ids are rejected
+before any snapshot access). The command performs an exact
+`dataset_id` lookup in `verified.entries`; a missing id is a formal
+failure (exit 1, stderr JSON) with an empty stdout. The success JSON
+(stdout, exit 0) carries the complete lossless record for that one
+entry: the full 14-field `dataset_facts` (dataset_id, dataset_kind,
+status, logical_row_count, dataset_schema_id,
+logical_dataset_content_id, dataset_as_of, scope, feature_spec_pins,
+label_spec_pins, split_spec_pin, canonical_build_pins,
+canonical_row_version_ids, completion) with every nested pin
+(`SpecPin`, `SourceSnapshotPin`, `CanonicalBuildPin`,
+`CompletionSummary`, `CompletionEntry`) serialized with its formal
+fields, plus `content_id` and `observed_metadata`. The
+`observed_metadata` contains `built_at` (UTC microseconds) and
+`build_path` — the **historical recorded location text**. The typed
+reader model names these fields `recorded_built_at` /
+`recorded_build_path`; the CLI presentation schema maps them to
+`built_at` / `build_path`. The recorded build path is never resolved,
+never stat'ed, never checked for existence, and never passed to
+`load_verified_dataset`. Show never accesses the original Dataset
+directories. The `dataset` object is a lossless typed presentation of
+the verified snapshot entry: every formal entry fact is preserved.
+CLI presentation bytes are governed by the PR-7 result JSON contract
+and are not claimed to be byte-identical to the canonical
+`catalog.json` artifact bytes.
+
+## 23. Deterministic JSON output
+
+Every CLI JSON result is deterministic:
+
+- UTF-8 text with `ensure_ascii=False`, `indent=2`, and a trailing
+  newline;
+- fixed key insertion order fixed by the contract of each result type;
+- no current-time or machine-derived facts: `built_at` values always
+  come from the verified snapshot's recorded explicit instants
+  (UTC microseconds), and paths are the snapshot's recorded lexical
+  text;
+- identical inputs always produce byte-identical output on every
+  platform.
+
+The CLI never uses `datetime.now()`, `datetime.utcnow()`, or
+`time.time()`.
+
+## 24. Exit-code contract (exit 0 / 1 / 2)
+
+```text
+exit 0   a single success JSON on stdout; stderr stays empty
+exit 1   a single failure JSON on stderr; stdout stays empty
+exit 2   argparse-level errors (unknown options, missing required
+         options, invalid argument values, forbidden combinations)
+```
+
+The failure JSON (stderr) has the fixed shape:
+
+```json
+{
+  "result_schema_version": "market-vault-dataset-catalog-cli-result-v1",
+  "cli_contract_version": "market-vault-dataset-catalog-cli-v1",
+  "command": "<the failing command>",
+  "result": "FAILED",
+  "error_type": "DatasetCatalogCLIError",
+  "error": "<message>"
+}
+```
+
+Documented failures — `DatasetCatalogError` (including every
+`DatasetCatalogBuildError`, `DatasetCatalogMaterializationError`, and
+`DatasetCatalogArtifactValidationError`), `OSError`, `UnicodeError`,
+`TypeError`, `ValueError`, and `KeyError` — are converted to
+`DatasetCatalogCLIError` at the CLI boundary with the `__cause__`
+preserved and never double-wrapped. Real programming errors
+(`AssertionError`, `RuntimeError`, and everything else) are never
+swallowed and never converted.
+
+## 25. Read-only query boundary and non-goals
+
+- verify / list / show are strictly read-only: they never write,
+  delete, repair, or rewrite anything, never follow the **historical**
+  recorded build path, and never verify the original Datasets still
+  exist.
+- There is no latest pointer, no implicit snapshot selection, and no
+  auto-repair; a corrupt snapshot fails closed and stays untouched.
+- The CLI never references the legacy Catalog
+  (`market_vault.storage.catalog.Catalog`), never creates DuckDB
+  tables or views, and `init-catalog` remains the legacy ingestion
+  catalog command.
+- The CLI never changes Dataset identity, Canonical identity, or any
+  PR-5 / PR-6 Catalog identity.
+- The Python Client is a v0.7 direction and is not part of v0.6.0;
+  PR-8 has not started.
