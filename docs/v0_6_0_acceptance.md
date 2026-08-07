@@ -37,8 +37,11 @@ accepted.
 
 Accepted in PR-8:
 
-- deterministic identity across process boundaries, directories, and
-  PyArrow writer versions;
+- deterministic identity across process boundaries and directories
+  for the same verified artifact and semantic inputs;
+- explicit classification of the PyArrow 24.0.0 / 25.0.0 cross-writer
+  physical-provenance differences (identity equality across writer
+  versions is never claimed);
 - fail-closed corruption handling at every stage with no repair;
 - the recovery contract (recovery is not repair);
 - the static reference artifact and the PyArrow 24.0.0 / 25.0.0
@@ -312,7 +315,7 @@ portability job, and marks the integrated acceptance with the
 ## 13. Test inventory and how to run
 
 ```text
-python -m pytest tests/test_v060_portability.py -q        # 11 tests
+python -m pytest tests/test_v060_portability.py -q        # 10 tests
 python -m pytest tests/test_v060_integrated_e2e.py -q     # integrated suite
 python -m pytest tests/test_sample_generation_core.py -q  # migrated frozen core
 python -m pytest tests/test_sample_generation_cli.py -q   # migrated frozen CLI
@@ -348,7 +351,7 @@ python -m venv <tmp>/venv24 && <tmp>/venv24/... pip install -e ".[dev]"
 
 All acceptance gates passed at PR-8 time on the PR branch:
 
-- `tests/test_v060_portability.py`: 11/11 passing on PyArrow 25.0.0 and
+- `tests/test_v060_portability.py`: 10/10 passing on PyArrow 25.0.0 and
   on the PyArrow 24.0.0 audit environment;
 - `tests/test_v060_integrated_e2e.py`: 46 passing, 1 explicit skip (the
   alias-creation test on a host that cannot create symlinks or junctions);
