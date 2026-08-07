@@ -607,12 +607,27 @@ def test_candidate_non_iterable_fails(tmp_path):
         build_dataset_catalog(candidate_build_dirs=42)
 
 
-def test_candidate_relative_input_is_coerced(complete_build, monkeypatch):
+def test_candidate_relative_input_fails(complete_build, monkeypatch):
+    """A relative candidate fails closed even when the current working
+    directory makes it resolvable: the builder never reads cwd to
+    complete a formal input."""
     monkeypatch.chdir(complete_build.build_path.parent)
-    result = build_dataset_catalog(
-        candidate_build_dirs=(complete_build.build_path.name,)
-    )
-    assert result.dataset_count == 1
+    with pytest.raises(DatasetCatalogBuildError) as excinfo:
+        build_dataset_catalog(
+            candidate_build_dirs=(complete_build.build_path.name,)
+        )
+    assert "lexically absolute" in str(excinfo.value)
+
+
+def test_dataset_root_relative_input_fails(complete_build, tmp_path, monkeypatch):
+    """A relative dataset_root fails closed even when it resolves under
+    the current working directory."""
+    root = tmp_path / "datasets"
+    root.mkdir()
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(DatasetCatalogBuildError) as excinfo:
+        build_dataset_catalog(dataset_root="datasets")
+    assert "lexically absolute" in str(excinfo.value)
 
 
 # ---------------------------------------------------------------------------

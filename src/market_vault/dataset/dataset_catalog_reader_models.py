@@ -235,6 +235,12 @@ def _validate_recorded_build_path(text: str, dataset_id: str) -> str:
     parts = text.split("/")
     if parts and parts[0] == "":
         parts = parts[1:]  # the leading root slash of a POSIX absolute path
+    if not parts:
+        # "/" is the root directory alone: no location component exists.
+        raise DatasetCatalogArtifactValidationError(
+            f"recorded build location must carry at least one path "
+            f"component: {text!r}"
+        )
     if any(part in ("", ".", "..") for part in parts):
         raise DatasetCatalogArtifactValidationError(
             f"recorded build location must not contain empty, '.', or '..' "

@@ -550,6 +550,7 @@ DATASET_CATALOG_PR6_FORBIDDEN_PATTERNS = {
         "os.walk",
         "json.loads",  # the builder never parses a manifest itself
         '"manifest.json"',
+        "Path.cwd()",  # cwd is never a formal-input dependency
     ),
     "src/market_vault/dataset/dataset_catalog_reader.py": (
         "load_verified_dataset(",
@@ -575,6 +576,12 @@ CI_PR6_API_IMPORT_LINES = (
     "build_dataset_catalog",
     "materialize_dataset_catalog_snapshot",
     "load_verified_dataset_catalog",
+)
+# The formal contract document must state the explicit-absolute builder
+# input contract (the formal-input boundary never depends on cwd).
+DATASET_CATALOG_PR6_PATH_CONTRACT_MARKERS = (
+    "lexically absolute safe path",
+    "never an implicit input",
 )
 # The dataset package must export the PR-5 public API.
 DATASET_CATALOG_EXPORTS = (
@@ -1501,6 +1508,17 @@ def check_dataset_catalog_pr6(root: Path) -> list[str]:
                 failures.append(
                     "market_vault.dataset does not export the PR-6 public "
                     f"API {export!r}"
+                )
+    # The formal contract document must state the explicit-absolute input
+    # contract.
+    contract = root / "docs" / "contracts" / "dataset_catalog.md"
+    if contract.exists():
+        text = contract.read_text(encoding="utf-8")
+        for marker in DATASET_CATALOG_PR6_PATH_CONTRACT_MARKERS:
+            if marker not in text:
+                failures.append(
+                    "docs/contracts/dataset_catalog.md does not state the "
+                    f"builder path-contract marker {marker!r}"
                 )
     # The direction document records the PR-6 stage and no false claim.
     direction = root / "docs" / "v0_6_0_direction.md"

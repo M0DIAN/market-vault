@@ -2975,6 +2975,29 @@ def test_release_checker_fails_when_root_scan_becomes_recursive(tmp_path):
     assert "missing the contract marker 'os.scandir(dataset_root)'" in result.stdout
 
 
+def test_release_checker_fails_when_builder_reads_cwd_for_inputs(tmp_path):
+    # Mutation: the builder reverting to a Path.cwd()-based relative
+    # coercion of a formal input must fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "src" / "market_vault" / "dataset" / "dataset_catalog_builder.py"
+    text = path.read_text(encoding="utf-8")
+    text = text.replace(
+        "    if not raw.is_absolute():\n"
+        "        raise DatasetCatalogBuildError(\n"
+        "            f\"{label} must be a lexically absolute path (cwd is never an \"\n"
+        "            f\"implicit input), got {dataset_root!r}\"\n"
+        "        )\n"
+        "    return raw",
+        "    if raw.is_absolute():\n"
+        "        return raw\n"
+        "    return Path.cwd() / raw",
+    )
+    path.write_text(text, encoding="utf-8")
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "must not contain the forbidden pattern 'Path.cwd()'" in result.stdout
+
+
 def test_release_checker_fails_when_content_identity_includes_path(tmp_path):
     repo = copy_repo(tmp_path)
     path = repo / "src" / "market_vault" / "dataset" / "dataset_catalog_identity.py"

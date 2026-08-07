@@ -594,6 +594,7 @@ def test_reader_is_side_effect_free(complete_build, tmp_path):
         "C:/Users/..\\tester/{id}",               # ".." component
         "C:/Users/tester/other-dataset",          # final != dataset_id
         "",                                       # empty
+        "/",                                      # root directory alone
     ],
 )
 def test_invalid_recorded_location_text_fails(complete_build, tmp_path, bad_text):
@@ -628,8 +629,18 @@ def test_posix_recorded_location_text_accepted(complete_build, tmp_path):
         )
     with pytest.raises(DatasetCatalogArtifactValidationError):
         _validate_recorded_build_path(
+            f"/tmp/../data/{complete_build.dataset_id}", complete_build.dataset_id
+        )
+    with pytest.raises(DatasetCatalogArtifactValidationError):
+        _validate_recorded_build_path(
             f"/tmp/data/{complete_build.dataset_id}/", complete_build.dataset_id
         )
+    # The root directory alone must fail with the reader business error,
+    # never with a raw IndexError.
+    with pytest.raises(DatasetCatalogArtifactValidationError):
+        _validate_recorded_build_path("/", complete_build.dataset_id)
+    with pytest.raises(DatasetCatalogArtifactValidationError):
+        _validate_recorded_build_path("", complete_build.dataset_id)
     # The full E2E round trip with a POSIX-style recorded location: a
     # consistent manifest (recomputed snapshot ID over the new catalog
     # bytes) must verify successfully.

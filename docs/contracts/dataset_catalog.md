@@ -304,13 +304,19 @@ variables are never implicit inputs.
   directories, `.staging-*` residue, documentation, any other name — is
   ignored but never entered or followed. A 64-hex named child that is a
   symlink, junction, reparse point, ordinary file, or special file fails
-  closed. `dataset_root` itself and every existing parent component must
-  be a real, regular, non-link directory; `resolve()` is never used to
-  mask a link.
+  closed. `dataset_root` itself must be a lexically absolute safe path,
+  and it and every existing parent component must be a real, regular,
+  non-link directory; `resolve()` is never used to mask a link.
 - **`candidate_build_dirs` mode — explicit candidate set.** An explicit
   iterable frozen at the boundary; input order never matters; an exactly
   identical lexical candidate path listed twice is processed once. Every
   candidate must be a lexically absolute safe path.
+- **No relative formal input.** `dataset_root` and every explicit
+  candidate must already be lexically absolute; the builder never reads
+  `Path.cwd()` to complete a formal input, so cwd — like settings, a
+  latest pointer, a default Dataset root, and environment variables — is
+  never an implicit input. A relative `dataset_root` or a relative
+  explicit candidate fails closed with `DatasetCatalogBuildError`.
 - **Empty Catalog.** `candidate_build_dirs=()` and a root with no 64-hex
   candidate both produce a legal empty Catalog
   (`dataset_count == 0`, `entries == ()`, a legal content identity).

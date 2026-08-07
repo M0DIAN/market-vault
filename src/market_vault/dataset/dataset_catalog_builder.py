@@ -117,7 +117,13 @@ def build_dataset_catalog(
 def _coerce_root(dataset_root, label: str) -> Path:
     """Lexically absolute Path of an explicit input; raw ``.`` / ``..``
     components are rejected before any normalization and ``resolve()`` is
-    never used to mask a link."""
+    never used to mask a link.
+
+    The input itself must already be lexically absolute: the builder
+    never consults the current working directory to complete a formal
+    input, so cwd can never become an implicit input. A relative
+    ``dataset_root`` or a relative explicit candidate fails closed.
+    """
     try:
         raw_text = os.fspath(dataset_root)
     except TypeError as exc:
@@ -140,15 +146,12 @@ def _coerce_root(dataset_root, label: str) -> Path:
         raise DatasetCatalogBuildError(
             f"{label} must be a path-like, got {type(dataset_root).__name__}"
         )
-    if raw.is_absolute():
-        return raw
-    try:
-        return Path.cwd() / raw
-    except OSError as exc:
+    if not raw.is_absolute():
         raise DatasetCatalogBuildError(
-            f"cannot resolve the current working directory for a relative "
-            f"{label}: {exc}"
-        ) from exc
+            f"{label} must be a lexically absolute path (cwd is never an "
+            f"implicit input), got {dataset_root!r}"
+        )
+    return raw
 
 
 def _reject_symlink(path: Path, label: str) -> None:
@@ -227,9 +230,9 @@ def _discover_root_candidates(dataset_root: Path) -> tuple[Path, ...]:
 
 def _coerce_candidate_build_dirs(candidate_build_dirs) -> tuple[Path, ...]:
     """Explicit candidate set frozen at the boundary: every candidate
-    must be a lexically absolute safe path; an exactly identical lexical
-    path listed twice is processed once (deduplicated before any
-    access)."""
+    must already be a lexically absolute safe path (cwd is never an
+    implicit input); an exactly identical lexical path listed twice is
+    processed once (deduplicated before any access)."""
     try:
         items = tuple(candidate_build_dirs)
     except TypeError as exc:
