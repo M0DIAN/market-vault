@@ -2354,37 +2354,33 @@ def test_release_checker_fails_when_contract_doc_reverts_cli_status(tmp_path):
 
 
 def test_release_checker_fails_when_direction_reverts_pr4_stage(tmp_path):
-    # Mutation: reverting the progress record to the pre-PR-4 wording must
-    # fail the checker.
+    # Mutation: reverting the PR-4 progress record to the pre-PR-4 wording
+    # must fail the checker.
     repo = copy_repo(tmp_path)
     path = repo / "docs" / "v0_6_0_direction.md"
     path.write_text(
         path.read_text(encoding="utf-8").replace(
-            "PR-3 is complete",
-            "PR-3 is not complete",
+            "PR-4 is complete",
+            "PR-4 is not complete",
         ),
         encoding="utf-8",
     )
     result = run_check_release(repo)
     assert result.returncode == 1
-    assert "does not state the PR-4 progress fact 'PR-3 is complete'" in result.stdout
+    assert "does not state the PR-4 progress fact 'PR-4 is complete'" in result.stdout
 
 
-def test_release_checker_fails_when_direction_claims_pr5_started(tmp_path):
+def test_release_checker_fails_when_direction_claims_pr5_complete(tmp_path):
+    # Mutation: claiming PR-5 is already complete must fail the checker.
     repo = copy_repo(tmp_path)
     path = repo / "docs" / "v0_6_0_direction.md"
     path.write_text(
-        path.read_text(encoding="utf-8").replace(
-            "PR-5 (Dataset Catalog) has not started",
-            "PR-5 (Dataset Catalog) has started",
-        ),
+        path.read_text(encoding="utf-8") + "\nPR-5 is complete.\n",
         encoding="utf-8",
     )
     result = run_check_release(repo)
     assert result.returncode == 1
-    assert (
-        "contains the false PR-4 claim 'PR-5 (Dataset Catalog) has started'"
-    ) in result.stdout
+    assert "contains the false PR-5 claim 'PR-5 is complete'" in result.stdout
 
 
 def test_release_checker_fails_when_direction_claims_v060_released(tmp_path):
@@ -2416,3 +2412,316 @@ def test_release_checker_fails_when_ci_loses_sample_generate_smoke(tmp_path):
     assert (
         "fresh-wheel smoke must cover 'market-vault sample-generate --help'"
     ) in result.stdout
+
+
+# --- V0.6.0 Dataset Catalog contract (PR-5) ----------------------------------
+
+
+def _mutate_catalog_models_version(repo: Path, old: str, new: str) -> None:
+    path = repo / "src" / "market_vault" / "dataset" / "dataset_catalog_models.py"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(old, new), encoding="utf-8"
+    )
+
+
+def _mutate_catalog_contract_doc(repo: Path, claim: str) -> None:
+    path = repo / "docs" / "contracts" / "dataset_catalog.md"
+    path.write_text(
+        path.read_text(encoding="utf-8") + f"\n{claim}\n", encoding="utf-8"
+    )
+
+
+def test_release_checker_fails_without_catalog_models_module(tmp_path):
+    # Mutation: deleting a key PR-5 boundary module must fail the checker.
+    repo = copy_repo(tmp_path)
+    (repo / "src" / "market_vault" / "dataset" / "dataset_catalog_models.py").unlink()
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "dataset_catalog_models.py is missing" in result.stdout
+
+
+def test_release_checker_fails_without_catalog_identity_module(tmp_path):
+    # Mutation: deleting the identity module must fail the checker.
+    repo = copy_repo(tmp_path)
+    (repo / "src" / "market_vault" / "dataset" / "dataset_catalog_identity.py").unlink()
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "dataset_catalog_identity.py is missing" in result.stdout
+
+
+def test_release_checker_fails_without_catalog_projection_module(tmp_path):
+    # Mutation: deleting the projection module must fail the checker.
+    repo = copy_repo(tmp_path)
+    (repo / "src" / "market_vault" / "dataset" / "dataset_catalog_projection.py").unlink()
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "dataset_catalog_projection.py is missing" in result.stdout
+
+
+def test_release_checker_fails_when_catalog_contract_version_removed(tmp_path):
+    # Mutation: changing the Catalog contract version constant must fail.
+    repo = copy_repo(tmp_path)
+    _mutate_catalog_models_version(
+        repo,
+        "market-vault-dataset-catalog-contract-v1",
+        "market-vault-dataset-catalog-contract-v9",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not define the exact version constant "
+        "'market-vault-dataset-catalog-contract-v1'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_catalog_entry_schema_version_removed(
+    tmp_path,
+):
+    # Mutation: changing the entry schema version constant must fail.
+    repo = copy_repo(tmp_path)
+    _mutate_catalog_models_version(
+        repo,
+        "market-vault-dataset-catalog-entry-v1",
+        "market-vault-dataset-catalog-entry-v9",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not define the exact version constant "
+        "'market-vault-dataset-catalog-entry-v1'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_catalog_content_id_version_removed(
+    tmp_path,
+):
+    # Mutation: changing the content identity version constant must fail.
+    repo = copy_repo(tmp_path)
+    _mutate_catalog_models_version(
+        repo,
+        "market-vault-dataset-catalog-content-v1",
+        "market-vault-dataset-catalog-content-v9",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not define the exact version constant "
+        "'market-vault-dataset-catalog-content-v1'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_catalog_identity_function_removed(
+    tmp_path,
+):
+    # Mutation: deleting the Catalog-level identity function must fail.
+    repo = copy_repo(tmp_path)
+    path = repo / "src" / "market_vault" / "dataset" / "dataset_catalog_identity.py"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "def dataset_catalog_content_id(",
+            "def removed_dataset_catalog_content_id(",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "dataset_catalog_identity.py is missing def dataset_catalog_content_id" in (
+        result.stdout
+    )
+
+
+def test_release_checker_fails_when_projection_loses_trust_boundary(
+    tmp_path,
+):
+    # Mutation: the projection no longer binding VerifiedDatasetBuild must
+    # fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "src" / "market_vault" / "dataset" / "dataset_catalog_projection.py"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "VerifiedDatasetBuild", "AnyBuild"
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "must bind the trust boundary to VerifiedDatasetBuild" in result.stdout
+
+
+def test_release_checker_fails_when_catalog_module_imports_legacy_catalog(
+    tmp_path,
+):
+    # Mutation: a PR-5 module importing the legacy Catalog must fail.
+    repo = copy_repo(tmp_path)
+    path = repo / "src" / "market_vault" / "dataset" / "dataset_catalog_identity.py"
+    path.write_text(
+        path.read_text(encoding="utf-8") + "\nfrom market_vault.storage import Catalog\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "must never import the legacy Catalog" in result.stdout
+
+
+def test_release_checker_fails_when_package_loses_catalog_export(tmp_path):
+    # Mutation: removing a PR-5 public export must fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "src" / "market_vault" / "dataset" / "__init__.py"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "project_dataset_catalog_entry",
+            "missing_catalog_export",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "market_vault.dataset does not export the PR-5 public API "
+        "'project_dataset_catalog_entry'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_pr6_builder_file_exists(tmp_path):
+    # Mutation: a PR-6 production file appearing must fail the checker.
+    repo = copy_repo(tmp_path)
+    (repo / "src" / "market_vault" / "dataset" / "dataset_catalog_builder.py").write_text(
+        "# PR-6 work\n", encoding="utf-8"
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "PR-6 / PR-7 production file must not exist yet" in result.stdout
+
+
+def test_release_checker_fails_when_contract_trusts_manifest_directly(
+    tmp_path,
+):
+    # Mutation: claiming the Catalog can trust a manifest directly must
+    # fail the checker.
+    repo = copy_repo(tmp_path)
+    _mutate_catalog_contract_doc(
+        repo, "The Dataset Catalog trusts manifests directly."
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "contains the false PR-5 claim 'trusts manifests directly'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_contract_claims_builder_implemented(
+    tmp_path,
+):
+    # Mutation: claiming the PR-6 builder is already implemented must fail.
+    repo = copy_repo(tmp_path)
+    _mutate_catalog_contract_doc(repo, "The Dataset Catalog builder is implemented.")
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "contains the false PR-5 claim 'Dataset Catalog builder is implemented'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_contract_claims_reader_implemented(
+    tmp_path,
+):
+    # Mutation: claiming the verified Catalog reader is already implemented
+    # must fail.
+    repo = copy_repo(tmp_path)
+    _mutate_catalog_contract_doc(repo, "The verified Catalog reader is implemented.")
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "contains the false PR-5 claim 'verified Catalog reader is implemented'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_contract_claims_path_enters_identity(
+    tmp_path,
+):
+    # Mutation: claiming a physical output directory enters the content
+    # identity must fail the checker.
+    repo = copy_repo(tmp_path)
+    _mutate_catalog_contract_doc(
+        repo, "physical output directory enters Catalog content identity"
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "contains the false identity claim" in result.stdout
+
+
+def test_release_checker_fails_when_contract_claims_built_at_enters_identity(
+    tmp_path,
+):
+    # Mutation: claiming built_at enters the content identity must fail.
+    repo = copy_repo(tmp_path)
+    _mutate_catalog_contract_doc(
+        repo, "built_at enters Catalog content identity"
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "contains the false identity claim 'built_at enters Catalog content identity'" in (
+        result.stdout
+    )
+
+
+def test_release_checker_fails_when_contract_reuses_legacy_catalog_tables(
+    tmp_path,
+):
+    # Mutation: an affirmative reuse claim must fail (the legitimate
+    # "never reuses" wording is preserved in the real document).
+    repo = copy_repo(tmp_path)
+    _mutate_catalog_contract_doc(repo, "The new Catalog reuses the legacy Catalog's tables.")
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "reuses the legacy Catalog's tables" in result.stdout
+
+
+def test_release_checker_fails_when_contract_loses_facts_field(tmp_path):
+    # Mutation: deleting a content-facts field from the contract document
+    # must fail.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "contracts" / "dataset_catalog.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "canonical_row_version_ids",
+            "missing_row_version_ids",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the exact facts field 'canonical_row_version_ids'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_direction_reverts_pr5_stage(tmp_path):
+    # Mutation: reverting the progress record to the pre-PR-5 wording must
+    # fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_6_0_direction.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "PR-5 (this PR, branch `feat/v0.6.0-dataset-catalog-contract`)",
+            "PR-5 (Dataset Catalog) has not started",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "does not state the PR-5 progress fact 'PR-5 (this PR'" in result.stdout
+
+
+def test_release_checker_fails_when_direction_starts_pr6(tmp_path):
+    # Mutation: claiming PR-6 has started must fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_6_0_direction.md"
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        + "\nPR-6 has started.\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "contains the false PR-5 claim 'PR-6 has started'" in result.stdout

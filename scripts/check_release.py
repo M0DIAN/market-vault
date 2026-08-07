@@ -377,20 +377,121 @@ SAMPLE_GENERATION_CLI_FALSE_CLAIMS = (
 )
 # Facts the v0.6.0 direction document must state about the PR-4 stage.
 V060_DIRECTION_PR4_FACTS = (
-    "PR #36",
-    "2026-08-06T06:59:35Z",
-    "4d5124fa1f1c30db5dcc5b8bb72c7e4f04f1109c",
-    "PR-3 is complete",
-    "PR-4 (this PR",
-    "PR-5 (Dataset Catalog) has not started",
+    "PR #37",
+    "2026-08-06T23:23:50Z",
+    "ca486a19e6795940f21a9a22053fc59175510d91",
+    "PR-4 is complete",
+)
+# Contradictory claims that must never appear in the v0.6.0 direction
+# document's PR-4 record (the completed-stage wording must stay factual).
+V060_DIRECTION_PR4_FALSE_CLAIMS = (
+    "V0.6.0 is released",
+)
+# Facts the v0.6.0 direction document must state about the PR-5 stage.
+V060_DIRECTION_PR5_FACTS = (
+    "PR-5 (this PR",
+    "feat/v0.6.0-dataset-catalog-contract",
+    "PR-6 (immutable Dataset Catalog builder, materializer,",
+    "verified Catalog reader) has not started",
     "not released",
 )
 # Contradictory claims that must never appear in the v0.6.0 direction
-# document's progress record.
-V060_DIRECTION_PR4_FALSE_CLAIMS = (
+# document's PR-5 record.
+V060_DIRECTION_PR5_FALSE_CLAIMS = (
     "V0.6.0 is released",
-    "PR-4 is complete",
-    "PR-5 (Dataset Catalog) has started",
+    "PR-5 is complete",
+    "PR-6 has started",
+)
+# The v0.6.0 Dataset Catalog contract production modules that must exist.
+DATASET_CATALOG_MODULES = (
+    "src/market_vault/dataset/dataset_catalog_models.py",
+    "src/market_vault/dataset/dataset_catalog_identity.py",
+    "src/market_vault/dataset/dataset_catalog_projection.py",
+)
+# The exact version constants the contract models module must define.
+DATASET_CATALOG_VERSION_CONSTANTS = (
+    "market-vault-dataset-catalog-contract-v1",
+    "market-vault-dataset-catalog-entry-v1",
+    "market-vault-dataset-catalog-content-v1",
+)
+# The public functions the contract modules must define.
+DATASET_CATALOG_FUNCTIONS = (
+    "def catalog_dataset_content_id",
+    "def dataset_catalog_content_id",
+    "def project_dataset_catalog_entry",
+)
+# The exact content-facts fields the formal contract document must state.
+DATASET_CATALOG_FACTS_FIELDS = (
+    "dataset_id",
+    "dataset_kind",
+    "status",
+    "logical_row_count",
+    "dataset_schema_id",
+    "logical_dataset_content_id",
+    "dataset_as_of",
+    "scope",
+    "feature_spec_pins",
+    "label_spec_pins",
+    "split_spec_pin",
+    "canonical_build_pins",
+    "canonical_row_version_ids",
+    "completion",
+)
+# Facts the formal Dataset Catalog contract document must state about the
+# PR-5 layer.
+DATASET_CATALOG_PR5_FACTS = (
+    "VerifiedDatasetBuild",
+    "project_dataset_catalog_entry",
+    "DatasetCatalogDatasetFacts",
+    "DatasetCatalogObservedMetadata",
+    "DatasetCatalogEntry",
+    "dataset_catalog_content_id",
+    "catalog_dataset_content_id",
+    "structurally disjoint",
+    "first-wins, last-wins, and path-wins are never used",
+    "PR-6",
+    "PR-7",
+)
+# Excluded facts the formal Dataset Catalog contract document must state
+# never enter the content identity.
+DATASET_CATALOG_EXCLUDED_FACTS = (
+    "machine / hostname",
+    "cwd",
+    "mtime",
+    "current time",
+    "scan order",
+    "candidate input order",
+    "moving the same verified Dataset to another parent directory",
+)
+# Contradictory claims that must never appear in the formal Dataset
+# Catalog contract document even when the required facts are present.
+DATASET_CATALOG_PR5_FALSE_CLAIMS = (
+    "trusts manifests directly",
+    "Dataset Catalog builder is implemented",
+    "verified Catalog reader is implemented",
+)
+# An affirmative "reuses the legacy Catalog's tables" claim is rejected;
+# the legitimate "never reuses the legacy Catalog's tables" wording is
+# allowed.
+DATASET_CATALOG_REUSES_LEGACY_RE = re.compile(
+    r"(?<!never )(?<!not )reuses the legacy Catalog's tables"
+)
+# Production files that must never exist yet (PR-6 / PR-7 work).
+DATASET_CATALOG_FORBIDDEN_FILES = (
+    "src/market_vault/dataset/dataset_catalog_builder.py",
+    "src/market_vault/dataset/dataset_catalog_reader.py",
+    "src/market_vault/dataset/dataset_catalog_snapshot.py",
+    "src/market_vault/dataset/dataset_catalog_cli.py",
+)
+# The dataset package must export the PR-5 public API.
+DATASET_CATALOG_EXPORTS = (
+    "DATASET_CATALOG_CONTRACT_VERSION",
+    "DatasetCatalogDatasetFacts",
+    "DatasetCatalogObservedMetadata",
+    "DatasetCatalogEntry",
+    "catalog_dataset_content_id",
+    "dataset_catalog_content_id",
+    "project_dataset_catalog_entry",
 )
 # The exact root field set and rule field set must be stated in the formal
 # contract document.
@@ -987,6 +1088,18 @@ def check_sample_generation_cli(root: Path) -> list[str]:
                     "docs/v0_6_0_direction.md contains the false PR-4 "
                     f"claim {claim!r}"
                 )
+        for fact in V060_DIRECTION_PR5_FACTS:
+            if fact not in text:
+                failures.append(
+                    "docs/v0_6_0_direction.md does not state the PR-5 "
+                    f"progress fact {fact!r}"
+                )
+        for claim in V060_DIRECTION_PR5_FALSE_CLAIMS:
+            if claim in text:
+                failures.append(
+                    "docs/v0_6_0_direction.md contains the false PR-5 "
+                    f"claim {claim!r}"
+                )
     ci = root / ".github" / "workflows" / "ci.yml"
     if ci.exists():
         text = ci.read_text(encoding="utf-8")
@@ -1022,12 +1135,41 @@ def check_dataset_catalog_contract(root: Path) -> list[str]:
                 "docs/contracts/dataset_catalog.md does not state the "
                 f"Catalog identity fact {fact!r}"
             )
+    for fact in DATASET_CATALOG_PR5_FACTS:
+        if fact not in text:
+            failures.append(
+                "docs/contracts/dataset_catalog.md does not state the "
+                f"PR-5 fact {fact!r}"
+            )
+    for field in DATASET_CATALOG_FACTS_FIELDS:
+        if field not in text:
+            failures.append(
+                "docs/contracts/dataset_catalog.md does not state the "
+                f"exact facts field {field!r}"
+            )
+    for fact in DATASET_CATALOG_EXCLUDED_FACTS:
+        if fact not in text:
+            failures.append(
+                "docs/contracts/dataset_catalog.md does not state the "
+                f"excluded fact {fact!r}"
+            )
     for claim in DATASET_CATALOG_FALSE_IDENTITY_CLAIMS:
         if claim in text:
             failures.append(
                 "docs/contracts/dataset_catalog.md contains the false "
                 f"identity claim {claim!r}"
             )
+    for claim in DATASET_CATALOG_PR5_FALSE_CLAIMS:
+        if claim in text:
+            failures.append(
+                "docs/contracts/dataset_catalog.md contains the false "
+                f"PR-5 claim {claim!r}"
+            )
+    if DATASET_CATALOG_REUSES_LEGACY_RE.search(text):
+        failures.append(
+            "docs/contracts/dataset_catalog.md claims the new Catalog "
+            "reuses the legacy Catalog's tables"
+        )
     for phrase in CONTRACT_STALE_PHRASES:
         if phrase in text:
             failures.append(
@@ -1039,6 +1181,98 @@ def check_dataset_catalog_contract(root: Path) -> list[str]:
             "docs/contracts/dataset_catalog.md claims an affirmative "
             "'implemented in v0.5.1' implementation"
         )
+    return failures
+
+
+def check_dataset_catalog(root: Path) -> list[str]:
+    """Static PR-5 checks: the three contract production modules exist, the
+    exact version constants and public functions are defined, the modules
+    never import the legacy Catalog, the dataset package exports the PR-5
+    public API, the formal contract document states the PR-5 facts and no
+    false claim, the direction document records the PR-5 stage, and no
+    PR-6 / PR-7 production file exists yet."""
+    failures = []
+    for rel in DATASET_CATALOG_MODULES:
+        if not (root / rel).exists():
+            failures.append(f"{rel} is missing")
+    models_path = root / "src" / "market_vault" / "dataset" / "dataset_catalog_models.py"
+    if models_path.exists():
+        text = models_path.read_text(encoding="utf-8")
+        for version in DATASET_CATALOG_VERSION_CONSTANTS:
+            if f'"{version}"' not in text:
+                failures.append(
+                    "dataset_catalog_models.py does not define the exact "
+                    f"version constant {version!r}"
+                )
+        for marker in (
+            "class DatasetCatalogDatasetFacts",
+            "class DatasetCatalogObservedMetadata",
+            "class DatasetCatalogEntry",
+        ):
+            if marker not in text:
+                failures.append(
+                    f"dataset_catalog_models.py is missing {marker}"
+                )
+    identity_path = root / "src" / "market_vault" / "dataset" / "dataset_catalog_identity.py"
+    if identity_path.exists():
+        text = identity_path.read_text(encoding="utf-8")
+        for marker in ("def catalog_dataset_content_id", "def dataset_catalog_content_id"):
+            if marker not in text:
+                failures.append(
+                    f"dataset_catalog_identity.py is missing {marker}"
+                )
+    projection_path = root / "src" / "market_vault" / "dataset" / "dataset_catalog_projection.py"
+    if projection_path.exists():
+        text = projection_path.read_text(encoding="utf-8")
+        if "def project_dataset_catalog_entry" not in text:
+            failures.append(
+                "dataset_catalog_projection.py is missing "
+                "project_dataset_catalog_entry"
+            )
+        if "VerifiedDatasetBuild" not in text:
+            failures.append(
+                "dataset_catalog_projection.py must bind the trust boundary "
+                "to VerifiedDatasetBuild"
+            )
+    # The PR-5 modules must never import the legacy Catalog.
+    for rel in DATASET_CATALOG_MODULES:
+        path = root / rel
+        if path.exists():
+            text = path.read_text(encoding="utf-8")
+            for forbidden in ("storage.catalog", "from market_vault.storage import Catalog"):
+                if forbidden in text:
+                    failures.append(
+                        f"{rel} must never import the legacy Catalog "
+                        f"({forbidden!r})"
+                    )
+    package = root / "src" / "market_vault" / "dataset" / "__init__.py"
+    if package.exists():
+        text = package.read_text(encoding="utf-8")
+        for export in DATASET_CATALOG_EXPORTS:
+            if export not in text:
+                failures.append(
+                    "market_vault.dataset does not export the PR-5 public "
+                    f"API {export!r}"
+                )
+    for rel in DATASET_CATALOG_FORBIDDEN_FILES:
+        if (root / rel).exists():
+            failures.append(f"PR-6 / PR-7 production file must not exist yet: {rel}")
+    failures.extend(check_dataset_catalog_contract(root))
+    direction = root / "docs" / "v0_6_0_direction.md"
+    if direction.exists():
+        text = direction.read_text(encoding="utf-8")
+        for fact in V060_DIRECTION_PR5_FACTS:
+            if fact not in text:
+                failures.append(
+                    "docs/v0_6_0_direction.md does not state the PR-5 "
+                    f"progress fact {fact!r}"
+                )
+        for claim in V060_DIRECTION_PR5_FALSE_CLAIMS:
+            if claim in text:
+                failures.append(
+                    "docs/v0_6_0_direction.md contains the false PR-5 "
+                    f"claim {claim!r}"
+                )
     return failures
 
 
@@ -1275,6 +1509,7 @@ def main() -> int:
         ("sample generator core", check_sample_generation_core),
         ("sample generation cli", check_sample_generation_cli),
         ("dataset catalog contract", check_dataset_catalog_contract),
+        ("dataset catalog", check_dataset_catalog),
         ("old release notes", check_old_release_notes),
         ("warning guard", check_warning_guard),
         ("examples", check_examples),

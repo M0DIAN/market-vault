@@ -306,13 +306,22 @@ V0.6.0 keeps, unchanged:
   stride-based candidate anchors, the exact half-open window geometry, the
   duplicate rejection, the Generation content identity, and the frozen
   `SampleGenerationResult`. PR-3 is complete.
-- PR-4 (this PR, branch `feat/v0.6.0-sample-generator-cli`) is the current
-  implementation stage: the Sample Generation CLI
-  (`market-vault sample-generate --plan`), the pure ordinary
-  `market-vault-dataset-build-plan-v1` renderer, the shared split-spec
-  loading authority, the safe / idempotent no-overwrite output
-  materialization, and the COMPLETE / EMPTY / determinism end-to-end proof.
-  PR-5 (Dataset Catalog) has not started; the Dataset Catalog is not
-  implemented.
+- PR #37 (`feat: add deterministic sample generation CLI`) was merged on
+  2026-08-06T23:23:50Z via the squash commit
+  `ca486a19e6795940f21a9a22053fc59175510d91`; PR-4 is complete: the Sample
+  Generation CLI (`market-vault sample-generate --plan`), the pure
+  ordinary `market-vault-dataset-build-plan-v1` renderer, the shared
+  split-spec loading authority, the safe / idempotent no-overwrite output
+  materialization, and the COMPLETE / EMPTY / determinism end-to-end
+  proof. PR #38 (`fix: read canonical parquet files without partition
+  inference`) was also merged on 2026-08-07T03:10:49Z via the squash
+  commit `b4c3618d631b2950934acbae4a72e00b2adf7350`; it is a standalone
+  verified-reader fix outside the fixed v0.6.0 PR sequence.
+- PR-5 (this PR, branch `feat/v0.6.0-dataset-catalog-contract`) is the
+  current implementation stage: the Dataset Catalog contract, strict
+  entry schema, frozen models, the metadata projection, and the Catalog
+  content identity. PR-6 (immutable Dataset Catalog builder, materializer,
+  verified Catalog reader) has not started; the Dataset Catalog snapshot
+  is not implemented.
 - The package version remains 0.5.1; the bump to 0.6.0 happens only in
   PR-9. V0.6.0 as a whole is not released.
