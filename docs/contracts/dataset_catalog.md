@@ -858,8 +858,9 @@ market-vault dataset-catalog-build
   (exit 2). The CLI never supplies the current time — `datetime.now()`
   is never used.
 - **CLI path boundary.** Every CLI path is coerced lexically: `.` and
-  `..` components are rejected (argparse-style error), a relative path
-  is made lexically absolute against `Path.cwd()`, and `resolve()` /
+  `..` lexical components are rejected before `Path` construction as a
+  formal CLI path-validation failure (exit 1); a relative path is made
+  lexically absolute against `Path.cwd()`, and `resolve()` /
   `expanduser()` / `expandvars()` / globbing / scanning are never used
   by the CLI. The builder's absolute-input contract is unchanged: the
   CLI completes relative inputs at the CLI boundary only, and the
@@ -967,12 +968,18 @@ canonical_row_version_ids, completion) with every nested pin
 (`SpecPin`, `SourceSnapshotPin`, `CanonicalBuildPin`,
 `CompletionSummary`, `CompletionEntry`) serialized with its formal
 fields, plus `content_id` and `observed_metadata`. The
-`observed_metadata` contains `recorded_built_at` and the `build_path`
-as **historical recorded location text**: it is never resolved, never
-stat'ed, never checked for existence, and never passed to
+`observed_metadata` contains `built_at` (UTC microseconds) and
+`build_path` — the **historical recorded location text**. The typed
+reader model names these fields `recorded_built_at` /
+`recorded_build_path`; the CLI presentation schema maps them to
+`built_at` / `build_path`. The recorded build path is never resolved,
+never stat'ed, never checked for existence, and never passed to
 `load_verified_dataset`. Show never accesses the original Dataset
-directories, and the record is byte-identical to the serialized
-snapshot entry it came from.
+directories. The `dataset` object is a lossless typed presentation of
+the verified snapshot entry: every formal entry fact is preserved.
+CLI presentation bytes are governed by the PR-7 result JSON contract
+and are not claimed to be byte-identical to the canonical
+`catalog.json` artifact bytes.
 
 ## 23. Deterministic JSON output
 
