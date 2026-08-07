@@ -47,6 +47,8 @@ from market_vault.models import QualityResult, RunManifest, Settings
 from market_vault.normalization import normalize_bars, normalize_trading_calendar
 from market_vault.storage import Catalog, ParquetStore
 
+from v060_acceptance_helpers import decode_canonical_fixture
+
 ROOT = Path(__file__).resolve().parents[1]
 UTC = timezone.utc
 NY = "America/New_York"
@@ -59,7 +61,10 @@ SOURCE_SCHEMA_VERSION = "10.9"
 BUILT_AT = datetime(2026, 8, 5, 1, 0, tzinfo=UTC)
 
 #: Frozen Generation content ID of the standard fixture (computed once and
-#: fixed; see test_identity_frozen_fixture).
+#: fixed; see test_identity_frozen_fixture). The regression now reproduces
+#: the ID from the static reference Canonical artifact (PyArrow25-produced
+#: base64 fixture), so it is independent of the local materializer and of
+#: the running PyArrow writer; see tests/fixtures/v060_portability/.
 FIXTURE_GENERATION_ID = "f70e0c89793a1ccfb51d8a16720a8446a74989415ad7c491608d19e2dd759fb3"
 
 
@@ -1304,8 +1309,21 @@ def test_identity_is_64_character_lowercase_hex(std_fixture):
     assert re.fullmatch(r"[0-9a-f]{64}", result.generation_content_id)
 
 
-def test_identity_frozen_fixture(std_fixture):
-    result = generate_sample_requests(std_fixture["plan"], path_base=std_fixture["tmp_path"])
+def test_identity_frozen_fixture(tmp_path):
+    """Fixed regression: the frozen Generation content ID reproduces exactly
+    from the static reference Canonical artifact (PyArrow25-produced base64
+    fixture). The artifact decodes with strict member checks and yields the
+    same canonical_build_id on every supported PyArrow writer, so the ID is
+    writer- and machine-independent (PR-8 portability audit)."""
+    build_dir = decode_canonical_fixture(tmp_path)
+    feature_paths, label_paths, split_path = write_fixture_files(tmp_path)
+    plan = make_plan(
+        build_paths=(str(build_dir),),
+        feature_paths=feature_paths,
+        label_paths=label_paths,
+        split_path=split_path,
+    )
+    result = generate_sample_requests(plan, path_base=tmp_path)
     assert result.generation_content_id == FIXTURE_GENERATION_ID
 
 

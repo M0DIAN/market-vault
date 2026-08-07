@@ -1024,24 +1024,28 @@ def test_release_checker_fails_when_v060_direction_missing_planned_status(tmp_pa
     assert "does not state the fact 'Status: planned'" in result.stdout
 
 
-def test_release_checker_fails_when_v060_direction_claims_pr8_started(
+def test_release_checker_fails_when_v060_direction_claims_pr9_started(
     tmp_path,
 ):
+    # PR-8 is the current stage; claiming PR-9 has started in the
+    # direction document must fail the checker.
     repo = copy_repo(tmp_path)
     path = repo / "docs" / "v0_6_0_direction.md"
     path.write_text(
-        path.read_text(encoding="utf-8").replace(
-            "PR-8 has not started",
-            "PR-8 has started",
-        ),
+        path.read_text(encoding="utf-8")
+        .replace("PR-9 not started", "PR-9 has started")
+        .replace("PR-9 has not started", "PR-9 has started"),
         encoding="utf-8",
     )
     result = run_check_release(repo)
     assert result.returncode == 1
     assert (
-        "does not state the PR-7 progress fact 'PR-8 has not started'"
+        "must state that PR-9 has not started"
     ) in result.stdout
-    assert "contains the false PR-7 claim 'PR-8 has started'" in result.stdout
+    assert (
+        "does not state the PR-8 progress fact 'PR-9 not started'"
+    ) in result.stdout
+    assert "contains the false PR-8 claim 'PR-9 has started'" in result.stdout
 
 
 def test_release_checker_fails_when_v060_direction_includes_python_client_in_v06(
@@ -1573,9 +1577,22 @@ def test_v060_direction_document_exists_and_is_planned():
     assert "not part of v0.6" in text
     for number in range(1, 10):
         assert f"PR-{number}" in text
-    assert "PR-8 has not started" in text
+    assert "PR-9 not started" in text
     assert "Quant Research" in text
     assert "Trading Execution" in text
+
+
+def test_v060_direction_records_pr7_merged_and_pr8_stage():
+    text = (ROOT / "docs" / "v0_6_0_direction.md").read_text(encoding="utf-8")
+    assert "PR #41" in text
+    assert "2026-08-07T13:25:52Z" in text
+    assert "15ce0ef" in text
+    assert "PR-7 COMPLETE" in text
+    assert "main verified" in text
+    assert "PR-8" in text
+    assert "PR-9 not started" in text
+    assert "0.5.1" in text
+    assert "not released" in text
 
 
 def test_v060_direction_docs_are_boundary_contracts():
@@ -2724,22 +2741,21 @@ def test_release_checker_fails_when_direction_reverts_pr6_stage(tmp_path):
 
 
 def test_release_checker_fails_when_direction_loses_pr7_record(tmp_path):
-    # Mutation: removing the PR-7 implementation claim from the progress
-    # record must fail the checker.
+    # Mutation: reverting the merged PR-7 progress record to the
+    # pre-PR-7 wording must fail the checker.
     repo = copy_repo(tmp_path)
     path = repo / "docs" / "v0_6_0_direction.md"
     path.write_text(
         path.read_text(encoding="utf-8").replace(
-            "implements the Dataset Catalog CLI",
-            "defines the Dataset Catalog CLI roadmap",
+            "PR-7 merged",
+            "PR-7 has not started",
         ),
         encoding="utf-8",
     )
     result = run_check_release(repo)
     assert result.returncode == 1
     assert (
-        "does not state the PR-7 progress fact "
-        "'implements the Dataset Catalog CLI'"
+        "does not state the PR-7 progress fact 'PR-7 merged'"
     ) in result.stdout
 
 
@@ -3508,3 +3524,252 @@ def test_release_checker_fails_when_ci_loses_pr6_smoke(tmp_path):
     result = run_check_release(repo)
     assert result.returncode == 1
     assert "PR-6 public API smoke marker" in result.stdout
+
+
+# --- V0.6.0 integrated acceptance (PR-8) ------------------------------------
+
+
+def test_release_checker_fails_without_acceptance_doc(tmp_path):
+    # Mutation: the acceptance document must exist.
+    repo = copy_repo(tmp_path)
+    (repo / "docs" / "v0_6_0_acceptance.md").unlink()
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "docs/v0_6_0_acceptance.md is missing" in result.stdout
+
+
+def test_release_checker_fails_when_acceptance_doc_claims_released(tmp_path):
+    # Mutation: an affirmative "v0.6.0 is released" claim in the
+    # acceptance document must fail the checker even when the required
+    # facts are present (the legitimate "v0.6.0 is not released" wording
+    # is preserved in the real document).
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_6_0_acceptance.md"
+    path.write_text(
+        path.read_text(encoding="utf-8") + "\nv0.6.0 is released.\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "false claim 'v0.6.0 is released'" in result.stdout
+
+
+def test_release_checker_fails_when_acceptance_doc_loses_pyarrow_fact(tmp_path):
+    # Mutation: deleting an audited PyArrow writer fact must fail the
+    # checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_6_0_acceptance.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "PyArrow 25.0.0", "PyArrow 26.0.0"
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "does not state the fact 'PyArrow 25.0.0'" in result.stdout
+
+
+def test_release_checker_fails_when_acceptance_doc_claims_byte_identical(
+    tmp_path,
+):
+    # Mutation: a false byte-identical cross-writer claim must fail the
+    # checker (the audited source Parquet physical bytes DIFFER).
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_6_0_acceptance.md"
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        + "\nThe source Parquet bytes are byte-identical across writers.\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "false claim 'byte-identical across writers'" in result.stdout
+
+
+def test_release_checker_fails_when_acceptance_doc_removes_physical_provenance(
+    tmp_path,
+):
+    # Mutation: claiming physical_snapshot_hash is not part of the
+    # physical source provenance must fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_6_0_acceptance.md"
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        + "\nphysical_snapshot_hash is not part of the provenance.\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "false claim 'physical_snapshot_hash is not part of'" in result.stdout
+
+
+def test_release_checker_fails_when_acceptance_doc_loses_frozen_generation_id(
+    tmp_path,
+):
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_6_0_acceptance.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "f70e0c89793a1ccfb51d8a16720a8446a74989415ad7c491608d19e2dd759fb3",
+            "f70e0c89793a1ccfb51d8a16720a8446a74989415ad7c491608d19e2dd759fb4",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "must record the frozen generation content id" in result.stdout
+
+
+def test_release_checker_fails_when_acceptance_doc_claims_pr9_started(tmp_path):
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_6_0_acceptance.md"
+    path.write_text(
+        path.read_text(encoding="utf-8") + "\nPR-9 has started.\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "false claim 'PR-9 has started'" in result.stdout
+
+
+def test_release_checker_fails_without_acceptance_helpers(tmp_path):
+    repo = copy_repo(tmp_path)
+    (repo / "tests" / "v060_acceptance_helpers.py").unlink()
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "tests/v060_acceptance_helpers.py is missing" in result.stdout
+
+
+def test_release_checker_fails_without_fixture_bundle(tmp_path):
+    repo = copy_repo(tmp_path)
+    (repo / "tests" / "fixtures" / "v060_portability" / "canonical_fixture.b64").unlink()
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "canonical_fixture.b64 is missing" in result.stdout
+
+
+def test_release_checker_fails_when_frozen_fixture_generation_id_changes(
+    tmp_path,
+):
+    # Mutation: re-baselining the frozen generation content id in the
+    # acceptance helpers must fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "tests" / "v060_acceptance_helpers.py"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "f70e0c89793a1ccfb51d8a16720a8446a74989415ad7c491608d19e2dd759fb3",
+            "f70e0c89793a1ccfb51d8a16720a8446a74989415ad7c491608d19e2dd759fb4",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "the frozen FIXTURE_GENERATION_ID must not change" in result.stdout
+
+
+def test_release_checker_fails_when_frozen_fixture_plan_sha_changes(tmp_path):
+    repo = copy_repo(tmp_path)
+    path = repo / "tests" / "v060_acceptance_helpers.py"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "78cd9e895ee966722c83db8d5388a49c635b8fd448fe8de796e2b56dcebf964b",
+            "78cd9e895ee966722c83db8d5388a49c635b8fd448fe8de796e2b56dcebf964c",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "the frozen FROZEN_RELATIVE_PLAN_SHA256 must not change" in result.stdout
+
+
+def test_release_checker_fails_when_pyarrow_pinned(tmp_path):
+    # Mutation: pinning pyarrow==24.0.0 in pyproject.toml must fail the
+    # checker (the pyarrow>=16 boundary must stay).
+    repo = copy_repo(tmp_path)
+    path = repo / "pyproject.toml"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            '"pyarrow>=16"', '"pyarrow==24.0.0"'
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "must keep the pyarrow>=16 dependency" in result.stdout
+    assert "must never pin a PyArrow writer version" in result.stdout
+
+
+def test_release_checker_fails_when_ci_matrix_changes(tmp_path):
+    repo = copy_repo(tmp_path)
+    ci = repo / ".github" / "workflows" / "ci.yml"
+    ci.write_text(
+        ci.read_text(encoding="utf-8").replace(
+            '["3.11", "3.14"]', '["3.11", "3.13", "3.14"]'
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "CI python matrix must stay exactly" in result.stdout
+
+
+def test_release_checker_fails_without_portability_job(tmp_path):
+    repo = copy_repo(tmp_path)
+    ci = repo / ".github" / "workflows" / "ci.yml"
+    ci.write_text(
+        ci.read_text(encoding="utf-8").replace(
+            "portability-pyarrow24", "portability-pyarrow25"
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "portability-pyarrow24 job" in result.stdout
+
+
+def test_release_checker_fails_when_portability_job_unpinned(tmp_path):
+    # Mutation: the portability job installing a non-pinned pyarrow must
+    # fail the checker.
+    repo = copy_repo(tmp_path)
+    ci = repo / ".github" / "workflows" / "ci.yml"
+    ci.write_text(
+        ci.read_text(encoding="utf-8").replace(
+            'pip install "pyarrow==24.0.0"',
+            'pip install "pyarrow>=24.0.0"',
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "must install pyarrow==24.0.0" in result.stdout
+
+
+def test_release_checker_fails_when_ci_loses_acceptance_marker(tmp_path):
+    repo = copy_repo(tmp_path)
+    ci = repo / ".github" / "workflows" / "ci.yml"
+    ci.write_text(
+        ci.read_text(encoding="utf-8").replace(
+            "PR8_INTEGRATED_ACCEPTANCE_OK", "PR8_MISSING_MARKER"
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "PR8_INTEGRATED_ACCEPTANCE_OK" in result.stdout
+
+
+def test_release_checker_allows_negated_release_wording_in_acceptance_doc(
+    tmp_path,
+):
+    # "v0.6.0 is not released" is the required legitimate wording and must
+    # never be rejected.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_6_0_acceptance.md"
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        + "\nv0.6.0 is not released by PR-8.\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 0, result.stdout + result.stderr

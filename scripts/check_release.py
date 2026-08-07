@@ -216,11 +216,11 @@ V060_DIRECTION_NONGOAL_MARKERS = (
     "backtesting",
     "automatic trading",
 )
-# The v0.6.0 direction document must explicitly state that PR-8 has not
-# started (the PR-7 query surface is fixed as the read-only
-# dataset-catalog-list filters; there is no standalone query CLI).
+# The v0.6.0 direction document must explicitly state that PR-9 has not
+# started (the v0.6.0 release preparation is the only PR that bumps the
+# version; PR-8 does not release v0.6.0).
 V060_NOT_IMPLEMENTED_MARKER = (
-    "PR-8 has not started"
+    "PR-9 has not started"
 )
 # Facts the v0.6.0 architecture ADR must state.
 ADR_V060_FACTS = (
@@ -404,12 +404,15 @@ V060_DIRECTION_PR6_FACTS = (
 V060_DIRECTION_PR6_FALSE_CLAIMS = (
     "V0.6.0 is released",
 )
-# Facts the v0.6.0 direction document must state about the PR-7 stage.
+# Facts the v0.6.0 direction document must state about the merged PR-7
+# stage.
 V060_DIRECTION_PR7_FACTS = (
-    "PR-7 (this PR",
-    "feat/v0.6.0-dataset-catalog-cli",
-    "implements the Dataset Catalog CLI",
-    "PR-8 has not started",
+    "PR #41",
+    "PR-7 merged",
+    "2026-08-07T13:25:52Z",
+    "15ce0ef",
+    "PR-7 COMPLETE",
+    "main verified",
     "PR-9 not started",
     "not released",
 )
@@ -417,8 +420,71 @@ V060_DIRECTION_PR7_FACTS = (
 # document's PR-7 record.
 V060_DIRECTION_PR7_FALSE_CLAIMS = (
     "V0.6.0 is released",
-    "PR-8 has started",
 )
+# Facts the v0.6.0 direction document must state about the PR-8 stage.
+V060_DIRECTION_PR8_FACTS = (
+    "PR #41",
+    "15ce0ef",
+    "PR-7 COMPLETE",
+    "PR-8",
+    "PR-9 not started",
+    "not released",
+    "0.5.1",
+)
+# Contradictory claims that must never appear in the v0.6.0 direction
+# document's PR-8 record.
+V060_DIRECTION_PR8_FALSE_CLAIMS = (
+    "V0.6.0 is released",
+    "PR-9 has started",
+)
+# Required facts the v0.6.0 integrated acceptance document must state.
+V060_ACCEPTANCE_FACTS = (
+    "Integrated Acceptance",
+    "determinism",
+    "corruption",
+    "recovery",
+    "portability",
+    "security",
+    "usability",
+    "PyArrow 24.0.0",
+    "PyArrow 25.0.0",
+    "pyarrow>=16",
+    "static reference artifact",
+    "physical source provenance",
+    "PR-9",
+    "0.5.1",
+    "not released",
+)
+# Contradictory claims that must never appear in the v0.6.0 integrated
+# acceptance document even when the required facts are present.
+V060_ACCEPTANCE_FALSE_CLAIMS = (
+    # False cross-writer claim: the source Parquet physical bytes DIFFER.
+    "byte-identical across writers",
+    "identical physical bytes across writers",
+    # False provenance claim: physical_snapshot_hash IS part of the
+    # physical source provenance.
+    "physical_snapshot_hash is not part of",
+    "physical_snapshot_hash does not enter",
+    # PR-9 must never be claimed started or released.
+    "PR-9 has started",
+    "PR-9 is in progress",
+    "PR-9 merged",
+)
+# An affirmative "v0.6.0 is released" claim is rejected; the legitimate
+# "v0.6.0 is not released" wording is allowed.
+V060_RELEASED_RE = re.compile(r"(?<!not )v0\.6\.0 is released", re.IGNORECASE)
+# The frozen static reference artifact identity values (mutation guards).
+FROZEN_FIXTURE_GENERATION_ID = (
+    "f70e0c89793a1ccfb51d8a16720a8446a74989415ad7c491608d19e2dd759fb3"
+)
+FROZEN_RELATIVE_PLAN_SHA256 = (
+    "78cd9e895ee966722c83db8d5388a49c635b8fd448fe8de796e2b56dcebf964b"
+)
+FROZEN_FIXTURE_BUILD_ID = (
+    "ce939b043010eb3a4c12b063734edd320bb44801bbfa44715010d5330935a124"
+)
+# The exact static reference artifact bundle byte size (mutation guard).
+FROZEN_BUNDLE_BYTE_SIZE = 38661
 # The v0.6.0 Dataset Catalog contract production modules that must exist.
 DATASET_CATALOG_MODULES = (
     "src/market_vault/dataset/dataset_catalog_models.py",
@@ -1021,8 +1087,20 @@ def check_v060_direction(root: Path) -> list[str]:
             )
     if V060_NOT_IMPLEMENTED_MARKER not in text:
         failures.append(
-            "docs/v0_6_0_direction.md must state that PR-8 has not started"
+            "docs/v0_6_0_direction.md must state that PR-9 has not started"
         )
+    for fact in V060_DIRECTION_PR8_FACTS:
+        if fact not in text:
+            failures.append(
+                "docs/v0_6_0_direction.md does not state the PR-8 "
+                f"progress fact {fact!r}"
+            )
+    for claim in V060_DIRECTION_PR8_FALSE_CLAIMS:
+        if claim in text:
+            failures.append(
+                "docs/v0_6_0_direction.md contains the false PR-8 "
+                f"claim {claim!r}"
+            )
     for fact in V060_DIRECTION_IDENTITY_FACTS:
         if fact not in text:
             failures.append(
@@ -1786,6 +1864,124 @@ def check_dataset_catalog_cli(root: Path) -> list[str]:
     return failures
 
 
+def check_v060_acceptance(root: Path) -> list[str]:
+    """Static PR-8 checks for the v0.6.0 integrated acceptance document:
+    the required fact markers are stated, the frozen static-reference
+    values are recorded, no affirmative release claim appears, and no
+    false cross-writer / provenance / PR-9 claim appears."""
+    path = root / "docs" / "v0_6_0_acceptance.md"
+    if not path.exists():
+        return ["docs/v0_6_0_acceptance.md is missing"]
+    text = path.read_text(encoding="utf-8")
+    failures = []
+    for fact in V060_ACCEPTANCE_FACTS:
+        if fact not in text:
+            failures.append(
+                f"docs/v0_6_0_acceptance.md does not state the fact {fact!r}"
+            )
+    for claim in V060_ACCEPTANCE_FALSE_CLAIMS:
+        if claim in text:
+            failures.append(
+                f"docs/v0_6_0_acceptance.md contains the false claim {claim!r}"
+            )
+    if V060_RELEASED_RE.search(text):
+        failures.append(
+            "docs/v0_6_0_acceptance.md contains the false claim "
+            "'v0.6.0 is released'"
+        )
+    if FROZEN_FIXTURE_GENERATION_ID not in text:
+        failures.append(
+            "docs/v0_6_0_acceptance.md must record the frozen generation "
+            "content id"
+        )
+    if FROZEN_RELATIVE_PLAN_SHA256 not in text:
+        failures.append(
+            "docs/v0_6_0_acceptance.md must record the frozen relative "
+            "build-plan sha256"
+        )
+    return failures
+
+
+def check_v060_frozen_fixture(root: Path) -> list[str]:
+    """Static PR-8 mutation guards for the static reference artifact: the
+    frozen identity values in the acceptance helpers must never change,
+    and the base64 bundle + metadata JSON must keep existing at their
+    exact frozen byte size."""
+    helpers = root / "tests" / "v060_acceptance_helpers.py"
+    bundle = (
+        root / "tests" / "fixtures" / "v060_portability" / "canonical_fixture.b64"
+    )
+    metadata = (
+        root / "tests" / "fixtures" / "v060_portability" / "fixture_metadata.json"
+    )
+    failures = []
+    if not helpers.exists():
+        return ["tests/v060_acceptance_helpers.py is missing"]
+    text = helpers.read_text(encoding="utf-8")
+    if FROZEN_FIXTURE_GENERATION_ID not in text:
+        failures.append("the frozen FIXTURE_GENERATION_ID must not change")
+    if FROZEN_RELATIVE_PLAN_SHA256 not in text:
+        failures.append("the frozen FROZEN_RELATIVE_PLAN_SHA256 must not change")
+    if FROZEN_FIXTURE_BUILD_ID not in text:
+        failures.append("the frozen FIXTURE_BUILD_ID must not change")
+    if not bundle.exists():
+        failures.append(
+            "tests/fixtures/v060_portability/canonical_fixture.b64 is missing"
+        )
+    elif (
+        len(bundle.read_bytes().replace(b"\r\n", b"\n")) != FROZEN_BUNDLE_BYTE_SIZE
+    ):
+        failures.append("the static reference artifact bundle size must not change")
+    if not metadata.exists():
+        failures.append(
+            "tests/fixtures/v060_portability/fixture_metadata.json is missing"
+        )
+    return failures
+
+
+def check_pyarrow_dependency(root: Path) -> list[str]:
+    """The supported PyArrow boundary is ``pyarrow>=16`` (never pinned to
+    a writer version); the portability audit pins the audited writers only
+    in the isolated CI job."""
+    path = root / "pyproject.toml"
+    if not path.exists():
+        return ["pyproject.toml is missing"]
+    text = path.read_text(encoding="utf-8")
+    failures = []
+    if '"pyarrow>=16"' not in text:
+        failures.append("pyproject.toml must keep the pyarrow>=16 dependency")
+    if re.search(r"pyarrow\s*==\s*\d", text):
+        failures.append(
+            "pyproject.toml must never pin a PyArrow writer version (pyarrow==)"
+        )
+    return failures
+
+
+def check_ci_pr8(root: Path) -> list[str]:
+    """The CI matrix stays exactly ``["3.11", "3.14"]``, the new
+    ``portability-pyarrow24`` job installs ``pyarrow==24.0.0`` explicitly,
+    and the package job carries the ``PR8_INTEGRATED_ACCEPTANCE_OK``
+    marker."""
+    path = root / ".github" / "workflows" / "ci.yml"
+    if not path.exists():
+        return [".github/workflows/ci.yml is missing"]
+    text = path.read_text(encoding="utf-8")
+    failures = []
+    if '"3.11", "3.14"' not in text:
+        failures.append('CI python matrix must stay exactly ["3.11", "3.14"]')
+    if "portability-pyarrow24" not in text:
+        failures.append("CI is missing the portability-pyarrow24 job")
+    if 'pip install "pyarrow==24.0.0"' not in text:
+        failures.append(
+            "CI portability-pyarrow24 job must install pyarrow==24.0.0"
+        )
+    if "PR8_INTEGRATED_ACCEPTANCE_OK" not in text:
+        failures.append(
+            "CI package job must carry the PR8_INTEGRATED_ACCEPTANCE_OK marker"
+        )
+    return failures
+
+
 def check_old_release_notes(root: Path) -> list[str]:
     failures = []
     if not (root / "docs" / "release_v0_5_0.md").exists():
@@ -2022,6 +2218,10 @@ def main() -> int:
         ("dataset catalog", check_dataset_catalog),
         ("dataset catalog pr6", check_dataset_catalog_pr6),
         ("dataset catalog cli", check_dataset_catalog_cli),
+        ("v0.6.0 acceptance", check_v060_acceptance),
+        ("v0.6.0 frozen fixture", check_v060_frozen_fixture),
+        ("pyarrow dependency", check_pyarrow_dependency),
+        ("CI PR-8 portability", check_ci_pr8),
         ("old release notes", check_old_release_notes),
         ("warning guard", check_warning_guard),
         ("examples", check_examples),

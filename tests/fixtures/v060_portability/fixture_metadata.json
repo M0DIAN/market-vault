@@ -1,0 +1,47 @@
+{
+  "fixture_name": "canonical_fixture",
+  "artifact": "one verified Canonical build directory (PyArrow25-produced)",
+  "bundle_file": "canonical_fixture.b64",
+  "bundle_format": "line-separated TSV: <relative POSIX member path>\\t<byte size>\\t<sha256>\\t<base64 payload>; member paths contain no '.', '..', absolute prefixes, or OS separators",
+  "canonical_build_id": "ce939b043010eb3a4c12b063734edd320bb44801bbfa44715010d5330935a124",
+  "produced_by_pyarrow_version": "25.0.0",
+  "logical_content": {
+    "symbol": "US.MU",
+    "trade_date": "2026-07-01",
+    "interval": "1m",
+    "requested_session": "ALL",
+    "adjustment": "NONE",
+    "source_schema_version": "10.9",
+    "bar_count": 10,
+    "bar_start": "2026-07-01 09:30:00 America/New_York",
+    "created_at": "2026-08-04T12:00:00+00:00",
+    "pinned_wall_clock": "2026-08-01T01:00:00Z",
+    "feature_spec": "simple_return window_bars=2",
+    "label_spec": "forward_return horizon=2"
+  },
+  "frozen_generation_content_id": "f70e0c89793a1ccfb51d8a16720a8446a74989415ad7c491608d19e2dd759fb3",
+  "frozen_relative_plan_sha256": "78cd9e895ee966722c83db8d5388a49c635b8fd448fe8de796e2b56dcebf964b",
+  "decode_contract": "decode every line to <target>/<path> (directories implicit); then the build directory must be named build_id=<canonical_build_id> before load_verified_canonical_build; byte sizes and sha256 must match after decode",
+  "members": [
+    {
+      "path": "_SUCCESS",
+      "byte_size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "bars/interval=1m/adjustment=NONE/code=US.MU/market_calendar_date=2026-07-01/part-00000.parquet",
+      "byte_size": 20073,
+      "sha256": "e91d29566599001c85bdcdf6a7baf7d8ff9e730ef2a8cbedcc2fd773a12f4169"
+    },
+    {
+      "path": "manifest.json",
+      "byte_size": 2769,
+      "sha256": "1add154e4756e1c559a12287bc446789f6392985c8ab337aaf9ff7c9266f50a9"
+    },
+    {
+      "path": "resolution.jsonl",
+      "byte_size": 5840,
+      "sha256": "7a8e86fa355eb65de09bfb1f55e0cba0f19278aef60b5a3f5194f255b16118b5"
+    }
+  ]
+}
