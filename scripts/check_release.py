@@ -206,15 +206,20 @@ V061_DIRECTION_FACTS = (
     "0.6.0 through PR-3",
     "bumped to 0.6.1 only in PR-4",
     "maintenance release",
-    "PR-1 is the current maintenance-baseline and direction stage",
+    "PR-1 is complete and merged as PR #44 at",
+    "6bb9a9500fae53511ff964f47e5ccea20f3d91f7",
+    "PR-2 is the current CLI/help/error/usability consistency-polish stage",
     "V0.6.1 is not released",
-    "PR-2 has not started",
+    "PR-3 has not started",
 )
 # The v0.6.1 direction document must not regress to stale current-state
-# wording: PR-1 has started (it is the current maintenance-baseline stage),
-# while the formal release is not completed and PR-2 has not started.
+# wording: PR-1 is complete (not the current stage), PR-2 is the current
+# stage (it has started), the formal release is not completed, and PR-3
+# has not started.
 V061_DIRECTION_STALE_PHRASES = (
     "The release is not started",
+    "PR-1 is the current maintenance-baseline and direction stage",
+    "PR-2 has not started",
 )
 # The v0.6.1 direction document must mark the explicit non-goals; none of
 # them may be smuggled into a v0.6.1 PR.
@@ -247,6 +252,12 @@ V061_DIRECTION_INVARIANT_MARKERS = (
     "Catalog formal contract unchanged",
     "existing immutable artifacts require no migration/rewrite",
     "CLI command set unchanged",
+)
+# Facts the v0.6.1 CLI usability audit document (the PR-2 deliverable)
+# must state.
+V061_CLI_USABILITY_AUDIT_MARKERS = (
+    "MarketVault v0.6.1 CLI Usability Audit",
+    "6bb9a9500fae53511ff964f47e5ccea20f3d91f7",
 )
 # Contradictory claims that must never appear in the v0.6.1 direction
 # document even when the required non-goal markers are present.
@@ -2529,6 +2540,23 @@ def check_v061_direction(root: Path) -> list[str]:
     return failures
 
 
+def check_v061_cli_usability_audit(root: Path) -> list[str]:
+    """The v0.6.1 PR-2 CLI usability audit document exists and states the
+    audited baseline."""
+    path = root / "docs" / "v0_6_1_cli_usability_audit.md"
+    if not path.exists():
+        return ["docs/v0_6_1_cli_usability_audit.md is missing"]
+    text = path.read_text(encoding="utf-8")
+    failures = []
+    for marker in V061_CLI_USABILITY_AUDIT_MARKERS:
+        if marker not in text:
+            failures.append(
+                "docs/v0_6_1_cli_usability_audit.md does not state the "
+                f"fact {marker!r}"
+            )
+    return failures
+
+
 def main() -> int:
     root = Path(__file__).resolve().parents[1]
     checks = [
@@ -2545,6 +2573,7 @@ def main() -> int:
         ("v0.5.1 direction", check_v051_direction),
         ("v0.6.0 direction", check_v060_direction),
         ("v0.6.1 direction", check_v061_direction),
+        ("v0.6.1 CLI usability audit", check_v061_cli_usability_audit),
         ("v0.6.0 ADR", check_v060_adr),
         ("sample generation modules", check_sample_generation_modules),
         ("sample generation contract", check_sample_generation_contract),

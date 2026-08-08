@@ -2156,9 +2156,10 @@ def test_semantic_feature_change_changes_dataset_id(fixtures, tmp_path, capsys):
 EXAMPLES_DIR = ROOT / "examples" / "dataset_cli"
 
 #: Every ``--flag`` token the example README may legitimately mention.
-#: The CLI-only flags are real commands; the negated flags and
-#: ``--split-spec`` appear only as "not supported" statements, never as
-#: usable options.
+#: The CLI-only flags are real commands; ``--settings`` is the real
+#: top-level option mentioned only as "ignored by Dataset commands"; the
+#: negated flags and ``--split-spec`` appear only as "not supported"
+#: statements, never as usable options.
 _KNOWN_EXAMPLE_FLAGS = frozenset(
     {
         "--plan",
@@ -2178,6 +2179,7 @@ _KNOWN_EXAMPLE_FLAGS = frozenset(
         "--repair",
         "--discover",
         "--now",
+        "--settings",
     }
 )
 
