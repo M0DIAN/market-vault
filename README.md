@@ -1,6 +1,50 @@
-# MarketVault v0.6.0
+# MarketVault v0.6.1
 
 MarketVault is a local historical market database for moomoo OpenD. V0.1 focused on closed-date stock, ETF, and option candlesticks. V0.2 added option contract static metadata and daily option volatility datasets. V0.3 adds the trading-calendar-driven collection and audit toolchain: a local trading calendar, resumable historical backfill, immutable snapshots, inventory reports, trading-day coverage audits, and intraday integrity audits. V0.4 adds the Canonical Dataset and ML Foundation: immutable Canonical builds from audited COMPLETE snapshots, a verified Canonical reader, three-clock market-bar semantics, two-clock point-in-time sample assembly, versioned Feature/Label spec contracts, deterministic Dataset identity/manifest contracts, chronological splits with actual-label-end purging, and the leakage threat-model regression suite. V0.5 adds the Deterministic Dataset Builder: an executable, verified, fail-closed pipeline that runs built-in Feature and Label transforms over verified Canonical builds, computes real `label_status` and `actual_label_end_time`, assigns chronological splits with actual-label-end purge, orchestrates immutable Dataset materialization, and reads the results back through a verified Dataset reader and three formal CLI commands. V0.5.1 is the stability and usability maintenance release on top of V0.5.0. V0.6 adds the Deterministic Sample Generator and the immutable Dataset Catalog: explicit generation plans produce deterministic PITSampleRequest sequences as ordinary Dataset build plans, and verified immutable Datasets project into immutable Catalog snapshots with a verified reader and read-only build/verify/list/show CLI discovery.
+
+## V0.6.1 stability, auditability, and usability maintenance
+
+V0.6.1 adds NO new product capability. It is the fixed maintenance patch
+on top of the formally released and sealed V0.6.0 baseline, delivering
+exactly three maintenance areas:
+
+### A. Lifecycle / release-state truth
+
+- The v0.6.0 formal release state is documented and sealed.
+- The v0.6.1 fixed maintenance direction is established.
+
+### B. CLI usability wording
+
+- Dataset / Sample Generation / Catalog help, error, and path terminology
+  consistency polish.
+- Top-level `--settings` help clarification.
+- No command, business argument, default, exit-code, or JSON behavior changes.
+
+### C. CI/package auditability
+
+- GitHub Actions runtime majors: `actions/checkout@v6`,
+  `actions/setup-python@v6`, and `actions/upload-artifact@v7`.
+- PyArrow24 CI wording corrected to compatibility runtime terminology.
+- `SHA256SUMS.txt` per-package manifest generation and verification.
+- Source-SHA / run-attempt-bound workflow artifact with 30-day retention
+  and `overwrite: false`.
+- Artifact id / url / digest metadata and `V061_PACKAGE_AUDIT_OK` closure.
+
+### Compatibility
+
+V0.6.1 keeps every formal boundary unchanged:
+
+```text
+identity unchanged
+schema unchanged
+formal contracts unchanged
+runtime dependencies unchanged
+CLI command set unchanged
+no artifact migration/rewrite
+```
+
+This section is release-facing package documentation, not the formal
+remote release-state record: the v0.6.1 formal release does not exist yet.
 
 ## V0.6.0 deterministic sample generation and Dataset Catalog
 

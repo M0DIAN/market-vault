@@ -4,6 +4,59 @@ All notable changes to MarketVault are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-08-08
+
+### Changed
+
+- Dataset / Sample Generation / Dataset Catalog CLI help, error, and path
+  terminology consistency polish.
+- Top-level `--settings` help clarification.
+- GitHub Actions runtime majors: `actions/checkout@v6`,
+  `actions/setup-python@v6`, and `actions/upload-artifact@v7`.
+- PyArrow24 CI terminology now describes the audited compatibility
+  runtime rather than a writer.
+
+### Added
+
+- v0.6.1 CI/package auditability regression guards.
+- Per-package `SHA256SUMS.txt` generation and verification.
+- Retained workflow artifact containing exactly: wheel, sdist,
+  `SHA256SUMS.txt`.
+- Source-SHA / run-attempt artifact provenance.
+- Artifact id / url / digest verification and the
+  `V061_PACKAGE_AUDIT_OK` marker.
+
+### Compatibility
+
+- No new product capability.
+- CLI command set unchanged.
+- Business arguments unchanged.
+- Defaults unchanged.
+- Exit-code semantics unchanged.
+- JSON schemas unchanged.
+- Canonical identity unchanged.
+- Dataset identity unchanged.
+- Sample Generation identity unchanged.
+- Catalog identities unchanged.
+- Formal contracts unchanged.
+- Runtime dependencies unchanged.
+- `pyarrow>=16` unchanged.
+- `requires-python >=3.11` unchanged.
+- Normal CI remains Python 3.11 and 3.14.
+- PyArrow24 full-suite compatibility gate remains exact `24.0.0`.
+- No artifact migration or rewrite.
+
+### Known boundaries
+
+- No Python Client.
+- No REST API.
+- No `dataset-catalog-query`.
+- No ML training.
+- No backtesting.
+- No signals.
+- No automatic trading.
+- No Trading Execution.
+
 ## [0.6.0] - 2026-08-08
 
 ### Added
@@ -347,6 +400,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Historical K-line collection for closed dates (`collect`), query layer
   (`query`), and option datasets.
 
+[0.6.1]: https://github.com/M0DIAN/market-vault/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/M0DIAN/market-vault/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/M0DIAN/market-vault/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/M0DIAN/market-vault/compare/v0.4.0...v0.5.0
