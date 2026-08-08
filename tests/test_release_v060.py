@@ -1160,6 +1160,12 @@ def test_v061_direction_document_states_planned_maintenance():
         assert f"PR-{number}" in text
     assert "0.6.0 through PR-3" in text
     assert "bumped to 0.6.1 only in PR-4" in text
+    # The current-stage narrative: PR-1 has started; the formal release is
+    # not completed and PR-2 has not started.
+    assert "PR-1 is the current maintenance-baseline and direction stage" in text
+    assert "V0.6.1 is not released" in text
+    assert "PR-2 has not started" in text
+    assert "The release is not started" not in text
     for marker in (
         "Python Client",
         "REST API",
@@ -1273,6 +1279,28 @@ def test_release_checker_fails_when_v061_direction_invariant_lost(tmp_path):
     assert (
         "does not state the frozen invariant "
         "'Canonical identity algorithms unchanged'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_v061_direction_reverts_current_stage(
+    tmp_path,
+):
+    # Reverting the current-stage narrative to the stale "The release is
+    # not started" wording (PR-1 has started and is PR #44) must fail the
+    # checker: the stale phrase is banned and the current facts are lost.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_6_1_direction.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "V0.6.1 is not released. PR-2 has not started.",
+            "The release is not started.",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "still contains the stale wording 'The release is not started'"
     ) in result.stdout
 
 

@@ -206,6 +206,15 @@ V061_DIRECTION_FACTS = (
     "0.6.0 through PR-3",
     "bumped to 0.6.1 only in PR-4",
     "maintenance release",
+    "PR-1 is the current maintenance-baseline and direction stage",
+    "V0.6.1 is not released",
+    "PR-2 has not started",
+)
+# The v0.6.1 direction document must not regress to stale current-state
+# wording: PR-1 has started (it is the current maintenance-baseline stage),
+# while the formal release is not completed and PR-2 has not started.
+V061_DIRECTION_STALE_PHRASES = (
+    "The release is not started",
 )
 # The v0.6.1 direction document must mark the explicit non-goals; none of
 # them may be smuggled into a v0.6.1 PR.
@@ -2505,6 +2514,12 @@ def check_v061_direction(root: Path) -> list[str]:
             failures.append(
                 "docs/v0_6_1_direction.md does not state the frozen "
                 f"invariant {marker!r}"
+            )
+    for phrase in V061_DIRECTION_STALE_PHRASES:
+        if phrase in text:
+            failures.append(
+                "docs/v0_6_1_direction.md still contains the stale "
+                f"wording {phrase!r}"
             )
     for claim in V061_DIRECTION_FALSE_CLAIMS:
         if claim in text:
