@@ -40,7 +40,7 @@ examples/dataset_cli/
 - The project is installed (`pip install -e .` or the equivalent editable
   install) and `market-vault --version` prints `market-vault 0.6.0`.
 - One or more **verified Canonical final build directories** exist. Pass
-  the final Dataset build directory itself (`.../canonical/dataset=market_bars_canonical/<canonical_build_id>`),
+  the final Canonical build directory itself (`.../canonical/dataset=market_bars_canonical/<canonical_build_id>`),
   never its parent and never a `latest` path.
 - The Dataset commands run fully offline; no settings file, OpenD host, or
   network is needed. The top-level `--settings` option is used only by
@@ -180,13 +180,13 @@ failure.
 
 Each entry: symptom / cause / correct handling.
 
-1. **Canonical parent root used instead of the final build dir** —
-   `dataset-build` fails on a directory without the verified-build layout.
-   Cause: the plan pinned a parent directory. Correct: pin the final
-   `<canonical_build_id>` directory itself.
+1. **Canonical parent root used instead of the final Canonical build dir**
+   — `dataset-build` fails on a directory without the verified-build
+   layout. Cause: the plan pinned a parent directory. Correct: pin the
+   final `<canonical_build_id>` directory itself.
 2. **`latest` path used** — the build fails. Cause: `latest` is never a
    formal Canonical input; the CLI never scans or selects it. Correct:
-   pass the explicit final Dataset build directory.
+   pass the explicit final Canonical build directory.
 3. **Canonical final dir missing `_SUCCESS`** — the build fails closed.
    Correct: use a complete committed Canonical build.
 4. **Canonical verification failure** — the build fails with the reader's
@@ -235,7 +235,6 @@ Each entry: symptom / cause / correct handling.
     Correct: point at the final Dataset build directory.
 20. **Conflicting final build** — an existing different Dataset build
     directory under the same `dataset_id` name fails closed and is never
-    under the same `dataset_id` name fails closed and is never
     overwritten. Correct: choose a different `output_root` or investigate
     the conflict.
 21. **Staging residue** — a leftover staging directory from a crashed
