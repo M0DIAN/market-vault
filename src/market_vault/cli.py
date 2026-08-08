@@ -64,7 +64,14 @@ def _resolve_symbols(args) -> list[str]:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="market-vault")
-    parser.add_argument("--settings", default="config/settings.yaml")
+    parser.add_argument(
+        "--settings",
+        default="config/settings.yaml",
+        help=(
+            "Settings file for settings-backed commands; Dataset, Sample "
+            "Generation, and Dataset Catalog commands ignore it"
+        ),
+    )
     parser.add_argument(
         "--version",
         action="version",

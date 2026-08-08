@@ -40,10 +40,12 @@ examples/dataset_cli/
 - The project is installed (`pip install -e .` or the equivalent editable
   install) and `market-vault --version` prints `market-vault 0.6.0`.
 - One or more **verified Canonical final build directories** exist. Pass
-  the final build directory itself (`.../canonical/dataset=market_bars_canonical/<canonical_build_id>`),
+  the final Canonical build directory itself (`.../canonical/dataset=market_bars_canonical/<canonical_build_id>`),
   never its parent and never a `latest` path.
 - The Dataset commands run fully offline; no settings file, OpenD host, or
-  network is needed.
+  network is needed. The top-level `--settings` option is used only by
+  settings-backed commands; Dataset, Sample Generation, and Dataset
+  Catalog commands ignore it.
 
 ## 2. Generate the example bundle
 
@@ -178,13 +180,13 @@ failure.
 
 Each entry: symptom / cause / correct handling.
 
-1. **Canonical parent root used instead of the final build dir** —
-   `dataset-build` fails on a directory without the verified-build layout.
-   Cause: the plan pinned a parent directory. Correct: pin the final
-   `<canonical_build_id>` directory itself.
+1. **Canonical parent root used instead of the final Canonical build dir**
+   — `dataset-build` fails on a directory without the verified-build
+   layout. Cause: the plan pinned a parent directory. Correct: pin the
+   final `<canonical_build_id>` directory itself.
 2. **`latest` path used** — the build fails. Cause: `latest` is never a
    formal Canonical input; the CLI never scans or selects it. Correct:
-   pass the explicit final build directory.
+   pass the explicit final Canonical build directory.
 3. **Canonical final dir missing `_SUCCESS`** — the build fails closed.
    Correct: use a complete committed Canonical build.
 4. **Canonical verification failure** — the build fails with the reader's
@@ -227,20 +229,21 @@ Each entry: symptom / cause / correct handling.
     working directory. Correct: put the spec files next to the plan or use
     absolute paths.
 18. **`output_root` confused with the build dir** — `dataset-verify` /
-    `dataset-inspect` need the final Dataset directory
+    `dataset-inspect` need the final Dataset build directory
     (`<output_root>/<dataset_id>`), not `output_root` itself.
 19. **verify/inspect pointed at `output_root`** — the reader fails closed.
-    Correct: point at the final Dataset directory.
-20. **Conflicting final build** — an existing different Dataset directory
-    under the same `dataset_id` name fails closed and is never
+    Correct: point at the final Dataset build directory.
+20. **Conflicting final build** — an existing different Dataset build
+    directory under the same `dataset_id` name fails closed and is never
     overwritten. Correct: choose a different `output_root` or investigate
     the conflict.
 21. **Staging residue** — a leftover staging directory from a crashed
     build is reported as a failure and never adopted. Correct: remove the
     residue only after confirming it is not a committed build.
-22. **Cross-trading-day / TRADING_DAYS labels** — unsupported in v0.5;
-    a `TRADING_DAYS` horizon or `cross_trading_day.allow: true` fails
-    closed. Correct: keep `BARS` horizons with `allow: false`.
+22. **Cross-trading-day / TRADING_DAYS labels** — unsupported by the
+    current Dataset contract; a `TRADING_DAYS` horizon or
+    `cross_trading_day.allow: true` fails closed. Correct: keep `BARS`
+    horizons with `allow: false`.
 23. **`--limit` above 1000** — argparse rejects it with exit code 2.
     Correct: page with `--offset` / `--limit` ≤ 1000.
 24. **EMPTY mistaken for failure** — `dataset_status = EMPTY` with

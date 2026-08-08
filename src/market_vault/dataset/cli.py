@@ -202,8 +202,8 @@ def add_dataset_subparsers(subparsers) -> None:
         "--plan",
         required=True,
         metavar="PATH",
-        help="Path to the versioned Dataset build-plan JSON (all build inputs "
-        "are declared in the plan; no other option is accepted)",
+        help="Path to the versioned Dataset build-plan JSON; all Dataset "
+        "build inputs are declared in the plan",
     )
     verify = subparsers.add_parser(
         "dataset-verify",
@@ -213,7 +213,8 @@ def add_dataset_subparsers(subparsers) -> None:
         "--build-dir",
         required=True,
         metavar="PATH",
-        help="Explicit final Dataset directory (<output_root>/<dataset_id>)",
+        help="Explicit final Dataset build directory "
+        "(<output_root>/<dataset_id>)",
     )
     inspect = subparsers.add_parser(
         "dataset-inspect",
@@ -223,14 +224,16 @@ def add_dataset_subparsers(subparsers) -> None:
         "--build-dir",
         required=True,
         metavar="PATH",
-        help="Explicit final Dataset directory (<output_root>/<dataset_id>)",
+        help="Explicit final Dataset build directory "
+        "(<output_root>/<dataset_id>)",
     )
     inspect.add_argument(
         "--offset",
         type=_non_negative_int_arg,
         default=0,
         metavar="N",
-        help="Row offset (default 0; rows are sliced, never reordered)",
+        help="Zero-based row offset (default 0; rows are sliced, never "
+        "reordered)",
     )
     inspect.add_argument(
         "--limit",

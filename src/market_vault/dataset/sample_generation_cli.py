@@ -151,9 +151,8 @@ def add_sample_generation_subparsers(subparsers) -> None:
         "--plan",
         required=True,
         metavar="PATH",
-        help="Path to the versioned Sample Generation plan JSON (all "
-        "generation inputs are declared in the plan; no other option is "
-        "accepted)",
+        help="Path to the versioned Sample Generation plan JSON; all "
+        "generation inputs are declared in the plan",
     )
 
 

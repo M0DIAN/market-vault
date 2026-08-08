@@ -209,12 +209,12 @@ def _aware_datetime_arg(value: str) -> datetime:
         parsed = datetime.fromisoformat(value)
     except ValueError as exc:
         raise argparse.ArgumentTypeError(
-            "built_at must be an ISO 8601 datetime (e.g. "
+            "--built-at must be an ISO 8601 datetime (e.g. "
             "2026-08-07T12:34:56+00:00)"
         ) from exc
     if parsed.tzinfo is None:
         raise argparse.ArgumentTypeError(
-            "built_at must be timezone-aware; naive datetimes are rejected"
+            "--built-at must be timezone-aware; naive datetimes are rejected"
         )
     return parsed
 
@@ -223,13 +223,13 @@ def _strict_date_arg(value: str) -> date:
     """Argparse type for ``--trade-date``: strict ``YYYY-MM-DD`` date."""
     if not _STRICT_ISO_DATE_RE.fullmatch(value):
         raise argparse.ArgumentTypeError(
-            "trade_date must use the strict format YYYY-MM-DD"
+            "--trade-date must use the strict format YYYY-MM-DD"
         )
     try:
         return date.fromisoformat(value)
     except ValueError as exc:
         raise argparse.ArgumentTypeError(
-            f"trade_date must be a valid calendar date, got {value!r}"
+            f"--trade-date must be a valid calendar date, got {value!r}"
         ) from exc
 
 
@@ -237,7 +237,8 @@ def _dataset_id_arg(value: str) -> str:
     """Argparse type for ``--dataset-id``: strict lowercase 64-hex."""
     if not _DATASET_ID_RE.fullmatch(value):
         raise argparse.ArgumentTypeError(
-            "dataset_id must be a 64-character lowercase SHA-256 hex string"
+            "--dataset-id must be a 64-character lowercase SHA-256 "
+            "hexadecimal string"
         )
     return value
 
@@ -247,103 +248,109 @@ def add_dataset_catalog_subparsers(subparsers) -> None:
     tree."""
     build = subparsers.add_parser(
         "dataset-catalog-build",
-        help="Build and materialize one immutable Dataset Catalog snapshot",
+        help="Build one immutable Dataset Catalog snapshot from explicit "
+        "Dataset candidates",
     )
     mode = build.add_mutually_exclusive_group(required=True)
     mode.add_argument(
         "--dataset-root",
         metavar="PATH",
-        help="Explicit bounded discovery root whose direct 64-hex children "
-        "are candidates (exactly one candidate mode)",
+        help="Explicit bounded Dataset discovery root; only direct 64-hex "
+        "child directories are candidates",
     )
     mode.add_argument(
         "--candidate-build-dir",
         action="append",
         metavar="PATH",
-        help="One explicit Dataset build directory candidate; repeatable "
-        "(exactly one candidate mode, at least one entry)",
+        help="Explicit final Dataset build directory candidate; repeatable "
+        "and mutually exclusive with --dataset-root",
     )
     build.add_argument(
         "--output-root",
         required=True,
         metavar="PATH",
-        help="Explicit parent directory of the committed snapshot "
-        "(<output_root>/<snapshot_id>)",
+        help="Explicit parent directory for the committed Dataset Catalog "
+        "snapshot (<output_root>/<snapshot_id>)",
     )
     build.add_argument(
         "--built-at",
         required=True,
         type=_aware_datetime_arg,
         metavar="ISO8601",
-        help="Explicit timezone-aware snapshot build instant (never the "
-        "current time)",
+        help="Explicit timezone-aware Dataset Catalog snapshot build "
+        "instant; current time is never used",
     )
 
     verify = subparsers.add_parser(
         "dataset-catalog-verify",
-        help="Verify one immutable Dataset Catalog snapshot directory",
+        help="Verify one immutable Dataset Catalog snapshot",
     )
     verify.add_argument(
         "--snapshot-dir",
         required=True,
         metavar="PATH",
-        help="Explicit final snapshot directory (<output_root>/<snapshot_id>)",
+        help="Explicit final Dataset Catalog snapshot directory "
+        "(<output_root>/<snapshot_id>)",
     )
 
     listing = subparsers.add_parser(
         "dataset-catalog-list",
-        help="List verified Catalog snapshot entries with read-only "
-        "in-memory filters and pagination",
+        help="List entries from one verified Dataset Catalog snapshot with "
+        "read-only filters and pagination",
     )
     listing.add_argument(
         "--snapshot-dir",
         required=True,
         metavar="PATH",
-        help="Explicit final snapshot directory (<output_root>/<snapshot_id>)",
+        help="Explicit final Dataset Catalog snapshot directory "
+        "(<output_root>/<snapshot_id>)",
     )
     listing.add_argument(
         "--status",
         choices=("COMPLETE", "EMPTY"),
-        help="Exact status filter (COMPLETE or EMPTY)",
+        help="Exact Dataset status filter (COMPLETE or EMPTY)",
     )
     listing.add_argument(
         "--dataset-kind",
         metavar="TEXT",
-        help="Exact dataset_kind filter",
+        help="Exact Dataset kind filter",
     )
     listing.add_argument(
         "--symbol",
         metavar="TEXT",
-        help="Membership filter: the symbol must be in scope.symbols",
+        help="Membership filter: symbol must be present in Dataset "
+        "scope.symbols",
     )
     listing.add_argument(
         "--trade-date",
         type=_strict_date_arg,
         metavar="YYYY-MM-DD",
-        help="Membership filter: the date must be in scope.trade_dates",
+        help="Membership filter: date must be present in Dataset "
+        "scope.trade_dates",
     )
     listing.add_argument(
         "--interval",
         metavar="TEXT",
-        help="Exact scope.interval filter",
+        help="Exact Dataset scope.interval filter",
     )
     listing.add_argument(
         "--adjustment",
         metavar="TEXT",
-        help="Exact scope.adjustment filter",
+        help="Exact Dataset scope.adjustment filter",
     )
     listing.add_argument(
         "--requested-session",
         metavar="TEXT",
-        help="Exact scope.requested_session filter (never matches a null "
-        "stored session)",
+        help="Exact Dataset scope.requested_session filter; a stored null "
+        "never matches",
     )
     listing.add_argument(
         "--offset",
         type=_non_negative_int_arg,
         default=0,
         metavar="N",
-        help="Entry offset (default 0; entries are sliced, never reordered)",
+        help="Zero-based entry offset (default 0; entries are sliced, never "
+        "reordered)",
     )
     listing.add_argument(
         "--limit",
@@ -356,13 +363,15 @@ def add_dataset_catalog_subparsers(subparsers) -> None:
 
     show = subparsers.add_parser(
         "dataset-catalog-show",
-        help="Show one verified Catalog snapshot entry by exact dataset_id",
+        help="Show one entry from one verified Dataset Catalog snapshot by "
+        "exact Dataset ID",
     )
     show.add_argument(
         "--snapshot-dir",
         required=True,
         metavar="PATH",
-        help="Explicit final snapshot directory (<output_root>/<snapshot_id>)",
+        help="Explicit final Dataset Catalog snapshot directory "
+        "(<output_root>/<snapshot_id>)",
     )
     show.add_argument(
         "--dataset-id",
@@ -459,7 +468,7 @@ def _coerce_cli_path(raw_text: str, label: str) -> Path:
 
 
 def _coerce_snapshot_dir(raw_text: str) -> Path:
-    return _coerce_cli_path(raw_text, "snapshot dir")
+    return _coerce_cli_path(raw_text, "snapshot directory")
 
 
 # ---------------------------------------------------------------------------
@@ -484,7 +493,7 @@ def _build_inputs(
             output_root,
         )
     candidates = tuple(
-        _coerce_cli_path(raw, "candidate build dir")
+        _coerce_cli_path(raw, "candidate build directory")
         for raw in args.candidate_build_dir
     )
     return ({"candidate_build_dirs": candidates}, output_root)
@@ -861,8 +870,8 @@ def _run_dataset_catalog_show(args: argparse.Namespace) -> dict:
             payload["dataset"] = _dataset_record_json(entry)
             return payload
     raise DatasetCatalogCLIError(
-        f"dataset_id not found in the verified Catalog snapshot: "
-        f"{args.dataset_id}"
+        f"--dataset-id was not found in the verified Dataset Catalog "
+        f"snapshot: {args.dataset_id}"
     )
 
 

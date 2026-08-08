@@ -1160,11 +1160,19 @@ def test_v061_direction_document_states_planned_maintenance():
         assert f"PR-{number}" in text
     assert "0.6.0 through PR-3" in text
     assert "bumped to 0.6.1 only in PR-4" in text
-    # The current-stage narrative: PR-1 has started; the formal release is
-    # not completed and PR-2 has not started.
-    assert "PR-1 is the current maintenance-baseline and direction stage" in text
+    # The current-stage narrative: PR-1 is complete (PR #44 merged at the
+    # squash baseline), PR-2 is the current stage, the formal release is
+    # not completed, and PR-3 has not started.
+    assert "PR-1 is complete and merged as PR #44 at" in text
+    assert "6bb9a9500fae53511ff964f47e5ccea20f3d91f7" in text
+    assert (
+        "PR-2 is the current CLI/help/error/usability consistency-polish "
+        "stage"
+    ) in text
     assert "V0.6.1 is not released" in text
-    assert "PR-2 has not started" in text
+    assert "PR-3 has not started" in text
+    assert "PR-1 is the current maintenance-baseline and direction stage" not in text
+    assert "PR-2 has not started" not in text
     assert "The release is not started" not in text
     for marker in (
         "Python Client",
@@ -1286,13 +1294,13 @@ def test_release_checker_fails_when_v061_direction_reverts_current_stage(
     tmp_path,
 ):
     # Reverting the current-stage narrative to the stale "The release is
-    # not started" wording (PR-1 has started and is PR #44) must fail the
-    # checker: the stale phrase is banned and the current facts are lost.
+    # not started" wording must fail the checker: the stale phrase is
+    # banned and the current facts are lost.
     repo = copy_repo(tmp_path)
     path = repo / "docs" / "v0_6_1_direction.md"
     path.write_text(
         path.read_text(encoding="utf-8").replace(
-            "V0.6.1 is not released. PR-2 has not started.",
+            "PR-3 has not started.",
             "The release is not started.",
         ),
         encoding="utf-8",
@@ -1302,6 +1310,118 @@ def test_release_checker_fails_when_v061_direction_reverts_current_stage(
     assert (
         "still contains the stale wording 'The release is not started'"
     ) in result.stdout
+
+
+def test_release_checker_fails_when_v061_direction_reverts_to_pr1_current(
+    tmp_path,
+):
+    # Reverting to the PR-1 stage wording ("PR-1 is the current
+    # maintenance-baseline and direction stage") must fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_6_1_direction.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "PR-1 is complete and merged as PR #44 at",
+            "PR-1 is the current maintenance-baseline and direction stage",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "still contains the stale wording "
+        "'PR-1 is the current maintenance-baseline and direction stage'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_v061_direction_reverts_pr2_not_started(
+    tmp_path,
+):
+    # Reverting to "PR-2 has not started" must fail the checker: PR-2 is
+    # the current stage.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_6_1_direction.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "PR-3 has not started.",
+            "PR-2 has not started.",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "still contains the stale wording 'PR-2 has not started'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_v061_direction_loses_pr44_baseline(
+    tmp_path,
+):
+    # Removing the PR #44 merged-baseline claim must fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_6_1_direction.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "PR-1 is complete and merged as PR #44 at",
+            "PR-1 is complete",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the fact 'PR-1 is complete and merged as PR #44 at'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_v061_direction_squash_sha_changed(
+    tmp_path,
+):
+    # Changing the PR-1 squash baseline SHA must fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_6_1_direction.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "6bb9a9500fae53511ff964f47e5ccea20f3d91f7",
+            "0000000000000000000000000000000000000000",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the fact "
+        "'6bb9a9500fae53511ff964f47e5ccea20f3d91f7'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_v061_direction_claims_pr3_started(
+    tmp_path,
+):
+    # Claiming PR-3 has started must fail the checker: PR-3 has not
+    # started and only PR-4 is the release preparation.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_6_1_direction.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "PR-3 has not started.",
+            "PR-3 has started.",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "does not state the fact 'PR-3 has not started'" in result.stdout
+
+
+def test_release_checker_fails_without_v061_cli_usability_audit(tmp_path):
+    # The PR-2 CLI usability audit document is a pinned deliverable.
+    repo = copy_repo(tmp_path)
+    (repo / "docs" / "v0_6_1_cli_usability_audit.md").unlink()
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "docs/v0_6_1_cli_usability_audit.md is missing" in result.stdout
 
 
 def test_release_checker_fails_when_v060_direction_missing_pr_number(tmp_path):
