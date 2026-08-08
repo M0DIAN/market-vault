@@ -1037,12 +1037,12 @@ def test_release_checker_fails_when_v060_direction_reverts_to_planned(
     tmp_path,
 ):
     # Reverting the v0.6.0 direction top status back to the old
-    # pre-PR-9 "Status: planned" wording must fail the checker.
+    # pre-release "Status: planned" wording must fail the checker.
     repo = copy_repo(tmp_path)
     path = repo / "docs" / "v0_6_0_direction.md"
     path.write_text(
         path.read_text(encoding="utf-8").replace(
-            "Status: implementation complete; v0.6.0 release preparation",
+            "Status: released on 2026-08-08",
             "Status: planned",
         ),
         encoding="utf-8",
@@ -1050,9 +1050,9 @@ def test_release_checker_fails_when_v060_direction_reverts_to_planned(
     result = run_check_release(repo)
     assert result.returncode == 1
     assert (
-        "does not state the fact 'Status: implementation complete; "
-        "v0.6.0 release preparation'"
+        "does not state the fact 'Status: released on 2026-08-08'"
     ) in result.stdout
+    assert "still contains the stale wording 'Status: planned'" in result.stdout
 
 
 def test_release_checker_fails_when_v060_direction_reclaims_pr9_not_started(
@@ -1073,19 +1073,28 @@ def test_release_checker_fails_when_v060_direction_reclaims_pr9_not_started(
     ) in result.stdout
 
 
-def test_release_checker_fails_when_v060_direction_reclaims_v060_released(
+def test_release_checker_fails_when_v060_direction_reverts_to_release_preparation(
     tmp_path,
 ):
+    # Reverting the v0.6.0 direction top status back to the
+    # release-preparation wording must fail the checker.
     repo = copy_repo(tmp_path)
     path = repo / "docs" / "v0_6_0_direction.md"
     path.write_text(
-        path.read_text(encoding="utf-8") + "\nv0.6.0 is formally released.\n",
+        path.read_text(encoding="utf-8").replace(
+            "Status: released on 2026-08-08",
+            "Status: implementation complete; v0.6.0 release preparation",
+        ),
         encoding="utf-8",
     )
     result = run_check_release(repo)
     assert result.returncode == 1
     assert (
-        "still contains the stale wording 'v0.6.0 is formally released'"
+        "does not state the fact 'Status: released on 2026-08-08'"
+    ) in result.stdout
+    assert (
+        "still contains the stale wording "
+        "'Status: implementation complete; v0.6.0 release preparation'"
     ) in result.stdout
 
 
@@ -1103,19 +1112,21 @@ def test_release_checker_fails_when_v060_direction_reclaims_pr8_this_pr(
     assert "still contains the stale wording 'PR-8 (this PR)'" in result.stdout
 
 
-def test_release_checker_fails_when_v060_direction_claims_release_published(
+def test_release_checker_fails_when_v060_direction_claims_pypi_published(
     tmp_path,
 ):
+    # The GitHub Release exists, but a PyPI publication claim must fail:
+    # PyPI and TestPyPI are NOT PUBLISHED.
     repo = copy_repo(tmp_path)
     path = repo / "docs" / "v0_6_0_direction.md"
     path.write_text(
-        path.read_text(encoding="utf-8") + "\nGitHub Release published.\n",
+        path.read_text(encoding="utf-8") + "\nPyPI published.\n",
         encoding="utf-8",
     )
     result = run_check_release(repo)
     assert result.returncode == 1
     assert (
-        "contains the false release claim 'GitHub Release published'"
+        "contains the false release claim 'PyPI published'"
     ) in result.stdout
 
 
@@ -1134,6 +1145,135 @@ def test_release_checker_fails_when_v060_direction_includes_python_client_in_v06
     result = run_check_release(repo)
     assert result.returncode == 1
     assert "does not state the fact 'not part of v0.6'" in result.stdout
+
+
+# --- V0.6.1 maintenance direction guards ------------------------------------
+
+
+def test_v061_direction_document_states_planned_maintenance():
+    text = (ROOT / "docs" / "v0_6_1_direction.md").read_text(encoding="utf-8")
+    assert "Status: planned maintenance release" in text
+    assert "Stability, Auditability, and Usability Maintenance" in text
+    assert "669c955abc0a234264964dfdb7fcafdf502a901a" in text
+    assert "package version at planning time: 0.6.0" in text
+    for number in range(1, 5):
+        assert f"PR-{number}" in text
+    assert "0.6.0 through PR-3" in text
+    assert "bumped to 0.6.1 only in PR-4" in text
+    for marker in (
+        "Python Client",
+        "REST API",
+        "Dataset Catalog query command",
+        "identity v2",
+        "schema v2",
+        "dependency modernization",
+        "PyArrow runtime pin",
+        "ML training",
+        "backtesting",
+        "signals",
+        "automatic trading",
+        "Trading Execution",
+        "Canonical identity algorithms unchanged",
+        "Dataset identity algorithms unchanged",
+        "CLI command set unchanged",
+    ):
+        assert marker in text
+
+
+def test_release_checker_fails_without_v061_direction(tmp_path):
+    repo = copy_repo(tmp_path)
+    (repo / "docs" / "v0_6_1_direction.md").unlink()
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "docs/v0_6_1_direction.md is missing" in result.stdout
+
+
+def test_release_checker_fails_when_v061_direction_adds_python_client(tmp_path):
+    # Sneaking the Python Client into v0.6.1 must fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_6_1_direction.md"
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        + "\nThe Python Client is part of v0.6.1.\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "contains the false claim 'Python Client is part of v0.6.1'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_v061_direction_adds_dataset_catalog_query(
+    tmp_path,
+):
+    # Sneaking a Dataset Catalog query command into v0.6.1 must fail.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_6_1_direction.md"
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        + "\nPR-2 adds the Dataset Catalog query command.\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "adds the Dataset Catalog query command" in result.stdout
+
+
+def test_release_checker_fails_when_v061_direction_bumps_version_early(tmp_path):
+    # Moving the 0.6.1 bump out of PR-4 must fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_6_1_direction.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "bumped to 0.6.1 only in PR-4",
+            "bumped to 0.6.1 in PR-2",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the fact 'bumped to 0.6.1 only in PR-4'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_v061_direction_pr_sequence_changed(tmp_path):
+    # Changing the fixed 4-PR sequence (PR-4 is the release preparation)
+    # must fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_6_1_direction.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "v0.6.1 release preparation",
+            "v0.6.1 feature release",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the fact 'v0.6.1 release preparation'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_v061_direction_invariant_lost(tmp_path):
+    # Losing a frozen invariant must fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_6_1_direction.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "Canonical identity algorithms unchanged",
+            "Canonical identity algorithms changed",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the frozen invariant "
+        "'Canonical identity algorithms unchanged'"
+    ) in result.stdout
 
 
 def test_release_checker_fails_when_v060_direction_missing_pr_number(tmp_path):
@@ -1640,19 +1780,27 @@ def test_v051_direction_document_is_released():
     assert "v0.6.0" in text
 
 
-def test_v060_direction_document_is_in_release_preparation():
+def test_v060_direction_document_is_released():
     text = (ROOT / "docs" / "v0_6_0_direction.md").read_text(encoding="utf-8")
-    assert "Status: implementation complete; v0.6.0 release preparation" in text
+    assert "Status: released on 2026-08-08" in text
     assert "Deterministic Sample Generation and Dataset Catalog" in text
     assert "a978eef291d5e26d20e5cf977bc76609c227cb52" in text
     assert "package version at planning time: 0.5.1" in text
     assert "bumped to 0.6.0 only in PR-9" in text
     assert "not part of v0.6" in text
-    assert "not formally released" in text
+    assert "PR #43" in text
+    assert "MERGED" in text
+    assert "669c955abc0a234264964dfdb7fcafdf502a901a" in text
+    assert "31227915770" in text
+    assert "MarketVault v0.6.0" in text
+    assert "2026-08-08T03:17:48Z" in text
+    assert "NOT PUBLISHED" in text
     for number in range(1, 10):
         assert f"PR-{number}" in text
     assert "PR-9 not started" not in text
     assert "Status: planned" not in text
+    assert "PR-9 is the current v0.6.0 release-preparation stage" not in text
+    assert "not formally released" not in text
     assert "Quant Research" in text
     assert "Trading Execution" in text
 
@@ -1670,8 +1818,11 @@ def test_v060_direction_records_pr7_complete_and_pr8_merged():
     assert "main verified" in text
     assert "31207428151" in text
     assert "0.5.1" in text
-    assert "not formally released" in text
-    assert "PR-9 is the current v0.6.0 release-preparation stage" in text
+    assert "PR #43" in text
+    assert "669c955abc0a234264964dfdb7fcafdf502a901a" in text
+    assert "PR-9 COMPLETE" in text
+    assert "31227915770" in text
+    assert "2026-08-08T03:17:48Z" in text
 
 
 def test_v060_direction_docs_are_boundary_contracts():
@@ -1804,17 +1955,32 @@ def test_ci_contains_060_assertions_and_marker():
     assert "assert market_vault.__version__ == '0.6.0'" in text
     assert "assert version('market-vault') == '0.6.0'" in text
     assert "V060_PUBLIC_API_IMPORT_OK" in text
-    assert "V060_RELEASE_PREP_OK" in text
+    assert "V060_RELEASE_STATE_OK" in text
+    assert "V060_RELEASE_PREP_OK" not in text
     assert "generate_sample_requests" in text
     assert '".b64"' in text
     assert "compileall -q src tests scripts examples" in text
     assert "render_plans.py --help" in text
 
 
-def test_release_notes_v060_state_release_preparation_facts():
+def test_release_notes_v060_state_formal_release_facts():
     text = (ROOT / "docs" / "release_v0_6_0.md").read_text(encoding="utf-8")
-    assert "## Release preparation status" in text
-    assert "v0.6.0 release preparation" in text
+    assert "## Formal release status" in text
+    assert "PR #43" in text
+    assert "MERGED" in text
+    assert "2026-08-07T23:41:36Z" in text
+    assert "669c955abc0a234264964dfdb7fcafdf502a901a" in text
+    assert "31227915770" in text
+    assert "v0.6.0" in text
+    assert "MarketVault v0.6.0" in text
+    assert "2026-08-08T03:17:48Z" in text
+    assert "market_vault-0.6.0-py3-none-any.whl" in text
+    assert "B1BC7D945A8DDF981AEB4AB2B973E5A8BD07919D7293DED15A7715BC03B262AF" in text
+    assert "market_vault-0.6.0.tar.gz" in text
+    assert "DBA631EC71BD6FD56A436DEB1F82481FAA3E3E89BA5D03D207870F2C96AF3C37" in text
+    assert "PyPI: NOT PUBLISHED" in text
+    assert "TestPyPI: NOT PUBLISHED" in text
+    assert "## Historical release-preparation record" in text
     assert "PR-9" in text
     assert "24a2243031b5f16fdbb9334f1a1722e56eb7a2f7" in text
     assert "PR #42" in text
@@ -1822,14 +1988,15 @@ def test_release_notes_v060_state_release_preparation_facts():
     assert "31207428151" in text
     assert "candidate validation only" in text
     assert "exact release commit" in text
-    assert "not published" in text
     assert "PyArrow 24.0.0" in text
     assert "PyArrow 25.0.0" in text
     assert "pyarrow>=16" in text
     assert "no standalone" in text
     assert "dataset-catalog-query" in text
-    assert "Formal release status" not in text
-    assert "tag: v0.6.0" not in text
+    assert "## Release preparation status" not in text
+    assert "PR-9 is open and **not merged**." not in text
+    assert "The v0.6.0 tag does **not** exist yet." not in text
+    assert "No GitHub Release exists yet." not in text
 
 
 def test_release_checker_fails_without_v060_release_notes(tmp_path):
@@ -1840,40 +2007,101 @@ def test_release_checker_fails_without_v060_release_notes(tmp_path):
     assert "docs/release_v0_6_0.md is missing" in result.stdout
 
 
-def _append_release_notes_claim(tmp_path, claim: str) -> subprocess.CompletedProcess:
+def test_release_checker_fails_when_release_notes_formal_region_claims_pr9_open(
+    tmp_path,
+):
+    # A stale current-state sentence in the formal region (before the
+    # historical release-preparation record) must fail the checker.
     repo = copy_repo(tmp_path)
     path = repo / "docs" / "release_v0_6_0.md"
     path.write_text(
-        path.read_text(encoding="utf-8") + f"\n{claim}\n",
+        path.read_text(encoding="utf-8").replace(
+            "## Historical release-preparation record",
+            "PR-9 is open and **not merged**.\n\n"
+            "## Historical release-preparation record",
+            1,
+        ),
         encoding="utf-8",
     )
-    return run_check_release(repo)
-
-
-def test_release_checker_fails_when_release_notes_claim_tag_exists(tmp_path):
-    result = _append_release_notes_claim(tmp_path, "tag: v0.6.0")
+    result = run_check_release(repo)
     assert result.returncode == 1
-    assert "still contains the stale wording 'tag: v0.6.0'" in result.stdout
+    assert "PR-9 is open and **not merged**." in result.stdout
 
 
-def test_release_checker_fails_when_release_notes_claim_github_release(tmp_path):
-    result = _append_release_notes_claim(
-        tmp_path, "GitHub Release: MarketVault v0.6.0"
+def test_release_checker_fails_when_release_notes_formal_region_claims_tag_missing(
+    tmp_path,
+):
+    # A stale current-state "tag does not exist yet" sentence in the formal
+    # region must fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "release_v0_6_0.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "## Historical release-preparation record",
+            "The v0.6.0 tag does **not** exist yet.\n\n"
+            "## Historical release-preparation record",
+            1,
+        ),
+        encoding="utf-8",
     )
+    result = run_check_release(repo)
     assert result.returncode == 1
-    assert (
-        "still contains the stale wording 'GitHub Release: MarketVault v0.6.0'"
-    ) in result.stdout
+    assert "The v0.6.0 tag does **not** exist yet." in result.stdout
+
+
+def test_release_checker_fails_when_release_notes_formal_region_claims_no_release(
+    tmp_path,
+):
+    # A stale current-state "No GitHub Release exists yet" sentence in the
+    # formal region must fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "release_v0_6_0.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "## Historical release-preparation record",
+            "No GitHub Release exists yet.\n\n"
+            "## Historical release-preparation record",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "No GitHub Release exists yet." in result.stdout
 
 
 def test_release_checker_fails_when_release_notes_claim_pypi_published(tmp_path):
-    result = _append_release_notes_claim(tmp_path, "PyPI: published")
+    # The claim must be smuggled into the formal region (before the
+    # historical release-preparation record); the historical record may
+    # quote stale release-preparation phrasing verbatim.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "release_v0_6_0.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "## Historical release-preparation record",
+            "PyPI: published\n\n## Historical release-preparation record",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
     assert result.returncode == 1
     assert "still contains the stale wording 'PyPI: published'" in result.stdout
 
 
 def test_release_checker_fails_when_release_notes_claim_every_writer(tmp_path):
-    result = _append_release_notes_claim(tmp_path, "every supported PyArrow writer")
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "release_v0_6_0.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "## Historical release-preparation record",
+            "every supported PyArrow writer\n\n"
+            "## Historical release-preparation record",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
     assert result.returncode == 1
     assert (
         "still contains the stale wording 'every supported PyArrow writer'"
@@ -1920,17 +2148,17 @@ def test_release_checker_fails_when_ci_reverts_to_v051(tmp_path):
     assert "distribution metadata assertion" in result.stdout
 
 
-def test_release_checker_fails_when_ci_loses_release_prep_marker(tmp_path):
+def test_release_checker_fails_when_ci_loses_release_state_marker(tmp_path):
     repo = copy_repo(tmp_path)
     ci = repo / ".github" / "workflows" / "ci.yml"
     text = ci.read_text(encoding="utf-8")
     ci.write_text(
-        text.replace("echo 'V060_RELEASE_PREP_OK'", "echo 'V060_PREP_OK'"),
+        text.replace("echo 'V060_RELEASE_STATE_OK'", "echo 'V060_STATE_OK'"),
         encoding="utf-8",
     )
     result = run_check_release(repo)
     assert result.returncode == 1
-    assert "must carry the V060_RELEASE_PREP_OK marker" in result.stdout
+    assert "must carry the V060_RELEASE_STATE_OK marker" in result.stdout
 
 
 def test_release_checker_fails_when_ci_loses_b64_forbidden(tmp_path):
