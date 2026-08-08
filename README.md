@@ -43,8 +43,12 @@ CLI command set unchanged
 no artifact migration/rewrite
 ```
 
-This section is release-facing package documentation, not the formal
-remote release-state record: the v0.6.1 formal release does not exist yet.
+The v0.6.1 formal release is published and sealed: the release commit is
+`37614d539171ef7b738e47415f3cd6ca2de332d1`, the annotated `v0.6.1` tag is
+created, and the GitHub Release `MarketVault v0.6.1` is published.
+PyPI: NOT PUBLISHED. TestPyPI: NOT PUBLISHED. This section is
+release-facing package documentation; the formal remote release-state
+record is `docs/release_v0_6_1.md`.
 
 ## V0.6.0 deterministic sample generation and Dataset Catalog
 
