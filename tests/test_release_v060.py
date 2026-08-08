@@ -1647,6 +1647,29 @@ def test_release_checker_fails_when_ci_drops_package_audit_ok(tmp_path):
     ) in result.stdout
 
 
+def test_release_checker_fails_when_ci_reverts_to_github_sha_only_artifact_name(
+    tmp_path,
+):
+    # Reverting the package artifact name to the github.sha-only binding
+    # (which is the synthetic merge-ref commit on pull_request runs, not
+    # the reviewed PR head) must fail the checker.
+    repo = copy_repo(tmp_path)
+    ci = repo / ".github" / "workflows" / "ci.yml"
+    ci.write_text(
+        ci.read_text(encoding="utf-8").replace(
+            "market-vault-package-${{ github.event.pull_request.head.sha || "
+            "github.sha }}-attempt-${{ github.run_attempt }}",
+            "market-vault-package-${{ github.sha }}-attempt-${{ github.run_attempt }}",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "CI package artifact name regressed to github.sha-only naming"
+    ) in result.stdout
+
+
 def test_release_checker_fails_when_v060_direction_missing_pr_number(tmp_path):
     repo = copy_repo(tmp_path)
     path = repo / "docs" / "v0_6_0_direction.md"

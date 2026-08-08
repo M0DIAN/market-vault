@@ -210,11 +210,30 @@ def test_package_artifact_upload_settings():
     assert re.search(r"(?m)^\s*path:\s*dist\s*$", block) is None
 
 
-def test_package_artifact_name_binds_commit_and_attempt():
+def test_package_artifact_name_resolves_source_sha_per_event():
+    # The artifact name must bind the reviewed PR head on pull_request
+    # runs (github.event.pull_request.head.sha) and fall back to
+    # github.sha on push runs. github.sha alone is the synthetic merge-ref
+    # commit on pull_request runs and must not be the only binding.
+    block = _region(
+        ci_text(), "Upload package audit artifact", "Confirm package audit artifact metadata"
+    )
+    assert (
+        "market-vault-package-${{ github.event.pull_request.head.sha || "
+        "github.sha }}-attempt-${{ github.run_attempt }}"
+    ) in block
+    assert "github.event.pull_request.head.sha" in block
+    assert "|| github.sha" in block
+    assert "github.run_attempt" in block
+
+
+def test_artifact_name_never_frozen_to_github_sha_only():
+    # The stale github.sha-only artifact naming must not reappear as the
+    # source SHA resolution for the package artifact.
     text = ci_text()
     assert (
         "market-vault-package-${{ github.sha }}-attempt-${{ github.run_attempt }}"
-        in text
+        not in text
     )
 
 
@@ -238,3 +257,13 @@ def test_audit_doc_distinguishes_raw_hashes_from_artifact_digest():
     assert "artifact-digest" in text
     assert "never compared to either package-file SHA" in text
     assert "container/archive" in text
+
+
+def test_audit_doc_describes_source_sha_resolution():
+    # The audit document must state the per-event source SHA resolution
+    # (pull_request head SHA vs push github.sha) and the merge-ref caveat.
+    text = AUDIT_DOC.read_text(encoding="utf-8")
+    assert "github.event.pull_request.head.sha" in text
+    assert "github.sha" in text
+    assert "synthetic merge-ref" in text
+    assert "market-vault-package-<source_sha>-attempt-<attempt>" in text

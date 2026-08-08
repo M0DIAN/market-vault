@@ -238,7 +238,7 @@ jobs:
         id: package-artifact
         uses: actions/upload-artifact@v7
         with:
-          name: market-vault-package-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          name: market-vault-package-${{ github.event.pull_request.head.sha || github.sha }}-attempt-${{ github.run_attempt }}
           path: |
             dist/*.whl
             dist/*.tar.gz

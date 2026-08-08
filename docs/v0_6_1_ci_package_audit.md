@@ -91,14 +91,30 @@ release asset hash, and it is never compared to either package-file SHA.
 
 ## G. Artifact naming
 
+The artifact source SHA resolves per event:
+
 ```text
-market-vault-package-<commit>-attempt-<attempt>
+pull_request  github.event.pull_request.head.sha   (the reviewed PR head)
+push          github.sha                           (the pushed main commit)
 ```
 
-i.e. `market-vault-package-${{ github.sha }}-attempt-${{ github.run_attempt }}`.
-The name binds the source commit and the run attempt, so a rerun gets a
-distinct attempt-bound artifact name instead of replacing a previous
-artifact.
+The workflow uses the GitHub expression
+`github.event.pull_request.head.sha || github.sha`, so the resolved source
+SHA is the PR head commit on pull_request runs and the exact pushed commit
+on push runs. `github.sha` alone is never treated as the source commit for
+every event: on a `pull_request` run it is the synthetic merge-ref commit,
+not the reviewed PR head.
+
+```text
+market-vault-package-<source_sha>-attempt-<attempt>
+```
+
+i.e.
+`market-vault-package-${{ github.event.pull_request.head.sha || github.sha }}-attempt-${{ github.run_attempt }}`.
+The name binds the resolved source SHA and the run attempt, so a rerun gets
+a distinct attempt-bound artifact name instead of replacing a previous
+artifact. A PR final-head CI artifact therefore binds the reviewed PR head
+commit, and a main push CI artifact binds the exact main commit.
 
 ## H. Retention
 

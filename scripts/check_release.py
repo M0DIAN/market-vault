@@ -275,6 +275,7 @@ V061_CI_PACKAGE_AUDIT_MARKERS = (
     "actions/upload-artifact@v7",
     "SHA256SUMS.txt",
     "artifact-digest",
+    "github.event.pull_request.head.sha",
     "V061_PACKAGE_AUDIT_OK",
 )
 # Contradictory claims that must never appear in the v0.6.1 direction
@@ -2608,7 +2609,8 @@ def check_ci_auditability(root: Path) -> list[str]:
             )
     for marker in (
         "SHA256SUMS.txt",
-        "market-vault-package-${{ github.sha }}-attempt-${{ github.run_attempt }}",
+        "market-vault-package-${{ github.event.pull_request.head.sha || "
+        "github.sha }}-attempt-${{ github.run_attempt }}",
         "if-no-files-found: error",
         "retention-days: 30",
         "overwrite: false",
@@ -2616,6 +2618,14 @@ def check_ci_auditability(root: Path) -> list[str]:
     ):
         if marker not in text:
             failures.append(f"CI package audit chain is missing {marker!r}")
+    if (
+        "market-vault-package-${{ github.sha }}-attempt-${{ "
+        "github.run_attempt }}"
+    ) in text:
+        failures.append(
+            "CI package artifact name regressed to github.sha-only naming "
+            "(must bind github.event.pull_request.head.sha || github.sha)"
+        )
     return failures
 
 
