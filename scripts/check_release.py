@@ -186,12 +186,14 @@ RELEASE_V051_STALE_PHRASES = (
 # The marker that separates the current-state region of the v0.5.1 release
 # notes from the historical release-preparation record.
 HISTORICAL_RELEASE_PREPARATION_HEADER = "## Historical release-preparation record"
-# Facts the v0.6.1 direction document must state: the release-preparation
-# status, the frozen baseline, the fixed 4-PR sequence, the fixed version
-# rules (0.6.0 through PR-3, 0.6.1 only in PR-4), and the not-released
-# lifecycle truth (no tag, no GitHub Release, no PyPI, no TestPyPI).
+# Facts the v0.6.1 direction document must state now that v0.6.1 is
+# formally released: the released status, the frozen baseline, the fixed
+# 4-PR sequence with the full merge record (PR-1..PR-4, including the
+# PR #47 release commit), the released lifecycle truth (tag created, GitHub
+# Release published, PyPI/TestPyPI NOT PUBLISHED), and the pointer to the
+# v0.7.0 direction.
 V061_DIRECTION_FACTS = (
-    "Status: implementation complete; v0.6.1 release preparation",
+    "Status: released on 2026-08-08",
     "Stability, Auditability, and Usability Maintenance",
     "669c955abc0a234264964dfdb7fcafdf502a901a",
     "v0.6.0",
@@ -213,20 +215,24 @@ V061_DIRECTION_FACTS = (
     "33d7f5856bf060527ccf4d2ab679df4429009ce6",
     "PR-3 COMPLETE: PR #46 merged at",
     "99c2e7bd445333740806dedec4aed03f82f32b11",
-    "PR-4 is the current v0.6.1 release-preparation stage",
-    "The package version is now 0.6.1 in PR-4",
-    "V0.6.1 is NOT formally released",
-    "The v0.6.1 tag has not been created",
-    "The GitHub Release v0.6.1 has not been published",
-    "PyPI is not published",
-    "TestPyPI is not published",
-    "The fixed 4-PR sequence itself remains unchanged",
+    "PR-4 COMPLETE: PR #47 merged at",
+    "37614d539171ef7b738e47415f3cd6ca2de332d1",
+    "31257004716",
+    "V0.6.1 is formally released",
+    "The v0.6.1 tag is created",
+    "The GitHub Release MarketVault v0.6.1 is published",
+    "2026-08-08T13:06:51Z",
+    "PyPI: NOT PUBLISHED",
+    "TestPyPI: NOT PUBLISHED",
+    "docs/v0_7_0_direction.md",
 )
 # The v0.6.1 direction document must not regress to stale current-state
-# wording: PR-1 / PR-2 / PR-3 are complete (none is the current stage),
-# PR-4 has started, the package is no longer 0.6.0, and the formal release
-# is not completed.
+# wording: the release-preparation narrative (PR-4 as the current stage,
+# "not formally released", tag/GitHub Release not created) and the
+# pre-release status are all stale now that v0.6.1 is released.
 V061_DIRECTION_STALE_PHRASES = (
+    "Status: planned",
+    "Status: implementation complete; v0.6.1 release preparation",
     "The release is not started",
     "PR-1 is the current maintenance-baseline and direction stage",
     "PR-2 has not started",
@@ -236,7 +242,18 @@ V061_DIRECTION_STALE_PHRASES = (
     "V0.6.1 maintenance development is in PR-3",
     "PR-3 is the current CI/package auditability and maintenance-hardening stage",
     "PR-4 has not started",
+    "PR-4 is the current v0.6.1 release-preparation stage",
+    "The package version is now 0.6.1 in PR-4",
+    "V0.6.1 is NOT formally released",
+    "The v0.6.1 tag has not been created",
+    "The GitHub Release v0.6.1 has not been published",
     "Package remains 0.6.0",
+)
+# Affirmative publication claims that must never appear in the v0.6.1
+# direction document: PyPI and TestPyPI are NOT PUBLISHED.
+V061_DIRECTION_RELEASE_CLAIMS = (
+    "PyPI: PUBLISHED",
+    "TestPyPI: PUBLISHED",
 )
 # The v0.6.1 direction document must mark the explicit non-goals; none of
 # them may be smuggled into a v0.6.1 PR.
@@ -299,13 +316,28 @@ V061_DIRECTION_FALSE_CLAIMS = (
     "0.6.1 in PR-2",
     "0.6.1 in PR-3",
 )
-# Facts the v0.6.1 release notes (the PR-4 deliverable) must state: the
-# release-preparation status (not a formal release status), the frozen
-# PR-1/2/3 merge record, the 0.6.1 package version, the NOT PUBLISHED
-# lifecycle state, and the candidate-vs-formal artifact distinction.
+# Facts the v0.6.1 release notes must state now that v0.6.1 is formally
+# released: the formal release status, the full merge record
+# (PR-1..PR-4 including the PR #47 release commit), the released lifecycle
+# truth (tag created, GitHub Release published, PyPI/TestPyPI NOT
+# PUBLISHED), the formal asset hashes, and the candidate-vs-formal artifact
+# distinction. The historical release-preparation record keeps the
+# preparation-time facts verbatim.
 V061_RELEASE_NOTES_FACTS = (
-    "## Release preparation status",
-    "NOT formally released",
+    "## Formal release status",
+    "formally released",
+    "PR-4: PR #47 MERGED",
+    "2026-08-08T12:20:16Z",
+    "37614d539171ef7b738e47415f3cd6ca2de332d1",
+    "31257004716",
+    "The annotated `v0.6.1` tag was created",
+    "0e0508065a6330d643e7801823e908fee881afc9",
+    "GitHub Release: MarketVault v0.6.1",
+    "MarketVault v0.6.1",
+    "367204479",
+    "2026-08-08T13:06:51Z",
+    "PyPI: NOT PUBLISHED",
+    "TestPyPI: NOT PUBLISHED",
     "99c2e7bd445333740806dedec4aed03f82f32b11",
     "PR-1: PR #44 MERGED 6bb9a9500fae53511ff964f47e5ccea20f3d91f7",
     "PR-2: PR #45 MERGED 33d7f5856bf060527ccf4d2ab679df4429009ce6",
@@ -316,28 +348,38 @@ V061_RELEASE_NOTES_FACTS = (
     "GitHub Release v0.6.1: NOT PUBLISHED",
     "PyPI:                  NOT PUBLISHED",
     "TestPyPI:              NOT PUBLISHED",
-    "No future merge SHA is claimed",
-    "no formal artifact SHA256 values are predicted",
+    "No future merge SHA was claimed",
+    "no formal artifact SHA256 values",
     "candidate validation only",
     "CI audit artifact",
-    "exact future v0.6.1 release commit",
-    "PR branch candidate hashes are never reused",
+    "exact main release commit was verified",
+    "PR candidate hashes: not reused as formal release asset hashes",
     "new product capabilities = 0",
+    "8fd8ec510a7724742d6e3e9fbca5c73b07e991cb3fa35002af792a8dd64ed550",
+    "0cadd537a0980978a9a0878766cb2234f5b419f3f5d3874ef92e300c76c756f1",
 )
-# Affirmative release claims that must never appear in the v0.6.1 release
-# notes: the formal release does not exist yet.
+# Stale pre-release wording that must never appear in the current-state
+# region of the v0.6.1 release notes (the formal text before the historical
+# release-preparation record). The historical sections may quote the
+# preparation-time state verbatim, but these precise current-state
+# sentences are forbidden in the formal region. "v0.6.1 is released" and
+# "v0.6.1 has been released" are now legal formal-state expressions and are
+# not stale.
 V061_RELEASE_NOTES_STALE_PHRASES = (
-    "## Formal release status",
-    "v0.6.1 tag: CREATED",
-    "GitHub Release v0.6.1: PUBLISHED",
+    "## Release preparation status",
+    "NOT formally released",
+    "PR-4 is open",
+    "PR-4: current release-preparation stage, OPEN / UNMERGED",
+    "package version in PR-4",
+    "v0.6.1 tag:            NOT CREATED",
+    "GitHub Release v0.6.1: NOT PUBLISHED",
+    "PyPI:                  NOT PUBLISHED",
+    "TestPyPI:              NOT PUBLISHED",
     "PyPI: PUBLISHED",
     "TestPyPI: PUBLISHED",
-    "PR-4 MERGED",
-    "PR-4 is merged",
-    "v0.6.1 is released",
-    "v0.6.1 has been released",
-    "v0.6.1 released on",
-    "formal release assets published",
+    "No future merge SHA is claimed",
+    "no formal artifact SHA256 values are predicted",
+    "exact future v0.6.1 release commit",
 )
 # Facts the v0.6.0 direction document must state now that v0.6.0 is
 # formally released. The planning sections may keep the historical
@@ -917,11 +959,12 @@ DATASET_CATALOG_CLI_FALSE_CLAIMS = (
 )
 # The CI fresh-wheel smoke must cover the four Catalog CLI help commands.
 CI_PR7_API_MARKER = "PR7_CATALOG_CLI_HELP_OK"
-# The CI package job must carry the v0.6.1 release-preparation-state
-# marker (never V061_RELEASED), the public API smoke must import
+# The CI package job must carry the v0.6.1 release-state marker (the
+# released-state marker; the stale preparation marker V061_RELEASE_PREP_OK
+# must never be restored), the public API smoke must import
 # generate_sample_requests, and the wheel contents check must forbid
 # *.b64 fixture bundles.
-CI_V061_RELEASE_STATE_MARKER = "V061_RELEASE_PREP_OK"
+CI_V061_RELEASE_STATE_MARKER = "V061_RELEASE_STATE_OK"
 CI_V061_PUBLIC_API_IMPORT_LINES = ("generate_sample_requests",)
 CI_PR7_HELP_COMMANDS = (
     "market-vault dataset-catalog-build --help",
@@ -1141,7 +1184,7 @@ README_MAINTENANCE_FACTS = (
 )
 # Facts the v0.6.1 maintenance section of the README must state: the
 # fixed maintenance scope (three areas, no new capability), the CLI and CI
-# auditability content, and the not-formally-released truth.
+# auditability content, and the published-and-sealed release truth.
 README_V061_SECTION_MARKERS = (
     "## V0.6.1 stability, auditability, and usability maintenance",
     "V0.6.1 adds NO new product capability",
@@ -1157,15 +1200,189 @@ README_V061_SECTION_MARKERS = (
     "runtime dependencies unchanged",
     "CLI command set unchanged",
     "no artifact migration/rewrite",
+    "v0.6.1 formal release is published and sealed",
+    "37614d539171ef7b738e47415f3cd6ca2de332d1",
+    "MarketVault v0.6.1",
+    "PyPI: NOT PUBLISHED",
+    "TestPyPI: NOT PUBLISHED",
+)
+# Stale pre-release claims that must never appear in the README: the
+# v0.6.1 formal release is now published and sealed, and the README must
+# never claim it was not released or that the release state is pending.
+README_V061_STALE_PHRASES = (
     "the v0.6.1 formal release does not exist yet",
 )
-# Affirmative release claims that must never appear in the README: the
-# v0.6.1 formal release does not exist yet.
-README_V061_FALSE_CLAIMS = (
-    "v0.6.1 is formally released",
-    "v0.6.1 has been released",
-    "v0.6.1 released on",
-    "v0.6.1 formal release is published",
+# Facts the v0.7.0 direction document must state: the planned feature
+# release status, the v0.6.1 baseline, the NOT RELEASED v0.7.0 state, the
+# fixed 6-PR sequence with the exact stage names, the version rules
+# (0.6.1 through PR-5, 0.7.0 only in PR-6), and the explicit non-goals.
+V070_DIRECTION_FACTS = (
+    "# MarketVault v0.7.0 Direction: Python Client and Read-only Artifact Access",
+    "Status: planned feature release; PR-1 baseline and API-contract stage",
+    "base version: v0.6.1",
+    "37614d539171ef7b738e47415f3cd6ca2de332d1",
+    "v0.7.0: NOT RELEASED",
+    "PR-1: CURRENT",
+    "PR-2: NOT STARTED",
+    "PR-1 — Post-v0.6.1 release baseline",
+    "PR-2 — Settings-independent ArtifactClient foundation",
+    "PR-3 — Canonical + Dataset verified read-only client access",
+    "PR-4 — Dataset Catalog verified read-only client access",
+    "PR-5 — Integrated E2E",
+    "PR-6 — v0.7.0 release preparation",
+    "Then a separate explicit GitHub Release gate",
+    "PR-1: 0.6.1",
+    "PR-2: 0.6.1",
+    "PR-3: 0.6.1",
+    "PR-4: 0.6.1",
+    "PR-5: 0.6.1",
+    "PR-6: 0.6.1 -> 0.7.0",
+    "the version is bumped to 0.7.0 only in PR-6",
+    "No early 0.7.0 version bump",
+    "No new CLI command",
+    "No REST API",
+    "No HTTP",
+    "No ML training",
+    "No backtesting",
+    "No signals",
+    "No trading",
+    "No writes through ArtifactClient",
+    "None of these may be smuggled into any v0.7.0 PR",
+    "verified readers remain trust boundaries",
+    "explicit path only",
+    "no hidden latest",
+    "no current time",
+    "no settings requirement for ArtifactClient",
+    "no OpenD/network for ArtifactClient",
+    "PyPI/TestPyPI deferred",
+)
+# Affirmative implementation / release claims that must never appear in
+# the v0.7.0 direction document: the Python Client is planned, not
+# implemented, and v0.7.0 is not released.
+V070_DIRECTION_STALE_PHRASES = (
+    "ArtifactClient is implemented",
+    "ArtifactClient is available",
+    "ArtifactClient() is implemented",
+    "from market_vault import ArtifactClient",
+    "V0.7.0 is released",
+    "v0.7.0 has been released",
+    "v0.7.0 released on",
+)
+# Facts the Python Client boundary contract must state: the
+# not-implemented status, the planned ArtifactClient root, the 13.x
+# sections, the constructor contract, the read-only scope, the trust
+# boundary, the path contract, the read semantics, the return-value
+# authority, the error boundary, the lightweight import, and the explicit
+# non-goals.
+V070_CONTRACT_FACTS = (
+    "# MarketVault Python Client Contract",
+    "Status: boundary contract; not implemented in released v0.6.1",
+    "Target release: v0.7.0",
+    "Planned public root: `ArtifactClient`",
+    "PR-1: contract only",
+    "must fail today",
+    "## 13.1 Existing MarketVault compatibility",
+    "the `MarketVault` constructor",
+    "## 13.2 Constructor",
+    "## 13.3 Read-only scope",
+    "## 13.4 Trust boundary",
+    "## 13.5 Path contract",
+    "## 13.6 Read semantics",
+    "## 13.7 Return-value authority",
+    "## 13.8 Error boundary",
+    "## 13.9 Lightweight import",
+    "## 13.10 Explicit non-goals",
+    "No required settings",
+    "No default settings path",
+    "No implicit `config/settings.yaml`",
+    "No filesystem access in the constructor",
+    "No network",
+    "No OpenD",
+    "No current time",
+    "No cwd-derived artifact root",
+    "No build / materialize / generate / repair / write APIs",
+    "`load_verified_canonical_build`",
+    "`load_verified_dataset`",
+    "`load_verified_dataset_catalog`",
+    "parse `manifest.json` itself",
+    "parse `catalog.json` itself",
+    "second validation path",
+    "repair artifacts",
+    "rewrite artifacts",
+    "delete artifacts",
+    "adopt partial staging output",
+    "`latest`",
+    "auto-discovery",
+    "environment-variable root",
+    "settings-derived root",
+    "cwd default root",
+    "recursive scan",
+    "search by guessing IDs",
+    "Do not resolve symlinks to hide them",
+    "mtime mutation",
+    "cache file writes",
+    "DuckDB Catalog construction",
+    "immutable thin views",
+    "second artifact-validation universe",
+    "No warn-and-continue",
+    "No partial success",
+    "eagerly import `duckdb`, `pandas`, `moomoo`, or `futu`",
+    "No REST API",
+    "No API server",
+    "No HTTP service",
+    "No new CLI command",
+    "No `dataset-catalog-query` CLI",
+    "No ML training",
+    "No model evaluation",
+    "No experiment tracking",
+    "No backtesting",
+    "No signals",
+    "No automatic trading",
+    "No Trading Execution",
+    "No new artifact format",
+    "No identity v2",
+)
+# Implemented claims that must never appear in the Python Client contract:
+# the contract freezes the boundary only; implementation begins in PR-2+.
+V070_CONTRACT_IMPLEMENTED_PHRASES = (
+    "ArtifactClient is implemented",
+    "ArtifactClient is available",
+    "ArtifactClient() is implemented",
+    "class ArtifactClient",
+    "Implementation status: implemented",
+)
+# Facts the v0.7.0 existing Python API audit document must state: the
+# audited top-level package behavior, the existing MarketVault
+# constructor and method surface, the verified readers as formal trust
+# boundaries, the compatibility finding, and the recommended
+# settings-independent ArtifactClient architecture.
+V070_AUDIT_FACTS = (
+    "# MarketVault v0.7.0 Existing Python API Audit",
+    "lazy",
+    "`MarketVault`",
+    "settings-backed",
+    "load_verified_canonical_build",
+    "load_verified_dataset",
+    "load_verified_dataset_catalog",
+    "trust boundaries",
+    "silently make settings optional",
+    "compatibility surface",
+    "public-name collision",
+    "`ArtifactClient`",
+)
+# The v0.7.0 direction and contract documents must name the exact v0.7.0
+# non-goals; these are checked as a second layer next to the direction
+# facts.
+V070_NONGOAL_MARKERS = (
+    "REST API",
+    "API server",
+    "HTTP service",
+    "dataset-catalog-query",
+    "ML training",
+    "backtesting",
+    "signals",
+    "automatic trading",
+    "Trading Execution",
 )
 # The example files that must exist, and the renderer markers that prove the
 # hardened boundaries stayed in place.
@@ -2362,11 +2579,13 @@ def check_ci_pr8(root: Path) -> list[str]:
 
 
 def check_ci_v061_release_state(root: Path) -> list[str]:
-    """The CI package job carries the ``V061_RELEASE_PREP_OK`` marker
-    (the v0.6.1 release-preparation marker; never ``V061_RELEASED``), the
-    public API smoke imports ``generate_sample_requests``, and the wheel
-    hygiene step forbids ``.b64`` files (the frozen static reference
-    artifact fixture must never ship inside the wheel)."""
+    """The CI package job carries the ``V061_RELEASE_STATE_OK`` marker
+    (the v0.6.1 released-state marker), the stale preparation marker
+    ``V061_RELEASE_PREP_OK`` is never restored, the v0.7 production marker
+    ``V070_PUBLIC_API_IMPORT_OK`` never appears, the public API smoke
+    imports ``generate_sample_requests``, and the wheel hygiene step
+    forbids ``.b64`` files (the frozen static reference artifact fixture
+    must never ship inside the wheel)."""
     path = root / ".github" / "workflows" / "ci.yml"
     if not path.exists():
         return [".github/workflows/ci.yml is missing"]
@@ -2376,6 +2595,15 @@ def check_ci_v061_release_state(root: Path) -> list[str]:
         failures.append(
             "CI package job must carry the "
             f"{CI_V061_RELEASE_STATE_MARKER} marker"
+        )
+    if "V061_RELEASE_PREP_OK" in text:
+        failures.append(
+            "CI must never restore the stale V061_RELEASE_PREP_OK marker"
+        )
+    if "V070_PUBLIC_API_IMPORT_OK" in text:
+        failures.append(
+            "CI must never claim the V070_PUBLIC_API_IMPORT_OK marker "
+            "before the Python Client is implemented"
         )
     if "V061_RELEASED" in text:
         failures.append(
@@ -2417,8 +2645,9 @@ def check_readme_maintenance_section(root: Path) -> list[str]:
 
 
 def check_readme_v061_section(root: Path) -> list[str]:
-    """The README states the v0.6.1 maintenance section markers and never
-    claims the v0.6.1 formal release."""
+    """The README states the v0.6.1 maintenance section markers and the
+    published-and-sealed release truth, and never contains the stale
+    pre-release wording."""
     path = root / "README.md"
     if not path.exists():
         return ["README.md is missing"]
@@ -2429,10 +2658,11 @@ def check_readme_v061_section(root: Path) -> list[str]:
             failures.append(
                 f"README does not state the v0.6.1 maintenance fact {fact!r}"
             )
-    for claim in README_V061_FALSE_CLAIMS:
-        if claim in text:
+    for phrase in README_V061_STALE_PHRASES:
+        if phrase in text:
             failures.append(
-                f"README contains the false v0.6.1 release claim {claim!r}"
+                "README contains the stale v0.6.1 release-state "
+                f"wording {phrase!r}"
             )
     return failures
 
@@ -2628,10 +2858,10 @@ def check_cli_version(root: Path) -> list[str]:
 
 
 def check_v061_direction(root: Path) -> list[str]:
-    """Static v0.6.1 direction checks: the document states the planned
-    maintenance release status, the frozen baseline, the fixed 4-PR
-    sequence, the fixed version rules, the explicit non-goals, and the
-    frozen invariants, and contains no smuggled capability claim."""
+    """Static v0.6.1 direction checks: the document states the released
+    status, the sealed 4-PR merge record, the formal release facts, the
+    explicit non-goals, and the frozen invariants, and contains no stale
+    pre-release wording and no false release claim."""
     path = root / "docs" / "v0_6_1_direction.md"
     if not path.exists():
         return ["docs/v0_6_1_direction.md is missing"]
@@ -2665,18 +2895,28 @@ def check_v061_direction(root: Path) -> list[str]:
             failures.append(
                 f"docs/v0_6_1_direction.md contains the false claim {claim!r}"
             )
+    for claim in V061_DIRECTION_RELEASE_CLAIMS:
+        if claim in text:
+            failures.append(
+                "docs/v0_6_1_direction.md contains the false release "
+                f"claim {claim!r}"
+            )
     return failures
 
 
 def check_v061_release_notes(root: Path) -> list[str]:
-    """The v0.6.1 release notes (the PR-4 deliverable) state the
-    release-preparation status, the PR-1/2/3 merge record, the NOT
-    PUBLISHED lifecycle state, and the candidate-vs-formal artifact
-    distinction, and never claim the formal release."""
+    """The v0.6.1 release notes state the formal release status and facts,
+    and never restore the release-preparation wording in the formal
+    region. Required facts are checked against the full document (several
+    facts live in the historical record, which quotes the
+    preparation-time state verbatim), but stale current-state sentences
+    are checked only in the formal region before the historical
+    release-preparation record."""
     path = root / "docs" / "release_v0_6_1.md"
     if not path.exists():
         return ["docs/release_v0_6_1.md is missing"]
     text = path.read_text(encoding="utf-8")
+    formal_text = text.split(HISTORICAL_RELEASE_PREPARATION_HEADER, 1)[0]
     failures = []
     for fact in V061_RELEASE_NOTES_FACTS:
         if fact not in text:
@@ -2684,11 +2924,111 @@ def check_v061_release_notes(root: Path) -> list[str]:
                 f"docs/release_v0_6_1.md does not state the fact {fact!r}"
             )
     for phrase in V061_RELEASE_NOTES_STALE_PHRASES:
+        if phrase in formal_text:
+            failures.append(
+                "docs/release_v0_6_1.md formal region contains the stale "
+                f"release claim {phrase!r}"
+            )
+    return failures
+
+
+def check_v070_direction(root: Path) -> list[str]:
+    """Static v0.7.0 direction checks: the document states the planned
+    feature release status, the v0.6.1 baseline, the fixed 6-PR sequence
+    with the exact stage names, the version rules, and the explicit
+    non-goals, and contains no implemented-client or released-state
+    claim."""
+    path = root / "docs" / "v0_7_0_direction.md"
+    if not path.exists():
+        return ["docs/v0_7_0_direction.md is missing"]
+    text = path.read_text(encoding="utf-8")
+    failures = []
+    for fact in V070_DIRECTION_FACTS:
+        if fact not in text:
+            failures.append(
+                f"docs/v0_7_0_direction.md does not state the fact {fact!r}"
+            )
+    for phrase in V070_DIRECTION_STALE_PHRASES:
         if phrase in text:
             failures.append(
-                "docs/release_v0_6_1.md contains the stale release "
-                f"claim {phrase!r}"
+                "docs/v0_7_0_direction.md contains the false "
+                f"implementation/release claim {phrase!r}"
             )
+    return failures
+
+
+def check_v070_python_client_contract(root: Path) -> list[str]:
+    """The Python Client boundary contract exists, states the
+    not-implemented status, the planned ArtifactClient root, and the
+    13.1-13.10 boundary clauses, and contains no implemented claim."""
+    path = root / "docs" / "contracts" / "python_client.md"
+    if not path.exists():
+        return ["docs/contracts/python_client.md is missing"]
+    text = path.read_text(encoding="utf-8")
+    failures = []
+    for fact in V070_CONTRACT_FACTS:
+        if fact not in text:
+            failures.append(
+                "docs/contracts/python_client.md does not state the "
+                f"fact {fact!r}"
+            )
+    for marker in V070_NONGOAL_MARKERS:
+        if marker not in text:
+            failures.append(
+                "docs/contracts/python_client.md does not mark the "
+                f"v0.7.0 non-goal {marker!r}"
+            )
+    for phrase in V070_CONTRACT_IMPLEMENTED_PHRASES:
+        if phrase in text:
+            failures.append(
+                "docs/contracts/python_client.md contains the false "
+                f"implemented claim {phrase!r}"
+            )
+    return failures
+
+
+def check_v070_python_api_audit(root: Path) -> list[str]:
+    """The v0.7.0 existing Python API audit document exists and states the
+    audited top-level package behavior, the existing MarketVault surface,
+    the verified readers as formal trust boundaries, the compatibility
+    finding, and the recommended settings-independent ArtifactClient
+    architecture."""
+    path = root / "docs" / "v0_7_0_python_api_audit.md"
+    if not path.exists():
+        return ["docs/v0_7_0_python_api_audit.md is missing"]
+    text = path.read_text(encoding="utf-8")
+    failures = []
+    for fact in V070_AUDIT_FACTS:
+        if fact not in text:
+            failures.append(
+                "docs/v0_7_0_python_api_audit.md does not state the "
+                f"fact {fact!r}"
+            )
+    return failures
+
+
+def check_v070_no_artifact_client_in_src(root: Path) -> list[str]:
+    """The Python Client is planned, not implemented: the package source
+    tree must contain no ``ArtifactClient`` production symbol and no
+    artifact-client module. ``from market_vault import ArtifactClient``
+    must still fail in PR-1."""
+    src = root / "src" / "market_vault"
+    failures = []
+    if not src.is_dir():
+        return ["src/market_vault is missing"]
+    for path in sorted(src.rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        for line_no, line in enumerate(text.splitlines(), 1):
+            if "ArtifactClient" in line:
+                failures.append(
+                    f"{path.relative_to(root)}:{line_no} contains the "
+                    "ArtifactClient symbol (the Python Client must not be "
+                    "implemented)"
+                )
+    if (src / "artifact_client.py").exists():
+        failures.append(
+            "src/market_vault/artifact_client.py must not exist in PR-1"
+        )
     return failures
 
 
@@ -2798,6 +3138,10 @@ def main() -> int:
         ("v0.6.1 direction", check_v061_direction),
         ("v0.6.1 release notes", check_v061_release_notes),
         ("v0.6.1 CLI usability audit", check_v061_cli_usability_audit),
+        ("v0.7.0 direction", check_v070_direction),
+        ("v0.7.0 Python client contract", check_v070_python_client_contract),
+        ("v0.7.0 Python API audit", check_v070_python_api_audit),
+        ("v0.7.0 no ArtifactClient in src", check_v070_no_artifact_client_in_src),
         ("CI auditability", check_ci_auditability),
         ("v0.6.1 CI package audit", check_v061_ci_package_audit),
         ("v0.6.0 ADR", check_v060_adr),
