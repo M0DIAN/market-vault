@@ -1160,19 +1160,27 @@ def test_v061_direction_document_states_planned_maintenance():
         assert f"PR-{number}" in text
     assert "0.6.0 through PR-3" in text
     assert "bumped to 0.6.1 only in PR-4" in text
-    # The current-stage narrative: PR-1 is complete (PR #44 merged at the
-    # squash baseline), PR-2 is the current stage, the formal release is
-    # not completed, and PR-3 has not started.
-    assert "PR-1 is complete and merged as PR #44 at" in text
+    # The current-stage narrative: PR-1 and PR-2 are complete (PR #44 and
+    # PR #45 merged at their squash baselines), PR-3 is the current stage,
+    # the formal release is not completed, and PR-4 has not started.
+    assert "PR-1 and PR-2 are complete and merged as PR #44 and PR #45" in text
+    assert "PR-1 merged at" in text
     assert "6bb9a9500fae53511ff964f47e5ccea20f3d91f7" in text
+    assert "PR-2's main baseline is" in text
+    assert "33d7f5856bf060527ccf4d2ab679df4429009ce6" in text
+    assert (
+        "PR-3 is the current CI/package auditability and maintenance-"
+        "hardening stage"
+    ) in text
+    assert "V0.6.1 is not released" in text
+    assert "PR-4 has not started" in text
+    assert "PR-1 is the current maintenance-baseline and direction stage" not in text
+    assert "PR-2 has not started" not in text
     assert (
         "PR-2 is the current CLI/help/error/usability consistency-polish "
         "stage"
-    ) in text
-    assert "V0.6.1 is not released" in text
-    assert "PR-3 has not started" in text
-    assert "PR-1 is the current maintenance-baseline and direction stage" not in text
-    assert "PR-2 has not started" not in text
+    ) not in text
+    assert "PR-3 has not started" not in text
     assert "The release is not started" not in text
     for marker in (
         "Python Client",
@@ -1300,7 +1308,7 @@ def test_release_checker_fails_when_v061_direction_reverts_current_stage(
     path = repo / "docs" / "v0_6_1_direction.md"
     path.write_text(
         path.read_text(encoding="utf-8").replace(
-            "PR-3 has not started.",
+            "PR-4 has not started.",
             "The release is not started.",
         ),
         encoding="utf-8",
@@ -1321,7 +1329,7 @@ def test_release_checker_fails_when_v061_direction_reverts_to_pr1_current(
     path = repo / "docs" / "v0_6_1_direction.md"
     path.write_text(
         path.read_text(encoding="utf-8").replace(
-            "PR-1 is complete and merged as PR #44 at",
+            "PR-1 and PR-2 are complete and merged as PR #44 and PR #45",
             "PR-1 is the current maintenance-baseline and direction stage",
         ),
         encoding="utf-8",
@@ -1343,7 +1351,7 @@ def test_release_checker_fails_when_v061_direction_reverts_pr2_not_started(
     path = repo / "docs" / "v0_6_1_direction.md"
     path.write_text(
         path.read_text(encoding="utf-8").replace(
-            "PR-3 has not started.",
+            "PR-4 has not started.",
             "PR-2 has not started.",
         ),
         encoding="utf-8",
@@ -1363,7 +1371,7 @@ def test_release_checker_fails_when_v061_direction_loses_pr44_baseline(
     path = repo / "docs" / "v0_6_1_direction.md"
     path.write_text(
         path.read_text(encoding="utf-8").replace(
-            "PR-1 is complete and merged as PR #44 at",
+            "PR-1 and PR-2 are complete and merged as PR #44 and PR #45",
             "PR-1 is complete",
         ),
         encoding="utf-8",
@@ -1371,7 +1379,8 @@ def test_release_checker_fails_when_v061_direction_loses_pr44_baseline(
     result = run_check_release(repo)
     assert result.returncode == 1
     assert (
-        "does not state the fact 'PR-1 is complete and merged as PR #44 at'"
+        "does not state the fact "
+        "'PR-1 and PR-2 are complete and merged as PR #44 and PR #45'"
     ) in result.stdout
 
 
@@ -1399,20 +1408,25 @@ def test_release_checker_fails_when_v061_direction_squash_sha_changed(
 def test_release_checker_fails_when_v061_direction_claims_pr3_started(
     tmp_path,
 ):
-    # Claiming PR-3 has started must fail the checker: PR-3 has not
-    # started and only PR-4 is the release preparation.
+    # Claiming PR-3 has started must fail the checker: PR-3 is the
+    # current stage, never a completed/started stage, and only PR-4 is
+    # the release preparation.
     repo = copy_repo(tmp_path)
     path = repo / "docs" / "v0_6_1_direction.md"
     path.write_text(
         path.read_text(encoding="utf-8").replace(
-            "PR-3 has not started.",
-            "PR-3 has started.",
+            "PR-3 is the current CI/package auditability and "
+            "maintenance-hardening stage",
+            "PR-3 has started",
         ),
         encoding="utf-8",
     )
     result = run_check_release(repo)
     assert result.returncode == 1
-    assert "does not state the fact 'PR-3 has not started'" in result.stdout
+    assert (
+        "does not state the fact 'PR-3 is the current CI/package "
+        "auditability and maintenance-hardening stage'"
+    ) in result.stdout
 
 
 def test_release_checker_fails_without_v061_cli_usability_audit(tmp_path):
@@ -1422,6 +1436,238 @@ def test_release_checker_fails_without_v061_cli_usability_audit(tmp_path):
     result = run_check_release(repo)
     assert result.returncode == 1
     assert "docs/v0_6_1_cli_usability_audit.md is missing" in result.stdout
+
+
+# --- V0.6.1 PR-3 CI/package auditability guards -----------------------------
+
+
+def test_v061_ci_package_audit_document_states_audit_chain():
+    text = (ROOT / "docs" / "v0_6_1_ci_package_audit.md").read_text(encoding="utf-8")
+    assert "MarketVault v0.6.1 CI and Package Auditability" in text
+    assert "33d7f5856bf060527ccf4d2ab679df4429009ce6" in text
+    assert "actions/checkout@v6" in text
+    assert "actions/setup-python@v6" in text
+    assert "actions/upload-artifact@v7" in text
+    assert "SHA256SUMS.txt" in text
+    assert "artifact-digest" in text
+    assert "V061_PACKAGE_AUDIT_OK" in text
+    # The raw-file-SHA256 vs GitHub artifact-digest distinction must be
+    # documented explicitly.
+    assert "artifact-digest" in text
+    assert "RAW wheel" in text
+    assert "container/archive" in text
+
+
+def test_release_checker_fails_when_v061_direction_reverts_to_pr2_current(
+    tmp_path,
+):
+    # Reverting the current-stage narrative to the stale PR-2 current
+    # wording must fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_6_1_direction.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "PR-4 has not started.",
+            "PR-2 is the current CLI/help/error/usability consistency-"
+            "polish stage.",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "still contains the stale wording "
+        "'PR-2 is the current CLI/help/error/usability consistency-polish "
+        "stage'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_v061_direction_says_pr3_not_started(
+    tmp_path,
+):
+    # Reverting to "PR-3 has not started" must fail the checker: PR-3 is
+    # the current stage.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_6_1_direction.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "PR-3 is the current CI/package auditability and "
+            "maintenance-hardening stage",
+            "PR-3 has not started",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "still contains the stale wording 'PR-3 has not started'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_v061_direction_loses_pr45_baseline(
+    tmp_path,
+):
+    # Removing the PR #45 merged-baseline claim must fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_6_1_direction.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "PR #44 and PR #45",
+            "PR #44",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the fact "
+        "'PR-1 and PR-2 are complete and merged as PR #44 and PR #45'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_v061_direction_pr45_squash_sha_changed(
+    tmp_path,
+):
+    # Changing the PR-2 squash baseline SHA must fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_6_1_direction.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "33d7f5856bf060527ccf4d2ab679df4429009ce6",
+            "0000000000000000000000000000000000000000",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the fact "
+        "'33d7f5856bf060527ccf4d2ab679df4429009ce6'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_v061_direction_claims_pr4_started(
+    tmp_path,
+):
+    # Claiming PR-4 has started must fail the checker: PR-4 has not
+    # started and only PR-4 is the release preparation.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_6_1_direction.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "PR-4 has not started.",
+            "PR-4 has started.",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "does not state the fact 'PR-4 has not started'" in result.stdout
+
+
+def test_release_checker_fails_without_v061_ci_package_audit(tmp_path):
+    # The PR-3 CI/package audit document is a pinned deliverable.
+    repo = copy_repo(tmp_path)
+    (repo / "docs" / "v0_6_1_ci_package_audit.md").unlink()
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "docs/v0_6_1_ci_package_audit.md is missing" in result.stdout
+
+
+def test_release_checker_fails_when_ci_restores_checkout_v4(tmp_path):
+    # Restoring the stale Node-20-targeting checkout@v4 must fail.
+    repo = copy_repo(tmp_path)
+    ci = repo / ".github" / "workflows" / "ci.yml"
+    ci.write_text(
+        ci.read_text(encoding="utf-8").replace(
+            "actions/checkout@v6",
+            "actions/checkout@v4",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "CI must never restore the stale Action major 'actions/checkout@v4'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_ci_restores_setup_python_v5(tmp_path):
+    # Restoring the stale Node-20-targeting setup-python@v5 must fail.
+    repo = copy_repo(tmp_path)
+    ci = repo / ".github" / "workflows" / "ci.yml"
+    ci.write_text(
+        ci.read_text(encoding="utf-8").replace(
+            "actions/setup-python@v6",
+            "actions/setup-python@v5",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "CI must never restore the stale Action major "
+        "'actions/setup-python@v5'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_ci_drops_upload_artifact_v7(tmp_path):
+    # Removing the Node-24 upload-artifact major must fail.
+    repo = copy_repo(tmp_path)
+    ci = repo / ".github" / "workflows" / "ci.yml"
+    ci.write_text(
+        ci.read_text(encoding="utf-8").replace(
+            "actions/upload-artifact@v7",
+            "actions/upload-artifact@v4",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "CI must use the Node-24 Action major 'actions/upload-artifact@v7'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_ci_drops_package_audit_ok(tmp_path):
+    # Removing the V061_PACKAGE_AUDIT_OK marker must fail.
+    repo = copy_repo(tmp_path)
+    ci = repo / ".github" / "workflows" / "ci.yml"
+    ci.write_text(
+        ci.read_text(encoding="utf-8").replace(
+            "V061_PACKAGE_AUDIT_OK",
+            "V061_PACKAGE_AUDIT_MISSING",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "CI package audit chain is missing 'V061_PACKAGE_AUDIT_OK'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_ci_reverts_to_github_sha_only_artifact_name(
+    tmp_path,
+):
+    # Reverting the package artifact name to the github.sha-only binding
+    # (which is the synthetic merge-ref commit on pull_request runs, not
+    # the reviewed PR head) must fail the checker.
+    repo = copy_repo(tmp_path)
+    ci = repo / ".github" / "workflows" / "ci.yml"
+    ci.write_text(
+        ci.read_text(encoding="utf-8").replace(
+            "market-vault-package-${{ github.event.pull_request.head.sha || "
+            "github.sha }}-attempt-${{ github.run_attempt }}",
+            "market-vault-package-${{ github.sha }}-attempt-${{ github.run_attempt }}",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "CI package artifact name regressed to github.sha-only naming"
+    ) in result.stdout
 
 
 def test_release_checker_fails_when_v060_direction_missing_pr_number(tmp_path):

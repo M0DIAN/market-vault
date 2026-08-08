@@ -5,15 +5,18 @@ Status: planned maintenance release
 This document defines the scope, non-goals, and fixed PR sequence for the
 V0.6.1 "Stability, Auditability, and Usability Maintenance" patch release.
 V0.6.1 is a maintenance release: it adds no new product capability and
-changes no formal identity, schema, contract, or CLI behavior. V0.6.1
-maintenance development is in PR-2; the direction PR (PR-1) was
-documentation and process only and implemented no product code.
-PR-1 is complete and merged as PR #44 at
+changes no formal identity, schema, contract, or CLI behavior.
+V0.6.1 maintenance development is in PR-3.
+PR-1 and PR-2 are complete and merged as PR #44 and PR #45.
+PR-1 merged at
 6bb9a9500fae53511ff964f47e5ccea20f3d91f7.
-PR-2 is the current CLI/help/error/usability consistency-polish stage.
+PR-2's main baseline is
+33d7f5856bf060527ccf4d2ab679df4429009ce6.
+PR-3 is the current CI/package auditability and maintenance-hardening stage.
 V0.6.1 is not released.
-PR-3 has not started.
+PR-4 has not started.
 The fixed PR sequence remains unchanged.
+Package remains 0.6.0.
 
 ## 1. Baseline
 
