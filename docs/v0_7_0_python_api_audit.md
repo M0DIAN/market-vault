@@ -34,8 +34,9 @@ The constructor calls `load_settings(...)` (unless a `Settings` object is
 passed directly) and then constructs `Catalog(self.settings)`. The
 existing `market_vault.MarketVault` is therefore a **settings-backed,
 legacy local-database client**: it binds to `settings.yaml`, a DuckDB
-Catalog, the local data root, and (through `backfill`/`plan_backfill`)
-OpenD collection. It is NOT a settings-independent artifact client.
+Catalog, the local data root, and OpenD collection through `backfill`;
+`plan_backfill` is local Catalog-backed planning with no OpenD/network.
+It is NOT a settings-independent artifact client.
 
 ## C. Current MarketVault method surface
 
@@ -46,7 +47,7 @@ commit, with signatures and side-effect categories taken from source:
 | --- | --- | --- |
 | `load_bars` | `(code, start=None, end=None, trade_date=None, interval="1m", session=None, adjustment="NONE") -> pd.DataFrame` | read-local (DuckDB view over curated market bars) |
 | `load_trading_calendar` | `(market=None, code=None, start_date=None, end_date=None) -> pd.DataFrame` | read-local (DuckDB view over curated trading calendar) |
-| `plan_backfill` | `(*, symbols, end_date, calendar_market=None, calendar_code=None, start_date=None, interval="1m", session=None, adjustment=None, force=False, incremental=False, bootstrap_start_date=None, today=None)` | plan (pure planning, no network) |
+| `plan_backfill` | `(*, symbols, end_date, calendar_market=None, calendar_code=None, start_date=None, interval="1m", session=None, adjustment=None, force=False, incremental=False, bootstrap_start_date=None, today=None)` | local planning / read-local (reads Catalog; no OpenD/network; uses current UTC date when today is omitted) |
 | `backfill` | `(*, symbols, end_date, calendar_market=None, calendar_code=None, start_date=None, interval="1m", session=None, adjustment=None, force=False, incremental=False, bootstrap_start_date=None, max_retries=2, retry_backoff_seconds=2.0, today=None)` | collection (network / OpenD-capable, writes local data) |
 | `inventory_market_bars` | `(*, symbols=None, start_date=None, end_date=None, interval=None, session=None, adjustment=None, source_schema_version=None, include_files=False, today=None) -> InventoryReport` | audit / read-local (no OpenD, no mutation) |
 | `audit_market_bars` | `(*, symbols, start_date, end_date, calendar_market=None, calendar_code=None, interval="1m", session=None, adjustment=None, source_schema_version=None, include_complete_dates=False, today=None) -> AuditReport` | audit / read-local (no OpenD, no mutation) |

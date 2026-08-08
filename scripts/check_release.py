@@ -1341,6 +1341,9 @@ V070_CONTRACT_FACTS = (
     "No Trading Execution",
     "No new artifact format",
     "No identity v2",
+    "No schema v2",
+    "No migration",
+    "No dependency modernization",
 )
 # Implemented claims that must never appear in the Python Client contract:
 # the contract freezes the boundary only; implementation begins in PR-2+.
@@ -1355,12 +1358,20 @@ V070_CONTRACT_IMPLEMENTED_PHRASES = (
 # audited top-level package behavior, the existing MarketVault
 # constructor and method surface, the verified readers as formal trust
 # boundaries, the compatibility finding, and the recommended
-# settings-independent ArtifactClient architecture.
+# settings-independent ArtifactClient architecture. The plan_backfill
+# classification facts freeze the accurate local behavior: Catalog-backed
+# local planning with no OpenD/network, using the current UTC date when
+# today is omitted.
 V070_AUDIT_FACTS = (
     "# MarketVault v0.7.0 Existing Python API Audit",
     "lazy",
     "`MarketVault`",
     "settings-backed",
+    "plan_backfill",
+    "local planning / read-local",
+    "reads Catalog",
+    "no OpenD/network",
+    "uses current UTC date when today is omitted",
     "load_verified_canonical_build",
     "load_verified_dataset",
     "load_verified_dataset_catalog",
@@ -1369,6 +1380,13 @@ V070_AUDIT_FACTS = (
     "compatibility surface",
     "public-name collision",
     "`ArtifactClient`",
+)
+# Stale or inaccurate plan_backfill claims that must never appear in the
+# v0.7.0 Python API audit: plan_backfill is not "pure planning" and does
+# not perform OpenD/network collection (only backfill does).
+V070_AUDIT_STALE_PHRASES = (
+    "pure planning",
+    "performs OpenD",
 )
 # The v0.7.0 direction and contract documents must name the exact v0.7.0
 # non-goals; these are checked as a second layer next to the direction
@@ -3003,6 +3021,12 @@ def check_v070_python_api_audit(root: Path) -> list[str]:
             failures.append(
                 "docs/v0_7_0_python_api_audit.md does not state the "
                 f"fact {fact!r}"
+            )
+    for phrase in V070_AUDIT_STALE_PHRASES:
+        if phrase in text:
+            failures.append(
+                "docs/v0_7_0_python_api_audit.md contains the stale "
+                f"plan_backfill claim {phrase!r}"
             )
     return failures
 

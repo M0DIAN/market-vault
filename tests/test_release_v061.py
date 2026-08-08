@@ -2343,6 +2343,9 @@ def test_v070_python_client_contract_states_boundaries():
         "Trading Execution",
         "new artifact format",
         "identity v2",
+        "schema v2",
+        "migration",
+        "dependency modernization",
     ):
         assert non_goal in text
     assert "ArtifactClient is implemented" not in text
@@ -2365,6 +2368,16 @@ def test_v070_python_api_audit_states_audit_facts():
     assert "public-name collision" in text
     assert "`ArtifactClient`" in text
     assert "PR-1 does not define that symbol" in text
+    # The accurate plan_backfill classification: local Catalog-backed
+    # planning with no OpenD/network and the current-UTC-date fallback.
+    assert "plan_backfill" in text
+    assert "local planning / read-local" in text
+    assert "reads Catalog" in text
+    assert "no OpenD/network" in text
+    assert "uses current UTC date when today is omitted" in text
+    assert "pure planning" not in text
+    assert "performs OpenD" not in text
+    assert "(through `backfill`/`plan_backfill`)" not in text
 
 
 def test_artifact_client_not_importable():
@@ -2694,6 +2707,103 @@ def test_release_checker_fails_when_src_adds_artifact_client_module(tmp_path):
     result = run_check_release(repo)
     assert result.returncode == 1
     assert "contains the ArtifactClient symbol" in result.stdout
+
+
+def test_release_checker_fails_when_contract_drops_schema_v2_non_goal(tmp_path):
+    # Mutation guard A: the contract must keep "No schema v2" as an
+    # explicit v0.7.0 non-goal.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "contracts" / "python_client.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "- No schema v2.\n",
+            "",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "does not state the fact 'No schema v2'" in result.stdout
+
+
+def test_release_checker_fails_when_contract_drops_migration_non_goal(tmp_path):
+    # Mutation guard B: the contract must keep "No migration" as an
+    # explicit v0.7.0 non-goal.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "contracts" / "python_client.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "- No migration.\n",
+            "",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "does not state the fact 'No migration'" in result.stdout
+
+
+def test_release_checker_fails_when_contract_drops_dependency_modernization(
+    tmp_path,
+):
+    # Mutation guard C: the contract must keep "No dependency
+    # modernization" as an explicit v0.7.0 non-goal.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "contracts" / "python_client.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "- No dependency modernization.\n",
+            "",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the fact 'No dependency modernization'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_audit_reverts_plan_backfill_to_pure_planning(
+    tmp_path,
+):
+    # Mutation guard D: the API audit must never classify plan_backfill
+    # as "pure planning".
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_7_0_python_api_audit.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "local planning / read-local",
+            "pure planning",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "contains the stale plan_backfill claim 'pure planning'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_audit_claims_plan_backfill_performs_opend(
+    tmp_path,
+):
+    # Mutation guard E: the API audit must never claim plan_backfill
+    # performs OpenD/network collection (only backfill does).
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_7_0_python_api_audit.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "local planning / read-local",
+            "performs OpenD collection",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "contains the stale plan_backfill claim 'performs OpenD'"
+    ) in result.stdout
 
 
 def test_release_checker_fails_when_v060_direction_missing_pr_number(tmp_path):

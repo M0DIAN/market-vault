@@ -139,3 +139,6 @@ lightweight.
 - No Trading Execution.
 - No new artifact format.
 - No identity v2.
+- No schema v2.
+- No migration.
+- No dependency modernization.
