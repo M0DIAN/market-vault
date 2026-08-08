@@ -186,9 +186,83 @@ RELEASE_V051_STALE_PHRASES = (
 # The marker that separates the current-state region of the v0.5.1 release
 # notes from the historical release-preparation record.
 HISTORICAL_RELEASE_PREPARATION_HEADER = "## Historical release-preparation record"
-# Facts the v0.6.0 direction document must state.
+# Facts the v0.6.1 direction document must state: the planned maintenance
+# release status, the frozen baseline, the fixed 4-PR sequence, and the
+# fixed version rules (0.6.0 through PR-3, 0.6.1 only in PR-4).
+V061_DIRECTION_FACTS = (
+    "Status: planned maintenance release",
+    "Stability, Auditability, and Usability Maintenance",
+    "669c955abc0a234264964dfdb7fcafdf502a901a",
+    "v0.6.0",
+    "package version at planning time: 0.6.0",
+    "PR-1",
+    "PR-2",
+    "PR-3",
+    "PR-4",
+    "Post-release baseline + maintenance direction",
+    "CLI/help/error/usability consistency polish",
+    "CI/package auditability + maintenance hardening",
+    "v0.6.1 release preparation",
+    "0.6.0 through PR-3",
+    "bumped to 0.6.1 only in PR-4",
+    "maintenance release",
+    "PR-1 is the current maintenance-baseline and direction stage",
+    "V0.6.1 is not released",
+    "PR-2 has not started",
+)
+# The v0.6.1 direction document must not regress to stale current-state
+# wording: PR-1 has started (it is the current maintenance-baseline stage),
+# while the formal release is not completed and PR-2 has not started.
+V061_DIRECTION_STALE_PHRASES = (
+    "The release is not started",
+)
+# The v0.6.1 direction document must mark the explicit non-goals; none of
+# them may be smuggled into a v0.6.1 PR.
+V061_DIRECTION_NONGOAL_MARKERS = (
+    "Python Client",
+    "REST API",
+    "Dataset Catalog query command",
+    "new Catalog capability",
+    "new Sample Generation capability",
+    "identity v2",
+    "schema v2",
+    "new artifact format",
+    "dependency modernization",
+    "PyArrow runtime pin",
+    "ML training",
+    "backtesting",
+    "signals",
+    "automatic trading",
+    "Trading Execution",
+)
+# The frozen v0.6.1 invariants the direction document must state.
+V061_DIRECTION_INVARIANT_MARKERS = (
+    "Canonical identity algorithms unchanged",
+    "Dataset identity algorithms unchanged",
+    "Sample Generation identity unchanged",
+    "Catalog content identity unchanged",
+    "Catalog snapshot identity unchanged",
+    "Dataset build-plan contract unchanged",
+    "Sample Generation contract unchanged",
+    "Catalog formal contract unchanged",
+    "existing immutable artifacts require no migration/rewrite",
+    "CLI command set unchanged",
+)
+# Contradictory claims that must never appear in the v0.6.1 direction
+# document even when the required non-goal markers are present.
+V061_DIRECTION_FALSE_CLAIMS = (
+    "Python Client is part of v0.6.1",
+    "adds the Python Client",
+    "adds the Dataset Catalog query command",
+    "0.6.1 in PR-1",
+    "0.6.1 in PR-2",
+    "0.6.1 in PR-3",
+)
+# Facts the v0.6.0 direction document must state now that v0.6.0 is
+# formally released. The planning sections may keep the historical
+# planning-time facts.
 V060_DIRECTION_FACTS = (
-    "Status: implementation complete; v0.6.0 release preparation",
+    "Status: released on 2026-08-08",
     "Deterministic Sample Generation and Dataset Catalog",
     "a978eef291d5e26d20e5cf977bc76609c227cb52",
     "package version at planning time: 0.5.1",
@@ -209,7 +283,16 @@ V060_DIRECTION_FACTS = (
     "not part of v0.6",
     "bumped to 0.6.0 only in PR-9",
     "release preparation",
-    "not formally released",
+    "PR #43",
+    "MERGED",
+    "669c955abc0a234264964dfdb7fcafdf502a901a",
+    "31227915770",
+    "v0.6.0",
+    "MarketVault v0.6.0",
+    "2026-08-08T03:17:48Z",
+    "PyPI",
+    "TestPyPI",
+    "NOT PUBLISHED",
     "24a2243031b5f16fdbb9334f1a1722e56eb7a2f7",
     "PR #42",
     "2026-08-07T18:32:32Z",
@@ -227,29 +310,44 @@ V060_DIRECTION_NONGOAL_MARKERS = (
 # Stale lifecycle wording that must never appear in the current-state
 # regions of the v0.6.0 direction document (the header and the Progress
 # section). The planning sections may quote the pre-PR-9 state, but the
-# current-state regions must describe the release preparation exactly.
+# current-state regions must describe the formal released state exactly.
 V060_DIRECTION_STALE_PHRASES = (
+    "Status: implementation complete; v0.6.0 release preparation",
+    "Status: planned",
+    "Status: proposed",
+    "PR-9 is the current v0.6.0 release-preparation stage",
+    "PR-9 is open and not merged",
     "PR-8 (this PR)",
     "PR-9 has not started",
     "every supported PyArrow writer",
-    "v0.6.0 is formally released",
+    "not formally released",
 )
-# Affirmative release claims that must never appear anywhere in the
-# v0.6.0 direction document: the release preparation does not create the
-# tag, the GitHub Release, or a PyPI publication.
+# False release claims that must never appear anywhere in the v0.6.0
+# direction document: the GitHub Release exists, but no PyPI / TestPyPI
+# publication was made.
 V060_DIRECTION_RELEASE_CLAIMS = (
-    "v0.6.0 tag exists",
-    "GitHub Release published",
     "PyPI published",
     "TestPyPI published",
 )
-# Facts the v0.6.0 release notes must state during the release-preparation
-# stage. The final formal facts (tag, GitHub Release, PyPI, merge SHA,
-# formal asset hashes) are intentionally absent: PR-9 must not fabricate
-# them.
+# Facts the v0.6.0 release notes must state now that v0.6.0 is formally
+# released. The historical release-preparation record keeps the
+# preparation-time facts (PR-9, PR-8 base, candidate validation only).
 RELEASE_V060_FACTS = (
-    "Release preparation status",
-    "v0.6.0 release preparation",
+    "Formal release status",
+    "PR #43",
+    "MERGED",
+    "2026-08-07T23:41:36Z",
+    "669c955abc0a234264964dfdb7fcafdf502a901a",
+    "31227915770",
+    "v0.6.0",
+    "MarketVault v0.6.0",
+    "2026-08-08T03:17:48Z",
+    "market_vault-0.6.0-py3-none-any.whl",
+    "B1BC7D945A8DDF981AEB4AB2B973E5A8BD07919D7293DED15A7715BC03B262AF",
+    "market_vault-0.6.0.tar.gz",
+    "DBA631EC71BD6FD56A436DEB1F82481FAA3E3E89BA5D03D207870F2C96AF3C37",
+    "PyPI: NOT PUBLISHED",
+    "TestPyPI: NOT PUBLISHED",
     "PR-9",
     "0.6.0",
     "24a2243031b5f16fdbb9334f1a1722e56eb7a2f7",
@@ -268,18 +366,20 @@ RELEASE_V060_FACTS = (
     "pyarrow>=16",
     "candidate validation only",
     "exact release commit",
-    "PyPI",
-    "TestPyPI",
-    "not published",
+    "no standalone",
+    "dataset-catalog-query",
 )
-# Formal-state phrasing that must never appear in the v0.6.0 release
-# notes: PR-9 is the release preparation, and the tag / GitHub Release /
-# PyPI facts are not created by it.
+# Stale release-preparation current-state sentences that must never appear
+# in the formal region of the v0.6.0 release notes (before the historical
+# release-preparation record). The historical sections may quote the
+# preparation-time state, but these precise current-state sentences are
+# forbidden in the formal region.
 RELEASE_V060_STALE_PHRASES = (
-    "Formal release status",
-    "v0.6.0 is formally released",
-    "tag: v0.6.0",
-    "GitHub Release: MarketVault v0.6.0",
+    "PR-9 is open and **not merged**.",
+    "The v0.6.0 tag does **not** exist yet.",
+    "No GitHub Release exists yet.",
+    "describes the **v0.6.0 release preparation** stage.",
+    "not formally released",
     "PyPI: published",
     "PR-8 (this PR)",
     "PR-9 has not started",
@@ -504,8 +604,6 @@ V060_DIRECTION_PR8_FACTS = (
     "main verified",
     "31207428151",
     "0.5.1",
-    "release preparation",
-    "not formally released",
 )
 # Contradictory claims that must never appear in the v0.6.0 direction
 # document's PR-8 record.
@@ -738,10 +836,10 @@ DATASET_CATALOG_CLI_FALSE_CLAIMS = (
 )
 # The CI fresh-wheel smoke must cover the four Catalog CLI help commands.
 CI_PR7_API_MARKER = "PR7_CATALOG_CLI_HELP_OK"
-# The CI package job must carry the v0.6.0 release-preparation marker, the
-# v0.6.0 public API smoke must import generate_sample_requests, and the
-# wheel contents check must forbid *.b64 fixture bundles.
-CI_V060_RELEASE_PREP_MARKER = "V060_RELEASE_PREP_OK"
+# The CI package job must carry the v0.6.0 formal released-state marker,
+# the v0.6.0 public API smoke must import generate_sample_requests, and
+# the wheel contents check must forbid *.b64 fixture bundles.
+CI_V060_RELEASE_STATE_MARKER = "V060_RELEASE_STATE_OK"
 CI_V060_PUBLIC_API_IMPORT_LINES = ("generate_sample_requests",)
 CI_PR7_HELP_COMMANDS = (
     "market-vault dataset-catalog-build --help",
@@ -1244,6 +1342,12 @@ def check_v060_release_notes(root: Path) -> list[str]:
     if not path.exists():
         return ["docs/release_v0_6_0.md is missing"]
     text = path.read_text(encoding="utf-8")
+    # Required facts are checked against the full document (several facts
+    # live in the historical record), but stale current-state sentences are
+    # checked only in the formal region before the historical
+    # release-preparation record: the historical sections may quote the
+    # preparation-time state verbatim.
+    formal_text = text.split(HISTORICAL_RELEASE_PREPARATION_HEADER, 1)[0]
     failures = []
     for fact in RELEASE_V060_FACTS:
         if fact not in text:
@@ -1251,7 +1355,7 @@ def check_v060_release_notes(root: Path) -> list[str]:
                 f"docs/release_v0_6_0.md does not state the fact {fact!r}"
             )
     for phrase in RELEASE_V060_STALE_PHRASES:
-        if phrase in text:
+        if phrase in formal_text:
             failures.append(
                 f"docs/release_v0_6_0.md still contains the stale wording {phrase!r}"
             )
@@ -2143,20 +2247,21 @@ def check_ci_pr8(root: Path) -> list[str]:
     return failures
 
 
-def check_ci_v060_release_prep(root: Path) -> list[str]:
-    """The CI package job carries the ``V060_RELEASE_PREP_OK`` marker, the
-    public API smoke imports ``generate_sample_requests``, and the wheel
-    hygiene step forbids ``.b64`` files (the frozen static reference
-    artifact fixture must never ship inside the wheel)."""
+def check_ci_v060_release_state(root: Path) -> list[str]:
+    """The CI package job carries the ``V060_RELEASE_STATE_OK`` marker
+    (the v0.6.0 formal released-state marker), the public API smoke
+    imports ``generate_sample_requests``, and the wheel hygiene step
+    forbids ``.b64`` files (the frozen static reference artifact fixture
+    must never ship inside the wheel)."""
     path = root / ".github" / "workflows" / "ci.yml"
     if not path.exists():
         return [".github/workflows/ci.yml is missing"]
     text = path.read_text(encoding="utf-8")
     failures = []
-    if CI_V060_RELEASE_PREP_MARKER not in text:
+    if CI_V060_RELEASE_STATE_MARKER not in text:
         failures.append(
             "CI package job must carry the "
-            f"{CI_V060_RELEASE_PREP_MARKER} marker"
+            f"{CI_V060_RELEASE_STATE_MARKER} marker"
         )
     for import_line in CI_V060_PUBLIC_API_IMPORT_LINES:
         if import_line not in text:
@@ -2383,6 +2488,47 @@ def check_cli_version(root: Path) -> list[str]:
     return []
 
 
+def check_v061_direction(root: Path) -> list[str]:
+    """Static v0.6.1 direction checks: the document states the planned
+    maintenance release status, the frozen baseline, the fixed 4-PR
+    sequence, the fixed version rules, the explicit non-goals, and the
+    frozen invariants, and contains no smuggled capability claim."""
+    path = root / "docs" / "v0_6_1_direction.md"
+    if not path.exists():
+        return ["docs/v0_6_1_direction.md is missing"]
+    text = path.read_text(encoding="utf-8")
+    failures = []
+    for fact in V061_DIRECTION_FACTS:
+        if fact not in text:
+            failures.append(
+                f"docs/v0_6_1_direction.md does not state the fact {fact!r}"
+            )
+    for marker in V061_DIRECTION_NONGOAL_MARKERS:
+        if marker not in text:
+            failures.append(
+                "docs/v0_6_1_direction.md does not mark the v0.6.1 "
+                f"non-goal {marker!r}"
+            )
+    for marker in V061_DIRECTION_INVARIANT_MARKERS:
+        if marker not in text:
+            failures.append(
+                "docs/v0_6_1_direction.md does not state the frozen "
+                f"invariant {marker!r}"
+            )
+    for phrase in V061_DIRECTION_STALE_PHRASES:
+        if phrase in text:
+            failures.append(
+                "docs/v0_6_1_direction.md still contains the stale "
+                f"wording {phrase!r}"
+            )
+    for claim in V061_DIRECTION_FALSE_CLAIMS:
+        if claim in text:
+            failures.append(
+                f"docs/v0_6_1_direction.md contains the false claim {claim!r}"
+            )
+    return failures
+
+
 def main() -> int:
     root = Path(__file__).resolve().parents[1]
     checks = [
@@ -2398,6 +2544,7 @@ def main() -> int:
         ("v0.6.0 release notes", check_v060_release_notes),
         ("v0.5.1 direction", check_v051_direction),
         ("v0.6.0 direction", check_v060_direction),
+        ("v0.6.1 direction", check_v061_direction),
         ("v0.6.0 ADR", check_v060_adr),
         ("sample generation modules", check_sample_generation_modules),
         ("sample generation contract", check_sample_generation_contract),
@@ -2411,7 +2558,7 @@ def main() -> int:
         ("v0.6.0 frozen fixture", check_v060_frozen_fixture),
         ("pyarrow dependency", check_pyarrow_dependency),
         ("CI PR-8 portability", check_ci_pr8),
-        ("CI v0.6.0 release prep", check_ci_v060_release_prep),
+        ("CI v0.6.0 release state", check_ci_v060_release_state),
         ("old release notes", check_old_release_notes),
         ("warning guard", check_warning_guard),
         ("examples", check_examples),

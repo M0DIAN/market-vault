@@ -1,16 +1,25 @@
 # MarketVault v0.6.0 Direction: Deterministic Sample Generation and Dataset Catalog
 
-Status: implementation complete; v0.6.0 release preparation
+Status: released on 2026-08-08
 
-This document defines the scope, non-goals, and fixed PR sequence for the
+This document defined the scope, non-goals, and fixed PR sequence for the
 V0.6.0 "Deterministic Sample Generation and Dataset Catalog" minor feature
-release. It fixes the architecture boundary for v0.6.0 and the two product
+release. It fixed the architecture boundary for v0.6.0 and the two product
 capabilities: the Deterministic Sample Generator and the immutable Dataset
-Catalog. The direction PR itself is documentation only and implements no
-product code; the precise schemas are defined by the subsequent contract
+Catalog. The direction PR itself was documentation only and implemented no
+product code; the precise schemas were defined by the subsequent contract
 PRs. The Dataset Catalog CLI was implemented by PR-7 (build / verify /
-list / show), merged in PR #41. PR-8 complete: PR #42 merged; PR-9 is the
-current v0.6.0 release-preparation stage.
+list / show), merged in PR #41. PR-8 complete: PR #42 merged. PR-9 (the
+v0.6.0 release preparation) is complete: PR #43 merged on 2026-08-07T23:41:36Z,
+the annotated `v0.6.0` tag points at the release commit
+`669c955abc0a234264964dfdb7fcafdf502a901a`, the GitHub Release `MarketVault
+v0.6.0` was published on 2026-08-08T03:17:48Z with the wheel and sdist
+assets, and PyPI and TestPyPI are NOT PUBLISHED. V0.6.1 continues from the
+separate [v0_6_1_direction.md](v0_6_1_direction.md) maintenance direction.
+
+The planning sections below describe the original v0.6.0 plan and are kept
+as historical planning records; the authoritative current state is the
+released state recorded in the Progress section.
 
 ## 1. Baseline
 
@@ -383,8 +392,16 @@ V0.6.0 keeps, unchanged:
   portability-pyarrow24 / package SUCCESS; PyArrow24 full suite
   3103 passed, 7 skipped, 0 failed). The Python Client is a v0.7
   direction and is not part of v0.6.0.
-- PR-9 is the current v0.6.0 release-preparation stage; the package
-  version is bumped to 0.6.0 in PR-9 only. V0.6.0 as a whole is not
-  formally released yet (the release is not formally released until the
-  post-merge release step). The v0.6.0 tag and the GitHub Release are
-  not created by PR-9; PyPI is not published by PR-9 either.
+- PR-9 (branch `release/v0.6.0`, `chore: prepare v0.6.0 release`)
+  completed the v0.6.0 release preparation: version sync to 0.6.0,
+  README, CHANGELOG, release notes, release checker / release tests / CI
+  package markers, and the release smoke. PR-9 COMPLETE: PR #43 MERGED on
+  2026-08-07T23:41:36Z via the squash commit
+  `669c955abc0a234264964dfdb7fcafdf502a901a`; main verified by CI run
+  31227915770 (test 3.11 / test 3.14 / portability-pyarrow24 / package
+  SUCCESS). The annotated `v0.6.0` tag was created after the merge and
+  points at the release commit; the GitHub Release `MarketVault v0.6.0`
+  was published on 2026-08-08T03:17:48Z with the wheel and sdist assets;
+  PyPI and TestPyPI are NOT PUBLISHED. V0.6.0 is formally released and
+  sealed. The Python Client is a v0.7 direction and is not part of v0.6;
+  v0.6.1 is a maintenance release and does not add it either.
