@@ -206,11 +206,15 @@ V061_DIRECTION_FACTS = (
     "0.6.0 through PR-3",
     "bumped to 0.6.1 only in PR-4",
     "maintenance release",
-    "PR-1 is complete and merged as PR #44 at",
+    "PR-1 and PR-2 are complete and merged as PR #44 and PR #45",
+    "PR-1 merged at",
     "6bb9a9500fae53511ff964f47e5ccea20f3d91f7",
-    "PR-2 is the current CLI/help/error/usability consistency-polish stage",
+    "PR-2's main baseline is",
+    "33d7f5856bf060527ccf4d2ab679df4429009ce6",
+    "PR-3 is the current CI/package auditability and maintenance-hardening stage",
     "V0.6.1 is not released",
-    "PR-3 has not started",
+    "PR-4 has not started",
+    "Package remains 0.6.0",
 )
 # The v0.6.1 direction document must not regress to stale current-state
 # wording: PR-1 is complete (not the current stage), PR-2 is the current
@@ -220,6 +224,8 @@ V061_DIRECTION_STALE_PHRASES = (
     "The release is not started",
     "PR-1 is the current maintenance-baseline and direction stage",
     "PR-2 has not started",
+    "PR-2 is the current CLI/help/error/usability consistency-polish stage",
+    "PR-3 has not started",
 )
 # The v0.6.1 direction document must mark the explicit non-goals; none of
 # them may be smuggled into a v0.6.1 PR.
@@ -258,6 +264,18 @@ V061_DIRECTION_INVARIANT_MARKERS = (
 V061_CLI_USABILITY_AUDIT_MARKERS = (
     "MarketVault v0.6.1 CLI Usability Audit",
     "6bb9a9500fae53511ff964f47e5ccea20f3d91f7",
+)
+# Facts the v0.6.1 CI and package audit document (the PR-3 deliverable)
+# must state.
+V061_CI_PACKAGE_AUDIT_MARKERS = (
+    "MarketVault v0.6.1 CI and Package Auditability",
+    "33d7f5856bf060527ccf4d2ab679df4429009ce6",
+    "actions/checkout@v6",
+    "actions/setup-python@v6",
+    "actions/upload-artifact@v7",
+    "SHA256SUMS.txt",
+    "artifact-digest",
+    "V061_PACKAGE_AUDIT_OK",
 )
 # Contradictory claims that must never appear in the v0.6.1 direction
 # document even when the required non-goal markers are present.
@@ -2557,6 +2575,67 @@ def check_v061_cli_usability_audit(root: Path) -> list[str]:
     return failures
 
 
+def check_ci_auditability(root: Path) -> list[str]:
+    """The v0.6.1 PR-3 CI/package auditability guards: the GitHub Actions
+    runtime majors moved to Node-24-capable versions (checkout v6,
+    setup-python v6, upload-artifact v7, never the stale v4/v5 majors),
+    the normal matrix stays exactly 3.11 + 3.14, the PyArrow24 CI pin stays
+    exactly ``pyarrow==24.0.0`` with compatibility terminology (never the
+    stale "writer" step labels), and the package audit chain (SHA256SUMS
+    manifest, attempt-bound artifact name, fail-closed upload settings,
+    and the V061_PACKAGE_AUDIT_OK marker) stays in place."""
+    path = root / ".github" / "workflows" / "ci.yml"
+    if not path.exists():
+        return [".github/workflows/ci.yml is missing"]
+    text = path.read_text(encoding="utf-8")
+    failures = []
+    for action in ("actions/checkout@v6", "actions/setup-python@v6", "actions/upload-artifact@v7"):
+        if action not in text:
+            failures.append(f"CI must use the Node-24 Action major {action!r}")
+    for stale in ("actions/checkout@v4", "actions/setup-python@v5"):
+        if stale in text:
+            failures.append(f"CI must never restore the stale Action major {stale!r}")
+    if '"3.11", "3.14"' not in text:
+        failures.append('CI python matrix must stay exactly ["3.11", "3.14"]')
+    if 'pip install "pyarrow==24.0.0"' not in text:
+        failures.append(
+            "CI portability-pyarrow24 job must keep the exact pin pyarrow==24.0.0"
+        )
+    for stale_label in ("audited PyArrow 24.0.0 writer", "audited writer version"):
+        if stale_label in text:
+            failures.append(
+                f"CI still contains the stale PyArrow step label {stale_label!r}"
+            )
+    for marker in (
+        "SHA256SUMS.txt",
+        "market-vault-package-${{ github.sha }}-attempt-${{ github.run_attempt }}",
+        "if-no-files-found: error",
+        "retention-days: 30",
+        "overwrite: false",
+        "V061_PACKAGE_AUDIT_OK",
+    ):
+        if marker not in text:
+            failures.append(f"CI package audit chain is missing {marker!r}")
+    return failures
+
+
+def check_v061_ci_package_audit(root: Path) -> list[str]:
+    """The v0.6.1 PR-3 CI and package audit document exists and states the
+    pinned baseline and the audit-chain markers."""
+    path = root / "docs" / "v0_6_1_ci_package_audit.md"
+    if not path.exists():
+        return ["docs/v0_6_1_ci_package_audit.md is missing"]
+    text = path.read_text(encoding="utf-8")
+    failures = []
+    for marker in V061_CI_PACKAGE_AUDIT_MARKERS:
+        if marker not in text:
+            failures.append(
+                "docs/v0_6_1_ci_package_audit.md does not state the "
+                f"fact {marker!r}"
+            )
+    return failures
+
+
 def main() -> int:
     root = Path(__file__).resolve().parents[1]
     checks = [
@@ -2574,6 +2653,8 @@ def main() -> int:
         ("v0.6.0 direction", check_v060_direction),
         ("v0.6.1 direction", check_v061_direction),
         ("v0.6.1 CLI usability audit", check_v061_cli_usability_audit),
+        ("CI auditability", check_ci_auditability),
+        ("v0.6.1 CI package audit", check_v061_ci_package_audit),
         ("v0.6.0 ADR", check_v060_adr),
         ("sample generation modules", check_sample_generation_modules),
         ("sample generation contract", check_sample_generation_contract),
