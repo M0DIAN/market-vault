@@ -21,7 +21,7 @@ import sys
 import tomllib
 from pathlib import Path
 
-EXPECTED_VERSION = "0.6.0"
+EXPECTED_VERSION = "0.6.1"
 PEP440_RE = re.compile(
     r"^([1-9]\d*!)?(0|[1-9]\d*)(\.(0|[1-9]\d*))*((a|b|rc)(0|[1-9]\d*))?"
     r"(\.post(0|[1-9]\d*))?(\.dev(0|[1-9]\d*))?$"
@@ -36,8 +36,8 @@ CI_PACKAGE_VERSION_MARKERS = (
 CI_METADATA_VERSION_MARKERS = (
     f"assert version('market-vault') == '{EXPECTED_VERSION}'",
 )
-# The CI fresh-wheel public API smoke marker must use the v0.6.0 marker.
-CI_PUBLIC_API_MARKER = "V060_PUBLIC_API_IMPORT_OK"
+# The CI fresh-wheel public API smoke marker must use the v0.6.1 marker.
+CI_PUBLIC_API_MARKER = "V061_PUBLIC_API_IMPORT_OK"
 # The exact NumPy timedelta warning-as-error guard that must stay in
 # pyproject.toml; an ignore-based substitute is never accepted.
 WARNING_GUARD_MARKER = (
@@ -186,11 +186,12 @@ RELEASE_V051_STALE_PHRASES = (
 # The marker that separates the current-state region of the v0.5.1 release
 # notes from the historical release-preparation record.
 HISTORICAL_RELEASE_PREPARATION_HEADER = "## Historical release-preparation record"
-# Facts the v0.6.1 direction document must state: the planned maintenance
-# release status, the frozen baseline, the fixed 4-PR sequence, and the
-# fixed version rules (0.6.0 through PR-3, 0.6.1 only in PR-4).
+# Facts the v0.6.1 direction document must state: the release-preparation
+# status, the frozen baseline, the fixed 4-PR sequence, the fixed version
+# rules (0.6.0 through PR-3, 0.6.1 only in PR-4), and the not-released
+# lifecycle truth (no tag, no GitHub Release, no PyPI, no TestPyPI).
 V061_DIRECTION_FACTS = (
-    "Status: planned maintenance release",
+    "Status: implementation complete; v0.6.1 release preparation",
     "Stability, Auditability, and Usability Maintenance",
     "669c955abc0a234264964dfdb7fcafdf502a901a",
     "v0.6.0",
@@ -206,26 +207,36 @@ V061_DIRECTION_FACTS = (
     "0.6.0 through PR-3",
     "bumped to 0.6.1 only in PR-4",
     "maintenance release",
-    "PR-1 and PR-2 are complete and merged as PR #44 and PR #45",
-    "PR-1 merged at",
+    "PR-1 COMPLETE: PR #44 merged at",
     "6bb9a9500fae53511ff964f47e5ccea20f3d91f7",
-    "PR-2's main baseline is",
+    "PR-2 COMPLETE: PR #45 merged at",
     "33d7f5856bf060527ccf4d2ab679df4429009ce6",
-    "PR-3 is the current CI/package auditability and maintenance-hardening stage",
-    "V0.6.1 is not released",
-    "PR-4 has not started",
-    "Package remains 0.6.0",
+    "PR-3 COMPLETE: PR #46 merged at",
+    "99c2e7bd445333740806dedec4aed03f82f32b11",
+    "PR-4 is the current v0.6.1 release-preparation stage",
+    "The package version is now 0.6.1 in PR-4",
+    "V0.6.1 is NOT formally released",
+    "The v0.6.1 tag has not been created",
+    "The GitHub Release v0.6.1 has not been published",
+    "PyPI is not published",
+    "TestPyPI is not published",
+    "The fixed 4-PR sequence itself remains unchanged",
 )
 # The v0.6.1 direction document must not regress to stale current-state
-# wording: PR-1 is complete (not the current stage), PR-2 is the current
-# stage (it has started), the formal release is not completed, and PR-3
-# has not started.
+# wording: PR-1 / PR-2 / PR-3 are complete (none is the current stage),
+# PR-4 has started, the package is no longer 0.6.0, and the formal release
+# is not completed.
 V061_DIRECTION_STALE_PHRASES = (
     "The release is not started",
     "PR-1 is the current maintenance-baseline and direction stage",
     "PR-2 has not started",
     "PR-2 is the current CLI/help/error/usability consistency-polish stage",
     "PR-3 has not started",
+    "Status: planned maintenance release",
+    "V0.6.1 maintenance development is in PR-3",
+    "PR-3 is the current CI/package auditability and maintenance-hardening stage",
+    "PR-4 has not started",
+    "Package remains 0.6.0",
 )
 # The v0.6.1 direction document must mark the explicit non-goals; none of
 # them may be smuggled into a v0.6.1 PR.
@@ -287,6 +298,46 @@ V061_DIRECTION_FALSE_CLAIMS = (
     "0.6.1 in PR-1",
     "0.6.1 in PR-2",
     "0.6.1 in PR-3",
+)
+# Facts the v0.6.1 release notes (the PR-4 deliverable) must state: the
+# release-preparation status (not a formal release status), the frozen
+# PR-1/2/3 merge record, the 0.6.1 package version, the NOT PUBLISHED
+# lifecycle state, and the candidate-vs-formal artifact distinction.
+V061_RELEASE_NOTES_FACTS = (
+    "## Release preparation status",
+    "NOT formally released",
+    "99c2e7bd445333740806dedec4aed03f82f32b11",
+    "PR-1: PR #44 MERGED 6bb9a9500fae53511ff964f47e5ccea20f3d91f7",
+    "PR-2: PR #45 MERGED 33d7f5856bf060527ccf4d2ab679df4429009ce6",
+    "PR-3: PR #46 MERGED 99c2e7bd445333740806dedec4aed03f82f32b11",
+    "PR-4: current release-preparation stage, OPEN / UNMERGED",
+    "package version in PR-4: 0.6.1",
+    "v0.6.1 tag:            NOT CREATED",
+    "GitHub Release v0.6.1: NOT PUBLISHED",
+    "PyPI:                  NOT PUBLISHED",
+    "TestPyPI:              NOT PUBLISHED",
+    "No future merge SHA is claimed",
+    "no formal artifact SHA256 values are predicted",
+    "candidate validation only",
+    "CI audit artifact",
+    "exact future v0.6.1 release commit",
+    "PR branch candidate hashes are never reused",
+    "new product capabilities = 0",
+)
+# Affirmative release claims that must never appear in the v0.6.1 release
+# notes: the formal release does not exist yet.
+V061_RELEASE_NOTES_STALE_PHRASES = (
+    "## Formal release status",
+    "v0.6.1 tag: CREATED",
+    "GitHub Release v0.6.1: PUBLISHED",
+    "PyPI: PUBLISHED",
+    "TestPyPI: PUBLISHED",
+    "PR-4 MERGED",
+    "PR-4 is merged",
+    "v0.6.1 is released",
+    "v0.6.1 has been released",
+    "v0.6.1 released on",
+    "formal release assets published",
 )
 # Facts the v0.6.0 direction document must state now that v0.6.0 is
 # formally released. The planning sections may keep the historical
@@ -866,11 +917,12 @@ DATASET_CATALOG_CLI_FALSE_CLAIMS = (
 )
 # The CI fresh-wheel smoke must cover the four Catalog CLI help commands.
 CI_PR7_API_MARKER = "PR7_CATALOG_CLI_HELP_OK"
-# The CI package job must carry the v0.6.0 formal released-state marker,
-# the v0.6.0 public API smoke must import generate_sample_requests, and
-# the wheel contents check must forbid *.b64 fixture bundles.
-CI_V060_RELEASE_STATE_MARKER = "V060_RELEASE_STATE_OK"
-CI_V060_PUBLIC_API_IMPORT_LINES = ("generate_sample_requests",)
+# The CI package job must carry the v0.6.1 release-preparation-state
+# marker (never V061_RELEASED), the public API smoke must import
+# generate_sample_requests, and the wheel contents check must forbid
+# *.b64 fixture bundles.
+CI_V061_RELEASE_STATE_MARKER = "V061_RELEASE_PREP_OK"
+CI_V061_PUBLIC_API_IMPORT_LINES = ("generate_sample_requests",)
 CI_PR7_HELP_COMMANDS = (
     "market-vault dataset-catalog-build --help",
     "market-vault dataset-catalog-verify --help",
@@ -1087,6 +1139,34 @@ README_MAINTENANCE_FACTS = (
     "examples/dataset_cli/README.md",
     "stdlib-only",
 )
+# Facts the v0.6.1 maintenance section of the README must state: the
+# fixed maintenance scope (three areas, no new capability), the CLI and CI
+# auditability content, and the not-formally-released truth.
+README_V061_SECTION_MARKERS = (
+    "## V0.6.1 stability, auditability, and usability maintenance",
+    "V0.6.1 adds NO new product capability",
+    "### A. Lifecycle / release-state truth",
+    "### B. CLI usability wording",
+    "### C. CI/package auditability",
+    "No command, business argument, default, exit-code, or JSON behavior changes",
+    "actions/checkout@v6",
+    "actions/setup-python@v6",
+    "actions/upload-artifact@v7",
+    "SHA256SUMS.txt",
+    "V061_PACKAGE_AUDIT_OK",
+    "runtime dependencies unchanged",
+    "CLI command set unchanged",
+    "no artifact migration/rewrite",
+    "the v0.6.1 formal release does not exist yet",
+)
+# Affirmative release claims that must never appear in the README: the
+# v0.6.1 formal release does not exist yet.
+README_V061_FALSE_CLAIMS = (
+    "v0.6.1 is formally released",
+    "v0.6.1 has been released",
+    "v0.6.1 released on",
+    "v0.6.1 formal release is published",
+)
 # The example files that must exist, and the renderer markers that prove the
 # hardened boundaries stayed in place.
 EXAMPLES_REQUIRED = (
@@ -1149,8 +1229,8 @@ def check_readme_title(root: Path) -> list[str]:
     if not path.exists():
         return ["README.md is missing"]
     first_line = path.read_text(encoding="utf-8").splitlines()[0]
-    if first_line.strip() != "# MarketVault v0.6.0":
-        return [f"README first line is {first_line.strip()!r}, expected '# MarketVault v0.6.0'"]
+    if first_line.strip() != "# MarketVault v0.6.1":
+        return [f"README first line is {first_line.strip()!r}, expected '# MarketVault v0.6.1'"]
     return []
 
 
@@ -1160,16 +1240,20 @@ def check_changelog(root: Path) -> list[str]:
         return ["CHANGELOG.md is missing"]
     text = path.read_text(encoding="utf-8")
     failures = []
+    if "## [0.6.1] - 2026-08-08" not in text:
+        failures.append("CHANGELOG.md is missing '## [0.6.1] - 2026-08-08'")
     if "## [0.6.0] - 2026-08-08" not in text:
-        failures.append("CHANGELOG.md is missing '## [0.6.0] - 2026-08-08'")
+        failures.append("CHANGELOG.md no longer contains '## [0.6.0] - 2026-08-08'")
     if "## [0.5.1] - 2026-08-06" not in text:
         failures.append("CHANGELOG.md no longer contains '## [0.5.1] - 2026-08-06'")
     if "## [0.5.0] - 2026-08-05" not in text:
         failures.append("CHANGELOG.md no longer contains '## [0.5.0] - 2026-08-05'")
     if "## [0.4.0] - 2026-08-05" not in text:
         failures.append("CHANGELOG.md no longer contains '## [0.4.0] - 2026-08-05'")
+    if "[0.6.1]: https://github.com/M0DIAN/market-vault/compare/v0.6.0...v0.6.1" not in text:
+        failures.append("CHANGELOG.md is missing the v0.6.1 compare link")
     if "[0.6.0]: https://github.com/M0DIAN/market-vault/compare/v0.5.1...v0.6.0" not in text:
-        failures.append("CHANGELOG.md is missing the v0.6.0 compare link")
+        failures.append("CHANGELOG.md no longer contains the v0.6.0 compare link")
     if "[0.5.1]: https://github.com/M0DIAN/market-vault/compare/v0.5.0...v0.5.1" not in text:
         failures.append("CHANGELOG.md no longer contains the v0.5.1 compare link")
     return failures
@@ -2277,23 +2361,27 @@ def check_ci_pr8(root: Path) -> list[str]:
     return failures
 
 
-def check_ci_v060_release_state(root: Path) -> list[str]:
-    """The CI package job carries the ``V060_RELEASE_STATE_OK`` marker
-    (the v0.6.0 formal released-state marker), the public API smoke
-    imports ``generate_sample_requests``, and the wheel hygiene step
-    forbids ``.b64`` files (the frozen static reference artifact fixture
-    must never ship inside the wheel)."""
+def check_ci_v061_release_state(root: Path) -> list[str]:
+    """The CI package job carries the ``V061_RELEASE_PREP_OK`` marker
+    (the v0.6.1 release-preparation marker; never ``V061_RELEASED``), the
+    public API smoke imports ``generate_sample_requests``, and the wheel
+    hygiene step forbids ``.b64`` files (the frozen static reference
+    artifact fixture must never ship inside the wheel)."""
     path = root / ".github" / "workflows" / "ci.yml"
     if not path.exists():
         return [".github/workflows/ci.yml is missing"]
     text = path.read_text(encoding="utf-8")
     failures = []
-    if CI_V060_RELEASE_STATE_MARKER not in text:
+    if CI_V061_RELEASE_STATE_MARKER not in text:
         failures.append(
             "CI package job must carry the "
-            f"{CI_V060_RELEASE_STATE_MARKER} marker"
+            f"{CI_V061_RELEASE_STATE_MARKER} marker"
         )
-    for import_line in CI_V060_PUBLIC_API_IMPORT_LINES:
+    if "V061_RELEASED" in text:
+        failures.append(
+            "CI package job must never claim the V061_RELEASED state"
+        )
+    for import_line in CI_V061_PUBLIC_API_IMPORT_LINES:
         if import_line not in text:
             failures.append(
                 f"CI public API smoke must import {import_line!r}"
@@ -2325,6 +2413,27 @@ def check_readme_maintenance_section(root: Path) -> list[str]:
     for fact in README_MAINTENANCE_FACTS:
         if fact not in text:
             failures.append(f"README does not state the v0.5.1 maintenance fact {fact!r}")
+    return failures
+
+
+def check_readme_v061_section(root: Path) -> list[str]:
+    """The README states the v0.6.1 maintenance section markers and never
+    claims the v0.6.1 formal release."""
+    path = root / "README.md"
+    if not path.exists():
+        return ["README.md is missing"]
+    text = path.read_text(encoding="utf-8")
+    failures = []
+    for fact in README_V061_SECTION_MARKERS:
+        if fact not in text:
+            failures.append(
+                f"README does not state the v0.6.1 maintenance fact {fact!r}"
+            )
+    for claim in README_V061_FALSE_CLAIMS:
+        if claim in text:
+            failures.append(
+                f"README contains the false v0.6.1 release claim {claim!r}"
+            )
     return failures
 
 
@@ -2559,6 +2668,30 @@ def check_v061_direction(root: Path) -> list[str]:
     return failures
 
 
+def check_v061_release_notes(root: Path) -> list[str]:
+    """The v0.6.1 release notes (the PR-4 deliverable) state the
+    release-preparation status, the PR-1/2/3 merge record, the NOT
+    PUBLISHED lifecycle state, and the candidate-vs-formal artifact
+    distinction, and never claim the formal release."""
+    path = root / "docs" / "release_v0_6_1.md"
+    if not path.exists():
+        return ["docs/release_v0_6_1.md is missing"]
+    text = path.read_text(encoding="utf-8")
+    failures = []
+    for fact in V061_RELEASE_NOTES_FACTS:
+        if fact not in text:
+            failures.append(
+                f"docs/release_v0_6_1.md does not state the fact {fact!r}"
+            )
+    for phrase in V061_RELEASE_NOTES_STALE_PHRASES:
+        if phrase in text:
+            failures.append(
+                "docs/release_v0_6_1.md contains the stale release "
+                f"claim {phrase!r}"
+            )
+    return failures
+
+
 def check_v061_cli_usability_audit(root: Path) -> list[str]:
     """The v0.6.1 PR-2 CLI usability audit document exists and states the
     audited baseline."""
@@ -2655,6 +2788,7 @@ def main() -> int:
         ("CHANGELOG entry", check_changelog),
         ("README wording", check_readme_no_stale_wording),
         ("README maintenance section", check_readme_maintenance_section),
+        ("README v0.6.1 section", check_readme_v061_section),
         ("direction status", check_direction_status),
         ("release notes", check_release_notes),
         ("v0.5.1 release notes", check_v051_release_notes),
@@ -2662,6 +2796,7 @@ def main() -> int:
         ("v0.5.1 direction", check_v051_direction),
         ("v0.6.0 direction", check_v060_direction),
         ("v0.6.1 direction", check_v061_direction),
+        ("v0.6.1 release notes", check_v061_release_notes),
         ("v0.6.1 CLI usability audit", check_v061_cli_usability_audit),
         ("CI auditability", check_ci_auditability),
         ("v0.6.1 CI package audit", check_v061_ci_package_audit),
@@ -2678,7 +2813,7 @@ def main() -> int:
         ("v0.6.0 frozen fixture", check_v060_frozen_fixture),
         ("pyarrow dependency", check_pyarrow_dependency),
         ("CI PR-8 portability", check_ci_pr8),
-        ("CI v0.6.0 release state", check_ci_v060_release_state),
+        ("CI v0.6.1 release state", check_ci_v061_release_state),
         ("old release notes", check_old_release_notes),
         ("warning guard", check_warning_guard),
         ("examples", check_examples),

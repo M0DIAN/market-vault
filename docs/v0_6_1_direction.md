@@ -1,22 +1,26 @@
 # MarketVault v0.6.1 Direction: Stability, Auditability, and Usability Maintenance
 
-Status: planned maintenance release
+Status: implementation complete; v0.6.1 release preparation
 
 This document defines the scope, non-goals, and fixed PR sequence for the
 V0.6.1 "Stability, Auditability, and Usability Maintenance" patch release.
 V0.6.1 is a maintenance release: it adds no new product capability and
 changes no formal identity, schema, contract, or CLI behavior.
-V0.6.1 maintenance development is in PR-3.
-PR-1 and PR-2 are complete and merged as PR #44 and PR #45.
-PR-1 merged at
+
+PR-1 COMPLETE: PR #44 merged at
 6bb9a9500fae53511ff964f47e5ccea20f3d91f7.
-PR-2's main baseline is
+PR-2 COMPLETE: PR #45 merged at
 33d7f5856bf060527ccf4d2ab679df4429009ce6.
-PR-3 is the current CI/package auditability and maintenance-hardening stage.
-V0.6.1 is not released.
-PR-4 has not started.
-The fixed PR sequence remains unchanged.
-Package remains 0.6.0.
+PR-3 COMPLETE: PR #46 merged at
+99c2e7bd445333740806dedec4aed03f82f32b11.
+PR-4 is the current v0.6.1 release-preparation stage.
+The package version is now 0.6.1 in PR-4.
+V0.6.1 is NOT formally released.
+The v0.6.1 tag has not been created.
+The GitHub Release v0.6.1 has not been published.
+PyPI is not published.
+TestPyPI is not published.
+The fixed 4-PR sequence itself remains unchanged.
 
 ## 1. Baseline
 
