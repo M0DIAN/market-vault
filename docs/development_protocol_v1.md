@@ -1,7 +1,7 @@
 # MarketVault Development Protocol v1
 
 MarketVault 工程流程的架构 / roadmap 文档。本文档说明 Development Protocol
-v1（DP1）的动机，记录实测基线，并定义后续 PR 实现的方向。
+v1（DP1）的动机，记录优化前的旧流程观测值，并定义后续 PR 实现的方向。
 
 - 策略文档：[DEVELOPMENT_PLAYBOOK.md](../DEVELOPMENT_PLAYBOOK.md) 与
   [RELEASE_PLAYBOOK.md](../RELEASE_PLAYBOOK.md)。
@@ -16,14 +16,14 @@ DP1 是 v0.7.0 正式发布并完成真实使用练习之后的首个流程工�
 - 尚不优化 CI 或测试；后续 PR 实现本文档定义的策略。
 - 不以任何方式改动已密封的 v0.7.0 release。
 
-## 2. 动机与实测基线
+## 2. 动机与旧流程观测（Legacy Workflow Observation）
 
-触发 DP1 的实测案例是 v0.7.0 lifecycle PR（`docs: record v0.7.0 formal
+触发 DP1 的案例是 v0.7.0 lifecycle PR（`docs: record v0.7.0 formal
 release state`，PR #54）——观测到的 lifecycle/docs workflow 案例，即实际
 测量的流程 benchmark（process benchmark）。真正的 v0.7.0 real-usage
-exercise 是随后一次独立活动，不是同一个测量。记录到的观测：
+exercise 是随后一次独立活动，不是同一个测量。记录到的旧流程观测值：
 
-- lifecycle / docs PR 全程约 63 分钟（wall-clock）。
+- PR #54 lifecycle/docs workflow ≈ 63 min（wall-clock）。
 - 本地测试主导 wall-clock 时间。
 - 单个受影响的 regression 测试文件就可能需要数分钟。
 - 该 PR 生命周期内本地重复执行了多次完整套件。
@@ -31,6 +31,25 @@ exercise 是随后一次独立活动，不是同一个测量。记录到的观�
   24 可移植性 gate，各自运行完整离线套件）。
 - package / release 验证还额外增加一个 CI 阶段（package build、
   fresh-wheel smoke、SHA256 closure）。
+
+### 63 分钟数字的含义边界
+
+PR #54 的约 63 分钟是优化前的历史观测值（优化前参考值，
+Pre-optimization Reference），不是 Development Protocol v1 的性能
+baseline / target baseline / acceptable baseline。
+
+该数字仅用于：
+
+- 记录旧流程的实际耗时；
+- 衡量未来优化带来的改善幅度；
+- 提供 before/after comparison。
+
+该数字绝不表示：
+
+- 可接受性能（acceptable performance）；
+- Development Protocol v1 的目标耗时；
+- correctness gate；
+- performance acceptance threshold。
 
 不断言精确百分比：记录的是单个 lifecycle PR 的 wall-clock 观测，不是计时
 研究。问题在性质上很清楚——小变更反复付出完整套件级验证的代价——但 DP1
@@ -102,18 +121,24 @@ final-head CI 矩阵按变更风险分层，而不是每次变更统一运行每
 
 ## 5. 未来 wall-clock 目标
 
-这些是性能目标（performance targets），不是 correctness gate。未达到
+这些是性能目标（performance targets），不是 correctness gates。未达到
 目标不是验证失败，而是改进流程的信号。
 
 | PR 类别 | 目标 wall-clock |
 |---|---|
 | small PR | 15–30 min |
+| docs / policy-only small PR | 优先目标 ≤ 20 min |
 | medium PR | 25–45 min |
 | release-prep / complex | 40–60 min |
 
-小 PR（例如 docs-only 或单模块变更）不应付出 lifecycle 级 wall-clock；
-release preparation 应该。目标约束的是包括 final-head CI 在内的整个
-生命周期时间，不只是实现时间。
+目标按类别区分：docs / policy-only 小 PR 的优先目标是 ≤ 20 min，比普通
+small PR 更紧；release preparation 允许最宽松的目标。
+
+如果优化后的 small / docs-only workflow 仍接近旧流程约 63 分钟的耗时，
+应视为性能目标未达到，而不能把 63 分钟作为正常基准接受。旧流程观测值
+只是 before 端参照（第 2 节），不是目标。
+
+目标约束的是包括 final-head CI 在内的整个生命周期时间，不只是实现时间。
 
 ## 6. Lifecycle-State Principle
 
@@ -159,7 +184,7 @@ release-preparation 记录分开。
 DP1：
 
 - 记录 playbooks 与 agent 契约；
-- 记录基线、方向、目标与 Lifecycle-State Principle；
+- 记录旧流程观测值、方向、目标与 Lifecycle-State Principle；
 - 不修改产品代码、版本、依赖、public API、CLI、schema、artifact format
   或 CI workflow。
 
