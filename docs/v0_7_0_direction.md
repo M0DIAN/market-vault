@@ -1,6 +1,6 @@
 # MarketVault v0.7.0 Direction: Python Client and Read-only Artifact Access
 
-Status: active feature development; PR-6 v0.7.0 release preparation stage
+Status: released on 2026-08-09
 
 Baseline:
 
@@ -20,9 +20,9 @@ PR-2: COMPLETE / MERGED / MAIN VERIFIED
 PR-3: COMPLETE / MERGED / MAIN VERIFIED
 PR-4: COMPLETE / MERGED / MAIN VERIFIED
 PR-5: COMPLETE / MERGED / MAIN VERIFIED
-PR-6: CURRENT
+PR-6: COMPLETE / MERGED / RELEASED
 package: 0.7.0
-v0.7.0: NOT RELEASED
+v0.7.0: FORMALLY RELEASED
 ```
 
 PR-1 record:
@@ -84,6 +84,25 @@ ArtifactClient integrated E2E acceptance: IMPLEMENTED
 consumer usability docs and source-tree examples: IMPLEMENTED
 ```
 
+PR-6 record:
+
+```text
+PR #53 merged at 2026-08-09T12:16:49Z
+squash/main: f25a50481b5ee718881acf5cb5ea5aa05bd32d93
+main CI: 31312887229 SUCCESS
+package: 0.7.0
+v0.7.0: FORMALLY RELEASED
+```
+
+The v0.7.0 release is sealed at the release commit
+`f25a50481b5ee718881acf5cb5ea5aa05bd32d93`: the main push CI run
+`31312887229` succeeded, the annotated `v0.7.0` tag points at the release commit,
+and the GitHub Release `MarketVault v0.7.0` is published on
+2026-08-09T12:54:26Z with exactly the wheel, the sdist, and the
+`SHA256SUMS.txt` manifest assets. PyPI: NOT PUBLISHED. TestPyPI: NOT PUBLISHED.
+The CI release-state marker is `V070_RELEASED_OK` (the preparation-time
+marker `V070_RELEASE_PREP_OK` was superseded at the formal release).
+
 This document defines the scope, non-goals, and fixed PR sequence for the
 V0.7.0 "Python Client and Read-only Artifact Access" feature release.
 V0.7.0 delivers a settings-independent Python artifact client that serves
@@ -97,8 +116,15 @@ access (merged PR #50). PR-4 added the Dataset Catalog verified read-only
 client access (merged PR #51). PR-5 added the integrated offline
 end-to-end acceptance, the explicit-path Python / Jupyter / ML-consumer
 usability documentation, the source-tree examples, and the backward
-compatibility hardening (merged PR #52). PR-6 performs the v0.7.0 release
-preparation.
+compatibility hardening (merged PR #52). PR-6 performed the v0.7.0
+release preparation and is complete (merged PR #53 at the release commit
+`f25a50481b5ee718881acf5cb5ea5aa05bd32d93`). V0.7.0 is formally released:
+the annotated `v0.7.0` tag is created, the GitHub Release `MarketVault
+v0.7.0` is published, and PyPI / TestPyPI are NOT PUBLISHED.
+
+The planning and boundary sections below are the historical v0.7.0
+planning record; they describe the plan as it was fixed at planning time,
+and the authoritative current state is the released state recorded above.
 
 ## 1. Goals
 

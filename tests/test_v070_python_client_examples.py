@@ -6,9 +6,10 @@ Protects the PR-5 consumer deliverables — the usage document
 (``examples/python_client/read_verified_artifacts.py``) — against
 drift that would break the consumer contract:
 
-- the usage doc states the unreleased lifecycle truth (v0.7.0 NOT
-  RELEASED, package metadata 0.6.1 through PR-5, formal v0.6.1 GitHub
-  Release without ArtifactClient);
+- the usage doc and the examples README state the released lifecycle
+  truth (v0.7.0 formally released 2026-08-09, package metadata 0.7.0,
+  formal v0.6.1 GitHub Release without ArtifactClient, formal v0.7.0
+  GitHub Release with the ArtifactClient wheel and sdist);
 - the executable example registers exactly the three required explicit
   path arguments and nothing else, with no default artifact paths;
 - the example calls all three ArtifactClient methods and prints one
@@ -349,15 +350,19 @@ def test_example_has_main_and_guard():
 # ---------------------------------------------------------------------------
 
 
-def test_usage_doc_states_unreleased_lifecycle():
+def test_usage_doc_states_released_lifecycle():
     text = USAGE_DOC.read_text(encoding="utf-8")
     assert_doc_contains(
         text,
         (
-            "unreleased v0.7",
-            "0.6.1 through PR-5",
-            "v0.7.0 is not released yet",
+            "Released documentation",
+            "formally released",
+            "v0.7.0 `ArtifactClient` (released 2026-08-09",
+            "release commit",
+            "f25a50481b5ee718881acf5cb5ea5aa05bd32d93",
+            "The package metadata is **0.7.0**",
             "formal v0.6.1 GitHub Release artifacts do **NOT** contain",
+            "formal v0.7.0 GitHub Release artifacts DO",
         ),
         USAGE_DOC.name,
     )
@@ -467,8 +472,11 @@ def test_examples_readme_states_source_tree_and_boundaries():
         (
             "source-tree",
             "not shipped as a public client API",
-            "0.6.1 through PR-5",
-            "v0.7.0 is not released yet",
+            "Released",
+            "formally released v0.7.0",
+            "The package metadata is 0.7.0",
+            "formal v0.7.0 GitHub Release contains the `ArtifactClient`",
+            "formal v0.6.1 GitHub Release does NOT contain",
             "looks up `latest`",
             "network or OpenD",
             "reads the current time",

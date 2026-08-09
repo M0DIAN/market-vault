@@ -20,8 +20,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Python / Jupyter / ML-consumer usage documentation
   (`docs/v0_7_0_python_client_usage.md`) and source-tree examples
   (`examples/python_client/`).
-- v0.7.0 release preparation (PR-6): candidate version 0.7.0, lifecycle
-  document sync, and v0.7.0 release notes (`docs/release_v0_7_0.md`).
+- v0.7.0 release preparation (PR-6) and formal release (merged PR #53,
+  release commit `f25a50481b5ee718881acf5cb5ea5aa05bd32d93`): candidate
+  version 0.7.0, lifecycle document sync, v0.7.0 release notes
+  (`docs/release_v0_7_0.md`), and the sealed v0.7.0 GitHub Release
+  record.
 
 ### Compatibility
 
@@ -38,8 +41,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Known boundaries
 
-- v0.7.0 is NOT formally released: no tag, no GitHub Release, no
-  PyPI / TestPyPI publication.
+- v0.7.0 is formally released: the annotated `v0.7.0` tag is created and
+  the GitHub Release `MarketVault v0.7.0` is published. PyPI and TestPyPI
+  are NOT published; publication remains a separate, explicit decision.
 - No Catalog convenience API.
 - No discovery / `latest` pointer.
 - No settings requirement for `ArtifactClient`.

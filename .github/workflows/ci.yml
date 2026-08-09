@@ -215,7 +215,7 @@ jobs:
           "
           echo 'PR7_CATALOG_CLI_HELP_OK'
           echo 'PR8_INTEGRATED_ACCEPTANCE_OK'
-          echo 'V070_RELEASE_PREP_OK'
+          echo 'V070_RELEASED_OK'
 
       - name: Check wheel contents exclude local data
         run: |

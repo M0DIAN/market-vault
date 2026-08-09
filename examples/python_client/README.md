@@ -5,10 +5,10 @@ v0.7.0 `ArtifactClient` verified reads. It is an example only: it is not
 shipped as a public client API, it is not part of the `market_vault`
 package, and it never performs its own artifact validation.
 
-> **Unreleased.** This example targets the unreleased v0.7 development
-> ArtifactClient. The package metadata remains 0.6.1 through PR-5, the
-> formal v0.6.1 GitHub Release does NOT contain `ArtifactClient`, and
-> v0.7.0 is not released yet.
+> **Released.** This example targets the formally released v0.7.0
+> `ArtifactClient`. The package metadata is 0.7.0.
+> The formal v0.7.0 GitHub Release contains the `ArtifactClient` wheel and sdist,
+> and the formal v0.6.1 GitHub Release does NOT contain `ArtifactClient`.
 
 ```text
 examples/python_client/
