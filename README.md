@@ -25,6 +25,17 @@ PyPI: NOT PUBLISHED. TestPyPI: NOT PUBLISHED. See
 [docs/contracts/python_client.md](docs/contracts/python_client.md), and
 [docs/v0_7_0_python_client_usage.md](docs/v0_7_0_python_client_usage.md).
 
+## Development process
+
+Repository-native engineering protocol: the [development
+playbook](DEVELOPMENT_PLAYBOOK.md) defines the standard PR lifecycle and
+local verification layers, the [release playbook](RELEASE_PLAYBOOK.md)
+defines the formal release gates, the [agent handoff](AGENT_HANDOFF.md)
+defines the Claude Code / Codex execution contract, and
+[docs/development_protocol_v1.md](docs/development_protocol_v1.md)
+records the motivation and roadmap. These documents define policy; the
+policy is implemented by later PRs.
+
 ## V0.6.1 stability, auditability, and usability maintenance
 
 V0.6.1 adds NO new product capability. It is the fixed maintenance patch
