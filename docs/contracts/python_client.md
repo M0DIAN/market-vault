@@ -1,6 +1,6 @@
 # MarketVault Python Client Contract
 
-Status: PR-5 integrated acceptance/usability/examples in unreleased v0.7.0 development
+Status: PR-6 v0.7.0 release preparation in unreleased v0.7.0 development
 
 Target release: v0.7.0
 
@@ -10,8 +10,9 @@ Formal v0.6.1 GitHub Release artifacts DO NOT contain `ArtifactClient`.
 Current unreleased v0.7.0 development introduces the `ArtifactClient`
 foundation (PR-2), the Canonical + Dataset verified read-only access
 (PR-3), the Dataset Catalog verified read-only access (PR-4), and the
-integrated acceptance / usability / consumer examples (PR-5) while
-the package metadata remains 0.6.1 under the frozen version policy.
+integrated acceptance / usability / consumer examples (PR-5, merged
+PR #52). The PR-6 release preparation bumps the package metadata to 0.7.0
+under the frozen version policy.
 
 PR-2: foundation implemented (`ArtifactClient()` constructs a stateless,
 settings-independent client).
@@ -23,13 +24,13 @@ PR-4: Dataset Catalog verified read-only access implemented
 (`ArtifactClient.load_dataset_catalog(snapshot_dir)` delegates to the
 formal verified Catalog reader and returns its verified object directly;
 see `docs/v0_7_0_direction.md`).
-PR-5: integrated acceptance/usability/examples CURRENT (offline
+PR-5: integrated acceptance/usability/examples COMPLETE / MERGED / MAIN VERIFIED (offline
 end-to-end acceptance over real committed artifacts, explicit-path
 Python / Jupyter / ML-consumer usage documentation, source-tree
 examples, and backward-compatibility hardening; see
 `docs/v0_7_0_python_client_usage.md` and `examples/python_client/README.md`).
-PR-6: release prep NOT STARTED.
-package: 0.6.1
+PR-6: release preparation CURRENT.
+package: 0.7.0
 v0.7.0: NOT RELEASED
 
 ## 13.1 Existing MarketVault compatibility

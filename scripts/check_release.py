@@ -22,7 +22,7 @@ import sys
 import tomllib
 from pathlib import Path
 
-EXPECTED_VERSION = "0.6.1"
+EXPECTED_VERSION = "0.7.0"
 PEP440_RE = re.compile(
     r"^([1-9]\d*!)?(0|[1-9]\d*)(\.(0|[1-9]\d*))*((a|b|rc)(0|[1-9]\d*))?"
     r"(\.post(0|[1-9]\d*))?(\.dev(0|[1-9]\d*))?$"
@@ -977,12 +977,13 @@ DATASET_CATALOG_CLI_FALSE_CLAIMS = (
 )
 # The CI fresh-wheel smoke must cover the four Catalog CLI help commands.
 CI_PR7_API_MARKER = "PR7_CATALOG_CLI_HELP_OK"
-# The CI package job must carry the v0.6.1 release-state marker (the
-# released-state marker; the stale preparation marker V061_RELEASE_PREP_OK
+# The CI package job must carry the v0.7.0 release-preparation marker
+# (V070_RELEASE_PREP_OK; the released-state marker V070_RELEASED_OK and
+# the stale v0.6.1 markers V061_RELEASE_STATE_OK / V061_RELEASE_PREP_OK
 # must never be restored), the public API smoke must import
 # generate_sample_requests, and the wheel contents check must forbid
 # *.b64 fixture bundles.
-CI_V061_RELEASE_STATE_MARKER = "V061_RELEASE_STATE_OK"
+CI_V070_RELEASE_PREP_MARKER = "V070_RELEASE_PREP_OK"
 CI_V061_PUBLIC_API_IMPORT_LINES = ("generate_sample_requests",)
 CI_PR7_HELP_COMMANDS = (
     "market-vault dataset-catalog-build --help",
@@ -1230,15 +1231,15 @@ README_V061_SECTION_MARKERS = (
 README_V061_STALE_PHRASES = (
     "the v0.6.1 formal release does not exist yet",
 )
-# Facts the v0.7.0 direction document must state: the active PR-5
-# feature-development status, the v0.6.1 baseline, the PR-1 / PR-2 / PR-3
-# / PR-4 merged records, the NOT RELEASED v0.7.0 state, the fixed 6-PR
-# sequence with the exact stage names, the version rules (0.6.1 through
-# PR-5, 0.7.0 only in PR-6), the explicit non-goals, the historical
-# PR-2 / PR-3 / PR-4 boundaries, and the PR-5 boundary.
+# Facts the v0.7.0 direction document must state: the active PR-6
+# release-preparation status, the v0.6.1 baseline, the PR-1 / PR-2 / PR-3
+# / PR-4 / PR-5 merged records, the NOT RELEASED v0.7.0 state, the fixed
+# 6-PR sequence with the exact stage names, the version rules (0.6.1
+# through PR-5, 0.7.0 only in PR-6), the explicit non-goals, the
+# historical PR-2 / PR-3 / PR-4 / PR-5 boundaries, and the PR-6 boundary.
 V070_DIRECTION_FACTS = (
     "# MarketVault v0.7.0 Direction: Python Client and Read-only Artifact Access",
-    "Status: active feature development; PR-5 Integrated E2E + usability stage",
+    "Status: active feature development; PR-6 v0.7.0 release preparation stage",
     "base version: v0.6.1",
     "37614d539171ef7b738e47415f3cd6ca2de332d1",
     "v0.7.0: NOT RELEASED",
@@ -1246,9 +1247,9 @@ V070_DIRECTION_FACTS = (
     "PR-2: COMPLETE / MERGED / MAIN VERIFIED",
     "PR-3: COMPLETE / MERGED / MAIN VERIFIED",
     "PR-4: COMPLETE / MERGED / MAIN VERIFIED",
-    "PR-5: CURRENT",
-    "PR-6: NOT STARTED",
-    "package: 0.6.1",
+    "PR-5: COMPLETE / MERGED / MAIN VERIFIED",
+    "PR-6: CURRENT",
+    "package: 0.7.0",
     "PR-1 record",
     "PR #48 merged at 2026-08-08T23:50:24Z",
     "bad62ee51e8eda03c7c5f20ac858973923e5f93d",
@@ -1274,6 +1275,14 @@ V070_DIRECTION_FACTS = (
     "8b6bb12355c64d02c7e4f73fc67b6222ff2af6ed",
     "31301770295",
     "ArtifactClient Dataset Catalog verified read: IMPLEMENTED",
+    "PR-5 record",
+    "PR #52 merged at 2026-08-09T10:07:06Z",
+    "2f7ee8dd6c7c3ce07f677be99cdd8afb8f2c68d4",
+    "5ec437d37bb2cde0b716aa5dc1f84538b4bc6215",
+    "31307554050",
+    "package before PR-6: 0.6.1",
+    "ArtifactClient integrated E2E acceptance: IMPLEMENTED",
+    "consumer usability docs and source-tree examples: IMPLEMENTED",
     "PR-1 — Post-v0.6.1 release baseline",
     "PR-2 — Settings-independent ArtifactClient foundation",
     "PR-3 — Canonical + Dataset verified read-only client access",
@@ -1366,6 +1375,25 @@ V070_DIRECTION_FACTS = (
     "add visualization product code",
     "add ML/training/evaluation",
     "perform PR-6 release preparation",
+    "## 6.5 PR-6 boundary",
+    "PR-6 (this PR) MAY ONLY",
+    "bump the package version from 0.6.1 to 0.7.0",
+    "sync the lifecycle documents (direction, contract, README, CHANGELOG)",
+    "add the v0.7.0 release notes (`docs/release_v0_7_0.md`)",
+    "harden the release checker / release regression guards",
+    "sync the CI release-state marker to `V070_RELEASE_PREP_OK`",
+    "PR-6 MUST NOT",
+    "modify `src/` except the `_version.py` version bump",
+    "modify dependencies",
+    "add ArtifactClient capabilities",
+    "add CLI",
+    "add discovery/latest",
+    "add settings",
+    "add network/OpenD",
+    "add current time",
+    "create the v0.7.0 tag",
+    "publish a GitHub Release",
+    "publish to PyPI / TestPyPI",
     "No new CLI command",
     "No REST API",
     "No HTTP",
@@ -1384,9 +1412,10 @@ V070_DIRECTION_FACTS = (
     "PyPI/TestPyPI deferred",
 )
 # Affirmative implementation / release claims that must never appear in
-# the v0.7.0 direction document: PR-1 / PR-2 / PR-3 / PR-4 are merged
-# history, PR-5 is the current (unmerged) stage, no later stage has
-# started, and v0.7.0 is not released.
+# the v0.7.0 direction document: PR-1 / PR-2 / PR-3 / PR-4 / PR-5 are
+# merged history, PR-6 is the current (unmerged) release-preparation
+# stage, no later stage has started, the package is 0.7.0, and v0.7.0 is
+# not released.
 V070_DIRECTION_STALE_PHRASES = (
     "ArtifactClient is implemented",
     "ArtifactClient is available",
@@ -1401,7 +1430,8 @@ V070_DIRECTION_STALE_PHRASES = (
     "PR-4: NOT STARTED",
     "PR-4: CURRENT",
     "PR-5: NOT STARTED",
-    "PR-6: CURRENT",
+    "PR-5: CURRENT",
+    "PR-6: NOT STARTED",
     "V0.7.0 is released",
     "v0.7.0 has been released",
     "v0.7.0 released on",
@@ -1417,12 +1447,13 @@ V070_DIRECTION_STALE_PHRASES = (
 # usability boundary.
 V070_CONTRACT_FACTS = (
     "# MarketVault Python Client Contract",
-    "Status: PR-5 integrated acceptance/usability/examples in unreleased v0.7.0 development",
+    "Status: PR-6 v0.7.0 release preparation in unreleased v0.7.0 development",
     "Target release: v0.7.0",
     "Public root: `ArtifactClient`",
     "Formal v0.6.1 GitHub Release artifacts",
     "DO NOT contain `ArtifactClient`",
-    "package metadata remains 0.6.1",
+    "PR #52",
+    "package metadata to 0.7.0",
     "frozen version policy",
     "## 13.1 Existing MarketVault compatibility",
     "the `MarketVault` constructor",
@@ -1438,9 +1469,9 @@ V070_CONTRACT_FACTS = (
     "## 13.8 Error boundary",
     "## 13.9 Lightweight import",
     "## 13.10 Explicit non-goals",
-    "PR-5: integrated acceptance/usability/examples CURRENT",
-    "PR-6: release prep NOT STARTED",
-    "package: 0.6.1",
+    "PR-5: integrated acceptance/usability/examples COMPLETE / MERGED / MAIN VERIFIED",
+    "PR-6: release preparation CURRENT",
+    "package: 0.7.0",
     "v0.7.0: NOT RELEASED",
     "## 13.11 PR-5 consumer-side usability boundary",
     "CONSUMER-SIDE only",
@@ -1543,6 +1574,56 @@ V070_CONTRACT_FALSE_READ_CLAIMS = (
     "Catalog show convenience is implemented",
     "Catalog filter convenience is implemented",
     "Catalog query convenience is implemented",
+)
+# Facts the v0.7.0 release notes document must state: the release
+# preparation status (PR-6 OPEN / UNMERGED, v0.7.0 NOT formally
+# released), the exact 5-PR merge record with the base commit, the
+# PR-6 candidate release state (tag / GitHub Release / PyPI / TestPyPI
+# NOT), the candidate-validation-only wording, the no-prediction rule
+# (no future merge SHA, no formal artifact hash values, candidate
+# hashes never reused as formal hashes), and the 5 independent formal
+# release conditions.
+V070_RELEASE_NOTES_FACTS = (
+    "# MarketVault v0.7.0 Release Notes",
+    "## Release preparation status",
+    "NOT formally released",
+    "PR-6: current release-preparation stage, OPEN / UNMERGED",
+    "5ec437d37bb2cde0b716aa5dc1f84538b4bc6215",
+    "PR-1: PR #48 MERGED bad62ee51e8eda03c7c5f20ac858973923e5f93d",
+    "PR-2: PR #49 MERGED 42c63ebfb0c2dfc91b1d61860bed2106faf1bba0",
+    "PR-3: PR #50 MERGED 61a2b055163815d463d5b261f5b6a94e54e515bd",
+    "PR-4: PR #51 MERGED 8b6bb12355c64d02c7e4f73fc67b6222ff2af6ed",
+    "PR-5: PR #52 MERGED 5ec437d37bb2cde0b716aa5dc1f84538b4bc6215",
+    "package version in PR-6: 0.7.0",
+    "v0.7.0 tag:            NOT CREATED",
+    "GitHub Release v0.7.0: NOT PUBLISHED",
+    "PyPI:                  NOT PUBLISHED",
+    "TestPyPI:              NOT PUBLISHED",
+    "No future merge SHA was claimed",
+    "no formal artifact SHA256 values",
+    "candidate validation only",
+    "PR candidate hashes: not reused as formal release asset hashes",
+    "The formal v0.7.0 release requires 5 independent conditions",
+    "new product capabilities = 0",
+)
+# Affirmative release claims that must never appear in the v0.7.0 release
+# notes: v0.7.0 is not released, the tag / GitHub Release / PyPI /
+# TestPyPI states are all NOT, PR-6 is not merged, and no future merge
+# SHA or formal artifact hash values are ever predicted.
+V070_RELEASE_NOTES_STALE_PHRASES = (
+    "v0.7.0 is released",
+    "v0.7.0 has been released",
+    "v0.7.0 released on",
+    "v0.7.0 tag was created",
+    "v0.7.0 tag is created",
+    "GitHub Release: MarketVault v0.7.0",
+    "PyPI: PUBLISHED",
+    "TestPyPI: PUBLISHED",
+    "PR-6: MERGED",
+    "the future merge commit is",
+    "will merge as",
+    "predicted merge SHA",
+    "formal artifact SHA256 values are predicted",
 )
 # Facts the v0.7.0 existing Python API audit document must state: the
 # audited top-level package behavior, the existing MarketVault
@@ -1654,8 +1735,8 @@ def check_readme_title(root: Path) -> list[str]:
     if not path.exists():
         return ["README.md is missing"]
     first_line = path.read_text(encoding="utf-8").splitlines()[0]
-    if first_line.strip() != "# MarketVault v0.6.1":
-        return [f"README first line is {first_line.strip()!r}, expected '# MarketVault v0.6.1'"]
+    if first_line.strip() != "# MarketVault v0.7.0":
+        return [f"README first line is {first_line.strip()!r}, expected '# MarketVault v0.7.0'"]
     return []
 
 
@@ -1665,6 +1746,10 @@ def check_changelog(root: Path) -> list[str]:
         return ["CHANGELOG.md is missing"]
     text = path.read_text(encoding="utf-8")
     failures = []
+    if "## [0.7.0] - 2026-08-09" not in text:
+        failures.append("CHANGELOG.md is missing '## [0.7.0] - 2026-08-09'")
+    if "[0.7.0]: https://github.com/M0DIAN/market-vault/compare/v0.6.1...v0.7.0" not in text:
+        failures.append("CHANGELOG.md is missing the v0.7.0 compare link")
     if "## [0.6.1] - 2026-08-08" not in text:
         failures.append("CHANGELOG.md is missing '## [0.6.1] - 2026-08-08'")
     if "## [0.6.0] - 2026-08-08" not in text:
@@ -2786,22 +2871,31 @@ def check_ci_pr8(root: Path) -> list[str]:
     return failures
 
 
-def check_ci_v061_release_state(root: Path) -> list[str]:
-    """The CI package job carries the ``V061_RELEASE_STATE_OK`` marker
-    (the v0.6.1 released-state marker), the stale preparation marker
-    ``V061_RELEASE_PREP_OK`` is never restored, the public API smoke
-    imports ``generate_sample_requests``, and the wheel hygiene step
-    forbids ``.b64`` files (the frozen static reference artifact fixture
-    must never ship inside the wheel)."""
+def check_ci_v070_release_prep_state(root: Path) -> list[str]:
+    """The CI package job carries the ``V070_RELEASE_PREP_OK`` marker
+    (the v0.7.0 release-preparation marker), the released-state marker
+    ``V070_RELEASED_OK`` and the stale v0.6.1 markers
+    ``V061_RELEASE_STATE_OK`` / ``V061_RELEASE_PREP_OK`` are never
+    restored, the public API smoke imports ``generate_sample_requests``,
+    and the wheel hygiene step forbids ``.b64`` files (the frozen static
+    reference artifact fixture must never ship inside the wheel)."""
     path = root / ".github" / "workflows" / "ci.yml"
     if not path.exists():
         return [".github/workflows/ci.yml is missing"]
     text = path.read_text(encoding="utf-8")
     failures = []
-    if CI_V061_RELEASE_STATE_MARKER not in text:
+    if CI_V070_RELEASE_PREP_MARKER not in text:
         failures.append(
             "CI package job must carry the "
-            f"{CI_V061_RELEASE_STATE_MARKER} marker"
+            f"{CI_V070_RELEASE_PREP_MARKER} marker"
+        )
+    if "V070_RELEASED_OK" in text:
+        failures.append(
+            "CI package job must never claim the V070_RELEASED_OK state"
+        )
+    if "V061_RELEASE_STATE_OK" in text:
+        failures.append(
+            "CI must never restore the stale V061_RELEASE_STATE_OK marker"
         )
     if "V061_RELEASE_PREP_OK" in text:
         failures.append(
@@ -3165,6 +3259,31 @@ def check_v061_release_notes(root: Path) -> list[str]:
             failures.append(
                 "docs/release_v0_6_1.md formal region contains the stale "
                 f"release claim {phrase!r}"
+            )
+    return failures
+
+
+def check_v070_release_notes(root: Path) -> list[str]:
+    """The v0.7.0 release notes exist and state the release-preparation
+    status (PR-6 OPEN / UNMERGED, v0.7.0 NOT formally released, tag /
+    GitHub Release / PyPI / TestPyPI NOT), the exact PR merge record,
+    and the candidate-validation-only rules, and never contain an
+    affirmative release claim or a future-hash prediction."""
+    path = root / "docs" / "release_v0_7_0.md"
+    if not path.exists():
+        return ["docs/release_v0_7_0.md is missing"]
+    text = path.read_text(encoding="utf-8")
+    failures = []
+    for fact in V070_RELEASE_NOTES_FACTS:
+        if fact not in text:
+            failures.append(
+                f"docs/release_v0_7_0.md does not state the fact {fact!r}"
+            )
+    for phrase in V070_RELEASE_NOTES_STALE_PHRASES:
+        if phrase in text:
+            failures.append(
+                "docs/release_v0_7_0.md contains the false release "
+                f"claim {phrase!r}"
             )
     return failures
 
@@ -4072,6 +4191,7 @@ def main() -> int:
         ("v0.6.1 direction", check_v061_direction),
         ("v0.6.1 release notes", check_v061_release_notes),
         ("v0.6.1 CLI usability audit", check_v061_cli_usability_audit),
+        ("v0.7.0 release notes", check_v070_release_notes),
         ("v0.7.0 direction", check_v070_direction),
         ("v0.7.0 Python client contract", check_v070_python_client_contract),
         ("v0.7.0 Python API audit", check_v070_python_api_audit),
@@ -4095,7 +4215,7 @@ def main() -> int:
         ("v0.6.0 frozen fixture", check_v060_frozen_fixture),
         ("pyarrow dependency", check_pyarrow_dependency),
         ("CI PR-8 portability", check_ci_pr8),
-        ("CI v0.6.1 release state", check_ci_v061_release_state),
+        ("CI v0.7.0 release prep state", check_ci_v070_release_prep_state),
         ("CI v0.7.0 public API smoke", check_ci_v070_public_api_smoke),
         ("old release notes", check_old_release_notes),
         ("warning guard", check_warning_guard),

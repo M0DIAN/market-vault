@@ -20,7 +20,7 @@ from market_vault.storage import Catalog, ParquetStore
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
-EXPECTED_VERSION = "0.6.1"
+EXPECTED_VERSION = "0.7.0"
 PUBLIC_API_IMPORT_CODE = "\n".join(
     [
         "from market_vault.canonical import load_verified_canonical_build",
@@ -258,9 +258,9 @@ def test_cli_existing_failure_exit_codes_unchanged():
 # --- Documentation ----------------------------------------------------------
 
 
-def test_readme_title_is_v061():
+def test_readme_title_is_v070():
     first_line = (ROOT / "README.md").read_text(encoding="utf-8").splitlines()[0]
-    assert first_line.strip() == "# MarketVault v0.6.1"
+    assert first_line.strip() == "# MarketVault v0.7.0"
 
 
 def test_readme_no_development_wording():
@@ -429,7 +429,7 @@ def test_readme_describes_explicit_build_plan():
 
 def test_readme_claims_v06_capabilities():
     text = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "# MarketVault v0.6.1" in text
+    assert "# MarketVault v0.7.0" in text
     assert "deterministic sample generation" in text
     assert "Dataset Catalog" in text
     assert "sample-generate" in text
@@ -551,20 +551,20 @@ def test_release_checker_passes_on_current_repo():
     assert f"RELEASE_CHECK_OK version={EXPECTED_VERSION}" in result.stdout
 
 
-def test_release_checker_output_is_exactly_release_check_ok_v061():
+def test_release_checker_output_is_exactly_release_check_ok_v070():
     result = run_check_release(ROOT)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert result.stdout.strip() == "RELEASE_CHECK_OK version=0.6.1"
+    assert result.stdout.strip() == "RELEASE_CHECK_OK version=0.7.0"
 
 
 def test_release_checker_fails_on_version_mismatch(tmp_path):
     repo = copy_repo(tmp_path)
     pyproject = repo / "pyproject.toml"
     text = pyproject.read_text(encoding="utf-8")
-    pyproject.write_text(text.replace('version = "0.6.1"', 'version = "9.9.9"'), encoding="utf-8")
+    pyproject.write_text(text.replace('version = "0.7.0"', 'version = "9.9.9"'), encoding="utf-8")
     version_file = repo / "src" / "market_vault" / "_version.py"
     version_file.write_text(
-        version_file.read_text(encoding="utf-8").replace('"0.6.1"', '"9.9.9"'),
+        version_file.read_text(encoding="utf-8").replace('"0.7.0"', '"9.9.9"'),
         encoding="utf-8",
     )
     result = run_check_release(repo)
@@ -577,7 +577,7 @@ def test_release_checker_fails_on_cli_version_mismatch(tmp_path):
     repo = copy_repo(tmp_path)
     version_file = repo / "src" / "market_vault" / "_version.py"
     version_file.write_text(
-        version_file.read_text(encoding="utf-8").replace('"0.6.1"', '"9.9.9"'),
+        version_file.read_text(encoding="utf-8").replace('"0.7.0"', '"9.9.9"'),
         encoding="utf-8",
     )
     result = run_check_release(repo)
@@ -639,7 +639,7 @@ def test_release_checker_fails_on_readme_title_mismatch(tmp_path):
     readme = repo / "README.md"
     readme.write_text(
         readme.read_text(encoding="utf-8").replace(
-            "# MarketVault v0.6", "# MarketVault v9.9"
+            "# MarketVault v0.7", "# MarketVault v9.9"
         ),
         encoding="utf-8",
     )
@@ -652,7 +652,7 @@ def test_release_checker_fails_on_old_ci_version_assertion(tmp_path):
     repo = copy_repo(tmp_path)
     ci = repo / ".github" / "workflows" / "ci.yml"
     text = ci.read_text(encoding="utf-8")
-    ci.write_text(text.replace("'0.6.1'", "'0.3.0'"), encoding="utf-8")
+    ci.write_text(text.replace("'0.7.0'", "'0.3.0'"), encoding="utf-8")
     result = run_check_release(repo)
     assert result.returncode == 1
     assert "package module version assertion" in result.stdout
@@ -666,7 +666,7 @@ def test_release_checker_fails_on_wrong_package_assertion_only(tmp_path):
     text = ci.read_text(encoding="utf-8")
     ci.write_text(
         text.replace(
-            "assert market_vault.__version__ == '0.6.1'",
+            "assert market_vault.__version__ == '0.7.0'",
             "assert market_vault.__version__ == '9.9.9'",
         ),
         encoding="utf-8",
@@ -684,7 +684,7 @@ def test_release_checker_fails_on_wrong_metadata_assertion_only(tmp_path):
     text = ci.read_text(encoding="utf-8")
     ci.write_text(
         text.replace(
-            "assert version('market-vault') == '0.6.1'",
+            "assert version('market-vault') == '0.7.0'",
             "assert version('market-vault') == '9.9.9'",
         ),
         encoding="utf-8",
@@ -724,14 +724,14 @@ def test_release_checker_reports_all_failures_at_once(tmp_path):
     repo = copy_repo(tmp_path)
     pyproject = repo / "pyproject.toml"
     pyproject.write_text(
-        pyproject.read_text(encoding="utf-8").replace('version = "0.6.1"', 'version = "9.9.9"'),
+        pyproject.read_text(encoding="utf-8").replace('version = "0.7.0"', 'version = "9.9.9"'),
         encoding="utf-8",
     )
     (repo / "CHANGELOG.md").unlink()
     readme = repo / "README.md"
     readme.write_text(
         readme.read_text(encoding="utf-8").replace(
-            "# MarketVault v0.6", "# MarketVault v9.9"
+            "# MarketVault v0.7", "# MarketVault v9.9"
         ),
         encoding="utf-8",
     )
@@ -2145,14 +2145,14 @@ def test_release_checker_fails_when_version_reverts_to_060(tmp_path):
     pyproject = repo / "pyproject.toml"
     pyproject.write_text(
         pyproject.read_text(encoding="utf-8").replace(
-            'version = "0.6.1"', 'version = "0.6.0"'
+            'version = "0.7.0"', 'version = "0.6.0"'
         ),
         encoding="utf-8",
     )
     version_file = repo / "src" / "market_vault" / "_version.py"
     version_file.write_text(
         version_file.read_text(encoding="utf-8").replace(
-            '"0.6.1"', '"0.6.0"'
+            '"0.7.0"', '"0.6.0"'
         ),
         encoding="utf-8",
     )
@@ -2168,7 +2168,7 @@ def test_release_checker_fails_when_readme_title_reverts_to_v060(tmp_path):
     readme = repo / "README.md"
     readme.write_text(
         readme.read_text(encoding="utf-8").replace(
-            "# MarketVault v0.6.1",
+            "# MarketVault v0.7.0",
             "# MarketVault v0.6.0",
         ),
         encoding="utf-8",
@@ -2202,7 +2202,7 @@ def test_release_checker_fails_when_ci_wheel_assertion_reverts_to_060(
     repo = copy_repo(tmp_path)
     ci = repo / ".github" / "workflows" / "ci.yml"
     ci.write_text(
-        ci.read_text(encoding="utf-8").replace("'0.6.1'", "'0.6.0'"),
+        ci.read_text(encoding="utf-8").replace("'0.7.0'", "'0.6.0'"),
         encoding="utf-8",
     )
     result = run_check_release(repo)
@@ -2233,8 +2233,8 @@ def test_v070_direction_document_states_baseline_and_sequence():
     text = (ROOT / "docs" / "v0_7_0_direction.md").read_text(encoding="utf-8")
     assert "# MarketVault v0.7.0 Direction: Python Client and Read-only Artifact Access" in text
     assert (
-        "Status: active feature development; PR-5 Integrated E2E + "
-        "usability stage" in text
+        "Status: active feature development; PR-6 v0.7.0 release "
+        "preparation stage" in text
     )
     assert "base version: v0.6.1" in text
     assert "37614d539171ef7b738e47415f3cd6ca2de332d1" in text
@@ -2243,8 +2243,8 @@ def test_v070_direction_document_states_baseline_and_sequence():
     assert "PR-2: COMPLETE / MERGED / MAIN VERIFIED" in text
     assert "PR-3: COMPLETE / MERGED / MAIN VERIFIED" in text
     assert "PR-4: COMPLETE / MERGED / MAIN VERIFIED" in text
-    assert "PR-5: CURRENT" in text
-    assert "PR-6: NOT STARTED" in text
+    assert "PR-5: COMPLETE / MERGED / MAIN VERIFIED" in text
+    assert "PR-6: CURRENT" in text
     assert "PR #48 merged at 2026-08-08T23:50:24Z" in text
     assert "bad62ee51e8eda03c7c5f20ac858973923e5f93d" in text
     assert "31284875166" in text
@@ -2266,7 +2266,14 @@ def test_v070_direction_document_states_baseline_and_sequence():
     assert "8b6bb12355c64d02c7e4f73fc67b6222ff2af6ed" in text
     assert "31301770295" in text
     assert "ArtifactClient Dataset Catalog verified read: IMPLEMENTED" in text
-    assert "package: 0.6.1" in text
+    assert "PR #52 merged at 2026-08-09T10:07:06Z" in text
+    assert "2f7ee8dd6c7c3ce07f677be99cdd8afb8f2c68d4" in text
+    assert "5ec437d37bb2cde0b716aa5dc1f84538b4bc6215" in text
+    assert "31307554050" in text
+    assert "package before PR-6: 0.6.1" in text
+    assert "ArtifactClient integrated E2E acceptance: IMPLEMENTED" in text
+    assert "consumer usability docs and source-tree examples: IMPLEMENTED" in text
+    assert "package: 0.7.0" in text
     for stage in (
         "PR-1 — Post-v0.6.1 release baseline",
         "PR-2 — Settings-independent ArtifactClient foundation",
@@ -2285,9 +2292,8 @@ def test_v070_direction_document_states_baseline_and_sequence():
     assert "PR-6: 0.6.1 -> 0.7.0" in text
     assert "the version is bumped to 0.7.0 only in PR-6" in text
     assert "No early 0.7.0 version bump" in text
-    # PR-2 / PR-3 / PR-4 are merged history; PR-5 is current and adds only
-    # acceptance / usability / examples; PR-6 has not started and v0.7.0
-    # is not released.
+    # PR-2 / PR-3 / PR-4 / PR-5 are merged history; PR-6 is the current
+    # release-preparation stage; v0.7.0 is not released.
     for boundary in (
         "PR-2 (the merged foundation PR, #49) implemented only",
         "the `ArtifactClient` class foundation",
@@ -2363,6 +2369,25 @@ def test_v070_direction_document_states_baseline_and_sequence():
         "add visualization product code",
         "add ML/training/evaluation",
         "perform PR-6 release preparation",
+        "## 6.5 PR-6 boundary",
+        "PR-6 (this PR) MAY ONLY",
+        "bump the package version from 0.6.1 to 0.7.0",
+        "sync the lifecycle documents (direction, contract, README, CHANGELOG)",
+        "add the v0.7.0 release notes (`docs/release_v0_7_0.md`)",
+        "harden the release checker / release regression guards",
+        "sync the CI release-state marker to `V070_RELEASE_PREP_OK`",
+        "PR-6 MUST NOT",
+        "modify `src/` except the `_version.py` version bump",
+        "modify dependencies",
+        "add ArtifactClient capabilities",
+        "add CLI",
+        "add discovery/latest",
+        "add settings",
+        "add network/OpenD",
+        "add current time",
+        "create the v0.7.0 tag",
+        "publish a GitHub Release",
+        "publish to PyPI / TestPyPI",
     ):
         assert boundary in text
     assert "ArtifactClient is implemented" not in text
@@ -2374,7 +2399,8 @@ def test_v070_direction_document_states_baseline_and_sequence():
     assert "PR-3: CURRENT" not in text
     assert "PR-4: NOT STARTED" not in text
     assert "PR-4: CURRENT" not in text
-    assert "PR-6: CURRENT" not in text
+    assert "PR-5: CURRENT" not in text
+    assert "PR-6: NOT STARTED" not in text
     assert "V0.7.0 is released" not in text
     for boundary in (
         "No new CLI command",
@@ -2406,22 +2432,23 @@ def test_v070_python_client_contract_states_boundaries():
     )
     assert "# MarketVault Python Client Contract" in text
     assert (
-        "Status: PR-5 integrated acceptance/usability/examples in "
-        "unreleased v0.7.0 development" in text
+        "Status: PR-6 v0.7.0 release preparation in unreleased v0.7.0 "
+        "development" in text
     )
     assert "Target release: v0.7.0" in text
     assert "Public root: `ArtifactClient`" in text
     assert "Formal v0.6.1 GitHub Release artifacts" in text
     assert "DO NOT contain `ArtifactClient`" in text
-    assert "package metadata remains 0.6.1" in text
+    assert "PR #52" in text
+    assert "package metadata to" in text
     assert "frozen version policy" in text
     assert "PR-3: Canonical + Dataset verified read-only access implemented" in text
     assert "PR-4: Dataset Catalog verified read-only access implemented" in text
     for section in range(1, 12):
         assert f"## 13.{section}" in text
-    assert "PR-5: integrated acceptance/usability/examples CURRENT" in text
-    assert "PR-6: release prep NOT STARTED" in text
-    assert "package: 0.6.1" in text
+    assert "PR-5: integrated acceptance/usability/examples COMPLETE / MERGED / MAIN VERIFIED" in text
+    assert "PR-6: release preparation CURRENT" in text
+    assert "package: 0.7.0" in text
     assert "v0.7.0: NOT RELEASED" in text
     # PR-5 consumer-side usability boundary: examples and documentation
     # are consumer-side only and never form a second trust path; consumer
@@ -2681,21 +2708,21 @@ def test_release_checker_fails_when_v070_sequence_tampered(tmp_path):
     ) in result.stdout
 
 
-def test_release_checker_fails_when_package_bumps_to_070(tmp_path):
-    # Mutation guard 8: bumping the current package to 0.7.0 must fail the
-    # checker: the package stays 0.6.1 through PR-5.
+def test_release_checker_fails_when_package_reverts_to_061(tmp_path):
+    # PR-6 guard: reverting the current package back to 0.6.1 must fail
+    # the checker: the package is 0.7.0 in the PR-6 release preparation.
     repo = copy_repo(tmp_path)
     pyproject = repo / "pyproject.toml"
     pyproject.write_text(
         pyproject.read_text(encoding="utf-8").replace(
-            'version = "0.6.1"', 'version = "0.7.0"'
+            'version = "0.7.0"', 'version = "0.6.1"'
         ),
         encoding="utf-8",
     )
     version_file = repo / "src" / "market_vault" / "_version.py"
     version_file.write_text(
         version_file.read_text(encoding="utf-8").replace(
-            '"0.6.1"', '"0.7.0"'
+            '"0.7.0"', '"0.6.1"'
         ),
         encoding="utf-8",
     )
@@ -2833,23 +2860,40 @@ def test_release_checker_fails_when_contract_adds_backtesting(tmp_path):
     assert "does not state the fact 'No backtesting'" in result.stdout
 
 
-def test_release_checker_fails_when_ci_reverts_marker_to_prep_ok(tmp_path):
-    # Mutation guard 17: reverting the CI marker to the stale
-    # V061_RELEASE_PREP_OK must fail the checker.
+def test_release_checker_fails_when_ci_claims_v070_released_ok(tmp_path):
+    # PR-6 guard: claiming the released-state marker V070_RELEASED_OK in
+    # CI must fail the checker: the marker set is V070_RELEASE_PREP_OK.
     repo = copy_repo(tmp_path)
     ci = repo / ".github" / "workflows" / "ci.yml"
     ci.write_text(
         ci.read_text(encoding="utf-8").replace(
-            "V061_RELEASE_STATE_OK",
-            "V061_RELEASE_PREP_OK",
+            "V070_RELEASE_PREP_OK",
+            "V070_RELEASED_OK",
         ),
         encoding="utf-8",
     )
     result = run_check_release(repo)
     assert result.returncode == 1
-    assert "must carry the V061_RELEASE_STATE_OK marker" in result.stdout
+    assert "must carry the V070_RELEASE_PREP_OK marker" in result.stdout
+    assert "must never claim the V070_RELEASED_OK state" in result.stdout
+
+
+def test_release_checker_fails_when_ci_restores_v061_release_state_marker(
+    tmp_path,
+):
+    # PR-6 guard: restoring the stale v0.6.1 released-state marker must
+    # fail the checker: the marker set is V070_RELEASE_PREP_OK.
+    repo = copy_repo(tmp_path)
+    ci = repo / ".github" / "workflows" / "ci.yml"
+    ci.write_text(
+        ci.read_text(encoding="utf-8")
+        + "\necho 'V061_RELEASE_STATE_OK'\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
     assert (
-        "must never restore the stale V061_RELEASE_PREP_OK marker"
+        "must never restore the stale V061_RELEASE_STATE_OK marker"
     ) in result.stdout
 
 
@@ -3216,26 +3260,278 @@ def test_release_checker_fails_when_contract_drops_load_dataset(
     ) in result.stdout
 
 
-def test_release_checker_fails_when_direction_claims_pr6_started(
+def test_release_checker_fails_when_direction_regresses_pr6_to_not_started(
     tmp_path,
 ):
-    # PR-3 mutation guard E / PR-4 / PR-5 guard: the direction document
-    # claiming a later stage (PR-6) started must fail the checker — PR-6
-    # is NOT STARTED and PR-5 must not be followed by any later-stage
-    # work.
+    # PR-6 guard: regressing the current release-preparation stage back
+    # to NOT STARTED must fail the checker — PR-6 is CURRENT.
     repo = copy_repo(tmp_path)
     path = repo / "docs" / "v0_7_0_direction.md"
     path.write_text(
         path.read_text(encoding="utf-8").replace(
-            "PR-6: NOT STARTED",
             "PR-6: CURRENT",
+            "PR-6: NOT STARTED",
         ),
         encoding="utf-8",
     )
     result = run_check_release(repo)
     assert result.returncode == 1
     assert (
-        "contains the false implementation/release claim 'PR-6: CURRENT'"
+        "contains the false implementation/release claim 'PR-6: NOT STARTED'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_direction_regresses_pr5_to_current(
+    tmp_path,
+):
+    # PR-6 guard: regressing the merged PR-5 stage back to CURRENT must
+    # fail the checker — PR-5 is COMPLETE / MERGED / MAIN VERIFIED.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_7_0_direction.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "PR-5: COMPLETE / MERGED / MAIN VERIFIED",
+            "PR-5: CURRENT",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "contains the false implementation/release claim 'PR-5: CURRENT'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_direction_loses_package_070(tmp_path):
+    # PR-6 guard: reverting the current progress-block package back to
+    # 0.6.1 must fail the checker — the PR-6 package is 0.7.0.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_7_0_direction.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "package: 0.7.0",
+            "package: 0.6.1",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the fact 'package: 0.7.0'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_contract_regresses_pr5_to_current(
+    tmp_path,
+):
+    # PR-6 guard: regressing the merged PR-5 contract stage back to
+    # CURRENT must fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "contracts" / "python_client.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "PR-5: integrated acceptance/usability/examples "
+            "COMPLETE / MERGED / MAIN VERIFIED",
+            "PR-5: integrated acceptance/usability/examples CURRENT",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the fact 'PR-5: integrated acceptance/usability/"
+        "examples COMPLETE / MERGED / MAIN VERIFIED'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_contract_regresses_pr6_to_not_started(
+    tmp_path,
+):
+    # PR-6 guard: regressing the current contract release-preparation
+    # stage back to NOT STARTED must fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "contracts" / "python_client.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "PR-6: release preparation CURRENT",
+            "PR-6: release preparation NOT STARTED",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the fact 'PR-6: release preparation CURRENT'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_contract_loses_package_070(tmp_path):
+    # PR-6 guard: reverting the contract package line back to 0.6.1 must
+    # fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "contracts" / "python_client.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "package: 0.7.0",
+            "package: 0.6.1",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the fact 'package: 0.7.0'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_release_notes_missing(tmp_path):
+    # PR-6 guard: deleting the v0.7.0 release notes document must fail
+    # the checker.
+    repo = copy_repo(tmp_path)
+    (repo / "docs" / "release_v0_7_0.md").unlink()
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "docs/release_v0_7_0.md is missing" in result.stdout
+
+
+def test_release_checker_fails_when_release_notes_claim_v070_released(
+    tmp_path,
+):
+    # PR-6 guard: an affirmative v0.7.0 released claim in the release
+    # notes must fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "release_v0_7_0.md"
+    path.write_text(
+        path.read_text(encoding="utf-8") + "\nv0.7.0 is released.\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "contains the false release claim 'v0.7.0 is released'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_release_notes_claim_tag_created(
+    tmp_path,
+):
+    # PR-6 guard: claiming the v0.7.0 tag was created must fail the
+    # checker — the tag is NOT CREATED.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "release_v0_7_0.md"
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        + "\nThe v0.7.0 tag was created.\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "contains the false release claim 'v0.7.0 tag was created'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_release_notes_predict_future_merge_sha(
+    tmp_path,
+):
+    # PR-6 guard: predicting the future PR-6 merge commit must fail the
+    # checker — the future merge SHA is UNKNOWN.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "release_v0_7_0.md"
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        + "\nthe future merge commit is "
+        + "5ec437d37bb2cde0b716aa5dc1f84538b4bc6215\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "contains the false release claim 'the future merge commit is'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_release_notes_predict_formal_hash(
+    tmp_path,
+):
+    # PR-6 guard: predicting formal artifact hash values must fail the
+    # checker — candidate hashes are never formal hashes.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "release_v0_7_0.md"
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        + "\nformal artifact SHA256 values are predicted\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "contains the false release claim "
+        "'formal artifact SHA256 values are predicted'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_release_notes_claim_pr6_merged(
+    tmp_path,
+):
+    # PR-6 guard: claiming PR-6 is merged must fail the checker — PR-6 is
+    # OPEN / UNMERGED.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "release_v0_7_0.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "PR-6: current release-preparation stage, OPEN / UNMERGED",
+            "PR-6: current release-preparation stage, MERGED",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the fact 'PR-6: current release-preparation "
+        "stage, OPEN / UNMERGED'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_release_notes_lose_not_released(
+    tmp_path,
+):
+    # PR-6 guard: dropping the NOT formally released statement must fail
+    # the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "release_v0_7_0.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "NOT formally released",
+            "FORMALLY RELEASED",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the fact 'NOT formally released'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_release_notes_lose_candidate_wording(
+    tmp_path,
+):
+    # PR-6 guard: losing the candidate-validation-only wording must fail
+    # the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "release_v0_7_0.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "candidate validation only",
+            "formal validation only",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the fact 'candidate validation only'"
     ) in result.stdout
 
 
@@ -4530,10 +4826,12 @@ def test_renderer_contains_hardening_markers():
 
 def test_ci_contains_061_assertions_and_marker():
     text = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    assert "assert market_vault.__version__ == '0.6.1'" in text
-    assert "assert version('market-vault') == '0.6.1'" in text
+    assert "assert market_vault.__version__ == '0.7.0'" in text
+    assert "assert version('market-vault') == '0.7.0'" in text
     assert "V061_PUBLIC_API_IMPORT_OK" in text
-    assert "V061_RELEASE_STATE_OK" in text
+    assert "V070_RELEASE_PREP_OK" in text
+    assert "V070_RELEASED_OK" not in text
+    assert "V061_RELEASE_STATE_OK" not in text
     assert "V061_RELEASE_PREP_OK" not in text
     # PR-2: the ArtifactClient foundation fresh-wheel smoke is required.
     assert "V070_PUBLIC_API_IMPORT_OK" in text
@@ -4724,7 +5022,7 @@ def test_release_checker_fails_when_ci_reverts_to_v051(tmp_path):
     repo = copy_repo(tmp_path)
     ci = repo / ".github" / "workflows" / "ci.yml"
     text = ci.read_text(encoding="utf-8")
-    ci.write_text(text.replace("'0.6.1'", "'0.5.1'"), encoding="utf-8")
+    ci.write_text(text.replace("'0.7.0'", "'0.5.1'"), encoding="utf-8")
     result = run_check_release(repo)
     assert result.returncode == 1
     assert "package module version assertion" in result.stdout
@@ -4736,12 +5034,12 @@ def test_release_checker_fails_when_ci_loses_release_state_marker(tmp_path):
     ci = repo / ".github" / "workflows" / "ci.yml"
     text = ci.read_text(encoding="utf-8")
     ci.write_text(
-        text.replace("echo 'V061_RELEASE_STATE_OK'", "echo 'V061_STATE_OK'"),
+        text.replace("echo 'V070_RELEASE_PREP_OK'", "echo 'V070_PREP_OK'"),
         encoding="utf-8",
     )
     result = run_check_release(repo)
     assert result.returncode == 1
-    assert "must carry the V061_RELEASE_STATE_OK marker" in result.stdout
+    assert "must carry the V070_RELEASE_PREP_OK marker" in result.stdout
 
 
 def test_release_checker_fails_when_ci_loses_b64_forbidden(tmp_path):
@@ -6998,13 +7296,13 @@ def test_release_checker_fails_without_executable_example(tmp_path):
 def test_release_checker_fails_when_direction_regresses_pr5_to_not_started(
     tmp_path,
 ):
-    # PR-5 guard: regressing PR-5 to NOT STARTED must fail the checker —
-    # PR-5 is the current stage.
+    # PR-6 guard: regressing the merged PR-5 stage back to NOT STARTED
+    # must fail the checker — PR-5 is COMPLETE / MERGED / MAIN VERIFIED.
     repo = copy_repo(tmp_path)
     path = repo / "docs" / "v0_7_0_direction.md"
     path.write_text(
         path.read_text(encoding="utf-8").replace(
-            "PR-5: CURRENT",
+            "PR-5: COMPLETE / MERGED / MAIN VERIFIED",
             "PR-5: NOT STARTED",
         ),
         encoding="utf-8",
