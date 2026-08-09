@@ -69,13 +69,23 @@ def resolve_ref(repo: str, ref: str) -> None:
     _git(repo, "rev-parse", "--verify", "--quiet", ref)
 
 
-def changed_paths(repo: str, base: str, head: str) -> list[str]:
-    """Resolve the exact changed-file list via the three-dot merge-base diff.
+def changed_paths(repo: str, base: str, head: str, merge_base: bool = True) -> list[str]:
+    """Resolve the exact changed-file list between two refs.
+
+    With ``merge_base=True`` (the default) the diff is the three-dot
+    merge-base diff ``base...head``; with ``merge_base=False`` it is the
+    direct tree diff ``base head``. pull_request ranges use the
+    merge-base diff; push ranges use the direct diff of the pushed
+    range.
 
     Renames (R<similarity> old new) contribute BOTH the old and the new
     path so a rename can never escape the scope audit.
     """
-    out = _git(repo, "diff", "--name-status", "-M", f"{base}...{head}")
+    if merge_base:
+        diff_args = [f"{base}...{head}"]
+    else:
+        diff_args = [base, head]
+    out = _git(repo, "diff", "--name-status", "-M", *diff_args)
     paths: list[str] = []
     for line in out.splitlines():
         parts = line.split("\t")

@@ -132,6 +132,21 @@ GitHub / network），是 scope audit 的机械部分；independent review 仍�
 - merge 前（适用时）的权威验证。完整矩阵的权威从来不在本地机器，而是
   GitHub final-head CI。
 
+final-head CI 按 changed paths 分层（CI Risk-Tier Optimization Phase 1，
+详见 [docs/development_protocol_v1.md](docs/development_protocol_v1.md)
+第 4.6 节）：
+
+- **DOCS_FAST**：仅 `docs/` 与三个顶层 policy 文档（DEVELOPMENT_PLAYBOOK.md /
+  RELEASE_PLAYBOOK.md / AGENT_HANDOFF.md）变更 —— 不跑 full pytest /
+  PyArrow suite / package build，target ≤ 5 min（prefer ≤ 3 min）。
+- **PACKAGE_DOCS**：DOCS_FAST set + `README.md` 变更（README 是 package
+  metadata 敏感路径）—— package job 保持完整验证。
+- **FULL**：任何其他变更 —— 当前完整矩阵不变。unknown / unset tier
+  一律按 FULL 处理（fail-safe）。
+
+分类由 [scripts/ci_risk_tier.py](scripts/ci_risk_tier.py) 完成
+（read-only、fail-closed）。
+
 ## 3. 何时不要求本地完整 pytest
 
 当权威的 final-head CI 会执行完整矩阵时，每次小修改后并不是默认要求本地

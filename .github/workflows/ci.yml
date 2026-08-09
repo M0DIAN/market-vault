@@ -10,8 +10,63 @@ on:
       - main
 
 jobs:
+  classify:
+    runs-on: ubuntu-latest
+    outputs:
+      tier: ${{ steps.classify.outputs.tier }}
+      reason: ${{ steps.classify.outputs.reason }}
+      changed_files: ${{ steps.classify.outputs.changed_files }}
+    steps:
+      - name: Check out repository with full history
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Classify change tier
+        id: classify
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+            HEAD="${{ github.event.pull_request.head.sha }}"
+            MODE=pull_request
+          else
+            BASE="${{ github.event.before }}"
+            HEAD="${{ github.sha }}"
+            MODE=push
+          fi
+          echo "event=${{ github.event_name }} mode=$MODE base=$BASE head=$HEAD"
+          if ! python scripts/ci_risk_tier.py --repo . --mode "$MODE" --base "$BASE" --head "$HEAD" > ci_tier.txt; then
+            echo "classifier failed; fail-closing to tier=full"
+            echo "tier=full" >> "$GITHUB_OUTPUT"
+            echo "reason=classifier_error_fail_closed" >> "$GITHUB_OUTPUT"
+            echo "changed_files=0" >> "$GITHUB_OUTPUT"
+            cat ci_tier.txt || true
+            exit 0
+          fi
+          cat ci_tier.txt
+          tier=$(sed -n 's/^tier=//p' ci_tier.txt)
+          reason=$(sed -n 's/^reason=//p' ci_tier.txt)
+          changed=$(sed -n 's/^changed_files=//p' ci_tier.txt)
+          echo "tier=${tier:-full}" >> "$GITHUB_OUTPUT"
+          echo "reason=${reason:-classifier_output_missing}" >> "$GITHUB_OUTPUT"
+          echo "changed_files=${changed:-0}" >> "$GITHUB_OUTPUT"
+
+      - name: Check whitespace in change range
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git diff --check "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}"
+          elif [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
+            git diff --check "${{ github.event.before }}" "${{ github.sha }}"
+          fi
+
+      - name: Check repository hygiene
+        run: python scripts/check_repo_hygiene.py
+
   test:
     runs-on: ubuntu-latest
+    needs: classify
     strategy:
       fail-fast: false
       matrix:
@@ -28,24 +83,36 @@ jobs:
           cache: pip
 
       - name: Install dependencies
+        if: needs.classify.outputs.tier != 'docs_fast' && needs.classify.outputs.tier != 'package_docs'
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
 
       - name: Compile Python
+        if: needs.classify.outputs.tier != 'docs_fast' && needs.classify.outputs.tier != 'package_docs'
         run: python -m compileall -q src tests scripts examples
 
       - name: Run offline tests
+        if: needs.classify.outputs.tier != 'docs_fast' && needs.classify.outputs.tier != 'package_docs'
         run: python -m pytest
 
       - name: Check repository hygiene
+        if: needs.classify.outputs.tier != 'docs_fast' && needs.classify.outputs.tier != 'package_docs'
         run: python scripts/check_repo_hygiene.py
 
       - name: Check whitespace
+        if: needs.classify.outputs.tier != 'docs_fast' && needs.classify.outputs.tier != 'package_docs'
         run: git diff --check
+
+      - name: Fast-path tier marker
+        if: needs.classify.outputs.tier != 'full'
+        run: |
+          echo "CI_TIER=${{ needs.classify.outputs.tier }}"
+          echo "FULL_TESTS_SKIPPED_BY_POLICY"
 
   portability-pyarrow24:
     runs-on: ubuntu-latest
+    needs: classify
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -57,20 +124,25 @@ jobs:
           cache: pip
 
       - name: Install dependencies
+        if: needs.classify.outputs.tier != 'docs_fast' && needs.classify.outputs.tier != 'package_docs'
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
 
       - name: Pin the audited PyArrow 24.0.0 compatibility runtime
+        if: needs.classify.outputs.tier != 'docs_fast' && needs.classify.outputs.tier != 'package_docs'
         run: python -m pip install "pyarrow==24.0.0"
 
       - name: Assert the audited PyArrow compatibility version
+        if: needs.classify.outputs.tier != 'docs_fast' && needs.classify.outputs.tier != 'package_docs'
         run: python -c "import pyarrow; assert pyarrow.__version__ == '24.0.0'"
 
       - name: Run audited PyArrow 24 compatibility tests
+        if: needs.classify.outputs.tier != 'docs_fast' && needs.classify.outputs.tier != 'package_docs'
         run: python -m pytest tests/test_v060_portability.py -q
 
       - name: Run the canonical reader and frozen regression surface
+        if: needs.classify.outputs.tier != 'docs_fast' && needs.classify.outputs.tier != 'package_docs'
         run: |
           python -m pytest tests/test_canonical_reader.py -q
           python -m pytest \
@@ -78,11 +150,18 @@ jobs:
             tests/test_sample_generation_cli.py -q
 
       - name: Run full offline suite under PyArrow 24.0.0
+        if: needs.classify.outputs.tier != 'docs_fast' && needs.classify.outputs.tier != 'package_docs'
         run: python -m pytest
+
+      - name: Fast-path tier marker
+        if: needs.classify.outputs.tier != 'full'
+        run: |
+          echo "CI_TIER=${{ needs.classify.outputs.tier }}"
+          echo "FULL_TESTS_SKIPPED_BY_POLICY"
 
   package:
     runs-on: ubuntu-latest
-    needs: [test, portability-pyarrow24]
+    needs: [classify, test, portability-pyarrow24]
 
     steps:
       - name: Check out repository
@@ -95,33 +174,40 @@ jobs:
           cache: pip
 
       - name: Install build tooling
+        if: needs.classify.outputs.tier != 'docs_fast'
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e .
           python -m pip install "build>=1.2,<2" "twine>=5,<7"
 
       - name: Run release checker
+        if: needs.classify.outputs.tier != 'docs_fast'
         run: python scripts/check_release.py
 
       - name: Example renderer help smoke
+        if: needs.classify.outputs.tier != 'docs_fast'
         run: python examples/dataset_cli/render_plans.py --help
 
       - name: PR-5 verified client example help smoke
+        if: needs.classify.outputs.tier != 'docs_fast'
         run: |
           python examples/python_client/read_verified_artifacts.py --help
           echo 'V070_INTEGRATED_ACCEPTANCE_OK'
 
       - name: Build wheel and sdist
+        if: needs.classify.outputs.tier != 'docs_fast'
         run: |
           python -m build
           python -m twine check dist/*
 
       - name: Confirm exactly one wheel and one sdist
+        if: needs.classify.outputs.tier != 'docs_fast'
         run: |
           test "$(ls dist/*.whl | wc -l)" -eq 1
           test "$(ls dist/*.tar.gz | wc -l)" -eq 1
 
       - name: Install wheel in a fresh virtual environment
+        if: needs.classify.outputs.tier != 'docs_fast'
         run: |
           python -m venv .release-venv
           .release-venv/bin/python -m pip install dist/*.whl
@@ -139,6 +225,7 @@ jobs:
           .release-venv/bin/python -c "from importlib.metadata import version; assert version('market-vault') == '0.7.0'"
 
       - name: Fresh-wheel public API smoke check
+        if: needs.classify.outputs.tier != 'docs_fast'
         run: |
           .release-venv/bin/python -c "
           from market_vault.canonical import load_verified_canonical_build
@@ -218,6 +305,7 @@ jobs:
           echo 'V070_RELEASED_OK'
 
       - name: Check wheel contents exclude local data
+        if: needs.classify.outputs.tier != 'docs_fast'
         run: |
           python - <<'EOF'
           import glob, zipfile
@@ -230,6 +318,7 @@ jobs:
           EOF
 
       - name: Build package SHA256 manifest
+        if: needs.classify.outputs.tier != 'docs_fast'
         run: |
           python - <<'EOF'
           import hashlib
@@ -252,6 +341,7 @@ jobs:
           EOF
 
       - name: Verify package SHA256 manifest
+        if: needs.classify.outputs.tier != 'docs_fast'
         run: |
           python - <<'EOF'
           import re
@@ -285,6 +375,7 @@ jobs:
 
       - name: Upload package audit artifact
         id: package-artifact
+        if: needs.classify.outputs.tier != 'docs_fast'
         uses: actions/upload-artifact@v7
         with:
           name: market-vault-package-${{ github.event.pull_request.head.sha || github.sha }}-attempt-${{ github.run_attempt }}
@@ -297,6 +388,7 @@ jobs:
           overwrite: false
 
       - name: Confirm package audit artifact metadata
+        if: needs.classify.outputs.tier != 'docs_fast'
         env:
           PACKAGE_ARTIFACT_ID: ${{ steps.package-artifact.outputs.artifact-id }}
           PACKAGE_ARTIFACT_URL: ${{ steps.package-artifact.outputs.artifact-url }}
@@ -318,3 +410,9 @@ jobs:
           print(f"PACKAGE_ARTIFACT_DIGEST={pdigest}")
           print("V061_PACKAGE_AUDIT_OK")
           EOF
+
+      - name: Fast-path tier marker
+        if: needs.classify.outputs.tier == 'docs_fast'
+        run: |
+          echo "CI_TIER=docs_fast"
+          echo "PACKAGE_BUILD_SKIPPED_BY_POLICY"
