@@ -162,7 +162,7 @@ jobs:
           client = ArtifactClient()
           assert callable(client.load_canonical_build)
           assert callable(client.load_dataset)
-          assert not hasattr(client, 'load_dataset_catalog')
+          assert callable(client.load_dataset_catalog)
           # Before actual reader invocation nothing heavy may be loaded.
           assert 'market_vault.config' not in sys.modules
           assert 'market_vault.storage' not in sys.modules
@@ -173,6 +173,29 @@ jobs:
           assert 'moomoo' not in sys.modules
           assert 'futu' not in sys.modules
           print('V070_PUBLIC_API_IMPORT_OK')
+          "
+          .release-venv/bin/python -c "
+          import os
+          import sys
+          import tempfile
+          os.chdir(tempfile.mkdtemp())
+          from market_vault import ArtifactClient
+          client = ArtifactClient()
+          cb = client.load_canonical_build
+          ds = client.load_dataset
+          cat = client.load_dataset_catalog
+          assert callable(cb) and callable(ds) and callable(cat)
+          # Binding the three read methods must stay lazy.
+          assert 'market_vault.config' not in sys.modules
+          assert 'market_vault.storage' not in sys.modules
+          assert 'market_vault.canonical' not in sys.modules
+          assert 'market_vault.dataset' not in sys.modules
+          assert 'market_vault.dataset.dataset_catalog_reader' not in sys.modules
+          assert 'duckdb' not in sys.modules
+          assert 'pandas' not in sys.modules
+          assert 'moomoo' not in sys.modules
+          assert 'futu' not in sys.modules
+          print('V070_CATALOG_CLIENT_IMPORT_OK')
           "
           .release-venv/bin/python -c "
           from market_vault.dataset.dataset_catalog_cli import (

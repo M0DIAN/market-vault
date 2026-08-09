@@ -3,34 +3,36 @@
 The :class:`ArtifactClient` is the v0.7.0 settings-independent public root
 for read-only verified artifact access. PR-2 shipped the strict
 zero-argument, stateless, side-effect-free constructor foundation. PR-3
-adds exactly two verified read methods:
+added exactly two verified read methods, and PR-4 adds the Dataset
+Catalog verified read:
 
 - :meth:`ArtifactClient.load_canonical_build` delegates verbatim to
   :func:`market_vault.canonical.reader.load_verified_canonical_build`;
 - :meth:`ArtifactClient.load_dataset` delegates verbatim to
-  :func:`market_vault.dataset.reader.load_verified_dataset`.
+  :func:`market_vault.dataset.reader.load_verified_dataset`;
+- :meth:`ArtifactClient.load_dataset_catalog` delegates verbatim to
+  :func:`market_vault.dataset.dataset_catalog_reader.load_verified_dataset_catalog`.
 
 The client performs zero artifact validation of its own: the formal
 readers remain the only validation authority, their exceptions propagate
 unwrapped, and nothing is ever written, repaired, or discovered.
 Reader imports occur at the actual method-call boundary so this module
-stays lightweight at import time. Dataset Catalog access is PR-4 and is
-not implemented here.
+stays lightweight at import time.
 """
 
 from __future__ import annotations
 
 
 class ArtifactClient:
-    """Settings-independent read-only artifact client (v0.7.0 PR-3).
+    """Settings-independent read-only artifact client (v0.7.0 PR-4).
 
     The constructor takes no arguments and performs no work: no settings,
     no filesystem access, no network, no OpenD, no current time. Instances
     are stateless (``__slots__ = ()``).
 
-    Verified reads are explicit-path only: ``load_canonical_build`` and
-    ``load_dataset`` delegate directly to the formal verified readers and
-    return their verified objects unchanged.
+    Verified reads are explicit-path only: ``load_canonical_build``,
+    ``load_dataset`` and ``load_dataset_catalog`` delegate directly to the
+    formal verified readers and return their verified objects unchanged.
     """
 
     __slots__ = ()
@@ -68,3 +70,18 @@ class ArtifactClient:
         from .dataset.reader import load_verified_dataset
 
         return load_verified_dataset(build_dir)
+
+    def load_dataset_catalog(self, snapshot_dir):
+        """Read and verify one immutable Dataset Catalog snapshot.
+
+        Delegates verbatim to
+        :func:`market_vault.dataset.dataset_catalog_reader.load_verified_dataset_catalog`
+        and returns its :class:`~market_vault.dataset.VerifiedDatasetCatalogSnapshot`
+        unchanged. The formal reader performs all validation; its
+        :class:`~market_vault.dataset.DatasetCatalogArtifactValidationError`
+        failures propagate unwrapped. The reader is imported only when this
+        method is actually called.
+        """
+        from .dataset.dataset_catalog_reader import load_verified_dataset_catalog
+
+        return load_verified_dataset_catalog(snapshot_dir)
