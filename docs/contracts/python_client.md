@@ -1,6 +1,6 @@
 # MarketVault Python Client Contract
 
-Status: PR-4 Dataset Catalog verified read-only access implemented in unreleased v0.7.0 development
+Status: PR-5 integrated acceptance/usability/examples in unreleased v0.7.0 development
 
 Target release: v0.7.0
 
@@ -9,7 +9,8 @@ Public root: `ArtifactClient`
 Formal v0.6.1 GitHub Release artifacts DO NOT contain `ArtifactClient`.
 Current unreleased v0.7.0 development introduces the `ArtifactClient`
 foundation (PR-2), the Canonical + Dataset verified read-only access
-(PR-3), and the Dataset Catalog verified read-only access (PR-4) while
+(PR-3), the Dataset Catalog verified read-only access (PR-4), and the
+integrated acceptance / usability / consumer examples (PR-5) while
 the package metadata remains 0.6.1 under the frozen version policy.
 
 PR-2: foundation implemented (`ArtifactClient()` constructs a stateless,
@@ -22,6 +23,14 @@ PR-4: Dataset Catalog verified read-only access implemented
 (`ArtifactClient.load_dataset_catalog(snapshot_dir)` delegates to the
 formal verified Catalog reader and returns its verified object directly;
 see `docs/v0_7_0_direction.md`).
+PR-5: integrated acceptance/usability/examples CURRENT (offline
+end-to-end acceptance over real committed artifacts, explicit-path
+Python / Jupyter / ML-consumer usage documentation, source-tree
+examples, and backward-compatibility hardening; see
+`docs/v0_7_0_python_client_usage.md` and `examples/python_client/README.md`).
+PR-6: release prep NOT STARTED.
+package: 0.6.1
+v0.7.0: NOT RELEASED
 
 ## 13.1 Existing MarketVault compatibility
 
@@ -193,3 +202,23 @@ invocation crosses the reader import boundary.
 - No schema v2.
 - No migration.
 - No dependency modernization.
+
+## 13.11 PR-5 consumer-side usability boundary
+
+The v0.7.0 usage documentation and the source-tree examples
+(`docs/v0_7_0_python_client_usage.md`, `examples/python_client/`) are
+CONSUMER-SIDE only. They do not create a second trust path: no example
+and no documentation introduces its own artifact parsing, validation,
+discovery, settings, environment-derived root, network/OpenD, or
+current-time behavior. The formal verified readers remain the only
+validation authority; examples only call `ArtifactClient` with explicit
+paths and print trusted fields from the returned verified objects.
+
+Consumer transformations performed AFTER an ArtifactClient verified read,
+for example constructing an in-memory pandas DataFrame from the already
+verified Dataset rows, are not artifact verification and are not part of
+the ArtifactClient trust contract. Such transformations are plain
+consumer-side data handling on top of already verified facts; they never
+re-verify artifacts, never bypass the formal verified readers (for
+example by parsing `dataset.parquet` directly), and never write back into
+artifact directories.

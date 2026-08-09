@@ -106,6 +106,11 @@ jobs:
       - name: Example renderer help smoke
         run: python examples/dataset_cli/render_plans.py --help
 
+      - name: PR-5 verified client example help smoke
+        run: |
+          python examples/python_client/read_verified_artifacts.py --help
+          echo 'V070_INTEGRATED_ACCEPTANCE_OK'
+
       - name: Build wheel and sdist
         run: |
           python -m build

@@ -1230,23 +1230,23 @@ README_V061_SECTION_MARKERS = (
 README_V061_STALE_PHRASES = (
     "the v0.6.1 formal release does not exist yet",
 )
-# Facts the v0.7.0 direction document must state: the active PR-4
+# Facts the v0.7.0 direction document must state: the active PR-5
 # feature-development status, the v0.6.1 baseline, the PR-1 / PR-2 / PR-3
-# merged records, the NOT RELEASED v0.7.0 state, the fixed 6-PR sequence
-# with the exact stage names, the version rules (0.6.1 through PR-5, 0.7.0
-# only in PR-6), the explicit non-goals, the historical PR-2 / PR-3
-# boundaries, and the PR-4 boundary.
+# / PR-4 merged records, the NOT RELEASED v0.7.0 state, the fixed 6-PR
+# sequence with the exact stage names, the version rules (0.6.1 through
+# PR-5, 0.7.0 only in PR-6), the explicit non-goals, the historical
+# PR-2 / PR-3 / PR-4 boundaries, and the PR-5 boundary.
 V070_DIRECTION_FACTS = (
     "# MarketVault v0.7.0 Direction: Python Client and Read-only Artifact Access",
-    "Status: active feature development; PR-4 Dataset Catalog ArtifactClient reads stage",
+    "Status: active feature development; PR-5 Integrated E2E + usability stage",
     "base version: v0.6.1",
     "37614d539171ef7b738e47415f3cd6ca2de332d1",
     "v0.7.0: NOT RELEASED",
     "PR-1: COMPLETE / MERGED / MAIN VERIFIED",
     "PR-2: COMPLETE / MERGED / MAIN VERIFIED",
     "PR-3: COMPLETE / MERGED / MAIN VERIFIED",
-    "PR-4: CURRENT",
-    "PR-5: NOT STARTED",
+    "PR-4: COMPLETE / MERGED / MAIN VERIFIED",
+    "PR-5: CURRENT",
     "PR-6: NOT STARTED",
     "package: 0.6.1",
     "PR-1 record",
@@ -1268,6 +1268,12 @@ V070_DIRECTION_FACTS = (
     "ArtifactClient Canonical verified read: IMPLEMENTED",
     "ArtifactClient Dataset verified read: IMPLEMENTED",
     "Dataset Catalog client read at PR-3: NOT IMPLEMENTED",
+    "PR-4 record",
+    "PR #51 merged at 2026-08-09T07:42:17Z",
+    "49dbc9fdc53d40d0955febe61c87e9cb71dcc159",
+    "8b6bb12355c64d02c7e4f73fc67b6222ff2af6ed",
+    "31301770295",
+    "ArtifactClient Dataset Catalog verified read: IMPLEMENTED",
     "PR-1 — Post-v0.6.1 release baseline",
     "PR-2 — Settings-independent ArtifactClient foundation",
     "PR-3 — Canonical + Dataset verified read-only client access",
@@ -1313,13 +1319,13 @@ V070_DIRECTION_FACTS = (
     "current-time behavior",
     "CLI",
     "PR-4/5/6 work",
-    "PR-4 (this PR) MAY implement only",
+    "PR-4 (the merged Catalog-read PR, #51) implemented only",
     "`load_dataset_catalog`",
     "direct formal verified Catalog reader delegation",
     "Catalog reader access tests",
     "contract/direction/checker changes",
     "fresh-wheel smoke updates",
-    "PR-4 MUST NOT",
+    "PR-4 did not implement",
     "Catalog builder",
     "Catalog materialization",
     "Catalog list/filter/query convenience API",
@@ -1337,6 +1343,29 @@ V070_DIRECTION_FACTS = (
     "PR-5 usability/examples",
     "PR-6 release prep",
     "version bump",
+    "## 6.4 PR-5 boundary",
+    "PR-5 (this PR) MAY ONLY",
+    "add integrated offline E2E acceptance",
+    "add explicit-path Python consumer documentation",
+    "add Jupyter-friendly consumer documentation",
+    "add ML-consumer handoff documentation without ML implementation",
+    "add source-tree examples",
+    "harden backward compatibility tests",
+    "harden release checker",
+    "add existing-job CI smoke for PR-5 examples/acceptance",
+    "PR-5 MUST NOT",
+    "modify src/",
+    "modify dependencies",
+    "modify version",
+    "add ArtifactClient capabilities",
+    "add CLI",
+    "add discovery/latest",
+    "add settings",
+    "add network/OpenD",
+    "add current time",
+    "add visualization product code",
+    "add ML/training/evaluation",
+    "perform PR-6 release preparation",
     "No new CLI command",
     "No REST API",
     "No HTTP",
@@ -1355,9 +1384,9 @@ V070_DIRECTION_FACTS = (
     "PyPI/TestPyPI deferred",
 )
 # Affirmative implementation / release claims that must never appear in
-# the v0.7.0 direction document: PR-1 / PR-2 / PR-3 are merged history,
-# PR-4 is the current (unmerged) stage, no later stage has started, and
-# v0.7.0 is not released.
+# the v0.7.0 direction document: PR-1 / PR-2 / PR-3 / PR-4 are merged
+# history, PR-5 is the current (unmerged) stage, no later stage has
+# started, and v0.7.0 is not released.
 V070_DIRECTION_STALE_PHRASES = (
     "ArtifactClient is implemented",
     "ArtifactClient is available",
@@ -1370,23 +1399,25 @@ V070_DIRECTION_STALE_PHRASES = (
     "PR-3: NOT STARTED",
     "PR-3: CURRENT",
     "PR-4: NOT STARTED",
-    "PR-5: CURRENT",
+    "PR-4: CURRENT",
+    "PR-5: NOT STARTED",
     "PR-6: CURRENT",
     "V0.7.0 is released",
     "v0.7.0 has been released",
     "v0.7.0 released on",
 )
-# Facts the Python Client boundary contract must state: the PR-4
-# implemented status (including the exact formal Catalog delegation and
-# its verified return / error types), the ArtifactClient root, the 13.x
+# Facts the Python Client boundary contract must state: the PR-5
+# integrated-status (including the exact formal delegation methods and
+# their verified return / error types), the ArtifactClient root, the 13.x
 # sections, the constructor contract, the exact PR-3 / PR-4 read methods
 # and their formal delegation, the read-only scope, the trust boundary,
 # the path contract, the read semantics, the return-value authority, the
 # error boundary, the lightweight import, the absence of any Catalog
-# convenience API, and the explicit non-goals.
+# convenience API, the explicit non-goals, and the PR-5 consumer-side
+# usability boundary.
 V070_CONTRACT_FACTS = (
     "# MarketVault Python Client Contract",
-    "Status: PR-4 Dataset Catalog verified read-only access implemented in unreleased v0.7.0 development",
+    "Status: PR-5 integrated acceptance/usability/examples in unreleased v0.7.0 development",
     "Target release: v0.7.0",
     "Public root: `ArtifactClient`",
     "Formal v0.6.1 GitHub Release artifacts",
@@ -1407,6 +1438,16 @@ V070_CONTRACT_FACTS = (
     "## 13.8 Error boundary",
     "## 13.9 Lightweight import",
     "## 13.10 Explicit non-goals",
+    "PR-5: integrated acceptance/usability/examples CURRENT",
+    "PR-6: release prep NOT STARTED",
+    "package: 0.6.1",
+    "v0.7.0: NOT RELEASED",
+    "## 13.11 PR-5 consumer-side usability boundary",
+    "CONSUMER-SIDE only",
+    "second trust path",
+    "Consumer transformations performed AFTER an ArtifactClient verified read",
+    "are not artifact verification and are not part of",
+    "the ArtifactClient trust contract",
     "No required settings",
     "No default settings path",
     "No implicit `config/settings.yaml`",
@@ -3688,6 +3729,242 @@ def check_v070_artifact_client_foundation(root: Path) -> list[str]:
     return failures
 
 
+# Facts the v0.7.0 Python client usage document must state: the
+# unreleased lifecycle, the exact three public business methods, the
+# explicit-path contract, the formal delegation targets and verified
+# return types, the Jupyter consumer-side post-verification boundary,
+# the ML-consumer handoff with no ML implementation, and the existing
+# formal error classes.
+V070_USAGE_DOC_FACTS = (
+    "unreleased v0.7",
+    "0.6.1 through PR-5",
+    "v0.7.0 is not released yet",
+    "formal v0.6.1 GitHub Release artifacts do **NOT** contain",
+    "Public business methods (exactly three):",
+    "ArtifactClient.load_canonical_build(build_dir)",
+    "ArtifactClient.load_dataset(build_dir)",
+    "ArtifactClient.load_dataset_catalog(snapshot_dir)",
+    "Every artifact path is EXPLICIT",
+    "never looks up `latest`",
+    "never scans or discovers artifacts",
+    "never reads the current time",
+    "load_verified_canonical_build",
+    "load_verified_dataset",
+    "load_verified_dataset_catalog",
+    "VerifiedCanonicalBuild",
+    "VerifiedDatasetBuild",
+    "VerifiedDatasetCatalogSnapshot",
+    "pd.DataFrame(dataset.rows",
+    "verification happened BEFORE the DataFrame",
+    "in-memory consumer representation",
+    "not a second artifact verification path",
+    "Do NOT parse",
+    "dataset.parquet",
+    "write back into the artifact directory",
+    "does NOT train models",
+    "automatic feature inference",
+    "target inference",
+    "train/test policy",
+    "choose columns and splits EXPLICITLY",
+    "NO sklearn / PyTorch / TensorFlow dependency",
+    "CanonicalArtifactValidationError",
+    "DatasetArtifactValidationError",
+    "DatasetCatalogArtifactValidationError",
+    "no ArtifactClient-specific error type",
+)
+# Discovery / settings / ML-implementation claims that must never appear
+# in the v0.7.0 usage document: the client is explicit-path only and the
+# guide contains no ML implementation code.
+V070_USAGE_DOC_STALE_PHRASES = (
+    "use the latest",
+    "auto-discovery",
+    "default artifact root",
+    "discover the",
+    "reads settings",
+    "loads settings",
+    "environment variable root",
+    "model.fit(",
+    "model.train(",
+    "torch.",
+    "tensorflow.",
+    "sklearn.",
+)
+# Facts the PR-5 source-tree examples README must state: the example is
+# consumer-side source-tree only, the unreleased lifecycle, the three
+# explicit required path arguments, and the fail-closed boundaries.
+V070_EXAMPLES_README_FACTS = (
+    "source-tree",
+    "not shipped as a public client API",
+    "0.6.1 through PR-5",
+    "v0.7.0 is not released yet",
+    "--canonical-build-dir",
+    "--dataset-build-dir",
+    "--catalog-snapshot-dir",
+    "looks up `latest`",
+    "network or OpenD",
+    "reads the current time",
+    "parses `manifest.json`",
+    "pandas or any ML / visualization framework",
+    "verified readers remain the only trust boundaries",
+    "Exit codes: 0 on success, 1 on any documented read failure",
+    "The example never:",
+)
+
+
+def check_v070_python_client_usage_doc(root: Path) -> list[str]:
+    """PR-5 required checks for the Python client usage document: it
+    exists, states the unreleased lifecycle and the exact three business
+    methods, documents the explicit-path contract, the Jupyter
+    consumer-side post-verification boundary, the ML-consumer handoff
+    with no ML implementation, and the existing formal error classes,
+    and contains no discovery / settings / ML-implementation claim."""
+    path = root / "docs" / "v0_7_0_python_client_usage.md"
+    if not path.exists():
+        return ["docs/v0_7_0_python_client_usage.md is missing"]
+    # Collapse whitespace so markdown line wraps never break a phrase.
+    text = " ".join(path.read_text(encoding="utf-8").split())
+    failures = []
+    for fact in V070_USAGE_DOC_FACTS:
+        if " ".join(fact.split()) not in text:
+            failures.append(
+                "docs/v0_7_0_python_client_usage.md does not state the "
+                f"fact {fact!r}"
+            )
+    for phrase in V070_USAGE_DOC_STALE_PHRASES:
+        if " ".join(phrase.split()) in text:
+            failures.append(
+                "docs/v0_7_0_python_client_usage.md contains the false "
+                f"discovery/ML claim {phrase!r}"
+            )
+    return failures
+
+
+def check_v070_python_client_examples(root: Path) -> list[str]:
+    """PR-5 required checks for the source-tree examples: the README
+    exists and states the source-tree consumer-only facts and the three
+    explicit required arguments, and the executable example registers
+    exactly the three required path arguments with no defaults, calls
+    the three ArtifactClient methods, prints one deterministic JSON
+    object (``sort_keys=True``), and imports only stdlib plus the
+    market_vault top level."""
+    failures = []
+    readme = root / "examples" / "python_client" / "README.md"
+    if not readme.exists():
+        failures.append("examples/python_client/README.md is missing")
+    else:
+        # Collapse whitespace so markdown line wraps never break a phrase.
+        text = " ".join(readme.read_text(encoding="utf-8").split())
+        for fact in V070_EXAMPLES_README_FACTS:
+            if " ".join(fact.split()) not in text:
+                failures.append(
+                    "examples/python_client/README.md does not state the "
+                    f"fact {fact!r}"
+                )
+    example = (
+        root / "examples" / "python_client" / "read_verified_artifacts.py"
+    )
+    if not example.exists():
+        failures.append(
+            "examples/python_client/read_verified_artifacts.py is missing"
+        )
+        return failures
+    source = example.read_text(encoding="utf-8")
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        failures.append(
+            "examples/python_client/read_verified_artifacts.py is not "
+            "valid Python"
+        )
+        return failures
+    add_argument = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "add_argument"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, str)
+    ]
+    names = [node.args[0].value for node in add_argument]
+    if names != [
+        "--canonical-build-dir",
+        "--dataset-build-dir",
+        "--catalog-snapshot-dir",
+    ]:
+        failures.append(
+            "the example must register exactly the three required path "
+            f"arguments, found {names}"
+        )
+    for node in add_argument:
+        keywords = {kw.arg: kw.value for kw in node.keywords}
+        required = keywords.get("required")
+        if not (
+            isinstance(required, ast.Constant) and required.value is True
+        ):
+            failures.append(
+                "each example path argument must be required=True"
+            )
+        if "default" in keywords:
+            failures.append(
+                "the example must not define default argument values"
+            )
+    calls = {
+        node.func.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+    }
+    for method in (
+        "load_canonical_build",
+        "load_dataset",
+        "load_dataset_catalog",
+    ):
+        if method not in calls:
+            failures.append(f"the example must call ArtifactClient.{method}")
+    dumps = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "dumps"
+    ]
+    if len(dumps) != 1:
+        failures.append(
+            "the example must print exactly one json.dumps object"
+        )
+    else:
+        keywords = {kw.arg: kw.value for kw in dumps[0].keywords}
+        sort_keys = keywords.get("sort_keys")
+        if not (
+            isinstance(sort_keys, ast.Constant) and sort_keys.value is True
+        ):
+            failures.append(
+                "the example json.dumps must use sort_keys=True"
+            )
+    imports = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imports.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            if node.module:
+                imports.add(node.module)
+    if not imports <= {
+        "__future__",
+        "argparse",
+        "json",
+        "sys",
+        "pathlib",
+        "market_vault",
+    }:
+        failures.append(
+            "the example must import only stdlib plus the market_vault "
+            f"top level, found {sorted(imports)}"
+        )
+    return failures
+
+
 def check_v061_cli_usability_audit(root: Path) -> list[str]:
     """The v0.6.1 PR-2 CLI usability audit document exists and states the
     audited baseline."""
@@ -3744,6 +4021,7 @@ def check_ci_auditability(root: Path) -> list[str]:
         "retention-days: 30",
         "overwrite: false",
         "V061_PACKAGE_AUDIT_OK",
+        "V070_INTEGRATED_ACCEPTANCE_OK",
     ):
         if marker not in text:
             failures.append(f"CI package audit chain is missing {marker!r}")
@@ -3800,6 +4078,8 @@ def main() -> int:
         ("v0.7.0 ArtifactClient foundation", check_v070_artifact_client_foundation),
         ("v0.7.0 ArtifactClient readers", check_v070_artifact_client_readers),
         ("v0.7.0 ArtifactClient catalog", check_v070_artifact_client_catalog),
+        ("v0.7.0 Python client usage doc", check_v070_python_client_usage_doc),
+        ("v0.7.0 Python client examples", check_v070_python_client_examples),
         ("CI auditability", check_ci_auditability),
         ("v0.6.1 CI package audit", check_v061_ci_package_audit),
         ("v0.6.0 ADR", check_v060_adr),
