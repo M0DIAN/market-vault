@@ -2232,19 +2232,28 @@ def test_release_checker_fails_when_ci_claims_v061_released(tmp_path):
 def test_v070_direction_document_states_baseline_and_sequence():
     text = (ROOT / "docs" / "v0_7_0_direction.md").read_text(encoding="utf-8")
     assert "# MarketVault v0.7.0 Direction: Python Client and Read-only Artifact Access" in text
-    assert "Status: active feature development; PR-2 ArtifactClient foundation stage" in text
+    assert (
+        "Status: active feature development; PR-3 Canonical + Dataset "
+        "ArtifactClient reads stage" in text
+    )
     assert "base version: v0.6.1" in text
     assert "37614d539171ef7b738e47415f3cd6ca2de332d1" in text
     assert "v0.7.0: NOT RELEASED" in text
     assert "PR-1: COMPLETE / MERGED / MAIN VERIFIED" in text
-    assert "PR-2: CURRENT" in text
-    assert "PR-3: NOT STARTED" in text
+    assert "PR-2: COMPLETE / MERGED / MAIN VERIFIED" in text
+    assert "PR-3: CURRENT" in text
     assert "PR-4: NOT STARTED" in text
     assert "PR-5: NOT STARTED" in text
     assert "PR-6: NOT STARTED" in text
     assert "PR #48 merged at 2026-08-08T23:50:24Z" in text
     assert "bad62ee51e8eda03c7c5f20ac858973923e5f93d" in text
     assert "31284875166" in text
+    assert "PR #49 merged at 2026-08-09T01:24:46Z" in text
+    assert "1a3ca95a6765e4418e753f1fec6d5c79b8e49e2f" in text
+    assert "42c63ebfb0c2dfc91b1d61860bed2106faf1bba0" in text
+    assert "31288212317" in text
+    assert "ArtifactClient foundation: IMPLEMENTED" in text
+    assert "Canonical / Dataset / Catalog reads at PR-2: NOT IMPLEMENTED" in text
     assert "package: 0.6.1" in text
     for stage in (
         "PR-1 — Post-v0.6.1 release baseline",
@@ -2264,14 +2273,14 @@ def test_v070_direction_document_states_baseline_and_sequence():
     assert "PR-6: 0.6.1 -> 0.7.0" in text
     assert "the version is bumped to 0.7.0 only in PR-6" in text
     assert "No early 0.7.0 version bump" in text
-    # PR-2 implements only the foundation; no read capability has started
-    # and v0.7.0 is not released.
+    # PR-2 is merged history; PR-3 is current and implements only the two
+    # verified reads; PR-4+ has not started and v0.7.0 is not released.
     for boundary in (
-        "PR-2 (this PR) may implement only",
+        "PR-2 (the merged foundation PR, #49) implemented only",
         "the `ArtifactClient` class foundation",
         "a stateless zero-argument constructor",
         "the lazy top-level package export",
-        "PR-2 must not implement",
+        "PR-2 did not implement",
         "Canonical reader methods",
         "Dataset reader methods",
         "Dataset Catalog reader methods",
@@ -2279,12 +2288,33 @@ def test_v070_direction_document_states_baseline_and_sequence():
         "discovery / latest",
         "network / OpenD",
         "future method stubs",
+        "PR-3 (this PR) MAY implement only",
+        "`load_canonical_build`",
+        "`load_dataset`",
+        "direct formal verified reader delegation",
+        "reader-access tests",
+        "contract/direction/checker changes",
+        "fresh-wheel API smoke updates",
+        "PR-3 MUST NOT implement",
+        "Dataset Catalog client access",
+        "Catalog lookup/filter",
+        "any writer/builder",
+        "discovery/latest",
+        "settings",
+        "OpenD/network",
+        "current-time behavior",
+        "CLI",
+        "PR-4/5/6 work",
     ):
         assert boundary in text
     assert "ArtifactClient is implemented" not in text
     assert "from market_vault import ArtifactClient" not in text
+    assert "PR-1: CURRENT" not in text
     assert "PR-2: NOT STARTED" not in text
-    assert "PR-3: CURRENT" not in text
+    assert "PR-2: CURRENT" not in text
+    assert "PR-3: NOT STARTED" not in text
+    assert "PR-3: COMPLETE" not in text
+    assert "PR-4: CURRENT" not in text
     assert "V0.7.0 is released" not in text
     for boundary in (
         "No new CLI command",
@@ -2315,17 +2345,19 @@ def test_v070_python_client_contract_states_boundaries():
         encoding="utf-8"
     )
     assert "# MarketVault Python Client Contract" in text
-    assert "Status: PR-2 foundation implemented in v0.7.0 development" in text
-    assert "artifact read capabilities not implemented" in text
+    assert (
+        "Status: PR-3 Canonical + Dataset verified read-only access "
+        "implemented" in text
+    )
+    assert "Dataset Catalog read access not implemented" in text
     assert "Target release: v0.7.0" in text
     assert "Public root: `ArtifactClient`" in text
     assert "Formal v0.6.1 GitHub Release artifacts" in text
     assert "DO NOT contain `ArtifactClient`" in text
     assert "package metadata remains 0.6.1" in text
     assert "frozen version policy" in text
-    assert "PR-2 implements none of them" in text
-    assert "PR-3: Canonical + Dataset verified read-only access" in text
-    assert "PR-4: Dataset Catalog verified read-only access" in text
+    assert "PR-4: Dataset Catalog verified read-only access NOT IMPLEMENTED" in text
+    assert "PR-3: Canonical + Dataset verified read-only access implemented" in text
     for section in range(1, 11):
         assert f"## 13.{section}" in text
     assert "Zero arguments" in text
@@ -2339,9 +2371,16 @@ def test_v070_python_client_contract_states_boundaries():
     assert "No current time" in text
     assert "No cwd-derived artifact root" in text
     assert "No build / materialize / generate / repair / write APIs" in text
+    assert "`load_canonical_build`" in text
+    assert "`load_dataset`" in text
     assert "`load_verified_canonical_build`" in text
     assert "`load_verified_dataset`" in text
-    assert "`load_verified_dataset_catalog`" in text
+    assert "VerifiedCanonicalBuild" in text
+    assert "VerifiedDatasetBuild" in text
+    assert "method-call boundary" in text
+    assert "no client-side artifact parsing" in text
+    assert "no client-side validation" in text
+    assert "no exception wrapping" in text
     assert "parse `manifest.json` itself" in text
     assert "parse `catalog.json` itself" in text
     assert "second validation path" in text
@@ -2360,7 +2399,7 @@ def test_v070_python_client_contract_states_boundaries():
     assert "mtime mutation" in text
     assert "cache file writes" in text
     assert "DuckDB Catalog construction" in text
-    assert "immutable thin views" in text
+    assert "No thin views" in text
     assert "second artifact-validation universe" in text
     assert "No warn-and-continue" in text
     assert "No partial success" in text
@@ -2385,15 +2424,21 @@ def test_v070_python_client_contract_states_boundaries():
         "dependency modernization",
     ):
         assert non_goal in text
-    # Only the PR-2 foundation is implemented; the full client, its
-    # constructor capability, and any read access are not.
-    assert "ArtifactClient is implemented" not in text
+    # PR-3 implements exactly the two verified reads; the full client
+    # (including Dataset Catalog access) and the class implementation
+    # details are not contract state.
+    assert "ArtifactClient is fully implemented" not in text
     assert "ArtifactClient() is implemented" not in text
+    assert "class ArtifactClient" not in text
     for claim in (
-        "Canonical read access is implemented",
-        "Dataset read access is implemented",
         "Catalog read access is implemented",
+        "Dataset Catalog read access is implemented",
         "read access is implemented in PR-2",
+        "PR-2 implements Canonical",
+        "PR-2 implements Dataset",
+        "PR-2 implements Catalog",
+        "PR-3 implements Catalog",
+        "PR-3 implements Dataset Catalog",
     ):
         assert claim not in text
 
@@ -2874,7 +2919,7 @@ def test_release_checker_fails_when_constructor_does_work(tmp_path):
     module = repo / "src" / "market_vault" / "artifact_client.py"
     module.write_text(
         module.read_text(encoding="utf-8").replace(
-            '        """Initialize the foundation with no configuration '
+            '        """Initialize the client with no configuration '
             "and no side\n        effects.\"\"\"\n",
             "        return None\n",
         ),
@@ -2970,15 +3015,17 @@ def test_release_checker_fails_when_module_imports_fs_time_network(
 def test_release_checker_fails_when_client_gets_public_read_method(
     tmp_path,
 ):
-    # Mutation guard 10: a public read method on ArtifactClient must fail
-    # the checker: PR-2 implements no business method.
+    # Mutation guard 10 / PR-3 guard C: the ArtifactClient public business
+    # method set is frozen at exactly load_canonical_build and
+    # load_dataset; any extra public method — including the PR-4 Dataset
+    # Catalog method — must fail the checker.
     repo = copy_repo(tmp_path)
     module = repo / "src" / "market_vault" / "artifact_client.py"
     module.write_text(
         module.read_text(encoding="utf-8").replace(
             "class ArtifactClient:",
             "class ArtifactClient:\n"
-            "    def open_canonical(self) -> None:\n"
+            "    def load_dataset_catalog(self, build_dir) -> None:\n"
             "        return None\n",
         ),
         encoding="utf-8",
@@ -2986,29 +3033,32 @@ def test_release_checker_fails_when_client_gets_public_read_method(
     result = run_check_release(repo)
     assert result.returncode == 1
     assert (
-        "ArtifactClient must not define business methods in PR-2 "
-        "(found: open_canonical)"
+        "ArtifactClient public business methods must be exactly "
+        "load_canonical_build and load_dataset, with only __init__ as "
+        "constructor (found: __init__, load_canonical_build, "
+        "load_dataset, load_dataset_catalog)"
     ) in result.stdout
 
 
-def test_release_checker_fails_when_direction_claims_pr3_started(
+def test_release_checker_fails_when_direction_states_pr3_not_started(
     tmp_path,
 ):
-    # Mutation guard 11: the direction document claiming PR-3 started must
-    # fail the checker.
+    # Mutation guard 11 / PR-3 guard D: the direction document regressing
+    # PR-3 to NOT STARTED must fail the checker — PR-3 is the current
+    # (unmerged) stage.
     repo = copy_repo(tmp_path)
     path = repo / "docs" / "v0_7_0_direction.md"
     path.write_text(
         path.read_text(encoding="utf-8").replace(
-            "PR-3: NOT STARTED",
             "PR-3: CURRENT",
+            "PR-3: NOT STARTED",
         ),
         encoding="utf-8",
     )
     result = run_check_release(repo)
     assert result.returncode == 1
     assert (
-        "contains the false implementation/release claim 'PR-3: CURRENT'"
+        "contains the false implementation/release claim 'PR-3: NOT STARTED'"
     ) in result.stdout
 
 
@@ -3022,14 +3072,205 @@ def test_release_checker_fails_when_contract_claims_read_access_in_pr2(
     path = repo / "docs" / "contracts" / "python_client.md"
     path.write_text(
         path.read_text(encoding="utf-8")
-        + "\nCanonical read access is implemented in PR-2.\n",
+        + "\nCanonical read access is implemented in PR-2.\n"
+        + "PR-2 implements Canonical and Dataset and Catalog reads.\n",
         encoding="utf-8",
     )
     result = run_check_release(repo)
     assert result.returncode == 1
     assert (
         "contains the false PR-2 read-capability claim "
-        "'Canonical read access is implemented'"
+        "'read access is implemented in PR-2'"
+    ) in result.stdout
+    assert (
+        "contains the false PR-2 read-capability claim "
+        "'PR-2 implements Canonical'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_contract_drops_load_canonical_build(
+    tmp_path,
+):
+    # PR-3 mutation guard A: the contract dropping the load_canonical_build
+    # API fact must fail the checker — the Canonical read method is frozen
+    # contract state.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "contracts" / "python_client.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "`load_canonical_build`",
+            "",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the fact '`load_canonical_build`'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_contract_drops_load_dataset(
+    tmp_path,
+):
+    # PR-3 mutation guard B: the contract dropping the load_dataset API
+    # fact must fail the checker — the Dataset read method is frozen
+    # contract state.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "contracts" / "python_client.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "`load_dataset`",
+            "",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the fact '`load_dataset`'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_direction_claims_pr4_started(
+    tmp_path,
+):
+    # PR-3 mutation guard E: the direction document claiming PR-4 started
+    # must fail the checker — PR-4 is NOT STARTED and PR-3 must not be
+    # followed by any later-stage work.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_7_0_direction.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "PR-4: NOT STARTED",
+            "PR-4: CURRENT",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "contains the false implementation/release claim 'PR-4: CURRENT'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_client_parses_manifest_itself(
+    tmp_path,
+):
+    # PR-3 mutation guard F: the Canonical reader method replaced with an
+    # independent manifest/JSON second read path must fail the checker.
+    repo = copy_repo(tmp_path)
+    module = repo / "src" / "market_vault" / "artifact_client.py"
+    module.write_text(
+        module.read_text(encoding="utf-8").replace(
+            "return load_verified_canonical_build(build_dir)",
+            "return json.load(open(build_dir / 'manifest.json'))",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "ArtifactClient.load_canonical_build must return the direct "
+        "load_verified_canonical_build(build_dir) result without wrapping"
+    ) in result.stdout
+    assert (
+        "ArtifactClient source must not independently use the identifier "
+        "'json' (no second trust path)"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_client_reads_parquet_itself(
+    tmp_path,
+):
+    # PR-3 mutation guard G: the Dataset reader method replaced with a raw
+    # Parquet read (second trust path) must fail the checker.
+    repo = copy_repo(tmp_path)
+    module = repo / "src" / "market_vault" / "artifact_client.py"
+    module.write_text(
+        module.read_text(encoding="utf-8").replace(
+            "return load_verified_dataset(build_dir)",
+            "return pyarrow.parquet.read_table(build_dir)",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "ArtifactClient.load_dataset must return the direct "
+        "load_verified_dataset(build_dir) result without wrapping"
+    ) in result.stdout
+    assert (
+        "ArtifactClient source must not independently use the identifier "
+        "'parquet' (no second trust path)"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_reader_import_moves_to_module_level(
+    tmp_path,
+):
+    # PR-3 mutation guard H: a reader import at module level (even the
+    # formal reader) must fail the checker — reader imports live only at
+    # the method-call boundary. Heavy third-party module-level imports are
+    # pinned by mutation guards 7/8.
+    repo = copy_repo(tmp_path)
+    module = repo / "src" / "market_vault" / "artifact_client.py"
+    module.write_text(
+        module.read_text(encoding="utf-8")
+        + "\nfrom .canonical.reader import load_verified_canonical_build\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "artifact_client.py must not import anything except "
+        "__future__.annotations"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_client_method_uses_settings(
+    tmp_path,
+):
+    # PR-3 mutation guard I: the client deriving its artifact root from
+    # settings (settings-derived root behavior) must fail the checker —
+    # the client has no settings and passes build_dir verbatim.
+    repo = copy_repo(tmp_path)
+    module = repo / "src" / "market_vault" / "artifact_client.py"
+    module.write_text(
+        module.read_text(encoding="utf-8").replace(
+            "return load_verified_canonical_build(build_dir)",
+            "build_root = settings.get(\"root\", build_dir)\n"
+            "        return load_verified_canonical_build(build_root)",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "ArtifactClient source must not independently use the identifier "
+        "'settings' (no second trust path)"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_contract_drops_no_exception_wrapping(
+    tmp_path,
+):
+    # PR-3 mutation guard J: the contract dropping the
+    # no-exception-wrapping / verified-reader authority boundary must fail
+    # the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "contracts" / "python_client.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "no exception wrapping and ",
+            "",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the fact 'no exception wrapping'"
     ) in result.stdout
 
 

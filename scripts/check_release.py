@@ -45,6 +45,9 @@ CI_V070_PUBLIC_API_MARKER = "V070_PUBLIC_API_IMPORT_OK"
 CI_V070_PUBLIC_API_IMPORT_LINES = (
     "from market_vault import ArtifactClient",
     "ArtifactClient()",
+    "assert callable(client.load_canonical_build)",
+    "assert callable(client.load_dataset)",
+    "assert not hasattr(client, 'load_dataset_catalog')",
 )
 # The exact NumPy timedelta warning-as-error guard that must stay in
 # pyproject.toml; an ignore-based substitute is never accepted.
@@ -1220,20 +1223,21 @@ README_V061_SECTION_MARKERS = (
 README_V061_STALE_PHRASES = (
     "the v0.6.1 formal release does not exist yet",
 )
-# Facts the v0.7.0 direction document must state: the active PR-2
-# feature-development status, the v0.6.1 baseline, the PR-1 merged record,
-# the NOT RELEASED v0.7.0 state, the fixed 6-PR sequence with the exact
-# stage names, the version rules (0.6.1 through PR-5, 0.7.0 only in PR-6),
-# the explicit non-goals, and the PR-2 boundary.
+# Facts the v0.7.0 direction document must state: the active PR-3
+# feature-development status, the v0.6.1 baseline, the PR-1 and PR-2
+# merged records, the NOT RELEASED v0.7.0 state, the fixed 6-PR sequence
+# with the exact stage names, the version rules (0.6.1 through PR-5, 0.7.0
+# only in PR-6), the explicit non-goals, the historical PR-2 boundary, and
+# the PR-3 boundary.
 V070_DIRECTION_FACTS = (
     "# MarketVault v0.7.0 Direction: Python Client and Read-only Artifact Access",
-    "Status: active feature development; PR-2 ArtifactClient foundation stage",
+    "Status: active feature development; PR-3 Canonical + Dataset ArtifactClient reads stage",
     "base version: v0.6.1",
     "37614d539171ef7b738e47415f3cd6ca2de332d1",
     "v0.7.0: NOT RELEASED",
     "PR-1: COMPLETE / MERGED / MAIN VERIFIED",
-    "PR-2: CURRENT",
-    "PR-3: NOT STARTED",
+    "PR-2: COMPLETE / MERGED / MAIN VERIFIED",
+    "PR-3: CURRENT",
     "PR-4: NOT STARTED",
     "PR-5: NOT STARTED",
     "PR-6: NOT STARTED",
@@ -1242,6 +1246,13 @@ V070_DIRECTION_FACTS = (
     "PR #48 merged at 2026-08-08T23:50:24Z",
     "bad62ee51e8eda03c7c5f20ac858973923e5f93d",
     "31284875166",
+    "PR-2 record",
+    "PR #49 merged at 2026-08-09T01:24:46Z",
+    "1a3ca95a6765e4418e753f1fec6d5c79b8e49e2f",
+    "42c63ebfb0c2dfc91b1d61860bed2106faf1bba0",
+    "31288212317",
+    "ArtifactClient foundation: IMPLEMENTED",
+    "Canonical / Dataset / Catalog reads at PR-2: NOT IMPLEMENTED",
     "PR-1 — Post-v0.6.1 release baseline",
     "PR-2 — Settings-independent ArtifactClient foundation",
     "PR-3 — Canonical + Dataset verified read-only client access",
@@ -1257,12 +1268,12 @@ V070_DIRECTION_FACTS = (
     "PR-6: 0.6.1 -> 0.7.0",
     "the version is bumped to 0.7.0 only in PR-6",
     "No early 0.7.0 version bump",
-    "PR-2 (this PR) may implement only",
+    "PR-2 (the merged foundation PR, #49) implemented only",
     "the `ArtifactClient` class foundation",
     "a stateless zero-argument constructor",
     "the lazy top-level package export",
     "foundation tests and the fresh-wheel public API smoke",
-    "PR-2 must not implement",
+    "PR-2 did not implement",
     "Canonical reader methods",
     "Dataset reader methods",
     "Dataset Catalog reader methods",
@@ -1270,6 +1281,23 @@ V070_DIRECTION_FACTS = (
     "discovery / latest",
     "network / OpenD",
     "future method stubs",
+    "PR-3 (this PR) MAY implement only",
+    "`load_canonical_build`",
+    "`load_dataset`",
+    "direct formal verified reader delegation",
+    "reader-access tests",
+    "contract/direction/checker changes",
+    "fresh-wheel API smoke updates",
+    "PR-3 MUST NOT implement",
+    "Dataset Catalog client access",
+    "Catalog lookup/filter",
+    "any writer/builder",
+    "discovery/latest",
+    "settings",
+    "OpenD/network",
+    "current-time behavior",
+    "CLI",
+    "PR-4/5/6 work",
     "No new CLI command",
     "No REST API",
     "No HTTP",
@@ -1288,8 +1316,9 @@ V070_DIRECTION_FACTS = (
     "PyPI/TestPyPI deferred",
 )
 # Affirmative implementation / release claims that must never appear in
-# the v0.7.0 direction document: only the PR-2 foundation is implemented,
-# no read capability has started, and v0.7.0 is not released.
+# the v0.7.0 direction document: PR-1 / PR-2 are merged history, PR-3 is
+# the current (unmerged) stage, no later stage has started, and v0.7.0 is
+# not released.
 V070_DIRECTION_STALE_PHRASES = (
     "ArtifactClient is implemented",
     "ArtifactClient is available",
@@ -1298,7 +1327,9 @@ V070_DIRECTION_STALE_PHRASES = (
     "PR-1: CURRENT",
     "PR-1: NOT STARTED",
     "PR-2: NOT STARTED",
-    "PR-3: CURRENT",
+    "PR-2: CURRENT",
+    "PR-3: NOT STARTED",
+    "PR-3: COMPLETE",
     "PR-4: CURRENT",
     "PR-5: CURRENT",
     "PR-6: CURRENT",
@@ -1306,25 +1337,24 @@ V070_DIRECTION_STALE_PHRASES = (
     "v0.7.0 has been released",
     "v0.7.0 released on",
 )
-# Facts the Python Client boundary contract must state: the
-# not-implemented status, the planned ArtifactClient root, the 13.x
-# sections, the constructor contract, the read-only scope, the trust
-# boundary, the path contract, the read semantics, the return-value
-# authority, the error boundary, the lightweight import, and the explicit
-# non-goals.
+# Facts the Python Client boundary contract must state: the PR-3
+# implemented status, the not-implemented Dataset Catalog boundary, the
+# ArtifactClient root, the 13.x sections, the constructor contract, the
+# exact PR-3 read methods and their formal delegation, the read-only
+# scope, the trust boundary, the path contract, the read semantics, the
+# return-value authority, the error boundary, the lightweight import, and
+# the explicit non-goals.
 V070_CONTRACT_FACTS = (
     "# MarketVault Python Client Contract",
-    "Status: PR-2 foundation implemented in v0.7.0 development",
-    "artifact read capabilities not implemented",
+    "Status: PR-3 Canonical + Dataset verified read-only access implemented",
+    "Dataset Catalog read access not implemented",
     "Target release: v0.7.0",
     "Public root: `ArtifactClient`",
     "Formal v0.6.1 GitHub Release artifacts",
     "DO NOT contain `ArtifactClient`",
     "package metadata remains 0.6.1",
     "frozen version policy",
-    "PR-3: Canonical + Dataset verified read-only access",
-    "PR-4: Dataset Catalog verified read-only access",
-    "PR-2 implements none of them",
+    "PR-4: Dataset Catalog verified read-only access NOT IMPLEMENTED",
     "## 13.1 Existing MarketVault compatibility",
     "the `MarketVault` constructor",
     "## 13.2 Constructor",
@@ -1348,9 +1378,16 @@ V070_CONTRACT_FACTS = (
     "No current time",
     "No cwd-derived artifact root",
     "No build / materialize / generate / repair / write APIs",
+    "`load_canonical_build`",
+    "`load_dataset`",
     "`load_verified_canonical_build`",
     "`load_verified_dataset`",
-    "`load_verified_dataset_catalog`",
+    "VerifiedCanonicalBuild",
+    "VerifiedDatasetBuild",
+    "method-call boundary",
+    "no client-side artifact parsing",
+    "no client-side validation",
+    "no exception wrapping",
     "parse `manifest.json` itself",
     "parse `catalog.json` itself",
     "second validation path",
@@ -1369,7 +1406,7 @@ V070_CONTRACT_FACTS = (
     "mtime mutation",
     "cache file writes",
     "DuckDB Catalog construction",
-    "immutable thin views",
+    "No thin views",
     "second artifact-validation universe",
     "No warn-and-continue",
     "No partial success",
@@ -1393,27 +1430,29 @@ V070_CONTRACT_FACTS = (
     "No dependency modernization",
 )
 # Implemented claims that must never appear in the Python Client contract:
-# only the PR-2 foundation is implemented; the full client and its
-# constructor capability are not.
+# only the PR-2 foundation and the PR-3 read methods are implemented; the
+# full client (including Dataset Catalog access) is not, and the class
+# implementation details are not contract state.
 V070_CONTRACT_IMPLEMENTED_PHRASES = (
-    "ArtifactClient is implemented",
+    "ArtifactClient is fully implemented",
     "ArtifactClient is available",
     "ArtifactClient() is implemented",
     "class ArtifactClient",
     "Implementation status: implemented",
 )
 # False read-capability claims that must never appear in the Python Client
-# contract even when the required PR-2 foundation markers are present:
-# Canonical / Dataset / Dataset Catalog read access is PR-3 / PR-4 and is
-# never implemented by PR-2.
+# contract even when the required PR-3 markers are present: Dataset
+# Catalog read access is PR-4 and is never implemented by PR-3, and PR-2
+# never implemented any read access.
 V070_CONTRACT_FALSE_READ_CLAIMS = (
-    "Canonical read access is implemented",
-    "Dataset read access is implemented",
     "Catalog read access is implemented",
+    "Dataset Catalog read access is implemented",
     "read access is implemented in PR-2",
     "PR-2 implements Canonical",
     "PR-2 implements Dataset",
     "PR-2 implements Catalog",
+    "PR-3 implements Catalog",
+    "PR-3 implements Dataset Catalog",
 )
 # Facts the v0.7.0 existing Python API audit document must state: the
 # audited top-level package behavior, the existing MarketVault
@@ -2695,9 +2734,10 @@ def check_ci_v061_release_state(root: Path) -> list[str]:
 
 
 def check_ci_v070_public_api_smoke(root: Path) -> list[str]:
-    """The CI fresh-wheel smoke must exercise the PR-2 ArtifactClient
-    foundation (``from market_vault import ArtifactClient`` and
-    ``ArtifactClient()``) and carry the ``V070_PUBLIC_API_IMPORT_OK``
+    """The CI fresh-wheel smoke must exercise the PR-3 ArtifactClient
+    surface (``from market_vault import ArtifactClient``, ``ArtifactClient()``,
+    the two callable read methods, and the absent
+    ``load_dataset_catalog``) and carry the ``V070_PUBLIC_API_IMPORT_OK``
     marker."""
     path = root / ".github" / "workflows" / "ci.yml"
     if not path.exists():
@@ -3118,11 +3158,13 @@ def check_v070_python_api_audit(root: Path) -> list[str]:
 
 
 def _check_artifact_client_module(module: Path) -> list[str]:
-    """AST structural checks for the PR-2 ArtifactClient foundation
-    module: exactly one ``ArtifactClient`` class, the stateless
-    ``__slots__ == ()`` boundary, no custom method besides ``__init__``,
-    a strict zero-argument ``__init__`` whose body performs no work, and
-    no module import other than ``from __future__ import annotations``."""
+    """AST structural checks for the PR-3 ArtifactClient module: exactly
+    one ``ArtifactClient`` class, the stateless ``__slots__ == ()``
+    boundary, exactly the frozen method set (``__init__``,
+    ``load_canonical_build``, ``load_dataset``), a strict zero-argument
+    ``__init__`` whose body performs no work, the exact reader method
+    signatures ``(self, build_dir)``, and no module import other than
+    ``from __future__ import annotations``."""
     failures: list[str] = []
     try:
         tree = ast.parse(module.read_text(encoding="utf-8"))
@@ -3145,11 +3187,12 @@ def _check_artifact_client_module(module: Path) -> list[str]:
         for node in cls.body
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     ]
-    custom = sorted(node.name for node in methods if node.name != "__init__")
-    if custom:
+    names = sorted(node.name for node in methods)
+    if names != ["__init__", "load_canonical_build", "load_dataset"]:
         failures.append(
-            "ArtifactClient must not define business methods in PR-2 "
-            f"(found: {', '.join(custom)})"
+            "ArtifactClient public business methods must be exactly "
+            "load_canonical_build and load_dataset, with only __init__ "
+            f"as constructor (found: {', '.join(names)})"
         )
     if not any(
         isinstance(node, ast.Assign)
@@ -3195,6 +3238,22 @@ def _check_artifact_client_module(module: Path) -> list[str]:
                 "ArtifactClient.__init__ body must not perform any work "
                 "(no calls, no filesystem/network/time access)"
             )
+    for method in methods:
+        if method.name in ("load_canonical_build", "load_dataset"):
+            args = method.args
+            if (
+                args.posonlyargs
+                or [arg.arg for arg in args.args] != ["self", "build_dir"]
+                or args.vararg is not None
+                or args.kwarg is not None
+                or args.kwonlyargs
+                or args.defaults
+                or args.kw_defaults
+            ):
+                failures.append(
+                    f"ArtifactClient.{method.name} must take exactly "
+                    "(self, build_dir) and no other arguments"
+                )
     for node in tree.body:
         if isinstance(node, ast.Import):
             failures.append(
@@ -3212,14 +3271,145 @@ def _check_artifact_client_module(module: Path) -> list[str]:
     return failures
 
 
+# The exact formal reader delegation authority per ArtifactClient method:
+# method name -> (relative reader module, formal reader function).
+ARTIFACT_CLIENT_READER_DELEGATIONS = {
+    "load_canonical_build": (
+        ".canonical.reader",
+        "load_verified_canonical_build",
+    ),
+    "load_dataset": (".dataset.reader", "load_verified_dataset"),
+}
+# Identifiers the ArtifactClient production source must never use outside
+# docstrings: the client has no second trust path and no independent
+# filesystem / manifest / parquet / environment / settings / storage
+# access. Docstring constants are not ast.Name/ast.Attribute nodes, so
+# documentation text is naturally excluded.
+CLIENT_FORBIDDEN_IDENTIFIERS = (
+    "Path",
+    "open",
+    "json",
+    "parquet",
+    "pyarrow",
+    "pandas",
+    "glob",
+    "rglob",
+    "environ",
+    "settings",
+    "storage",
+    "duckdb",
+)
+
+
+def check_v070_artifact_client_readers(root: Path) -> list[str]:
+    """PR-3 required checks: each ArtifactClient reader method delegates
+    at the actual method-call boundary to the exact formal reader (a
+    method-local import plus a direct return of the formal call), the
+    client source contains no second trust path (no independent
+    Path / open / json / parquet / pyarrow / pandas / glob / rglob /
+    environ / settings / storage / duckdb identifier use), and no PR-4
+    Dataset Catalog capability exists."""
+    failures: list[str] = []
+    module = root / "src" / "market_vault" / "artifact_client.py"
+    if not module.exists():
+        failures.append("src/market_vault/artifact_client.py is missing")
+        return failures
+    text = module.read_text(encoding="utf-8")
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        failures.append(f"{module.name} is not valid Python")
+        return failures
+    clients = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "ArtifactClient"
+    ]
+    if len(clients) != 1:
+        failures.append(
+            "src/market_vault/artifact_client.py must define class "
+            "ArtifactClient exactly once"
+        )
+        return failures
+    methods = {
+        node.name: node
+        for node in clients[0].body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    for name, (reader_module, reader_func) in (
+        ARTIFACT_CLIENT_READER_DELEGATIONS.items()
+    ):
+        method = methods.get(name)
+        if method is None:
+            failures.append(
+                f"ArtifactClient.{name} must exist and delegate to "
+                f"{reader_func}"
+            )
+            continue
+        statements = [
+            node
+            for node in method.body
+            if not (
+                isinstance(node, ast.Expr)
+                and isinstance(node.value, ast.Constant)
+                and isinstance(node.value.value, str)
+            )
+        ]
+        local_import = any(
+            isinstance(node, ast.ImportFrom)
+            and node.level == 1
+            and node.module == reader_module.lstrip(".")
+            and [alias.name for alias in node.names] == [reader_func]
+            for node in statements
+        )
+        direct_return = any(
+            isinstance(node, ast.Return)
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+            and node.value.func.id == reader_func
+            and len(node.value.args) == 1
+            and isinstance(node.value.args[0], ast.Name)
+            and node.value.args[0].id == "build_dir"
+            and not node.value.keywords
+            for node in statements
+        )
+        if not local_import:
+            failures.append(
+                f"ArtifactClient.{name} must import {reader_func} from "
+                f"{reader_module!r} at the method-call boundary"
+            )
+        if not direct_return:
+            failures.append(
+                f"ArtifactClient.{name} must return the direct "
+                f"{reader_func}(build_dir) result without wrapping"
+            )
+    for node in ast.walk(tree):
+        identifier = None
+        if isinstance(node, ast.Name):
+            identifier = node.id
+        elif isinstance(node, ast.Attribute):
+            identifier = node.attr
+        if identifier in CLIENT_FORBIDDEN_IDENTIFIERS:
+            failures.append(
+                "ArtifactClient source must not independently use the "
+                f"identifier {identifier!r} (no second trust path)"
+            )
+    if "load_dataset_catalog" in text:
+        failures.append(
+            "ArtifactClient must not expose the PR-4 load_dataset_catalog "
+            "capability"
+        )
+    return failures
+
+
 def check_v070_artifact_client_foundation(root: Path) -> list[str]:
-    """PR-2 required checks: the ArtifactClient foundation module exists
-    with the frozen minimal structure (exactly one ArtifactClient class,
-    ``__slots__ == ()``, no custom method besides ``__init__``, a strict
-    zero-argument side-effect-free ``__init__``, no module import besides
-    ``__future__``), and the top-level package exports ArtifactClient
-    lazily through ``__getattr__`` (never through an eager top-level
-    import) while keeping MarketVault and ``__version__`` in ``__all__``."""
+    """Required ArtifactClient checks: the module exists with the frozen
+    structure (exactly one ArtifactClient class, ``__slots__ == ()``,
+    exactly the frozen method set, a strict zero-argument side-effect-free
+    ``__init__``, no module import besides ``__future__``), and the
+    top-level package exports ArtifactClient lazily through ``__getattr__``
+    (never through an eager top-level import) while keeping MarketVault
+    and ``__version__`` in ``__all__``."""
     failures = []
     module = root / "src" / "market_vault" / "artifact_client.py"
     if not module.exists():
@@ -3395,6 +3585,7 @@ def main() -> int:
         ("v0.7.0 Python client contract", check_v070_python_client_contract),
         ("v0.7.0 Python API audit", check_v070_python_api_audit),
         ("v0.7.0 ArtifactClient foundation", check_v070_artifact_client_foundation),
+        ("v0.7.0 ArtifactClient readers", check_v070_artifact_client_readers),
         ("CI auditability", check_ci_auditability),
         ("v0.6.1 CI package audit", check_v061_ci_package_audit),
         ("v0.6.0 ADR", check_v060_adr),
