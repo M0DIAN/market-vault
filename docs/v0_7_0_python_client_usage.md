@@ -1,10 +1,11 @@
 # MarketVault v0.7.0 Python Client Usage Guide
 
-> **Unreleased development documentation.** This guide describes the
-> unreleased v0.7 ArtifactClient under active development. The package
-> metadata remains **0.6.1 through PR-5** under the frozen version policy.
+> **Released documentation.** This guide describes the formally released
+> v0.7.0 `ArtifactClient` (released 2026-08-09, release commit
+> `f25a50481b5ee718881acf5cb5ea5aa05bd32d93`).
+> The package metadata is **0.7.0**.
 > The formal v0.6.1 GitHub Release artifacts do **NOT** contain
-> `ArtifactClient`. **v0.7.0 is not released yet.**
+> `ArtifactClient`; the formal v0.7.0 GitHub Release artifacts DO.
 
 The `ArtifactClient` is the settings-independent, read-only Python client
 for verified immutable artifacts. It delegates every read verbatim to the

@@ -2232,19 +2232,16 @@ def test_release_checker_fails_when_ci_claims_v061_released(tmp_path):
 def test_v070_direction_document_states_baseline_and_sequence():
     text = (ROOT / "docs" / "v0_7_0_direction.md").read_text(encoding="utf-8")
     assert "# MarketVault v0.7.0 Direction: Python Client and Read-only Artifact Access" in text
-    assert (
-        "Status: active feature development; PR-6 v0.7.0 release "
-        "preparation stage" in text
-    )
+    assert "Status: released on 2026-08-09" in text
     assert "base version: v0.6.1" in text
     assert "37614d539171ef7b738e47415f3cd6ca2de332d1" in text
-    assert "v0.7.0: NOT RELEASED" in text
+    assert "v0.7.0: FORMALLY RELEASED" in text
     assert "PR-1: COMPLETE / MERGED / MAIN VERIFIED" in text
     assert "PR-2: COMPLETE / MERGED / MAIN VERIFIED" in text
     assert "PR-3: COMPLETE / MERGED / MAIN VERIFIED" in text
     assert "PR-4: COMPLETE / MERGED / MAIN VERIFIED" in text
     assert "PR-5: COMPLETE / MERGED / MAIN VERIFIED" in text
-    assert "PR-6: CURRENT" in text
+    assert "PR-6: COMPLETE / MERGED / RELEASED" in text
     assert "PR #48 merged at 2026-08-08T23:50:24Z" in text
     assert "bad62ee51e8eda03c7c5f20ac858973923e5f93d" in text
     assert "31284875166" in text
@@ -2292,8 +2289,8 @@ def test_v070_direction_document_states_baseline_and_sequence():
     assert "PR-6: 0.6.1 -> 0.7.0" in text
     assert "the version is bumped to 0.7.0 only in PR-6" in text
     assert "No early 0.7.0 version bump" in text
-    # PR-2 / PR-3 / PR-4 / PR-5 are merged history; PR-6 is the current
-    # release-preparation stage; v0.7.0 is not released.
+    # PR-2 / PR-3 / PR-4 / PR-5 / PR-6 are merged history; v0.7.0 is
+    # formally released (2026-08-09) and the release is sealed.
     for boundary in (
         "PR-2 (the merged foundation PR, #49) implemented only",
         "the `ArtifactClient` class foundation",
@@ -2401,7 +2398,13 @@ def test_v070_direction_document_states_baseline_and_sequence():
     assert "PR-4: CURRENT" not in text
     assert "PR-5: CURRENT" not in text
     assert "PR-6: NOT STARTED" not in text
+    assert "PR-6: CURRENT" not in text
+    assert "v0.7.0: NOT RELEASED" not in text
     assert "V0.7.0 is released" not in text
+    assert "V0.7.0 is formally released" in text
+    assert "PR #53 merged at 2026-08-09T12:16:49Z" in text
+    assert "31312887229" in text
+    assert "The CI release-state marker is `V070_RELEASED_OK`" in text
     for boundary in (
         "No new CLI command",
         "No REST API",
@@ -2431,10 +2434,7 @@ def test_v070_python_client_contract_states_boundaries():
         encoding="utf-8"
     )
     assert "# MarketVault Python Client Contract" in text
-    assert (
-        "Status: PR-6 v0.7.0 release preparation in unreleased v0.7.0 "
-        "development" in text
-    )
+    assert "Status: formally released in v0.7.0 (2026-08-09)" in text
     assert "Target release: v0.7.0" in text
     assert "Public root: `ArtifactClient`" in text
     assert "Formal v0.6.1 GitHub Release artifacts" in text
@@ -2447,9 +2447,16 @@ def test_v070_python_client_contract_states_boundaries():
     for section in range(1, 12):
         assert f"## 13.{section}" in text
     assert "PR-5: integrated acceptance/usability/examples COMPLETE / MERGED / MAIN VERIFIED" in text
-    assert "PR-6: release preparation CURRENT" in text
+    assert "PR-6: release preparation COMPLETE / MERGED / RELEASED (PR #53)" in text
     assert "package: 0.7.0" in text
-    assert "v0.7.0: NOT RELEASED" in text
+    assert "v0.7.0: FORMALLY RELEASED" in text
+    assert "merged as PR #53 at the release commit" in text
+    assert "f25a50481b5ee718881acf5cb5ea5aa05bd32d93" in text
+    assert "V0.7.0 is formally released" in text
+    assert "the annotated `v0.7.0` tag is created" in text
+    assert "the GitHub Release `MarketVault v0.7.0` is published" in text
+    assert "The formal v0.7.0 GitHub Release artifacts contain" in text
+    assert "the `ArtifactClient` wheel and sdist" in text
     # PR-5 consumer-side usability boundary: examples and documentation
     # are consumer-side only and never form a second trust path; consumer
     # transformations after a verified read are not artifact verification.
@@ -2860,29 +2867,35 @@ def test_release_checker_fails_when_contract_adds_backtesting(tmp_path):
     assert "does not state the fact 'No backtesting'" in result.stdout
 
 
-def test_release_checker_fails_when_ci_claims_v070_released_ok(tmp_path):
-    # PR-6 guard: claiming the released-state marker V070_RELEASED_OK in
-    # CI must fail the checker: the marker set is V070_RELEASE_PREP_OK.
+def test_release_checker_fails_when_ci_restores_v070_release_prep_marker(
+    tmp_path,
+):
+    # Post-release guard: reverting the CI released-state marker
+    # V070_RELEASED_OK back to the superseded preparation-time marker
+    # V070_RELEASE_PREP_OK must fail the checker.
     repo = copy_repo(tmp_path)
     ci = repo / ".github" / "workflows" / "ci.yml"
     ci.write_text(
         ci.read_text(encoding="utf-8").replace(
-            "V070_RELEASE_PREP_OK",
             "V070_RELEASED_OK",
+            "V070_RELEASE_PREP_OK",
         ),
         encoding="utf-8",
     )
     result = run_check_release(repo)
     assert result.returncode == 1
-    assert "must carry the V070_RELEASE_PREP_OK marker" in result.stdout
-    assert "must never claim the V070_RELEASED_OK state" in result.stdout
+    assert "must carry the V070_RELEASED_OK marker" in result.stdout
+    assert (
+        "must never restore the superseded V070_RELEASE_PREP_OK "
+        "preparation marker"
+    ) in result.stdout
 
 
 def test_release_checker_fails_when_ci_restores_v061_release_state_marker(
     tmp_path,
 ):
     # PR-6 guard: restoring the stale v0.6.1 released-state marker must
-    # fail the checker: the marker set is V070_RELEASE_PREP_OK.
+    # fail the checker: the marker set is V070_RELEASED_OK.
     repo = copy_repo(tmp_path)
     ci = repo / ".github" / "workflows" / "ci.yml"
     ci.write_text(
@@ -3263,13 +3276,14 @@ def test_release_checker_fails_when_contract_drops_load_dataset(
 def test_release_checker_fails_when_direction_regresses_pr6_to_not_started(
     tmp_path,
 ):
-    # PR-6 guard: regressing the current release-preparation stage back
-    # to NOT STARTED must fail the checker — PR-6 is CURRENT.
+    # PR-6 guard: regressing the completed release-preparation stage back
+    # to NOT STARTED must fail the checker — PR-6 is COMPLETE / MERGED /
+    # RELEASED.
     repo = copy_repo(tmp_path)
     path = repo / "docs" / "v0_7_0_direction.md"
     path.write_text(
         path.read_text(encoding="utf-8").replace(
-            "PR-6: CURRENT",
+            "PR-6: COMPLETE / MERGED / RELEASED",
             "PR-6: NOT STARTED",
         ),
         encoding="utf-8",
@@ -3347,13 +3361,14 @@ def test_release_checker_fails_when_contract_regresses_pr5_to_current(
 def test_release_checker_fails_when_contract_regresses_pr6_to_not_started(
     tmp_path,
 ):
-    # PR-6 guard: regressing the current contract release-preparation
+    # PR-6 guard: regressing the completed contract release-preparation
     # stage back to NOT STARTED must fail the checker.
     repo = copy_repo(tmp_path)
     path = repo / "docs" / "contracts" / "python_client.md"
     path.write_text(
         path.read_text(encoding="utf-8").replace(
-            "PR-6: release preparation CURRENT",
+            "PR-6: release preparation COMPLETE / MERGED / RELEASED "
+            "(PR #53)",
             "PR-6: release preparation NOT STARTED",
         ),
         encoding="utf-8",
@@ -3361,7 +3376,8 @@ def test_release_checker_fails_when_contract_regresses_pr6_to_not_started(
     result = run_check_release(repo)
     assert result.returncode == 1
     assert (
-        "does not state the fact 'PR-6: release preparation CURRENT'"
+        "does not state the fact 'PR-6: release preparation COMPLETE / "
+        "MERGED / RELEASED (PR #53)'"
     ) in result.stdout
 
 
@@ -3394,144 +3410,239 @@ def test_release_checker_fails_when_release_notes_missing(tmp_path):
     assert "docs/release_v0_7_0.md is missing" in result.stdout
 
 
-def test_release_checker_fails_when_release_notes_claim_v070_released(
+def test_release_checker_fails_when_release_notes_formal_region_claims_not_released(
     tmp_path,
 ):
-    # PR-6 guard: an affirmative v0.7.0 released claim in the release
-    # notes must fail the checker.
+    # Post-release guard: the release-notes formal region must never
+    # restore the preparation-time NOT formally released status — v0.7.0
+    # is formally released.
     repo = copy_repo(tmp_path)
     path = repo / "docs" / "release_v0_7_0.md"
     path.write_text(
-        path.read_text(encoding="utf-8") + "\nv0.7.0 is released.\n",
+        path.read_text(encoding="utf-8").replace(
+            "The v0.7.0 release is formally released and sealed",
+            "V0.7.0 is NOT formally released",
+        ),
         encoding="utf-8",
     )
     result = run_check_release(repo)
     assert result.returncode == 1
     assert (
-        "contains the false release claim 'v0.7.0 is released'"
+        "formal region contains the stale release claim "
+        "'V0.7.0 is NOT formally released'"
     ) in result.stdout
 
 
-def test_release_checker_fails_when_release_notes_claim_tag_created(
+def test_release_checker_fails_when_release_notes_formal_region_claims_tag_not_created(
     tmp_path,
 ):
-    # PR-6 guard: claiming the v0.7.0 tag was created must fail the
-    # checker — the tag is NOT CREATED.
+    # Post-release guard: the release-notes formal region must never
+    # restore the preparation-time tag state — the v0.7.0 tag IS CREATED.
     repo = copy_repo(tmp_path)
     path = repo / "docs" / "release_v0_7_0.md"
     path.write_text(
-        path.read_text(encoding="utf-8")
-        + "\nThe v0.7.0 tag was created.\n",
+        path.read_text(encoding="utf-8").replace(
+            "## Formal release status",
+            "## Formal release status\nv0.7.0 tag:            NOT CREATED",
+        ),
         encoding="utf-8",
     )
     result = run_check_release(repo)
     assert result.returncode == 1
     assert (
-        "contains the false release claim 'v0.7.0 tag was created'"
+        "formal region contains the stale release claim "
+        "'v0.7.0 tag:            NOT CREATED'"
     ) in result.stdout
 
 
 def test_release_checker_fails_when_release_notes_predict_future_merge_sha(
     tmp_path,
 ):
-    # PR-6 guard: predicting the future PR-6 merge commit must fail the
-    # checker — the future merge SHA is UNKNOWN.
+    # Post-release guard: the release-notes formal region must never
+    # predict a future merge commit — the PR-6 release commit is known
+    # and recorded.
     repo = copy_repo(tmp_path)
     path = repo / "docs" / "release_v0_7_0.md"
     path.write_text(
-        path.read_text(encoding="utf-8")
-        + "\nthe future merge commit is "
-        + "5ec437d37bb2cde0b716aa5dc1f84538b4bc6215\n",
+        path.read_text(encoding="utf-8").replace(
+            "## Formal release status",
+            "## Formal release status\nthe future merge commit is "
+            "5ec437d37bb2cde0b716aa5dc1f84538b4bc6215",
+        ),
         encoding="utf-8",
     )
     result = run_check_release(repo)
     assert result.returncode == 1
     assert (
-        "contains the false release claim 'the future merge commit is'"
+        "formal region contains the stale release claim "
+        "'the future merge commit is'"
     ) in result.stdout
 
 
 def test_release_checker_fails_when_release_notes_predict_formal_hash(
     tmp_path,
 ):
-    # PR-6 guard: predicting formal artifact hash values must fail the
-    # checker — candidate hashes are never formal hashes.
+    # Post-release guard: the release-notes formal region must never
+    # claim formal artifact hash values are predicted — the formal
+    # SHA-256 values are recorded, not predicted.
     repo = copy_repo(tmp_path)
     path = repo / "docs" / "release_v0_7_0.md"
     path.write_text(
-        path.read_text(encoding="utf-8")
-        + "\nformal artifact SHA256 values are predicted\n",
+        path.read_text(encoding="utf-8").replace(
+            "## Formal release status",
+            "## Formal release status\nformal artifact SHA256 values are "
+            "predicted",
+        ),
         encoding="utf-8",
     )
     result = run_check_release(repo)
     assert result.returncode == 1
     assert (
-        "contains the false release claim "
+        "formal region contains the stale release claim "
         "'formal artifact SHA256 values are predicted'"
     ) in result.stdout
 
 
-def test_release_checker_fails_when_release_notes_claim_pr6_merged(
+def test_release_checker_fails_when_release_notes_lose_pr6_merged(
     tmp_path,
 ):
-    # PR-6 guard: claiming PR-6 is merged must fail the checker — PR-6 is
-    # OPEN / UNMERGED.
+    # Post-release guard: losing the merged PR-6 record (the exact
+    # release commit) must fail the checker — PR-6 is MERGED at the
+    # release commit.
     repo = copy_repo(tmp_path)
     path = repo / "docs" / "release_v0_7_0.md"
     path.write_text(
         path.read_text(encoding="utf-8").replace(
-            "PR-6: current release-preparation stage, OPEN / UNMERGED",
-            "PR-6: current release-preparation stage, MERGED",
+            "PR-6: PR #53 MERGED f25a50481b5ee718881acf5cb5ea5aa05bd32d93",
+            "PR-6: PR #53 OPEN / UNMERGED",
         ),
         encoding="utf-8",
     )
     result = run_check_release(repo)
     assert result.returncode == 1
     assert (
-        "does not state the fact 'PR-6: current release-preparation "
-        "stage, OPEN / UNMERGED'"
+        "does not state the fact 'PR-6: PR #53 MERGED "
+        "f25a50481b5ee718881acf5cb5ea5aa05bd32d93'"
     ) in result.stdout
 
 
-def test_release_checker_fails_when_release_notes_lose_not_released(
+def test_release_checker_fails_when_release_notes_lose_formal_release_status(
     tmp_path,
 ):
-    # PR-6 guard: dropping the NOT formally released statement must fail
-    # the checker.
+    # Post-release guard: losing the formal release status statement must
+    # fail the checker.
     repo = copy_repo(tmp_path)
     path = repo / "docs" / "release_v0_7_0.md"
     path.write_text(
         path.read_text(encoding="utf-8").replace(
-            "NOT formally released",
-            "FORMALLY RELEASED",
+            "The v0.7.0 release is formally released and sealed",
+            "The v0.7.0 release is NOT released",
         ),
         encoding="utf-8",
     )
     result = run_check_release(repo)
     assert result.returncode == 1
     assert (
-        "does not state the fact 'NOT formally released'"
+        "does not state the fact "
+        "'The v0.7.0 release is formally released and sealed'"
     ) in result.stdout
 
 
-def test_release_checker_fails_when_release_notes_lose_candidate_wording(
+def test_release_checker_fails_when_release_notes_formal_region_restores_candidate_hashes(
     tmp_path,
 ):
-    # PR-6 guard: losing the candidate-validation-only wording must fail
-    # the checker.
+    # Post-release guard: the release-notes formal region must never
+    # restore the candidate-hashes-not-reused preparation wording — the
+    # formal assets and their SHA-256 values are sealed.
     repo = copy_repo(tmp_path)
     path = repo / "docs" / "release_v0_7_0.md"
     path.write_text(
         path.read_text(encoding="utf-8").replace(
-            "candidate validation only",
-            "formal validation only",
+            "## Formal release status",
+            "## Formal release status\nPR candidate hashes: not reused as "
+            "formal release asset hashes",
         ),
         encoding="utf-8",
     )
     result = run_check_release(repo)
     assert result.returncode == 1
     assert (
-        "does not state the fact 'candidate validation only'"
+        "formal region contains the stale release claim "
+        "'PR candidate hashes: not reused as formal release asset hashes'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_release_notes_restore_unstable_main_head(
+    tmp_path,
+):
+    # Post-release guard: the release-notes formal region must state the
+    # main HEAD at release sealing and must never restore the unstable
+    # current-state "main HEAD: <release commit>" wording, which becomes
+    # false as soon as the post-release PR merges.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "release_v0_7_0.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "main HEAD at release sealing: f25a50481b5ee718881acf5cb5ea5aa05bd32d93",
+            "main HEAD: f25a50481b5ee718881acf5cb5ea5aa05bd32d93",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "formal region contains the stale release claim "
+        "'main HEAD: f25a50481b5ee718881acf5cb5ea5aa05bd32d93'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_release_notes_tamper_sha256sums_file_hash(
+    tmp_path,
+):
+    # Post-release guard: tampering with the formal SHA256SUMS.txt file
+    # SHA-256 (the manifest file's own hash, distinct from its contents
+    # lines) must fail the checker — all three formal asset hashes are
+    # sealed.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "release_v0_7_0.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "8294805C21CEBE3A2D62465664F9A90E0CF4F3B02AE4F1A0651C7D7830403512",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the fact "
+        "'8294805C21CEBE3A2D62465664F9A90E0CF4F3B02AE4F1A0651C7D7830403512'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_release_notes_manifest_hash_replaced_by_contents(
+    tmp_path,
+):
+    # Post-release guard: the SHA256SUMS.txt file hash must not be
+    # replaced by the manifest contents lines (the reviewer-flagged
+    # confusion); the record must state the manifest file's own SHA-256
+    # and the two contents lines separately.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "release_v0_7_0.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "SHA256SUMS.txt\nSHA-256:\n"
+            "8294805C21CEBE3A2D62465664F9A90E0CF4F3B02AE4F1A0651C7D7830403512\n\n"
+            "Contents:",
+            "SHA256SUMS.txt\nSHA-256:",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the fact "
+        "'8294805C21CEBE3A2D62465664F9A90E0CF4F3B02AE4F1A0651C7D7830403512'"
     ) in result.stdout
 
 
@@ -4829,8 +4940,8 @@ def test_ci_contains_061_assertions_and_marker():
     assert "assert market_vault.__version__ == '0.7.0'" in text
     assert "assert version('market-vault') == '0.7.0'" in text
     assert "V061_PUBLIC_API_IMPORT_OK" in text
-    assert "V070_RELEASE_PREP_OK" in text
-    assert "V070_RELEASED_OK" not in text
+    assert "V070_RELEASED_OK" in text
+    assert "V070_RELEASE_PREP_OK" not in text
     assert "V061_RELEASE_STATE_OK" not in text
     assert "V061_RELEASE_PREP_OK" not in text
     # PR-2: the ArtifactClient foundation fresh-wheel smoke is required.
@@ -5034,12 +5145,12 @@ def test_release_checker_fails_when_ci_loses_release_state_marker(tmp_path):
     ci = repo / ".github" / "workflows" / "ci.yml"
     text = ci.read_text(encoding="utf-8")
     ci.write_text(
-        text.replace("echo 'V070_RELEASE_PREP_OK'", "echo 'V070_PREP_OK'"),
+        text.replace("echo 'V070_RELEASED_OK'", "echo 'V070_PREP_OK'"),
         encoding="utf-8",
     )
     result = run_check_release(repo)
     assert result.returncode == 1
-    assert "must carry the V070_RELEASE_PREP_OK marker" in result.stdout
+    assert "must carry the V070_RELEASED_OK marker" in result.stdout
 
 
 def test_release_checker_fails_when_ci_loses_b64_forbidden(tmp_path):
@@ -7335,21 +7446,26 @@ def test_release_checker_fails_when_direction_regresses_pr4_to_current(
     ) in result.stdout
 
 
-def test_release_checker_fails_when_direction_claims_v070_released(tmp_path):
-    # PR-5 guard: the direction document losing the NOT RELEASED v0.7.0
-    # state must fail the checker — v0.7.0 is not released.
+def test_release_checker_fails_when_direction_regresses_v070_to_not_released(
+    tmp_path,
+):
+    # Post-release guard: the direction document regressing the formally
+    # released v0.7.0 state back to a bare unqualified RELEASED claim or
+    # to the preparation-time NOT RELEASED state must fail the checker.
     repo = copy_repo(tmp_path)
     path = repo / "docs" / "v0_7_0_direction.md"
     path.write_text(
         path.read_text(encoding="utf-8").replace(
+            "v0.7.0: FORMALLY RELEASED",
             "v0.7.0: NOT RELEASED",
-            "v0.7.0: RELEASED",
         ),
         encoding="utf-8",
     )
     result = run_check_release(repo)
     assert result.returncode == 1
-    assert "does not state the fact 'v0.7.0: NOT RELEASED'" in result.stdout
+    assert (
+        "contains the false implementation/release claim 'v0.7.0: NOT RELEASED'"
+    ) in result.stdout
 
 
 def test_release_checker_fails_when_usage_doc_loses_explicit_path_contract(

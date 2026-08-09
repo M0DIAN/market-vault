@@ -977,13 +977,13 @@ DATASET_CATALOG_CLI_FALSE_CLAIMS = (
 )
 # The CI fresh-wheel smoke must cover the four Catalog CLI help commands.
 CI_PR7_API_MARKER = "PR7_CATALOG_CLI_HELP_OK"
-# The CI package job must carry the v0.7.0 release-preparation marker
-# (V070_RELEASE_PREP_OK; the released-state marker V070_RELEASED_OK and
-# the stale v0.6.1 markers V061_RELEASE_STATE_OK / V061_RELEASE_PREP_OK
-# must never be restored), the public API smoke must import
-# generate_sample_requests, and the wheel contents check must forbid
-# *.b64 fixture bundles.
-CI_V070_RELEASE_PREP_MARKER = "V070_RELEASE_PREP_OK"
+# The CI package job must carry the v0.7.0 released-state marker
+# (V070_RELEASED_OK; the superseded preparation-time marker
+# V070_RELEASE_PREP_OK and the stale v0.6.1 markers V061_RELEASE_STATE_OK
+# / V061_RELEASE_PREP_OK must never be restored), the public API smoke
+# must import generate_sample_requests, and the wheel contents check must
+# forbid *.b64 fixture bundles.
+CI_V070_RELEASED_MARKER = "V070_RELEASED_OK"
 CI_V061_PUBLIC_API_IMPORT_LINES = ("generate_sample_requests",)
 CI_PR7_HELP_COMMANDS = (
     "market-vault dataset-catalog-build --help",
@@ -1239,16 +1239,16 @@ README_V061_STALE_PHRASES = (
 # historical PR-2 / PR-3 / PR-4 / PR-5 boundaries, and the PR-6 boundary.
 V070_DIRECTION_FACTS = (
     "# MarketVault v0.7.0 Direction: Python Client and Read-only Artifact Access",
-    "Status: active feature development; PR-6 v0.7.0 release preparation stage",
+    "Status: released on 2026-08-09",
     "base version: v0.6.1",
     "37614d539171ef7b738e47415f3cd6ca2de332d1",
-    "v0.7.0: NOT RELEASED",
+    "v0.7.0: FORMALLY RELEASED",
     "PR-1: COMPLETE / MERGED / MAIN VERIFIED",
     "PR-2: COMPLETE / MERGED / MAIN VERIFIED",
     "PR-3: COMPLETE / MERGED / MAIN VERIFIED",
     "PR-4: COMPLETE / MERGED / MAIN VERIFIED",
     "PR-5: COMPLETE / MERGED / MAIN VERIFIED",
-    "PR-6: CURRENT",
+    "PR-6: COMPLETE / MERGED / RELEASED",
     "package: 0.7.0",
     "PR-1 record",
     "PR #48 merged at 2026-08-08T23:50:24Z",
@@ -1283,6 +1283,24 @@ V070_DIRECTION_FACTS = (
     "package before PR-6: 0.6.1",
     "ArtifactClient integrated E2E acceptance: IMPLEMENTED",
     "consumer usability docs and source-tree examples: IMPLEMENTED",
+    "PR-6 record",
+    "PR #53 merged at 2026-08-09T12:16:49Z",
+    "31312887229",
+    "The v0.7.0 release is sealed at the release commit",
+    "the annotated `v0.7.0` tag points at the release commit",
+    "the GitHub Release `MarketVault v0.7.0` is published on",
+    "2026-08-09T12:54:26Z",
+    "exactly the wheel, the sdist, and the",
+    "`SHA256SUMS.txt` manifest assets",
+    "PyPI: NOT PUBLISHED",
+    "TestPyPI: NOT PUBLISHED",
+    "The CI release-state marker is `V070_RELEASED_OK`",
+    "V070_RELEASE_PREP_OK",
+    "PR-6 performed the v0.7.0",
+    "V0.7.0 is formally released",
+    "the annotated `v0.7.0` tag is created",
+    "the GitHub Release `MarketVault",
+    "PyPI / TestPyPI are NOT PUBLISHED",
     "PR-1 — Post-v0.6.1 release baseline",
     "PR-2 — Settings-independent ArtifactClient foundation",
     "PR-3 — Canonical + Dataset verified read-only client access",
@@ -1412,10 +1430,11 @@ V070_DIRECTION_FACTS = (
     "PyPI/TestPyPI deferred",
 )
 # Affirmative implementation / release claims that must never appear in
-# the v0.7.0 direction document: PR-1 / PR-2 / PR-3 / PR-4 / PR-5 are
-# merged history, PR-6 is the current (unmerged) release-preparation
-# stage, no later stage has started, the package is 0.7.0, and v0.7.0 is
-# not released.
+# the v0.7.0 direction document: PR-1 / PR-2 / PR-3 / PR-4 / PR-5 / PR-6
+# are merged history, no earlier stage may regress to CURRENT / NOT
+# STARTED, and the v0.7.0 release state must never regress to the
+# preparation-time wording (PR-6 CURRENT, v0.7.0 NOT RELEASED) or to a
+# bare unqualified release claim.
 V070_DIRECTION_STALE_PHRASES = (
     "ArtifactClient is implemented",
     "ArtifactClient is available",
@@ -1432,9 +1451,12 @@ V070_DIRECTION_STALE_PHRASES = (
     "PR-5: NOT STARTED",
     "PR-5: CURRENT",
     "PR-6: NOT STARTED",
-    "V0.7.0 is released",
-    "v0.7.0 has been released",
-    "v0.7.0 released on",
+    "PR-6: CURRENT",
+    "PR-6: OPEN",
+    "PR-6: UNMERGED",
+    "Status: active feature development; PR-6 v0.7.0 release preparation stage",
+    "v0.7.0: NOT RELEASED",
+    "v0.7.0: RELEASED",
 )
 # Facts the Python Client boundary contract must state: the PR-5
 # integrated-status (including the exact formal delegation methods and
@@ -1447,7 +1469,7 @@ V070_DIRECTION_STALE_PHRASES = (
 # usability boundary.
 V070_CONTRACT_FACTS = (
     "# MarketVault Python Client Contract",
-    "Status: PR-6 v0.7.0 release preparation in unreleased v0.7.0 development",
+    "Status: formally released in v0.7.0 (2026-08-09)",
     "Target release: v0.7.0",
     "Public root: `ArtifactClient`",
     "Formal v0.6.1 GitHub Release artifacts",
@@ -1455,6 +1477,13 @@ V070_CONTRACT_FACTS = (
     "PR #52",
     "package metadata to 0.7.0",
     "frozen version policy",
+    "merged as PR #53 at the release commit",
+    "f25a50481b5ee718881acf5cb5ea5aa05bd32d93",
+    "V0.7.0 is formally released",
+    "the annotated `v0.7.0` tag is created",
+    "the GitHub Release `MarketVault v0.7.0` is published",
+    "The formal v0.7.0 GitHub Release artifacts contain",
+    "the `ArtifactClient` wheel and sdist",
     "## 13.1 Existing MarketVault compatibility",
     "the `MarketVault` constructor",
     "## 13.2 Constructor",
@@ -1470,9 +1499,9 @@ V070_CONTRACT_FACTS = (
     "## 13.9 Lightweight import",
     "## 13.10 Explicit non-goals",
     "PR-5: integrated acceptance/usability/examples COMPLETE / MERGED / MAIN VERIFIED",
-    "PR-6: release preparation CURRENT",
+    "PR-6: release preparation COMPLETE / MERGED / RELEASED (PR #53)",
     "package: 0.7.0",
-    "v0.7.0: NOT RELEASED",
+    "v0.7.0: FORMALLY RELEASED",
     "## 13.11 PR-5 consumer-side usability boundary",
     "CONSUMER-SIDE only",
     "second trust path",
@@ -1575,55 +1604,82 @@ V070_CONTRACT_FALSE_READ_CLAIMS = (
     "Catalog filter convenience is implemented",
     "Catalog query convenience is implemented",
 )
-# Facts the v0.7.0 release notes document must state: the release
-# preparation status (PR-6 OPEN / UNMERGED, v0.7.0 NOT formally
-# released), the exact 5-PR merge record with the base commit, the
-# PR-6 candidate release state (tag / GitHub Release / PyPI / TestPyPI
-# NOT), the candidate-validation-only wording, the no-prediction rule
-# (no future merge SHA, no formal artifact hash values, candidate
-# hashes never reused as formal hashes), and the 5 independent formal
-# release conditions.
+# Facts the v0.7.0 release notes document must state: the formal release
+# status (PR #53 MERGED, the exact release commit / the main HEAD at
+# release sealing / main CI / annotated tag / GitHub Release /
+# publishedAt / draft / prerelease state, PyPI / TestPyPI NOT PUBLISHED),
+# the formal wheel / sdist / SHA256SUMS.txt asset names and their exact
+# SHA-256 values, the historical release-preparation record, the
+# exact 6-PR merge record including the PR-6 release commit, and the
+# zero-product-capability scope. Facts that live in the historical
+# release-preparation record are checked against the full document;
+# stale current-state sentences are checked only in the formal region
+# before the historical header.
 V070_RELEASE_NOTES_FACTS = (
     "# MarketVault v0.7.0 Release Notes",
-    "## Release preparation status",
-    "NOT formally released",
-    "PR-6: current release-preparation stage, OPEN / UNMERGED",
+    "## Formal release status",
+    "The v0.7.0 release is formally released and sealed",
+    "PR #53: MERGED",
+    "release commit: f25a50481b5ee718881acf5cb5ea5aa05bd32d93",
+    "main HEAD at release sealing: f25a50481b5ee718881acf5cb5ea5aa05bd32d93",
+    "main CI: 31312887229",
+    "tag: v0.7.0",
+    "tag type: annotated",
+    "tag object: 563e8f94d6fc4c1717ed1cb9683c76df1802ed85",
+    "GitHub Release: MarketVault v0.7.0",
+    "release ID: 367478271",
+    "publishedAt: 2026-08-09T12:54:26Z",
+    "draft: false",
+    "prerelease: false",
+    "PyPI: NOT PUBLISHED",
+    "TestPyPI: NOT PUBLISHED",
+    "the peeled tag commit equals the release commit",
+    "exactly the wheel, the sdist, and the per-package",
+    "`SHA256SUMS.txt` manifest",
+    "8294805C21CEBE3A2D62465664F9A90E0CF4F3B02AE4F1A0651C7D7830403512",
+    "Contents:",
+    "market_vault-0.7.0-py3-none-any.whl",
+    "C9B94D451B614FF4DEA16A495258085F11C58F138F3F44C0A20E47D2309BA47F",
+    "market_vault-0.7.0.tar.gz",
+    "604AD74EAF5E98C5FAED930548E4346A7C1C4455B050295A2D82A43CBC6B21E1",
+    "## Historical release-preparation record",
+    "the Formal release status section above is authoritative",
     "5ec437d37bb2cde0b716aa5dc1f84538b4bc6215",
     "PR-1: PR #48 MERGED bad62ee51e8eda03c7c5f20ac858973923e5f93d",
     "PR-2: PR #49 MERGED 42c63ebfb0c2dfc91b1d61860bed2106faf1bba0",
     "PR-3: PR #50 MERGED 61a2b055163815d463d5b261f5b6a94e54e515bd",
     "PR-4: PR #51 MERGED 8b6bb12355c64d02c7e4f73fc67b6222ff2af6ed",
     "PR-5: PR #52 MERGED 5ec437d37bb2cde0b716aa5dc1f84538b4bc6215",
-    "package version in PR-6: 0.7.0",
-    "v0.7.0 tag:            NOT CREATED",
-    "GitHub Release v0.7.0: NOT PUBLISHED",
-    "PyPI:                  NOT PUBLISHED",
-    "TestPyPI:              NOT PUBLISHED",
-    "No future merge SHA was claimed",
-    "no formal artifact SHA256 values",
-    "candidate validation only",
-    "PR candidate hashes: not reused as formal release asset hashes",
-    "The formal v0.7.0 release requires 5 independent conditions",
+    "PR-6: PR #53 MERGED f25a50481b5ee718881acf5cb5ea5aa05bd32d93",
     "new product capabilities = 0",
 )
-# Affirmative release claims that must never appear in the v0.7.0 release
-# notes: v0.7.0 is not released, the tag / GitHub Release / PyPI /
-# TestPyPI states are all NOT, PR-6 is not merged, and no future merge
-# SHA or formal artifact hash values are ever predicted.
+# Stale release-preparation claims that must never appear in the formal
+# region of the v0.7.0 release notes (before the historical
+# release-preparation record): the preparation-stage status, the NOT
+# CREATED / NOT PUBLISHED release state, the candidate-validation-only
+# and no-prediction wording, affirmative PyPI / TestPyPI publication
+# claims, and the unstable current-state "main HEAD: <release commit>"
+# wording (the release record may state the main HEAD at release
+# sealing, but must never claim the current main HEAD remains the
+# release commit). The v0.7.0 release, tag, GitHub Release, and PR-6
+# MERGED are now formal truth and must never be treated as stale.
 V070_RELEASE_NOTES_STALE_PHRASES = (
-    "v0.7.0 is released",
-    "v0.7.0 has been released",
-    "v0.7.0 released on",
-    "v0.7.0 tag was created",
-    "v0.7.0 tag is created",
-    "GitHub Release: MarketVault v0.7.0",
-    "PyPI: PUBLISHED",
-    "TestPyPI: PUBLISHED",
-    "PR-6: MERGED",
+    "main HEAD: f25a50481b5ee718881acf5cb5ea5aa05bd32d93",
+    "## Release preparation status",
+    "V0.7.0 is NOT formally released",
+    "v0.7.0 tag:            NOT CREATED",
+    "GitHub Release v0.7.0: NOT PUBLISHED",
+    "PR-6: current release-preparation stage, OPEN / UNMERGED",
+    "PR candidate hashes: not reused as formal release asset hashes",
+    "No future merge SHA was claimed",
+    "no formal artifact SHA256 values",
+    "The formal v0.7.0 release requires 5 independent conditions",
     "the future merge commit is",
     "will merge as",
     "predicted merge SHA",
     "formal artifact SHA256 values are predicted",
+    "PyPI: PUBLISHED",
+    "TestPyPI: PUBLISHED",
 )
 # Facts the v0.7.0 existing Python API audit document must state: the
 # audited top-level package behavior, the existing MarketVault
@@ -2871,10 +2927,10 @@ def check_ci_pr8(root: Path) -> list[str]:
     return failures
 
 
-def check_ci_v070_release_prep_state(root: Path) -> list[str]:
-    """The CI package job carries the ``V070_RELEASE_PREP_OK`` marker
-    (the v0.7.0 release-preparation marker), the released-state marker
-    ``V070_RELEASED_OK`` and the stale v0.6.1 markers
+def check_ci_v070_released_state(root: Path) -> list[str]:
+    """The CI package job carries the ``V070_RELEASED_OK`` marker (the
+    v0.7.0 released-state marker); the superseded preparation-time marker
+    ``V070_RELEASE_PREP_OK`` and the stale v0.6.1 markers
     ``V061_RELEASE_STATE_OK`` / ``V061_RELEASE_PREP_OK`` are never
     restored, the public API smoke imports ``generate_sample_requests``,
     and the wheel hygiene step forbids ``.b64`` files (the frozen static
@@ -2884,14 +2940,15 @@ def check_ci_v070_release_prep_state(root: Path) -> list[str]:
         return [".github/workflows/ci.yml is missing"]
     text = path.read_text(encoding="utf-8")
     failures = []
-    if CI_V070_RELEASE_PREP_MARKER not in text:
+    if CI_V070_RELEASED_MARKER not in text:
         failures.append(
             "CI package job must carry the "
-            f"{CI_V070_RELEASE_PREP_MARKER} marker"
+            f"{CI_V070_RELEASED_MARKER} marker"
         )
-    if "V070_RELEASED_OK" in text:
+    if "V070_RELEASE_PREP_OK" in text:
         failures.append(
-            "CI package job must never claim the V070_RELEASED_OK state"
+            "CI package job must never restore the superseded "
+            "V070_RELEASE_PREP_OK preparation marker"
         )
     if "V061_RELEASE_STATE_OK" in text:
         failures.append(
@@ -3264,15 +3321,19 @@ def check_v061_release_notes(root: Path) -> list[str]:
 
 
 def check_v070_release_notes(root: Path) -> list[str]:
-    """The v0.7.0 release notes exist and state the release-preparation
-    status (PR-6 OPEN / UNMERGED, v0.7.0 NOT formally released, tag /
-    GitHub Release / PyPI / TestPyPI NOT), the exact PR merge record,
-    and the candidate-validation-only rules, and never contain an
-    affirmative release claim or a future-hash prediction."""
+    """The v0.7.0 release notes state the formal release status and facts
+    (release commit / tag / GitHub Release / formal asset SHA-256 values,
+    PyPI / TestPyPI NOT PUBLISHED) and never restore the
+    release-preparation wording in the formal region. Required facts are
+    checked against the full document (several facts live in the
+    historical record, which quotes the preparation-time state
+    verbatim), but stale current-state sentences are checked only in the
+    formal region before the historical release-preparation record."""
     path = root / "docs" / "release_v0_7_0.md"
     if not path.exists():
         return ["docs/release_v0_7_0.md is missing"]
     text = path.read_text(encoding="utf-8")
+    formal_text = text.split(HISTORICAL_RELEASE_PREPARATION_HEADER, 1)[0]
     failures = []
     for fact in V070_RELEASE_NOTES_FACTS:
         if fact not in text:
@@ -3280,20 +3341,21 @@ def check_v070_release_notes(root: Path) -> list[str]:
                 f"docs/release_v0_7_0.md does not state the fact {fact!r}"
             )
     for phrase in V070_RELEASE_NOTES_STALE_PHRASES:
-        if phrase in text:
+        if phrase in formal_text:
             failures.append(
-                "docs/release_v0_7_0.md contains the false release "
-                f"claim {phrase!r}"
+                "docs/release_v0_7_0.md formal region contains the stale "
+                f"release claim {phrase!r}"
             )
     return failures
 
 
 def check_v070_direction(root: Path) -> list[str]:
-    """Static v0.7.0 direction checks: the document states the planned
-    feature release status, the v0.6.1 baseline, the fixed 6-PR sequence
-    with the exact stage names, the version rules, and the explicit
-    non-goals, and contains no implemented-client or released-state
-    claim."""
+    """Static v0.7.0 direction checks: the document states the formally
+    released status (2026-08-09), the v0.6.1 baseline, the fixed 6-PR
+    sequence with the exact stage names, the version rules, the explicit
+    non-goals, the sealed release record (release commit / main CI / tag /
+    GitHub Release / PyPI NOT PUBLISHED / released-state CI marker), and
+    contains no implemented-client or pre-release-stage claim."""
     path = root / "docs" / "v0_7_0_direction.md"
     if not path.exists():
         return ["docs/v0_7_0_direction.md is missing"]
@@ -3314,8 +3376,9 @@ def check_v070_direction(root: Path) -> list[str]:
 
 
 def check_v070_python_client_contract(root: Path) -> list[str]:
-    """The Python Client boundary contract exists, states the PR-2
-    foundation-implemented status, the ArtifactClient root, and the
+    """The Python Client boundary contract exists, states the formally
+    released v0.7.0 status (release commit / tag / GitHub Release), the
+    PR-2 foundation-implemented status, the ArtifactClient root, and the
     13.1-13.10 boundary clauses, contains no full-client implemented
     claim, and never claims Canonical / Dataset / Catalog read access is
     implemented by PR-2."""
@@ -3848,17 +3911,22 @@ def check_v070_artifact_client_foundation(root: Path) -> list[str]:
     return failures
 
 
-# Facts the v0.7.0 Python client usage document must state: the
-# unreleased lifecycle, the exact three public business methods, the
+# Facts the v0.7.0 Python client usage document must state: the formally
+# released v0.7.0 lifecycle, the exact three public business methods, the
 # explicit-path contract, the formal delegation targets and verified
 # return types, the Jupyter consumer-side post-verification boundary,
 # the ML-consumer handoff with no ML implementation, and the existing
 # formal error classes.
 V070_USAGE_DOC_FACTS = (
-    "unreleased v0.7",
-    "0.6.1 through PR-5",
-    "v0.7.0 is not released yet",
+    "Released documentation",
+    "formally released",
+    "v0.7.0 `ArtifactClient` (released 2026-08-09",
+    "release commit",
+    "f25a50481b5ee718881acf5cb5ea5aa05bd32d93",
+    "The package metadata is",
+    "0.7.0",
     "formal v0.6.1 GitHub Release artifacts do **NOT** contain",
+    "formal v0.7.0 GitHub Release artifacts DO",
     "Public business methods (exactly three):",
     "ArtifactClient.load_canonical_build(build_dir)",
     "ArtifactClient.load_dataset(build_dir)",
@@ -3909,13 +3977,18 @@ V070_USAGE_DOC_STALE_PHRASES = (
     "sklearn.",
 )
 # Facts the PR-5 source-tree examples README must state: the example is
-# consumer-side source-tree only, the unreleased lifecycle, the three
-# explicit required path arguments, and the fail-closed boundaries.
+# consumer-side source-tree only, the released v0.7.0 lifecycle, the
+# three explicit required path arguments, and the fail-closed
+# boundaries.
 V070_EXAMPLES_README_FACTS = (
     "source-tree",
     "not shipped as a public client API",
-    "0.6.1 through PR-5",
-    "v0.7.0 is not released yet",
+    "Released",
+    "formally released v0.7.0",
+    "The package metadata is 0.7.0",
+    "formal v0.7.0",
+    "GitHub Release contains the `ArtifactClient` wheel and sdist",
+    "formal v0.6.1 GitHub Release does NOT contain",
     "--canonical-build-dir",
     "--dataset-build-dir",
     "--catalog-snapshot-dir",
@@ -3932,11 +4005,12 @@ V070_EXAMPLES_README_FACTS = (
 
 def check_v070_python_client_usage_doc(root: Path) -> list[str]:
     """PR-5 required checks for the Python client usage document: it
-    exists, states the unreleased lifecycle and the exact three business
-    methods, documents the explicit-path contract, the Jupyter
-    consumer-side post-verification boundary, the ML-consumer handoff
-    with no ML implementation, and the existing formal error classes,
-    and contains no discovery / settings / ML-implementation claim."""
+    exists, states the formally released v0.7.0 lifecycle and the exact
+    three business methods, documents the explicit-path contract, the
+    Jupyter consumer-side post-verification boundary, the ML-consumer
+    handoff with no ML implementation, and the existing formal error
+    classes, and contains no discovery / settings / ML-implementation
+    claim."""
     path = root / "docs" / "v0_7_0_python_client_usage.md"
     if not path.exists():
         return ["docs/v0_7_0_python_client_usage.md is missing"]
@@ -4215,7 +4289,7 @@ def main() -> int:
         ("v0.6.0 frozen fixture", check_v060_frozen_fixture),
         ("pyarrow dependency", check_pyarrow_dependency),
         ("CI PR-8 portability", check_ci_pr8),
-        ("CI v0.7.0 release prep state", check_ci_v070_release_prep_state),
+        ("CI v0.7.0 released state", check_ci_v070_released_state),
         ("CI v0.7.0 public API smoke", check_ci_v070_public_api_smoke),
         ("old release notes", check_old_release_notes),
         ("warning guard", check_warning_guard),
