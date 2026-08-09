@@ -111,6 +111,18 @@ CI 到达 terminal 状态（与 1.7 相同规则）。
 不能仅仅因为存在 PR 就自动要求完整本地套件。小文档 PR 或单模块 PR 不自动
 要求完整本地套件。
 
+提交前可运行机械 scope audit 工具（DP2 implemented，
+[scripts/audit_pr.py](scripts/audit_pr.py)）：
+
+```
+python scripts/audit_pr.py --base <base> --head <head> --allow <path_or_prefix> ...
+```
+
+它只检查 changed-file list 与显式 allow 规则是否一致（read-only，不访问
+GitHub / network），是 scope audit 的机械部分；independent review 仍由人类
+或独立审查者判断。详见 [docs/development_protocol_v1.md](docs/development_protocol_v1.md)
+第 4.3 节。
+
 ### LEVEL 3 — authoritative full verification
 
 - GitHub final-head CI，按仓库策略

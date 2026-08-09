@@ -93,6 +93,11 @@ affected regression surface 与完整套件可以在本地以并行 pytest 进�
 
 ### 4.3 自动化 PR audit（Automated PR Audit）
 
+**状态：DP2 implemented**。实现为 [scripts/audit_pr.py](../scripts/audit_pr.py)
+（read-only、确定性、无 GitHub / network 访问；测试见
+[tests/test_audit_pr.py](../tests/test_audit_pr.py)）。CI 集成是后续独立任务，
+不在 DP2 范围内。
+
 脚本化的 PR audit，机械地检查冻结范围契约（changed-file list 与 scope
 一致、无 product / version / dependency / API / CLI / schema / workflow
 变更），无需人类或 agent 重读整个 diff。audit 是审查的机械部分；
@@ -100,7 +105,7 @@ independent review 仍由人类或独立审查者判断。
 
 ### 4.4 仓库原生 playbooks / handoff（Repository-Native Playbooks / Handoff）
 
-本仓库现在携带 playbooks 与 agent 执行契约
+**状态：DP1 implemented**。本仓库现在携带 playbooks 与 agent 执行契约
 （[DEVELOPMENT_PLAYBOOK.md](../DEVELOPMENT_PLAYBOOK.md)、
 [RELEASE_PLAYBOOK.md](../RELEASE_PLAYBOOK.md)、
 [AGENT_HANDOFF.md](../AGENT_HANDOFF.md)），未来任务引用它们而不是在每次
