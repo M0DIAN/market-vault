@@ -1,6 +1,6 @@
 # MarketVault v0.7.0 Direction: Python Client and Read-only Artifact Access
 
-Status: planned feature release; PR-1 baseline and API-contract stage
+Status: active feature development; PR-2 ArtifactClient foundation stage
 
 Baseline:
 
@@ -12,20 +12,36 @@ GitHub Release: MarketVault v0.6.1
 package version at planning time: 0.6.1
 ```
 
+Progress / current state:
+
 ```text
+PR-1: COMPLETE / MERGED / MAIN VERIFIED
+PR-2: CURRENT
+PR-3: NOT STARTED
+PR-4: NOT STARTED
+PR-5: NOT STARTED
+PR-6: NOT STARTED
+package: 0.6.1
 v0.7.0: NOT RELEASED
-PR-1: CURRENT
-PR-2: NOT STARTED
+```
+
+PR-1 record:
+
+```text
+PR #48 merged at 2026-08-08T23:50:24Z
+squash/main: bad62ee51e8eda03c7c5f20ac858973923e5f93d
+main CI: 31284875166 SUCCESS
+package: 0.6.1
 ```
 
 This document defines the scope, non-goals, and fixed PR sequence for the
 V0.7.0 "Python Client and Read-only Artifact Access" feature release.
 V0.7.0 delivers a settings-independent Python artifact client that serves
 verified immutable artifacts through the existing formal verified
-readers. PR-1 is the post-v0.6.1 release baseline, the existing Python API
-audit (`docs/v0_7_0_python_api_audit.md`), and the Python Client boundary
-contract (`docs/contracts/python_client.md`); PR-1 implements no client
-production code.
+readers. PR-1 established the post-v0.6.1 release baseline, the existing
+Python API audit (`docs/v0_7_0_python_api_audit.md`), and the Python
+Client boundary contract (`docs/contracts/python_client.md`). PR-2
+implements the settings-independent `ArtifactClient` foundation.
 
 ## 1. Goals
 
@@ -132,7 +148,7 @@ PyPI/TestPyPI deferred
 
 ## 6. PR-1 boundary
 
-PR-1 (this PR) may:
+PR-1 (the merged baseline PR) may:
 
 - seal the v0.6.1 formal GitHub release state;
 - audit the existing Python public API;
@@ -151,6 +167,26 @@ PR-1 must not:
 - bump the package version (stays 0.6.1);
 - change dependencies;
 - create the v0.7.0 tag or GitHub Release.
+
+## 6.1 PR-2 boundary
+
+PR-2 (this PR) may implement only:
+
+- the `ArtifactClient` class foundation;
+- a stateless zero-argument constructor;
+- the lazy top-level package export;
+- foundation tests and the fresh-wheel public API smoke.
+
+PR-2 must not implement:
+
+- Canonical reader methods;
+- Dataset reader methods;
+- Dataset Catalog reader methods;
+- filesystem artifact access;
+- settings;
+- discovery / latest;
+- network / OpenD;
+- future method stubs.
 
 ## 7. Acceptance principles
 

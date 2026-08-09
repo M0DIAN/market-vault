@@ -1,17 +1,20 @@
 # MarketVault Python Client Contract
 
-Status: boundary contract; not implemented in released v0.6.1
+Status: PR-2 foundation implemented in v0.7.0 development; artifact read capabilities not implemented
 
 Target release: v0.7.0
 
-Planned public root: `ArtifactClient`
+Public root: `ArtifactClient`
 
-PR-1: contract only. Implementation begins in PR-2+ (see
+Formal v0.6.1 GitHub Release artifacts DO NOT contain `ArtifactClient`.
+Current unreleased v0.7.0 development introduces the `ArtifactClient`
+foundation while the package metadata remains 0.6.1 under the frozen version policy.
+
+PR-2: foundation implemented (`ArtifactClient()` constructs a stateless,
+settings-independent client).
+PR-3: Canonical + Dataset verified read-only access.
+PR-4: Dataset Catalog verified read-only access (see
 `docs/v0_7_0_direction.md`).
-
-This contract freezes the boundary of the planned settings-independent
-Python artifact client. The client is **not implemented** in v0.6.1:
-`from market_vault import ArtifactClient` must fail today.
 
 ## 13.1 Existing MarketVault compatibility
 
@@ -25,12 +28,14 @@ The v0.7 `ArtifactClient` is separate. `ArtifactClient` must not alter:
 
 ## 13.2 Constructor
 
-Planned:
+PR-2 foundation implemented:
 
 ```python
 ArtifactClient()
 ```
 
+- Zero arguments.
+- Stateless.
 - No required settings.
 - No default settings path.
 - No implicit `config/settings.yaml`.
@@ -51,6 +56,10 @@ Planned capabilities:
 - Dataset Catalog verified access;
 - Python-side read-only Catalog lookup/filter access, only if implemented
   through one shared verified authority.
+
+PR-2 implements none of them.
+PR-3: Canonical + Dataset verified read-only access.
+PR-4: Dataset Catalog verified read-only access.
 
 No build / materialize / generate / repair / write APIs.
 

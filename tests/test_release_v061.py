@@ -531,6 +531,9 @@ def test_v061_dataset_exports_are_public():
 def run_check_release(repo: Path) -> subprocess.CompletedProcess:
     env = dict(os.environ)
     env["PYTHONPATH"] = str(repo / "src")
+    # Force UTF-8 child stdout so the utf-8 decode below matches on any
+    # locale (Windows GBK would otherwise mangle non-ASCII checker facts).
+    env["PYTHONIOENCODING"] = "utf-8"
     return subprocess.run(
         [sys.executable, str(repo / "scripts" / "check_release.py")],
         cwd=repo,
@@ -2229,12 +2232,20 @@ def test_release_checker_fails_when_ci_claims_v061_released(tmp_path):
 def test_v070_direction_document_states_baseline_and_sequence():
     text = (ROOT / "docs" / "v0_7_0_direction.md").read_text(encoding="utf-8")
     assert "# MarketVault v0.7.0 Direction: Python Client and Read-only Artifact Access" in text
-    assert "Status: planned feature release; PR-1 baseline and API-contract stage" in text
+    assert "Status: active feature development; PR-2 ArtifactClient foundation stage" in text
     assert "base version: v0.6.1" in text
     assert "37614d539171ef7b738e47415f3cd6ca2de332d1" in text
     assert "v0.7.0: NOT RELEASED" in text
-    assert "PR-1: CURRENT" in text
-    assert "PR-2: NOT STARTED" in text
+    assert "PR-1: COMPLETE / MERGED / MAIN VERIFIED" in text
+    assert "PR-2: CURRENT" in text
+    assert "PR-3: NOT STARTED" in text
+    assert "PR-4: NOT STARTED" in text
+    assert "PR-5: NOT STARTED" in text
+    assert "PR-6: NOT STARTED" in text
+    assert "PR #48 merged at 2026-08-08T23:50:24Z" in text
+    assert "bad62ee51e8eda03c7c5f20ac858973923e5f93d" in text
+    assert "31284875166" in text
+    assert "package: 0.6.1" in text
     for stage in (
         "PR-1 — Post-v0.6.1 release baseline",
         "PR-2 — Settings-independent ArtifactClient foundation",
@@ -2253,10 +2264,27 @@ def test_v070_direction_document_states_baseline_and_sequence():
     assert "PR-6: 0.6.1 -> 0.7.0" in text
     assert "the version is bumped to 0.7.0 only in PR-6" in text
     assert "No early 0.7.0 version bump" in text
-    # The Python Client is planned, not implemented; v0.7.0 is not
-    # released.
+    # PR-2 implements only the foundation; no read capability has started
+    # and v0.7.0 is not released.
+    for boundary in (
+        "PR-2 (this PR) may implement only",
+        "the `ArtifactClient` class foundation",
+        "a stateless zero-argument constructor",
+        "the lazy top-level package export",
+        "PR-2 must not implement",
+        "Canonical reader methods",
+        "Dataset reader methods",
+        "Dataset Catalog reader methods",
+        "filesystem artifact access",
+        "discovery / latest",
+        "network / OpenD",
+        "future method stubs",
+    ):
+        assert boundary in text
     assert "ArtifactClient is implemented" not in text
     assert "from market_vault import ArtifactClient" not in text
+    assert "PR-2: NOT STARTED" not in text
+    assert "PR-3: CURRENT" not in text
     assert "V0.7.0 is released" not in text
     for boundary in (
         "No new CLI command",
@@ -2287,12 +2315,21 @@ def test_v070_python_client_contract_states_boundaries():
         encoding="utf-8"
     )
     assert "# MarketVault Python Client Contract" in text
-    assert "Status: boundary contract; not implemented in released v0.6.1" in text
+    assert "Status: PR-2 foundation implemented in v0.7.0 development" in text
+    assert "artifact read capabilities not implemented" in text
     assert "Target release: v0.7.0" in text
-    assert "Planned public root: `ArtifactClient`" in text
-    assert "must fail today" in text
+    assert "Public root: `ArtifactClient`" in text
+    assert "Formal v0.6.1 GitHub Release artifacts" in text
+    assert "DO NOT contain `ArtifactClient`" in text
+    assert "package metadata remains 0.6.1" in text
+    assert "frozen version policy" in text
+    assert "PR-2 implements none of them" in text
+    assert "PR-3: Canonical + Dataset verified read-only access" in text
+    assert "PR-4: Dataset Catalog verified read-only access" in text
     for section in range(1, 11):
         assert f"## 13.{section}" in text
+    assert "Zero arguments" in text
+    assert "Stateless" in text
     assert "No required settings" in text
     assert "No default settings path" in text
     assert "No implicit `config/settings.yaml`" in text
@@ -2348,7 +2385,17 @@ def test_v070_python_client_contract_states_boundaries():
         "dependency modernization",
     ):
         assert non_goal in text
+    # Only the PR-2 foundation is implemented; the full client, its
+    # constructor capability, and any read access are not.
     assert "ArtifactClient is implemented" not in text
+    assert "ArtifactClient() is implemented" not in text
+    for claim in (
+        "Canonical read access is implemented",
+        "Dataset read access is implemented",
+        "Catalog read access is implemented",
+        "read access is implemented in PR-2",
+    ):
+        assert claim not in text
 
 
 def test_v070_python_api_audit_states_audit_facts():
@@ -2380,11 +2427,14 @@ def test_v070_python_api_audit_states_audit_facts():
     assert "(through `backfill`/`plan_backfill`)" not in text
 
 
-def test_artifact_client_not_importable():
-    # The Python Client is planned, not implemented: `from market_vault
-    # import ArtifactClient` must fail in PR-1.
-    with pytest.raises(ImportError):
-        from market_vault import ArtifactClient  # noqa: F401
+def test_artifact_client_foundation_importable():
+    # PR-2 implements the ArtifactClient foundation: `from market_vault
+    # import ArtifactClient` succeeds and `ArtifactClient()` constructs a
+    # stateless settings-independent instance.
+    from market_vault import ArtifactClient  # noqa: F401
+
+    client = ArtifactClient()
+    assert not hasattr(client, "__dict__")
 
 
 def test_release_checker_fails_when_release_notes_tamper_release_commit(
@@ -2675,38 +2725,312 @@ def test_release_checker_fails_when_ci_reverts_marker_to_prep_ok(tmp_path):
     ) in result.stdout
 
 
-def test_release_checker_fails_when_ci_claims_v070_public_api_import_ok(
+def test_release_checker_fails_when_ci_loses_v070_public_api_import_ok(
     tmp_path,
 ):
-    # Mutation guard 18: the V070_PUBLIC_API_IMPORT_OK marker must never
-    # appear before the Python Client is implemented.
+    # Mutation guard 13: the CI fresh-wheel smoke must carry the
+    # V070_PUBLIC_API_IMPORT_OK marker once PR-2 implements the
+    # ArtifactClient foundation.
     repo = copy_repo(tmp_path)
     ci = repo / ".github" / "workflows" / "ci.yml"
     ci.write_text(
-        ci.read_text(encoding="utf-8")
-        + "\necho 'V070_PUBLIC_API_IMPORT_OK'\n",
+        ci.read_text(encoding="utf-8").replace(
+            "print('V070_PUBLIC_API_IMPORT_OK')",
+            "print('V070_PUBLIC_API_IMPORT_MISSING')",
+        ),
         encoding="utf-8",
     )
     result = run_check_release(repo)
     assert result.returncode == 1
     assert (
-        "must never claim the V070_PUBLIC_API_IMPORT_OK marker "
-        "before the Python Client is implemented"
+        "must carry the V070_PUBLIC_API_IMPORT_OK marker"
     ) in result.stdout
 
 
-def test_release_checker_fails_when_src_adds_artifact_client_module(tmp_path):
-    # Mutation guard (no-production-implementation audit): a new
-    # ArtifactClient production module in src/ must fail the checker.
+def test_release_checker_fails_when_src_removes_artifact_client_module(
+    tmp_path,
+):
+    # Mutation guard 1: removing the ArtifactClient production module must
+    # fail the checker: the PR-2 foundation is required.
     repo = copy_repo(tmp_path)
-    src = repo / "src" / "market_vault"
-    (src / "artifact_client.py").write_text(
-        "class ArtifactClient:\n    pass\n",
+    (repo / "src" / "market_vault" / "artifact_client.py").unlink()
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "src/market_vault/artifact_client.py is missing" in result.stdout
+
+
+def test_release_checker_fails_when_artifact_client_removed_from_all(
+    tmp_path,
+):
+    # Mutation guard 2: removing ArtifactClient from __all__ must fail the
+    # checker: it is a required top-level public export.
+    repo = copy_repo(tmp_path)
+    init_path = repo / "src" / "market_vault" / "__init__.py"
+    init_path.write_text(
+        init_path.read_text(encoding="utf-8").replace(
+            '    "ArtifactClient",\n',
+            "",
+        ),
         encoding="utf-8",
     )
     result = run_check_release(repo)
     assert result.returncode == 1
-    assert "contains the ArtifactClient symbol" in result.stdout
+    assert (
+        "src/market_vault/__init__.py __all__ must contain 'ArtifactClient'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_artifact_client_export_becomes_eager(
+    tmp_path,
+):
+    # Mutation guard 3: an eager top-level import of the artifact_client
+    # module must fail the checker: the export must stay lazy through
+    # __getattr__.
+    repo = copy_repo(tmp_path)
+    init_path = repo / "src" / "market_vault" / "__init__.py"
+    init_path.write_text(
+        "from .artifact_client import ArtifactClient\n"
+        + init_path.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "ArtifactClient must be exported lazily through __getattr__, "
+        "never through an eager top-level import"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_constructor_gains_settings_argument(
+    tmp_path,
+):
+    # Mutation guard 4: a settings argument on the constructor must fail
+    # the checker: the constructor is strictly zero-argument.
+    repo = copy_repo(tmp_path)
+    module = repo / "src" / "market_vault" / "artifact_client.py"
+    module.write_text(
+        module.read_text(encoding="utf-8").replace(
+            "def __init__(self) -> None:",
+            "def __init__(self, settings=None) -> None:",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "ArtifactClient.__init__ must take exactly self and no "
+        "positional/keyword configuration arguments"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_constructor_gains_root_argument(
+    tmp_path,
+):
+    # Mutation guard 5: a root/path argument on the constructor must fail
+    # the checker: the constructor is strictly zero-argument.
+    repo = copy_repo(tmp_path)
+    module = repo / "src" / "market_vault" / "artifact_client.py"
+    module.write_text(
+        module.read_text(encoding="utf-8").replace(
+            "def __init__(self) -> None:",
+            "def __init__(self, root=None) -> None:",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "ArtifactClient.__init__ must take exactly self and no "
+        "positional/keyword configuration arguments"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_constructor_gains_path_argument(
+    tmp_path,
+):
+    # Mutation guard 5b: a path argument on the constructor must fail the
+    # checker: the constructor is strictly zero-argument.
+    repo = copy_repo(tmp_path)
+    module = repo / "src" / "market_vault" / "artifact_client.py"
+    module.write_text(
+        module.read_text(encoding="utf-8").replace(
+            "def __init__(self) -> None:",
+            "def __init__(self, path=None) -> None:",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "ArtifactClient.__init__ must take exactly self and no "
+        "positional/keyword configuration arguments"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_constructor_does_work(tmp_path):
+    # Mutation guard 5c: a constructor body that performs work (any
+    # non-docstring statement) must fail the checker.
+    repo = copy_repo(tmp_path)
+    module = repo / "src" / "market_vault" / "artifact_client.py"
+    module.write_text(
+        module.read_text(encoding="utf-8").replace(
+            '        """Initialize the foundation with no configuration '
+            "and no side\n        effects.\"\"\"\n",
+            "        return None\n",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "ArtifactClient.__init__ body must not perform any work "
+        "(no calls, no filesystem/network/time access)"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_slots_removed(tmp_path):
+    # Mutation guard 6: removing the __slots__ stateless boundary must
+    # fail the checker.
+    repo = copy_repo(tmp_path)
+    module = repo / "src" / "market_vault" / "artifact_client.py"
+    module.write_text(
+        module.read_text(encoding="utf-8").replace(
+            "    __slots__ = ()\n",
+            "",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "ArtifactClient must keep the stateless boundary __slots__ == ()"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_module_imports_config_or_storage(
+    tmp_path,
+):
+    # Mutation guard 7: the foundation module must never import
+    # market_vault.config or market_vault.storage.
+    repo = copy_repo(tmp_path)
+    module = repo / "src" / "market_vault" / "artifact_client.py"
+    module.write_text(
+        module.read_text(encoding="utf-8")
+        + "\nfrom market_vault import config\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "artifact_client.py must not import anything except "
+        "__future__.annotations"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_module_imports_canonical_or_dataset(
+    tmp_path,
+):
+    # Mutation guard 8: the foundation module must never import
+    # market_vault.canonical or market_vault.dataset (reader delegation
+    # belongs to PR-3 / PR-4).
+    repo = copy_repo(tmp_path)
+    module = repo / "src" / "market_vault" / "artifact_client.py"
+    module.write_text(
+        module.read_text(encoding="utf-8")
+        + "\nfrom market_vault.dataset import load_verified_dataset\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "artifact_client.py must not import anything except "
+        "__future__.annotations"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_module_imports_fs_time_network(
+    tmp_path,
+):
+    # Mutation guard 9: the foundation module must never import a
+    # filesystem / time / network dependency.
+    repo = copy_repo(tmp_path)
+    module = repo / "src" / "market_vault" / "artifact_client.py"
+    module.write_text(
+        module.read_text(encoding="utf-8") + "\nfrom pathlib import Path\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "artifact_client.py must not import anything except "
+        "__future__.annotations"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_client_gets_public_read_method(
+    tmp_path,
+):
+    # Mutation guard 10: a public read method on ArtifactClient must fail
+    # the checker: PR-2 implements no business method.
+    repo = copy_repo(tmp_path)
+    module = repo / "src" / "market_vault" / "artifact_client.py"
+    module.write_text(
+        module.read_text(encoding="utf-8").replace(
+            "class ArtifactClient:",
+            "class ArtifactClient:\n"
+            "    def open_canonical(self) -> None:\n"
+            "        return None\n",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "ArtifactClient must not define business methods in PR-2 "
+        "(found: open_canonical)"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_direction_claims_pr3_started(
+    tmp_path,
+):
+    # Mutation guard 11: the direction document claiming PR-3 started must
+    # fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_7_0_direction.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "PR-3: NOT STARTED",
+            "PR-3: CURRENT",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "contains the false implementation/release claim 'PR-3: CURRENT'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_contract_claims_read_access_in_pr2(
+    tmp_path,
+):
+    # Mutation guard 12: the contract claiming Canonical / Dataset /
+    # Catalog read access is already implemented in PR-2 must fail the
+    # checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "contracts" / "python_client.md"
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        + "\nCanonical read access is implemented in PR-2.\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "contains the false PR-2 read-capability claim "
+        "'Canonical read access is implemented'"
+    ) in result.stdout
 
 
 def test_release_checker_fails_when_contract_drops_schema_v2_non_goal(tmp_path):
@@ -3487,7 +3811,10 @@ def test_ci_contains_061_assertions_and_marker():
     assert "V061_PUBLIC_API_IMPORT_OK" in text
     assert "V061_RELEASE_STATE_OK" in text
     assert "V061_RELEASE_PREP_OK" not in text
-    assert "V070_PUBLIC_API_IMPORT_OK" not in text
+    # PR-2: the ArtifactClient foundation fresh-wheel smoke is required.
+    assert "V070_PUBLIC_API_IMPORT_OK" in text
+    assert "from market_vault import ArtifactClient" in text
+    assert "ArtifactClient()" in text
     assert "V061_RELEASED" not in text
     assert "generate_sample_requests" in text
     assert '".b64"' in text

@@ -14,6 +14,7 @@ part of release readiness.
 
 from __future__ import annotations
 
+import ast
 import os
 import re
 import subprocess
@@ -38,6 +39,13 @@ CI_METADATA_VERSION_MARKERS = (
 )
 # The CI fresh-wheel public API smoke marker must use the v0.6.1 marker.
 CI_PUBLIC_API_MARKER = "V061_PUBLIC_API_IMPORT_OK"
+# The CI fresh-wheel smoke must also exercise the PR-2 ArtifactClient
+# foundation and print its own v0.7.0 marker.
+CI_V070_PUBLIC_API_MARKER = "V070_PUBLIC_API_IMPORT_OK"
+CI_V070_PUBLIC_API_IMPORT_LINES = (
+    "from market_vault import ArtifactClient",
+    "ArtifactClient()",
+)
 # The exact NumPy timedelta warning-as-error guard that must stay in
 # pyproject.toml; an ignore-based substitute is never accepted.
 WARNING_GUARD_MARKER = (
@@ -1212,18 +1220,28 @@ README_V061_SECTION_MARKERS = (
 README_V061_STALE_PHRASES = (
     "the v0.6.1 formal release does not exist yet",
 )
-# Facts the v0.7.0 direction document must state: the planned feature
-# release status, the v0.6.1 baseline, the NOT RELEASED v0.7.0 state, the
-# fixed 6-PR sequence with the exact stage names, the version rules
-# (0.6.1 through PR-5, 0.7.0 only in PR-6), and the explicit non-goals.
+# Facts the v0.7.0 direction document must state: the active PR-2
+# feature-development status, the v0.6.1 baseline, the PR-1 merged record,
+# the NOT RELEASED v0.7.0 state, the fixed 6-PR sequence with the exact
+# stage names, the version rules (0.6.1 through PR-5, 0.7.0 only in PR-6),
+# the explicit non-goals, and the PR-2 boundary.
 V070_DIRECTION_FACTS = (
     "# MarketVault v0.7.0 Direction: Python Client and Read-only Artifact Access",
-    "Status: planned feature release; PR-1 baseline and API-contract stage",
+    "Status: active feature development; PR-2 ArtifactClient foundation stage",
     "base version: v0.6.1",
     "37614d539171ef7b738e47415f3cd6ca2de332d1",
     "v0.7.0: NOT RELEASED",
-    "PR-1: CURRENT",
-    "PR-2: NOT STARTED",
+    "PR-1: COMPLETE / MERGED / MAIN VERIFIED",
+    "PR-2: CURRENT",
+    "PR-3: NOT STARTED",
+    "PR-4: NOT STARTED",
+    "PR-5: NOT STARTED",
+    "PR-6: NOT STARTED",
+    "package: 0.6.1",
+    "PR-1 record",
+    "PR #48 merged at 2026-08-08T23:50:24Z",
+    "bad62ee51e8eda03c7c5f20ac858973923e5f93d",
+    "31284875166",
     "PR-1 — Post-v0.6.1 release baseline",
     "PR-2 — Settings-independent ArtifactClient foundation",
     "PR-3 — Canonical + Dataset verified read-only client access",
@@ -1239,6 +1257,19 @@ V070_DIRECTION_FACTS = (
     "PR-6: 0.6.1 -> 0.7.0",
     "the version is bumped to 0.7.0 only in PR-6",
     "No early 0.7.0 version bump",
+    "PR-2 (this PR) may implement only",
+    "the `ArtifactClient` class foundation",
+    "a stateless zero-argument constructor",
+    "the lazy top-level package export",
+    "foundation tests and the fresh-wheel public API smoke",
+    "PR-2 must not implement",
+    "Canonical reader methods",
+    "Dataset reader methods",
+    "Dataset Catalog reader methods",
+    "filesystem artifact access",
+    "discovery / latest",
+    "network / OpenD",
+    "future method stubs",
     "No new CLI command",
     "No REST API",
     "No HTTP",
@@ -1257,13 +1288,20 @@ V070_DIRECTION_FACTS = (
     "PyPI/TestPyPI deferred",
 )
 # Affirmative implementation / release claims that must never appear in
-# the v0.7.0 direction document: the Python Client is planned, not
-# implemented, and v0.7.0 is not released.
+# the v0.7.0 direction document: only the PR-2 foundation is implemented,
+# no read capability has started, and v0.7.0 is not released.
 V070_DIRECTION_STALE_PHRASES = (
     "ArtifactClient is implemented",
     "ArtifactClient is available",
     "ArtifactClient() is implemented",
     "from market_vault import ArtifactClient",
+    "PR-1: CURRENT",
+    "PR-1: NOT STARTED",
+    "PR-2: NOT STARTED",
+    "PR-3: CURRENT",
+    "PR-4: CURRENT",
+    "PR-5: CURRENT",
+    "PR-6: CURRENT",
     "V0.7.0 is released",
     "v0.7.0 has been released",
     "v0.7.0 released on",
@@ -1276,14 +1314,23 @@ V070_DIRECTION_STALE_PHRASES = (
 # non-goals.
 V070_CONTRACT_FACTS = (
     "# MarketVault Python Client Contract",
-    "Status: boundary contract; not implemented in released v0.6.1",
+    "Status: PR-2 foundation implemented in v0.7.0 development",
+    "artifact read capabilities not implemented",
     "Target release: v0.7.0",
-    "Planned public root: `ArtifactClient`",
-    "PR-1: contract only",
-    "must fail today",
+    "Public root: `ArtifactClient`",
+    "Formal v0.6.1 GitHub Release artifacts",
+    "DO NOT contain `ArtifactClient`",
+    "package metadata remains 0.6.1",
+    "frozen version policy",
+    "PR-3: Canonical + Dataset verified read-only access",
+    "PR-4: Dataset Catalog verified read-only access",
+    "PR-2 implements none of them",
     "## 13.1 Existing MarketVault compatibility",
     "the `MarketVault` constructor",
     "## 13.2 Constructor",
+    "PR-2 foundation implemented",
+    "Zero arguments",
+    "Stateless",
     "## 13.3 Read-only scope",
     "## 13.4 Trust boundary",
     "## 13.5 Path contract",
@@ -1346,13 +1393,27 @@ V070_CONTRACT_FACTS = (
     "No dependency modernization",
 )
 # Implemented claims that must never appear in the Python Client contract:
-# the contract freezes the boundary only; implementation begins in PR-2+.
+# only the PR-2 foundation is implemented; the full client and its
+# constructor capability are not.
 V070_CONTRACT_IMPLEMENTED_PHRASES = (
     "ArtifactClient is implemented",
     "ArtifactClient is available",
     "ArtifactClient() is implemented",
     "class ArtifactClient",
     "Implementation status: implemented",
+)
+# False read-capability claims that must never appear in the Python Client
+# contract even when the required PR-2 foundation markers are present:
+# Canonical / Dataset / Dataset Catalog read access is PR-3 / PR-4 and is
+# never implemented by PR-2.
+V070_CONTRACT_FALSE_READ_CLAIMS = (
+    "Canonical read access is implemented",
+    "Dataset read access is implemented",
+    "Catalog read access is implemented",
+    "read access is implemented in PR-2",
+    "PR-2 implements Canonical",
+    "PR-2 implements Dataset",
+    "PR-2 implements Catalog",
 )
 # Facts the v0.7.0 existing Python API audit document must state: the
 # audited top-level package behavior, the existing MarketVault
@@ -2599,8 +2660,7 @@ def check_ci_pr8(root: Path) -> list[str]:
 def check_ci_v061_release_state(root: Path) -> list[str]:
     """The CI package job carries the ``V061_RELEASE_STATE_OK`` marker
     (the v0.6.1 released-state marker), the stale preparation marker
-    ``V061_RELEASE_PREP_OK`` is never restored, the v0.7 production marker
-    ``V070_PUBLIC_API_IMPORT_OK`` never appears, the public API smoke
+    ``V061_RELEASE_PREP_OK`` is never restored, the public API smoke
     imports ``generate_sample_requests``, and the wheel hygiene step
     forbids ``.b64`` files (the frozen static reference artifact fixture
     must never ship inside the wheel)."""
@@ -2618,11 +2678,6 @@ def check_ci_v061_release_state(root: Path) -> list[str]:
         failures.append(
             "CI must never restore the stale V061_RELEASE_PREP_OK marker"
         )
-    if "V070_PUBLIC_API_IMPORT_OK" in text:
-        failures.append(
-            "CI must never claim the V070_PUBLIC_API_IMPORT_OK marker "
-            "before the Python Client is implemented"
-        )
     if "V061_RELEASED" in text:
         failures.append(
             "CI package job must never claim the V061_RELEASED state"
@@ -2636,6 +2691,29 @@ def check_ci_v061_release_state(root: Path) -> list[str]:
         failures.append(
             "CI wheel hygiene forbidden tuple must include \".b64\""
         )
+    return failures
+
+
+def check_ci_v070_public_api_smoke(root: Path) -> list[str]:
+    """The CI fresh-wheel smoke must exercise the PR-2 ArtifactClient
+    foundation (``from market_vault import ArtifactClient`` and
+    ``ArtifactClient()``) and carry the ``V070_PUBLIC_API_IMPORT_OK``
+    marker."""
+    path = root / ".github" / "workflows" / "ci.yml"
+    if not path.exists():
+        return [".github/workflows/ci.yml is missing"]
+    text = path.read_text(encoding="utf-8")
+    failures = []
+    if CI_V070_PUBLIC_API_MARKER not in text:
+        failures.append(
+            "CI fresh-wheel smoke must carry the "
+            f"{CI_V070_PUBLIC_API_MARKER} marker"
+        )
+    for line in CI_V070_PUBLIC_API_IMPORT_LINES:
+        if line not in text:
+            failures.append(
+                f"CI fresh-wheel smoke must run {line}"
+            )
     return failures
 
 
@@ -2976,9 +3054,11 @@ def check_v070_direction(root: Path) -> list[str]:
 
 
 def check_v070_python_client_contract(root: Path) -> list[str]:
-    """The Python Client boundary contract exists, states the
-    not-implemented status, the planned ArtifactClient root, and the
-    13.1-13.10 boundary clauses, and contains no implemented claim."""
+    """The Python Client boundary contract exists, states the PR-2
+    foundation-implemented status, the ArtifactClient root, and the
+    13.1-13.10 boundary clauses, contains no full-client implemented
+    claim, and never claims Canonical / Dataset / Catalog read access is
+    implemented by PR-2."""
     path = root / "docs" / "contracts" / "python_client.md"
     if not path.exists():
         return ["docs/contracts/python_client.md is missing"]
@@ -3001,6 +3081,12 @@ def check_v070_python_client_contract(root: Path) -> list[str]:
             failures.append(
                 "docs/contracts/python_client.md contains the false "
                 f"implemented claim {phrase!r}"
+            )
+    for claim in V070_CONTRACT_FALSE_READ_CLAIMS:
+        if claim in text:
+            failures.append(
+                "docs/contracts/python_client.md contains the false "
+                f"PR-2 read-capability claim {claim!r}"
             )
     return failures
 
@@ -3031,28 +3117,171 @@ def check_v070_python_api_audit(root: Path) -> list[str]:
     return failures
 
 
-def check_v070_no_artifact_client_in_src(root: Path) -> list[str]:
-    """The Python Client is planned, not implemented: the package source
-    tree must contain no ``ArtifactClient`` production symbol and no
-    artifact-client module. ``from market_vault import ArtifactClient``
-    must still fail in PR-1."""
-    src = root / "src" / "market_vault"
-    failures = []
-    if not src.is_dir():
-        return ["src/market_vault is missing"]
-    for path in sorted(src.rglob("*.py")):
-        text = path.read_text(encoding="utf-8")
-        for line_no, line in enumerate(text.splitlines(), 1):
-            if "ArtifactClient" in line:
-                failures.append(
-                    f"{path.relative_to(root)}:{line_no} contains the "
-                    "ArtifactClient symbol (the Python Client must not be "
-                    "implemented)"
-                )
-    if (src / "artifact_client.py").exists():
+def _check_artifact_client_module(module: Path) -> list[str]:
+    """AST structural checks for the PR-2 ArtifactClient foundation
+    module: exactly one ``ArtifactClient`` class, the stateless
+    ``__slots__ == ()`` boundary, no custom method besides ``__init__``,
+    a strict zero-argument ``__init__`` whose body performs no work, and
+    no module import other than ``from __future__ import annotations``."""
+    failures: list[str] = []
+    try:
+        tree = ast.parse(module.read_text(encoding="utf-8"))
+    except SyntaxError:
+        failures.append(f"{module.name} is not valid Python")
+        return failures
+    clients = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "ArtifactClient"
+    ]
+    if len(clients) != 1:
         failures.append(
-            "src/market_vault/artifact_client.py must not exist in PR-1"
+            f"{module.name} must define class ArtifactClient exactly once"
         )
+        return failures
+    cls = clients[0]
+    methods = [
+        node
+        for node in cls.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+    custom = sorted(node.name for node in methods if node.name != "__init__")
+    if custom:
+        failures.append(
+            "ArtifactClient must not define business methods in PR-2 "
+            f"(found: {', '.join(custom)})"
+        )
+    if not any(
+        isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "__slots__"
+            for target in node.targets
+        )
+        and isinstance(node.value, ast.Tuple)
+        and not node.value.elts
+        for node in cls.body
+    ):
+        failures.append(
+            "ArtifactClient must keep the stateless boundary __slots__ == ()"
+        )
+    inits = [node for node in methods if node.name == "__init__"]
+    if len(inits) != 1:
+        failures.append(
+            "ArtifactClient must define exactly one __init__ method"
+        )
+    else:
+        args = inits[0].args
+        if (
+            args.posonlyargs
+            or len(args.args) != 1
+            or args.args[0].arg != "self"
+            or args.vararg is not None
+            or args.kwarg is not None
+            or args.kwonlyargs
+            or args.defaults
+            or args.kw_defaults
+        ):
+            failures.append(
+                "ArtifactClient.__init__ must take exactly self and no "
+                "positional/keyword configuration arguments"
+            )
+        if not all(
+            isinstance(node, ast.Expr)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+            for node in inits[0].body
+        ):
+            failures.append(
+                "ArtifactClient.__init__ body must not perform any work "
+                "(no calls, no filesystem/network/time access)"
+            )
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            failures.append(
+                "artifact_client.py must not import anything except "
+                "__future__.annotations"
+            )
+        elif isinstance(node, ast.ImportFrom):
+            if node.module != "__future__" or not any(
+                alias.name == "annotations" for alias in node.names
+            ):
+                failures.append(
+                    "artifact_client.py must not import anything except "
+                    "__future__.annotations"
+                )
+    return failures
+
+
+def check_v070_artifact_client_foundation(root: Path) -> list[str]:
+    """PR-2 required checks: the ArtifactClient foundation module exists
+    with the frozen minimal structure (exactly one ArtifactClient class,
+    ``__slots__ == ()``, no custom method besides ``__init__``, a strict
+    zero-argument side-effect-free ``__init__``, no module import besides
+    ``__future__``), and the top-level package exports ArtifactClient
+    lazily through ``__getattr__`` (never through an eager top-level
+    import) while keeping MarketVault and ``__version__`` in ``__all__``."""
+    failures = []
+    module = root / "src" / "market_vault" / "artifact_client.py"
+    if not module.exists():
+        failures.append("src/market_vault/artifact_client.py is missing")
+    else:
+        failures.extend(_check_artifact_client_module(module))
+    init_path = root / "src" / "market_vault" / "__init__.py"
+    if not init_path.exists():
+        failures.append("src/market_vault/__init__.py is missing")
+        return failures
+    text = init_path.read_text(encoding="utf-8")
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        failures.append("src/market_vault/__init__.py is not valid Python")
+        return failures
+    for export in ("ArtifactClient", "MarketVault", "__version__"):
+        if not any(
+            isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "__all__"
+                for target in node.targets
+            )
+            and isinstance(node.value, ast.List)
+            and any(
+                isinstance(elt, ast.Constant) and elt.value == export
+                for elt in node.value.elts
+            )
+            for node in tree.body
+        ):
+            failures.append(
+                "src/market_vault/__init__.py __all__ must contain "
+                f"{export!r}"
+            )
+    if "def __getattr__" not in text:
+        failures.append(
+            "src/market_vault/__init__.py must define __getattr__ for the "
+            "lazy public exports"
+        )
+    else:
+        getattr_index = text.index("def __getattr__")
+        lazy_import = "from .artifact_client import ArtifactClient"
+        if lazy_import not in text:
+            failures.append(
+                "src/market_vault/__init__.py __getattr__ must lazily "
+                "import ArtifactClient"
+            )
+        elif text.index(lazy_import) < getattr_index:
+            failures.append(
+                "ArtifactClient must be exported lazily through "
+                "__getattr__, never through an eager top-level import"
+            )
+        if 'if name == "MarketVault":' not in text:
+            failures.append(
+                "src/market_vault/__init__.py __getattr__ must keep the "
+                "lazy MarketVault branch"
+            )
+        if "from .api import MarketVault" not in text:
+            failures.append(
+                "src/market_vault/__init__.py __getattr__ must keep the "
+                "lazy MarketVault import"
+            )
     return failures
 
 
@@ -3165,7 +3394,7 @@ def main() -> int:
         ("v0.7.0 direction", check_v070_direction),
         ("v0.7.0 Python client contract", check_v070_python_client_contract),
         ("v0.7.0 Python API audit", check_v070_python_api_audit),
-        ("v0.7.0 no ArtifactClient in src", check_v070_no_artifact_client_in_src),
+        ("v0.7.0 ArtifactClient foundation", check_v070_artifact_client_foundation),
         ("CI auditability", check_ci_auditability),
         ("v0.6.1 CI package audit", check_v061_ci_package_audit),
         ("v0.6.0 ADR", check_v060_adr),
@@ -3182,6 +3411,7 @@ def main() -> int:
         ("pyarrow dependency", check_pyarrow_dependency),
         ("CI PR-8 portability", check_ci_pr8),
         ("CI v0.6.1 release state", check_ci_v061_release_state),
+        ("CI v0.7.0 public API smoke", check_ci_v070_public_api_smoke),
         ("old release notes", check_old_release_notes),
         ("warning guard", check_warning_guard),
         ("examples", check_examples),
