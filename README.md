@@ -25,6 +25,18 @@ PyPI: NOT PUBLISHED. TestPyPI: NOT PUBLISHED. See
 [docs/contracts/python_client.md](docs/contracts/python_client.md), and
 [docs/v0_7_0_python_client_usage.md](docs/v0_7_0_python_client_usage.md).
 
+## 开发流程
+
+MarketVault 的仓库级工程规范见：
+
+- [DEVELOPMENT_PLAYBOOK.md](DEVELOPMENT_PLAYBOOK.md) — 开发手册：标准 PR
+  生命周期与本地验证层级
+- [RELEASE_PLAYBOOK.md](RELEASE_PLAYBOOK.md) — 发布手册：正式 release gate
+- [AGENT_HANDOFF.md](AGENT_HANDOFF.md) — Agent 执行协议
+- [docs/development_protocol_v1.md](docs/development_protocol_v1.md) — 动机与路线图
+
+这些文档定义开发、发布、Agent handoff 和流程优化规范。
+
 ## V0.6.1 stability, auditability, and usability maintenance
 
 V0.6.1 adds NO new product capability. It is the fixed maintenance patch
