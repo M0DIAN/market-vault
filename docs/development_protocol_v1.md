@@ -125,7 +125,21 @@ authoritative truth 固化进 immutable release payload。DP1 只记录这条规
 无 network / GitHub API、fail-closed；pull_request 用 merge-base-correct
 three-dot diff，push 用直连 tree diff；rename 的 old + new path 都计入；
 验证见 [tests/test_ci_risk_tier.py](../tests/test_ci_risk_tier.py)）与
-[.github/workflows/ci.yml](../.github/workflows/ci.yml) 的 `classify` job。
+[.github/workflows/ci.yml](../.github/workflows/ci.yml) 的 step 级分类。
+
+分类在每个正式 job（`test` / `portability-pyarrow24` / `package`）内以一个
+`Classify change tier` step 运行，把 `CI_TIER` / `CI_TIER_REASON` 通过
+`$GITHUB_ENV` 导出。不新增 job：仓库的 release-auditability 契约固定
+CI 恰好有 4 个正式 job（`test`、`portability-pyarrow24`、`package`，
+package 的依赖字面为 `needs: [test, portability-pyarrow24]`，且
+`check_release.py` 断言 portability full-suite step 的 `run: python -m
+pytest` 与 step name 字面相邻），该契约是既有 immutable invariant。
+heavy steps 的 guard 为 `if: env.CI_TIER != 'docs_fast' && env.CI_TIER
+!= 'package_docs'`（package job：`!= 'docs_fast'`）。**fail-safe 硬性
+要求**：没有条件表达式可以让 unknown / unset tier 跳过 heavy validation
+——`CI_TIER` 未设置时 guard 恒为真，heavy validation 照常运行（等价
+FULL）。fast-path marker（`FULL_TESTS_SKIPPED_BY_POLICY` /
+`PACKAGE_BUILD_SKIPPED_BY_POLICY`）只在 fast tier 出现。
 
 三个保守 tier：
 
