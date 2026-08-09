@@ -3572,6 +3572,80 @@ def test_release_checker_fails_when_release_notes_formal_region_restores_candida
     ) in result.stdout
 
 
+def test_release_checker_fails_when_release_notes_restore_unstable_main_head(
+    tmp_path,
+):
+    # Post-release guard: the release-notes formal region must state the
+    # main HEAD at release sealing and must never restore the unstable
+    # current-state "main HEAD: <release commit>" wording, which becomes
+    # false as soon as the post-release PR merges.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "release_v0_7_0.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "main HEAD at release sealing: f25a50481b5ee718881acf5cb5ea5aa05bd32d93",
+            "main HEAD: f25a50481b5ee718881acf5cb5ea5aa05bd32d93",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "formal region contains the stale release claim "
+        "'main HEAD: f25a50481b5ee718881acf5cb5ea5aa05bd32d93'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_release_notes_tamper_sha256sums_file_hash(
+    tmp_path,
+):
+    # Post-release guard: tampering with the formal SHA256SUMS.txt file
+    # SHA-256 (the manifest file's own hash, distinct from its contents
+    # lines) must fail the checker — all three formal asset hashes are
+    # sealed.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "release_v0_7_0.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "8294805C21CEBE3A2D62465664F9A90E0CF4F3B02AE4F1A0651C7D7830403512",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the fact "
+        "'8294805C21CEBE3A2D62465664F9A90E0CF4F3B02AE4F1A0651C7D7830403512'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_release_notes_manifest_hash_replaced_by_contents(
+    tmp_path,
+):
+    # Post-release guard: the SHA256SUMS.txt file hash must not be
+    # replaced by the manifest contents lines (the reviewer-flagged
+    # confusion); the record must state the manifest file's own SHA-256
+    # and the two contents lines separately.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "release_v0_7_0.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "SHA256SUMS.txt\nSHA-256:\n"
+            "8294805C21CEBE3A2D62465664F9A90E0CF4F3B02AE4F1A0651C7D7830403512\n\n"
+            "Contents:",
+            "SHA256SUMS.txt\nSHA-256:",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the fact "
+        "'8294805C21CEBE3A2D62465664F9A90E0CF4F3B02AE4F1A0651C7D7830403512'"
+    ) in result.stdout
+
+
 def test_release_checker_fails_when_client_parses_manifest_itself(
     tmp_path,
 ):

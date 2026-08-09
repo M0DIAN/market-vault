@@ -7,7 +7,7 @@ The v0.7.0 release is formally released and sealed.
 ```text
 PR #53: MERGED
 release commit: f25a50481b5ee718881acf5cb5ea5aa05bd32d93
-main HEAD: f25a50481b5ee718881acf5cb5ea5aa05bd32d93
+main HEAD at release sealing: f25a50481b5ee718881acf5cb5ea5aa05bd32d93
 main CI: 31312887229
 tag: v0.7.0
 tag type: annotated
@@ -37,6 +37,9 @@ SHA-256:
 
 SHA256SUMS.txt
 SHA-256:
+8294805C21CEBE3A2D62465664F9A90E0CF4F3B02AE4F1A0651C7D7830403512
+
+Contents:
 c9b94d451b614ff4dea16a495258085f11c58f138f3f44c0a20e47d2309ba47f  market_vault-0.7.0-py3-none-any.whl
 604ad74eaf5e98c5faed930548e4346a7c1c4455b050295a2d82a43cbc6b21e1  market_vault-0.7.0.tar.gz
 ```

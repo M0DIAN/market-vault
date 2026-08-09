@@ -1605,10 +1605,11 @@ V070_CONTRACT_FALSE_READ_CLAIMS = (
     "Catalog query convenience is implemented",
 )
 # Facts the v0.7.0 release notes document must state: the formal release
-# status (PR #53 MERGED, the exact release commit / main CI / annotated
-# tag / GitHub Release / publishedAt / draft / prerelease state, PyPI /
-# TestPyPI NOT PUBLISHED), the formal wheel / sdist asset names and their
-# exact SHA-256 values, the historical release-preparation record, the
+# status (PR #53 MERGED, the exact release commit / the main HEAD at
+# release sealing / main CI / annotated tag / GitHub Release /
+# publishedAt / draft / prerelease state, PyPI / TestPyPI NOT PUBLISHED),
+# the formal wheel / sdist / SHA256SUMS.txt asset names and their exact
+# SHA-256 values, the historical release-preparation record, the
 # exact 6-PR merge record including the PR-6 release commit, and the
 # zero-product-capability scope. Facts that live in the historical
 # release-preparation record are checked against the full document;
@@ -1620,7 +1621,7 @@ V070_RELEASE_NOTES_FACTS = (
     "The v0.7.0 release is formally released and sealed",
     "PR #53: MERGED",
     "release commit: f25a50481b5ee718881acf5cb5ea5aa05bd32d93",
-    "main HEAD: f25a50481b5ee718881acf5cb5ea5aa05bd32d93",
+    "main HEAD at release sealing: f25a50481b5ee718881acf5cb5ea5aa05bd32d93",
     "main CI: 31312887229",
     "tag: v0.7.0",
     "tag type: annotated",
@@ -1635,6 +1636,8 @@ V070_RELEASE_NOTES_FACTS = (
     "the peeled tag commit equals the release commit",
     "exactly the wheel, the sdist, and the per-package",
     "`SHA256SUMS.txt` manifest",
+    "8294805C21CEBE3A2D62465664F9A90E0CF4F3B02AE4F1A0651C7D7830403512",
+    "Contents:",
     "market_vault-0.7.0-py3-none-any.whl",
     "C9B94D451B614FF4DEA16A495258085F11C58F138F3F44C0A20E47D2309BA47F",
     "market_vault-0.7.0.tar.gz",
@@ -1654,10 +1657,14 @@ V070_RELEASE_NOTES_FACTS = (
 # region of the v0.7.0 release notes (before the historical
 # release-preparation record): the preparation-stage status, the NOT
 # CREATED / NOT PUBLISHED release state, the candidate-validation-only
-# and no-prediction wording, and affirmative PyPI / TestPyPI publication
-# claims. The v0.7.0 release, tag, GitHub Release, and PR-6 MERGED are
-# now formal truth and must never be treated as stale.
+# and no-prediction wording, affirmative PyPI / TestPyPI publication
+# claims, and the unstable current-state "main HEAD: <release commit>"
+# wording (the release record may state the main HEAD at release
+# sealing, but must never claim the current main HEAD remains the
+# release commit). The v0.7.0 release, tag, GitHub Release, and PR-6
+# MERGED are now formal truth and must never be treated as stale.
 V070_RELEASE_NOTES_STALE_PHRASES = (
+    "main HEAD: f25a50481b5ee718881acf5cb5ea5aa05bd32d93",
     "## Release preparation status",
     "V0.7.0 is NOT formally released",
     "v0.7.0 tag:            NOT CREATED",
