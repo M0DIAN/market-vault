@@ -2233,8 +2233,8 @@ def test_v070_direction_document_states_baseline_and_sequence():
     text = (ROOT / "docs" / "v0_7_0_direction.md").read_text(encoding="utf-8")
     assert "# MarketVault v0.7.0 Direction: Python Client and Read-only Artifact Access" in text
     assert (
-        "Status: active feature development; PR-4 Dataset Catalog "
-        "ArtifactClient reads stage" in text
+        "Status: active feature development; PR-5 Integrated E2E + "
+        "usability stage" in text
     )
     assert "base version: v0.6.1" in text
     assert "37614d539171ef7b738e47415f3cd6ca2de332d1" in text
@@ -2242,8 +2242,8 @@ def test_v070_direction_document_states_baseline_and_sequence():
     assert "PR-1: COMPLETE / MERGED / MAIN VERIFIED" in text
     assert "PR-2: COMPLETE / MERGED / MAIN VERIFIED" in text
     assert "PR-3: COMPLETE / MERGED / MAIN VERIFIED" in text
-    assert "PR-4: CURRENT" in text
-    assert "PR-5: NOT STARTED" in text
+    assert "PR-4: COMPLETE / MERGED / MAIN VERIFIED" in text
+    assert "PR-5: CURRENT" in text
     assert "PR-6: NOT STARTED" in text
     assert "PR #48 merged at 2026-08-08T23:50:24Z" in text
     assert "bad62ee51e8eda03c7c5f20ac858973923e5f93d" in text
@@ -2261,6 +2261,11 @@ def test_v070_direction_document_states_baseline_and_sequence():
     assert "ArtifactClient Canonical verified read: IMPLEMENTED" in text
     assert "ArtifactClient Dataset verified read: IMPLEMENTED" in text
     assert "Dataset Catalog client read at PR-3: NOT IMPLEMENTED" in text
+    assert "PR #51 merged at 2026-08-09T07:42:17Z" in text
+    assert "49dbc9fdc53d40d0955febe61c87e9cb71dcc159" in text
+    assert "8b6bb12355c64d02c7e4f73fc67b6222ff2af6ed" in text
+    assert "31301770295" in text
+    assert "ArtifactClient Dataset Catalog verified read: IMPLEMENTED" in text
     assert "package: 0.6.1" in text
     for stage in (
         "PR-1 — Post-v0.6.1 release baseline",
@@ -2280,9 +2285,9 @@ def test_v070_direction_document_states_baseline_and_sequence():
     assert "PR-6: 0.6.1 -> 0.7.0" in text
     assert "the version is bumped to 0.7.0 only in PR-6" in text
     assert "No early 0.7.0 version bump" in text
-    # PR-2 / PR-3 are merged history; PR-4 is current and implements only
-    # the verified Catalog read; PR-5+ has not started and v0.7.0 is not
-    # released.
+    # PR-2 / PR-3 / PR-4 are merged history; PR-5 is current and adds only
+    # acceptance / usability / examples; PR-6 has not started and v0.7.0
+    # is not released.
     for boundary in (
         "PR-2 (the merged foundation PR, #49) implemented only",
         "the `ArtifactClient` class foundation",
@@ -2313,12 +2318,12 @@ def test_v070_direction_document_states_baseline_and_sequence():
         "current-time behavior",
         "CLI",
         "PR-4/5/6 work",
-        "PR-4 (this PR) MAY implement only",
+        "PR-4 (the merged Catalog-read PR, #51) implemented only",
         "`load_dataset_catalog`",
         "direct formal verified Catalog reader delegation",
         "Catalog reader access tests",
         "fresh-wheel smoke updates",
-        "PR-4 MUST NOT",
+        "PR-4 did not implement",
         "Catalog builder",
         "Catalog materialization",
         "Catalog list/filter/query convenience API",
@@ -2335,6 +2340,29 @@ def test_v070_direction_document_states_baseline_and_sequence():
         "PR-5 usability/examples",
         "PR-6 release prep",
         "version bump",
+        "## 6.4 PR-5 boundary",
+        "PR-5 (this PR) MAY ONLY",
+        "add integrated offline E2E acceptance",
+        "add explicit-path Python consumer documentation",
+        "add Jupyter-friendly consumer documentation",
+        "add ML-consumer handoff documentation without ML implementation",
+        "add source-tree examples",
+        "harden backward compatibility tests",
+        "harden release checker",
+        "add existing-job CI smoke for PR-5 examples/acceptance",
+        "PR-5 MUST NOT",
+        "modify src/",
+        "modify dependencies",
+        "modify version",
+        "add ArtifactClient capabilities",
+        "add CLI",
+        "add discovery/latest",
+        "add settings",
+        "add network/OpenD",
+        "add current time",
+        "add visualization product code",
+        "add ML/training/evaluation",
+        "perform PR-6 release preparation",
     ):
         assert boundary in text
     assert "ArtifactClient is implemented" not in text
@@ -2345,7 +2373,8 @@ def test_v070_direction_document_states_baseline_and_sequence():
     assert "PR-3: NOT STARTED" not in text
     assert "PR-3: CURRENT" not in text
     assert "PR-4: NOT STARTED" not in text
-    assert "PR-5: CURRENT" not in text
+    assert "PR-4: CURRENT" not in text
+    assert "PR-6: CURRENT" not in text
     assert "V0.7.0 is released" not in text
     for boundary in (
         "No new CLI command",
@@ -2377,8 +2406,8 @@ def test_v070_python_client_contract_states_boundaries():
     )
     assert "# MarketVault Python Client Contract" in text
     assert (
-        "Status: PR-4 Dataset Catalog verified read-only access "
-        "implemented in unreleased v0.7.0 development" in text
+        "Status: PR-5 integrated acceptance/usability/examples in "
+        "unreleased v0.7.0 development" in text
     )
     assert "Target release: v0.7.0" in text
     assert "Public root: `ArtifactClient`" in text
@@ -2388,8 +2417,22 @@ def test_v070_python_client_contract_states_boundaries():
     assert "frozen version policy" in text
     assert "PR-3: Canonical + Dataset verified read-only access implemented" in text
     assert "PR-4: Dataset Catalog verified read-only access implemented" in text
-    for section in range(1, 11):
+    for section in range(1, 12):
         assert f"## 13.{section}" in text
+    assert "PR-5: integrated acceptance/usability/examples CURRENT" in text
+    assert "PR-6: release prep NOT STARTED" in text
+    assert "package: 0.6.1" in text
+    assert "v0.7.0: NOT RELEASED" in text
+    # PR-5 consumer-side usability boundary: examples and documentation
+    # are consumer-side only and never form a second trust path; consumer
+    # transformations after a verified read are not artifact verification.
+    assert "CONSUMER-SIDE only" in text
+    assert "second trust path" in text
+    assert (
+        "Consumer transformations performed AFTER an ArtifactClient "
+        "verified read" in text
+    )
+    assert "the ArtifactClient trust contract" in text
     assert "Zero arguments" in text
     assert "Stateless" in text
     assert "No required settings" in text
@@ -3173,25 +3216,26 @@ def test_release_checker_fails_when_contract_drops_load_dataset(
     ) in result.stdout
 
 
-def test_release_checker_fails_when_direction_claims_pr5_started(
+def test_release_checker_fails_when_direction_claims_pr6_started(
     tmp_path,
 ):
-    # PR-3 mutation guard E / PR-4 guard: the direction document claiming
-    # a later stage (PR-5) started must fail the checker — PR-5 is NOT
-    # STARTED and PR-4 must not be followed by any later-stage work.
+    # PR-3 mutation guard E / PR-4 / PR-5 guard: the direction document
+    # claiming a later stage (PR-6) started must fail the checker — PR-6
+    # is NOT STARTED and PR-5 must not be followed by any later-stage
+    # work.
     repo = copy_repo(tmp_path)
     path = repo / "docs" / "v0_7_0_direction.md"
     path.write_text(
         path.read_text(encoding="utf-8").replace(
-            "PR-5: NOT STARTED",
-            "PR-5: CURRENT",
+            "PR-6: NOT STARTED",
+            "PR-6: CURRENT",
         ),
         encoding="utf-8",
     )
     result = run_check_release(repo)
     assert result.returncode == 1
     assert (
-        "contains the false implementation/release claim 'PR-5: CURRENT'"
+        "contains the false implementation/release claim 'PR-6: CURRENT'"
     ) in result.stdout
 
 
@@ -3774,7 +3818,7 @@ def test_release_checker_fails_when_direction_drops_pr4_boundary(tmp_path):
     path = repo / "docs" / "v0_7_0_direction.md"
     path.write_text(
         path.read_text(encoding="utf-8").replace(
-            "PR-4 (this PR) MAY implement only",
+            "PR-4 (the merged Catalog-read PR, #51) implemented only",
             "",
         ),
         encoding="utf-8",
@@ -3782,7 +3826,8 @@ def test_release_checker_fails_when_direction_drops_pr4_boundary(tmp_path):
     result = run_check_release(repo)
     assert result.returncode == 1
     assert (
-        "does not state the fact 'PR-4 (this PR) MAY implement only'"
+        "does not state the fact 'PR-4 (the merged Catalog-read PR, "
+        "#51) implemented only'"
     ) in result.stdout
 
 
@@ -3790,12 +3835,12 @@ def test_release_checker_fails_when_direction_states_pr4_not_started(
     tmp_path,
 ):
     # PR-4 guard: the direction document regressing PR-4 to NOT STARTED
-    # must fail the checker — PR-4 is the current stage.
+    # must fail the checker — PR-4 is merged history.
     repo = copy_repo(tmp_path)
     path = repo / "docs" / "v0_7_0_direction.md"
     path.write_text(
         path.read_text(encoding="utf-8").replace(
-            "PR-4: CURRENT",
+            "PR-4: COMPLETE / MERGED / MAIN VERIFIED",
             "PR-4: NOT STARTED",
         ),
         encoding="utf-8",
@@ -6914,3 +6959,223 @@ def test_release_checker_fails_when_portability_full_suite_step_loses_pytest(
     result = run_check_release(repo)
     assert result.returncode == 1
     assert "full-suite step must run python -m pytest" in result.stdout
+
+
+# --- V0.7.0 PR-5 guards: integrated E2E / usability / examples -------------
+
+
+def test_release_checker_fails_without_usage_doc(tmp_path):
+    # PR-5 guard: deleting the Python client usage document must fail the
+    # checker.
+    repo = copy_repo(tmp_path)
+    (repo / "docs" / "v0_7_0_python_client_usage.md").unlink()
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "docs/v0_7_0_python_client_usage.md is missing" in result.stdout
+
+
+def test_release_checker_fails_without_examples_readme(tmp_path):
+    # PR-5 guard: deleting the source-tree examples README must fail the
+    # checker.
+    repo = copy_repo(tmp_path)
+    (repo / "examples" / "python_client" / "README.md").unlink()
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "examples/python_client/README.md is missing" in result.stdout
+
+
+def test_release_checker_fails_without_executable_example(tmp_path):
+    # PR-5 guard: deleting the executable example must fail the checker.
+    repo = copy_repo(tmp_path)
+    (repo / "examples" / "python_client" / "read_verified_artifacts.py").unlink()
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "examples/python_client/read_verified_artifacts.py is missing"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_direction_regresses_pr5_to_not_started(
+    tmp_path,
+):
+    # PR-5 guard: regressing PR-5 to NOT STARTED must fail the checker —
+    # PR-5 is the current stage.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_7_0_direction.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "PR-5: CURRENT",
+            "PR-5: NOT STARTED",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "contains the false implementation/release claim 'PR-5: NOT STARTED'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_direction_regresses_pr4_to_current(
+    tmp_path,
+):
+    # PR-5 guard: regressing the merged PR-4 stage back to CURRENT must
+    # fail the checker — PR-4 is merged history.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_7_0_direction.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "PR-4: COMPLETE / MERGED / MAIN VERIFIED",
+            "PR-4: CURRENT",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "contains the false implementation/release claim 'PR-4: CURRENT'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_direction_claims_v070_released(tmp_path):
+    # PR-5 guard: the direction document losing the NOT RELEASED v0.7.0
+    # state must fail the checker — v0.7.0 is not released.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_7_0_direction.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "v0.7.0: NOT RELEASED",
+            "v0.7.0: RELEASED",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "does not state the fact 'v0.7.0: NOT RELEASED'" in result.stdout
+
+
+def test_release_checker_fails_when_usage_doc_loses_explicit_path_contract(
+    tmp_path,
+):
+    # PR-5 guard: the usage document losing the explicit-path contract
+    # must fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_7_0_python_client_usage.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "Every artifact path is EXPLICIT",
+            "Every artifact path is IMPLICIT",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the fact 'Every artifact path is EXPLICIT'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_usage_doc_loses_jupyter_post_verification(
+    tmp_path,
+):
+    # PR-5 guard: the usage document losing the Jupyter consumer-side
+    # post-verification marker must fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_7_0_python_client_usage.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "pd.DataFrame(dataset.rows",
+            "pd.DataFrame(rows",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "does not state the fact 'pd.DataFrame(dataset.rows'"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_usage_doc_gains_ml_implementation(
+    tmp_path,
+):
+    # PR-5 guard: the usage document gaining ML implementation code must
+    # fail the checker — the guide documents a handoff, never an ML
+    # implementation.
+    repo = copy_repo(tmp_path)
+    path = repo / "docs" / "v0_7_0_python_client_usage.md"
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        + "\n```python\nmodel.fit(X_train, y_train)\n```\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "contains the false discovery/ML claim 'model.fit('"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_example_gains_forbidden_import(
+    tmp_path,
+):
+    # PR-5 guard: the executable example gaining a discovery / settings /
+    # network / write / parse import (here `os`) must fail the checker —
+    # the example is stdlib + market_vault only.
+    repo = copy_repo(tmp_path)
+    example = (
+        repo / "examples" / "python_client" / "read_verified_artifacts.py"
+    )
+    example.write_text(
+        example.read_text(encoding="utf-8")
+        + "\nimport os\n",
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "the example must import only stdlib plus the market_vault top "
+        "level"
+    ) in result.stdout
+
+
+def test_release_checker_fails_when_example_argument_loses_required(
+    tmp_path,
+):
+    # PR-5 guard: an example path argument dropping required=True must
+    # fail the checker — all three arguments are explicit and mandatory.
+    repo = copy_repo(tmp_path)
+    example = (
+        repo / "examples" / "python_client" / "read_verified_artifacts.py"
+    )
+    example.write_text(
+        example.read_text(encoding="utf-8").replace(
+            "--catalog-snapshot-dir\", required=True",
+            "--catalog-snapshot-dir\", required=False",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert "each example path argument must be required=True" in result.stdout
+
+
+def test_release_checker_fails_when_ci_loses_v070_integrated_acceptance_ok(
+    tmp_path,
+):
+    # PR-5 guard: the CI losing the V070_INTEGRATED_ACCEPTANCE_OK marker
+    # must fail the checker.
+    repo = copy_repo(tmp_path)
+    ci = repo / ".github" / "workflows" / "ci.yml"
+    ci.write_text(
+        ci.read_text(encoding="utf-8").replace(
+            "V070_INTEGRATED_ACCEPTANCE_OK",
+            "V070_INTEGRATED_ACCEPTANCE_MISSING",
+        ),
+        encoding="utf-8",
+    )
+    result = run_check_release(repo)
+    assert result.returncode == 1
+    assert (
+        "CI package audit chain is missing 'V070_INTEGRATED_ACCEPTANCE_OK'"
+    ) in result.stdout

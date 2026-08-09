@@ -1,6 +1,6 @@
 # MarketVault v0.7.0 Direction: Python Client and Read-only Artifact Access
 
-Status: active feature development; PR-4 Dataset Catalog ArtifactClient reads stage
+Status: active feature development; PR-5 Integrated E2E + usability stage
 
 Baseline:
 
@@ -18,8 +18,8 @@ Progress / current state:
 PR-1: COMPLETE / MERGED / MAIN VERIFIED
 PR-2: COMPLETE / MERGED / MAIN VERIFIED
 PR-3: COMPLETE / MERGED / MAIN VERIFIED
-PR-4: CURRENT
-PR-5: NOT STARTED
+PR-4: COMPLETE / MERGED / MAIN VERIFIED
+PR-5: CURRENT
 PR-6: NOT STARTED
 package: 0.6.1
 v0.7.0: NOT RELEASED
@@ -59,6 +59,19 @@ ArtifactClient Dataset verified read: IMPLEMENTED
 Dataset Catalog client read at PR-3: NOT IMPLEMENTED
 ```
 
+PR-4 record:
+
+```text
+PR #51 merged at 2026-08-09T07:42:17Z
+final head: 49dbc9fdc53d40d0955febe61c87e9cb71dcc159
+squash/main: 8b6bb12355c64d02c7e4f73fc67b6222ff2af6ed
+main CI: 31301770295 SUCCESS
+package: 0.6.1
+ArtifactClient Canonical verified read: IMPLEMENTED
+ArtifactClient Dataset verified read: IMPLEMENTED
+ArtifactClient Dataset Catalog verified read: IMPLEMENTED
+```
+
 This document defines the scope, non-goals, and fixed PR sequence for the
 V0.7.0 "Python Client and Read-only Artifact Access" feature release.
 V0.7.0 delivers a settings-independent Python artifact client that serves
@@ -68,8 +81,11 @@ Python API audit (`docs/v0_7_0_python_api_audit.md`), and the Python
 Client boundary contract (`docs/contracts/python_client.md`). PR-2
 implemented the settings-independent `ArtifactClient` foundation (merged
 PR #49). PR-3 added the Canonical + Dataset verified read-only client
-access (merged PR #50). PR-4 adds the Dataset Catalog verified read-only
-client access.
+access (merged PR #50). PR-4 added the Dataset Catalog verified read-only
+client access (merged PR #51). PR-5 adds the integrated offline
+end-to-end acceptance, the explicit-path Python / Jupyter / ML-consumer
+usability documentation, the source-tree examples, and the backward
+compatibility hardening.
 
 ## 1. Goals
 
@@ -115,6 +131,7 @@ Each PR is independent:
 - PR-1 does not implement any PR-2/PR-3/PR-4/PR-5 content;
 - PR-2 does not implement any PR-3/PR-4/PR-5 content;
 - PR-3 does not implement any PR-4/PR-5 content;
+- PR-4 does not implement any PR-5 content;
 - PR-5 does not implement the release preparation;
 - the version is bumped to 0.7.0 only in PR-6.
 
@@ -240,9 +257,9 @@ PR-3 did not implement:
 - CLI;
 - PR-4/5/6 work.
 
-## 6.3 PR-4 boundary
+## 6.3 PR-4 boundary (merged PR #51)
 
-PR-4 (this PR) MAY implement only:
+PR-4 (the merged Catalog-read PR, #51) implemented only:
 
 - `load_dataset_catalog`;
 - direct formal verified Catalog reader delegation;
@@ -250,7 +267,7 @@ PR-4 (this PR) MAY implement only:
 - contract/direction/checker changes;
 - fresh-wheel smoke updates.
 
-PR-4 MUST NOT:
+PR-4 did not implement:
 
 - Catalog builder;
 - Catalog materialization;
@@ -269,6 +286,34 @@ PR-4 MUST NOT:
 - PR-5 usability/examples;
 - PR-6 release prep;
 - version bump.
+
+## 6.4 PR-5 boundary
+
+PR-5 (this PR) MAY ONLY:
+
+- add integrated offline E2E acceptance;
+- add explicit-path Python consumer documentation;
+- add Jupyter-friendly consumer documentation;
+- add ML-consumer handoff documentation without ML implementation;
+- add source-tree examples;
+- harden backward compatibility tests;
+- harden release checker;
+- add existing-job CI smoke for PR-5 examples/acceptance.
+
+PR-5 MUST NOT:
+
+- modify src/;
+- modify dependencies;
+- modify version;
+- add ArtifactClient capabilities;
+- add CLI;
+- add discovery/latest;
+- add settings;
+- add network/OpenD;
+- add current time;
+- add visualization product code;
+- add ML/training/evaluation;
+- perform PR-6 release preparation.
 
 ## 7. Acceptance principles
 
