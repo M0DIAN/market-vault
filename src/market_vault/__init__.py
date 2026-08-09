@@ -9,10 +9,18 @@ from typing import Any
 
 from ._version import __version__
 
-__all__ = ["MarketVault", "__version__"]
+__all__ = [
+    "ArtifactClient",
+    "MarketVault",
+    "__version__",
+]
 
 
 def __getattr__(name: str) -> Any:
+    if name == "ArtifactClient":
+        from .artifact_client import ArtifactClient
+
+        return ArtifactClient
     if name == "MarketVault":
         from .api import MarketVault
 
