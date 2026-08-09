@@ -314,3 +314,32 @@ def test_no_allow_rules_fail_closed(tmp_path):
     assert "AUDIT_PR_FAILED" in result.stdout
     assert "- a.txt" in result.stdout
     assert "scope=FAIL" in result.stdout
+
+
+def test_changed_paths_direct_diff_semantics(tmp_path):
+    """changed_paths(merge_base=False) is the direct tree diff (push).
+
+    Two divergent lines share base c1; the feature line adds docs/x.md
+    (c2) while the main line changes a.txt (c3). The merge-base diff
+    c3...c2 sees only the feature's own change; the direct diff c3 c2
+    sees both lines' changes.
+    """
+    repo = make_repo(tmp_path)
+    write_file(repo, "a.txt")
+    base = commit_all(repo, "base")  # c1
+    write_file(repo, "docs/x.md")
+    head_feature = commit_all(repo, "feature")  # c2
+    run_git(repo, "checkout", "-q", "-b", "mainline", base)
+    write_file(repo, "a.txt", "changed\n")
+    head_main = commit_all(repo, "mainline")  # c3
+
+    sys.path.insert(0, str(SCRIPT.parent))
+    from audit_pr import changed_paths  # noqa: PLC0415
+
+    merge_base_paths = changed_paths(str(repo), head_main, head_feature)
+    direct_paths = changed_paths(
+        str(repo), head_main, head_feature, merge_base=False
+    )
+
+    assert set(merge_base_paths) == {"docs/x.md"}
+    assert set(direct_paths) == {"a.txt", "docs/x.md"}

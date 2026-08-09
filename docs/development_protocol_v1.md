@@ -120,9 +120,56 @@ authoritative truth 固化进 immutable release payload。DP1 只记录这条规
 
 ### 4.6 CI 风险分层优化（CI Risk-Tier Optimization）
 
-final-head CI 矩阵按变更风险分层，而不是每次变更统一运行每个环境，同时为
-需要的变更保留权威的完整验证。该方向不削弱 final-head CI；它作为独立变更
-规划与审查。
+**状态：Phase 1 implemented**（分支 `ci/risk-tier-fast-path`）。实现为
+[scripts/ci_risk_tier.py](../scripts/ci_risk_tier.py)（read-only、确定性、
+无 network / GitHub API、fail-closed；pull_request 用 merge-base-correct
+three-dot diff，push 用直连 tree diff；rename 的 old + new path 都计入；
+验证见 [tests/test_ci_risk_tier.py](../tests/test_ci_risk_tier.py)）与
+[.github/workflows/ci.yml](../.github/workflows/ci.yml) 的 step 级分类。
+
+分类在每个正式 job（`test` / `portability-pyarrow24` / `package`）内以一个
+`Classify change tier` step 运行，把 `CI_TIER` / `CI_TIER_REASON` 通过
+`$GITHUB_ENV` 导出。不新增 job：仓库的 release-auditability 契约固定
+CI 恰好有 4 个正式 job（`test`、`portability-pyarrow24`、`package`，
+package 的依赖字面为 `needs: [test, portability-pyarrow24]`，且
+`check_release.py` 断言 portability full-suite step 的 `run: python -m
+pytest` 与 step name 字面相邻），该契约是既有 immutable invariant。
+heavy steps 的 guard 为 `if: env.CI_TIER != 'docs_fast' && env.CI_TIER
+!= 'package_docs'`（package job：`!= 'docs_fast'`）。**fail-safe 硬性
+要求**：没有条件表达式可以让 unknown / unset tier 跳过 heavy validation
+——`CI_TIER` 未设置时 guard 恒为真，heavy validation 照常运行（等价
+FULL）。fast-path marker（`FULL_TESTS_SKIPPED_BY_POLICY` /
+`PACKAGE_BUILD_SKIPPED_BY_POLICY`）只在 fast tier 出现。
+
+例外（故意不带 tier guard）：package job 的 `Run release checker` step
+在所有 tier 都执行。`scripts/check_release.py` 不是 package-build
+检查器，而是 stdlib-only 的 release / document 一致性检查器，验证
+`docs/**` 内容（release notes、direction、contracts、lifecycle
+records）；docs 变更不得绕过优化前已存在的该检查。
+
+三个保守 tier：
+
+- **DOCS_FAST**：仅当所有 changed paths 属于 `docs/**` 或三个顶层 policy
+  文档（`DEVELOPMENT_PLAYBOOK.md` / `RELEASE_PLAYBOOK.md` /
+  `AGENT_HANDOFF.md`）时适用。保留权威 CI（checkout、changed-file
+  分类、repo hygiene、whitespace / diff 检查、release checker /
+  release-document 一致性检查），但**不运行** full pytest（Python 3.11 /
+  3.14）、PyArrow suite、package build / fresh-wheel smoke / SHA256
+  closure。target wall-clock ≤ 5 min（prefer ≤ 3 min）。
+- **PACKAGE_DOCS**：所有 changed paths 属于 DOCS_FAST set + `README.md`，
+  且至少 `README.md` 变更。`README.md` 是 package metadata 敏感路径
+  （pyproject.toml `readme = "README.md"`），因此 package job 保持当前
+  完整验证不变；跳过 full pytest 与 PyArrow suite。
+- **FULL**：任何其他 changed path（`src/**`、`tests/**`、`scripts/**`、
+  `examples/**`、`pyproject.toml`、`.github/workflows/**`、未知路径、
+  混合变更等）、empty diff、classifier error —— 保持当前完整 CI 语义
+  不变。**fail-safe 硬性要求**：unknown / unset tier 必须按 FULL 处理，
+  任何条件表达式不得导致未知 tier 跳过重验证。
+
+方向句保留：final-head CI 矩阵按变更风险分层，而不是每次变更统一运行每个
+环境，同时为需要的变更保留权威的完整验证；该方向不削弱 final-head CI。
+快路径的首次实测 wall-clock 在后续合法的 docs/policy-only PR 上记录，
+不在本实现 PR 上声称达标。
 
 ## 5. 未来 wall-clock 目标
 
