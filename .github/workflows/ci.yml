@@ -29,12 +29,15 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
-      # CI Risk-Tier Optimization Phase 1: classify the change range once
-      # per job. There is no 5th formal job: the repo's release-auditability
-      # contract fixes exactly test / portability-pyarrow24 / package, so
-      # CI_TIER is exported via $GITHUB_ENV and heavy steps guard on it.
-      # Fail-safe: an unset/unknown CI_TIER makes every guard true, so
-      # heavy validation always runs unless the tier is exactly a fast tier.
+      # CI Risk-Tier Optimization Phase 1 (+ Component-Aware foundation,
+      # DP4): classify the change range once per job. There is no 5th
+      # formal job: the repo's release-auditability contract fixes exactly
+      # test / portability-pyarrow24 / package, so CI_TIER is exported via
+      # $GITHUB_ENV and heavy steps guard on it. Fail-safe: an
+      # unset/unknown CI_TIER makes every guard true, so heavy validation
+      # always runs unless the tier is exactly a fast tier. The classifier
+      # also emits component impact (ci/components.toml); CI_COMPONENTS is
+      # exported but no tier change comes from it yet.
       - name: Classify change tier
         run: |
           set -euo pipefail
@@ -60,6 +63,12 @@ jobs:
           fi
           echo "CI_TIER=${tier:-full}" >> "$GITHUB_ENV"
           echo "CI_TIER_REASON=${reason:-classifier_output_missing}" >> "$GITHUB_ENV"
+          # Component-aware foundation (DP4): export the classifier's
+          # component impact for future component-level gating. No
+          # component may skip validation yet, so nothing downstream
+          # consumes this besides the log.
+          components="$(sed -n 's/^components=//p' ci_tier.txt)"
+          echo "CI_COMPONENTS=${components:-none}" >> "$GITHUB_ENV"
 
       # Authoritative checks that run on every tier (the DOCS_FAST path
       # keeps checkout + classification + whitespace + hygiene).
@@ -134,6 +143,12 @@ jobs:
           fi
           echo "CI_TIER=${tier:-full}" >> "$GITHUB_ENV"
           echo "CI_TIER_REASON=${reason:-classifier_output_missing}" >> "$GITHUB_ENV"
+          # Component-aware foundation (DP4): export the classifier's
+          # component impact for future component-level gating. No
+          # component may skip validation yet, so nothing downstream
+          # consumes this besides the log.
+          components="$(sed -n 's/^components=//p' ci_tier.txt)"
+          echo "CI_COMPONENTS=${components:-none}" >> "$GITHUB_ENV"
 
       - name: Install dependencies
         if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs'
@@ -216,6 +231,12 @@ jobs:
           fi
           echo "CI_TIER=${tier:-full}" >> "$GITHUB_ENV"
           echo "CI_TIER_REASON=${reason:-classifier_output_missing}" >> "$GITHUB_ENV"
+          # Component-aware foundation (DP4): export the classifier's
+          # component impact for future component-level gating. No
+          # component may skip validation yet, so nothing downstream
+          # consumes this besides the log.
+          components="$(sed -n 's/^components=//p' ci_tier.txt)"
+          echo "CI_COMPONENTS=${components:-none}" >> "$GITHUB_ENV"
 
       - name: Install build tooling
         if: env.CI_TIER != 'docs_fast'

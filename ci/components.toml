@@ -1,0 +1,44 @@
+# MarketVault component registry (Component-Aware CI foundation, DP4).
+#
+# Each [components.<name>] entry registers a component's path surface.
+# scripts/ci_risk_tier.py reads this file (read-only, fail-closed) and
+# emits component impact information alongside the Phase 1 path-tier:
+#
+#   components=...          matched registered component names
+#   core_changed=true|false
+#   package_changed=true|false
+#   unknown_changed=true|false
+#   shared_changed=true|false     workflow / classifier / registry /
+#                                 package-schema mutation
+#   independent_only=true|false   all changes inside registered
+#                                 components, none core/package/shared
+#   full_matrix_required=true|false
+#
+# The tier model is unchanged: docs_fast / package_docs / full. No path
+# registered below makes any change FASTER than it was before; the
+# registry only makes the classifier's impact information explicit and
+# machine-readable.
+#
+# FUTURE RULE (documented, not active yet): a component may skip the
+# legacy core full matrix only when ALL of the following hold:
+#   1. its paths are explicitly registered here;
+#   2. it declares explicit component validation (a future registry
+#      extension);
+#   3. it does not modify core / shared contracts;
+#   4. it does not modify package / workflow / shared schema;
+#   5. the classifier can determine its full impact scope.
+# "Not under src/market_vault/" alone is never sufficient.
+#
+# No component registered in this file satisfies condition 2 yet, so
+# every registered-component change still classifies FULL. A future UI
+# component will NOT enter any fast path until it is registered here
+# AND declares its own CI validation. This PR deliberately registers no
+# non-existent component.
+
+[components.core]
+paths = ["src/market_vault/"]
+requires_core_full = true
+
+[components.package]
+paths = ["pyproject.toml", "README.md"]
+requires_package = true
