@@ -48,13 +48,27 @@ CI is:
 
 Only after the CI for the exact final head SHA reaches a terminal state:
 
-- **SUCCESS** — report `READY FOR INDEPENDENT REVIEW` (with the compact
-  final-report fields below).
-- **FAILURE** — report `FAILED`, naming the failing job and failing
-  step.
+- **terminal SUCCESS** — report `READY FOR INDEPENDENT REVIEW` (with
+  the compact final-report fields below).
+- **ANY terminal non-success conclusion** — report `FAILED/BLOCKED`.
+  No terminal non-success state may ever become `READY FOR INDEPENDENT
+  REVIEW`.
+
+For a terminal non-success, report:
+
+- the actual workflow conclusion (`failure`, `cancelled`,
+  `timed_out`, ...),
+- the affected job(s),
+- the failing / terminated step when available.
+
+This includes runs that end `cancelled` or `timed_out`: they are
+terminal, they are not SUCCESS, and they require the `FAILED/BLOCKED`
+report.
 
 If the task subsequently merges and triggers main CI, apply the SAME
-rule to the exact merge / main commit before reporting `COMPLETE`.
+semantics to the exact merge / main commit before reporting `COMPLETE`:
+terminal SUCCESS only, or `FAILED/BLOCKED` with the actual conclusion
+and the affected job / step.
 
 Do not drip-feed "CI pending" as a final report. Interim progress
 messages are fine; the final report is emitted only at a terminal CI
@@ -71,7 +85,7 @@ Every final report contains exactly these fields, in this order:
 | changed files | the exact changed-file list |
 | local checks | the local verification performed and its results |
 | CI run ID | the GitHub Actions run ID for the final head |
-| CI job conclusions | every job's conclusion (SUCCESS / FAILURE) |
+| CI job conclusions | every job's actual conclusion (SUCCESS, or failure / cancelled / timed_out for terminal non-success runs) |
 | diff / scope result | diff stat and confirmation the changed-file list matches the frozen scope |
 | working-tree state | clean or the exact remaining changes |
 | mutation / immutability declaration | explicit confirmation that no product / version / dependency / API / CLI / schema / workflow / release mutation occurred, when that is true |
@@ -81,8 +95,9 @@ Every final report contains exactly these fields, in this order:
 
 - `READY FOR INDEPENDENT REVIEW` — final-head CI terminal SUCCESS, all
   local and scope checks done; the independent reviewer is the next gate.
-- `FAILED` — final-head CI terminal FAILURE; report the failing job and
-  step.
+- `FAILED/BLOCKED` — final-head CI reached a terminal non-success
+  conclusion; report the actual workflow conclusion, the affected
+  job(s), and the failing / terminated step when available.
 - `COMPLETE` — reserved for post-merge tasks whose exact merge / main
   commit CI is terminal SUCCESS.
 - `STOP BEFORE MERGE` — the explicit stop state; merge requires separate

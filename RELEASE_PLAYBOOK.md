@@ -2,9 +2,10 @@
 
 The repository-native release procedure for MarketVault. This document
 records the formal release gates that every MarketVault release must
-pass. It codifies the procedure already exercised by the v0.3.0 – v0.7.0
-formal releases; see [docs/release_v0_7_0.md](docs/release_v0_7_0.md) for
-the recorded v0.7.0 example.
+pass. The current procedure was refined across v0.3.0 through v0.7.0,
+with v0.7.0 serving as the current fully audited reference procedure;
+see [docs/release_v0_7_0.md](docs/release_v0_7_0.md) for the recorded
+v0.7.0 example.
 
 ## 1. Formal release gates
 
@@ -117,6 +118,40 @@ Any statement that would become false immediately after the release is
 sealed must be marked as historical, not authoritative — see the
 Lifecycle-State Principle in
 [docs/development_protocol_v1.md](docs/development_protocol_v1.md).
+
+### 3.1 Lifecycle-state recording timing (no immutable-release paradox)
+
+Mutable lifecycle facts must NOT be required to exist as authoritative
+current truth inside the immutable release payload (the release commit,
+the annotated tag, and the published package artifacts). These include:
+
+- tag-created state
+- tag object SHA
+- GitHub Release publication state
+- Release ID
+- `publishedAt`
+- PyPI / TestPyPI publication state
+- current main HEAD
+
+The immutable release payload carries stable source truth — version,
+feature scope, API / contracts, compatibility, non-goals, release
+procedure, artifact formats. It cannot simultaneously record the
+lifecycle facts that only become true after it is sealed.
+
+After publication, mutable release facts may be recorded as an explicit
+point-in-time / historical release record on later `main` — the same
+pattern [docs/release_v0_7_0.md](docs/release_v0_7_0.md) already
+follows, with its formal status section and its historical
+release-preparation record.
+
+Post-release `main` may legitimately advance beyond the immutable
+release tag: the tag and its payload are frozen at the release commit,
+while later `main` carries the historical release record and subsequent
+work.
+
+DP1 does NOT design or implement a machine-readable release-state
+payload (`release/state.json` or equivalent). That remains DP5 work
+after the semantics are designed.
 
 ## 4. Release-related hygiene for regular PRs
 

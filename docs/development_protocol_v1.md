@@ -23,8 +23,8 @@ real-usage exercise. DP1 defines policy only:
 ## 2. Motivation and measured baseline
 
 The v0.7.0 lifecycle PR (`docs: record v0.7.0 formal release state`,
-PR #54) was the observed real-usage case that motivated DP1. The
-recorded observation:
+PR #54) was the measured lifecycle/docs workflow case — the process
+benchmark — that motivated DP1. The recorded observation:
 
 - The lifecycle / docs PR took approximately 63 minutes wall-clock.
 - Local testing dominated wall-clock time.
