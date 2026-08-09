@@ -127,6 +127,43 @@ def test_package_job_needs_test_and_portability():
     assert "needs: [test, portability-pyarrow24]" in block
 
 
+def test_release_checker_step_runs_on_all_tiers():
+    """The package job's `Run release checker` step must not be tier-gated.
+
+    scripts/check_release.py is a stdlib-only release/document consistency
+    checker that validates docs/** content (release notes, direction docs,
+    contracts, lifecycle records). A DOCS_FAST run must keep executing it,
+    while the package BUILD chain stays docs_fast-guarded (PACKAGE_DOCS and
+    FULL behavior are unchanged: the guards exclude only docs_fast).
+    """
+    block = _job_block(ci_text(), "package")
+    names = _step_names(block)
+
+    def own_region(name: str) -> str:
+        idx = names.index(name)
+        end = f"- name: {names[idx + 1]}" if idx + 1 < len(names) else None
+        return _region(block, f"- name: {name}", end)
+
+    release_checker = own_region("Run release checker")
+    assert "run: python scripts/check_release.py" in release_checker
+    assert "if:" not in release_checker
+    for name in (
+        "Install build tooling",
+        "Example renderer help smoke",
+        "PR-5 verified client example help smoke",
+        "Build wheel and sdist",
+        "Confirm exactly one wheel and one sdist",
+        "Install wheel in a fresh virtual environment",
+        "Fresh-wheel public API smoke check",
+        "Check wheel contents exclude local data",
+        "Build package SHA256 manifest",
+        "Verify package SHA256 manifest",
+        "Upload package audit artifact",
+        "Confirm package audit artifact metadata",
+    ):
+        assert "if: env.CI_TIER != 'docs_fast'" in own_region(name), name
+
+
 # ---------------------------------------------------------------------------
 # portability-pyarrow24 (section 30).
 # ---------------------------------------------------------------------------

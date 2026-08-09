@@ -224,8 +224,11 @@ jobs:
           python -m pip install -e .
           python -m pip install "build>=1.2,<2" "twine>=5,<7"
 
+      # The release/document consistency checker runs on every tier. It is
+      # stdlib-only (no build tooling needed) and validates docs/** content
+      # (release notes, direction docs, contracts, lifecycle records), so a
+      # DOCS_FAST change must not bypass it.
       - name: Run release checker
-        if: env.CI_TIER != 'docs_fast'
         run: python scripts/check_release.py
 
       - name: Example renderer help smoke

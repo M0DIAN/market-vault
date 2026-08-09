@@ -141,14 +141,21 @@ heavy steps 的 guard 为 `if: env.CI_TIER != 'docs_fast' && env.CI_TIER
 FULL）。fast-path marker（`FULL_TESTS_SKIPPED_BY_POLICY` /
 `PACKAGE_BUILD_SKIPPED_BY_POLICY`）只在 fast tier 出现。
 
+例外（故意不带 tier guard）：package job 的 `Run release checker` step
+在所有 tier 都执行。`scripts/check_release.py` 不是 package-build
+检查器，而是 stdlib-only 的 release / document 一致性检查器，验证
+`docs/**` 内容（release notes、direction、contracts、lifecycle
+records）；docs 变更不得绕过优化前已存在的该检查。
+
 三个保守 tier：
 
 - **DOCS_FAST**：仅当所有 changed paths 属于 `docs/**` 或三个顶层 policy
   文档（`DEVELOPMENT_PLAYBOOK.md` / `RELEASE_PLAYBOOK.md` /
   `AGENT_HANDOFF.md`）时适用。保留权威 CI（checkout、changed-file
-  分类、repo hygiene、whitespace / diff 检查），但**不运行** full pytest
-  （Python 3.11 / 3.14）、PyArrow suite、package build / fresh-wheel
-  smoke / SHA256 closure。target wall-clock ≤ 5 min（prefer ≤ 3 min）。
+  分类、repo hygiene、whitespace / diff 检查、release checker /
+  release-document 一致性检查），但**不运行** full pytest（Python 3.11 /
+  3.14）、PyArrow suite、package build / fresh-wheel smoke / SHA256
+  closure。target wall-clock ≤ 5 min（prefer ≤ 3 min）。
 - **PACKAGE_DOCS**：所有 changed paths 属于 DOCS_FAST set + `README.md`，
   且至少 `README.md` 变更。`README.md` 是 package metadata 敏感路径
   （pyproject.toml `readme = "README.md"`），因此 package job 保持当前

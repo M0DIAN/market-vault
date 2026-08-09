@@ -138,7 +138,9 @@ final-head CI 按 changed paths 分层（CI Risk-Tier Optimization Phase 1，
 
 - **DOCS_FAST**：仅 `docs/` 与三个顶层 policy 文档（DEVELOPMENT_PLAYBOOK.md /
   RELEASE_PLAYBOOK.md / AGENT_HANDOFF.md）变更 —— 不跑 full pytest /
-  PyArrow suite / package build，target ≤ 5 min（prefer ≤ 3 min）。
+  PyArrow suite / package build，但保留分类、whitespace、repo hygiene
+  与 release checker（release / document 一致性检查），
+  target ≤ 5 min（prefer ≤ 3 min）。
 - **PACKAGE_DOCS**：DOCS_FAST set + `README.md` 变更（README 是 package
   metadata 敏感路径）—— package job 保持完整验证。
 - **FULL**：任何其他变更 —— 当前完整矩阵不变。unknown / unset tier
