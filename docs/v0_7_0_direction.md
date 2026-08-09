@@ -1,6 +1,6 @@
 # MarketVault v0.7.0 Direction: Python Client and Read-only Artifact Access
 
-Status: active feature development; PR-2 ArtifactClient foundation stage
+Status: active feature development; PR-3 Canonical + Dataset ArtifactClient reads stage
 
 Baseline:
 
@@ -16,8 +16,8 @@ Progress / current state:
 
 ```text
 PR-1: COMPLETE / MERGED / MAIN VERIFIED
-PR-2: CURRENT
-PR-3: NOT STARTED
+PR-2: COMPLETE / MERGED / MAIN VERIFIED
+PR-3: CURRENT
 PR-4: NOT STARTED
 PR-5: NOT STARTED
 PR-6: NOT STARTED
@@ -34,6 +34,18 @@ main CI: 31284875166 SUCCESS
 package: 0.6.1
 ```
 
+PR-2 record:
+
+```text
+PR #49 merged at 2026-08-09T01:24:46Z
+final head: 1a3ca95a6765e4418e753f1fec6d5c79b8e49e2f
+squash/main: 42c63ebfb0c2dfc91b1d61860bed2106faf1bba0
+main CI: 31288212317 SUCCESS
+package: 0.6.1
+ArtifactClient foundation: IMPLEMENTED
+Canonical / Dataset / Catalog reads at PR-2: NOT IMPLEMENTED
+```
+
 This document defines the scope, non-goals, and fixed PR sequence for the
 V0.7.0 "Python Client and Read-only Artifact Access" feature release.
 V0.7.0 delivers a settings-independent Python artifact client that serves
@@ -41,7 +53,9 @@ verified immutable artifacts through the existing formal verified
 readers. PR-1 established the post-v0.6.1 release baseline, the existing
 Python API audit (`docs/v0_7_0_python_api_audit.md`), and the Python
 Client boundary contract (`docs/contracts/python_client.md`). PR-2
-implements the settings-independent `ArtifactClient` foundation.
+implemented the settings-independent `ArtifactClient` foundation (merged
+PR #49). PR-3 adds the Canonical + Dataset verified read-only client
+access.
 
 ## 1. Goals
 
@@ -86,6 +100,7 @@ Each PR is independent:
 - a PR never starts the next stage as a side effect;
 - PR-1 does not implement any PR-2/PR-3/PR-4/PR-5 content;
 - PR-2 does not implement any PR-3/PR-4/PR-5 content;
+- PR-3 does not implement any PR-4/PR-5 content;
 - PR-5 does not implement the release preparation;
 - the version is bumped to 0.7.0 only in PR-6.
 
@@ -170,14 +185,14 @@ PR-1 must not:
 
 ## 6.1 PR-2 boundary
 
-PR-2 (this PR) may implement only:
+PR-2 (the merged foundation PR, #49) implemented only:
 
 - the `ArtifactClient` class foundation;
 - a stateless zero-argument constructor;
 - the lazy top-level package export;
 - foundation tests and the fresh-wheel public API smoke.
 
-PR-2 must not implement:
+PR-2 did not implement:
 
 - Canonical reader methods;
 - Dataset reader methods;
@@ -187,6 +202,29 @@ PR-2 must not implement:
 - discovery / latest;
 - network / OpenD;
 - future method stubs.
+
+## 6.2 PR-3 boundary
+
+PR-3 (this PR) MAY implement only:
+
+- `load_canonical_build`;
+- `load_dataset`;
+- direct formal verified reader delegation;
+- reader-access tests;
+- contract/direction/checker changes;
+- fresh-wheel API smoke updates.
+
+PR-3 MUST NOT implement:
+
+- Dataset Catalog client access;
+- Catalog lookup/filter;
+- any writer/builder;
+- discovery/latest;
+- settings;
+- OpenD/network;
+- current-time behavior;
+- CLI;
+- PR-4/5/6 work.
 
 ## 7. Acceptance principles
 

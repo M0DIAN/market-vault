@@ -160,6 +160,10 @@ jobs:
           os.chdir(tempfile.mkdtemp())
           from market_vault import ArtifactClient
           client = ArtifactClient()
+          assert callable(client.load_canonical_build)
+          assert callable(client.load_dataset)
+          assert not hasattr(client, 'load_dataset_catalog')
+          # Before actual reader invocation nothing heavy may be loaded.
           assert 'market_vault.config' not in sys.modules
           assert 'market_vault.storage' not in sys.modules
           assert 'market_vault.canonical' not in sys.modules
