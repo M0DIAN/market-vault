@@ -1,159 +1,142 @@
-# MarketVault Development Playbook
+# MarketVault 开发手册（Development Playbook）
 
-The repository-native development playbook for MarketVault. Claude Code,
-Codex, and human developers reference this document instead of repeating
-the full gate specification inside every prompt.
+MarketVault 的仓库级开发手册。Claude Code、Codex 以及人工开发者在执行任务
+时引用本手册，而无需在每次 prompt 中重复完整的 gate 规范。
 
-- Scope: standard PR lifecycle and the three local verification layers.
-- Release procedure: see [RELEASE_PLAYBOOK.md](RELEASE_PLAYBOOK.md).
-- Agent execution contract: see [AGENT_HANDOFF.md](AGENT_HANDOFF.md).
-- Motivation and roadmap: see
-  [docs/development_protocol_v1.md](docs/development_protocol_v1.md).
+- PR 生命周期与本地验证层级：本文件。
+- 正式发布流程：见 [RELEASE_PLAYBOOK.md](RELEASE_PLAYBOOK.md)。
+- Agent 执行协议：见 [AGENT_HANDOFF.md](AGENT_HANDOFF.md)。
+- 动机与路线图：见
+  [docs/development_protocol_v1.md](docs/development_protocol_v1.md)。
 
-This playbook is Development Protocol v1 (DP1) policy. DP1 defines
-policy only; it does not modify CI, tests, or tooling. Later PRs
-implement the policy.
+本手册是 Development Protocol v1（DP1）的策略。DP1 只定义策略，不修改 CI、
+测试或工具链；后续 PR 负责实现。
 
-## 1. Standard PR lifecycle
+## 1. 标准 PR 生命周期
 
-Every MarketVault PR follows the same lifecycle. The order matters; the
-gates are non-negotiable.
+每个 MarketVault PR 都遵循同一个生命周期。顺序重要，gate 不可协商。
 
-### 1.1 Exact base
+### 1.1 精确基线（Exact Base）
 
 1. `git switch main`
 2. `git fetch origin --prune --tags`
 3. `git pull --ff-only`
-4. Verify `HEAD == origin/main == <exact base SHA>` given by the task or
-   by the current main HEAD.
-5. Verify the working tree is clean (`git status --short` empty).
+4. 验证 `HEAD == origin/main == <exact base SHA>`（任务给定的 exact base
+   SHA，或当前 main HEAD）。
+5. 验证工作区干净（`git status --short` 无输出）。
 
-If any of these checks fail, stop and report. Never start work from an
-unverified base.
+任一检查失败即停止并报告。绝不允许从未经验证的基线开始工作。
 
-### 1.2 Scope freeze
+### 1.2 范围冻结（Scope Freeze）
 
-Before any edit, state the exact scope of the task: the files that may
-change, the files that must not change, and the non-goals. Confirm the
-scope with the requester when it is ambiguous.
+编辑前先明确任务范围：允许修改的文件、禁止修改的文件、以及 non-goals。
+范围有歧义时与任务方确认。
 
-A frozen scope is a promise. Expanding scope without explicit approval is
-a protocol violation (see [AGENT_HANDOFF.md](AGENT_HANDOFF.md) rule 4).
+冻结的范围是承诺。未经明确批准扩大范围属于违反协议
+（见 [AGENT_HANDOFF.md](AGENT_HANDOFF.md) 规则 4）。
 
-### 1.3 Branch creation
+### 1.3 创建分支
 
-Create a branch whose name reflects the change, for example
-`docs/development-protocol-v1`. Push branches to the repository remote so
-final-head CI runs.
+创建反映变更内容的分支，例如 `docs/development-protocol-v1`。分支推送到
+远端，以便 final-head CI 运行。
 
-### 1.4 Implementation
+### 1.4 实现
 
-Implement the frozen scope on the branch. Match surrounding code style
-and document density. Do not silently add adjacent work.
+在分支上实现冻结的范围。保持与周围代码一致的风格与注释密度。不得静默添加
+相邻工作。
 
-### 1.5 Local verification layer
+### 1.5 本地验证层级
 
-Run the appropriate local verification layer (Section 2). The layer is
-chosen by the size and risk of the change, not by a fixed rule that every
-edit must run everything.
+运行合适的本地验证层级（第 2 节）。按变更规模与风险选择层级，而不是规定
+"每次编辑都必须跑全部"。
 
-### 1.6 Final-head push
+### 1.6 final-head push
 
-Push the final head: `git push -u origin <branch>`.
+`git push -u origin <branch>` 推送 final head。
 
-The final head is the last commit you intend the reviewers to evaluate.
-Everything after this point is evaluated against this exact SHA.
+final head 是你希望审查者评估的最后一个 commit。此后一切评估都针对这个
+exact SHA。
 
 ### 1.7 GitHub final-head CI
 
-The pull request triggers GitHub Actions for the exact final head SHA.
-CI is the authoritative verification of the final head (Section 2.3).
-Do not report acceptance until that CI reaches a terminal state — see
-the CI-wait reporting rule in [AGENT_HANDOFF.md](AGENT_HANDOFF.md).
+PR 会为 exact final head SHA 触发 GitHub Actions。final head 的权威验证是
+CI（见 2.3）。CI 未到达 terminal 状态前不得报告完成——见
+[AGENT_HANDOFF.md](AGENT_HANDOFF.md) 的 CI-wait 报告规则。
 
-### 1.8 Independent review
+### 1.8 独立审查（Independent Review）
 
-An independent reviewer — a human or a separate reviewer process, never
-the authoring agent — reviews the final head: diff, scope audit, CI
-results, and any release implications. The authoring agent's own report
-is not independent verification.
+由独立审查者——人类或独立的审查进程，绝不能是撰写该工作的 agent——审查
+final head：diff、scope audit、CI 结果、以及任何 release 影响。撰写该工作
+的 agent 自己的报告不构成 independent verification。
 
-### 1.9 Merge gate
+### 1.9 merge gate
 
-Merge happens only after:
+只有以下条件全部满足才可 merge：
 
-- final-head CI is terminal and SUCCESS, and
-- the independent review passes, and
-- explicit merge authorization was given.
+- final-head CI 已 terminal 且 SUCCESS，并且
+- 独立审查通过，并且
+- 获得了明确的 merge 授权。
 
-STOP BEFORE MERGE unless explicitly authorized.
+STOP BEFORE MERGE，除非获得明确授权。
 
-### 1.10 Main verification
+### 1.10 main verification
 
-After the merge, the push to `main` triggers main CI for the merge
-commit. Main CI is the authoritative post-merge run. A task that reports
-COMPLETE must wait for the exact merge/main commit's CI to reach a
-terminal state first (same rule as 1.7).
+merge 后，push 到 `main` 会为 merge commit 触发 main CI。main CI 是权威的
+post-merge 验证。报告 COMPLETE 的任务必须先等 exact merge/main commit 的
+CI 到达 terminal 状态（与 1.7 相同规则）。
 
-## 2. Local verification layers
+## 2. 本地验证层级
 
-Three layers define how much verification runs locally. Higher layers
-include the lower ones.
+三层定义本地需要跑多少验证。高层包含低层。
 
 ### LEVEL 1 — focused development
 
-For fast iteration during implementation.
+用于开发迭代，快速反馈：
 
-- Only tests directly relevant to the changed behavior.
-- Checker / lint / diff checks relevant to the changed paths
-  (for example `git diff --check`, `python -m compileall` on changed
-  files, repo hygiene checks when they touch the changed surface).
-- Intended for fast iteration inside the implementation loop.
+- 只跑与修改行为直接相关的测试。
+- 只跑与 changed paths 相关的 checker / lint / diff 检查
+  （例如 `git diff --check`、对修改文件 `python -m compileall`、与修改面
+  相关的 repo hygiene 检查）。
 
 ### LEVEL 2 — submission readiness
 
-Before pushing a final head and opening / updating a PR.
+提交 final head / 打开或更新 PR 之前：
 
-- The affected regression surface: the regression suites that cover the
-  changed code paths, run to completion.
-- Scope audit: the changed-file list matches the frozen scope exactly.
-- Dependency / version audit when applicable: any change that touches
-  dependencies, packaging, or versions must verify the dependency and
-  version surface it affects.
-- No automatic full-suite requirement merely because a PR exists. A small
-  docs-only or single-module PR does not automatically require the full
-  local suite.
+- affected regression surface：覆盖被修改代码路径的 regression suite，
+  跑完。
+- scope audit：changed-file list 与冻结范围完全一致。
+- dependency / version audit when applicable：任何涉及依赖、打包或版本的
+  变更必须验证其影响的 dependency 与 version 面。
+
+不能仅仅因为存在 PR 就自动要求完整本地套件。小文档 PR 或单模块 PR 不自动
+要求完整本地套件。
 
 ### LEVEL 3 — authoritative full verification
 
-- GitHub final-head CI, according to repository policy
-  ([.github/workflows/ci.yml](.github/workflows/ci.yml)): the full test
-  matrix (Python 3.11 and 3.14), the PyArrow 24 portability gate, and the
-  package build / fresh-wheel / SHA256 closure job.
-- Required before merge when applicable. The local machine is never the
-  authority for the full matrix; GitHub final-head CI is.
+- GitHub final-head CI，按仓库策略
+  （[.github/workflows/ci.yml](.github/workflows/ci.yml)）：完整测试矩阵
+  （Python 3.11 与 3.14）、PyArrow 24 可移植性 gate、以及 package
+  build / fresh-wheel / SHA256 closure job。
+- merge 前（适用时）的权威验证。完整矩阵的权威从来不在本地机器，而是
+  GitHub final-head CI。
 
-## 3. When a local full pytest run is required
+## 3. 何时不要求本地完整 pytest
 
-A local full `pytest` run is NOT automatically required after every small
-edit when authoritative final-head CI will run the full matrix.
+当权威的 final-head CI 会执行完整矩阵时，每次小修改后并不是默认要求本地
+完整 `pytest` 运行。
 
-The authoritative full verification of the final head is GitHub CI. The
-local full suite is optional when CI covers it; local verification exists
-to catch problems fast and early (LEVEL 1) and to prove submission
-readiness (LEVEL 2), not to duplicate the full CI matrix on every edit.
+final head 的权威完整验证是 GitHub CI。本地完整套件在 CI 覆盖它时是可选的；
+本地验证的目的是快速、尽早发现问题（LEVEL 1）并证明提交就绪（LEVEL 2），
+而不是在每次编辑时复制整个 CI 矩阵的工作。
 
-Full-suite local runs are still appropriate when:
+以下情况仍然适合本地完整套件：
 
-- CI is unavailable or cannot run (for example a repository network
-  outage), or
-- the change is a release-preparation change that must be validated
-  before the release gate, or
-- the task explicitly requires a local full run.
+- CI 不可用（例如仓库网络故障），或
+- 变更属于 release-preparation，必须在 release gate 前验证，或
+- 任务明确要求本地完整运行。
 
-## 4. Do not weaken final-head CI
+## 4. DP1 当前不修改 CI
 
-DP1 does not change CI behavior. The final-head CI defined in
-[.github/workflows/ci.yml](.github/workflows/ci.yml) — the full matrix,
-the PyArrow 24 gate, the package job — remains exactly as it is. Any
-future change to CI is a separate, explicit PR with its own review.
+DP1 不改 CI 行为。[.github/workflows/ci.yml](.github/workflows/ci.yml)
+定义的 final-head CI——完整矩阵、PyArrow 24 gate、package job——保持原样，
+不被削弱。任何未来的 CI 变更都是独立的、带自己审查的 PR。

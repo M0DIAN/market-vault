@@ -1,56 +1,49 @@
 # MarketVault Development Protocol v1
 
-The architecture and roadmap document for the MarketVault engineering
-process. This document motivates Development Protocol v1 (DP1), records
-the measured baseline, and defines the directions that later PRs
-implement.
+MarketVault 工程流程的架构 / roadmap 文档。本文档说明 Development Protocol
+v1（DP1）的动机，记录实测基线，并定义后续 PR 实现的方向。
 
-- Policy documents: [DEVELOPMENT_PLAYBOOK.md](../DEVELOPMENT_PLAYBOOK.md)
-  and [RELEASE_PLAYBOOK.md](../RELEASE_PLAYBOOK.md).
-- Agent execution contract: [AGENT_HANDOFF.md](../AGENT_HANDOFF.md).
+- 策略文档：[DEVELOPMENT_PLAYBOOK.md](../DEVELOPMENT_PLAYBOOK.md) 与
+  [RELEASE_PLAYBOOK.md](../RELEASE_PLAYBOOK.md)。
+- Agent 执行契约：[AGENT_HANDOFF.md](../AGENT_HANDOFF.md)。
 
-## 1. Status
+## 1. 状态
 
-DP1 is the first process-engineering task after the completed v0.7.0
-real-usage exercise. DP1 defines policy only:
+DP1 是 v0.7.0 正式发布并完成真实使用练习之后的首个流程工程任务。DP1 只
+定义策略：
 
-- It does not change product code, version, dependencies, public API,
-  CLI, schemas, or artifact formats.
-- It does not optimize CI or tests yet; later PRs implement the policy
-  defined here.
-- It does not mutate the sealed v0.7.0 release in any way.
+- 不修改产品代码、版本、依赖、public API、CLI、schema 或 artifact format。
+- 尚不优化 CI 或测试；后续 PR 实现本文档定义的策略。
+- 不以任何方式改动已密封的 v0.7.0 release。
 
-## 2. Motivation and measured baseline
+## 2. 动机与实测基线
 
-The v0.7.0 lifecycle PR (`docs: record v0.7.0 formal release state`,
-PR #54) was the measured lifecycle/docs workflow case — the process
-benchmark — that motivated DP1. The recorded observation:
+触发 DP1 的实测案例是 v0.7.0 lifecycle PR（`docs: record v0.7.0 formal
+release state`，PR #54）——观测到的 lifecycle/docs workflow 案例，即实际
+测量的流程 benchmark（process benchmark）。真正的 v0.7.0 real-usage
+exercise 是随后一次独立活动，不是同一个测量。记录到的观测：
 
-- The lifecycle / docs PR took approximately 63 minutes wall-clock.
-- Local testing dominated wall-clock time.
-- The affected regression test file alone can take many minutes.
-- Repeated full-suite execution occurred locally during the PR
-  lifecycle.
-- GitHub CI currently executes multiple full-suite environments (the
-  Python 3.11 and 3.14 matrix, the PyArrow 24 portability gate, each
-  running the full offline suite).
-- Package / release verification adds another CI stage (package build,
-  fresh-wheel smoke, SHA256 closure).
+- lifecycle / docs PR 全程约 63 分钟（wall-clock）。
+- 本地测试主导 wall-clock 时间。
+- 单个受影响的 regression 测试文件就可能需要数分钟。
+- 该 PR 生命周期内本地重复执行了多次完整套件。
+- GitHub CI 目前执行多个完整套件环境（Python 3.11 与 3.14 矩阵、PyArrow
+  24 可移植性 gate，各自运行完整离线套件）。
+- package / release 验证还额外增加一个 CI 阶段（package build、
+  fresh-wheel smoke、SHA256 closure）。
 
-No exact percentages are claimed: the recorded observation is a
-wall-clock measurement of one lifecycle PR, not a timing study. The
-problem is qualitatively clear — small changes repeatedly pay for
-full-suite-scale verification — but DP1 deliberately avoids claiming
-precise breakdowns the observation does not support.
+不断言精确百分比：记录的是单个 lifecycle PR 的 wall-clock 观测，不是计时
+研究。问题在性质上很清楚——小变更反复付出完整套件级验证的代价——但 DP1
+刻意不声称观测不支持的具体占比。
 
-## 3. Core principle: FASTER, SAME SAFETY
+## 3. 核心原则：FASTER, SAME SAFETY
 
-The objective of DP1 is to reduce repeated human / agent instruction
-overhead and wall-clock latency while preserving every current safety
-guarantee.
+更快，但保持同等安全等级。
 
-Safety is not traded for speed. Every gate that exists today continues
-to exist:
+DP1 的目标是在保留当前所有安全保证的同时，减少反复出现的人类 / agent
+指令开销与 wall-clock 延迟。
+
+安全不为速度让步。今天存在的每个 gate 都继续存在：
 
 - scope freeze
 - exact base
@@ -60,89 +53,80 @@ to exist:
 - release gate
 - artifact hash closure
 
-DP1's policy reduces repeated verification (local full suites run
-repeatedly for the same change) and repeated instruction (the full gate
-spec repeated inside every prompt), not the gates themselves.
+DP1 的策略减少的是重复验证（同一变更反复跑本地完整套件）与重复指令
+（每次 prompt 重复完整 gate 规范），而不是 gate 本身。
 
-## 4. Development Protocol v1 directions
+## 4. Development Protocol v1 的六个方向
 
-Later PRs implement these directions. DP1 does not implement them; it
-defines and prioritizes them.
+后续 PR 实现这些方向。DP1 不实现它们；只定义与排序。
 
-### 4.1 Layered local testing
+### 4.1 分层本地测试（Layered Local Testing）
 
-Three local verification layers — LEVEL 1 focused development, LEVEL 2
-submission readiness, LEVEL 3 authoritative full verification — so a
-small edit runs only what the edit needs, and the full-suite authority
-sits in final-head CI. Policy is in the
-[DEVELOPMENT_PLAYBOOK.md](../DEVELOPMENT_PLAYBOOK.md) section 2.
+三个本地验证层级——LEVEL 1 focused development、LEVEL 2 submission
+readiness、LEVEL 3 authoritative full verification——让小编辑只跑它需要的
+验证，完整套件的权威落在 final-head CI。策略见
+[DEVELOPMENT_PLAYBOOK.md](../DEVELOPMENT_PLAYBOOK.md) 第 2 节。
 
-### 4.2 Parallel testing
+### 4.2 并行测试（Parallel Testing）
 
-The affected regression surface and the full suite can run as parallel
-pytest processes locally, so the wall-clock cost of a regression
-surface does not scale linearly with its run time.
+affected regression surface 与完整套件可以在本地以并行 pytest 进程运行，
+使 regression surface 的 wall-clock 代价不再随运行时间线性增长。
 
-### 4.3 Automated PR audit
+### 4.3 自动化 PR audit（Automated PR Audit）
 
-An automated, scripted PR audit that checks the frozen-scope contract
-(changed-file list vs. scope, no product / version / dependency / API /
-CLI / schema / workflow mutation) without a human or agent re-reading
-the whole diff. The audit is the mechanical part of the review; the
-independent review remains human or separate-reviewer judgment.
+脚本化的 PR audit，机械地检查冻结范围契约（changed-file list 与 scope
+一致、无 product / version / dependency / API / CLI / schema / workflow
+变更），无需人类或 agent 重读整个 diff。audit 是审查的机械部分；
+independent review 仍由人类或独立审查者判断。
 
-### 4.4 Repository-native playbooks / handoff
+### 4.4 仓库原生 playbooks / handoff（Repository-Native Playbooks / Handoff）
 
-This repository now carries the playbooks and the agent execution
-contract ([DEVELOPMENT_PLAYBOOK.md](../DEVELOPMENT_PLAYBOOK.md),
-[RELEASE_PLAYBOOK.md](../RELEASE_PLAYBOOK.md),
-[AGENT_HANDOFF.md](../AGENT_HANDOFF.md)) so future tasks reference them
-instead of repeating the full gate specification inside every prompt.
+本仓库现在携带 playbooks 与 agent 执行契约
+（[DEVELOPMENT_PLAYBOOK.md](../DEVELOPMENT_PLAYBOOK.md)、
+[RELEASE_PLAYBOOK.md](../RELEASE_PLAYBOOK.md)、
+[AGENT_HANDOFF.md](../AGENT_HANDOFF.md)），未来任务引用它们而不是在每次
+prompt 中重复完整 gate 规范。
 
 ### 4.5 Lifecycle-State Decoupling
 
-The Lifecycle-State Principle (Section 6): mutable lifecycle truth must
-not be embedded as authoritative truth in immutable release payloads.
-DP1 documents the rule only; the concrete release-state design
-(`release/state.json` or equivalent) is DP5 after the semantics are
-designed.
+Lifecycle-State Principle（第 6 节）：mutable lifecycle truth 不得作为
+authoritative truth 固化进 immutable release payload。DP1 只记录这条规则；
+具体的 release-state 设计（`release/state.json` 或等价物）是 DP5（语义设计
+完成后）的工作。
 
-### 4.6 CI risk-tier optimization
+### 4.6 CI 风险分层优化（CI Risk-Tier Optimization）
 
-The final-head CI matrix is sized by change risk instead of uniformly
-running every environment for every change, while keeping the
-authoritative full verification intact for changes that need it. This
-direction does not weaken final-head CI; it is planned and reviewed as
-its own change.
+final-head CI 矩阵按变更风险分层，而不是每次变更统一运行每个环境，同时为
+需要的变更保留权威的完整验证。该方向不削弱 final-head CI；它作为独立变更
+规划与审查。
 
-## 5. Future target wall-clock guidance
+## 5. 未来 wall-clock 目标
 
-These are performance targets, not correctness gates. Missing a target
-is not a failure of verification; it is a signal to improve the process.
+这些是性能目标（performance targets），不是 correctness gate。未达到
+目标不是验证失败，而是改进流程的信号。
 
-| PR class | Target wall-clock |
+| PR 类别 | 目标 wall-clock |
 |---|---|
 | small PR | 15–30 min |
 | medium PR | 25–45 min |
 | release-prep / complex | 40–60 min |
 
-A small PR (for example docs-only or a single-module change) should not
-pay lifecycle-scale wall-clock; a release preparation should. The
-targets bound total lifecycle time including final-head CI, not just
-implementation time.
+小 PR（例如 docs-only 或单模块变更）不应付出 lifecycle 级 wall-clock；
+release preparation 应该。目标约束的是包括 final-head CI 在内的整个
+生命周期时间，不只是实现时间。
 
 ## 6. Lifecycle-State Principle
 
-Any statement that becomes false immediately after a merge, tag
-creation, release publication, or package publication must not be
-embedded as authoritative current truth in an immutable release payload.
+任何会在 merge、tag creation、Release publication、package publication
+之后立即变假的陈述，都不能作为 authoritative current truth 固化进
+immutable release payload。
 
-Two classes of truth exist:
+区分两类 truth：
 
 ### IMMUTABLE SOURCE TRUTH
 
-Statements that remain true across lifecycle transitions and belong in
-immutable release payloads as authoritative:
+跨 lifecycle transition 仍然为真、可以作为 authoritative truth 放进
+immutable release payload 的陈述：
 
 - version
 - feature scope
@@ -154,9 +138,8 @@ immutable release payloads as authoritative:
 
 ### MUTABLE LIFECYCLE TRUTH
 
-Statements that flip the moment a lifecycle transition happens and must
-never be embedded as authoritative current truth in an immutable release
-payload:
+在 lifecycle transition 发生的那一刻就翻转、绝不能作为 authoritative
+current truth 固化进 immutable release payload 的陈述：
 
 - PR open / current / merged
 - current main HEAD
@@ -166,21 +149,19 @@ payload:
 - latest status
 - package-registry publication state
 
-Where mutable lifecycle truth is recorded (for example in release-notes
-documents), it is recorded as a historical record of the state at a
-point in time, explicitly marked as such — exactly as
-[docs/release_v0_7_0.md](release_v0_7_0.md) separates its formal release
-status from its historical release-preparation record.
+需要记录 mutable lifecycle truth 时（例如 release notes 文档），作为某个
+时间点的历史记录、明确标注为历史记录——正如
+[docs/release_v0_7_0.md](release_v0_7_0.md) 把正式 release 状态与历史的
+release-preparation 记录分开。
 
-## 7. DP1 scope boundary
+## 7. DP1 范围边界
 
-DP1:
+DP1：
 
-- records the playbooks and the agent contract;
-- documents the baseline, the directions, the targets, and the
-  Lifecycle-State Principle;
-- changes no product code, no version, no dependency, no public API, no
-  CLI, no schema, no artifact format, and no CI workflow.
+- 记录 playbooks 与 agent 契约；
+- 记录基线、方向、目标与 Lifecycle-State Principle；
+- 不修改产品代码、版本、依赖、public API、CLI、schema、artifact format
+  或 CI workflow。
 
-DP1 does NOT implement the release-state design (`release/state.json` or
-equivalent). That belongs to DP5, after the semantics are designed.
+DP1 不实现 release-state 设计（`release/state.json` 或等价物）。那是 DP5
+（语义设计完成后）的工作。

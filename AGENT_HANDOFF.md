@@ -1,116 +1,111 @@
-# MarketVault Agent Handoff
+# MarketVault Agent 执行协议（Agent Handoff）
 
-The execution contract for Claude Code and Codex agents working on
-MarketVault. Agents follow this contract in place of receiving the full
-gate specification inside every prompt. The playbooks it references are
-[DEVELOPMENT_PLAYBOOK.md](DEVELOPMENT_PLAYBOOK.md) and
-[RELEASE_PLAYBOOK.md](RELEASE_PLAYBOOK.md).
+Claude Code 与 Codex agent 在 MarketVault 仓库工作的执行契约。Agent 遵循本
+契约，而无需在每次 prompt 中接收完整 gate 规范。所引用的手册：
+[DEVELOPMENT_PLAYBOOK.md](DEVELOPMENT_PLAYBOOK.md) 与
+[RELEASE_PLAYBOOK.md](RELEASE_PLAYBOOK.md)。
 
-## 1. Execution contract
+## 1. 执行契约
 
-1. **Agent is executor; independent reviewer remains separate.** The
-   agent implements and verifies. An independent reviewer — a human or a
-   separate review process, never the same agent instance — approves.
-2. **Never treat the agent's own report as independent verification.**
-   The agent's "I checked it" is not the review gate. The independent
-   review gate (development playbook 1.8) is satisfied only by a
-   reviewer other than the authoring agent.
-3. **Exact base SHA must be checked before work.** Run the exact-base
-   procedure (development playbook 1.1): switch to `main`, fetch,
-   fast-forward, verify `HEAD == origin/main == <base SHA>`, verify a
-   clean worktree. If the check fails, stop and report.
-4. **Scope expansion requires stopping, not silently adding work.**
-   If the work reveals that the frozen scope is wrong or incomplete,
-   stop and report the needed expansion. Do not fold it in.
-5. **STOP BEFORE MERGE unless explicitly authorized.** The agent never
-   merges its own PR without explicit merge authorization.
-6. **Never move / recreate release tags without explicit release
-   instruction.** No tag creation, deletion, movement, or recreation
-   outside an explicit release task.
-7. **Never amend / rebase / force-push protected release history
-   without explicit authorization.** Release commits, tags, and the
-   formal release records are immutable (release playbook 2).
+1. **Agent 是 executor，independent reviewer 必须独立。** Agent 负责实现与
+   验证。独立审查者——人类或独立审查进程，绝不能是同一 agent 实例——负责
+   批准。
+2. **Agent 自己的报告不能替代 independent verification。** Agent 的
+   "我检查过了" 不是审查 gate。独立审查 gate（开发手册 1.8）只能由撰写该
+   工作的 agent 之外的审查者满足。
+3. **开始工作前必须验证 exact base SHA。** 执行精确基线流程（开发手册
+   1.1）：`git switch main`、`git fetch origin --prune --tags`、
+   `git pull --ff-only`、验证 `HEAD == origin/main == <base SHA>`、验证
+   工作区干净。失败则停止并报告。
+4. **scope expansion 必须 STOP 并报告，不得静默扩大范围。** 若工作中发现
+   冻结范围错误或不完整，停止并报告需要的扩展，不得擅自并入。
+5. **STOP BEFORE MERGE unless explicitly authorized.** Agent 未经明确 merge
+   授权绝不 merge 自己的 PR。
+6. **release tag 不得自行创建 / 删除 / 移动 / 重建。** 除明确 release 任务
+   外，不得创建、删除、移动或重建任何 tag。
+7. **release history 不得自行 amend / rebase / force-push。** release
+   commit、tag 与正式 release 记录不可变（发布手册第 2 节），未经明确授权
+   不得 amend / rebase / force-push 受保护的 release history。
 
-## 2. Final-reporting rule: wait for CI to reach a terminal state
+## 2. 最终报告规则：等待 CI 到达 terminal 状态
 
-This is the most important reporting rule.
+这是最重要的报告规则。
 
-If a task triggers GitHub CI, the agent MUST wait for the CI associated
-with the exact final head SHA to reach a terminal state.
+任务一旦触发 GitHub CI，Agent 必须等待与该任务 exact final head SHA 对应的
+CI 到达 terminal 状态。
 
-The agent MUST NOT output the final acceptance / completion report while
-CI is:
+在 CI 处于以下状态时，Agent 不得输出 final acceptance / completion report：
 
 - queued
 - waiting
 - pending
 - in_progress
 
-Only after the CI for the exact final head SHA reaches a terminal state:
+只有当 exact final head SHA 对应的 CI 到达 terminal 状态后：
 
-- **terminal SUCCESS** — report `READY FOR INDEPENDENT REVIEW` (with
-  the compact final-report fields below).
-- **ANY terminal non-success conclusion** — report `FAILED/BLOCKED`.
-  No terminal non-success state may ever become `READY FOR INDEPENDENT
-  REVIEW`.
+- **terminal SUCCESS**
+  -> 报告 `READY FOR INDEPENDENT REVIEW`（附第 3 节的标准 final-report
+     字段）。
 
-For a terminal non-success, report:
+- **ANY terminal non-success conclusion**
+  -> 报告 `FAILED` 或 `BLOCKED`。
+  -> 任何 terminal non-success 状态都绝对不能变成 `READY FOR INDEPENDENT
+     REVIEW`。
 
-- the actual workflow conclusion (`failure`, `cancelled`,
-  `timed_out`, ...),
-- the affected job(s),
-- the failing / terminated step when available.
+terminal non-success 包括但不限于：
 
-This includes runs that end `cancelled` or `timed_out`: they are
-terminal, they are not SUCCESS, and they require the `FAILED/BLOCKED`
-report.
+- failure
+- cancelled
+- timed_out
 
-If the task subsequently merges and triggers main CI, apply the SAME
-semantics to the exact merge / main commit before reporting `COMPLETE`:
-terminal SUCCESS only, or `FAILED/BLOCKED` with the actual conclusion
-and the affected job / step.
+报告 terminal non-success 时必须包含：
 
-Do not drip-feed "CI pending" as a final report. Interim progress
-messages are fine; the final report is emitted only at a terminal CI
-state.
+- actual workflow conclusion
+- affected job(s)
+- failing / terminated step when available
 
-## 3. Compact standard final-report fields
+如果任务随后 merge 并触发 main CI，对 exact merge/main commit 应用完全
+相同的规则后再报告 `COMPLETE`：只有 terminal SUCCESS 才能 COMPLETE，否则
+`FAILED` / `BLOCKED` 并附 actual conclusion 与 affected job / step。
 
-Every final report contains exactly these fields, in this order:
+Do not drip-feed "CI pending" as a final report.
 
-| Field | Content |
+可以有普通进度消息，但正式 final report 只能在 CI 到达 terminal 状态后输出。
+
+## 3. 标准 final-report 字段
+
+每个 final report 按顺序包含以下字段（字段名保持稳定英文）：
+
+| 字段（英文名稳定） | 内容 |
 |---|---|
-| base SHA | the exact base SHA verified before work |
-| final head SHA | the pushed head SHA whose CI was evaluated |
-| changed files | the exact changed-file list |
-| local checks | the local verification performed and its results |
-| CI run ID | the GitHub Actions run ID for the final head |
-| CI job conclusions | every job's actual conclusion (SUCCESS, or failure / cancelled / timed_out for terminal non-success runs) |
-| diff / scope result | diff stat and confirmation the changed-file list matches the frozen scope |
-| working-tree state | clean or the exact remaining changes |
-| mutation / immutability declaration | explicit confirmation that no product / version / dependency / API / CLI / schema / workflow / release mutation occurred, when that is true |
-| stop state | the current stop point (for example "STOP BEFORE MERGE", "READY FOR INDEPENDENT REVIEW") |
+| base SHA | 开工前验证的 exact base SHA |
+| final head SHA | 被评估的 pushed head SHA |
+| changed files | 精确的 changed-file list |
+| local checks | 执行的本地验证及其结果 |
+| CI run ID | final head 对应的 GitHub Actions run ID |
+| CI job conclusions | 每个 job 的实际结论（SUCCESS，或 terminal non-success 时的 failure / cancelled / timed_out 等） |
+| diff / scope result | diff stat，以及 changed-file list 与冻结范围一致的确认 |
+| working-tree state | clean，或确切的剩余变更 |
+| mutation / immutability declaration | 当属实时明确声明：无 product / version / dependency / API / CLI / schema / workflow / release 变更 |
+| stop state | 当前停止点（例如 STOP BEFORE MERGE、READY FOR INDEPENDENT REVIEW） |
 
-## 4. Reporting vocabulary
+## 4. 报告词汇
 
-- `READY FOR INDEPENDENT REVIEW` — final-head CI terminal SUCCESS, all
-  local and scope checks done; the independent reviewer is the next gate.
-- `FAILED/BLOCKED` — final-head CI reached a terminal non-success
-  conclusion; report the actual workflow conclusion, the affected
-  job(s), and the failing / terminated step when available.
-- `COMPLETE` — reserved for post-merge tasks whose exact merge / main
-  commit CI is terminal SUCCESS.
-- `STOP BEFORE MERGE` — the explicit stop state; merge requires separate
-  authorization (contract rule 5).
+- `READY FOR INDEPENDENT REVIEW` — final-head CI terminal SUCCESS，本地
+  检查与 scope 检查全部完成；下一个 gate 是独立审查者。
+- `FAILED` / `BLOCKED` — final-head CI 到达 terminal non-success；报告
+  actual workflow conclusion、affected job(s)、以及 available 时的
+  failing / terminated step。
+- `COMPLETE` — 仅用于 post-merge 任务：exact merge/main commit 的 CI 为
+  terminal SUCCESS。
+- `STOP BEFORE MERGE` — 明确的停止点；merge 需要单独授权（契约规则 5）。
 
-## 5. Protocol violations
+## 5. 协议违规
 
-The following are protocol violations and must be reported as such:
+以下行为属于协议违规，必须如实报告：
 
-- Working from an unverified base.
-- Silent scope expansion.
-- Reporting acceptance while CI is queued / waiting / pending /
-  in_progress.
-- Treating an agent's own report as the independent review.
-- Moving, recreating, amending, or force-pushing release history without
-  explicit authorization.
+- 从未经验证的基线开始工作。
+- 静默 scope expansion。
+- CI 处于 queued / waiting / pending / in_progress 时报告完成。
+- 把 agent 自己的报告当作 independent review。
+- 未经明确授权移动、重建、amend 或 force-push release history。

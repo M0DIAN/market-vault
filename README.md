@@ -25,16 +25,17 @@ PyPI: NOT PUBLISHED. TestPyPI: NOT PUBLISHED. See
 [docs/contracts/python_client.md](docs/contracts/python_client.md), and
 [docs/v0_7_0_python_client_usage.md](docs/v0_7_0_python_client_usage.md).
 
-## Development process
+## 开发流程
 
-Repository-native engineering protocol: the [development
-playbook](DEVELOPMENT_PLAYBOOK.md) defines the standard PR lifecycle and
-local verification layers, the [release playbook](RELEASE_PLAYBOOK.md)
-defines the formal release gates, the [agent handoff](AGENT_HANDOFF.md)
-defines the Claude Code / Codex execution contract, and
-[docs/development_protocol_v1.md](docs/development_protocol_v1.md)
-records the motivation and roadmap. These documents define policy; the
-policy is implemented by later PRs.
+MarketVault 的仓库级工程规范见：
+
+- [DEVELOPMENT_PLAYBOOK.md](DEVELOPMENT_PLAYBOOK.md) — 开发手册：标准 PR
+  生命周期与本地验证层级
+- [RELEASE_PLAYBOOK.md](RELEASE_PLAYBOOK.md) — 发布手册：正式 release gate
+- [AGENT_HANDOFF.md](AGENT_HANDOFF.md) — Agent 执行协议
+- [docs/development_protocol_v1.md](docs/development_protocol_v1.md) — 动机与路线图
+
+这些文档定义开发、发布、Agent handoff 和流程优化规范。
 
 ## V0.6.1 stability, auditability, and usability maintenance
 
