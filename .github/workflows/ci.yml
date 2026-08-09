@@ -135,8 +135,8 @@ jobs:
           .release-venv/bin/market-vault dataset-catalog-verify --help
           .release-venv/bin/market-vault dataset-catalog-list --help
           .release-venv/bin/market-vault dataset-catalog-show --help
-          .release-venv/bin/python -c "import market_vault; assert market_vault.__version__ == '0.6.1'"
-          .release-venv/bin/python -c "from importlib.metadata import version; assert version('market-vault') == '0.6.1'"
+          .release-venv/bin/python -c "import market_vault; assert market_vault.__version__ == '0.7.0'"
+          .release-venv/bin/python -c "from importlib.metadata import version; assert version('market-vault') == '0.7.0'"
 
       - name: Fresh-wheel public API smoke check
         run: |
@@ -215,7 +215,7 @@ jobs:
           "
           echo 'PR7_CATALOG_CLI_HELP_OK'
           echo 'PR8_INTEGRATED_ACCEPTANCE_OK'
-          echo 'V061_RELEASE_STATE_OK'
+          echo 'V070_RELEASE_PREP_OK'
 
       - name: Check wheel contents exclude local data
         run: |

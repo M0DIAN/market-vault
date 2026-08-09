@@ -4,6 +4,52 @@ All notable changes to MarketVault are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-08-09
+
+### Added
+
+- Settings-independent Python artifact client: `market_vault.ArtifactClient`
+  serves verified immutable artifacts through the existing formal verified
+  readers.
+- `ArtifactClient.load_canonical_build(build_dir)` /
+  `ArtifactClient.load_dataset(build_dir)` /
+  `ArtifactClient.load_dataset_catalog(snapshot_dir)`: direct delegation to
+  the formal verified readers, returning their verified objects with no
+  client-side parsing, no second trust path, no exception wrapping, and a
+  lazy import boundary.
+- Python / Jupyter / ML-consumer usage documentation
+  (`docs/v0_7_0_python_client_usage.md`) and source-tree examples
+  (`examples/python_client/`).
+- v0.7.0 release preparation (PR-6): candidate version 0.7.0, lifecycle
+  document sync, and v0.7.0 release notes (`docs/release_v0_7_0.md`).
+
+### Compatibility
+
+- No new product capability beyond the Python Client read-only surface.
+- Canonical identity unchanged.
+- Dataset identity unchanged.
+- Sample Generation identity unchanged.
+- Catalog identities unchanged.
+- Schemas and artifact formats unchanged.
+- Existing artifacts require no migration.
+- CLI command set unchanged.
+- Runtime dependencies unchanged.
+- `requires-python >=3.11` unchanged.
+
+### Known boundaries
+
+- v0.7.0 is NOT formally released: no tag, no GitHub Release, no
+  PyPI / TestPyPI publication.
+- No Catalog convenience API.
+- No discovery / `latest` pointer.
+- No settings requirement for `ArtifactClient`.
+- No network / OpenD for `ArtifactClient`.
+- No REST API.
+- No ML training.
+- No backtesting.
+- No signals.
+- No automatic trading.
+
 ## [0.6.1] - 2026-08-08
 
 ### Changed
@@ -400,6 +446,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Historical K-line collection for closed dates (`collect`), query layer
   (`query`), and option datasets.
 
+[0.7.0]: https://github.com/M0DIAN/market-vault/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/M0DIAN/market-vault/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/M0DIAN/market-vault/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/M0DIAN/market-vault/compare/v0.5.0...v0.5.1

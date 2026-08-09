@@ -1,6 +1,6 @@
 # MarketVault v0.7.0 Direction: Python Client and Read-only Artifact Access
 
-Status: active feature development; PR-5 Integrated E2E + usability stage
+Status: active feature development; PR-6 v0.7.0 release preparation stage
 
 Baseline:
 
@@ -19,9 +19,9 @@ PR-1: COMPLETE / MERGED / MAIN VERIFIED
 PR-2: COMPLETE / MERGED / MAIN VERIFIED
 PR-3: COMPLETE / MERGED / MAIN VERIFIED
 PR-4: COMPLETE / MERGED / MAIN VERIFIED
-PR-5: CURRENT
-PR-6: NOT STARTED
-package: 0.6.1
+PR-5: COMPLETE / MERGED / MAIN VERIFIED
+PR-6: CURRENT
+package: 0.7.0
 v0.7.0: NOT RELEASED
 ```
 
@@ -72,6 +72,18 @@ ArtifactClient Dataset verified read: IMPLEMENTED
 ArtifactClient Dataset Catalog verified read: IMPLEMENTED
 ```
 
+PR-5 record:
+
+```text
+PR #52 merged at 2026-08-09T10:07:06Z
+final head: 2f7ee8dd6c7c3ce07f677be99cdd8afb8f2c68d4
+squash/main: 5ec437d37bb2cde0b716aa5dc1f84538b4bc6215
+main CI: 31307554050 SUCCESS
+package before PR-6: 0.6.1
+ArtifactClient integrated E2E acceptance: IMPLEMENTED
+consumer usability docs and source-tree examples: IMPLEMENTED
+```
+
 This document defines the scope, non-goals, and fixed PR sequence for the
 V0.7.0 "Python Client and Read-only Artifact Access" feature release.
 V0.7.0 delivers a settings-independent Python artifact client that serves
@@ -82,10 +94,11 @@ Client boundary contract (`docs/contracts/python_client.md`). PR-2
 implemented the settings-independent `ArtifactClient` foundation (merged
 PR #49). PR-3 added the Canonical + Dataset verified read-only client
 access (merged PR #50). PR-4 added the Dataset Catalog verified read-only
-client access (merged PR #51). PR-5 adds the integrated offline
+client access (merged PR #51). PR-5 added the integrated offline
 end-to-end acceptance, the explicit-path Python / Jupyter / ML-consumer
 usability documentation, the source-tree examples, and the backward
-compatibility hardening.
+compatibility hardening (merged PR #52). PR-6 performs the v0.7.0 release
+preparation.
 
 ## 1. Goals
 
@@ -314,6 +327,30 @@ PR-5 MUST NOT:
 - add visualization product code;
 - add ML/training/evaluation;
 - perform PR-6 release preparation.
+
+## 6.5 PR-6 boundary
+
+PR-6 (this PR) MAY ONLY:
+
+- bump the package version from 0.6.1 to 0.7.0;
+- sync the lifecycle documents (direction, contract, README, CHANGELOG);
+- add the v0.7.0 release notes (`docs/release_v0_7_0.md`);
+- harden the release checker / release regression guards;
+- sync the CI release-state marker to `V070_RELEASE_PREP_OK`.
+
+PR-6 MUST NOT:
+
+- modify `src/` except the `_version.py` version bump;
+- modify dependencies;
+- add ArtifactClient capabilities;
+- add CLI;
+- add discovery/latest;
+- add settings;
+- add network/OpenD;
+- add current time;
+- create the v0.7.0 tag;
+- publish a GitHub Release;
+- publish to PyPI / TestPyPI.
 
 ## 7. Acceptance principles
 

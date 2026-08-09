@@ -640,11 +640,11 @@ def test_limit_one_thousand_accepted():
     assert args.limit == 1000
 
 
-def test_version_is_market_vault_061(capsys):
+def test_version_is_market_vault_070(capsys):
     with pytest.raises(SystemExit) as excinfo:
         cli_module.build_parser().parse_args(["--version"])
     assert excinfo.value.code == 0
-    assert "market-vault 0.6.1" in capsys.readouterr().out
+    assert "market-vault 0.7.0" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------

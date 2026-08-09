@@ -1,6 +1,27 @@
-# MarketVault v0.6.1
+# MarketVault v0.7.0
 
 MarketVault is a local historical market database for moomoo OpenD. V0.1 focused on closed-date stock, ETF, and option candlesticks. V0.2 added option contract static metadata and daily option volatility datasets. V0.3 adds the trading-calendar-driven collection and audit toolchain: a local trading calendar, resumable historical backfill, immutable snapshots, inventory reports, trading-day coverage audits, and intraday integrity audits. V0.4 adds the Canonical Dataset and ML Foundation: immutable Canonical builds from audited COMPLETE snapshots, a verified Canonical reader, three-clock market-bar semantics, two-clock point-in-time sample assembly, versioned Feature/Label spec contracts, deterministic Dataset identity/manifest contracts, chronological splits with actual-label-end purging, and the leakage threat-model regression suite. V0.5 adds the Deterministic Dataset Builder: an executable, verified, fail-closed pipeline that runs built-in Feature and Label transforms over verified Canonical builds, computes real `label_status` and `actual_label_end_time`, assigns chronological splits with actual-label-end purge, orchestrates immutable Dataset materialization, and reads the results back through a verified Dataset reader and three formal CLI commands. V0.5.1 is the stability and usability maintenance release on top of V0.5.0. V0.6 adds the Deterministic Sample Generator and the immutable Dataset Catalog: explicit generation plans produce deterministic PITSampleRequest sequences as ordinary Dataset build plans, and verified immutable Datasets project into immutable Catalog snapshots with a verified reader and read-only build/verify/list/show CLI discovery.
+
+## V0.7.0 Python Client and read-only artifact access (candidate, NOT formally released)
+
+V0.7.0 adds a settings-independent Python artifact client:
+`market_vault.ArtifactClient` serves verified immutable artifacts through
+the existing formal verified readers. The public read methods are exactly
+`load_canonical_build(build_dir)`, `load_dataset(build_dir)`, and
+`load_dataset_catalog(snapshot_dir)`; each delegates directly to the
+formal verified reader and returns its verified object, with no
+client-side parsing, no second trust path, no exception wrapping, and no
+discovery / latest / settings / network / OpenD / current-time behavior.
+Plain `import market_vault` stays lightweight: reader imports happen only
+at actual method invocation.
+
+The package candidate is 0.7.0 (PR-6 release preparation), but v0.7.0 is
+NOT formally released: the v0.7.0 tag is NOT CREATED, the GitHub Release
+is NOT PUBLISHED, and PyPI / TestPyPI are NOT PUBLISHED. See
+[docs/release_v0_7_0.md](docs/release_v0_7_0.md),
+[docs/v0_7_0_direction.md](docs/v0_7_0_direction.md),
+[docs/contracts/python_client.md](docs/contracts/python_client.md), and
+[docs/v0_7_0_python_client_usage.md](docs/v0_7_0_python_client_usage.md).
 
 ## V0.6.1 stability, auditability, and usability maintenance
 
