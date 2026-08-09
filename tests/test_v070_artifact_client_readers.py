@@ -1,12 +1,14 @@
-"""Focused v0.7.0 PR-3 regression: ArtifactClient verified reader access.
+"""Focused v0.7.0 PR-4 regression: ArtifactClient verified reader access.
 
-Covers the frozen PR-3 reader surface:
+Covers the frozen PR-4 reader surface:
 
-- the exact two public business methods and their frozen signatures;
-- direct verbatim delegation: the exact ``build_dir`` value reaches the
-  formal reader and the exact formal result returns unchanged;
+- the exact three public business methods and their frozen signatures;
+- direct verbatim delegation: the exact ``build_dir`` / ``snapshot_dir``
+  value reaches the formal reader and the exact formal result returns
+  unchanged;
 - error preservation: formal ``CanonicalArtifactValidationError`` /
-  ``DatasetArtifactValidationError`` propagate unwrapped;
+  ``DatasetArtifactValidationError`` /
+  ``DatasetCatalogArtifactValidationError`` propagate unwrapped;
 - the method-call import boundary: reader imports happen only at actual
   invocation and load nothing beyond the formal reader chain;
 - read-only behavior against real minimal committed-style artifact
@@ -14,8 +16,7 @@ Covers the frozen PR-3 reader surface:
   result is the exact formal verified object, no files are created or
   modified;
 - fail-closed corruption: a corrupt artifact produces the exact formal
-  validation error, never a partial client success;
-- no Dataset Catalog capability.
+  validation error, never a partial client success.
 
 Fixtures are constructed locally with the production builders only (no
 helper imports from other test modules), mirroring the deterministic
@@ -53,6 +54,7 @@ from market_vault.dataset import (
     ChronologicalSplitSpec,
     CrossTradingDayPolicy,
     DatasetArtifactValidationError,
+    DatasetCatalogArtifactValidationError,
     DatasetField,
     DatasetScope,
     FeatureSpec,
@@ -63,9 +65,13 @@ from market_vault.dataset import (
     SpecParameter,
     SpecVersionRequirements,
     VerifiedDatasetBuild,
+    VerifiedDatasetCatalogSnapshot,
+    build_dataset_catalog,
     dataset_orchestration_schema,
     load_verified_dataset,
+    load_verified_dataset_catalog,
     materialize_dataset_artifacts,
+    materialize_dataset_catalog_snapshot,
     orchestrate_dataset_build,
 )
 from market_vault.models import QualityResult, RunManifest, Settings
@@ -348,19 +354,37 @@ def dataset_build(tmp_path_factory):
     return build_dataset(cfg, [build_a, build_f], root)
 
 
+@pytest.fixture(scope="module")
+def catalog_snapshot(dataset_build):
+    """One immutable Dataset Catalog snapshot via the production
+    builders: ``build_dataset_catalog`` + ``materialize_dataset_catalog_snapshot``."""
+    root = dataset_build.parent.parent
+    result = build_dataset_catalog(
+        candidate_build_dirs=tuple([str(dataset_build)])
+    )
+    mresult = materialize_dataset_catalog_snapshot(
+        result, output_root=root / "catalog_snapshots", built_at=BUILT_AT
+    )
+    return Path(mresult.snapshot_path)
+
+
 # ---------------------------------------------------------------------------
 # 1. API shape.
 # ---------------------------------------------------------------------------
 
 
-def test_exactly_two_public_read_methods():
+def test_exactly_three_public_read_methods():
     public = sorted(
         n for n in dir(ArtifactClient) if not n.startswith("_")
     )
-    assert public == ["load_canonical_build", "load_dataset"]
+    assert public == [
+        "load_canonical_build",
+        "load_dataset",
+        "load_dataset_catalog",
+    ]
 
 
-def test_reader_signatures_are_exactly_self_build_dir():
+def test_reader_signatures_are_exactly_self_and_the_read_arg():
     import inspect
 
     assert list(inspect.signature(ArtifactClient.load_canonical_build).parameters) == [
@@ -371,6 +395,9 @@ def test_reader_signatures_are_exactly_self_build_dir():
         "self",
         "build_dir",
     ]
+    assert list(
+        inspect.signature(ArtifactClient.load_dataset_catalog).parameters
+    ) == ["self", "snapshot_dir"]
 
 
 # ---------------------------------------------------------------------------
@@ -444,6 +471,43 @@ def test_dataset_reader_called_exactly_once(monkeypatch):
     assert calls == ["x"]
 
 
+def test_catalog_method_delegates_verbatim(monkeypatch):
+    sentinel_snapshot_dir = object()
+    sentinel_result = object()
+    calls = []
+
+    def stub(snapshot_dir):
+        calls.append(snapshot_dir)
+        return sentinel_result
+
+    monkeypatch.setattr(
+        "market_vault.dataset.dataset_catalog_reader."
+        "load_verified_dataset_catalog",
+        stub,
+    )
+    result = ArtifactClient().load_dataset_catalog(sentinel_snapshot_dir)
+    assert calls == [sentinel_snapshot_dir]
+    assert result is sentinel_result
+
+
+def test_catalog_reader_called_exactly_once(monkeypatch):
+    sentinel_result = object()
+    calls = []
+
+    def stub(snapshot_dir):
+        calls.append(snapshot_dir)
+        return sentinel_result
+
+    monkeypatch.setattr(
+        "market_vault.dataset.dataset_catalog_reader."
+        "load_verified_dataset_catalog",
+        stub,
+    )
+    result = ArtifactClient().load_dataset_catalog("x")
+    assert result is sentinel_result
+    assert calls == ["x"]
+
+
 # ---------------------------------------------------------------------------
 # 3. Error preservation (no wrapping).
 # ---------------------------------------------------------------------------
@@ -474,6 +538,24 @@ def test_dataset_reader_error_propagates_unwrapped(monkeypatch):
     )
     with pytest.raises(DatasetArtifactValidationError) as excinfo:
         ArtifactClient().load_dataset("x")
+    assert excinfo.value is expected
+
+
+def test_catalog_reader_error_propagates_unwrapped(monkeypatch):
+    expected = DatasetCatalogArtifactValidationError(
+        "formal catalog failure"
+    )
+
+    def stub(snapshot_dir):
+        raise expected
+
+    monkeypatch.setattr(
+        "market_vault.dataset.dataset_catalog_reader."
+        "load_verified_dataset_catalog",
+        stub,
+    )
+    with pytest.raises(DatasetCatalogArtifactValidationError) as excinfo:
+        ArtifactClient().load_dataset_catalog("x")
     assert excinfo.value is expected
 
 
@@ -593,6 +675,30 @@ def test_dataset_method_call_boundary_loads_only_reader_chain():
     assert "V070_LAZY_BOUNDARY_OK" in result.stdout
 
 
+def test_catalog_method_call_boundary_loads_only_reader_chain():
+    code = LAZY_BOUNDARY_PROBE.replace(
+        "%METHOD_CALL%",
+        "try:\n"
+        "    client.load_dataset_catalog('definitely-missing-snapshot')\n"
+        "    raise SystemExit('catalog client call did not fail')\n"
+        "except Exception as exc:\n"
+        "    assert type(exc).__name__ == 'DatasetCatalogArtifactValidationError', type(exc)",
+    )
+    code = code.replace(
+        "%EXC_NAME%", "DatasetCatalogArtifactValidationError"
+    ).replace(
+        "%DIRECT_IMPORT%",
+        "from market_vault.dataset.dataset_catalog_reader import "
+        "load_verified_dataset_catalog",
+    ).replace(
+        "%DIRECT_CALL%",
+        "load_verified_dataset_catalog('definitely-missing-snapshot')",
+    )
+    result = run_python(code)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "V070_LAZY_BOUNDARY_OK" in result.stdout
+
+
 # ---------------------------------------------------------------------------
 # 5. Read-only behavior on real fixtures.
 # ---------------------------------------------------------------------------
@@ -663,6 +769,34 @@ def test_dataset_client_read_no_parent_side_effects(dataset_build, tmp_path):
     assert set(os.listdir(parent)) == before
 
 
+def test_catalog_client_read_matches_direct_reader(catalog_snapshot):
+    snapshot = catalog_snapshot
+    before_files = set(os.listdir(snapshot))
+    before_snapshot = artifact_snapshot(snapshot)
+
+    direct = load_verified_dataset_catalog(snapshot)
+    client_result = ArtifactClient().load_dataset_catalog(snapshot)
+
+    # Exact formal result type and identical verified facts.
+    assert type(client_result) is type(direct)
+    assert isinstance(client_result, VerifiedDatasetCatalogSnapshot)
+    assert client_result.snapshot_id == direct.snapshot_id
+    assert client_result.catalog_content_id == direct.catalog_content_id
+    assert client_result.manifest == direct.manifest
+    assert client_result.entries == direct.entries
+
+    # Read-only: no files created, no bytes changed.
+    assert set(os.listdir(snapshot)) == before_files
+    assert artifact_snapshot(snapshot) == before_snapshot
+
+
+def test_catalog_client_read_no_parent_side_effects(catalog_snapshot):
+    parent = catalog_snapshot.parent
+    before = set(os.listdir(parent))
+    ArtifactClient().load_dataset_catalog(catalog_snapshot)
+    assert set(os.listdir(parent)) == before
+
+
 # ---------------------------------------------------------------------------
 # 6. Invalid / corrupt artifact fails closed.
 # ---------------------------------------------------------------------------
@@ -702,11 +836,18 @@ def test_dataset_client_missing_path_fails_closed(tmp_path):
         ArtifactClient().load_dataset(missing)
 
 
-# ---------------------------------------------------------------------------
-# 7. No Dataset Catalog capability.
-# ---------------------------------------------------------------------------
+def test_catalog_client_corrupt_artifact_fails_closed(catalog_snapshot):
+    manifest = catalog_snapshot / "manifest.json"
+    original = manifest.read_bytes()
+    manifest.write_bytes(original[: len(original) // 2])
+    try:
+        with pytest.raises(DatasetCatalogArtifactValidationError):
+            ArtifactClient().load_dataset_catalog(catalog_snapshot)
+    finally:
+        manifest.write_bytes(original)
 
 
-def test_no_dataset_catalog_capability():
-    assert not hasattr(ArtifactClient, "load_dataset_catalog")
-    assert not hasattr(ArtifactClient(), "load_dataset_catalog")
+def test_catalog_client_missing_path_fails_closed(tmp_path):
+    missing = tmp_path / "no-such-catalog-snapshot"
+    with pytest.raises(DatasetCatalogArtifactValidationError):
+        ArtifactClient().load_dataset_catalog(missing)

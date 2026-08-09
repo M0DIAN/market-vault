@@ -1,6 +1,6 @@
 # MarketVault v0.7.0 Direction: Python Client and Read-only Artifact Access
 
-Status: active feature development; PR-3 Canonical + Dataset ArtifactClient reads stage
+Status: active feature development; PR-4 Dataset Catalog ArtifactClient reads stage
 
 Baseline:
 
@@ -17,8 +17,8 @@ Progress / current state:
 ```text
 PR-1: COMPLETE / MERGED / MAIN VERIFIED
 PR-2: COMPLETE / MERGED / MAIN VERIFIED
-PR-3: CURRENT
-PR-4: NOT STARTED
+PR-3: COMPLETE / MERGED / MAIN VERIFIED
+PR-4: CURRENT
 PR-5: NOT STARTED
 PR-6: NOT STARTED
 package: 0.6.1
@@ -46,6 +46,19 @@ ArtifactClient foundation: IMPLEMENTED
 Canonical / Dataset / Catalog reads at PR-2: NOT IMPLEMENTED
 ```
 
+PR-3 record:
+
+```text
+PR #50 merged at 2026-08-09T05:34:20Z
+final head: 01d40bd9a090dc1e23d9539aa57a8649c0d64b7c
+squash/main: 61a2b055163815d463d5b261f5b6a94e54e515bd
+main CI: 31296976872 SUCCESS
+package: 0.6.1
+ArtifactClient Canonical verified read: IMPLEMENTED
+ArtifactClient Dataset verified read: IMPLEMENTED
+Dataset Catalog client read at PR-3: NOT IMPLEMENTED
+```
+
 This document defines the scope, non-goals, and fixed PR sequence for the
 V0.7.0 "Python Client and Read-only Artifact Access" feature release.
 V0.7.0 delivers a settings-independent Python artifact client that serves
@@ -54,8 +67,9 @@ readers. PR-1 established the post-v0.6.1 release baseline, the existing
 Python API audit (`docs/v0_7_0_python_api_audit.md`), and the Python
 Client boundary contract (`docs/contracts/python_client.md`). PR-2
 implemented the settings-independent `ArtifactClient` foundation (merged
-PR #49). PR-3 adds the Canonical + Dataset verified read-only client
-access.
+PR #49). PR-3 added the Canonical + Dataset verified read-only client
+access (merged PR #50). PR-4 adds the Dataset Catalog verified read-only
+client access.
 
 ## 1. Goals
 
@@ -203,9 +217,9 @@ PR-2 did not implement:
 - network / OpenD;
 - future method stubs.
 
-## 6.2 PR-3 boundary
+## 6.2 PR-3 boundary (merged PR #50)
 
-PR-3 (this PR) MAY implement only:
+PR-3 (the merged reader PR, #50) implemented only:
 
 - `load_canonical_build`;
 - `load_dataset`;
@@ -214,7 +228,7 @@ PR-3 (this PR) MAY implement only:
 - contract/direction/checker changes;
 - fresh-wheel API smoke updates.
 
-PR-3 MUST NOT implement:
+PR-3 did not implement:
 
 - Dataset Catalog client access;
 - Catalog lookup/filter;
@@ -225,6 +239,36 @@ PR-3 MUST NOT implement:
 - current-time behavior;
 - CLI;
 - PR-4/5/6 work.
+
+## 6.3 PR-4 boundary
+
+PR-4 (this PR) MAY implement only:
+
+- `load_dataset_catalog`;
+- direct formal verified Catalog reader delegation;
+- Catalog reader access tests;
+- contract/direction/checker changes;
+- fresh-wheel smoke updates.
+
+PR-4 MUST NOT:
+
+- Catalog builder;
+- Catalog materialization;
+- Catalog list/filter/query convenience API;
+- new CLI;
+- dataset-catalog-query CLI;
+- Canonical/Dataset production changes;
+- artifact format change;
+- schema change;
+- identity change;
+- migration;
+- settings;
+- discovery/latest;
+- network/OpenD;
+- current time;
+- PR-5 usability/examples;
+- PR-6 release prep;
+- version bump.
 
 ## 7. Acceptance principles
 
