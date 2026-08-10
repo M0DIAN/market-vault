@@ -53,6 +53,13 @@ ordering, newline-terminated, strictly schema-validated before writing.
 
 The GitHub token is never printed. The token is only ever sent to
 ``api.github.com``; cross-host redirects (artifact CDN) strip it.
+
+V2 foundation (PR #65): this module additionally defines the pure,
+deterministic per-surface reuse-plan evidence matrix (SURFACE_ORDER /
+SURFACE_JOB_NAMES / SurfaceDecision / ReusePlan /
+build_surface_reuse_plan / render_reuse_plan) for a future partial-reuse
+decision. FOUNDATION ONLY: it is not wired into run_verifier() and the
+workflow does not parse its output — no production skip behavior changes.
 """
 
 from __future__ import annotations
@@ -141,6 +148,47 @@ REUSE_LOG_KEYS = (
     "main_sha",
     "main_tree_sha",
 )
+
+# V2 foundation constants (PR #65). The V1 REQUIRED_JOB_SURFACES contract
+# above is untouched; these are a separate canonical surface model for the
+# future partial-reuse decision. SURFACE_ORDER fixes the canonical
+# decision/render order; SURFACE_JOB_NAMES maps each canonical surface ID
+# to the current GitHub job name.
+SURFACE_ORDER = (
+    "test-3.11",
+    "test-3.14",
+    "pyarrow24",
+    "package",
+)
+
+SURFACE_JOB_NAMES = {
+    "test-3.11": "test (3.11)",
+    "test-3.14": "test (3.14)",
+    "pyarrow24": "portability-pyarrow24",
+    "package": "package",
+}
+
+# Exact render tokens for the deterministic V2 plan renderer (pinned).
+SURFACE_RENDER_TOKENS = {
+    "test-3.11": "TEST_311",
+    "test-3.14": "TEST_314",
+    "pyarrow24": "PYARROW24",
+    "package": "PACKAGE",
+}
+
+# V2 mode values.
+MODE_FULL_REUSE = "full_reuse"
+MODE_PARTIAL_REUSE = "partial_reuse"
+MODE_NO_REUSE = "no_reuse"
+
+# V2 per-surface / contract reasons (single exact constants, pinned by
+# tests; the identity-false invariant uses GLOBAL_IDENTITY_UNPROVEN_REASON).
+GLOBAL_IDENTITY_UNPROVEN_REASON = "global_identity_unproven"
+SURFACE_VERIFIED_REASON = "verified_job_success"
+SURFACE_JOB_MISSING_REASON = "job_missing"
+SURFACE_JOB_NON_SUCCESS_REASON = "job_non_success"
+JOB_DUPLICATE_CONTRACT_REASON = "job_duplicate_contract"
+JOB_UNEXPECTED_CONTRACT_REASON = "job_unexpected_contract"
 
 
 # ---------------------------------------------------------------------------
@@ -468,6 +516,166 @@ def check_control_plane(changed_paths: list[str]) -> tuple[bool, str | None]:
         if normalized in CONTROL_PLANE_PATHS:
             return False, "control_plane_changed"
     return True, None
+
+
+# ---------------------------------------------------------------------------
+# V2 foundation: per-surface reuse-plan evidence matrix (PR #65).
+#
+# FOUNDATION ONLY: a deterministic, pure, immutable data model for a future
+# partial-reuse decision. It is NOT wired into run_verifier() and the
+# workflow does not parse its output yet — no production skip behavior
+# changes with this PR. Partial reuse is allowed ONLY after global identity
+# (valid push shape, trusted squash topology, exact associated PR, exact
+# PR head/run association, valid attempt-bound attestation, matching
+# identifiers, main tree == tested tree, no control-plane exclusion) has
+# been independently proven; the future caller passes identity_proven /
+# identity_reason into the planner explicitly.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class SurfaceDecision:
+    """V2 per-surface evidence decision. ``reuse`` is True only when
+    exactly one job with the canonical name for this surface exists and
+    terminated ``completed`` / ``success``. Data only — no network / git /
+    environment behavior."""
+
+    surface: str
+    reuse: bool
+    reason: str
+
+
+@dataclass(frozen=True)
+class ReusePlan:
+    """V2 deterministic reuse plan. ``mode`` is one of MODE_FULL_REUSE /
+    MODE_PARTIAL_REUSE / MODE_NO_REUSE. ``surfaces`` always follows
+    SURFACE_ORDER regardless of input job order. Data only."""
+
+    mode: str
+    identity_proven: bool
+    identity_reason: str
+    surfaces: tuple[SurfaceDecision, ...]
+
+
+def _no_reuse_plan(identity_reason: str, surface_reason: str) -> ReusePlan:
+    """A fail-closed plan: identity proven but the job contract is
+    ambiguous (duplicate or unexpected formal job surface) — every surface
+    must RUN; never partially reuse around an unknown control/evidence
+    shape."""
+    return ReusePlan(
+        mode=MODE_NO_REUSE,
+        identity_proven=True,
+        identity_reason=identity_reason,
+        surfaces=tuple(
+            SurfaceDecision(surface, False, surface_reason)
+            for surface in SURFACE_ORDER
+        ),
+    )
+
+
+def build_surface_reuse_plan(
+    *,
+    identity_proven: bool,
+    identity_reason: str,
+    jobs: list[dict],
+) -> ReusePlan:
+    """V2 evidence planner — pure and deterministic: no I/O, no GitHub
+    calls, no environment reads, no subprocess, no git, no filesystem
+    writes; input job order does not affect the output; input dicts are
+    never mutated.
+
+    Global identity is a hard boundary: identity unproven → mode=no_reuse
+    with EVERY surface reuse=False (GLOBAL_IDENTITY_UNPROVEN_REASON). There
+    is no state where identity_proven=False and any surface.reuse=True.
+
+    When identity is proven, the job list must match the workflow contract
+    exactly: a duplicate required surface or an unexpected formal job
+    surface is evidence-contract ambiguity → mode=no_reuse (4/4 RUN).
+    Otherwise each surface is reusable only when exactly one corresponding
+    job exists with status == "completed" and conclusion == "success";
+    missing → job_missing, anything else → job_non_success. The future
+    workflow therefore only runs the non-reusable surfaces.
+    """
+    if not identity_proven:
+        return ReusePlan(
+            mode=MODE_NO_REUSE,
+            identity_proven=False,
+            identity_reason=identity_reason,
+            surfaces=tuple(
+                SurfaceDecision(surface, False, GLOBAL_IDENTITY_UNPROVEN_REASON)
+                for surface in SURFACE_ORDER
+            ),
+        )
+    counts: dict[str, int] = {}
+    for job in jobs:
+        name = str(job.get("name") or "")
+        counts[name] = counts.get(name, 0) + 1
+    for surface in SURFACE_ORDER:
+        if counts.get(SURFACE_JOB_NAMES[surface], 0) > 1:
+            return _no_reuse_plan(identity_reason, JOB_DUPLICATE_CONTRACT_REASON)
+    for name in counts:
+        if name not in SURFACE_JOB_NAMES.values():
+            return _no_reuse_plan(identity_reason, JOB_UNEXPECTED_CONTRACT_REASON)
+    by_name: dict[str, list[dict]] = {}
+    for job in jobs:
+        by_name.setdefault(str(job.get("name") or ""), []).append(job)
+    decisions = []
+    for surface in SURFACE_ORDER:
+        matching = by_name.get(SURFACE_JOB_NAMES[surface], [])
+        if not matching:
+            decisions.append(
+                SurfaceDecision(surface, False, SURFACE_JOB_MISSING_REASON)
+            )
+            continue
+        if len(matching) > 1:
+            # Defensive: unreachable after the duplicate contract check
+            # above; ambiguity must never produce partial reuse.
+            return _no_reuse_plan(identity_reason, JOB_DUPLICATE_CONTRACT_REASON)
+        job = matching[0]
+        if job.get("status") == "completed" and job.get("conclusion") == "success":
+            decisions.append(
+                SurfaceDecision(surface, True, SURFACE_VERIFIED_REASON)
+            )
+        else:
+            decisions.append(
+                SurfaceDecision(surface, False, SURFACE_JOB_NON_SUCCESS_REASON)
+            )
+    flags = [d.reuse for d in decisions]
+    if all(flags):
+        mode = MODE_FULL_REUSE
+    elif any(flags):
+        mode = MODE_PARTIAL_REUSE
+    else:
+        mode = MODE_NO_REUSE
+    return ReusePlan(
+        mode=mode,
+        identity_proven=True,
+        identity_reason=identity_reason,
+        surfaces=tuple(decisions),
+    )
+
+
+def render_reuse_plan(plan: ReusePlan) -> str:
+    """Deterministic V2 foundation renderer: fixed key order, newline-
+    terminated. Foundation output only — it is NOT parsed by ci.yml and it
+    never replaces render_verdict(); the V1 POST_MERGE_REUSE contract is
+    untouched."""
+    lines = [
+        f"POST_MERGE_REUSE_MODE={plan.mode}",
+        f"IDENTITY_PROVEN={'true' if plan.identity_proven else 'false'}",
+        f"identity_reason={plan.identity_reason}",
+    ]
+    for decision in plan.surfaces:
+        lines.append(
+            f"REUSE_{SURFACE_RENDER_TOKENS[decision.surface]}="
+            f"{'true' if decision.reuse else 'false'}"
+        )
+    for decision in plan.surfaces:
+        lines.append(
+            f"reason_{SURFACE_RENDER_TOKENS[decision.surface].lower()}="
+            f"{decision.reason}"
+        )
+    return "\n".join(lines) + "\n"
 
 
 # ---------------------------------------------------------------------------

@@ -320,6 +320,71 @@ CC 必须等 exact main SHA 的 CI terminal（无论闭合 A 还是 B）之后�
 报告 COMPLETE；queued / waiting / pending / in_progress 一律不得报告
 COMPLETE。
 
+### 4.9 Partial Post-Merge Reuse V2 — Evidence Matrix Foundation（PR #65）
+
+**状态：FOUNDATION ONLY / 未激活任何 production skip**。PR #65 只落地
+纯数据模型与决策矩阵（在
+[scripts/ci_post_merge_reuse.py](../scripts/ci_post_merge_reuse.py) 内，
+`build_surface_reuse_plan` / `SurfaceDecision` / `ReusePlan` /
+`render_reuse_plan`，全部 deterministic、无 I/O、无 GitHub / git / 环境
+行为），**没有**接入 `run_verifier()`，ci.yml 也**没有**解析其输出。
+V1 的 `POST_MERGE_REUSE=true/false` 语义、`render_verdict()` 输出、
+`skip_heavy_validation`、attestation schema / field order、以及
+`run_verifier()` 的完整四 surface 证明流程逐字节不变。任何 V2 输出都不
+是生产 gate。
+
+**三个未来模式**：`FULL_REUSE` / `PARTIAL_REUSE` / `NO_REUSE`，由
+`ReusePlan.mode` 表达（`full_reuse` / `partial_reuse` / `no_reuse`）。
+
+**Global identity 硬边界**：partial reuse 只在 global identity 已被独立
+证明之后才被允许。identity 未证明 → `no_reuse`，4/4 surface
+`reuse=false`、reason=`global_identity_unproven`；**不存在**
+`identity_proven=false` 且任意 `surface.reuse=true` 的状态（回归测试固定
+完整输入矩阵）。global identity 的完整含义（未来 caller 须等价建立）：
+valid main push event、可信单 parent squash 拓扑、exact 关联 merged PR、
+exact PR head/run 关联、valid attempt-bound attestation、attestation
+标识符全部匹配、main tree == tested tree、无控制面排除。
+
+**Canonical surface 模型**（固定顺序，独立于 V1
+`REQUIRED_JOB_SURFACES`，后者原样保留）：
+
+| surface ID | GitHub job name |
+|---|---|
+| `test-3.11` | `test (3.11)` |
+| `test-3.14` | `test (3.14)` |
+| `pyarrow24` | `portability-pyarrow24` |
+| `package` | `package` |
+
+**Per-surface evidence 规则**（identity 已证明且契约无歧义时）：surface
+可复用 ⇔ 恰好一个对应 job 且 `status == completed` 且 `conclusion ==
+success`（reason=`verified_job_success`）；缺失 →
+reason=`job_missing`；存在但非 completed/success → reason=
+`job_non_success`。这些缺失/非成功是 `PARTIAL_REUSE` 的正常来源——未来
+workflow 只运行非可复用 surface。
+
+**Ambiguity / 契约漂移规则（fail closed）**：重复的 canonical job
+（reason=`job_duplicate_contract`）或 unexpected formal job（reason=
+`job_unexpected_contract`）→ `no_reuse`，4/4 RUN。绝不围绕歧义的
+workflow 契约做 partial reuse——延续 V1 "unknown control/evidence shape
+fail closed" 原则。
+
+**当前证据限制（明确声明）**：V1 的 global attestation 由 package job
+在完整 PR FULL 链成功之后产出。因此本 foundation **不**声称可以从一个
+从未产出 valid global attestation 的失败 PR run 中打捞独立成功的
+surface。本 PR 语境下 `PARTIAL_REUSE` 的含义是：**GLOBAL TREE/PR/RUN
+IDENTITY 已证明**，但个别 surface 证据缺失或非成功/不足；global
+attestation / tree identity 无法证明 → `NO_REUSE` / FULL。未来若想打捞
+"未走到 attestation 点的 PR run 中独立成功的 surface"，需要另行设计
+per-surface attestation——本 PR 不声称该能力。
+
+**Rollout 序列**：#65 evidence model foundation → independent review →
+control-plane FULL post-merge verification（#65 自身是控制面变更，其
+main push 不得复用证据）→ #66 实际 surface-level workflow gating →
+专门 production canaries / mutation cases。
+
+**V2 未在生产实现。** 任何把 V2 输出当作生产 skip 依据的改动，必须先
+通过上述完整评审与 canary 流程。
+
 ## 5. 未来 wall-clock 目标
 
 这些是性能目标（performance targets），不是 correctness gates。未达到
