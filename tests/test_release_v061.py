@@ -10,6 +10,40 @@ from datetime import date
 from pathlib import Path
 
 import pytest
+import importlib.util as _importlib_util
+
+
+def _load_check_release():
+    """Load scripts/check_release.py as a plain module (scripts/ is
+    not a package). Tests invoke the exact production check functions
+    through this single registry instead of a full checker subprocess."""
+    spec = _importlib_util.spec_from_file_location(
+        "check_release", str(ROOT / "scripts" / "check_release.py")
+    )
+    assert spec is not None and spec.loader is not None
+    module = _importlib_util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def assert_check_fails(check, repo: Path, *fragments: str) -> list[str]:
+    """Run one production check against a mutated repo copy and assert it
+    reports every expected failure fragment.
+
+    The mutation tests exercise the smallest exact production check
+    responsible for each invariant instead of paying for a full checker
+    subprocess run; run_check_release retains the end-to-end integration
+    cases. Returns the failure list so tests can assert on absences.
+    """
+    failures = check(repo)
+    assert failures, f"{check.__name__} reported no failure"
+    text = "\n".join(failures)
+    for fragment in fragments:
+        assert fragment in text, (
+            f"expected {fragment!r} in {check.__name__} failures: {failures!r}"
+        )
+    return failures
+
 
 import market_vault
 from market_vault import MarketVault
@@ -19,6 +53,9 @@ from market_vault.normalization import normalize_bars, normalize_trading_calenda
 from market_vault.storage import Catalog, ParquetStore
 
 ROOT = Path(__file__).resolve().parents[1]
+_check_release = _load_check_release()
+
+
 SRC = ROOT / "src"
 EXPECTED_VERSION = "0.7.0"
 PUBLIC_API_IMPORT_CODE = "\n".join(
@@ -580,9 +617,7 @@ def test_release_checker_fails_on_cli_version_mismatch(tmp_path):
         version_file.read_text(encoding="utf-8").replace('"0.7.0"', '"9.9.9"'),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "CLI --version output" in result.stdout
+    assert_check_fails(_check_release.check_cli_version, repo, "CLI --version output")
 
 
 def test_release_checker_fails_on_development_wording(tmp_path):
@@ -605,33 +640,29 @@ def test_release_checker_fails_on_stale_builder_wording(tmp_path):
         + "\nfinal Dataset builder is not implemented\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "final Dataset builder is not implemented" in result.stdout
+    assert_check_fails(
+        _check_release.check_readme_no_stale_wording,
+        repo,
+        'final Dataset builder is not implemented',
+    )
 
 
 def test_release_checker_fails_without_changelog(tmp_path):
     repo = copy_repo(tmp_path)
     (repo / "CHANGELOG.md").unlink()
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "CHANGELOG.md" in result.stdout
+    assert_check_fails(_check_release.check_changelog, repo, "CHANGELOG.md")
 
 
 def test_release_checker_fails_without_v05_release_notes(tmp_path):
     repo = copy_repo(tmp_path)
     (repo / "docs" / "release_v0_5_0.md").unlink()
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "release_v0_5_0.md" in result.stdout
+    assert_check_fails(_check_release.check_release_notes, repo, "release_v0_5_0.md")
 
 
 def test_release_checker_fails_without_v04_release_notes(tmp_path):
     repo = copy_repo(tmp_path)
     (repo / "docs" / "release_v0_4_0.md").unlink()
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "release_v0_4_0.md" in result.stdout
+    assert_check_fails(_check_release.check_old_release_notes, repo, "release_v0_4_0.md")
 
 
 def test_release_checker_fails_on_readme_title_mismatch(tmp_path):
@@ -643,9 +674,7 @@ def test_release_checker_fails_on_readme_title_mismatch(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "README first line" in result.stdout
+    assert_check_fails(_check_release.check_readme_title, repo, "README first line")
 
 
 def test_release_checker_fails_on_old_ci_version_assertion(tmp_path):
@@ -671,11 +700,13 @@ def test_release_checker_fails_on_wrong_package_assertion_only(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "package module version assertion" in result.stdout
-    assert "distribution metadata assertion" not in result.stdout
-    assert "old version 0.3.0" not in result.stdout
+    failures = assert_check_fails(
+        _check_release.check_ci_version_assertions,
+        repo,
+        'package module version assertion',
+    )
+    assert 'distribution metadata assertion' not in "\n".join(failures)
+    assert 'old version 0.3.0' not in "\n".join(failures)
 
 
 def test_release_checker_fails_on_wrong_metadata_assertion_only(tmp_path):
@@ -689,11 +720,13 @@ def test_release_checker_fails_on_wrong_metadata_assertion_only(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "distribution metadata assertion" in result.stdout
-    assert "package module version assertion" not in result.stdout
-    assert "old version 0.3.0" not in result.stdout
+    failures = assert_check_fails(
+        _check_release.check_ci_version_assertions,
+        repo,
+        'distribution metadata assertion',
+    )
+    assert 'package module version assertion' not in "\n".join(failures)
+    assert 'old version 0.3.0' not in "\n".join(failures)
 
 
 def test_release_checker_fails_on_wrong_public_api_marker(tmp_path):
@@ -701,9 +734,7 @@ def test_release_checker_fails_on_wrong_public_api_marker(tmp_path):
     ci = repo / ".github" / "workflows" / "ci.yml"
     text = ci.read_text(encoding="utf-8")
     ci.write_text(text.replace("V061_PUBLIC_API_IMPORT_OK", "V040_PUBLIC_API_IMPORT_OK"), encoding="utf-8")
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "public API smoke marker" in result.stdout
+    assert_check_fails(_check_release.check_ci_version_assertions, repo, "public API smoke marker")
 
 
 def test_release_checker_fails_on_tracked_artifact(tmp_path):
@@ -715,9 +746,7 @@ def test_release_checker_fails_on_tracked_artifact(tmp_path):
     tracked.write_text("x", encoding="utf-8")
     # data/ is gitignored; -f is required to make the artifact tracked.
     subprocess.run(["git", "add", "-f", "data/tracked.txt"], cwd=repo, check=True)
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "tracked build artifact" in result.stdout
+    assert_check_fails(_check_release.check_build_artifacts_untracked, repo, "tracked build artifact")
 
 
 def test_release_checker_reports_all_failures_at_once(tmp_path):
@@ -755,13 +784,12 @@ def test_release_checker_fails_on_old_direction_status(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "does not state the released fact 'Status: released'" in result.stdout
-    assert (
-        "still contains the stale wording "
-        "'Status: implementation complete; v0.5.0 release preparation'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_direction_status,
+        repo,
+        "does not state the released fact 'Status: released'",
+        "still contains the stale wording 'Status: implementation complete; v0.5.0 release preparation'",
+    )
 
 
 def test_release_checker_fails_when_direction_missing_release_commit(tmp_path):
@@ -774,11 +802,11 @@ def test_release_checker_fails_when_direction_missing_release_commit(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the released fact '3b4d03c785123e204885faea08df7b9d7ed07ec0'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_direction_status,
+        repo,
+        "does not state the released fact '3b4d03c785123e204885faea08df7b9d7ed07ec0'",
+    )
 
 
 def test_release_checker_fails_when_release_notes_missing_pr29_merged(tmp_path):
@@ -788,9 +816,11 @@ def test_release_checker_fails_when_release_notes_missing_pr29_merged(tmp_path):
         path.read_text(encoding="utf-8").replace("MERGED", "OPEN"),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "does not state the release fact 'MERGED'" in result.stdout
+    assert_check_fails(
+        _check_release.check_release_notes,
+        repo,
+        "does not state the release fact 'MERGED'",
+    )
 
 
 def test_release_checker_fails_when_release_notes_claim_pr29_still_open(tmp_path):
@@ -801,9 +831,7 @@ def test_release_checker_fails_when_release_notes_claim_pr29_still_open(tmp_path
         + "\nGitHub PR #29 is still OPEN and not merged.\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "GitHub PR #29 is still OPEN" in result.stdout
+    assert_check_fails(_check_release.check_release_notes, repo, "GitHub PR #29 is still OPEN")
 
 
 def test_release_checker_fails_when_release_notes_missing_wheel_asset(tmp_path):
@@ -816,11 +844,11 @@ def test_release_checker_fails_when_release_notes_missing_wheel_asset(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the release fact 'market_vault-0.5.0-py3-none-any.whl'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_release_notes,
+        repo,
+        "does not state the release fact 'market_vault-0.5.0-py3-none-any.whl'",
+    )
 
 
 def test_release_checker_fails_when_release_notes_missing_sdist_asset(tmp_path):
@@ -833,17 +861,17 @@ def test_release_checker_fails_when_release_notes_missing_sdist_asset(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "does not state the release fact 'market_vault-0.5.0.tar.gz'" in result.stdout
+    assert_check_fails(
+        _check_release.check_release_notes,
+        repo,
+        "does not state the release fact 'market_vault-0.5.0.tar.gz'",
+    )
 
 
 def test_release_checker_fails_without_v051_direction(tmp_path):
     repo = copy_repo(tmp_path)
     (repo / "docs" / "v0_5_1_direction.md").unlink()
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "docs/v0_5_1_direction.md is missing" in result.stdout
+    assert_check_fails(_check_release.check_v051_direction, repo, "docs/v0_5_1_direction.md is missing")
 
 
 def test_release_checker_fails_when_v051_direction_reverts_to_planned(tmp_path):
@@ -858,12 +886,12 @@ def test_release_checker_fails_when_v051_direction_reverts_to_planned(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the fact 'Status: released on 2026-08-06 JST'"
-    ) in result.stdout
-    assert "still contains the stale wording 'Status: planned'" in result.stdout
+    assert_check_fails(
+        _check_release.check_v051_direction,
+        repo,
+        "does not state the fact 'Status: released on 2026-08-06 JST'",
+        "still contains the stale wording 'Status: planned'",
+    )
 
 
 def test_release_checker_fails_when_v051_direction_reverts_to_release_preparation(
@@ -880,15 +908,12 @@ def test_release_checker_fails_when_v051_direction_reverts_to_release_preparatio
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the fact 'Status: released on 2026-08-06 JST'"
-    ) in result.stdout
-    assert (
-        "still contains the stale wording "
-        "'Status: implementation complete; v0.5.1 release preparation'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v051_direction,
+        repo,
+        "does not state the fact 'Status: released on 2026-08-06 JST'",
+        "still contains the stale wording 'Status: implementation complete; v0.5.1 release preparation'",
+    )
 
 
 def test_release_checker_fails_when_v051_direction_missing_release_commit(tmp_path):
@@ -901,11 +926,11 @@ def test_release_checker_fails_when_v051_direction_missing_release_commit(tmp_pa
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the fact 'a978eef291d5e26d20e5cf977bc76609c227cb52'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v051_direction,
+        repo,
+        "does not state the fact 'a978eef291d5e26d20e5cf977bc76609c227cb52'",
+    )
 
 
 def test_release_checker_fails_when_v051_direction_missing_main_ci_run(tmp_path):
@@ -918,9 +943,11 @@ def test_release_checker_fails_when_v051_direction_missing_main_ci_run(tmp_path)
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "does not state the fact '31029709970'" in result.stdout
+    assert_check_fails(
+        _check_release.check_v051_direction,
+        repo,
+        "does not state the fact '31029709970'",
+    )
 
 
 def test_release_checker_fails_when_release_notes_missing_pr33_merged(tmp_path):
@@ -930,9 +957,11 @@ def test_release_checker_fails_when_release_notes_missing_pr33_merged(tmp_path):
         path.read_text(encoding="utf-8").replace("MERGED", "OPEN"),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "does not state the fact 'MERGED'" in result.stdout
+    assert_check_fails(
+        _check_release.check_v051_release_notes,
+        repo,
+        "does not state the fact 'MERGED'",
+    )
 
 
 def test_release_checker_fails_when_formal_section_claims_pr4_still_open(tmp_path):
@@ -949,9 +978,7 @@ def test_release_checker_fails_when_formal_section_claims_pr4_still_open(tmp_pat
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "PR-4 is open and not merged" in result.stdout
+    assert_check_fails(_check_release.check_v051_release_notes, repo, "PR-4 is open and not merged")
 
 
 def test_release_checker_fails_when_release_notes_missing_wheel_hash(tmp_path):
@@ -964,12 +991,11 @@ def test_release_checker_fails_when_release_notes_missing_wheel_hash(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the fact "
-        "'80965A671AEEF75F315386D9BD4B62EC5DC08E552CB3430AEF92F83C562248C1'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v051_release_notes,
+        repo,
+        "does not state the fact '80965A671AEEF75F315386D9BD4B62EC5DC08E552CB3430AEF92F83C562248C1'",
+    )
 
 
 def test_release_checker_fails_when_release_notes_missing_sdist_hash(tmp_path):
@@ -982,12 +1008,11 @@ def test_release_checker_fails_when_release_notes_missing_sdist_hash(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the fact "
-        "'FE82FB4FD254C493EC00519EDEB438533C0C5E8D5A7690E1F14AEA39DE4CCDAB'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v051_release_notes,
+        repo,
+        "does not state the fact 'FE82FB4FD254C493EC00519EDEB438533C0C5E8D5A7690E1F14AEA39DE4CCDAB'",
+    )
 
 
 def test_release_checker_fails_when_asset_source_reverts_to_release_preparation_build(
@@ -1005,11 +1030,11 @@ def test_release_checker_fails_when_asset_source_reverts_to_release_preparation_
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the fact 'rebuilt from the exact release commit'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v051_release_notes,
+        repo,
+        "does not state the fact 'rebuilt from the exact release commit'",
+    )
 
 
 def test_release_notes_allow_released_phrase_in_formal_section(tmp_path):
@@ -1025,8 +1050,7 @@ def test_release_notes_allow_released_phrase_in_formal_section(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 0, result.stdout + result.stderr
+    assert _check_release.check_v051_release_notes(repo) == []
 
 
 def test_release_checker_allows_historical_pr4_open_sentence(tmp_path):
@@ -1039,16 +1063,13 @@ def test_release_checker_allows_historical_pr4_open_sentence(tmp_path):
         + "\nPR-4 is open and not merged.\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 0, result.stdout + result.stderr
+    assert _check_release.check_v051_release_notes(repo) == []
 
 
 def test_release_checker_fails_without_v060_direction(tmp_path):
     repo = copy_repo(tmp_path)
     (repo / "docs" / "v0_6_0_direction.md").unlink()
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "docs/v0_6_0_direction.md is missing" in result.stdout
+    assert_check_fails(_check_release.check_v060_direction, repo, "docs/v0_6_0_direction.md is missing")
 
 
 def test_release_checker_fails_when_v060_direction_reverts_to_planned(
@@ -1065,12 +1086,12 @@ def test_release_checker_fails_when_v060_direction_reverts_to_planned(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the fact 'Status: released on 2026-08-08'"
-    ) in result.stdout
-    assert "still contains the stale wording 'Status: planned'" in result.stdout
+    assert_check_fails(
+        _check_release.check_v060_direction,
+        repo,
+        "does not state the fact 'Status: released on 2026-08-08'",
+        "still contains the stale wording 'Status: planned'",
+    )
 
 
 def test_release_checker_fails_when_v060_direction_reclaims_pr9_not_started(
@@ -1084,11 +1105,11 @@ def test_release_checker_fails_when_v060_direction_reclaims_pr9_not_started(
         path.read_text(encoding="utf-8") + "\nPR-9 has not started.\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "still contains the stale wording 'PR-9 has not started'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v060_direction,
+        repo,
+        "still contains the stale wording 'PR-9 has not started'",
+    )
 
 
 def test_release_checker_fails_when_v060_direction_reverts_to_release_preparation(
@@ -1105,15 +1126,12 @@ def test_release_checker_fails_when_v060_direction_reverts_to_release_preparatio
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the fact 'Status: released on 2026-08-08'"
-    ) in result.stdout
-    assert (
-        "still contains the stale wording "
-        "'Status: implementation complete; v0.6.0 release preparation'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v060_direction,
+        repo,
+        "does not state the fact 'Status: released on 2026-08-08'",
+        "still contains the stale wording 'Status: implementation complete; v0.6.0 release preparation'",
+    )
 
 
 def test_release_checker_fails_when_v060_direction_reclaims_pr8_this_pr(
@@ -1125,9 +1143,11 @@ def test_release_checker_fails_when_v060_direction_reclaims_pr8_this_pr(
         path.read_text(encoding="utf-8") + "\nPR-8 (this PR) is complete.\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "still contains the stale wording 'PR-8 (this PR)'" in result.stdout
+    assert_check_fails(
+        _check_release.check_v060_direction,
+        repo,
+        "still contains the stale wording 'PR-8 (this PR)'",
+    )
 
 
 def test_release_checker_fails_when_v060_direction_claims_pypi_published(
@@ -1141,11 +1161,11 @@ def test_release_checker_fails_when_v060_direction_claims_pypi_published(
         path.read_text(encoding="utf-8") + "\nPyPI published.\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "contains the false release claim 'PyPI published'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v060_direction,
+        repo,
+        "contains the false release claim 'PyPI published'",
+    )
 
 
 def test_release_checker_fails_when_v060_direction_includes_python_client_in_v06(
@@ -1160,9 +1180,11 @@ def test_release_checker_fails_when_v060_direction_includes_python_client_in_v06
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "does not state the fact 'not part of v0.6'" in result.stdout
+    assert_check_fails(
+        _check_release.check_v060_direction,
+        repo,
+        "does not state the fact 'not part of v0.6'",
+    )
 
 
 # --- V0.6.1 maintenance direction guards ------------------------------------
@@ -1247,9 +1269,7 @@ def test_v061_direction_document_states_released_state():
 def test_release_checker_fails_without_v061_direction(tmp_path):
     repo = copy_repo(tmp_path)
     (repo / "docs" / "v0_6_1_direction.md").unlink()
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "docs/v0_6_1_direction.md is missing" in result.stdout
+    assert_check_fails(_check_release.check_v061_direction, repo, "docs/v0_6_1_direction.md is missing")
 
 
 def test_release_checker_fails_when_v061_direction_adds_python_client(tmp_path):
@@ -1261,11 +1281,11 @@ def test_release_checker_fails_when_v061_direction_adds_python_client(tmp_path):
         + "\nThe Python Client is part of v0.6.1.\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "contains the false claim 'Python Client is part of v0.6.1'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v061_direction,
+        repo,
+        "contains the false claim 'Python Client is part of v0.6.1'",
+    )
 
 
 def test_release_checker_fails_when_v061_direction_adds_dataset_catalog_query(
@@ -1279,9 +1299,11 @@ def test_release_checker_fails_when_v061_direction_adds_dataset_catalog_query(
         + "\nPR-2 adds the Dataset Catalog query command.\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "adds the Dataset Catalog query command" in result.stdout
+    assert_check_fails(
+        _check_release.check_v061_direction,
+        repo,
+        'adds the Dataset Catalog query command',
+    )
 
 
 def test_release_checker_fails_when_v061_direction_bumps_version_early(tmp_path):
@@ -1295,11 +1317,11 @@ def test_release_checker_fails_when_v061_direction_bumps_version_early(tmp_path)
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the fact 'bumped to 0.6.1 only in PR-4'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v061_direction,
+        repo,
+        "does not state the fact 'bumped to 0.6.1 only in PR-4'",
+    )
 
 
 def test_release_checker_fails_when_v061_direction_pr_sequence_changed(tmp_path):
@@ -1314,11 +1336,11 @@ def test_release_checker_fails_when_v061_direction_pr_sequence_changed(tmp_path)
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the fact 'v0.6.1 release preparation'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v061_direction,
+        repo,
+        "does not state the fact 'v0.6.1 release preparation'",
+    )
 
 
 def test_release_checker_fails_when_v061_direction_invariant_lost(tmp_path):
@@ -1332,12 +1354,11 @@ def test_release_checker_fails_when_v061_direction_invariant_lost(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the frozen invariant "
-        "'Canonical identity algorithms unchanged'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v061_direction,
+        repo,
+        "does not state the frozen invariant 'Canonical identity algorithms unchanged'",
+    )
 
 
 def test_release_checker_fails_when_v061_direction_reverts_current_stage(
@@ -1355,14 +1376,12 @@ def test_release_checker_fails_when_v061_direction_reverts_current_stage(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "still contains the stale wording 'The release is not started'"
-    ) in result.stdout
-    assert (
-        "does not state the fact 'PR-4 COMPLETE: PR #47 merged at'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v061_direction,
+        repo,
+        "still contains the stale wording 'The release is not started'",
+        "does not state the fact 'PR-4 COMPLETE: PR #47 merged at'",
+    )
 
 
 def test_release_checker_fails_when_v061_direction_reverts_to_pr1_current(
@@ -1379,15 +1398,12 @@ def test_release_checker_fails_when_v061_direction_reverts_to_pr1_current(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "still contains the stale wording "
-        "'PR-1 is the current maintenance-baseline and direction stage'"
-    ) in result.stdout
-    assert (
-        "does not state the fact 'PR-1 COMPLETE: PR #44 merged at'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v061_direction,
+        repo,
+        "still contains the stale wording 'PR-1 is the current maintenance-baseline and direction stage'",
+        "does not state the fact 'PR-1 COMPLETE: PR #44 merged at'",
+    )
 
 
 def test_release_checker_fails_when_v061_direction_reverts_pr2_not_started(
@@ -1404,11 +1420,11 @@ def test_release_checker_fails_when_v061_direction_reverts_pr2_not_started(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "still contains the stale wording 'PR-2 has not started'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v061_direction,
+        repo,
+        "still contains the stale wording 'PR-2 has not started'",
+    )
 
 
 def test_release_checker_fails_when_v061_direction_loses_pr44_baseline(
@@ -1424,11 +1440,11 @@ def test_release_checker_fails_when_v061_direction_loses_pr44_baseline(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the fact 'PR-1 COMPLETE: PR #44 merged at'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v061_direction,
+        repo,
+        "does not state the fact 'PR-1 COMPLETE: PR #44 merged at'",
+    )
 
 
 def test_release_checker_fails_when_v061_direction_squash_sha_changed(
@@ -1444,12 +1460,11 @@ def test_release_checker_fails_when_v061_direction_squash_sha_changed(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the fact "
-        "'6bb9a9500fae53511ff964f47e5ccea20f3d91f7'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v061_direction,
+        repo,
+        "does not state the fact '6bb9a9500fae53511ff964f47e5ccea20f3d91f7'",
+    )
 
 
 def test_release_checker_fails_when_v061_direction_claims_pr3_current(
@@ -1468,24 +1483,23 @@ def test_release_checker_fails_when_v061_direction_claims_pr3_current(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "still contains the stale wording 'PR-3 is the current CI/package "
-        "auditability and maintenance-hardening stage'"
-    ) in result.stdout
-    assert (
-        "does not state the fact 'PR-3 COMPLETE: PR #46 merged at'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v061_direction,
+        repo,
+        "still contains the stale wording 'PR-3 is the current CI/package auditability and maintenance-hardening stage'",
+        "does not state the fact 'PR-3 COMPLETE: PR #46 merged at'",
+    )
 
 
 def test_release_checker_fails_without_v061_cli_usability_audit(tmp_path):
     # The PR-2 CLI usability audit document is a pinned deliverable.
     repo = copy_repo(tmp_path)
     (repo / "docs" / "v0_6_1_cli_usability_audit.md").unlink()
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "docs/v0_6_1_cli_usability_audit.md is missing" in result.stdout
+    assert_check_fails(
+        _check_release.check_v061_cli_usability_audit,
+        repo,
+        'docs/v0_6_1_cli_usability_audit.md is missing',
+    )
 
 
 # --- V0.6.1 PR-3 CI/package auditability guards -----------------------------
@@ -1523,13 +1537,11 @@ def test_release_checker_fails_when_v061_direction_reverts_to_pr2_current(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "still contains the stale wording "
-        "'PR-2 is the current CLI/help/error/usability consistency-polish "
-        "stage'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v061_direction,
+        repo,
+        "still contains the stale wording 'PR-2 is the current CLI/help/error/usability consistency-polish stage'",
+    )
 
 
 def test_release_checker_fails_when_v061_direction_says_pr3_not_started(
@@ -1546,14 +1558,12 @@ def test_release_checker_fails_when_v061_direction_says_pr3_not_started(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "still contains the stale wording 'PR-3 has not started'"
-    ) in result.stdout
-    assert (
-        "does not state the fact 'PR-3 COMPLETE: PR #46 merged at'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v061_direction,
+        repo,
+        "still contains the stale wording 'PR-3 has not started'",
+        "does not state the fact 'PR-3 COMPLETE: PR #46 merged at'",
+    )
 
 
 def test_release_checker_fails_when_v061_direction_loses_pr45_baseline(
@@ -1569,11 +1579,11 @@ def test_release_checker_fails_when_v061_direction_loses_pr45_baseline(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the fact 'PR-2 COMPLETE: PR #45 merged at'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v061_direction,
+        repo,
+        "does not state the fact 'PR-2 COMPLETE: PR #45 merged at'",
+    )
 
 
 def test_release_checker_fails_when_v061_direction_pr45_squash_sha_changed(
@@ -1589,12 +1599,11 @@ def test_release_checker_fails_when_v061_direction_pr45_squash_sha_changed(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the fact "
-        "'33d7f5856bf060527ccf4d2ab679df4429009ce6'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v061_direction,
+        repo,
+        "does not state the fact '33d7f5856bf060527ccf4d2ab679df4429009ce6'",
+    )
 
 
 def test_release_checker_fails_when_v061_direction_claims_pr4_not_started(
@@ -1611,14 +1620,12 @@ def test_release_checker_fails_when_v061_direction_claims_pr4_not_started(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "still contains the stale wording 'PR-4 has not started'"
-    ) in result.stdout
-    assert (
-        "does not state the fact 'PR-4 COMPLETE: PR #47 merged at'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v061_direction,
+        repo,
+        "still contains the stale wording 'PR-4 has not started'",
+        "does not state the fact 'PR-4 COMPLETE: PR #47 merged at'",
+    )
 
 
 def test_release_checker_fails_when_v061_direction_loses_release_prep_status(
@@ -1634,14 +1641,12 @@ def test_release_checker_fails_when_v061_direction_loses_release_prep_status(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the fact 'Status: released on 2026-08-08'"
-    ) in result.stdout
-    assert (
-        "still contains the stale wording 'Status: planned'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v061_direction,
+        repo,
+        "does not state the fact 'Status: released on 2026-08-08'",
+        "still contains the stale wording 'Status: planned'",
+    )
 
 
 def test_release_checker_fails_when_v061_direction_package_still_060(
@@ -1658,11 +1663,11 @@ def test_release_checker_fails_when_v061_direction_package_still_060(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "still contains the stale wording 'Package remains 0.6.0'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v061_direction,
+        repo,
+        "still contains the stale wording 'Package remains 0.6.0'",
+    )
 
 
 def test_release_checker_fails_when_v061_direction_reverts_to_not_released(
@@ -1677,11 +1682,11 @@ def test_release_checker_fails_when_v061_direction_reverts_to_not_released(
         + "\nV0.6.1 is NOT formally released.\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "still contains the stale wording 'V0.6.1 is NOT formally released'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v061_direction,
+        repo,
+        "still contains the stale wording 'V0.6.1 is NOT formally released'",
+    )
 
 
 def test_release_checker_fails_when_v061_direction_claims_tag_not_created(
@@ -1696,12 +1701,11 @@ def test_release_checker_fails_when_v061_direction_claims_tag_not_created(
         + "\nThe v0.6.1 tag has not been created.\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "still contains the stale wording "
-        "'The v0.6.1 tag has not been created'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v061_direction,
+        repo,
+        "still contains the stale wording 'The v0.6.1 tag has not been created'",
+    )
 
 
 def test_release_checker_fails_when_v061_direction_claims_release_not_published(
@@ -1716,12 +1720,11 @@ def test_release_checker_fails_when_v061_direction_claims_release_not_published(
         + "\nThe GitHub Release v0.6.1 has not been published.\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "still contains the stale wording "
-        "'The GitHub Release v0.6.1 has not been published'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v061_direction,
+        repo,
+        "still contains the stale wording 'The GitHub Release v0.6.1 has not been published'",
+    )
 
 
 def test_release_checker_fails_when_v061_direction_claims_pypi_published(
@@ -1738,20 +1741,22 @@ def test_release_checker_fails_when_v061_direction_claims_pypi_published(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "contains the false release claim 'PyPI: PUBLISHED'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v061_direction,
+        repo,
+        "contains the false release claim 'PyPI: PUBLISHED'",
+    )
 
 
 def test_release_checker_fails_without_v061_ci_package_audit(tmp_path):
     # The PR-3 CI/package audit document is a pinned deliverable.
     repo = copy_repo(tmp_path)
     (repo / "docs" / "v0_6_1_ci_package_audit.md").unlink()
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "docs/v0_6_1_ci_package_audit.md is missing" in result.stdout
+    assert_check_fails(
+        _check_release.check_v061_ci_package_audit,
+        repo,
+        'docs/v0_6_1_ci_package_audit.md is missing',
+    )
 
 
 def test_release_checker_fails_when_ci_restores_checkout_v4(tmp_path):
@@ -1765,11 +1770,11 @@ def test_release_checker_fails_when_ci_restores_checkout_v4(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "CI must never restore the stale Action major 'actions/checkout@v4'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_ci_auditability,
+        repo,
+        "CI must never restore the stale Action major 'actions/checkout@v4'",
+    )
 
 
 def test_release_checker_fails_when_ci_restores_setup_python_v5(tmp_path):
@@ -1783,12 +1788,11 @@ def test_release_checker_fails_when_ci_restores_setup_python_v5(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "CI must never restore the stale Action major "
-        "'actions/setup-python@v5'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_ci_auditability,
+        repo,
+        "CI must never restore the stale Action major 'actions/setup-python@v5'",
+    )
 
 
 def test_release_checker_fails_when_ci_drops_upload_artifact_v7(tmp_path):
@@ -1802,11 +1806,11 @@ def test_release_checker_fails_when_ci_drops_upload_artifact_v7(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "CI must use the Node-24 Action major 'actions/upload-artifact@v7'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_ci_auditability,
+        repo,
+        "CI must use the Node-24 Action major 'actions/upload-artifact@v7'",
+    )
 
 
 def test_release_checker_fails_when_ci_drops_package_audit_ok(tmp_path):
@@ -1820,11 +1824,11 @@ def test_release_checker_fails_when_ci_drops_package_audit_ok(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "CI package audit chain is missing 'V061_PACKAGE_AUDIT_OK'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_ci_auditability,
+        repo,
+        "CI package audit chain is missing 'V061_PACKAGE_AUDIT_OK'",
+    )
 
 
 def test_release_checker_fails_when_ci_reverts_to_github_sha_only_artifact_name(
@@ -1843,11 +1847,11 @@ def test_release_checker_fails_when_ci_reverts_to_github_sha_only_artifact_name(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "CI package artifact name regressed to github.sha-only naming"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_ci_auditability,
+        repo,
+        'CI package artifact name regressed to github.sha-only naming',
+    )
 
 
 # --- V0.6.1 release preparation guards --------------------------------------
@@ -1903,9 +1907,11 @@ def test_release_checker_fails_without_v061_release_notes(tmp_path):
     # The v0.6.1 release notes are a pinned PR-4 deliverable.
     repo = copy_repo(tmp_path)
     (repo / "docs" / "release_v0_6_1.md").unlink()
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "docs/release_v0_6_1.md is missing" in result.stdout
+    assert_check_fails(
+        _check_release.check_v061_release_notes,
+        repo,
+        'docs/release_v0_6_1.md is missing',
+    )
 
 
 def test_release_checker_fails_when_release_notes_revert_to_preparation_status(
@@ -1923,15 +1929,12 @@ def test_release_checker_fails_when_release_notes_revert_to_preparation_status(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the fact '## Formal release status'"
-    ) in result.stdout
-    assert (
-        "formal region contains the stale release claim "
-        "'## Release preparation status'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v061_release_notes,
+        repo,
+        "does not state the fact '## Formal release status'",
+        "formal region contains the stale release claim '## Release preparation status'",
+    )
 
 
 def test_release_checker_fails_when_release_notes_claim_tag_created(
@@ -1947,11 +1950,11 @@ def test_release_checker_fails_when_release_notes_claim_tag_created(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the fact 'v0.6.1 tag:            NOT CREATED'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v061_release_notes,
+        repo,
+        "does not state the fact 'v0.6.1 tag:            NOT CREATED'",
+    )
 
 
 def test_release_checker_fails_when_release_notes_claim_github_release_published(
@@ -1967,11 +1970,11 @@ def test_release_checker_fails_when_release_notes_claim_github_release_published
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the fact 'GitHub Release v0.6.1: NOT PUBLISHED'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v061_release_notes,
+        repo,
+        "does not state the fact 'GitHub Release v0.6.1: NOT PUBLISHED'",
+    )
 
 
 def test_release_checker_fails_when_release_notes_claim_pypi_published(
@@ -1987,11 +1990,11 @@ def test_release_checker_fails_when_release_notes_claim_pypi_published(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the fact 'PyPI:                  NOT PUBLISHED'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v061_release_notes,
+        repo,
+        "does not state the fact 'PyPI:                  NOT PUBLISHED'",
+    )
 
 
 def test_release_checker_fails_when_release_notes_claim_testpypi_published(
@@ -2007,11 +2010,11 @@ def test_release_checker_fails_when_release_notes_claim_testpypi_published(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the fact 'TestPyPI:              NOT PUBLISHED'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v061_release_notes,
+        repo,
+        "does not state the fact 'TestPyPI:              NOT PUBLISHED'",
+    )
 
 
 def test_release_checker_fails_when_release_notes_claim_pr4_merged(
@@ -2029,12 +2032,11 @@ def test_release_checker_fails_when_release_notes_claim_pr4_merged(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the fact "
-        "'PR-4: current release-preparation stage, OPEN / UNMERGED'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v061_release_notes,
+        repo,
+        "does not state the fact 'PR-4: current release-preparation stage, OPEN / UNMERGED'",
+    )
 
 
 def test_release_checker_fails_when_release_notes_lose_candidate_distinction(
@@ -2051,11 +2053,11 @@ def test_release_checker_fails_when_release_notes_lose_candidate_distinction(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the fact 'candidate validation only'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v061_release_notes,
+        repo,
+        "does not state the fact 'candidate validation only'",
+    )
 
 
 def test_release_checker_fails_when_release_notes_lose_merge_record(
@@ -2071,12 +2073,11 @@ def test_release_checker_fails_when_release_notes_lose_merge_record(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the fact "
-        "'PR-1: PR #44 MERGED 6bb9a9500fae53511ff964f47e5ccea20f3d91f7'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v061_release_notes,
+        repo,
+        "does not state the fact 'PR-1: PR #44 MERGED 6bb9a9500fae53511ff964f47e5ccea20f3d91f7'",
+    )
 
 
 # --- V0.6.1 README / version / CI release-preparation guards ----------------
@@ -2111,12 +2112,11 @@ def test_release_checker_fails_when_readme_loses_v061_section(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the v0.6.1 maintenance fact "
-        "'## V0.6.1 stability, auditability, and usability maintenance'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_readme_v061_section,
+        repo,
+        "does not state the v0.6.1 maintenance fact '## V0.6.1 stability, auditability, and usability maintenance'",
+    )
 
 
 def test_release_checker_fails_when_readme_reverts_to_not_released(tmp_path):
@@ -2130,12 +2130,11 @@ def test_release_checker_fails_when_readme_reverts_to_not_released(tmp_path):
         + "\nthe v0.6.1 formal release does not exist yet.\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "README contains the stale v0.6.1 release-state wording "
-        "'the v0.6.1 formal release does not exist yet'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_readme_v061_section,
+        repo,
+        "README contains the stale v0.6.1 release-state wording 'the v0.6.1 formal release does not exist yet'",
+    )
 
 
 def test_release_checker_fails_when_version_reverts_to_060(tmp_path):
@@ -2156,10 +2155,8 @@ def test_release_checker_fails_when_version_reverts_to_060(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "pyproject.toml version" in result.stdout
-    assert "package __version__" in result.stdout
+    assert_check_fails(_check_release.check_pyproject_version, repo, "pyproject.toml version")
+    assert_check_fails(_check_release.check_package_version, repo, "package __version__")
 
 
 def test_release_checker_fails_when_readme_title_reverts_to_v060(tmp_path):
@@ -2173,9 +2170,7 @@ def test_release_checker_fails_when_readme_title_reverts_to_v060(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "README first line" in result.stdout
+    assert_check_fails(_check_release.check_readme_title, repo, "README first line")
 
 
 def test_release_checker_fails_when_changelog_loses_061_entry(tmp_path):
@@ -2189,9 +2184,11 @@ def test_release_checker_fails_when_changelog_loses_061_entry(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "CHANGELOG.md is missing '## [0.6.1] - 2026-08-08'" in result.stdout
+    assert_check_fails(
+        _check_release.check_changelog,
+        repo,
+        "CHANGELOG.md is missing '## [0.6.1] - 2026-08-08'",
+    )
 
 
 def test_release_checker_fails_when_ci_wheel_assertion_reverts_to_060(
@@ -2205,10 +2202,12 @@ def test_release_checker_fails_when_ci_wheel_assertion_reverts_to_060(
         ci.read_text(encoding="utf-8").replace("'0.7.0'", "'0.6.0'"),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "package module version assertion" in result.stdout
-    assert "distribution metadata assertion" in result.stdout
+    assert_check_fails(
+        _check_release.check_ci_version_assertions,
+        repo,
+        'package module version assertion',
+        'distribution metadata assertion',
+    )
 
 
 def test_release_checker_fails_when_ci_claims_v061_released(tmp_path):
@@ -2221,9 +2220,11 @@ def test_release_checker_fails_when_ci_claims_v061_released(tmp_path):
         + "\necho 'V061_RELEASED'\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "must never claim the V061_RELEASED state" in result.stdout
+    assert_check_fails(
+        _check_release.check_ci_v070_released_state,
+        repo,
+        'must never claim the V061_RELEASED state',
+    )
 
 
 # --- V0.7.0 PR-1 boundary / mutation guards ----------------------------------
@@ -2613,12 +2614,11 @@ def test_release_checker_fails_when_release_notes_tamper_release_commit(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the fact "
-        "'37614d539171ef7b738e47415f3cd6ca2de332d1'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v061_release_notes,
+        repo,
+        "does not state the fact '37614d539171ef7b738e47415f3cd6ca2de332d1'",
+    )
 
 
 def test_release_checker_fails_when_release_notes_tamper_wheel_hash(
@@ -2635,12 +2635,11 @@ def test_release_checker_fails_when_release_notes_tamper_wheel_hash(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the fact "
-        "'8fd8ec510a7724742d6e3e9fbca5c73b07e991cb3fa35002af792a8dd64ed550'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v061_release_notes,
+        repo,
+        "does not state the fact '8fd8ec510a7724742d6e3e9fbca5c73b07e991cb3fa35002af792a8dd64ed550'",
+    )
 
 
 def test_release_checker_fails_when_release_notes_tamper_sdist_hash(
@@ -2657,12 +2656,11 @@ def test_release_checker_fails_when_release_notes_tamper_sdist_hash(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the fact "
-        "'0cadd537a0980978a9a0878766cb2234f5b419f3f5d3874ef92e300c76c756f1'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v061_release_notes,
+        repo,
+        "does not state the fact '0cadd537a0980978a9a0878766cb2234f5b419f3f5d3874ef92e300c76c756f1'",
+    )
 
 
 def test_release_checker_fails_when_v061_direction_claims_pypi_published(
@@ -2679,11 +2677,11 @@ def test_release_checker_fails_when_v061_direction_claims_pypi_published(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "contains the false release claim 'PyPI: PUBLISHED'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v061_direction,
+        repo,
+        "contains the false release claim 'PyPI: PUBLISHED'",
+    )
 
 
 def test_release_checker_fails_without_v070_direction(tmp_path):
@@ -2691,9 +2689,7 @@ def test_release_checker_fails_without_v070_direction(tmp_path):
     # the checker.
     repo = copy_repo(tmp_path)
     (repo / "docs" / "v0_7_0_direction.md").unlink()
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "docs/v0_7_0_direction.md is missing" in result.stdout
+    assert_check_fails(_check_release.check_v070_direction, repo, "docs/v0_7_0_direction.md is missing")
 
 
 def test_release_checker_fails_when_v070_sequence_tampered(tmp_path):
@@ -2708,11 +2704,11 @@ def test_release_checker_fails_when_v070_sequence_tampered(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the fact 'PR-6 — v0.7.0 release preparation'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_direction,
+        repo,
+        "does not state the fact 'PR-6 — v0.7.0 release preparation'",
+    )
 
 
 def test_release_checker_fails_when_package_reverts_to_061(tmp_path):
@@ -2733,10 +2729,8 @@ def test_release_checker_fails_when_package_reverts_to_061(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "pyproject.toml version" in result.stdout
-    assert "package __version__" in result.stdout
+    assert_check_fails(_check_release.check_pyproject_version, repo, "pyproject.toml version")
+    assert_check_fails(_check_release.check_package_version, repo, "package __version__")
 
 
 def test_release_checker_fails_when_contract_modifies_marketvault_constructor(
@@ -2753,11 +2747,11 @@ def test_release_checker_fails_when_contract_modifies_marketvault_constructor(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the fact 'the `MarketVault` constructor'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_python_client_contract,
+        repo,
+        "does not state the fact 'the `MarketVault` constructor'",
+    )
 
 
 def test_release_checker_fails_when_contract_requires_settings_yaml(tmp_path):
@@ -2771,11 +2765,11 @@ def test_release_checker_fails_when_contract_requires_settings_yaml(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the fact 'No implicit `config/settings.yaml`'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_python_client_contract,
+        repo,
+        "does not state the fact 'No implicit `config/settings.yaml`'",
+    )
 
 
 def test_release_checker_fails_when_contract_adds_latest(tmp_path):
@@ -2789,9 +2783,11 @@ def test_release_checker_fails_when_contract_adds_latest(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "does not state the fact '`latest`'" in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_python_client_contract,
+        repo,
+        "does not state the fact '`latest`'",
+    )
 
 
 def test_release_checker_fails_when_contract_allows_raw_manifest_parsing(
@@ -2808,11 +2804,11 @@ def test_release_checker_fails_when_contract_allows_raw_manifest_parsing(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the fact 'parse `manifest.json` itself'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_python_client_contract,
+        repo,
+        "does not state the fact 'parse `manifest.json` itself'",
+    )
 
 
 def test_release_checker_fails_when_contract_allows_repair(tmp_path):
@@ -2827,11 +2823,13 @@ def test_release_checker_fails_when_contract_allows_repair(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "does not state the fact 'repair artifacts'" in result.stdout
-    assert "does not state the fact 'rewrite artifacts'" in result.stdout
-    assert "does not state the fact 'delete artifacts'" in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_python_client_contract,
+        repo,
+        "does not state the fact 'repair artifacts'",
+        "does not state the fact 'rewrite artifacts'",
+        "does not state the fact 'delete artifacts'",
+    )
 
 
 def test_release_checker_fails_when_contract_adds_rest_api(tmp_path):
@@ -2845,9 +2843,11 @@ def test_release_checker_fails_when_contract_adds_rest_api(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "does not state the fact 'No REST API'" in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_python_client_contract,
+        repo,
+        "does not state the fact 'No REST API'",
+    )
 
 
 def test_release_checker_fails_when_contract_adds_backtesting(tmp_path):
@@ -2862,9 +2862,11 @@ def test_release_checker_fails_when_contract_adds_backtesting(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "does not state the fact 'No backtesting'" in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_python_client_contract,
+        repo,
+        "does not state the fact 'No backtesting'",
+    )
 
 
 def test_release_checker_fails_when_ci_restores_v070_release_prep_marker(
@@ -2882,13 +2884,12 @@ def test_release_checker_fails_when_ci_restores_v070_release_prep_marker(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "must carry the V070_RELEASED_OK marker" in result.stdout
-    assert (
-        "must never restore the superseded V070_RELEASE_PREP_OK "
-        "preparation marker"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_ci_v070_released_state,
+        repo,
+        'must carry the V070_RELEASED_OK marker',
+        'must never restore the superseded V070_RELEASE_PREP_OK preparation marker',
+    )
 
 
 def test_release_checker_fails_when_ci_restores_v061_release_state_marker(
@@ -2903,11 +2904,11 @@ def test_release_checker_fails_when_ci_restores_v061_release_state_marker(
         + "\necho 'V061_RELEASE_STATE_OK'\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "must never restore the stale V061_RELEASE_STATE_OK marker"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_ci_v070_released_state,
+        repo,
+        'must never restore the stale V061_RELEASE_STATE_OK marker',
+    )
 
 
 def test_release_checker_fails_when_ci_loses_v070_public_api_import_ok(
@@ -2925,11 +2926,11 @@ def test_release_checker_fails_when_ci_loses_v070_public_api_import_ok(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "must carry the V070_PUBLIC_API_IMPORT_OK marker"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_ci_v070_public_api_smoke,
+        repo,
+        'must carry the V070_PUBLIC_API_IMPORT_OK marker',
+    )
 
 
 def test_release_checker_fails_when_src_removes_artifact_client_module(
@@ -2939,9 +2940,11 @@ def test_release_checker_fails_when_src_removes_artifact_client_module(
     # fail the checker: the PR-2 foundation is required.
     repo = copy_repo(tmp_path)
     (repo / "src" / "market_vault" / "artifact_client.py").unlink()
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "src/market_vault/artifact_client.py is missing" in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_artifact_client_foundation,
+        repo,
+        'src/market_vault/artifact_client.py is missing',
+    )
 
 
 def test_release_checker_fails_when_artifact_client_removed_from_all(
@@ -2958,11 +2961,11 @@ def test_release_checker_fails_when_artifact_client_removed_from_all(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "src/market_vault/__init__.py __all__ must contain 'ArtifactClient'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_artifact_client_foundation,
+        repo,
+        "src/market_vault/__init__.py __all__ must contain 'ArtifactClient'",
+    )
 
 
 def test_release_checker_fails_when_artifact_client_export_becomes_eager(
@@ -2978,12 +2981,11 @@ def test_release_checker_fails_when_artifact_client_export_becomes_eager(
         + init_path.read_text(encoding="utf-8"),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "ArtifactClient must be exported lazily through __getattr__, "
-        "never through an eager top-level import"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_artifact_client_foundation,
+        repo,
+        'ArtifactClient must be exported lazily through __getattr__, never through an eager top-level import',
+    )
 
 
 def test_release_checker_fails_when_constructor_gains_settings_argument(
@@ -3000,12 +3002,11 @@ def test_release_checker_fails_when_constructor_gains_settings_argument(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "ArtifactClient.__init__ must take exactly self and no "
-        "positional/keyword configuration arguments"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_artifact_client_foundation,
+        repo,
+        'ArtifactClient.__init__ must take exactly self and no positional/keyword configuration arguments',
+    )
 
 
 def test_release_checker_fails_when_constructor_gains_root_argument(
@@ -3022,12 +3023,11 @@ def test_release_checker_fails_when_constructor_gains_root_argument(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "ArtifactClient.__init__ must take exactly self and no "
-        "positional/keyword configuration arguments"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_artifact_client_foundation,
+        repo,
+        'ArtifactClient.__init__ must take exactly self and no positional/keyword configuration arguments',
+    )
 
 
 def test_release_checker_fails_when_constructor_gains_path_argument(
@@ -3044,12 +3044,11 @@ def test_release_checker_fails_when_constructor_gains_path_argument(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "ArtifactClient.__init__ must take exactly self and no "
-        "positional/keyword configuration arguments"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_artifact_client_foundation,
+        repo,
+        'ArtifactClient.__init__ must take exactly self and no positional/keyword configuration arguments',
+    )
 
 
 def test_release_checker_fails_when_constructor_does_work(tmp_path):
@@ -3065,12 +3064,11 @@ def test_release_checker_fails_when_constructor_does_work(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "ArtifactClient.__init__ body must not perform any work "
-        "(no calls, no filesystem/network/time access)"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_artifact_client_foundation,
+        repo,
+        'ArtifactClient.__init__ body must not perform any work (no calls, no filesystem/network/time access)',
+    )
 
 
 def test_release_checker_fails_when_slots_removed(tmp_path):
@@ -3085,11 +3083,11 @@ def test_release_checker_fails_when_slots_removed(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "ArtifactClient must keep the stateless boundary __slots__ == ()"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_artifact_client_foundation,
+        repo,
+        'ArtifactClient must keep the stateless boundary __slots__ == ()',
+    )
 
 
 def test_release_checker_fails_when_module_imports_config_or_storage(
@@ -3104,12 +3102,11 @@ def test_release_checker_fails_when_module_imports_config_or_storage(
         + "\nfrom market_vault import config\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "artifact_client.py must not import anything except "
-        "__future__.annotations"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_artifact_client_foundation,
+        repo,
+        'artifact_client.py must not import anything except __future__.annotations',
+    )
 
 
 def test_release_checker_fails_when_module_imports_canonical_or_dataset(
@@ -3125,12 +3122,11 @@ def test_release_checker_fails_when_module_imports_canonical_or_dataset(
         + "\nfrom market_vault.dataset import load_verified_dataset\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "artifact_client.py must not import anything except "
-        "__future__.annotations"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_artifact_client_foundation,
+        repo,
+        'artifact_client.py must not import anything except __future__.annotations',
+    )
 
 
 def test_release_checker_fails_when_module_imports_fs_time_network(
@@ -3144,12 +3140,11 @@ def test_release_checker_fails_when_module_imports_fs_time_network(
         module.read_text(encoding="utf-8") + "\nfrom pathlib import Path\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "artifact_client.py must not import anything except "
-        "__future__.annotations"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_artifact_client_foundation,
+        repo,
+        'artifact_client.py must not import anything except __future__.annotations',
+    )
 
 
 def test_release_checker_fails_when_client_gets_public_read_method(
@@ -3171,15 +3166,11 @@ def test_release_checker_fails_when_client_gets_public_read_method(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "ArtifactClient public business methods must be exactly "
-        "load_canonical_build, load_dataset and load_dataset_catalog, "
-        "with only __init__ as constructor (found: __init__, "
-        "load_canonical_build, load_dataset, load_dataset_catalog, "
-        "load_dataset_catalog_latest)"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_artifact_client_foundation,
+        repo,
+        'ArtifactClient public business methods must be exactly load_canonical_build, load_dataset and load_dataset_catalog, with only __init__ as constructor (found: __init__, load_canonical_build, load_dataset, load_dataset_catalog, load_dataset_catalog_latest)',
+    )
 
 
 def test_release_checker_fails_when_direction_states_pr3_not_started(
@@ -3196,11 +3187,11 @@ def test_release_checker_fails_when_direction_states_pr3_not_started(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "contains the false implementation/release claim 'PR-3: NOT STARTED'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_direction,
+        repo,
+        "contains the false implementation/release claim 'PR-3: NOT STARTED'",
+    )
 
 
 def test_release_checker_fails_when_contract_claims_read_access_in_pr2(
@@ -3217,16 +3208,12 @@ def test_release_checker_fails_when_contract_claims_read_access_in_pr2(
         + "PR-2 implements Canonical and Dataset and Catalog reads.\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "contains the false PR-2 read-capability claim "
-        "'read access is implemented in PR-2'"
-    ) in result.stdout
-    assert (
-        "contains the false PR-2 read-capability claim "
-        "'PR-2 implements Canonical'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_python_client_contract,
+        repo,
+        "contains the false PR-2 read-capability claim 'read access is implemented in PR-2'",
+        "contains the false PR-2 read-capability claim 'PR-2 implements Canonical'",
+    )
 
 
 def test_release_checker_fails_when_contract_drops_load_canonical_build(
@@ -3244,11 +3231,11 @@ def test_release_checker_fails_when_contract_drops_load_canonical_build(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the fact '`load_canonical_build`'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_python_client_contract,
+        repo,
+        "does not state the fact '`load_canonical_build`'",
+    )
 
 
 def test_release_checker_fails_when_contract_drops_load_dataset(
@@ -3266,11 +3253,11 @@ def test_release_checker_fails_when_contract_drops_load_dataset(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the fact '`load_dataset`'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_python_client_contract,
+        repo,
+        "does not state the fact '`load_dataset`'",
+    )
 
 
 def test_release_checker_fails_when_direction_regresses_pr6_to_not_started(
@@ -3288,11 +3275,11 @@ def test_release_checker_fails_when_direction_regresses_pr6_to_not_started(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "contains the false implementation/release claim 'PR-6: NOT STARTED'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_direction,
+        repo,
+        "contains the false implementation/release claim 'PR-6: NOT STARTED'",
+    )
 
 
 def test_release_checker_fails_when_direction_regresses_pr5_to_current(
@@ -3309,11 +3296,11 @@ def test_release_checker_fails_when_direction_regresses_pr5_to_current(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "contains the false implementation/release claim 'PR-5: CURRENT'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_direction,
+        repo,
+        "contains the false implementation/release claim 'PR-5: CURRENT'",
+    )
 
 
 def test_release_checker_fails_when_direction_loses_package_070(tmp_path):
@@ -3328,11 +3315,11 @@ def test_release_checker_fails_when_direction_loses_package_070(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the fact 'package: 0.7.0'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_direction,
+        repo,
+        "does not state the fact 'package: 0.7.0'",
+    )
 
 
 def test_release_checker_fails_when_contract_regresses_pr5_to_current(
@@ -3350,12 +3337,11 @@ def test_release_checker_fails_when_contract_regresses_pr5_to_current(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the fact 'PR-5: integrated acceptance/usability/"
-        "examples COMPLETE / MERGED / MAIN VERIFIED'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_python_client_contract,
+        repo,
+        "does not state the fact 'PR-5: integrated acceptance/usability/examples COMPLETE / MERGED / MAIN VERIFIED'",
+    )
 
 
 def test_release_checker_fails_when_contract_regresses_pr6_to_not_started(
@@ -3373,12 +3359,11 @@ def test_release_checker_fails_when_contract_regresses_pr6_to_not_started(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the fact 'PR-6: release preparation COMPLETE / "
-        "MERGED / RELEASED (PR #53)'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_python_client_contract,
+        repo,
+        "does not state the fact 'PR-6: release preparation COMPLETE / MERGED / RELEASED (PR #53)'",
+    )
 
 
 def test_release_checker_fails_when_contract_loses_package_070(tmp_path):
@@ -3393,11 +3378,11 @@ def test_release_checker_fails_when_contract_loses_package_070(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the fact 'package: 0.7.0'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_python_client_contract,
+        repo,
+        "does not state the fact 'package: 0.7.0'",
+    )
 
 
 def test_release_checker_fails_when_release_notes_missing(tmp_path):
@@ -3405,9 +3390,11 @@ def test_release_checker_fails_when_release_notes_missing(tmp_path):
     # the checker.
     repo = copy_repo(tmp_path)
     (repo / "docs" / "release_v0_7_0.md").unlink()
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "docs/release_v0_7_0.md is missing" in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_release_notes,
+        repo,
+        'docs/release_v0_7_0.md is missing',
+    )
 
 
 def test_release_checker_fails_when_release_notes_formal_region_claims_not_released(
@@ -3425,12 +3412,11 @@ def test_release_checker_fails_when_release_notes_formal_region_claims_not_relea
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "formal region contains the stale release claim "
-        "'V0.7.0 is NOT formally released'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_release_notes,
+        repo,
+        "formal region contains the stale release claim 'V0.7.0 is NOT formally released'",
+    )
 
 
 def test_release_checker_fails_when_release_notes_formal_region_claims_tag_not_created(
@@ -3447,12 +3433,11 @@ def test_release_checker_fails_when_release_notes_formal_region_claims_tag_not_c
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "formal region contains the stale release claim "
-        "'v0.7.0 tag:            NOT CREATED'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_release_notes,
+        repo,
+        "formal region contains the stale release claim 'v0.7.0 tag:            NOT CREATED'",
+    )
 
 
 def test_release_checker_fails_when_release_notes_predict_future_merge_sha(
@@ -3471,12 +3456,11 @@ def test_release_checker_fails_when_release_notes_predict_future_merge_sha(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "formal region contains the stale release claim "
-        "'the future merge commit is'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_release_notes,
+        repo,
+        "formal region contains the stale release claim 'the future merge commit is'",
+    )
 
 
 def test_release_checker_fails_when_release_notes_predict_formal_hash(
@@ -3495,12 +3479,11 @@ def test_release_checker_fails_when_release_notes_predict_formal_hash(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "formal region contains the stale release claim "
-        "'formal artifact SHA256 values are predicted'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_release_notes,
+        repo,
+        "formal region contains the stale release claim 'formal artifact SHA256 values are predicted'",
+    )
 
 
 def test_release_checker_fails_when_release_notes_lose_pr6_merged(
@@ -3518,12 +3501,11 @@ def test_release_checker_fails_when_release_notes_lose_pr6_merged(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the fact 'PR-6: PR #53 MERGED "
-        "f25a50481b5ee718881acf5cb5ea5aa05bd32d93'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_release_notes,
+        repo,
+        "does not state the fact 'PR-6: PR #53 MERGED f25a50481b5ee718881acf5cb5ea5aa05bd32d93'",
+    )
 
 
 def test_release_checker_fails_when_release_notes_lose_formal_release_status(
@@ -3540,12 +3522,11 @@ def test_release_checker_fails_when_release_notes_lose_formal_release_status(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the fact "
-        "'The v0.7.0 release is formally released and sealed'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_release_notes,
+        repo,
+        "does not state the fact 'The v0.7.0 release is formally released and sealed'",
+    )
 
 
 def test_release_checker_fails_when_release_notes_formal_region_restores_candidate_hashes(
@@ -3564,12 +3545,11 @@ def test_release_checker_fails_when_release_notes_formal_region_restores_candida
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "formal region contains the stale release claim "
-        "'PR candidate hashes: not reused as formal release asset hashes'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_release_notes,
+        repo,
+        "formal region contains the stale release claim 'PR candidate hashes: not reused as formal release asset hashes'",
+    )
 
 
 def test_release_checker_fails_when_release_notes_restore_unstable_main_head(
@@ -3588,12 +3568,11 @@ def test_release_checker_fails_when_release_notes_restore_unstable_main_head(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "formal region contains the stale release claim "
-        "'main HEAD: f25a50481b5ee718881acf5cb5ea5aa05bd32d93'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_release_notes,
+        repo,
+        "formal region contains the stale release claim 'main HEAD: f25a50481b5ee718881acf5cb5ea5aa05bd32d93'",
+    )
 
 
 def test_release_checker_fails_when_release_notes_tamper_sha256sums_file_hash(
@@ -3612,12 +3591,11 @@ def test_release_checker_fails_when_release_notes_tamper_sha256sums_file_hash(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the fact "
-        "'8294805C21CEBE3A2D62465664F9A90E0CF4F3B02AE4F1A0651C7D7830403512'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_release_notes,
+        repo,
+        "does not state the fact '8294805C21CEBE3A2D62465664F9A90E0CF4F3B02AE4F1A0651C7D7830403512'",
+    )
 
 
 def test_release_checker_fails_when_release_notes_manifest_hash_replaced_by_contents(
@@ -3638,12 +3616,11 @@ def test_release_checker_fails_when_release_notes_manifest_hash_replaced_by_cont
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the fact "
-        "'8294805C21CEBE3A2D62465664F9A90E0CF4F3B02AE4F1A0651C7D7830403512'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_release_notes,
+        repo,
+        "does not state the fact '8294805C21CEBE3A2D62465664F9A90E0CF4F3B02AE4F1A0651C7D7830403512'",
+    )
 
 
 def test_release_checker_fails_when_client_parses_manifest_itself(
@@ -3660,16 +3637,12 @@ def test_release_checker_fails_when_client_parses_manifest_itself(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "ArtifactClient.load_canonical_build must return the direct "
-        "load_verified_canonical_build(build_dir) result without wrapping"
-    ) in result.stdout
-    assert (
-        "ArtifactClient source must not independently use the identifier "
-        "'json' (no second trust path)"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_artifact_client_readers,
+        repo,
+        'ArtifactClient.load_canonical_build must return the direct load_verified_canonical_build(build_dir) result without wrapping',
+        "ArtifactClient source must not independently use the identifier 'json' (no second trust path)",
+    )
 
 
 def test_release_checker_fails_when_client_reads_parquet_itself(
@@ -3686,16 +3659,12 @@ def test_release_checker_fails_when_client_reads_parquet_itself(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "ArtifactClient.load_dataset must return the direct "
-        "load_verified_dataset(build_dir) result without wrapping"
-    ) in result.stdout
-    assert (
-        "ArtifactClient source must not independently use the identifier "
-        "'parquet' (no second trust path)"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_artifact_client_readers,
+        repo,
+        'ArtifactClient.load_dataset must return the direct load_verified_dataset(build_dir) result without wrapping',
+        "ArtifactClient source must not independently use the identifier 'parquet' (no second trust path)",
+    )
 
 
 def test_release_checker_fails_when_reader_import_moves_to_module_level(
@@ -3712,12 +3681,11 @@ def test_release_checker_fails_when_reader_import_moves_to_module_level(
         + "\nfrom .canonical.reader import load_verified_canonical_build\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "artifact_client.py must not import anything except "
-        "__future__.annotations"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_artifact_client_foundation,
+        repo,
+        'artifact_client.py must not import anything except __future__.annotations',
+    )
 
 
 def test_release_checker_fails_when_client_method_uses_settings(
@@ -3736,12 +3704,11 @@ def test_release_checker_fails_when_client_method_uses_settings(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "ArtifactClient source must not independently use the identifier "
-        "'settings' (no second trust path)"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_artifact_client_readers,
+        repo,
+        "ArtifactClient source must not independently use the identifier 'settings' (no second trust path)",
+    )
 
 
 def test_release_checker_fails_when_contract_drops_no_exception_wrapping(
@@ -3759,11 +3726,11 @@ def test_release_checker_fails_when_contract_drops_no_exception_wrapping(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the fact 'no exception wrapping'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_python_client_contract,
+        repo,
+        "does not state the fact 'no exception wrapping'",
+    )
 
 
 def test_release_checker_fails_when_contract_drops_schema_v2_non_goal(tmp_path):
@@ -3778,9 +3745,11 @@ def test_release_checker_fails_when_contract_drops_schema_v2_non_goal(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "does not state the fact 'No schema v2'" in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_python_client_contract,
+        repo,
+        "does not state the fact 'No schema v2'",
+    )
 
 
 def test_release_checker_fails_when_contract_drops_migration_non_goal(tmp_path):
@@ -3795,9 +3764,11 @@ def test_release_checker_fails_when_contract_drops_migration_non_goal(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "does not state the fact 'No migration'" in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_python_client_contract,
+        repo,
+        "does not state the fact 'No migration'",
+    )
 
 
 def test_release_checker_fails_when_contract_drops_dependency_modernization(
@@ -3814,11 +3785,11 @@ def test_release_checker_fails_when_contract_drops_dependency_modernization(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the fact 'No dependency modernization'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_python_client_contract,
+        repo,
+        "does not state the fact 'No dependency modernization'",
+    )
 
 
 def test_release_checker_fails_when_audit_reverts_plan_backfill_to_pure_planning(
@@ -3835,11 +3806,11 @@ def test_release_checker_fails_when_audit_reverts_plan_backfill_to_pure_planning
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "contains the stale plan_backfill claim 'pure planning'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_python_api_audit,
+        repo,
+        "contains the stale plan_backfill claim 'pure planning'",
+    )
 
 
 def test_release_checker_fails_when_audit_claims_plan_backfill_performs_opend(
@@ -3856,11 +3827,11 @@ def test_release_checker_fails_when_audit_claims_plan_backfill_performs_opend(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "contains the stale plan_backfill claim 'performs OpenD'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_python_api_audit,
+        repo,
+        "contains the stale plan_backfill claim 'performs OpenD'",
+    )
 
 
 # --- V0.7.0 PR-4 boundary / mutation guards -------------------------------
@@ -3876,12 +3847,11 @@ def test_release_checker_fails_when_catalog_method_deleted(tmp_path):
         text.split("    def load_dataset_catalog", 1)[0],
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "ArtifactClient.load_dataset_catalog must exist and delegate to "
-        "load_verified_dataset_catalog"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_artifact_client_catalog,
+        repo,
+        'ArtifactClient.load_dataset_catalog must exist and delegate to load_verified_dataset_catalog',
+    )
 
 
 def test_release_checker_fails_when_catalog_method_renamed(tmp_path):
@@ -3895,12 +3865,11 @@ def test_release_checker_fails_when_catalog_method_renamed(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "ArtifactClient.load_dataset_catalog must exist and delegate to "
-        "load_verified_dataset_catalog"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_artifact_client_catalog,
+        repo,
+        'ArtifactClient.load_dataset_catalog must exist and delegate to load_verified_dataset_catalog',
+    )
 
 
 def test_release_checker_fails_when_catalog_reader_import_moves_to_module_level(
@@ -3916,12 +3885,11 @@ def test_release_checker_fails_when_catalog_reader_import_moves_to_module_level(
         "load_verified_dataset_catalog\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "artifact_client.py must not import anything except "
-        "__future__.annotations"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_artifact_client_foundation,
+        repo,
+        'artifact_client.py must not import anything except __future__.annotations',
+    )
 
 
 def test_release_checker_fails_when_catalog_imports_wrong_reader(tmp_path):
@@ -3937,13 +3905,11 @@ def test_release_checker_fails_when_catalog_imports_wrong_reader(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "ArtifactClient.load_dataset_catalog must import "
-        "load_verified_dataset_catalog from '.dataset.dataset_catalog_reader' "
-        "at the method-call boundary"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_artifact_client_catalog,
+        repo,
+        "ArtifactClient.load_dataset_catalog must import load_verified_dataset_catalog from '.dataset.dataset_catalog_reader' at the method-call boundary",
+    )
 
 
 def test_release_checker_fails_when_catalog_calls_wrong_reader_function(
@@ -3960,12 +3926,11 @@ def test_release_checker_fails_when_catalog_calls_wrong_reader_function(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "ArtifactClient.load_dataset_catalog must return the direct "
-        "load_verified_dataset_catalog(snapshot_dir) result without wrapping"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_artifact_client_catalog,
+        repo,
+        'ArtifactClient.load_dataset_catalog must return the direct load_verified_dataset_catalog(snapshot_dir) result without wrapping',
+    )
 
 
 def test_release_checker_fails_when_catalog_method_uses_path(tmp_path):
@@ -3980,16 +3945,12 @@ def test_release_checker_fails_when_catalog_method_uses_path(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "ArtifactClient.load_dataset_catalog must return the direct "
-        "load_verified_dataset_catalog(snapshot_dir) result without wrapping"
-    ) in result.stdout
-    assert (
-        "must not independently use the identifier 'Path' (no second "
-        "trust path)"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_artifact_client_catalog,
+        repo,
+        'ArtifactClient.load_dataset_catalog must return the direct load_verified_dataset_catalog(snapshot_dir) result without wrapping',
+        "must not independently use the identifier 'Path' (no second trust path)",
+    )
 
 
 def test_release_checker_fails_when_catalog_method_uses_str(tmp_path):
@@ -4004,12 +3965,11 @@ def test_release_checker_fails_when_catalog_method_uses_str(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "ArtifactClient.load_dataset_catalog must return the direct "
-        "load_verified_dataset_catalog(snapshot_dir) result without wrapping"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_artifact_client_catalog,
+        repo,
+        'ArtifactClient.load_dataset_catalog must return the direct load_verified_dataset_catalog(snapshot_dir) result without wrapping',
+    )
 
 
 def test_release_checker_fails_when_catalog_result_wrapped(tmp_path):
@@ -4023,12 +3983,11 @@ def test_release_checker_fails_when_catalog_result_wrapped(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "ArtifactClient.load_dataset_catalog must return the direct "
-        "load_verified_dataset_catalog(snapshot_dir) result without wrapping"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_artifact_client_catalog,
+        repo,
+        'ArtifactClient.load_dataset_catalog must return the direct load_verified_dataset_catalog(snapshot_dir) result without wrapping',
+    )
 
 
 def test_release_checker_fails_when_catalog_error_caught(tmp_path):
@@ -4046,12 +4005,11 @@ def test_release_checker_fails_when_catalog_error_caught(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "ArtifactClient methods must not catch or wrap any exception "
-        "(no try/except, formal errors propagate unwrapped)"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_artifact_client_foundation,
+        repo,
+        'ArtifactClient methods must not catch or wrap any exception (no try/except, formal errors propagate unwrapped)',
+    )
 
 
 def test_release_checker_fails_when_catalog_catches_exception(tmp_path):
@@ -4069,12 +4027,11 @@ def test_release_checker_fails_when_catalog_catches_exception(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "ArtifactClient methods must not catch or wrap any exception "
-        "(no try/except, formal errors propagate unwrapped)"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_artifact_client_foundation,
+        repo,
+        'ArtifactClient methods must not catch or wrap any exception (no try/except, formal errors propagate unwrapped)',
+    )
 
 
 def test_release_checker_fails_when_catalog_adds_query_method(tmp_path):
@@ -4091,13 +4048,11 @@ def test_release_checker_fails_when_catalog_adds_query_method(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "ArtifactClient public business methods must be exactly "
-        "load_canonical_build, load_dataset and load_dataset_catalog, "
-        "with only __init__ as constructor"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_artifact_client_foundation,
+        repo,
+        'ArtifactClient public business methods must be exactly load_canonical_build, load_dataset and load_dataset_catalog, with only __init__ as constructor',
+    )
 
 
 def test_release_checker_fails_when_catalog_parses_files(tmp_path):
@@ -4113,12 +4068,11 @@ def test_release_checker_fails_when_catalog_parses_files(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "ArtifactClient.load_dataset_catalog must not independently use "
-        "the identifier 'hashlib' (no second trust path)"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_artifact_client_catalog,
+        repo,
+        "ArtifactClient.load_dataset_catalog must not independently use the identifier 'hashlib' (no second trust path)",
+    )
 
 
 def test_release_checker_fails_when_canonical_reader_deleted(tmp_path):
@@ -4130,12 +4084,11 @@ def test_release_checker_fails_when_canonical_reader_deleted(tmp_path):
     start = text.index("    def load_canonical_build(")
     end = text.index("    def load_dataset(")
     module.write_text(text[:start] + text[end:], encoding="utf-8")
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "ArtifactClient.load_canonical_build must exist and delegate to "
-        "load_verified_canonical_build"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_artifact_client_readers,
+        repo,
+        'ArtifactClient.load_canonical_build must exist and delegate to load_verified_canonical_build',
+    )
 
 
 def test_release_checker_fails_when_dataset_reader_deleted(tmp_path):
@@ -4147,12 +4100,11 @@ def test_release_checker_fails_when_dataset_reader_deleted(tmp_path):
     start = text.index("    def load_dataset(")
     end = text.index("    def load_dataset_catalog")
     module.write_text(text[:start] + text[end:], encoding="utf-8")
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "ArtifactClient.load_dataset must exist and delegate to "
-        "load_verified_dataset"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_artifact_client_readers,
+        repo,
+        'ArtifactClient.load_dataset must exist and delegate to load_verified_dataset',
+    )
 
 
 def test_release_checker_fails_when_existing_reader_delegation_changed(
@@ -4169,12 +4121,11 @@ def test_release_checker_fails_when_existing_reader_delegation_changed(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "ArtifactClient.load_dataset must return the direct "
-        "load_verified_dataset(build_dir) result without wrapping"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_artifact_client_readers,
+        repo,
+        'ArtifactClient.load_dataset must return the direct load_verified_dataset(build_dir) result without wrapping',
+    )
 
 
 def test_release_checker_fails_when_ci_loses_catalog_client_marker(tmp_path):
@@ -4189,12 +4140,11 @@ def test_release_checker_fails_when_ci_loses_catalog_client_marker(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "CI fresh-wheel smoke must carry the "
-        "V070_CATALOG_CLIENT_IMPORT_OK marker"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_ci_v070_public_api_smoke,
+        repo,
+        'CI fresh-wheel smoke must carry the V070_CATALOG_CLIENT_IMPORT_OK marker',
+    )
 
 
 def test_release_checker_fails_when_contract_drops_load_dataset_catalog(
@@ -4211,11 +4161,11 @@ def test_release_checker_fails_when_contract_drops_load_dataset_catalog(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the fact '`load_dataset_catalog`'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_python_client_contract,
+        repo,
+        "does not state the fact '`load_dataset_catalog`'",
+    )
 
 
 def test_release_checker_fails_when_direction_drops_pr4_boundary(tmp_path):
@@ -4230,12 +4180,11 @@ def test_release_checker_fails_when_direction_drops_pr4_boundary(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the fact 'PR-4 (the merged Catalog-read PR, "
-        "#51) implemented only'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_direction,
+        repo,
+        "does not state the fact 'PR-4 (the merged Catalog-read PR, #51) implemented only'",
+    )
 
 
 def test_release_checker_fails_when_direction_states_pr4_not_started(
@@ -4252,11 +4201,11 @@ def test_release_checker_fails_when_direction_states_pr4_not_started(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "contains the false implementation/release claim 'PR-4: NOT STARTED'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_direction,
+        repo,
+        "contains the false implementation/release claim 'PR-4: NOT STARTED'",
+    )
 
 
 def test_release_checker_fails_when_v060_direction_missing_pr_number(
@@ -4268,35 +4217,37 @@ def test_release_checker_fails_when_v060_direction_missing_pr_number(
         path.read_text(encoding="utf-8").replace("PR-5", "PX-5"),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "does not state the fact 'PR-5'" in result.stdout
+    assert_check_fails(_check_release.check_v060_direction, repo, "does not state the fact 'PR-5'")
 
 
 def test_release_checker_fails_without_v060_adr(tmp_path):
     repo = copy_repo(tmp_path)
     (repo / "docs" / "adr" / "0003-project-boundaries-and-v060-data-discovery.md").unlink()
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "docs/adr/0003-project-boundaries-and-v060-data-discovery.md is missing"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v060_adr,
+        repo,
+        'docs/adr/0003-project-boundaries-and-v060-data-discovery.md is missing',
+    )
 
 
 def test_release_checker_fails_without_sample_generation_contract(tmp_path):
     repo = copy_repo(tmp_path)
     (repo / "docs" / "contracts" / "sample_generation.md").unlink()
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "docs/contracts/sample_generation.md is missing" in result.stdout
+    assert_check_fails(
+        _check_release.check_sample_generation_contract,
+        repo,
+        'docs/contracts/sample_generation.md is missing',
+    )
 
 
 def test_release_checker_fails_without_dataset_catalog_contract(tmp_path):
     repo = copy_repo(tmp_path)
     (repo / "docs" / "contracts" / "dataset_catalog.md").unlink()
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "docs/contracts/dataset_catalog.md is missing" in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_contract,
+        repo,
+        'docs/contracts/dataset_catalog.md is missing',
+    )
 
 
 def test_release_checker_fails_when_v060_direction_appends_sample_generator_implemented(
@@ -4311,9 +4262,11 @@ def test_release_checker_fails_when_v060_direction_appends_sample_generator_impl
         + "\nThe Sample Generator is implemented and available now.\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "false claim 'Sample Generator is implemented'" in result.stdout
+    assert_check_fails(
+        _check_release.check_v060_direction,
+        repo,
+        "false claim 'Sample Generator is implemented'",
+    )
 
 
 def test_release_checker_fails_when_v060_direction_appends_dataset_catalog_implemented(
@@ -4326,9 +4279,11 @@ def test_release_checker_fails_when_v060_direction_appends_dataset_catalog_imple
         + "\nThe Dataset Catalog is implemented and available now.\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "false claim 'Dataset Catalog is implemented'" in result.stdout
+    assert_check_fails(
+        _check_release.check_v060_direction,
+        repo,
+        "false claim 'Dataset Catalog is implemented'",
+    )
 
 
 def test_release_checker_fails_when_sample_contract_singular_canonical_dirs(
@@ -4345,12 +4300,11 @@ def test_release_checker_fails_when_sample_contract_singular_canonical_dirs(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the plural input fact "
-        "'one or more explicit verified Canonical build directories'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_sample_generation_contract,
+        repo,
+        "does not state the plural input fact 'one or more explicit verified Canonical build directories'",
+    )
 
 
 def test_release_checker_fails_when_sample_contract_singular_feature_spec_paths(
@@ -4365,12 +4319,11 @@ def test_release_checker_fails_when_sample_contract_singular_feature_spec_paths(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the plural input fact "
-        "'one or more explicit Feature spec file paths'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_sample_generation_contract,
+        repo,
+        "does not state the plural input fact 'one or more explicit Feature spec file paths'",
+    )
 
 
 def test_release_checker_fails_when_sample_contract_singular_label_spec_paths(
@@ -4385,12 +4338,11 @@ def test_release_checker_fails_when_sample_contract_singular_label_spec_paths(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the plural input fact "
-        "'one or more explicit Label spec file paths'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_sample_generation_contract,
+        repo,
+        "does not state the plural input fact 'one or more explicit Label spec file paths'",
+    )
 
 
 def test_release_checker_fails_when_sample_contract_appends_implemented_in_v051(
@@ -4405,9 +4357,11 @@ def test_release_checker_fails_when_sample_contract_appends_implemented_in_v051(
         + "\nThe Sample Generator is implemented in v0.5.1.\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "affirmative 'implemented in v0.5.1'" in result.stdout
+    assert_check_fails(
+        _check_release.check_sample_generation_contract,
+        repo,
+        "affirmative 'implemented in v0.5.1'",
+    )
 
 
 def test_release_checker_fails_when_catalog_contract_appends_available_now(
@@ -4420,9 +4374,11 @@ def test_release_checker_fails_when_catalog_contract_appends_available_now(
         + "\nThe Dataset Catalog is available now.\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "stale claim 'available now'" in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_contract,
+        repo,
+        "stale claim 'available now'",
+    )
 
 
 def test_release_checker_fails_when_catalog_contract_claims_built_at_enters_identity(
@@ -4437,11 +4393,11 @@ def test_release_checker_fails_when_catalog_contract_claims_built_at_enters_iden
         + "\nbuilt_at enters Catalog content identity.\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "false identity claim 'built_at enters Catalog content identity'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_contract,
+        repo,
+        "false identity claim 'built_at enters Catalog content identity'",
+    )
 
 
 def test_release_checker_fails_when_catalog_contract_claims_output_directory_enters_identity(
@@ -4454,12 +4410,11 @@ def test_release_checker_fails_when_catalog_contract_claims_output_directory_ent
         + "\nThe physical output directory enters Catalog content identity.\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "false identity claim "
-        "'physical output directory enters Catalog content identity'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_contract,
+        repo,
+        "false identity claim 'physical output directory enters Catalog content identity'",
+    )
 
 
 def test_release_checker_fails_when_catalog_contract_missing_separate_materialization_identity(
@@ -4476,12 +4431,11 @@ def test_release_checker_fails_when_catalog_contract_missing_separate_materializ
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the Catalog identity fact "
-        "'separate materialization or snapshot identity'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_contract,
+        repo,
+        "does not state the Catalog identity fact 'separate materialization or snapshot identity'",
+    )
 
 
 def test_release_checker_fails_when_sample_generation_contract_claims_implemented(
@@ -4496,11 +4450,11 @@ def test_release_checker_fails_when_sample_generation_contract_claims_implemente
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the planned-contract marker 'not implemented in v0.5.1'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_sample_generation_contract,
+        repo,
+        "does not state the planned-contract marker 'not implemented in v0.5.1'",
+    )
 
 
 def test_release_checker_fails_when_dataset_catalog_contract_claims_implemented(
@@ -4515,11 +4469,11 @@ def test_release_checker_fails_when_dataset_catalog_contract_claims_implemented(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the planned-contract marker 'not implemented in v0.5.1'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_contract,
+        repo,
+        "does not state the planned-contract marker 'not implemented in v0.5.1'",
+    )
 
 
 def test_release_checker_fails_when_v051_direction_claims_sample_generator_implemented(
@@ -4536,9 +4490,11 @@ def test_release_checker_fails_when_v051_direction_claims_sample_generator_imple
         "V0.5.1 has implemented all of the following",
     )
     path.write_text(text, encoding="utf-8")
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "does not mark the future capabilities as non-goals" in result.stdout
+    assert_check_fails(
+        _check_release.check_v051_direction,
+        repo,
+        'does not mark the future capabilities as non-goals',
+    )
 
 
 # --- Package metadata -------------------------------------------------------
@@ -4994,9 +4950,11 @@ def test_release_notes_v060_state_formal_release_facts():
 def test_release_checker_fails_without_v060_release_notes(tmp_path):
     repo = copy_repo(tmp_path)
     (repo / "docs" / "release_v0_6_0.md").unlink()
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "docs/release_v0_6_0.md is missing" in result.stdout
+    assert_check_fails(
+        _check_release.check_v060_release_notes,
+        repo,
+        'docs/release_v0_6_0.md is missing',
+    )
 
 
 def test_release_checker_fails_when_release_notes_formal_region_claims_pr9_open(
@@ -5015,9 +4973,11 @@ def test_release_checker_fails_when_release_notes_formal_region_claims_pr9_open(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "PR-9 is open and **not merged**." in result.stdout
+    assert_check_fails(
+        _check_release.check_v060_release_notes,
+        repo,
+        'PR-9 is open and **not merged**.',
+    )
 
 
 def test_release_checker_fails_when_release_notes_formal_region_claims_tag_missing(
@@ -5036,9 +4996,11 @@ def test_release_checker_fails_when_release_notes_formal_region_claims_tag_missi
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "The v0.6.0 tag does **not** exist yet." in result.stdout
+    assert_check_fails(
+        _check_release.check_v060_release_notes,
+        repo,
+        'The v0.6.0 tag does **not** exist yet.',
+    )
 
 
 def test_release_checker_fails_when_release_notes_formal_region_claims_no_release(
@@ -5057,9 +5019,7 @@ def test_release_checker_fails_when_release_notes_formal_region_claims_no_releas
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "No GitHub Release exists yet." in result.stdout
+    assert_check_fails(_check_release.check_v060_release_notes, repo, "No GitHub Release exists yet.")
 
 
 def test_release_checker_fails_when_release_notes_claim_pypi_published(tmp_path):
@@ -5076,9 +5036,11 @@ def test_release_checker_fails_when_release_notes_claim_pypi_published(tmp_path)
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "still contains the stale wording 'PyPI: published'" in result.stdout
+    assert_check_fails(
+        _check_release.check_v060_release_notes,
+        repo,
+        "still contains the stale wording 'PyPI: published'",
+    )
 
 
 def test_release_checker_fails_when_release_notes_claim_every_writer(tmp_path):
@@ -5093,11 +5055,11 @@ def test_release_checker_fails_when_release_notes_claim_every_writer(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "still contains the stale wording 'every supported PyArrow writer'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v060_release_notes,
+        repo,
+        "still contains the stale wording 'every supported PyArrow writer'",
+    )
 
 
 def test_release_checker_fails_when_release_notes_lose_candidate_wording(
@@ -5112,9 +5074,11 @@ def test_release_checker_fails_when_release_notes_lose_candidate_wording(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "does not state the fact 'candidate validation only'" in result.stdout
+    assert_check_fails(
+        _check_release.check_v060_release_notes,
+        repo,
+        "does not state the fact 'candidate validation only'",
+    )
 
 
 def test_release_checker_fails_when_release_notes_lose_pr42(tmp_path):
@@ -5124,9 +5088,11 @@ def test_release_checker_fails_when_release_notes_lose_pr42(tmp_path):
         path.read_text(encoding="utf-8").replace("PR #42", "PR #4x"),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "does not state the fact 'PR #42'" in result.stdout
+    assert_check_fails(
+        _check_release.check_v060_release_notes,
+        repo,
+        "does not state the fact 'PR #42'",
+    )
 
 
 def test_release_checker_fails_when_ci_reverts_to_v051(tmp_path):
@@ -5134,10 +5100,12 @@ def test_release_checker_fails_when_ci_reverts_to_v051(tmp_path):
     ci = repo / ".github" / "workflows" / "ci.yml"
     text = ci.read_text(encoding="utf-8")
     ci.write_text(text.replace("'0.7.0'", "'0.5.1'"), encoding="utf-8")
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "package module version assertion" in result.stdout
-    assert "distribution metadata assertion" in result.stdout
+    assert_check_fails(
+        _check_release.check_ci_version_assertions,
+        repo,
+        'package module version assertion',
+        'distribution metadata assertion',
+    )
 
 
 def test_release_checker_fails_when_ci_loses_release_state_marker(tmp_path):
@@ -5148,9 +5116,11 @@ def test_release_checker_fails_when_ci_loses_release_state_marker(tmp_path):
         text.replace("echo 'V070_RELEASED_OK'", "echo 'V070_PREP_OK'"),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "must carry the V070_RELEASED_OK marker" in result.stdout
+    assert_check_fails(
+        _check_release.check_ci_v070_released_state,
+        repo,
+        'must carry the V070_RELEASED_OK marker',
+    )
 
 
 def test_release_checker_fails_when_ci_loses_b64_forbidden(tmp_path):
@@ -5158,9 +5128,11 @@ def test_release_checker_fails_when_ci_loses_b64_forbidden(tmp_path):
     ci = repo / ".github" / "workflows" / "ci.yml"
     text = ci.read_text(encoding="utf-8")
     ci.write_text(text.replace('".b64"', '".b64x"'), encoding="utf-8")
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert 'wheel hygiene forbidden tuple must include ".b64"' in result.stdout
+    assert_check_fails(
+        _check_release.check_ci_v070_released_state,
+        repo,
+        'wheel hygiene forbidden tuple must include ".b64"',
+    )
 
 
 def test_release_checker_fails_when_ci_loses_generate_sample_requests(tmp_path):
@@ -5171,17 +5143,21 @@ def test_release_checker_fails_when_ci_loses_generate_sample_requests(tmp_path):
         text.replace("generate_sample_requests", "generate_sample_plan"),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "CI public API smoke must import 'generate_sample_requests'" in result.stdout
+    assert_check_fails(
+        _check_release.check_ci_v070_released_state,
+        repo,
+        "CI public API smoke must import 'generate_sample_requests'",
+    )
 
 
 def test_release_checker_fails_without_v051_release_notes(tmp_path):
     repo = copy_repo(tmp_path)
     (repo / "docs" / "release_v0_5_1.md").unlink()
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "docs/release_v0_5_1.md is missing" in result.stdout
+    assert_check_fails(
+        _check_release.check_v051_release_notes,
+        repo,
+        'docs/release_v0_5_1.md is missing',
+    )
 
 
 def test_release_checker_fails_without_warning_guard(tmp_path):
@@ -5194,10 +5170,12 @@ def test_release_checker_fails_without_warning_guard(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "warning-as-error guard" in result.stdout
-    assert "must not ignore DeprecationWarnings" in result.stdout
+    assert_check_fails(
+        _check_release.check_warning_guard,
+        repo,
+        'warning-as-error guard',
+        'must not ignore DeprecationWarnings',
+    )
 
 
 # --- V0.6.0 Sample Generation contract (PR-2) -------------------------------
@@ -5206,9 +5184,11 @@ def test_release_checker_fails_without_warning_guard(tmp_path):
 def test_release_checker_fails_without_sample_generation_modules(tmp_path):
     repo = copy_repo(tmp_path)
     (repo / "src" / "market_vault" / "dataset" / "sample_generation.py").unlink()
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "sample_generation.py is missing" in result.stdout
+    assert_check_fails(
+        _check_release.check_sample_generation_modules,
+        repo,
+        'sample_generation.py is missing',
+    )
 
 
 def _mutate_models_version(repo: Path, old: str, new: str) -> None:
@@ -5227,12 +5207,11 @@ def test_release_checker_fails_when_plan_schema_version_constant_removed(tmp_pat
         "market-vault-sample-generation-plan-v1",
         "market-vault-sample-generation-plan-v9",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not define the exact version constant "
-        "'market-vault-sample-generation-plan-v1'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_sample_generation_modules,
+        repo,
+        "does not define the exact version constant 'market-vault-sample-generation-plan-v1'",
+    )
 
 
 def test_release_checker_fails_when_rule_schema_version_constant_removed(tmp_path):
@@ -5244,12 +5223,11 @@ def test_release_checker_fails_when_rule_schema_version_constant_removed(tmp_pat
         "market-vault-sample-generation-rule-v1",
         "market-vault-sample-generation-rule-v9",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not define the exact version constant "
-        "'market-vault-sample-generation-rule-v1'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_sample_generation_modules,
+        repo,
+        "does not define the exact version constant 'market-vault-sample-generation-rule-v1'",
+    )
 
 
 def test_release_checker_fails_when_content_id_version_constant_removed(tmp_path):
@@ -5261,12 +5239,11 @@ def test_release_checker_fails_when_content_id_version_constant_removed(tmp_path
         "market-vault-sample-generation-content-v1",
         "market-vault-sample-generation-content-v9",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not define the exact version constant "
-        "'market-vault-sample-generation-content-v1'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_sample_generation_modules,
+        repo,
+        "does not define the exact version constant 'market-vault-sample-generation-content-v1'",
+    )
 
 
 def test_release_checker_accepts_core_implemented_claim(tmp_path):
@@ -5279,8 +5256,7 @@ def test_release_checker_accepts_core_implemented_claim(tmp_path):
         + "\nThe Sample Generator core is implemented.\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 0, result.stdout + result.stderr
+    assert _check_release.check_sample_generation_contract(repo) == []
 
 
 def test_release_checker_accepts_cli_implemented_claim(tmp_path):
@@ -5293,8 +5269,7 @@ def test_release_checker_accepts_cli_implemented_claim(tmp_path):
         + "\nThe Sample Generation CLI is implemented.\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 0, result.stdout + result.stderr
+    assert _check_release.check_sample_generation_contract(repo) == []
 
 
 def test_release_checker_fails_without_generator_core_module(tmp_path):
@@ -5302,9 +5277,11 @@ def test_release_checker_fails_without_generator_core_module(tmp_path):
     # checker.
     repo = copy_repo(tmp_path)
     (repo / "src" / "market_vault" / "dataset" / "sample_generation_core.py").unlink()
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "sample_generation_core.py is missing" in result.stdout
+    assert_check_fails(
+        _check_release.check_sample_generation_core,
+        repo,
+        'sample_generation_core.py is missing',
+    )
 
 
 def test_release_checker_fails_when_generator_core_version_constant_removed(
@@ -5321,12 +5298,11 @@ def test_release_checker_fails_when_generator_core_version_constant_removed(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not define the exact core version constant "
-        "'market-vault-sample-generator-core-v1'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_sample_generation_core,
+        repo,
+        "does not define the exact core version constant 'market-vault-sample-generator-core-v1'",
+    )
 
 
 def test_release_checker_fails_when_contract_doc_claims_generator_writes_dataset(
@@ -5341,11 +5317,11 @@ def test_release_checker_fails_when_contract_doc_claims_generator_writes_dataset
         + "\nthe generator writes the Dataset build plan.\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "false core claim 'the generator writes the Dataset build plan'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_sample_generation_core,
+        repo,
+        "false core claim 'the generator writes the Dataset build plan'",
+    )
 
 
 def test_release_checker_fails_when_contract_doc_claims_gaps_are_skipped(
@@ -5359,9 +5335,11 @@ def test_release_checker_fails_when_contract_doc_claims_gaps_are_skipped(
         path.read_text(encoding="utf-8") + "\ngaps are skipped.\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "false core claim 'gaps are skipped'" in result.stdout
+    assert_check_fails(
+        _check_release.check_sample_generation_core,
+        repo,
+        "false core claim 'gaps are skipped'",
+    )
 
 
 def test_release_checker_fails_when_contract_doc_claims_gaps_are_filled(
@@ -5375,9 +5353,11 @@ def test_release_checker_fails_when_contract_doc_claims_gaps_are_filled(
         path.read_text(encoding="utf-8") + "\ngaps are filled.\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "false core claim 'gaps are filled'" in result.stdout
+    assert_check_fails(
+        _check_release.check_sample_generation_core,
+        repo,
+        "false core claim 'gaps are filled'",
+    )
 
 
 def test_release_checker_fails_when_contract_doc_claims_cross_day_allowed(
@@ -5392,9 +5372,11 @@ def test_release_checker_fails_when_contract_doc_claims_cross_day_allowed(
         + "\ncross-day windows are allowed.\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "false core claim 'cross-day windows are allowed'" in result.stdout
+    assert_check_fails(
+        _check_release.check_sample_generation_core,
+        repo,
+        "false core claim 'cross-day windows are allowed'",
+    )
 
 
 
@@ -5413,12 +5395,11 @@ def test_release_checker_fails_when_contract_doc_singular_feature_spec_paths(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the plural input fact "
-        "'one or more explicit Feature spec file paths'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_sample_generation_contract,
+        repo,
+        "does not state the plural input fact 'one or more explicit Feature spec file paths'",
+    )
 
 
 def test_release_checker_fails_when_contract_doc_singular_label_spec_paths(
@@ -5435,12 +5416,11 @@ def test_release_checker_fails_when_contract_doc_singular_label_spec_paths(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the plural input fact "
-        "'one or more explicit Label spec file paths'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_sample_generation_contract,
+        repo,
+        "does not state the plural input fact 'one or more explicit Label spec file paths'",
+    )
 
 
 def test_release_checker_fails_when_contract_doc_claims_paths_enter_identity(
@@ -5455,11 +5435,11 @@ def test_release_checker_fails_when_contract_doc_claims_paths_enter_identity(
         + "\nPaths enter the Sample Generation content identity.\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "false claim 'Paths enter the Sample Generation content identity'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_sample_generation_contract,
+        repo,
+        "false claim 'Paths enter the Sample Generation content identity'",
+    )
 
 
 def test_release_checker_fails_when_contract_doc_claims_built_at_enters_identity(
@@ -5474,11 +5454,11 @@ def test_release_checker_fails_when_contract_doc_claims_built_at_enters_identity
         + "\nbuilt_at enters the Sample Generation content identity.\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "false claim 'built_at enters the Sample Generation content identity'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_sample_generation_contract,
+        repo,
+        "false claim 'built_at enters the Sample Generation content identity'",
+    )
 
 
 def test_release_checker_fails_when_contract_doc_claims_generation_id_enters_dataset_identity(
@@ -5493,9 +5473,11 @@ def test_release_checker_fails_when_contract_doc_claims_generation_id_enters_dat
         + "\nGeneration content ID enters dataset_id.\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "false claim 'Generation content ID enters dataset_id'" in result.stdout
+    assert_check_fails(
+        _check_release.check_sample_generation_contract,
+        repo,
+        "false claim 'Generation content ID enters dataset_id'",
+    )
 
 
 def test_release_checker_fails_when_path_base_absolute_declaration_removed(
@@ -5511,11 +5493,11 @@ def test_release_checker_fails_when_path_base_absolute_declaration_removed(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the core fact 'explicit absolute path_base'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_sample_generation_core,
+        repo,
+        "does not state the core fact 'explicit absolute path_base'",
+    )
 
 
 def test_release_checker_fails_when_overlap_segment_declaration_removed(
@@ -5532,12 +5514,11 @@ def test_release_checker_fails_when_overlap_segment_declaration_removed(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the core fact 'Overlapping Canonical rows never "
-        "become a segment boundary'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_sample_generation_core,
+        repo,
+        "does not state the core fact 'Overlapping Canonical rows never become a segment boundary'",
+    )
 
 
 def test_release_checker_fails_when_shared_label_contract_declaration_removed(
@@ -5554,11 +5535,11 @@ def test_release_checker_fails_when_shared_label_contract_declaration_removed(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the core fact 'Shared Label configuration contract'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_sample_generation_core,
+        repo,
+        "does not state the core fact 'Shared Label configuration contract'",
+    )
 
 
 def test_release_checker_fails_when_generation_id_recompute_declaration_removed(
@@ -5575,11 +5556,11 @@ def test_release_checker_fails_when_generation_id_recompute_declaration_removed(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the core fact 'recomputes the Generation content ID'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_sample_generation_core,
+        repo,
+        "does not state the core fact 'recomputes the Generation content ID'",
+    )
 
 
 # --- V0.6.0 Sample Generation CLI (PR-4) ------------------------------------
@@ -5603,18 +5584,22 @@ def test_release_checker_fails_without_sample_generation_cli_module(tmp_path):
     # Mutation: deleting the CLI module must fail the checker.
     repo = copy_repo(tmp_path)
     (repo / "src" / "market_vault" / "dataset" / "sample_generation_cli.py").unlink()
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "sample_generation_cli.py is missing" in result.stdout
+    assert_check_fails(
+        _check_release.check_sample_generation_cli,
+        repo,
+        'sample_generation_cli.py is missing',
+    )
 
 
 def test_release_checker_fails_without_sample_generation_output_module(tmp_path):
     # Mutation: deleting the pure renderer module must fail the checker.
     repo = copy_repo(tmp_path)
     (repo / "src" / "market_vault" / "dataset" / "sample_generation_output.py").unlink()
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "sample_generation_output.py is missing" in result.stdout
+    assert_check_fails(
+        _check_release.check_sample_generation_cli,
+        repo,
+        'sample_generation_output.py is missing',
+    )
 
 
 def test_release_checker_fails_when_cli_contract_version_removed(tmp_path):
@@ -5626,12 +5611,11 @@ def test_release_checker_fails_when_cli_contract_version_removed(tmp_path):
         "market-vault-sample-generation-cli-v1",
         "market-vault-sample-generation-cli-v9",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not define the exact CLI version constant "
-        "'market-vault-sample-generation-cli-v1'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_sample_generation_cli,
+        repo,
+        "does not define the exact CLI version constant 'market-vault-sample-generation-cli-v1'",
+    )
 
 
 def test_release_checker_fails_when_cli_result_schema_version_removed(tmp_path):
@@ -5643,12 +5627,11 @@ def test_release_checker_fails_when_cli_result_schema_version_removed(tmp_path):
         "market-vault-sample-generation-cli-result-v1",
         "market-vault-sample-generation-cli-result-v9",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not define the exact CLI version constant "
-        "'market-vault-sample-generation-cli-result-v1'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_sample_generation_cli,
+        repo,
+        "does not define the exact CLI version constant 'market-vault-sample-generation-cli-result-v1'",
+    )
 
 
 def test_release_checker_fails_when_sample_generate_registration_removed(tmp_path):
@@ -5663,9 +5646,11 @@ def test_release_checker_fails_when_sample_generate_registration_removed(tmp_pat
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "does not register sample-generate" in result.stdout
+    assert_check_fails(
+        _check_release.check_sample_generation_cli,
+        repo,
+        'does not register sample-generate',
+    )
 
 
 def test_release_checker_fails_when_sample_generate_gains_a_business_option(
@@ -5681,9 +5666,11 @@ def test_release_checker_fails_when_sample_generate_gains_a_business_option(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "registers the business option '--output'" in result.stdout
+    assert_check_fails(
+        _check_release.check_sample_generation_cli,
+        repo,
+        "registers the business option '--output'",
+    )
 
 
 def test_release_checker_fails_when_cli_module_calls_orchestration(tmp_path):
@@ -5696,9 +5683,11 @@ def test_release_checker_fails_when_cli_module_calls_orchestration(tmp_path):
         + "\nresult = orchestrate_dataset_build()\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "must never call orchestrate_dataset_build" in result.stdout
+    assert_check_fails(
+        _check_release.check_sample_generation_cli,
+        repo,
+        'must never call orchestrate_dataset_build',
+    )
 
 
 def test_release_checker_fails_when_contract_doc_claims_generator_builds_dataset(
@@ -5708,11 +5697,11 @@ def test_release_checker_fails_when_contract_doc_claims_generator_builds_dataset
     # Dataset must fail the checker.
     repo = copy_repo(tmp_path)
     _mutate_contract_doc(repo, "The Sample Generator builds the Dataset.")
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "contains the false PR-4 claim 'Sample Generator builds the Dataset'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_sample_generation_cli,
+        repo,
+        "contains the false PR-4 claim 'Sample Generator builds the Dataset'",
+    )
 
 
 def test_release_checker_fails_when_contract_doc_claims_cli_builds_dataset(
@@ -5720,9 +5709,11 @@ def test_release_checker_fails_when_contract_doc_claims_cli_builds_dataset(
 ):
     repo = copy_repo(tmp_path)
     _mutate_contract_doc(repo, "the CLI builds the Dataset.")
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "contains the false PR-4 claim 'the CLI builds the Dataset'" in result.stdout
+    assert_check_fails(
+        _check_release.check_sample_generation_cli,
+        repo,
+        "contains the false PR-4 claim 'the CLI builds the Dataset'",
+    )
 
 
 def test_release_checker_fails_when_contract_doc_claims_cli_calls_orchestration(
@@ -5730,11 +5721,11 @@ def test_release_checker_fails_when_contract_doc_claims_cli_calls_orchestration(
 ):
     repo = copy_repo(tmp_path)
     _mutate_contract_doc(repo, "the CLI calls orchestrate_dataset_build.")
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "contains the false PR-4 claim 'the CLI calls orchestrate_dataset_build'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_sample_generation_cli,
+        repo,
+        "contains the false PR-4 claim 'the CLI calls orchestrate_dataset_build'",
+    )
 
 
 def test_release_checker_fails_when_contract_doc_claims_cli_implements_catalog(
@@ -5742,11 +5733,11 @@ def test_release_checker_fails_when_contract_doc_claims_cli_implements_catalog(
 ):
     repo = copy_repo(tmp_path)
     _mutate_contract_doc(repo, "the CLI implements Dataset Catalog.")
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "contains the false PR-4 claim 'the CLI implements Dataset Catalog'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_sample_generation_cli,
+        repo,
+        "contains the false PR-4 claim 'the CLI implements Dataset Catalog'",
+    )
 
 
 def test_release_checker_fails_when_contract_doc_claims_output_overwrites(
@@ -5754,11 +5745,11 @@ def test_release_checker_fails_when_contract_doc_claims_output_overwrites(
 ):
     repo = copy_repo(tmp_path)
     _mutate_contract_doc(repo, "The output plan overwrites existing files.")
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "contains the false PR-4 claim 'output plan overwrites existing files'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_sample_generation_cli,
+        repo,
+        "contains the false PR-4 claim 'output plan overwrites existing files'",
+    )
 
 
 def test_release_checker_fails_when_contract_doc_claims_relative_paths_move(
@@ -5766,11 +5757,11 @@ def test_release_checker_fails_when_contract_doc_claims_relative_paths_move(
 ):
     repo = copy_repo(tmp_path)
     _mutate_contract_doc(repo, "relative paths may move to another parent.")
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "contains the false PR-4 claim 'relative paths may move to another parent'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_sample_generation_cli,
+        repo,
+        "contains the false PR-4 claim 'relative paths may move to another parent'",
+    )
 
 
 def test_release_checker_fails_when_contract_doc_claims_current_time_built_at(
@@ -5778,9 +5769,11 @@ def test_release_checker_fails_when_contract_doc_claims_current_time_built_at(
 ):
     repo = copy_repo(tmp_path)
     _mutate_contract_doc(repo, "The current time supplies built_at.")
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "contains the false PR-4 claim 'current time supplies built_at'" in result.stdout
+    assert_check_fails(
+        _check_release.check_sample_generation_cli,
+        repo,
+        "contains the false PR-4 claim 'current time supplies built_at'",
+    )
 
 
 def test_release_checker_fails_when_contract_doc_claims_output_path_enters_identity(
@@ -5790,12 +5783,11 @@ def test_release_checker_fails_when_contract_doc_claims_output_path_enters_ident
     _mutate_contract_doc(
         repo, "The output_plan_path enters the Generation content identity."
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "contains the false PR-4 claim "
-        "'output_plan_path enters the Generation content identity'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_sample_generation_cli,
+        repo,
+        "contains the false PR-4 claim 'output_plan_path enters the Generation content identity'",
+    )
 
 
 def test_release_checker_fails_when_contract_doc_reverts_cli_status(tmp_path):
@@ -5811,13 +5803,16 @@ def test_release_checker_fails_when_contract_doc_reverts_cli_status(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the formal v1 contract marker 'Status: Sample "
-        "Generation contract, generator core, and CLI implemented'"
-    ) in result.stdout
-    assert "contains the false PR-4 claim 'CLI not implemented'" in result.stdout
+    assert_check_fails(
+        _check_release.check_sample_generation_contract,
+        repo,
+        "does not state the formal v1 contract marker 'Status: Sample Generation contract, generator core, and CLI implemented'",
+    )
+    assert_check_fails(
+        _check_release.check_sample_generation_cli,
+        repo,
+        "contains the false PR-4 claim 'CLI not implemented'",
+    )
 
 
 def test_release_checker_fails_when_direction_reverts_pr4_stage(tmp_path):
@@ -5832,9 +5827,11 @@ def test_release_checker_fails_when_direction_reverts_pr4_stage(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "does not state the PR-4 progress fact 'PR-4 is complete'" in result.stdout
+    assert_check_fails(
+        _check_release.check_sample_generation_cli,
+        repo,
+        "does not state the PR-4 progress fact 'PR-4 is complete'",
+    )
 
 
 def test_release_checker_fails_when_direction_loses_pr6_complete(tmp_path):
@@ -5849,11 +5846,11 @@ def test_release_checker_fails_when_direction_loses_pr6_complete(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the PR-6 progress fact 'PR-6 is complete'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_pr6,
+        repo,
+        "does not state the PR-6 progress fact 'PR-6 is complete'",
+    )
 
 
 def test_release_checker_fails_when_direction_claims_v060_released(tmp_path):
@@ -5863,9 +5860,11 @@ def test_release_checker_fails_when_direction_claims_v060_released(tmp_path):
         path.read_text(encoding="utf-8") + "\nV0.6.0 is released.\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "contains the false PR-4 claim 'V0.6.0 is released'" in result.stdout
+    assert_check_fails(
+        _check_release.check_sample_generation_cli,
+        repo,
+        "contains the false PR-4 claim 'V0.6.0 is released'",
+    )
 
 
 def test_release_checker_fails_when_ci_loses_sample_generate_smoke(tmp_path):
@@ -5880,11 +5879,11 @@ def test_release_checker_fails_when_ci_loses_sample_generate_smoke(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "fresh-wheel smoke must cover 'market-vault sample-generate --help'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_sample_generation_cli,
+        repo,
+        "fresh-wheel smoke must cover 'market-vault sample-generate --help'",
+    )
 
 
 # --- V0.6.0 Dataset Catalog contract (PR-5) ----------------------------------
@@ -5908,27 +5907,33 @@ def test_release_checker_fails_without_catalog_models_module(tmp_path):
     # Mutation: deleting a key PR-5 boundary module must fail the checker.
     repo = copy_repo(tmp_path)
     (repo / "src" / "market_vault" / "dataset" / "dataset_catalog_models.py").unlink()
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "dataset_catalog_models.py is missing" in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog,
+        repo,
+        'dataset_catalog_models.py is missing',
+    )
 
 
 def test_release_checker_fails_without_catalog_identity_module(tmp_path):
     # Mutation: deleting the identity module must fail the checker.
     repo = copy_repo(tmp_path)
     (repo / "src" / "market_vault" / "dataset" / "dataset_catalog_identity.py").unlink()
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "dataset_catalog_identity.py is missing" in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog,
+        repo,
+        'dataset_catalog_identity.py is missing',
+    )
 
 
 def test_release_checker_fails_without_catalog_projection_module(tmp_path):
     # Mutation: deleting the projection module must fail the checker.
     repo = copy_repo(tmp_path)
     (repo / "src" / "market_vault" / "dataset" / "dataset_catalog_projection.py").unlink()
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "dataset_catalog_projection.py is missing" in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog,
+        repo,
+        'dataset_catalog_projection.py is missing',
+    )
 
 
 def test_release_checker_fails_when_catalog_contract_version_removed(tmp_path):
@@ -5939,12 +5944,11 @@ def test_release_checker_fails_when_catalog_contract_version_removed(tmp_path):
         "market-vault-dataset-catalog-contract-v1",
         "market-vault-dataset-catalog-contract-v9",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not define the exact version constant "
-        "'market-vault-dataset-catalog-contract-v1'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog,
+        repo,
+        "does not define the exact version constant 'market-vault-dataset-catalog-contract-v1'",
+    )
 
 
 def test_release_checker_fails_when_catalog_entry_schema_version_removed(
@@ -5957,12 +5961,11 @@ def test_release_checker_fails_when_catalog_entry_schema_version_removed(
         "market-vault-dataset-catalog-entry-v1",
         "market-vault-dataset-catalog-entry-v9",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not define the exact version constant "
-        "'market-vault-dataset-catalog-entry-v1'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog,
+        repo,
+        "does not define the exact version constant 'market-vault-dataset-catalog-entry-v1'",
+    )
 
 
 def test_release_checker_fails_when_catalog_content_id_version_removed(
@@ -5975,12 +5978,11 @@ def test_release_checker_fails_when_catalog_content_id_version_removed(
         "market-vault-dataset-catalog-content-v1",
         "market-vault-dataset-catalog-content-v9",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not define the exact version constant "
-        "'market-vault-dataset-catalog-content-v1'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog,
+        repo,
+        "does not define the exact version constant 'market-vault-dataset-catalog-content-v1'",
+    )
 
 
 def test_release_checker_fails_when_catalog_identity_function_removed(
@@ -5996,10 +5998,10 @@ def test_release_checker_fails_when_catalog_identity_function_removed(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "dataset_catalog_identity.py is missing def dataset_catalog_content_id" in (
-        result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog,
+        repo,
+        'dataset_catalog_identity.py is missing def dataset_catalog_content_id',
     )
 
 
@@ -6016,9 +6018,11 @@ def test_release_checker_fails_when_projection_loses_trust_boundary(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "must bind the trust boundary to VerifiedDatasetBuild" in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog,
+        repo,
+        'must bind the trust boundary to VerifiedDatasetBuild',
+    )
 
 
 def test_release_checker_fails_when_catalog_module_imports_legacy_catalog(
@@ -6031,9 +6035,11 @@ def test_release_checker_fails_when_catalog_module_imports_legacy_catalog(
         path.read_text(encoding="utf-8") + "\nfrom market_vault.storage import Catalog\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "must never import the legacy Catalog" in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog,
+        repo,
+        'must never import the legacy Catalog',
+    )
 
 
 def test_release_checker_fails_when_package_loses_catalog_export(tmp_path):
@@ -6047,12 +6053,11 @@ def test_release_checker_fails_when_package_loses_catalog_export(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "market_vault.dataset does not export the PR-5 public API "
-        "'project_dataset_catalog_entry'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog,
+        repo,
+        "market_vault.dataset does not export the PR-5 public API 'project_dataset_catalog_entry'",
+    )
 
 
 def test_release_checker_fails_without_catalog_cli_module(tmp_path):
@@ -6060,11 +6065,11 @@ def test_release_checker_fails_without_catalog_cli_module(tmp_path):
     # checker.
     repo = copy_repo(tmp_path)
     (repo / "src" / "market_vault" / "dataset" / "dataset_catalog_cli.py").unlink()
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "src/market_vault/dataset/dataset_catalog_cli.py is missing"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_cli,
+        repo,
+        'src/market_vault/dataset/dataset_catalog_cli.py is missing',
+    )
 
 
 def test_release_checker_fails_when_contract_trusts_manifest_directly(
@@ -6076,11 +6081,11 @@ def test_release_checker_fails_when_contract_trusts_manifest_directly(
     _mutate_catalog_contract_doc(
         repo, "The Dataset Catalog trusts manifests directly."
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "contains the false PR-5 claim 'trusts manifests directly'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_contract,
+        repo,
+        "contains the false PR-5 claim 'trusts manifests directly'",
+    )
 
 
 def test_release_checker_fails_when_contract_claims_builder_implemented(
@@ -6089,11 +6094,11 @@ def test_release_checker_fails_when_contract_claims_builder_implemented(
     # Mutation: claiming the PR-6 builder is already implemented must fail.
     repo = copy_repo(tmp_path)
     _mutate_catalog_contract_doc(repo, "The Dataset Catalog builder is implemented.")
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "contains the false PR-5 claim 'Dataset Catalog builder is implemented'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_contract,
+        repo,
+        "contains the false PR-5 claim 'Dataset Catalog builder is implemented'",
+    )
 
 
 def test_release_checker_fails_when_contract_claims_reader_implemented(
@@ -6103,11 +6108,11 @@ def test_release_checker_fails_when_contract_claims_reader_implemented(
     # must fail.
     repo = copy_repo(tmp_path)
     _mutate_catalog_contract_doc(repo, "The verified Catalog reader is implemented.")
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "contains the false PR-5 claim 'verified Catalog reader is implemented'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_contract,
+        repo,
+        "contains the false PR-5 claim 'verified Catalog reader is implemented'",
+    )
 
 
 def test_release_checker_fails_when_contract_claims_path_enters_identity(
@@ -6119,9 +6124,11 @@ def test_release_checker_fails_when_contract_claims_path_enters_identity(
     _mutate_catalog_contract_doc(
         repo, "physical output directory enters Catalog content identity"
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "contains the false identity claim" in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_contract,
+        repo,
+        'contains the false identity claim',
+    )
 
 
 def test_release_checker_fails_when_contract_claims_built_at_enters_identity(
@@ -6132,10 +6139,10 @@ def test_release_checker_fails_when_contract_claims_built_at_enters_identity(
     _mutate_catalog_contract_doc(
         repo, "built_at enters Catalog content identity"
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "contains the false identity claim 'built_at enters Catalog content identity'" in (
-        result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_contract,
+        repo,
+        "contains the false identity claim 'built_at enters Catalog content identity'",
     )
 
 
@@ -6146,9 +6153,11 @@ def test_release_checker_fails_when_contract_reuses_legacy_catalog_tables(
     # "never reuses" wording is preserved in the real document).
     repo = copy_repo(tmp_path)
     _mutate_catalog_contract_doc(repo, "The new Catalog reuses the legacy Catalog's tables.")
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "reuses the legacy Catalog's tables" in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_contract,
+        repo,
+        "reuses the legacy Catalog's tables",
+    )
 
 
 def test_release_checker_fails_when_contract_loses_facts_field(tmp_path):
@@ -6163,11 +6172,11 @@ def test_release_checker_fails_when_contract_loses_facts_field(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the exact facts field 'canonical_row_version_ids'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_contract,
+        repo,
+        "does not state the exact facts field 'canonical_row_version_ids'",
+    )
 
 
 def test_release_checker_fails_when_direction_reverts_pr6_stage(tmp_path):
@@ -6182,9 +6191,11 @@ def test_release_checker_fails_when_direction_reverts_pr6_stage(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "does not state the PR-6 progress fact 'PR-6 merged'" in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_pr6,
+        repo,
+        "does not state the PR-6 progress fact 'PR-6 merged'",
+    )
 
 
 def test_release_checker_fails_when_direction_loses_pr7_record(tmp_path):
@@ -6199,11 +6210,11 @@ def test_release_checker_fails_when_direction_loses_pr7_record(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the PR-7 progress fact 'PR-7 merged'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_cli,
+        repo,
+        "does not state the PR-7 progress fact 'PR-7 merged'",
+    )
 
 
 def _mutate_catalog_cli_append(repo: Path, snippet: str) -> None:
@@ -6246,11 +6257,11 @@ def test_release_checker_fails_without_catalog_cli_models_module(tmp_path):
     # Mutation: removing the PR-7 CLI models module must fail the checker.
     repo = copy_repo(tmp_path)
     (repo / "src" / "market_vault" / "dataset" / "dataset_catalog_cli_models.py").unlink()
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "src/market_vault/dataset/dataset_catalog_cli_models.py is missing"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_cli,
+        repo,
+        'src/market_vault/dataset/dataset_catalog_cli_models.py is missing',
+    )
 
 
 def test_release_checker_fails_when_catalog_cli_registration_removed(
@@ -6267,11 +6278,11 @@ def test_release_checker_fails_when_catalog_cli_registration_removed(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "dataset_catalog_cli.py does not register dataset-catalog-build"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_cli,
+        repo,
+        'dataset_catalog_cli.py does not register dataset-catalog-build',
+    )
 
 
 def test_release_checker_fails_when_catalog_cli_adds_query_command(
@@ -6283,11 +6294,11 @@ def test_release_checker_fails_when_catalog_cli_adds_query_command(
     _mutate_catalog_cli_append(
         repo, 'subparsers.add_parser("dataset-catalog-query")'
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "must never register a fifth dataset-catalog-query command"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_cli,
+        repo,
+        'must never register a fifth dataset-catalog-query command',
+    )
 
 
 def test_release_checker_fails_when_catalog_cli_dispatched_after_settings(
@@ -6297,11 +6308,11 @@ def test_release_checker_fails_when_catalog_cli_dispatched_after_settings(
     # must fail the checker.
     repo = copy_repo(tmp_path)
     _move_catalog_dispatch_after_settings(repo)
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "must dispatch the Dataset Catalog commands before load_settings"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_cli,
+        repo,
+        'must dispatch the Dataset Catalog commands before load_settings',
+    )
 
 
 def test_release_checker_fails_when_catalog_cli_reloads_dataset(tmp_path):
@@ -6316,11 +6327,11 @@ def test_release_checker_fails_when_catalog_cli_reloads_dataset(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "must not contain the forbidden pattern 'load_verified_dataset('"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_cli,
+        repo,
+        "must not contain the forbidden pattern 'load_verified_dataset('",
+    )
 
 
 def test_release_checker_fails_when_catalog_cli_reads_catalog_json(
@@ -6329,51 +6340,51 @@ def test_release_checker_fails_when_catalog_cli_reads_catalog_json(
     # Mutation: the CLI reading the raw catalog.json must fail the checker.
     repo = copy_repo(tmp_path)
     _mutate_catalog_cli_append(repo, 'raw = snapshot_dir / "catalog.json"')
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        'must not contain the forbidden pattern \'"catalog.json"\''
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_cli,
+        repo,
+        'must not contain the forbidden pattern \'"catalog.json"\'',
+    )
 
 
 def test_release_checker_fails_when_catalog_cli_gains_latest(tmp_path):
     repo = copy_repo(tmp_path)
     _mutate_catalog_cli_append(repo, 'parser.add_argument("--latest")')
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "must not contain the forbidden pattern '--latest'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_cli,
+        repo,
+        "must not contain the forbidden pattern '--latest'",
+    )
 
 
 def test_release_checker_fails_when_catalog_cli_gains_force(tmp_path):
     repo = copy_repo(tmp_path)
     _mutate_catalog_cli_append(repo, 'parser.add_argument("--force")')
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "must not contain the forbidden pattern '--force'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_cli,
+        repo,
+        "must not contain the forbidden pattern '--force'",
+    )
 
 
 def test_release_checker_fails_when_catalog_cli_gains_overwrite(tmp_path):
     repo = copy_repo(tmp_path)
     _mutate_catalog_cli_append(repo, 'parser.add_argument("--overwrite")')
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "must not contain the forbidden pattern '--overwrite'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_cli,
+        repo,
+        "must not contain the forbidden pattern '--overwrite'",
+    )
 
 
 def test_release_checker_fails_when_catalog_cli_loads_settings(tmp_path):
     repo = copy_repo(tmp_path)
     _mutate_catalog_cli_append(repo, "settings = load_settings(args.settings)")
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "must not contain the forbidden pattern 'load_settings('"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_cli,
+        repo,
+        "must not contain the forbidden pattern 'load_settings('",
+    )
 
 
 def test_release_checker_fails_when_catalog_cli_references_legacy_storage(
@@ -6383,21 +6394,21 @@ def test_release_checker_fails_when_catalog_cli_references_legacy_storage(
     _mutate_catalog_cli_append(
         repo, "legacy = market_vault.storage.catalog.Catalog"
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "must not contain the forbidden pattern 'storage.catalog'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_cli,
+        repo,
+        "must not contain the forbidden pattern 'storage.catalog'",
+    )
 
 
 def test_release_checker_fails_when_catalog_cli_uses_duckdb(tmp_path):
     repo = copy_repo(tmp_path)
     _mutate_catalog_cli_append(repo, "import duckdb")
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "must not contain the forbidden pattern 'duckdb'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_cli,
+        repo,
+        "must not contain the forbidden pattern 'duckdb'",
+    )
 
 
 def test_release_checker_fails_when_contract_doc_loses_and_semantics(
@@ -6414,11 +6425,11 @@ def test_release_checker_fails_when_contract_doc_loses_and_semantics(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the PR-7 fact 'AND semantics'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_cli,
+        repo,
+        "does not state the PR-7 fact 'AND semantics'",
+    )
 
 
 def test_release_checker_fails_when_contract_doc_reclaims_pr8_not_started(
@@ -6433,11 +6444,11 @@ def test_release_checker_fails_when_contract_doc_reclaims_pr8_not_started(
         + "\nPR-8 has not started.\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "still contains the stale claim 'PR-8 has not started'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_contract,
+        repo,
+        "still contains the stale claim 'PR-8 has not started'",
+    )
 
 
 def test_release_checker_fails_when_contract_doc_reclaims_catalog_cli_missing(
@@ -6450,11 +6461,11 @@ def test_release_checker_fails_when_contract_doc_reclaims_catalog_cli_missing(
         + "\nCatalog CLI is not implemented.\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "still contains the stale claim 'Catalog CLI is not implemented'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_contract,
+        repo,
+        "still contains the stale claim 'Catalog CLI is not implemented'",
+    )
 
 
 def test_release_checker_fails_when_sample_contract_reclaims_catalog_missing(
@@ -6467,12 +6478,11 @@ def test_release_checker_fails_when_sample_contract_reclaims_catalog_missing(
         + "\nDataset Catalog (PR-5+) is not implemented.\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "still contains the stale claim "
-        "'Dataset Catalog (PR-5+) is not implemented'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_sample_generation_contract,
+        repo,
+        "still contains the stale claim 'Dataset Catalog (PR-5+) is not implemented'",
+    )
 
 
 def test_release_checker_fails_when_contract_doc_claims_repairs(
@@ -6480,11 +6490,11 @@ def test_release_checker_fails_when_contract_doc_claims_repairs(
 ):
     repo = copy_repo(tmp_path)
     _mutate_catalog_contract_doc(repo, "The CLI repairs the snapshot.")
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "contains the false PR-7 claim 'repairs the snapshot'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_cli,
+        repo,
+        "contains the false PR-7 claim 'repairs the snapshot'",
+    )
 
 
 def test_release_checker_fails_when_contract_doc_gains_latest_pointer(
@@ -6492,11 +6502,11 @@ def test_release_checker_fails_when_contract_doc_gains_latest_pointer(
 ):
     repo = copy_repo(tmp_path)
     _mutate_catalog_contract_doc(repo, "The CLI maintains a latest pointer.")
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "contains the false PR-7 claim 'maintains a latest pointer'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_cli,
+        repo,
+        "contains the false PR-7 claim 'maintains a latest pointer'",
+    )
 
 
 def test_release_checker_fails_when_ci_loses_pr7_smoke(tmp_path):
@@ -6508,9 +6518,7 @@ def test_release_checker_fails_when_ci_loses_pr7_smoke(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "PR-7 CLI help smoke marker" in result.stdout
+    assert_check_fails(_check_release.check_dataset_catalog_cli, repo, "PR-7 CLI help smoke marker")
 
 
 def test_release_checker_fails_when_ci_loses_catalog_help_command(
@@ -6524,11 +6532,11 @@ def test_release_checker_fails_when_ci_loses_catalog_help_command(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "must cover 'market-vault dataset-catalog-show --help'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_cli,
+        repo,
+        "must cover 'market-vault dataset-catalog-show --help'",
+    )
 
 
 def _mutate_catalog_models_marker(repo: Path, old: str, new: str) -> None:
@@ -6547,12 +6555,11 @@ def test_release_checker_fails_when_row_version_coverage_reversed(tmp_path):
         "uncovered = sorted(set(canonical_row_version_ids) - covered)",
         "uncovered = sorted(covered - set(canonical_row_version_ids))",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "is missing the independent-review hardening marker "
-        "'set(canonical_row_version_ids) - covered'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog,
+        repo,
+        "is missing the independent-review hardening marker 'set(canonical_row_version_ids) - covered'",
+    )
 
 
 def test_release_checker_fails_when_specpin_business_key_drifts(tmp_path):
@@ -6564,12 +6571,11 @@ def test_release_checker_fails_when_specpin_business_key_drifts(tmp_path):
         "key = (pin.kind, pin.name, pin.version)",
         "key = (pin.kind, pin.name, pin.version, pin.content_sha256)",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "is missing the independent-review hardening marker "
-        "'key = (pin.kind, pin.name, pin.version)'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog,
+        repo,
+        "is missing the independent-review hardening marker 'key = (pin.kind, pin.name, pin.version)'",
+    )
 
 
 def test_release_checker_fails_when_unsafe_identity_text_rejection_lost(
@@ -6582,12 +6588,11 @@ def test_release_checker_fails_when_unsafe_identity_text_rejection_lost(
         "reject_unsafe_text(text, label)",
         "reject_unsafe_text_nothing(text, label)",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "is missing the independent-review hardening marker "
-        "'reject_unsafe_text(text, label)'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog,
+        repo,
+        "is missing the independent-review hardening marker 'reject_unsafe_text(text, label)'",
+    )
 
 
 def test_release_checker_fails_when_location_binding_lost(tmp_path):
@@ -6598,12 +6603,11 @@ def test_release_checker_fails_when_location_binding_lost(tmp_path):
         "!= self.dataset_facts.dataset_id",
         "== self.dataset_facts.dataset_id",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "is missing the independent-review hardening marker "
-        "'!= self.dataset_facts.dataset_id'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog,
+        repo,
+        "is missing the independent-review hardening marker '!= self.dataset_facts.dataset_id'",
+    )
 
 
 def test_release_checker_fails_when_contract_claims_metadata_enters_identity(
@@ -6615,9 +6619,11 @@ def test_release_checker_fails_when_contract_claims_metadata_enters_identity(
     _mutate_catalog_contract_doc(
         repo, "built_at enters Catalog content identity"
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "contains the false identity claim" in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_contract,
+        repo,
+        'contains the false identity claim',
+    )
 
 
 # --- V0.6.0 Dataset Catalog snapshot layer (PR-6) ----------------------------
@@ -6633,17 +6639,21 @@ def _mutate_catalog_builder(repo: Path, old: str, new: str) -> None:
 def test_release_checker_fails_without_pr6_builder_module(tmp_path):
     repo = copy_repo(tmp_path)
     (repo / "src" / "market_vault" / "dataset" / "dataset_catalog_builder.py").unlink()
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "dataset_catalog_builder.py is missing" in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_pr6,
+        repo,
+        'dataset_catalog_builder.py is missing',
+    )
 
 
 def test_release_checker_fails_without_pr6_reader_module(tmp_path):
     repo = copy_repo(tmp_path)
     (repo / "src" / "market_vault" / "dataset" / "dataset_catalog_reader.py").unlink()
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "dataset_catalog_reader.py is missing" in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_pr6,
+        repo,
+        'dataset_catalog_reader.py is missing',
+    )
 
 
 def test_release_checker_fails_without_pr6_materializer_module(tmp_path):
@@ -6655,9 +6665,11 @@ def test_release_checker_fails_without_pr6_materializer_module(tmp_path):
         / "dataset"
         / "dataset_catalog_materialization.py"
     ).unlink()
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "dataset_catalog_materialization.py is missing" in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_pr6,
+        repo,
+        'dataset_catalog_materialization.py is missing',
+    )
 
 
 def test_release_checker_fails_when_builder_version_constant_removed(tmp_path):
@@ -6676,12 +6688,11 @@ def test_release_checker_fails_when_builder_version_constant_removed(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not define the exact builder version constant "
-        "'market-vault-dataset-catalog-builder-v1'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_pr6,
+        repo,
+        "does not define the exact builder version constant 'market-vault-dataset-catalog-builder-v1'",
+    )
 
 
 def test_release_checker_fails_when_snapshot_id_version_constant_removed(
@@ -6702,12 +6713,11 @@ def test_release_checker_fails_when_snapshot_id_version_constant_removed(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not define the exact version constant "
-        "'market-vault-dataset-catalog-snapshot-id-v1'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_pr6,
+        repo,
+        "does not define the exact version constant 'market-vault-dataset-catalog-snapshot-id-v1'",
+    )
 
 
 def test_release_checker_fails_when_reader_version_constant_removed(tmp_path):
@@ -6726,12 +6736,11 @@ def test_release_checker_fails_when_reader_version_constant_removed(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not define the exact version constant "
-        "'market-vault-verified-dataset-catalog-reader-v1'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_pr6,
+        repo,
+        "does not define the exact version constant 'market-vault-verified-dataset-catalog-reader-v1'",
+    )
 
 
 def test_release_checker_fails_when_builder_trusts_manifest_directly(
@@ -6743,10 +6752,10 @@ def test_release_checker_fails_when_builder_trusts_manifest_directly(
         "verified = load_verified_dataset(candidate)",
         "verified = _parse_manifest(candidate)",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "missing the contract marker 'load_verified_dataset(candidate)'" in (
-        result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_pr6,
+        repo,
+        "missing the contract marker 'load_verified_dataset(candidate)'",
     )
 
 
@@ -6757,11 +6766,11 @@ def test_release_checker_fails_when_builder_skips_verified_reader(tmp_path):
         "project_dataset_catalog_entry(verified)",
         "project_dataset_catalog_entry(None)",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "missing the contract marker 'project_dataset_catalog_entry(verified)'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_pr6,
+        repo,
+        "missing the contract marker 'project_dataset_catalog_entry(verified)'",
+    )
 
 
 def test_release_checker_fails_when_root_scan_becomes_recursive(tmp_path):
@@ -6771,10 +6780,12 @@ def test_release_checker_fails_when_root_scan_becomes_recursive(tmp_path):
         "with os.scandir(dataset_root) as iterator:",
         "for entry in dataset_root.rglob('*'):",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "must not contain the forbidden pattern 'rglob'" in result.stdout
-    assert "missing the contract marker 'os.scandir(dataset_root)'" in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_pr6,
+        repo,
+        "must not contain the forbidden pattern 'rglob'",
+        "missing the contract marker 'os.scandir(dataset_root)'",
+    )
 
 
 def test_release_checker_fails_when_builder_reads_cwd_for_inputs(tmp_path):
@@ -6795,9 +6806,11 @@ def test_release_checker_fails_when_builder_reads_cwd_for_inputs(tmp_path):
         "    return Path.cwd() / raw",
     )
     path.write_text(text, encoding="utf-8")
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "must not contain the forbidden pattern 'Path.cwd()'" in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_pr6,
+        repo,
+        "must not contain the forbidden pattern 'Path.cwd()'",
+    )
 
 
 def test_release_checker_fails_when_content_identity_includes_path(tmp_path):
@@ -6807,10 +6820,10 @@ def test_release_checker_fails_when_content_identity_includes_path(tmp_path):
         path.read_text(encoding="utf-8") + '\n    "build_path": facts.build_path,\n',
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "must not contain the forbidden pattern '\"build_path\":'" in (
-        result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_pr6,
+        repo,
+        'must not contain the forbidden pattern \'"build_path":\'',
     )
 
 
@@ -6823,9 +6836,11 @@ def test_release_checker_fails_when_content_identity_includes_built_at(
         path.read_text(encoding="utf-8") + '\n    "built_at": facts.built_at,\n',
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "must not contain the forbidden pattern '\"built_at\":'" in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_pr6,
+        repo,
+        'must not contain the forbidden pattern \'"built_at":\'',
+    )
 
 
 def test_release_checker_fails_when_snapshot_identity_includes_output_root(
@@ -6843,10 +6858,10 @@ def test_release_checker_fails_when_snapshot_identity_includes_output_root(
         path.read_text(encoding="utf-8") + '\n    "output_root": output_root,\n',
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "must not contain the forbidden pattern '\"output_root\"'" in (
-        result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_pr6,
+        repo,
+        'must not contain the forbidden pattern \'"output_root"\'',
     )
 
 
@@ -6858,10 +6873,10 @@ def test_release_checker_fails_when_reader_reloads_recorded_paths(tmp_path):
         + "\nload_verified_dataset(entry.recorded_build_path)\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "must not contain the forbidden pattern 'load_verified_dataset('" in (
-        result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_pr6,
+        repo,
+        "must not contain the forbidden pattern 'load_verified_dataset('",
     )
 
 
@@ -6876,10 +6891,10 @@ def test_release_checker_fails_when_reader_loses_historical_location_contract(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "missing the contract marker 'historical observed location'" in (
-        result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_pr6,
+        repo,
+        "missing the contract marker 'historical observed location'",
     )
 
 
@@ -6906,9 +6921,11 @@ def test_release_checker_fails_when_success_not_written_last(tmp_path):
         1,
     )
     path.write_text(text, encoding="utf-8")
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "must write _SUCCESS before the atomic publication" in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_pr6,
+        repo,
+        'must write _SUCCESS before the atomic publication',
+    )
 
 
 def test_release_checker_fails_when_publication_allows_overwrite(tmp_path):
@@ -6927,11 +6944,11 @@ def test_release_checker_fails_when_publication_allows_overwrite(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "must not contain the forbidden pattern 'os.replace('" in result.stdout
-    assert "missing the contract marker '_atomic_rename_directory_no_replace(" in (
-        result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_pr6,
+        repo,
+        "must not contain the forbidden pattern 'os.replace('",
+        "missing the contract marker '_atomic_rename_directory_no_replace(",
     )
 
 
@@ -6948,9 +6965,11 @@ def test_release_checker_fails_when_latest_appears(tmp_path):
         path.read_text(encoding="utf-8") + '\nlatest = final.parent / "latest"\n',
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "must not contain the forbidden pattern '\"latest\"'" in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_pr6,
+        repo,
+        'must not contain the forbidden pattern \'"latest"\'',
+    )
 
 
 def test_release_checker_fails_when_write_return_validation_lost(tmp_path):
@@ -6969,9 +6988,11 @@ def test_release_checker_fails_when_write_return_validation_lost(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "missing the contract marker 'type(written) is not int" in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_pr6,
+        repo,
+        "missing the contract marker 'type(written) is not int",
+    )
 
 
 def test_release_checker_fails_when_package_loses_pr6_export(tmp_path):
@@ -6984,12 +7005,11 @@ def test_release_checker_fails_when_package_loses_pr6_export(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "market_vault.dataset does not export the PR-6 public API "
-        "'build_dataset_catalog'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_dataset_catalog_pr6,
+        repo,
+        "market_vault.dataset does not export the PR-6 public API 'build_dataset_catalog'",
+    )
 
 
 def test_release_checker_fails_when_ci_loses_pr6_smoke(tmp_path):
@@ -7001,9 +7021,7 @@ def test_release_checker_fails_when_ci_loses_pr6_smoke(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "PR-6 public API smoke marker" in result.stdout
+    assert_check_fails(_check_release.check_dataset_catalog_pr6, repo, "PR-6 public API smoke marker")
 
 
 # --- V0.6.0 integrated acceptance (PR-8) ------------------------------------
@@ -7013,9 +7031,11 @@ def test_release_checker_fails_without_acceptance_doc(tmp_path):
     # Mutation: the acceptance document must exist.
     repo = copy_repo(tmp_path)
     (repo / "docs" / "v0_6_0_acceptance.md").unlink()
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "docs/v0_6_0_acceptance.md is missing" in result.stdout
+    assert_check_fails(
+        _check_release.check_v060_acceptance,
+        repo,
+        'docs/v0_6_0_acceptance.md is missing',
+    )
 
 
 def test_release_checker_fails_when_acceptance_doc_claims_released(tmp_path):
@@ -7029,9 +7049,7 @@ def test_release_checker_fails_when_acceptance_doc_claims_released(tmp_path):
         path.read_text(encoding="utf-8") + "\nv0.6.0 is released.\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "false claim 'v0.6.0 is released'" in result.stdout
+    assert_check_fails(_check_release.check_v060_acceptance, repo, "false claim 'v0.6.0 is released'")
 
 
 def test_release_checker_fails_when_acceptance_doc_loses_pyarrow_fact(tmp_path):
@@ -7045,9 +7063,11 @@ def test_release_checker_fails_when_acceptance_doc_loses_pyarrow_fact(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "does not state the fact 'PyArrow 25.0.0'" in result.stdout
+    assert_check_fails(
+        _check_release.check_v060_acceptance,
+        repo,
+        "does not state the fact 'PyArrow 25.0.0'",
+    )
 
 
 def test_release_checker_fails_when_acceptance_doc_claims_byte_identical(
@@ -7062,9 +7082,11 @@ def test_release_checker_fails_when_acceptance_doc_claims_byte_identical(
         + "\nThe source Parquet bytes are byte-identical across writers.\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "false claim 'byte-identical across writers'" in result.stdout
+    assert_check_fails(
+        _check_release.check_v060_acceptance,
+        repo,
+        "false claim 'byte-identical across writers'",
+    )
 
 
 def test_release_checker_fails_when_acceptance_doc_removes_physical_provenance(
@@ -7079,9 +7101,11 @@ def test_release_checker_fails_when_acceptance_doc_removes_physical_provenance(
         + "\nphysical_snapshot_hash is not part of the provenance.\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "false claim 'physical_snapshot_hash is not part of'" in result.stdout
+    assert_check_fails(
+        _check_release.check_v060_acceptance,
+        repo,
+        "false claim 'physical_snapshot_hash is not part of'",
+    )
 
 
 def test_release_checker_fails_when_acceptance_doc_loses_frozen_generation_id(
@@ -7096,9 +7120,11 @@ def test_release_checker_fails_when_acceptance_doc_loses_frozen_generation_id(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "must record the frozen generation content id" in result.stdout
+    assert_check_fails(
+        _check_release.check_v060_acceptance,
+        repo,
+        'must record the frozen generation content id',
+    )
 
 
 def test_release_checker_fails_when_acceptance_doc_claims_pr9_started(tmp_path):
@@ -7108,25 +7134,27 @@ def test_release_checker_fails_when_acceptance_doc_claims_pr9_started(tmp_path):
         path.read_text(encoding="utf-8") + "\nPR-9 has started.\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "false claim 'PR-9 has started'" in result.stdout
+    assert_check_fails(_check_release.check_v060_acceptance, repo, "false claim 'PR-9 has started'")
 
 
 def test_release_checker_fails_without_acceptance_helpers(tmp_path):
     repo = copy_repo(tmp_path)
     (repo / "tests" / "v060_acceptance_helpers.py").unlink()
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "tests/v060_acceptance_helpers.py is missing" in result.stdout
+    assert_check_fails(
+        _check_release.check_v060_frozen_fixture,
+        repo,
+        'tests/v060_acceptance_helpers.py is missing',
+    )
 
 
 def test_release_checker_fails_without_fixture_bundle(tmp_path):
     repo = copy_repo(tmp_path)
     (repo / "tests" / "fixtures" / "v060_portability" / "canonical_fixture.b64").unlink()
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "canonical_fixture.b64 is missing" in result.stdout
+    assert_check_fails(
+        _check_release.check_v060_frozen_fixture,
+        repo,
+        'canonical_fixture.b64 is missing',
+    )
 
 
 def test_release_checker_fails_when_frozen_fixture_generation_id_changes(
@@ -7143,9 +7171,11 @@ def test_release_checker_fails_when_frozen_fixture_generation_id_changes(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "the frozen FIXTURE_GENERATION_ID must not change" in result.stdout
+    assert_check_fails(
+        _check_release.check_v060_frozen_fixture,
+        repo,
+        'the frozen FIXTURE_GENERATION_ID must not change',
+    )
 
 
 def test_release_checker_fails_when_frozen_fixture_plan_sha_changes(tmp_path):
@@ -7158,9 +7188,11 @@ def test_release_checker_fails_when_frozen_fixture_plan_sha_changes(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "the frozen FROZEN_RELATIVE_PLAN_SHA256 must not change" in result.stdout
+    assert_check_fails(
+        _check_release.check_v060_frozen_fixture,
+        repo,
+        'the frozen FROZEN_RELATIVE_PLAN_SHA256 must not change',
+    )
 
 
 def test_release_checker_fails_when_pyarrow_pinned(tmp_path):
@@ -7174,10 +7206,12 @@ def test_release_checker_fails_when_pyarrow_pinned(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "must keep the pyarrow>=16 dependency" in result.stdout
-    assert "must never pin a PyArrow writer version" in result.stdout
+    assert_check_fails(
+        _check_release.check_pyarrow_dependency,
+        repo,
+        'must keep the pyarrow>=16 dependency',
+        'must never pin a PyArrow writer version',
+    )
 
 
 def test_release_checker_fails_when_ci_matrix_changes(tmp_path):
@@ -7189,9 +7223,7 @@ def test_release_checker_fails_when_ci_matrix_changes(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "CI python matrix must stay exactly" in result.stdout
+    assert_check_fails(_check_release.check_ci_pr8, repo, "CI python matrix must stay exactly")
 
 
 def test_release_checker_fails_without_portability_job(tmp_path):
@@ -7203,9 +7235,7 @@ def test_release_checker_fails_without_portability_job(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "portability-pyarrow24 job" in result.stdout
+    assert_check_fails(_check_release.check_ci_pr8, repo, "portability-pyarrow24 job")
 
 
 def test_release_checker_fails_when_portability_job_unpinned(tmp_path):
@@ -7220,9 +7250,7 @@ def test_release_checker_fails_when_portability_job_unpinned(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "must install pyarrow==24.0.0" in result.stdout
+    assert_check_fails(_check_release.check_ci_pr8, repo, "must install pyarrow==24.0.0")
 
 
 def test_release_checker_fails_when_ci_loses_acceptance_marker(tmp_path):
@@ -7234,9 +7262,7 @@ def test_release_checker_fails_when_ci_loses_acceptance_marker(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "PR8_INTEGRATED_ACCEPTANCE_OK" in result.stdout
+    assert_check_fails(_check_release.check_ci_pr8, repo, "PR8_INTEGRATED_ACCEPTANCE_OK")
 
 
 def test_release_checker_allows_negated_release_wording_in_acceptance_doc(
@@ -7251,8 +7277,7 @@ def test_release_checker_allows_negated_release_wording_in_acceptance_doc(
         + "\nv0.6.0 is not released by PR-8.\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 0, result.stdout + result.stderr
+    assert _check_release.check_v060_acceptance(repo) == []
 
 
 def test_release_checker_fails_when_acceptance_doc_loses_upstream_curated_provenance(
@@ -7270,9 +7295,11 @@ def test_release_checker_fails_when_acceptance_doc_loses_upstream_curated_proven
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "does not state the fact 'upstream source / curated'" in result.stdout
+    assert_check_fails(
+        _check_release.check_v060_acceptance,
+        repo,
+        "does not state the fact 'upstream source / curated'",
+    )
 
 
 def test_release_checker_fails_when_acceptance_doc_loses_canonical_output_parquet(
@@ -7289,9 +7316,11 @@ def test_release_checker_fails_when_acceptance_doc_loses_canonical_output_parque
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "does not state the fact 'Canonical output Parquet'" in result.stdout
+    assert_check_fails(
+        _check_release.check_v060_acceptance,
+        repo,
+        "does not state the fact 'Canonical output Parquet'",
+    )
 
 
 def test_release_checker_fails_when_acceptance_doc_loses_exactly_empty_success(
@@ -7308,9 +7337,11 @@ def test_release_checker_fails_when_acceptance_doc_loses_exactly_empty_success(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "does not state the fact 'exactly empty'" in result.stdout
+    assert_check_fails(
+        _check_release.check_v060_acceptance,
+        repo,
+        "does not state the fact 'exactly empty'",
+    )
 
 
 def test_release_checker_fails_when_acceptance_doc_claims_every_supported_writer(
@@ -7325,9 +7356,11 @@ def test_release_checker_fails_when_acceptance_doc_claims_every_supported_writer
         + "\nevery supported PyArrow writer version is proven.\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "false claim 'every supported PyArrow writer'" in result.stdout
+    assert_check_fails(
+        _check_release.check_v060_acceptance,
+        repo,
+        "false claim 'every supported PyArrow writer'",
+    )
 
 
 def test_release_checker_fails_when_portability_job_loses_full_suite_step(
@@ -7344,9 +7377,7 @@ def test_release_checker_fails_when_portability_job_loses_full_suite_step(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "must include the full offline suite step" in result.stdout
+    assert_check_fails(_check_release.check_ci_pr8, repo, "must include the full offline suite step")
 
 
 def test_release_checker_fails_when_portability_full_suite_step_loses_pytest(
@@ -7365,9 +7396,7 @@ def test_release_checker_fails_when_portability_full_suite_step_loses_pytest(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "full-suite step must run python -m pytest" in result.stdout
+    assert_check_fails(_check_release.check_ci_pr8, repo, "full-suite step must run python -m pytest")
 
 
 # --- V0.7.0 PR-5 guards: integrated E2E / usability / examples -------------
@@ -7378,9 +7407,11 @@ def test_release_checker_fails_without_usage_doc(tmp_path):
     # checker.
     repo = copy_repo(tmp_path)
     (repo / "docs" / "v0_7_0_python_client_usage.md").unlink()
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "docs/v0_7_0_python_client_usage.md is missing" in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_python_client_usage_doc,
+        repo,
+        'docs/v0_7_0_python_client_usage.md is missing',
+    )
 
 
 def test_release_checker_fails_without_examples_readme(tmp_path):
@@ -7388,20 +7419,22 @@ def test_release_checker_fails_without_examples_readme(tmp_path):
     # checker.
     repo = copy_repo(tmp_path)
     (repo / "examples" / "python_client" / "README.md").unlink()
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "examples/python_client/README.md is missing" in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_python_client_examples,
+        repo,
+        'examples/python_client/README.md is missing',
+    )
 
 
 def test_release_checker_fails_without_executable_example(tmp_path):
     # PR-5 guard: deleting the executable example must fail the checker.
     repo = copy_repo(tmp_path)
     (repo / "examples" / "python_client" / "read_verified_artifacts.py").unlink()
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "examples/python_client/read_verified_artifacts.py is missing"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_python_client_examples,
+        repo,
+        'examples/python_client/read_verified_artifacts.py is missing',
+    )
 
 
 def test_release_checker_fails_when_direction_regresses_pr5_to_not_started(
@@ -7418,11 +7451,11 @@ def test_release_checker_fails_when_direction_regresses_pr5_to_not_started(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "contains the false implementation/release claim 'PR-5: NOT STARTED'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_direction,
+        repo,
+        "contains the false implementation/release claim 'PR-5: NOT STARTED'",
+    )
 
 
 def test_release_checker_fails_when_direction_regresses_pr4_to_current(
@@ -7439,11 +7472,11 @@ def test_release_checker_fails_when_direction_regresses_pr4_to_current(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "contains the false implementation/release claim 'PR-4: CURRENT'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_direction,
+        repo,
+        "contains the false implementation/release claim 'PR-4: CURRENT'",
+    )
 
 
 def test_release_checker_fails_when_direction_regresses_v070_to_not_released(
@@ -7461,11 +7494,11 @@ def test_release_checker_fails_when_direction_regresses_v070_to_not_released(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "contains the false implementation/release claim 'v0.7.0: NOT RELEASED'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_direction,
+        repo,
+        "contains the false implementation/release claim 'v0.7.0: NOT RELEASED'",
+    )
 
 
 def test_release_checker_fails_when_usage_doc_loses_explicit_path_contract(
@@ -7482,11 +7515,11 @@ def test_release_checker_fails_when_usage_doc_loses_explicit_path_contract(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the fact 'Every artifact path is EXPLICIT'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_python_client_usage_doc,
+        repo,
+        "does not state the fact 'Every artifact path is EXPLICIT'",
+    )
 
 
 def test_release_checker_fails_when_usage_doc_loses_jupyter_post_verification(
@@ -7503,11 +7536,11 @@ def test_release_checker_fails_when_usage_doc_loses_jupyter_post_verification(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "does not state the fact 'pd.DataFrame(dataset.rows'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_python_client_usage_doc,
+        repo,
+        "does not state the fact 'pd.DataFrame(dataset.rows'",
+    )
 
 
 def test_release_checker_fails_when_usage_doc_gains_ml_implementation(
@@ -7523,11 +7556,11 @@ def test_release_checker_fails_when_usage_doc_gains_ml_implementation(
         + "\n```python\nmodel.fit(X_train, y_train)\n```\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "contains the false discovery/ML claim 'model.fit('"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_python_client_usage_doc,
+        repo,
+        "contains the false discovery/ML claim 'model.fit('",
+    )
 
 
 def test_release_checker_fails_when_example_gains_forbidden_import(
@@ -7545,12 +7578,11 @@ def test_release_checker_fails_when_example_gains_forbidden_import(
         + "\nimport os\n",
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "the example must import only stdlib plus the market_vault top "
-        "level"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_python_client_examples,
+        repo,
+        'the example must import only stdlib plus the market_vault top level',
+    )
 
 
 def test_release_checker_fails_when_example_argument_loses_required(
@@ -7569,9 +7601,11 @@ def test_release_checker_fails_when_example_argument_loses_required(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert "each example path argument must be required=True" in result.stdout
+    assert_check_fails(
+        _check_release.check_v070_python_client_examples,
+        repo,
+        'each example path argument must be required=True',
+    )
 
 
 def test_release_checker_fails_when_ci_loses_v070_integrated_acceptance_ok(
@@ -7588,8 +7622,131 @@ def test_release_checker_fails_when_ci_loses_v070_integrated_acceptance_ok(
         ),
         encoding="utf-8",
     )
-    result = run_check_release(repo)
-    assert result.returncode == 1
-    assert (
-        "CI package audit chain is missing 'V070_INTEGRATED_ACCEPTANCE_OK'"
-    ) in result.stdout
+    assert_check_fails(
+        _check_release.check_ci_auditability,
+        repo,
+        "CI package audit chain is missing 'V070_INTEGRATED_ACCEPTANCE_OK'",
+    )
+
+# --- Registry wiring guards (A-F) -------------------------------------------
+# The mutation tests invoke individual production checks directly. These
+# guards pin the CHECKS registry contract so the direct-invocation harness
+# cannot drift from the full-checker behavior they replace: the exact label
+# set and order (A), label uniqueness (B), collect_failures() invoking every
+# entry (C), aggregation in registry order (D), and the CLI main() using the
+# same single collection path (E). If a production check is removed from the
+# registry, test_check_registry_matches_pinned_labels_and_order fails (F).
+
+EXPECTED_CHECKS = (
+    ("pyproject version", "check_pyproject_version"),
+    ("package __version__", "check_package_version"),
+    ("README title", "check_readme_title"),
+    ("CHANGELOG entry", "check_changelog"),
+    ("README wording", "check_readme_no_stale_wording"),
+    ("README maintenance section", "check_readme_maintenance_section"),
+    ("README v0.6.1 section", "check_readme_v061_section"),
+    ("direction status", "check_direction_status"),
+    ("release notes", "check_release_notes"),
+    ("v0.5.1 release notes", "check_v051_release_notes"),
+    ("v0.6.0 release notes", "check_v060_release_notes"),
+    ("v0.5.1 direction", "check_v051_direction"),
+    ("v0.6.0 direction", "check_v060_direction"),
+    ("v0.6.1 direction", "check_v061_direction"),
+    ("v0.6.1 release notes", "check_v061_release_notes"),
+    ("v0.6.1 CLI usability audit", "check_v061_cli_usability_audit"),
+    ("v0.7.0 release notes", "check_v070_release_notes"),
+    ("v0.7.0 direction", "check_v070_direction"),
+    ("v0.7.0 Python client contract", "check_v070_python_client_contract"),
+    ("v0.7.0 Python API audit", "check_v070_python_api_audit"),
+    ("v0.7.0 ArtifactClient foundation", "check_v070_artifact_client_foundation"),
+    ("v0.7.0 ArtifactClient readers", "check_v070_artifact_client_readers"),
+    ("v0.7.0 ArtifactClient catalog", "check_v070_artifact_client_catalog"),
+    ("v0.7.0 Python client usage doc", "check_v070_python_client_usage_doc"),
+    ("v0.7.0 Python client examples", "check_v070_python_client_examples"),
+    ("CI auditability", "check_ci_auditability"),
+    ("v0.6.1 CI package audit", "check_v061_ci_package_audit"),
+    ("v0.6.0 ADR", "check_v060_adr"),
+    ("sample generation modules", "check_sample_generation_modules"),
+    ("sample generation contract", "check_sample_generation_contract"),
+    ("sample generator core", "check_sample_generation_core"),
+    ("sample generation cli", "check_sample_generation_cli"),
+    ("dataset catalog contract", "check_dataset_catalog_contract"),
+    ("dataset catalog", "check_dataset_catalog"),
+    ("dataset catalog pr6", "check_dataset_catalog_pr6"),
+    ("dataset catalog cli", "check_dataset_catalog_cli"),
+    ("v0.6.0 acceptance", "check_v060_acceptance"),
+    ("v0.6.0 frozen fixture", "check_v060_frozen_fixture"),
+    ("pyarrow dependency", "check_pyarrow_dependency"),
+    ("CI PR-8 portability", "check_ci_pr8"),
+    ("CI v0.7.0 released state", "check_ci_v070_released_state"),
+    ("CI v0.7.0 public API smoke", "check_ci_v070_public_api_smoke"),
+    ("old release notes", "check_old_release_notes"),
+    ("warning guard", "check_warning_guard"),
+    ("examples", "check_examples"),
+    ("README upgrade notes", "check_readme_upgrade_sections"),
+    ("README dataset builder", "check_readme_dataset_builder_section"),
+    ("README explicit plan", "check_readme_explicit_build_plan"),
+    ("README adjustment boundary", "check_readme_adjustment_none"),
+    ("README dataset boundaries", "check_readme_dataset_boundaries"),
+    ("CI version assertions", "check_ci_version_assertions"),
+    ("build artifacts untracked", "check_build_artifacts_untracked"),
+    ("PEP 440 version", "check_pep440"),
+    ("CLI version output", "check_cli_version"),
+)
+
+
+def test_check_registry_matches_pinned_labels_and_order():
+    """Guards A and F: the registry preserves the exact production check
+    labels in their exact order; removing, reordering, or renaming any
+    registry entry fails this test."""
+    assert tuple((label, fn.__name__) for label, fn in _check_release.CHECKS) == EXPECTED_CHECKS
+
+
+def test_check_registry_labels_are_unique():
+    """Guard B: no two registry entries share a label, and the registry is
+    exactly the pinned check set."""
+    labels = [label for label, _ in _check_release.CHECKS]
+    assert len(labels) == len(set(labels))
+    assert len(labels) == len(EXPECTED_CHECKS)
+
+
+def test_collect_failures_invokes_every_check_in_registry_order(monkeypatch):
+    """Guards C and D: collect_failures() runs every registry entry exactly
+    once and aggregates failures in registry order (no fail-fast, no
+    omission).
+
+    The registry itself is swapped for sentinel entries (collect_failures
+    reads the module-level CHECKS name), because some production checks
+    call each other by module attribute; patching attributes would not
+    intercept the registry references."""
+    calls = []
+
+    def sentinel(root, _label):
+        calls.append(_label)
+        return [f"{_label}: injected"]
+
+    sentinel_checks = [
+        (label, (lambda root, _l=label: sentinel(root, _l)))
+        for label, _ in _check_release.CHECKS
+    ]
+    monkeypatch.setattr(_check_release, "CHECKS", tuple(sentinel_checks))
+    failures = _check_release.collect_failures(ROOT)
+    assert calls == [label for label, _ in _check_release.CHECKS]
+    assert failures == [f"{label}: injected" for label, _ in _check_release.CHECKS]
+
+
+def test_main_uses_collect_failures(monkeypatch, capsys):
+    """Guard E: the CLI entry point aggregates through the same production
+    path (collect_failures), so the registry guards cover the CLI output."""
+    marker = {"called": False}
+
+    def fake_collect(root):
+        marker["called"] = True
+        return ["injected failure"]
+
+    monkeypatch.setattr(_check_release, "collect_failures", fake_collect)
+    assert _check_release.main() == 1
+    out = capsys.readouterr().out
+    assert marker["called"]
+    assert out.startswith("RELEASE_CHECK_FAILED")
+    assert "- injected failure" in out
