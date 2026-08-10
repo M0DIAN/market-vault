@@ -18,12 +18,19 @@ registers component path surfaces and the classifier emits their impact
 (components=, core_changed=, package_changed=, unknown_changed=,
 shared_changed=, independent_only=, full_matrix_required=). The three
 tiers are unchanged and no registered component makes any change faster
-than before; the registry only makes impact explicit. The future rule
-(a component may skip the core full matrix only with explicit path
-registration + explicit validation + no core/shared/package/workflow
-mutation + determinable impact) is computed as ``full_matrix_required``
-but does not change the tier yet: every registered-component-only
-change still classifies FULL (component_without_validation_requires_full).
+than before; the registry only makes impact explicit.
+
+Semantics at the foundation stage: ``independent_only`` is
+eligibility/impact information only (the changed paths are structurally
+isolated to registered non-core / non-package / non-shared components);
+it does NOT authorize skipping the core full matrix.
+``full_matrix_required`` reflects the currently ACTIVE validation
+policy: it is false only for the active fast tiers docs_fast /
+package_docs, and true for every other classification — including any
+registered independent component without an explicit validation
+contract. Only a future PR that registers an explicit, validated
+component-validation contract may allow independent_only=true together
+with full_matrix_required=false for that component.
 
 Fail-safe: an empty diff, an unresolvable ref, an invalid registry, or
 any git failure yields tier=full (or a non-zero exit the workflow
@@ -141,7 +148,15 @@ class Component:
 
 @dataclass
 class Impact:
-    """Component impact of a changed-path list (additive, never gates)."""
+    """Component impact of a changed-path list (additive, never gates).
+
+    ``independent_only`` is eligibility/impact information only: it says
+    the changed paths are structurally isolated to registered
+    non-core/non-package/non-shared components. It does not authorize
+    skipping the core full matrix. ``full_matrix_required`` reflects
+    the currently ACTIVE validation policy and is set by ``classify``
+    from the resulting tier (false only for docs_fast/package_docs).
+    """
 
     components: list[str] = field(default_factory=list)
     core_changed: bool = False
@@ -217,28 +232,16 @@ def load_registry(repo_root: str) -> list[Component]:
 def compute_impact(paths: list[str], components: list[Component]) -> Impact:
     """Component impact of a changed-path list (never raises).
 
-    ``full_matrix_required`` is the future-rule predicate: true unless
-    every changed path is covered by the docs scope, README, the
-    control plane, or a registered component AND no core / shared /
-    unknown surface was hit. It does not change the tier; it is the
-    mechanism a future component validation can gate on.
+    ``full_matrix_required`` is intentionally left at its default here:
+    ``classify`` derives it from the ACTIVE tier policy after the tier
+    decision, so it can never contradict the reason for the tier.
     """
     impact = Impact()
     matched: set[str] = set()
     core_hit = False
     package_hit = any(p == README_FILE for p in paths)
-    covered = True
-
-    def _covered(path: str) -> bool:
-        return any(rule_matches(rule, path) for rule in DOCS_SCOPE_RULES) or (
-            path == README_FILE
-        ) or any(rule_matches(rule, path) for rule in CONTROL_RULES) or any(
-            rule_matches(rule, path) for c in components for rule in c.paths
-        )
 
     for path in paths:
-        if not _covered(path):
-            covered = False
         if any(rule_matches(rule, path) for rule in CONTROL_RULES):
             impact.shared_changed = True
         if any(rule_matches(rule, path) for rule in DOCS_SCOPE_RULES):
@@ -272,13 +275,6 @@ def compute_impact(paths: list[str], components: list[Component]) -> Impact:
         and not impact.shared_changed
         and not impact.unknown_changed
     )
-    impact.full_matrix_required = (
-        not paths
-        or impact.shared_changed
-        or impact.unknown_changed
-        or impact.core_changed
-        or not covered
-    )
     return impact
 
 
@@ -291,38 +287,52 @@ def classify(
     Renames are already handled by the caller: both the old and the new
     path are in ``paths``, so a rename into or out of any scope
     classifies by both paths.
+
+    ``full_matrix_required`` is derived from the resulting tier, so it
+    always reflects the currently ACTIVE validation policy: false only
+    for docs_fast / package_docs, true for every FULL classification —
+    including registered independent components that have no explicit
+    validation contract (REASON_COMPONENT_NO_VALIDATION). The
+    contradictory state (component_without_validation_requires_full
+    together with full_matrix_required=false) is structurally
+    impossible.
     """
     impact = compute_impact(paths, components)
     if not paths:
-        return TIER_FULL, REASON_EMPTY, impact
-    allowed = [
-        *DOCS_SCOPE_RULES,
-        README_FILE,
-        *CONTROL_RULES,
-        *(rule for c in components for rule in c.paths),
-    ]
-    if violations(paths, allowed):
-        return TIER_FULL, REASON_NOT_IN_SCOPE, impact
-    if impact.shared_changed:
+        tier, reason = TIER_FULL, REASON_EMPTY
+    elif violations(
+        paths,
+        [
+            *DOCS_SCOPE_RULES,
+            README_FILE,
+            *CONTROL_RULES,
+            *(rule for c in components for rule in c.paths),
+        ],
+    ):
+        tier, reason = TIER_FULL, REASON_NOT_IN_SCOPE
+    elif impact.shared_changed:
         # Control-plane mutation (workflow / classifier / registry /
         # package schema) forces FULL, regardless of components.
-        return TIER_FULL, REASON_SHARED, impact
-    if impact.core_changed:
+        tier, reason = TIER_FULL, REASON_SHARED
+    elif impact.core_changed:
         # The core component requires the full matrix (condition 3/5).
-        return TIER_FULL, REASON_CORE, impact
-    if README_FILE in paths and all(
+        tier, reason = TIER_FULL, REASON_CORE
+    elif README_FILE in paths and all(
         p == README_FILE or any(rule_matches(r, p) for r in DOCS_SCOPE_RULES)
         for p in paths
     ):
-        return TIER_PACKAGE_DOCS, REASON_README, impact
-    if all(any(rule_matches(r, p) for r in DOCS_SCOPE_RULES) for p in paths):
-        return TIER_DOCS_FAST, REASON_DOCS, impact
-    if impact.components:
+        tier, reason = TIER_PACKAGE_DOCS, REASON_README
+    elif all(any(rule_matches(r, p) for r in DOCS_SCOPE_RULES) for p in paths):
+        tier, reason = TIER_DOCS_FAST, REASON_DOCS
+    elif impact.components:
         # Registered component(s) with no validation contract yet: the
         # tier stays FULL until a future registry entry declares
         # component validation (future rule condition 2).
-        return TIER_FULL, REASON_COMPONENT_NO_VALIDATION, impact
-    return TIER_FULL, REASON_UNKNOWN, impact
+        tier, reason = TIER_FULL, REASON_COMPONENT_NO_VALIDATION
+    else:
+        tier, reason = TIER_FULL, REASON_UNKNOWN
+    impact.full_matrix_required = tier == TIER_FULL
+    return tier, reason, impact
 
 
 def main(argv: list[str]) -> int:

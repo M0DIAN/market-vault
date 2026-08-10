@@ -19,6 +19,17 @@
 # registry only makes the classifier's impact information explicit and
 # machine-readable.
 #
+# Semantics: independent_only is eligibility/impact information only
+# (the changed paths are structurally isolated to registered
+# non-core / non-package / non-shared components). It does NOT authorize
+# skipping the core full matrix. full_matrix_required reflects the
+# currently ACTIVE validation policy: false only for docs_fast /
+# package_docs, true for every other classification — including any
+# registered independent component that has no explicit validation
+# contract. No component registered here may report
+# full_matrix_required=false until a future PR implements an explicit
+# component-validation contract.
+#
 # FUTURE RULE (documented, not active yet): a component may skip the
 # legacy core full matrix only when ALL of the following hold:
 #   1. its paths are explicitly registered here;

@@ -202,8 +202,20 @@ fail-closed）与 [scripts/ci_risk_tier.py](../scripts/ci_risk_tier.py)
 扩展）、（3）不修改 core/shared contract、（4）不修改 package /
 workflow / shared schema、（5）classifier 能确定影响范围——才允许
 跳过旧 core full matrix。不能仅因为"路径不是 src/market_vault"就
-自动认为安全。`full_matrix_required=` 是该规则的机制化计算；在注册
-表声明 validation 之前，任何 registered-component-only 变更仍
+自动认为安全。
+
+**语义（foundation 阶段）**：`independent_only=` 只是 eligibility /
+impact 信息——changed paths 结构性隔离于已注册的非 core / 非
+package / 非 shared 组件——本身并不授权跳过 core full matrix。
+`full_matrix_required=` 反映**当前 active 的 validation 策略**：
+仅 docs_fast / package_docs 为 false，其余（core、unknown、
+shared、以及无 validation 契约的 registered independent component）
+恒为 true（与 tier 严格一致，杜绝
+`component_without_validation_requires_full` 与
+`full_matrix_required=false` 同时出现的矛盾状态）。只有未来 PR 落地
+显式的 component-validation 契约后，才可能对该组件出现
+`independent_only=true` 且 `full_matrix_required=false`。在注册表
+声明 validation 之前，任何 registered-component-only 变更仍
 classify FULL（`component_without_validation_requires_full`）。
 
 **NO LIVE UI TIER YET**：本 PR 不得因为未来可能存在 `ui/` 就让

@@ -242,9 +242,13 @@ def test_registry_mutation_full_and_shared_changed(tmp_path):
 def test_registered_independent_component_component_only(tmp_path):
     """A registered independent component classifies component-only.
 
-    The tier stays FULL (no component may skip validation until a
-    registry entry declares one), but the impact is explicit:
-    components=widgets, independent_only=true, full_matrix_required=false.
+    independent_only=true is eligibility/impact information only: the
+    changed paths are structurally isolated to a registered non-core /
+    non-package / non-shared component. It does NOT authorize skipping
+    the core full matrix: without an explicit validation contract the
+    tier stays FULL and full_matrix_required stays true (it reflects
+    the currently ACTIVE policy). Only a future PR registering explicit
+    component validation may flip full_matrix_required to false.
     """
     repo = make_repo(tmp_path)
     result = classify_change(repo, "widgets/thing.py", registry=INDEPENDENT_REGISTRY)
@@ -257,7 +261,7 @@ def test_registered_independent_component_component_only(tmp_path):
     assert line_value(result, "unknown_changed") == "false"
     assert line_value(result, "shared_changed") == "false"
     assert line_value(result, "independent_only") == "true"
-    assert line_value(result, "full_matrix_required") == "false"
+    assert line_value(result, "full_matrix_required") == "true"
 
 
 def test_known_component_plus_core_full(tmp_path):
@@ -304,7 +308,9 @@ def test_component_plus_package_sensitive_path_elevated(tmp_path):
 
     The fail-closed answer is FULL (the component has no validation
     contract yet and the change is no longer docs-scope), while the
-    package sensitivity is still reported.
+    package sensitivity is still reported. full_matrix_required stays
+    true: it reflects the active policy, and this change is not under
+    the docs_fast / package_docs fast paths.
     """
     repo = make_repo(tmp_path)
     write_registry(repo, INDEPENDENT_REGISTRY)
@@ -321,7 +327,7 @@ def test_component_plus_package_sensitive_path_elevated(tmp_path):
     assert line_value(result, "components") == "widgets"
     assert line_value(result, "package_changed") == "true"
     assert line_value(result, "independent_only") == "false"
-    assert line_value(result, "full_matrix_required") == "false"
+    assert line_value(result, "full_matrix_required") == "true"
 
 
 def test_rename_into_unknown_full(tmp_path):
@@ -386,3 +392,54 @@ def test_invalid_ref_fail_closed_with_registry(tmp_path):
     assert result.returncode == 2, result.stdout + result.stderr
     assert line_value(result, "tier") == "full"
     assert line_value(result, "reason") == "classifier_error_fail_closed"
+
+
+def test_full_matrix_required_matches_active_policy(tmp_path):
+    """full_matrix_required reflects the ACTIVE policy, not eligibility.
+
+    Invariant: full_matrix_required == true exactly when tier == full.
+    In particular, a registered independent component WITHOUT a
+    validation contract must report independent_only=true together with
+    full_matrix_required=true, tier=full and
+    reason=component_without_validation_requires_full. The
+    contradictory state (component_without_validation_requires_full
+    AND full_matrix_required=false) must never occur.
+    """
+    scenarios = [
+        (REAL_REGISTRY, ["docs/guide.md"], "docs_fast"),
+        (REAL_REGISTRY, ["README.md", "docs/guide.md"], "package_docs"),
+        (REAL_REGISTRY, ["src/market_vault/thing.py"], "full"),
+        (REAL_REGISTRY, ["notes.txt"], "full"),
+        (REAL_REGISTRY, [".github/workflows/ci.yml"], "full"),
+        (REAL_REGISTRY, ["pyproject.toml"], "full"),
+        (INDEPENDENT_REGISTRY, ["widgets/thing.py"], "full"),
+        (INDEPENDENT_REGISTRY, ["widgets/thing.py", "README.md"], "full"),
+        (
+            INDEPENDENT_REGISTRY + REAL_REGISTRY,
+            ["widgets/thing.py", "src/market_vault/thing.py"],
+            "full",
+        ),
+    ]
+    for i, (registry, paths, expected_tier) in enumerate(scenarios):
+        scenario_dir = tmp_path / f"repo{i}"
+        scenario_dir.mkdir()
+        repo = make_repo(scenario_dir)
+        write_registry(repo, registry)
+        for path in paths:
+            write_file(repo, path)
+        base = commit_all(repo, "base")
+        for path in paths:
+            write_file(repo, path, "changed\n")
+        head = commit_all(repo, "head")
+        result = run_classifier(repo, base, head)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert tier(result) == expected_tier, result.stdout
+        assert line_value(result, "full_matrix_required") == (
+            "true" if expected_tier == "full" else "false"
+        ), result.stdout
+        assert not (
+            line_value(result, "reason")
+            == "component_without_validation_requires_full"
+            and line_value(result, "full_matrix_required") == "false"
+        ), result.stdout
