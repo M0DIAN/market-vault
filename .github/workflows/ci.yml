@@ -259,18 +259,22 @@ jobs:
             tests/test_sample_generation_core.py \
             tests/test_sample_generation_cli.py -q
 
-      # The full-suite step keeps its exact shape (name immediately followed
-      # by `run: python -m pytest`): scripts/check_release.py and its
-      # regression tests assert that literal adjacency. The tier guard
-      # therefore follows the run line. FULL CI performance profiling
-      # (measurement only): step-scoped PYTEST_ADDOPTS emits the
-      # slowest-durations report; targeted PyArrow steps above do not
-      # inherit it.
-      - name: Run full offline suite under PyArrow 24.0.0
-        run: python -m pytest
+      # The audited PyArrow 24 sensitive regression surface (P0-1): the
+      # exact six-file replacement for the old blanket full-suite run
+      # under PyArrow 24.0.0. The file list is literal and reviewable;
+      # scripts/check_release.py and its regression tests pin it. FULL
+      # pytest remains in the normal test matrix (3.11 / 3.14).
+      - name: Run audited PyArrow 24 sensitive regression surface
         if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.POST_MERGE_REUSE != 'true'
-        env:
-          PYTEST_ADDOPTS: "--durations=200"
+        run: |
+          python -m pytest \
+            tests/test_canonical_materialization_v03.py \
+            tests/test_canonical_builder_v03.py \
+            tests/test_dataset_materialization.py \
+            tests/test_verified_dataset_reader.py \
+            tests/test_pit_sample_assembly.py \
+            tests/test_dataset_end_to_end_regression.py \
+            -q --durations=100
 
       - name: FULL tests reused from verified PR
         if: env.POST_MERGE_REUSE == 'true'

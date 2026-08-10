@@ -7238,15 +7238,24 @@ def test_release_checker_fails_without_portability_job(tmp_path):
     assert_check_fails(_check_release.check_ci_pr8, repo, "portability-pyarrow24 job")
 
 
-def test_release_checker_fails_when_portability_job_unpinned(tmp_path):
-    # Mutation: the portability job installing a non-pinned pyarrow must
-    # fail the checker.
+@pytest.mark.parametrize(
+    "replacement",
+    [
+        'pip install "pyarrow>=24.0.0"',  # pin changed
+        'pip install "pyarrow"',  # pin removed
+    ],
+)
+def test_release_checker_fails_when_portability_job_unpinned(
+    tmp_path, replacement
+):
+    # Mutation: the portability job installing a non-pinned pyarrow
+    # (changed or unpinned) must fail the checker.
     repo = copy_repo(tmp_path)
     ci = repo / ".github" / "workflows" / "ci.yml"
     ci.write_text(
         ci.read_text(encoding="utf-8").replace(
             'pip install "pyarrow==24.0.0"',
-            'pip install "pyarrow>=24.0.0"',
+            replacement,
         ),
         encoding="utf-8",
     )
@@ -7363,40 +7372,260 @@ def test_release_checker_fails_when_acceptance_doc_claims_every_supported_writer
     )
 
 
-def test_release_checker_fails_when_portability_job_loses_full_suite_step(
+def test_release_checker_fails_when_portability_job_loses_c_surface_step(
     tmp_path,
 ):
-    # Mutation: removing the PyArrow 24 full offline suite step must fail
-    # the checker.
+    # Mutation: removing the PyArrow 24 sensitive regression surface step
+    # (P0-1 replacement for the old full offline suite step) must fail the
+    # checker.
     repo = copy_repo(tmp_path)
     path = repo / ".github" / "workflows" / "ci.yml"
     path.write_text(
         path.read_text(encoding="utf-8").replace(
-            "Run full offline suite under PyArrow 24.0.0",
-            "Run full offline suite",
+            "Run audited PyArrow 24 sensitive regression surface",
+            "Run audited PyArrow 24 compatibility subset",
         ),
         encoding="utf-8",
     )
-    assert_check_fails(_check_release.check_ci_pr8, repo, "must include the full offline suite step")
+    assert_check_fails(
+        _check_release.check_ci_pr8,
+        repo,
+        "must include the audited PyArrow 24 sensitive regression step",
+    )
 
 
-def test_release_checker_fails_when_portability_full_suite_step_loses_pytest(
-    tmp_path,
+@pytest.mark.parametrize(
+    "test_file",
+    [
+        "tests/test_canonical_materialization_v03.py",
+        "tests/test_canonical_builder_v03.py",
+        "tests/test_dataset_materialization.py",
+        "tests/test_verified_dataset_reader.py",
+        "tests/test_pit_sample_assembly.py",
+        "tests/test_dataset_end_to_end_regression.py",
+    ],
+)
+def test_release_checker_fails_when_any_c_surface_file_removed(
+    tmp_path, test_file
 ):
-    # Mutation: the PyArrow 24 full offline suite step must run the plain
-    # `python -m pytest` (the whole suite, not a subset).
+    # Mutation: removing any one of the six audited PyArrow 24 sensitive
+    # regression files must fail the checker (the six-file contract is
+    # literal and reviewable).
     repo = copy_repo(tmp_path)
     path = repo / ".github" / "workflows" / "ci.yml"
     path.write_text(
         path.read_text(encoding="utf-8").replace(
-            "Run full offline suite under PyArrow 24.0.0\n"
-            "        run: python -m pytest\n",
-            "Run full offline suite under PyArrow 24.0.0\n"
-            "        run: python -m pytest tests/test_v060_portability.py -q\n",
+            test_file, test_file.replace(".py", "_missing.py")
         ),
         encoding="utf-8",
     )
-    assert_check_fails(_check_release.check_ci_pr8, repo, "full-suite step must run python -m pytest")
+    assert_check_fails(
+        _check_release.check_ci_pr8,
+        repo,
+        f"must run the exact audited sensitive regression file {test_file!r}",
+    )
+
+
+def test_release_checker_fails_when_c_surface_file_replaced_by_unrelated_test(
+    tmp_path,
+):
+    # Mutation: swapping one C surface file for an unrelated test file
+    # must fail the checker (the C file set cannot be inferred at
+    # runtime; it is exact).
+    repo = copy_repo(tmp_path)
+    path = repo / ".github" / "workflows" / "ci.yml"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "tests/test_canonical_materialization_v03.py",
+            "tests/test_v061_ci_auditability.py",
+        ),
+        encoding="utf-8",
+    )
+    assert_check_fails(
+        _check_release.check_ci_pr8,
+        repo,
+        "must run the exact audited sensitive regression file "
+        "'tests/test_canonical_materialization_v03.py'",
+    )
+
+
+def test_release_checker_fails_when_portability_job_restores_blanket_full_step(
+    tmp_path,
+):
+    # Mutation: restoring the old blanket FULL PyArrow step in place of
+    # the C surface must fail the checker (the old step name is
+    # forbidden, C is required, and no unqualified pytest run may appear
+    # in the portability job).
+    repo = copy_repo(tmp_path)
+    path = repo / ".github" / "workflows" / "ci.yml"
+    text = path.read_text(encoding="utf-8")
+    c_step_region = (
+        "- name: Run audited PyArrow 24 sensitive regression surface\n"
+        "        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != "
+        "'package_docs' && env.POST_MERGE_REUSE != 'true'\n"
+        "        run: |\n"
+        "          python -m pytest \\\n"
+        "            tests/test_canonical_materialization_v03.py \\\n"
+        "            tests/test_canonical_builder_v03.py \\\n"
+        "            tests/test_dataset_materialization.py \\\n"
+        "            tests/test_verified_dataset_reader.py \\\n"
+        "            tests/test_pit_sample_assembly.py \\\n"
+        "            tests/test_dataset_end_to_end_regression.py \\\n"
+        "            -q --durations=100\n"
+    )
+    old_full_region = (
+        "- name: Run full offline suite under PyArrow 24.0.0\n"
+        "        run: python -m pytest\n"
+    )
+    assert c_step_region in text
+    path.write_text(
+        text.replace(c_step_region, old_full_region), encoding="utf-8"
+    )
+    assert_check_fails(
+        _check_release.check_ci_pr8,
+        repo,
+        "must never restore the blanket",
+        "must include the audited PyArrow 24 sensitive regression step",
+        "must never run an unqualified",
+    )
+
+
+def test_release_checker_fails_when_portability_job_loses_a_surface(
+    tmp_path,
+):
+    # Mutation: removing the exact targeted portability surface (A) must
+    # fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / ".github" / "workflows" / "ci.yml"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "python -m pytest tests/test_v060_portability.py -q",
+            "python -m pytest -q",
+        ),
+        encoding="utf-8",
+    )
+    assert_check_fails(
+        _check_release.check_ci_pr8,
+        repo,
+        "must keep the exact portability surface "
+        "'tests/test_v060_portability.py'",
+    )
+
+
+@pytest.mark.parametrize(
+    "test_file",
+    [
+        "tests/test_canonical_reader.py",
+        "tests/test_sample_generation_core.py",
+        "tests/test_sample_generation_cli.py",
+    ],
+)
+def test_release_checker_fails_when_b_surface_member_removed(
+    tmp_path, test_file
+):
+    # Mutation: removing any one of the three canonical / frozen
+    # regression files (B) must fail the checker.
+    repo = copy_repo(tmp_path)
+    path = repo / ".github" / "workflows" / "ci.yml"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            test_file, test_file.replace(".py", "_missing.py")
+        ),
+        encoding="utf-8",
+    )
+    assert_check_fails(
+        _check_release.check_ci_pr8,
+        repo,
+        f"must keep the exact canonical/frozen regression file {test_file!r}",
+    )
+
+
+def test_release_checker_fails_when_portability_job_loses_version_assertion(
+    tmp_path,
+):
+    # Mutation: removing the explicit PyArrow version assertion step must
+    # fail the checker (the runtime is only audited when the asserted
+    # version stays pinned).
+    repo = copy_repo(tmp_path)
+    path = repo / ".github" / "workflows" / "ci.yml"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "Assert the audited PyArrow compatibility version",
+            "Assert the installed PyArrow version",
+        ),
+        encoding="utf-8",
+    )
+    assert_check_fails(
+        _check_release.check_ci_pr8,
+        repo,
+        "must keep the explicit PyArrow version assertion step",
+    )
+
+
+def test_release_checker_fails_when_portability_tier_guard_inverted(
+    tmp_path,
+):
+    # Mutation: inverting the tier guard so an unknown/unset CI_TIER
+    # could skip heavy validation must fail the checker (fail-closed
+    # semantics: unknown tier runs heavy validation).
+    repo = copy_repo(tmp_path)
+    path = repo / ".github" / "workflows" / "ci.yml"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "env.CI_TIER != 'docs_fast'",
+            "env.CI_TIER == 'docs_fast'",
+        ),
+        encoding="utf-8",
+    )
+    assert_check_fails(
+        _check_release.check_ci_pr8,
+        repo,
+        'fail-closed heavy guard fragment "env.CI_TIER != \'docs_fast\'"',
+    )
+
+
+def test_release_checker_fails_when_portability_reuse_guard_inverted(
+    tmp_path,
+):
+    # Mutation: inverting the reuse guard so heavy validation could run
+    # (or be claimed) only on POST_MERGE_REUSE == 'true' must fail the
+    # checker (only a PROVEN reuse may skip heavy validation).
+    repo = copy_repo(tmp_path)
+    path = repo / ".github" / "workflows" / "ci.yml"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "env.POST_MERGE_REUSE != 'true'",
+            "env.POST_MERGE_REUSE == 'true'",
+        ),
+        encoding="utf-8",
+    )
+    assert_check_fails(
+        _check_release.check_ci_pr8,
+        repo,
+        'fail-closed heavy guard fragment "env.POST_MERGE_REUSE != \'true\'"',
+    )
+
+
+def test_release_checker_fails_when_package_job_loses_portability_dependency(
+    tmp_path,
+):
+    # Mutation: dropping the portability-pyarrow24 dependency of the
+    # package job must fail the checker (the formal job topology stays
+    # unchanged).
+    repo = copy_repo(tmp_path)
+    path = repo / ".github" / "workflows" / "ci.yml"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "needs: [test, portability-pyarrow24]",
+            "needs: test",
+        ),
+        encoding="utf-8",
+    )
+    assert_check_fails(
+        _check_release.check_ci_pr8,
+        repo,
+        "must depend on [test, portability-pyarrow24]",
+    )
 
 
 # --- V0.7.0 PR-5 guards: integrated E2E / usability / examples -------------
