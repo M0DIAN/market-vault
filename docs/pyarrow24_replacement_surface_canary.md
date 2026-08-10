@@ -142,24 +142,46 @@ therefore the narrowed-job figure. **The measured net saving is ≈ 177s** (not
 Per FULL run, the portability environment is charged **−177s** (whole-job;
 −177.85s pytest-only).
 
-- Audit-baseline runner-seconds: 989 → 989 − 177 = **812 (−17.9%)**.
-- Canary-run terms (other jobs measured 280/300/58s): 1052 → 789 (−25%).
+The canary total (1052s = 280 + 300 + 414 + 58) is **not** a production
+baseline: it contains the extra C measurement step. Projected production
+totals (same-run):
+
+- canary total = **1052s**
+- projected current production total: 1052 − 86 (C step) = **966s**
+- projected narrowed production total: 1052 − 263 (FULL step) = **789s**
+- **P0-1 net runner saving: 966 − 789 = 177s**
+- **percentage: 177 / 966 ≈ 18.3%**
+
+Audit-baseline statement (kept, separate): 989 → 989 − 177 = **812 (−17.9%)**.
 
 No other environment is affected (A/B cancel; the 3.11/3.14 jobs are unchanged
 by P0-1).
 
 ## 14. Workflow critical-path interpretation
 
-- Canary run whole jobs: 3.11 = 280s, 3.14 = 300s, **portability = 414s
-  (bottleneck)**, package = 58s; workflow wall clock ≈ 8m05s
-  (10:52:02 → 11:00:07; job-span equivalent 8m02s).
-- After P0-1 (narrowed portability ≈ 151s): the bottleneck moves to
-  **test (3.14) at 300s**; projected wall ≈ 300 + 58 + overhead ≈ **6m03s**
-  (run-local terms; audit-baseline terms ≈ 6m09s vs 6m27s).
-- Wall-clock saving ≈ 1m54s run-local (the portability job's 114s excess over
-  the 3.14 job disappears), ≈ 12–18s in audit-baseline terms. Consistent with
-  the audit's wall-clock analysis: **the dominant P0-1 win is runner-seconds
-  (−177s), not workflow wall-clock**, which remains bounded by the 3.14 job.
+The temporary 414s portability job is the **canary** job (it includes the
+extra C step) — it is NOT the current production baseline.
+
+Same-run projections (this run's other jobs: 3.11 = 280s, 3.14 = 300s,
+package = 58s):
+
+- projected current portability: 414 − 86 (C step) = **328s**
+- projected narrowed portability: 414 − 263 (FULL step) = **151s**
+- same-run current critical path: max(280, 300, 328) = **328s**
+- same-run narrowed critical path: max(280, 300, 151) = **300s**
+- **run-local pre-package critical-path improvement ≈ 28s**; the package tail
+  (58s) is approximately unchanged.
+
+Audit-baseline interpretation (retained): ≈ 12–18s in that sample (6m27s →
+≈ 6m09s). **Runner variance explains the difference**: portability ran 414s
+here vs 327s in the audit's primary sample, which is why the same-run
+projected critical-path gain (~28s) exceeds the audit-baseline estimate
+(~12–18s). A ~1m54s run-local wall-clock saving is NOT claimed — the canary
+job's 414s is not a production baseline.
+
+Consistent with the audit's wall-clock analysis: **the dominant P0-1 win is
+runner-seconds (−177s), not workflow wall-clock**, which remains bounded by
+the 3.14 job.
 
 ## 15. Warm-cache limitation
 
