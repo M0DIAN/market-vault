@@ -48,6 +48,21 @@ PR #61 additionally pins the post-merge FULL reuse gate contract:
   reuse path unreachable; the binding is never workflow-global or
   job-global, and ordinary heavy pytest/build/package steps receive no
   dedicated token env from this change.
+
+PR #63 pins the lightweight release-checker runtime bootstrap contract
+(the PR #62 production canary proved tree-equivalence reuse but exposed
+that the unconditional release checker's CLI-version subprocess needs the
+MarketVault runtime importable, which verified reuse no longer installs):
+
+- the package job holds exactly one ``Prepare release-checker runtime``
+  step, guarded exactly ``docs_fast OR POST_MERGE_REUSE == 'true'``,
+  running exactly ``python -m pip install -e .`` (never build/twine),
+  immediately before the still-unconditional ``Run release checker``;
+- the path composition stays fail-safe: an unset/unknown
+  ``POST_MERGE_REUSE`` keeps the heavy guards true and the bootstrap
+  skipped, so NORMAL FULL still runs; only a PROVEN
+  ``POST_MERGE_REUSE=true`` skips the heavy chain while the bootstrap
+  still enables the release checker.
 """
 
 from __future__ import annotations
@@ -501,21 +516,28 @@ def test_heavy_steps_never_skip_without_verified_proof():
                 assert "env.POST_MERGE_REUSE != 'true'" in region, (job, name)
 
 
-def test_reuse_true_guard_appears_only_on_echo_only_marker_steps():
+def test_reuse_true_guard_appears_only_on_marker_and_bootstrap_steps():
     """``POST_MERGE_REUSE == 'true'`` may only gate the verified-reuse
-    marker steps, and those steps only echo — they never run or gate any
-    validation."""
+    marker steps (echo-only, they never run or gate any validation) and
+    the PR #63 lightweight release-checker runtime bootstrap step (a
+    minimal ``pip install -e .`` that enables the unconditional release
+    checker under lightweight closures — it never installs build/twine)."""
     for name, region in _steps(ci_text()):
         if "env.POST_MERGE_REUSE == 'true'" in region:
             assert name in (
                 "FULL tests reused from verified PR",
                 "Package validation reused from verified PR",
+                "Prepare release-checker runtime",
             ), name
-            assert "echo" in region
-            assert "python -m pytest" not in region
-            assert "pip " not in region
-            assert "python -m build" not in region
-            assert "python scripts/check_release.py" not in region
+            if name in (
+                "FULL tests reused from verified PR",
+                "Package validation reused from verified PR",
+            ):
+                assert "echo" in region
+                assert "python -m pytest" not in region
+                assert "pip " not in region
+                assert "python -m build" not in region
+                assert "python scripts/check_release.py" not in region
 
 
 def test_reuse_markers_present_with_exact_names():
@@ -565,3 +587,132 @@ def test_attestation_never_created_on_non_full_tier():
             assert "env.CI_TIER == 'full'" in region
             assert "env.CI_FULL_MATRIX_REQUIRED == 'true'" in region
             assert "github.event_name == 'pull_request'" in region
+
+
+# ---------------------------------------------------------------------------
+# Lightweight release-checker runtime bootstrap (PR #63).
+# ---------------------------------------------------------------------------
+
+
+def _guard_of(block: str, name: str) -> str | None:
+    """The ``if:`` expression of one step, or None when unconditional."""
+    names = _step_names(block)
+    if name not in names:
+        return None
+    idx = names.index(name)
+    end = f"- name: {names[idx + 1]}" if idx + 1 < len(names) else None
+    region = _region(block, f"- name: {name}", end)
+    match = re.search(r"(?m)^        if: (.+)$", region)
+    return match.group(1) if match else None
+
+
+def _evaluate_guard(expr: str, tier: str, reuse: str) -> bool:
+    """Evaluate a step guard for one (CI_TIER, POST_MERGE_REUSE) scenario.
+
+    The guard grammar is the small GitHub-expression subset the workflow
+    uses: comparisons against the literals ``'docs_fast'`` / ``'true'``
+    combined with ``&&`` / ``||``. ``POST_MERGE_REUSE`` is passed as the
+    raw exported value (unset is ``""``).
+    """
+    values = {
+        "env.CI_TIER == 'docs_fast'": tier == "docs_fast",
+        "env.CI_TIER != 'docs_fast'": tier != "docs_fast",
+        "env.POST_MERGE_REUSE == 'true'": reuse == "true",
+        "env.POST_MERGE_REUSE != 'true'": reuse != "true",
+    }
+    for token, value in values.items():
+        expr = expr.replace(token, str(value))
+    expr = expr.replace("&&", " and ").replace("||", " or ")
+    return bool(eval(expr, {"__builtins__": {}}))
+
+
+def test_package_has_exactly_one_release_checker_runtime_bootstrap():
+    """(A) Exactly one ``Prepare release-checker runtime`` step exists,
+    in the package job (the name may also appear in comments)."""
+    for job in ("test", "portability-pyarrow24", "package"):
+        block = _job_block(ci_text(), job)
+        names = _step_names(block)
+        assert names.count("Prepare release-checker runtime") == (1 if job == "package" else 0)
+
+
+def test_bootstrap_guard_is_exactly_docs_fast_or_verified_reuse():
+    """(B) The bootstrap guard is exactly ``docs_fast OR
+    POST_MERGE_REUSE == 'true'`` — nothing else, no tier-full exception,
+    no path filter."""
+    block = _job_block(ci_text(), "package")
+    guard = _guard_of(block, "Prepare release-checker runtime")
+    assert guard == "env.CI_TIER == 'docs_fast' || env.POST_MERGE_REUSE == 'true'"
+
+
+def test_bootstrap_installs_only_editable_runtime():
+    """(C, D) The bootstrap installs exactly ``python -m pip install -e
+    .`` and nothing else: no build, no twine, no extra packages."""
+    block = _job_block(ci_text(), "package")
+    names = _step_names(block)
+    idx = names.index("Prepare release-checker runtime")
+    end = f"- name: {names[idx + 1]}"
+    region = _region(block, "- name: Prepare release-checker runtime", end)
+    installs = [line.strip() for line in re.findall(
+        r"(?m)^\s*python -m pip install[^\n]*$", region
+    )]
+    assert installs == ["python -m pip install -e ."]
+
+
+def test_bootstrap_precedes_unconditional_release_checker():
+    """(E, F) The bootstrap step comes immediately before ``Run release
+    checker``, and the release checker stays unconditional."""
+    block = _job_block(ci_text(), "package")
+    names = _step_names(block)
+    bootstrap = names.index("Prepare release-checker runtime")
+    checker = names.index("Run release checker")
+    assert checker == bootstrap + 1
+    assert _guard_of(block, "Run release checker") is None
+
+
+def test_lightweight_closure_path_composition():
+    """(G, H, I, J, K) The step guards compose into the intended paths:
+
+    - NORMAL FULL / PACKAGE_DOCS: install build tooling runs, bootstrap
+      skipped, release checker runs, heavy package validation runs;
+    - DOCS_FAST: install skipped, bootstrap runs, checker runs, heavy
+      package validation skipped;
+    - VERIFIED REUSE: install skipped, bootstrap runs, checker runs,
+      heavy package validation skipped, reuse marker eligible;
+    - unknown/unset POST_MERGE_REUSE: bootstrap skipped, heavy validation
+      still runs (fail-safe).
+    """
+    block = _job_block(ci_text(), "package")
+    probes = (
+        "Install build tooling",
+        "Prepare release-checker runtime",
+        "Run release checker",
+        "Build wheel and sdist",
+        "Package validation reused from verified PR",
+    )
+    guards = {name: _guard_of(block, name) for name in probes}
+    assert guards["Run release checker"] is None
+
+    def outcome(name: str, tier: str, reuse: str) -> str:
+        guard = guards[name]
+        if guard is None:
+            return "run"
+        return "run" if _evaluate_guard(guard, tier, reuse) else "skip"
+
+    scenarios = {
+        "normal_full": ("full", ""),
+        "docs_fast": ("docs_fast", ""),
+        "verified_reuse": ("full", "true"),
+        "package_docs": ("package_docs", ""),
+        "unknown_reuse": ("full", "garbage"),
+    }
+    expected = {
+        # install, bootstrap, checker, heavy build, reuse marker
+        "normal_full": ("run", "skip", "run", "run", "skip"),
+        "docs_fast": ("skip", "run", "run", "skip", "skip"),
+        "verified_reuse": ("skip", "run", "run", "skip", "run"),
+        "package_docs": ("run", "skip", "run", "run", "skip"),
+        "unknown_reuse": ("run", "skip", "run", "run", "skip"),
+    }
+    for scenario, (tier, reuse) in scenarios.items():
+        results = tuple(outcome(name, tier, reuse) for name in probes)
+        assert results == expected[scenario], (scenario, results)

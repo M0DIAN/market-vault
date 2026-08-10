@@ -367,10 +367,30 @@ jobs:
           python -m pip install -e .
           python -m pip install "build>=1.2,<2" "twine>=5,<7"
 
-      # The release/document consistency checker runs on every tier. It is
-      # stdlib-only (no build tooling needed) and validates docs/** content
-      # (release notes, direction docs, contracts, lifecycle records), so a
-      # DOCS_FAST change must not bypass it.
+      # Lightweight closure bootstrap (PR #63): the release checker below
+      # runs unconditionally, and its CLI-version verification invokes
+      # `python -m market_vault --version`, which imports the MarketVault
+      # runtime (api.py imports pandas). When the normal Install build
+      # tooling step did not run — docs_fast tier, or verified post-merge
+      # reuse skipped the install — bootstrap exactly the runtime
+      # dependencies. Package tooling (build/twine) and the heavy package
+      # validation chain are unnecessary when verified PR FULL evidence is
+      # reused, so they are not installed here.
+      - name: Prepare release-checker runtime
+        if: env.CI_TIER == 'docs_fast' || env.POST_MERGE_REUSE == 'true'
+        run: |
+          python -m pip install -e .
+
+      # The release/document consistency checker runs on every tier and
+      # validates docs/** content (release notes, direction docs,
+      # contracts, lifecycle records), so a DOCS_FAST change must not
+      # bypass it. The script itself is stdlib-only with no third-party
+      # Python dependency, but one production check invokes
+      # `python -m market_vault --version` as a subprocess, and that
+      # requires the MarketVault runtime to be importable. Lightweight
+      # closures therefore prepare the runtime dependencies (see
+      # "Prepare release-checker runtime"); the checker must never be
+      # assumed to run in an empty Python environment.
       - name: Run release checker
         run: python scripts/check_release.py
 
