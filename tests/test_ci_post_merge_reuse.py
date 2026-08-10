@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import itertools
 import json
 import sys
 import urllib.error
@@ -1209,3 +1210,418 @@ def test_cli_missing_token_prints_false(capsys):
     assert reuse.main(["--repo", REPO], env={}) == 0
     captured = capsys.readouterr()
     assert captured.out.startswith("POST_MERGE_REUSE=false\nreason=missing_token\n")
+
+
+# ---------------------------------------------------------------------------
+# V2 foundation: per-surface reuse-plan evidence matrix (PR #65).
+#
+# FOUNDATION ONLY — these tests pin the pure model, the fail-closed
+# decision matrix, and the invariant that identity unproven can never
+# produce surface reuse. The foundation is NOT wired into run_verifier():
+# the V1 POST_MERGE_REUSE contract tests above are untouched, and the last
+# two tests below re-prove that V1 production behavior is unchanged.
+# ---------------------------------------------------------------------------
+
+
+def v2_plan(
+    *,
+    identity_proven: bool = True,
+    identity_reason: str = "verified_tree_identity",
+    jobs: list[dict] | None = None,
+) -> reuse.ReusePlan:
+    return reuse.build_surface_reuse_plan(
+        identity_proven=identity_proven,
+        identity_reason=identity_reason,
+        jobs=[] if jobs is None else jobs,
+    )
+
+
+def v2_jobs(
+    *,
+    missing: tuple[str, ...] = (),
+    statuses: dict[str, str] | None = None,
+    conclusions: dict[str, str] | None = None,
+    extra: tuple[dict, ...] = (),
+) -> list[dict]:
+    """Canonical V2 job list; one completed/success job per surface by
+    default. ``missing`` selects surfaces (canonical IDs) to omit; the
+    status/conclusion maps are keyed by canonical job name."""
+    jobs = []
+    for surface in reuse.SURFACE_ORDER:
+        if surface in missing:
+            continue
+        name = reuse.SURFACE_JOB_NAMES[surface]
+        jobs.append(
+            {
+                "name": name,
+                "status": (statuses or {}).get(name, "completed"),
+                "conclusion": (conclusions or {}).get(name, "success"),
+            }
+        )
+    jobs.extend(extra)
+    return jobs
+
+
+def surface_names(plan: reuse.ReusePlan) -> list[str]:
+    return [d.surface for d in plan.surfaces]
+
+
+def test_v2_surface_model_is_canonical_and_maps_to_jobs():
+    assert reuse.SURFACE_ORDER == (
+        "test-3.11",
+        "test-3.14",
+        "pyarrow24",
+        "package",
+    )
+    assert reuse.SURFACE_JOB_NAMES == {
+        "test-3.11": "test (3.11)",
+        "test-3.14": "test (3.14)",
+        "pyarrow24": "portability-pyarrow24",
+        "package": "package",
+    }
+    # The V1 four-surface contract is preserved as a separate constant.
+    assert reuse.REQUIRED_JOB_SURFACES == tuple(reuse.SURFACE_JOB_NAMES.values())
+    assert tuple(reuse.SURFACE_JOB_NAMES[s] for s in reuse.SURFACE_ORDER) == (
+        reuse.REQUIRED_JOB_SURFACES
+    )
+
+
+# -- 1. identity false + all jobs success -> no_reuse / 4 RUN -----------
+
+
+def test_v2_identity_false_all_jobs_success_no_reuse():
+    plan = v2_plan(
+        identity_proven=False, identity_reason="no_proof", jobs=v2_jobs()
+    )
+    assert plan.mode == reuse.MODE_NO_REUSE
+    assert plan.identity_proven is False
+    assert plan.identity_reason == "no_proof"
+    assert all(d.reuse is False for d in plan.surfaces)
+    assert all(
+        d.reason == reuse.GLOBAL_IDENTITY_UNPROVEN_REASON for d in plan.surfaces
+    )
+
+
+# -- 2. identity true + all four success -> full_reuse / 4 REUSE ---------
+
+
+def test_v2_identity_true_all_success_full_reuse():
+    plan = v2_plan(identity_reason="verified_tree_identity", jobs=v2_jobs())
+    assert plan.mode == reuse.MODE_FULL_REUSE
+    assert plan.identity_proven is True
+    assert all(d.reuse is True for d in plan.surfaces)
+    assert all(d.reason == reuse.SURFACE_VERIFIED_REASON for d in plan.surfaces)
+
+
+# -- 3-6. exactly one surface missing -> partial_reuse / only it RUN ----
+
+
+@pytest.mark.parametrize("surface", reuse.SURFACE_ORDER)
+def test_v2_one_missing_surface_partial(surface):
+    plan = v2_plan(jobs=v2_jobs(missing=(surface,)))
+    assert plan.mode == reuse.MODE_PARTIAL_REUSE
+    for decision in plan.surfaces:
+        if decision.surface == surface:
+            assert decision.reuse is False
+            assert decision.reason == reuse.SURFACE_JOB_MISSING_REASON
+        else:
+            assert decision.reuse is True
+            assert decision.reason == reuse.SURFACE_VERIFIED_REASON
+
+
+# -- 7. every pair of missing surfaces -> partial / those two RUN --------
+
+
+@pytest.mark.parametrize(
+    "pair", [p for p in itertools.combinations(reuse.SURFACE_ORDER, 2)]
+)
+def test_v2_two_missing_surfaces_partial(pair):
+    plan = v2_plan(jobs=v2_jobs(missing=tuple(pair)))
+    assert plan.mode == reuse.MODE_PARTIAL_REUSE
+    for decision in plan.surfaces:
+        expected_reuse = decision.surface not in pair
+        assert decision.reuse is expected_reuse
+        assert decision.reason == (
+            reuse.SURFACE_JOB_MISSING_REASON
+            if not expected_reuse
+            else reuse.SURFACE_VERIFIED_REASON
+        )
+
+
+# -- 8. three missing -> partial / one REUSE -----------------------------
+
+
+@pytest.mark.parametrize(
+    "triple", [t for t in itertools.combinations(reuse.SURFACE_ORDER, 3)]
+)
+def test_v2_three_missing_surfaces_partial(triple):
+    plan = v2_plan(jobs=v2_jobs(missing=tuple(triple)))
+    assert plan.mode == reuse.MODE_PARTIAL_REUSE
+    reusable = [d for d in plan.surfaces if d.reuse]
+    assert [d.surface for d in reusable] == [
+        s for s in reuse.SURFACE_ORDER if s not in triple
+    ]
+    for decision in plan.surfaces:
+        if decision.surface in triple:
+            assert decision.reason == reuse.SURFACE_JOB_MISSING_REASON
+
+
+# -- 9. all four missing -> no_reuse / 4 RUN -----------------------------
+
+
+def test_v2_all_surfaces_missing_no_reuse():
+    plan = v2_plan(jobs=v2_jobs(missing=tuple(reuse.SURFACE_ORDER)))
+    assert plan.mode == reuse.MODE_NO_REUSE
+    assert all(d.reuse is False for d in plan.surfaces)
+    assert all(d.reason == reuse.SURFACE_JOB_MISSING_REASON for d in plan.surfaces)
+
+
+# -- 10-15. non-success / incomplete per surface -> only it RUN ----------
+
+
+@pytest.mark.parametrize(
+    "conclusion",
+    ["failure", "cancelled", "timed_out", "skipped", "neutral", "action_required"],
+)
+@pytest.mark.parametrize("surface", reuse.SURFACE_ORDER)
+def test_v2_non_success_conclusion_partial(surface, conclusion):
+    name = reuse.SURFACE_JOB_NAMES[surface]
+    plan = v2_plan(
+        jobs=v2_jobs(conclusions={name: conclusion})
+    )
+    assert plan.mode == reuse.MODE_PARTIAL_REUSE
+    for decision in plan.surfaces:
+        if decision.surface == surface:
+            assert decision.reuse is False
+            assert decision.reason == reuse.SURFACE_JOB_NON_SUCCESS_REASON
+        else:
+            assert decision.reuse is True
+
+
+@pytest.mark.parametrize(
+    "status", ["in_progress", "queued", "waiting", "pending", ""]
+)
+@pytest.mark.parametrize("surface", reuse.SURFACE_ORDER)
+def test_v2_incomplete_job_status_partial(surface, status):
+    name = reuse.SURFACE_JOB_NAMES[surface]
+    plan = v2_plan(
+        jobs=v2_jobs(
+            statuses={name: status}, conclusions={name: None}
+        )
+    )
+    assert plan.mode == reuse.MODE_PARTIAL_REUSE
+    for decision in plan.surfaces:
+        if decision.surface == surface:
+            assert decision.reuse is False
+            assert decision.reason == reuse.SURFACE_JOB_NON_SUCCESS_REASON
+        else:
+            assert decision.reuse is True
+
+
+# -- 16-17. duplicate required surface -> no_reuse / 4 RUN ---------------
+
+
+@pytest.mark.parametrize("surface", ("test-3.11", "package"))
+def test_v2_duplicate_required_surface_no_reuse(surface):
+    name = reuse.SURFACE_JOB_NAMES[surface]
+    jobs = v2_jobs() + [{"name": name, "status": "completed", "conclusion": "success"}]
+    plan = v2_plan(jobs=jobs)
+    assert plan.mode == reuse.MODE_NO_REUSE
+    assert all(d.reuse is False for d in plan.surfaces)
+    assert all(d.reason == reuse.JOB_DUPLICATE_CONTRACT_REASON for d in plan.surfaces)
+
+
+# -- 18. unexpected formal job -> no_reuse / 4 RUN -----------------------
+
+
+def test_v2_unexpected_job_no_reuse():
+    plan = v2_plan(jobs=v2_jobs(extra=({"name": "lint", "status": "completed",
+                                        "conclusion": "success"},)))
+    assert plan.mode == reuse.MODE_NO_REUSE
+    assert all(d.reuse is False for d in plan.surfaces)
+    assert all(d.reason == reuse.JOB_UNEXPECTED_CONTRACT_REASON for d in plan.surfaces)
+
+
+def test_v2_unexpected_job_without_name_no_reuse():
+    plan = v2_plan(jobs=v2_jobs(extra=({"status": "completed", "conclusion": "success"},)))
+    assert plan.mode == reuse.MODE_NO_REUSE
+    assert all(d.reason == reuse.JOB_UNEXPECTED_CONTRACT_REASON for d in plan.surfaces)
+
+
+# -- 19. shuffled input order -> same plan, canonical output order -------
+
+
+def test_v2_input_job_order_does_not_matter():
+    ordered = v2_plan(jobs=v2_jobs(missing=("package",)))
+    shuffled = v2_plan(
+        jobs=[
+            {"name": reuse.SURFACE_JOB_NAMES["test-3.14"],
+             "status": "completed", "conclusion": "success"},
+            {"name": reuse.SURFACE_JOB_NAMES["test-3.11"],
+             "status": "completed", "conclusion": "success"},
+            {"name": reuse.SURFACE_JOB_NAMES["pyarrow24"],
+             "status": "completed", "conclusion": "success"},
+        ]
+    )
+    assert surface_names(ordered) == list(reuse.SURFACE_ORDER)
+    assert surface_names(shuffled) == list(reuse.SURFACE_ORDER)
+    assert shuffled.mode == ordered.mode
+    assert [
+        (d.surface, d.reuse, d.reason) for d in shuffled.surfaces
+    ] == [(d.surface, d.reuse, d.reason) for d in ordered.surfaces]
+
+
+# -- 20. input jobs are never mutated ------------------------------------
+
+
+def test_v2_input_jobs_not_mutated():
+    jobs = v2_jobs(missing=("package",))
+    snapshot = json.dumps(jobs, sort_keys=True)
+    v2_plan(jobs=jobs)
+    assert json.dumps(jobs, sort_keys=True) == snapshot
+
+
+# -- 21. identity-false invariant across many job shapes -----------------
+
+
+@pytest.mark.parametrize(
+    "job_shape",
+    [
+        [],
+        v2_jobs(),
+        v2_jobs(missing=("package",)),
+        v2_jobs(conclusions={reuse.SURFACE_JOB_NAMES["package"]: "failure"}),
+        v2_jobs() + [{"name": reuse.SURFACE_JOB_NAMES["package"],
+                      "status": "completed", "conclusion": "success"}],
+        v2_jobs(extra=({"name": "lint", "status": "completed",
+                        "conclusion": "success"},)),
+    ],
+    ids=["empty", "all_success", "one_missing", "one_failed", "duplicate",
+         "unexpected"],
+)
+def test_v2_identity_false_invariant_no_surface_may_reuse(job_shape):
+    plan = v2_plan(identity_proven=False, identity_reason="no_proof",
+                   jobs=job_shape)
+    assert plan.mode == reuse.MODE_NO_REUSE
+    assert all(d.reuse is False for d in plan.surfaces)
+    assert all(
+        d.reason == reuse.GLOBAL_IDENTITY_UNPROVEN_REASON for d in plan.surfaces
+    )
+
+
+# -- 22-24. mode ⇔ evidence shape ----------------------------------------
+
+
+def test_v2_full_reuse_only_when_all_four_reusable():
+    all_ok = v2_plan(jobs=v2_jobs())
+    assert all_ok.mode == reuse.MODE_FULL_REUSE
+    for surface in reuse.SURFACE_ORDER:
+        name = reuse.SURFACE_JOB_NAMES[surface]
+        plan = v2_plan(jobs=v2_jobs(conclusions={name: "failure"}))
+        assert plan.mode != reuse.MODE_FULL_REUSE
+        assert plan.mode == reuse.MODE_PARTIAL_REUSE
+
+
+def test_v2_partial_reuse_iff_mix_of_reusable_and_not():
+    for surface in reuse.SURFACE_ORDER:
+        name = reuse.SURFACE_JOB_NAMES[surface]
+        plan = v2_plan(jobs=v2_jobs(missing=(surface,)))
+        assert plan.mode == reuse.MODE_PARTIAL_REUSE
+        assert any(d.reuse for d in plan.surfaces)
+        assert any(not d.reuse for d in plan.surfaces)
+    # A single non-reusable surface still yields a mix (the other three
+    # remain reusable) → partial.
+    name = reuse.SURFACE_JOB_NAMES["test-3.11"]
+    plan = v2_plan(jobs=v2_jobs(statuses={name: "in_progress"},
+                                conclusions={name: None}))
+    assert plan.mode == reuse.MODE_PARTIAL_REUSE
+
+
+def test_v2_no_reuse_iff_identity_false_or_ambiguous_or_zero_reusable():
+    assert v2_plan(identity_proven=False, jobs=v2_jobs()).mode == reuse.MODE_NO_REUSE
+    assert v2_plan(
+        jobs=v2_jobs() + [{"name": reuse.SURFACE_JOB_NAMES["package"],
+                           "status": "completed", "conclusion": "success"}]
+    ).mode == reuse.MODE_NO_REUSE
+    assert v2_plan(jobs=v2_jobs(extra=({"name": "lint"},))).mode == reuse.MODE_NO_REUSE
+    assert v2_plan(jobs=v2_jobs(missing=tuple(reuse.SURFACE_ORDER))).mode == (
+        reuse.MODE_NO_REUSE
+    )
+
+
+# -- renderer: deterministic, pinned, never collides with V1 -------------
+
+
+def test_render_reuse_plan_exact_block():
+    plan = v2_plan(
+        identity_reason="verified_tree_identity",
+        jobs=v2_jobs(missing=("package",)),
+    )
+    assert reuse.render_reuse_plan(plan) == (
+        "POST_MERGE_REUSE_MODE=partial_reuse\n"
+        "IDENTITY_PROVEN=true\n"
+        "identity_reason=verified_tree_identity\n"
+        "REUSE_TEST_311=true\n"
+        "REUSE_TEST_314=true\n"
+        "REUSE_PYARROW24=true\n"
+        "REUSE_PACKAGE=false\n"
+        "reason_test_311=verified_job_success\n"
+        "reason_test_314=verified_job_success\n"
+        "reason_pyarrow24=verified_job_success\n"
+        "reason_package=job_missing\n"
+    )
+
+
+def test_render_reuse_plan_newline_terminated_and_deterministic():
+    plan = v2_plan(identity_proven=False, identity_reason="no_proof",
+                   jobs=v2_jobs())
+    first = reuse.render_reuse_plan(plan)
+    second = reuse.render_reuse_plan(plan)
+    assert first == second
+    assert first.endswith("\n")
+    assert first.startswith("POST_MERGE_REUSE_MODE=no_reuse\n")
+
+
+def test_render_reuse_plan_never_collides_with_v1_contract():
+    rendered = reuse.render_reuse_plan(
+        v2_plan(jobs=v2_jobs(missing=("package",)))
+    )
+    # V1 ci.yml parses POST_MERGE_REUSE= exactly; the V2 renderer must not
+    # emit that key and must not be parseable as a V1 verdict.
+    assert "POST_MERGE_REUSE=" not in rendered
+    assert rendered.splitlines()[0] == "POST_MERGE_REUSE_MODE=partial_reuse"
+    v1 = reuse.render_verdict(
+        reuse.Verdict(reuse=True, reason=reuse.REUSE_OK_REASON,
+                      pr_number=PR_NUMBER, pr_head_sha=HEAD, pr_run_id=RUN_ID,
+                      tested_merge_sha=MERGE, tested_tree_sha=TREE,
+                      main_sha=MAIN, main_tree_sha=TREE)
+    )
+    assert v1 == (
+        "POST_MERGE_REUSE=true\n"
+        "reason=verified_full_pr_tree_equivalence\n"
+        f"pr_number={PR_NUMBER}\n"
+        f"pr_head_sha={HEAD}\n"
+        f"pr_run_id={RUN_ID}\n"
+        f"tested_merge_sha={MERGE}\n"
+        f"tested_tree_sha={TREE}\n"
+        f"main_sha={MAIN}\n"
+        f"main_tree_sha={TREE}\n"
+    )
+
+
+# -- 25-26. V1 production behavior unchanged (foundation is inert) -------
+
+
+def test_v2_foundation_does_not_change_v1_happy_path():
+    v = run_verifier()
+    assert v.reuse is True
+    assert marker_of(v) == "true"
+    assert v.reason == reuse.REUSE_OK_REASON
+
+
+def test_v2_foundation_does_not_change_v1_missing_job_behavior():
+    jobs = [j for j in make_all_jobs() if j["name"] != "package"]
+    v = run_verifier(api_kwargs={"jobs": jobs})
+    assert v.reuse is False
+    assert v.reason == "jobs_missing_surface"
+    assert marker_of(v) == "false"
