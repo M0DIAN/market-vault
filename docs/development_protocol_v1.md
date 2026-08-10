@@ -228,6 +228,98 @@ UI-only PR 至少应执行 UI validation + ArtifactClient public contract
 smoke，而不需要整个 Python core full suite。本 PR 只定义机制，不
 伪造 UI contract。
 
+### 4.8 Post-Merge Verified FULL Reuse（PR #61）
+
+**状态：PR #61 implemented**。实现为
+[scripts/ci_post_merge_reuse.py](../scripts/ci_post_merge_reuse.py)
+（stdlib-only、read-only、无 `shell=True` / `eval` / 任意命令构造、无
+repo/tag/ref mutation；纯验证核心与 GitHub REST adapter 分离、可离线
+测试；验证见 [tests/test_ci_post_merge_reuse.py](../tests/test_ci_post_merge_reuse.py)）
+与 [.github/workflows/ci.yml](../.github/workflows/ci.yml) 的 step 级
+gating。
+
+对 eligible 的 main push，如果新 main 树被证明与一个成功完成的 final PR
+FULL 运行 byte-for-byte Git-tree 等价，main CI 复用该验证证据并只跑轻量
+post-merge 闭合（checkout、分类、whitespace、repo hygiene、release
+checker、reuse marker）。任何 proof 缺失 / 歧义 / 过期 / 畸形 / 不可达
+/ 失败 → FAIL CLOSED TO NORMAL FULL CI。"Reuse failure" 永远不让 CI
+变弱。FASTER, SAME SAFETY。
+
+九个条件（全部必须证明，任何一条失败即拒绝复用）：
+
+1. 事件形状：`push` 事件、`refs/heads/main`、真实非零 `before`、真实
+   main SHA。
+2. Commit 拓扑：新 main commit 恰好一个 parent 且等于 `before`（单
+   commit squash push；拒绝多 commit push、merge-commit push、root）。
+3. 关联 PR：恰好一个 merged PR 关联到 exact 新 main commit
+   （`merge_commit_sha` == main SHA、`base.ref` == main、PR 记录的 base
+   SHA == `before`）；捕获 exact PR head SHA。
+4. 成功 exact-head PR CI：相同 workflow 的 completed + success
+   `pull_request` run，exact PR head SHA；queued / in_progress / failed /
+   cancelled / skipped / neutral / timed_out / action_required 一律拒绝。
+5. 所需 job：四个正式 surface（test (3.11)、test (3.14)、
+   portability-pyarrow24、package）全部 terminal SUCCESS——不缺失、不
+   重复、不额外、非成功即拒（job surface 变化而不更新契约 → fail
+   closed）。
+6. Attestation：attempt-bound artifact 由该 exact run/attempt 产出，
+   下载后严格 schema + 标识符交叉验证（repository、run_id、
+   run_attempt、pr_number、base_sha、head_sha、tier=full、
+   full_matrix_required=true 全部匹配已证明的上下文）。
+7. **TREE EQUIVALENCE（核心安全证明）**：`git rev-parse <main
+   sha>^{tree}` == attestation 的 `tested_tree_sha`。commit SHA 相等
+   不被期望（合成 merge commit 与 squash commit 身份必然不同）；tree
+   相等被要求——被测试内容的等价性。
+8. 控制面排除：即使 tree 等价，变更触及 CI / release 安全控制面
+   （`.github/workflows/**`、`scripts/ci_post_merge_reuse.py`、
+   `scripts/ci_risk_tier.py`、`scripts/audit_pr.py`、
+   `scripts/check_release.py`、`ci/components.toml`、
+   `tests/test_v061_ci_auditability.py`、
+   `tests/test_ci_post_merge_reuse.py` 及任何新的 attestation / gate
+   contract 文件）→ FULL。rename 的 old + new path 都计入；changed
+   paths 解析的未知错误 → FULL。
+9. 失败语义：任何失败 → `POST_MERGE_REUSE=false reason=<specific>`，
+   workflow 转 NORMAL FULL；verifier 失败本身不是 CI 失败；**没有任何
+   状态可以导致 proof 失败 + 跳过 FULL 测试**（回归测试固定该不变式；
+   `skip_heavy_validation` 只认字面 `"true"`）。
+
+**Attestation**：pull_request + tier=full + full-matrix-required 的
+package job 在全部 package 步骤成功之后创建 `ci_full_attestation.json`
+——确定性 JSON（稳定 key 顺序、UTF-8、newline 结尾）、严格 schema
+验证后才写出并上传为 attempt-bound artifact
+`market-vault-full-ci-attestation-<head_sha>-attempt-<attempt>`。
+attestation 只是证据，不取代 run/job conclusion 检查；缺失 attestation
+永远不能启用复用；attestation 创建失败会 fail package job。docs_fast /
+package_docs 不产出 attestation。
+
+**Workflow gating**：不新增正式 job（保持恰好 4 个 formal job 与
+`needs: [test, portability-pyarrow24]` 不变）。proof step 在
+`github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+env.CI_TIER == 'full'` 时运行 verifier 并把 `POST_MERGE_REUSE` /
+`POST_MERGE_REUSE_REASON` 通过 `$GITHUB_ENV` 导出；heavy step 的 guard
+追加字面 `&& env.POST_MERGE_REUSE != 'true'`——unset 时是空串，guard
+恒真，heavy validation 照常运行（fail-safe，与 §4.6 的 unknown tier
+规则同构）。reuse marker（`FULL_TESTS_REUSED_FROM_VERIFIED_PR` /
+`PACKAGE_VALIDATION_REUSED_FROM_VERIFIED_PR`）只在
+`== 'true'` 时出现且只 echo；`Run release checker` 依旧无条件执行。
+权限只读（`contents: read` / `pull-requests: read` / `actions: read`），
+无任何 write；token 只送 `api.github.com`，artifact CDN 跨主机重定向
+剥离 Authorization。`on:` 块无 paths / paths-ignore——复用 gate 绝不
+通过 workflow 级路径过滤被绕过。
+
+**控制面自排除**：本 PR 修改 CI 控制面（workflow + verifier + contract
+测试 + 文档），因此它自己的第一次 main push 不允许使用 reuse gate，仍
+要求完整 FULL；live reuse 路径只对后续普通 PR 生效。
+
+**协议流程**：修改 → 本地验证（LEVEL 1/2，见 playbook 第 2 节）→
+final-head push → final-head PR CI（tier 分层；tier=full 执行完整矩阵
+并产出 attestation）→ 等 CI terminal → CC final PR report →
+independent review → merge gate（final-head CI terminal SUCCESS +
+独立审查通过 + 明确 merge 授权）→ squash merge → main verification
+（**A — VERIFIED REUSE closure** | **B — NORMAL FULL fallback**）。
+CC 必须等 exact main SHA 的 CI terminal（无论闭合 A 还是 B）之后才能
+报告 COMPLETE；queued / waiting / pending / in_progress 一律不得报告
+COMPLETE。
+
 ## 5. 未来 wall-clock 目标
 
 这些是性能目标（performance targets），不是 correctness gates。未达到

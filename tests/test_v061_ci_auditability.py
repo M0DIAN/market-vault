@@ -23,6 +23,24 @@ document) and asserts the stable invariants of the PR-3 audit chain:
 
 This is a repository/workflow regression test, not product code. It never
 makes an internet request.
+
+PR #61 additionally pins the post-merge FULL reuse gate contract:
+
+- the read-only workflow ``permissions`` block and the absence of any
+  workflow-level ``paths`` / ``paths-ignore`` filtering (the reuse gate
+  must never be bypassed via ``on:`` path filters);
+- every job runs the ``Post-merge FULL reuse proof`` step (main-push + full
+  tier only) with a fail-closed crash fallback, and every heavy validation
+  step's guard contains the literal ``env.POST_MERGE_REUSE != 'true'``
+  exclusion — an unset ``POST_MERGE_REUSE`` is the empty string, so heavy
+  validation always runs unless reuse is PROVEN;
+- the verified-reuse markers (``FULL_TESTS_REUSED_FROM_VERIFIED_PR`` /
+  ``PACKAGE_VALIDATION_REUSED_FROM_VERIFIED_PR``) exist only behind
+  ``env.POST_MERGE_REUSE == 'true'`` and only echo — they never gate any
+  validation, and "skipped by policy" markers are never on the reuse path;
+- the PR FULL attestation create + upload steps exist in the package job
+  with a pull_request-only ``tier == 'full'`` guard and the attempt-bound
+  artifact name contract.
 """
 
 from __future__ import annotations
@@ -304,3 +322,170 @@ def test_audit_doc_describes_source_sha_resolution():
     assert "github.sha" in text
     assert "synthetic merge-ref" in text
     assert "market-vault-package-<source_sha>-attempt-<attempt>" in text
+
+
+# ---------------------------------------------------------------------------
+# Post-merge FULL reuse gate (PR #61).
+# ---------------------------------------------------------------------------
+
+
+def _steps(text: str) -> list[tuple[str, str]]:
+    """(name, region) for every step of every formal job."""
+    out = []
+    for job in ("test", "portability-pyarrow24", "package"):
+        block = _job_block(text, job)
+        names = _step_names(block)
+        for i, name in enumerate(names):
+            end = f"- name: {names[i + 1]}" if i + 1 < len(names) else None
+            out.append((name, _region(block, f"- name: {name}", end)))
+    return out
+
+
+def test_workflow_permissions_are_read_only():
+    block = _region(ci_text(), "permissions:", "on:")
+    assert "contents: read" in block
+    assert "pull-requests: read" in block
+    assert "actions: read" in block
+    assert "write" not in block
+
+
+def test_no_workflow_level_path_filtering():
+    """The reuse gate must never be bypassed via workflow-level path
+    filtering: the ``on:`` block has no paths / paths-ignore."""
+    on_region = _region(ci_text(), "on:", "jobs:")
+    assert "paths:" not in on_region
+    assert "paths-ignore:" not in on_region
+
+
+def test_reuse_proof_step_present_in_all_three_jobs():
+    for job in ("test", "portability-pyarrow24", "package"):
+        block = _job_block(ci_text(), job)
+        assert "Post-merge FULL reuse proof" in block
+        assert "python scripts/ci_post_merge_reuse.py" in block
+        assert "github.event_name == 'push'" in block
+        assert "github.ref == 'refs/heads/main'" in block
+        assert "env.CI_TIER == 'full'" in block
+        assert "POST_MERGE_REUSE=" in block
+
+
+def test_reuse_proof_step_fail_closes_on_verifier_crash():
+    """A verifier crash must fail-closed: marker=false with a specific
+    reason, never a skip of heavy validation."""
+    for job in ("test", "portability-pyarrow24", "package"):
+        block = _job_block(ci_text(), job)
+        assert "verifier_crash_fail_closed" in block
+        assert "marker=false" in block
+
+
+def test_classify_exports_full_matrix_required_in_every_job():
+    for job in ("test", "portability-pyarrow24", "package"):
+        block = _job_block(ci_text(), job)
+        assert "full_matrix_required" in block
+        assert "CI_FULL_MATRIX_REQUIRED=" in block
+
+
+def test_heavy_steps_never_skip_without_verified_proof():
+    """Every heavy validation step's guard must contain the literal
+    ``env.POST_MERGE_REUSE != 'true'`` exclusion: an unset POST_MERGE_REUSE
+    is the empty string, so the guard is true and heavy validation runs
+    (fail-safe)."""
+    per_job = {
+        "test": (
+            "Install dependencies",
+            "Compile Python",
+            "Run offline tests",
+        ),
+        "portability-pyarrow24": (
+            "Install dependencies",
+            "Pin the audited PyArrow 24.0.0 compatibility runtime",
+            "Assert the audited PyArrow compatibility version",
+            "Run audited PyArrow 24 compatibility tests",
+            "Run the canonical reader and frozen regression surface",
+            "Run full offline suite under PyArrow 24.0.0",
+        ),
+        "package": (
+            "Install build tooling",
+            "Example renderer help smoke",
+            "PR-5 verified client example help smoke",
+            "Build wheel and sdist",
+            "Confirm exactly one wheel and one sdist",
+            "Install wheel in a fresh virtual environment",
+            "Fresh-wheel public API smoke check",
+            "Check wheel contents exclude local data",
+            "Build package SHA256 manifest",
+            "Verify package SHA256 manifest",
+            "Upload package audit artifact",
+            "Confirm package audit artifact metadata",
+        ),
+    }
+    text = ci_text()
+    for job, names in per_job.items():
+        for name, region in _steps(text):
+            if name in names and _job_block(text, job).count(f"- name: {name}") == 1:
+                assert "env.POST_MERGE_REUSE != 'true'" in region, (job, name)
+
+
+def test_reuse_true_guard_appears_only_on_echo_only_marker_steps():
+    """``POST_MERGE_REUSE == 'true'`` may only gate the verified-reuse
+    marker steps, and those steps only echo — they never run or gate any
+    validation."""
+    for name, region in _steps(ci_text()):
+        if "env.POST_MERGE_REUSE == 'true'" in region:
+            assert name in (
+                "FULL tests reused from verified PR",
+                "Package validation reused from verified PR",
+            ), name
+            assert "echo" in region
+            assert "python -m pytest" not in region
+            assert "pip " not in region
+            assert "python -m build" not in region
+            assert "python scripts/check_release.py" not in region
+
+
+def test_reuse_markers_present_with_exact_names():
+    text = ci_text()
+    assert text.count("FULL_TESTS_REUSED_FROM_VERIFIED_PR") == 2
+    assert text.count("PACKAGE_VALIDATION_REUSED_FROM_VERIFIED_PR") == 1
+
+
+def test_skipped_by_policy_never_claimed_on_reuse_path():
+    """The fast-tier markers keep their exact old guards; they are never on
+    the verified-reuse path."""
+    for name, region in _steps(ci_text()):
+        if "SKIPPED_BY_POLICY" in region:
+            assert "env.CI_TIER == 'docs_fast'" in region
+            assert "POST_MERGE_REUSE" not in region
+
+
+def test_attestation_steps_present_with_pr_only_full_guard():
+    block = _job_block(ci_text(), "package")
+    assert "Create FULL CI attestation" in block
+    assert "Upload FULL CI attestation artifact" in block
+    assert "python scripts/ci_post_merge_reuse.py --create-attestation ci_full_attestation.json" in block
+    assert "github.event_name == 'pull_request'" in block
+    assert "env.CI_TIER == 'full'" in block
+    assert "env.CI_FULL_MATRIX_REQUIRED == 'true'" in block
+    assert "actions/upload-artifact@v7" in block
+    assert "if-no-files-found: error" in block
+    assert "retention-days: 30" in block
+    assert "overwrite: false" in block
+
+
+def test_attestation_artifact_name_binds_pr_head_and_attempt():
+    block = _job_block(ci_text(), "package")
+    assert (
+        "market-vault-full-ci-attestation-${{ github.event.pull_request.head.sha }}"
+        "-attempt-${{ github.run_attempt }}"
+    ) in block
+
+
+def test_attestation_never_created_on_non_full_tier():
+    """The attestation create step is gated on tier == full (and the
+    exported full-matrix-required flag): docs_fast / package_docs /
+    unset-tier runs produce no attestation, so no evidence can be minted
+    from a run that did not really execute the FULL matrix."""
+    for name, region in _steps(ci_text()):
+        if name == "Create FULL CI attestation":
+            assert "env.CI_TIER == 'full'" in region
+            assert "env.CI_FULL_MATRIX_REQUIRED == 'true'" in region
+            assert "github.event_name == 'pull_request'" in region
