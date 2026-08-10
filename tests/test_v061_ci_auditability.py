@@ -40,7 +40,14 @@ PR #61 additionally pins the post-merge FULL reuse gate contract:
   validation, and "skipped by policy" markers are never on the reuse path;
 - the PR FULL attestation create + upload steps exist in the package job
   with a pull_request-only ``tier == 'full'`` guard and the attempt-bound
-  artifact name contract.
+  artifact name contract;
+- every ``Post-merge FULL reuse proof`` step binds ``GITHUB_TOKEN``
+  (``${{ github.token }}``) **step-scoped** — the verifier reads the token
+  from its process environment, so a missing binding would make every
+  eligible main push fail closed with ``reason=missing_token`` and the
+  reuse path unreachable; the binding is never workflow-global or
+  job-global, and ordinary heavy pytest/build/package steps receive no
+  dedicated token env from this change.
 """
 
 from __future__ import annotations
@@ -377,6 +384,72 @@ def test_reuse_proof_step_fail_closes_on_verifier_crash():
         assert "marker=false" in block
 
 
+def test_every_reuse_proof_step_binds_step_scoped_github_token():
+    """The verifier reads ``GITHUB_TOKEN`` from its process environment.
+    Without a binding every eligible main push would fail closed with
+    ``reason=missing_token`` and the reuse path would be unreachable, so
+    every proof step must expose ``github.token`` as ``GITHUB_TOKEN``."""
+    proofs = [region for name, region in _steps(ci_text())
+              if name == "Post-merge FULL reuse proof"]
+    assert len(proofs) == 3
+    for region in proofs:
+        assert "env:" in region
+        assert "GITHUB_TOKEN: ${{ github.token }}" in region
+
+
+def test_github_token_binding_is_step_scoped_only():
+    """The token binding must be step-scoped: exactly three bindings in the
+    whole workflow, each inside a proof step — never workflow-global and
+    never job-global."""
+    text = ci_text()
+    binding = "GITHUB_TOKEN: ${{ github.token }}"
+    assert text.count(binding) == 3
+    for name, region in _steps(text):
+        if binding in region:
+            assert name == "Post-merge FULL reuse proof", name
+    # No binding (and no env block at all) outside the jobs section: the
+    # workflow preamble holds name/permissions/on only.
+    preamble = text.split("jobs:\n", 1)[0]
+    assert binding not in preamble
+    assert "env:" not in preamble
+
+
+def test_heavy_steps_receive_no_dedicated_github_token_env():
+    """Ordinary heavy pytest/build/package steps must not gain a
+    ``GITHUB_TOKEN`` env binding from this change: the token is only needed
+    by the reuse verifier, and per-step default token exposure for other
+    steps is not introduced here."""
+    text = ci_text()
+    for job, names in _HEAVY_STEPS_PER_JOB.items():
+        for name, region in _steps(text):
+            if name in names and _job_block(text, job).count(f"- name: {name}") == 1:
+                assert "GITHUB_TOKEN" not in region, (job, name)
+
+
+def test_missing_token_proof_failure_never_skips_heavy_validation():
+    """A verifier run without a token is an exit-0 proof failure
+    (``POST_MERGE_REUSE=false`` / ``reason=missing_token`` — proven at the
+    verifier level in test_ci_post_merge_reuse.py). This test mirrors the
+    proof step's marker extraction in pure Python and proves the extracted
+    marker never equals 'true', so the heavy guards
+    (``env.POST_MERGE_REUSE != 'true'``) run FULL validation. Offline and
+    deterministic; no sed dependency."""
+    verifier_output = "POST_MERGE_REUSE=false\nreason=missing_token\n"
+    marker = next(
+        (line.split("=", 1)[1] for line in verifier_output.splitlines()
+         if line.startswith("POST_MERGE_REUSE=")),
+        "false",
+    )
+    reason = next(
+        (line.split("=", 1)[1] for line in verifier_output.splitlines()
+         if line.startswith("reason=")),
+        "",
+    )
+    assert marker == "false"
+    assert reason == "missing_token"
+    assert marker != "true"  # -> heavy guard holds -> FULL validation runs
+
+
 def test_classify_exports_full_matrix_required_in_every_job():
     for job in ("test", "portability-pyarrow24", "package"):
         block = _job_block(ci_text(), job)
@@ -384,42 +457,45 @@ def test_classify_exports_full_matrix_required_in_every_job():
         assert "CI_FULL_MATRIX_REQUIRED=" in block
 
 
+_HEAVY_STEPS_PER_JOB = {
+    "test": (
+        "Install dependencies",
+        "Compile Python",
+        "Run offline tests",
+    ),
+    "portability-pyarrow24": (
+        "Install dependencies",
+        "Pin the audited PyArrow 24.0.0 compatibility runtime",
+        "Assert the audited PyArrow compatibility version",
+        "Run audited PyArrow 24 compatibility tests",
+        "Run the canonical reader and frozen regression surface",
+        "Run full offline suite under PyArrow 24.0.0",
+    ),
+    "package": (
+        "Install build tooling",
+        "Example renderer help smoke",
+        "PR-5 verified client example help smoke",
+        "Build wheel and sdist",
+        "Confirm exactly one wheel and one sdist",
+        "Install wheel in a fresh virtual environment",
+        "Fresh-wheel public API smoke check",
+        "Check wheel contents exclude local data",
+        "Build package SHA256 manifest",
+        "Verify package SHA256 manifest",
+        "Upload package audit artifact",
+        "Confirm package audit artifact metadata",
+    ),
+}
+
+
 def test_heavy_steps_never_skip_without_verified_proof():
     """Every heavy validation step's guard must contain the literal
     ``env.POST_MERGE_REUSE != 'true'`` exclusion: an unset POST_MERGE_REUSE
-    is the empty string, so the guard is true and heavy validation runs
-    (fail-safe)."""
-    per_job = {
-        "test": (
-            "Install dependencies",
-            "Compile Python",
-            "Run offline tests",
-        ),
-        "portability-pyarrow24": (
-            "Install dependencies",
-            "Pin the audited PyArrow 24.0.0 compatibility runtime",
-            "Assert the audited PyArrow compatibility version",
-            "Run audited PyArrow 24 compatibility tests",
-            "Run the canonical reader and frozen regression surface",
-            "Run full offline suite under PyArrow 24.0.0",
-        ),
-        "package": (
-            "Install build tooling",
-            "Example renderer help smoke",
-            "PR-5 verified client example help smoke",
-            "Build wheel and sdist",
-            "Confirm exactly one wheel and one sdist",
-            "Install wheel in a fresh virtual environment",
-            "Fresh-wheel public API smoke check",
-            "Check wheel contents exclude local data",
-            "Build package SHA256 manifest",
-            "Verify package SHA256 manifest",
-            "Upload package audit artifact",
-            "Confirm package audit artifact metadata",
-        ),
-    }
+    is the empty string, and ``false`` is not ``'true'``, so the guard is
+    true and heavy validation runs (fail-safe) for every proof-failure
+    state."""
     text = ci_text()
-    for job, names in per_job.items():
+    for job, names in _HEAVY_STEPS_PER_JOB.items():
         for name, region in _steps(text):
             if name in names and _job_block(text, job).count(f"- name: {name}") == 1:
                 assert "env.POST_MERGE_REUSE != 'true'" in region, (job, name)

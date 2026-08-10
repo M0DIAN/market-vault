@@ -91,6 +91,14 @@ jobs:
       # printed. "Reuse" is never claimed without verified proof.
       - name: Post-merge FULL reuse proof
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.CI_TIER == 'full'
+        # The verifier reads GITHUB_TOKEN from its process environment to
+        # query the GitHub API (read-only). Without this step-scoped
+        # binding every eligible main push would fail closed with
+        # reason=missing_token and the reuse path would be unreachable.
+        # The binding is deliberately step-scoped: it must not be
+        # workflow-global or job-global.
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           if python scripts/ci_post_merge_reuse.py > post_merge_reuse.txt; then
@@ -203,6 +211,14 @@ jobs:
 
       - name: Post-merge FULL reuse proof
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.CI_TIER == 'full'
+        # The verifier reads GITHUB_TOKEN from its process environment to
+        # query the GitHub API (read-only). Without this step-scoped
+        # binding every eligible main push would fail closed with
+        # reason=missing_token and the reuse path would be unreachable.
+        # The binding is deliberately step-scoped: it must not be
+        # workflow-global or job-global.
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           if python scripts/ci_post_merge_reuse.py > post_merge_reuse.txt; then
@@ -322,6 +338,14 @@ jobs:
 
       - name: Post-merge FULL reuse proof
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.CI_TIER == 'full'
+        # The verifier reads GITHUB_TOKEN from its process environment to
+        # query the GitHub API (read-only). Without this step-scoped
+        # binding every eligible main push would fail closed with
+        # reason=missing_token and the reuse path would be unreachable.
+        # The binding is deliberately step-scoped: it must not be
+        # workflow-global or job-global.
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           if python scripts/ci_post_merge_reuse.py > post_merge_reuse.txt; then
