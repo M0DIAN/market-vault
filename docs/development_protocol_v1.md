@@ -171,6 +171,63 @@ records）；docs 变更不得绕过优化前已存在的该检查。
 快路径的首次实测 wall-clock 在后续合法的 docs/policy-only PR 上记录，
 不在本实现 PR 上声称达标。
 
+### 4.7 Component-Aware Impact Classification（Foundation）
+
+**状态：Phase 1 path-tier 已完成；本层为 component-aware impact
+classification foundation（DP4 implemented）**。实现为
+[ci/components.toml](../ci/components.toml)（组件注册表，read-only、
+fail-closed）与 [scripts/ci_risk_tier.py](../scripts/ci_risk_tier.py)
+的组件 impact 输出（稳定格式：`components=` / `core_changed=` /
+`package_changed=` / `unknown_changed=` / `shared_changed=` /
+`independent_only=` / `full_matrix_required=`）。
+
+本层只建立安全扩展机制，不改变任何 tier：
+
+- 保留 docs_fast / package_docs / full 三 tier；不新增正式 job。
+- 注册表登记 `[components.core]`（`src/market_vault/`，
+  `requires_core_full = true`）与 `[components.package]`
+  （`pyproject.toml`、`README.md`，`requires_package = true`）。
+- 控制面变更恒 FULL：`.github/workflows/**`、`scripts/ci_risk_tier.py`、
+  `scripts/audit_pr.py`、`ci/components.toml`（registry 本身）、
+  `pyproject.toml`（package schema）——future rule 条件 4。
+- 未知路径恒 FULL（`changed_path_not_in_docs_scope`）。
+- invalid registry / invalid ref fail closed（exit 2；
+  `invalid_registry_fail_closed` / `classifier_error_fail_closed`）。
+- CI 侧只在 `Classify change tier` step 导出 `CI_COMPONENTS`
+  （`$GITHUB_ENV`）；不新增 job、不改 heavy-step guard、不启用任何
+  skip。
+
+**FUTURE RULE（已记录，未激活）**：以后只有当一个组件同时满足
+（1）path 已显式注册、（2）有明确 component validation（未来注册表
+扩展）、（3）不修改 core/shared contract、（4）不修改 package /
+workflow / shared schema、（5）classifier 能确定影响范围——才允许
+跳过旧 core full matrix。不能仅因为"路径不是 src/market_vault"就
+自动认为安全。
+
+**语义（foundation 阶段）**：`independent_only=` 只是 eligibility /
+impact 信息——changed paths 结构性隔离于已注册的非 core / 非
+package / 非 shared 组件——本身并不授权跳过 core full matrix。
+`full_matrix_required=` 反映**当前 active 的 validation 策略**：
+仅 docs_fast / package_docs 为 false，其余（core、unknown、
+shared、以及无 validation 契约的 registered independent component）
+恒为 true（与 tier 严格一致，杜绝
+`component_without_validation_requires_full` 与
+`full_matrix_required=false` 同时出现的矛盾状态）。只有未来 PR 落地
+显式的 component-validation 契约后，才可能对该组件出现
+`independent_only=true` 且 `full_matrix_required=false`。在注册表
+声明 validation 之前，任何 registered-component-only 变更仍
+classify FULL（`component_without_validation_requires_full`）。
+
+**NO LIVE UI TIER YET**：本 PR 不得因为未来可能存在 `ui/` 就让
+`ui/**` 进入 fast path。UI fast path 只有在真正创建 UI component
+并同时定义它自己的 CI validation 时才启用；本 PR 不登记不存在的
+ui component。
+
+**SHARED CONTRACT（预留概念）**：未来 UI 若依赖 ArtifactClient，
+UI-only PR 至少应执行 UI validation + ArtifactClient public contract
+smoke，而不需要整个 Python core full suite。本 PR 只定义机制，不
+伪造 UI contract。
+
 ## 5. 未来 wall-clock 目标
 
 这些是性能目标（performance targets），不是 correctness gates。未达到

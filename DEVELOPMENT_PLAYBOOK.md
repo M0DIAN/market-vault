@@ -149,6 +149,26 @@ final-head CI 按 changed paths 分层（CI Risk-Tier Optimization Phase 1，
 分类由 [scripts/ci_risk_tier.py](scripts/ci_risk_tier.py) 完成
 （read-only、fail-closed）。
 
+分类是分层的：Phase 1 path-tier（docs_fast / package_docs / full）
+已完成；下一层是 component-aware impact classification
+（[docs/development_protocol_v1.md](docs/development_protocol_v1.md)
+第 4.7 节）。组件注册表 [ci/components.toml](ci/components.toml)
+登记组件路径面，分类器额外输出组件 impact（`components=` /
+`core_changed=` / `package_changed=` / `unknown_changed=` /
+`shared_changed=` / `independent_only=` / `full_matrix_required=`）。
+独立组件未来可避免无关 core CI，但 unknown / shared（workflow、
+classifier、registry、package schema）变更必须 FULL。当前没有任何
+组件可跳过验证：core 组件 `requires_core_full`，package 路径由
+package job 覆盖，控制面变更恒 FULL。`independent_only=` 只是
+eligibility / impact 信息（changed paths 结构性隔离于已注册的非
+core / 非 package / 非 shared 组件），本身并不授权跳过 core full
+matrix；`full_matrix_required=` 反映当前 active 的 validation 策略
+——仅 docs_fast / package_docs 为 false，其余（core、unknown、
+shared、以及无 validation 契约的 registered independent component）
+恒为 true。只有未来 PR 落地显式的 component-validation 契约后，才
+可能对该组件出现 `independent_only=true` 且
+`full_matrix_required=false`。
+
 ## 3. 何时不要求本地完整 pytest
 
 当权威的 final-head CI 会执行完整矩阵时，每次小修改后并不是默认要求本地
