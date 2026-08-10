@@ -81,11 +81,11 @@ All four formal jobs SUCCESS.
 | Job | Whole s | Detail |
 |---|---|---|
 | test (3.11) | 283 | conservative subset: **808 passed, 40.28s pytest, 40s step wall** · FULL offline: 3753 passed / 7 skipped, 216.65s pytest |
-| test (3.14) | 273 | FULL offline: 3753 passed / 7 skipped, 291.15s pytest |
+| test (3.14) | 333 | FULL offline: 3753 passed / 7 skipped, 291.15s pytest |
 | portability-pyarrow24 | 127 | A: 10 passed / 0.86s · B: 3 passed / 1.11s + 178 passed / 43.62s · C: 706 passed / 5 skipped / 45.27s (exact six-file surface, 711 collected) |
 | package | 60 | release checker `RELEASE_CHECK_OK version=0.7.0` · built `market_vault-0.7.0.tar.gz` + `market_vault-0.7.0-py3-none-any.whl` · SHA256SUMS verification OK · V061_PACKAGE_AUDIT_OK |
 
-Runner total **743s** · workflow wall **406s**.
+Runner total **803s** · workflow wall **406s**.
 V1 attestation artifact created (CI-only, 451 B):
 `market-vault-full-ci-attestation-1a2d8cb…-attempt-1`.
 Package artifact CI-only: `market-vault-package-1a2d8cb…-attempt-1`.
