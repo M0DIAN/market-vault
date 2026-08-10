@@ -4246,67 +4246,88 @@ def check_v061_ci_package_audit(root: Path) -> list[str]:
     return failures
 
 
+# Module-level registry of every production check, in canonical order. Both
+# the CLI entry point (collect_failures / main) and the mutation-test
+# harness in tests/test_release_v061.py consume this single registry, so a
+# targeted test can invoke the smallest exact check responsible for an
+# invariant without paying for a full checker subprocess run. Removing a
+# production check from this registry (or reordering or relabeling one)
+# must fail the focused registry-pinning regression tests.
+CHECKS = (
+    ("pyproject version", check_pyproject_version),
+    ("package __version__", check_package_version),
+    ("README title", check_readme_title),
+    ("CHANGELOG entry", check_changelog),
+    ("README wording", check_readme_no_stale_wording),
+    ("README maintenance section", check_readme_maintenance_section),
+    ("README v0.6.1 section", check_readme_v061_section),
+    ("direction status", check_direction_status),
+    ("release notes", check_release_notes),
+    ("v0.5.1 release notes", check_v051_release_notes),
+    ("v0.6.0 release notes", check_v060_release_notes),
+    ("v0.5.1 direction", check_v051_direction),
+    ("v0.6.0 direction", check_v060_direction),
+    ("v0.6.1 direction", check_v061_direction),
+    ("v0.6.1 release notes", check_v061_release_notes),
+    ("v0.6.1 CLI usability audit", check_v061_cli_usability_audit),
+    ("v0.7.0 release notes", check_v070_release_notes),
+    ("v0.7.0 direction", check_v070_direction),
+    ("v0.7.0 Python client contract", check_v070_python_client_contract),
+    ("v0.7.0 Python API audit", check_v070_python_api_audit),
+    ("v0.7.0 ArtifactClient foundation", check_v070_artifact_client_foundation),
+    ("v0.7.0 ArtifactClient readers", check_v070_artifact_client_readers),
+    ("v0.7.0 ArtifactClient catalog", check_v070_artifact_client_catalog),
+    ("v0.7.0 Python client usage doc", check_v070_python_client_usage_doc),
+    ("v0.7.0 Python client examples", check_v070_python_client_examples),
+    ("CI auditability", check_ci_auditability),
+    ("v0.6.1 CI package audit", check_v061_ci_package_audit),
+    ("v0.6.0 ADR", check_v060_adr),
+    ("sample generation modules", check_sample_generation_modules),
+    ("sample generation contract", check_sample_generation_contract),
+    ("sample generator core", check_sample_generation_core),
+    ("sample generation cli", check_sample_generation_cli),
+    ("dataset catalog contract", check_dataset_catalog_contract),
+    ("dataset catalog", check_dataset_catalog),
+    ("dataset catalog pr6", check_dataset_catalog_pr6),
+    ("dataset catalog cli", check_dataset_catalog_cli),
+    ("v0.6.0 acceptance", check_v060_acceptance),
+    ("v0.6.0 frozen fixture", check_v060_frozen_fixture),
+    ("pyarrow dependency", check_pyarrow_dependency),
+    ("CI PR-8 portability", check_ci_pr8),
+    ("CI v0.7.0 released state", check_ci_v070_released_state),
+    ("CI v0.7.0 public API smoke", check_ci_v070_public_api_smoke),
+    ("old release notes", check_old_release_notes),
+    ("warning guard", check_warning_guard),
+    ("examples", check_examples),
+    ("README upgrade notes", check_readme_upgrade_sections),
+    ("README dataset builder", check_readme_dataset_builder_section),
+    ("README explicit plan", check_readme_explicit_build_plan),
+    ("README adjustment boundary", check_readme_adjustment_none),
+    ("README dataset boundaries", check_readme_dataset_boundaries),
+    ("CI version assertions", check_ci_version_assertions),
+    ("build artifacts untracked", check_build_artifacts_untracked),
+    ("PEP 440 version", check_pep440),
+    ("CLI version output", check_cli_version),
+)
+
+
+def collect_failures(root: Path) -> list[str]:
+    """Run every registered check against root and aggregate failures.
+
+    Failures come back in registry order and ALL of them are reported (no
+    fail-fast): a broken release surfaces every problem in one run. This is
+    the single production aggregation path used by the CLI and exercised
+    directly by the mutation-test harness.
+    """
+    failures: list[str] = []
+    for label, check in CHECKS:
+        failures.extend(check(root))
+    return failures
+
+
 def main() -> int:
     root = Path(__file__).resolve().parents[1]
-    checks = [
-        ("pyproject version", check_pyproject_version),
-        ("package __version__", check_package_version),
-        ("README title", check_readme_title),
-        ("CHANGELOG entry", check_changelog),
-        ("README wording", check_readme_no_stale_wording),
-        ("README maintenance section", check_readme_maintenance_section),
-        ("README v0.6.1 section", check_readme_v061_section),
-        ("direction status", check_direction_status),
-        ("release notes", check_release_notes),
-        ("v0.5.1 release notes", check_v051_release_notes),
-        ("v0.6.0 release notes", check_v060_release_notes),
-        ("v0.5.1 direction", check_v051_direction),
-        ("v0.6.0 direction", check_v060_direction),
-        ("v0.6.1 direction", check_v061_direction),
-        ("v0.6.1 release notes", check_v061_release_notes),
-        ("v0.6.1 CLI usability audit", check_v061_cli_usability_audit),
-        ("v0.7.0 release notes", check_v070_release_notes),
-        ("v0.7.0 direction", check_v070_direction),
-        ("v0.7.0 Python client contract", check_v070_python_client_contract),
-        ("v0.7.0 Python API audit", check_v070_python_api_audit),
-        ("v0.7.0 ArtifactClient foundation", check_v070_artifact_client_foundation),
-        ("v0.7.0 ArtifactClient readers", check_v070_artifact_client_readers),
-        ("v0.7.0 ArtifactClient catalog", check_v070_artifact_client_catalog),
-        ("v0.7.0 Python client usage doc", check_v070_python_client_usage_doc),
-        ("v0.7.0 Python client examples", check_v070_python_client_examples),
-        ("CI auditability", check_ci_auditability),
-        ("v0.6.1 CI package audit", check_v061_ci_package_audit),
-        ("v0.6.0 ADR", check_v060_adr),
-        ("sample generation modules", check_sample_generation_modules),
-        ("sample generation contract", check_sample_generation_contract),
-        ("sample generator core", check_sample_generation_core),
-        ("sample generation cli", check_sample_generation_cli),
-        ("dataset catalog contract", check_dataset_catalog_contract),
-        ("dataset catalog", check_dataset_catalog),
-        ("dataset catalog pr6", check_dataset_catalog_pr6),
-        ("dataset catalog cli", check_dataset_catalog_cli),
-        ("v0.6.0 acceptance", check_v060_acceptance),
-        ("v0.6.0 frozen fixture", check_v060_frozen_fixture),
-        ("pyarrow dependency", check_pyarrow_dependency),
-        ("CI PR-8 portability", check_ci_pr8),
-        ("CI v0.7.0 released state", check_ci_v070_released_state),
-        ("CI v0.7.0 public API smoke", check_ci_v070_public_api_smoke),
-        ("old release notes", check_old_release_notes),
-        ("warning guard", check_warning_guard),
-        ("examples", check_examples),
-        ("README upgrade notes", check_readme_upgrade_sections),
-        ("README dataset builder", check_readme_dataset_builder_section),
-        ("README explicit plan", check_readme_explicit_build_plan),
-        ("README adjustment boundary", check_readme_adjustment_none),
-        ("README dataset boundaries", check_readme_dataset_boundaries),
-        ("CI version assertions", check_ci_version_assertions),
-        ("build artifacts untracked", check_build_artifacts_untracked),
-        ("PEP 440 version", check_pep440),
-        ("CLI version output", check_cli_version),
-    ]
-    failures: list[str] = []
-    for label, check in checks:
-        failures.extend(check(root))
+    failures = collect_failures(root)
     if failures:
         print("RELEASE_CHECK_FAILED")
         for failure in failures:
