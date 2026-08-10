@@ -173,7 +173,8 @@ def test_pyproject_change_full(tmp_path):
 
 
 def test_ci_workflow_only_control_plane(tmp_path):
-    """ci.yml alone is control_plane, a validated subset with no full matrix."""
+    """A ci.yml-only change classifies control_plane: a validated subset
+    that never requires the full matrix."""
     repo = make_repo(tmp_path)
     write_file(repo, ".github/workflows/ci.yml")
     base = commit_all(repo, "base")
