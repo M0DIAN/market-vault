@@ -141,14 +141,15 @@ jobs:
       # control-plane validation surface runtime. Removed before merge.
       - name: Measure conservative control-plane subset
         if: matrix.python-version == '3.11' && env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.POST_MERGE_REUSE != 'true'
-        run: python -m pytest \
-          tests/test_ci_risk_tier.py \
-          tests/test_component_aware_tiers.py \
-          tests/test_ci_post_merge_reuse.py \
-          tests/test_audit_pr.py \
-          tests/test_v061_ci_auditability.py \
-          tests/test_release_v061.py \
-          -q --durations=100
+        run: |
+          python -m pytest \
+            tests/test_ci_risk_tier.py \
+            tests/test_component_aware_tiers.py \
+            tests/test_ci_post_merge_reuse.py \
+            tests/test_audit_pr.py \
+            tests/test_v061_ci_auditability.py \
+            tests/test_release_v061.py \
+            -q --durations=100
 
       - name: Run offline tests
         if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.POST_MERGE_REUSE != 'true'
