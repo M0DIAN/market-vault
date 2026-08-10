@@ -63,6 +63,16 @@ PR 会为 exact final head SHA 触发 GitHub Actions。final head 的权威验�
 CI（见 2.3）。CI 未到达 terminal 状态前不得报告完成——见
 [AGENT_HANDOFF.md](AGENT_HANDOFF.md) 的 CI-wait 报告规则。
 
+PR 验证按第 2 节的 tier 分层。tier=full 的 PR（含任何 CI 控制面变更、
+`src/**`、`tests/**`、`scripts/**` 变更）执行完整矩阵：Python 3.11 /
+3.14 全量离线套件、PyArrow 24 可移植性 gate、package build /
+fresh-wheel / SHA256 closure。tier=full 且 full-matrix-required 的 PR
+运行在 package job 全部成功后会产出 **FULL CI attestation** artifact
+（`market-vault-full-ci-attestation-<head_sha>-attempt-<attempt>`，
+确定性 JSON，记录被测试的 exact merge commit tree SHA），作为后续
+post-merge 复用验证的证据；docs_fast / package_docs 的 PR 不产出
+attestation。attestation 只是证据，不取代任何 run/job conclusion 检查。
+
 ### 1.8 独立审查（Independent Review）
 
 由独立审查者——人类或独立的审查进程，绝不能是撰写该工作的 agent——审查
@@ -84,6 +94,25 @@ STOP BEFORE MERGE，除非获得明确授权。
 merge 后，push 到 `main` 会为 merge commit 触发 main CI。main CI 是权威的
 post-merge 验证。报告 COMPLETE 的任务必须先等 exact merge/main commit 的
 CI 到达 terminal 状态（与 1.7 相同规则）。
+
+main verification 有两种闭合路径（Post-Merge Verified FULL Reuse，
+[scripts/ci_post_merge_reuse.py](scripts/ci_post_merge_reuse.py)，
+详见 [docs/development_protocol_v1.md](docs/development_protocol_v1.md)
+第 4.8 节）：
+
+- **A — VERIFIED REUSE closure**：当新 main 树被证明与一个成功完成的
+  final PR FULL 运行 Git-tree 等价（verifier 全部条件成立，
+  `POST_MERGE_REUSE=true`），main CI 复用该验证证据并只跑轻量 post-merge
+  闭合（分类、whitespace、repo hygiene、release checker、reuse marker）。
+  复用要求树等价，**不要求 commit SHA 相等**（squash commit 与合成 merge
+  commit 身份必然不同；tree 相等才是被测试内容的等价性）。
+- **B — NORMAL FULL fallback**：任何证据缺失 / 歧义 / 过期 / 畸形 /
+  不可达 / 失败，或变更触及 CI 控制面（workflow、classifier、release
+  checker、audit、registry、gate contract 文件），main CI 退化为正常
+  完整 FULL 验证。
+
+**Reuse failure 永远不是 CI 失败，也永远不会跳过验证（fail-closed）**。
+控制面变更的 main push 恒走 FULL（本 PR 自己的第一次 main push 即如此）。
 
 ## 2. 本地验证层级
 
@@ -131,6 +160,10 @@ GitHub / network），是 scope audit 的机械部分；independent review 仍�
   build / fresh-wheel / SHA256 closure job。
 - merge 前（适用时）的权威验证。完整矩阵的权威从来不在本地机器，而是
   GitHub final-head CI。
+- post-merge 的权威验证是 main CI：tier=full 的 main push 先运行
+  post-merge reuse proof——证明成功则复用已验证的 PR FULL 证据（闭合
+  A），证明失败则执行正常完整 FULL 验证（闭合 B）。两条路径都必须
+  terminal 之后才允许报告 COMPLETE（见 1.10）。
 
 final-head CI 按 changed paths 分层（CI Risk-Tier Optimization Phase 1，
 详见 [docs/development_protocol_v1.md](docs/development_protocol_v1.md)
