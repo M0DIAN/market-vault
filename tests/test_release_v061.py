@@ -7462,7 +7462,8 @@ def test_release_checker_fails_when_portability_job_restores_blanket_full_step(
     c_step_region = (
         "- name: Run audited PyArrow 24 sensitive regression surface\n"
         "        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != "
-        "'package_docs' && env.POST_MERGE_REUSE != 'true'\n"
+        "'package_docs' && env.CI_TIER != 'control_plane' "
+        "&& env.POST_MERGE_REUSE != 'true'\n"
         "        run: |\n"
         "          python -m pytest \\\n"
         "            tests/test_canonical_materialization_v03.py \\\n"
@@ -7562,19 +7563,19 @@ def test_release_checker_fails_when_portability_job_loses_version_assertion(
     )
 
 
-def _mutate_step_guard(tmp_path, step_name, old, new):
+def _mutate_step_guard(tmp_path, step_name, old, new, job="portability-pyarrow24"):
     """Replace ``old`` with ``new`` inside the exact YAML region of one
-    named step of the portability-pyarrow24 job only. Every other step —
-    and every other job — stays byte-identical, so the mutation proves
-    the checker is step-scoped rather than block-scoped."""
+    named step of one job only. Every other step — and every other job —
+    stays byte-identical, so the mutation proves the checker is
+    step-scoped rather than block-scoped."""
     repo = copy_repo(tmp_path)
     ci = repo / ".github" / "workflows" / "ci.yml"
     text = ci.read_text(encoding="utf-8")
-    block = _check_release._ci_job_block(text, "portability-pyarrow24")
-    assert block is not None
+    block = _check_release._ci_job_block(text, job)
+    assert block is not None, job
     region = _check_release._ci_step_region(block, step_name)
-    assert region is not None, step_name
-    assert old in region, (step_name, old)
+    assert region is not None, (job, step_name)
+    assert old in region, (job, step_name, old)
     new_block = block.replace(region, region.replace(old, new))
     assert block in text
     ci.write_text(text.replace(block, new_block), encoding="utf-8")
@@ -7697,6 +7698,395 @@ def test_release_checker_fails_when_package_job_loses_portability_dependency(
         _check_release.check_ci_pr8,
         repo,
         "must depend on [test, portability-pyarrow24]",
+    )
+
+
+# --- P1-2 control-plane tier (PR #71) mutation tests -----------------------
+#
+# Every mutation changes exactly ONE control-plane invariant and leaves
+# every other step byte-identical, proving check_ci_control_plane is
+# step-scoped and fail-closed: a control_plane run must never produce V1
+# FULL evidence, and the exact allowlist / guard / six-file surface pins
+# hold.
+
+_CONTROL_PLANE_ALLOWLIST_BLOCK = """CONTROL_PLANE_SCOPE_RULES = [
+    ".github/workflows/ci.yml",
+    "scripts/ci_risk_tier.py",
+    "scripts/ci_post_merge_reuse.py",
+    "scripts/audit_pr.py",
+    "scripts/check_release.py",
+    "ci/components.toml",
+    "tests/test_ci_risk_tier.py",
+    "tests/test_component_aware_tiers.py",
+    "tests/test_ci_post_merge_reuse.py",
+    "tests/test_audit_pr.py",
+    "tests/test_v061_ci_auditability.py",
+]
+"""
+
+
+def _mutate_classifier(tmp_path, old, new):
+    """Replace ``old`` with ``new`` in scripts/ci_risk_tier.py of the
+    mutated repo copy (the classifier file is the only other file in
+    scope for the classifier mutations)."""
+    repo = copy_repo(tmp_path)
+    path = repo / "scripts" / "ci_risk_tier.py"
+    text = path.read_text(encoding="utf-8")
+    assert old in text, old
+    path.write_text(text.replace(old, new), encoding="utf-8")
+    return repo
+
+
+def test_control_plane_check_fails_when_tier_constant_removed(tmp_path):
+    # Mutation: the control_plane tier constant is renamed away — the
+    # tier cannot be produced or consumed under its contract name.
+    repo = _mutate_classifier(
+        tmp_path,
+        'TIER_CONTROL_PLANE = "control_plane"',
+        'TIER_CONTROL_PLANE = "control_plane_deleted"',
+    )
+    assert_check_fails(
+        _check_release.check_ci_control_plane,
+        repo,
+        "TIER_CONTROL_PLANE must stay exactly 'control_plane'",
+    )
+
+
+def test_control_plane_check_fails_when_scope_broadened(tmp_path):
+    # Mutation: the exact 11-path allowlist is broadened to whole
+    # tests//scripts//.github/workflows/ directory rules — the single
+    # fast-eligibility surface must never be a broad rule.
+    broad_block = (
+        "CONTROL_PLANE_SCOPE_RULES = [\n"
+        '    "tests/",\n'
+        '    "scripts/",\n'
+        '    ".github/workflows/",\n'
+        "]\n"
+    )
+    repo = _mutate_classifier(
+        tmp_path,
+        _CONTROL_PLANE_ALLOWLIST_BLOCK,
+        broad_block,
+    )
+    assert_check_fails(
+        _check_release.check_ci_control_plane,
+        repo,
+        "must stay exactly the 11-path allowlist",
+    )
+
+
+def test_control_plane_check_fails_when_release_v061_in_scope(tmp_path):
+    # Mutation: tests/test_release_v061.py is added to the allowlist.
+    # That file also protects package / CLI / Python compatibility
+    # contracts, so it must stay FULL-forcing.
+    repo = _mutate_classifier(
+        tmp_path,
+        '    "tests/test_v061_ci_auditability.py",\n',
+        '    "tests/test_v061_ci_auditability.py",\n'
+        '    "tests/test_release_v061.py",\n',
+    )
+    assert_check_fails(
+        _check_release.check_ci_control_plane,
+        repo,
+        "must stay exactly the 11-path allowlist",
+    )
+
+
+def test_control_plane_check_fails_when_pyproject_in_scope(tmp_path):
+    # Mutation: pyproject.toml is added to the allowlist — the package
+    # schema must never be control-plane-eligible.
+    repo = _mutate_classifier(
+        tmp_path,
+        '    "ci/components.toml",\n',
+        '    "ci/components.toml",\n    "pyproject.toml",\n',
+    )
+    assert_check_fails(
+        _check_release.check_ci_control_plane,
+        repo,
+        "must stay exactly the 11-path allowlist",
+    )
+
+
+def test_control_plane_check_fails_when_one_of_six_files_removed(tmp_path):
+    # Mutation: one of the six control-plane test files disappears from
+    # the conservative surface.
+    repo = _mutate_step_guard(
+        tmp_path,
+        "Run conservative control-plane tests",
+        "tests/test_ci_risk_tier.py",
+        "tests/test_ci_risk_tier_missing.py",
+        job="test",
+    )
+    assert_check_fails(
+        _check_release.check_ci_control_plane,
+        repo,
+        "must run the exact six-file surface including "
+        "'tests/test_ci_risk_tier.py'",
+    )
+
+
+def test_control_plane_check_fails_when_six_files_replaced_by_full_pytest(
+    tmp_path,
+):
+    # Mutation: the literal six-file command collapses into an
+    # unqualified `python -m pytest` — the conservative surface must
+    # never become the FULL suite.
+    repo = _mutate_step_guard(
+        tmp_path,
+        "Run conservative control-plane tests",
+        "python -m pytest \\",
+        "python -m pytest",
+        job="test",
+    )
+    assert_check_fails(
+        _check_release.check_ci_control_plane,
+        repo,
+        "control-plane step must be exactly",
+    )
+
+
+def test_control_plane_check_fails_when_k_selection_added(tmp_path):
+    # Mutation: -k is added to the conservative surface — dynamic
+    # selection would silently shrink the pinned six-file surface.
+    repo = _mutate_step_guard(
+        tmp_path,
+        "Run conservative control-plane tests",
+        "-q --durations=100",
+        "-q --durations=100 -k test_tier",
+        job="test",
+    )
+    assert_check_fails(
+        _check_release.check_ci_control_plane,
+        repo,
+        "control-plane step must be exactly",
+    )
+
+
+def test_control_plane_check_fails_when_python_311_guard_removed(tmp_path):
+    # Mutation: the 3.11-only guard is removed from the conservative
+    # step — control_plane must stay pinned to the single audited leg.
+    repo = _mutate_step_guard(
+        tmp_path,
+        "Run conservative control-plane tests",
+        "if: env.CI_TIER == 'control_plane' && matrix.python-version == '3.11'",
+        "if: env.CI_TIER == 'control_plane'",
+        job="test",
+    )
+    assert_check_fails(
+        _check_release.check_ci_control_plane,
+        repo,
+        "control-plane step must keep the exact guard",
+    )
+
+
+def test_control_plane_check_fails_when_full_permitted_on_314(tmp_path):
+    # Mutation: the FULL offline step is permitted to run on the 3.14 leg
+    # of a control_plane run — the 3.14 leg must stay FULL-free.
+    repo = _mutate_step_guard(
+        tmp_path,
+        "Run offline tests",
+        " && env.CI_TIER != 'control_plane' &&",
+        " && (env.CI_TIER != 'control_plane' "
+        "|| matrix.python-version == '3.14') &&",
+        job="test",
+    )
+    assert_check_fails(
+        _check_release.check_ci_control_plane,
+        repo,
+        "FULL offline step must keep the exact fail-closed guard",
+    )
+
+
+def test_control_plane_check_fails_when_full_skips_unknown_tier(tmp_path):
+    # Mutation: the FULL offline step only runs when tier==full, so an
+    # unknown/unset tier would silently skip the FULL authority — it must
+    # stay fail-closed (every `!=` guard is true when CI_TIER is unset).
+    repo = _mutate_step_guard(
+        tmp_path,
+        "Run offline tests",
+        "&& env.POST_MERGE_REUSE != 'true'",
+        "&& env.POST_MERGE_REUSE != 'true' && env.CI_TIER == 'full'",
+        job="test",
+    )
+    assert_check_fails(
+        _check_release.check_ci_control_plane,
+        repo,
+        "FULL offline step must keep the exact fail-closed guard",
+    )
+
+
+def test_control_plane_check_fails_when_pyarrow_c_guard_weakened(tmp_path):
+    # Mutation: the PyArrow 24 C step guard loses its control_plane
+    # exclusion — a control_plane run would execute the heavy PyArrow
+    # surface.
+    repo = _mutate_step_guard(
+        tmp_path,
+        "Run audited PyArrow 24 sensitive regression surface",
+        " && env.CI_TIER != 'control_plane' &&",
+        " &&",
+    )
+    assert_check_fails(
+        _check_release.check_ci_control_plane,
+        repo,
+        "heavy step ('Run audited PyArrow 24 sensitive regression "
+        "surface') must keep the exact control-plane-excluded guard",
+    )
+
+
+def test_control_plane_check_fails_when_package_build_guard_weakened(
+    tmp_path,
+):
+    # Mutation: the package build chain guard loses its control_plane
+    # exclusion — a control_plane run would build and audit the package.
+    repo = _mutate_step_guard(
+        tmp_path,
+        "Install build tooling",
+        " && env.CI_TIER != 'control_plane' &&",
+        " &&",
+        job="package",
+    )
+    assert_check_fails(
+        _check_release.check_ci_control_plane,
+        repo,
+        "heavy step ('Install build tooling') must keep the exact "
+        "control-plane-excluded guard",
+    )
+
+
+def test_control_plane_check_fails_when_runtime_bootstrap_skips_control_plane(
+    tmp_path,
+):
+    # Mutation: the release-checker runtime bootstrap loses its
+    # control_plane case — the unconditional release checker tail would
+    # run in an empty Python environment on a control_plane run.
+    repo = _mutate_step_guard(
+        tmp_path,
+        "Prepare release-checker runtime",
+        " || env.CI_TIER == 'control_plane' ||",
+        " ||",
+        job="package",
+    )
+    assert_check_fails(
+        _check_release.check_ci_control_plane,
+        repo,
+        "release-checker runtime bootstrap must include control_plane",
+    )
+
+
+def test_control_plane_check_fails_when_release_checker_becomes_conditional(
+    tmp_path,
+):
+    # Mutation: the release checker gains a tier condition — it must
+    # validate EVERY tier, including control_plane.
+    repo = _mutate_step_guard(
+        tmp_path,
+        "Run release checker",
+        "        run: python scripts/check_release.py",
+        "        if: env.CI_TIER != 'docs_fast'\n"
+        "        run: python scripts/check_release.py",
+        job="package",
+    )
+    assert_check_fails(
+        _check_release.check_ci_control_plane,
+        repo,
+        "release checker step must stay unconditional",
+    )
+
+
+def test_control_plane_check_fails_when_attestation_permitted_for_control_plane(
+    tmp_path,
+):
+    # Mutation: the FULL attestation step is permitted on control_plane —
+    # control_plane must NEVER produce V1 FULL evidence.
+    repo = _mutate_step_guard(
+        tmp_path,
+        "Create FULL CI attestation",
+        "env.CI_TIER == 'full'",
+        "env.CI_TIER == 'full' || env.CI_TIER == 'control_plane'",
+        job="package",
+    )
+    assert_check_fails(
+        _check_release.check_ci_control_plane,
+        repo,
+        "must stay FULL-only (control_plane never attests)",
+    )
+
+
+def test_control_plane_check_fails_when_reuse_proof_permitted_for_control_plane(
+    tmp_path,
+):
+    # Mutation: the post-merge reuse proof is permitted on control_plane —
+    # a control_plane push must never claim verified FULL evidence.
+    repo = _mutate_step_guard(
+        tmp_path,
+        "Post-merge FULL reuse proof",
+        "&& env.CI_TIER == 'full'",
+        "&& (env.CI_TIER == 'full' || env.CI_TIER == 'control_plane')",
+        job="package",
+    )
+    assert_check_fails(
+        _check_release.check_ci_control_plane,
+        repo,
+        "must stay FULL-only (control_plane never proves reuse)",
+    )
+
+
+def test_control_plane_check_fails_when_step_duplicated(tmp_path):
+    # Mutation: the conservative control-plane step is duplicated inside
+    # the test job — a duplicated step must fail closed instead of
+    # validating an arbitrary region.
+    repo = copy_repo(tmp_path)
+    ci = repo / ".github" / "workflows" / "ci.yml"
+    text = ci.read_text(encoding="utf-8")
+    marker = "- name: Run conservative control-plane tests"
+    assert text.count(marker) == 1
+    ci.write_text(
+        text.replace(
+            marker,
+            marker + "\n        run: echo duplicate\n" + marker,
+            1,
+        ),
+        encoding="utf-8",
+    )
+    failures = assert_check_fails(
+        _check_release.check_ci_control_plane,
+        repo,
+        "is duplicated in the job block",
+    )
+    assert len(failures) == 1, failures
+
+
+def test_control_plane_check_fails_when_marker_step_removed(tmp_path):
+    # Mutation: the test job loses its explicit control-plane tier marker
+    # step — the logs must always make the policy skip evident.
+    repo = _mutate_step_guard(
+        tmp_path,
+        "Control-plane tier marker",
+        "- name: Control-plane tier marker",
+        "- name: Control-plane tier marker (removed)",
+        job="test",
+    )
+    assert_check_fails(
+        _check_release.check_ci_control_plane,
+        repo,
+        "test job must keep the explicit control-plane tier marker step",
+    )
+
+
+def test_control_plane_check_fails_when_classify_branch_removed(tmp_path):
+    # Mutation: the control-plane branch in classify() is disabled — the
+    # classifier could never emit control_plane, so a control-plane
+    # change would fall through to FULL (silently making the tier
+    # unreachable).
+    repo = _mutate_classifier(
+        tmp_path,
+        "    elif _is_control_plane_change(paths):",
+        "    elif False:  # control-plane branch removed",
+    )
+    assert_check_fails(
+        _check_release.check_ci_control_plane,
+        repo,
+        "must keep the exact control-plane classify branch",
     )
 
 
@@ -7979,6 +8369,7 @@ EXPECTED_CHECKS = (
     ("v0.6.0 frozen fixture", "check_v060_frozen_fixture"),
     ("pyarrow dependency", "check_pyarrow_dependency"),
     ("CI PR-8 portability", "check_ci_pr8"),
+    ("CI control-plane tier", "check_ci_control_plane"),
     ("CI v0.7.0 released state", "check_ci_v070_released_state"),
     ("CI v0.7.0 public API smoke", "check_ci_v070_public_api_smoke"),
     ("old release notes", "check_old_release_notes"),

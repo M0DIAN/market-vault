@@ -4,8 +4,11 @@ The component-aware foundation is additive to the Phase 1 tier model:
 ci/components.toml registers component path surfaces, and the classifier
 emits component impact (components=, core_changed=, package_changed=,
 unknown_changed=, shared_changed=, independent_only=,
-full_matrix_required=) while the three tiers stay unchanged and no
-registered component makes anything faster.
+full_matrix_required=) while no registered component makes anything
+faster. The tier model is docs_fast / package_docs / control_plane /
+full (P1-2, PR #71): control_plane is a validated SUBSET tier driven by
+the allowlist in scripts/ci_risk_tier.py, NOT by the registry — no
+registry component can make a change control_plane.
 
 Tests run the classifier against small temporary git repositories with
 a minimal ci/components.toml; the MarketVault repository itself is never
@@ -208,18 +211,25 @@ def test_package_schema_full_and_shared_changed(tmp_path):
     assert line_value(result, "full_matrix_required") == "true"
 
 
-def test_workflow_mutation_full_and_shared_changed(tmp_path):
+def test_ci_workflow_control_plane_subset(tmp_path):
+    """ci.yml is the allowlisted control-plane path: validated subset.
+
+    The control-plane branch runs BEFORE the generic shared_changed FULL
+    check, so shared_changed stays true as impact information while the
+    tier is control_plane with full_matrix_required=false.
+    """
     repo = make_repo(tmp_path)
     result = classify_change(repo, ".github/workflows/ci.yml")
 
-    assert tier(result) == "full"
-    assert line_value(result, "reason") == "workflow_or_registry_mutation_requires_full"
+    assert tier(result) == "control_plane"
+    assert line_value(result, "reason") == "all_changes_in_control_plane_scope"
     assert line_value(result, "shared_changed") == "true"
-    assert line_value(result, "full_matrix_required") == "true"
+    assert line_value(result, "full_matrix_required") == "false"
 
 
-def test_registry_mutation_full_and_shared_changed(tmp_path):
-    """Mutating ci/components.toml itself is a control-plane change."""
+def test_registry_mutation_control_plane_subset(tmp_path):
+    """ci/components.toml is allowlisted: mutating it with docs is
+    control_plane, not the generic shared-mutation FULL."""
     repo = make_repo(tmp_path)
     write_registry(repo, REAL_REGISTRY)
     write_file(repo, "docs/guide.md")
@@ -229,9 +239,10 @@ def test_registry_mutation_full_and_shared_changed(tmp_path):
     result = run_classifier(repo, base, head)
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert tier(result) == "full"
-    assert line_value(result, "reason") == "workflow_or_registry_mutation_requires_full"
+    assert tier(result) == "control_plane"
+    assert line_value(result, "reason") == "all_changes_in_control_plane_scope"
     assert line_value(result, "shared_changed") == "true"
+    assert line_value(result, "full_matrix_required") == "false"
 
 
 # ---------------------------------------------------------------------------
@@ -410,7 +421,7 @@ def test_full_matrix_required_matches_active_policy(tmp_path):
         (REAL_REGISTRY, ["README.md", "docs/guide.md"], "package_docs"),
         (REAL_REGISTRY, ["src/market_vault/thing.py"], "full"),
         (REAL_REGISTRY, ["notes.txt"], "full"),
-        (REAL_REGISTRY, [".github/workflows/ci.yml"], "full"),
+        (REAL_REGISTRY, [".github/workflows/ci.yml"], "control_plane"),
         (REAL_REGISTRY, ["pyproject.toml"], "full"),
         (INDEPENDENT_REGISTRY, ["widgets/thing.py"], "full"),
         (INDEPENDENT_REGISTRY, ["widgets/thing.py", "README.md"], "full"),

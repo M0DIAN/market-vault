@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""MarketVault CI risk-tier classifier (Phase 1 + Component-Aware foundation).
+"""MarketVault CI risk-tier classifier (Phase 1 + Component-Aware + CP).
 
 Deterministic, read-only classification of a change range into one of
-three conservative tiers:
+four conservative tiers:
 
 - docs_fast:    every changed path is inside the docs/policy scope
                 (docs/**, DEVELOPMENT_PLAYBOOK.md, RELEASE_PLAYBOOK.md,
@@ -10,27 +10,43 @@ three conservative tiers:
 - package_docs: every changed path is in the docs scope OR README.md,
                 and README.md itself changed (README is package
                 metadata-sensitive: pyproject.toml ``readme``)
+- control_plane: every changed path is in the exact validated
+                CONTROL_PLANE_SCOPE_RULES allowlist (or the docs scope),
+                with at least one control-plane path. This is a
+                validated SUBSET tier: it runs the conservative
+                six-file control-plane pytest surface on Python 3.11
+                plus the package release-checker tail — never the V1
+                FULL matrix.
 - full:         anything else, including empty diffs and any condition
                 that prevents reliable classification
 
 The component-aware foundation (DP4) is additive: ``ci/components.toml``
 registers component path surfaces and the classifier emits their impact
 (components=, core_changed=, package_changed=, unknown_changed=,
-shared_changed=, independent_only=, full_matrix_required=). The three
-tiers are unchanged and no registered component makes any change faster
-than before; the registry only makes impact explicit.
+shared_changed=, independent_only=, full_matrix_required=). No
+registered component makes any change faster than before; the registry
+only makes impact explicit.
 
 Semantics at the foundation stage: ``independent_only`` is
 eligibility/impact information only (the changed paths are structurally
 isolated to registered non-core / non-package / non-shared components);
 it does NOT authorize skipping the core full matrix.
 ``full_matrix_required`` reflects the currently ACTIVE validation
-policy: it is false only for the active fast tiers docs_fast /
-package_docs, and true for every other classification — including any
-registered independent component without an explicit validation
-contract. Only a future PR that registers an explicit, validated
-component-validation contract may allow independent_only=true together
-with full_matrix_required=false for that component.
+policy: it is false only for the validated subset tiers docs_fast /
+package_docs / control_plane, and true for every other classification —
+including any registered independent component without an explicit
+validation contract. Only a future PR that registers an explicit,
+validated component-validation contract may allow independent_only=true
+together with full_matrix_required=false for that component.
+
+control_plane is an explicit CI control-plane path contract, NOT a
+component-registry entry: it never appears in ci/components.toml and no
+registry component can make a change control_plane. The exact
+CONTROL_PLANE_SCOPE_RULES allowlist is the single fast-eligibility
+surface: a control-plane-only change may legitimately report
+shared_changed=true as impact metadata (the tier contract explicitly
+authorizes that exact allowlisted subset); anything outside the
+allowlist remains FULL.
 
 Fail-safe: an empty diff, an unresolvable ref, an invalid registry, or
 any git failure yields tier=full (or a non-zero exit the workflow
@@ -53,7 +69,7 @@ Usage (run from the repository root, or pass --repo):
 
 Output:
 
-    tier=docs_fast|package_docs|full
+    tier=docs_fast|package_docs|control_plane|full
     reason=<short stable explanation>
     components=<comma-separated component names|none>
     core_changed=<true|false>
@@ -118,8 +134,31 @@ CONTROL_RULES = [
     "pyproject.toml",
 ]
 
+# P1-2 (PR #71): the exact fast-eligible control-plane scope. This is the
+# ONLY explicit allowlist for the control_plane tier — never a broad
+# tests/** / scripts/** / .github/workflows/** rule. Tests
+# tests/test_release_v061.py is INTENTIONALLY absent: that file also
+# protects package / CLI / Python compatibility contracts, so changing it
+# must keep forcing FULL. pyproject.toml and every non-ci.yml workflow are
+# absent for the same reason. Renames classify by BOTH paths, so renaming
+# an eligible path into a non-eligible one fails closed to FULL.
+CONTROL_PLANE_SCOPE_RULES = [
+    ".github/workflows/ci.yml",
+    "scripts/ci_risk_tier.py",
+    "scripts/ci_post_merge_reuse.py",
+    "scripts/audit_pr.py",
+    "scripts/check_release.py",
+    "ci/components.toml",
+    "tests/test_ci_risk_tier.py",
+    "tests/test_component_aware_tiers.py",
+    "tests/test_ci_post_merge_reuse.py",
+    "tests/test_audit_pr.py",
+    "tests/test_v061_ci_auditability.py",
+]
+
 TIER_DOCS_FAST = "docs_fast"
 TIER_PACKAGE_DOCS = "package_docs"
+TIER_CONTROL_PLANE = "control_plane"
 TIER_FULL = "full"
 
 _COMPONENT_NAME_RE = r"^[a-z0-9_-]+$"
@@ -128,6 +167,7 @@ REASON_EMPTY = "empty_diff"
 REASON_NOT_IN_SCOPE = "changed_path_not_in_docs_scope"
 REASON_README = "readme_changed_in_docs_scope"
 REASON_DOCS = "all_changes_in_docs_scope"
+REASON_CONTROL_PLANE = "all_changes_in_control_plane_scope"
 REASON_SHARED = "workflow_or_registry_mutation_requires_full"
 REASON_UNKNOWN = "unknown_path_requires_full"
 REASON_CORE = "core_component_requires_full"
@@ -155,7 +195,11 @@ class Impact:
     non-core/non-package/non-shared components. It does not authorize
     skipping the core full matrix. ``full_matrix_required`` reflects
     the currently ACTIVE validation policy and is set by ``classify``
-    from the resulting tier (false only for docs_fast/package_docs).
+    from the resulting tier (false only for the validated subset tiers
+    docs_fast/package_docs/control_plane). A validated control-plane
+    change may legitimately carry shared_changed=true as impact
+    metadata: the tier contract explicitly authorizes the exact
+    CONTROL_PLANE_SCOPE_RULES subset; anything outside it remains FULL.
     """
 
     components: list[str] = field(default_factory=list)
@@ -246,6 +290,12 @@ def compute_impact(paths: list[str], components: list[Component]) -> Impact:
             impact.shared_changed = True
         if any(rule_matches(rule, path) for rule in DOCS_SCOPE_RULES):
             continue
+        if any(rule_matches(rule, path) for rule in CONTROL_PLANE_SCOPE_RULES):
+            # The validated control-plane subset is a known path surface:
+            # it never counts as an unknown path. shared_changed may still
+            # be true here (e.g. .github/workflows/ci.yml), which the tier
+            # contract explicitly authorizes as impact metadata.
+            continue
         hit = [c for c in components if any(rule_matches(r, path) for r in c.paths)]
         if hit:
             matched.update(c.name for c in hit)
@@ -278,6 +328,21 @@ def compute_impact(paths: list[str], components: list[Component]) -> Impact:
     return impact
 
 
+def _is_control_plane_change(paths: list[str]) -> bool:
+    """Exact control-plane mixture: >= 1 control-plane path and every
+    path is either a CONTROL_PLANE_SCOPE_RULE or an existing
+    DOCS_SCOPE_RULE. Anything else (README, pyproject.toml, src/**,
+    non-eligible tests/scripts/workflows, unknown paths, renames) fails
+    the allowlist and falls through to FULL."""
+    return bool(paths) and any(
+        any(rule_matches(r, p) for r in CONTROL_PLANE_SCOPE_RULES) for p in paths
+    ) and all(
+        any(rule_matches(r, p) for r in CONTROL_PLANE_SCOPE_RULES)
+        or any(rule_matches(r, p) for r in DOCS_SCOPE_RULES)
+        for p in paths
+    )
+
+
 def classify(
     paths: list[str], components: list[Component]
 ) -> tuple[str, str, Impact]:
@@ -288,14 +353,29 @@ def classify(
     path are in ``paths``, so a rename into or out of any scope
     classifies by both paths.
 
+    Precedence (fail-closed):
+      1. empty diff -> FULL
+      2. invalid/unresolvable classification -> FULL (caller exit 2)
+      3. exact docs scope -> docs_fast
+      4. README + docs only -> package_docs
+      5. exact control-plane / docs-only mixture with >= 1 control-plane
+         path -> control_plane (validated SUBSET tier)
+      6. core / package / schema / shared / unknown / other -> FULL
+
+    The control-plane check runs BEFORE the generic shared_changed FULL
+    check, so the old shared rule can never make control_plane
+    unreachable for the exact allowlisted subset; shared/package safety
+    is not weakened because anything outside the allowlist still hits
+    the shared/core/violation checks and stays FULL.
+
     ``full_matrix_required`` is derived from the resulting tier, so it
     always reflects the currently ACTIVE validation policy: false only
-    for docs_fast / package_docs, true for every FULL classification —
-    including registered independent components that have no explicit
-    validation contract (REASON_COMPONENT_NO_VALIDATION). The
-    contradictory state (component_without_validation_requires_full
-    together with full_matrix_required=false) is structurally
-    impossible.
+    for the validated subset tiers docs_fast / package_docs /
+    control_plane, true for every FULL classification — including
+    registered independent components that have no explicit validation
+    contract (REASON_COMPONENT_NO_VALIDATION). The contradictory state
+    (component_without_validation_requires_full together with
+    full_matrix_required=false) is structurally impossible.
     """
     impact = compute_impact(paths, components)
     if not paths:
@@ -306,24 +386,32 @@ def classify(
             *DOCS_SCOPE_RULES,
             README_FILE,
             *CONTROL_RULES,
+            *CONTROL_PLANE_SCOPE_RULES,
             *(rule for c in components for rule in c.paths),
         ],
     ):
         tier, reason = TIER_FULL, REASON_NOT_IN_SCOPE
-    elif impact.shared_changed:
-        # Control-plane mutation (workflow / classifier / registry /
-        # package schema) forces FULL, regardless of components.
-        tier, reason = TIER_FULL, REASON_SHARED
-    elif impact.core_changed:
-        # The core component requires the full matrix (condition 3/5).
-        tier, reason = TIER_FULL, REASON_CORE
+    elif all(any(rule_matches(r, p) for r in DOCS_SCOPE_RULES) for p in paths):
+        tier, reason = TIER_DOCS_FAST, REASON_DOCS
     elif README_FILE in paths and all(
         p == README_FILE or any(rule_matches(r, p) for r in DOCS_SCOPE_RULES)
         for p in paths
     ):
         tier, reason = TIER_PACKAGE_DOCS, REASON_README
-    elif all(any(rule_matches(r, p) for r in DOCS_SCOPE_RULES) for p in paths):
-        tier, reason = TIER_DOCS_FAST, REASON_DOCS
+    elif _is_control_plane_change(paths):
+        # P1-2 (PR #71): the validated control-plane subset tier. It runs
+        # the conservative six-file control-plane pytest surface on
+        # Python 3.11 plus the package release-checker tail; it MUST
+        # NEVER produce V1 FULL evidence (full_matrix_required=false).
+        tier, reason = TIER_CONTROL_PLANE, REASON_CONTROL_PLANE
+    elif impact.shared_changed:
+        # Control-plane mutation outside the validated allowlist
+        # (workflow / classifier / registry / package schema) forces
+        # FULL, regardless of components.
+        tier, reason = TIER_FULL, REASON_SHARED
+    elif impact.core_changed:
+        # The core component requires the full matrix (condition 3/5).
+        tier, reason = TIER_FULL, REASON_CORE
     elif impact.components:
         # Registered component(s) with no validation contract yet: the
         # tier stays FULL until a future registry entry declares

@@ -14,7 +14,12 @@
 #                                 components, none core/package/shared
 #   full_matrix_required=true|false
 #
-# The tier model is unchanged: docs_fast / package_docs / full. No path
+# The tier model: docs_fast / package_docs / control_plane / full.
+# control_plane (P1-2, PR #71) is an explicit CI control-plane path
+# contract, NOT a component-registry entry: it never appears here as a
+# component and no registry component can make a change control_plane.
+# Its fast-eligibility allowlist lives solely in
+# scripts/ci_risk_tier.py (CONTROL_PLANE_SCOPE_RULES). No path
 # registered below makes any change FASTER than it was before; the
 # registry only makes the classifier's impact information explicit and
 # machine-readable.
@@ -23,12 +28,12 @@
 # (the changed paths are structurally isolated to registered
 # non-core / non-package / non-shared components). It does NOT authorize
 # skipping the core full matrix. full_matrix_required reflects the
-# currently ACTIVE validation policy: false only for docs_fast /
-# package_docs, true for every other classification — including any
-# registered independent component that has no explicit validation
-# contract. No component registered here may report
-# full_matrix_required=false until a future PR implements an explicit
-# component-validation contract.
+# currently ACTIVE validation policy: false only for the validated
+# subset tiers docs_fast / package_docs / control_plane, true for every
+# other classification — including any registered independent component
+# that has no explicit validation contract. No component registered
+# here may report full_matrix_required=false until a future PR
+# implements an explicit component-validation contract.
 #
 # FUTURE RULE (documented, not active yet): a component may skip the
 # legacy core full matrix only when ALL of the following hold:

@@ -56,14 +56,29 @@ that the unconditional release checker's CLI-version subprocess needs the
 MarketVault runtime importable, which verified reuse no longer installs):
 
 - the package job holds exactly one ``Prepare release-checker runtime``
-  step, guarded exactly ``docs_fast OR POST_MERGE_REUSE == 'true'``,
-  running exactly ``python -m pip install -e .`` (never build/twine),
-  immediately before the still-unconditional ``Run release checker``;
+  step, guarded exactly ``docs_fast OR control_plane OR
+  POST_MERGE_REUSE == 'true'``, running exactly ``python -m pip install
+  -e .`` (never build/twine), immediately before the still-unconditional
+  ``Run release checker``;
 - the path composition stays fail-safe: an unset/unknown
   ``POST_MERGE_REUSE`` keeps the heavy guards true and the bootstrap
   skipped, so NORMAL FULL still runs; only a PROVEN
   ``POST_MERGE_REUSE=true`` skips the heavy chain while the bootstrap
   still enables the release checker.
+
+PR #71 pins the conservative control-plane tier (P1-2 mechanism):
+
+- the test job holds the exact named ``Run conservative control-plane
+  tests`` step guarded ``CI_TIER == 'control_plane' && python 3.11``
+  running the literal six-file pytest surface (never -k/globs/markers);
+- Python 3.14 under control_plane never runs the product FULL suite (the
+  offline step excludes the tier), and the PyArrow24 + package heavy
+  chains skip control_plane while the release-checker runtime bootstrap
+  still runs;
+- the ``Control-plane tier marker`` step exists in all three jobs;
+- control_plane runs mint no V1 FULL evidence: the attestation and
+  reuse-proof guards stay exactly ``tier == 'full'`` and the FULL path /
+  docs_fast / package_docs behavior remains intact.
 """
 
 from __future__ import annotations
@@ -91,6 +106,45 @@ PYARROW24_SURFACE_C = (
 )
 PYARROW24_C_STEP = "Run audited PyArrow 24 sensitive regression surface"
 PYARROW24_OLD_FULL_STEP = "Run full offline suite under PyArrow 24.0.0"
+
+# P1-2 (PR #71): the conservative control-plane tier. The exact six-file
+# pytest surface is literal and reviewable.
+CONTROL_PLANE_STEP = "Run conservative control-plane tests"
+CONTROL_PLANE_MARKER_STEP = "Control-plane tier marker"
+CONTROL_PLANE_GUARD = (
+    "if: env.CI_TIER == 'control_plane' && matrix.python-version == '3.11'"
+)
+CONTROL_PLANE_EXCLUDED = "env.CI_TIER != 'control_plane'"
+CONTROL_PLANE_SURFACE = (
+    "tests/test_ci_risk_tier.py",
+    "tests/test_component_aware_tiers.py",
+    "tests/test_ci_post_merge_reuse.py",
+    "tests/test_audit_pr.py",
+    "tests/test_v061_ci_auditability.py",
+    "tests/test_release_v061.py",
+)
+PYARROW24_HEAVY_STEPS = (
+    "Install dependencies",
+    "Pin the audited PyArrow 24.0.0 compatibility runtime",
+    "Assert the audited PyArrow compatibility version",
+    "Run audited PyArrow 24 compatibility tests",
+    "Run the canonical reader and frozen regression surface",
+    "Run audited PyArrow 24 sensitive regression surface",
+)
+PACKAGE_HEAVY_STEPS = (
+    "Install build tooling",
+    "Example renderer help smoke",
+    "PR-5 verified client example help smoke",
+    "Build wheel and sdist",
+    "Confirm exactly one wheel and one sdist",
+    "Install wheel in a fresh virtual environment",
+    "Fresh-wheel public API smoke check",
+    "Check wheel contents exclude local data",
+    "Build package SHA256 manifest",
+    "Verify package SHA256 manifest",
+    "Upload package audit artifact",
+    "Confirm package audit artifact metadata",
+)
 
 
 def ci_text() -> str:
@@ -632,8 +686,9 @@ def test_attestation_artifact_name_binds_pr_head_and_attempt():
 def test_attestation_never_created_on_non_full_tier():
     """The attestation create step is gated on tier == full (and the
     exported full-matrix-required flag): docs_fast / package_docs /
-    unset-tier runs produce no attestation, so no evidence can be minted
-    from a run that did not really execute the FULL matrix."""
+    control_plane / unset-tier runs produce no attestation, so no
+    evidence can be minted from a run that did not really execute the
+    FULL matrix."""
     for name, region in _steps(ci_text()):
         if name == "Create FULL CI attestation":
             assert "env.CI_TIER == 'full'" in region
@@ -669,6 +724,8 @@ def _evaluate_guard(expr: str, tier: str, reuse: str) -> bool:
     values = {
         "env.CI_TIER == 'docs_fast'": tier == "docs_fast",
         "env.CI_TIER != 'docs_fast'": tier != "docs_fast",
+        "env.CI_TIER == 'control_plane'": tier == "control_plane",
+        "env.CI_TIER != 'control_plane'": tier != "control_plane",
         "env.POST_MERGE_REUSE == 'true'": reuse == "true",
         "env.POST_MERGE_REUSE != 'true'": reuse != "true",
     }
@@ -687,13 +744,16 @@ def test_package_has_exactly_one_release_checker_runtime_bootstrap():
         assert names.count("Prepare release-checker runtime") == (1 if job == "package" else 0)
 
 
-def test_bootstrap_guard_is_exactly_docs_fast_or_verified_reuse():
-    """(B) The bootstrap guard is exactly ``docs_fast OR
+def test_bootstrap_guard_is_exactly_docs_fast_or_control_plane_or_verified_reuse():
+    """(B) The bootstrap guard is exactly ``docs_fast OR control_plane OR
     POST_MERGE_REUSE == 'true'`` — nothing else, no tier-full exception,
     no path filter."""
     block = _job_block(ci_text(), "package")
     guard = _guard_of(block, "Prepare release-checker runtime")
-    assert guard == "env.CI_TIER == 'docs_fast' || env.POST_MERGE_REUSE == 'true'"
+    assert guard == (
+        "env.CI_TIER == 'docs_fast' || env.CI_TIER == 'control_plane' "
+        "|| env.POST_MERGE_REUSE == 'true'"
+    )
 
 
 def test_bootstrap_installs_only_editable_runtime():
@@ -728,6 +788,8 @@ def test_lightweight_closure_path_composition():
       skipped, release checker runs, heavy package validation runs;
     - DOCS_FAST: install skipped, bootstrap runs, checker runs, heavy
       package validation skipped;
+    - CONTROL_PLANE: install skipped, bootstrap runs (release checker
+      stays available), checker runs, heavy package validation skipped;
     - VERIFIED REUSE: install skipped, bootstrap runs, checker runs,
       heavy package validation skipped, reuse marker eligible;
     - unknown/unset POST_MERGE_REUSE: bootstrap skipped, heavy validation
@@ -753,6 +815,7 @@ def test_lightweight_closure_path_composition():
     scenarios = {
         "normal_full": ("full", ""),
         "docs_fast": ("docs_fast", ""),
+        "control_plane": ("control_plane", ""),
         "verified_reuse": ("full", "true"),
         "package_docs": ("package_docs", ""),
         "unknown_reuse": ("full", "garbage"),
@@ -761,6 +824,7 @@ def test_lightweight_closure_path_composition():
         # install, bootstrap, checker, heavy build, reuse marker
         "normal_full": ("run", "skip", "run", "run", "skip"),
         "docs_fast": ("skip", "run", "run", "skip", "skip"),
+        "control_plane": ("skip", "run", "run", "skip", "skip"),
         "verified_reuse": ("skip", "run", "run", "skip", "run"),
         "package_docs": ("run", "skip", "run", "run", "skip"),
         "unknown_reuse": ("run", "skip", "run", "run", "skip"),
@@ -768,3 +832,92 @@ def test_lightweight_closure_path_composition():
     for scenario, (tier, reuse) in scenarios.items():
         results = tuple(outcome(name, tier, reuse) for name in probes)
         assert results == expected[scenario], (scenario, results)
+
+
+# ---------------------------------------------------------------------------
+# Control-plane tier (P1-2, PR #71): conservative subset execution.
+# ---------------------------------------------------------------------------
+
+
+def test_control_plane_step_name_and_literal_surface():
+    """The exact named CP step runs the literal six-file pytest surface,
+    never -k / globs / markers."""
+    block = _job_block(ci_text(), "test")
+    names = _step_names(block)
+    assert CONTROL_PLANE_STEP in names
+    idx = names.index(CONTROL_PLANE_STEP)
+    end = f"- name: {names[idx + 1]}" if idx + 1 < len(names) else None
+    region = _region(block, f"- name: {CONTROL_PLANE_STEP}", end)
+    for test_file in CONTROL_PLANE_SURFACE:
+        assert test_file in region
+    assert "python -m pytest" in region
+    assert "-q --durations=100" in region
+    assert "-k" not in region
+
+
+def test_control_plane_runs_on_python_311_only():
+    """The CP step guard is exactly control_plane tier AND Python 3.11."""
+    block = _job_block(ci_text(), "test")
+    region = _region(
+        block, f"- name: {CONTROL_PLANE_STEP}", f"- name: {CONTROL_PLANE_MARKER_STEP}"
+    )
+    assert CONTROL_PLANE_GUARD in region
+    assert "matrix.python-version == '3.11'" in region
+
+
+def test_control_plane_314_skips_blanket_full_pytest():
+    """Python 3.14 under control_plane must NOT run the product FULL
+    suite: the offline step guard excludes the tier."""
+    block = _job_block(ci_text(), "test")
+    names = _step_names(block)
+    assert "Run offline tests" in names
+    idx = names.index("Run offline tests")
+    end = f"- name: {names[idx + 1]}" if idx + 1 < len(names) else None
+    region = _region(block, "- name: Run offline tests", end)
+    assert CONTROL_PLANE_EXCLUDED in region
+    assert re.search(r"(?m)^\s*run: python -m pytest\s*$", region) is not None
+
+
+def test_pyarrow24_heavy_steps_skip_on_control_plane():
+    """PyArrow A/B/C runtime + regression steps exclude control_plane."""
+    block = _job_block(ci_text(), "portability-pyarrow24")
+    names = _step_names(block)
+    for heavy in PYARROW24_HEAVY_STEPS:
+        assert heavy in names, heavy
+        idx = names.index(heavy)
+        end = f"- name: {names[idx + 1]}" if idx + 1 < len(names) else None
+        region = _region(block, f"- name: {heavy}", end)
+        assert CONTROL_PLANE_EXCLUDED in region, heavy
+
+
+def test_package_heavy_steps_skip_on_control_plane():
+    """Every package heavy build/audit step excludes control_plane."""
+    block = _job_block(ci_text(), "package")
+    names = _step_names(block)
+    for heavy in PACKAGE_HEAVY_STEPS:
+        assert heavy in names, heavy
+        idx = names.index(heavy)
+        end = f"- name: {names[idx + 1]}" if idx + 1 < len(names) else None
+        region = _region(block, f"- name: {heavy}", end)
+        assert CONTROL_PLANE_EXCLUDED in region, heavy
+
+
+def test_control_plane_marker_present_in_all_three_jobs():
+    """Every formal job carries the control-plane tier marker."""
+    for job in ("test", "portability-pyarrow24", "package"):
+        block = _job_block(ci_text(), job)
+        assert CONTROL_PLANE_MARKER_STEP in _step_names(block), job
+        assert f"- name: {CONTROL_PLANE_MARKER_STEP}" in block
+
+
+def test_control_plane_never_mints_full_evidence():
+    """control_plane runs produce no V1 FULL evidence: the attestation
+    and reuse-proof guards stay exactly tier == 'full'."""
+    for name, region in _steps(ci_text()):
+        if name in (
+            "Create FULL CI attestation",
+            "Upload FULL CI attestation artifact",
+            "Post-merge FULL reuse proof",
+        ):
+            assert "env.CI_TIER == 'full'" in region, name
+            assert "'control_plane'" not in region, name

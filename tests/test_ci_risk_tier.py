@@ -72,13 +72,33 @@ def tier_of(result: subprocess.CompletedProcess) -> str:
     pytest.fail(f"no tier= line in output: {result.stdout!r}")
 
 
-def classify_change(repo: Path, path: str) -> str:
+def classify_change(
+    repo: Path,
+    path: str,
+    content: str = "x\n",
+    changed_content: str = "changed\n",
+) -> str:
     """Change one path between two commits and return the tier."""
-    write_file(repo, path)
+    write_file(repo, path, content)
     base = commit_all(repo, "base")
-    write_file(repo, path, "changed\n")
+    write_file(repo, path, changed_content)
     head = commit_all(repo, "head")
     result = run_classifier(repo, base, head)
+    assert result.returncode == 0, result.stdout + result.stderr
+    return tier_of(result)
+
+
+def classify_changes(repo: Path, paths: list[str]) -> str:
+    """Change several paths between two commits and return the tier."""
+    for path in paths:
+        write_file(repo, path)
+    base = commit_all(repo, "base")
+    for path in paths:
+        write_file(repo, path, "changed\n")
+    head = commit_all(repo, "head")
+
+    result = run_classifier(repo, base, head)
+
     assert result.returncode == 0, result.stdout + result.stderr
     return tier_of(result)
 
@@ -152,9 +172,167 @@ def test_pyproject_change_full(tmp_path):
     assert classify_change(repo, "pyproject.toml") == "full"
 
 
-def test_workflow_change_full(tmp_path):
+def test_ci_workflow_only_control_plane(tmp_path):
+    """ci.yml alone is control_plane, a validated subset with no full matrix."""
     repo = make_repo(tmp_path)
-    assert classify_change(repo, ".github/workflows/ci.yml") == "full"
+    write_file(repo, ".github/workflows/ci.yml")
+    base = commit_all(repo, "base")
+    write_file(repo, ".github/workflows/ci.yml", "changed\n")
+    head = commit_all(repo, "head")
+
+    result = run_classifier(repo, base, head)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert tier_of(result) == "control_plane"
+    assert "reason=all_changes_in_control_plane_scope" in result.stdout
+    assert "full_matrix_required=false" in result.stdout
+
+
+CONTROL_PLANE_ELIGIBLE_PATHS = [
+    "scripts/ci_risk_tier.py",
+    "scripts/ci_post_merge_reuse.py",
+    "scripts/audit_pr.py",
+    "scripts/check_release.py",
+    "ci/components.toml",
+    "tests/test_ci_risk_tier.py",
+    "tests/test_component_aware_tiers.py",
+    "tests/test_ci_post_merge_reuse.py",
+    "tests/test_audit_pr.py",
+    "tests/test_v061_ci_auditability.py",
+]
+
+
+VALID_REGISTRY = """\
+[components.core]
+paths = ["src/market_vault/"]
+
+[components.package]
+paths = ["pyproject.toml", "README.md"]
+"""
+
+
+@pytest.mark.parametrize("path", CONTROL_PLANE_ELIGIBLE_PATHS)
+def test_control_plane_eligible_path_only(tmp_path, path):
+    """Every allowlisted control-plane path alone classifies control_plane."""
+    repo = make_repo(tmp_path)
+    if path == "ci/components.toml":
+        # The classifier parses ci/components.toml, so both commits must
+        # hold valid TOML for the path to be eligible.
+        changed = VALID_REGISTRY + "# changed\n"
+        assert classify_change(
+            repo, path, content=VALID_REGISTRY, changed_content=changed
+        ) == "control_plane"
+    else:
+        assert classify_change(repo, path) == "control_plane"
+
+
+def test_control_plane_plus_docs_control_plane(tmp_path):
+    """control_plane mixed with docs stays control_plane (CP + docs scope)."""
+    repo = make_repo(tmp_path)
+    assert classify_changes(
+        repo, [".github/workflows/ci.yml", "docs/guide.md"]
+    ) == "control_plane"
+
+
+def test_control_plane_plus_playbook_control_plane(tmp_path):
+    """DEVELOPMENT_PLAYBOOK.md is in the docs scope, so the mix is valid."""
+    repo = make_repo(tmp_path)
+    assert classify_changes(
+        repo, [".github/workflows/ci.yml", "DEVELOPMENT_PLAYBOOK.md"]
+    ) == "control_plane"
+
+
+def test_control_plane_plus_readme_full(tmp_path):
+    """README is outside CP + docs: the mixed change must be FULL."""
+    repo = make_repo(tmp_path)
+    assert classify_changes(repo, [".github/workflows/ci.yml", "README.md"]) == "full"
+
+
+def test_control_plane_plus_pyproject_full(tmp_path):
+    """pyproject.toml is a shared/package-schema path: FULL."""
+    repo = make_repo(tmp_path)
+    assert classify_changes(
+        repo, [".github/workflows/ci.yml", "pyproject.toml"]
+    ) == "full"
+
+
+def test_control_plane_plus_src_full(tmp_path):
+    """A src/ change mixed with control-plane paths must be FULL."""
+    repo = make_repo(tmp_path)
+    assert classify_changes(
+        repo, [".github/workflows/ci.yml", "src/market_vault/thing.py"]
+    ) == "full"
+
+
+def test_control_plane_plus_release_test_full(tmp_path):
+    """tests/test_release_v061.py is deliberately NOT control-plane eligible."""
+    repo = make_repo(tmp_path)
+    assert classify_changes(
+        repo, [".github/workflows/ci.yml", "tests/test_release_v061.py"]
+    ) == "full"
+
+
+def test_control_plane_plus_repo_hygiene_full(tmp_path):
+    """scripts/check_repo_hygiene.py is outside the control-plane allowlist."""
+    repo = make_repo(tmp_path)
+    assert classify_changes(
+        repo, [".github/workflows/ci.yml", "scripts/check_repo_hygiene.py"]
+    ) == "full"
+
+
+def test_control_plane_plus_other_workflow_full(tmp_path):
+    """Only ci.yml is control-plane eligible; other workflows stay FULL."""
+    repo = make_repo(tmp_path)
+    assert classify_changes(
+        repo, [".github/workflows/ci.yml", ".github/workflows/release.yml"]
+    ) == "full"
+
+
+def test_rename_eligible_to_unknown_full(tmp_path):
+    """Renaming a control-plane path to an unknown path must classify FULL."""
+    repo = make_repo(tmp_path)
+    write_file(repo, ".github/workflows/ci.yml")
+    base = commit_all(repo, "base")
+    run_git(repo, "mv", ".github/workflows/ci.yml", "notes.txt")
+    head = commit_all(repo, "head")
+
+    result = run_classifier(repo, base, head)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert tier_of(result) == "full"
+
+
+def test_rename_unknown_to_eligible_full(tmp_path):
+    """Renaming an unknown path into the allowlist stays FULL: the old path
+    participates in the diff."""
+    repo = make_repo(tmp_path)
+    write_file(repo, "notes.txt")
+    base = commit_all(repo, "base")
+    # git mv does not create leading directories for the destination
+    (repo / ".github" / "workflows").mkdir(parents=True)
+    run_git(repo, "mv", "notes.txt", ".github/workflows/ci.yml")
+    head = commit_all(repo, "head")
+
+    result = run_classifier(repo, base, head)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert tier_of(result) == "full"
+
+
+def test_invalid_registry_fail_closed_full(tmp_path):
+    """A malformed component registry must fail closed to FULL."""
+    repo = make_repo(tmp_path)
+    write_file(repo, "docs/guide.md")
+    write_file(repo, "ci/components.toml", "not a toml = [\n")
+    base = commit_all(repo, "base")
+    write_file(repo, "docs/guide.md", "changed\n")
+    head = commit_all(repo, "head")
+
+    result = run_classifier(repo, base, head)
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert tier_of(result) == "full"
+    assert "reason=invalid_registry_fail_closed" in result.stdout
 
 
 def test_docs_and_src_mixed_full(tmp_path):

@@ -2912,13 +2912,121 @@ CI_PYARROW24_C_STEP = "Run audited PyArrow 24 sensitive regression surface"
 CI_PYARROW24_OLD_FULL_STEP = "Run full offline suite under PyArrow 24.0.0"
 # The exact heavy guard line pinned to the C step region itself (never
 # validated block-globally): an unknown/unset CI_TIER or an unset
-# POST_MERGE_REUSE keeps heavy validation running.
+# POST_MERGE_REUSE keeps heavy validation running. P1-2 (PR #71) added
+# the control_plane exclusion, so the pinned line is now the full
+# four-condition form (a control_plane run must skip the whole PyArrow 24
+# surface).
 CI_PYARROW24_C_GUARD = (
     "if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' "
-    "&& env.POST_MERGE_REUSE != 'true'"
+    "&& env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'"
 )
 CI_REUSE_MARKER_STEP = "FULL tests reused from verified PR"
 CI_REUSE_MARKER_GUARD = "if: env.POST_MERGE_REUSE == 'true'"
+
+# P1-2 control-plane tier (PR #71): the conservative six-file
+# control-plane pytest surface on Python 3.11 plus the package
+# release-checker tail. The guard / file list / allowlist are pinned
+# exactly; any drift fails closed.
+CI_CONTROL_PLANE_STEP = "Run conservative control-plane tests"
+CI_CONTROL_PLANE_GUARD = (
+    "if: env.CI_TIER == 'control_plane' && matrix.python-version == '3.11'"
+)
+CI_CONTROL_PLANE_TESTS = (
+    "tests/test_ci_risk_tier.py",
+    "tests/test_component_aware_tiers.py",
+    "tests/test_ci_post_merge_reuse.py",
+    "tests/test_audit_pr.py",
+    "tests/test_v061_ci_auditability.py",
+    "tests/test_release_v061.py",
+)
+# The exact fast-eligible control-plane scope. Mirror of
+# scripts/ci_risk_tier.py CONTROL_PLANE_SCOPE_RULES; check_ci_control_plane
+# cross-verifies both directions with ast. Never a broad tests/** /
+# scripts/** / .github/workflows/** rule; tests/test_release_v061.py,
+# pyproject.toml, README.md and every non-ci.yml workflow are
+# INTENTIONALLY absent (they protect package / CLI / Python contracts).
+CI_CONTROL_PLANE_SCOPE_FILES = (
+    ".github/workflows/ci.yml",
+    "scripts/ci_risk_tier.py",
+    "scripts/ci_post_merge_reuse.py",
+    "scripts/audit_pr.py",
+    "scripts/check_release.py",
+    "ci/components.toml",
+    "tests/test_ci_risk_tier.py",
+    "tests/test_component_aware_tiers.py",
+    "tests/test_ci_post_merge_reuse.py",
+    "tests/test_audit_pr.py",
+    "tests/test_v061_ci_auditability.py",
+)
+CI_CONTROL_PLANE_TIER = "control_plane"
+CI_CONTROL_PLANE_REASON = "all_changes_in_control_plane_scope"
+CI_CONTROL_PLANE_MARKER_STEP = "Control-plane tier marker"
+CI_CONTROL_PLANE_MARKER_GUARD = "if: env.CI_TIER == 'control_plane'"
+# The FULL offline surface must stay excluded from control_plane AND keep
+# failing closed for unknown/unset tiers (every `!=` guard is true when
+# CI_TIER is unset, so the FULL suite still runs).
+CI_OFFLINE_TESTS_STEP = "Run offline tests"
+CI_OFFLINE_TESTS_GUARD = (
+    "if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' "
+    "&& env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'"
+)
+# P1-2: the heavy guards gain the control_plane exclusion. The old pinned
+# CI_PYARROW24_C_GUARD stays a substring of the new form, so the PR-8
+# checks keep passing; these constants pin the FULL new line so removing
+# the control_plane condition fails closed here.
+CI_HEAVY_GUARD_PYARROW24 = (
+    "if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' "
+    "&& env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'"
+)
+CI_HEAVY_GUARD_PACKAGE = (
+    "if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'control_plane' "
+    "&& env.POST_MERGE_REUSE != 'true'"
+)
+CI_PYARROW24_HEAVY_STEPS = (
+    "Install dependencies",
+    "Pin the audited PyArrow 24.0.0 compatibility runtime",
+    "Assert the audited PyArrow compatibility version",
+    "Run audited PyArrow 24 compatibility tests",
+    "Run the canonical reader and frozen regression surface",
+    "Run audited PyArrow 24 sensitive regression surface",
+)
+CI_PACKAGE_HEAVY_STEPS = (
+    "Install build tooling",
+    "Example renderer help smoke",
+    "PR-5 verified client example help smoke",
+    "Build wheel and sdist",
+    "Confirm exactly one wheel and one sdist",
+    "Install wheel in a fresh virtual environment",
+    "Fresh-wheel public API smoke check",
+    "Check wheel contents exclude local data",
+    "Build package SHA256 manifest",
+    "Verify package SHA256 manifest",
+    "Upload package audit artifact",
+    "Confirm package audit artifact metadata",
+)
+CI_PREPARE_RELEASE_CHECKER_STEP = "Prepare release-checker runtime"
+CI_PREPARE_RELEASE_CHECKER_GUARD = (
+    "if: env.CI_TIER == 'docs_fast' || env.CI_TIER == 'control_plane' "
+    "|| env.POST_MERGE_REUSE == 'true'"
+)
+CI_RELEASE_CHECKER_STEP = "Run release checker"
+# control_plane must NEVER produce V1 FULL evidence: attestation and
+# reuse proof stay tier=full-exclusive.
+CI_ATTESTATION_STEP = "Create FULL CI attestation"
+CI_ATTESTATION_GUARD = (
+    "if: github.event_name == 'pull_request' && env.CI_TIER == 'full' "
+    "&& env.CI_FULL_MATRIX_REQUIRED == 'true'"
+)
+CI_ATTESTATION_UPLOAD_STEP = "Upload FULL CI attestation artifact"
+CI_REUSE_PROOF_STEP = "Post-merge FULL reuse proof"
+CI_REUSE_PROOF_GUARD = (
+    "if: github.event_name == 'push' && github.ref == 'refs/heads/main' "
+    "&& env.CI_TIER == 'full'"
+)
+# Classifier contract pins (scripts/ci_risk_tier.py, verified with ast).
+CI_CLASSIFIER_REL = Path("scripts") / "ci_risk_tier.py"
+CI_TIER_UNIVERSE_LINE = "tier=docs_fast|package_docs|control_plane|full"
+CI_FMR_LINE = "impact.full_matrix_required = tier == TIER_FULL"
 
 _CI_JOB_HEADER_RE = re.compile(r"(?m)^  ([A-Za-z0-9_-]+):\s*$")
 
@@ -3082,6 +3190,339 @@ def check_ci_pr8(root: Path) -> list[str]:
             "CI portability-pyarrow24 job verified-reuse marker step must "
             f"keep the exact guard {CI_REUSE_MARKER_GUARD!r}"
         )
+    return failures
+
+
+def _classifier_control_plane_scope(text: str) -> tuple[list[str], list[str]]:
+    """(values, failures) for the control-plane contract constants of
+    scripts/ci_risk_tier.py, parsed with ast (no eval, no import)."""
+    failures = []
+    values: dict[str, object] = {}
+    try:
+        tree = ast.parse(text)
+    except SyntaxError as exc:
+        return [], [f"{CI_CLASSIFIER_REL} does not parse: {exc}"]
+    wanted = {"TIER_CONTROL_PLANE", "REASON_CONTROL_PLANE",
+              "CONTROL_PLANE_SCOPE_RULES"}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name) and target.id in wanted:
+                try:
+                    values[target.id] = ast.literal_eval(node.value)
+                except ValueError:
+                    failures.append(
+                        f"{CI_CLASSIFIER_REL} {target.id} must be a literal"
+                    )
+    return values, failures
+
+
+def _guard_is_exact_line(region: str, guard: str) -> bool:
+    """True when ``guard`` is a COMPLETE ``if:`` line in ``region``.
+
+    Substring matching is deliberately NOT used: appending or prepending
+    conditions (e.g. ``&& env.CI_TIER == 'full'`` at the end of a
+    fail-closed guard) must fail the pin, because a guard line with extra
+    conditions is a weakened or repurposed guard.
+    """
+    return re.search(
+        r"(?m)^[ \t]*" + re.escape(guard) + r"[ \t]*\r?$",
+        region,
+    ) is not None
+
+
+def check_ci_control_plane(root: Path) -> list[str]:
+    """P1-2 (PR #71): the control-plane validation tier contract.
+
+    scripts/ci_risk_tier.py must define the exact CONTROL_PLANE_SCOPE_RULES
+    allowlist and the control_plane tier with its stable reason; the
+    workflow must bind CI_TIER=control_plane to exactly the conservative
+    six-file pytest surface on Python 3.11 plus the package
+    release-checker tail. control_plane must NEVER produce V1 FULL
+    evidence: no FULL offline suite (on any matrix leg), no PyArrow 24
+    surface, no package build chain, no attestation, no reuse proof.
+    Everything is pinned to exact named-step regions (a duplicated step
+    raises ValueError and fails closed), never block-global fragments,
+    and every guard is pinned as a complete line so appended or prepended
+    conditions fail closed.
+    """
+    failures = []
+    path = root / ".github" / "workflows" / "ci.yml"
+    if not path.exists():
+        return [".github/workflows/ci.yml is missing"]
+    text = path.read_text(encoding="utf-8")
+    if "needs: [test, portability-pyarrow24]" not in text:
+        failures.append(
+            "CI package job must depend on [test, portability-pyarrow24]"
+        )
+
+    # --- classifier contract (scripts/ci_risk_tier.py) ---
+    tier_path = root / CI_CLASSIFIER_REL
+    if not tier_path.exists():
+        failures.append(f"{CI_CLASSIFIER_REL} is missing")
+        return failures
+    tier_text = tier_path.read_text(encoding="utf-8")
+    if CI_TIER_UNIVERSE_LINE not in tier_text:
+        failures.append(
+            "ci_risk_tier.py tier universe must be exactly "
+            f"{CI_TIER_UNIVERSE_LINE!r} (control_plane included)"
+        )
+    if CI_FMR_LINE not in tier_text:
+        failures.append(
+            "ci_risk_tier.py must derive full_matrix_required from the "
+            f"tier exactly as {CI_FMR_LINE!r} (control_plane cannot be "
+            "full_matrix_required=true)"
+        )
+    if "    elif _is_control_plane_change(paths):" not in tier_text:
+        failures.append(
+            "ci_risk_tier.py must keep the exact control-plane classify "
+            "branch (elif _is_control_plane_change(paths))"
+        )
+    c_values, c_failures = _classifier_control_plane_scope(tier_text)
+    failures.extend(c_failures)
+    if c_values.get("TIER_CONTROL_PLANE") != CI_CONTROL_PLANE_TIER:
+        failures.append(
+            "ci_risk_tier.py TIER_CONTROL_PLANE must stay exactly "
+            f"{CI_CONTROL_PLANE_TIER!r}"
+        )
+    if c_values.get("REASON_CONTROL_PLANE") != CI_CONTROL_PLANE_REASON:
+        failures.append(
+            "ci_risk_tier.py REASON_CONTROL_PLANE must stay exactly "
+            f"{CI_CONTROL_PLANE_REASON!r}"
+        )
+    if c_values.get("CONTROL_PLANE_SCOPE_RULES") != list(
+        CI_CONTROL_PLANE_SCOPE_FILES
+    ):
+        failures.append(
+            "ci_risk_tier.py CONTROL_PLANE_SCOPE_RULES must stay exactly "
+            f"the 11-path allowlist {list(CI_CONTROL_PLANE_SCOPE_FILES)!r} — "
+            "tests/test_release_v061.py, pyproject.toml, README.md and "
+            "every non-ci.yml workflow stay non-eligible"
+        )
+
+    # --- test job: FULL exclusion + conservative control-plane surface ---
+    test_block = _ci_job_block(text, "test")
+    if test_block is None:
+        failures.append("CI test job block is missing")
+    else:
+        try:
+            offline_region = _ci_step_region(test_block, CI_OFFLINE_TESTS_STEP)
+        except ValueError as exc:
+            failures.append(f"CI test job {exc}")
+            offline_region = None
+        if offline_region is None:
+            failures.append(
+                f"CI test job must keep the FULL offline step "
+                f"({CI_OFFLINE_TESTS_STEP!r})"
+            )
+        else:
+            if not _guard_is_exact_line(offline_region, CI_OFFLINE_TESTS_GUARD):
+                failures.append(
+                    "CI test job FULL offline step must keep the exact "
+                    f"fail-closed guard line {CI_OFFLINE_TESTS_GUARD!r} "
+                    "(FULL never runs for control_plane; unknown/unset "
+                    "tiers still run FULL; no extra conditions allowed)"
+                )
+            if not re.search(
+                r"(?m)^\s*run: python -m pytest\s*$", offline_region
+            ):
+                failures.append(
+                    "CI test job FULL offline step must run the literal "
+                    "`python -m pytest`"
+                )
+        cp_duplicated = False
+        try:
+            cp_region = _ci_step_region(test_block, CI_CONTROL_PLANE_STEP)
+        except ValueError as exc:
+            failures.append(f"CI test job {exc}")
+            cp_duplicated = True
+            cp_region = None
+        if not cp_duplicated and cp_region is None:
+            failures.append(
+                f"CI test job must keep the conservative control-plane "
+                f"step ({CI_CONTROL_PLANE_STEP!r})"
+            )
+        elif cp_region is not None:
+            if not _guard_is_exact_line(cp_region, CI_CONTROL_PLANE_GUARD):
+                failures.append(
+                    "CI test job control-plane step must keep the exact "
+                    f"guard line {CI_CONTROL_PLANE_GUARD!r} (3.11 only)"
+                )
+            for test_file in CI_CONTROL_PLANE_TESTS:
+                if test_file not in cp_region:
+                    failures.append(
+                        "CI test job control-plane step must run the exact "
+                        f"six-file surface including {test_file!r}"
+                    )
+            # The ENTIRE named-step region is pinned byte-for-byte: name,
+            # guard, and the literal six-file pytest block. No -k /
+            # markers / globs / dynamic file discovery / generated
+            # selector lists / extra flags / extra conditions can be
+            # appended or prepended without breaking the pin.
+            expected_region = (
+                f"- name: {CI_CONTROL_PLANE_STEP}\n"
+                f"        {CI_CONTROL_PLANE_GUARD}\n"
+                "        run: |\n"
+                "          python -m pytest \\\n"
+                + "".join(
+                    f"            {test_file} \\\n"
+                    for test_file in CI_CONTROL_PLANE_TESTS
+                )
+                + "            -q --durations=100"
+            )
+            if cp_region != expected_region:
+                failures.append(
+                    "CI test job control-plane step must be exactly "
+                    f"{expected_region!r} — no extra flags, no -k / -m / "
+                    "markers / globs / dynamic discovery, no extra "
+                    "conditions"
+                )
+
+    # --- portability-pyarrow24 job: full heavy surface excluded ---
+    pyarrow_block = _ci_job_block(text, "portability-pyarrow24")
+    if pyarrow_block is None:
+        failures.append("CI portability-pyarrow24 job block is missing")
+    else:
+        for heavy_step in CI_PYARROW24_HEAVY_STEPS:
+            try:
+                region = _ci_step_region(pyarrow_block, heavy_step)
+            except ValueError as exc:
+                failures.append(f"CI portability-pyarrow24 job {exc}")
+                continue
+            if region is None:
+                failures.append(
+                    "CI portability-pyarrow24 job must keep the heavy step "
+                    f"({heavy_step!r})"
+                )
+            elif not _guard_is_exact_line(region, CI_HEAVY_GUARD_PYARROW24):
+                failures.append(
+                    "CI portability-pyarrow24 job heavy step "
+                    f"({heavy_step!r}) must keep the exact control-plane-"
+                    f"excluded guard line {CI_HEAVY_GUARD_PYARROW24!r}"
+                )
+
+    # --- package job: build chain excluded, release-checker tail runs ---
+    package_block = _ci_job_block(text, "package")
+    if package_block is None:
+        failures.append("CI package job block is missing")
+    else:
+        for heavy_step in CI_PACKAGE_HEAVY_STEPS:
+            try:
+                region = _ci_step_region(package_block, heavy_step)
+            except ValueError as exc:
+                failures.append(f"CI package job {exc}")
+                continue
+            if region is None:
+                failures.append(
+                    "CI package job must keep the heavy step "
+                    f"({heavy_step!r})"
+                )
+            elif not _guard_is_exact_line(region, CI_HEAVY_GUARD_PACKAGE):
+                failures.append(
+                    f"CI package job heavy step ({heavy_step!r}) must keep "
+                    f"the exact control-plane-excluded guard line "
+                    f"{CI_HEAVY_GUARD_PACKAGE!r}"
+                )
+        try:
+            prep_region = _ci_step_region(
+                package_block, CI_PREPARE_RELEASE_CHECKER_STEP
+            )
+        except ValueError as exc:
+            failures.append(f"CI package job {exc}")
+            prep_region = None
+        if prep_region is None:
+            failures.append(
+                "CI package job must keep the release-checker runtime "
+                f"bootstrap step ({CI_PREPARE_RELEASE_CHECKER_STEP!r})"
+            )
+        elif not _guard_is_exact_line(
+            prep_region, CI_PREPARE_RELEASE_CHECKER_GUARD
+        ):
+            failures.append(
+                "CI package job release-checker runtime bootstrap must "
+                "include control_plane as its exact guard line "
+                f"{CI_PREPARE_RELEASE_CHECKER_GUARD!r}"
+            )
+        try:
+            checker_region = _ci_step_region(
+                package_block, CI_RELEASE_CHECKER_STEP
+            )
+        except ValueError as exc:
+            failures.append(f"CI package job {exc}")
+            checker_region = None
+        if checker_region is None:
+            failures.append(
+                f"CI package job must keep the unconditional release "
+                f"checker step ({CI_RELEASE_CHECKER_STEP!r})"
+            )
+        elif "if:" in checker_region:
+            failures.append(
+                "CI package job release checker step must stay "
+                "unconditional (it validates every tier, including "
+                "control_plane)"
+            )
+        for step_name, guard in (
+            (CI_ATTESTATION_STEP, CI_ATTESTATION_GUARD),
+            (CI_ATTESTATION_UPLOAD_STEP, CI_ATTESTATION_GUARD),
+        ):
+            try:
+                region = _ci_step_region(package_block, step_name)
+            except ValueError as exc:
+                failures.append(f"CI package job {exc}")
+                continue
+            if region is None:
+                failures.append(
+                    f"CI package job must keep the attestation step "
+                    f"({step_name!r})"
+                )
+            elif not _guard_is_exact_line(region, guard):
+                failures.append(
+                    f"CI package job {step_name!r} must stay FULL-only "
+                    f"(control_plane never attests): {guard!r}"
+                )
+        try:
+            reuse_region = _ci_step_region(package_block, CI_REUSE_PROOF_STEP)
+        except ValueError as exc:
+            failures.append(f"CI package job {exc}")
+            reuse_region = None
+        if reuse_region is None:
+            failures.append(
+                f"CI package job must keep the post-merge reuse proof step "
+                f"({CI_REUSE_PROOF_STEP!r})"
+            )
+        elif not _guard_is_exact_line(reuse_region, CI_REUSE_PROOF_GUARD):
+            failures.append(
+                f"CI package job {CI_REUSE_PROOF_STEP!r} must stay FULL-only "
+                f"(control_plane never proves reuse): "
+                f"{CI_REUSE_PROOF_GUARD!r}"
+            )
+
+    # --- explicit control-plane markers (log evidence, not behavior) ---
+    for job, block in (
+        ("test", test_block),
+        ("portability-pyarrow24", pyarrow_block),
+        ("package", package_block),
+    ):
+        if block is None:
+            continue
+        try:
+            marker_region = _ci_step_region(block, CI_CONTROL_PLANE_MARKER_STEP)
+        except ValueError as exc:
+            failures.append(f"CI {job} job {exc}")
+            continue
+        if marker_region is None:
+            failures.append(
+                f"CI {job} job must keep the explicit control-plane tier "
+                f"marker step ({CI_CONTROL_PLANE_MARKER_STEP!r})"
+            )
+        elif not _guard_is_exact_line(
+            marker_region, CI_CONTROL_PLANE_MARKER_GUARD
+        ):
+            failures.append(
+                f"CI {job} job control-plane tier marker step must keep "
+                f"the exact guard line {CI_CONTROL_PLANE_MARKER_GUARD!r}"
+            )
     return failures
 
 
@@ -4452,6 +4893,7 @@ CHECKS = (
     ("v0.6.0 frozen fixture", check_v060_frozen_fixture),
     ("pyarrow dependency", check_pyarrow_dependency),
     ("CI PR-8 portability", check_ci_pr8),
+    ("CI control-plane tier", check_ci_control_plane),
     ("CI v0.7.0 released state", check_ci_v070_released_state),
     ("CI v0.7.0 public API smoke", check_ci_v070_public_api_smoke),
     ("old release notes", check_old_release_notes),
