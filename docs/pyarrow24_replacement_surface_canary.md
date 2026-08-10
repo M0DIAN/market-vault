@@ -173,10 +173,14 @@ package = 58s):
   (58s) is approximately unchanged.
 
 Audit-baseline interpretation (retained): ≈ 12–18s in that sample (6m27s →
-≈ 6m09s). **Runner variance explains the difference**: portability ran 414s
-here vs 327s in the audit's primary sample, which is why the same-run
-projected critical-path gain (~28s) exceeds the audit-baseline estimate
-(~12–18s). A ~1m54s run-local wall-clock saving is NOT claimed — the canary
+≈ 6m09s). **Runner variance explains the difference primarily through the
+Python 3.14 job timing** (≈300s in the canary sample vs ≈315s in the audit
+baseline): same-run gap = 328 − 300 ≈ **28s**; audit-baseline gap =
+327 − 315 ≈ **12s** (within the documented ~12–18s range depending on timing
+granularity/sample). The comparable projected-current portability timings are
+≈328s vs ≈327s — effectively identical (~1s) — so the temporary 414s canary
+job must not be used as a variance comparison because it contains the extra C
+measurement. A ~1m54s run-local wall-clock saving is NOT claimed — the canary
 job's 414s is not a production baseline.
 
 Consistent with the audit's wall-clock analysis: **the dominant P0-1 win is
