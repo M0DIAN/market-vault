@@ -272,20 +272,6 @@ jobs:
         env:
           PYTEST_ADDOPTS: "--durations=200"
 
-      # TEMPORARY PR #67 canary step: measures the proposed P0-1 replacement
-      # surface C on the actual PyArrow 24 runner. Removed before final head.
-      - name: Measure proposed PyArrow24 sensitivity subset (canary only)
-        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.POST_MERGE_REUSE != 'true'
-        run: |
-          python -m pytest \
-            tests/test_canonical_materialization_v03.py \
-            tests/test_canonical_builder_v03.py \
-            tests/test_dataset_materialization.py \
-            tests/test_verified_dataset_reader.py \
-            tests/test_pit_sample_assembly.py \
-            tests/test_dataset_end_to_end_regression.py \
-            -q --durations=100
-
       - name: FULL tests reused from verified PR
         if: env.POST_MERGE_REUSE == 'true'
         run: |
