@@ -2910,6 +2910,15 @@ CI_PYARROW24_SURFACE_C = (
 )
 CI_PYARROW24_C_STEP = "Run audited PyArrow 24 sensitive regression surface"
 CI_PYARROW24_OLD_FULL_STEP = "Run full offline suite under PyArrow 24.0.0"
+# The exact heavy guard line pinned to the C step region itself (never
+# validated block-globally): an unknown/unset CI_TIER or an unset
+# POST_MERGE_REUSE keeps heavy validation running.
+CI_PYARROW24_C_GUARD = (
+    "if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' "
+    "&& env.POST_MERGE_REUSE != 'true'"
+)
+CI_REUSE_MARKER_STEP = "FULL tests reused from verified PR"
+CI_REUSE_MARKER_GUARD = "if: env.POST_MERGE_REUSE == 'true'"
 
 _CI_JOB_HEADER_RE = re.compile(r"(?m)^  ([A-Za-z0-9_-]+):\s*$")
 
@@ -2932,6 +2941,25 @@ def _ci_job_block(text: str, job: str) -> str | None:
     return tail[:end]
 
 
+def _ci_step_region(block: str, step_name: str) -> str | None:
+    """The exact YAML region of one named step inside a job block: from
+    its ``      - name: <step_name>`` line up to (not including) the
+    next ``- name:`` step line, whatever its indentation. None when the
+    step does not exist; ValueError when it appears more than once,
+    because a duplicated step must fail closed instead of validating an
+    arbitrary region."""
+    marker = f"- name: {step_name}\n"
+    count = block.count(marker)
+    if count == 0:
+        return None
+    if count > 1:
+        raise ValueError(f"step {step_name!r} is duplicated in the job block")
+    start = block.index(marker)
+    next_step = re.compile(r"\n[ \t]*- name: ")
+    match = next_step.search(block, start + len(marker))
+    return block[start:] if match is None else block[start : match.start()]
+
+
 def check_ci_pr8(root: Path) -> list[str]:
     """The CI matrix stays exactly ``["3.11", "3.14"]``, the
     ``portability-pyarrow24`` job stays on Python 3.11, installs and
@@ -2940,8 +2968,10 @@ def check_ci_pr8(root: Path) -> list[str]:
     frozen regression, and the six-file sensitive regression surface) —
     never a blanket full-suite run under PyArrow 24.0.0. The package job
     carries the ``PR8_INTEGRATED_ACCEPTANCE_OK`` marker and still depends
-    on ``[test, portability-pyarrow24]``; the formal job topology and the
-    fail-closed heavy guard stay unchanged."""
+    on ``[test, portability-pyarrow24]``; the formal job topology stays
+    unchanged, and the C step's fail-closed heavy guard plus the
+    verified-reuse marker guard are pinned to their own exact step
+    regions."""
     path = root / ".github" / "workflows" / "ci.yml"
     if not path.exists():
         return [".github/workflows/ci.yml is missing"]
@@ -3020,24 +3050,37 @@ def check_ci_pr8(root: Path) -> list[str]:
             "CI portability-pyarrow24 job must never run an unqualified "
             "blanket `python -m pytest`"
         )
-    # The heavy guard must stay fail-closed: an unknown/unset CI_TIER or
-    # an unset POST_MERGE_REUSE keeps heavy validation running.
-    for guard_fragment in (
-        "env.CI_TIER != 'docs_fast'",
-        "env.CI_TIER != 'package_docs'",
-        "env.POST_MERGE_REUSE != 'true'",
-    ):
-        if guard_fragment not in block:
-            failures.append(
-                "CI portability-pyarrow24 job must keep the fail-closed "
-                f"heavy guard fragment {guard_fragment!r}"
-            )
+    # The C heavy guard must stay fail-closed ON the C step itself: an
+    # unknown/unset CI_TIER or an unset POST_MERGE_REUSE keeps heavy
+    # validation running. Pinning the exact guard line inside the exact
+    # step region (not block-global fragments) proves the guard binds to
+    # the C step, not merely to some step elsewhere in the job.
+    try:
+        c_region = _ci_step_region(block, CI_PYARROW24_C_STEP)
+    except ValueError as exc:
+        failures.append(f"CI portability-pyarrow24 job {exc}")
+        c_region = None
+    if c_region is not None and CI_PYARROW24_C_GUARD not in c_region:
+        failures.append(
+            "CI portability-pyarrow24 job C step must keep the exact "
+            f"fail-closed heavy guard ({CI_PYARROW24_C_GUARD!r})"
+        )
     # The verified-reuse marker may only sit behind a PROVEN
-    # POST_MERGE_REUSE == 'true'.
-    if "POST_MERGE_REUSE == 'true'" not in block:
+    # POST_MERGE_REUSE == 'true', bound to the marker step itself.
+    try:
+        reuse_region = _ci_step_region(block, CI_REUSE_MARKER_STEP)
+    except ValueError as exc:
+        failures.append(f"CI portability-pyarrow24 job {exc}")
+        reuse_region = None
+    if reuse_region is None:
         failures.append(
             "CI portability-pyarrow24 job must keep the verified-reuse "
-            "marker behind POST_MERGE_REUSE == 'true'"
+            f"marker step ({CI_REUSE_MARKER_STEP!r})"
+        )
+    elif CI_REUSE_MARKER_GUARD not in reuse_region:
+        failures.append(
+            "CI portability-pyarrow24 job verified-reuse marker step must "
+            f"keep the exact guard {CI_REUSE_MARKER_GUARD!r}"
         )
     return failures
 

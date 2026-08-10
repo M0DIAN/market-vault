@@ -7562,48 +7562,120 @@ def test_release_checker_fails_when_portability_job_loses_version_assertion(
     )
 
 
-def test_release_checker_fails_when_portability_tier_guard_inverted(
-    tmp_path,
-):
-    # Mutation: inverting the tier guard so an unknown/unset CI_TIER
-    # could skip heavy validation must fail the checker (fail-closed
-    # semantics: unknown tier runs heavy validation).
+def _mutate_step_guard(tmp_path, step_name, old, new):
+    """Replace ``old`` with ``new`` inside the exact YAML region of one
+    named step of the portability-pyarrow24 job only. Every other step —
+    and every other job — stays byte-identical, so the mutation proves
+    the checker is step-scoped rather than block-scoped."""
     repo = copy_repo(tmp_path)
-    path = repo / ".github" / "workflows" / "ci.yml"
-    path.write_text(
-        path.read_text(encoding="utf-8").replace(
-            "env.CI_TIER != 'docs_fast'",
-            "env.CI_TIER == 'docs_fast'",
+    ci = repo / ".github" / "workflows" / "ci.yml"
+    text = ci.read_text(encoding="utf-8")
+    block = _check_release._ci_job_block(text, "portability-pyarrow24")
+    assert block is not None
+    region = _check_release._ci_step_region(block, step_name)
+    assert region is not None, step_name
+    assert old in region, (step_name, old)
+    new_block = block.replace(region, region.replace(old, new))
+    assert block in text
+    ci.write_text(text.replace(block, new_block), encoding="utf-8")
+    return repo
+
+
+@pytest.mark.parametrize(
+    ("old_fragment", "new_fragment"),
+    [
+        # A: docs_fast exclusion inverted on the C step only.
+        ("env.CI_TIER != 'docs_fast'", "env.CI_TIER == 'docs_fast'"),
+        # B: package_docs exclusion inverted on the C step only.
+        ("env.CI_TIER != 'package_docs'", "env.CI_TIER == 'package_docs'"),
+        # C: reuse exclusion inverted on the C step only.
+        ("env.POST_MERGE_REUSE != 'true'", "env.POST_MERGE_REUSE == 'true'"),
+        # D: POST_MERGE_REUSE condition removed from the C step only.
+        (" && env.POST_MERGE_REUSE != 'true'", ""),
+    ],
+)
+def test_release_checker_fails_when_c_step_guard_weakened(
+    tmp_path, old_fragment, new_fragment
+):
+    # Mutation: weakening the C step's own heavy guard only — every
+    # other heavy step and the A/B surfaces stay byte-identical — must
+    # fail the checker with exactly the C-step guard failure (the exact
+    # guard line is pinned inside the C step region, not searched
+    # block-globally).
+    repo = _mutate_step_guard(
+        tmp_path,
+        "Run audited PyArrow 24 sensitive regression surface",
+        old_fragment,
+        new_fragment,
+    )
+    failures = assert_check_fails(
+        _check_release.check_ci_pr8,
+        repo,
+        "C step must keep the exact fail-closed heavy guard",
+    )
+    assert len(failures) == 1, failures
+
+
+def test_release_checker_fails_when_reuse_marker_guard_inverted(tmp_path):
+    # Mutation: inverting only the verified-reuse marker step's own guard
+    # must fail the checker with exactly the marker-step guard failure
+    # (the marker may only sit behind a PROVEN POST_MERGE_REUSE ==
+    # 'true', bound to its own step region).
+    repo = _mutate_step_guard(
+        tmp_path,
+        "FULL tests reused from verified PR",
+        "env.POST_MERGE_REUSE == 'true'",
+        "env.POST_MERGE_REUSE != 'true'",
+    )
+    failures = assert_check_fails(
+        _check_release.check_ci_pr8,
+        repo,
+        "verified-reuse marker step must keep the exact guard",
+    )
+    assert len(failures) == 1, failures
+
+
+def test_release_checker_fails_when_c_step_duplicated(tmp_path):
+    # Mutation: duplicating the C step inside the portability job must
+    # fail closed (a duplicated step must never validate an arbitrary
+    # region).
+    repo = copy_repo(tmp_path)
+    ci = repo / ".github" / "workflows" / "ci.yml"
+    text = ci.read_text(encoding="utf-8")
+    marker = "- name: Run audited PyArrow 24 sensitive regression surface"
+    assert text.count(marker) == 1
+    ci.write_text(
+        text.replace(
+            marker,
+            marker + "\n        run: echo duplicate\n" + marker,
+            1,
         ),
         encoding="utf-8",
     )
-    assert_check_fails(
+    failures = assert_check_fails(
         _check_release.check_ci_pr8,
         repo,
-        'fail-closed heavy guard fragment "env.CI_TIER != \'docs_fast\'"',
+        "is duplicated in the job block",
     )
+    assert len(failures) == 1, failures
 
 
-def test_release_checker_fails_when_portability_reuse_guard_inverted(
-    tmp_path,
-):
-    # Mutation: inverting the reuse guard so heavy validation could run
-    # (or be claimed) only on POST_MERGE_REUSE == 'true' must fail the
-    # checker (only a PROVEN reuse may skip heavy validation).
-    repo = copy_repo(tmp_path)
-    path = repo / ".github" / "workflows" / "ci.yml"
-    path.write_text(
-        path.read_text(encoding="utf-8").replace(
-            "env.POST_MERGE_REUSE != 'true'",
-            "env.POST_MERGE_REUSE == 'true'",
-        ),
-        encoding="utf-8",
+def test_ci_step_region_helper_semantics():
+    # The step-region helper must return None for a missing step, return
+    # exactly the named step's YAML (never leaking the next step), and
+    # raise ValueError on a duplicated step so the checker fails closed.
+    block = (
+        "      - name: Alpha\n"
+        "        run: echo 1\n"
+        "      - name: Beta\n"
+        "        run: echo 2\n"
     )
-    assert_check_fails(
-        _check_release.check_ci_pr8,
-        repo,
-        'fail-closed heavy guard fragment "env.POST_MERGE_REUSE != \'true\'"',
-    )
+    assert _check_release._ci_step_region(block, "Gamma") is None
+    alpha = _check_release._ci_step_region(block, "Alpha")
+    assert alpha.startswith("- name: Alpha")
+    assert "Beta" not in alpha
+    with pytest.raises(ValueError):
+        _check_release._ci_step_region(block + block, "Alpha")
 
 
 def test_release_checker_fails_when_package_job_loses_portability_dependency(
