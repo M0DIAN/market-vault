@@ -385,6 +385,73 @@ main push 不得复用证据）→ #66 实际 surface-level workflow gating →
 **V2 未在生产实现。** 任何把 V2 输出当作生产 skip 依据的改动，必须先
 通过上述完整评审与 canary 流程。
 
+### 4.10 Control-Plane 验证层级（P1-2，PR #71）
+
+CONTROL_PLANE 是第四种 CI tier：经过验证的保守子集路径（validated
+SUBSET tier），介于 docs_fast / package_docs 与 FULL 之间。它只对
+**精确的控制面 allowlist** 生效，绝不宽于 CI 自身验证面。
+
+**精确 eligible path 哲学**：tier 资格只来自 `scripts/ci_risk_tier.py`
+中的 `CONTROL_PLANE_SCOPE_RULES`（11 条精确路径；不存在
+`tests/**` / `scripts/**` / `.github/workflows/**` 之类的宽规则）：
+
+- `.github/workflows/ci.yml`
+- `scripts/ci_risk_tier.py`
+- `scripts/ci_post_merge_reuse.py`
+- `scripts/audit_pr.py`
+- `scripts/check_release.py`
+- `ci/components.toml`
+- `tests/test_ci_risk_tier.py`
+- `tests/test_component_aware_tiers.py`
+- `tests/test_ci_post_merge_reuse.py`
+- `tests/test_audit_pr.py`
+- `tests/test_v061_ci_auditability.py`
+
+明确**不** eligible：`tests/test_release_v061.py`（bootstrap 安全）、
+`pyproject.toml`、`README.md`、`scripts/check_repo_hygiene.py`、
+`src/**`、其他 workflow、未知路径。混合规则：≥1 条 CP 路径 **且**
+全部路径在 CP ∪ docs 范围内 → control_plane；任何越界路径 → FULL。
+
+**分类优先级（fail closed）**：empty → FULL；invalid → FULL；
+docs_fast；package_docs；control_plane；shared/core/unknown → FULL。
+control_plane 分支位于旧 shared_changed 检查**之前**，因此旧 shared
+规则不会让精确 allowlist 子集不可达；allowlist 之外的改动仍命中
+shared/core/violation 检查并保持 FULL。
+
+**执行契约**（`.github/workflows/ci.yml`）：
+
+- `Run conservative control-plane tests`：guard 精确等于
+  `CI_TIER == 'control_plane' && matrix.python-version == '3.11'`，
+  命令为字面六文件 pytest 面（`-q --durations=100`，无 `-k` /
+  marker / glob）：`tests/test_ci_risk_tier.py`、
+  `tests/test_component_aware_tiers.py`、
+  `tests/test_ci_post_merge_reuse.py`、`tests/test_audit_pr.py`、
+  `tests/test_v061_ci_auditability.py`、`tests/test_release_v061.py`；
+- Python 3.14 在 control_plane 下**不**运行产品 FULL 套件；
+- PyArrow24 六个 heavy 步骤与 package 十二个 heavy 步骤在
+  control_plane 下 skip；
+- `Prepare release-checker runtime`（`python -m pip install -e .`）在
+  control_plane 下运行，`Run release checker` 保持无条件 → package
+  checker tail 完整保留；
+- 三个 formal job 均含 `Control-plane tier marker`。
+
+**证据与复用边界**：
+
+- `full_matrix_required=false`（validated subset，永不产出 V1 FULL
+  证据）；
+- 无 V1 attestation（create/upload 仅 `tier == 'full'`）；
+- 无 V1 reuse proof（仅 main push + `tier == 'full'`）；
+- unknown / unset / mixed 一律 fail closed FULL。
+
+**Rollout 状态（精确）**：PR #71 仅部署机制（mechanism deployment）。
+它自身因为修改 `tests/test_release_v061.py`（bootstrap safety）而
+分类为 `tier=full, full_matrix_required=true`——这是有意的，绝不
+"修复" classifier 让 #71 自身变成 control_plane。生产级 fast-path
+验证需要独立的真实 canary：**PR #72 为首次生产 control-plane
+canary**。在 canary 成功之前，不得声明 P1-2 生产验证完成，也不得把
+#71 描述为 "production validated"。本 PR 的所有 wall-clock 记录属于
+FULL 路径，不是 fast-path 基准。
+
 ## 5. 未来 wall-clock 目标
 
 这些是性能目标（performance targets），不是 correctness gates。未达到
