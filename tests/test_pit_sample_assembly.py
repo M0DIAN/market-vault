@@ -16,6 +16,7 @@ import shutil
 from dataclasses import FrozenInstanceError, replace
 from datetime import date, datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -296,6 +297,82 @@ def make_empty_build(tmp_path):
     result = materialize(cfg, symbols=["US.XYZ"])
     assert result.status == "EMPTY"
     return verified(result)
+
+
+# ---------------------------------------------------------------------------
+# Shared immutable template fixtures (built once per module).
+# ---------------------------------------------------------------------------
+
+# One template root directory per fixture family; every read-only test reuses
+# these trees directly and no test may write into them. Destructive tests
+# clone_build() into their own tmp_path first.
+_TEMPLATE_DIRS = (
+    "builds",
+    "second-run",
+    "duplicate-artifacts",
+    "gap",
+    "multi-symbol-gap",
+    "jul2-gap",
+    "duplicate-gap-artifacts",
+    "two-symbol",
+    "empty",
+)
+
+
+def _fingerprint(root: Path) -> list[tuple[str, str, int, str]]:
+    """Recursive content fingerprint of one template tree: (relative path,
+    file type, byte size, sha256) per entry, sorted. Mtimes are deliberately
+    excluded because content identity is what immutability means here."""
+    entries = []
+    for path in sorted(root.rglob("*"), key=lambda p: p.relative_to(root).as_posix()):
+        rel = path.relative_to(root).as_posix()
+        if path.is_symlink():
+            entries.append((rel, "symlink", 0, ""))
+        elif path.is_file():
+            entries.append(
+                (rel, "file", path.stat().st_size,
+                 hashlib.sha256(path.read_bytes()).hexdigest())
+            )
+        else:
+            entries.append((rel, "dir", 0, ""))
+    return entries
+
+
+def clone_build(build, tmp_path):
+    """Deterministic isolated copy of a template build tree for a destructive
+    test: a normal recursive copy (never hardlinks), then re-verified at the
+    new path so the returned object binds to the clone. The template tree
+    itself is never touched."""
+    dest = tmp_path / build.build_path.name
+    shutil.copytree(build.build_path, dest)
+    return load_verified_canonical_build(dest)
+
+
+@pytest.fixture(scope="module")
+def pit_templates(tmp_path_factory):
+    """Immutable module-scoped build templates, constructed once and shared by
+    every read-only test. Destructive tests must clone_build() into their own
+    tmp_path instead of writing here; the module-teardown fingerprint
+    comparison fails the run if any template tree changed."""
+    root = tmp_path_factory.mktemp("pit-templates")
+    templates = SimpleNamespace(
+        builds=make_builds(root / "builds"),
+        second_run=make_second_run_build(root / "second-run"),
+        duplicate_artifacts=make_duplicate_build_artifacts(root / "duplicate-artifacts"),
+        gap=make_gap_build(root / "gap"),
+        multi_symbol_gap=make_multi_symbol_gap_build(root / "multi-symbol-gap"),
+        jul2_gap=make_jul2_gap_build(root / "jul2-gap"),
+        duplicate_gap_artifacts=make_duplicate_gap_artifacts(root / "duplicate-gap-artifacts"),
+        two_symbol=make_two_symbol_build(root / "two-symbol"),
+        empty=make_empty_build(root / "empty"),
+    )
+    before = {name: _fingerprint(root / name) for name in _TEMPLATE_DIRS}
+    yield templates
+    after = {name: _fingerprint(root / name) for name in _TEMPLATE_DIRS}
+    assert after == before, (
+        "PIT template fixture trees changed during the module: a test wrote "
+        "into a shared immutable template instead of cloning it"
+    )
 
 
 def request(
@@ -604,8 +681,8 @@ def version_id(
 # ---------------------------------------------------------------------------
 
 
-def test_event_time_equal_feature_window_start_included(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_event_time_equal_feature_window_start_included(pit_templates):
+    _, a, *_ = pit_templates.builds
     result = assemble([a], [request()])
     sample = result.samples[0]
     assert sample.diagnostics.feature_candidate_count == 2
@@ -617,8 +694,8 @@ def test_event_time_equal_feature_window_start_included(tmp_path):
     ]
 
 
-def test_event_time_equal_feature_window_close_excluded(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_event_time_equal_feature_window_close_excluded(pit_templates):
+    _, a, *_ = pit_templates.builds
     sample = assemble([a], [request()]).samples[0]
     event_times = {bar.event_time for bar in a.bars}
     assert pd.Timestamp("2026-07-01T13:32:00Z") in event_times
@@ -628,8 +705,8 @@ def test_event_time_equal_feature_window_close_excluded(tmp_path):
     )
 
 
-def test_market_available_at_equal_feature_window_close_included(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_market_available_at_equal_feature_window_close_included(pit_templates):
+    _, a, *_ = pit_templates.builds
     # The 09:31 row's market_available_at is exactly 09:32 (13:32Z) == close.
     sample = assemble([a], [request()]).samples[0]
     assert sample.diagnostics.feature_market_future_excluded_count == 0
@@ -640,8 +717,8 @@ def test_market_available_at_equal_feature_window_close_included(tmp_path):
     )
 
 
-def test_market_available_at_after_feature_window_close_excluded(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_market_available_at_after_feature_window_close_excluded(pit_templates):
+    _, a, *_ = pit_templates.builds
     # Window [13:30:00, 13:31:30): the 09:31 row is a candidate (event < close)
     # but its market_available_at (13:32) is after the close.
     result = assemble(
@@ -657,8 +734,8 @@ def test_market_available_at_after_feature_window_close_excluded(tmp_path):
     ]
 
 
-def test_archive_available_at_equal_dataset_as_of_included(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_archive_available_at_equal_dataset_as_of_included(pit_templates):
+    _, a, *_ = pit_templates.builds
     sample = assemble(
         [a], [request()], dataset_as_of=datetime(2026, 7, 1, 14, 0, tzinfo=UTC)
     ).samples[0]
@@ -666,8 +743,8 @@ def test_archive_available_at_equal_dataset_as_of_included(tmp_path):
     assert sample.diagnostics.feature_archive_future_excluded_count == 0
 
 
-def test_archive_available_at_after_dataset_as_of_excluded(tmp_path):
-    _, a, b, *_ = make_builds(tmp_path)
+def test_archive_available_at_after_dataset_as_of_excluded(pit_templates):
+    _, a, b, *_ = pit_templates.builds
     sample = assemble(
         [a, b],
         [request(code="US.NVDA")],
@@ -678,15 +755,15 @@ def test_archive_available_at_after_dataset_as_of_excluded(tmp_path):
     assert sample.diagnostics.feature_archive_future_excluded_count == 2
 
 
-def test_no_dataset_as_of_skips_archive_cutoff(tmp_path):
-    _, a, b, *_ = make_builds(tmp_path)
+def test_no_dataset_as_of_skips_archive_cutoff(pit_templates):
+    _, a, b, *_ = pit_templates.builds
     sample = assemble([a, b], [request(code="US.NVDA")]).samples[0]
     assert sample.diagnostics.feature_selected_count == 2
     assert sample.diagnostics.feature_archive_future_excluded_count == 0
 
 
-def test_feature_never_contains_label_future_rows(tmp_path):
-    _, a, b, c, _ = make_builds(tmp_path)
+def test_feature_never_contains_label_future_rows(pit_templates):
+    _, a, b, c, _ = pit_templates.builds
     result = assemble(
         [a, b, c],
         [
@@ -707,8 +784,8 @@ def test_feature_never_contains_label_future_rows(tmp_path):
     )
 
 
-def test_label_row_can_be_after_feature_close(tmp_path):
-    _, a, b, c, _ = make_builds(tmp_path)
+def test_label_row_can_be_after_feature_close(pit_templates):
+    _, a, b, c, _ = pit_templates.builds
     label_req = request(
         label_start=datetime(2026, 7, 1, 13, 34, tzinfo=UTC),
         label_close=datetime(2026, 7, 1, 13, 36, tzinfo=UTC),
@@ -733,14 +810,14 @@ def test_naive_window_timestamp_fails(tmp_path):
         )
 
 
-def test_naive_dataset_as_of_fails(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_naive_dataset_as_of_fails(pit_templates):
+    _, a, *_ = pit_templates.builds
     with pytest.raises(PITAssemblyError):
         assemble([a], [request()], dataset_as_of=datetime(2026, 7, 1, 14, 0))
 
 
-def test_equivalent_utc_and_non_utc_representations_identical(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_equivalent_utc_and_non_utc_representations_identical(pit_templates):
+    _, a, *_ = pit_templates.builds
     utc_req = request(
         label_start=datetime(2026, 7, 1, 13, 34, tzinfo=UTC),
         label_close=datetime(2026, 7, 1, 13, 36, tzinfo=UTC),
@@ -755,8 +832,8 @@ def test_equivalent_utc_and_non_utc_representations_identical(tmp_path):
     assert assemble([a], [utc_req]) == assemble([a], [ny_req])
 
 
-def test_microsecond_precision_normalized(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_microsecond_precision_normalized(pit_templates):
+    _, a, *_ = pit_templates.builds
     nano = request(
         feature_start=pd.Timestamp("2026-07-01T13:30:00.123456789Z"),
         feature_close=pd.Timestamp("2026-07-01T13:32:00.987654321Z"),
@@ -791,8 +868,8 @@ def test_single_label_boundary_fails():
         )
 
 
-def test_cross_market_calendar_date_label_row_fails(tmp_path):
-    _, a, b, c, d = make_builds(tmp_path)
+def test_cross_market_calendar_date_label_row_fails(pit_templates):
+    _, a, b, c, d = pit_templates.builds
     # Build D holds US.NVDA rows of market-calendar date 2026-07-02; the label
     # window selects the 13:31Z row, which is not on the anchor date.
     with pytest.raises(PITAssemblyError, match="cross-market-calendar-date"):
@@ -815,8 +892,8 @@ def test_adjustment_not_none_fails():
         request(adjustment="ADJ")
 
 
-def test_label_horizon_not_claimed_complete(tmp_path):
-    _, a, b, c, _ = make_builds(tmp_path)
+def test_label_horizon_not_claimed_complete(pit_templates):
+    _, a, b, c, _ = pit_templates.builds
     result = assemble(
         [a, b, c],
         [
@@ -840,15 +917,15 @@ def test_label_horizon_not_claimed_complete(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_build_input_order_irrelevant(tmp_path):
-    _, a, b, *_ = make_builds(tmp_path)
+def test_build_input_order_irrelevant(pit_templates):
+    _, a, b, *_ = pit_templates.builds
     first = assemble([a, b], [request(), request(code="US.NVDA")])
     second = assemble([b, a], [request(code="US.NVDA"), request()])
     assert first == second
 
 
-def test_request_input_order_irrelevant(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_request_input_order_irrelevant(pit_templates):
+    _, a, *_ = pit_templates.builds
     req_short = request()
     req_long = request(
         feature_close=datetime(2026, 7, 1, 13, 34, tzinfo=UTC)
@@ -858,30 +935,30 @@ def test_request_input_order_irrelevant(tmp_path):
     assert first == second
 
 
-def test_row_input_order_irrelevant(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_row_input_order_irrelevant(pit_templates):
+    _, a, *_ = pit_templates.builds
     reversed_build = replace(a, bars=tuple(reversed(a.bars)))
     first = assemble([a], [request()])
     second = assemble([reversed_build], [request()])
     assert first == second
 
 
-def test_association_row_order_fixed(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_association_row_order_fixed(pit_templates):
+    _, a, *_ = pit_templates.builds
     first = assemble([a], [request()])
     second = assemble([a], [request()])
     assert first.association_rows == second.association_rows
 
 
-def test_positions_fixed(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_positions_fixed(pit_templates):
+    _, a, *_ = pit_templates.builds
     rows = assemble([a], [request()]).association_rows
     feature_rows = [row for row in rows if row["role"] == PIT_ROLE_FEATURE]
     assert [row["position"] for row in feature_rows] == [0, 1]
 
 
-def test_sample_key_stable_across_paths(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_sample_key_stable_across_paths(pit_templates, tmp_path):
+    _, a, *_ = pit_templates.builds
     moved = tmp_path / f"build_id={a.canonical_build_id}"
     shutil.copytree(a.build_path, moved)
     moved_build = load_verified_canonical_build(moved)
@@ -892,8 +969,8 @@ def test_sample_key_stable_across_paths(tmp_path):
     assert first.association_content_id == second.association_content_id
 
 
-def test_row_version_change_changes_sample_version_id(tmp_path):
-    a, a2 = make_second_run_build(tmp_path)
+def test_row_version_change_changes_sample_version_id(pit_templates):
+    a, a2 = pit_templates.second_run
     first = assemble([a], [request()])
     second = assemble([a2], [request()])
     assert first.samples[0].sample_key == second.samples[0].sample_key
@@ -901,8 +978,8 @@ def test_row_version_change_changes_sample_version_id(tmp_path):
     assert first.association_content_id != second.association_content_id
 
 
-def test_dataset_as_of_change_changes_sample_version_id(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_dataset_as_of_change_changes_sample_version_id(pit_templates):
+    _, a, *_ = pit_templates.builds
     first = assemble([a], [request()], dataset_as_of=datetime(2026, 7, 1, 14, 0, tzinfo=UTC))
     second = assemble([a], [request()], dataset_as_of=datetime(2026, 7, 1, 16, 0, tzinfo=UTC))
     assert first.samples[0].sample_key == second.samples[0].sample_key
@@ -927,8 +1004,8 @@ def test_build_created_at_change_does_not_change_identity(tmp_path):
     assert result_one == result_two
 
 
-def test_zero_row_result_stable_and_schema_tied(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_zero_row_result_stable_and_schema_tied(pit_templates):
+    _, a, *_ = pit_templates.builds
     empty_req = request(code="US.QQQ")
     first = assemble([a], [empty_req])
     second = assemble([a], [empty_req])
@@ -947,8 +1024,8 @@ def test_zero_row_result_stable_and_schema_tied(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_identical_row_versions_deduplicated(tmp_path):
-    first, second = make_duplicate_build_artifacts(tmp_path)
+def test_identical_row_versions_deduplicated(pit_templates):
+    first, second = pit_templates.duplicate_artifacts
     result = assemble([first, second], [request()])
     sample = result.samples[0]
     assert sample.diagnostics.feature_selected_count == 2
@@ -957,34 +1034,34 @@ def test_identical_row_versions_deduplicated(tmp_path):
     assert len(result.gap_references) == 1
 
 
-def test_different_row_versions_fail(tmp_path):
-    a, a2 = make_second_run_build(tmp_path)
+def test_different_row_versions_fail(pit_templates):
+    a, a2 = pit_templates.second_run
     with pytest.raises(PITAssemblyError, match="conflicting canonical candidates"):
         assemble([a, a2], [request()])
 
 
-def test_same_version_different_market_values_fail(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_same_version_different_market_values_fail(pit_templates):
+    _, a, *_ = pit_templates.builds
     tampered = replace(a, bars=tuple(replace(bar, close=999.0) for bar in a.bars))
     with pytest.raises(PITAssemblyError, match="conflicting canonical candidates"):
         assemble([a, tampered], [request()])
 
 
-def test_duplicate_sample_key_fails(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_duplicate_sample_key_fails(pit_templates):
+    _, a, *_ = pit_templates.builds
     with pytest.raises(PITAssemblyError, match="duplicate sample_key"):
         assemble([a], [request(), request()])
 
 
-def test_row_not_belonging_to_declared_build_fails(tmp_path):
-    _, a, b, c, _ = make_builds(tmp_path)
+def test_row_not_belonging_to_declared_build_fails(pit_templates):
+    _, a, b, c, _ = pit_templates.builds
     foreign = replace(a, bars=a.bars + (c.bars[0],))
     with pytest.raises(PITAssemblyError, match="not covered by the declared provenance"):
         assemble([foreign], [request()])
 
 
-def test_row_version_not_covered_by_build_provenance_fails(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_row_version_not_covered_by_build_provenance_fails(pit_templates):
+    _, a, *_ = pit_templates.builds
     stripped = replace(a, canonical_row_version_ids=a.canonical_row_version_ids[1:])
     with pytest.raises(PITAssemblyError, match="not covered by the declared provenance"):
         assemble([stripped], [request()])
@@ -995,8 +1072,8 @@ def test_row_version_not_covered_by_build_provenance_fails(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_valid_complete_build_loads(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_valid_complete_build_loads(pit_templates):
+    _, a, *_ = pit_templates.builds
     payload = json.loads(a.manifest_payload)
     assert a.status == "COMPLETE"
     assert len(a.bars) == 4
@@ -1015,8 +1092,8 @@ def test_valid_complete_build_loads(tmp_path):
     assert [bar.event_time for bar in a.bars] == sorted(bar.event_time for bar in a.bars)
 
 
-def test_valid_empty_build_loads(tmp_path):
-    empty = make_empty_build(tmp_path)
+def test_valid_empty_build_loads(pit_templates):
+    empty = pit_templates.empty
     assert empty.status == "EMPTY"
     assert empty.bars == ()
     assert empty.canonical_row_version_ids == ()
@@ -1031,22 +1108,25 @@ def test_valid_empty_build_loads(tmp_path):
     assert result.canonical_build_pins[0].canonical_row_version_ids == ()
 
 
-def test_missing_success_fails(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_missing_success_fails(pit_templates, tmp_path):
+    _, a, *_ = pit_templates.builds
+    a = clone_build(a, tmp_path)
     (a.build_path / "_SUCCESS").unlink()
     with pytest.raises(CanonicalArtifactValidationError, match="_SUCCESS"):
         load_verified_canonical_build(a.build_path)
 
 
-def test_wrong_manifest_schema_version_fails(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_wrong_manifest_schema_version_fails(pit_templates, tmp_path):
+    _, a, *_ = pit_templates.builds
+    a = clone_build(a, tmp_path)
     mutate_manifest(a, lambda payload: payload.__setitem__("manifest_schema_version", "x"))
     with pytest.raises(CanonicalArtifactValidationError, match="schema mismatch"):
         load_verified_canonical_build(a.build_path)
 
 
-def test_build_dir_id_mismatch_fails(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_build_dir_id_mismatch_fails(pit_templates, tmp_path):
+    _, a, *_ = pit_templates.builds
+    a = clone_build(a, tmp_path)
     build_id = json.loads(a.manifest_payload)["canonical_build_id"]
     wrong = a.build_path.parent / f"build_id={sha('wrong')}"
     a.build_path.rename(wrong)
@@ -1054,8 +1134,9 @@ def test_build_dir_id_mismatch_fails(tmp_path):
         load_verified_canonical_build(wrong)
 
 
-def test_manifest_sha_mismatch_fails(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_manifest_sha_mismatch_fails(pit_templates, tmp_path):
+    _, a, *_ = pit_templates.builds
+    a = clone_build(a, tmp_path)
     mutate_manifest(
         a,
         lambda payload: payload.__setitem__(
@@ -1066,8 +1147,9 @@ def test_manifest_sha_mismatch_fails(tmp_path):
         load_verified_canonical_build(a.build_path)
 
 
-def test_byte_size_mismatch_fails(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_byte_size_mismatch_fails(pit_templates, tmp_path):
+    _, a, *_ = pit_templates.builds
+    a = clone_build(a, tmp_path)
     mutate_manifest(
         a,
         lambda payload: payload.__setitem__(
@@ -1078,8 +1160,9 @@ def test_byte_size_mismatch_fails(tmp_path):
         load_verified_canonical_build(a.build_path)
 
 
-def test_row_count_mismatch_fails(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_row_count_mismatch_fails(pit_templates, tmp_path):
+    _, a, *_ = pit_templates.builds
+    a = clone_build(a, tmp_path)
     mutate_manifest(
         a,
         lambda payload: payload.__setitem__(
@@ -1090,8 +1173,9 @@ def test_row_count_mismatch_fails(tmp_path):
         load_verified_canonical_build(a.build_path)
 
 
-def test_parquet_schema_mismatch_fails(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_parquet_schema_mismatch_fails(pit_templates, tmp_path):
+    _, a, *_ = pit_templates.builds
+    a = clone_build(a, tmp_path)
     bar_file = next(a.build_path.rglob("bars/**/part-00000.parquet"))
     table = pq.ParquetFile(bar_file).read()
     reordered = table.select(list(reversed(table.column_names)))
@@ -1108,8 +1192,9 @@ def test_parquet_schema_mismatch_fails(tmp_path):
         load_verified_canonical_build(a.build_path)
 
 
-def test_tampered_canonical_bar_key_fails(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_tampered_canonical_bar_key_fails(pit_templates, tmp_path):
+    _, a, *_ = pit_templates.builds
+    a = clone_build(a, tmp_path)
     rewrite_bars(
         a,
         lambda frame: set_column(
@@ -1121,8 +1206,9 @@ def test_tampered_canonical_bar_key_fails(tmp_path):
         load_verified_canonical_build(a.build_path)
 
 
-def test_tampered_canonical_row_version_id_fails(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_tampered_canonical_row_version_id_fails(pit_templates, tmp_path):
+    _, a, *_ = pit_templates.builds
+    a = clone_build(a, tmp_path)
     rewrite_bars(
         a,
         lambda frame: set_column(
@@ -1134,15 +1220,17 @@ def test_tampered_canonical_row_version_id_fails(tmp_path):
         load_verified_canonical_build(a.build_path)
 
 
-def test_tampered_canonical_content_id_fails(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_tampered_canonical_content_id_fails(pit_templates, tmp_path):
+    _, a, *_ = pit_templates.builds
+    a = clone_build(a, tmp_path)
     mutate_manifest(a, lambda payload: payload.__setitem__("canonical_content_id", sha("tampered")))
     with pytest.raises(CanonicalArtifactValidationError, match="canonical_content_id"):
         load_verified_canonical_build(a.build_path)
 
 
-def test_tampered_canonical_build_id_fails(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_tampered_canonical_build_id_fails(pit_templates, tmp_path):
+    _, a, *_ = pit_templates.builds
+    a = clone_build(a, tmp_path)
     tampered = sha("tampered")
     mutate_manifest(a, lambda payload: payload.__setitem__("canonical_build_id", tampered))
     moved = a.build_path.parent / f"build_id={tampered}"
@@ -1151,15 +1239,17 @@ def test_tampered_canonical_build_id_fails(tmp_path):
         load_verified_canonical_build(moved)
 
 
-def test_bool_top_level_count_fails(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_bool_top_level_count_fails(pit_templates, tmp_path):
+    _, a, *_ = pit_templates.builds
+    a = clone_build(a, tmp_path)
     mutate_manifest(a, lambda payload: payload.__setitem__("canonical_row_count", True))
     with pytest.raises(CanonicalArtifactValidationError, match="non-negative integer"):
         load_verified_canonical_build(a.build_path)
 
 
-def test_path_traversal_output_record_fails(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_path_traversal_output_record_fails(pit_templates, tmp_path):
+    _, a, *_ = pit_templates.builds
+    a = clone_build(a, tmp_path)
     mutate_manifest(
         a,
         lambda payload: payload["output_files"].append(
@@ -1177,8 +1267,9 @@ def test_path_traversal_output_record_fails(tmp_path):
         load_verified_canonical_build(a.build_path)
 
 
-def test_symlinked_file_fails(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_symlinked_file_fails(pit_templates, tmp_path):
+    _, a, *_ = pit_templates.builds
+    a = clone_build(a, tmp_path)
     bar_file = next(a.build_path.rglob("bars/**/part-00000.parquet"))
     outside = tmp_path / "outside.parquet"
     outside.write_bytes(b"x")
@@ -1191,29 +1282,33 @@ def test_symlinked_file_fails(tmp_path):
         load_verified_canonical_build(a.build_path)
 
 
-def test_malformed_utf8_manifest_fails(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_malformed_utf8_manifest_fails(pit_templates, tmp_path):
+    _, a, *_ = pit_templates.builds
+    a = clone_build(a, tmp_path)
     (a.build_path / "manifest.json").write_bytes(b"\xff\xfe\x00")
     with pytest.raises(CanonicalArtifactValidationError, match="not valid UTF-8"):
         load_verified_canonical_build(a.build_path)
 
 
-def test_invalid_json_manifest_fails(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_invalid_json_manifest_fails(pit_templates, tmp_path):
+    _, a, *_ = pit_templates.builds
+    a = clone_build(a, tmp_path)
     (a.build_path / "manifest.json").write_text("{not json", encoding="utf-8")
     with pytest.raises(CanonicalArtifactValidationError, match="not valid JSON"):
         load_verified_canonical_build(a.build_path)
 
 
-def test_unknown_manifest_field_fails(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_unknown_manifest_field_fails(pit_templates, tmp_path):
+    _, a, *_ = pit_templates.builds
+    a = clone_build(a, tmp_path)
     mutate_manifest(a, lambda payload: payload.__setitem__("unexpected", 1))
     with pytest.raises(CanonicalArtifactValidationError, match="unknown top-level"):
         load_verified_canonical_build(a.build_path)
 
 
-def test_unknown_output_record_field_fails(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_unknown_output_record_field_fails(pit_templates, tmp_path):
+    _, a, *_ = pit_templates.builds
+    a = clone_build(a, tmp_path)
     mutate_manifest(
         a,
         lambda payload: payload["output_files"][0].__setitem__("unexpected", 1),
@@ -1222,8 +1317,9 @@ def test_unknown_output_record_field_fails(tmp_path):
         load_verified_canonical_build(a.build_path)
 
 
-def test_missing_manifest_fails(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_missing_manifest_fails(pit_templates, tmp_path):
+    _, a, *_ = pit_templates.builds
+    a = clone_build(a, tmp_path)
     (a.build_path / "manifest.json").unlink()
     with pytest.raises(CanonicalArtifactValidationError, match="manifest.json"):
         load_verified_canonical_build(a.build_path)
@@ -1239,8 +1335,8 @@ def test_nonexistent_build_dir_fails(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_selected_rows_produce_canonical_build_pins(tmp_path):
-    _, a, b, c, _ = make_builds(tmp_path)
+def test_selected_rows_produce_canonical_build_pins(pit_templates):
+    _, a, b, c, _ = pit_templates.builds
     result = assemble(
         [a, b, c],
         [
@@ -1278,8 +1374,8 @@ def test_selected_rows_produce_canonical_build_pins(tmp_path):
     assert {snap.ingestion_run_id for snap in pins[c.canonical_build_id].source_snapshots} == {"run-c"}
 
 
-def test_selected_row_ids_covered_by_pins(tmp_path):
-    _, a, b, c, _ = make_builds(tmp_path)
+def test_selected_row_ids_covered_by_pins(pit_templates):
+    _, a, b, c, _ = pit_templates.builds
     result = assemble(
         [a, b, c],
         [
@@ -1299,8 +1395,8 @@ def test_selected_row_ids_covered_by_pins(tmp_path):
     assert set(result.canonical_row_version_ids) == pinned
 
 
-def test_unselected_source_snapshots_excluded_from_pins(tmp_path):
-    _, a, b, *_ = make_builds(tmp_path)
+def test_unselected_source_snapshots_excluded_from_pins(pit_templates):
+    _, a, b, *_ = pit_templates.builds
     result = assemble([a, b], [request()])
     pin_b = next(
         pin for pin in result.canonical_build_pins
@@ -1310,8 +1406,9 @@ def test_unselected_source_snapshots_excluded_from_pins(tmp_path):
     assert pin_b.source_snapshots == ()
 
 
-def test_snapshot_path_change_does_not_affect_identity(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_snapshot_path_change_does_not_affect_identity(pit_templates, tmp_path):
+    _, a, *_ = pit_templates.builds
+    a = clone_build(a, tmp_path)
     # Relocate snapshot_file consistently across the whole artifact; the
     # reader re-verifies the fully relocated artifact (an inconsistent
     # relocation would fail the per-key resolution binding).
@@ -1322,8 +1419,8 @@ def test_snapshot_path_change_does_not_affect_identity(tmp_path):
     assert first == second
 
 
-def test_gap_reference_matches_manifest(tmp_path):
-    gap_build = make_gap_build(tmp_path)
+def test_gap_reference_matches_manifest(pit_templates):
+    gap_build = pit_templates.gap
     payload = json.loads(gap_build.manifest_payload)
     assert gap_build.gap_count == 1
     result = assemble([gap_build], [request()])
@@ -1342,16 +1439,16 @@ def test_gap_reference_matches_manifest(tmp_path):
     )
 
 
-def test_no_duplicate_gap_reference_per_build(tmp_path):
-    _, a, b, *_ = make_builds(tmp_path)
+def test_no_duplicate_gap_reference_per_build(pit_templates):
+    _, a, b, *_ = pit_templates.builds
     result = assemble([a, b, a], [request()])
     ref_ids = [ref.canonical_build_id for ref in result.gap_references]
     assert ref_ids == sorted(set(ref_ids))
     assert len(ref_ids) == 2
 
 
-def test_pit_sample_version_id_helpers_deterministic(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_pit_sample_version_id_helpers_deterministic(pit_templates):
+    _, a, *_ = pit_templates.builds
     first = assemble([a], [request()])
     sample = first.samples[0]
     recomputed = pit_sample_version_id(
@@ -1383,7 +1480,7 @@ def test_pit_sample_version_id_helpers_deterministic(tmp_path):
     assert reordered_feature != recomputed
 
 
-def test_association_schema_contract(tmp_path):
+def test_association_schema_contract(pit_templates):
     schema = pit_association_schema()
     assert [field.name for field in schema.fields] == [
         "sample_key", "sample_version_id", "role", "position",
@@ -1392,13 +1489,13 @@ def test_association_schema_contract(tmp_path):
     ]
     roles = {
         row["role"]
-        for row in assemble([make_builds(tmp_path)[1]], [request()]).association_rows
+        for row in assemble([pit_templates.builds[1]], [request()]).association_rows
     }
     assert roles <= {PIT_ROLE_FEATURE, PIT_ROLE_LABEL}
 
 
-def test_roles_and_positions_in_association_rows(tmp_path):
-    _, a, b, c, _ = make_builds(tmp_path)
+def test_roles_and_positions_in_association_rows(pit_templates):
+    _, a, b, c, _ = pit_templates.builds
     rows = assemble(
         [a, b, c],
         [
@@ -1421,8 +1518,8 @@ def test_roles_and_positions_in_association_rows(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_swapped_resolution_selected_fails(tmp_path):
-    build = make_two_symbol_build(tmp_path)
+def test_swapped_resolution_selected_fails(pit_templates, tmp_path):
+    build = clone_build(pit_templates.two_symbol, tmp_path)
     rows = [
         json.loads(line)
         for line in (build.build_path / "resolution.jsonl").read_text(encoding="utf-8").splitlines()
@@ -1440,8 +1537,9 @@ def test_swapped_resolution_selected_fails(tmp_path):
         load_verified_canonical_build(new_root)
 
 
-def test_bar_code_not_in_manifest_symbols_fails(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_bar_code_not_in_manifest_symbols_fails(pit_templates, tmp_path):
+    _, a, *_ = pit_templates.builds
+    a = clone_build(a, tmp_path)
     recompute_and_rewrite_bars(
         a,
         lambda frame: set_column(
@@ -1452,8 +1550,9 @@ def test_bar_code_not_in_manifest_symbols_fails(tmp_path):
         load_verified_canonical_build(a.build_path)
 
 
-def test_bar_trade_date_not_in_manifest_dates_fails(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_bar_trade_date_not_in_manifest_dates_fails(pit_templates, tmp_path):
+    _, a, *_ = pit_templates.builds
+    a = clone_build(a, tmp_path)
     recompute_and_rewrite_bars(
         a,
         lambda frame: set_column(
@@ -1465,8 +1564,9 @@ def test_bar_trade_date_not_in_manifest_dates_fails(tmp_path):
         load_verified_canonical_build(a.build_path)
 
 
-def test_bar_request_key_field_mismatch_fails(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_bar_request_key_field_mismatch_fails(pit_templates, tmp_path):
+    _, a, *_ = pit_templates.builds
+    a = clone_build(a, tmp_path)
     recompute_and_rewrite_bars(
         a,
         lambda frame: set_column(
@@ -1477,8 +1577,9 @@ def test_bar_request_key_field_mismatch_fails(tmp_path):
         load_verified_canonical_build(a.build_path)
 
 
-def test_bar_builder_version_mismatch_fails(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_bar_builder_version_mismatch_fails(pit_templates, tmp_path):
+    _, a, *_ = pit_templates.builds
+    a = clone_build(a, tmp_path)
     recompute_and_rewrite_bars(
         a,
         lambda frame: set_column(
@@ -1490,15 +1591,17 @@ def test_bar_builder_version_mismatch_fails(tmp_path):
         load_verified_canonical_build(a.build_path)
 
 
-def test_non_normalized_request_symbols_fail(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_non_normalized_request_symbols_fail(pit_templates, tmp_path):
+    _, a, *_ = pit_templates.builds
+    a = clone_build(a, tmp_path)
     mutate_manifest(
         a,
         lambda payload: payload["normalized_request"].__setitem__("symbols", ["US.MU", "US.MU"]),
     )
     with pytest.raises(CanonicalArtifactValidationError, match="deduplicated"):
         load_verified_canonical_build(a.build_path)
-    _, b, *_ = make_builds(tmp_path)
+    _, b, *_ = pit_templates.builds
+    b = clone_build(b, tmp_path / "second")
     mutate_manifest(
         b,
         lambda payload: payload["normalized_request"].__setitem__("symbols", ["US.NVDA", "US.MU"]),
@@ -1507,8 +1610,9 @@ def test_non_normalized_request_symbols_fail(tmp_path):
         load_verified_canonical_build(b.build_path)
 
 
-def test_non_normalized_request_trade_dates_fail(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_non_normalized_request_trade_dates_fail(pit_templates, tmp_path):
+    _, a, *_ = pit_templates.builds
+    a = clone_build(a, tmp_path)
     mutate_manifest(
         a,
         lambda payload: payload["normalized_request"].__setitem__(
@@ -1519,8 +1623,8 @@ def test_non_normalized_request_trade_dates_fail(tmp_path):
         load_verified_canonical_build(a.build_path)
 
 
-def test_gap_sidecar_tampered_with_synced_identity_fails(tmp_path):
-    gap_build = make_gap_build(tmp_path)
+def test_gap_sidecar_tampered_with_synced_identity_fails(pit_templates, tmp_path):
+    gap_build = clone_build(pit_templates.gap, tmp_path)
     gap_file = next(gap_build.build_path.rglob("gaps/**/part-00000.parquet"))
     rows = pq.ParquetFile(gap_file).read().to_pylist()
     rows[0]["missing_bar_count"] = 2
@@ -1529,8 +1633,8 @@ def test_gap_sidecar_tampered_with_synced_identity_fails(tmp_path):
         load_verified_canonical_build(new_root)
 
 
-def test_gap_sidecar_removed_with_synced_identity_fails(tmp_path):
-    gap_build = make_gap_build(tmp_path)
+def test_gap_sidecar_removed_with_synced_identity_fails(pit_templates, tmp_path):
+    gap_build = clone_build(pit_templates.gap, tmp_path)
     new_root = resync_gap_sidecar(gap_build, [])
     with pytest.raises(CanonicalArtifactValidationError, match="re-derived from the bars"):
         load_verified_canonical_build(new_root)
@@ -1541,8 +1645,8 @@ def test_gap_sidecar_removed_with_synced_identity_fails(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_known_gap_other_symbol_excluded(tmp_path):
-    gap_build = make_multi_symbol_gap_build(tmp_path)
+def test_known_gap_other_symbol_excluded(pit_templates):
+    gap_build = pit_templates.multi_symbol_gap
     sample = assemble(
         [gap_build],
         [request(feature_close=datetime(2026, 7, 1, 13, 33, tzinfo=UTC))],
@@ -1553,8 +1657,8 @@ def test_known_gap_other_symbol_excluded(tmp_path):
     assert nvda_gap_id not in sample.diagnostics.known_feature_gap_ids
 
 
-def test_known_gap_other_date_excluded(tmp_path):
-    gap_build = make_jul2_gap_build(tmp_path)
+def test_known_gap_other_date_excluded(pit_templates):
+    gap_build = pit_templates.jul2_gap
     sample = assemble(
         [gap_build],
         [
@@ -1572,8 +1676,8 @@ def test_known_gap_other_date_excluded(tmp_path):
     assert sample.diagnostics.known_feature_gap_ids == ()
 
 
-def test_known_gap_other_session_excluded(tmp_path):
-    gap_build = make_gap_build(tmp_path)
+def test_known_gap_other_session_excluded(pit_templates):
+    gap_build = pit_templates.gap
     sample = assemble(
         [gap_build],
         [request(requested_session="MORNING",
@@ -1582,8 +1686,8 @@ def test_known_gap_other_session_excluded(tmp_path):
     assert sample.diagnostics.known_feature_gap_ids == ()
 
 
-def test_known_gap_other_interval_excluded(tmp_path):
-    gap_build = make_gap_build(tmp_path)
+def test_known_gap_other_interval_excluded(pit_templates):
+    gap_build = pit_templates.gap
     sample = assemble(
         [gap_build],
         [request(interval="5m",
@@ -1592,8 +1696,8 @@ def test_known_gap_other_interval_excluded(tmp_path):
     assert sample.diagnostics.known_feature_gap_ids == ()
 
 
-def test_known_gap_requires_next_boundary_market_available(tmp_path):
-    gap_build = make_gap_build(tmp_path)
+def test_known_gap_requires_next_boundary_market_available(pit_templates):
+    gap_build = pit_templates.gap
     # The next boundary bar (09:32) is market-available at 13:33Z; a window
     # closing before that never sees the gap as known.
     early = assemble([gap_build], [request()]).samples[0]
@@ -1609,8 +1713,8 @@ def test_known_gap_requires_next_boundary_market_available(tmp_path):
     )
 
 
-def test_known_gap_archive_cutoff(tmp_path):
-    gap_build = make_gap_build(tmp_path)
+def test_known_gap_archive_cutoff(pit_templates):
+    gap_build = pit_templates.gap
     close = datetime(2026, 7, 1, 13, 33, tzinfo=UTC)
     before = assemble(
         [gap_build], [request(feature_close=close)],
@@ -1627,8 +1731,8 @@ def test_known_gap_archive_cutoff(tmp_path):
     )
 
 
-def test_known_gap_identical_across_builds_deduped(tmp_path):
-    first, second = make_duplicate_gap_artifacts(tmp_path)
+def test_known_gap_identical_across_builds_deduped(pit_templates):
+    first, second = pit_templates.duplicate_gap_artifacts
     sample = assemble(
         [first, second],
         [request(feature_close=datetime(2026, 7, 1, 13, 33, tzinfo=UTC))],
@@ -1639,8 +1743,8 @@ def test_known_gap_identical_across_builds_deduped(tmp_path):
     assert len(sample.diagnostics.known_feature_gap_ids) == 1
 
 
-def test_known_gap_conflicting_facts_fail(tmp_path):
-    gap_build = make_gap_build(tmp_path)
+def test_known_gap_conflicting_facts_fail(pit_templates):
+    gap_build = pit_templates.gap
     tampered = replace(
         gap_build,
         gap_boundaries=(
@@ -1736,15 +1840,15 @@ def test_association_schema_version_pinned():
 # ---------------------------------------------------------------------------
 
 
-def test_empty_observation_when_no_candidates(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_empty_observation_when_no_candidates(pit_templates):
+    _, a, *_ = pit_templates.builds
     sample = assemble([a], [request(code="US.QQQ")]).samples[0]
     assert sample.diagnostics.feature_candidate_count == 0
     assert sample.diagnostics.empty_observation_window is True
 
 
-def test_empty_observation_when_all_market_excluded(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_empty_observation_when_all_market_excluded(pit_templates):
+    _, a, *_ = pit_templates.builds
     sample = assemble(
         [a],
         [
@@ -1760,8 +1864,8 @@ def test_empty_observation_when_all_market_excluded(tmp_path):
     assert sample.diagnostics.empty_observation_window is True
 
 
-def test_empty_observation_when_all_archive_excluded(tmp_path):
-    _, a, b, *_ = make_builds(tmp_path)
+def test_empty_observation_when_all_archive_excluded(pit_templates):
+    _, a, b, *_ = pit_templates.builds
     sample = assemble(
         [a, b], [request(code="US.NVDA")],
         dataset_as_of=datetime(2026, 7, 1, 14, 0, tzinfo=UTC),
@@ -1772,8 +1876,8 @@ def test_empty_observation_when_all_archive_excluded(tmp_path):
     assert sample.diagnostics.empty_observation_window is True
 
 
-def test_empty_observation_false_when_selected(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_empty_observation_false_when_selected(pit_templates):
+    _, a, *_ = pit_templates.builds
     sample = assemble([a], [request()]).samples[0]
     assert sample.diagnostics.feature_selected_count == 2
     assert sample.diagnostics.empty_observation_window is False
@@ -1784,8 +1888,8 @@ def test_empty_observation_false_when_selected(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_normalized_request_deeply_immutable(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_normalized_request_deeply_immutable(pit_templates):
+    _, a, *_ = pit_templates.builds
     assert isinstance(a.normalized_request, VerifiedCanonicalRequest)
     assert isinstance(a.normalized_request.symbols, tuple)
     assert isinstance(a.normalized_request.trade_dates, tuple)
@@ -1793,8 +1897,8 @@ def test_normalized_request_deeply_immutable(tmp_path):
         a.normalized_request.symbols = ("US.NVDA",)
 
 
-def test_manifest_payload_immutable_bytes(tmp_path):
-    _, a, *_ = make_builds(tmp_path)
+def test_manifest_payload_immutable_bytes(pit_templates):
+    _, a, *_ = pit_templates.builds
     assert isinstance(a.manifest_payload, bytes)
     with pytest.raises(TypeError):
         a.manifest_payload[0] = ord("x")
