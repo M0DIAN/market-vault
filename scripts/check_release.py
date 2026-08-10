@@ -2889,11 +2889,89 @@ def check_pyarrow_dependency(root: Path) -> list[str]:
     return failures
 
 
+# P0-1 (Test Portfolio Audit V1): the audited PyArrow 24 compatibility
+# surface of the portability-pyarrow24 job. A (targeted portability), B
+# (canonical / frozen regression) and C (the six-file sensitive
+# regression surface) are literal, reviewable file lists; C replaces the
+# old blanket full-suite step. FULL pytest stays in the normal matrix.
+CI_PYARROW24_SURFACE_A = "tests/test_v060_portability.py"
+CI_PYARROW24_SURFACE_B = (
+    "tests/test_canonical_reader.py",
+    "tests/test_sample_generation_core.py",
+    "tests/test_sample_generation_cli.py",
+)
+CI_PYARROW24_SURFACE_C = (
+    "tests/test_canonical_materialization_v03.py",
+    "tests/test_canonical_builder_v03.py",
+    "tests/test_dataset_materialization.py",
+    "tests/test_verified_dataset_reader.py",
+    "tests/test_pit_sample_assembly.py",
+    "tests/test_dataset_end_to_end_regression.py",
+)
+CI_PYARROW24_C_STEP = "Run audited PyArrow 24 sensitive regression surface"
+CI_PYARROW24_OLD_FULL_STEP = "Run full offline suite under PyArrow 24.0.0"
+# The exact heavy guard line pinned to the C step region itself (never
+# validated block-globally): an unknown/unset CI_TIER or an unset
+# POST_MERGE_REUSE keeps heavy validation running.
+CI_PYARROW24_C_GUARD = (
+    "if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' "
+    "&& env.POST_MERGE_REUSE != 'true'"
+)
+CI_REUSE_MARKER_STEP = "FULL tests reused from verified PR"
+CI_REUSE_MARKER_GUARD = "if: env.POST_MERGE_REUSE == 'true'"
+
+_CI_JOB_HEADER_RE = re.compile(r"(?m)^  ([A-Za-z0-9_-]+):\s*$")
+
+
+def _ci_jobs_section(text: str) -> str:
+    return text.split("jobs:\n", 1)[1]
+
+
+def _ci_job_block(text: str, job: str) -> str | None:
+    """The block of one formal job in ci.yml: from its two-space
+    ``  <job>:`` header to the next two-space job header (or the end of
+    the jobs section). None when the job does not exist."""
+    section = _ci_jobs_section(text)
+    start = section.find(f"  {job}:\n")
+    if start < 0:
+        return None
+    tail = section[start + len(job) + 2 :]
+    matches = list(_CI_JOB_HEADER_RE.finditer(tail))
+    end = matches[0].start() if matches else len(tail)
+    return tail[:end]
+
+
+def _ci_step_region(block: str, step_name: str) -> str | None:
+    """The exact YAML region of one named step inside a job block: from
+    its ``      - name: <step_name>`` line up to (not including) the
+    next ``- name:`` step line, whatever its indentation. None when the
+    step does not exist; ValueError when it appears more than once,
+    because a duplicated step must fail closed instead of validating an
+    arbitrary region."""
+    marker = f"- name: {step_name}\n"
+    count = block.count(marker)
+    if count == 0:
+        return None
+    if count > 1:
+        raise ValueError(f"step {step_name!r} is duplicated in the job block")
+    start = block.index(marker)
+    next_step = re.compile(r"\n[ \t]*- name: ")
+    match = next_step.search(block, start + len(marker))
+    return block[start:] if match is None else block[start : match.start()]
+
+
 def check_ci_pr8(root: Path) -> list[str]:
-    """The CI matrix stays exactly ``["3.11", "3.14"]``, the new
-    ``portability-pyarrow24`` job installs ``pyarrow==24.0.0`` explicitly
-    and runs the full offline suite under PyArrow 24.0.0, and the package
-    job carries the ``PR8_INTEGRATED_ACCEPTANCE_OK`` marker."""
+    """The CI matrix stays exactly ``["3.11", "3.14"]``, the
+    ``portability-pyarrow24`` job stays on Python 3.11, installs and
+    asserts ``pyarrow==24.0.0`` explicitly, and runs the audited PyArrow
+    24 compatibility surface A + B + C (targeted portability, canonical /
+    frozen regression, and the six-file sensitive regression surface) —
+    never a blanket full-suite run under PyArrow 24.0.0. The package job
+    carries the ``PR8_INTEGRATED_ACCEPTANCE_OK`` marker and still depends
+    on ``[test, portability-pyarrow24]``; the formal job topology stays
+    unchanged, and the C step's fail-closed heavy guard plus the
+    verified-reuse marker guard are pinned to their own exact step
+    regions."""
     path = root / ".github" / "workflows" / "ci.yml"
     if not path.exists():
         return [".github/workflows/ci.yml is missing"]
@@ -2911,19 +2989,99 @@ def check_ci_pr8(root: Path) -> list[str]:
         failures.append(
             "CI package job must carry the PR8_INTEGRATED_ACCEPTANCE_OK marker"
         )
-    full_suite_step = "Run full offline suite under PyArrow 24.0.0"
-    if full_suite_step not in text:
+    if "needs: [test, portability-pyarrow24]" not in text:
         failures.append(
-            "CI portability-pyarrow24 job must include the full offline "
-            "suite step (Run full offline suite under PyArrow 24.0.0)"
+            "CI package job must depend on [test, portability-pyarrow24]"
         )
-    else:
-        after = text.split(full_suite_step, 1)[1]
-        if not re.search(r"(?m)^\s*run: python -m pytest\s*$", after[:400]):
+    job_headers = _CI_JOB_HEADER_RE.findall(_ci_jobs_section(text))
+    if job_headers != ["test", "portability-pyarrow24", "package"]:
+        failures.append(
+            "CI formal job topology must stay exactly "
+            "[test, portability-pyarrow24, package]"
+        )
+    block = _ci_job_block(text, "portability-pyarrow24")
+    if block is None:
+        failures.append("CI portability-pyarrow24 job block is missing")
+        return failures
+    if 'python-version: "3.11"' not in block:
+        failures.append("CI portability-pyarrow24 job must stay on Python 3.11")
+    if "Assert the audited PyArrow compatibility version" not in block:
+        failures.append(
+            "CI portability-pyarrow24 job must keep the explicit PyArrow "
+            "version assertion step"
+        )
+    # A: the exact targeted portability surface.
+    if CI_PYARROW24_SURFACE_A not in block:
+        failures.append(
+            "CI portability-pyarrow24 job must keep the exact portability "
+            f"surface {CI_PYARROW24_SURFACE_A!r}"
+        )
+    # B: the exact canonical / frozen regression surface.
+    for test_file in CI_PYARROW24_SURFACE_B:
+        if test_file not in block:
             failures.append(
-                "CI portability-pyarrow24 full-suite step must run "
-                "python -m pytest"
+                "CI portability-pyarrow24 job must keep the exact "
+                f"canonical/frozen regression file {test_file!r}"
             )
+    # C: the exact six-file audited sensitive regression surface, in one
+    # production step with all six paths appearing literally.
+    if CI_PYARROW24_C_STEP not in block:
+        failures.append(
+            "CI portability-pyarrow24 job must include the audited PyArrow "
+            f"24 sensitive regression step ({CI_PYARROW24_C_STEP!r})"
+        )
+    for test_file in CI_PYARROW24_SURFACE_C:
+        if test_file not in block:
+            failures.append(
+                "CI portability-pyarrow24 job must run the exact audited "
+                f"sensitive regression file {test_file!r}"
+            )
+    # The old blanket FULL PyArrow step must never be restored.
+    if CI_PYARROW24_OLD_FULL_STEP in block:
+        failures.append(
+            "CI portability-pyarrow24 job must never restore the blanket "
+            "full-suite step under PyArrow 24.0.0 "
+            f"({CI_PYARROW24_OLD_FULL_STEP!r})"
+        )
+    # No unqualified blanket `python -m pytest` may remain in the
+    # portability job: every pytest invocation names its surface.
+    if re.search(r"(?m)^\s*run: python -m pytest\s*$", block):
+        failures.append(
+            "CI portability-pyarrow24 job must never run an unqualified "
+            "blanket `python -m pytest`"
+        )
+    # The C heavy guard must stay fail-closed ON the C step itself: an
+    # unknown/unset CI_TIER or an unset POST_MERGE_REUSE keeps heavy
+    # validation running. Pinning the exact guard line inside the exact
+    # step region (not block-global fragments) proves the guard binds to
+    # the C step, not merely to some step elsewhere in the job.
+    try:
+        c_region = _ci_step_region(block, CI_PYARROW24_C_STEP)
+    except ValueError as exc:
+        failures.append(f"CI portability-pyarrow24 job {exc}")
+        c_region = None
+    if c_region is not None and CI_PYARROW24_C_GUARD not in c_region:
+        failures.append(
+            "CI portability-pyarrow24 job C step must keep the exact "
+            f"fail-closed heavy guard ({CI_PYARROW24_C_GUARD!r})"
+        )
+    # The verified-reuse marker may only sit behind a PROVEN
+    # POST_MERGE_REUSE == 'true', bound to the marker step itself.
+    try:
+        reuse_region = _ci_step_region(block, CI_REUSE_MARKER_STEP)
+    except ValueError as exc:
+        failures.append(f"CI portability-pyarrow24 job {exc}")
+        reuse_region = None
+    if reuse_region is None:
+        failures.append(
+            "CI portability-pyarrow24 job must keep the verified-reuse "
+            f"marker step ({CI_REUSE_MARKER_STEP!r})"
+        )
+    elif CI_REUSE_MARKER_GUARD not in reuse_region:
+        failures.append(
+            "CI portability-pyarrow24 job verified-reuse marker step must "
+            f"keep the exact guard {CI_REUSE_MARKER_GUARD!r}"
+        )
     return failures
 
 

@@ -10,10 +10,11 @@ document) and asserts the stable invariants of the PR-3 audit chain:
   exact four-job gate, and the exact package job dependency
   (test + portability-pyarrow24);
 - the ``portability-pyarrow24`` job keeps Python 3.11, the exact
-  CI-only ``pyarrow==24.0.0`` pin, the portability / canonical-reader /
-  Sample Generation / full pytest runs, and the corrected
-  compatibility terminology (no stale "writer" wording in its audited
-  step names);
+  CI-only ``pyarrow==24.0.0`` pin, the audited compatibility surface
+  A + B + C (targeted portability, canonical / frozen regression, and
+  the six-file sensitive regression surface — never a blanket full
+  pytest run under PyArrow 24.0.0), and the corrected compatibility
+  terminology (no stale "writer" wording in its audited step names);
 - the package audit chain: the separate SHA256SUMS build and verify
   stages, the attempt-bound artifact upload with fail-closed settings,
   the artifact metadata closure, and the ``V061_PACKAGE_AUDIT_OK``
@@ -75,6 +76,21 @@ CI = ROOT / ".github" / "workflows" / "ci.yml"
 AUDIT_DOC = ROOT / "docs" / "v0_6_1_ci_package_audit.md"
 
 JOB_HEADER_RE = re.compile(r"(?m)^  ([A-Za-z0-9_-]+):\s*$")
+
+# P0-1 (Test Portfolio Audit V1): the exact audited PyArrow 24
+# sensitive regression surface (C) of the portability-pyarrow24 job.
+# The six-file list is literal and reviewable; it replaces the old
+# blanket full-suite step.
+PYARROW24_SURFACE_C = (
+    "tests/test_canonical_materialization_v03.py",
+    "tests/test_canonical_builder_v03.py",
+    "tests/test_dataset_materialization.py",
+    "tests/test_verified_dataset_reader.py",
+    "tests/test_pit_sample_assembly.py",
+    "tests/test_dataset_end_to_end_regression.py",
+)
+PYARROW24_C_STEP = "Run audited PyArrow 24 sensitive regression surface"
+PYARROW24_OLD_FULL_STEP = "Run full offline suite under PyArrow 24.0.0"
 
 
 def ci_text() -> str:
@@ -209,15 +225,50 @@ def test_release_checker_step_runs_on_all_tiers():
 # ---------------------------------------------------------------------------
 
 
-def test_pyarrow24_job_keeps_runtime_and_suite():
+def test_pyarrow24_job_keeps_runtime_and_audited_surfaces():
+    # The portability job contract is: PyArrow 24.0.0 pin + A (targeted
+    # portability) + B (canonical / frozen regression) + C (six-file
+    # sensitive regression surface).
     block = _job_block(ci_text(), "portability-pyarrow24")
     assert 'python-version: "3.11"' in block
     assert 'pip install "pyarrow==24.0.0"' in block
+    # A: the exact targeted portability surface.
     assert "tests/test_v060_portability.py" in block
+    # B: the exact canonical / frozen regression surface.
     assert "tests/test_canonical_reader.py" in block
     assert "tests/test_sample_generation_core.py" in block
     assert "tests/test_sample_generation_cli.py" in block
-    assert "python -m pytest" in block
+    # C: the exact six-file sensitive regression surface.
+    for test_file in PYARROW24_SURFACE_C:
+        assert test_file in block
+
+
+def test_pyarrow24_job_runs_exact_c_surface_step():
+    # The exact intended C step exists as one production step, the old
+    # blanket FULL PyArrow step is absent, and no unqualified blanket
+    # `python -m pytest` remains in the portability job.
+    block = _job_block(ci_text(), "portability-pyarrow24")
+    names = _step_names(block)
+    assert PYARROW24_C_STEP in names
+    assert PYARROW24_OLD_FULL_STEP not in block
+    assert re.search(r"(?m)^\s*run: python -m pytest\s*$", block) is None
+    # All six C paths appear literally inside the C step's run region.
+    idx = names.index(PYARROW24_C_STEP)
+    end = f"- name: {names[idx + 1]}" if idx + 1 < len(names) else None
+    region = _region(block, f"- name: {PYARROW24_C_STEP}", end)
+    for test_file in PYARROW24_SURFACE_C:
+        assert test_file in region
+    assert "python -m pytest" in region
+    assert "--durations=100" in region
+
+
+def test_normal_matrix_keeps_blanket_full_pytest():
+    # The unqualified blanket `python -m pytest` must remain in the
+    # normal test job (3.11 / 3.14 FULL is unchanged); only the
+    # portability-pyarrow24 job dropped its duplicate blanket suite.
+    block = _job_block(ci_text(), "test")
+    assert "Run offline tests" in block
+    assert re.search(r"(?m)^\s*run: python -m pytest\s*$", block) is not None
 
 
 def test_pyarrow24_step_names_use_compatibility_terminology():
@@ -226,6 +277,7 @@ def test_pyarrow24_step_names_use_compatibility_terminology():
     assert any("Pin the audited PyArrow 24.0.0 compatibility runtime" in n for n in names)
     assert any("Assert the audited PyArrow compatibility version" in n for n in names)
     assert any("Run audited PyArrow 24 compatibility tests" in n for n in names)
+    assert any(PYARROW24_C_STEP in n for n in names)
     # The stale "writer" wording is gone from the PyArrow24 audited step
     # names specifically; the word itself is not banned repository-wide.
     for name in names:
@@ -484,7 +536,7 @@ _HEAVY_STEPS_PER_JOB = {
         "Assert the audited PyArrow compatibility version",
         "Run audited PyArrow 24 compatibility tests",
         "Run the canonical reader and frozen regression surface",
-        "Run full offline suite under PyArrow 24.0.0",
+        "Run audited PyArrow 24 sensitive regression surface",
     ),
     "package": (
         "Install build tooling",
