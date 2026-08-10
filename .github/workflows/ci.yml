@@ -97,6 +97,12 @@ jobs:
       - name: Run offline tests
         if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs'
         run: python -m pytest
+        # FULL CI performance profiling (measurement only, no behavior
+        # change): emit the slowest-durations report for both matrix
+        # environments (3.11 / 3.14). PYTEST_ADDOPTS is step-scoped so
+        # targeted pytest invocations never inherit it.
+        env:
+          PYTEST_ADDOPTS: "--durations=200"
 
       - name: Fast-path tier marker
         if: env.CI_TIER == 'docs_fast' || env.CI_TIER == 'package_docs'
@@ -179,10 +185,15 @@ jobs:
       # The full-suite step keeps its exact shape (name immediately followed
       # by `run: python -m pytest`): scripts/check_release.py and its
       # regression tests assert that literal adjacency. The tier guard
-      # therefore follows the run line.
+      # therefore follows the run line. FULL CI performance profiling
+      # (measurement only): step-scoped PYTEST_ADDOPTS emits the
+      # slowest-durations report; targeted PyArrow steps above do not
+      # inherit it.
       - name: Run full offline suite under PyArrow 24.0.0
         run: python -m pytest
         if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs'
+        env:
+          PYTEST_ADDOPTS: "--durations=200"
 
       - name: Fast-path tier marker
         if: env.CI_TIER == 'docs_fast' || env.CI_TIER == 'package_docs'
