@@ -360,9 +360,12 @@ Measured answer, per condition:
    V1's gate correctly rejects such reuse (section 8). **Holds — V1 is
    sound; it just cannot express the narrower claim.**
 
-So the QUESTION is answered affirmatively in the narrow case, with the
-formal decision boundary of section 14. The measured source-evidence chain
-indicates that a future implementation MAY be able to use:
+The source-input / exact-delta sub-question is answered affirmatively for
+this narrow direct-parent case. The complete production-safety question is
+NOT yet answered affirmatively, because runtime/dependency identity for a
+skipped target surface remains unresolved. Therefore the formal decision
+remains OUTCOME B. The measured source-evidence chain indicates that a
+future implementation MAY be able to use:
 
 - the existing source-head V1 FULL attestation;
 - the source-head successful formal surface job;
@@ -499,5 +502,7 @@ commit; no amend, no rebase, no force-push, no history rewrite.
 - All digests quoted above are CI-ONLY / NON-FORMAL-RELEASE HASHes; the
   sealed PR #74 resolved digest `7561b50a...` is the pre-existing pinned
   contract value; none is a v0.7.0 formal release hash.
-- No tag, no release, no ref was changed. STOP BEFORE MERGE — this PR is
+- No tag, GitHub Release, main ref, or formal release ref was changed. The
+  PR branch ref advanced only through the normal commits documented above;
+  no amend, rebase, or force-push was used. STOP BEFORE MERGE — this PR is
   measurement-only and must not be merged.
