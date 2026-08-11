@@ -30,7 +30,7 @@ the failed jobs were rerun on attempt 2.
 |---|---|
 | Frozen base SHA (`origin/main`) | `d27158be1f4c908e208bd520e85231071df38b89` |
 | Temporary measurement head SHA | `79670d42dc15bba6adc5e40ab2ac7d76b14256ed` |
-| Final docs-only head SHA | <FINAL_HEAD_SHA> |
+| Final docs-only head SHA | `cfeaca3ee3a7ae934da7bf0f4c0691b9439b4c70` |
 | PR number | #76 |
 | Canary workflow run ID | 31520818544 (run_number 258) |
 | PR head SHA (both attempts) | `79670d42dc15bba6adc5e40ab2ac7d76b14256ed` |
