@@ -30,7 +30,8 @@ the failed jobs were rerun on attempt 2.
 |---|---|
 | Frozen base SHA (`origin/main`) | `d27158be1f4c908e208bd520e85231071df38b89` |
 | Temporary measurement head SHA | `79670d42dc15bba6adc5e40ab2ac7d76b14256ed` |
-| Final docs-only head SHA | `cfeaca3ee3a7ae934da7bf0f4c0691b9439b4c70` |
+| Report content commit SHA | `cfeaca3ee3a7ae934da7bf0f4c0691b9439b4c70` |
+| Final PR head | NOT SELF-EMBEDDED BY DESIGN. The authoritative final head is GitHub PR metadata plus the exact-head CI run reviewed at merge time. |
 | PR number | #76 |
 | Canary workflow run ID | 31520818544 (run_number 258) |
 | PR head SHA (both attempts) | `79670d42dc15bba6adc5e40ab2ac7d76b14256ed` |
@@ -43,6 +44,15 @@ the failed jobs were rerun on attempt 2.
 both attempts, as expected for the same exact head and the same PR synthetic
 merge checkout. The tree digest above is a CI artifact identity, NOT a
 v0.7.0 formal release hash.
+
+### Final-head identity (self-reference note)
+
+This document records the report-content commit SHA, not the SHA of the
+commit that contains this text. Embedding the containing commit's own SHA
+in tracked file content is self-referential, because changing the content
+changes the commit SHA: no tracked document can state the hash of the
+commit that contains it. The authoritative final PR head is therefore
+GitHub PR metadata plus the exact-head CI run reviewed at merge time.
 
 ## 3. Attempt 1 — intentional failure (measured)
 
@@ -240,8 +250,16 @@ as its prerequisite. Any future design that wants to distinguish
   `scripts/check_release.py` and every other tracked file except this
   document are byte-identical to the frozen base.
 - No release/tag/ref was changed; no tag, no release, no force-push, no
-  history rewrite. History is the base commit, the temporary canary commit,
-  then this cleanup/docs commit.
+  history rewrite. Actual pre-correction history (accurate):
+
+  frozen base `d27158be1f4c908e208bd520e85231071df38b89`
+  → temporary canary `79670d42dc15bba6adc5e40ab2ac7d76b14256ed`
+  → canary cleanup `50cca04950064efbf116bbd6c5d6e8b664f0fa3e`
+  → measurement report `cfeaca3ee3a7ae934da7bf0f4c0691b9439b4c70`
+  → attempted SHA stamp `b1ebc5c58f2ce782e3bc03a109f3c823fc5f4edc`
+  → this final docs-accuracy correction commit
+  (the correction commit does not embed its own SHA, for the
+  self-reference reason explained in section 2)
 - All digests quoted above are CI-ONLY / NON-FORMAL-RELEASE HASHes (the
   sealed PR #74 resolved digest `7561b50a...` is the pre-existing pinned
   contract value); none is a v0.7.0 formal release hash.
