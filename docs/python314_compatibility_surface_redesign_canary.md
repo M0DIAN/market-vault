@@ -688,4 +688,3 @@ tests/test_verified_dataset_reader.py::test_success_symlink_rejected
 tests/test_verified_dataset_reader.py::test_symlink_entry_rejected
 tests/test_verified_dataset_reader.py::test_symlink_relocation_rejected
 ```
-
