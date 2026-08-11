@@ -502,7 +502,11 @@ commit; no amend, no rebase, no force-push, no history rewrite.
 - All digests quoted above are CI-ONLY / NON-FORMAL-RELEASE HASHes; the
   sealed PR #74 resolved digest `7561b50a...` is the pre-existing pinned
   contract value; none is a v0.7.0 formal release hash.
-- No tag, GitHub Release, main ref, or formal release ref was changed. The
-  PR branch ref advanced only through the normal commits documented above;
-  no amend, rebase, or force-push was used. STOP BEFORE MERGE — this PR is
-  measurement-only and must not be merged.
+- During measurement and report preparation, no tag, GitHub Release, main
+  ref, or formal release ref was changed. The PR branch ref advanced only
+  through the normal commits documented above; no amend, rebase, or
+  force-push was used.
+- At report finalization, STOP BEFORE MERGE pending independent review.
+  Measurement-only means that no production CI/product behavior was
+  activated or changed by this PR. The final docs-only evidence report may
+  be merged only after explicit independent merge authorization.
