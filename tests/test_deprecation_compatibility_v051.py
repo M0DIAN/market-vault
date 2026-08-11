@@ -28,8 +28,6 @@ implementation.
 from __future__ import annotations
 
 import datetime
-import os
-import sys
 import warnings
 from contextlib import contextmanager
 from datetime import date
@@ -105,15 +103,6 @@ def gap_bars() -> tuple[CanonicalBar, ...]:
 
 
 def test_bar_available_at_python_int_interval_no_deprecation_warning():
-    # TEMPORARY P2-1 rerun-evidence canary: fail only the first GitHub
-    # Actions attempt of the Python 3.14 leg so the failed-jobs rerun
-    # naturally passes on attempt 2. Remove with the canary PR.
-    if (
-        os.environ.get("GITHUB_ACTIONS") == "true"
-        and os.environ.get("GITHUB_RUN_ATTEMPT") == "1"
-        and sys.version_info[:2] == (3, 14)
-    ):
-        pytest.fail("P2_PARTIAL_REUSE_RERUN_CANARY_ATTEMPT1")
     market_time = pd.Timestamp("2026-07-01 09:30:00", tz=NY)
     with target_warning_as_error():
         result = bar_available_at(market_time, 60)
