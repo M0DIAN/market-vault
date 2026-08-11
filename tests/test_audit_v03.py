@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-# P2_DISTINCT_HEAD_CANARY_A
+# P2_DISTINCT_HEAD_CANARY_B
 
 import json
 from dataclasses import replace
