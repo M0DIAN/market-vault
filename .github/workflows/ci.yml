@@ -142,19 +142,6 @@ jobs:
         if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && (env.CI_TIER != 'control_plane' || matrix.python-version == '3.11') && env.POST_MERGE_REUSE != 'true'
         run: python -m compileall -q src tests scripts examples
 
-      # PR #74 measurement canary (TEMPORARY): measures the redesigned
-      # Python 3.14 compatibility surface. Reads the frozen selector
-      # manifest only; prints the selector set, then runs it. Removed
-      # before merge; production activation is PR #75.
-      - name: Measure redesigned Python 3.14 compatibility surface
-        if: env.CI_TIER == 'full' && matrix.python-version == '3.14' && env.POST_MERGE_REUSE != 'true'
-        run: |
-          set -euo pipefail
-          mapfile -t PY314_SELECTORS < <(grep -Ev '^[[:space:]]*#|^[[:space:]]*$' ci/python314_compatibility_surface_redesign_canary.txt)
-          echo "PY314_SELECTOR_COUNT=${#PY314_SELECTORS[@]}"
-          printf '%s\n' "${PY314_SELECTORS[@]}"
-          python -m pytest "${PY314_SELECTORS[@]}" -q --durations=200
-
       # P1-2 (PR #71): the product FULL pytest stays FULL-only; a
       # validated control_plane run never executes it on either matrix
       # leg. Unknown/unset tier keeps running it (fail-closed to FULL).
