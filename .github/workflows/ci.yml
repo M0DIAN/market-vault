@@ -27,12 +27,21 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        # P2-4 BUILD-ISOLATION CANARY: exact-SHA pin of checkout's @v6-
+        # resolved commit d23441a48e516b6c34aea4fa41551a30e30af803.
+        # contract: uses: actions/checkout@v6 (mutable label, never
+        # dereferenced in this head; every step's action identity is
+        # fingerprinted). Removed on the final docs-only head.
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        # P2-4 BUILD-ISOLATION CANARY: exact-SHA pin of setup-python's
+        # @v6-resolved commit ece7cb06caefa5fff74198d8649806c4678c61a1.
+        # uses: actions/setup-python@v6 (mutable label). Removed on the
+        # final docs-only head.
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -127,6 +136,42 @@ jobs:
       - name: Check repository hygiene
         run: python scripts/check_repo_hygiene.py
 
+      # P2-4 BUILD-ISOLATION IDENTITY + EVIDENCE-CLOSURE CANARY (TEMPORARY,
+      # PR #79): shadow measurement ONLY — the probe never skips validation
+      # and never gates the heavy chain. Before the heavy install it
+      # resolves and fingerprints (a) the runtime the 3.14 surface WOULD
+      # use and (b) the exact PEP 517/660 isolated build environment it
+      # WOULD construct: declared [build-system] requirements, the
+      # get_requires_for_build_editable hook result, the complete effective
+      # build dependency set, materialized exact wheels (SHA256), and a
+      # build-only local direct-reference constraint proven by positive and
+      # negative enforcement tests (all inside a clean temporary venv;
+      # stdlib-only script; zero index fetches). A probe failure records
+      # RUNTIME_FINGERPRINT_VALID=false / BUILD_CONSTRAINT_READY=false and
+      # the normal FULL chain still runs. Removed entirely on the final
+      # docs-only head.
+      - name: Runtime + build-isolation identity probe (shadow, measurement only)
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && (env.CI_TIER != 'control_plane' || matrix.python-version == '3.11') && env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.14'
+        run: |
+          set -euo pipefail
+          mkdir -p fp-evidence
+          python scripts/ci_runtime_identity_v2.py probe \
+            --surface test-3.14 \
+            --actions-checkout d23441a48e516b6c34aea4fa41551a30e30af803 \
+            --actions-setup-python ece7cb06caefa5fff74198d8649806c4678c61a1 \
+            --actions-upload-artifact 043fb46d1a93c77aae656e7c1c64a875d1fc6a0a \
+            --out-dir fp-evidence || {
+            echo "RUNTIME_FINGERPRINT_VALID=false reason=probe_script_crash" \
+              | tee fp-evidence/probe_summary.txt
+          }
+          cat fp-evidence/probe_summary.txt
+          fp_valid="$(sed -n 's/^RUNTIME_FINGERPRINT_VALID=//p' fp-evidence/probe_summary.txt)"
+          fp_reason="$(sed -n 's/^reason=//p' fp-evidence/probe_summary.txt | head -1)"
+          bc_ready="$(sed -n 's/^BUILD_CONSTRAINT_READY=//p' fp-evidence/probe_summary.txt)"
+          echo "RUNTIME_FINGERPRINT_VALID=${fp_valid:-false}" >> "$GITHUB_ENV"
+          echo "RUNTIME_FINGERPRINT_REASON=${fp_reason:-unknown}" >> "$GITHUB_ENV"
+          echo "BUILD_CONSTRAINT_READY=${bc_ready:-false}" >> "$GITHUB_ENV"
+
       # P1-2 control-plane tier (PR #71): dependency setup and the
       # compile check still run on control_plane, but ONLY on the Python
       # 3.11 leg that executes the conservative six-file control-plane
@@ -136,7 +181,23 @@ jobs:
         if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && (env.CI_TIER != 'control_plane' || matrix.python-version == '3.11') && env.POST_MERGE_REUSE != 'true'
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]"
+          if [ "${{ matrix.python-version }}" = "3.14" ]; then
+            # P2-4 BUILD-ISOLATION CANARY (TEMPORARY, PR #79): the 3.14 leg
+            # of the editable install runs under the measured exact
+            # --build-constraint ONLY when the probe proved it acceptable
+            # (BUILD_CONSTRAINT_READY=true); otherwise it falls back to the
+            # normal install. Either way the machine-readable report and
+            # the full raw log are retained for the evidence bundle.
+            if [ "${{ env.BUILD_CONSTRAINT_READY }}" = "true" ]; then
+              echo "BUILD_CONSTRAINT_USED=true" > actual_constraint_used.txt
+              python -m pip install --build-constraint fp-evidence/build_constraints.txt --report actual_install_report_314.json -e ".[dev]" > actual_install_314.log 2>&1 || { cat actual_install_314.log; exit 1; }
+            else
+              echo "BUILD_CONSTRAINT_USED=false" > actual_constraint_used.txt
+              python -m pip install --report actual_install_report_314.json -e ".[dev]" > actual_install_314.log 2>&1 || { cat actual_install_314.log; exit 1; }
+            fi
+          else
+            python -m pip install -e ".[dev]"
+          fi
 
       - name: Compile Python
         if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && (env.CI_TIER != 'control_plane' || matrix.python-version == '3.11') && env.POST_MERGE_REUSE != 'true'
@@ -201,6 +262,55 @@ jobs:
             "${PY314_SELECTORS[@]}" \
             -q --durations=200
 
+      # P2-4 BUILD-ISOLATION CANARY (TEMPORARY, PR #79): verify the
+      # pre-install fingerprint against the ACTUAL heavy 3.14 runtime
+      # (machine-readable install report + live installed distributions),
+      # assemble the build-identity receipt, copy the raw actual install
+      # log + report + the exact verifier source into the evidence bundle,
+      # and replay the whole bundle OFFLINE from a clean copy.
+      # Measurement only; every step tolerates failure and the heavy chain
+      # is never skipped.
+      - name: Verify identities and replay evidence bundle (shadow, measurement only)
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && (env.CI_TIER != 'control_plane' || matrix.python-version == '3.11') && env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.14'
+        run: |
+          set -euo pipefail
+          python scripts/ci_runtime_identity_v2.py verify-installed \
+            --surface test-3.14 \
+            --fingerprint fp-evidence/runtime_identity_v2.json \
+            --actual-report actual_install_report_314.json \
+            --out-dir fp-evidence || true
+          cat fp-evidence/runtime_verification_receipt.json || true
+          python scripts/ci_runtime_identity_v2.py build-receipt \
+            --surface test-3.14 \
+            --constraint-used-marker actual_constraint_used.txt \
+            --out-dir fp-evidence || true
+          cat fp-evidence/build_identity_receipt.json || true
+          python scripts/ci_runtime_identity_v2.py bundle \
+            --surface test-3.14 --workspace . --out-dir fp-evidence || true
+          cat fp-evidence/EVIDENCE_MANIFEST.json || true
+          rm -rf replay-bundle
+          mkdir -p replay-bundle
+          cp -r fp-evidence/. replay-bundle/
+          python replay-bundle/verifier_source.py verify-bundle --bundle-dir replay-bundle || true
+          cat replay-bundle/replay_summary.txt || true
+
+      # P2-4 BUILD-ISOLATION CANARY (TEMPORARY, PR #79): upload the
+      # measurement evidence, attempt-bound to the exact PR head SHA
+      # (same naming contract as the existing package artifact).
+      - name: Upload runtime v2 evidence (shadow, measurement only)
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && (env.CI_TIER != 'control_plane' || matrix.python-version == '3.11') && env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.14'
+        # P2-4 BUILD-ISOLATION CANARY: exact-SHA pin of upload-artifact's
+        # @v7-resolved commit 043fb46d1a93c77aae656e7c1c64a875d1fc6a0a.
+        # uses: actions/upload-artifact@v7 (mutable label). Removed on the
+        # final docs-only head.
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: market-vault-runtime-v2-test-3.14-${{ github.event.pull_request.head.sha || github.sha }}-attempt-${{ github.run_attempt }}
+          path: fp-evidence/
+          if-no-files-found: warn
+          retention-days: 30
+          overwrite: false
+
       # P1-2 control-plane tier (PR #71): the conservative six-file
       # control-plane pytest surface, executed only on Python 3.11 for
       # CI_TIER=control_plane. The file list is literal and reviewable;
@@ -248,12 +358,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        # P2-4 BUILD-ISOLATION CANARY: exact-SHA pin of checkout's @v6-
+        # resolved commit d23441a48e516b6c34aea4fa41551a30e30af803.
+        # contract: uses: actions/checkout@v6 (mutable label, never
+        # dereferenced in this head; every step's action identity is
+        # fingerprinted). Removed on the final docs-only head.
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        # P2-4 BUILD-ISOLATION CANARY: exact-SHA pin of setup-python's
+        # @v6-resolved commit ece7cb06caefa5fff74198d8649806c4678c61a1.
+        # uses: actions/setup-python@v6 (mutable label). Removed on the
+        # final docs-only head.
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.11"
           cache: pip
@@ -318,6 +437,33 @@ jobs:
           echo "POST_MERGE_REUSE=${marker:-false}" >> "$GITHUB_ENV"
           echo "POST_MERGE_REUSE_REASON=${reason:-verifier_output_missing}" >> "$GITHUB_ENV"
 
+      # P2-4 BUILD-ISOLATION IDENTITY + EVIDENCE-CLOSURE CANARY (TEMPORARY,
+      # PR #79): shadow probe for the pyarrow24 surface, AFTER classifier,
+      # BEFORE the heavy dependency installation. Measurement only; never
+      # skips anything.
+      - name: Runtime + build-isolation identity probe (shadow, measurement only)
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p fp-evidence
+          python scripts/ci_runtime_identity_v2.py probe \
+            --surface pyarrow24 \
+            --out-dir fp-evidence \
+            --actions-checkout d23441a48e516b6c34aea4fa41551a30e30af803 \
+            --actions-setup-python ece7cb06caefa5fff74198d8649806c4678c61a1 \
+            --actions-upload-artifact 043fb46d1a93c77aae656e7c1c64a875d1fc6a0a \
+            || { echo "RUNTIME_FINGERPRINT_VALID=false reason=probe_script_crash" | tee fp-evidence/probe_summary.txt; }
+          cat fp-evidence/probe_summary.txt
+          {
+            sed -n 's/^RUNTIME_FINGERPRINT_VALID=//p' fp-evidence/probe_summary.txt
+          } | grep -q . || echo "RUNTIME_FINGERPRINT_VALID=false" >> fp-evidence/probe_summary.txt
+          fp_valid="$(sed -n 's/^RUNTIME_FINGERPRINT_VALID=//p' fp-evidence/probe_summary.txt)"
+          fp_reason="$(sed -n 's/^reason=//p' fp-evidence/probe_summary.txt)"
+          bc_ready="$(sed -n 's/^BUILD_CONSTRAINT_READY=//p' fp-evidence/probe_summary.txt)"
+          echo "RUNTIME_FINGERPRINT_VALID=${fp_valid:-false}" >> "$GITHUB_ENV"
+          echo "RUNTIME_FINGERPRINT_REASON=${fp_reason:-probe_summary_missing}" >> "$GITHUB_ENV"
+          echo "BUILD_CONSTRAINT_READY=${bc_ready:-false}" >> "$GITHUB_ENV"
+
       # P1-2 control-plane tier (PR #71): for CI_TIER=control_plane the
       # whole PyArrow 24 product surface (pin / assertion / A / B / C) is
       # skipped — no PyArrow product surface is needed for pure
@@ -327,11 +473,25 @@ jobs:
         if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]"
+          # P2-4 BUILD-ISOLATION CANARY (TEMPORARY, PR #79): the editable
+          # install runs under the measured exact --build-constraint ONLY
+          # when the probe proved it acceptable (BUILD_CONSTRAINT_READY=true);
+          # otherwise it falls back to the normal install. Either way the
+          # machine-readable report and the full raw log are retained.
+          if [ "${{ env.BUILD_CONSTRAINT_READY }}" = "true" ]; then
+            echo "BUILD_CONSTRAINT_USED=true" > actual_constraint_used.txt
+            python -m pip install --build-constraint fp-evidence/build_constraints.txt --report actual_dev_install_report.json -e ".[dev]" > actual_dev_install.log 2>&1 || { cat actual_dev_install.log; exit 1; }
+          else
+            echo "BUILD_CONSTRAINT_USED=false" > actual_constraint_used.txt
+            python -m pip install --report actual_dev_install_report.json -e ".[dev]" > actual_dev_install.log 2>&1 || { cat actual_dev_install.log; exit 1; }
+          fi
 
       - name: Pin the audited PyArrow 24.0.0 compatibility runtime
         if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
-        run: python -m pip install "pyarrow==24.0.0"
+        # P2-4 BUILD-ISOLATION CANARY (TEMPORARY, PR #79): retain the
+        # machine-readable pin report and the full raw log (the pin step
+        # is a runtime step, never constraint-bound).
+        run: python -m pip install "pyarrow==24.0.0" --report actual_pyarrow_pin_report.json > actual_pyarrow_pin.log 2>&1
 
       - name: Assert the audited PyArrow compatibility version
         if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
@@ -366,6 +526,53 @@ jobs:
             tests/test_dataset_end_to_end_regression.py \
             -q --durations=100
 
+      # P2-4 BUILD-ISOLATION CANARY (TEMPORARY, PR #79): shadow verification
+      # of the pre-install probe against the ACTUAL PyArrow 24 pinned
+      # runtime. actual_dev_install_report.json is the base install report;
+      # actual_pyarrow_pin_report.json is the later pin report (later
+      # reports override earlier ones per surface semantics).
+      - name: Verify identities and replay evidence bundle (shadow, measurement only)
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
+        run: |
+          set -euo pipefail
+          python scripts/ci_runtime_identity_v2.py verify-installed \
+            --surface pyarrow24 \
+            --fingerprint fp-evidence/runtime_identity_v2.json \
+            --actual-report actual_dev_install_report.json \
+            --actual-report actual_pyarrow_pin_report.json \
+            --out-dir fp-evidence || true
+          cat fp-evidence/runtime_verification_receipt.json || true
+          python scripts/ci_runtime_identity_v2.py build-receipt \
+            --surface pyarrow24 \
+            --constraint-used-marker actual_constraint_used.txt \
+            --out-dir fp-evidence || true
+          cat fp-evidence/build_identity_receipt.json || true
+          python scripts/ci_runtime_identity_v2.py bundle \
+            --surface pyarrow24 --workspace . --out-dir fp-evidence || true
+          cat fp-evidence/EVIDENCE_MANIFEST.json || true
+          rm -rf replay-bundle
+          mkdir -p replay-bundle
+          cp -r fp-evidence/. replay-bundle/
+          python replay-bundle/verifier_source.py verify-bundle --bundle-dir replay-bundle || true
+          cat replay-bundle/replay_summary.txt || true
+
+      # P2-4 BUILD-ISOLATION CANARY (TEMPORARY, PR #79): upload the
+      # measurement evidence, attempt-bound to the exact PR head SHA
+      # (same naming contract as the existing package artifact).
+      - name: Upload runtime v2 evidence (shadow, measurement only)
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
+        # P2-4 BUILD-ISOLATION CANARY: exact-SHA pin of upload-artifact's
+        # @v7-resolved commit 043fb46d1a93c77aae656e7c1c64a875d1fc6a0a.
+        # uses: actions/upload-artifact@v7 (mutable label). Removed on the
+        # final docs-only head.
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: market-vault-runtime-v2-pyarrow24-${{ github.event.pull_request.head.sha || github.sha }}-attempt-${{ github.run_attempt }}
+          path: fp-evidence/
+          if-no-files-found: warn
+          retention-days: 30
+          overwrite: false
+
       - name: FULL tests reused from verified PR
         if: env.POST_MERGE_REUSE == 'true'
         run: |
@@ -396,12 +603,21 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        # P2-4 BUILD-ISOLATION CANARY: exact-SHA pin of checkout's @v6-
+        # resolved commit d23441a48e516b6c34aea4fa41551a30e30af803.
+        # contract: uses: actions/checkout@v6 (mutable label, never
+        # dereferenced in this head; every step's action identity is
+        # fingerprinted). Removed on the final docs-only head.
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        # P2-4 BUILD-ISOLATION CANARY: exact-SHA pin of setup-python's
+        # @v6-resolved commit ece7cb06caefa5fff74198d8649806c4678c61a1.
+        # uses: actions/setup-python@v6 (mutable label). Removed on the
+        # final docs-only head.
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.11"
           cache: pip
@@ -693,7 +909,11 @@ jobs:
       - name: Upload package audit artifact
         id: package-artifact
         if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
-        uses: actions/upload-artifact@v7
+        # P2-4 BUILD-ISOLATION CANARY: exact-SHA pin of upload-artifact's
+        # @v7-resolved commit 043fb46d1a93c77aae656e7c1c64a875d1fc6a0a.
+        # uses: actions/upload-artifact@v7 (mutable label). Removed on the
+        # final docs-only head.
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: market-vault-package-${{ github.event.pull_request.head.sha || github.sha }}-attempt-${{ github.run_attempt }}
           path: |
@@ -741,7 +961,11 @@ jobs:
       - name: Upload FULL CI attestation artifact
         id: attestation-artifact
         if: github.event_name == 'pull_request' && env.CI_TIER == 'full' && env.CI_FULL_MATRIX_REQUIRED == 'true'
-        uses: actions/upload-artifact@v7
+        # P2-4 BUILD-ISOLATION CANARY: exact-SHA pin of upload-artifact's
+        # @v7-resolved commit 043fb46d1a93c77aae656e7c1c64a875d1fc6a0a.
+        # uses: actions/upload-artifact@v7 (mutable label). Removed on the
+        # final docs-only head.
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: market-vault-full-ci-attestation-${{ github.event.pull_request.head.sha }}-attempt-${{ github.run_attempt }}
           path: ci_full_attestation.json
