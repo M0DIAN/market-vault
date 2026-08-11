@@ -2980,8 +2980,12 @@ CI_OFFLINE_TESTS_GUARD = (
 # 3.14 leg runs exactly the audited 294-node surface sealed in PR #74
 # (docs/python314_compatibility_surface_redesign_canary.md): a fail-closed
 # validator re-derives the sealed resolved-node digest from a live pytest
-# collection, then the surface executes the selector list read literally
-# from the permanent manifest ci/python314_compatibility_surface.txt.
+# collection, then the surface step loads the selector list into an
+# explicit Bash array from the permanent manifest
+# ci/python314_compatibility_surface.txt via mapfile, fail-closes on the
+# exact 258 count, prints the full set, and expands it QUOTED into pytest
+# (no $(cat ...) command substitution / xargs / eval / globs / -k /
+# markers / dynamic discovery).
 CI_PY314_VALIDATOR_STEP = "Validate Python 3.14 compatibility surface"
 CI_PY314_SURFACE_STEP = "Run Python 3.14 compatibility surface"
 CI_PY314_VALIDATOR_RUN = "python scripts/ci_python314_surface.py --repo ."
@@ -3105,6 +3109,17 @@ def _ci_step_region(block: str, step_name: str) -> str | None:
     next_step = re.compile(r"\n[ \t]*- name: ")
     match = next_step.search(block, start + len(marker))
     return block[start:] if match is None else block[start : match.start()]
+
+
+def _ci_join_continuations(region: str) -> str:
+    """Join Bash backslash-newline line continuations (with the following
+    indentation) into single spaces, so contract pins match the logical
+    command lines regardless of how the step wraps them. CRLF checkout
+    line endings are normalized first (all CI workflow pins are
+    line-ending-agnostic). The literal-space alternative avoids crossing
+    newlines, so blank lines between commands are never collapsed."""
+    region = region.replace("\r\n", "\n")
+    return re.sub(r"[ \t]*\\\n[ \t]*", " ", region)
 
 
 def check_ci_pr8(root: Path) -> list[str]:
@@ -3687,8 +3702,11 @@ def check_ci_python314_surface(root: Path) -> list[str]:
     ci/python314_compatibility_surface.txt (sealed PR #74). This check
     pins: the 3.11 restriction on the blanket FULL step, the validator
     step and its exact invocation, the surface step with its exact guard
-    and the literal manifest read (no other manifest path may exist), the
-    ordering (validator before surface), the manifest itself
+    and the fail-closed Bash array execution (mapfile from the exact
+    manifest path, hard selector-count check, PY314_SELECTOR_COUNT audit
+    marker, full selector set printed, QUOTED array expansion into pytest
+    with --durations=200; $(cat ...) command substitution is forbidden),
+    the ordering (validator before surface), the manifest itself
     (hash / counts / order / uniqueness / overlap), and the unchanged
     PyArrow24 / package / V1 attestation guards (control_plane never
     mints V1 evidence). Everything is pinned statically — pytest is never
@@ -3789,16 +3807,55 @@ def check_ci_python314_surface(root: Path) -> list[str]:
                 f"fail-closed 3.14 guard line {CI_PY314_GUARD!r} (no extra "
                 "conditions allowed)"
             )
-        manifest_read = f"$(cat {CI_PY314_MANIFEST_REL})"
-        if manifest_read not in surface_region:
+        # The step must fail closed: explicit shell options, the sealed
+        # manifest loaded into an explicit Bash array via mapfile (exact
+        # path, no command substitution), a hard selector-count check, an
+        # audit marker, the full selector set printed, and the array
+        # expanded QUOTED into pytest with the pinned durations report.
+        # Backslash line continuations are joined so the pins match the
+        # logical command lines regardless of line wrapping.
+        surface_run = _ci_join_continuations(surface_region)
+        if not re.search(r"(?m)^\s*set -euo pipefail\s*$", surface_region):
             failures.append(
-                "CI test job Python 3.14 surface step must read the "
-                f"validated manifest literally ({manifest_read!r})"
+                "CI test job Python 3.14 surface step must fail closed "
+                "with explicit shell options (set -euo pipefail)"
             )
-        if "python -m pytest" not in surface_region:
+        mapfile_load = (
+            f"mapfile -t PY314_SELECTORS < {CI_PY314_MANIFEST_REL}"
+        )
+        if mapfile_load not in surface_run:
             failures.append(
-                "CI test job Python 3.14 surface step must run pytest on "
-                "the validated selectors"
+                "CI test job Python 3.14 surface step must load the "
+                "sealed selector list into an explicit Bash array via "
+                f"mapfile from exactly {CI_PY314_MANIFEST_REL!r}"
+            )
+        count_check = (
+            f'test "${{#PY314_SELECTORS[@]}}" -eq {CI_PY314_SELECTOR_COUNT}'
+        )
+        if count_check not in surface_run:
+            failures.append(
+                "CI test job Python 3.14 surface step must fail closed on "
+                f"the selector count (test \"${{#PY314_SELECTORS[@]}}\" "
+                f"-eq {CI_PY314_SELECTOR_COUNT})"
+            )
+        if "printf 'PY314_SELECTOR_COUNT=%s\\n'" not in surface_run:
+            failures.append(
+                "CI test job Python 3.14 surface step must emit the "
+                "PY314_SELECTOR_COUNT audit marker"
+            )
+        if "printf '%s\\n' \"${PY314_SELECTORS[@]}\"" not in surface_run:
+            failures.append(
+                "CI test job Python 3.14 surface step must print the full "
+                'validated selector set (printf \'%s\\n\' '
+                '"${PY314_SELECTORS[@]}")'
+            )
+        pytest_run = (
+            'python -m pytest "${PY314_SELECTORS[@]}" -q --durations=200'
+        )
+        if pytest_run not in surface_run:
+            failures.append(
+                "CI test job Python 3.14 surface step must expand the "
+                "selector array QUOTED into pytest with --durations=200"
             )
 
     # --- the validator must precede the surface execution ---
@@ -3812,12 +3869,13 @@ def check_ci_python314_surface(root: Path) -> list[str]:
                 "validation)"
             )
 
-    # --- the workflow reads exactly ONE manifest path ---
-    if len(re.findall(r"\$\(cat ", test_block)) != 1:
+    # --- the workflow never reads the manifest via command substitution ---
+    if re.findall(r"\$\(cat ", test_block):
         failures.append(
-            "CI test job must read the Python 3.14 surface manifest from "
-            f"exactly one step (only {CI_PY314_MANIFEST_REL!r}; reading "
-            "another manifest path is a contract violation)"
+            "CI test job must never read the Python 3.14 surface manifest "
+            "via $(cat ...) command substitution — only the fail-closed "
+            f"Bash array / mapfile load of {CI_PY314_MANIFEST_REL!r} is "
+            "allowed"
         )
 
     # --- the permanent manifest itself (static, no pytest) ---

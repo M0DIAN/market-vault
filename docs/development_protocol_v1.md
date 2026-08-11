@@ -483,10 +483,16 @@ selector，normalized SHA-256 `2742853e…`）、fail-closed 验证器
 **新的正式 FULL 契约**（自本 PR 起，V1 attestation 证明的正是该契约）：
 
 - `test (3.11)`：blanket FULL 产品 pytest（与 #74 之前完全一致）；
-- `test (3.14)`：验证器通过后执行 audited 294-node compatibility
-  surface（`python -m pytest -q --durations=100 $(cat
-  ci/python314_compatibility_surface.txt)`）；验证器任何失败 → 步骤
-  失败，表面一行也不执行（fail closed）；
+- `test (3.14)`：验证器通过后以 fail-closed Bash array 执行 audited
+  294-node compatibility surface：`set -euo pipefail`；`mapfile` 从
+  `ci/python314_compatibility_surface.txt` 载入显式数组
+  `PY314_SELECTORS`；`test "${#PY314_SELECTORS[@]}" -eq 258` 硬校验
+  selector 数；输出 `PY314_SELECTOR_COUNT` audit marker；打印全部
+  selector；最后带引号展开为
+  `python -m pytest "${PY314_SELECTORS[@]}" -q --durations=200`。
+  不使用 command substitution（`$(cat ...)`）/ xargs / eval / glob /
+  `-k` / marker / 动态 selector 发现；验证器任何失败 → 步骤失败，
+  表面一行也不执行（fail closed）；
 - `portability-pyarrow24` 与 `package` 与既有契约一致；
 - job 拓扑不变：恰好 4 个 formal job，`package` 的
   `needs: [test, portability-pyarrow24]` 不变。
@@ -503,8 +509,10 @@ state。双 hash 钉死契约：
   `[param]` 后缀展开；selector 未 resolve、重复 node、计数 ≠ 294、
   digest 不符 → 全部 fail closed。成功 marker
   `PY314_SURFACE_VALIDATION_OK` 只在该步 stdout 输出，`check_release.py`
-  同时以独立静态实现（不运行 pytest）把 workflow 分腿、步骤顺序与
-  manifest 静态契约钉死。
+  同时以独立静态实现（不运行 pytest）把 workflow 分腿、步骤顺序、
+  surface 步骤的 fail-closed Bash array 执行形态（mapfile / 258 计数
+  校验 / `PY314_SELECTOR_COUNT` marker / selector 打印 / 带引号展开 /
+  `--durations=200` / 禁止 `$(cat ...)`）与 manifest 静态契约钉死。
 
 **Tier / reuse 边界**：三个 P1-1 路径（manifest、验证器、其测试）加入
 `CONTROL_RULES`（FULL-forcing）而**不在** `CONTROL_PLANE_SCOPE_RULES`

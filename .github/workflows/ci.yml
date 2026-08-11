@@ -174,15 +174,32 @@ jobs:
         if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.14'
         run: python scripts/ci_python314_surface.py --repo .
 
-      # P1-1 (PR #75): execute exactly the validated surface. The
-      # selector list is read literally from the validated manifest
-      # ci/python314_compatibility_surface.txt (no -k / markers / globs /
-      # dynamic discovery); the previous validator step must have passed,
-      # otherwise this step never runs and the job fails.
+      # P1-1 (PR #75): execute exactly the validated surface, fail-closed.
+      # The selector list is loaded into an explicit Bash array from the
+      # validated manifest ci/python314_compatibility_surface.txt with a
+      # hard count check (258), printed for auditability, and expanded
+      # quoted into pytest (no command substitution, xargs, eval, globs,
+      # -k, markers, or dynamic discovery); the previous validator step
+      # must have passed, otherwise this step never runs and the job
+      # fails.
       - name: Run Python 3.14 compatibility surface
         if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.14'
         run: |
-          python -m pytest -q --durations=100 $(cat ci/python314_compatibility_surface.txt)
+          set -euo pipefail
+
+          mapfile -t PY314_SELECTORS \
+            < ci/python314_compatibility_surface.txt
+
+          test "${#PY314_SELECTORS[@]}" -eq 258
+
+          printf 'PY314_SELECTOR_COUNT=%s\n' \
+            "${#PY314_SELECTORS[@]}"
+
+          printf '%s\n' "${PY314_SELECTORS[@]}"
+
+          python -m pytest \
+            "${PY314_SELECTORS[@]}" \
+            -q --durations=200
 
       # P1-2 control-plane tier (PR #71): the conservative six-file
       # control-plane pytest surface, executed only on Python 3.11 for

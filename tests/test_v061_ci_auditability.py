@@ -134,9 +134,11 @@ PYARROW24_HEAVY_STEPS = (
 
 # P1-1 (PR #75): the Python 3.14 compatibility surface activation. The
 # 3.14 leg of the test job runs exactly the audited 294-node surface
-# sealed in PR #74: a fail-closed validator first, then the surface
-# executes the selector list read literally from the permanent manifest
-# ci/python314_compatibility_surface.txt.
+# sealed in PR #74: a fail-closed validator first, then the surface step
+# loads the selector list into an explicit Bash array from the permanent
+# manifest ci/python314_compatibility_surface.txt (mapfile, fail-closed
+# on the exact 258 count, printed, expanded QUOTED into pytest — no
+# $(cat ...) command substitution).
 PY314_VALIDATOR_STEP = "Validate Python 3.14 compatibility surface"
 PY314_SURFACE_STEP = "Run Python 3.14 compatibility surface"
 PY314_MANIFEST = "ci/python314_compatibility_surface.txt"
@@ -365,9 +367,11 @@ def test_314_leg_keeps_fail_closed_validator_step():
 
 
 def test_314_leg_executes_audited_surface_from_sealed_manifest():
-    """The surface step runs pytest on the selector list read literally
-    from the sealed manifest, with the exact 3.14 guard; the workflow
-    reads exactly one manifest path."""
+    """The surface step must fail closed: explicit shell options, the
+    sealed manifest loaded into an explicit Bash array via mapfile (no
+    $(cat ...) command substitution), a hard selector-count check, the
+    audit marker, the full selector set printed, and the array expanded
+    QUOTED into pytest with --durations=200, with the exact 3.14 guard."""
     block = _job_block(ci_text(), "test")
     names = _step_names(block)
     assert PY314_SURFACE_STEP in names
@@ -375,8 +379,19 @@ def test_314_leg_executes_audited_surface_from_sealed_manifest():
     end = f"- name: {names[idx + 1]}"
     region = _region(block, f"- name: {PY314_SURFACE_STEP}", end)
     assert PY314_GUARD in region
-    assert f"$(cat {PY314_MANIFEST})" in region
-    assert len(re.findall(r"\$\(cat ", block)) == 1
+    assert re.search(r"(?m)^\s*set -euo pipefail\s*$", region)
+    # Join Bash backslash continuations so the pins match the logical
+    # command lines regardless of line wrapping (CRLF checkout
+    # line endings are normalized first; the literal-space alternative
+    # never collapses blank lines between commands).
+    joined = re.sub(r"[ \t]*\\\n[ \t]*", " ", region.replace("\r\n", "\n"))
+    assert f"mapfile -t PY314_SELECTORS < {PY314_MANIFEST}" in joined
+    assert 'test "${#PY314_SELECTORS[@]}" -eq 258' in joined
+    assert "printf 'PY314_SELECTOR_COUNT=%s\\n'" in joined
+    assert 'printf \'%s\\n\' "${PY314_SELECTORS[@]}"' in joined
+    assert 'python -m pytest "${PY314_SELECTORS[@]}" -q --durations=200' in joined
+    # The manifest must never be read via $(cat ...) in the test job.
+    assert "$(cat " not in block
 
 
 def test_314_validator_precedes_surface_execution():
