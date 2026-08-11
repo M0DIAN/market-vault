@@ -1,9 +1,18 @@
 # P2-2 Distinct-Head / Direct-Parent Surface Evidence Canary
 
-**Status:** MEASURED — DECISION OUTCOME A (the measured evidence supports the
-narrow architecture statement; reuse was NOT activated)
+**Status:** MEASURED — DECISION OUTCOME B — SURFACE INPUT IDENTITY IS NOT YET
+DEFENSIBLE FOR PRODUCTION. SOURCE-CODE / SELECTED-INPUT DELTA SUB-PROOF:
+PASS. RUNTIME / DEPENDENCY IDENTITY: UNRESOLVED FOR PRODUCTION REUSE.
+Reuse was NOT activated.
 **PR:** #77
 **Type:** measurement / shadow evidence only. No production behavior changed.
+
+> **Evidence-decision correction note:** after the measurement completed, a
+> normal docs-only correction commit re-examined the formal decision against
+> the #77 taxonomy and corrected it from OUTCOME A to OUTCOME B. Every
+> empirical fact below is unchanged and was re-verified; the formal decision,
+> the per-surface attestation claim, the runtime observation, and the
+> residual-gap definition were corrected/added by that commit.
 
 ## 1. Scope and method
 
@@ -291,6 +300,46 @@ The actual run validates the shadow plan: nothing failed where the plan
 claimed the delta was irrelevant, and the plan never skipped anything in
 production (all surfaces ran).
 
+### Actual runtime observation (this A/B pair)
+
+For THIS measured A/B pair, the visible Python 3.14 runtime was in fact
+equal. Verified directly from the two raw workflow logs (both runs):
+
+| Runtime identity item | Measured value (both heads) |
+|---|---|
+| Runner OS | Ubuntu 24.04 |
+| Runner image | ubuntu-24.04 |
+| Runner image version | `20260720.247.2` (Set up job: "Version: 20260720.247.2") |
+| Python | CPython 3.14.6 (set up identically in both runs; identical setup-python cache key) |
+| pip (after install step upgrade) | 26.2.1 |
+
+Material installed dependency versions visible in the two raw logs matched
+(per-job resolution identical A vs B), examples:
+
+| Package | Resolved version | Package | Resolved version |
+|---|---|---|---|
+| pandas | 2.3.3 | numpy (3.14 job runtime) | 2.5.2 |
+| pyarrow (dev dep, before the pyarrow24 pin) | 25.0.1 | numpy (3.11 job runtime) | 2.4.6 |
+| duckdb | 1.5.5 | pytest | 9.1.1 |
+| build | 1.5.0 | twine | 6.2.0 |
+
+(The numpy nuance is real and identical in both runs: the Python 3.14 job
+resolved numpy 2.5.2, the Python 3.11 jobs resolved numpy 2.4.6 — same
+resolution in A and B. pyarrow 25.0.1 is the `.[dev]` resolution that the
+pyarrow24 job then pins down to 24.0.0; that pin and assertion ran in both
+heads.)
+
+This proves:
+
+- **THE ACTUAL CANARY WAS NOT CONTAMINATED BY OBSERVED RUNTIME DRIFT.** The
+  environments the two FULL runs actually executed under were observably
+  equal.
+
+It does NOT prove:
+
+- That a future SKIPPED Head-B surface would resolve the same environment
+  automatically. That is the residual gap below (section 13, threat K).
+
 ## 12. Evidence-model question
 
 *Can a prior exact-head FULL V1 proof from Head A safely support reuse of
@@ -311,13 +360,23 @@ Measured answer, per condition:
    V1's gate correctly rejects such reuse (section 8). **Holds — V1 is
    sound; it just cannot express the narrower claim.**
 
-So the QUESTION is answered affirmatively in the narrow case, with an
-important structural caveat: realizing it requires an evidence model that
-keys per-surface evidence to each surface's selected-input manifest rather
-than to the global tree — i.e. the V2 surface-evidence model. This canary
-does NOT implement it; it only measures that the delta proof itself is
+So the QUESTION is answered affirmatively in the narrow case, with the
+formal decision boundary of section 14. The measured source-evidence chain
+indicates that a future implementation MAY be able to use:
+
+- the existing source-head V1 FULL attestation;
+- the source-head successful formal surface job;
+- exact direct-parent topology;
+- exact A→B delta;
+- a frozen surface-input identity contract;
+- and an independently proven runtime/environment identity.
+
+**No new per-surface attestation artifact or schema is shown to be
+necessary by #77.** Whether a future implementation chooses to introduce
+one is a separate design decision, not a #77 measurement finding. The
+canary's measured contribution is that the delta proof itself is
 mechanically sound and that full execution agrees with the shadow
-prediction.
+prediction — not that a particular future evidence artifact is required.
 
 ## 13. Threat model (A–K)
 
@@ -333,11 +392,21 @@ prediction.
 | H | Unknown/unclassified path | The classifier measures `unknown_changed=true` for the canary delta and fail-closes to tier=full; the delta prover must treat any path not provably covered as invalidating everything (fail-closed). |
 | I | Deletion | NOT EXERCISED. A deletion changes the 3.11 blanket surface (it runs the whole suite) and any surface selecting the deleted path; must conservatively invalidate. |
 | J | Dynamic import ambiguity (test modules importing test modules) | MEASURED ABSENT: no test module imports another test module; the canary file has no reference chain into either sealed surface (section 3). |
-| K | Dependency / environment drift between the A and B runs | The two runs executed ~10 minutes apart on the same workflow configuration and passed the same pinned surfaces (pyarrow==24.0.0 asserted, sealed 3.14 contract, RELEASE_CHECK_OK 0.7.0). Environment drift is a residual risk inherent to ANY reuse scheme (including V1 post-merge reuse); it is mitigated here by not activating reuse at all. |
+| K | Dependency / environment drift between the A and B runs | **RESIDUAL GAP — RUNTIME / DEPENDENCY IDENTITY.** For THIS measured A/B pair the visible runtime was in fact equal (section 11: runner image `20260720.247.2`, CPython 3.14.6, pip 26.2.1, identical per-job resolved dependency versions — the canary was not contaminated by observed runtime drift). But source-input equality alone is insufficient for production reuse: the current dependency/runtime contracts contain ranges and externally resolved runtime state (e.g. `numpy>=1.23.2` resolved at install time by pip against PyPI state). If Head B's heavy surface is skipped, there is no heavy job from which to infer what exact dependency environment B would have used — the observed equality of two RUNNING runs does not carry over to a skipped one. A future production cross-head reuse verifier therefore needs an additional fail-closed runtime identity mechanism. Fail-closed rule: **runtime identity unproven or unequal => RUN.** |
 
-## 14. Decision: OUTCOME A
+## 14. Decision: OUTCOME B — SURFACE INPUT IDENTITY IS NOT YET DEFENSIBLE FOR PRODUCTION
 
-All measurement gates held:
+Formal decision per the #77 taxonomy:
+
+- **SOURCE-CODE / SELECTED-INPUT DELTA SUB-PROOF: PASS.** The experiment
+  successfully proves the source-side claim: for a direct-parent
+  transition, exact selected-source/test inputs can be proven unchanged at
+  surface granularity even when the whole Git tree changes.
+- **RUNTIME / DEPENDENCY IDENTITY: UNRESOLVED FOR PRODUCTION REUSE.** The
+  experiment does not close the runtime side: a future skipped Head-B
+  surface has no heavy job from which to infer its environment.
+
+The measured gates that DID hold remain valid and are preserved:
 
 1. direct-parent topology with exactly-known delta (parent proven);
 2. delta provably irrelevant to both sealed surfaces (blob manifests);
@@ -345,27 +414,58 @@ All measurement gates held:
 4. actual FULL-B confirmed the shadow plan (no hidden failure);
 5. V1 correctly fails closed across distinct heads (trees differ).
 
-**Conclusion:** the narrow architecture statement — *direct-parent,
-exact-delta, explicitly-irrelevant-path reuse is viable for specific
-audited surfaces* — is supported by the measured evidence, and no
-unexpected evidence gap was found. Reuse was NOT activated; no V2
-implementation was made in this PR.
+But per the original #77 decision taxonomy, the unresolved
+runtime/environment identity boundary requires **OUTCOME B** — the canary
+is NOT failed and NOT contaminated (the observed runtime of THIS A/B pair
+was equal, section 11); rather, surface input identity is not yet
+defensible for production because source-input equality alone does not
+establish the runtime identity of a skipped target surface (threat K).
+
+**Conclusion:** cross-head production reuse is NOT ready for activation.
+Reuse was NOT activated; no V2 implementation was made in this PR.
 
 ## 15. Architecture boundary
 
-The evidence supports AT MOST:
+**PROVEN:**
 
-> For a DIRECT CHILD B of head A, where the A→B delta is exactly known and
-> every selected input of a formal surface S is byte-identical A vs B,
-> surface S's FULL evidence from A MAY be considered reusable for B —
-> provided a V2 evidence model that keys per-surface attestations to
-> selected-input manifests, and a fail-closed delta prover, are built and
-> reviewed separately.
+For a direct-parent transition, exact selected-source/test inputs can be
+proven unchanged at surface granularity even when the whole Git tree
+changes. (This PR: 37-file Python 3.14 selected-input equality, 10-file
+PyArrow24 equality, `src/**` equality, `pyproject.toml` / ci.yml / manifest
+/ validator equality, no conftest; 60-node stability; tree inequality.)
 
-It does NOT support arbitrary ancestry, cross-branch reuse, transitive
-chaining (A→B→C), or any reuse where the delta cannot be fully enumerated
-and proven irrelevant. V1's head-bound evidence model remains the
-production gate; it correctly rejects cross-head reuse today.
+**NOT YET PROVEN:**
+
+That the target head would execute under an equivalent runtime / dependency
+environment when the heavy target surface itself is skipped.
+
+**Therefore: cross-head production reuse is NOT ready for activation.**
+
+The evidence does NOT support arbitrary ancestry, cross-branch reuse,
+transitive chaining (A→B→C), or any reuse where the delta cannot be fully
+enumerated and proven irrelevant. V1's head-bound evidence model remains
+the production gate; it correctly rejects cross-head reuse today.
+
+### Future options (identification only — MUST NOT be implemented in #77)
+
+The measurement report may identify, but must not implement, either of the
+following defensible directions. That is future #78 work; neither option is
+chosen or built here.
+
+**OPTION 1 — LIGHTWEIGHT TARGET RUNTIME FINGERPRINT.** Before reusing a
+heavy surface on Head B, run a lightweight bootstrap that resolves the same
+environment and computes a deterministic runtime fingerprint. Candidate
+inputs: runner OS / architecture; runner image identity/version; resolved
+action/toolchain identity; exact Python version; exact installed
+distribution name/version set; surface-specific forced runtime pins.
+Canonicalize deterministically and hash it. Require
+`HEAD_A_RUNTIME_FINGERPRINT == HEAD_B_RUNTIME_FINGERPRINT`; otherwise RUN
+the surface.
+
+**OPTION 2 — LOCKED / PINNED ENVIRONMENT CONTRACT.** Introduce a separately
+reviewed fully pinned environment/lock contract whose identity can be
+proven unchanged A→B. The lock/toolchain contract hash then participates in
+the surface evidence identity.
 
 ## 16. Cleanup
 
@@ -391,7 +491,10 @@ commit; no amend, no rebase, no force-push, no history rewrite.
   → Head A `4f6b49d71d10af5f4f8825cb0c3d63bb848c9bea` (marker A)
   → Head B `79714d788d48d7a728f48e22b91f5807d691390f` (marker B, direct child)
   → cleanup `802e1e3df14296d776994e955548f80a5838b147` (canary restored)
-  → this final report commit (which, per section 2, does not embed its own SHA)
+  → the measurement report commit
+  → this final evidence-decision correction commit (OUTCOME A → OUTCOME B;
+    runtime observation and residual-gap definition added; per-surface
+    attestation claim corrected; does not embed its own SHA, per section 2)
 
 - All digests quoted above are CI-ONLY / NON-FORMAL-RELEASE HASHes; the
   sealed PR #74 resolved digest `7561b50a...` is the pre-existing pinned
