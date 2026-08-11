@@ -1,12 +1,25 @@
 # P2-3 Runtime Identity Fingerprint Canary
 
-**Status:** MEASURED — DECISION OUTCOME A — LIVE TARGET RUNTIME FINGERPRINT IS
-VIABLE as an additional proof layer for the specifically audited `test-3.14`
-and `pyarrow24` surfaces. Shadow decisions: `SHADOW_REUSE_CANDIDATE=true` for
-both surfaces. Reuse was NOT activated. No runtime-fingerprint mechanism
-remains on this head.
+**Status:** MEASURED — DECISION **OUTCOME B** — RUNTIME IDENTITY CONTRACT
+STILL HAS A PROOF GAP. The lightweight live pre-install probe foundation
+is viable and all four probe-vs-actual receipts matched, but PEP 517
+isolated build-environment dependency identity is outside the proof
+boundary, so the current fingerprint schema is not yet sufficient for
+production reuse. Cross-head production reuse remains **NOT READY**.
+Reuse was NOT activated. No runtime-fingerprint mechanism remains on this
+head.
 **PR:** #78
 **Type:** measurement / shadow evidence only. No production behavior changed.
+
+> **Evidence-decision correction note:** after the measurement completed,
+> independent review accepted the experiment execution (live pre-install
+> probe PASS, final installed distribution prediction PASS, cross-head
+> comparator PASS) and corrected the formal decision from OUTCOME A to
+> OUTCOME B: the fingerprint omits PEP 517 isolated build-environment
+> dependency identity (setuptools / wheel resolution), which is a concrete
+> proof boundary outside what #78 measured. Every empirical fact below is
+> unchanged and was re-verified against the exact-head CI evidence. Head A
+> and Head B were NOT rerun; no temporary instrumentation was recreated.
 
 > Every hash in this report is a **CI-ONLY / NON-FORMAL-RELEASE HASH** —
 > it describes a temporary measurement artifact from an exact-head CI run,
@@ -26,9 +39,10 @@ identity fingerprint** taken *before* the heavy install can close that gap.
 
 - A stdlib-only probe (`scripts/ci_runtime_fingerprint.py`, temporary)
   resolves the runtime identity — runner, exact Python, pip, project
-  dependency contract, exact action SHAs, workflow digest — and the full
-  external dependency set (canonical names, versions, normalized URLs,
-  SHA256 artifact hashes) via a clean-venv `pip install --dry-run --report`.
+  dependency contract, exact action SHAs, workflow digest — and the final
+  installed external runtime distribution set (canonical names, versions,
+  normalized URLs, SHA256 artifact hashes) via a clean-venv
+  `pip install --dry-run --report`.
 - The probe ran as a **shadow** step on the Python 3.14 matrix leg and the
   `portability-pyarrow24` job, AFTER checkout / setup-python / classifier and
   BEFORE the heavy dependency installation. A probe failure recorded
@@ -61,24 +75,35 @@ identity fingerprint** taken *before* the heavy install can close that gap.
 | PR | #78 |
 | Head A SHA | `6a0f1b5c6c2025db8cf6484c587a1e30f07c3caa` |
 | Head A run ID | `31534156493` (conclusion: success) |
-| Head A V1 FULL attestation | schema 1, `run_id=31534156493`, `pr_number=78`, `base_sha=5ca28121…`, `head_sha=6a0f1b5…`, tier `full`, `full_matrix_required=true` |
+| Head A V1 FULL attestation | schema 1, `run_id=31534156493`, `pr_number=78`, `base_sha=5ca28121…`, `head_sha=6a0f1b5…`, tier `full`, `full_matrix_required=true` — artifact ID `9118248219` |
 | Head B SHA | `41abe630f8d3c14ee66ab5d218f6c26ab84109db` |
 | Head B run ID | `31534838665` (conclusion: success) |
-| Head B V1 FULL attestation | schema 1, `run_id=31534838665`, `pr_number=78`, `base_sha=5ca28121…`, `head_sha=41abe63…`, tier `full`, `full_matrix_required=true` |
+| Head B V1 FULL attestation | schema 1, `run_id=31534838665`, `pr_number=78`, `base_sha=5ca28121…`, `head_sha=41abe63…`, tier `full`, `full_matrix_required=true` — artifact ID `9118509668` |
 
-## 3. Fingerprint artifact IDs
+## 3. Fingerprint artifacts
 
 Temporary measurement artifacts (all CI-ONLY / NON-FORMAL-RELEASE):
 
-| Surface | Head | Artifact name |
-|---|---|---|
-| test-3.14 | A | `market-vault-runtime-fingerprint-test-3.14-6a0f1b5c6c2025db8cf6484c587a1e30f07c3caa-attempt-1` |
-| pyarrow24 | A | `market-vault-runtime-fingerprint-pyarrow24-6a0f1b5c6c2025db8cf6484c587a1e30f07c3caa-attempt-1` |
-| test-3.14 | B | `market-vault-runtime-fingerprint-test-3.14-41abe630f8d3c14ee66ab5d218f6c26ab84109db-attempt-1` |
-| pyarrow24 | B | `market-vault-runtime-fingerprint-pyarrow24-41abe630f8d3c14ee66ab5d218f6c26ab84109db-attempt-1` |
+| Surface | Head | Artifact name | Artifact ID |
+|---|---|---|---|
+| test-3.14 | A | `market-vault-runtime-fingerprint-test-3.14-6a0f1b5c6c2025db8cf6484c587a1e30f07c3caa-attempt-1` | `9118115429` |
+| pyarrow24 | A | `market-vault-runtime-fingerprint-pyarrow24-6a0f1b5c6c2025db8cf6484c587a1e30f07c3caa-attempt-1` | `9118117181` |
+| test-3.14 | B | `market-vault-runtime-fingerprint-test-3.14-41abe630f8d3c14ee66ab5d218f6c26ab84109db-attempt-1` | `9118380353` |
+| pyarrow24 | B | `market-vault-runtime-fingerprint-pyarrow24-41abe630f8d3c14ee66ab5d218f6c26ab84109db-attempt-1` | `9118379613` |
 
 Each artifact contains: `runtime_fingerprint.json`, `verification_receipt.json`,
 `resolver_report.json`, `probe_summary.txt`, `probe_pip_dryrun.log`.
+
+**Evidence-retention caveat (raw actual-install reports):** the actual heavy
+install reports were generated and consumed during CI —
+`install_report_314.json` (test-3.14), `dev_install_report.json` +
+`pyarrow_pin_report.json` (pyarrow24) — but were NOT copied into
+`fp-evidence/` and therefore were NOT retained inside the uploaded
+measurement artifacts. Receipt generation and results were observed in the
+exact CI jobs and remain valid measured evidence, but an independent
+reviewer cannot replay `verify-installed` from the archived artifacts alone.
+#78 does not claim full raw-evidence closure; a future canary must archive
+the normalized actual install report(s).
 
 ## 4. Fingerprint schema and canonicalization contract
 
@@ -97,6 +122,11 @@ Each artifact contains: `runtime_fingerprint.json`, `verification_receipt.json`,
   duplicate canonical package, malformed artifact hash, and probe-invalid
   documents all fail closed — never "unknown".
 
+**Scope of what `resolved_distributions` proves:** the set is *the final
+installed external runtime distribution set represented by pip's
+machine-readable install report*. It does NOT include PEP 517 isolated
+build-environment dependencies (see section 13).
+
 ## 5. Identity contract recorded per surface
 
 | Block | Fields |
@@ -106,7 +136,7 @@ Each artifact contains: `runtime_fingerprint.json`, `verification_receipt.json`,
 | Resolver | pip name + exact version |
 | Dependency contract | project name, version, `pyproject_sha256`, sorted dependencies / dev-dependencies (tomllib, no install needed) |
 | Action contract | exact-SHA checkout / setup-python / upload-artifact pins + `ci_yml_sha256` |
-| Resolved distributions | canonical name, version, normalized URL, artifact SHA256 for every external package |
+| Resolved distributions | canonical name, version, normalized URL, artifact SHA256 for every external package in the final installed runtime set |
 
 ## 6. Action identity strategy
 
@@ -160,7 +190,8 @@ importlib cross-check of every recorded distribution and a live
 
 The pre-install probe predicted the actual heavy runtime on all four
 surface/run combinations (`PROBE_PREDICTED_RUNTIME_MATCHES_ACTUAL=true`).
-No importlib cross-check mismatches anywhere.
+No importlib cross-check mismatches anywhere. **Final installed distribution
+prediction = PASS** for all four combinations.
 
 ## 9. A→B delta irrelevance (source-input proof)
 
@@ -171,10 +202,18 @@ No importlib cross-check mismatches anywhere.
   `pyproject.toml`, `ci/python314_compatibility_surface.txt`,
   `scripts/ci_python314_surface.py`, and `src/**` — all byte-identical.
 - `tests/test_audit_v03.py` has NO nodes in the sealed 258-node
-  `ci/python314_compatibility_surface.txt` manifest, and is not among the
-  pyarrow24 surface's files (test_v060_portability + 8 frozen regression
-  files). The delta is therefore irrelevant to both reuse candidates under
-  the #77 selected-input boundary contract.
+  `ci/python314_compatibility_surface.txt` manifest.
+- PyArrow24 surface accounting (corrected): the complete audited PyArrow 24
+  path executes **10 unique test files** — 1 file on the A step
+  (`tests/test_v060_portability.py`), 3 files on the B step
+  (`test_canonical_reader.py`, `test_sample_generation_core.py`,
+  `test_sample_generation_cli.py`), and 6 files on the C step
+  (`test_canonical_materialization_v03.py`, `test_canonical_builder_v03.py`,
+  `test_dataset_materialization.py`, `test_verified_dataset_reader.py`,
+  `test_pit_sample_assembly.py`, `test_dataset_end_to_end_regression.py`).
+  `tests/test_audit_v03.py` is none of them.
+- The delta is therefore irrelevant to both reuse candidates under the #77
+  selected-input boundary contract.
 
 ## 10. Actual hosted runner identity (Head A and Head B)
 
@@ -201,18 +240,19 @@ measurement and both #78 heads.
 | Probe (pyarrow24, Head A) | 10.5 s |
 | Probe (test-3.14, Head B) | 12.5 s |
 | Probe (pyarrow24, Head B) | 10.3 s |
-| Heavy install (test-3.14) | ~23 s |
-| Heavy install + pin (pyarrow24) | ~19 s |
 | Python 3.14 compatibility surface pytest | ~55 s |
-| PyArrow 24 sensitive regression surface | ~39 s |
-| 3.11 blanket FULL pytest | ~4 m 25 s |
+| Complete PyArrow24 A/B/C execution path | ~94 s (install 17 s + pin 2 s + A tests 1 s + B surface 35 s + C surface 39 s) |
+| Heavy install (test-3.14) | ~23 s |
+| 3.11 blanket FULL pytest | ~4 m 25 s — **contextual observation only**; #78 did not measure or authorize test-3.11 reuse, and this is NOT the upper bound for a surface the fingerprint could protect |
 
-The probe is meaningfully cheaper than the heavy surface it could protect
-(~10–12 s vs ~39 s–4.5 min), and it runs in a clean venv with no dependency
-on the heavy environment. **Dry-run download analysis (from
-`probe_pip_dryrun.log`, not guessed):** the resolver downloaded metadata
-ONLY — exactly 2 metadata fetches (`pyarrow-25.0.1….whl.metadata`,
-`numpy-2.5.2….whl.metadata`), zero full archives.
+For the candidate surfaces, the probe (~10–12 s) is meaningfully cheaper
+than the surfaces it could protect: the test-3.14 compatibility surface
+(~55 s) and the complete PyArrow24 A/B/C path (~94 s). The probe runs in a
+clean venv with no dependency on the heavy environment. **Dry-run download
+analysis (from `probe_pip_dryrun.log`, not guessed):** the resolver
+downloaded metadata ONLY — exactly 2 metadata fetches
+(`pyarrow-25.0.1….whl.metadata`, `numpy-2.5.2….whl.metadata`), zero full
+archives.
 
 ## 12. Comparator branches
 
@@ -233,7 +273,70 @@ ONLY — exactly 2 metadata fetches (`pyarrow-25.0.1….whl.metadata`,
   core (probe-invalid fails closed; probe-vs-actual mismatch fails closed;
   pyarrow24 live-import contradiction fails closed).
 
-## 13. Shadow decision chain (per surface)
+## 13. BUILD-ISOLATION PROOF GAP (the corrected decision's gap)
+
+Current build contract:
+
+```toml
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+```
+
+`pip install -e ".[dev]"` invokes a **PEP 517 isolated build environment**
+before constructing the editable MarketVault installation. The actual FULL
+logs visibly execute:
+
+```
+Installing build dependencies
+Checking if build backend supports build_editable
+Getting requirements to build editable
+Preparing editable metadata (pyproject.toml)
+Building editable for market-vault
+```
+
+The current runtime fingerprint does NOT contain resolved artifact identity
+for those isolated build dependencies. Specifically,
+`resolved_distributions` do NOT contain `setuptools` or `wheel` (verified in
+both heads' fingerprints), and `pyproject_sha256` proves only that the
+DECLARED ranges are unchanged — it does NOT prove which exact
+setuptools/wheel artifacts were resolved into the build environment.
+
+Therefore two heads can theoretically have **identical current fingerprints
+but different build-backend resolution** — a possible false-positive
+identity at the current schema's proof boundary.
+
+**Fail-closed future rule:**
+unproven / unequal build-isolation identity => RUN.
+
+**Future gap to close (NOT implemented in #78): BUILD-ISOLATION IDENTITY.**
+The next measurement must bind at minimum: exact build backend
+distributions, exact versions, exact artifact SHA256, the build-system
+requirement contract, applicable Python/runtime identity, and raw
+actual-install evidence retention. Likely relevant current build
+requirements: `setuptools>=68`, `wheel`.
+
+## 14. Evidence-retention gap
+
+Each archived runtime-fingerprint artifact contains exactly:
+`runtime_fingerprint.json`, `verification_receipt.json`,
+`resolver_report.json`, `probe_summary.txt`, `probe_pip_dryrun.log`.
+
+The actual heavy install reports were generated and consumed during CI
+(`install_report_314.json` for test-3.14; `dev_install_report.json` and
+`pyarrow_pin_report.json` for pyarrow24) but were NOT copied into
+`fp-evidence/` and therefore were NOT retained inside the uploaded
+measurement artifacts. Consequences:
+
+- receipt generation was observed in the exact CI jobs;
+- receipt results remain valid measured evidence;
+- but an independent reviewer cannot replay `verify-installed` from the
+  archived artifact alone.
+
+#78 does NOT claim full raw-evidence closure. A future canary MUST archive
+the normalized actual install report(s).
+
+## 15. Shadow decision chain (per surface)
 
 | Proof leg | test-3.14 | pyarrow24 |
 |---|---|---|
@@ -241,39 +344,51 @@ ONLY — exactly 2 metadata fetches (`pyarrow-25.0.1….whl.metadata`,
 | TRANSITION: Head B direct child + exact A→B delta | PASS | PASS |
 | SOURCE-INPUT PROOF: #77 boundary contract proves delta irrelevant | PASS | PASS |
 | RUNTIME PROOF: Head B live fingerprint valid + Head B FP == Head A FP | PASS | PASS |
-| **SHADOW_REUSE_CANDIDATE** | **true** | **true** |
 
-Per the fail-closed rules, if any leg were missing/invalid/unequal the
-candidate would be `false` ⇒ RUN. No production action consumes this result
-in #78.
+All observed legs pass — but the shadow decision is CONDITIONAL on the
+corrected decision: with the fail-closed rule "unproven / unequal
+build-isolation identity => RUN", the current schema does not yet carry the
+build-isolation proof leg, so production reuse is NOT READY despite the
+passing observed legs. No production action consumes any of this in #78.
 
-## 14. Decision
+## 16. Decision (corrected)
 
-**OUTCOME A — LIVE TARGET RUNTIME FINGERPRINT IS VIABLE.** All OUTCOME A
-conditions hold: both surface probes valid on both heads; probe runs before
-and independent of the heavy install; deterministic fingerprint; required
-runner identity present; exact Python and pip identity represented;
-machine-readable dependency resolution; exact external artifact
-identities/hashes represented; action identities immutable (exact-SHA
-pinned) / proven; Head A and Head B fingerprints match their actual
-installs; comparator fails closed with all 32 negative mutation tests
-passing; A→B source delta proven irrelevant to both reuse candidates; no
-production skip occurred.
+**OUTCOME B — RUNTIME IDENTITY CONTRACT STILL HAS A PROOF GAP.**
 
-Note per the spec: OUTCOME A does NOT require Head A FP ≠ Head B FP. Here
-the natural result was equality (runtime genuinely identical across heads),
-which keeps both surfaces as reuse candidates.
+PROVEN by #78:
 
-**Scope limit:** OUTCOME A means only that a live target runtime
-fingerprint is a viable ADDITIONAL proof layer for direct-parent cross-head
-reuse of the specifically audited `test-3.14` and `pyarrow24` surfaces. It
-does NOT mean Partial Reuse V2 is production-ready. Still not allowed:
-package reuse, test-3.11 reuse, arbitrary ancestry, transitive evidence
-chaining, cross-branch reuse, production skipping, mutable-label-only action
-identity.
+- the lightweight live pre-install probe is viable;
+- runner / Python / pip / action identity can be canonicalized;
+- final external installed dependency versions + artifact SHA256 can be
+  resolved before the heavy install;
+- all four measured probe-vs-actual receipts matched;
+- A/B cross-head fingerprints matched naturally (equality on both surfaces);
+- the mutation comparator fails closed (32/32 tests);
+- the probe is materially cheaper than the heavy surfaces it would protect.
 
-## 15. Remaining limitations
+NOT PROVEN:
 
+- complete environment-construction identity — specifically PEP 517
+  isolated build-environment dependency identity (setuptools / wheel
+  artifact resolution) is outside the current proof boundary.
+
+**Architecture conclusion:** #78 proves that a live pre-install runtime
+fingerprint is a viable foundation, but the current schema is not yet
+sufficient for production reuse because build-isolation dependency identity
+is outside the proof boundary. Therefore cross-head production reuse
+remains NOT READY and Partial Reuse V2 remains NOT ACTIVATED.
+
+**Scope limit:** even the corrected decision does not change that the
+fingerprint applies only to the specifically audited `test-3.14` and
+`pyarrow24` surfaces. Still not allowed: package reuse, test-3.11 reuse,
+arbitrary ancestry, transitive evidence chaining, cross-branch reuse,
+production skipping, mutable-label-only action identity.
+
+## 17. Remaining limitations
+
+- PEP 517 build-isolation dependency identity is not represented (section 13).
+- Raw actual-install reports were not retained in the measurement artifacts
+  (section 14).
 - The fingerprint is a snapshot of the CI runner's hosted image; GitHub can
   change `ImageVersion` between runs (no drift was observed here, and any
   drift would fail closed as `runner_image_version_unequal` ⇒ RUN).
@@ -287,7 +402,7 @@ identity.
 - The canary measured two surfaces only; no claim is made for the package
   surface or the 3.11 blanket FULL surface.
 
-## 16. Explicit statements
+## 18. Explicit statements
 
 - **No production skip occurred.** Both heads executed the CURRENT FULL
   four-job validation contract end-to-end.
@@ -298,6 +413,10 @@ identity.
   pins, `--report` instrumentation, canary marker) is removed; ci.yml and
   test_audit_v03.py are byte-for-byte the frozen base.
 - **No release/tag/main mutation occurred** during measurement preparation.
+- **Raw actual-install report retention was incomplete** in the canary
+  artifacts (section 14).
+- **Formal decision corrected to OUTCOME B** after independent review;
+  empirical measurement facts unchanged.
 
 **Final PR head:**
 NOT SELF-EMBEDDED BY DESIGN.
