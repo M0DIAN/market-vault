@@ -27,23 +27,12 @@ jobs:
 
     steps:
       - name: Check out repository
-        # P2-3 RUNTIME IDENTITY CANARY (TEMPORARY, PR #78): the current
-        # @v6 label resolves to d23441a48e516b6c34aea4fa41551a30e30af803
-        # (observed in the exact-main CI logs); the canary exact-SHA pins
-        # the executed action below. Comment line kept for the auditability
-        # contract: uses: actions/checkout@v6 (mutable label, never
-        # acceptable as immutable runtime identity by itself). This pin is
-        # removed on the final docs-only head.
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Set up Python
-        # P2-3 RUNTIME IDENTITY CANARY (TEMPORARY, PR #78): exact-SHA pin
-        # of the @v6-resolved commit ece7cb06caefa5fff74198d8649806c4678c61a1.
-        # uses: actions/setup-python@v6 (mutable label). Removed on the
-        # final docs-only head.
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -138,34 +127,6 @@ jobs:
       - name: Check repository hygiene
         run: python scripts/check_repo_hygiene.py
 
-      # P2-3 RUNTIME IDENTITY FINGERPRINT CANARY (TEMPORARY, PR #78):
-      # shadow measurement ONLY — the probe never skips validation and
-      # never gates the heavy chain. It resolves and fingerprints the
-      # runtime the 3.14 surface WOULD use, BEFORE the heavy install,
-      # inside a clean temporary venv (stdlib-only script). A probe
-      # failure records RUNTIME_FINGERPRINT_VALID=false and the normal
-      # FULL chain still runs. Removed entirely on the final docs-only
-      # head.
-      - name: Runtime fingerprint probe (shadow, measurement only)
-        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && (env.CI_TIER != 'control_plane' || matrix.python-version == '3.11') && env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.14'
-        run: |
-          set -euo pipefail
-          mkdir -p fp-evidence
-          python scripts/ci_runtime_fingerprint.py probe \
-            --surface test-3.14 \
-            --actions-checkout d23441a48e516b6c34aea4fa41551a30e30af803 \
-            --actions-setup-python ece7cb06caefa5fff74198d8649806c4678c61a1 \
-            --actions-upload-artifact 043fb46d1a93c77aae656e7c1c64a875d1fc6a0a \
-            --out-dir fp-evidence || {
-            echo "RUNTIME_FINGERPRINT_VALID=false reason=probe_script_crash" \
-              | tee fp-evidence/probe_summary.txt
-          }
-          cat fp-evidence/probe_summary.txt
-          fp_valid="$(sed -n 's/^RUNTIME_FINGERPRINT_VALID=//p' fp-evidence/probe_summary.txt)"
-          fp_reason="$(sed -n 's/^reason=//p' fp-evidence/probe_summary.txt | head -1)"
-          echo "RUNTIME_FINGERPRINT_VALID=${fp_valid:-false}" >> "$GITHUB_ENV"
-          echo "RUNTIME_FINGERPRINT_REASON=${fp_reason:-unknown}" >> "$GITHUB_ENV"
-
       # P1-2 control-plane tier (PR #71): dependency setup and the
       # compile check still run on control_plane, but ONLY on the Python
       # 3.11 leg that executes the conservative six-file control-plane
@@ -175,14 +136,7 @@ jobs:
         if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && (env.CI_TIER != 'control_plane' || matrix.python-version == '3.11') && env.POST_MERGE_REUSE != 'true'
         run: |
           python -m pip install --upgrade pip
-          if [ "${{ matrix.python-version }}" = "3.14" ]; then
-            # P2-3 RUNTIME IDENTITY CANARY (TEMPORARY, PR #78): the 3.14
-            # leg also emits a machine-readable install report for the
-            # probe-vs-actual verification. The 3.11 leg is unchanged.
-            python -m pip install --report install_report_314.json -e ".[dev]"
-          else
-            python -m pip install -e ".[dev]"
-          fi
+          python -m pip install -e ".[dev]"
 
       - name: Compile Python
         if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && (env.CI_TIER != 'control_plane' || matrix.python-version == '3.11') && env.POST_MERGE_REUSE != 'true'
@@ -247,38 +201,6 @@ jobs:
             "${PY314_SELECTORS[@]}" \
             -q --durations=200
 
-      # P2-3 RUNTIME IDENTITY FINGERPRINT CANARY (TEMPORARY, PR #78):
-      # shadow verification of the pre-install probe against the ACTUAL
-      # heavy 3.14 runtime (machine-readable install report + the live
-      # installed distributions). Measurement only; never skips anything.
-      - name: Verify runtime fingerprint against actual install (shadow, measurement only)
-        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && (env.CI_TIER != 'control_plane' || matrix.python-version == '3.11') && env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.14'
-        run: |
-          set -euo pipefail
-          python scripts/ci_runtime_fingerprint.py verify-installed \
-            --surface test-3.14 \
-            --fingerprint fp-evidence/runtime_fingerprint.json \
-            --actual-report install_report_314.json \
-            --out-dir fp-evidence || true
-          cat fp-evidence/verification_receipt.json || true
-
-      # P2-3 RUNTIME IDENTITY FINGERPRINT CANARY (TEMPORARY, PR #78):
-      # upload the measurement evidence, attempt-bound to the exact PR
-      # head SHA (same naming contract as the existing package artifact).
-      - name: Upload runtime fingerprint evidence (shadow, measurement only)
-        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && (env.CI_TIER != 'control_plane' || matrix.python-version == '3.11') && env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.14'
-        # P2-3 RUNTIME IDENTITY CANARY: exact-SHA pin of upload-artifact's
-        # @v7-resolved commit 043fb46d1a93c77aae656e7c1c64a875d1fc6a0a.
-        # uses: actions/upload-artifact@v7 (mutable label). Removed on the
-        # final docs-only head.
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: market-vault-runtime-fingerprint-test-3.14-${{ github.event.pull_request.head.sha || github.sha }}-attempt-${{ github.run_attempt }}
-          path: fp-evidence/
-          if-no-files-found: warn
-          retention-days: 30
-          overwrite: false
-
       # P1-2 control-plane tier (PR #71): the conservative six-file
       # control-plane pytest surface, executed only on Python 3.11 for
       # CI_TIER=control_plane. The file list is literal and reviewable;
@@ -326,21 +248,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        # P2-3 RUNTIME IDENTITY CANARY: exact-SHA pin of checkout's @v6-
-        # resolved commit d23441a48e516b6c34aea4fa41551a30e30af803.
-        # contract: uses: actions/checkout@v6 (mutable label, never
-        # p2-3-rely on the mutable ref). Removed on the final docs-only
-        # head.
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Set up Python
-        # P2-3 RUNTIME IDENTITY CANARY: exact-SHA pin of setup-python's
-        # @v6-resolved commit ece7cb06caefa5fff74198d8649806c4678c61a1.
-        # uses: actions/setup-python@v6 (mutable label). Removed on the
-        # final docs-only head.
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
           cache: pip
@@ -405,30 +318,6 @@ jobs:
           echo "POST_MERGE_REUSE=${marker:-false}" >> "$GITHUB_ENV"
           echo "POST_MERGE_REUSE_REASON=${reason:-verifier_output_missing}" >> "$GITHUB_ENV"
 
-      # P2-3 RUNTIME IDENTITY FINGERPRINT CANARY (TEMPORARY, PR #78):
-      # shadow probe for the pyarrow24 surface, AFTER classifier, BEFORE
-      # the heavy dependency installation. Measurement only.
-      - name: Runtime fingerprint probe (shadow, measurement only)
-        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
-        run: |
-          set -euo pipefail
-          mkdir -p fp-evidence
-          python scripts/ci_runtime_fingerprint.py probe \
-            --surface pyarrow24 \
-            --out-dir fp-evidence \
-            --actions-checkout d23441a48e516b6c34aea4fa41551a30e30af803 \
-            --actions-setup-python ece7cb06caefa5fff74198d8649806c4678c61a1 \
-            --actions-upload-artifact 043fb46d1a93c77aae656e7c1c64a875d1fc6a0a \
-            || { echo "RUNTIME_FINGERPRINT_VALID=false reason=probe_script_crash" | tee fp-evidence/probe_summary.txt; }
-          cat fp-evidence/probe_summary.txt
-          {
-            sed -n 's/^RUNTIME_FINGERPRINT_VALID=//p' fp-evidence/probe_summary.txt
-          } | grep -q . || echo "RUNTIME_FINGERPRINT_VALID=false" >> fp-evidence/probe_summary.txt
-          fp_valid="$(sed -n 's/^RUNTIME_FINGERPRINT_VALID=//p' fp-evidence/probe_summary.txt)"
-          fp_reason="$(sed -n 's/^reason=//p' fp-evidence/probe_summary.txt)"
-          echo "RUNTIME_FINGERPRINT_VALID=${fp_valid:-false}" >> "$GITHUB_ENV"
-          echo "RUNTIME_FINGERPRINT_REASON=${fp_reason:-probe_summary_missing}" >> "$GITHUB_ENV"
-
       # P1-2 control-plane tier (PR #71): for CI_TIER=control_plane the
       # whole PyArrow 24 product surface (pin / assertion / A / B / C) is
       # skipped — no PyArrow product surface is needed for pure
@@ -438,11 +327,11 @@ jobs:
         if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
         run: |
           python -m pip install --upgrade pip
-          python -m pip install --report dev_install_report.json -e ".[dev]"
+          python -m pip install -e ".[dev]"
 
       - name: Pin the audited PyArrow 24.0.0 compatibility runtime
         if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
-        run: python -m pip install "pyarrow==24.0.0" --report pyarrow_pin_report.json
+        run: python -m pip install "pyarrow==24.0.0"
 
       - name: Assert the audited PyArrow compatibility version
         if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
@@ -477,40 +366,6 @@ jobs:
             tests/test_dataset_end_to_end_regression.py \
             -q --durations=100
 
-      # P2-3 RUNTIME IDENTITY FINGERPRINT CANARY (TEMPORARY, PR #78):
-      # shadow verification of the pre-install probe against the ACTUAL
-      # PyArrow 24 pinned runtime. dev_install_report.json is the base
-      # install report; pyarrow_pin_report.json is the later pin report
-      # (later reports override earlier ones per surface semantics).
-      - name: Verify runtime fingerprint against actual install (shadow, measurement only)
-        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
-        run: |
-          set -euo pipefail
-          python scripts/ci_runtime_fingerprint.py verify-installed \
-            --surface pyarrow24 \
-            --fingerprint fp-evidence/runtime_fingerprint.json \
-            --actual-report dev_install_report.json \
-            --actual-report pyarrow_pin_report.json \
-            --out-dir fp-evidence || true
-          cat fp-evidence/verification_receipt.json || true
-
-      # P2-3 RUNTIME IDENTITY FINGERPRINT CANARY (TEMPORARY, PR #78):
-      # upload the measurement evidence, attempt-bound to the exact PR
-      # head SHA (same naming contract as the existing package artifact).
-      - name: Upload runtime fingerprint evidence (shadow, measurement only)
-        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
-        # P2-3 RUNTIME IDENTITY CANARY: exact-SHA pin of upload-artifact's
-        # @v7-resolved commit 043fb46d1a93c77aae656e7c1c64a875d1fc6a0a.
-        # uses: actions/upload-artifact@v7 (mutable label). Removed on the
-        # final docs-only head.
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: market-vault-runtime-fingerprint-pyarrow24-${{ github.event.pull_request.head.sha || github.sha }}-attempt-${{ github.run_attempt }}
-          path: fp-evidence/
-          if-no-files-found: warn
-          retention-days: 30
-          overwrite: false
-
       - name: FULL tests reused from verified PR
         if: env.POST_MERGE_REUSE == 'true'
         run: |
@@ -541,21 +396,12 @@ jobs:
 
     steps:
       - name: Check out repository
-        # P2-3 RUNTIME IDENTITY CANARY: exact-SHA pin of checkout's @v6-
-        # resolved commit d23441a48e516b6c34aea4fa41551a30e30af803.
-        # contract: uses: actions/checkout@v6 (mutable label, never
-        # p2-3-rely on the mutable ref). Removed on the final docs-only
-        # head.
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Set up Python
-        # P2-3 RUNTIME IDENTITY CANARY: exact-SHA pin of setup-python's
-        # @v6-resolved commit ece7cb06caefa5fff74198d8649806c4678c61a1.
-        # uses: actions/setup-python@v6 (mutable label). Removed on the
-        # final docs-only head.
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
           cache: pip
@@ -847,11 +693,7 @@ jobs:
       - name: Upload package audit artifact
         id: package-artifact
         if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
-        # P2-3 RUNTIME IDENTITY CANARY: exact-SHA pin of upload-artifact's
-        # @v7-resolved commit 043fb46d1a93c77aae656e7c1c64a875d1fc6a0a.
-        # uses: actions/upload-artifact@v7 (mutable label). Removed on the
-        # final docs-only head.
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@v7
         with:
           name: market-vault-package-${{ github.event.pull_request.head.sha || github.sha }}-attempt-${{ github.run_attempt }}
           path: |
@@ -899,11 +741,7 @@ jobs:
       - name: Upload FULL CI attestation artifact
         id: attestation-artifact
         if: github.event_name == 'pull_request' && env.CI_TIER == 'full' && env.CI_FULL_MATRIX_REQUIRED == 'true'
-        # P2-3 RUNTIME IDENTITY CANARY: exact-SHA pin of upload-artifact's
-        # @v7-resolved commit 043fb46d1a93c77aae656e7c1c64a875d1fc6a0a.
-        # uses: actions/upload-artifact@v7 (mutable label). Removed on the
-        # final docs-only head.
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@v7
         with:
           name: market-vault-full-ci-attestation-${{ github.event.pull_request.head.sha }}-attempt-${{ github.run_attempt }}
           path: ci_full_attestation.json
