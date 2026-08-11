@@ -145,15 +145,44 @@ jobs:
       # P1-2 (PR #71): the product FULL pytest stays FULL-only; a
       # validated control_plane run never executes it on either matrix
       # leg. Unknown/unset tier keeps running it (fail-closed to FULL).
+      # P1-1 (PR #75): the blanket FULL product pytest now runs ONLY on
+      # the Python 3.11 leg. On Python 3.14 the formal contract is the
+      # audited 294-node compatibility surface, validated fail-closed by
+      # scripts/ci_python314_surface.py and executed by the next two
+      # steps; a blanket unqualified FULL pytest on 3.14 is a contract
+      # violation.
       - name: Run offline tests
-        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.11'
         run: python -m pytest
         # FULL CI performance profiling (measurement only, no behavior
-        # change): emit the slowest-durations report for both matrix
-        # environments (3.11 / 3.14). PYTEST_ADDOPTS is step-scoped so
-        # targeted pytest invocations never inherit it.
+        # change): emit the slowest-durations report for the Python 3.11
+        # blanket FULL run. PYTEST_ADDOPTS is step-scoped so targeted
+        # pytest invocations never inherit it.
         env:
           PYTEST_ADDOPTS: "--durations=200"
+
+      # P1-1 (PR #75): the Python 3.14 formal contract is the audited
+      # compatibility surface sealed in PR #74
+      # (docs/python314_compatibility_surface_redesign_canary.md). This
+      # validator is fail-closed: it re-derives the sealed resolved-node
+      # digest 7561b50a... from a live pytest collection and refuses to
+      # proceed on ANY deviation. The manifest hash is pinned inside the
+      # validator, and scripts/check_release.py pins this step and its
+      # exact guard. Unknown/unset tier keeps both steps running
+      # (fail-closed to FULL).
+      - name: Validate Python 3.14 compatibility surface
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.14'
+        run: python scripts/ci_python314_surface.py --repo .
+
+      # P1-1 (PR #75): execute exactly the validated surface. The
+      # selector list is read literally from the validated manifest
+      # ci/python314_compatibility_surface.txt (no -k / markers / globs /
+      # dynamic discovery); the previous validator step must have passed,
+      # otherwise this step never runs and the job fails.
+      - name: Run Python 3.14 compatibility surface
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.14'
+        run: |
+          python -m pytest -q --durations=100 $(cat ci/python314_compatibility_surface.txt)
 
       # P1-2 control-plane tier (PR #71): the conservative six-file
       # control-plane pytest surface, executed only on Python 3.11 for

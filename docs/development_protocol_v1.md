@@ -135,11 +135,14 @@ package 的依赖字面为 `needs: [test, portability-pyarrow24]`，且
 `check_release.py` 断言 portability full-suite step 的 `run: python -m
 pytest` 与 step name 字面相邻），该契约是既有 immutable invariant。
 heavy steps 的 guard 为 `if: env.CI_TIER != 'docs_fast' && env.CI_TIER
-!= 'package_docs'`（package job：`!= 'docs_fast'`）。**fail-safe 硬性
-要求**：没有条件表达式可以让 unknown / unset tier 跳过 heavy validation
-——`CI_TIER` 未设置时 guard 恒为真，heavy validation 照常运行（等价
-FULL）。fast-path marker（`FULL_TESTS_SKIPPED_BY_POLICY` /
-`PACKAGE_BUILD_SKIPPED_BY_POLICY`）只在 fast tier 出现。
+!= 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE
+!= 'true'`，并按 `matrix.python-version` 分腿：blanket FULL pytest 步骤
+仅 `== '3.11'`，P1-1（§4.11）起 3.14 步骤为 audited compatibility
+surface（验证器 + 表面执行）。**fail-safe 硬性要求**：没有条件表达式可以
+让 unknown / unset tier 跳过 heavy validation——`CI_TIER` 未设置时 guard
+恒为真，heavy validation 照常运行（等价 FULL）。fast-path marker
+（`FULL_TESTS_SKIPPED_BY_POLICY` / `PACKAGE_BUILD_SKIPPED_BY_POLICY`）
+只在 fast tier 出现。
 
 例外（故意不带 tier guard）：package job 的 `Run release checker` step
 在所有 tier 都执行。`scripts/check_release.py` 不是 package-build
@@ -153,18 +156,22 @@ records）；docs 变更不得绕过优化前已存在的该检查。
   文档（`DEVELOPMENT_PLAYBOOK.md` / `RELEASE_PLAYBOOK.md` /
   `AGENT_HANDOFF.md`）时适用。保留权威 CI（checkout、changed-file
   分类、repo hygiene、whitespace / diff 检查、release checker /
-  release-document 一致性检查），但**不运行** full pytest（Python 3.11 /
-  3.14）、PyArrow suite、package build / fresh-wheel smoke / SHA256
-  closure。target wall-clock ≤ 5 min（prefer ≤ 3 min）。
+  release-document 一致性检查），但**不运行** Python 3.11 blanket full
+  pytest、Python 3.14 audited compatibility surface（§4.11）、PyArrow
+  suite、package build / fresh-wheel smoke / SHA256 closure。target
+  wall-clock ≤ 5 min（prefer ≤ 3 min）。
 - **PACKAGE_DOCS**：所有 changed paths 属于 DOCS_FAST set + `README.md`，
   且至少 `README.md` 变更。`README.md` 是 package metadata 敏感路径
   （pyproject.toml `readme = "README.md"`），因此 package job 保持当前
-  完整验证不变；跳过 full pytest 与 PyArrow suite。
+  完整验证不变；跳过 Python 3.11 blanket full pytest、Python 3.14
+  audited compatibility surface（§4.11）与 PyArrow suite。
 - **FULL**：任何其他 changed path（`src/**`、`tests/**`、`scripts/**`、
   `examples/**`、`pyproject.toml`、`.github/workflows/**`、未知路径、
   混合变更等）、empty diff、classifier error —— 保持当前完整 CI 语义
-  不变。**fail-safe 硬性要求**：unknown / unset tier 必须按 FULL 处理，
-  任何条件表达式不得导致未知 tier 跳过重验证。
+  不变（P1-1 起：3.11 blanket FULL + 3.14 audited 294-node surface +
+  PyArrow24 + package，见 §4.11）。**fail-safe 硬性要求**：unknown /
+  unset tier 必须按 FULL 处理，任何条件表达式不得导致未知 tier 跳过
+  重验证。
 
 方向句保留：final-head CI 矩阵按变更风险分层，而不是每次变更统一运行每个
 环境，同时为需要的变更保留权威的完整验证；该方向不削弱 final-head CI。
@@ -260,7 +267,9 @@ checker、reuse marker）。任何 proof 缺失 / 歧义 / 过期 / 畸形 / 不
 5. 所需 job：四个正式 surface（test (3.11)、test (3.14)、
    portability-pyarrow24、package）全部 terminal SUCCESS——不缺失、不
    重复、不额外、非成功即拒（job surface 变化而不更新契约 → fail
-   closed）。
+   closed）。job 拓扑不变；P1-1（§4.11）起 `test (3.14)` job 的内容为
+   audited 294-node compatibility surface（验证器 + 表面执行），不再是
+   blanket 3.14 full pytest。
 6. Attestation：attempt-bound artifact 由该 exact run/attempt 产出，
    下载后严格 schema + 标识符交叉验证（repository、run_id、
    run_attempt、pr_number、base_sha、head_sha、tier=full、
@@ -409,8 +418,12 @@ SUBSET tier），介于 docs_fast / package_docs 与 FULL 之间。它只对
 
 明确**不** eligible：`tests/test_release_v061.py`（bootstrap 安全）、
 `pyproject.toml`、`README.md`、`scripts/check_repo_hygiene.py`、
-`src/**`、其他 workflow、未知路径。混合规则：≥1 条 CP 路径 **且**
-全部路径在 CP ∪ docs 范围内 → control_plane；任何越界路径 → FULL。
+`ci/python314_compatibility_surface.txt`、
+`scripts/ci_python314_surface.py`、
+`tests/test_python314_compatibility_surface.py`（P1-1 控制面路径，恒
+FULL，见 §4.11）、`src/**`、其他 workflow、未知路径。混合规则：≥1 条
+CP 路径 **且** 全部路径在 CP ∪ docs 范围内 → control_plane；任何越界
+路径 → FULL。
 
 **分类优先级（fail closed）**：empty → FULL；invalid → FULL；
 docs_fast；package_docs；control_plane；shared/core/unknown → FULL。
@@ -451,6 +464,66 @@ shared/core/violation 检查并保持 FULL。
 canary**。在 canary 成功之前，不得声明 P1-2 生产验证完成，也不得把
 #71 描述为 "production validated"。本 PR 的所有 wall-clock 记录属于
 FULL 路径，不是 fast-path 基准。
+
+### 4.11 Python 3.14 Compatibility Surface Activation（P1-1，PR #75）
+
+**状态：PR #75 implemented（生产激活）**。P1-1 把经独立审核的 PR #74
+Python 3.14 兼容性表面（audited 294-node compatibility surface）从
+canary 测量永久部署为正式 FULL 契约的一部分。实现为永久 manifest
+[ci/python314_compatibility_surface.txt](../ci/python314_compatibility_surface.txt)
+（#74 已密封清单的逐字节拷贝：258 行 = 2 个 whole-file + 256 个 node
+selector，normalized SHA-256 `2742853e…`）、fail-closed 验证器
+[scripts/ci_python314_surface.py](../scripts/ci_python314_surface.py)
+（stdlib-only、read-only、无 network / `shell=True` / eval；唯一 pytest
+执行是 `--collect-only` 子进程且禁用 cache 与 bytecode 写入；验证见
+[tests/test_python314_compatibility_surface.py](../tests/test_python314_compatibility_surface.py)）
+与 [.github/workflows/ci.yml](../.github/workflows/ci.yml) 的 3.11/3.14
+分腿执行。
+
+**新的正式 FULL 契约**（自本 PR 起，V1 attestation 证明的正是该契约）：
+
+- `test (3.11)`：blanket FULL 产品 pytest（与 #74 之前完全一致）；
+- `test (3.14)`：验证器通过后执行 audited 294-node compatibility
+  surface（`python -m pytest -q --durations=100 $(cat
+  ci/python314_compatibility_surface.txt)`）；验证器任何失败 → 步骤
+  失败，表面一行也不执行（fail closed）；
+- `portability-pyarrow24` 与 `package` 与既有契约一致；
+- job 拓扑不变：恰好 4 个 formal job，`package` 的
+  `needs: [test, portability-pyarrow24]` 不变。
+
+**Fail-closed 验证器**：每次 CI 运行在表面执行前从零验证，无 lockfile /
+state。双 hash 钉死契约：
+
+- manifest hash `2742853e…`：UTF-8、CRLF→LF 归一化（CRLF checkout 同样
+  验证）、恰好一个 trailing LF、严格 selector 形状（无 glob / `-k` /
+  `-m` / 目录 / 空白行；排序、去重、whole-file-node 不重叠）、固定
+  计数（258 = 2 + 256）；
+- resolved digest `7561b50a…`：`sha256(join(LF, sorted(collected
+  nodeids)))`，与 #74 密封 digest 逐字节一致。parametrized selector 以
+  `[param]` 后缀展开；selector 未 resolve、重复 node、计数 ≠ 294、
+  digest 不符 → 全部 fail closed。成功 marker
+  `PY314_SURFACE_VALIDATION_OK` 只在该步 stdout 输出，`check_release.py`
+  同时以独立静态实现（不运行 pytest）把 workflow 分腿、步骤顺序与
+  manifest 静态契约钉死。
+
+**Tier / reuse 边界**：三个 P1-1 路径（manifest、验证器、其测试）加入
+`CONTROL_RULES`（FULL-forcing）而**不在** `CONTROL_PLANE_SCOPE_RULES`
+——任何 P1-1 变更强制 FULL，绝不进入 control_plane fast path；
+`ci_post_merge_reuse.py` 的 `CONTROL_PLANE_PATHS` 同样包含这三个路径，
+触及即拒绝 post-merge 复用。
+
+**Evidence 边界**：
+
+- V1 attestation 证明**当前正式 FULL 契约完成**：3.11 blanket FULL +
+  3.14 audited surface + PyArrow24 + package。**不**声称 Python 3.14
+  blanket 产品 FULL pytest 运行过（schema_version=1，无 V2 字段）；
+- `full_matrix_required=true` 对 P1-1 自身成立（控制面变更），本 PR 的
+  wall-clock 记录属于 FULL 路径，标注为 TWO-RUN OBSERVED RANGE，不是
+  stable benchmark；
+- **Rollout 状态（精确）**：#74
+  （[docs/python314_compatibility_surface_redesign_canary.md](python314_compatibility_surface_redesign_canary.md)）
+  是独立的测量 / 设计 PR（canary，未激活）；#75 是生产激活，只部署
+  #74 已审核的表面与机制，不改动表面本身。merge 由独立审查执行。
 
 ## 5. 未来 wall-clock 目标
 

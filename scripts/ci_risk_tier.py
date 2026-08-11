@@ -126,12 +126,24 @@ REGISTRY_REL = Path("ci") / "components.toml"
 # FULL (future rule condition 4: package / workflow / shared schema).
 # pyproject.toml is the package schema; scripts/audit_pr.py is the
 # classifier's own audit dependency.
+#
+# P1-1 (PR #75): the Python 3.14 compatibility surface contract lives in
+# ci/python314_compatibility_surface.txt (the sealed selector manifest),
+# scripts/ci_python314_surface.py (the fail-closed validator), and
+# tests/test_python314_compatibility_surface.py (its regression surface).
+# Mutating ANY of them changes the 3.14 execution contract itself, so it
+# forces FULL. They are INTENTIONALLY absent from
+# CONTROL_PLANE_SCOPE_RULES: a change that touches the surface must never
+# classify as the validated control_plane subset tier.
 CONTROL_RULES = [
     ".github/workflows/",
     "scripts/ci_risk_tier.py",
     "scripts/audit_pr.py",
     "ci/components.toml",
     "pyproject.toml",
+    "ci/python314_compatibility_surface.txt",
+    "scripts/ci_python314_surface.py",
+    "tests/test_python314_compatibility_surface.py",
 ]
 
 # P1-2 (PR #71): the exact fast-eligible control-plane scope. This is the

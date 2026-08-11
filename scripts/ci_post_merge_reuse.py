@@ -106,6 +106,12 @@ REQUIRED_JOB_SURFACES = (
 # classifier are control-plane; the gate contract files themselves are
 # control-plane, which intentionally makes this PR's own main-push run
 # ineligible for reuse.
+#
+# P1-1 (PR #75): the Python 3.14 compatibility surface contract
+# (manifest, fail-closed validator, regression surface) is control-plane
+# too: a merged change touching it means the 3.14 surface contract
+# changed, so the attestation's "3.14 audited surface" claim cannot be
+# reused and normal FULL validation must run.
 CONTROL_PLANE_PATHS = (
     ".github/workflows/",  # directory prefix
     "scripts/ci_post_merge_reuse.py",
@@ -113,6 +119,9 @@ CONTROL_PLANE_PATHS = (
     "scripts/audit_pr.py",
     "scripts/check_release.py",
     "ci/components.toml",
+    "ci/python314_compatibility_surface.txt",
+    "scripts/ci_python314_surface.py",
+    "tests/test_python314_compatibility_surface.py",
     "tests/test_v061_ci_auditability.py",
     "tests/test_ci_post_merge_reuse.py",
 )
