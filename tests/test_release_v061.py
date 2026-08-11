@@ -8090,6 +8090,485 @@ def test_control_plane_check_fails_when_classify_branch_removed(tmp_path):
     )
 
 
+# --- P1-1 Python 3.14 compatibility surface (PR #75) mutation tests --------
+#
+# Every mutation changes exactly ONE activation invariant and leaves every
+# other step byte-identical, proving check_ci_python314_surface is
+# step-scoped and fail-closed: the blanket FULL pytest is 3.11-only, the
+# 3.14 leg runs exactly the validated manifest surface, the manifest
+# itself is pinned (hash / counts / order / uniqueness / overlap), and the
+# PyArrow24 / package / V1 attestation contract stays byte-exact.
+
+_MANIFEST_REL = "ci/python314_compatibility_surface.txt"
+
+
+def _mutate_manifest(tmp_path, mutate):
+    """Rewrite ci/python314_compatibility_surface.txt of the mutated repo
+    copy via ``mutate(text)``; everything else stays byte-identical."""
+    repo = copy_repo(tmp_path)
+    path = repo / _MANIFEST_REL
+    text = path.read_text(encoding="utf-8")
+    path.write_text(mutate(text), encoding="utf-8")
+    return repo
+
+
+# The pinned fail-closed execution block of the surface step (raw YAML
+# run content, 10-space base indent): explicit shell options, mapfile
+# load of the exact sealed manifest, hard 258 count check, audit marker,
+# full selector set printed, and the QUOTED array expanded into pytest
+# with --durations=200. Every surface-run mutation swaps this exact
+# block, keeping all other steps and jobs byte-identical.
+_SURFACE_RUN = (
+    "          set -euo pipefail\n"
+    "\n"
+    "          mapfile -t PY314_SELECTORS \\\n"
+    "            < ci/python314_compatibility_surface.txt\n"
+    "\n"
+    '          test "${#PY314_SELECTORS[@]}" -eq 258\n'
+    "\n"
+    "          printf 'PY314_SELECTOR_COUNT=%s\\n' \\\n"
+    '            "${#PY314_SELECTORS[@]}"\n'
+    "\n"
+    "          printf '%s\\n' \"${PY314_SELECTORS[@]}\"\n"
+    "\n"
+    "          python -m pytest \\\n"
+    '            "${PY314_SELECTORS[@]}" \\\n'
+    "            -q --durations=200\n"
+)
+
+
+def _mutate_surface_run(tmp_path, new_run):
+    """Replace the pinned fail-closed surface execution block with
+    ``new_run`` inside the exact surface step region only; every other
+    step — and every other job — stays byte-identical."""
+    repo = copy_repo(tmp_path)
+    ci = repo / ".github" / "workflows" / "ci.yml"
+    text = ci.read_text(encoding="utf-8").replace("\r\n", "\n")
+    block = _check_release._ci_job_block(text, "test")
+    assert block is not None, "test"
+    region = _check_release._ci_step_region(
+        block, "Run Python 3.14 compatibility surface"
+    )
+    assert region is not None, "Run Python 3.14 compatibility surface"
+    assert _SURFACE_RUN in region
+    new_block = block.replace(region, region.replace(_SURFACE_RUN, new_run))
+    assert block in text
+    ci.write_text(text.replace(block, new_block), encoding="utf-8")
+    return repo
+
+
+def test_py314_check_fails_when_validator_step_removed(tmp_path):
+    # Mutation: the fail-closed validator step is renamed away — the 3.14
+    # leg would have no validation gate at all.
+    repo = _mutate_step_guard(
+        tmp_path,
+        "Validate Python 3.14 compatibility surface",
+        "- name: Validate Python 3.14 compatibility surface",
+        "- name: Validate Python 3.14 compatibility surface (removed)",
+        job="test",
+    )
+    assert_check_fails(
+        _check_release.check_ci_python314_surface,
+        repo,
+        "must keep the Python 3.14 surface validator step",
+    )
+
+
+def test_py314_check_fails_when_surface_step_removed(tmp_path):
+    # Mutation: the surface execution step is renamed away — the 3.14 leg
+    # would silently run no audited surface at all.
+    repo = _mutate_step_guard(
+        tmp_path,
+        "Run Python 3.14 compatibility surface",
+        "- name: Run Python 3.14 compatibility surface",
+        "- name: Run Python 3.14 compatibility surface (removed)",
+        job="test",
+    )
+    assert_check_fails(
+        _check_release.check_ci_python314_surface,
+        repo,
+        "must keep the Python 3.14 compatibility surface step",
+    )
+
+
+def test_py314_check_fails_when_validator_guard_loses_314(tmp_path):
+    # Mutation: the validator step's own guard loses its 3.14 restriction
+    # (e.g. it would run on 3.11 only) — the 3.14 leg must be validated.
+    repo = _mutate_step_guard(
+        tmp_path,
+        "Validate Python 3.14 compatibility surface",
+        "&& matrix.python-version == '3.14'",
+        "&& matrix.python-version == '3.11'",
+        job="test",
+    )
+    assert_check_fails(
+        _check_release.check_ci_python314_surface,
+        repo,
+        "validator step must keep the exact fail-closed 3.14 guard line",
+    )
+
+
+def test_py314_check_fails_when_surface_guard_loses_314(tmp_path):
+    # Mutation: the surface step's own guard loses its 3.14 restriction —
+    # the audited surface must never run on a different leg.
+    repo = _mutate_step_guard(
+        tmp_path,
+        "Run Python 3.14 compatibility surface",
+        "&& matrix.python-version == '3.14'",
+        "&& matrix.python-version == '3.11'",
+        job="test",
+    )
+    assert_check_fails(
+        _check_release.check_ci_python314_surface,
+        repo,
+        "surface step must keep the exact fail-closed 3.14 guard line",
+    )
+
+
+def test_py314_check_fails_when_validator_invocation_changed(tmp_path):
+    # Mutation: the validator step stops passing --repo . — the invocation
+    # must stay the pinned fail-closed form.
+    repo = _mutate_step_guard(
+        tmp_path,
+        "Validate Python 3.14 compatibility surface",
+        "run: python scripts/ci_python314_surface.py --repo .",
+        "run: python scripts/ci_python314_surface.py",
+        job="test",
+    )
+    assert_check_fails(
+        _check_release.check_ci_python314_surface,
+        repo,
+        "must invoke the fail-closed validator exactly as",
+    )
+
+
+def test_py314_check_fails_when_surface_reads_other_manifest(tmp_path):
+    # Mutation: the surface step loads a different manifest path — the
+    # 3.14 leg must execute exactly the sealed manifest, nothing else.
+    repo = _mutate_step_guard(
+        tmp_path,
+        "Run Python 3.14 compatibility surface",
+        "ci/python314_compatibility_surface.txt",
+        "ci/python314_compatibility_surface2.txt",
+        job="test",
+    )
+    assert_check_fails(
+        _check_release.check_ci_python314_surface,
+        repo,
+        "must load the sealed selector list into an explicit Bash array "
+        "via mapfile",
+    )
+
+
+def test_py314_check_fails_when_cat_substitution_used(tmp_path):
+    # Mutation: the fail-closed Bash array execution collapses back into
+    # a `$(cat ...)` command substitution — the manifest must never be
+    # read via command substitution in the test job.
+    repo = _mutate_surface_run(
+        tmp_path,
+        "          python -m pytest -q --durations=200 "
+        "$(cat ci/python314_compatibility_surface.txt)\n",
+    )
+    assert_check_fails(
+        _check_release.check_ci_python314_surface,
+        repo,
+        "must never read the Python 3.14 surface manifest via $(cat ...)",
+        "must load the sealed selector list into an explicit Bash array "
+        "via mapfile",
+    )
+
+
+def test_py314_check_fails_when_blanket_full_loses_311_restriction(tmp_path):
+    # Mutation: the blanket FULL offline step loses its 3.11 restriction —
+    # a blanket unqualified FULL pytest on the 3.14 leg is a contract
+    # violation.
+    repo = _mutate_step_guard(
+        tmp_path,
+        "Run offline tests",
+        " && matrix.python-version == '3.11'",
+        "",
+        job="test",
+    )
+    assert_check_fails(
+        _check_release.check_ci_python314_surface,
+        repo,
+        "blanket FULL step must keep the exact fail-closed 3.11-only guard",
+    )
+
+
+def test_py314_check_fails_when_blanket_pytest_duplicated_on_314(tmp_path):
+    # Mutation: the surface step collapses into an unqualified
+    # `python -m pytest` — an unvalidated blanket run would appear on the
+    # 3.14 leg.
+    repo = _mutate_surface_run(tmp_path, "          python -m pytest\n")
+    assert_check_fails(
+        _check_release.check_ci_python314_surface,
+        repo,
+        "must run an unqualified blanket `python -m pytest` exactly once",
+        "must expand the selector array QUOTED into pytest with "
+        "--durations=200",
+    )
+
+
+def test_py314_check_fails_when_mapfile_removed(tmp_path):
+    # Mutation: the mapfile array load is removed — the surface would
+    # have no fail-closed selector source at all.
+    repo = _mutate_surface_run(
+        tmp_path, "          # mapfile load removed\n"
+    )
+    assert_check_fails(
+        _check_release.check_ci_python314_surface,
+        repo,
+        "must load the sealed selector list into an explicit Bash array "
+        "via mapfile",
+    )
+
+
+def test_py314_check_fails_when_count_check_removed(tmp_path):
+    # Mutation: the hard selector-count check is removed — a tampered
+    # manifest could silently change the surface.
+    repo = _mutate_surface_run(
+        tmp_path, "          # count check removed\n"
+    )
+    assert_check_fails(
+        _check_release.check_ci_python314_surface,
+        repo,
+        "must fail closed on the selector count",
+    )
+
+
+def test_py314_check_fails_when_count_pin_changed(tmp_path):
+    # Mutation: the pinned 258 count changes — the sealed 258-selector
+    # surface must never be re-pinned to another count.
+    repo = _mutate_surface_run(
+        tmp_path, '          test "${#PY314_SELECTORS[@]}" -eq 259\n'
+    )
+    assert_check_fails(
+        _check_release.check_ci_python314_surface,
+        repo,
+        "must fail closed on the selector count",
+    )
+
+
+def test_py314_check_fails_when_selector_printing_removed(tmp_path):
+    # Mutation: the full selector set is no longer printed — the audited
+    # surface must stay reviewable in the CI log.
+    repo = _mutate_surface_run(
+        tmp_path, "          # selector printing removed\n"
+    )
+    assert_check_fails(
+        _check_release.check_ci_python314_surface,
+        repo,
+        "must print the full validated selector set",
+    )
+
+
+def test_py314_check_fails_when_array_expansion_unquoted(tmp_path):
+    # Mutation: the selector array is expanded unquoted into pytest —
+    # unquoted expansion would glob / word-split selectors.
+    repo = _mutate_surface_run(
+        tmp_path,
+        "          python -m pytest \\\n"
+        "            ${PY314_SELECTORS[@]} \\\n"
+        "            -q --durations=200\n",
+    )
+    assert_check_fails(
+        _check_release.check_ci_python314_surface,
+        repo,
+        "must expand the selector array QUOTED into pytest with "
+        "--durations=200",
+    )
+
+
+def test_py314_check_fails_when_durations_changed(tmp_path):
+    # Mutation: the durations report pin changes away from 200 — the
+    # surface step contract must stay byte-exact.
+    repo = _mutate_surface_run(
+        tmp_path,
+        "          python -m pytest \\\n"
+        '            "${PY314_SELECTORS[@]}" \\\n'
+        "            -q --durations=100\n",
+    )
+    assert_check_fails(
+        _check_release.check_ci_python314_surface,
+        repo,
+        "must expand the selector array QUOTED into pytest with "
+        "--durations=200",
+    )
+
+
+def test_py314_check_fails_when_shell_options_removed(tmp_path):
+    # Mutation: the explicit fail-closed shell options are dropped —
+    # without `set -euo pipefail` a failing count check would not stop
+    # the step.
+    repo = _mutate_surface_run(
+        tmp_path, "          # shell options removed\n"
+    )
+    assert_check_fails(
+        _check_release.check_ci_python314_surface,
+        repo,
+        "must fail closed with explicit shell options (set -euo pipefail)",
+    )
+
+
+def test_py314_check_fails_when_manifest_hash_mutated(tmp_path):
+    # Mutation: one selector is edited (still valid shape, still sorted,
+    # same counts) — the manifest hash must pin the exact sealed surface.
+    def mutate(text):
+        lines = text.splitlines()
+        last = lines[-1]
+        # Grow the last line lexicographically so it stays sorted and
+        # shape-valid: the surface hash must change.
+        lines[-1] = last.replace("test_", "test_z", 1)
+        return "\n".join(lines) + "\n"
+
+    repo = _mutate_manifest(tmp_path, mutate)
+    failures = assert_check_fails(
+        _check_release.check_ci_python314_surface,
+        repo,
+        "normalized SHA-256 mismatch",
+    )
+    assert len(failures) == 1, failures
+
+
+def test_py314_check_fails_when_manifest_selector_count_changed(tmp_path):
+    # Mutation: a selector line is deleted — the sealed 258-selector
+    # surface must never grow or shrink.
+    repo = _mutate_manifest(
+        tmp_path,
+        lambda text: "\n".join(text.splitlines()[:-1]) + "\n",
+    )
+    assert_check_fails(
+        _check_release.check_ci_python314_surface,
+        repo,
+        "must have exactly 258 selectors",
+    )
+
+
+def test_py314_check_fails_when_manifest_unsorted(tmp_path):
+    # Mutation: the first two selector lines are swapped — the manifest
+    # must stay a deterministic, sorted contract.
+    repo = _mutate_manifest(
+        tmp_path,
+        lambda text: "\n".join(
+            [text.splitlines()[1], text.splitlines()[0]]
+            + text.splitlines()[2:]
+        )
+        + "\n",
+    )
+    assert_check_fails(
+        _check_release.check_ci_python314_surface,
+        repo,
+        "is not sorted",
+    )
+
+
+def test_py314_check_fails_when_manifest_duplicated(tmp_path):
+    # Mutation: the first selector line is duplicated — duplicate
+    # selectors would make the surface ambiguous.
+    repo = _mutate_manifest(
+        tmp_path, lambda text: text.splitlines()[0] + "\n" + text
+    )
+    assert_check_fails(
+        _check_release.check_ci_python314_surface,
+        repo,
+        "contains duplicate selectors",
+    )
+
+
+def test_py314_check_fails_when_manifest_whole_node_overlap(tmp_path):
+    # Mutation: a node selector is rewritten for a whole-file-selector
+    # file — a node and whole-file selector for the same file is a
+    # contradictory contract.
+    def mutate(text):
+        lines = text.splitlines()
+        node_index = next(i for i, l in enumerate(lines) if "::" in l)
+        lines[node_index] = "tests/test_canonical_reader.py::test_overlap"
+        return "\n".join(lines) + "\n"
+
+    repo = _mutate_manifest(tmp_path, mutate)
+    assert_check_fails(
+        _check_release.check_ci_python314_surface,
+        repo,
+        "overlaps a whole-file selector",
+    )
+
+
+def test_py314_check_fails_when_manifest_missing(tmp_path):
+    # Mutation: the permanent manifest file vanishes — the 3.14 contract
+    # has no surface to validate.
+    repo = copy_repo(tmp_path)
+    (repo / _MANIFEST_REL).unlink()
+    assert_check_fails(
+        _check_release.check_ci_python314_surface,
+        repo,
+        f"surface manifest {_MANIFEST_REL!r} is missing",
+    )
+
+
+def test_py314_check_fails_when_validator_and_surface_steps_swapped(tmp_path):
+    # Mutation: the validator step moves AFTER the surface execution — the
+    # surface must never run before fail-closed validation.
+    repo = copy_repo(tmp_path)
+    ci = repo / ".github" / "workflows" / "ci.yml"
+    text = ci.read_text(encoding="utf-8")
+    block = _check_release._ci_job_block(text, "test")
+    validator = _check_release._ci_step_region(
+        block, "Validate Python 3.14 compatibility surface"
+    )
+    surface = _check_release._ci_step_region(
+        block, "Run Python 3.14 compatibility surface"
+    )
+    assert validator is not None and surface is not None
+    assert text.count(validator) == 1 and text.count(surface) == 1
+    swapped = (
+        text.replace(validator, "@@VALIDATOR@@")
+        .replace(surface, validator)
+        .replace("@@VALIDATOR@@", surface)
+    )
+    ci.write_text(swapped, encoding="utf-8")
+    assert_check_fails(
+        _check_release.check_ci_python314_surface,
+        repo,
+        "validator step must precede the surface execution step",
+    )
+
+
+def test_py314_check_fails_when_pyarrow_c_guard_weakened(tmp_path):
+    # Mutation: the PyArrow 24 C step guard is weakened — the activation
+    # must never change the PyArrow24 contract.
+    repo = _mutate_step_guard(
+        tmp_path,
+        "Run audited PyArrow 24 sensitive regression surface",
+        "env.CI_TIER != 'control_plane'",
+        "env.CI_TIER == 'control_plane'",
+    )
+    assert_check_fails(
+        _check_release.check_ci_python314_surface,
+        repo,
+        "C step must keep the exact fail-closed heavy guard",
+    )
+
+
+def test_py314_check_fails_when_attestation_permitted_for_control_plane(
+    tmp_path,
+):
+    # Mutation: the V1 attestation step is permitted on control_plane —
+    # control_plane must never mint V1 FULL evidence.
+    repo = _mutate_step_guard(
+        tmp_path,
+        "Create FULL CI attestation",
+        "env.CI_TIER == 'full'",
+        "env.CI_TIER == 'full' || env.CI_TIER == 'control_plane'",
+        job="package",
+    )
+    assert_check_fails(
+        _check_release.check_ci_python314_surface,
+        repo,
+        "V1 attestation step must stay FULL-only",
+    )
+
+
 # --- V0.7.0 PR-5 guards: integrated E2E / usability / examples -------------
 
 
@@ -8370,6 +8849,7 @@ EXPECTED_CHECKS = (
     ("pyarrow dependency", "check_pyarrow_dependency"),
     ("CI PR-8 portability", "check_ci_pr8"),
     ("CI control-plane tier", "check_ci_control_plane"),
+    ("CI Python 3.14 compatibility surface", "check_ci_python314_surface"),
     ("CI v0.7.0 released state", "check_ci_v070_released_state"),
     ("CI v0.7.0 public API smoke", "check_ci_v070_public_api_smoke"),
     ("old release notes", "check_old_release_notes"),

@@ -289,6 +289,71 @@ def test_control_plane_plus_other_workflow_full(tmp_path):
     ) == "full"
 
 
+# P1-1 (PR #75): the Python 3.14 compatibility surface contract
+# (ci/python314_compatibility_surface.txt, scripts/ci_python314_surface.py,
+# tests/test_python314_compatibility_surface.py) is in CONTROL_RULES but
+# INTENTIONALLY NOT in CONTROL_PLANE_SCOPE_RULES: any change touching the
+# surface must force FULL and must never classify as the validated
+# control_plane subset tier.
+PY314_SURFACE_PATHS = [
+    "ci/python314_compatibility_surface.txt",
+    "scripts/ci_python314_surface.py",
+    "tests/test_python314_compatibility_surface.py",
+]
+
+
+@pytest.mark.parametrize("path", PY314_SURFACE_PATHS)
+def test_py314_surface_path_alone_full(tmp_path, path):
+    """A surface contract change alone forces FULL (shared control rule)."""
+    repo = make_repo(tmp_path)
+    assert classify_change(repo, path) == "full"
+
+
+@pytest.mark.parametrize("path", PY314_SURFACE_PATHS)
+def test_py314_surface_path_not_control_plane_eligible(tmp_path, path):
+    """A surface path is NOT in the control-plane allowlist: mixed with
+    ci.yml the change must stay FULL, never control_plane."""
+    repo = make_repo(tmp_path)
+    assert classify_changes(
+        repo, [".github/workflows/ci.yml", path]
+    ) == "full"
+
+
+def test_py314_surface_manifest_plus_ci_yml_full_reason(tmp_path):
+    """manifest + ci.yml classifies FULL with the shared-mutation reason."""
+    repo = make_repo(tmp_path)
+    write_file(repo, ".github/workflows/ci.yml")
+    write_file(repo, "ci/python314_compatibility_surface.txt")
+    base = commit_all(repo, "base")
+    write_file(repo, ".github/workflows/ci.yml", "changed\n")
+    write_file(repo, "ci/python314_compatibility_surface.txt", "changed\n")
+    head = commit_all(repo, "head")
+
+    result = run_classifier(repo, base, head)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert tier_of(result) == "full"
+    assert "reason=workflow_or_registry_mutation_requires_full" in result.stdout
+
+
+def test_rename_py314_surface_validator_full(tmp_path):
+    """Renaming scripts/ci_python314_surface.py classifies FULL via both
+    paths (the old control-rule path and the unknown new path)."""
+    repo = make_repo(tmp_path)
+    write_file(repo, "scripts/ci_python314_surface.py")
+    base = commit_all(repo, "base")
+    (repo / "scripts" / "moved").mkdir(parents=True)
+    run_git(repo, "mv", "scripts/ci_python314_surface.py",
+            "scripts/moved/surface_validator.py")
+    head = commit_all(repo, "head")
+
+    result = run_classifier(repo, base, head)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert tier_of(result) == "full"
+    assert "changed_files=2" in result.stdout
+
+
 def test_rename_eligible_to_unknown_full(tmp_path):
     """Renaming a control-plane path to an unknown path must classify FULL."""
     repo = make_repo(tmp_path)

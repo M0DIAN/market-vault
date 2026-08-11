@@ -131,6 +131,22 @@ PYARROW24_HEAVY_STEPS = (
     "Run the canonical reader and frozen regression surface",
     "Run audited PyArrow 24 sensitive regression surface",
 )
+
+# P1-1 (PR #75): the Python 3.14 compatibility surface activation. The
+# 3.14 leg of the test job runs exactly the audited 294-node surface
+# sealed in PR #74: a fail-closed validator first, then the surface step
+# loads the selector list into an explicit Bash array from the permanent
+# manifest ci/python314_compatibility_surface.txt (mapfile, fail-closed
+# on the exact 258 count, printed, expanded QUOTED into pytest — no
+# $(cat ...) command substitution).
+PY314_VALIDATOR_STEP = "Validate Python 3.14 compatibility surface"
+PY314_SURFACE_STEP = "Run Python 3.14 compatibility surface"
+PY314_MANIFEST = "ci/python314_compatibility_surface.txt"
+PY314_GUARD = (
+    "if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' "
+    "&& env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true' "
+    "&& matrix.python-version == '3.14'"
+)
 PACKAGE_HEAVY_STEPS = (
     "Install build tooling",
     "Example renderer help smoke",
@@ -316,13 +332,79 @@ def test_pyarrow24_job_runs_exact_c_surface_step():
     assert "--durations=100" in region
 
 
-def test_normal_matrix_keeps_blanket_full_pytest():
-    # The unqualified blanket `python -m pytest` must remain in the
-    # normal test job (3.11 / 3.14 FULL is unchanged); only the
+def test_normal_matrix_keeps_blanket_full_pytest_on_311_only():
+    # P1-1 (PR #75): the unqualified blanket `python -m pytest` remains in
+    # the normal test job, but ONLY on the Python 3.11 leg. On 3.14 the
+    # formal contract is the audited compatibility surface; an
+    # unvalidated blanket run on 3.14 is a contract violation. Only the
     # portability-pyarrow24 job dropped its duplicate blanket suite.
     block = _job_block(ci_text(), "test")
-    assert "Run offline tests" in block
-    assert re.search(r"(?m)^\s*run: python -m pytest\s*$", block) is not None
+    names = _step_names(block)
+    assert "Run offline tests" in names
+    # Exactly one direct blanket line (the 3.11 step) and no bare
+    # `python -m pytest` hidden inside a `run: |` block.
+    assert len(re.findall(r"(?m)^\s*run: python -m pytest\s*$", block)) == 1
+    assert not re.findall(r"(?m)^\s*python -m pytest\s*$", block)
+    # The blanket step itself is pinned to the 3.11 leg.
+    idx = names.index("Run offline tests")
+    end = f"- name: {names[idx + 1]}"
+    region = _region(block, "- name: Run offline tests", end)
+    assert "matrix.python-version == '3.11'" in region
+
+
+def test_314_leg_keeps_fail_closed_validator_step():
+    """The 3.14 leg must validate the surface BEFORE any execution: the
+    exact fail-closed validator step with the exact 3.14 guard and the
+    pinned invocation."""
+    block = _job_block(ci_text(), "test")
+    names = _step_names(block)
+    assert PY314_VALIDATOR_STEP in names
+    idx = names.index(PY314_VALIDATOR_STEP)
+    end = f"- name: {names[idx + 1]}"
+    region = _region(block, f"- name: {PY314_VALIDATOR_STEP}", end)
+    assert PY314_GUARD in region
+    assert "run: python scripts/ci_python314_surface.py --repo ." in region
+
+
+def test_314_leg_executes_audited_surface_from_sealed_manifest():
+    """The surface step must fail closed: explicit shell options, the
+    sealed manifest loaded into an explicit Bash array via mapfile (no
+    $(cat ...) command substitution), a hard selector-count check, the
+    audit marker, the full selector set printed, and the array expanded
+    QUOTED into pytest with --durations=200, with the exact 3.14 guard."""
+    block = _job_block(ci_text(), "test")
+    names = _step_names(block)
+    assert PY314_SURFACE_STEP in names
+    idx = names.index(PY314_SURFACE_STEP)
+    end = f"- name: {names[idx + 1]}"
+    region = _region(block, f"- name: {PY314_SURFACE_STEP}", end)
+    assert PY314_GUARD in region
+    assert re.search(r"(?m)^\s*set -euo pipefail\s*$", region)
+    # Join Bash backslash continuations so the pins match the logical
+    # command lines regardless of line wrapping (CRLF checkout
+    # line endings are normalized first; the literal-space alternative
+    # never collapses blank lines between commands).
+    joined = re.sub(r"[ \t]*\\\n[ \t]*", " ", region.replace("\r\n", "\n"))
+    assert f"mapfile -t PY314_SELECTORS < {PY314_MANIFEST}" in joined
+    assert 'test "${#PY314_SELECTORS[@]}" -eq 258' in joined
+    assert "printf 'PY314_SELECTOR_COUNT=%s\\n'" in joined
+    assert 'printf \'%s\\n\' "${PY314_SELECTORS[@]}"' in joined
+    assert 'python -m pytest "${PY314_SELECTORS[@]}" -q --durations=200' in joined
+    # The manifest must never be read via $(cat ...) in the test job.
+    assert "$(cat " not in block
+
+
+def test_314_validator_precedes_surface_execution():
+    """The surface must never run before fail-closed validation."""
+    block = _job_block(ci_text(), "test")
+    assert block.index(f"- name: {PY314_VALIDATOR_STEP}") < block.index(
+        f"- name: {PY314_SURFACE_STEP}"
+    )
+
+
+def test_314_sealed_manifest_is_checked_into_repo():
+    """The permanent manifest must exist at the pinned path."""
+    assert (ROOT / PY314_MANIFEST).is_file()
 
 
 def test_pyarrow24_step_names_use_compatibility_terminology():
