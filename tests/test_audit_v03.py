@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# P2_DISTINCT_HEAD_CANARY_A
+
 import json
 from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
