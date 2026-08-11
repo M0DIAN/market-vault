@@ -1,4 +1,4 @@
-# P2_RUNTIME_IDENTITY_CANARY_A
+# P2_RUNTIME_IDENTITY_CANARY_B
 from __future__ import annotations
 
 import json
