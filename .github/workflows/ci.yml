@@ -27,12 +27,12 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # actions/checkout@v6 (auditability preserved; exact commit pinned)
         with:
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # actions/setup-python@v6 (auditability preserved; exact commit pinned)
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -201,6 +201,71 @@ jobs:
             "${PY314_SELECTORS[@]}" \
             -q --durations=200
 
+      # P2-7 (measurement only, temporary): runtime sdist normalized payload
+      # identity on the Python 3.14 leg. Shadow evidence: the measure never
+      # fails the job (|| true) and the bundle step is likewise shadow, so
+      # every outcome (including a crash) is retained as evidence. The head
+      # label is derived from the tests/test_audit_v03.py marker so the
+      # Head A -> Head B diff stays exactly one comment line. All steps are
+      # FULL-tier-only; docs_fast / package_docs / control_plane / verified
+      # post-merge reuse heads skip them entirely.
+      - name: P2-7 measure runtime sdist normalized payload identity (test-3.14)
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.14'
+        run: |
+          set -euo pipefail
+          label="$(sed -n '1s/.*P2_NORMALIZED_SDIST_PAYLOAD_CANARY_\([AB]\).*/\1/p' tests/test_audit_v03.py)"
+          test -n "$label"
+          echo "P2_7_HEAD=HEAD_${label}" >> "$GITHUB_ENV"
+          set +e
+          python scripts/ci_runtime_sdist_normalized_identity.py measure \
+            --out-dir cw-evidence --surface test-3.14 \
+            --head "HEAD_${label}" --repo . \
+            || true
+          set -e
+          cat cw-evidence/probe_summary.txt 2>/dev/null || true
+
+      - name: P2-7 assemble evidence bundle (test-3.14)
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.14'
+        run: |
+          set +e
+          python scripts/ci_runtime_sdist_normalized_identity.py bundle \
+            --out-dir cw-evidence --surface test-3.14 --head "${{ env.P2_7_HEAD }}" \
+            || true
+          set -e
+          ls cw-evidence 2>/dev/null || true
+
+      - name: P2-7 offline replay of finalized bundle (test-3.14)
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.14'
+        # Shadow evidence: a failed replay must never fail the job; it is
+        # retained in the summary file and the artifact.
+        continue-on-error: true
+        run: |
+          # Execute the bundle's OWN verifier_source.py so the
+          # verifier_source self-identity realpath binding holds.
+          python cw-evidence/verifier_source.py verify-bundle \
+            --bundle-dir cw-evidence \
+            --summary-out replay_test-3.14.txt
+          cat replay_test-3.14.txt
+          grep -q '^EVIDENCE_BUNDLE_REPLAY_OK=true$' replay_test-3.14.txt
+
+      - name: P2-7 upload finalized evidence bundle (test-3.14)
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.14'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7 (pinned exact commit; P2-7 evidence chain)
+        with:
+          name: market-vault-normalized-sdist-test-3.14-${{ github.event.pull_request.head.sha || github.sha }}-attempt-${{ github.run_attempt }}
+          # Only manifest-bound files are uploaded: the four excluded tops
+          # are the same BUNDLE_EXCLUDED_TOPS the manifest walk skips, so
+          # the retained copy replays no_orphan_files cleanly.
+          path: |
+            cw-evidence/
+            !cw-evidence/venvs/**
+            !cw-evidence/sdist_extract_1/**
+            !cw-evidence/sdist_extract_2/**
+            !cw-evidence/remainder_wheelhouse/**
+          if-no-files-found: error
+          retention-days: 30
+          overwrite: false
+
       # P1-2 control-plane tier (PR #71): the conservative six-file
       # control-plane pytest surface, executed only on Python 3.11 for
       # CI_TIER=control_plane. The file list is literal and reviewable;
@@ -248,12 +313,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # actions/checkout@v6 (auditability preserved; exact commit pinned)
         with:
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # actions/setup-python@v6 (auditability preserved; exact commit pinned)
         with:
           python-version: "3.11"
           cache: pip
@@ -366,6 +431,62 @@ jobs:
             tests/test_dataset_end_to_end_regression.py \
             -q --durations=100
 
+      # P2-7 (measurement only, temporary): runtime sdist normalized payload
+      # identity on the pyarrow24 surface (Python 3.11 + pyarrow==24.0.0
+      # resolved by the tool's own closed-world resolver). Same shadow
+      # semantics as the test-3.14 leg: measure and bundle never fail the
+      # job; replay is continue-on-error; upload retains every outcome.
+      # FULL-tier-only.
+      - name: P2-7 measure runtime sdist normalized payload identity (pyarrow24)
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
+        run: |
+          set -euo pipefail
+          label="$(sed -n '1s/.*P2_NORMALIZED_SDIST_PAYLOAD_CANARY_\([AB]\).*/\1/p' tests/test_audit_v03.py)"
+          test -n "$label"
+          echo "P2_7_HEAD=HEAD_${label}" >> "$GITHUB_ENV"
+          set +e
+          python scripts/ci_runtime_sdist_normalized_identity.py measure \
+            --out-dir cw-evidence --surface pyarrow24 \
+            --head "HEAD_${label}" --repo . \
+            || true
+          set -e
+          cat cw-evidence/probe_summary.txt 2>/dev/null || true
+
+      - name: P2-7 assemble evidence bundle (pyarrow24)
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
+        run: |
+          set +e
+          python scripts/ci_runtime_sdist_normalized_identity.py bundle \
+            --out-dir cw-evidence --surface pyarrow24 --head "${{ env.P2_7_HEAD }}" \
+            || true
+          set -e
+          ls cw-evidence 2>/dev/null || true
+
+      - name: P2-7 offline replay of finalized bundle (pyarrow24)
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
+        continue-on-error: true
+        run: |
+          python cw-evidence/verifier_source.py verify-bundle \
+            --bundle-dir cw-evidence \
+            --summary-out replay_pyarrow24.txt
+          cat replay_pyarrow24.txt
+          grep -q '^EVIDENCE_BUNDLE_REPLAY_OK=true$' replay_pyarrow24.txt
+
+      - name: P2-7 upload finalized evidence bundle (pyarrow24)
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7 (pinned exact commit; P2-7 evidence chain)
+        with:
+          name: market-vault-normalized-sdist-pyarrow24-${{ github.event.pull_request.head.sha || github.sha }}-attempt-${{ github.run_attempt }}
+          path: |
+            cw-evidence/
+            !cw-evidence/venvs/**
+            !cw-evidence/sdist_extract_1/**
+            !cw-evidence/sdist_extract_2/**
+            !cw-evidence/remainder_wheelhouse/**
+          if-no-files-found: error
+          retention-days: 30
+          overwrite: false
+
       - name: FULL tests reused from verified PR
         if: env.POST_MERGE_REUSE == 'true'
         run: |
@@ -396,12 +517,12 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # actions/checkout@v6 (auditability preserved; exact commit pinned)
         with:
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # actions/setup-python@v6 (auditability preserved; exact commit pinned)
         with:
           python-version: "3.11"
           cache: pip
@@ -693,7 +814,7 @@ jobs:
       - name: Upload package audit artifact
         id: package-artifact
         if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # actions/upload-artifact@v7 (auditability preserved; exact commit pinned)
         with:
           name: market-vault-package-${{ github.event.pull_request.head.sha || github.sha }}-attempt-${{ github.run_attempt }}
           path: |
@@ -741,11 +862,113 @@ jobs:
       - name: Upload FULL CI attestation artifact
         id: attestation-artifact
         if: github.event_name == 'pull_request' && env.CI_TIER == 'full' && env.CI_FULL_MATRIX_REQUIRED == 'true'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # actions/upload-artifact@v7 (auditability preserved; exact commit pinned)
         with:
           name: market-vault-full-ci-attestation-${{ github.event.pull_request.head.sha }}-attempt-${{ github.run_attempt }}
           path: ci_full_attestation.json
           if-no-files-found: error
+          retention-days: 30
+          overwrite: false
+
+      # P2-7 (measurement only, temporary): retained-artifact roundtrip
+      # closure. The package job already waits on [test,
+      # portability-pyarrow24], so the exact current-run evidence artifacts
+      # are downloadable here. Protocol: download the ORIGINALLY uploaded
+      # bundle with an exact-SHA-pinned download-artifact, replay the
+      # downloaded bytes READ-ONLY via the bundle's own verifier_source.py,
+      # and record the roundtrip verdict OUTSIDE the manifest-bound bundle
+      # (the summary/receipt files live in the runner workspace, never
+      # inside the bundle, and are uploaded as a separate diagnostic
+      # artifact). The original uploaded bundle is never modified; no replay
+      # status is ever appended to probe_summary.txt or any manifest-bound
+      # file. Shadow evidence only: failures set the shadow verdict false
+      # and are recorded; they never gate production validation, never
+      # alter POST_MERGE_REUSE, and never activate reuse.
+      - name: P2-7 download retained evidence bundle (test-3.14)
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v7 (pinned exact commit; P2-7 evidence chain)
+        with:
+          name: market-vault-normalized-sdist-test-3.14-${{ github.event.pull_request.head.sha || github.sha }}-attempt-${{ github.run_attempt }}
+          path: retained-test-3.14
+
+      - name: P2-7 replay downloaded retained copy (test-3.14)
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
+        continue-on-error: true
+        run: |
+          set +e
+          python retained-test-3.14/verifier_source.py verify-bundle \
+            --bundle-dir retained-test-3.14 \
+            --summary-out roundtrip_test_3_14.txt
+          rc=$?
+          set -e
+          cat roundtrip_test_3_14.txt
+          if [ "$rc" -eq 0 ] && grep -q '^EVIDENCE_BUNDLE_REPLAY_OK=true$' roundtrip_test_3_14.txt; then
+            echo "RETAINED_ARTIFACT_ROUNDTRIP_REPLAY_OK_test_3_14=true"
+            echo "true" > roundtrip_ok_test_3_14.txt
+          else
+            echo "RETAINED_ARTIFACT_ROUNDTRIP_REPLAY_OK_test_3_14=false"
+            echo "false" > roundtrip_ok_test_3_14.txt
+          fi
+
+      - name: P2-7 download retained evidence bundle (pyarrow24)
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v7 (pinned exact commit; P2-7 evidence chain)
+        with:
+          name: market-vault-normalized-sdist-pyarrow24-${{ github.event.pull_request.head.sha || github.sha }}-attempt-${{ github.run_attempt }}
+          path: retained-pyarrow24
+
+      - name: P2-7 replay downloaded retained copy (pyarrow24)
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
+        continue-on-error: true
+        run: |
+          set +e
+          python retained-pyarrow24/verifier_source.py verify-bundle \
+            --bundle-dir retained-pyarrow24 \
+            --summary-out roundtrip_pyarrow24.txt
+          rc=$?
+          set -e
+          cat roundtrip_pyarrow24.txt
+          if [ "$rc" -eq 0 ] && grep -q '^EVIDENCE_BUNDLE_REPLAY_OK=true$' roundtrip_pyarrow24.txt; then
+            echo "RETAINED_ARTIFACT_ROUNDTRIP_REPLAY_OK_pyarrow24=true"
+            echo "true" > roundtrip_ok_pyarrow24.txt
+          else
+            echo "RETAINED_ARTIFACT_ROUNDTRIP_REPLAY_OK_pyarrow24=false"
+            echo "false" > roundtrip_ok_pyarrow24.txt
+          fi
+
+      - name: P2-7 derive overall roundtrip verdict
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
+        continue-on-error: true
+        run: |
+          a="$(cat roundtrip_ok_test_3_14.txt 2>/dev/null || echo false)"
+          b="$(cat roundtrip_ok_pyarrow24.txt 2>/dev/null || echo false)"
+          if [ "$a" = "true" ] && [ "$b" = "true" ]; then
+            echo "RETAINED_ARTIFACT_ROUNDTRIP_REPLAY_OK=true"
+            echo "RETAINED_ARTIFACT_ROUNDTRIP_REPLAY_OK=true" > roundtrip_receipt.txt
+          else
+            echo "RETAINED_ARTIFACT_ROUNDTRIP_REPLAY_OK=false"
+            echo "RETAINED_ARTIFACT_ROUNDTRIP_REPLAY_OK=false" > roundtrip_receipt.txt
+          fi
+
+      # P2-7: the roundtrip receipt is a SEPARATE, non-manifest-bound
+      # diagnostic artifact (replay status must live outside the
+      # manifest-bound evidence bundle). It never replaces or wraps the
+      # original uploaded evidence bundles.
+      - name: P2-7 upload roundtrip diagnostic receipt
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7 (pinned exact commit; P2-7 diagnostic receipt)
+        with:
+          name: market-vault-normalized-sdist-roundtrip-receipt-${{ github.event.pull_request.head.sha || github.sha }}-attempt-${{ github.run_attempt }}
+          path: |
+            roundtrip_receipt.txt
+            roundtrip_test_3_14.txt
+            roundtrip_ok_test_3_14.txt
+            roundtrip_pyarrow24.txt
+            roundtrip_ok_pyarrow24.txt
+          if-no-files-found: warn
           retention-days: 30
           overwrite: false
 
