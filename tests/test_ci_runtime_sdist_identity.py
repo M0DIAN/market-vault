@@ -584,6 +584,39 @@ class TestWheelMutationNegative:
             assert rsi.sha256_file(wheel) == before_sha
 
 
+class TestCliWiring:
+    """CLI-level wiring guard: every Namespace attribute each cmd_*
+    consumes must exist after argparse parses the documented invocation.
+    This class of bug (a Namespace.actions read against --actions-*
+    dests) crashed Head A's measure before any measurement happened."""
+
+    def test_25_measure_namespace_has_all_consumed_attrs(self):
+        argv = [
+            "measure",
+            "--surface", "test-3.14",
+            "--actions-checkout", "d" * 40,
+            "--actions-setup-python", "e" * 40,
+            "--actions-upload-artifact", "f" * 40,
+            "--repo-root", ".",
+            "--out-dir", "cw-evidence",
+        ]
+        args = rsi.parse_argv(argv)
+        for attr in ("surface", "repo_root", "out_dir",
+                     "actions_checkout", "actions_setup_python",
+                     "actions_upload_artifact"):
+            assert hasattr(args, attr), f"missing Namespace.{attr}"
+
+    def test_25b_bundle_namespace_has_only_documented_args(self):
+        argv = ["bundle", "--out-dir", "cw-evidence"]
+        args = rsi.parse_argv(argv)
+        assert args.out_dir == "cw-evidence"
+
+    def test_25c_verify_bundle_namespace_has_bundle_dir(self):
+        argv = ["verify-bundle", "--bundle-dir", "cw-evidence"]
+        args = rsi.parse_argv(argv)
+        assert args.bundle_dir == "cw-evidence"
+
+
 def _write_report(entry, td):
     """Fabricate a pip --report JSON on disk (one install entry)."""
     path = Path(td) / "report.json"

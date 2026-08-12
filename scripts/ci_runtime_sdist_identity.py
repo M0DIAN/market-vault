@@ -1843,7 +1843,12 @@ class RuntimeSdistIdentityProbe:
 
 
 def cmd_measure(args):
-    probe = RuntimeSdistIdentityProbe(args.surface, args.actions,
+    actions = {
+        "checkout": args.actions_checkout,
+        "setup_python": args.actions_setup_python,
+        "upload_artifact": args.actions_upload_artifact,
+    }
+    probe = RuntimeSdistIdentityProbe(args.surface, actions,
                                       args.repo_root, args.out_dir)
     t0 = time.time()
     summary = {}
@@ -1852,7 +1857,7 @@ def cmd_measure(args):
         summary["runner"] = runner_identity()
         summary["python"] = python_identity()
         summary["dependency_contract"] = probe.contract
-        summary["action_contract"] = action_contract(args.actions,
+        summary["action_contract"] = action_contract(actions,
                                                      args.repo_root)
 
         records, pip_version = probe.leg_runtime_resolution(base_python)
@@ -2729,7 +2734,7 @@ def cmd_compare(args):
 # ---------------------------------------------------------------------------
 
 
-def main(argv=None):
+def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -2761,7 +2766,17 @@ def main(argv=None):
     p.set_defaults(func=lambda a: sys.stdout.write(
         canonical_serialize(read_json(a.path))))
 
-    args = parser.parse_args(argv)
+    return parser
+
+
+def parse_argv(argv):
+    """Parse argv into a Namespace; tests use this to verify the CLI
+    wiring without executing a command."""
+    return build_parser().parse_args(argv)
+
+
+def main(argv=None):
+    args = parse_argv(argv if argv is not None else sys.argv[1:])
     return args.func(args)
 
 
