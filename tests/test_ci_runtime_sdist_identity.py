@@ -14,7 +14,10 @@ import copy
 import hashlib
 import importlib.util
 import json
+import subprocess
+import sys
 import tempfile
+import types
 import zipfile
 from pathlib import Path
 
@@ -197,6 +200,9 @@ def make_wheel(path, payload=b"print('hi')\n"):
         for p, d in payloads.items():
             zf.writestr(p, d)
         rows = [f"{p},{b64h(d)},{len(d)}" for p, d in payloads.items()]
+        # PEP 427: RECORD ends with its own entry with empty hash+size
+        # (bdist_wheel output; a wheel cannot bind its own bytes).
+        rows.append(f"{dist}/RECORD,,")
         zf.writestr(f"{dist}/RECORD", "\n".join(rows) + "\n")
     return path
 
@@ -655,6 +661,611 @@ class TestCliWiring:
             )
             assert probe.contract["name"] == "market-vault"
 
+    def test_27_pip26_archive_info_hash_schema_parses(self):
+        # pip >= 26 nests the archive hash under download_info.archive_info.
+        # hashes; Head A crash #3 raised 'missing/odd sha256 for build' on
+        # the real --report JSON from the runner.
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            report = _write_report_pip26(
+                {"name": "moomoo-api", "version": "10.9.6908",
+                 "url": "https://files.pythonhosted.org/packages/"
+                        "moomoo_api-10.9.6908.tar.gz",
+                 "sha": SDIST_FIXTURE["sha256"]},
+                td,
+            )
+            records = rsi.parse_pip_report_extended(report)
+            assert len(records) == 1
+            rec = records[0]
+            assert rec["artifact_type"] == "sdist"
+            assert rec["sha256"] == SDIST_FIXTURE["sha256"]
+
+    def test_27b_pip26_schema_flat_hash_still_accepted(self):
+        # legacy flat download_info.hashes keeps working
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            report = _write_report(
+                {"name": "moomoo-api", "version": "10.9.6908",
+                 "url": "https://files.pythonhosted.org/packages/"
+                        "moomoo_api-10.9.6908.tar.gz",
+                 "sha": SDIST_FIXTURE["sha256"]},
+                td,
+            )
+            records = rsi.parse_pip_report_extended(report)
+            assert records[0]["artifact_type"] == "sdist"
+
+    def test_27c_pip26_schema_odd_hash_fails_closed(self):
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            report = _write_report_pip26(
+                {"name": "moomoo-api", "version": "10.9.6908",
+                 "url": "https://files.pythonhosted.org/packages/"
+                        "moomoo_api-10.9.6908.tar.gz",
+                 "sha": "deadbeef"},
+                td,
+            )
+            with pytest.raises(ValueError, match="missing/odd sha256"):
+                rsi.parse_pip_report_extended(report)
+
+    def test_27d_resolve_wheels_only_invokes_pip_module(self, monkeypatch):
+        # Head A crash #5: the build-requires resolver ran
+        # `python.exe install ...`, so 'install' was parsed as a script
+        # path ('can't open file ...\\install', exit 2). The constructed
+        # command MUST be `python -m pip install ...` AND carry an
+        # ABSOLUTE --report path — the buildhook legs run pip with cwd in
+        # a temp extract dir, so a relative report path fails (Head A
+        # crash #6: 'OSError: [Errno 2] No such file or directory:
+        # cw-evidence-local\\source_build_declared_report.json').
+        captured = {}
+
+        def fake_run(cmd, **kwargs):
+            captured["cmd"] = cmd
+            report = Path(cmd[cmd.index("--report") + 1])
+            entry = {"name": "setuptools", "version": "84.0.0",
+                     "url": "https://files.pythonhosted.org/packages/"
+                            "setuptools-84.0.0-py3-none-any.whl",
+                     "sha": "10" * 32}
+            install_entry = {
+                "metadata": {"name": entry["name"],
+                             "version": entry["version"]},
+                "download_info": {"url": entry["url"],
+                                  "archive_info": {"hashes": {}}},
+            }
+            install_entry["download_info"]["archive_info"]["hashes"][
+                "sha256"] = entry["sha"]
+            report.write_text(
+                json.dumps({"install": [install_entry]}), encoding="utf-8")
+
+        monkeypatch.setattr(rsi, "_run", fake_run)
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            # relative on purpose: the bug was a relative --report path
+            # reaching a pip child whose cwd is NOT the repo root
+            report_arg = "declared_report.json"
+            try:
+                resolved = rsi.resolve_wheels_only(
+                    "/venv/Scripts/python.exe",
+                    ["setuptools>=68", "wheel"],
+                    report_arg,
+                    None,
+                )
+            finally:
+                Path(report_arg).unlink(missing_ok=True)  # fake pip's file
+            assert resolved == [
+                {"name": "setuptools", "version": "84.0.0",
+                 "filename": "setuptools-84.0.0-py3-none-any.whl",
+                 "sha256": "10" * 32},
+            ]
+            cmd = captured["cmd"]
+            assert cmd[:3] == ["/venv/Scripts/python.exe", "-m", "pip"]
+            assert cmd[3] == "install"
+            assert "--dry-run" in cmd
+            assert "--ignore-installed" in cmd
+            assert Path(cmd[cmd.index("--report") + 1]).is_absolute()
+            assert cmd[-2:] == ["setuptools>=68", "wheel"]
+
+    def test_27e_download_from_report_reads_archive_info_hash(
+            self, monkeypatch):
+        # Head A crash #7: build-wheel materialization read only the flat
+        # download_info.hashes, so it never saw the pip >= 26
+        # archive_info.hashes nesting ('cannot materialize build wheel
+        # packaging from report' — while the same report parsed fine
+        # through parse_pip_report_extended one leg earlier).
+        captured = {}
+
+        def fake_download_exact(url, sha, wheelhouse, log_path=None):
+            captured["url"] = url
+            captured["sha"] = sha
+            return Path(wheelhouse) / "fake.whl"
+
+        monkeypatch.setattr(rsi, "_download_exact", fake_download_exact)
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            report = td / "declared_report.json"
+            install = []
+            for name, version, sha in [
+                ("setuptools", "84.0.0", "10" * 32),
+                ("wheel", "0.48.0", "20" * 32),
+                ("packaging", "26.3", "30" * 32),
+            ]:
+                url = (f"https://files.pythonhosted.org/packages/"
+                       f"{name}-{version}-py3-none-any.whl")
+                install.append({
+                    "metadata": {"name": name, "version": version},
+                    "download_info": {"url": url,
+                                      "archive_info": {"hashes": {
+                                          "sha256": sha}}},
+                })
+            report.write_text(json.dumps({"install": install}),
+                              encoding="utf-8")
+            rsi._download_exact_from_report(
+                {"name": "packaging", "sha256": "30" * 32},
+                report, "wheelhouse", None,
+            )
+            assert captured["url"].endswith(
+                "packaging-26.3-py3-none-any.whl")
+            assert captured["sha"] == "30" * 32
+
+    def test_27f_dist_info_probe_code_serializes(self):
+        # Head A crash #8: the probe JSON-dumped d._path raw; on Windows
+        # AND Linux that is a Path object -> TypeError -> 'distribution
+        # moomoo-api not found in venv' although the install report said
+        # 'Successfully installed moomoo-api-10.9.6908'.
+        proc = subprocess.run(
+            [sys.executable, "-c", rsi._DIST_INFO_PROBE_CODE, "pytest"],
+            capture_output=True, text=True,
+        )
+        assert proc.returncode == 0, proc.stderr
+        data = json.loads(proc.stdout.strip().splitlines()[-1])
+        assert data["name"] == "pytest"
+        assert str(data["path"]).endswith("dist-info")
+
+    def test_27g_record_sha_matches_pep427_prefixed_value(self):
+        # Head A crash #9: real pip RECORDs carry 'sha256=<b64>' (PEP
+        # 427); the old comparison never stripped the prefix, so every
+        # hash-bearing installed file was flagged :SHA256 and an UNTOUCHED
+        # install reported 'installed payload changed'.
+        data = b"print('hi')\n"
+        prefixed = "sha256=" + rsi._b64_sha256(data)
+        assert rsi._record_sha_matches(prefixed, data) is True
+        assert rsi._record_sha_matches(
+            "sha256=" + rsi._b64_sha256(b"other"), data) is False
+        # legacy bare form still accepted
+        assert rsi._record_sha_matches(rsi._b64_sha256(data), data) is True
+        # malformed / unknown algorithm / padding: fail closed
+        assert rsi._record_sha_matches("md5=" + "0" * 22, data) is False
+        assert rsi._record_sha_matches(
+            rsi._b64_sha256(data) + "=", data) is False
+        assert rsi._record_sha_matches("", data) is False
+
+    def test_27h_installed_tree_with_pep427_record_valid(self):
+        # end-to-end guard for crash #9: a REAL pip-style RECORD (with
+        # the sha256= prefix) must verify clean
+        with tempfile.TemporaryDirectory() as td:
+            root, dist = make_installed_tree(Path(td))
+            record = root / dist / "RECORD"
+            rows = []
+            for line in record.read_text(encoding="utf-8").splitlines():
+                rel, want, size = line.split(",")
+                rows.append(f"{rel},sha256={want},{size}")
+            record.write_text("\n".join(rows) + "\n", encoding="utf-8")
+            payload = rsi.verify_installed_payload_at(
+                Path(td) / dist, "demo-pkg", "1.0", "1.0")
+            assert payload["valid"] is True
+            assert payload["reasons"] == []
+
+    def test_27i_verify_install_report_pip26_nested_hash(self):
+        # pip >= 26 nests the archive hash under download_info.
+        # archive_info.hashes; verify_install_report read only the flat
+        # form, so the exact-wheel install was flagged
+        # 'report wheel SHA256 != built wheel SHA256' with sha=None (the
+        # local run showed install_report_valid=false after a
+        # 'Successfully installed moomoo-api-10.9.6908').
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            wheel = td / rsi.BUILT_WHEEL_REL / "1" / "demo_pkg-1.0-py3-none-any.whl"
+            wheel.parent.mkdir(parents=True)
+            wheel.write_bytes(b"wheel-bytes")
+            built_sha = hashlib.sha256(b"wheel-bytes").hexdigest()
+            report = td / "r.json"
+            report.write_text(json.dumps({"install": [
+                {"metadata": {"name": "demo-pkg", "version": "1.0"},
+                 "download_info": {
+                     "url": wheel.as_uri(),
+                     "archive_info": {"hashes": {"sha256": built_sha}}}},
+            ]}), encoding="utf-8")
+            result = rsi.verify_install_report(report, wheel, built_sha)
+            assert result["valid"] is True, result
+
+    def test_27j_inventory_probe_canonicalizes_names(self, monkeypatch):
+        # The live-env check keyed the inventory by RAW distribution name
+        # ('moomoo_api', 'jaraco.classes', 'PyYAML') while the lookup used
+        # the canonical form ('moomoo-api', ...) — every such dist came
+        # back MISSING and FINAL_RUNTIME_MATCH went false even though the
+        # whole runtime was present (local run: 8/42 MISSING, all
+        # case/underscore/dot name mismatches). Canonicalization must be
+        # inline: crash #12 showed importlib.metadata.canonicalize_name
+        # is absent from this env's pythoncore 3.14.
+        captured = {}
+
+        def fake_run(cmd, **kwargs):
+            captured["code"] = cmd[cmd.index("-c") + 1]
+            return types.SimpleNamespace(returncode=0, stdout="{}")
+
+        monkeypatch.setattr(rsi, "_run", fake_run)
+        assert rsi._inventory_json("/venv/python.exe") == {}
+        assert "re.sub" in captured["code"]
+        assert "importlib.metadata.canonicalize_name" not in captured["code"]
+        # real interpreter: every inventory key must be canonical
+        inv = rsi._inventory_json(sys.executable)
+        for key in inv:
+            assert key == rsi.canonicalize_name(key), key
+
+    def test_27k_cross_head_compare_doc_not_single_head_required(self):
+        # the cross-head compare doc only exists after Head B + offline
+        # interpretation; a per-head CI bundle must not require it, and
+        # the bundle must not silently drop it when present
+        assert "runtime_sdist_identity_compare.json" not in \
+            rsi.BUNDLE_REQUIRED_FILES
+        assert "runtime_sdist_identity_compare.json" in \
+            rsi.CROSS_HEAD_ONLY_FILES
+        assert "performance.json" in rsi.BUNDLE_REQUIRED_FILES
+
+
+# ---------------------------------------------------------------------------
+# section 24/31: PEP 427 RECORD self entry (crash #13 families)
+# ---------------------------------------------------------------------------
+
+
+class TestPep427RecordSelfEntry:
+    def test_28_record_self_entry_empty_hash_size_accepted(self):
+        # PEP 427: RECORD's own entry (normally the last line) carries
+        # EMPTY hash and size -- a wheel cannot bind its own bytes.  The
+        # replay verifier rejected real bdist_wheel output with
+        # 'wheel_record_invalid' until this rule was implemented.
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            wheel = make_wheel(td / "demo_pkg-1.0-py3-none-any.whl")
+            v = rsi.validate_wheel(wheel, "demo-pkg", "1.0")
+            assert v["valid"] is True
+            assert v["record_ok"] is True
+
+    def test_28b_record_missing_self_entry_invalid(self):
+        # a RECORD that does not list itself is malformed -> fail closed
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            wheel = make_wheel(td / "demo_pkg-1.0-py3-none-any.whl")
+            dist = "demo_pkg-1.0.dist-info"
+            with zipfile.ZipFile(wheel, "r") as zf:
+                payloads = {
+                    p: zf.read(p) for p in zf.namelist()
+                    if p != f"{dist}/RECORD"
+                }
+            with zipfile.ZipFile(wheel, "w") as zf:
+                rows = [f"{p},{b64h(d)},{len(d)}"
+                        for p, d in sorted(payloads.items())]
+                for p, d in sorted(payloads.items()):
+                    zf.writestr(p, d)
+                zf.writestr(f"{dist}/RECORD",
+                            "\n".join(rows) + "\n")  # no self entry
+            v = rsi.validate_wheel(wheel, "demo-pkg", "1.0")
+            assert v["valid"] is False
+            assert "RECORD does not list itself" in v["reasons"]
+
+    def test_28c_record_self_entry_with_hash_invalid(self):
+        # a self entry carrying a hash or size is a lie (self-binding is
+        # impossible) -> fail closed
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            wheel = make_wheel(td / "demo_pkg-1.0-py3-none-any.whl")
+            dist = "demo_pkg-1.0.dist-info"
+            with zipfile.ZipFile(wheel, "r") as zf:
+                payloads = {
+                    p: zf.read(p) for p in zf.namelist()
+                    if p != f"{dist}/RECORD"
+                }
+            with zipfile.ZipFile(wheel, "w") as zf:
+                rows = [f"{p},{b64h(d)},{len(d)}"
+                        for p, d in sorted(payloads.items())]
+                rows.append(f"{dist}/RECORD,sha256={b64h(b'x')},3")
+                for p, d in sorted(payloads.items()):
+                    zf.writestr(p, d)
+                zf.writestr(f"{dist}/RECORD", "\n".join(rows) + "\n")
+            v = rsi.validate_wheel(wheel, "demo-pkg", "1.0")
+            assert v["valid"] is False
+            assert "empty hash and size" in " ".join(v["reasons"])
+
+
+# ---------------------------------------------------------------------------
+# section 31: canonical fingerprint is order-independent (crash #13)
+# ---------------------------------------------------------------------------
+
+
+class TestFingerprintOrderIndependence:
+    def test_29_fingerprint_invariant_under_key_permutation(self):
+        # crash #13: _sort_arrays sorted lists by json.dumps(sort_keys=
+        # False), whose key strings depend on dict KEY INSERTION ORDER --
+        # the same document in a different key order got a different
+        # fingerprint, so the stored fingerprint never matched the
+        # verifier's recompute over the (recursively key-sorted) read-back.
+        doc = make_identity()
+        base = rsi.compute_fingerprint_sha(doc)
+        permuted = copy.deepcopy(doc)
+        permuted["resolved_distributions"] = [
+            {k: r[k] for k in reversed(list(r.keys()))}
+            for r in doc["resolved_distributions"]
+        ]
+        permuted["marketvault_build_identity"] = {
+            k: permuted["marketvault_build_identity"][k]
+            for k in reversed(list(permuted["marketvault_build_identity"].keys()))
+        }
+        assert rsi.compute_fingerprint_sha(permuted) == base
+
+    def test_29b_fingerprint_survives_json_round_trip(self):
+        # the fingerprint the measure stores must equal the verifier's
+        # recompute over the file it wrote (write_json sorts keys
+        # recursively; canonical_payload must produce the same form)
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "identity.json"
+            doc = make_identity()
+            rsi.write_json(path, doc)
+            read_back = rsi.read_json(path)
+            assert read_back["fingerprint_sha256"] == \
+                rsi.compute_fingerprint_sha(read_back)
+
+    def test_29c_verdicts_from_summary_round_trip(self):
+        text = (
+            "SOURCE_BUILD_IDENTITY_VALID=false\n"
+            "reason=see per-leg verdicts in probe_summary.txt\n"
+            "RUNTIME_OTHER_COUNT=0\n"
+            "RUNTIME_SDIST_COUNT=1\n"
+            "RAW_WHEEL_REPRODUCIBLE_moomoo-api=false\n"
+            "reason=build1 aaaa != build2 bbbb\n"
+            "FINAL_RUNTIME_MATCH=true\n"
+            "MEASURE_CRASH=false\n"
+        )
+        verdicts = rsi._verdicts_from_summary_text(text)
+        assert verdicts["SOURCE_BUILD_IDENTITY_VALID"] is False
+        assert verdicts["RUNTIME_OTHER_COUNT"] == 0
+        assert verdicts["RUNTIME_SDIST_COUNT"] == 1
+        assert verdicts["RAW_WHEEL_REPRODUCIBLE_moomoo-api"] is False
+        assert verdicts["FINAL_RUNTIME_MATCH"] is True
+        assert verdicts["MEASURE_CRASH"] is False
+        assert "reason" not in verdicts
+
+
+# ---------------------------------------------------------------------------
+# section 31: manifest self entry cannot bind itself
+# ---------------------------------------------------------------------------
+
+
+class TestManifestSelfEntry:
+    def test_30_manifest_records_null_self_hash(self):
+        # the manifest lists itself (BUNDLE_REQUIRED_FILES requires it)
+        # but must record null size/sha256 for its own entry -- a stale
+        # pre-write hash made every replay's manifest_hashes fail
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "probe_summary.txt").write_text(
+                "RUNTIME_SDIST_COUNT=1\n", encoding="utf-8")
+            # cmd_bundle writes the manifest twice (before and after the
+            # verifier self-copy); only the second call can list itself
+            rsi._write_manifest(root, ["probe_summary.txt"])
+            manifest = rsi._write_manifest(root, ["probe_summary.txt"])
+            self_entry = next(
+                e for e in manifest["files"]
+                if e["path"] == rsi.MANIFEST_NAME)
+            assert self_entry["sha256"] is None
+            assert self_entry["size"] is None
+            other = next(
+                e for e in manifest["files"]
+                if e["path"] == "probe_summary.txt")
+            assert other["sha256"] is not None
+            assert other["size"] is not None
+
+    def test_30b_verifier_accepts_null_self_entry(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "probe_summary.txt").write_text(
+                "RUNTIME_SDIST_COUNT=1\n", encoding="utf-8")
+            # as in cmd_bundle: first pass writes the manifest, the second
+            # pass includes the (null-hashed) self entry
+            rsi._write_manifest(root, ["probe_summary.txt"])
+            rsi._write_manifest(root, ["probe_summary.txt"])
+            verifier = rsi.BundleVerifier(root)
+            verifier.verify()
+            # completeness is not the point here (the sparse test bundle
+            # lacks the full required set); the self entry must verify
+            assert verifier.checks.get("manifest_hashes") is True
+
+    def test_30c_verifier_rejects_stale_self_hash(self):
+        # a manifest that records its own hash is either stale or a lie
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "probe_summary.txt").write_text(
+                "RUNTIME_SDIST_COUNT=1\n", encoding="utf-8")
+            rsi.write_json(root / "EVIDENCE_MANIFEST.json", {
+                "schema_version": rsi.SCHEMA_VERSION,
+                "surface": "test-3.14",
+                "complete": True,
+                "missing": [],
+                "files": [
+                    {"path": "probe_summary.txt", "size": 20,
+                     "sha256": "11" * 32},
+                    {"path": rsi.MANIFEST_NAME, "size": 123,
+                     "sha256": "22" * 32},
+                ],
+            })
+            verifier = rsi.BundleVerifier(root)
+            verifier.verify()
+            assert verifier.checks.get("manifest_hashes") is False
+            assert rsi.MANIFEST_NAME + ":SELF_HASH" in (
+                verifier.checks.get("manifest_hashes_detail") or "")
+
+
+# ---------------------------------------------------------------------------
+# section 31: recorded flags are a consistency check, not a pass/fail
+# ---------------------------------------------------------------------------
+
+
+class TestRecordedFlagsConsistency:
+    def _run_verifier(self, receipt, summary_text):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            rsi.write_json(root / "runtime_sdist_identity_receipt.json",
+                           receipt)
+            (root / "probe_summary.txt").write_text(summary_text,
+                                                    encoding="utf-8")
+            rsi.write_json(root / "EVIDENCE_MANIFEST.json", {
+                "schema_version": rsi.SCHEMA_VERSION,
+                "surface": "test-3.14",
+                "complete": True,
+                "missing": [],
+                "files": [],
+            })
+            verifier = rsi.BundleVerifier(root)
+            verifier.verify()
+            return verifier.checks.get("recorded_flags")
+
+    def test_31_measured_invalid_identity_still_replays(self):
+        # a measured valid=false (e.g. raw wheel bytes not reproducible)
+        # is legitimate evidence: the receipt must AGREE with the derived
+        # verdict, not claim true
+        receipt = {
+            "schema_version": rsi.SCHEMA_VERSION,
+            "surface": "test-3.14",
+            "source_build_identity_valid": False,
+            "final_runtime_match": True,
+        }
+        summary = (
+            "SOURCE_BUILD_IDENTITY_VALID=false\n"
+            "FINAL_RUNTIME_MATCH=true\n"
+            "RUNTIME_OTHER_COUNT=0\n"
+            "RUNTIME_SDIST_COUNT=1\n"
+            "SOURCE_BUILT_PACKAGE_SURVIVED_REMAINDER_INSTALL=true\n"
+            "RUNTIME_INSTALL_FROM_WHEELS_ONLY=true\n"
+            "SHADOW_SURFACE_PASS=true\n"
+            "MEASURE_CRASH=false\n"
+            "RAW_WHEEL_REPRODUCIBLE_moomoo-api=false\n"
+        )
+        assert self._run_verifier(receipt, summary) is True
+
+    def test_31b_receipt_disagreeing_with_summary_fails(self):
+        # receipt claims valid=true but the retained verdicts derive
+        # false -> the bundle is self-inconsistent -> replay fails closed
+        receipt = {
+            "schema_version": rsi.SCHEMA_VERSION,
+            "surface": "test-3.14",
+            "source_build_identity_valid": True,
+            "final_runtime_match": True,
+        }
+        summary = (
+            "SOURCE_BUILD_IDENTITY_VALID=false\n"
+            "FINAL_RUNTIME_MATCH=true\n"
+            "RUNTIME_OTHER_COUNT=0\n"
+            "RUNTIME_SDIST_COUNT=1\n"
+            "SOURCE_BUILT_PACKAGE_SURVIVED_REMAINDER_INSTALL=true\n"
+            "RUNTIME_INSTALL_FROM_WHEELS_ONLY=true\n"
+            "SHADOW_SURFACE_PASS=true\n"
+            "MEASURE_CRASH=false\n"
+            "RAW_WHEEL_REPRODUCIBLE_moomoo-api=false\n"
+        )
+        assert self._run_verifier(receipt, summary) is False
+
+    def test_31c_summary_final_match_disagreement_fails(self):
+        receipt = {
+            "schema_version": rsi.SCHEMA_VERSION,
+            "surface": "test-3.14",
+            "source_build_identity_valid": False,
+            "final_runtime_match": True,
+        }
+        summary = (
+            "SOURCE_BUILD_IDENTITY_VALID=false\n"
+            "FINAL_RUNTIME_MATCH=false\n"
+            "RUNTIME_OTHER_COUNT=0\n"
+            "RUNTIME_SDIST_COUNT=1\n"
+            "SOURCE_BUILT_PACKAGE_SURVIVED_REMAINDER_INSTALL=true\n"
+            "RUNTIME_INSTALL_FROM_WHEELS_ONLY=true\n"
+            "SHADOW_SURFACE_PASS=true\n"
+            "MEASURE_CRASH=false\n"
+            "RAW_WHEEL_REPRODUCIBLE_moomoo-api=false\n"
+        )
+        assert self._run_verifier(receipt, summary) is False
+
+
+class TestInstallReportBundleSlot:
+    # The bundle is relocated between the measure's out-dir and the replay
+    # dir (ci.yml copies cw-evidence/. into replay-bundle/), so absolute
+    # path equality can never hold at replay time.  The exact local wheel
+    # is identified by its slot: <any-prefix>/built_wheels/1/<filename>.
+
+    def _wheel(self, td):
+        wheel = td / rsi.BUILT_WHEEL_REL / "1" / "demo_pkg-1.0-py3-none-any.whl"
+        wheel.parent.mkdir(parents=True, exist_ok=True)
+        wheel.write_bytes(b"wheel-bytes")
+        return wheel, hashlib.sha256(b"wheel-bytes").hexdigest()
+
+    def _report(self, td, url, sha):
+        path = td / "r.json"
+        path.write_text(json.dumps({"install": [
+            {"metadata": {"name": "demo-pkg", "version": "1.0"},
+             "download_info": {"url": url, "hashes": {"sha256": sha}}},
+        ]}), encoding="utf-8")
+        return path
+
+    def test_32_relocated_bundle_still_valid(self):
+        # recorded URL points at the ORIGINAL out-dir (cw-evidence), the
+        # wheel passed by the verifier lives in the replay dir: different
+        # absolute prefixes, same built_wheels/1/<filename> slot -> valid
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            wheel, built_sha = self._wheel(td)
+            out_dir = td.parent / "cw-evidence"
+            url = out_dir.joinpath(
+                rsi.BUILT_WHEEL_REL, "1", wheel.name).as_uri()
+            result = rsi.verify_install_report(
+                self._report(td, url, built_sha), wheel, built_sha)
+            assert result["valid"] is True, result
+
+    def test_32b_rebuilt_wheel_slot_rejected(self):
+        # the rebuilt wheel slot built_wheels/2 must never satisfy the
+        # exact-wheel check: different cached/rebuilt bytes are not the
+        # installed artifact even when the basename is identical
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            wheel, built_sha = self._wheel(td)
+            other = td / rsi.BUILT_WHEEL_REL / "2" / wheel.name
+            other.parent.mkdir(parents=True)
+            result = rsi.verify_install_report(
+                self._report(td, other.as_uri(), built_sha), wheel, built_sha)
+            assert result["valid"] is False
+            assert "exact local wheel" in result["reasons"][0]
+
+    def test_32c_pip_cache_style_url_rejected(self):
+        # a pip-cache artifact carries cache-hash path components, not the
+        # built_wheels/1 slot
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            wheel, built_sha = self._wheel(td)
+            cached = td / "pip-cache" / "abc123" / wheel.name
+            cached.parent.mkdir(parents=True)
+            result = rsi.verify_install_report(
+                self._report(td, cached.as_uri(), built_sha), wheel, built_sha)
+            assert result["valid"] is False
+            assert "exact local wheel" in result["reasons"][0]
+
+    def test_32d_non_file_url_rejected(self):
+        # an index-resolved install (https) is never the exact local wheel
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            wheel, built_sha = self._wheel(td)
+            url = ("https://pypi.org/packages/"
+                   f"{rsi.BUILT_WHEEL_REL}/1/{wheel.name}")
+            result = rsi.verify_install_report(
+                self._report(td, url, built_sha), wheel, built_sha)
+            assert result["valid"] is False
+            assert "file:// wheel" in result["reasons"][0]
+
 
 def _write_report(entry, td):
     """Fabricate a pip --report JSON on disk (one install entry)."""
@@ -665,6 +1276,22 @@ def _write_report(entry, td):
     }
     if entry.get("sha"):
         install_entry["download_info"]["hashes"]["sha256"] = entry["sha"]
+    path.write_text(json.dumps({"install": [install_entry]}),
+                    encoding="utf-8")
+    return path
+
+
+def _write_report_pip26(entry, td):
+    """pip >= 26 report schema: archive_info.hashes nested under
+    download_info (Head A crash #3 was a parse of this exact shape)."""
+    path = Path(td) / "report.json"
+    install_entry = {
+        "metadata": {"name": entry["name"], "version": entry["version"]},
+        "download_info": {"url": entry["url"], "archive_info": {"hashes": {}}},
+    }
+    if entry.get("sha"):
+        install_entry["download_info"]["archive_info"]["hashes"]["sha256"] = (
+            entry["sha"])
     path.write_text(json.dumps({"install": [install_entry]}),
                     encoding="utf-8")
     return path

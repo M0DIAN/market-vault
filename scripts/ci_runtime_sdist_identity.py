@@ -137,7 +137,6 @@ BUNDLE_REQUIRED_FILES = (
     "runtime_resolution.json",
     "runtime_sdist_identity_receipt.json",
     "runtime_sdist_identity.json",
-    "runtime_sdist_identity_compare.json",
     "source_sdist_identity.json",
     "sdist_manifest.json",
     "source_build_contract.json",
@@ -160,6 +159,15 @@ BUNDLE_REQUIRED_FILES = (
     "verifier_source.py",
     "EVIDENCE_MANIFEST.json",
 )
+
+# Cross-head artifact: produced only during offline interpretation AFTER
+# Head B (the identity-doc diff of two CI runs), so a single-head CI
+# bundle can never contain it. It is bundled/verified when present; its
+# absence on a per-head bundle is not a completeness failure (the
+# assembled cross-head bundle is the artifact the offline replay seals).
+CROSS_HEAD_ONLY_FILES = ("runtime_sdist_identity_compare.json",)
+
+MANIFEST_NAME = "EVIDENCE_MANIFEST.json"
 
 INSTALL_EXCLUDED_FROM_PAYLOAD = {
     "INSTALLER", "REQUESTED", "direct_url.json",
@@ -204,7 +212,14 @@ def _sort_arrays(obj):
     if isinstance(obj, dict):
         return {k: _sort_arrays(v) for k, v in obj.items()}
     if isinstance(obj, list):
-        return sorted((_sort_arrays(v) for v in obj), key=json.dumps)
+        # crash #13: json.dumps(sort_keys=False) preserves key insertion
+        # order, so a sort key built on it is order-dependent: the same
+        # VALUE in a different key order produced a different sorted
+        # sequence and therefore a different fingerprint over the same
+        # document.  canonical_serialize sorts keys recursively, so list
+        # ordering is a pure function of the elements' values.
+        return sorted((_sort_arrays(v) for v in obj),
+                      key=canonical_serialize)
     return obj
 
 
@@ -310,12 +325,18 @@ def _inventory_json(venv_python, log_path=None):
     """Return {canonical_name: version} from importlib.metadata in the venv."""
     code = (
         "import importlib.metadata as m, json\n"
+        # crash #12: importlib.metadata.canonicalize_name does not exist
+        # on every interpreter (this env's pythoncore 3.14 lacks it), so
+        # the probe canonicalizes inline (PEP 503, same rule as
+        # canonicalize_name in this script)
+        "import re\n"
+        "canon = lambda n: re.sub(r'[-_.]+', '-', n).lower()\n"
         "out = {}\n"
         "for d in m.distributions():\n"
         "    n = d.metadata['Name'] if d.metadata and d.metadata.get('Name') else ''\n"
         "    if not n:\n"
         "        continue\n"
-        "    out[n] = d.version or ''\n"
+        "    out[canon(n)] = d.version or ''\n"
         "print(json.dumps(out, sort_keys=True))\n"
     )
     proc = _run([venv_python, "-c", code], log_path=log_path, allow_fail=False)
@@ -439,6 +460,13 @@ def parse_pip_report_extended(report_path, skip_local_project=True):
         artifact_type = "other"
         if info.get("url"):
             raw_url = info["url"]
+            # pip >= 26 nests the archive hash under archive_info.hashes;
+            # older --report JSON used a flat hashes map. Accept both,
+            # fail closed on neither.
+            archive_info = info.get("archive_info") or {}
+            recorded = ((archive_info.get("hashes") or {})
+                        .get("sha256")
+                        or (info.get("hashes") or {}).get("sha256"))
             if raw_url.startswith("file://"):
                 # closed-world installs (--find-links + --require-hashes)
                 # legitimately source from the local wheelhouse; the bytes
@@ -452,7 +480,6 @@ def parse_pip_report_extended(report_path, skip_local_project=True):
                         f"{raw_url!r}"
                     )
                 actual = sha256_file(local)
-                recorded = (info.get("hashes") or {}).get("sha256")
                 if recorded is not None:
                     if not re.fullmatch(r"[0-9a-f]{64}", str(recorded)):
                         raise ValueError(
@@ -468,8 +495,7 @@ def parse_pip_report_extended(report_path, skip_local_project=True):
                 artifact_type = classify_artifact(url)
             else:
                 url = normalize_download_url(raw_url)
-                hashes = info.get("hashes") or {}
-                sha = hashes.get("sha256")
+                sha = recorded
                 if not sha or not re.fullmatch(r"[0-9a-f]{64}", str(sha)):
                     raise ValueError(
                         f"report {report_path}: missing/odd sha256 for {canonical}"
@@ -562,8 +588,10 @@ def action_contract(actions, repo_root):
 
 def _download_exact(url, sha256, dest_dir, log_path=None, attempts=3):
     """Download the EXACT resolver-selected artifact; verify local bytes."""
+    dest_dir = Path(dest_dir)
+    dest_dir.mkdir(parents=True, exist_ok=True)  # crash #4: dest subdir never created
     filename = url.rsplit("/", 1)[-1]
-    dest = Path(dest_dir) / filename
+    dest = dest_dir / filename
     last_err = None
     for _ in range(attempts):
         try:
@@ -772,9 +800,15 @@ def resolve_wheels_only(pip_exec, requirements, report_path, log_path, cwd=None)
     Raises (fail closed) on any sdist / VCS / direct URL / missing hash /
     duplicate canonical distribution.
     """
-    report_path = Path(report_path)
+    # Absolute: the buildhook legs run pip with cwd inside a temp extract
+    # dir, so a relative --report path would resolve against that cwd
+    # (Head A crash #6: 'OSError: [Errno 2] No such file or directory:
+    # cw-evidence-local\\source_build_declared_report.json').
+    report_path = Path(report_path).resolve()
     report_path.parent.mkdir(parents=True, exist_ok=True)
-    cmd = [pip_exec, "install", "--dry-run", "--ignore-installed",
+    # -m pip is REQUIRED: bare `python.exe install ...` parses 'install' as a
+    # script path (Head A crash #5: 'can't open file ...\\install').
+    cmd = [pip_exec, "-m", "pip", "install", "--dry-run", "--ignore-installed",
            "--report", str(report_path), *requirements]
     _run(cmd, cwd=cwd, log_path=log_path)
     records = parse_pip_report_extended(report_path)
@@ -921,9 +955,19 @@ def _b64_sha256(data):
 
 
 def _record_sha_matches(record_hash, data):
+    # PEP 427 RECORD values are 'sha256=<b64>' — the prefix MUST be
+    # stripped before comparing (Head A crash #9: every hash-bearing
+    # installed file was flagged :SHA256 because the raw value never
+    # equaled the bare digest, producing a FALSE 'installed payload
+    # changed' signal for an untouched install).
     if not record_hash:
         return False
-    return record_hash in (_b64_sha256(data), _b64_sha256(data) + "=")
+    want = record_hash
+    if want.startswith("sha256="):
+        want = want[len("sha256="):]
+    if want.startswith("sha256=") or "=" in want:
+        return False  # malformed / unknown algorithm / padding: fail closed
+    return want == _b64_sha256(data)
 
 
 def wheel_dist_info_name(wheel_path):
@@ -1045,10 +1089,20 @@ def validate_wheel(wheel_path, expected_name, expected_version):
         reasons.append(f"bad zip: {exc}")
         return _wheel_validation_result(False, reasons)
 
-    # RECORD may not list itself
-    if record_path in record_rows:
+    # PEP 427: RECORD contains its own entry with EMPTY hash and size (a
+    # wheel cannot bind its own bytes; this is the one member exempt from
+    # hash verification).  A missing self entry, or one carrying a hash or
+    # size, is malformed and fails closed.
+    self_row = record_rows.get(record_path)
+    if self_row is None:
         record_ok = False
-        reasons.append("RECORD lists itself")
+        reasons.append("RECORD does not list itself")
+    else:
+        self_hash, self_size = self_row
+        if self_hash or self_size:
+            record_ok = False
+            reasons.append(
+                "RECORD self-entry must have empty hash and size")
     for path in record_rows:
         if path not in members and path != record_path:
             record_ok = False
@@ -1130,14 +1184,19 @@ def verify_install_report(report_path, wheel_path, built_sha256):
     built wheel's SHA256 (never a package-name resolution / cached wheel)."""
     data = read_json(report_path)
     install = data.get("install") or []
-    wheel_abs = Path(wheel_path).resolve()
     wheel_filename = Path(wheel_path).name
     matches = []
     for entry in install:
         info = entry.get("download_info") or {}
         url = info.get("url") or ""
         if url.rstrip("/").rsplit("/", 1)[-1] == wheel_filename:
-            matches.append((url, (info.get("hashes") or {}).get("sha256")))
+            # pip >= 26 nests the hash under archive_info.hashes (the
+            # same schema that crashed Head A #3/#7); the flat form is
+            # still accepted as fallback
+            archive_info = info.get("archive_info") or {}
+            sha = ((archive_info.get("hashes") or {}).get("sha256")
+                   or (info.get("hashes") or {}).get("sha256"))
+            matches.append((url, sha))
     if len(matches) != 1:
         return {
             "valid": False,
@@ -1145,30 +1204,45 @@ def verify_install_report(report_path, wheel_path, built_sha256):
             "matches": matches,
         }
     url, sha = matches[0]
-    if url.startswith("file://"):
-        local = str(_file_url_to_path(url))
-    else:
-        local = url
     ok = True
     reasons = []
-    if str(Path(local).resolve()) != str(wheel_abs):
+    if not url.startswith("file://"):
         ok = False
-        reasons.append("install source is not the exact local wheel")
+        reasons.append("install source is not a local file:// wheel")
+    else:
+        local = str(_file_url_to_path(url))
+        # The bundle is relocated between the measure's out-dir and the
+        # replay dir (ci.yml copies cw-evidence/. into replay-bundle/),
+        # so absolute path equality can never hold at replay time.  The
+        # exact local wheel is instead identified by its slot inside the
+        # bundle: <out-dir>/built_wheels/1/<filename>.  A pip cache, an
+        # index URL, or the rebuilt-wheel slot (built_wheels/2) all fail
+        # closed — different bytes must never be treated as equivalent.
+        if not local.replace("\\", "/").endswith(
+                f"{BUILT_WHEEL_REL}/1/{wheel_filename}"):
+            ok = False
+            reasons.append("install source is not the exact local wheel")
     if sha != built_sha256:
         ok = False
         reasons.append("report wheel SHA256 != built wheel SHA256")
     return {"valid": ok, "reasons": reasons, "matches": matches}
 
 
+# Head A crash #8: d._path was JSON-dumped raw; on Windows AND Linux it
+# is a Path object -> TypeError -> the distribution was reported 'not
+# found in venv' even though the exact-wheel install had succeeded.
+_DIST_INFO_PROBE_CODE = (
+    "import importlib.metadata as m, json, sys\n"
+    "name = sys.argv[1]\n"
+    "d = m.distribution(name)\n"
+    "print(json.dumps({'name': d.metadata['Name'], 'version': d.version, "
+    "'path': str(d._path)}))\n"
+)
+
+
 def installed_distribution_dir(venv_python, canonical_name):
     """Locate the installed distribution's .dist-info directory."""
-    code = (
-        "import importlib.metadata as m, json, sys\n"
-        "name = sys.argv[1]\n"
-        "d = m.distribution(name)\n"
-        "print(json.dumps({'name': d.metadata['Name'], 'version': d.version, "
-        "'path': d._path}))\n"
-    )
+    code = _DIST_INFO_PROBE_CODE
     proc = _run([venv_python, "-c", code, canonical_name], allow_fail=True)
     if proc.returncode != 0:
         raise RuntimeError(f"distribution {canonical_name} not found in venv")
@@ -1395,17 +1469,20 @@ def marketvault_build_set(base_python, repo_root, out_dir, log_path):
 
 
 def _download_exact_from_report(wheel, report_path, wheelhouse, log_path):
-    """Download a resolved wheel's exact bytes via its report record."""
-    data = read_json(report_path)
-    for entry in data.get("install") or []:
-        metadata = entry.get("metadata") or {}
-        if canonicalize_name(metadata.get("name") or "") != wheel["name"]:
+    """Download a resolved wheel's exact bytes via its report record.
+
+    Matching goes through parse_pip_report_extended (the schema-aware
+    single source of truth) — a raw read of download_info.hashes misses
+    the pip >= 26 nesting under archive_info.hashes and never matches
+    (Head A crash #7: 'cannot materialize build wheel packaging from
+    report' while the very same report parsed fine one leg earlier).
+    """
+    for rec in parse_pip_report_extended(report_path):
+        if canonicalize_name(rec["name"]) != wheel["name"]:
             continue
-        info = entry.get("download_info") or {}
-        url = info.get("url")
-        sha = (info.get("hashes") or {}).get("sha256")
-        if url and sha == wheel["sha256"]:
-            _download_exact(url, sha, wheelhouse, log_path=log_path)
+        if rec["sha256"] == wheel["sha256"]:
+            _download_exact(rec["url"], rec["sha256"], wheelhouse,
+                            log_path=log_path)
             return
     raise RuntimeError(
         f"cannot materialize build wheel {wheel['name']} from report"
@@ -1536,6 +1613,35 @@ def mutation_negative(wheel_path, out_dir):
 # fail-closed validity decision (§23; pure so the negative tests exercise
 # the exact rule set used by the probe)
 # ---------------------------------------------------------------------------
+
+
+def evaluate_source_build_identity_valid(verdicts, sdist_names):
+    """SOURCE_BUILD_IDENTITY_VALID from the measured verdict set.
+
+    Any missing or False verdict for a required leg => INVALID.  No
+    assertion of the rules is ever bypassed; this is the ONLY decision
+    function for the per-sdist source-build identity.
+    """
+def _verdicts_from_summary_text(text):
+    """Re-derive the measured verdict dict from probe_summary.txt lines
+    (KEY=value with reason= continuation lines, values true/false/int)."""
+    verdicts = {}
+    for line in text.splitlines():
+        if not line or line.startswith("reason="):
+            continue
+        key, _, raw = line.partition("=")
+        value = raw.strip()
+        if value == "true":
+            value = True
+        elif value == "false":
+            value = False
+        else:
+            try:
+                value = int(value)
+            except ValueError:
+                pass
+        verdicts[key] = value
+    return verdicts
 
 
 def evaluate_source_build_identity_valid(verdicts, sdist_names):
@@ -1860,6 +1966,15 @@ def cmd_measure(args):
                                       args.repo_root, args.out_dir)
     t0 = time.time()
     summary = {}
+    # Bound up front so the crash-path summary writer below never hits
+    # UnboundLocalError on a leg that failed before assigning them
+    # (Head A crash #3: resolution parse failure left sdist_records
+    # unbound and the fail-closed writer died with it).
+    records = []
+    wheel_records = []
+    sdist_records = []
+    other_records = []
+    per_sdist = {}
     try:
         base_python = sys.executable
         summary["runner"] = runner_identity()
@@ -2125,16 +2240,20 @@ def cmd_measure(args):
                          summary["action_contract"]["ci_yml_sha256"]},
             "resolved_distributions": records,
             "source_sdist_identity": {
-                r["name"]: per_sdist[r]["source_sdist"] for r in sdist_records
+                r["name"]: per_sdist[r["name"]]["source_sdist"]
+                for r in sdist_records
             },
             "source_build_environment_identity": {
-                r["name"]: per_sdist[r]["source_build_contract"] for r in sdist_records
+                r["name"]: per_sdist[r["name"]]["source_build_contract"]
+                for r in sdist_records
             },
             "exact_built_wheel_sha256": {
-                r["name"]: per_sdist[r]["built_wheel"] for r in sdist_records
+                r["name"]: per_sdist[r["name"]]["built_wheel"]
+                for r in sdist_records
             },
             "installed_payload_identity": {
-                r["name"]: per_sdist[r]["actual_install"] for r in sdist_records
+                r["name"]: per_sdist[r["name"]]["actual_install"]
+                for r in sdist_records
             },
             "marketvault_build_identity": {
                 "backend": mv_build_set["backend"],
@@ -2202,6 +2321,15 @@ def cmd_measure(args):
             f"MEASURE_ELAPSED_SECONDS={probe.verdicts['MEASURE_ELAPSED_SECONDS']}")
     summary_path.write_text("\n".join(lines) + "\n", encoding="utf-8",
                             newline="\n")
+    # per-head performance record (bundle-required, produced by the
+    # measure itself — a single CI head can never fabricate the
+    # cross-head compare doc, but it CAN and MUST record its own timing)
+    write_json(probe.out_dir / "performance.json", {
+        "schema_version": SCHEMA_VERSION,
+        "surface": args.surface,
+        "elapsed_seconds": probe.verdicts.get("MEASURE_ELAPSED_SECONDS"),
+        "legs": probe.perf,
+    })
     return 0
 
 
@@ -2262,8 +2390,15 @@ def _write_manifest(out_dir, required):
         "complete": not missing,
         "missing": missing,
         "files": [
-            {"path": rel, "size": os.path.getsize(root / rel),
-             "sha256": sha256_file(root / rel)}
+            # The manifest cannot bind its own bytes: the recorded
+            # self-hash of a file that contains that very hash is either
+            # stale (pre-write) or a lie, so the self entry is recorded
+            # with null size/sha256 and the verifier requires exactly that.
+            {"path": rel,
+             "size": None if rel == MANIFEST_NAME
+             else os.path.getsize(root / rel),
+             "sha256": None if rel == MANIFEST_NAME
+             else sha256_file(root / rel)}
             for rel in rels
         ],
     }
@@ -2361,6 +2496,15 @@ class BundleVerifier:
             if not rel or rel.startswith("/") or re.match(r"^[A-Za-z]:", rel):
                 hash_ok = False
                 hash_bad.append(f"{rel}:ABS_PATH")
+                continue
+            if rel == MANIFEST_NAME:
+                # A manifest cannot bind its own bytes: the writer records
+                # null size/sha256 for the self entry, and anything else is
+                # a stale hash or a lie -> fail closed.
+                if entry.get("sha256") is not None \
+                        or entry.get("size") is not None:
+                    hash_ok = False
+                    hash_bad.append(f"{rel}:SELF_HASH")
                 continue
             path = root / rel
             if not path.is_file():
@@ -2613,20 +2757,35 @@ class BundleVerifier:
                 shadow_detail = "shadow_surface.log:ABSENT"
         self._check("shadow_surface", shadow_ok, shadow_detail)
 
-        # survival + wheels-only + final-match recorded flags
+        # Recorded flags: the receipt's recorded decision must EQUAL the
+        # verdicts re-derived from the retained probe_summary.txt (a
+        # measured valid=false is still evidence; a receipt that disagrees
+        # with its own summary is not).  The quality gates (survival,
+        # wheels-only, shadow, crash) must be true for the bundle to be a
+        # measurement of anything at all.
         flags = {}
-        if receipt_path.exists():
-            receipt = read_json(receipt_path)
-            flags["valid"] = receipt.get("source_build_identity_valid") is True
-            flags["final_runtime_match"] = receipt.get("final_runtime_match") is True
+        verdicts = {}
         summary_path = root / "probe_summary.txt"
         if summary_path.exists():
             text = summary_path.read_text(encoding="utf-8")
-            flags["survival"] = (
-                "SOURCE_BUILT_PACKAGE_SURVIVED_REMAINDER_INSTALL=true" in text)
-            flags["wheels_only"] = "RUNTIME_INSTALL_FROM_WHEELS_ONLY=true" in text
-            flags["shadow"] = "SHADOW_SURFACE_PASS=true" in text
-            flags["crash"] = "MEASURE_CRASH=true" not in text
+            verdicts = _verdicts_from_summary_text(text)
+            flags["survival"] = verdicts.get(
+                "SOURCE_BUILT_PACKAGE_SURVIVED_REMAINDER_INSTALL") is True
+            flags["wheels_only"] = verdicts.get(
+                "RUNTIME_INSTALL_FROM_WHEELS_ONLY") is True
+            flags["shadow"] = verdicts.get("SHADOW_SURFACE_PASS") is True
+            flags["crash"] = verdicts.get("MEASURE_CRASH") is False
+        if receipt_path.exists():
+            receipt = read_json(receipt_path)
+            derived_valid = evaluate_source_build_identity_valid(
+                verdicts,
+                [k[len("RAW_WHEEL_REPRODUCIBLE_"):] for k in verdicts
+                 if k.startswith("RAW_WHEEL_REPRODUCIBLE_")])
+            flags["valid"] = (receipt.get("source_build_identity_valid")
+                              == derived_valid)
+            flags["final_runtime_match"] = (
+                receipt.get("final_runtime_match")
+                == (verdicts.get("FINAL_RUNTIME_MATCH") is True))
         flags_ok = all(flags.get(k) is True for k in
                        ("valid", "final_runtime_match", "survival",
                         "wheels_only", "shadow", "crash"))
