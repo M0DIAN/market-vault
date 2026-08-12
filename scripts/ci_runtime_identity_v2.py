@@ -2048,12 +2048,14 @@ SURFACE_WORKSPACE_FILES = {
     "test-3.14": (
         "actual_install_report_314.json",
         "actual_install_314.log",
+        "actual_constraint_used.txt",
     ),
     "pyarrow24": (
         "actual_dev_install_report.json",
         "actual_dev_install.log",
         "actual_pyarrow_pin_report.json",
         "actual_pyarrow_pin.log",
+        "actual_constraint_used.txt",
     ),
 }
 
@@ -2424,9 +2426,12 @@ def cmd_verify_bundle(args: argparse.Namespace) -> int:
             and build_receipt.get("constraint_mode") == CONSTRAINT_MODE
         )
         if build_receipt_ok:
-            used_marker = (bundle / "actual_constraint_used.txt").read_text(
-                encoding="utf-8", errors="replace"
-            ).strip()
+            try:
+                used_marker = (bundle / "actual_constraint_used.txt").read_text(
+                    encoding="utf-8", errors="replace"
+                ).strip()
+            except OSError:
+                used_marker = ""
             marker_used = used_marker.endswith("=true")
             build_receipt_ok = (
                 bool(build_receipt.get("actual_heavy_install_used_build_constraint"))
