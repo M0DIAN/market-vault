@@ -909,7 +909,16 @@ def base_docs():
         "sdist_sha256": "s" * 64,
         "wheel_payload_sha256": "p" * 64,
         "installed_payload_sha256": "i" * 64,
+        "raw_diagnostic": {"note": "diagnostic", "raw_wheel_sha256_1": "r" * 64, "raw_wheel_sha256_2": "t" * 64},
         "raw_diagnostic_sha256": "d" * 64,
+        "raw_mismatch_verdict": {
+            "allowed_difference": "zip_dos_modification_timestamps_of_build_generated_members_only",
+            "diff_attribution": {"local_or_central_timestamp": 10, "unclassified": 0},
+            "diff_byte_count": 10,
+            "normalization_valid": True,
+            "raw_wheel_reproducible": False,
+            "reason": "timestamp_only_contract_ok",
+        },
         "fingerprint_sha256": "f" * 64,
     }
     return strict, norm
@@ -989,6 +998,43 @@ class TestComparator:
         assert r["raw_reason"] == "first_differing_field:source_sdist"
         assert r["all_global_identity_contracts_match"] is False
         assert r["global_reason"] == "first_differing_field:source_sdist"
+
+    # ------------------------------------------------------------------
+    # Cross-head diagnostics: raw-layer noise must never break the
+    # NORMALIZED verdict. Heads A/B of the canary differ only by the
+    # marker comment, so the raw wheel SHAs and the timestamp attribution
+    # counts vary per run while the identity stays identical.
+    # ------------------------------------------------------------------
+
+    def test_raw_diagnostic_sha256_drift_does_not_break_normalized(self, tool, capsys):
+        sa, na = base_docs()
+        nb = dict(na)
+        nb["raw_diagnostic_sha256"] = "Z" * 64
+        nb["raw_diagnostic"] = {"note": "diagnostic", "raw_wheel_sha256_1": "u" * 64, "raw_wheel_sha256_2": "v" * 64}
+        r = self._run(tool, sa, na, dict(sa), nb, capsys)
+        assert r["normalized_runtime_sdist_identity_match"] is True
+        assert r["normalized_reason"] == "ok"
+        assert r["all_global_identity_contracts_match"] is True
+
+    def test_verdict_attribution_noise_does_not_break_normalized(self, tool, capsys):
+        sa, na = base_docs()
+        nb = dict(na)
+        nb["raw_mismatch_verdict"] = dict(na["raw_mismatch_verdict"])
+        nb["raw_mismatch_verdict"]["diff_attribution"] = {"local_or_central_timestamp": 3, "unclassified": 0}
+        nb["raw_mismatch_verdict"]["diff_byte_count"] = 3
+        r = self._run(tool, sa, na, dict(sa), nb, capsys)
+        assert r["normalized_runtime_sdist_identity_match"] is True
+        assert r["normalized_reason"] == "ok"
+        assert r["all_global_identity_contracts_match"] is True
+
+    def test_verdict_identity_change_breaks_normalized(self, tool, capsys):
+        sa, na = base_docs()
+        nb = dict(na)
+        nb["raw_mismatch_verdict"] = dict(na["raw_mismatch_verdict"])
+        nb["raw_mismatch_verdict"]["normalization_valid"] = False
+        r = self._run(tool, sa, na, dict(sa), nb, capsys)
+        assert r["normalized_runtime_sdist_identity_match"] is False
+        assert r["normalized_reason"].startswith("first_differing_field:raw_mismatch_verdict")
 
 
 # ---------------------------------------------------------------------------

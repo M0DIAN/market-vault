@@ -2057,6 +2057,39 @@ def cmd_verify_bundle(args) -> int:
 # cross-head comparator
 
 
+# Fields that are measurement diagnostics (never part of the normalized
+# identity): the per-run fingerprint binding, the raw wheel SHAs retained
+# as diagnostic, the run surface, and the canary head. head is excluded
+# deliberately: the whole point of the cross-head canary is that two heads
+# differing only by the marker comment must share one normalized identity.
+NORMALIZED_DIAGNOSTIC_FIELDS = ("fingerprint_sha256", "raw_diagnostic", "raw_diagnostic_sha256", "surface", "head")
+
+# Subfields of raw_mismatch_verdict that quantify the raw-layer noise of a
+# single run (how many members happened to carry differing timestamps). They
+# are measurement detail, not identity: the identity part of the verdict is
+# allowed_difference / normalization_valid / raw_wheel_reproducible / reason.
+NORMALIZED_VERDICT_NOISE_FIELDS = ("diff_attribution", "diff_byte_count")
+
+
+def _normalized_identity_payload(doc: dict) -> dict:
+    """Extract the identity-bearing fields of a normalized identity doc.
+
+    Excludes the diagnostic/self-referential fields and the run-noise
+    subfields of raw_mismatch_verdict. All other fields (canonical name,
+    version, resolver identity, sdist SHA, build contract, closed-world
+    build-env identity, wheel tags/metadata, payload SHAs and counts, RECORD
+    validation, verdict identity, final installed/runtime identity,
+    MarketVault build identity, shadow surface) participate in the
+    cross-head comparison.
+    """
+    payload = {k: v for k, v in doc.items() if k not in NORMALIZED_DIAGNOSTIC_FIELDS}
+    verdict = payload.get("raw_mismatch_verdict")
+    if isinstance(verdict, dict):
+        verdict = {k: v for k, v in verdict.items() if k not in NORMALIZED_VERDICT_NOISE_FIELDS}
+        payload["raw_mismatch_verdict"] = verdict
+    return payload
+
+
 STRICT_FIELD_ORDER = [
     "runner",
     "python",
@@ -2132,11 +2165,12 @@ def cmd_compare(args) -> int:
         raw_match = False
         first_raw = "reason:schema_unequal"
 
-    # normalized comparison: fingerprint payload only. raw_diagnostic, head,
-    # surface are excluded; runner/python/resolver/build-env drift is NEVER
-    # normalized (it stays in the strict comparison below).
-    n1_payload = {k: v for k, v in n1.items() if k not in ("fingerprint_sha256", "raw_diagnostic", "surface", "head")}
-    n2_payload = {k: v for k, v in n2.items() if k not in ("fingerprint_sha256", "raw_diagnostic", "surface", "head")}
+    # normalized comparison: identity payload only. raw diagnostics (incl.
+    # raw_diagnostic_sha256), the per-run fingerprint, head, and surface are
+    # excluded; runner/python/resolver/build-env drift is NEVER normalized
+    # (it stays in the strict comparison below).
+    n1_payload = _normalized_identity_payload(n1)
+    n2_payload = _normalized_identity_payload(n2)
     norm_match = n1.get("schema_version") == n2.get("schema_version") == SCHEMA_VERSION and n1_payload == n2_payload
     first_norm = None if norm_match else _first_differing_path(n1_payload, n2_payload)
 
