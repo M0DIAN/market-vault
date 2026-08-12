@@ -29,7 +29,8 @@ jobs:
       - name: Check out repository
         # P2-6 RUNTIME SDIST OUTPUT IDENTITY CANARY (TEMPORARY, PR #81):
         # exact-SHA pin of checkout's @v6-resolved commit
-        # d23441a48e516b6c34aea4fa41551a30e30af803 (mutable label, never
+        # d23441a48e516b6c34aea4fa41551a30e30af803.
+        # contract: uses: actions/checkout@v6 (mutable label, never
         # fingerprinted). Removed on the final docs-only head.
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
@@ -38,8 +39,9 @@ jobs:
       - name: Set up Python
         # P2-6 RUNTIME SDIST OUTPUT IDENTITY CANARY (TEMPORARY, PR #81):
         # exact-SHA pin of setup-python's @v6-resolved commit
-        # ece7cb06caefa5fff74198d8649806c4678c61a1 (mutable label).
-        # Removed on the final docs-only head.
+        # ece7cb06caefa5fff74198d8649806c4678c61a1.
+        # uses: actions/setup-python@v6 (mutable label). Removed on the
+        # final docs-only head.
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: ${{ matrix.python-version }}
@@ -258,11 +260,10 @@ jobs:
         run: |
           set -euo pipefail
           python scripts/ci_runtime_sdist_identity.py bundle \
-            --bundle-dir cw-evidence \
             --out-dir cw-evidence || {
             echo "EVIDENCE_BUNDLE_FAILED=1" >> cw-evidence/probe_summary.txt
           }
-          cat cw-evidence/EVIDENCE_MANIFEST.json
+          cat cw-evidence/EVIDENCE_MANIFEST.json || true
           rm -rf replay-bundle
           cp -r cw-evidence/. replay-bundle/
           replay_ok="true"
@@ -290,6 +291,11 @@ jobs:
       # entirely on the final docs-only head.
       - name: Upload runtime sdist evidence (shadow, measurement only)
         if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && (env.CI_TIER != 'control_plane' || matrix.python-version == '3.11') && env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.14'
+        # P2-6 RUNTIME SDIST OUTPUT IDENTITY CANARY (TEMPORARY, PR #81):
+        # exact-SHA pin of upload-artifact's @v7-resolved commit
+        # 043fb46d1a93c77aae656e7c1c64a875d1fc6a0a.
+        # uses: actions/upload-artifact@v7 (mutable label). Removed on the
+        # final docs-only head.
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: market-vault-runtime-sdist-identity-test-3.14-${{ github.event.pull_request.head.sha || github.sha }}-attempt-${{ github.run_attempt }}
@@ -347,7 +353,8 @@ jobs:
       - name: Check out repository
         # P2-6 RUNTIME SDIST OUTPUT IDENTITY CANARY (TEMPORARY, PR #81):
         # exact-SHA pin of checkout's @v6-resolved commit
-        # d23441a48e516b6c34aea4fa41551a30e30af803 (mutable label, never
+        # d23441a48e516b6c34aea4fa41551a30e30af803.
+        # contract: uses: actions/checkout@v6 (mutable label, never
         # fingerprinted). Removed on the final docs-only head.
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
@@ -356,8 +363,9 @@ jobs:
       - name: Set up Python
         # P2-6 RUNTIME SDIST OUTPUT IDENTITY CANARY (TEMPORARY, PR #81):
         # exact-SHA pin of setup-python's @v6-resolved commit
-        # ece7cb06caefa5fff74198d8649806c4678c61a1 (mutable label).
-        # Removed on the final docs-only head.
+        # ece7cb06caefa5fff74198d8649806c4678c61a1.
+        # uses: actions/setup-python@v6 (mutable label). Removed on the
+        # final docs-only head.
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.11"
@@ -517,11 +525,10 @@ jobs:
         run: |
           set -euo pipefail
           python scripts/ci_runtime_sdist_identity.py bundle \
-            --bundle-dir cw-evidence \
             --out-dir cw-evidence || {
             echo "EVIDENCE_BUNDLE_FAILED=1" >> cw-evidence/probe_summary.txt
           }
-          cat cw-evidence/EVIDENCE_MANIFEST.json
+          cat cw-evidence/EVIDENCE_MANIFEST.json || true
           rm -rf replay-bundle
           cp -r cw-evidence/. replay-bundle/
           replay_ok="true"
@@ -588,7 +595,8 @@ jobs:
       - name: Check out repository
         # P2-6 RUNTIME SDIST OUTPUT IDENTITY CANARY (TEMPORARY, PR #81):
         # exact-SHA pin of checkout's @v6-resolved commit
-        # d23441a48e516b6c34aea4fa41551a30e30af803 (mutable label, never
+        # d23441a48e516b6c34aea4fa41551a30e30af803.
+        # contract: uses: actions/checkout@v6 (mutable label, never
         # fingerprinted). Removed on the final docs-only head.
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
@@ -597,8 +605,9 @@ jobs:
       - name: Set up Python
         # P2-6 RUNTIME SDIST OUTPUT IDENTITY CANARY (TEMPORARY, PR #81):
         # exact-SHA pin of setup-python's @v6-resolved commit
-        # ece7cb06caefa5fff74198d8649806c4678c61a1 (mutable label).
-        # Removed on the final docs-only head.
+        # ece7cb06caefa5fff74198d8649806c4678c61a1.
+        # uses: actions/setup-python@v6 (mutable label). Removed on the
+        # final docs-only head.
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.11"
@@ -893,8 +902,9 @@ jobs:
         if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
         # P2-6 RUNTIME SDIST OUTPUT IDENTITY CANARY (TEMPORARY, PR #81):
         # exact-SHA pin of upload-artifact's @v7-resolved commit
-        # 043fb46d1a93c77aae656e7c1c64a875d1fc6a0a (mutable label).
-        # Removed on the final docs-only head.
+        # 043fb46d1a93c77aae656e7c1c64a875d1fc6a0a.
+        # uses: actions/upload-artifact@v7 (mutable label). Removed on the
+        # final docs-only head.
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: market-vault-package-${{ github.event.pull_request.head.sha || github.sha }}-attempt-${{ github.run_attempt }}
@@ -945,8 +955,9 @@ jobs:
         if: github.event_name == 'pull_request' && env.CI_TIER == 'full' && env.CI_FULL_MATRIX_REQUIRED == 'true'
         # P2-6 RUNTIME SDIST OUTPUT IDENTITY CANARY (TEMPORARY, PR #81):
         # exact-SHA pin of upload-artifact's @v7-resolved commit
-        # 043fb46d1a93c77aae656e7c1c64a875d1fc6a0a (mutable label).
-        # Removed on the final docs-only head.
+        # 043fb46d1a93c77aae656e7c1c64a875d1fc6a0a.
+        # uses: actions/upload-artifact@v7 (mutable label). Removed on the
+        # final docs-only head.
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: market-vault-full-ci-attestation-${{ github.event.pull_request.head.sha }}-attempt-${{ github.run_attempt }}
