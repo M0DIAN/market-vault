@@ -27,22 +27,12 @@ jobs:
 
     steps:
       - name: Check out repository
-        # P2-6 RUNTIME SDIST OUTPUT IDENTITY CANARY (TEMPORARY, PR #81):
-        # exact-SHA pin of checkout's @v6-resolved commit
-        # d23441a48e516b6c34aea4fa41551a30e30af803.
-        # contract: uses: actions/checkout@v6 (mutable label, never
-        # fingerprinted). Removed on the final docs-only head.
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Set up Python
-        # P2-6 RUNTIME SDIST OUTPUT IDENTITY CANARY (TEMPORARY, PR #81):
-        # exact-SHA pin of setup-python's @v6-resolved commit
-        # ece7cb06caefa5fff74198d8649806c4678c61a1.
-        # uses: actions/setup-python@v6 (mutable label). Removed on the
-        # final docs-only head.
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -137,40 +127,6 @@ jobs:
       - name: Check repository hygiene
         run: python scripts/check_repo_hygiene.py
 
-      # P2-6 RUNTIME SDIST OUTPUT IDENTITY CANARY (TEMPORARY, PR #81):
-      # measure, inside the 3.14 leg, the EXACT wheel artifact actually
-      # installed for every runtime sdist (concrete case: moomoo-api
-      # 10.9.6908 from moomoo_api-10.9.6908.tar.gz): materialize the
-      # resolver-selected sdist bytes, build the wheel twice
-      # cache-disabled in a closed world, validate RECORD, prove the
-      # built wheel is exactly what the install report and the installed
-      # RECORD agree on, install the remainder from wheels only, install
-      # MarketVault under the sealed P2-5 closed-world contract, then run
-      # the FULL 258-selector surface inside the shadow env. Measurement
-      # only: a probe failure records fail-closed markers and the normal
-      # FULL chain still runs. Removed entirely on the final docs-only
-      # head.
-      - name: Runtime sdist identity measurement (shadow, measurement only)
-        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && (env.CI_TIER != 'control_plane' || matrix.python-version == '3.11') && env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.14'
-        run: |
-          set -euo pipefail
-          mkdir -p cw-evidence
-          python scripts/ci_runtime_sdist_identity.py measure \
-            --surface test-3.14 \
-            --actions-checkout d23441a48e516b6c34aea4fa41551a30e30af803 \
-            --actions-setup-python ece7cb06caefa5fff74198d8649806c4678c61a1 \
-            --actions-upload-artifact 043fb46d1a93c77aae656e7c1c64a875d1fc6a0a \
-            --out-dir cw-evidence || {
-            echo "SOURCE_BUILD_IDENTITY_VALID=false" \
-              | tee cw-evidence/probe_summary.txt
-            echo "reason=measure_script_crash" >> cw-evidence/probe_summary.txt
-          }
-          cat cw-evidence/probe_summary.txt
-          sb_valid="$(sed -n 's/^SOURCE_BUILD_IDENTITY_VALID=//p' cw-evidence/probe_summary.txt | tail -1)"
-          rt_match="$(sed -n 's/^FINAL_RUNTIME_MATCH=//p' cw-evidence/probe_summary.txt | tail -1)"
-          echo "SOURCE_BUILD_IDENTITY_VALID=${sb_valid:-false}" >> "$GITHUB_ENV"
-          echo "FINAL_RUNTIME_MATCH=${rt_match:-false}" >> "$GITHUB_ENV"
-
       # P1-2 control-plane tier (PR #71): dependency setup and the
       # compile check still run on control_plane, but ONLY on the Python
       # 3.11 leg that executes the conservative six-file control-plane
@@ -245,65 +201,6 @@ jobs:
             "${PY314_SELECTORS[@]}" \
             -q --durations=200
 
-      # P2-6 RUNTIME SDIST OUTPUT IDENTITY CANARY (TEMPORARY, PR #81):
-      # seal the evidence bundle produced by the measure step (3.14 leg)
-      # and replay it from a byte-copy under a DIFFERENT directory name,
-      # forcing the replay verifier to re-derive every check from the
-      # retained bytes (bundle SHA256s are recomputed per file at
-      # replay). The bundle self-verifies with the same verifier source
-      # that made it, so a tampered or truncated bundle fails the
-      # replay. Measurement only: the replay never blocks the FULL chain
-      # (|| true) and the candidate flag only feeds the shadow surface.
-      # Removed entirely on the final docs-only head.
-      - name: Verify and replay runtime sdist evidence bundle (shadow, measurement only)
-        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && (env.CI_TIER != 'control_plane' || matrix.python-version == '3.11') && env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.14'
-        run: |
-          set -euo pipefail
-          python scripts/ci_runtime_sdist_identity.py bundle \
-            --out-dir cw-evidence || {
-            echo "EVIDENCE_BUNDLE_FAILED=1" >> cw-evidence/probe_summary.txt
-          }
-          cat cw-evidence/EVIDENCE_MANIFEST.json || true
-          rm -rf replay-bundle
-          cp -r cw-evidence/. replay-bundle/
-          replay_ok="true"
-          python replay-bundle/verifier_source.py verify-bundle \
-            --bundle-dir replay-bundle \
-            || { replay_ok="false"; echo "REPLAY_FAILED=1" >> cw-evidence/probe_summary.txt; }
-          sb_valid="${SOURCE_BUILD_IDENTITY_VALID:-false}"
-          rt_match="${FINAL_RUNTIME_MATCH:-false}"
-          echo "REPLAY_OK=${replay_ok}" >> cw-evidence/probe_summary.txt
-          echo "SHADOW_REUSE_CANDIDATE=$( \
-            [ "${replay_ok}" = "true" ] && \
-            [ "${sb_valid}" = "true" ] && \
-            [ "${rt_match}" = "true" ] && echo true || echo false )" \
-            >> "$GITHUB_ENV"
-          echo "SHADOW_REUSE_CANDIDATE_FOR_INFO=$( \
-            [ "${replay_ok}" = "true" ] && \
-            [ "${sb_valid}" = "true" ] && \
-            [ "${rt_match}" = "true" ] && echo true || echo false )"
-
-      # P2-6 RUNTIME SDIST OUTPUT IDENTITY CANARY (TEMPORARY, PR #81):
-      # retain the 3.14-leg evidence bundle as a CI artifact so the
-      # off-line replay can be re-derived from the exact uploaded bytes.
-      # if-no-files-found: warn keeps a measurement crash from failing
-      # the job (fail-closed markers already recorded it). Removed
-      # entirely on the final docs-only head.
-      - name: Upload runtime sdist evidence (shadow, measurement only)
-        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && (env.CI_TIER != 'control_plane' || matrix.python-version == '3.11') && env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.14'
-        # P2-6 RUNTIME SDIST OUTPUT IDENTITY CANARY (TEMPORARY, PR #81):
-        # exact-SHA pin of upload-artifact's @v7-resolved commit
-        # 043fb46d1a93c77aae656e7c1c64a875d1fc6a0a.
-        # uses: actions/upload-artifact@v7 (mutable label). Removed on the
-        # final docs-only head.
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: market-vault-runtime-sdist-identity-test-3.14-${{ github.event.pull_request.head.sha || github.sha }}-attempt-${{ github.run_attempt }}
-          path: cw-evidence/
-          if-no-files-found: warn
-          retention-days: 30
-          overwrite: false
-
       # P1-2 control-plane tier (PR #71): the conservative six-file
       # control-plane pytest surface, executed only on Python 3.11 for
       # CI_TIER=control_plane. The file list is literal and reviewable;
@@ -351,22 +248,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        # P2-6 RUNTIME SDIST OUTPUT IDENTITY CANARY (TEMPORARY, PR #81):
-        # exact-SHA pin of checkout's @v6-resolved commit
-        # d23441a48e516b6c34aea4fa41551a30e30af803.
-        # contract: uses: actions/checkout@v6 (mutable label, never
-        # fingerprinted). Removed on the final docs-only head.
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Set up Python
-        # P2-6 RUNTIME SDIST OUTPUT IDENTITY CANARY (TEMPORARY, PR #81):
-        # exact-SHA pin of setup-python's @v6-resolved commit
-        # ece7cb06caefa5fff74198d8649806c4678c61a1.
-        # uses: actions/setup-python@v6 (mutable label). Removed on the
-        # final docs-only head.
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
           cache: pip
@@ -431,40 +318,6 @@ jobs:
           echo "POST_MERGE_REUSE=${marker:-false}" >> "$GITHUB_ENV"
           echo "POST_MERGE_REUSE_REASON=${reason:-verifier_output_missing}" >> "$GITHUB_ENV"
 
-      # P2-6 RUNTIME SDIST OUTPUT IDENTITY CANARY (TEMPORARY, PR #81):
-      # measure, inside the pyarrow24 leg, the EXACT wheel artifact
-      # actually installed for every runtime sdist (concrete case:
-      # moomoo-api 10.9.6908 from moomoo_api-10.9.6908.tar.gz):
-      # materialize the resolver-selected sdist bytes, build the wheel
-      # twice cache-disabled in a closed world, validate RECORD, prove
-      # the built wheel is exactly what the install report and the
-      # installed RECORD agree on, install the remainder from wheels
-      # only, install MarketVault + pyarrow==24.0.0 under the sealed
-      # P2-5 closed-world contract, then run the audited PyArrow 24
-      # regression surface inside the shadow env. Measurement only: a
-      # probe failure records fail-closed markers and the normal FULL
-      # chain still runs. Removed entirely on the final docs-only head.
-      - name: Runtime sdist identity measurement (shadow, measurement only)
-        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
-        run: |
-          set -euo pipefail
-          mkdir -p cw-evidence
-          python scripts/ci_runtime_sdist_identity.py measure \
-            --surface pyarrow24 \
-            --actions-checkout d23441a48e516b6c34aea4fa41551a30e30af803 \
-            --actions-setup-python ece7cb06caefa5fff74198d8649806c4678c61a1 \
-            --actions-upload-artifact 043fb46d1a93c77aae656e7c1c64a875d1fc6a0a \
-            --out-dir cw-evidence || {
-            echo "SOURCE_BUILD_IDENTITY_VALID=false" \
-              | tee cw-evidence/probe_summary.txt
-            echo "reason=measure_script_crash" >> cw-evidence/probe_summary.txt
-          }
-          cat cw-evidence/probe_summary.txt
-          sb_valid="$(sed -n 's/^SOURCE_BUILD_IDENTITY_VALID=//p' cw-evidence/probe_summary.txt | tail -1)"
-          rt_match="$(sed -n 's/^FINAL_RUNTIME_MATCH=//p' cw-evidence/probe_summary.txt | tail -1)"
-          echo "SOURCE_BUILD_IDENTITY_VALID=${sb_valid:-false}" >> "$GITHUB_ENV"
-          echo "FINAL_RUNTIME_MATCH=${rt_match:-false}" >> "$GITHUB_ENV"
-
       # P1-2 control-plane tier (PR #71): for CI_TIER=control_plane the
       # whole PyArrow 24 product surface (pin / assertion / A / B / C) is
       # skipped — no PyArrow product surface is needed for pure
@@ -513,56 +366,6 @@ jobs:
             tests/test_dataset_end_to_end_regression.py \
             -q --durations=100
 
-      # P2-6 RUNTIME SDIST OUTPUT IDENTITY CANARY (TEMPORARY, PR #81):
-      # seal and replay the pyarrow24 evidence bundle (same protocol as
-      # the test leg above: byte-copy to replay-bundle/, re-derive every
-      # check from the retained bytes). Measurement only: the replay
-      # never blocks the FULL chain and the candidate flag only feeds
-      # the shadow surface. Removed entirely on the final docs-only
-      # head.
-      - name: Verify and replay runtime sdist evidence bundle (shadow, measurement only)
-        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
-        run: |
-          set -euo pipefail
-          python scripts/ci_runtime_sdist_identity.py bundle \
-            --out-dir cw-evidence || {
-            echo "EVIDENCE_BUNDLE_FAILED=1" >> cw-evidence/probe_summary.txt
-          }
-          cat cw-evidence/EVIDENCE_MANIFEST.json || true
-          rm -rf replay-bundle
-          cp -r cw-evidence/. replay-bundle/
-          replay_ok="true"
-          python replay-bundle/verifier_source.py verify-bundle \
-            --bundle-dir replay-bundle \
-            || { replay_ok="false"; echo "REPLAY_FAILED=1" >> cw-evidence/probe_summary.txt; }
-          sb_valid="${SOURCE_BUILD_IDENTITY_VALID:-false}"
-          rt_match="${FINAL_RUNTIME_MATCH:-false}"
-          echo "REPLAY_OK=${replay_ok}" >> cw-evidence/probe_summary.txt
-          echo "SHADOW_REUSE_CANDIDATE=$( \
-            [ "${replay_ok}" = "true" ] && \
-            [ "${sb_valid}" = "true" ] && \
-            [ "${rt_match}" = "true" ] && echo true || echo false )" \
-            >> "$GITHUB_ENV"
-          echo "SHADOW_REUSE_CANDIDATE_FOR_INFO=$( \
-            [ "${replay_ok}" = "true" ] && \
-            [ "${sb_valid}" = "true" ] && \
-            [ "${rt_match}" = "true" ] && echo true || echo false )"
-
-      # P2-6 RUNTIME SDIST OUTPUT IDENTITY CANARY (TEMPORARY, PR #81):
-      # retain the pyarrow24 evidence bundle as a CI artifact.
-      # if-no-files-found: warn keeps a measurement crash from failing
-      # the job (fail-closed markers already recorded it). Removed
-      # entirely on the final docs-only head.
-      - name: Upload runtime sdist evidence (shadow, measurement only)
-        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: market-vault-runtime-sdist-identity-pyarrow24-${{ github.event.pull_request.head.sha || github.sha }}-attempt-${{ github.run_attempt }}
-          path: cw-evidence/
-          if-no-files-found: warn
-          retention-days: 30
-          overwrite: false
-
       - name: FULL tests reused from verified PR
         if: env.POST_MERGE_REUSE == 'true'
         run: |
@@ -593,22 +396,12 @@ jobs:
 
     steps:
       - name: Check out repository
-        # P2-6 RUNTIME SDIST OUTPUT IDENTITY CANARY (TEMPORARY, PR #81):
-        # exact-SHA pin of checkout's @v6-resolved commit
-        # d23441a48e516b6c34aea4fa41551a30e30af803.
-        # contract: uses: actions/checkout@v6 (mutable label, never
-        # fingerprinted). Removed on the final docs-only head.
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Set up Python
-        # P2-6 RUNTIME SDIST OUTPUT IDENTITY CANARY (TEMPORARY, PR #81):
-        # exact-SHA pin of setup-python's @v6-resolved commit
-        # ece7cb06caefa5fff74198d8649806c4678c61a1.
-        # uses: actions/setup-python@v6 (mutable label). Removed on the
-        # final docs-only head.
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
           cache: pip
@@ -900,12 +693,7 @@ jobs:
       - name: Upload package audit artifact
         id: package-artifact
         if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
-        # P2-6 RUNTIME SDIST OUTPUT IDENTITY CANARY (TEMPORARY, PR #81):
-        # exact-SHA pin of upload-artifact's @v7-resolved commit
-        # 043fb46d1a93c77aae656e7c1c64a875d1fc6a0a.
-        # uses: actions/upload-artifact@v7 (mutable label). Removed on the
-        # final docs-only head.
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@v7
         with:
           name: market-vault-package-${{ github.event.pull_request.head.sha || github.sha }}-attempt-${{ github.run_attempt }}
           path: |
@@ -953,12 +741,7 @@ jobs:
       - name: Upload FULL CI attestation artifact
         id: attestation-artifact
         if: github.event_name == 'pull_request' && env.CI_TIER == 'full' && env.CI_FULL_MATRIX_REQUIRED == 'true'
-        # P2-6 RUNTIME SDIST OUTPUT IDENTITY CANARY (TEMPORARY, PR #81):
-        # exact-SHA pin of upload-artifact's @v7-resolved commit
-        # 043fb46d1a93c77aae656e7c1c64a875d1fc6a0a.
-        # uses: actions/upload-artifact@v7 (mutable label). Removed on the
-        # final docs-only head.
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@v7
         with:
           name: market-vault-full-ci-attestation-${{ github.event.pull_request.head.sha }}-attempt-${{ github.run_attempt }}
           path: ci_full_attestation.json
