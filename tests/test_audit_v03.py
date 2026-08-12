@@ -1,4 +1,3 @@
-# P2_BUILD_ISOLATION_CANARY_B
 from __future__ import annotations
 
 import json
