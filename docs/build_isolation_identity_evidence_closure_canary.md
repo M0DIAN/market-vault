@@ -1,24 +1,41 @@
 # P2-4 Build-Isolation Identity + Evidence-Closure Canary
 
-**Status:** MEASURED — OBSERVED DECISION **OUTCOME A** — BUILD-ISOLATION
-IDENTITY AND EVIDENCE CLOSURE BOTH PROVEN, PENDING INDEPENDENT REVIEW.
-The two P2-3 proof gaps (docs/runtime_identity_fingerprint_canary.md,
-OUTCOME B) are closed by measurement: the exact PEP 517 / PEP 660 isolated
-build environment was resolved and fingerprinted (setuptools / wheel /
-packaging artifacts with SHA256), bound to the real editable install via pip
-`--build-constraint` with local direct-reference wheels, and the raw
-evidence replayable offline from the uploaded artifacts alone
-(`verifier_source.py verify-bundle` → `EVIDENCE_BUNDLE_REPLAY_OK` on all
-four surface/run combinations). Cross-head production reuse remains **NOT
-ACTIVATED**; **STOP BEFORE MERGE** pending independent review.
+**Status:** MEASURED — FORMAL DECISION **OUTCOME B** — BUILD-ISOLATION
+IDENTITY STILL HAS A **CLOSED-WORLD PROOF GAP**. The two P2-3 proof gaps
+are closed to the extent of the measured boundary: exact artifact identity
+and enforcement for the **probe-observed** PEP 517 / PEP 660 build
+dependency set (setuptools / wheel / packaging artifacts with SHA256) is
+proven and was bound to the real editable install via pip
+`--build-constraint` with local direct-reference wheels, and raw evidence
+replays offline from the uploaded artifacts alone (`verifier_source.py
+verify-bundle` → `EVIDENCE_BUNDLE_REPLAY_OK` on all four surface/run
+combinations). NOT proven: that the ACTUAL isolated PEP 517 environment
+could contain ONLY the probe-observed build package set (closed-world
+identity). Cross-head production reuse remains **NOT READY FOR PRODUCTION
+ACTIVATION**; Partial Reuse V2 remains NOT ACTIVATED; **STOP BEFORE
+MERGE**.
 **PR:** #79
 **Type:** measurement / shadow evidence only. No production behavior changed.
 
-> **Decision discipline:** the observed empirical verdict is OUTCOME A, but
+> **Decision discipline:** the observed empirical verdict was OUTCOME A, but
 > the final formal decision is exactly one of OUTCOME A / OUTCOME B /
 > OUTCOME C, taken by independent review after this measurement. This
 > document does not claim self-embedding; the authoritative values are
 > GitHub PR metadata and the exact-head CI runs referenced below.
+
+> **Evidence-decision correction note:** after the measurement completed,
+> independent review accepted the experiment execution (EXPERIMENT
+> EXECUTION = PASS: build resolution, exact build wheel hash identity,
+> wrong-hash enforcement, actual heavy install used build constraint, raw
+> evidence retention, offline evidence replay) and corrected the formal
+> decision from OUTCOME A to **OUTCOME B**: pip build constraints constrain
+> packages that are REQUESTED — they are NOT an allowlist of every package
+> that may enter the isolated build environment — so the ACTUAL PEP 517
+> environment's closed-world equality to the fingerprinted set is not
+> proven (section 12). Every empirical fact below is unchanged and was
+> re-verified against the exact-head CI evidence. Head A and Head B were
+> NOT rerun; no temporary instrumentation was recreated; production CI is
+> unchanged.
 
 > Every hash in this report is a **CI-ONLY / NON-FORMAL-RELEASE HASH** —
 > it describes a temporary measurement artifact from an exact-head CI run,
@@ -42,11 +59,17 @@ This PR measures both:
   **build_isolation block**: the sealed `[build-system]` contract
   (backend, declared requires), the live PEP 517
   `get_requires_for_build_editable` hook result, the complete **effective
-  build dependency set** with materialized exact wheels (canonical name,
-  version, filename, SHA256), and a **build-only local direct-reference
-  constraint** (`name @ file:///…whl#sha256=<hex>`) proven by a positive
-  constrained editable install (market-vault 0.7.0, zero index fetches) and
-  a negative wrong-hash rejection.
+  build dependency set** (the probe-observed set) with materialized exact
+  wheels (canonical name, version, filename, SHA256), and a **build-only
+  local direct-reference constraint**
+  (`name @ file:///…whl#sha256=<hex>`) proven by a positive constrained
+  editable install (market-vault 0.7.0; no index download visible in the
+  retained top-level positive-install log segment) and a negative
+  wrong-hash rejection. Scope boundary: the probe observes the build
+  dependency set as resolved by ITS OWN hook invocation; the ACTUAL
+  editable build invokes the backend hook again, and the current mechanism
+  does not prove that second invocation cannot yield additional
+  requirements (section 12, closed-world gap).
 - The probe ran as a **shadow** step on the Python 3.14 matrix leg and the
   `portability-pyarrow24` job, AFTER checkout / setup-python / classifier and
   BEFORE the heavy dependency installation. A probe failure recorded
@@ -167,11 +190,14 @@ bundle replays offline: `EVIDENCE_BUNDLE_REPLAY_OK`, all 16
   closed — never "unknown".
 
 **Scope of the V2 fingerprint:** the final installed external runtime
-distribution set (as before) **plus** the exact PEP 517 isolated
+distribution set (as before) **plus** the probe-observed PEP 517 isolated
 build-environment dependency identity — declared `[build-system]`
 requirements, the live `get_requires_for_build_editable` hook result, the
-complete effective build dependency set with exact wheel artifacts, and the
-constraint digest that was bound to the real install.
+complete effective build dependency set (as observed by the probe) with
+exact wheel artifacts, and the constraint digest that was bound to the real
+install. This is exact artifact identity **for the probe-observed build
+dependency set**; it is NOT a closed-world claim about the ACTUAL isolated
+build environment (section 12).
 
 ## 5. Identity contract recorded per surface
 
@@ -307,7 +333,7 @@ enforcement installs (each ~7 s). Per-stage times are recorded in every
 on the heavy environment, and it is measured on both surfaces for both
 heads.
 
-## 12. Build-isolation identity (the P2-3 gap, now measured)
+## 12. Build-isolation identity (the P2-3 gap, now measured — with the closed-world boundary)
 
 Sealed build contract (unchanged, from `pyproject.toml`):
 
@@ -344,10 +370,13 @@ in every replay).
 - **Positive stage** (`P24_CONSTRAINED_INSTALL_BEGIN` segment):
   `pip install --no-deps --build-constraint build_constraints.txt -e .` in
   a clean venv — build dependencies installed from the local wheelhouse,
-  zero index fetches inside the segmented install (the only `Collecting`
-  lines are pip's own cached self-upgrade, which precedes the separator),
-  editable wheel `market_vault-0.7.0-….editable-py3-none-any.whl` built and
-  installed; importlib.metadata check prints `0.7.0`;
+  **no index download was visible in the retained top-level positive-install
+  log segment** (the only `Collecting` lines are pip's own cached
+  self-upgrade, which precedes the separator). This is a measured LOG
+  observation only; it does NOT establish a no-index / closed-world
+  resolver boundary (see the closed-world gap below). Editable wheel
+  `market_vault-0.7.0-….editable-py3-none-any.whl` built and installed;
+  importlib.metadata check prints `0.7.0`;
   `P24_POSITIVE_BUILD_CONSTRAINT_INSTALL_PASSED=true reason=version=0.7.0`.
 - **Negative stage**: the same constraint with one deliberate wrong hash
   (`wrong_hash_constraint.txt`) → pip refuses the build dependency;
@@ -360,8 +389,65 @@ surfaces and both heads, `BUILD_CONSTRAINT_READY=true` in the probe summary
 drove `--build-constraint fp-evidence/build_constraints.txt` on the actual
 `pip install -e ".[dev]"`; `BUILD_CONSTRAINT_USED=true` was recorded, and
 the offline replay's `build_receipt_consistency` check ties the receipt to
-the marker. The build-isolation identity is therefore not merely measured —
-it was enforced on the actual editable installs this PR's CI ran.
+the marker. The probe-observed build-isolation identity was therefore not
+merely measured — it was enforced on the actual editable installs this
+PR's CI ran (for the packages the build requested).
+
+### The closed-world gap (the Outcome-B blocker; NOT proven)
+
+Pip build constraints constrain packages that are **requested**. They are
+NOT an allowlist of every package that may be installed into the isolated
+build environment.
+
+The pre-install probe invokes `get_requires_for_build_editable` and
+observed `[]`. But pip invokes that backend hook **again** while performing
+the actual editable build. The current evidence mechanism does not prove
+that the second invocation could not return an additional build
+requirement. Concretely:
+
+| | Hook result |
+|---|---|
+| probe hook | `[]` |
+| actual pip hook (hypothetical) | `["extra-build-dependency"]` |
+
+Because `extra-build-dependency` is absent from `build_constraints.txt`,
+the current `--build-constraint` does not by itself reject that package —
+the actual build may resolve / install it from an index. The fingerprint
+can therefore remain based on packaging / setuptools / wheel while the
+actual isolated build environment contains a fourth package. That is a
+possible **false-positive environment identity** at the current proof
+boundary.
+
+**Future fail-closed rule:**
+ANY actual isolated-build dependency outside the fingerprinted effective
+build set => RUN / INVALID.
+
+### Path-dependent constraint digest (non-safety portability limitation)
+
+`build_constraints.txt` contains local absolute `file://` paths, so its
+literal SHA256 (`d23280aed9e929c9ba00430cec30cac4b96b708eef7bde99f57273babb359080`)
+also indirectly depends on the workspace path. This creates possible
+**safe false negatives** (same build set at a different workspace path →
+different digest), never unsafe false positives. A future production
+implementation should distinguish `NORMALIZED_BUILD_IDENTITY_SHA256`
+(canonical name / version / filename / artifact SHA256) from
+`EXECUTION_CONSTRAINT_FILE_SHA256` (the concrete local constraint used by
+that job). No redesign happens in #79.
+
+### Next required measurement — CLOSED-WORLD BUILD-ISOLATION ENFORCEMENT
+
+The next gap is: a future canary must prove that the actual PEP 517
+isolated environment **cannot install any build distribution outside the
+measured effective set**. Candidate future approaches (NOT chosen or
+implemented in #79):
+
+- **A.** Build the editable project under a genuinely closed local build
+  source: exact wheelhouse + no external index access for the build phase.
+- **B.** Split runtime dependency preparation from the editable build so
+  that the editable-build step runs `--no-deps` with an isolated-build
+  environment restricted to the exact local build wheelhouse.
+- **C.** Another mechanism that independently records / verifies the
+  ACTUAL isolated build environment and fails on any unmeasured package.
 
 ## 13. Evidence closure (the P2-3 gap, now closed)
 
@@ -393,6 +479,20 @@ install reports and prove offline replay. Measured here:
 - The superseded first Head A bundles (run `31545318378`) are the negative
   evidence sample: `manifest_complete` / `verifier_source` failed closed
   exactly as designed, which is what exposed the marker-retention bug.
+
+**Manifest duplicate-path observation (hardening required, not the
+Outcome-B blocker):** every fixed evidence manifest contains
+`actual_constraint_used.txt` **twice** — test-3.14 bundles have 21 manifest
+entries over 20 unique paths, pyarrow24 bundles 23 entries over 22 unique
+paths. The duplicate entries are byte-identical (same path, same size,
+same SHA256; caused by the marker being both a workspace file and a
+required bundle file). This did NOT invalidate the measured bundles and all
+four independent offline replays still PASS (the verifier collapses
+duplicates into `manifest_by_path`). However, the current verifier does not
+explicitly reject duplicate manifest paths, and a future production rule
+must be: **duplicate EVIDENCE_MANIFEST path => INVALID**, with the manifest
+generator emitting each relative path exactly once. Classified as
+**EVIDENCE MANIFEST HARDENING REQUIRED**.
 
 ## 14. Comparator branches
 
@@ -429,55 +529,79 @@ install reports and prove offline replay. Measured here:
 | TRANSITION: Head B direct child + exact A→B delta (one comment line) | PASS | PASS |
 | SOURCE-INPUT PROOF: #77 boundary contract proves delta irrelevant | PASS | PASS |
 | RUNTIME PROOF: Head B live fingerprint valid + Head B FP == Head A FP | PASS | PASS |
-| BUILD-ISOLATION PROOF: effective build set resolved, wheel-hashed, constraint-bound, positively + negatively enforced, identical across heads | PASS | PASS |
+| BUILD-ISOLATION PROOF: probe-observed effective build set resolved, wheel-hashed, constraint-bound, positively + negatively enforced, identical across heads | PASS | PASS |
 | EVIDENCE-CLOSURE PROOF: all four bundles replay offline (`EVIDENCE_BUNDLE_REPLAY_OK`, 16/16) | PASS | PASS |
+| CLOSED-WORLD PROOF: actual isolated PEP 517 environment contains ONLY the probe-observed set (hook re-invocation can add requirements; constraint is not an allowlist) | **NOT PROVEN** | **NOT PROVEN** |
 
-All observed legs pass, including the two legs P2-3 left unproven. The
-shadow decision is OUTCOME A **pending independent review**; with the
-fail-closed rule "unproven / unequal build-isolation identity => RUN" the
-V2 schema now carries a proven build-isolation leg. No production action
-consumes any of this in #79.
+All observed measurement legs pass, including the two legs P2-3 left
+unproven. But the closed-world leg is NOT PROVEN, so the formal decision
+is OUTCOME B (section 16); with the fail-closed rules "unproven / unequal
+build-isolation identity => RUN" and "ANY actual isolated-build dependency
+outside the fingerprinted effective build set => RUN / INVALID", the V2
+schema carries a proven build-isolation leg for the probe-observed set but
+not a closed-world leg. No production action consumes any of this in #79.
 
-## 16. Decision (observed; STOP BEFORE MERGE)
+## 16. Decision (corrected)
 
-**OUTCOME A — BUILD-ISOLATION IDENTITY AND EVIDENCE CLOSURE BOTH PROVEN**
-(observed verdict; final decision exactly one of OUTCOME A / B / C, taken
-by independent review before merge).
+**OUTCOME B — BUILD-ISOLATION IDENTITY STILL HAS A CLOSED-WORLD PROOF GAP**
+(formal decision, corrected from the observed OUTCOME A by independent
+review; all empirical measurements below unchanged and re-verified against
+the exact-head CI evidence).
 
 PROVEN by #79:
 
-- the exact PEP 517 / PEP 660 isolated build environment is resolved and
-  fingerprinted: declared `[build-system]` contract, live
-  `get_requires_for_build_editable` hook result (`[]`), complete effective
-  build dependency set {packaging 26.3, setuptools 84.0.0, wheel 0.48.0}
-  with materialized exact wheels and SHA256, and a local direct-reference
-  `--build-constraint` digest — identical across heads and surfaces;
-- the constraint is real: positive constrained editable install of
-  market-vault 0.7.0 with zero index fetches, negative wrong-hash
-  rejection, marker lines `P24_POSITIVE_BUILD_CONSTRAINT_INSTALL_PASSED=true`
-  and `P24_NEGATIVE_WRONG_HASH_REJECTED=true` in every bundle;
-- the real heavy editable installs on both surfaces and both heads ran
-  **under** the measured constraint (`BUILD_CONSTRAINT_READY=true` →
-  `BUILD_CONSTRAINT_USED=true`, bound by `build_receipt_consistency`);
-- all four surface/run combinations: probe predicted the actual runtime
-  (file-match), and the evidence bundles replay offline
-  (`EVIDENCE_BUNDLE_REPLAY_OK`, 16/16) from the archived artifacts alone;
-- A/B cross-head V2 fingerprints matched naturally on both surfaces
-  (equality on both), and cross-surface comparison correctly reports
-  `surface_unequal`;
-- the mutation comparator fails closed (66/66 tests on CPython 3.14 and
-  3.11).
+- declared build requirements were resolved;
+- `get_requires_for_build_editable` was probed;
+- the probe-observed effective build set was resolved;
+- exact wheel bytes + SHA256 were materialized;
+- positive constrained editable installs succeeded;
+- wrong-hash constraints were rejected;
+- the actual heavy installs used `--build-constraint`;
+- runtime probe-vs-actual matched;
+- raw actual reports/logs were retained;
+- all four bundles replayed offline.
 
-NOT PROVEN / NOT CLAIMED:
+NOT PROVEN:
 
-- the decision binds only the exact head pair and the sealed source-input
-  boundary contract for the audited `test-3.14` and `pyarrow24` surfaces;
-- no claim for the package surface, test-3.11 blanket FULL surface, or any
-  unmeasured surface; no reuse authorization is granted by this document;
-  Partial Reuse V2 remains NOT ACTIVATED.
+- that the ACTUAL isolated PEP 517 environment could contain ONLY the
+  probe-observed build package set (the closed-world gap, section 12).
+
+**Architecture conclusion:** #79 proves that exact artifact binding for the
+probe-observed PEP 517 build dependency set is viable, and that raw
+evidence closure is viable. #79 does NOT yet prove that the actual isolated
+build environment is a closed set equal to the fingerprinted effective set.
+Therefore Partial Reuse V2 remains **NOT READY FOR PRODUCTION ACTIVATION**;
+no V2 is activated.
+
+**Scope limit:** the decision binds only the exact head pair and the sealed
+source-input boundary contract for the audited `test-3.14` and `pyarrow24`
+surfaces. No claim for the package surface, test-3.11 blanket FULL surface,
+or any unmeasured surface. Still not allowed: package reuse, test-3.11
+reuse, arbitrary ancestry, transitive evidence chaining, cross-branch
+reuse, production skipping, mutable-label-only action identity. No reuse
+authorization is granted by this document.
 
 ## 17. Remaining limitations
 
+- **Closed-world build-isolation identity is NOT proven (the Outcome-B
+  blocker):** pip build constraints constrain requested packages, not every
+  package that may enter the isolated build environment; the backend hook
+  is invoked again during the actual build, and the current mechanism does
+  not prove that second invocation cannot add a build requirement outside
+  the fingerprinted set (section 12).
+- **The zero-index observation is a log observation, not a resolver
+  boundary:** "no index download visible in the retained top-level
+  positive-install log segment" does not establish a no-index / closed-world
+  resolver guarantee (section 12).
+- **Manifest duplicate paths:** the fixed bundles' manifests list
+  `actual_constraint_used.txt` twice (byte-identical entries); harmless to
+  the measured replays but EVIDENCE MANIFEST HARDENING REQUIRED — future
+  rule: duplicate path => INVALID (section 13).
+- **Path-dependent constraint digest:** the constraint file's literal SHA256
+  depends on the local absolute `file://` paths (workspace path), creating
+  possible safe false negatives, never unsafe false positives; future
+  production should separate normalized build identity from execution
+  constraint file hashes (section 12).
 - The fingerprint is a snapshot of the CI runner's hosted image and of PyPI
   state at probe time; GitHub can change `ImageVersion` between runs (no
   drift observed; any drift fails closed as `runner_image_version_unequal`
@@ -512,9 +636,14 @@ NOT PROVEN / NOT CLAIMED:
   bundles were not replayable (marker not retained); the bug was fixed and
   re-verified before Head B; the fixed run is the authoritative Head A
   evidence (sections 1, 13).
-- **STOP BEFORE MERGE:** this document records the observed verdict
-  (OUTCOME A) pending independent review; the final formal decision is
-  exactly one of OUTCOME A / OUTCOME B / OUTCOME C.
+- **Manifest duplicate-path observation is on record** as EVIDENCE MANIFEST
+  HARDENING REQUIRED, not as the Outcome-B blocker (section 13).
+- **Formal decision corrected to OUTCOME B** after independent review
+  (accepted experiment execution; corrected OUTCOME A → OUTCOME B on the
+  closed-world isolated-build dependency identity gap); empirical
+  measurement facts unchanged. Head A / Head B were NOT rerun; no temporary
+  instrumentation was recreated; production CI is unchanged.
+- **STOP BEFORE MERGE.**
 
 **Final PR head:**
 NOT SELF-EMBEDDED BY DESIGN.
