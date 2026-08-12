@@ -291,10 +291,10 @@ jobs:
           cp -r cw-evidence/. replay-bundle/
           python replay-bundle/verifier_source.py verify-bundle --bundle-dir replay-bundle || true
           cat replay-bundle/replay_summary.txt || true
-          replay_ok="$(sed -n 's/^EVIDENCE_BUNDLE_REPLAY_OK=//p' replay-bundle/replay_summary.txt | tail -1)"
-          cw_valid="$(sed -n 's/^CLOSED_WORLD_BUILD_VALID=//p' cw-evidence/probe_summary.txt | tail -1)"
-          rt_match="$(sed -n 's/^FINAL_RUNTIME_MATCH=//p' cw-evidence/probe_summary.txt | tail -1)"
-          sentinel_no="$(sed -n 's/^CLOSED_WORLD_SENTINEL_AUTO_INSTALL=//p' cw-evidence/probe_summary.txt | tail -1)"
+          replay_ok="$(sed -n 's/^EVIDENCE_BUNDLE_REPLAY_OK=//p' replay-bundle/replay_summary.txt | tail -1 || true)"
+          cw_valid="$(sed -n 's/^CLOSED_WORLD_BUILD_VALID=//p' cw-evidence/probe_summary.txt | tail -1 || true)"
+          rt_match="$(sed -n 's/^FINAL_RUNTIME_MATCH=//p' cw-evidence/probe_summary.txt | tail -1 || true)"
+          sentinel_no="$(sed -n 's/^CLOSED_WORLD_SENTINEL_AUTO_INSTALL=//p' cw-evidence/probe_summary.txt | tail -1 || true)"
           if [ "${replay_ok:-false}" = "true" ] && [ "${cw_valid:-false}" = "true" ] && [ "${rt_match:-false}" = "true" ] && [ "${sentinel_no:-true}" = "false" ]; then
             echo "SHADOW_REUSE_CANDIDATE=true" >> "$GITHUB_ENV"
           else
@@ -523,10 +523,10 @@ jobs:
           cp -r cw-evidence/. replay-bundle/
           python replay-bundle/verifier_source.py verify-bundle --bundle-dir replay-bundle || true
           cat replay-bundle/replay_summary.txt || true
-          replay_ok="$(sed -n 's/^EVIDENCE_BUNDLE_REPLAY_OK=//p' replay-bundle/replay_summary.txt | tail -1)"
-          cw_valid="$(sed -n 's/^CLOSED_WORLD_BUILD_VALID=//p' cw-evidence/probe_summary.txt | tail -1)"
-          rt_match="$(sed -n 's/^FINAL_RUNTIME_MATCH=//p' cw-evidence/probe_summary.txt | tail -1)"
-          sentinel_no="$(sed -n 's/^CLOSED_WORLD_SENTINEL_AUTO_INSTALL=//p' cw-evidence/probe_summary.txt | tail -1)"
+          replay_ok="$(sed -n 's/^EVIDENCE_BUNDLE_REPLAY_OK=//p' replay-bundle/replay_summary.txt | tail -1 || true)"
+          cw_valid="$(sed -n 's/^CLOSED_WORLD_BUILD_VALID=//p' cw-evidence/probe_summary.txt | tail -1 || true)"
+          rt_match="$(sed -n 's/^FINAL_RUNTIME_MATCH=//p' cw-evidence/probe_summary.txt | tail -1 || true)"
+          sentinel_no="$(sed -n 's/^CLOSED_WORLD_SENTINEL_AUTO_INSTALL=//p' cw-evidence/probe_summary.txt | tail -1 || true)"
           if [ "${replay_ok:-false}" = "true" ] && [ "${cw_valid:-false}" = "true" ] && [ "${rt_match:-false}" = "true" ] && [ "${sentinel_no:-true}" = "false" ]; then
             echo "SHADOW_REUSE_CANDIDATE=true" >> "$GITHUB_ENV"
           else

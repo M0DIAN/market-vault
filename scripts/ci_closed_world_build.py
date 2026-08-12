@@ -131,7 +131,6 @@ BUNDLE_REQUIRED_FILES = (
     "synthetic_source/p2_synthetic_backend.py",
     "probe_summary.txt",
     "verifier_source.py",
-    "EVIDENCE_MANIFEST.json",
 )
 # pyarrow24 additionally carries the pyarrow pin install report.
 BUNDLE_REQUIRED_FILES_PYARROW24 = (
@@ -291,11 +290,14 @@ def _inventory_json(venv_python, log_path=None):
 def _importlib_metadata_check(venv_python, records, log_path=None):
     """Cross-check that each {name, version} record is present in the venv."""
     inventory = _inventory_json(venv_python, log_path=log_path)
+    # importlib.metadata returns raw dist names ("jaraco.classes", "PyYAML",
+    # "moomoo_api") — canonicalize the whole inventory for lookup.
+    by_canonical = {canonicalize_name(k): v for k, v in inventory.items()}
     checks = {}
     ok = True
     for rec in sorted(records, key=lambda r: canonicalize_name(r["name"])):
         key = canonicalize_name(rec["name"])
-        actual = inventory.get(key)
+        actual = by_canonical.get(key)
         if actual is None:
             ok = False
             checks[key] = {"expected": rec["version"], "actual": "MISSING"}
@@ -360,7 +362,9 @@ def parse_pip_report(report_path, skip_local_project=True):
         info = entry.get("download_info") or {}
         if info.get("url"):
             url = normalize_download_url(info["url"])
-            hashes = info.get("hashes") or {}
+            # pip --report nests hashes under download_info.archive_info
+            archive_info = info.get("archive_info") or {}
+            hashes = archive_info.get("hashes") or info.get("hashes") or {}
             sha = hashes.get("sha256")
             if not sha or not re.fullmatch(r"[0-9a-f]{64}", str(sha)):
                 raise ValueError(
@@ -396,10 +400,13 @@ def merge_install_reports(report_paths):
 
 
 def dependency_contract(repo_root):
+    import tomllib
+
     pyproject = Path(repo_root) / "pyproject.toml"
     if not pyproject.exists():
         raise FileNotFoundError(f"pyproject.toml not found at {pyproject}")
-    data = read_json(pyproject)
+    with open(pyproject, "rb") as fh:
+        data = tomllib.load(fh)
     project = data.get("project") or {}
     build_system = data.get("build-system") or {}
     build_requires = list(build_system.get("requires") or [])
@@ -489,8 +496,9 @@ class BuildSetResolver:
 
     def _dry_run_report(self, requirements, report_rel, allow_fail=False):
         report_path = self.out_dir / report_rel
-        cmd = [self.pip_exec, "install", "--dry-run", "--ignore-installed",
-               "--report", str(report_path), *requirements]
+        cmd = [self.venv_python, "-m", "pip", "install", "--dry-run",
+               "--ignore-installed", "--report", str(report_path),
+               *requirements]
         proc = _run(cmd, cwd=self.out_dir.parent, log_path=self.log_path,
                     allow_fail=allow_fail)
         return report_path
@@ -1097,8 +1105,12 @@ class ClosedWorldProbe:
         identity + live importlib.metadata."""
         records = merge_install_reports(reports)
         resolution_by_name = {r["name"]: r for r in resolution}
+        inventory = _inventory_json(exact_python, log_path=self.log_path)
+        inv_by_canonical = {canonicalize_name(k): v
+                            for k, v in inventory.items()}
         ok = True
         mismatches = {}
+        pre_satisfied = {}
         for rec in records:
             expected = resolution_by_name.get(rec["name"])
             if expected is None:
@@ -1121,10 +1133,27 @@ class ClosedWorldProbe:
                     "note": "artifact sha256 differs at equal version",
                 }
         for name in sorted(set(resolution_by_name) - set(records_by_name(records))):
-            ok = False
-            mismatches[name] = {
-                "final": "ABSENT", "resolution": resolution_by_name[name]["version"]
-            }
+            # Absent from the install report: pip skips distributions the
+            # exact prebuild env already provides (e.g. build deps such as
+            # packaging). Accept iff the final env still holds the expected
+            # version — the env-level match is what matters.
+            expected = resolution_by_name[name]
+            live_version = inv_by_canonical.get(name)
+            if (live_version is not None
+                    and canonicalize_name(str(live_version))
+                    == canonicalize_name(str(expected["version"]))):
+                pre_satisfied[name] = {
+                    "version": expected["version"],
+                    "sha256": expected.get("sha256"),
+                    "reason": "already present in exact prebuild env; "
+                              "pip did not reinstall",
+                }
+            else:
+                ok = False
+                mismatches[name] = {
+                    "final": "ABSENT", "resolution": expected["version"],
+                    "note": "not present in final env",
+                }
         live_ok, live_checks, _ = _importlib_metadata_check(
             exact_python, [{"name": r["name"], "version": r["version"]}
                            for r in records],
@@ -1144,6 +1173,7 @@ class ClosedWorldProbe:
             "surface": self.surface,
             "final_runtime_match": ok and live_ok and pyarrow_ok,
             "report_vs_resolution_mismatches": mismatches,
+            "pre_satisfied_by_exact_build_env": pre_satisfied,
             "importlib_cross_check_ok": live_ok,
             "importlib_checks": live_checks,
             "pyarrow24_version": pyarrow_version,
@@ -1169,16 +1199,22 @@ def records_by_name(records):
 
 
 def cmd_measure(args):
-    probe = ClosedWorldProbe(args.surface, args.actions, args.repo_root,
-                             args.out_dir)
+    actions = {
+        "checkout": args.actions_checkout,
+        "setup_python": args.actions_setup_python,
+        "upload_artifact": args.actions_upload_artifact,
+    }
     t0 = time.time()
     summary = {}
+    probe = None
     try:
+        probe = ClosedWorldProbe(args.surface, actions, args.repo_root,
+                                 args.out_dir)
         base_python = sys.executable
         summary["runner"] = runner_identity()
         summary["python"] = python_identity()
         summary["dependency_contract"] = probe.contract
-        summary["action_contract"] = action_contract(args.actions, args.repo_root)
+        summary["action_contract"] = action_contract(actions, args.repo_root)
 
         resolution, pip_version = probe.leg_runtime_resolution(base_python)
         summary["resolved_distributions"] = resolution
@@ -1208,6 +1244,8 @@ def cmd_measure(args):
         summary["normalized_build_identity_sha256"] = (
             identity_doc["normalized_build_identity_sha256"]
         )
+        probe._mark("NORMALIZED_BUILD_IDENTITY_SHA256",
+                    identity_doc["normalized_build_identity_sha256"])
 
         build_ok = probe.leg_closed_world_build(exact_python)
         delta = probe.leg_delta(exact_python, pre)
@@ -1216,9 +1254,12 @@ def cmd_measure(args):
         synthetic = probe.leg_synthetic(base_python, build_set)
         summary["synthetic"] = synthetic
 
-        reports = [probe.out_dir / "runtime_actual_install_report.json"]
-        if args.surface == "pyarrow24":
-            reports.append(probe.out_dir / "runtime_pyarrow_pin_report.json")
+        runtime_report, pin_report = probe.leg_runtime_install(exact_python)
+        reports = []
+        if runtime_report is not None:
+            reports.append(runtime_report)
+        if pin_report is not None:
+            reports.append(pin_report)
         runtime_verdict = probe.leg_final_runtime_match(
             exact_python, resolution, reports
         )
@@ -1241,6 +1282,7 @@ def cmd_measure(args):
         receipt = {
             "schema_version": SCHEMA_VERSION,
             "surface": args.surface,
+            "verifier_script_sha256": sha256_file(Path(__file__)),
             "backend": build_set["backend"],
             "normalized_build_identity_sha256": (
                 identity_doc["normalized_build_identity_sha256"]
@@ -1312,6 +1354,9 @@ def cmd_measure(args):
         elapsed = time.time() - t0
         probe._mark("MEASURE_ELAPSED_SECONDS", round(elapsed, 1))
     except Exception as exc:  # measurement never fails the job
+        if probe is None:
+            probe = ClosedWorldProbe(args.surface, actions, args.repo_root,
+                                     args.out_dir)
         probe._mark("MEASURE_CRASH", True, f"{type(exc).__name__}: {exc}")
 
     summary_path = probe.out_dir / "probe_summary.txt"
@@ -1396,6 +1441,10 @@ def _write_manifest(out_dir, required):
                 f"EVIDENCE_MANIFEST_INVALID reason=duplicate_path:{rel}"
             )
         seen.add(rel)
+    # The manifest cannot bind its own final bytes (self-referential hash);
+    # its own entry is excluded and its integrity is carried by the upload
+    # artifact + the binding of every other file below.
+    rels = [rel for rel in rels if rel != "EVIDENCE_MANIFEST.json"]
     missing = [r for r in required if r not in rels]
     manifest = {
         "schema_version": SCHEMA_VERSION,
@@ -1509,6 +1558,9 @@ class BundleVerifier:
             rel = entry.get("path")
             if not rel:
                 hash_ok = False
+                continue
+            # Defensive: a manifest cannot bind its own bytes.
+            if rel == "EVIDENCE_MANIFEST.json":
                 continue
             path = root / rel
             if not path.is_file():
@@ -1684,12 +1736,16 @@ class BundleVerifier:
             )
         self._check("runtime_receipt", runtime_ok)
 
-        # 18. verifier self-identity: the running verifier IS the bundle copy
+        # 18. verifier self-identity: the bundle verifier_source.py is
+        # byte-identical to the script that produced the evidence, as
+        # recorded in the receipt at measure time.
         verifier_ok = False
         vf = root / "verifier_source.py"
-        if vf.is_file():
-            running = Path(os.path.abspath(__file__))
-            verifier_ok = os.path.realpath(running) == os.path.realpath(vf)
+        recorded = None
+        if receipt_path.is_file():
+            recorded = read_json(receipt_path).get("verifier_script_sha256")
+        if vf.is_file() and isinstance(recorded, str):
+            verifier_ok = sha256_file(vf) == recorded
         self._check("verifier_source", verifier_ok)
 
         return self._summary(True)
