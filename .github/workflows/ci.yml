@@ -27,21 +27,12 @@ jobs:
 
     steps:
       - name: Check out repository
-        # P2-5 CLOSED-WORLD BUILD CANARY: exact-SHA pin of checkout's @v6-
-        # resolved commit d23441a48e516b6c34aea4fa41551a30e30af803.
-        # contract: uses: actions/checkout@v6 (mutable label, never
-        # dereferenced in this head; every step's action identity is
-        # fingerprinted). Removed on the final docs-only head.
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Set up Python
-        # P2-5 CLOSED-WORLD BUILD CANARY: exact-SHA pin of setup-python's
-        # @v6-resolved commit ece7cb06caefa5fff74198d8649806c4678c61a1.
-        # uses: actions/setup-python@v6 (mutable label). Removed on the
-        # final docs-only head.
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -135,47 +126,6 @@ jobs:
 
       - name: Check repository hygiene
         run: python scripts/check_repo_hygiene.py
-
-      # P2-5 CLOSED-WORLD BUILD CANARY (TEMPORARY, PR #80): shadow
-      # measurement ONLY — the probe never skips validation and never
-      # gates the heavy chain. Before the heavy install it measures
-      # whether the REAL editable build can execute as a closed world:
-      # live-resolved effective build set (declared requires + the
-      # get_requires_for_build_editable hook + transitive graph), every
-      # artifact a wheel with exact SHA256 materialized locally; stable
-      # dual dynamic-hook probe; an exact prebuild venv provisioned ONLY
-      # from the local wheelhouse (PIP_NO_INDEX=1 + --require-hashes);
-      # the real `pip install --no-build-isolation --no-deps
-      # --check-build-dependencies -e .` inside that exact env; pre/post
-      # distribution inventories (only market-vault 0.7.0 may appear);
-      # synthetic sentinel control (ordinary isolation auto-installs) and
-      # closed-world rejection (artifact available, never auto-installed);
-      # runtime deps installed separately after the build with
-      # FINAL_RUNTIME_MATCH. A probe failure records fail-closed markers
-      # and the normal FULL chain still runs. Removed entirely on the
-      # final docs-only head.
-      - name: Closed-world build measurement (shadow, measurement only)
-        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && (env.CI_TIER != 'control_plane' || matrix.python-version == '3.11') && env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.14'
-        run: |
-          set -euo pipefail
-          mkdir -p cw-evidence
-          python scripts/ci_closed_world_build.py measure \
-            --surface test-3.14 \
-            --actions-checkout d23441a48e516b6c34aea4fa41551a30e30af803 \
-            --actions-setup-python ece7cb06caefa5fff74198d8649806c4678c61a1 \
-            --actions-upload-artifact 043fb46d1a93c77aae656e7c1c64a875d1fc6a0a \
-            --out-dir cw-evidence || {
-            echo "CLOSED_WORLD_BUILD_VALID=false" \
-              | tee cw-evidence/probe_summary.txt
-            echo "reason=measure_script_crash" >> cw-evidence/probe_summary.txt
-          }
-          cat cw-evidence/probe_summary.txt
-          cw_valid="$(sed -n 's/^CLOSED_WORLD_BUILD_VALID=//p' cw-evidence/probe_summary.txt | tail -1)"
-          rt_match="$(sed -n 's/^FINAL_RUNTIME_MATCH=//p' cw-evidence/probe_summary.txt | tail -1)"
-          sentinel_no="$(sed -n 's/^CLOSED_WORLD_SENTINEL_AUTO_INSTALL=//p' cw-evidence/probe_summary.txt | tail -1)"
-          echo "CLOSED_WORLD_BUILD_VALID=${cw_valid:-false}" >> "$GITHUB_ENV"
-          echo "FINAL_RUNTIME_MATCH=${rt_match:-false}" >> "$GITHUB_ENV"
-          echo "CLOSED_WORLD_SENTINEL_AUTO_INSTALL=${sentinel_no:-true}" >> "$GITHUB_ENV"
 
       # P1-2 control-plane tier (PR #71): dependency setup and the
       # compile check still run on control_plane, but ONLY on the Python
@@ -274,51 +224,6 @@ jobs:
           echo "FULL_TESTS_REUSED_FROM_VERIFIED_PR"
           echo "reason=${{ env.POST_MERGE_REUSE_REASON }}"
 
-      # P2-5 CLOSED-WORLD BUILD CANARY (TEMPORARY, PR #80): assemble the
-      # self-contained evidence bundle with the duplicate-path-hardened
-      # manifest, copy it to a clean temp dir, and replay it OFFLINE with
-      # the bundle's own verifier. Measurement only; every step tolerates
-      # failure and the heavy chain is never skipped.
-      - name: Verify and replay closed-world evidence bundle (shadow, measurement only)
-        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && (env.CI_TIER != 'control_plane' || matrix.python-version == '3.11') && env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.14'
-        run: |
-          set -euo pipefail
-          python scripts/ci_closed_world_build.py bundle \
-            --out-dir cw-evidence || true
-          cat cw-evidence/EVIDENCE_MANIFEST.json || true
-          rm -rf replay-bundle
-          mkdir -p replay-bundle
-          cp -r cw-evidence/. replay-bundle/
-          python replay-bundle/verifier_source.py verify-bundle --bundle-dir replay-bundle || true
-          cat replay-bundle/replay_summary.txt || true
-          replay_ok="$(sed -n 's/^EVIDENCE_BUNDLE_REPLAY_OK=//p' replay-bundle/replay_summary.txt | tail -1 || true)"
-          cw_valid="$(sed -n 's/^CLOSED_WORLD_BUILD_VALID=//p' cw-evidence/probe_summary.txt | tail -1 || true)"
-          rt_match="$(sed -n 's/^FINAL_RUNTIME_MATCH=//p' cw-evidence/probe_summary.txt | tail -1 || true)"
-          sentinel_no="$(sed -n 's/^CLOSED_WORLD_SENTINEL_AUTO_INSTALL=//p' cw-evidence/probe_summary.txt | tail -1 || true)"
-          if [ "${replay_ok:-false}" = "true" ] && [ "${cw_valid:-false}" = "true" ] && [ "${rt_match:-false}" = "true" ] && [ "${sentinel_no:-true}" = "false" ]; then
-            echo "SHADOW_REUSE_CANDIDATE=true" >> "$GITHUB_ENV"
-          else
-            echo "SHADOW_REUSE_CANDIDATE=false" >> "$GITHUB_ENV"
-          fi
-          echo "SHADOW_REUSE_CANDIDATE=${{ env.SHADOW_REUSE_CANDIDATE }}"
-
-      # P2-5 CLOSED-WORLD BUILD CANARY (TEMPORARY, PR #80): upload the
-      # measurement evidence, attempt-bound to the exact PR head SHA
-      # (same naming contract as the existing package artifact).
-      - name: Upload closed-world evidence (shadow, measurement only)
-        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && (env.CI_TIER != 'control_plane' || matrix.python-version == '3.11') && env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.14'
-        # P2-5 CLOSED-WORLD BUILD CANARY: exact-SHA pin of upload-artifact's
-        # @v7-resolved commit 043fb46d1a93c77aae656e7c1c64a875d1fc6a0a.
-        # uses: actions/upload-artifact@v7 (mutable label). Removed on the
-        # final docs-only head.
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: market-vault-closed-world-test-3.14-${{ github.event.pull_request.head.sha || github.sha }}-attempt-${{ github.run_attempt }}
-          path: cw-evidence/
-          if-no-files-found: warn
-          retention-days: 30
-          overwrite: false
-
       - name: Fast-path tier marker
         if: env.CI_TIER == 'docs_fast' || env.CI_TIER == 'package_docs'
         run: |
@@ -343,21 +248,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        # P2-5 CLOSED-WORLD BUILD CANARY: exact-SHA pin of checkout's @v6-
-        # resolved commit d23441a48e516b6c34aea4fa41551a30e30af803.
-        # contract: uses: actions/checkout@v6 (mutable label, never
-        # dereferenced in this head; every step's action identity is
-        # fingerprinted). Removed on the final docs-only head.
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Set up Python
-        # P2-5 CLOSED-WORLD BUILD CANARY: exact-SHA pin of setup-python's
-        # @v6-resolved commit ece7cb06caefa5fff74198d8649806c4678c61a1.
-        # uses: actions/setup-python@v6 (mutable label). Removed on the
-        # final docs-only head.
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
           cache: pip
@@ -422,36 +318,6 @@ jobs:
           echo "POST_MERGE_REUSE=${marker:-false}" >> "$GITHUB_ENV"
           echo "POST_MERGE_REUSE_REASON=${reason:-verifier_output_missing}" >> "$GITHUB_ENV"
 
-      # P2-5 CLOSED-WORLD BUILD CANARY (TEMPORARY, PR #80): shadow
-      # measurement ONLY — the probe never skips validation and never
-      # gates the heavy chain. Same closed-world measurement as the
-      # test-3.14 leg, on the pyarrow24 surface (runtime contract ends
-      # with pyarrow==24.0.0; FINAL_RUNTIME_MATCH additionally requires
-      # pyarrow.__version__ == 24.0.0). Removed entirely on the final
-      # docs-only head.
-      - name: Closed-world build measurement (shadow, measurement only)
-        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
-        run: |
-          set -euo pipefail
-          mkdir -p cw-evidence
-          python scripts/ci_closed_world_build.py measure \
-            --surface pyarrow24 \
-            --actions-checkout d23441a48e516b6c34aea4fa41551a30e30af803 \
-            --actions-setup-python ece7cb06caefa5fff74198d8649806c4678c61a1 \
-            --actions-upload-artifact 043fb46d1a93c77aae656e7c1c64a875d1fc6a0a \
-            --out-dir cw-evidence || {
-            echo "CLOSED_WORLD_BUILD_VALID=false" \
-              | tee cw-evidence/probe_summary.txt
-            echo "reason=measure_script_crash" >> cw-evidence/probe_summary.txt
-          }
-          cat cw-evidence/probe_summary.txt
-          cw_valid="$(sed -n 's/^CLOSED_WORLD_BUILD_VALID=//p' cw-evidence/probe_summary.txt | tail -1)"
-          rt_match="$(sed -n 's/^FINAL_RUNTIME_MATCH=//p' cw-evidence/probe_summary.txt | tail -1)"
-          sentinel_no="$(sed -n 's/^CLOSED_WORLD_SENTINEL_AUTO_INSTALL=//p' cw-evidence/probe_summary.txt | tail -1)"
-          echo "CLOSED_WORLD_BUILD_VALID=${cw_valid:-false}" >> "$GITHUB_ENV"
-          echo "FINAL_RUNTIME_MATCH=${rt_match:-false}" >> "$GITHUB_ENV"
-          echo "CLOSED_WORLD_SENTINEL_AUTO_INSTALL=${sentinel_no:-true}" >> "$GITHUB_ENV"
-
       # P1-2 control-plane tier (PR #71): for CI_TIER=control_plane the
       # whole PyArrow 24 product surface (pin / assertion / A / B / C) is
       # skipped — no PyArrow product surface is needed for pure
@@ -506,50 +372,6 @@ jobs:
           echo "FULL_TESTS_REUSED_FROM_VERIFIED_PR"
           echo "reason=${{ env.POST_MERGE_REUSE_REASON }}"
 
-      # P2-5 CLOSED-WORLD BUILD CANARY (TEMPORARY, PR #80): assemble the
-      # self-contained evidence bundle (including the pyarrow24 pin
-      # report), copy it to a clean temp dir, and replay it OFFLINE with
-      # the bundle's own verifier. Measurement only; the heavy chain is
-      # never skipped.
-      - name: Verify and replay closed-world evidence bundle (shadow, measurement only)
-        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
-        run: |
-          set -euo pipefail
-          python scripts/ci_closed_world_build.py bundle \
-            --out-dir cw-evidence || true
-          cat cw-evidence/EVIDENCE_MANIFEST.json || true
-          rm -rf replay-bundle
-          mkdir -p replay-bundle
-          cp -r cw-evidence/. replay-bundle/
-          python replay-bundle/verifier_source.py verify-bundle --bundle-dir replay-bundle || true
-          cat replay-bundle/replay_summary.txt || true
-          replay_ok="$(sed -n 's/^EVIDENCE_BUNDLE_REPLAY_OK=//p' replay-bundle/replay_summary.txt | tail -1 || true)"
-          cw_valid="$(sed -n 's/^CLOSED_WORLD_BUILD_VALID=//p' cw-evidence/probe_summary.txt | tail -1 || true)"
-          rt_match="$(sed -n 's/^FINAL_RUNTIME_MATCH=//p' cw-evidence/probe_summary.txt | tail -1 || true)"
-          sentinel_no="$(sed -n 's/^CLOSED_WORLD_SENTINEL_AUTO_INSTALL=//p' cw-evidence/probe_summary.txt | tail -1 || true)"
-          if [ "${replay_ok:-false}" = "true" ] && [ "${cw_valid:-false}" = "true" ] && [ "${rt_match:-false}" = "true" ] && [ "${sentinel_no:-true}" = "false" ]; then
-            echo "SHADOW_REUSE_CANDIDATE=true" >> "$GITHUB_ENV"
-          else
-            echo "SHADOW_REUSE_CANDIDATE=false" >> "$GITHUB_ENV"
-          fi
-          echo "SHADOW_REUSE_CANDIDATE=${{ env.SHADOW_REUSE_CANDIDATE }}"
-
-      # P2-5 CLOSED-WORLD BUILD CANARY (TEMPORARY, PR #80): upload the
-      # measurement evidence, attempt-bound to the exact PR head SHA.
-      - name: Upload closed-world evidence (shadow, measurement only)
-        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
-        # P2-5 CLOSED-WORLD BUILD CANARY: exact-SHA pin of upload-artifact's
-        # @v7-resolved commit 043fb46d1a93c77aae656e7c1c64a875d1fc6a0a.
-        # uses: actions/upload-artifact@v7 (mutable label). Removed on the
-        # final docs-only head.
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: market-vault-closed-world-pyarrow24-${{ github.event.pull_request.head.sha || github.sha }}-attempt-${{ github.run_attempt }}
-          path: cw-evidence/
-          if-no-files-found: warn
-          retention-days: 30
-          overwrite: false
-
       # P1-2 control-plane tier marker (PR #71): the PyArrow 24 surface
       # (pin / assertion / A / B / C) is skipped wholesale for
       # CI_TIER=control_plane — no PyArrow product surface is needed for
@@ -574,21 +396,12 @@ jobs:
 
     steps:
       - name: Check out repository
-        # P2-5 CLOSED-WORLD BUILD CANARY: exact-SHA pin of checkout's @v6-
-        # resolved commit d23441a48e516b6c34aea4fa41551a30e30af803.
-        # contract: uses: actions/checkout@v6 (mutable label, never
-        # dereferenced in this head; every step's action identity is
-        # fingerprinted). Removed on the final docs-only head.
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Set up Python
-        # P2-5 CLOSED-WORLD BUILD CANARY: exact-SHA pin of setup-python's
-        # @v6-resolved commit ece7cb06caefa5fff74198d8649806c4678c61a1.
-        # uses: actions/setup-python@v6 (mutable label). Removed on the
-        # final docs-only head.
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
           cache: pip
@@ -880,11 +693,7 @@ jobs:
       - name: Upload package audit artifact
         id: package-artifact
         if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
-        # P2-5 CLOSED-WORLD BUILD CANARY: exact-SHA pin of upload-artifact's
-        # @v7-resolved commit 043fb46d1a93c77aae656e7c1c64a875d1fc6a0a.
-        # uses: actions/upload-artifact@v7 (mutable label). Removed on the
-        # final docs-only head.
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@v7
         with:
           name: market-vault-package-${{ github.event.pull_request.head.sha || github.sha }}-attempt-${{ github.run_attempt }}
           path: |
@@ -932,11 +741,7 @@ jobs:
       - name: Upload FULL CI attestation artifact
         id: attestation-artifact
         if: github.event_name == 'pull_request' && env.CI_TIER == 'full' && env.CI_FULL_MATRIX_REQUIRED == 'true'
-        # P2-5 CLOSED-WORLD BUILD CANARY: exact-SHA pin of upload-artifact's
-        # @v7-resolved commit 043fb46d1a93c77aae656e7c1c64a875d1fc6a0a.
-        # uses: actions/upload-artifact@v7 (mutable label). Removed on the
-        # final docs-only head.
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@v7
         with:
           name: market-vault-full-ci-attestation-${{ github.event.pull_request.head.sha }}-attempt-${{ github.run_attempt }}
           path: ci_full_attestation.json
