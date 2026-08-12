@@ -98,6 +98,7 @@ import sys
 import tarfile
 import tempfile
 import time
+import tomllib
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -244,6 +245,13 @@ def sha256_file(path):
 def read_json(path):
     with open(path, "r", encoding="utf-8") as fh:
         return json.load(fh)
+
+
+def read_pyproject(path):
+    """pyproject.toml is TOML, never JSON (a JSON parse of the sealed
+    pyproject.toml crashed Head A before any measurement happened)."""
+    with open(path, "rb") as fh:
+        return tomllib.load(fh)
 
 
 def write_json(path, obj):
@@ -514,7 +522,7 @@ def dependency_contract(repo_root):
     pyproject = Path(repo_root) / "pyproject.toml"
     if not pyproject.exists():
         raise FileNotFoundError(f"pyproject.toml not found at {pyproject}")
-    data = read_json(pyproject)
+    data = read_pyproject(pyproject)
     project = data.get("project") or {}
     build_system = data.get("build-system") or {}
     build_requires = list(build_system.get("requires") or [])
@@ -682,7 +690,7 @@ def read_source_build_contract(extracted_root):
     root = Path(extracted_root)
     pyproject = root / "pyproject.toml"
     if pyproject.exists():
-        data = read_json(pyproject)
+        data = read_pyproject(pyproject)
         build_system = data.get("build-system") or {}
         backend = build_system.get("build-backend")
         if not backend:

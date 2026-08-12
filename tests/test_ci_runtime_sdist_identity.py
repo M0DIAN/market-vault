@@ -24,6 +24,7 @@ SCRIPT = (
     Path(__file__).resolve().parents[1]
     / "scripts" / "ci_runtime_sdist_identity.py"
 )
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 _spec = importlib.util.spec_from_file_location(
     "ci_runtime_sdist_identity", SCRIPT)
@@ -615,6 +616,44 @@ class TestCliWiring:
         argv = ["verify-bundle", "--bundle-dir", "cw-evidence"]
         args = rsi.parse_argv(argv)
         assert args.bundle_dir == "cw-evidence"
+
+    def test_26_dependency_contract_reads_toml_not_json(self):
+        # pyproject.toml is TOML; a JSON parse crashed Head A's measure
+        # inside RuntimeSdistIdentityProbe.__init__ before any
+        # measurement happened. The sealed project contract must parse.
+        contract = rsi.dependency_contract(REPO_ROOT)
+        assert contract["name"] == "market-vault"
+        assert contract["version"] == "0.7.0"
+        assert contract["build_system"]["build_backend"] == (
+            "setuptools.build_meta")
+        assert contract["pyproject_sha256"]
+
+    def test_26b_read_source_build_contract_parses_toml(self):
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            (td / "pyproject.toml").write_text(
+                "[build-system]\n"
+                'requires = ["setuptools>=68", "wheel"]\n'
+                'build-backend = "setuptools.build_meta"\n',
+                encoding="utf-8",
+            )
+            contract = rsi.read_source_build_contract(td)
+            assert contract["pyproject_present"] is True
+            assert contract["backend"] == "setuptools.build_meta"
+            assert contract["requires"] == ["setuptools>=68", "wheel"]
+
+    def test_26c_probe_init_against_sealed_repo(self):
+        # The exact constructor that crashed Head A (JSON parse of
+        # pyproject.toml) must succeed against the real repo.
+        with tempfile.TemporaryDirectory() as td:
+            probe = rsi.RuntimeSdistIdentityProbe(
+                "test-3.14",
+                {"checkout": "d" * 40, "setup_python": "e" * 40,
+                 "upload_artifact": "f" * 40},
+                REPO_ROOT,
+                td,
+            )
+            assert probe.contract["name"] == "market-vault"
 
 
 def _write_report(entry, td):
