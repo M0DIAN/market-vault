@@ -1092,3 +1092,5 @@ def test_api_audit_still_raises_value_error(tmp_path):
             calendar_market="US",
             today=date(2026, 8, 2),
         )
+
+# P2_RUNTIME_SDIST_OUTPUT_CANARY_A
