@@ -1,4 +1,4 @@
-# P2_NORMALIZED_SDIST_PAYLOAD_CANARY_A
+# P2_NORMALIZED_SDIST_PAYLOAD_CANARY_B
 from __future__ import annotations
 
 import json
