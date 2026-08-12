@@ -1,6 +1,6 @@
 # P2-6 Runtime Sdist Build-Output Identity Canary (PR #81)
 
-**Status: MEASURED / OUTCOME B — READY FOR INDEPENDENT REVIEW — STOP BEFORE MERGE**
+**Status: MEASURED / OUTCOME B (TWO SEALED GAPS) — INDEPENDENT REVIEW CORRECTION APPLIED — STOP BEFORE MERGE**
 
 This is the permanent record of PR #81's measurement. All measurement code was
 temporary (removed in commit `80fa655`); the permanent diff of this PR is
@@ -26,15 +26,21 @@ installed be bound — same sdist / name / version / resolver identity but
 **P2-6 answer (measured):** the sdist → wheel → install chain is bound
 end-to-end (install report wheel SHA == built wheel SHA; installed payload
 digest == built wheel payload digest; wheel RECORD valid; mutation-negative;
-cache disabled; offline replay independently re-derives every check). The one
-remaining proof gap is that **raw wheel bytes are nondeterministic under
-identical same-run inputs**: two cache-disabled builds of the same sdist in
-the same closed-world environment produce content-identical wheels that
-differ only in the ZIP modification timestamps of the 5 build-generated
-`dist-info/` members. The content digest (WHEEL_PAYLOAD_SHA256) is stable
-across all four measurements. Per the §14 protocol rule, this makes Formal
-OUTCOME A impossible for the raw-wheel architecture; the decision is
-**OUTCOME B** with the exact gap identified (§15).
+cache disabled; the in-job replay of the pre-upload bundle copy re-derives
+every check). Two proof gaps remain sealed. **Gap #1:** raw wheel bytes are
+nondeterministic under identical same-run inputs — two cache-disabled builds
+of the same sdist in the same closed-world environment produce
+content-identical wheels that differ only in the ZIP modification timestamps
+of the 5 build-generated `dist-info/` members; the content digest
+(WHEEL_PAYLOAD_SHA256) is stable across all four measurements. **Gap #2**
+(found by independent review, §20): the four RETAINED GitHub evidence
+artifacts fail offline replay — `EVIDENCE_BUNDLE_REPLAY_OK=false` ×4,
+`reason=failed_checks:manifest_hashes` — because a 15-byte marker was appended
+to `probe_summary.txt` AFTER manifest generation and AFTER the replay copy was
+created; the uploaded bytes are not the replayed bytes. Per the §14 protocol
+rule, gap #1 makes Formal OUTCOME A impossible for the raw-wheel
+architecture; the decision is **OUTCOME B** with both gaps identified (§15,
+§20).
 
 ## 2. Measurement protocol (summary)
 
@@ -87,7 +93,10 @@ job, in a shadow environment (measurement only, fail-closed markers):
 15. **Evidence bundle** — receipt, identity docs, probe records, reports,
     logs, both built wheel byte sets, wheelhouse, manifest, and the verifier
     self-copy; the offline replay re-derives every check from the bundle
-    (`EVIDENCE_BUNDLE_REPLAY_OK`).
+    (`EVIDENCE_BUNDLE_REPLAY_OK`). Closure rule: once `EVIDENCE_MANIFEST.json`
+    is generated, no manifest-bound file may be modified — the bytes uploaded
+    must be the bytes replayed (§20; this run violated the rule, and the
+    defect is sealed as gap #2).
 
 ## 3. Heads
 
@@ -144,6 +153,12 @@ REPLAY_OK=true
 Identical shape; `RUNTIME_WHEEL_COUNT=47`, `MEASURE_ELAPSED_SECONDS` 199.0
 (Head A) / 150.0 (Head B).
 
+`REPLAY_OK=true` in the dumps above is the **in-job, pre-upload replay-copy**
+verdict: the workflow verified a byte copy of the bundle taken before upload.
+The four RETAINED GitHub artifacts do NOT replay —
+`EVIDENCE_BUNDLE_REPLAY_OK=false` ×4, `reason=failed_checks:manifest_hashes`
+(sealed gap #2, §20).
+
 ## 6. Runtime sdist inventory
 
 Exactly one runtime dependency resolves from a non-wheel source artifact:
@@ -178,7 +193,12 @@ Wheel filename: `moomoo_api-10.9.6908-py3-none-any.whl`.
 | repeat-build equality | **false** | **false** | **false** | **false** |
 | WHEEL_PAYLOAD_SHA256 | `230368cd1d0fe21bf7a0bd25539aefcb581b9e932c8e8ff121814d54cb7472e6` | same | same | same |
 | INSTALLED_PAYLOAD_SHA256 | `230368cd…` (same) | same | same | same |
-| wheel RECORD / structure | valid (replay `built_wheel_identity=true`) | valid | valid | valid |
+| wheel RECORD / structure | valid | valid | valid | valid |
+
+(Replay check `built_wheel_identity=true` re-derives true even on the retained
+bundles — as does every per-check except the manifest closure gate, §20. The
+retained-bundle replay verdict is nonetheless FAIL:
+`manifest_hashes=false` ×4.)
 
 **Characterization of the raw non-reproducibility (independent member-level
 analysis of the Head A test-3.14 pair):** both wheels contain 424 members;
@@ -200,7 +220,9 @@ the payload digest.
 
 ## 9. Exact-wheel install binding
 
-For all four measurements (verified from the retained bundles):
+For all four measurements (recorded in the retained bundles' install reports —
+the report contents were not affected by the closure defect; re-derivation of
+these checks was verified on the in-job pre-upload replay copy, §20):
 
 - `source_built_install_report.json` install source URL is the exact local
   wheel: `file://…/cw-evidence/built_wheels/1/moomoo_api-10.9.6908-py3-none-any.whl`
@@ -262,10 +284,13 @@ unlike P2-5, the runner/python identities **did not drift** between heads
 identical across heads (§7).
 
 **Separable questions:** (A) architecture validity — the sdist → wheel →
-installed-bytes binding is measured and works (all install/RECORD/payload/
-replay checks pass on all four bundles), with the raw-reproducibility caveat;
-(B) pair reusability — **not reusable**: a Head A measurement cannot stand in
-for Head B's evidence because the exact built wheel SHA256 differs.
+installed-bytes binding is measured and works (all install/RECORD/payload
+checks pass on all four measurements; the in-job pre-upload replay copy
+re-derived every check; the retained bundles re-derive every per-check
+EXCEPT the manifest closure gate — `manifest_hashes=false` ×4, §20), with
+the raw-reproducibility caveat; (B) pair reusability — **not reusable**: a
+Head A measurement cannot stand in for Head B's evidence because the exact
+built wheel SHA256 differs.
 
 ## 14. SHADOW_REUSE_CANDIDATE decision (actual, from CI logs)
 
@@ -273,7 +298,9 @@ for Head B's evidence because the exact built wheel SHA256 differs.
 FINAL_RUNTIME_MATCH` → `true && false && true` = **false** on all four
 measurements (recorded in the CI step environment, e.g.
 `SHADOW_REUSE_CANDIDATE: false` in Head B test-3.14). No reuse candidate is
-produced; consistent with §15's fail-closed production rule.
+produced; consistent with §15's fail-closed production rule. (`replay_ok` is
+the in-job, pre-upload replay-copy verdict; the retained artifacts fail the
+manifest closure gate, §20 — `SHADOW_REUSE_CANDIDATE=false` either way.)
 
 ## 15. Outcome determination
 
@@ -281,8 +308,9 @@ produced; consistent with §15's fail-closed production rule.
 
 Formal OUTCOME A is impossible here by the protocol's own rule (§14): same-head
 repeated raw wheel builds are **not** byte-identical
-(`RAW_WHEEL_REPRODUCIBLE=false` on all four measurements). Every other
-OUTCOME-A condition is measured true:
+(`RAW_WHEEL_REPRODUCIBLE=false` on all four measurements). Two independent
+direct gaps are sealed (§20); every other OUTCOME-A condition is measured
+true:
 
 - all runtime sdists discovered (`RUNTIME_SDIST_COUNT=1`, `OTHER_COUNT=0`);
 - exact source bytes/hash verified (`SOURCE_SDIST_HASH_OK=true`,
@@ -291,7 +319,8 @@ OUTCOME-A condition is measured true:
 - source-build environment exact and closed-world (stable env identity, §7);
 - pip cache disabled (`SOURCE_BUILD_CACHE_DISABLED_1/2=true`);
 - exact built wheel SHA256 captured (§8);
-- wheel RECORD validates (replay `built_wheel_identity=true`);
+- wheel RECORD validates (per-check `built_wheel_identity=true`, incl. on the
+  retained bundles);
 - shadow install uses the exact local wheel (report URL slot, §9);
 - install report wheel SHA == built wheel SHA (true on all four);
 - installed RECORD validates; installed payload identity captured
@@ -300,19 +329,33 @@ OUTCOME-A condition is measured true:
 - final runtime contains no source artifact (§11);
 - both candidate shadow surfaces pass (§12);
 - mutation negative fails closed (§10);
-- all four authoritative bundles replay offline (`EVIDENCE_BUNDLE_REPLAY_OK=true`
-  ×4, `REPLAY_OK=true` ×4);
+- **in-job pre-upload replay copy: PASS** — `REPLAY_OK=true` ×4 (CI logs);
+  the verifier validated a byte copy taken before upload;
+- **retained GitHub artifact replay: FAIL ×4** —
+  `EVIDENCE_BUNDLE_REPLAY_OK=false`, `reason=failed_checks:manifest_hashes`;
+  the uploaded bytes are not the replayed bytes (gap #2, §20);
 - no production skip occurred.
 
-**Exact remaining gap (identified per §33):** raw wheel output is
-nondeterministic under identical same-run inputs — the 5 build-generated
-`dist-info/` members carry wall-clock ZIP modification timestamps. Content is
-fully deterministic (424/424 members byte-identical; payload digest stable
-across heads and surfaces), so the gap is precisely: **container timestamp
-metadata of build-generated dist-info members**.
+**Exact remaining gaps (identified per §33):**
+
+1. **Raw wheel output is nondeterministic under identical same-run inputs** —
+   the 5 build-generated `dist-info/` members carry wall-clock ZIP modification
+   timestamps. Content is fully deterministic (424/424 members byte-identical;
+   payload digest stable across heads and surfaces), so this gap is precisely:
+   **container timestamp metadata of build-generated dist-info members**.
+2. **Retained evidence bundle closure failure** — the workflow appended the
+   15-byte marker `REPLAY_OK=true\n` to `cw-evidence/probe_summary.txt` AFTER
+   `EVIDENCE_MANIFEST.json` was generated AND AFTER the replay-bundle copy was
+   created, so the retained artifacts fail offline replay
+   (`manifest_hashes=false` ×4). Stripping exactly those 15 bytes restores the
+   manifest-recorded SHA256 and the stripped bundle replays to full closure on
+   all four — the append was the ONLY post-manifest mutation, the evidence
+   content itself is sound (all 19 per-checks except the closure gate re-derive
+   true), but the replayed bytes are not the uploaded bytes (§20).
 
 OUTCOME B does NOT activate V2 and does NOT mean the measured A/B pair is
-reusable (it is not, §13).
+reusable (it is not, §13). Neither gap is contamination of the measurement
+itself, so the decision is OUTCOME B, not OUTCOME C.
 
 **Fail-closed production rule (unchanged):** any runtime dependency resolved
 from a non-wheel source artifact whose exact resulting install
@@ -335,6 +378,10 @@ NOT READY for production activation.
   `tests/test_audit_v03.py` restored **byte-for-byte** to the frozen base.
 - Final PR diff: **this document only**.
 - All hashes/artifacts cited here are CI-only / non-formal-release.
+- Independent-review correction (this revision): docs-only; the four evidence
+  artifact IDs are unchanged; Heads A/B not re-run; no history rewrite; no
+  amend / rebase / force-push; the frozen base → corrected final head diff
+  changes exactly this file.
 
 ## 17. Evidence identities (authoritative artifacts)
 
@@ -347,9 +394,12 @@ NOT READY for production activation.
 
 Each evidence artifact contains the full receipt, identity docs, probe
 records, reports, logs, both built wheel byte sets, wheelhouse, manifest,
-and the verifier self-copy — everything an independent reviewer needs to
-replay every conclusion offline (the Head A replay was executed from a
-relocated bundle copy, `replay-bundle/`, exactly as CI does).
+and the verifier self-copy. Independent offline replay of the four RETAINED
+artifacts does NOT close: `EVIDENCE_BUNDLE_REPLAY_OK=false` ×4,
+`reason=failed_checks:manifest_hashes` (§20). The replay that did close
+(Head A, relocated bundle copy `replay-bundle/`, exactly as CI does) ran on
+the pre-upload bytes — before the 15-byte post-manifest append that broke the
+retained bundles' manifest closure.
 
 ## 18. Performance
 
@@ -380,13 +430,82 @@ measurement steps are removed on the final head.
 - The wheels-only runtime substitution and the editable-install survival
   proofs were measured under the current locked runtime pinning; a changed
   runtime resolver could surface new sdist cases.
+- The evidence-bundle closure defect of §20 (post-manifest, post-replay-copy
+  append) must never recur: the next measurement implements the §20 hardening
+  rule (FINALIZE → MANIFEST → REPLAY EXACT FINAL → NO FURTHER WRITES →
+  UPLOAD EXACT REPLAYED BYTES).
 
-## 20. Final head and gates
+## 20. Independent review correction — retained-artifact replay closure
+
+Independent replay of the four RETAINED evidence artifacts
+(`9134234878`, `9134303596`, `9134891800`, `9134916165`) fails:
+`EVIDENCE_BUNDLE_REPLAY_OK=false` ×4, `reason=failed_checks:manifest_hashes`.
+Reproduced here, per artifact, from the exact uploaded bytes (fresh unzip of
+each artifact, invoking that bundle's own verifier against that bundle):
+
+| artifact | uploaded `probe_summary.txt` | manifest-bound | 15-byte suffix strip restores manifest SHA | replay of uploaded bytes | replay after strip |
+|---|---|---|---|---|---|
+| `9134234878` (A/test-3.14) | 954 B | 939 B | yes | `manifest_hashes=false`, `EVIDENCE_BUNDLE_REPLAY_OK=false` | `EVIDENCE_BUNDLE_REPLAY_OK=true` |
+| `9134303596` (A/pyarrow24) | 954 B | 939 B | yes | `manifest_hashes=false`, `EVIDENCE_BUNDLE_REPLAY_OK=false` | `EVIDENCE_BUNDLE_REPLAY_OK=true` |
+| `9134891800` (B/test-3.14) | 954 B | 939 B | yes | `manifest_hashes=false`, `EVIDENCE_BUNDLE_REPLAY_OK=false` | `EVIDENCE_BUNDLE_REPLAY_OK=true` |
+| `9134916165` (B/pyarrow24) | 954 B | 939 B | yes | `manifest_hashes=false`, `EVIDENCE_BUNDLE_REPLAY_OK=false` | `EVIDENCE_BUNDLE_REPLAY_OK=true` |
+
+**Root cause (measured):** the instrumented workflow appended the 15-byte
+marker `REPLAY_OK=true\n` to `cw-evidence/probe_summary.txt` AFTER
+`EVIDENCE_MANIFEST.json` was generated AND AFTER the replay-bundle copy was
+created (`cp -r cw-evidence/. replay-bundle/`). The uploaded directory
+therefore does not contain the bytes the in-job replay validated: uploaded
+954 bytes vs manifest-bound 939. Removing exactly the 15 trailing bytes
+restores the manifest-recorded SHA256 on all four, and the stripped bundle
+then replays to full closure (`manifest_hashes=true`,
+`EVIDENCE_BUNDLE_REPLAY_OK=true`, all 19 checks true) — the append was the
+ONLY post-manifest mutation, and the pre-append bytes were internally closed.
+
+**Replay status, stated precisely:**
+
+- **IN-JOB PRE-UPLOAD REPLAY COPY: PASS** — `REPLAY_OK=true` ×4 (CI logs);
+  the verifier validated a byte copy taken before the append.
+- **RETAINED GITHUB ARTIFACT REPLAY: FAIL ×4** —
+  `reason=failed_checks:manifest_hashes`; the uploaded bytes are not the
+  replayed bytes. All 19 per-checks except the manifest closure gate re-derive
+  true on the retained bundles — the evidence CONTENT is sound; the closure is
+  broken.
+
+**Consequence — second sealed gap.** The formal decision remains OUTCOME B
+with TWO independent direct gaps:
+
+1. raw wheel output nondeterminism (build-generated dist-info ZIP
+   timestamps; §8, §15);
+2. retained evidence bundle closure failure (bundle mutated after manifest
+   generation and after the replay copy was created; this section).
+
+**Permanent hardening rule (recorded for any future measurement):** After
+`EVIDENCE_MANIFEST` generation, no manifest-bound file may be modified. The
+exact bytes ultimately uploaded must be the exact bytes replayed:
+
+**FINALIZE → MANIFEST → REPLAY THE EXACT FINAL DIRECTORY/ARCHIVE → NO FURTHER
+WRITES → UPLOAD EXACT REPLAYED BYTES.**
+
+Any post-replay mutation: **INVALID ⇒ RUN** / evidence not closed. (Options
+that satisfy the rule: (A) write all mutable results first, then generate the
+final manifest, then replay the finalized bundle, then upload without further
+writes — preferred; or (B) keep replay status outside the manifest-bound
+bundle.)
+
+**Correction scope:** this correction is docs-only — the frozen base →
+corrected final head diff changes exactly
+`docs/runtime_sdist_build_output_identity_canary.md` (this file). No
+production CI/code/test change; no artifact replaced; no history rewritten;
+Heads A/B not re-run; formal decision unchanged (OUTCOME B).
+
+## 21. Final head and gates
 
 Final PR head is **NOT self-embedded by design**; authoritative identity =
-GitHub metadata + exact-head CI at review time. Final local gates (run on the
-docs-only head): `git diff --check` clean; `check_repo_hygiene.py` pass;
-`check_release.py` `RELEASE_CHECK_OK version=0.7.0`; `ci_risk_tier.py`
+GitHub metadata + exact-head CI at review time. The correction commit is the
+current final head (previous final head `320b6fc8f99c0476c22c692fd84e66aaef260a8c`);
+its CI run is recorded in the final report. Final local gates (run on the
+corrected docs-only head): `git diff --check` clean; `check_repo_hygiene.py`
+pass; `check_release.py` `RELEASE_CHECK_OK version=0.7.0`; `ci_risk_tier.py`
 `tier=docs_fast reason=all_changes_in_docs_scope full_matrix_required=false`;
 final CI silent, 4/4 jobs success, **0 artifacts**.
 
