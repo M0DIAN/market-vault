@@ -1,7 +1,18 @@
-# P2-8 Partial Reuse V2 Proof-Stack Closure Review (PR #83)
+# P2-8 Partial Reuse V2 Proof-Stack Closure Review (PR #83, rev 2)
 
-**Status: ARCHITECTURE / EVIDENCE CLOSURE REVIEW ONLY — OUTCOME A (PROOF STACK
-CLOSED FOR AUDITED CANDIDATE SURFACES ONLY).**
+**Rev 2 — independent-review corrections applied.** Rev 1 (outcome A draft)
+was reviewed independently; the review accepted scope discipline, exact-head
+CI, historical P2-1..P2-7 outcome representation, P2-6/P2-7 technical
+closure, and the candidate-surface boundary, but required: (1) an explicit
+production evidence topology / provenance proof (blocking), (2) outcome
+discipline re-derivation, (3) predicate-5 ambiguity removal, (4)
+evidence-precision corrections, (5) retained-artifact wording tightening.
+Rev 2 applies all five. The formal result changed from OUTCOME A to
+**OUTCOME B** — see §12 for the exact derivation and remaining gap.
+
+**Status: ARCHITECTURE / EVIDENCE CLOSURE REVIEW ONLY — OUTCOME B
+(INTEGRATED MEASUREMENT CHAIN CLOSED; PRODUCTION V2 SURFACE-EVIDENCE
+PROVENANCE / POST-MERGE TOPOLOGY BRIDGE OPEN).**
 
 **No Partial Reuse V2 activation. No production skip. No workflow gating
 change. No production code change. No test logic change. No attestation
@@ -15,9 +26,11 @@ evidence stack (PRs #76–#82). It answers one question:
 
 The answer was not assumed. It is derived per proof layer below, with every
 logical bridge shown. The formal result is exactly one of OUTCOME A /
-OUTCOME B / OUTCOME C; the result of this review is **OUTCOME A — PROOF
-STACK CLOSED FOR AUDITED CANDIDATE SURFACES ONLY** (§12), which authorizes
-**no** production reuse and activates **nothing**.
+OUTCOME B / OUTCOME C; the result of this review is **OUTCOME B — the
+measurement chain is closed and sound for the identity mechanisms, but the
+production evidence topology contains bridges that depend on new per-surface
+attestation behavior not exercised by any sealed measurement** (§12). This
+authorizes **no** production reuse and activates **nothing**.
 
 ---
 
@@ -84,7 +97,7 @@ surfaces, for the exact measured topology.
 | Stage | PR | Sealed report | Original outcome | Scope measured |
 |---|---|---|---|---|
 | P2-1 | #76 | [partial_reuse_rerun_evidence_canary.md](partial_reuse_rerun_evidence_canary.md) | **OUTCOME A** — V1 already covers the failed-job rerun case | attempt/run identity; rerun semantics; composite job view; attempt-bound attestation |
-| P2-2 | #77 | [distinct_head_surface_evidence_canary.md](distinct_head_surface_evidence_canary.md) | **OUTCOME B** (corrected from A) — source/selected-input delta sub-proof PASS; runtime/dependency identity UNRESOLVED for production reuse | direct-child topology; exact A→B delta; blob-manifest surface relevance; node-ID stability; V1 cross-head fail-closed |
+| P2-2 | #77 | [distinct_head_surface_evidence_canary.md](distinct_head_surface_evidence_canary.md) | **OUTCOME B** (corrected from A) — source/selected-input delta sub-proof PASS; runtime/dependency identity UNRESOLVED for production reuse | direct-child topology; exact A→B delta; blob-manifest surface relevance; node-ID stability (canary file's 60 collected node IDs, base/A/B); V1 cross-head fail-closed |
 | P2-3 | #78 | [runtime_identity_fingerprint_canary.md](runtime_identity_fingerprint_canary.md) | **OUTCOME B** (corrected from A) — live pre-install runtime fingerprint viable; PEP 517 build-isolation dependency identity outside the proof boundary | runner/Python/pip/resolver/action/ci.yml identity; resolved distribution set; probe-vs-actual 4/4; evidence-retention gap (raw install reports) |
 | P2-4 | #79 | [build_isolation_identity_evidence_closure_canary.md](build_isolation_identity_evidence_closure_canary.md) | **OUTCOME B** (corrected from A) — build-isolation identity for the probe-observed set + evidence closure proven; ACTUAL isolated env closed-world identity NOT proven | PEP 517/660 build dependency set with exact wheel SHA256; build-constraint binding (positive + wrong-hash negative); offline replay 16/16; manifest duplicate-path hardening required |
 | P2-5 | #80 | [closed_world_build_execution_canary.md](closed_world_build_execution_canary.md) | **OUTCOME A (narrowed)** — closed-world build execution viable; COMPLETE P2 STACK NOT CLOSED; its own A/B pair NOT reusable (runner image + interpreter drifted); new gap: runtime sdist output identity | exact hash-locked prebuild env; `--no-build-isolation --no-deps --check-build-dependencies`; `PIP_NO_INDEX=1`; `--require-hashes`; sentinel control/negative proof; distribution delta; normalized build identity A==B |
@@ -135,7 +148,8 @@ evidence across GitHub Actions attempts?
   attempt-bound attestation binds `run_id` + `run_attempt` and the package
   chain that creates it ran fully on the terminal attempt. Evidence may NOT
   be combined across distinct runs or across runs of different heads (that
-  is P2-2's domain, closed only under the exact topology of §4/P2-2).
+  is P2-2's domain, closed only under the exact topology of §4/P2-2 and the
+  production mapping of §7).
 
 **Classify: CLOSED.** Same-run attempt semantics are fully representable by
 V1's single-run model (measured OUTCOME A). Recorded caveat (not a gap): a
@@ -155,13 +169,15 @@ unaffected surface?
 - **Exact A→B delta**: PROVEN — one file, one comment-line replacement
   (`-1/+1` in `tests/test_audit_v03.py`).
 - **Surface relevance proof**: PROVEN — every selected input blob is
-  byte-identical A→B: the 37 manifest files of the sealed 3.14 surface, the
-  10 files of the audited PyArrow 24 surface, `src/**` (105 blobs),
-  `pyproject.toml`, `ci.yml`, no repo-wide conftest; 60 node IDs stable
-  across base/A/B (comment deltas do not perturb collection).
+  byte-identical A→B: the 37 manifest files of the sealed 3.14 surface
+  (258 selectors over 37 files), the 10 files of the audited PyArrow 24
+  surface, `src/**` (105 blobs), `pyproject.toml`, `ci.yml`, no repo-wide
+  conftest; the canary file's 60 collected node IDs (base/A/B) are stable —
+  comment deltas do not perturb collection. The ONLY differing path A→B is
+  the canary file, selected by NEITHER sealed surface.
 - **No arbitrary descendant reuse**: the measurement covers the
   direct-parent case only; arbitrary ancestry, cross-branch, and transitive
-  chaining (A→B→C) are explicitly out of scope and receive no evidence.
+  chaining are explicitly out of scope (P2-2 §13 threat A, §15).
 - **No merge-base / unrelated-head generalization**: the two heads' trees
   differ (proven), each attested `tested_tree_sha` equals its own head tree,
   and V1's tree-equivalence gate correctly rejects cross-head reuse — V1 is
@@ -180,7 +196,8 @@ measurement; the runtime side closed by the P2-3 → P2-7 chain (§5 shows each
 bridge). Closed **only** for: direct-child topology, fully enumerated delta,
 selected-input equality, live runtime identity equality, the two audited
 surfaces. Anything outside that contract has no evidence and must fail
-closed (production consequence: RUN).
+closed (production consequence: RUN). §7 derives how this class maps to the
+production post-merge topology.
 
 ### P2-3 — RUNTIME IDENTITY
 
@@ -214,6 +231,11 @@ source delta is surface-irrelevant?
   the equality gate is enforced: `ImageVersion` rolled between heads and the
   cross-head comparison failed closed (`first_differing_field:runner`) — no
   reuse was produced.
+- **Schema-binding limitation (recorded here, developed in §7/§12)**: the
+  fingerprint is sealed in P2-3's canary evidence-bundle schema
+  (`probe_summary.txt` and companions). The production V1 attestation schema
+  carries no fingerprint fields. Binding the fingerprint into a production
+  evidence object is new attestation behavior (GAP-P2-8-T1).
 
 **Classify: CLOSED** for the mechanism (probe viable, predictive, and
 fail-closed on drift). The two P2-3 residuals — build-isolation dependency
@@ -348,13 +370,19 @@ OUTCOME A):**
 
 - **Gap 6B — raw wheel byte nondeterminism**: two cache-disabled builds of
   the same sdist in the same closed-world environment are NOT byte-identical
-  (`RAW_WHEEL_REPRODUCIBLE=false` ×4). Independent member-level analysis:
-  424/424 members content-identical; the ONLY raw differences are the ZIP
-  local-header DOS modification-time fields of the 5 build-generated
-  `dist-info/` members (10 differing bytes in the measured pair) — classic
-  bdist_wheel timestamp nondeterminism, no artificial determinism applied.
-  Content is fully deterministic (payload digest stable across heads AND
-  surfaces). Closed by P2-7's normalized contract (below).
+  (`RAW_WHEEL_REPRODUCIBLE=false` ×4). Independent member-level analysis of
+  the Head A test-3.14 build pair (recorded, not generalized to other legs):
+  both wheels contain 424 members; every member's content is byte-identical
+  (same set, same order, same SHA256, same sizes); the ONLY raw byte
+  differences are the ZIP local-header DOS modification-time fields of the
+  5 build-generated `dist-info/` members — `licenses/LICENSE`, `METADATA`,
+  `WHEEL`, `top_level.txt`, `RECORD` — stamped at 2-second granularity
+  (build #1 08:28:46 vs build #2 08:28:48 in Head A); 10 differing bytes in
+  that pair. Classic bdist_wheel timestamp nondeterminism; no artificial
+  determinism applied (protocol forbids it). The cross-leg contract is NOT
+  a byte count: every raw difference must be classified, the allowed
+  difference is the exact approved timestamp-only contract, and
+  `unclassified = 0`. Closed by P2-7's normalized contract (below).
 - **Gap 6C — retained artifact closure failure**: the four RETAINED GitHub
   artifacts fail offline replay — `EVIDENCE_BUNDLE_REPLAY_OK=false` ×4,
   `reason=failed_checks:manifest_hashes` — because a 15-byte marker
@@ -451,10 +479,14 @@ bytes that passed replay?
 - Original artifact never mutated / never re-uploaded: the
   uploaded-then-downloaded artifact is the authoritative retained copy;
   download used an exact-SHA-pinned `download-artifact`.
-- Retained roundtrip replay true on all six legs
-  (`RETAINED_ARTIFACT_ROUNDTRIP_REPLAY_OK=true`); retained replay tree SHA
-  equals the manifest-bound bundle tree SHA (Head A recorded: test-3.14
-  `572cd65d…`, pyarrow24 `cc9e146c…`).
+- **Precise proven claim**: the downloaded retained bundle's manifest-bound
+  content/tree identity matches the finalized uploaded bundle content/tree,
+  and the downloaded retained bundle passes its own offline replay
+  (`RETAINED_ARTIFACT_ROUNDTRIP_REPLAY_OK=true` ×6). Head A replay tree SHAs
+  (retained copies): test-3.14 `572cd65d…`, pyarrow24 `cc9e146c…` — equal to
+  the manifest-bound bundle tree SHA printed by the bundle step. Raw outer
+  GitHub transport ZIP byte identity (the transport wrapper re-zips
+  artifacts) was NOT measured and is NOT claimed.
 - All measured surfaces/heads covered (3 heads × 2 surfaces; all four
   formal jobs success on every run).
 
@@ -475,8 +507,8 @@ row N is closed by row N+1 with a measured invariant, not by assumption):
 | P2-3 runtime identity | PEP 517 build-isolation dependency identity outside schema | P2-4 + P2-5 | probe-observed effective build set bound by exact wheels + constraint; actual build closed to that set (sentinel negative proof) |
 | P2-4 build isolation | closed-world identity of the ACTUAL isolated env | P2-5 | `--no-build-isolation --no-deps --check-build-dependencies` + `PIP_NO_INDEX=1` + hash-locked exact env; sentinel auto-install rejected |
 | P2-5 closed-world | runtime sdist output identity (sdist ≠ installed wheel bytes) | P2-6 + P2-7 | sdist→wheel→installed payload bound end-to-end (report SHA == built SHA == installed payload); raw mismatch 100% timestamp-attributed, unclassified=0 |
-| P2-6 raw nondeterminism | `RAW_WHEEL_REPRODUCIBLE=false` | P2-7 | normalized install-artifact identity: payload + installed identity exact, negative + positive controls, raw stays diagnostic |
-| P2-6 retained closure | retained bytes ≠ replayed bytes (manifest_hashes=false ×4) | P2-7 | FINALIZE → MANIFEST → REPLAY EXACT FINAL → NO FURTHER WRITES → UPLOAD → DOWNLOAD → REPLAY DOWNLOADED BYTES; verdict outside bundle; roundtrip true ×6 |
+| P2-6 raw nondeterminism | `RAW_WHEEL_REPRODUCIBLE=false` | P2-7 | normalized install-artifact identity: payload + installed identity exact, negative + positive controls, raw stays diagnostic (Head A test-3.14 pair: 5 dist-info members, 10 bytes — recorded, not generalized) |
+| P2-6 retained closure | retained bytes ≠ replayed bytes (manifest_hashes=false ×4) | P2-7 | FINALIZE → MANIFEST → REPLAY EXACT FINAL → NO FURTHER WRITES → UPLOAD → DOWNLOAD → REPLAY DOWNLOADED BYTES; verdict outside bundle; retained replay OK ×6 (downloaded bundle's manifest-bound content/tree identity == finalized bundle; downloaded bundle passes its own offline replay; no outer-transport-byte claim) |
 
 Every closing invariant was measured in the closing stage's own retained
 evidence. No gap is closed "because a later stage said OUTCOME A"; each row
@@ -499,9 +531,10 @@ production):**
   exact installed artifact identity is not proven: **⇒ RUN**.
 - test-3.11 and package surfaces: **not measured by the P2 stack, not
   authorized** (§8).
-- A production-consumable V2 evidence schema and its wiring into ci.yml:
-  **not implemented — that is the separate production-contract PR**, whose
-  contract this document specifies (§9).
+- The production evidence topology (which run owns which evidence object,
+  how a reused surface is truthfully represented): **derived in §7; bridges
+  depend on new per-surface attestation behavior — this is the OUTCOME B
+  gap** (§12). Not an implementation detail; part of the security proof.
 
 ---
 
@@ -519,8 +552,8 @@ consequence if the invariant is unavailable.
 | GAP-P2-4 | P2-3; P2-4 / #79 | build-isolation dependency identity (setuptools/wheel) outside proof boundary | P2-4 (probe-observed set) + P2-5 (closed-world) | effective build set with exact wheel bytes/SHA256; `--build-constraint` binding (positive + wrong-hash negative); actual build under `--no-build-isolation --no-deps --check-build-dependencies`, `PIP_NO_INDEX=1`, hash-locked env; sentinel rejected | **CLOSED** | RUN |
 | GAP-P2-5 | P2-4 residual; P2-5 / #80 | closed-world build execution unproven (constraint ≠ allowlist) | P2-5 (OUTCOME A narrowed) | exact prebuild env; pip build-dependency management disabled; `PIP_NO_INDEX=1`; `--require-hashes`; sentinel control/negative; distribution delta exactly `{market-vault: 0.7.0}`; path-free build identity stable | **CLOSED** | RUN |
 | GAP-P2-6A | P2-5 §12; P2-6 / #81 | resolver-selected sdist not bound to exact installed wheel/payload bytes | P2-6 (measured) + P2-7 (re-measured) | sdist SHA verified; cache-disabled builds; report SHA == built SHA; RECORD valid; WHEEL_PAYLOAD == INSTALLED_PAYLOAD; mutation negative; wheels-only final runtime | **CLOSED** | RUN |
-| GAP-P2-6B | P2-6 / #81 gap #1 | raw wheel byte nondeterminism (`RAW_WHEEL_REPRODUCIBLE=false`; ZIP timestamps of 5 dist-info members) | P2-7 / #82 | normalized install-artifact identity: member sets identical; decompressed bytes identical; payload + installed payload identical; every raw difference 100% timestamp-attributed (`unclassified: 0`); negative + positive timestamp-only controls; raw stays diagnostic | **CLOSED** | RUN |
-| GAP-P2-6C | P2-6 / #81 gap #2 | retained evidence bundle closure failure (15-byte post-manifest append; uploaded bytes ≠ replayed bytes) | P2-7 / #82 | FINALIZE → MANIFEST → REPLAY EXACT FINAL → NO FURTHER WRITES → UPLOAD → DOWNLOAD RETAINED → REPLAY DOWNLOADED BYTES; verdict outside bundle; roundtrip true ×6, CHECK_COUNT=28; original never mutated/re-uploaded | **CLOSED** | RUN / evidence not closed |
+| GAP-P2-6B | P2-6 / #81 gap #1 | raw wheel byte nondeterminism (`RAW_WHEEL_REPRODUCIBLE=false`; Head A test-3.14 pair: ZIP timestamps of 5 dist-info members, 10 bytes) | P2-7 / #82 | normalized install-artifact identity: member sets identical; decompressed bytes identical; payload + installed payload identical; every raw difference 100% timestamp-attributed (`unclassified: 0`); negative + positive timestamp-only controls; raw stays diagnostic | **CLOSED** | RUN |
+| GAP-P2-6C | P2-6 / #81 gap #2 | retained evidence bundle closure failure (15-byte post-manifest append; retained content failed its own manifest closure) | P2-7 / #82 | FINALIZE → MANIFEST → REPLAY EXACT FINAL → NO FURTHER WRITES → UPLOAD → DOWNLOAD RETAINED → REPLAY DOWNLOADED BYTES; verdict outside bundle; downloaded bundle's manifest-bound content/tree identity == finalized bundle; roundtrip OK ×6, CHECK_COUNT=28; original never mutated/re-uploaded | **CLOSED** | RUN / evidence not closed |
 | GAP-P2-4B | P2-4 / #79 §13 | evidence manifest duplicate paths (hardening required) | P2-5 / #80 | generator raises `EVIDENCE_MANIFEST_INVALID reason=duplicate_path:<path>` before writing; verifier independently rejects duplicates; P2-5+ bundles duplicate-free | **CLOSED** | RUN |
 | GAP-P2-5A | P2-5 / #80 §10 | offline runtime replay gate validates receipt + report presence, does not recompute full report-vs-resolution equality | P2-6/P2-7 + production implementation | live `verify-installed` ran on every leg (probe-vs-actual matched); replay re-derives the file-derived checks incl. install-report binding (P2-7 28 gates); full equality re-derivation in offline replay is a production-implementation requirement, not a measurement gap | **CLOSED** (measurement); production must implement full re-derivation | RUN |
 | GAP-P2-5B | P2-5 / #80 §11 | receipt field timing: `postbuild_distribution_inventory` populated after the later runtime install | P2-5 (recorded) + production implementation | standalone `PREBUILD/POSTBUILD_ENVIRONMENT.json` correct and manifest-bound; offline verifier recomputes the delta from them; production receipt must bind the immediate POSTBUILD inventory | **CLOSED** (measured facts unaffected); production receipt schema must use immediate post-build inventory | RUN |
@@ -533,15 +566,163 @@ evidence establishes it.
 
 ---
 
-## 7. P2 foundation status (summary)
+## 7. Production evidence topology and provenance (the security proof)
 
-- `scripts/ci_post_merge_reuse.py` V2 foundation: unchanged, unactivated,
-  regression-pinned (identity-false invariant; canonical surface model;
-  duplicate/unexpected-job fail-closed; V1 contract non-collision).
-- `tests/test_ci_post_merge_reuse.py`: unchanged (this review adds no test).
-- `docs/development_protocol_v1.md` §4.9: unchanged; the later
-  production-contract implementation (when approved) updates the protocol in
-  its own PR — not this one.
+The independent review required this section: the production evidence
+topology is part of the security proof, not an implementation detail. This
+section defines the concrete commit endpoints of every proof, which run owns
+which evidence artifact, how the evidence is bound, and how the sealed
+measurements map to a real post-merge main push.
+
+### 7.1 Explicit symbols
+
+| Symbol | Meaning |
+|---|---|
+| `P` | previous main SHA — the `before` of the push event that creates `M` |
+| `M` | new squash/main SHA — the commit created by the merged PR |
+| `A` | source surface-evidence head (the head whose runs own the reusable surface evidence) |
+| `B` | target/final head whose decision run evaluates reuse |
+| `T_B` | GitHub-tested synthetic merge tree for `B` (`tested_merge_sha`; its tree is the attestation's `tested_tree_sha`) |
+| `tree(X)` | the git tree SHA of commit `X` |
+
+### 7.2 Chosen production mapping
+
+**`A := P` (previous main), `B := M` (new main).**
+
+Rationale: P2-2 measured the direct-child class — a head whose parent is
+proven, with a fully enumerated delta provably irrelevant to the candidate
+surface. In production the only relation that is *guaranteed and enforced*
+is the consecutive-main relation: GitHub's squash merge creates `M` with
+exactly one parent, and V1's sealed topology gate requires exactly one
+parent AND `parents[0] == before_sha` (i.e., `parent(M) == P`,
+`check_topology` in `scripts/ci_post_merge_reuse.py`). The P2-2 canary pair
+(canary-branch commits `4f6b49d7` → `79714d78`, direct child, one-line
+delta) is a measured instance of this same class: same relation shape, same
+enumeration method, same surface-relevance rule set.
+
+The same-head salvage topology (reusing a PR run's own successful surfaces
+when the PR run never produced a valid global attestation) is NOT this
+mapping: the foundation's declared limitation (§2) explicitly excludes it,
+and no P2 stage measured it. This document does not claim it.
+
+### 7.3 Direct answers to the provenance questions
+
+**(a) Which head owns the reusable surface evidence — `P`.** The evidence
+object is the main-push attestation bound to `tree(P)`: the attestation
+carries `tested_tree_sha` and V1's tree-equivalence gate validates
+`tree(P) == tested_tree_sha` at the time `P` is main. Exactly one
+attestation is selected per head (V1 exact-one select rule, sealed). Its
+per-job blocks provide per-surface granularity (the attestation schema is
+per-job; surfaces map to jobs 1:1).
+
+**(b) Which head is the target of P2-2's direct-child proof.** In the sealed
+measurement: the canary-head pair. In the production mapping: the pair
+`(P, M)`. The pair that MUST satisfy the direct-child relation is
+`(P, M)`: `parent(M) == P`, enforced by the sealed topology gate on every
+main push. The delta to enumerate at decision time is `P..M` (the full
+merged delta).
+
+**(c) How the relation maps to a real post-merge main push.** GitHub's
+squash merge of the PR creates `M` with exactly one parent, `P`; the push
+event carries `before = P`. The V1 topology gate (sealed, production code)
+requires exactly that. The merged delta `P..M` must then be fully enumerated
+and proven irrelevant to each reused surface under the §9 predicate-5 rules
+(which encode P2-2 §13 threats A–I).
+
+**(d) Which run/attempt owns each evidence artifact.**
+
+- `P`'s evidence: the main-push CI run at `P`, attempt-bound per P2-1. If
+  `P`'s run was itself a V1 FULL reuse, the executed evidence is the merged
+  PR-head run whose tested tree equals `tree(P)`; the artifact owned by
+  `tree(P)` is still `P`'s main-push attestation (one per main push,
+  exactly-one rule). The tree-equivalence proof collapses the provenance to
+  `tree(P)` — see 7.4.
+- `M`'s decision: the main-push CI run at `M`, attempt-bound (P2-1
+  semantics: a rerun of `M`'s run is the same run identity; probe and
+  evidence objects are attempt-bound).
+- The live identity probe (P2-3 mechanism) must run in every main-push run
+  (and every PR run) and its fingerprint must be recorded in a
+  schema-bound evidence object — **this binding is new attestation
+  behavior; see GAP-P2-8-T1 (§12)**.
+
+**(e) Which attestation/evidence schema binds the reused surface.** A
+V2-scoped evidence object (new schema, to be specified in the
+production-contract PR): per-surface block
+`{surface, verdict: reused, source: {evidence_id, head: P, tree: tree(P)},
+identity: {fingerprint(P), fingerprint(M), equality: true, fields compared},
+decision_run: {run_id, run_attempt}, executed: false}`.
+The V1 FULL attestation schema binds only fully-executed runs (4/4 executed
+on the tested tree) and is never used to represent reuse.
+
+**(f) How a surface that was REUSED rather than EXECUTED on `B` is
+truthfully represented.** By the explicit `verdict: reused` block above,
+which names the source evidence object (bound to `tree(P)`), the identity
+comparison performed, and the decision run. Fail-closed rules: a surface
+with no valid evidence block ⇒ `no_reuse` ⇒ RUN; `verdict: reuse` requires
+ALL of (i) a source evidence id that validates and binds `tree(P)`,
+(ii) identity equality `P` vs `M`, (iii) delta `P..M` surface-irrelevance.
+
+**(g) How B-level evidence is finally bound to the squash/main commit `M`.**
+`M`'s run's V2 evidence object binds head `M`, `tree(M)`, `run_id`,
+`run_attempt` via the same strict object-schema binding V1 uses (head + tree
+fields, exact SHA format, no permissive parsing). For the main-push case the
+tree binding is validated as `tested_tree == tree(M)` when the merged PR's
+tested tree equals `M`'s tree (the V1 pattern), else `tree(M)` directly.
+
+**(h) How the system avoids treating a V2 partial/subset proof as a V1 FULL
+attestation.**
+
+1. Distinct artifact naming: the V1 verifier selects ONLY
+   `market-vault-full-ci-attestation-*` and strictly validates its schema;
+   a V2 object can never validate as a V1 attestation (sealed, regression-
+   pinned). Cross-class acceptance is impossible by construction.
+2. Emission rule: the decision run NEVER uploads the V1-prefixed artifact
+   when any heavy surface was reused or skipped. The V1 FULL attestation is
+   emitted only when 4/4 surfaces executed on the tested tree — today's
+   exact V1 semantics, preserved unchanged.
+3. Any consumer that requires a V1 FULL attestation therefore forces full
+   execution (no reuse). A V2 partial/subset object is never interpreted as
+   proving FULL execution.
+
+### 7.4 Provenance derivation — why this is not unsupported transitive chaining
+
+The V1 tree-equivalence proof makes the attestation bound to `tree(P)` a
+first-class evidence object regardless of whether `P`'s run executed or
+reused: the attestation names `tested_tree_sha`, the gate validates
+`tested_tree == tree(P)`, and the executed evidence is for the tested tree —
+therefore the attestation IS evidence for `tree(P)`. The V2 gate on `M`
+consumes exactly one first-order object (the attestation bound to
+`tree(P)`) and never recurses into that attestation's own provenance. The
+hop count is invariant at 1.
+
+P2-2's excluded `A→B→C` chaining is a different shape: transient run
+artifacts without a tree-binding collapse object, where `C`'s reuse depends
+on `B`'s run whose evidence came from `A`'s run — a chain that grows with
+each hop. The production mapping does not have this shape. Additionally,
+every decision re-verifies the CURRENT tree delta (`P..M`) at decision time;
+no manifest is carried across more than one hop.
+
+The previous PR / tree-equivalence proof participates as the provenance
+anchor: `P`'s main-push attestation + the tree-equivalence gate prove the
+evidence object is bound to `tree(P)` and not to some other tree; the V2
+gate requires exactly one such object for `tree(P)`.
+
+### 7.5 What the sealed measurements covered vs. what remains to be sealed
+
+| Step in the production sequence | Sealed mechanism? |
+|---|---|
+| 1. topology gate `parent(M) == P` | YES — V1 `check_topology` (production code, regression-pinned); P2-2 measured instance of the class |
+| 2. exactly-one evidence object bound to `tree(P)` with per-surface blocks | YES — V1 attestation selection + tree-equivalence (production code, sealed); per-job blocks exist in the schema |
+| 3. delta `P..M` fully enumerated; surface-relevance gates (predicate 5) | YES — P2-2 §9 methodology + §13 threat rules; decision-time computation |
+| 4. identity mechanisms: live probe, build isolation, closed world, sdist→wheel→installed, normalized identity, retained replay | YES — P2-3..7, all measured |
+| 5. source-head (`P`) fingerprint recorded in a schema-bound production evidence object | **NO — new attestation/evidence behavior (GAP-P2-8-T1)** |
+| 6. truthful reused-surface representation; "never emit V1 FULL when a heavy surface was reused/skipped" as PRODUCTION behavior | **NO — new attestation semantics (GAP-P2-8-T2)** |
+| 7. the full sequence exercised end-to-end on real consecutive main pushes (`P`→`M`) with production attestation objects | **NO — sealed measurements ran canary-branch heads with canary-bundle schemas (GAP-P2-8-T3)** |
+
+Steps 1–4 are sealed. Steps 5–7 depend on new per-surface attestation /
+evidence behavior that no sealed measurement exercised, and step 7's
+sequence is a topology not covered by the sealed measurements as a runnable
+production flow. This is the OUTCOME B gap (§12).
 
 ---
 
@@ -553,10 +734,16 @@ Canonical foundation surfaces: `test-3.11`, `test-3.14`, `pyarrow24`,
 
 | Surface | Measured in P2 stack | Input identity | Runtime/build/artifact identity | Closure status |
 |---|---|---|---|---|
-| test-3.14 | P2-2,3,4,5,6,7 (3.14 leg) | sealed 258-node/37-file manifest; validator + node-ID stability | full runtime fingerprint (CPython 3.14.6), build-isolation, closed-world, sdist output, normalized identity — all measured | **CANDIDATE — PROOF STACK CLOSED** (under the §9 contract) |
-| pyarrow24 | P2-2,3,4,5,6,7 (pyarrow24 job) | 10-file audited surface (A 1 + B 3 + C 6) | full runtime fingerprint (CPython 3.11.15 + pyarrow==24.0.0 pin), build-isolation, closed-world, sdist output, normalized identity — all measured | **CANDIDATE — PROOF STACK CLOSED** (under the §9 contract) |
+| test-3.14 | P2-2,3,4,5,6,7 (3.14 leg) | sealed 258-selector / 37-file manifest resolving to the sealed 294-node Python 3.14 compatibility surface (287 passed + 7 skipped); validator pinned (resolved_sha256=7561b50a…); canary file absent; canary file's 60 collected node IDs stable base/A/B | full runtime fingerprint (CPython 3.14.6), build-isolation, closed-world, sdist output, normalized identity — all measured | **MEASUREMENT CLOSED** for this surface; production reuse blocked by GAP-P2-8 (topology bridge) |
+| pyarrow24 | P2-2,3,4,5,6,7 (pyarrow24 job) | 10-file audited surface (A 1 + B 3 + C 6); canary file absent; 60 collected node IDs stable base/A/B | full runtime fingerprint (CPython 3.11.15 + pyarrow==24.0.0 pin), build-isolation, closed-world, sdist output, normalized identity — all measured | **MEASUREMENT CLOSED** for this surface; production reuse blocked by GAP-P2-8 (topology bridge) |
 | test-3.11 | none (blanket-suite leg; P2-3 §11 explicitly records the 3.11 blanket run as contextual observation only) | blanket suite includes every test file — the canary marker file was part of this surface | no runtime fingerprint, no sdist/normalized measurements | **NOT AUTHORIZED by P2-8** |
 | package | none (package inputs `src/**` + `pyproject.toml` + ci.yml; P2 measured the MarketVault *editable* build under closed-world, not the package job's wheel/sdist + twine + fresh-venv + audit chain) | src/pyproject equality proven for the P2-2 pair only; artifact bytes shown to differ even for comment-only deltas | package job artifact identity not covered by the runtime-sdist fingerprint work | **NOT AUTHORIZED by P2-8** |
+
+Precision note (per independent review): the "60 node IDs" claim means the
+**60 collected node IDs of the canary file `tests/test_audit_v03.py` were
+stable across base/A/B** (P2-2 §7) — it is NOT the Python 3.14 surface node
+count. The 3.14 surface node count is the 294-node contract (287 passed + 7
+skipped).
 
 "Do not equate: 'global identity contract is understood' with 'every
 surface is now reusable'." P2-8 explicitly refuses any inference from the
@@ -567,23 +754,24 @@ their own dedicated measurement before any future per-surface contract.
 
 ## 9. Draft production fail-closed contract (specification only — NOT implemented)
 
-If and only if the proof review supports it (it does, for the two audited
-candidate surfaces), the minimum production contract for a candidate surface
-reuse is the following. A surface may return REUSE **only if EVERY required
-predicate is true**. Any missing / malformed / ambiguous / stale / mismatched
-predicate ⇒ **RUN**. No exception.
+If and only if the proof review supports it, the minimum production contract
+for a candidate surface reuse is the following. A surface may return REUSE
+**only if EVERY required predicate is true**. Any missing / malformed /
+ambiguous / stale / mismatched predicate ⇒ **RUN**. No exception.
+Predicates are evaluated in the decision run at `B := M` (§7.2) against the
+evidence object bound to `tree(P)` and the live probe at `M`.
 
 | # | Predicate | Evidence anchor |
 |---|---|---|
-| 1 | valid event / topology (push on main, single-parent squash, parent == `event.before`) | V1 foundation `check_event_shape`/`check_topology` (regression-pinned) |
+| 1 | valid event / topology (push on main, single-parent squash, parent == `before` == `P`) | V1 foundation `check_event_shape`/`check_topology` (regression-pinned) |
 | 2 | exact merged PR association (exactly one; `merge_commit_sha` == main SHA; base ref/sha exact) | V1 foundation `select_merged_pr` (regression-pinned) |
 | 3 | exact attempt/run identity (completed + success run on exact head; attempt-bound attestation, exactly one) | V1 foundation + P2-1 |
-| 4 | exact direct-child or other explicitly proven head relationship | P2-2 (direct-child measured; nothing else ever proven) |
-| 5 | exact surface relevance proof (delta fully enumerated; every selected input blob identical — 3.14: 37 manifest files; pyarrow24: 10 files; plus `src/**`? per surface, `pyproject.toml`, ci.yml, no conftest; node-ID stability) | P2-2 §9 (blob manifests) |
+| 4 | exact direct-child relation `parent(M) == P` (or another explicitly proven head relationship — none other exists) | V1 `check_topology` (production code) + P2-2 measured instance |
+| 5 | exact surface relevance proof — delta `P..M` fully enumerated; every selected input blob identical for the reused surface; HARD RUN RULES for BOTH audited candidate surfaces (P2-2 §13 threats C–I, encoded without permissive interpretation): any `src/**` change ⇒ RUN; any `pyproject.toml` change ⇒ RUN; any relevant CI/control-plane change ⇒ RUN; any unknown/unclassified path ⇒ RUN; any repo-wide conftest addition/change ⇒ RUN; any change to that surface's selected test inputs ⇒ RUN; any deletion of a selected input ⇒ RUN. Preserves the surface-specific selected sets: test-3.14 = the sealed 37-file manifest (258 selectors); pyarrow24 = the sealed 10-file ci.yml surface | P2-2 §9 (blob manifests) + §13 threats C–I + §7 (node-ID stability: canary file's 60 collected node IDs, base/A/B) |
 | 6 | no control-plane exclusion | V1 foundation `check_control_plane` |
 | 7 | canonical job topology unambiguous (no duplicate, no unexpected formal job) | V1 foundation + P2-1 + V2 foundation reasons |
-| 8 | prior surface evidence completed/success | V1 foundation + P2-1 (composite latest view) |
-| 9 | runtime global identity match (live probe, target head) | P2-3 |
+| 8 | prior surface evidence completed/success (evidence object bound to `tree(P)`, exactly one) | V1 foundation + P2-1 (composite latest view) + §7.3(a) |
+| 9 | runtime global identity match (live probe, target head `M`) | P2-3 |
 | 10 | runner identity match (image OS/version, RUNNER_OS/ARCH, sys fields) | P2-3/P2-4/P2-7 (P2-5 drift rejected) |
 | 11 | Python identity match (exact version, soabi, cache_tag, pointer width) | P2-3/P2-4/P2-7 |
 | 12 | resolver identity match (pip exact version) | P2-3 |
@@ -596,24 +784,30 @@ predicate ⇒ **RUN**. No exception.
 | 19 | unclassified raw differences == 0 | P2-7 (`unclassified: 0` every leg) |
 | 20 | installed payload identity match (installed bytes == built bytes == reported bytes) | P2-6/P2-7 (`WHEEL_PAYLOAD == INSTALLED_PAYLOAD`) |
 | 21 | final runtime identity match (probe == actual install, live cross-check) | P2-3/P2-4/P2-6/P2-7 (`FINAL_RUNTIME_MATCH`) |
-| 22 | retained evidence replay closure valid (FINALIZE → MANIFEST → REPLAY EXACT FINAL → NO FURTHER WRITES → UPLOAD → DOWNLOAD → REPLAY DOWNLOADED BYTES; verdict outside bundle) | P2-7 (roundtrip ×6, CHECK_COUNT=28) |
+| 22 | retained evidence replay closure valid — evidence objects from BOTH heads replay: source object (bound to `tree(P)`) and `M`'s decision object (FINALIZE → MANIFEST → REPLAY EXACT FINAL → NO FURTHER WRITES → UPLOAD → DOWNLOAD → REPLAY DOWNLOADED BYTES; verdict outside bundle; downloaded bundle's manifest-bound content/tree identity == finalized bundle; downloaded bundle passes its own offline replay) | P2-7 (roundtrip ×6, CHECK_COUNT=28) |
 | 23 | evidence schema/version exact | strict schema validation measured for V1 attestation; production V2 schema pins its own version, unknown version ⇒ INVALID |
 | 24 | no duplicate/unexpected evidence | V1 `select_attestation_artifact`/`check_jobs` + P2-1 |
 | 25 | no unknown field/shape accepted through permissive parsing | V1 strict attestation validation (exact key set); production V2 parsing must be strict-equivalent |
+| 26 | source-head fingerprint binding: the evidence object bound to `tree(P)` carries `P`'s recorded runtime fingerprint in the production schema (schema-bound, versioned) — **NEW attestation behavior (GAP-P2-8-T1), not sealed** | P2-3 mechanism; binding schema unmeasured |
+| 27 | truthful reused-surface representation: `M`'s decision object records `verdict: reused` with source evidence id + identity comparison + decision run; the V1 FULL attestation is NEVER emitted by a run in which any heavy surface was reused or skipped — **NEW attestation behavior (GAP-P2-8-T2), not sealed** | V1 semantics preserved; production rule unmeasured |
 
 Drafting notes:
 
-- Predicate 5 must be evaluated per surface with the surface's own selected-
-  input set (test-3.14 and pyarrow24 have different input sets; `src/**` /
-  `pyproject.toml` / ci.yml participate in the *global* delta check, and
-  changes there invalidate package and the 3.11 blanket surface by the
-  surface-boundary rules, even though those surfaces themselves are not
-  reuse candidates).
+- Predicate 5's hard rules encode P2-2 §13 threats C–I exactly: threat C
+  (src/** is a selected input for every surface), threat D (pyproject change
+  invalidates package and both test legs conservatively), threat E
+  (control-plane change invalidates ALL surfaces), threat F (conftest
+  addition is a selected input of every test surface), threat G (change to
+  any of the 37/10 selected files invalidates that surface), threat H
+  (unknown/unclassified path invalidates everything), threat I (deletion
+  conservatively invalidates). No permissive interpretation.
 - Predicates 9–21 are LIVE predicates: the target head's runtime/build
   identity must be re-proven at decision time (the lightweight probe is the
   measured mechanism, ~10–31 s per surface, independent of the heavy
   install). The source head's recorded evidence supplies its side of each
   comparison.
+- Predicates 26–27 are the unsealed bridges (GAP-P2-8). The contract as a
+  whole cannot be certified until a canary seals them (§12/§13).
 - Any single predicate failure ⇒ `no_reuse` for that surface with a
   specific `reason`; identity unproven ⇒ 4/4 `no_reuse` (foundation
   invariant).
@@ -633,11 +827,19 @@ Drafting notes:
   exact-tree-equivalent FULL evidence path (V1 verifier unchanged,
   regression-pinned, still the only production reuse gate). P2-8 does not
   redefine that boolean; no P2 stage ever did.
+- **The V1 FULL attestation (`market-vault-full-ci-attestation-*`) is NEVER
+  emitted or interpreted as proving FULL execution when a heavy surface was
+  actually reused/skipped.** A run that reuses any heavy surface emits only
+  the V2-scoped evidence object with truthful per-surface verdicts (§7.3(h));
+  any consumer requiring a V1 FULL attestation forces full execution. A V2
+  partial/subset proof is never accepted as a V1 FULL attestation (distinct
+  artifact class, strict V1 schema validation — sealed and regression-
+  pinned).
 - **Precedence (conceptual, not implemented in P2-8):**
   1. If existing V1 FULL reuse proves all four surfaces → use existing V1
      behavior.
   2. Else evaluate the future V2 per-surface evidence (per-surface plan,
-     `full_reuse` / `partial_reuse` / `no_reuse`).
+     `full_reuse` / `partial_reuse` / `no_reuse`) under the §7 topology.
   3. Any V2 surface not independently proven → RUN.
 - V2's production consumption requires its own separate PR (planning,
   implementation, review, canaries); until then all V2 output is foundation
@@ -660,7 +862,8 @@ Drafting notes:
   exactly as sealed; P2-7's OUTCOME A is not upgraded into a production
   authorization.
 - **P2-8 is architecture/evidence closure only** — the permanent diff of
-  this PR is exactly this document (`docs/partial_reuse_v2_proof_stack_closure.md`).
+  this PR is exactly this document
+  (`docs/partial_reuse_v2_proof_stack_closure.md`).
 - **Production implementation requires a separate PR** — including the
   production V2 evidence schema, the live probe integration, per-surface
   plan wiring, the `development_protocol_v1.md` update, and any new
@@ -671,72 +874,122 @@ Drafting notes:
 
 ## 12. Formal outcome
 
-**OUTCOME A — PROOF STACK CLOSED FOR AUDITED CANDIDATE SURFACES ONLY
-(`test-3.14`, `pyarrow24`).**
+**OUTCOME B — INTEGRATED ARCHITECTURE SOUND AND MEASUREMENT CHAIN CLOSED;
+PRODUCTION V2 SURFACE-EVIDENCE PROVENANCE / POST-MERGE TOPOLOGY BRIDGE
+OPEN.**
 
-Every OUTCOME A condition is satisfied:
+The independent review's OUTCOME DISCIPLINE was applied: OUTCOME A is
+retained only if EVERY required bridge is derivable from sealed P2 evidence
+without a new measurement assumption; OUTCOME B is required if any bridge
+depends on an unmeasured evidence semantic, new per-surface attestation
+behavior, or a topology not covered by the sealed measurements.
 
-- every proof gap required for the audited candidate surfaces has an exact
-  logical closure (the §5 chain; each bridge is a measured invariant);
-- no gap is closed merely by assumption (each closing invariant is named and
-  measured in the closing stage's retained evidence);
-- P2-6's historical OUTCOME B remains honestly represented (both gaps
-  sealed, never retroactively A);
-- P2-7 supplies valid closure for its two gaps (normalized identity with
-  negative + positive controls; retained roundtrip replay ×6,
-  CHECK_COUNT=28);
-- retained evidence closure is valid (downloaded bytes == uploaded bytes;
-  replay of downloaded bytes true);
-- the comparator defect is accounted for and fixed evidence supports the
-  final interpretation (defect → deterministic fix → 3 regression tests →
-  retained A/B re-comparison true);
-- no global identity field that should remain sensitive is normalized away
-  (only per-run diagnostics and run-noise are excluded; runner/python/
-  resolver/build-env drift always breaks the match — enforced by the P2-5
-  drift case);
-- production fail-closed behavior is specified unambiguously (§9 — any
-  predicate missing/mismatched ⇒ RUN, no exception);
-- no evidence supports an unsafe generalization (evidence is bounded to
-  direct-child + exact-delta + live-identity equality + two surfaces; no
-  evidence for arbitrary ancestry, cross-branch, transitive chaining,
-  test-3.11, or package).
+**What the review accepted (unchanged in rev 2):**
 
-OUTCOME A here does **NOT** mean:
+- scope discipline (single docs file; no code/workflow/test/schema/release
+  change);
+- exact-head CI;
+- historical P2-1..P2-7 outcome representation (including P2-6's sealed
+  OUTCOME B with both gaps, P2-7's OUTCOME A);
+- P2-6/P2-7 technical closure (sdist→wheel→installed binding; normalized
+  identity with negative + positive controls; retained roundtrip replay
+  ×6, CHECK_COUNT=28; comparator fix accounted);
+- candidate-surface boundary (test-3.14 and pyarrow24 candidates only).
 
-- Partial Reuse V2 is activated (it is not; no production skip exists);
-- every surface is reusable (test-3.11 and package are NOT authorized);
-- any head relationship other than the proven direct-child + exact-delta
-  topology is reusable (nothing else has evidence);
-- a production V2 implementation exists (the separate production-contract
-  PR is the next step, not this PR).
+**What rev 2 added — the derived topology (§7):** the production mapping
+`A := P`, `B := M` (consecutive main SHAs) with the direct-child relation
+`parent(M) == P` enforced by the sealed V1 topology gate; the evidence
+object bound to `tree(P)`; the decision run at `M`; the truthful
+reused-surface representation rules; the V1-FULL-never-emitted-on-reuse
+rules; and the provenance derivation showing the mapping is a single-hop
+consumption of a tree-bound attestation, NOT transitive chaining.
+
+**The remaining gap — named exactly:**
+
+**GAP-P2-8 — PRODUCTION V2 SURFACE-EVIDENCE PROVENANCE / POST-MERGE
+TOPOLOGY BRIDGE**, with three sub-bridges, each dependent on behavior no
+sealed measurement exercised:
+
+- **GAP-P2-8-T1 — source-head fingerprint binding.** The production
+  evidence object bound to `tree(P)` must carry `P`'s recorded runtime
+  fingerprint in a schema-bound, versioned field (P2-3's fingerprint is
+  sealed only in the canary bundle schema; the production V1 attestation
+  schema carries none). Requires the probe to run in every production
+  run and its output to be schema-bound — new per-surface attestation
+  behavior.
+- **GAP-P2-8-T2 — truthful reused-surface representation.** The V1
+  attestation is a 4/4-executed model. Representing "reused, not
+  executed" (with source evidence id + identity comparison + decision
+  run) and the rule "never emit/never accept a V2 partial/subset object
+  as the V1 FULL attestation" are new attestation semantics; their
+  production behavior has never been exercised.
+- **GAP-P2-8-T3 — end-to-end post-merge topology sequence.** The sealed
+  measurements ran canary-branch heads with canary-bundle evidence
+  schemas. The full sequence — every main-push/PR run records the
+  fingerprint; decision run at `M` validates topology, exactly-one
+  evidence for `tree(P)`, delta `P..M`, identity equality, per-surface
+  decision, truthful representation, replay closure — was never executed
+  on real consecutive main pushes with production attestation objects.
+
+**Why not OUTCOME C:** no evidence incompatibility or contamination — every
+sealed fact and every measured invariant is intact; the comparator defect
+was fixed with documented regression tests and retained re-comparison; the
+gap is a scope-boundary gap (production evidence topology), not a defect in
+the measured chain. Corrected outcomes inside stages (P2-2/3/4 A→B) were
+independently reviewed and accepted.
+
+**Why not OUTCOME A:** per the review's discipline, OUTCOME A would require
+every bridge to be derivable from sealed evidence. T1 and T2 depend on new
+per-surface attestation behavior, and T3 is a topology not covered by the
+sealed measurements as a runnable production flow. Choosing A "because the
+future implementation could probably be written safely" is explicitly
+forbidden and is not chosen.
+
+**Therefore:** the integrated review certifies the measurement chain (the
+identity mechanisms and the direct-child source-input semantics are
+measured, sound, and fail-closed) for the two audited candidate surfaces,
+but a fail-closed production Partial Reuse V2 contract is NOT yet certified.
+No production reuse is authorized.
 
 ---
 
 ## 13. Next-step recommendation (exact)
 
-1. **Independent review** of this document and its single-file diff (the
-   review gate per the development playbook §1.8). **STOP BEFORE MERGE**
-   until explicitly authorized.
-2. After merge: **production-contract implementation PR** (separate):
+1. **Independent review** of this rev-2 document and its single-file diff.
+   **STOP BEFORE MERGE** until explicitly authorized.
+2. **The exact next canary needed — P2-9: production-topology shadow
+   canary (measurement only, no gating).** Run on a real consecutive
+   main-push pair (`P` → `M`) after any future merge:
+   - every main-push/PR run records the live probe fingerprint in a
+     schema-bound evidence object (shadow, unused by any gate);
+   - in the `M` decision run (shadow): evidence binding to `tree(P)`,
+     `parent(M) == P`, delta `P..M` enumeration, probe identity equality
+     `P` vs `M`, per-surface fail-closed decision, truthful
+     `verdict: reused` representation;
+   - negative control: a V2 partial/subset object is never emitted as
+     and never accepted as the V1 FULL attestation (artifact-class
+     separation exercised on a real run);
+   - pass criterion: shadow verdict consistent on at least one real pair
+     with at least one candidate surface REUSE and one RUN; any
+     inconsistency ⇒ INVALID ⇒ no contract.
+   This closes GAP-P2-8-T1/T2/T3 in that order.
+3. After P2-9 closes: **production-contract implementation PR** (separate):
    - implement the §9 contract with the production V2 evidence schema and
      strict validation (schema version, exact key sets, no permissive
      parsing);
-   - integrate the live pre-install runtime/build-identity probe for the two
-     candidate surfaces (fail-closed: INVALID never "unknown");
+   - integrate the live pre-install runtime/build-identity probe for the
+     two candidate surfaces (fail-closed: INVALID never "unknown");
    - wire the per-surface plan (foundation `build_surface_reuse_plan`) under
      the proven global identity; any unproven surface ⇒ RUN;
-   - implement retained-evidence replay closure per the P2-7 protocol
-     (FINALIZE → MANIFEST → REPLAY EXACT FINAL → NO FURTHER WRITES →
-     UPLOAD → DOWNLOAD → REPLAY DOWNLOADED BYTES; verdict outside the
-     bundle);
-   - implement the offline-replay hardening items from the ledger
-     (full report-vs-resolution equality re-derivation; immediate POSTBUILD
+   - implement retained-evidence replay closure per the P2-7 protocol;
+   - implement the offline-replay hardening items from the ledger (full
+     report-vs-resolution equality re-derivation; immediate POSTBUILD
      receipt binding);
-   - update `docs/development_protocol_v1.md` (new section replacing/next to
-     §4.9) in that PR — not here;
+   - update `docs/development_protocol_v1.md` (new section replacing/next
+     to §4.9) in that PR — not here;
    - its own control-plane tier and canaries per the rollout sequence §4.9
      (this PR's main push must not be reused — it is docs-scope anyway).
-3. **Dedicated measurement for test-3.11 and package** before any future
+4. **Dedicated measurement for test-3.11 and package** before any future
    per-surface contract for those surfaces — P2-8 grants them nothing.
 
 ---
@@ -745,7 +998,14 @@ OUTCOME A here does **NOT** mean:
 
 - Frozen base verified exactly: `8aeef5fb99f5abed06b25db622cb17cf9afd5fa3`
   (HEAD == origin/main, clean tree).
-- Permanent diff: exactly one file — `docs/partial_reuse_v2_proof_stack_closure.md`.
+- Rev history: rev 1 (this PR's first commit) was reviewed independently;
+  the review accepted scope/CI/history/closure/boundary and required the
+  topology proof, outcome discipline, predicate-5 precision, evidence-
+  precision, and retained-wording corrections; rev 2 (this commit) applies
+  them. The corrected formal outcome is OUTCOME B (§12) — returned
+  honestly, not forced.
+- Permanent diff: exactly one file —
+  `docs/partial_reuse_v2_proof_stack_closure.md`.
 - No historical evidence report changed; no code/workflow/test/schema/
   release change.
 - Local gates on the final head: `git diff --check` clean;
