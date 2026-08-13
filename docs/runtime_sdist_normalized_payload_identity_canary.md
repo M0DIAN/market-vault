@@ -114,7 +114,7 @@ three heads unless stated; every leg measured `MEASURE_CRASH=false`.
 | `RAW_WHEEL_REPRODUCIBLE` (diagnostic) | false | false |
 | `EVALUATED_RAW_MISMATCH_NORMALIZATION_VALID` | true | true |
 | `RAW_MISMATCH_REASON` | timestamp_only_contract_ok | timestamp_only_contract_ok |
-| `RAW_DIFF_ATTRIBUTION` (per head) | A 10 / B 8 / fix 10, unclassified **0** | A 2 / B 4 / fix 2, unclassified **0** |
+| `RAW_DIFF_ATTRIBUTION` (per head) | A 10 / B 4 / fix 10, unclassified **0** | A 2 / B 8 / fix 10, unclassified **0** |
 | `WHEEL_PAYLOAD_SHA256` | `230368cd1d0fe21bf7a0bd25539aefcb581b9e932c8e8ff121814d54cb7472e6` | same |
 | `INSTALLED_PAYLOAD_SHA256` | same (`== WHEEL_PAYLOAD_SHA256`) | same |
 | `PAYLOAD_ENTRY_COUNT_1` / `_2` | 423 / 423 | 423 / 423 |
@@ -129,7 +129,7 @@ three heads unless stated; every leg measured `MEASURE_CRASH=false`.
 | `INSTALL_REPORT_SHA_OK` / `SLOT_OK` | true / true | true / true |
 | `MANIFEST_ENTRY_COUNT` | 517 | 520 |
 | `RUNTIME_WHEEL_COUNT` | 44 | 47 |
-| `NORMALIZED_SOURCE_BUILD_IDENTITY_SHA256` (per head) | A `05a2a1025f6bf0be750d1b5ee5f008cdc925c4167ac66aeafe1bef1608021b67` · B `1611f4ced55476622824e23a5ff4818a87130ed9522d2cca217744c8359ea19b` · fix `77d4e3bc7c3be609f1ee66c7e5e425849b0a7125adb31eb89d1117160e9468a4` | A `bbd6236b0f57c3ebc38cee98092af3405557f30e9021c7ca16519546cd2f49cd` · B `64bf51a737af902c24d27dfad0c9c90db43993f00e31498ffd6efd76ec85bc50` · fix `88ab519536374eba00e5954ed170e4f2291654624e0f1a9fe0d6e8376f124282` |
+| `NORMALIZED_SOURCE_BUILD_IDENTITY_SHA256` (per head) | A `bbd6236b0f57c3ebc38cee98092af3405557f30e9021c7ca16519546cd2f49cd` · B `1611f4ced55476622824e23a5ff4818a87130ed9522d2cca217744c8359ea19b` · fix `77d4e3bc7c3be609f1ee66c7e5e425849b0a7125adb31eb89d1117160e9468a4` | A `05a2a1025f6bf0be750d1b5ee5f008cdc925c4167ac66aeafe1bef1608021b67` · B `64bf51a737af902c24d27dfad0c9c90db43993f00e31498ffd6efd76ec85bc50` · fix `88ab519536374eba00e5954ed170e4f2291654624e0f1a9fe0d6e8376f124282` |
 
 `NORMALIZED_SOURCE_BUILD_IDENTITY_SHA256` is the per-measurement digest and
 binds its context, including the canary head — it therefore differs across
@@ -200,8 +200,8 @@ copy and is never re-uploaded).
 | fix | `31629138376` | true (28 checks) | true (28 checks) | true |
 
 Head A replay tree SHAs (retained copies): test-3.14
-`cc9e146c2c261c7c2a7e1ccdde6481f448c5fb83fdcae180fd1488b926128501`,
-pyarrow24 `572cd65daa1ef1a3bab6b3f0adb7a75fc8a7f0f8071c89858ae877b0e22e0720`
+`572cd65daa1ef1a3bab6b3f0adb7a75fc8a7f0f8071c89858ae877b0e22e0720`,
+pyarrow24 `cc9e146c2c261c7c2a7e1ccdde6481f448c5fb83fdcae180fd1488b926128501`
 (equal to the manifest-bound bundle tree SHA printed by the bundle step).
 A roundtrip replay failure would have set the shadow verdict false and
 would never have skipped production validation.
@@ -335,3 +335,32 @@ diff --check`, `check_repo_hygiene.py`, `check_release.py`
 (`RELEASE_CHECK_OK version=0.7.0`), and the offline ci-auditability/
 release suites. The final exact-head CI run must conclude 4/4 jobs
 success with the formal suite green and no canary artifacts.
+
+## 19. Independent review correction (docs-only)
+
+Independent review confirmed the P2-7 technical measurement supports
+FORMAL OUTCOME A, and identified exact-value transcription /
+surface-label errors in this report. This section records the
+correction:
+
+- **`NORMALIZED_SOURCE_BUILD_IDENTITY_SHA256` surface assignment
+  (Head A)**: the test-3.14 and pyarrow24 values were swapped in the
+  original transcription. Correct values (verified against the retained
+  bundles): test-3.14 = `bbd6236b…`; pyarrow24 = `05a2a102…`.
+- **`RAW_DIFF_ATTRIBUTION` counts (Head B and comparator-fix head)**:
+  Head B test-3.14 = 4, pyarrow24 = 8; comparator-fix head test-3.14 =
+  10, pyarrow24 = 10. `unclassified = 0` for every leg.
+- **Head A retained roundtrip replay tree SHA mapping**: test-3.14 and
+  pyarrow24 were swapped in the original transcription. Correct values
+  (verified against the retained roundtrip receipt files): test-3.14 =
+  `572cd65d…`; pyarrow24 = `cc9e146c…`.
+
+Correction guarantees:
+
+- These were report transcription / surface-label errors only.
+- The authoritative retained evidence itself is unchanged; all six
+  retained bundles (Heads A/B/comparator-fix × test-3.14/pyarrow24)
+  replay with `EVIDENCE_BUNDLE_REPLAY_OK=true` / `CHECK_COUNT=28`.
+- Formal OUTCOME A is unchanged.
+- Heads A/B/comparator-fix were not rerun.
+- No measurement artifact was mutated.
