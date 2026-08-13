@@ -1,4 +1,4 @@
-# P2-8 Partial Reuse V2 Proof-Stack Closure Review (PR #83, rev 2)
+# P2-8 Partial Reuse V2 Proof-Stack Closure Review (PR #83, rev 3)
 
 **Rev 2 — independent-review corrections applied.** Rev 1 (outcome A draft)
 was reviewed independently; the review accepted scope discipline, exact-head
@@ -9,6 +9,20 @@ discipline re-derivation, (3) predicate-5 ambiguity removal, (4)
 evidence-precision corrections, (5) retained-artifact wording tightening.
 Rev 2 applies all five. The formal result changed from OUTCOME A to
 **OUTCOME B** — see §12 for the exact derivation and remaining gap.
+
+**Rev 3 — second independent review applied.** Rev 2's OUTCOME B was
+confirmed correct. Rev 3 corrects the V1 attestation model (§7.1–§7.5):
+the production V1 attestation is a single flat object (exact 12-field
+schema, §7.3(a)) with NO per-job/per-surface blocks; per-surface success
+is separate GitHub Actions jobs-API evidence validated by `check_jobs()`.
+The nonexistent "main-push V1 attestation" is removed (V1 FULL attestations
+are emitted only by qualifying `pull_request` FULL runs); the source proof
+for previous main `P` is the prior merged PR's exact successful FULL run
+and its attempt-bound V1 attestation with `tested_tree_sha == tree(P)`.
+§7.4/§7.5 define a source composite object and classify its unexercised
+end-to-end assembly as GAP-P2-8-T0. §13's P2-9 canary is redesigned around
+that actual source path on a controlled real `P`→`M` pair (one candidate
+REUSE, one candidate RUN). Formal result unchanged: **OUTCOME B**.
 
 **Status: ARCHITECTURE / EVIDENCE CLOSURE REVIEW ONLY — OUTCOME B
 (INTEGRATED MEASUREMENT CHAIN CLOSED; PRODUCTION V2 SURFACE-EVIDENCE
@@ -607,13 +621,24 @@ and no P2 stage measured it. This document does not claim it.
 
 ### 7.3 Direct answers to the provenance questions
 
-**(a) Which head owns the reusable surface evidence — `P`.** The evidence
-object is the main-push attestation bound to `tree(P)`: the attestation
-carries `tested_tree_sha` and V1's tree-equivalence gate validates
-`tree(P) == tested_tree_sha` at the time `P` is main. Exactly one
-attestation is selected per head (V1 exact-one select rule, sealed). Its
-per-job blocks provide per-surface granularity (the attestation schema is
-per-job; surfaces map to jobs 1:1).
+**(a) Which head owns the reusable surface evidence — `P`.** The executed
+surface evidence for `P` is owned by the prior merged PR's exact successful
+source PR-head FULL run at `P`, bound to `tree(P)` via the V1
+attestation's `tested_tree_sha` + the tree-equivalence gate. The V1
+attestation is a single flat object with an exact 12-field schema
+(`schema_version`, `repository`, `workflow`, `run_id`, `run_attempt`,
+`pr_number`, `base_sha`, `head_sha`, `tested_merge_sha`, `tested_tree_sha`,
+`tier`, `full_matrix_required`) and contains NO per-job or per-surface
+blocks. Per-surface success is NOT inside the attestation: it is the exact
+4-job GitHub Actions jobs-API evidence, validated by `check_jobs()`. The
+full composite source proof for a surface of `P` is:
+
+source PR/run/attempt (P2-1 attempt-bound semantics)
++ exact 4-job GitHub Actions job view (all four formal jobs success)
++ `check_jobs()` (exactly the four surfaces; no duplicate/extra/non-success)
++ exactly-one V1 FULL attestation (`market-vault-full-ci-attestation-*`)
++ strict attestation validation (exact key set, no permissive parsing)
++ `tested_tree_sha` + tree equivalence (`tested_tree == tree(P)`).
 
 **(b) Which head is the target of P2-2's direct-child proof.** In the sealed
 measurement: the canary-head pair. In the production mapping: the pair
@@ -631,19 +656,25 @@ and proven irrelevant to each reused surface under the §9 predicate-5 rules
 
 **(d) Which run/attempt owns each evidence artifact.**
 
-- `P`'s evidence: the main-push CI run at `P`, attempt-bound per P2-1. If
-  `P`'s run was itself a V1 FULL reuse, the executed evidence is the merged
-  PR-head run whose tested tree equals `tree(P)`; the artifact owned by
-  `tree(P)` is still `P`'s main-push attestation (one per main push,
-  exactly-one rule). The tree-equivalence proof collapses the provenance to
-  `tree(P)` — see 7.4.
+- `P`'s evidence: the prior merged PR's exact successful source PR-head
+  FULL run/attempt (the run whose merge created `P`). Per P2-1 semantics
+  that run is identified by exact head SHA + `completed` + `success` +
+  exactly-one attempt-bound V1 attestation. If that PR's run itself used
+  V1 FULL reuse, the main run merely CONSUMED the prior PR attestation —
+  it emitted NO V1 attestation of its own; the executed surface evidence
+  still resolves to the qualifying prior PR FULL run with
+  `tested_tree == tree(P)`.
 - `M`'s decision: the main-push CI run at `M`, attempt-bound (P2-1
   semantics: a rerun of `M`'s run is the same run identity; probe and
-  evidence objects are attempt-bound).
-- The live identity probe (P2-3 mechanism) must run in every main-push run
-  (and every PR run) and its fingerprint must be recorded in a
-  schema-bound evidence object — **this binding is new attestation
-  behavior; see GAP-P2-8-T1 (§12)**.
+  evidence objects are attempt-bound). The V1 FULL attestation is
+  created/uploaded ONLY on `github.event_name == 'pull_request' &&
+  CI_TIER == full && CI_FULL_MATRIX_REQUIRED == true` (ci.yml) — never on
+  a main push — so `M`'s decision run emits no V1 FULL attestation; any
+  V2 evidence object it emits is the V2-scoped class (§7.3(h)).
+- The live identity probe (P2-3 mechanism) must run in every run (PR and
+  main push) and its fingerprint must be recorded in a schema-bound
+  evidence object — **this binding is new attestation behavior; see
+  GAP-P2-8-T1 (§12)**.
 
 **(e) Which attestation/evidence schema binds the reused surface.** A
 V2-scoped evidence object (new schema, to be specified in the
@@ -651,8 +682,10 @@ production-contract PR): per-surface block
 `{surface, verdict: reused, source: {evidence_id, head: P, tree: tree(P)},
 identity: {fingerprint(P), fingerprint(M), equality: true, fields compared},
 decision_run: {run_id, run_attempt}, executed: false}`.
-The V1 FULL attestation schema binds only fully-executed runs (4/4 executed
-on the tested tree) and is never used to represent reuse.
+The V1 FULL attestation schema is a single flat 12-field object bound to a
+fully-executed run (4/4 surfaces executed on the tested tree, per-surface
+success carried by the jobs API + `check_jobs()`, not by the attestation)
+and is never used to represent reuse.
 
 **(f) How a surface that was REUSED rather than EXECUTED on `B` is
 truthfully represented.** By the explicit `verdict: reused` block above,
@@ -665,9 +698,13 @@ ALL of (i) a source evidence id that validates and binds `tree(P)`,
 **(g) How B-level evidence is finally bound to the squash/main commit `M`.**
 `M`'s run's V2 evidence object binds head `M`, `tree(M)`, `run_id`,
 `run_attempt` via the same strict object-schema binding V1 uses (head + tree
-fields, exact SHA format, no permissive parsing). For the main-push case the
-tree binding is validated as `tested_tree == tree(M)` when the merged PR's
-tested tree equals `M`'s tree (the V1 pattern), else `tree(M)` directly.
+fields, exact SHA format, no permissive parsing). `M`'s own V1 FULL
+attestation does not exist — V1 FULL attestations are emitted only by
+qualifying `pull_request` FULL runs. For the tree binding, the V1 pattern
+(post-merge verifier) applies: the consumed PR attestation's
+`tested_tree_sha` must equal the main tree, which in this mapping is
+`tested_tree == tree(M)` for the PR whose merge created `M`; otherwise the
+V2 object binds `tree(M)` directly.
 
 **(h) How the system avoids treating a V2 partial/subset proof as a V1 FULL
 attestation.**
@@ -686,43 +723,68 @@ attestation.**
 
 ### 7.4 Provenance derivation — why this is not unsupported transitive chaining
 
-The V1 tree-equivalence proof makes the attestation bound to `tree(P)` a
-first-class evidence object regardless of whether `P`'s run executed or
-reused: the attestation names `tested_tree_sha`, the gate validates
-`tested_tree == tree(P)`, and the executed evidence is for the tested tree —
-therefore the attestation IS evidence for `tree(P)`. The V2 gate on `M`
-consumes exactly one first-order object (the attestation bound to
-`tree(P)`) and never recurses into that attestation's own provenance. The
-hop count is invariant at 1.
+The V2 gate on `M` consumes one first-order source composite object for
+`tree(P)` and never recurses into that object's own provenance; the hop
+count is invariant at 1.
+
+**Source composite object (conceptual):**
+
+```
+SourceSurfaceEvidence(P, surface) :=
+  prior merged PR association for P   (the PR whose merge created P)
+  + exact successful source PR-head FULL run/attempt
+  + exact 4-job jobs-API evidence     (all four formal jobs success)
+  + check_jobs() validation
+  + exactly-one V1 FULL attestation from that PR run (attempt-bound)
+  + strict attestation validation     (exact 12-field schema)
+  + tested_tree == tree(P)            (tested_tree_sha + tree equivalence)
+  + source runtime fingerprint        (once P2-9 supplies it, §13)
+```
+
+The CURRENT V1 components in this composite are each individually sealed
+and regression-pinned: run/attempt identity (P2-1), the 4-job jobs
+contract and `check_jobs()` (V1 foundation), the exactly-one
+attempt-bound attestation and its strict 12-field validation (V1
+foundation), tree equivalence (V1 foundation). What has NOT been exercised
+end-to-end is ASSEMBLING them one generation back as the V2
+source-evidence locator/binding — locating a qualifying prior merged PR
+for `P`, resolving its exact FULL run/attempt, and producing a V2
+source-evidence id from the composite. That assembly is classified
+honestly inside GAP-P2-8 as **GAP-P2-8-T0 (source-evidence locator
+bridge)** (§12) — it is NOT called sealed here.
 
 P2-2's excluded `A→B→C` chaining is a different shape: transient run
 artifacts without a tree-binding collapse object, where `C`'s reuse depends
 on `B`'s run whose evidence came from `A`'s run — a chain that grows with
-each hop. The production mapping does not have this shape. Additionally,
-every decision re-verifies the CURRENT tree delta (`P..M`) at decision time;
-no manifest is carried across more than one hop.
-
-The previous PR / tree-equivalence proof participates as the provenance
-anchor: `P`'s main-push attestation + the tree-equivalence gate prove the
-evidence object is bound to `tree(P)` and not to some other tree; the V2
-gate requires exactly one such object for `tree(P)`.
+each hop. The production mapping does not have this shape: the composite
+object is bound to `tree(P)` through the prior PR FULL run's attestation
+`tested_tree_sha` + the tree-equivalence gate, and every decision
+re-verifies the CURRENT tree delta (`P..M`) at decision time; no manifest
+is carried across more than one hop. The prior PR FULL run participates as
+the provenance anchor: its attestation + the tree-equivalence gate prove
+the composite is bound to `tree(P)` and not to some other tree; the V2
+gate requires exactly one such composite for `tree(P)`.
 
 ### 7.5 What the sealed measurements covered vs. what remains to be sealed
 
 | Step in the production sequence | Sealed mechanism? |
 |---|---|
 | 1. topology gate `parent(M) == P` | YES — V1 `check_topology` (production code, regression-pinned); P2-2 measured instance of the class |
-| 2. exactly-one evidence object bound to `tree(P)` with per-surface blocks | YES — V1 attestation selection + tree-equivalence (production code, sealed); per-job blocks exist in the schema |
+| 2. source composite proof for `tree(P)`: prior merged PR association + exact PR-head FULL run/attempt + exact 4-job jobs view + `check_jobs()` + exactly-one V1 FULL attestation + strict validation + `tested_tree_sha` + tree equivalence | components: YES — each individually sealed (V1 foundation + P2-1 + P2-2); end-to-end assembly one generation back as the V2 source-evidence locator/binding: **NO — never exercised (GAP-P2-8-T0)** |
 | 3. delta `P..M` fully enumerated; surface-relevance gates (predicate 5) | YES — P2-2 §9 methodology + §13 threat rules; decision-time computation |
 | 4. identity mechanisms: live probe, build isolation, closed world, sdist→wheel→installed, normalized identity, retained replay | YES — P2-3..7, all measured |
 | 5. source-head (`P`) fingerprint recorded in a schema-bound production evidence object | **NO — new attestation/evidence behavior (GAP-P2-8-T1)** |
 | 6. truthful reused-surface representation; "never emit V1 FULL when a heavy surface was reused/skipped" as PRODUCTION behavior | **NO — new attestation semantics (GAP-P2-8-T2)** |
 | 7. the full sequence exercised end-to-end on real consecutive main pushes (`P`→`M`) with production attestation objects | **NO — sealed measurements ran canary-branch heads with canary-bundle schemas (GAP-P2-8-T3)** |
 
-Steps 1–4 are sealed. Steps 5–7 depend on new per-surface attestation /
-evidence behavior that no sealed measurement exercised, and step 7's
-sequence is a topology not covered by the sealed measurements as a runnable
-production flow. This is the OUTCOME B gap (§12).
+Steps 1, 3, 4 and the individual V1 components of step 2 are sealed.
+Step 2's end-to-end assembly (locating the prior merged PR for `P`,
+resolving its exact FULL run/attempt, binding the composite to `tree(P)`)
+is GAP-P2-8-T0 — unexercised as a V2 source-evidence locator. Steps 5–7
+depend on new per-surface attestation / evidence behavior that no sealed
+measurement exercised, and step 7's sequence is a topology not covered by
+the sealed measurements as a runnable production flow. This is the OUTCOME
+B gap (§12).
 
 ---
 
@@ -759,7 +821,7 @@ for a candidate surface reuse is the following. A surface may return REUSE
 **only if EVERY required predicate is true**. Any missing / malformed /
 ambiguous / stale / mismatched predicate ⇒ **RUN**. No exception.
 Predicates are evaluated in the decision run at `B := M` (§7.2) against the
-evidence object bound to `tree(P)` and the live probe at `M`.
+source composite (§7.4) bound to `tree(P)` and the live probe at `M`.
 
 | # | Predicate | Evidence anchor |
 |---|---|---|
@@ -770,7 +832,7 @@ evidence object bound to `tree(P)` and the live probe at `M`.
 | 5 | exact surface relevance proof — delta `P..M` fully enumerated; every selected input blob identical for the reused surface; HARD RUN RULES for BOTH audited candidate surfaces (P2-2 §13 threats C–I, encoded without permissive interpretation): any `src/**` change ⇒ RUN; any `pyproject.toml` change ⇒ RUN; any relevant CI/control-plane change ⇒ RUN; any unknown/unclassified path ⇒ RUN; any repo-wide conftest addition/change ⇒ RUN; any change to that surface's selected test inputs ⇒ RUN; any deletion of a selected input ⇒ RUN. Preserves the surface-specific selected sets: test-3.14 = the sealed 37-file manifest (258 selectors); pyarrow24 = the sealed 10-file ci.yml surface | P2-2 §9 (blob manifests) + §13 threats C–I + §7 (node-ID stability: canary file's 60 collected node IDs, base/A/B) |
 | 6 | no control-plane exclusion | V1 foundation `check_control_plane` |
 | 7 | canonical job topology unambiguous (no duplicate, no unexpected formal job) | V1 foundation + P2-1 + V2 foundation reasons |
-| 8 | prior surface evidence completed/success (evidence object bound to `tree(P)`, exactly one) | V1 foundation + P2-1 (composite latest view) + §7.3(a) |
+| 8 | prior surface evidence completed/success — source composite proof for `tree(P)`: prior merged PR association + exact PR-head FULL run/attempt + exact 4-job jobs view + `check_jobs()` + exactly-one attempt-bound V1 FULL attestation + strict validation + `tested_tree_sha` == `tree(P)`; any component unavailable ⇒ RUN | V1 foundation + P2-1 + §7.3(a)/§7.4 (end-to-end assembly itself: GAP-P2-8-T0) |
 | 9 | runtime global identity match (live probe, target head `M`) | P2-3 |
 | 10 | runner identity match (image OS/version, RUNNER_OS/ARCH, sys fields) | P2-3/P2-4/P2-7 (P2-5 drift rejected) |
 | 11 | Python identity match (exact version, soabi, cache_tag, pointer width) | P2-3/P2-4/P2-7 |
@@ -829,12 +891,17 @@ Drafting notes:
   redefine that boolean; no P2 stage ever did.
 - **The V1 FULL attestation (`market-vault-full-ci-attestation-*`) is NEVER
   emitted or interpreted as proving FULL execution when a heavy surface was
-  actually reused/skipped.** A run that reuses any heavy surface emits only
-  the V2-scoped evidence object with truthful per-surface verdicts (§7.3(h));
-  any consumer requiring a V1 FULL attestation forces full execution. A V2
-  partial/subset proof is never accepted as a V1 FULL attestation (distinct
-  artifact class, strict V1 schema validation — sealed and regression-
-  pinned).
+  actually reused/skipped.** Its creation/upload is gated on
+  `github.event_name == 'pull_request' && CI_TIER == full &&
+  CI_FULL_MATRIX_REQUIRED == true` (ci.yml) — a main push never emits one —
+  and it is a single flat 12-field object for a fully-executed PR run
+  (4/4 surfaces executed on the tested tree; per-surface success is carried
+  by the jobs API + `check_jobs()`, not by the attestation). A run that
+  reuses any heavy surface emits only the V2-scoped evidence object with
+  truthful per-surface verdicts (§7.3(h)); any consumer requiring a V1 FULL
+  attestation forces full execution. A V2 partial/subset proof is never
+  accepted as a V1 FULL attestation (distinct artifact class, strict V1
+  schema validation — sealed and regression-pinned).
 - **Precedence (conceptual, not implemented in P2-8):**
   1. If existing V1 FULL reuse proves all four surfaces → use existing V1
      behavior.
@@ -907,16 +974,30 @@ consumption of a tree-bound attestation, NOT transitive chaining.
 **The remaining gap — named exactly:**
 
 **GAP-P2-8 — PRODUCTION V2 SURFACE-EVIDENCE PROVENANCE / POST-MERGE
-TOPOLOGY BRIDGE**, with three sub-bridges, each dependent on behavior no
+TOPOLOGY BRIDGE**, with four sub-bridges, each dependent on behavior no
 sealed measurement exercised:
 
-- **GAP-P2-8-T1 — source-head fingerprint binding.** The production
-  evidence object bound to `tree(P)` must carry `P`'s recorded runtime
-  fingerprint in a schema-bound, versioned field (P2-3's fingerprint is
-  sealed only in the canary bundle schema; the production V1 attestation
-  schema carries none). Requires the probe to run in every production
-  run and its output to be schema-bound — new per-surface attestation
-  behavior.
+- **GAP-P2-8-T0 — source-evidence locator bridge.** The V2
+  source-evidence locator/binding must ASSEMBLE the individually-sealed V1
+  components one generation back: identify the prior merged PR that
+  produced `P`; identify its exact successful source PR-head FULL
+  run/attempt; validate the exact 4 formal job conclusions from the GitHub
+  Actions jobs API (`check_jobs()`); select exactly one attempt-bound V1
+  FULL attestation from that run; strictly validate it (exact 12-field
+  schema); prove `attestation.tested_tree_sha == tree(P)`. Each component
+  is sealed, but the end-to-end assembly as the V2 source-evidence locator
+  was NEVER exercised (sealed measurements ran canary-branch heads with
+  canary-bundle schemas, not the prior-PR locator path). If any component
+  is unavailable at decision time ⇒ source evidence unavailable ⇒ RUN.
+  NOTE: there is NO main-push V1 attestation — V1 FULL attestations are
+  emitted only by qualifying `pull_request` FULL runs; `P`'s main push, if
+  it used V1 reuse, only CONSUMED the prior PR attestation.
+- **GAP-P2-8-T1 — source-head fingerprint binding.** The V2 source
+  composite must carry `P`'s recorded runtime fingerprint in a
+  schema-bound, versioned field (P2-3's fingerprint is sealed only in the
+  canary bundle schema; the production V1 attestation schema carries
+  none). Requires the probe to run in every production run and its output
+  to be schema-bound — new per-surface attestation behavior.
 - **GAP-P2-8-T2 — truthful reused-surface representation.** The V1
   attestation is a 4/4-executed model. Representing "reused, not
   executed" (with source evidence id + identity comparison + decision
@@ -925,11 +1006,12 @@ sealed measurement exercised:
   production behavior has never been exercised.
 - **GAP-P2-8-T3 — end-to-end post-merge topology sequence.** The sealed
   measurements ran canary-branch heads with canary-bundle evidence
-  schemas. The full sequence — every main-push/PR run records the
-  fingerprint; decision run at `M` validates topology, exactly-one
-  evidence for `tree(P)`, delta `P..M`, identity equality, per-surface
-  decision, truthful representation, replay closure — was never executed
-  on real consecutive main pushes with production attestation objects.
+  schemas. The full sequence — source composite locator for `tree(P)`
+  (T0), live fingerprints on both heads, decision run at `M` validating
+  topology (`parent(M) == P`), delta `P..M`, identity equality,
+  per-surface decision, truthful representation, replay closure — was
+  never executed on real consecutive main pushes with production evidence
+  objects.
 
 **Why not OUTCOME C:** no evidence incompatibility or contamination — every
 sealed fact and every measured invariant is intact; the comparator defect
@@ -939,11 +1021,12 @@ the measured chain. Corrected outcomes inside stages (P2-2/3/4 A→B) were
 independently reviewed and accepted.
 
 **Why not OUTCOME A:** per the review's discipline, OUTCOME A would require
-every bridge to be derivable from sealed evidence. T1 and T2 depend on new
-per-surface attestation behavior, and T3 is a topology not covered by the
-sealed measurements as a runnable production flow. Choosing A "because the
-future implementation could probably be written safely" is explicitly
-forbidden and is not chosen.
+every bridge to be derivable from sealed evidence. T0 depends on the
+unexercised end-to-end assembly of the source-evidence locator; T1 and T2
+depend on new per-surface attestation behavior; T3 is a topology not
+covered by the sealed measurements as a runnable production flow. Choosing
+A "because the future implementation could probably be written safely" is
+explicitly forbidden and is not chosen.
 
 **Therefore:** the integrated review certifies the measurement chain (the
 identity mechanisms and the direct-child source-input semantics are
@@ -958,21 +1041,31 @@ No production reuse is authorized.
 1. **Independent review** of this rev-2 document and its single-file diff.
    **STOP BEFORE MERGE** until explicitly authorized.
 2. **The exact next canary needed — P2-9: production-topology shadow
-   canary (measurement only, no gating).** Run on a real consecutive
-   main-push pair (`P` → `M`) after any future merge:
-   - every main-push/PR run records the live probe fingerprint in a
-     schema-bound evidence object (shadow, unused by any gate);
-   - in the `M` decision run (shadow): evidence binding to `tree(P)`,
-     `parent(M) == P`, delta `P..M` enumeration, probe identity equality
-     `P` vs `M`, per-surface fail-closed decision, truthful
-     `verdict: reused` representation;
-   - negative control: a V2 partial/subset object is never emitted as
-     and never accepted as the V1 FULL attestation (artifact-class
+   canary (measurement only, no gating), exercising the ACTUAL source
+   path.** Prefer a CONTROLLED real `P`→`M` pair, deliberately designed so
+   that one audited candidate surface is REUSE and one is RUN, rather than
+   relying on an arbitrary future merge to happen to produce that mixed
+   state. The shadow flow follows the real source path — NOT a main-push
+   V1 attestation (none exists):
+
+   prior merged PR FULL run (the PR whose merge created `P`)
+   → exact 4-job jobs-API evidence + `check_jobs()`
+   → exactly-one attempt-bound V1 FULL attestation, strictly validated
+   → `attestation.tested_tree_sha == tree(P)`
+   → source runtime fingerprint (schema-bound, shadow)
+   → `M` live fingerprint
+   → delta `P..M` enumeration + surface-relevance proof (predicate 5)
+   → per-surface shadow decision (fail-closed)
+   → truthful `verdict: reused` V2 evidence object — never the V1 FULL
+     class; negative control: a V2 partial/subset object is never emitted
+     as and never accepted as the V1 FULL attestation (artifact-class
      separation exercised on a real run);
-   - pass criterion: shadow verdict consistent on at least one real pair
-     with at least one candidate surface REUSE and one RUN; any
-     inconsistency ⇒ INVALID ⇒ no contract.
-   This closes GAP-P2-8-T1/T2/T3 in that order.
+
+   - pass criterion: shadow verdict consistent on at least one controlled
+     real pair with the designed outcomes (≥1 candidate surface REUSE,
+     ≥1 candidate surface RUN, all others consistent); any inconsistency
+     ⇒ INVALID ⇒ no contract.
+   This closes GAP-P2-8-T0/T1/T2/T3 in that order.
 3. After P2-9 closes: **production-contract implementation PR** (separate):
    - implement the §9 contract with the production V2 evidence schema and
      strict validation (schema version, exact key sets, no permissive
@@ -1001,9 +1094,17 @@ No production reuse is authorized.
 - Rev history: rev 1 (this PR's first commit) was reviewed independently;
   the review accepted scope/CI/history/closure/boundary and required the
   topology proof, outcome discipline, predicate-5 precision, evidence-
-  precision, and retained-wording corrections; rev 2 (this commit) applies
-  them. The corrected formal outcome is OUTCOME B (§12) — returned
-  honestly, not forced.
+  precision, and retained-wording corrections; rev 2 applied them and the
+  formal outcome was corrected to OUTCOME B (§12) — returned honestly,
+  not forced. A second independent review confirmed OUTCOME B and required
+  rev 3 (this commit): correct the V1 attestation model (single flat
+  12-field schema, no per-job/per-surface blocks; per-surface success =
+  jobs-API evidence + `check_jobs()`), remove the nonexistent main-push V1
+  attestation (V1 FULL attestations are emitted only by qualifying
+  `pull_request` FULL runs), define the source composite object (§7.4)
+  and classify its unexercised end-to-end assembly as GAP-P2-8-T0, and
+  redesign P2-9 around the actual source path on a controlled `P`→`M`
+  pair. Formal outcome remains OUTCOME B.
 - Permanent diff: exactly one file —
   `docs/partial_reuse_v2_proof_stack_closure.md`.
 - No historical evidence report changed; no code/workflow/test/schema/
