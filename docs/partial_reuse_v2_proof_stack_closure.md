@@ -1,4 +1,4 @@
-# P2-8 Partial Reuse V2 Proof-Stack Closure Review (PR #83, rev 3)
+# P2-8 Partial Reuse V2 Proof-Stack Closure Review (PR #83, rev 4)
 
 **Rev 2 — independent-review corrections applied.** Rev 1 (outcome A draft)
 was reviewed independently; the review accepted scope discipline, exact-head
@@ -23,6 +23,18 @@ and its attempt-bound V1 attestation with `tested_tree_sha == tree(P)`.
 end-to-end assembly as GAP-P2-8-T0. §13's P2-9 canary is redesigned around
 that actual source path on a controlled real `P`→`M` pair (one candidate
 REUSE, one candidate RUN). Formal result unchanged: **OUTCOME B**.
+
+**Rev 4 — third independent review applied.** Rev 3's OUTCOME B was
+confirmed; the previous blockers (flat 12-field attestation model, jobs
+API + `check_jobs()` surface evidence, no main-push V1 attestation,
+`SourceSurfaceEvidence(P, surface)`, T0/T1/T2/T3 honestly OPEN) are all
+closed. Rev 4 fixes the impossible PR-run reuse sentence (§7.3(d): a
+`pull_request` FULL run does not use the post-merge V1 reuse path — only a
+main-push run can consume a prior PR FULL attestation), makes P2-9 staging
+executable (PHASE S setup/source PR / PHASE T controlled target PR /
+PHASE C cleanup, so the shadow instrumentation never first appears inside
+the measured `P..M` delta), and fixes the §13 rev-number typo. Formal
+result unchanged: **OUTCOME B**.
 
 **Status: ARCHITECTURE / EVIDENCE CLOSURE REVIEW ONLY — OUTCOME B
 (INTEGRATED MEASUREMENT CHAIN CLOSED; PRODUCTION V2 SURFACE-EVIDENCE
@@ -659,11 +671,13 @@ and proven irrelevant to each reused surface under the §9 predicate-5 rules
 - `P`'s evidence: the prior merged PR's exact successful source PR-head
   FULL run/attempt (the run whose merge created `P`). Per P2-1 semantics
   that run is identified by exact head SHA + `completed` + `success` +
-  exactly-one attempt-bound V1 attestation. If that PR's run itself used
-  V1 FULL reuse, the main run merely CONSUMED the prior PR attestation —
-  it emitted NO V1 attestation of its own; the executed surface evidence
-  still resolves to the qualifying prior PR FULL run with
-  `tested_tree == tree(P)`.
+  exactly-one attempt-bound V1 attestation. NOTE: a `pull_request` FULL
+  run does not use the post-merge V1 reuse path — reuse is a
+  main-push-side gate. If `P`'s main-push run used V1 FULL reuse, that
+  main-push run merely consumed the qualifying prior PR FULL attestation;
+  it emitted no new V1 FULL attestation. The executed source surface
+  evidence remains owned by the qualifying prior PR FULL run whose
+  `tested_tree_sha` equals `tree(P)`.
 - `M`'s decision: the main-push CI run at `M`, attempt-bound (P2-1
   semantics: a rerun of `M`'s run is the same run identity; probe and
   evidence objects are attempt-bound). The V1 FULL attestation is
@@ -1038,34 +1052,57 @@ No production reuse is authorized.
 
 ## 13. Next-step recommendation (exact)
 
-1. **Independent review** of this rev-2 document and its single-file diff.
-   **STOP BEFORE MERGE** until explicitly authorized.
+1. **Independent review** of the current document and its single-file
+   diff. **STOP BEFORE MERGE** until explicitly authorized.
 2. **The exact next canary needed — P2-9: production-topology shadow
-   canary (measurement only, no gating), exercising the ACTUAL source
-   path.** Prefer a CONTROLLED real `P`→`M` pair, deliberately designed so
-   that one audited candidate surface is REUSE and one is RUN, rather than
-   relying on an arbitrary future merge to happen to produce that mixed
-   state. The shadow flow follows the real source path — NOT a main-push
-   V1 attestation (none exists):
+   canary (measurement only, no gating, no activation), STAGED so the
+   shadow instrumentation NEVER first appears inside the measured `P..M`
+   delta.** Rationale: predicate 5 says any relevant CI/control-plane
+   change ⇒ RUN for both audited candidate surfaces — if the live probe /
+   V2 evidence schema / source locator / shadow evaluator were introduced
+   by the `M`-producing PR itself, both candidates would necessarily RUN
+   and the required mixed verdict could not be measured. Therefore P2-9 is
+   staged:
 
-   prior merged PR FULL run (the PR whose merge created `P`)
+   **PHASE S — SETUP / SOURCE PR.** Introduce the measurement-only shadow
+   instrumentation in a standalone source PR; full validation runs
+   normally; no reuse is expected or authorized; the source PR run emits
+   the schema-bound source fingerprint/evidence; squash merge this PR to
+   create source main `P`.
+
+   **PHASE T — CONTROLLED TARGET PR.** Start from `P`; the shadow
+   instrumentation is already present and byte-identical; DO NOT modify
+   CI/control-plane/probe/evidence-schema code; change a classified
+   surface-specific input, deliberately chosen so that exactly one
+   audited candidate is invalidated and the other remains eligible; run
+   normal FULL validation so the shadow verdict can be compared against
+   actual execution; squash merge to create `M`. The `M` main-push shadow
+   evaluator then exercises the actual source path:
+
+   prior PR that created `P`
+   → exact PR FULL run/attempt
    → exact 4-job jobs-API evidence + `check_jobs()`
    → exactly-one attempt-bound V1 FULL attestation, strictly validated
    → `attestation.tested_tree_sha == tree(P)`
    → source runtime fingerprint (schema-bound, shadow)
    → `M` live fingerprint
    → delta `P..M` enumeration + surface-relevance proof (predicate 5)
-   → per-surface shadow decision (fail-closed)
+   → one candidate surface REUSE + one candidate surface RUN (designed)
    → truthful `verdict: reused` V2 evidence object — never the V1 FULL
      class; negative control: a V2 partial/subset object is never emitted
      as and never accepted as the V1 FULL attestation (artifact-class
-     separation exercised on a real run);
+     separation exercised on a real run)
+   → retained replay closure.
 
-   - pass criterion: shadow verdict consistent on at least one controlled
-     real pair with the designed outcomes (≥1 candidate surface REUSE,
-     ≥1 candidate surface RUN, all others consistent); any inconsistency
+   **PHASE C — CLEANUP.** Remove all temporary P2-9 measurement
+   instrumentation; preserve only the permanent report; no activation.
+
+   - pass criterion: shadow verdict consistent on the controlled real
+     pair with the designed outcomes (≥1 candidate surface REUSE, ≥1
+     candidate surface RUN, all others consistent); any inconsistency
      ⇒ INVALID ⇒ no contract.
-   This closes GAP-P2-8-T0/T1/T2/T3 in that order.
+   This closes GAP-P2-8-T0/T1/T2/T3 in that order. P2-9 remains
+   measurement/shadow only throughout.
 3. After P2-9 closes: **production-contract implementation PR** (separate):
    - implement the §9 contract with the production V2 evidence schema and
      strict validation (schema version, exact key sets, no permissive
@@ -1104,7 +1141,12 @@ No production reuse is authorized.
   `pull_request` FULL runs), define the source composite object (§7.4)
   and classify its unexercised end-to-end assembly as GAP-P2-8-T0, and
   redesign P2-9 around the actual source path on a controlled `P`→`M`
-  pair. Formal outcome remains OUTCOME B.
+  pair. A third independent review confirmed OUTCOME B and required rev 4
+  (this commit): fix the impossible PR-run reuse sentence (§7.3(d) — a
+  `pull_request` FULL run does not use the post-merge V1 reuse path),
+  stage P2-9 as PHASE S / PHASE T / PHASE C so the shadow instrumentation
+  never first appears inside the measured `P..M` delta, and fix the §13
+  rev-number typo. Formal outcome remains OUTCOME B.
 - Permanent diff: exactly one file —
   `docs/partial_reuse_v2_proof_stack_closure.md`.
 - No historical evidence report changed; no code/workflow/test/schema/
