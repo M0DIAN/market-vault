@@ -40,6 +40,16 @@ SCRIPT = ROOT / "scripts" / "ci_p29_production_topology_shadow.py"
 V1_SCRIPT = ROOT / "scripts" / "ci_post_merge_reuse.py"
 CI_YML = ROOT / ".github" / "workflows" / "ci.yml"
 
+# Frozen Phase-S commit pair: the original setup commit on top of the
+# frozen base. The main-push tests must NOT derive the target from the
+# checked-out HEAD — on CI the default pull_request checkout is the
+# GitHub PR MERGE commit (two parents: base first, PR head second), a
+# merge topology the main-push contract correctly fails closed on. Both
+# SHAs exist in every fetch-depth: 0 checkout, so the pair resolves
+# identically on any runner.
+MAIN_PUSH_TARGET_SHA = "a12694fff7f99e61ec34b787d7147655c81d9008"
+MAIN_PUSH_PARENT_SHA = "8b3d789c2445bf3d5b62bfe0e43a5ab9ae18b0ee"
+
 
 def _load_tool() -> "module":
     spec = importlib.util.spec_from_file_location("ci_p29_tool", SCRIPT)
@@ -1390,7 +1400,7 @@ def _main_push_env() -> dict:
         GITHUB_RUN_ATTEMPT="1",
         GITHUB_EVENT_NAME="push",
         GITHUB_REF="refs/heads/main",
-        GITHUB_SHA=_git_head_sha(),
+        GITHUB_SHA=MAIN_PUSH_TARGET_SHA,
     )
 
 
@@ -1446,16 +1456,19 @@ def test_main_push_context_fails_closed_wrong_repository():
 def test_main_push_context_ok_exact_single_parent():
     env = _main_push_env()
     ctx = tool.main_push_context(ROOT, env)
-    parent = subprocess.check_output(
-        ["git", "-C", str(ROOT), "rev-parse", "HEAD^"], text=True
+    assert ctx["target_sha"] == MAIN_PUSH_TARGET_SHA
+    assert ctx["parent_sha"] == MAIN_PUSH_PARENT_SHA
+    assert ctx["parent_sha"] == subprocess.check_output(
+        ["git", "-C", str(ROOT), "rev-parse", MAIN_PUSH_TARGET_SHA + "^"],
+        text=True,
     ).strip()
-    assert ctx["target_sha"] == _git_head_sha()
-    assert ctx["parent_sha"] == parent
     assert ctx["target_tree_sha"] == subprocess.check_output(
-        ["git", "-C", str(ROOT), "rev-parse", "HEAD^{tree}"], text=True
+        ["git", "-C", str(ROOT), "rev-parse", MAIN_PUSH_TARGET_SHA + "^{tree}"],
+        text=True,
     ).strip()
     assert ctx["parent_tree_sha"] == subprocess.check_output(
-        ["git", "-C", str(ROOT), "rev-parse", f"{parent}^{{tree}}"], text=True
+        ["git", "-C", str(ROOT), "rev-parse", MAIN_PUSH_PARENT_SHA + "^{tree}"],
+        text=True,
     ).strip()
     assert ctx["run_id"] == 42 and ctx["run_attempt"] == 1
 
@@ -1512,7 +1525,8 @@ def test_main_push_delta_exact_paths():
     env = _main_push_env()
     ctx = tool.main_push_context(ROOT, env)
     paths = tool.main_push_delta(ROOT, ctx["target_sha"], ctx["parent_sha"])
-    # the Phase-S correction delta is exactly the 3-file temporary scope
+    # the frozen Phase-S setup delta (a12694f -> 8b3d789) is exactly the
+    # 3-file temporary scope
     assert paths == [
         ".github/workflows/ci.yml",
         "scripts/ci_p29_production_topology_shadow.py",
@@ -1651,9 +1665,7 @@ def _locator_att_doc(head_sha, parent, parent_tree, run_id=777):
 
 def test_locate_source_evidence_ok(tmp_path, monkeypatch):
     head_sha = "b" * 40
-    parent = subprocess.check_output(
-        ["git", "-C", str(ROOT), "rev-parse", "HEAD^"], text=True
-    ).strip()
+    parent = MAIN_PUSH_PARENT_SHA
     parent_tree = subprocess.check_output(
         ["git", "-C", str(ROOT), "rev-parse", f"{parent}^{{tree}}"], text=True
     ).strip()
@@ -1701,9 +1713,7 @@ def test_locate_source_evidence_ok(tmp_path, monkeypatch):
 
 def test_locate_source_evidence_fail_closed_cases(tmp_path, monkeypatch):
     head_sha = "b" * 40
-    parent = subprocess.check_output(
-        ["git", "-C", str(ROOT), "rev-parse", "HEAD^"], text=True
-    ).strip()
+    parent = MAIN_PUSH_PARENT_SHA
     parent_tree = subprocess.check_output(
         ["git", "-C", str(ROOT), "rev-parse", f"{parent}^{{tree}}"], text=True
     ).strip()
@@ -1914,7 +1924,7 @@ def test_verify_retained_target_bundle_ok(tmp_path, monkeypatch, capsys):
     rc, out_lines, out, main_env = _run_aggregate(tmp_path, monkeypatch, capsys)
     assert rc == 0
     bundle = out / "test-3.14"
-    name = f"{tool.P2_9_TARGET_ARTIFACT_PREFIX}-test-3.14-{_git_head_sha()}-attempt-1"
+    name = f"{tool.P2_9_TARGET_ARTIFACT_PREFIX}-test-3.14-{MAIN_PUSH_TARGET_SHA}-attempt-1"
     summary_out = tmp_path / "rt_target.txt"
     proc = subprocess.run(
         [sys.executable, str(bundle / tool.VERIFIER_NAME), "verify-retained",
