@@ -734,7 +734,7 @@ def test_run_context_wrong_repository(pr_env):
 
 
 # ---------------------------------------------------------------------------
-# source evidence schema (exact 15-key set)
+# source evidence schema (exact 16-field set)
 
 
 def test_source_evidence_schema_valid():
