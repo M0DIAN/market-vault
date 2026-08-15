@@ -1,7 +1,7 @@
 """Offline regression tests for the P2-9 Phase S source evidence setup.
 
 Tests ``scripts/ci_p29_production_topology_shadow.py`` (this PR): the
-exact 15-key source evidence schema, the sealed canonicalization/hashing
+exact 16-field source evidence schema, the sealed canonicalization/hashing
 primitives ported from the audited P2-7 implementation, the ZIP
 normalization contract (timestamp-only), the run/tree binding, the
 selected-input contracts (sealed 3.14 surface and audited pyarrow24
@@ -19,6 +19,7 @@ checks), never written.
 
 from __future__ import annotations
 
+import argparse
 import base64
 import hashlib
 import importlib.util
@@ -26,6 +27,7 @@ import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import zipfile
@@ -1201,10 +1203,830 @@ def test_class_separation_p2_9_validator_rejects_v1_doc():
     assert any(f.startswith("unknown_keys:") for f in failures)
 
 
-def test_class_separation_p2_9_schema_has_no_v1_fields():
-    """The P2-9 schema shares no V1 field names (class separation is
-    structural, not just literal)."""
-    v1_fields = {
+def test_class_separation_p2_9_schema_excludes_v1_only_fields():
+    """The P2-9 source evidence schema EXCLUDES the V1-only fields
+    (base_sha, head_sha, tier, full_matrix_required): class separation is
+    structural. Bidirectional rejection is proven by the two tests above
+    (a P2-9 object fed to the V1 validator is REJECTED; a V1 attestation
+    fed to the P2-9 validator is REJECTED)."""
+    v1_only_fields = {
         "base_sha", "head_sha", "tier", "full_matrix_required",
     }
-    assert not (v1_fields & set(tool.SOURCE_EVIDENCE_FIELDS))
+    assert not (v1_only_fields & set(tool.SOURCE_EVIDENCE_FIELDS))
+
+
+# ---------------------------------------------------------------------------
+# independent-review correction: exact schema sets + wording pins
+
+
+def test_source_evidence_schema_exact_16_field_set():
+    """The source evidence schema is the exact 16-field set enumerated in
+    Section 4 of the P2-9 Phase S spec. Regression pin for the field set
+    (do NOT alter the field set to make the count different)."""
+    assert len(tool.SOURCE_EVIDENCE_FIELDS) == 16
+    assert set(tool.SOURCE_EVIDENCE_FIELDS) == {
+        "schema_version", "artifact_class", "repository", "workflow",
+        "run_id", "run_attempt", "pr_number", "pr_head_sha",
+        "tested_merge_sha", "tested_tree_sha", "surface",
+        "probe_source_sha256", "selected_input_contract_sha256",
+        "runtime_identity_sha256", "normalization_contract_sha256",
+        "evidence_manifest_sha256",
+    }
+
+
+def test_target_shadow_evidence_schema_exact_25_field_set():
+    """The pre-staged target shadow evidence class is the exact 25-field
+    set (p2_9_target_shadow_v1), distinct from the V1 FULL attestation and
+    from the source evidence class."""
+    assert len(tool.TARGET_SHADOW_FIELDS) == 25
+    assert set(tool.TARGET_SHADOW_FIELDS) == {
+        "schema_version", "artifact_class", "repository", "workflow",
+        "run_id", "run_attempt", "target_sha", "parent_sha",
+        "target_tree_sha", "parent_tree_sha", "surface", "verdict",
+        "reason", "source_pr_number", "source_pr_head_sha", "source_run_id",
+        "source_run_attempt", "source_artifact_name", "source_tested_tree_sha",
+        "target_runtime_identity_sha256", "delta_identity_sha256",
+        "selected_input_verdict", "global_runtime_match",
+        "retained_replay_state", "evidence_manifest_sha256",
+    }
+
+
+def test_target_probe_payload_schema_exact_16_field_set():
+    assert len(tool.TARGET_PROBE_PAYLOAD_FIELDS) == 16
+
+
+def _valid_target_evidence(available: bool = False, verdict: str | None = None,
+                           runtime_match: bool = False,
+                           sel_verdict: str = "affected") -> dict:
+    doc = {
+        "schema_version": 1,
+        "artifact_class": tool.TARGET_ARTIFACT_CLASS,
+        "repository": "M0DIAN/market-vault",
+        "workflow": "CI",
+        "run_id": 42,
+        "run_attempt": 1,
+        "target_sha": "d" * 40,
+        "parent_sha": "e" * 40,
+        "target_tree_sha": "f" * 40,
+        "parent_tree_sha": "0" * 40,
+        "surface": "test-3.14",
+        "verdict": verdict or tool.VERDICT_RUN,
+        "reason": "run:source_unavailable:source_pr_none",
+        "source_pr_number": 0,
+        "source_pr_head_sha": "0" * 40,
+        "source_run_id": 0,
+        "source_run_attempt": 0,
+        "source_artifact_name": "",
+        "source_tested_tree_sha": "0" * 40,
+        "target_runtime_identity_sha256": "1" * 64,
+        "delta_identity_sha256": "2" * 64,
+        "selected_input_verdict": sel_verdict,
+        "global_runtime_match": runtime_match,
+        "retained_replay_state": tool.TARGET_RETAINED_REPLAY_STATE,
+        "evidence_manifest_sha256": "3" * 64,
+    }
+    if available:
+        doc.update({
+            "source_pr_number": 84,
+            "source_pr_head_sha": "b" * 40,
+            "source_run_id": 777,
+            "source_run_attempt": 1,
+            "source_artifact_name": (
+                f"{tool.P2_9_ARTIFACT_PREFIX}-test-3.14-{'b' * 40}-attempt-1"
+            ),
+            "source_tested_tree_sha": "c" * 40,
+        })
+    return doc
+
+
+def _valid_target_payload() -> dict:
+    return {
+        "schema_version": 1,
+        "artifact_class": tool.TARGET_PROBE_ARTIFACT_CLASS,
+        "repository": "M0DIAN/market-vault",
+        "workflow": "CI",
+        "run_id": 42,
+        "run_attempt": 1,
+        "surface": "test-3.14",
+        "target_sha": "d" * 40,
+        "parent_sha": "e" * 40,
+        "target_tree_sha": "f" * 40,
+        "parent_tree_sha": "0" * 40,
+        "runtime_identity_sha256": "1" * 64,
+        "runtime_environment_sha256": "2" * 64,
+        "normalized_identity_sha256": "3" * 64,
+        "selected_input_contract_sha256": "4" * 64,
+        "probe_source_sha256": "5" * 64,
+    }
+
+
+def test_target_probe_payload_schema_valid_and_fail_closed():
+    assert tool.validate_target_probe_payload(_valid_target_payload()) == []
+    missing = _valid_target_payload()
+    del missing["normalized_identity_sha256"]
+    failures = tool.validate_target_probe_payload(missing)
+    assert any(f.startswith("missing_keys:") and "normalized_identity_sha256" in f for f in failures)
+    unknown = _valid_target_payload()
+    unknown["bogus_field"] = 1
+    failures = tool.validate_target_probe_payload(unknown)
+    assert any(f.startswith("unknown_keys:") for f in failures)
+    bad_class = _valid_target_payload()
+    bad_class["artifact_class"] = tool.ARTIFACT_CLASS
+    failures = tool.validate_target_probe_payload(bad_class)
+    assert any(f.startswith("artifact_class_expected_") for f in failures)
+
+
+def test_target_shadow_evidence_schema_valid_and_fail_closed():
+    # source unavailable (zeroed pattern) + run verdict: valid
+    assert tool.validate_target_shadow_evidence(_valid_target_evidence()) == []
+    # source available pattern + run verdict: valid
+    doc = _valid_target_evidence(available=True, runtime_match=True, sel_verdict="unaffected")
+    doc["reason"] = "run:selected_input_affected:runtime_mismatch"
+    assert tool.validate_target_shadow_evidence(doc) == []
+    # REUSED only when every predicate proves true
+    reused = _valid_target_evidence(
+        available=True, verdict=tool.VERDICT_REUSED, runtime_match=True,
+        sel_verdict="unaffected",
+    )
+    reused["reason"] = "reused:all_predicates_valid"
+    assert tool.validate_target_shadow_evidence(reused) == []
+    reused_bad_match = _valid_target_evidence(
+        available=True, verdict=tool.VERDICT_REUSED, runtime_match=False,
+        sel_verdict="unaffected",
+    )
+    failures = tool.validate_target_shadow_evidence(reused_bad_match)
+    assert any(f == "reused_requires_all_predicates" for f in failures)
+    # missing / unknown keys => INVALID
+    missing = _valid_target_evidence()
+    del missing["delta_identity_sha256"]
+    failures = tool.validate_target_shadow_evidence(missing)
+    assert any(f.startswith("missing_keys:") and "delta_identity_sha256" in f for f in failures)
+    unknown = _valid_target_evidence()
+    unknown["bogus_field"] = 1
+    failures = tool.validate_target_shadow_evidence(unknown)
+    assert any(f.startswith("unknown_keys:") for f in failures)
+    # mixed source identity pattern => INVALID
+    mixed = _valid_target_evidence(available=True)
+    mixed["source_run_id"] = 0
+    failures = tool.validate_target_shadow_evidence(mixed)
+    assert any(f == "source_identity_pattern_invalid" for f in failures)
+    # invalid verdict literal => INVALID
+    bad_verdict = _valid_target_evidence()
+    bad_verdict["verdict"] = "reuse"
+    failures = tool.validate_target_shadow_evidence(bad_verdict)
+    assert any(f.startswith("verdict_invalid:") for f in failures)
+
+
+# ---------------------------------------------------------------------------
+# Phase-T pre-stage: main-push target context (fail-closed)
+
+
+def _main_push_env() -> dict:
+    return dict(
+        os.environ,
+        GITHUB_REPOSITORY="M0DIAN/market-vault",
+        GITHUB_WORKFLOW="CI",
+        GITHUB_RUN_ID="42",
+        GITHUB_RUN_ATTEMPT="1",
+        GITHUB_EVENT_NAME="push",
+        GITHUB_REF="refs/heads/main",
+        GITHUB_SHA=_git_head_sha(),
+    )
+
+
+def _pr_env_custom(merge_sha: str, run_id: int, attempt: int,
+                   pr_number: int, head_sha: str, tmp_path: Path) -> dict:
+    event = tmp_path / f"event_{run_id}.json"
+    event.write_text(
+        json.dumps({"pull_request": {"number": pr_number, "head": {"sha": head_sha}}}),
+        encoding="utf-8",
+    )
+    return dict(
+        os.environ,
+        GITHUB_REPOSITORY="M0DIAN/market-vault",
+        GITHUB_RUN_ID=str(run_id),
+        GITHUB_RUN_ATTEMPT=str(attempt),
+        GITHUB_SHA=merge_sha,
+        GITHUB_EVENT_PATH=str(event),
+    )
+
+
+def test_main_push_context_fails_closed_on_non_push():
+    with pytest.raises(RuntimeError, match="main_push_event_required"):
+        tool.main_push_context(ROOT, {"GITHUB_EVENT_NAME": "pull_request"})
+
+
+def test_main_push_context_fails_closed_on_wrong_ref():
+    env = _main_push_env()
+    env["GITHUB_REF"] = "refs/heads/ci/x"
+    with pytest.raises(RuntimeError, match="main_push_ref_required"):
+        tool.main_push_context(ROOT, env)
+
+
+def test_main_push_context_fails_closed_missing_env():
+    env = {
+        "GITHUB_EVENT_NAME": "push",
+        "GITHUB_REF": "refs/heads/main",
+        "GITHUB_REPOSITORY": "M0DIAN/market-vault",
+        "GITHUB_RUN_ID": "42",
+        "GITHUB_RUN_ATTEMPT": "1",
+        # GITHUB_SHA missing
+    }
+    with pytest.raises(RuntimeError, match="main_push_context_missing:.*GITHUB_SHA"):
+        tool.main_push_context(ROOT, env)
+
+
+def test_main_push_context_fails_closed_wrong_repository():
+    env = _main_push_env()
+    env["GITHUB_REPOSITORY"] = "other/repo"
+    with pytest.raises(RuntimeError, match="main_push_repository_mismatch"):
+        tool.main_push_context(ROOT, env)
+
+
+def test_main_push_context_ok_exact_single_parent():
+    env = _main_push_env()
+    ctx = tool.main_push_context(ROOT, env)
+    parent = subprocess.check_output(
+        ["git", "-C", str(ROOT), "rev-parse", "HEAD^"], text=True
+    ).strip()
+    assert ctx["target_sha"] == _git_head_sha()
+    assert ctx["parent_sha"] == parent
+    assert ctx["target_tree_sha"] == subprocess.check_output(
+        ["git", "-C", str(ROOT), "rev-parse", "HEAD^{tree}"], text=True
+    ).strip()
+    assert ctx["parent_tree_sha"] == subprocess.check_output(
+        ["git", "-C", str(ROOT), "rev-parse", f"{parent}^{{tree}}"], text=True
+    ).strip()
+    assert ctx["run_id"] == 42 and ctx["run_attempt"] == 1
+
+
+def test_main_push_context_rejects_merge_topology(tmp_path):
+    """A merge commit (two parents) under a single-parent contract must
+    fail closed: main_push_parent_expected_single."""
+    repo = tmp_path / "r"
+    subprocess.run(["git", "init", str(repo)], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "config", "user.email", "t@t"],
+        check=True, capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "config", "user.name", "t"],
+        check=True, capture_output=True,
+    )
+    for f in ("a", "b"):
+        (repo / f).write_text(f + "\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(repo), "add", f], check=True, capture_output=True)
+        subprocess.run(
+            ["git", "-C", str(repo), "commit", "-m", f], check=True, capture_output=True
+        )
+    subprocess.run(
+        ["git", "-C", str(repo), "checkout", "-b", "side", "HEAD~1"],
+        check=True, capture_output=True,
+    )
+    (repo / "c").write_text("c\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "c"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-m", "c"], check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "checkout", "master"], check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "merge", "--no-ff", "-m", "merge", "side"],
+        check=True, capture_output=True,
+    )
+    merge_sha = subprocess.check_output(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"], text=True
+    ).strip()
+    env = _main_push_env()
+    env["GITHUB_SHA"] = merge_sha
+    with pytest.raises(RuntimeError, match="main_push_parent_expected_single"):
+        tool.main_push_context(repo, env)
+
+
+# ---------------------------------------------------------------------------
+# Phase-T pre-stage: P..M delta evaluator
+
+
+def test_main_push_delta_exact_paths():
+    env = _main_push_env()
+    ctx = tool.main_push_context(ROOT, env)
+    paths = tool.main_push_delta(ROOT, ctx["target_sha"], ctx["parent_sha"])
+    # the Phase-S correction delta is exactly the 3-file temporary scope
+    assert paths == [
+        ".github/workflows/ci.yml",
+        "scripts/ci_p29_production_topology_shadow.py",
+        "tests/test_ci_p29_production_topology_shadow.py",
+    ]
+
+
+def test_classify_delta_paths_sealed_contract_semantics():
+    c314 = tool.compute_selected_input_contract(ROOT, "test-3.14")
+    cpa = tool.compute_selected_input_contract(ROOT, "pyarrow24")
+    # the future Phase-T target file: selected by test-3.14 (affected),
+    # audited known-benign for pyarrow24 (unaffected candidate)
+    r314 = tool.classify_delta_paths([tool.TARGET_FILE], "test-3.14", c314)
+    assert r314["selected_input_verdict"] == "affected"
+    assert r314["affected"] == [tool.TARGET_FILE]
+    rpa = tool.classify_delta_paths([tool.TARGET_FILE], "pyarrow24", cpa)
+    assert rpa["selected_input_verdict"] == "unaffected"
+    assert rpa["benign"] == [tool.TARGET_FILE]
+    # invalidators + unknown paths invalidate
+    r3 = tool.classify_delta_paths(
+        ["ci/components.toml", "src/foo.py", "docs/x.md"], "pyarrow24", cpa
+    )
+    assert r3["selected_input_verdict"] == "affected"
+    assert r3["invalidated"] == ["ci/components.toml", "src/foo.py"]
+    assert r3["unknown"] == ["docs/x.md"]
+    # selected-input change invalidates
+    r4 = tool.classify_delta_paths(["tests/test_v060_portability.py"], "pyarrow24", cpa)
+    assert r4["selected_input_verdict"] == "affected"
+    assert r4["affected"] == ["tests/test_v060_portability.py"]
+    # P2-9 machinery changes invalidate both surfaces (the measurement
+    # stack is part of the sealed fail-close contract). git diff emits
+    # forward-slash paths; the Windows-local Path form must be normalized.
+    script_rel = str(SCRIPT.relative_to(ROOT)).replace("\\", "/")
+    r5 = tool.classify_delta_paths([script_rel], "pyarrow24", cpa)
+    assert r5["selected_input_verdict"] == "affected"
+    assert r5["invalidated"] == [script_rel]
+    # empty delta is the only unaffected candidate for pyarrow24
+    r6 = tool.classify_delta_paths([], "pyarrow24", cpa)
+    assert r6["selected_input_verdict"] == "unaffected"
+
+
+def test_delta_identity_sha256_deterministic():
+    a = tool.delta_identity_sha256(["x/a.py", "b.py"], "test-3.14", "affected")
+    b = tool.delta_identity_sha256(["b.py", "x/a.py"], "test-3.14", "affected")
+    c = tool.delta_identity_sha256(["x/a.py", "b.py"], "test-3.14", "unaffected")
+    assert a == b
+    assert a != c
+
+
+def test_runtime_environment_sha256_head_insensitive(tmp_path):
+    """DOC_RUNTIME embeds the run-specific head literal; the environment
+    identity used for cross-run comparison must be head-insensitive."""
+    env = _pr_env_custom(_git_head_sha(), 42, 1, 42, "a" * 40, tmp_path)
+    out = tmp_path / "probe"
+    build_probe_out(out, "test-3.14", "a" * 40, env)
+    doc = json.loads((out / tool.DOC_RUNTIME).read_text(encoding="utf-8"))
+    assert "head" in doc
+    other = dict(doc)
+    other["head"] = "f" * 40
+    assert tool._runtime_environment_sha256(other) == tool._runtime_environment_sha256(doc)
+
+
+# ---------------------------------------------------------------------------
+# Phase-T pre-stage: source evidence locator (mocked read-only GitHub API)
+
+
+def _locator_canned(tmp_path, monkeypatch, *, pulls, runs, jobs, art_names,
+                    att_doc, bundles=None):
+    """Monkeypatch tool._gh_api / tool._gh_run_download with canned
+    read-only API responses. bundles maps artifact name -> finalized bundle
+    dir for download simulation."""
+    head_sha = "b" * 40
+
+    def fake_api(path, env=None):
+        if path.startswith("repos/M0DIAN/market-vault/commits/"):
+            return pulls
+        if path.startswith("repos/M0DIAN/market-vault/actions/runs?head_sha="):
+            return runs
+        if "/jobs?" in path:
+            return jobs
+        if "/artifacts?" in path:
+            return {"artifacts": [{"name": n} for n in art_names]}
+        raise AssertionError(f"unexpected api path: {path}")
+
+    def fake_download(run_id, name, dest, repo_slug, env=None):
+        if name == f"market-vault-full-ci-attestation-{head_sha}-attempt-1":
+            (dest / name).mkdir(parents=True, exist_ok=True)
+            (dest / name / "ci_full_attestation.json").write_text(
+                json.dumps(att_doc, sort_keys=True), encoding="utf-8"
+            )
+        else:
+            surface = next(
+                s for s in tool.SURFACES
+                if name == f"{tool.P2_9_ARTIFACT_PREFIX}-{s}-{head_sha}-attempt-1"
+            )
+            shutil.copytree(bundles[surface], dest / name, dirs_exist_ok=True)
+
+    monkeypatch.setattr(tool, "_gh_api", fake_api)
+    monkeypatch.setattr(tool, "_gh_run_download", fake_download)
+
+
+def _locator_ctx() -> dict:
+    return tool.main_push_context(ROOT, _main_push_env())
+
+
+def _locator_ok_bundles(tmp_path, head_sha, parent):
+    """Build real finalized source bundles for the one-generation-back
+    'source PR' run (merge = parent of the main-push HEAD)."""
+    src_env = _pr_env_custom(parent, 777, 1, 84, head_sha, tmp_path)
+    bundles = {}
+    for surface in tool.SURFACES:
+        out = tmp_path / f"src_{surface}"
+        build_probe_out(out, surface, head_sha, src_env)
+        fin = run_finalize(out, surface, head_sha, src_env)
+        assert fin.returncode == 0, fin.stdout + fin.stderr
+        bundles[surface] = out
+    return bundles
+
+
+def _locator_att_doc(head_sha, parent, parent_tree, run_id=777):
+    return {
+        "schema_version": 1,
+        "repository": "M0DIAN/market-vault",
+        "workflow": "CI",
+        "run_id": run_id,
+        "run_attempt": 1,
+        "pr_number": 84,
+        "base_sha": "0" * 40,
+        "head_sha": head_sha,
+        "tested_merge_sha": parent,
+        "tested_tree_sha": parent_tree,
+        "tier": "full",
+        "full_matrix_required": True,
+    }
+
+
+def test_locate_source_evidence_ok(tmp_path, monkeypatch):
+    head_sha = "b" * 40
+    parent = subprocess.check_output(
+        ["git", "-C", str(ROOT), "rev-parse", "HEAD^"], text=True
+    ).strip()
+    parent_tree = subprocess.check_output(
+        ["git", "-C", str(ROOT), "rev-parse", f"{parent}^{{tree}}"], text=True
+    ).strip()
+    bundles = _locator_ok_bundles(tmp_path, head_sha, parent)
+    att_doc = _locator_att_doc(head_sha, parent, parent_tree)
+    art_names = (
+        [f"market-vault-full-ci-attestation-{head_sha}-attempt-1"]
+        + [f"{tool.P2_9_ARTIFACT_PREFIX}-{s}-{head_sha}-attempt-1" for s in tool.SURFACES]
+    )
+    _locator_canned(
+        tmp_path, monkeypatch,
+        pulls=[{
+            "number": 84, "merged_at": "2026-08-15T00:00:00Z", "state": "closed",
+            "merge_commit_sha": parent, "head": {"sha": head_sha},
+        }],
+        runs={"workflow_runs": [{
+            "event": "pull_request", "head_sha": head_sha,
+            "path": ".github/workflows/ci.yml", "status": "completed",
+            "conclusion": "success", "id": 777, "run_attempt": 1,
+        }]},
+        jobs={"jobs": [
+            {"name": n, "conclusion": "success"}
+            for n in ["test (3.11)", "test (3.14)", "portability-pyarrow24", "package"]
+        ]},
+        art_names=art_names,
+        att_doc=att_doc,
+        bundles=bundles,
+    )
+    loc = tool.locate_source_evidence(ROOT, _locator_ctx())
+    assert loc["source_available"] is True
+    assert loc["reason"] == "ok"
+    assert loc["pr_number"] == 84
+    assert loc["run_id"] == 777
+    assert loc["attestation"]["valid"] is True
+    assert loc["attestation"]["sha256"] == tool.sha256_bytes(
+        json.dumps(att_doc, sort_keys=True).encode()
+    )
+    for surface in tool.SURFACES:
+        b = loc["bundles"][surface]
+        assert b["evidence"]["tested_tree_sha"] == parent_tree
+        assert b["evidence"]["pr_head_sha"] == head_sha
+        assert int(b["replay_check_count"]) > 0
+        assert b["normalized_fingerprint_sha256"]
+
+
+def test_locate_source_evidence_fail_closed_cases(tmp_path, monkeypatch):
+    head_sha = "b" * 40
+    parent = subprocess.check_output(
+        ["git", "-C", str(ROOT), "rev-parse", "HEAD^"], text=True
+    ).strip()
+    parent_tree = subprocess.check_output(
+        ["git", "-C", str(ROOT), "rev-parse", f"{parent}^{{tree}}"], text=True
+    ).strip()
+    bundles = _locator_ok_bundles(tmp_path, head_sha, parent)
+    att_doc = _locator_att_doc(head_sha, parent, parent_tree)
+    art_names = (
+        [f"market-vault-full-ci-attestation-{head_sha}-attempt-1"]
+        + [f"{tool.P2_9_ARTIFACT_PREFIX}-{s}-{head_sha}-attempt-1" for s in tool.SURFACES]
+    )
+    pull = {
+        "number": 84, "merged_at": "2026-08-15T00:00:00Z", "state": "closed",
+        "merge_commit_sha": parent, "head": {"sha": head_sha},
+    }
+    run = {
+        "event": "pull_request", "head_sha": head_sha,
+        "path": ".github/workflows/ci.yml", "status": "completed",
+        "conclusion": "success", "id": 777, "run_attempt": 1,
+    }
+    jobs_ok = {"jobs": [
+        {"name": n, "conclusion": "success"}
+        for n in ["test (3.11)", "test (3.14)", "portability-pyarrow24", "package"]
+    ]}
+
+    cases = [
+        ("source_pr_none", [], {"workflow_runs": [run]}, jobs_ok, art_names, att_doc),
+        ("source_pr_ambiguous",
+         [pull, dict(pull, number=85)], {"workflow_runs": [run]}, jobs_ok, art_names, att_doc),
+        ("source_run_not_found", [pull], {"workflow_runs": []}, jobs_ok, art_names, att_doc),
+        ("source_run_ambiguous", [pull],
+         {"workflow_runs": [run, dict(run, id=778)]}, jobs_ok, art_names, att_doc),
+        ("source_jobs_not_exact_four", [pull], {"workflow_runs": [run]},
+         {"jobs": [{"name": "test (3.11)", "conclusion": "success"}]}, art_names, att_doc),
+        ("source_jobs_not_all_success", [pull], {"workflow_runs": [run]},
+         {"jobs": [{"name": n, "conclusion": "failure"}
+                   for n in ["test (3.11)", "test (3.14)", "portability-pyarrow24", "package"]]},
+         art_names, att_doc),
+        ("v1_attestation_not_found", [pull], {"workflow_runs": [run]}, jobs_ok,
+         [f"{tool.P2_9_ARTIFACT_PREFIX}-{s}-{head_sha}-attempt-1" for s in tool.SURFACES],
+         att_doc),
+        ("v1_attestation_invalid", [pull], {"workflow_runs": [run]}, jobs_ok, art_names,
+         dict(att_doc, tested_tree_sha="9" * 40)),
+        ("v1_attestation_invalid", [pull], {"workflow_runs": [run]}, jobs_ok, art_names,
+         dict(att_doc, tier="control_plane")),
+        ("source_bundle_test-3.14_not_found", [pull], {"workflow_runs": [run]}, jobs_ok,
+         [f"market-vault-full-ci-attestation-{head_sha}-attempt-1"]
+         + [f"{tool.P2_9_ARTIFACT_PREFIX}-pyarrow24-{head_sha}-attempt-1"],
+         att_doc),
+        ("source_bundle_pyarrow24_not_found", [pull], {"workflow_runs": [run]}, jobs_ok,
+         [f"market-vault-full-ci-attestation-{head_sha}-attempt-1"]
+         + [f"{tool.P2_9_ARTIFACT_PREFIX}-test-3.14-{head_sha}-attempt-1"],
+         att_doc),
+    ]
+    for expect, pulls, runs, jobs, names, att in cases:
+        _locator_canned(
+            tmp_path, monkeypatch, pulls=pulls, runs=runs, jobs=jobs,
+            art_names=names, att_doc=att, bundles=bundles,
+        )
+        with pytest.raises(tool.SourceLocatorError, match=expect):
+            tool.locate_source_evidence(ROOT, _locator_ctx())
+
+
+# ---------------------------------------------------------------------------
+# Phase-T pre-stage: aggregate (main-push target shadow, fail-close to RUN)
+
+
+def _build_target_payload(pdir: Path, surface: str, main_env: dict) -> dict:
+    """Build a synthetic target probe payload dir mirroring cmd_target_probe
+    exactly (payload doc + DOC_RUNTIME + DOC_NORMALIZED), from the synthetic
+    probe tree. No network, no heavy measurement."""
+    work = pdir.parent / f"probe_{surface}"
+    ctx = tool.main_push_context(ROOT, main_env)
+    pdir.parent.mkdir(parents=True, exist_ok=True)
+    probe_env = _pr_env_custom(
+        ctx["target_sha"], ctx["run_id"], ctx["run_attempt"], 84, "a" * 40,
+        pdir.parent,
+    )
+    build_probe_out(work, surface, "a" * 40, probe_env)
+    runtime_doc = json.loads((work / tool.DOC_RUNTIME).read_text(encoding="utf-8"))
+    norm_doc = json.loads((work / tool.DOC_NORMALIZED).read_text(encoding="utf-8"))
+    contract = tool.compute_selected_input_contract(ROOT, surface)
+    payload = {
+        "schema_version": 1,
+        "artifact_class": tool.TARGET_PROBE_ARTIFACT_CLASS,
+        "repository": "M0DIAN/market-vault",
+        "workflow": "CI",
+        "run_id": ctx["run_id"],
+        "run_attempt": ctx["run_attempt"],
+        "surface": surface,
+        "target_sha": ctx["target_sha"],
+        "parent_sha": ctx["parent_sha"],
+        "target_tree_sha": ctx["target_tree_sha"],
+        "parent_tree_sha": ctx["parent_tree_sha"],
+        "runtime_identity_sha256": tool.sha256_file(work / tool.DOC_RUNTIME),
+        "runtime_environment_sha256": tool._runtime_environment_sha256(runtime_doc),
+        "normalized_identity_sha256": norm_doc["fingerprint_sha256"],
+        "selected_input_contract_sha256": tool.sha256_bytes(
+            tool.canonical_serialize(contract).encode()
+        ),
+        "probe_source_sha256": tool.sha256_file(SCRIPT),
+    }
+    pdir.mkdir(parents=True, exist_ok=True)
+    (pdir / tool.TARGET_PROBE_PAYLOAD_NAME).write_text(
+        json.dumps(payload, sort_keys=True), encoding="utf-8"
+    )
+    shutil.copyfile(work / tool.DOC_RUNTIME, pdir / tool.DOC_RUNTIME)
+    shutil.copyfile(work / tool.DOC_NORMALIZED, pdir / tool.DOC_NORMALIZED)
+    return payload
+
+
+def _run_aggregate(tmp_path, monkeypatch, capsys):
+    main_env = _main_push_env()
+    probe_dir = tmp_path / "probe"
+    for surface in tool.SURFACES:
+        _build_target_payload(probe_dir / surface, surface, main_env)
+    for k, v in main_env.items():
+        if k.startswith("GITHUB_"):
+            monkeypatch.setenv(k, v)
+
+    def source_unavailable(*args, **kwargs):
+        raise tool.SourceLocatorError("source_pr_none")
+
+    monkeypatch.setattr(tool, "_gh_api", source_unavailable)
+    out = tmp_path / "out"
+    ns = argparse.Namespace(out_dir=str(out), probe_dir=str(probe_dir), repo=str(ROOT))
+    rc = tool.cmd_aggregate(ns)
+    out_lines = capsys.readouterr().out
+    return rc, out_lines, out, main_env
+
+
+def test_aggregate_fail_closes_to_all_run_on_source_unavailable(tmp_path, monkeypatch, capsys):
+    """On the Phase-S merge push itself the evaluator legitimately
+    fail-closes: source unavailable => every surface RUN, never REUSE, and
+    the target evidence is produced with the P2-7 closure."""
+    rc, out_lines, out, main_env = _run_aggregate(tmp_path, monkeypatch, capsys)
+    assert rc == 0
+    assert "TARGET_EVIDENCE_OK=true" in out_lines
+    assert "SOURCE_LOCATOR_AVAILABLE=false" in out_lines
+    assert "SOURCE_LOCATOR_REASON=source_pr_none" in out_lines
+    assert "DELTA_CHANGED_PATH_COUNT=3" in out_lines
+    for surface in tool.SURFACES:
+        assert f"TARGET_VERDICT_{surface}=run" in out_lines
+        assert f"TARGET_REASON_{surface}=run:source_unavailable:source_pr_none" in out_lines
+        assert f"SELECTED_INPUT_VERDICT_{surface}=affected" in out_lines
+        assert f"GLOBAL_RUNTIME_MATCH_{surface}=false" in out_lines
+        assert f"TARGET_EVIDENCE_BUNDLE_REPLAY_OK_{surface}=true" in out_lines
+        assert f"CHECK_COUNT_{surface}" in out_lines
+        # the bundle must replay offline with its OWN verifier copy
+        bundle = out / surface
+        summary_out = tmp_path / f"replay_{surface}.txt"
+        proc = run_verify_bundle(bundle, summary_out)
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        # evidence doc: exact 25 fields, zeroed source identity, run verdict
+        ev = json.loads((bundle / tool.TARGET_EVIDENCE_NAME).read_text(encoding="utf-8"))
+        assert tool.validate_target_shadow_evidence(ev) == []
+        assert ev["source_pr_number"] == 0
+        assert ev["source_artifact_name"] == ""
+        assert ev["verdict"] == tool.VERDICT_RUN
+        assert ev["retained_replay_state"] == tool.TARGET_RETAINED_REPLAY_STATE
+        # mutual seal
+        manifest = json.loads((bundle / tool.MANIFEST_NAME).read_text(encoding="utf-8"))
+        entries = [
+            [e["path"], e["sha256"], e["size"]]
+            for e in manifest["entries"]
+            if e["path"] != tool.TARGET_EVIDENCE_NAME
+        ]
+        assert tool.manifest_content_digest(entries) == ev["evidence_manifest_sha256"]
+
+
+def test_aggregate_target_evidence_cross_doc_consistency(tmp_path, monkeypatch, capsys):
+    """delta_evaluator + source_reference + evidence are cross-doc
+    consistent and the delta identity is re-derived."""
+    rc, out_lines, out, main_env = _run_aggregate(tmp_path, monkeypatch, capsys)
+    assert rc == 0
+    for surface in tool.SURFACES:
+        bundle = out / surface
+        ev = json.loads((bundle / tool.TARGET_EVIDENCE_NAME).read_text(encoding="utf-8"))
+        dd = json.loads((bundle / tool.DELTA_EVALUATOR_NAME).read_text(encoding="utf-8"))
+        ref = json.loads((bundle / tool.SOURCE_REFERENCE_NAME).read_text(encoding="utf-8"))
+        assert dd["changed_paths"] == [
+            ".github/workflows/ci.yml",
+            "scripts/ci_p29_production_topology_shadow.py",
+            "tests/test_ci_p29_production_topology_shadow.py",
+        ]
+        assert dd["invalidated"] == dd["changed_paths"]
+        assert dd["selected_input_verdict"] == ev["selected_input_verdict"]
+        assert dd["delta_identity_sha256"] == tool.delta_identity_sha256(
+            dd["changed_paths"], surface, ev["selected_input_verdict"]
+        )
+        assert dd["delta_identity_sha256"] == ev["delta_identity_sha256"]
+        assert dd["surface"] == ev["surface"]
+        assert dd["target_sha"] == ev["target_sha"]
+        assert dd["parent_sha"] == ev["parent_sha"]
+        assert ref["source_available"] is False
+        assert ref["reason"] == "source_pr_none"
+        assert ref["source_pr_number"] == ev["source_pr_number"] == 0
+        assert ref["runtime_match"] is False
+        # payload identity docs are bound
+        payload = json.loads(
+            (bundle / tool.TARGET_PROBE_PAYLOAD_NAME).read_text(encoding="utf-8")
+        )
+        assert payload["runtime_identity_sha256"] == ev["target_runtime_identity_sha256"]
+        assert tool.sha256_file(bundle / tool.DOC_RUNTIME) == payload["runtime_identity_sha256"]
+
+
+def test_verify_retained_target_bundle_ok(tmp_path, monkeypatch, capsys):
+    """A retained TARGET bundle verified under its exact target name passes
+    the post-upload roundtrip (main-push context binding)."""
+    rc, out_lines, out, main_env = _run_aggregate(tmp_path, monkeypatch, capsys)
+    assert rc == 0
+    bundle = out / "test-3.14"
+    name = f"{tool.P2_9_TARGET_ARTIFACT_PREFIX}-test-3.14-{_git_head_sha()}-attempt-1"
+    summary_out = tmp_path / "rt_target.txt"
+    proc = subprocess.run(
+        [sys.executable, str(bundle / tool.VERIFIER_NAME), "verify-retained",
+         "--bundle-dir", str(bundle), "--name", name,
+         "--surface", "test-3.14", "--repo", str(ROOT),
+         "--summary-out", str(summary_out)],
+        capture_output=True, text=True, env=main_env,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    lines = summary_out.read_text(encoding="utf-8")
+    assert "ROUNDTRIP_RECEIPT=OK" in lines
+    assert "ROUNDTRIP_RULE=READ_ONLY_REPLAY_NO_MUTATION_NO_REUPLOAD" in lines
+
+
+def test_verify_retained_rejects_v1_lookalike_name(finalized_bundle, pr_env, tmp_path):
+    """Independent-review correction: a valid P2-9 retained source bundle
+    passed with a V1-style attestation name must be REJECTED by the exact
+    name binding (distinct from wrong-head/attempt P2-9-name cases)."""
+    bundle, _ = finalized_bundle
+    v1_name = f"market-vault-full-ci-attestation-{pr_env['head']}-attempt-1"
+    summary_out = tmp_path / "rt_v1.txt"
+    proc = subprocess.run(
+        [sys.executable, str(bundle / tool.VERIFIER_NAME), "verify-retained",
+         "--bundle-dir", str(bundle), "--name", v1_name,
+         "--surface", "test-3.14", "--repo", str(ROOT),
+         "--summary-out", str(summary_out)],
+        capture_output=True, text=True, env=pr_env["env"],
+    )
+    assert proc.returncode == 2
+    lines = summary_out.read_text(encoding="utf-8")
+    assert "ROUNDTRIP_RECEIPT=INVALID" in lines
+    assert "FAILED_CHECK=artifact_name_binding:" in lines
+
+
+def test_verify_retained_rejects_wrong_attempt_p2_9_name(finalized_bundle, pr_env, tmp_path):
+    """A P2-9-style name with the wrong run attempt is rejected by the
+    exact name binding."""
+    bundle, _ = finalized_bundle
+    wrong = f"{tool.P2_9_ARTIFACT_PREFIX}-test-3.14-{pr_env['head']}-attempt-99"
+    summary_out = tmp_path / "rt_att.txt"
+    proc = subprocess.run(
+        [sys.executable, str(bundle / tool.VERIFIER_NAME), "verify-retained",
+         "--bundle-dir", str(bundle), "--name", wrong,
+         "--surface", "test-3.14", "--repo", str(ROOT),
+         "--summary-out", str(summary_out)],
+        capture_output=True, text=True, env=pr_env["env"],
+    )
+    assert proc.returncode == 2
+    lines = summary_out.read_text(encoding="utf-8")
+    assert "ROUNDTRIP_RECEIPT=INVALID" in lines
+    assert "FAILED_CHECK=artifact_name_binding:" in lines
+
+
+def test_target_bundle_tamper_rejected(tmp_path, monkeypatch, capsys):
+    """Target evidence tampering fails closed: a verdict/reason inconsistency
+    and an invalid verdict literal both fail the replay."""
+    rc, out_lines, out, main_env = _run_aggregate(tmp_path, monkeypatch, capsys)
+    assert rc == 0
+    bundle = out / "test-3.14"
+    ev_p = bundle / tool.TARGET_EVIDENCE_NAME
+    # tamper 1: verdict run but reason claims reused => verdict consistency
+    d = json.loads(ev_p.read_text(encoding="utf-8"))
+    d["reason"] = "reused:all_predicates_valid"
+    ev_p.write_text(json.dumps(d, sort_keys=True), encoding="utf-8")
+    lines = _tamper_and_verify(bundle, tmp_path)
+    assert any(ln.startswith("FAILED_CHECK=target_verdict_consistency:") for ln in lines)
+    # tamper 2: invalid verdict literal => schema failure
+    d = json.loads(ev_p.read_text(encoding="utf-8"))
+    d["verdict"] = "reuse"
+    ev_p.write_text(json.dumps(d, sort_keys=True), encoding="utf-8")
+    lines = _tamper_and_verify(bundle, tmp_path)
+    assert any(ln.startswith("FAILED_CHECK=target_evidence_schema:") for ln in lines)
+    # tamper 3: unknown field => schema failure
+    d = json.loads(ev_p.read_text(encoding="utf-8"))
+    d["bogus_field"] = 1
+    ev_p.write_text(json.dumps(d, sort_keys=True), encoding="utf-8")
+    lines = _tamper_and_verify(bundle, tmp_path)
+    assert any(ln.startswith("FAILED_CHECK=target_evidence_schema:") for ln in lines)
+
+
+# ---------------------------------------------------------------------------
+# Phase-T pre-stage: main-push shadow steps pre-staged in ci.yml
+
+
+def test_main_push_shadow_steps_prestaged_in_ci_yml():
+    """The main-push shadow steps are pre-staged NOW: target probes in the
+    test-3.14 and pyarrow24 jobs, aggregator + target bundle upload/replay
+    in the package job. The steps MUST run on main pushes even when
+    POST_MERGE_REUSE=true (no reuse guard), must not add any skip
+    conditions, must not add any job, and the artifact names use the exact
+    main-push templates."""
+    ci = CI_YML.read_text(encoding="utf-8")
+    guard = (
+        "github.event_name == 'push' && github.ref == 'refs/heads/main' "
+        "&& env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' "
+        "&& env.CI_TIER != 'control_plane'"
+    )
+    assert guard in ci
+    # the main-push P2-9 guards must NOT carry POST_MERGE_REUSE
+    idx = ci.index("Run P2-9 main-push target probe (test-3.14)")
+    chunk = ci[idx:idx + 600]
+    assert "POST_MERGE_REUSE" not in chunk
+    assert "target-probe" in chunk
+    assert "matrix.python-version == '3.14'" in chunk
+    # no new job: the P2-9 main-push steps live inside existing jobs
+    assert ci.count("Run P2-9 main-push target probe (") == 2
+    for surface in tool.SURFACES:
+        assert f"{tool.P2_9_TARGET_PROBE_ARTIFACT_PREFIX}-{surface}-" in ci
+        assert f"{tool.P2_9_TARGET_ARTIFACT_PREFIX}-{surface}-${{{{ github.sha }}}}-attempt-${{{{ github.run_attempt }}}}" in ci
+    assert "Run P2-9 main-push target shadow aggregation" in ci
+    assert "GITHUB_TOKEN: ${{ github.token }}" in ci
+    # the aggregate output feeds exact target bundle uploads + retained replays
+    for action in ("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+                   "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"):
+        assert action in ci

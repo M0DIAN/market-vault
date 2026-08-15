@@ -28,7 +28,7 @@ Subcommands:
                       runtime.
   finalize          — assemble the source evidence bundle: verifier
                       self-copy FIRST, receipt, source evidence doc (the
-                      exact 15-key schema), then EVIDENCE_MANIFEST.json
+                      exact 16-field schema), then EVIDENCE_MANIFEST.json
                       LAST. No writes are allowed after the manifest.
   verify-bundle     — offline replay of a bundle. Run the bundle's OWN
                       verifier_source.py copy against that bundle; replay
@@ -40,7 +40,36 @@ Subcommands:
                       The downloaded original bundle is never mutated or
                       re-uploaded.
   validate-evidence — validate a source evidence doc against the exact
-                      15-key schema (fail-closed).
+                      16-field schema (fail-closed).
+  target-probe      — MAIN-PUSH target runtime probe (Phase-T pre-stage):
+                      validates the main-push target context (M / the exact
+                      single parent P / trees / run binding; fail-closed on
+                      not-main-push, merge topology, malformed identity),
+                      runs the SAME sealed per-surface measurement as the
+                      source probe against M, and emits the schema-bound
+                      target probe payload + identity docs into the
+                      upload-only payload dir. Runs on main pushes even
+                      when POST_MERGE_REUSE=true and never changes V1 skip
+                      semantics.
+  aggregate         — MAIN-PUSH target shadow aggregator (Phase-T
+                      pre-stage): source evidence locator (read-only GitHub
+                      API, one generation back from P; none/duplicate/
+                      ambiguity/malformed/expired/mismatched => source
+                      unavailable => every surface RUN, never REUSE), the
+                      exact P..M delta evaluator with the sealed fail-close
+                      contract, the target shadow evidence class
+                      (p2_9_target_shadow_v1, exact 25-field schema), and
+                      the P2-7 closure finalize + pre-upload replay. On the
+                      Phase-S merge push itself the evaluator legitimately
+                      fail-closes to all RUN / source-unavailable and
+                      activates nothing.
+
+Phase-T pre-stage (independent-review correction): the measured Phase-T
+P..M delta MUST NOT later modify ci.yml, the P2-9 probe code, the source
+locator, the target evaluator, the V2 shadow evidence schema, or the
+evidence verifier — therefore this Phase-S PR already carries the complete
+measurement-only Phase-T machinery above. Nothing here activates
+production reuse; a REUSED target verdict is only ever evidence.
 
 Closure rule (P2-7 discipline, retained verbatim): FINALIZE -> MANIFEST ->
 PRE-UPLOAD REPLAY -> NO FURTHER WRITES -> UPLOAD -> DOWNLOAD RETAINED
@@ -81,6 +110,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import fnmatch
 import hashlib
 import io
 import json
@@ -103,7 +133,7 @@ from pathlib import Path
 
 SCHEMA_VERSION = 1
 ARTIFACT_CLASS = "p2_9_source_surface_shadow_v1"
-# The exact 15-key source evidence schema (Section 4 of the P2-9 Phase S
+# The exact 16-field source evidence schema (Section 4 of the P2-9 Phase S
 # spec). Unknown or missing keys => INVALID. Field ORDER is not identity
 # (canonical_serialize sorts keys); the KEY SET is.
 SOURCE_EVIDENCE_FIELDS = (
@@ -125,6 +155,99 @@ SOURCE_EVIDENCE_FIELDS = (
     "evidence_manifest_sha256",
 )
 
+# ---------------------------------------------------------------------------
+# Phase-T pre-staged target-side constants (independent-review correction)
+#
+# The measured Phase-T P..M delta MUST NOT later modify ci.yml, the P2-9
+# probe code, the source locator, the target evaluator, the V2 shadow
+# evidence schema, or the evidence verifier — therefore the complete
+# measurement-only Phase-T machinery is pre-staged in this Phase-S PR.
+# The target evidence class is a SEPARATE strict class, distinct from the
+# V1 FULL attestation and from the P2-9 source evidence class. Exact key
+# sets: unknown or missing fields => INVALID. A REUSED verdict is valid
+# only when every source/runtime/delta predicate proves true; a RUN
+# verdict must remain truthful. A V1 FULL attestation is never emitted to
+# represent a reused surface.
+
+TARGET_ARTIFACT_CLASS = "p2_9_target_shadow_v1"
+TARGET_PROBE_ARTIFACT_CLASS = "p2_9_target_probe_payload_v1"
+P2_9_TARGET_ARTIFACT_PREFIX = "market-vault-p2-9-target"
+P2_9_TARGET_PROBE_ARTIFACT_PREFIX = "market-vault-p2-9-target-probe"
+TARGET_EVIDENCE_NAME = "target_shadow_evidence.json"
+TARGET_PROBE_PAYLOAD_NAME = "target_probe_payload.json"
+DELTA_EVALUATOR_NAME = "delta_evaluator.json"
+SOURCE_REFERENCE_NAME = "source_reference.json"
+VERDICT_RUN = "run"
+VERDICT_REUSED = "reused"
+TARGET_RETAINED_REPLAY_STATE = "pre_upload_pending"
+
+# The V1 FULL CI attestation field set (exact; mirrors the ATTESTATION
+# field order used by scripts/ci_post_merge_reuse.py; used by the source
+# locator to validate the one-generation-back attestation).
+V1_ATTESTATION_FIELDS = (
+    "schema_version", "repository", "workflow", "run_id", "run_attempt",
+    "pr_number", "base_sha", "head_sha", "tested_merge_sha",
+    "tested_tree_sha", "tier", "full_matrix_required",
+)
+
+# Target shadow evidence schema: exact 25-field set. Unknown or missing
+# fields => INVALID. source_* fields are either all real (source available)
+# or all zeroed (source unavailable); mixed patterns are INVALID.
+TARGET_SHADOW_FIELDS = (
+    "schema_version",
+    "artifact_class",
+    "repository",
+    "workflow",
+    "run_id",
+    "run_attempt",
+    "target_sha",                   # M (the main-push head)
+    "parent_sha",                   # P (the exact single parent of M)
+    "target_tree_sha",
+    "parent_tree_sha",
+    "surface",
+    "verdict",                      # "run" | "reused"
+    "reason",
+    "source_pr_number",
+    "source_pr_head_sha",
+    "source_run_id",
+    "source_run_attempt",
+    "source_artifact_name",
+    "source_tested_tree_sha",
+    "target_runtime_identity_sha256",
+    "delta_identity_sha256",
+    "selected_input_verdict",       # "affected" | "unaffected"
+    "global_runtime_match",
+    "retained_replay_state",
+    "evidence_manifest_sha256",
+)
+
+# Target probe payload schema: exact 16-field set. runtime_identity_sha256
+# is the sha256 of the strict runtime_sdist_identity.json bytes (same
+# derivation as the source evidence's runtime_identity_sha256);
+# runtime_environment_sha256 is the head/surface-insensitive environment
+# identity (canonical_serialize of the runtime doc minus its run-specific
+# wrapper fields) so the source PR run and the main-push target run are
+# cross-run comparable; normalized_identity_sha256 is the sealed
+# DOC_NORMALIZED fingerprint (also head-insensitive).
+TARGET_PROBE_PAYLOAD_FIELDS = (
+    "schema_version",
+    "artifact_class",
+    "repository",
+    "workflow",
+    "run_id",
+    "run_attempt",
+    "surface",
+    "target_sha",
+    "parent_sha",
+    "target_tree_sha",
+    "parent_tree_sha",
+    "runtime_identity_sha256",
+    "runtime_environment_sha256",
+    "normalized_identity_sha256",
+    "selected_input_contract_sha256",
+    "probe_source_sha256",
+)
+
 SURFACES = ("test-3.14", "pyarrow24")
 
 DOC_RUNTIME = "runtime_sdist_identity.json"
@@ -136,6 +259,19 @@ PROBE_NAME = "probe_summary.txt"
 SOURCE_EVIDENCE_NAME = "source_evidence.json"
 SELECTED_INPUT_CONTRACT_NAME = "selected_input_contract.json"
 NORMALIZATION_CONTRACT_NAME = "normalization_contract.json"
+
+# Exact target bundle file set (manifest-complete; no orphans). The
+# manifest cannot list itself (same rule as the source bundle set).
+REQUIRED_TARGET_BUNDLE_FILES = (
+    RECEIPT_NAME,
+    VERIFIER_NAME,
+    TARGET_EVIDENCE_NAME,
+    TARGET_PROBE_PAYLOAD_NAME,
+    DOC_RUNTIME,
+    DOC_NORMALIZED,
+    DELTA_EVALUATOR_NAME,
+    SOURCE_REFERENCE_NAME,
+)
 
 # P2-9 action pins (independent: resolved from the frozen base CI logs for
 # checkout/setup-python; upload-artifact@v7 = 043fb46d...; the P2-9
@@ -204,12 +340,14 @@ INVALIDATOR_GLOB_PATTERNS = [
     "pyproject.toml",
     "scripts/audit_pr.py",
     "scripts/check_release.py",
+    "scripts/ci_p29_production_topology_shadow.py",
     "scripts/ci_post_merge_reuse.py",
     "scripts/ci_python314_surface.py",
     "scripts/ci_risk_tier.py",
     "src/**",
     "tests/conftest.py",
     "tests/test_audit_pr.py",
+    "tests/test_ci_p29_production_topology_shadow.py",
     "tests/test_ci_post_merge_reuse.py",
     "tests/test_ci_risk_tier.py",
     "tests/test_component_aware_tiers.py",
@@ -1189,6 +1327,9 @@ def compute_selected_input_contract(repo: Path, surface: str) -> dict:
         "change_classification": {
             "selected_inputs": "selectors.files (the exact schema-bound surface)",
             "invalidators": INVALIDATOR_GLOB_PATTERNS,
+            "known_benign_paths": (
+                [TARGET_FILE] if surface == "pyarrow24" else []
+            ),
             "unknown_paths": "INVALIDATE (conservative)",
         },
         "target_relation": {
@@ -2113,7 +2254,7 @@ _HEX64_RE = re.compile(r"[0-9a-f]{64}")  # sha256 digests
 
 
 def validate_source_evidence(doc) -> list:
-    """Validate a source evidence document against the exact 15-key schema.
+    """Validate a source evidence document against the exact 16-field schema.
     Returns failure messages; empty list means VALID. Unknown or missing
     keys, wrong types, wrong class literal, or wrong literals => INVALID.
     No permissive fallback exists."""
@@ -2367,6 +2508,16 @@ class BundleVerifier:
             self.errors.append(f"{name}:{detail}".rstrip(":"))
 
     def run(self) -> dict:
+        # Dispatch: a bundle carrying the target shadow evidence doc is a
+        # Phase-T pre-staged TARGET bundle (main-push measurement); any
+        # other bundle is a P2-9 SOURCE bundle. The target class is a
+        # separate strict class and is never verified as a source bundle
+        # (and vice versa).
+        if (self.root / TARGET_EVIDENCE_NAME).is_file():
+            return self._run_target_bundle()
+        return self._run_source_bundle()
+
+    def _run_source_bundle(self) -> dict:
         summary_p = self.root / PROBE_NAME
         s = {}
         if summary_p.is_file():
@@ -2672,7 +2823,7 @@ class BundleVerifier:
         # ---------------------------------------------------------------
         # P2-9 source evidence gates (Section 4/5/8/10 of the spec)
 
-        # source evidence doc: exact 15-key schema
+        # source evidence doc: exact 16-field schema
         evidence = {}
         self.check("source_evidence_present", (self.root / SOURCE_EVIDENCE_NAME).is_file())
         if (self.root / SOURCE_EVIDENCE_NAME).is_file():
@@ -2812,6 +2963,251 @@ class BundleVerifier:
             "checks": self.checks,
         }
 
+    def _run_target_bundle(self) -> dict:
+        """Replay of a Phase-T pre-staged TARGET shadow evidence bundle
+        (p2_9_target_shadow_v1). The target class is a separate strict
+        class: unknown/missing fields => INVALID; REUSED requires every
+        source/runtime/delta predicate to prove true; a V1 FULL attestation
+        is never emitted to represent a reused surface. The exact check
+        count for a valid target bundle is the target-branch size; the
+        aggregate prints it per surface."""
+        root = self.root
+
+        # target evidence doc: exact 25-field schema
+        evidence = {}
+        self.check("target_evidence_present", (root / TARGET_EVIDENCE_NAME).is_file())
+        if (root / TARGET_EVIDENCE_NAME).is_file():
+            try:
+                evidence = json.loads((root / TARGET_EVIDENCE_NAME).read_text(encoding="utf-8"))
+            except Exception as exc:
+                self.check("target_evidence_schema", False, str(exc))
+            else:
+                schema_failures = validate_target_shadow_evidence(evidence)
+                self.check("target_evidence_schema", not schema_failures, ";".join(schema_failures[:5]))
+        else:
+            self.check("target_evidence_schema", False, "missing")
+
+        # manifest gates
+        manifest_p = root / MANIFEST_NAME
+        self.check("manifest_present", manifest_p.is_file())
+        manifest = None
+        if manifest_p.is_file():
+            try:
+                manifest = json.loads(manifest_p.read_text(encoding="utf-8"))
+                self.check(
+                    "manifest_schema",
+                    manifest.get("schema_version") == SCHEMA_VERSION
+                    and isinstance(manifest.get("entries"), list),
+                    "schema_version",
+                )
+            except Exception as exc:
+                self.check("manifest_schema", False, str(exc))
+        by_path = {}
+        if manifest is not None:
+            dup = False
+            for e in manifest.get("entries", []):
+                path = e.get("path")
+                if path in by_path:
+                    dup = True
+                by_path[path] = e
+            self.check("manifest_duplicate_paths_rejected", not dup, "duplicate_path")
+            missing = sorted(f for f in REQUIRED_TARGET_BUNDLE_FILES if f not in by_path)
+            self.check("manifest_complete", not missing, ",".join(missing))
+            hashes_ok = True
+            for path, e in by_path.items():
+                p = root / path
+                if not p.is_file() or p.stat().st_size != e.get("size") or sha256_file(p) != e.get("sha256"):
+                    hashes_ok = False
+                    break
+            self.check("manifest_hashes", hashes_ok)
+        else:
+            self.check("manifest_duplicate_paths_rejected", False, "no_manifest")
+            self.check("manifest_complete", False, "no_manifest")
+            self.check("manifest_hashes", False, "no_manifest")
+
+        # verifier self-identity (the bundle's verifier_source.py copy)
+        verifier = root / VERIFIER_NAME
+        receipt = {}
+        if (root / RECEIPT_NAME).is_file():
+            try:
+                receipt = json.loads((root / RECEIPT_NAME).read_text(encoding="utf-8"))
+            except Exception:
+                receipt = {}
+        v_self_ok = (
+            Path(__file__).resolve() == verifier.resolve()
+            and verifier.is_file()
+            and receipt.get("verifier_script_sha256") == sha256_file(verifier)
+            and VERIFIER_NAME in by_path
+            and by_path.get(VERIFIER_NAME, {}).get("sha256") == sha256_file(verifier)
+        )
+        self.check("verifier_source", v_self_ok, "realpath_or_sha")
+
+        # receipt consistency (target receipt binds M / P / trees / run)
+        rcpt_ok = (
+            receipt.get("schema_version") == SCHEMA_VERSION
+            and receipt.get("surface") == evidence.get("surface")
+            and receipt.get("target_sha") == evidence.get("target_sha")
+            and receipt.get("parent_sha") == evidence.get("parent_sha")
+            and receipt.get("target_tree_sha") == evidence.get("target_tree_sha")
+            and receipt.get("parent_tree_sha") == evidence.get("parent_tree_sha")
+            and receipt.get("run_id") == evidence.get("run_id")
+            and receipt.get("run_attempt") == evidence.get("run_attempt")
+            and receipt.get("repository") == evidence.get("repository")
+            and receipt.get("workflow") == evidence.get("workflow")
+            and receipt.get("verifier_script_sha256") == sha256_file(verifier)
+        )
+        self.check("receipt_consistency", bool(rcpt_ok), "tree_or_run_or_verifier_sha")
+
+        # target probe payload + identity docs
+        payload = {}
+        self.check("target_probe_payload_present", (root / TARGET_PROBE_PAYLOAD_NAME).is_file())
+        if (root / TARGET_PROBE_PAYLOAD_NAME).is_file():
+            try:
+                payload = json.loads((root / TARGET_PROBE_PAYLOAD_NAME).read_text(encoding="utf-8"))
+            except Exception as exc:
+                self.check("target_probe_payload_schema", False, str(exc))
+            else:
+                schema_failures = validate_target_probe_payload(payload)
+                self.check("target_probe_payload_schema", not schema_failures, ";".join(schema_failures[:5]))
+        else:
+            self.check("target_probe_payload_schema", False, "missing")
+
+        id_ok = False
+        if (root / DOC_RUNTIME).is_file() and (root / DOC_NORMALIZED).is_file():
+            try:
+                runtime_doc = json.loads((root / DOC_RUNTIME).read_text(encoding="utf-8"))
+                norm_doc = json.loads((root / DOC_NORMALIZED).read_text(encoding="utf-8"))
+                fp = norm_doc.get("fingerprint_sha256")
+                fp_payload = {
+                    k: v for k, v in norm_doc.items()
+                    if k not in ("fingerprint_sha256", "raw_diagnostic")
+                }
+                fp_payload["raw_diagnostic_sha256"] = norm_doc.get("raw_diagnostic_sha256")
+                fp_recompute = sha256_bytes(canonical_serialize(fp_payload).encode())
+                id_ok = (
+                    sha256_file(root / DOC_RUNTIME) == payload.get("runtime_identity_sha256")
+                    and runtime_doc.get("surface") == payload.get("surface")
+                    and _runtime_environment_sha256(runtime_doc) == payload.get("runtime_environment_sha256")
+                    and bool(fp) and fp_recompute == fp
+                    and fp == payload.get("normalized_identity_sha256")
+                )
+            except Exception:
+                id_ok = False
+        self.check("target_runtime_identity", id_ok, "doc_or_payload_mismatch")
+
+        # evidence <-> payload bindings (run / topology / identity)
+        ev_payload_ok = (
+            payload.get("run_id") == evidence.get("run_id")
+            and payload.get("run_attempt") == evidence.get("run_attempt")
+            and payload.get("target_sha") == evidence.get("target_sha")
+            and payload.get("parent_sha") == evidence.get("parent_sha")
+            and payload.get("target_tree_sha") == evidence.get("target_tree_sha")
+            and payload.get("parent_tree_sha") == evidence.get("parent_tree_sha")
+            and payload.get("surface") == evidence.get("surface")
+            and payload.get("runtime_identity_sha256") == evidence.get("target_runtime_identity_sha256")
+        )
+        self.check("target_evidence_payload_bindings", bool(ev_payload_ok), "run_or_tree_or_identity")
+
+        # delta evaluator doc (exact P..M changed paths + verdict)
+        delta_ok = False
+        if (root / DELTA_EVALUATOR_NAME).is_file():
+            try:
+                dd = json.loads((root / DELTA_EVALUATOR_NAME).read_text(encoding="utf-8"))
+                paths = dd.get("changed_paths")
+                identity = delta_identity_sha256(
+                    paths or [], dd.get("surface", ""), dd.get("selected_input_verdict", "")
+                )
+                delta_ok = (
+                    dd.get("schema_version") == SCHEMA_VERSION
+                    and dd.get("document_type") == "delta_evaluator"
+                    and dd.get("surface") == evidence.get("surface")
+                    and dd.get("target_sha") == evidence.get("target_sha")
+                    and dd.get("parent_sha") == evidence.get("parent_sha")
+                    and isinstance(paths, list)
+                    and paths == sorted(set(paths))
+                    and dd.get("selected_input_verdict") == evidence.get("selected_input_verdict")
+                    and dd.get("delta_identity_sha256") == identity
+                    and identity == evidence.get("delta_identity_sha256")
+                )
+            except Exception:
+                delta_ok = False
+        self.check("delta_evaluator", bool(delta_ok), "identity_or_verdict_mismatch")
+
+        # source reference doc (cross-doc equality with the evidence doc)
+        ref = {}
+        ref_ok = False
+        if (root / SOURCE_REFERENCE_NAME).is_file():
+            try:
+                ref = json.loads((root / SOURCE_REFERENCE_NAME).read_text(encoding="utf-8"))
+                ref_ok = (
+                    ref.get("schema_version") == SCHEMA_VERSION
+                    and ref.get("document_type") == "source_reference"
+                    and ref.get("source_pr_number") == evidence.get("source_pr_number")
+                    and ref.get("source_pr_head_sha") == evidence.get("source_pr_head_sha")
+                    and ref.get("source_run_id") == evidence.get("source_run_id")
+                    and ref.get("source_run_attempt") == evidence.get("source_run_attempt")
+                    and ref.get("source_artifact_name") == evidence.get("source_artifact_name")
+                    and ref.get("source_tested_tree_sha") == evidence.get("source_tested_tree_sha")
+                )
+            except Exception:
+                ref_ok = False
+        self.check("source_reference", bool(ref_ok), "cross_doc_mismatch")
+
+        # verdict internal consistency: REUSED requires every predicate
+        verdict_ok = True
+        if evidence.get("verdict") == VERDICT_REUSED:
+            verdict_ok = (
+                evidence.get("global_runtime_match") is True
+                and evidence.get("selected_input_verdict") == "unaffected"
+                and ref.get("runtime_match") is True
+                and ref.get("source_available") is True
+                and isinstance(evidence.get("source_pr_number"), int)
+                and evidence.get("source_pr_number") > 0
+            )
+        if evidence.get("verdict") == VERDICT_RUN:
+            verdict_ok = verdict_ok and str(evidence.get("reason", "")).startswith("run:")
+        if evidence.get("verdict") == VERDICT_REUSED:
+            verdict_ok = verdict_ok and str(evidence.get("reason", "")).startswith("reused:")
+        self.check("target_verdict_consistency", bool(verdict_ok), "reused_requires_all_predicates")
+
+        # mutual seal: manifest content digest binds the evidence doc
+        ev_manifest_ok = False
+        if manifest is not None:
+            entries = [
+                [e.get("path"), e.get("sha256"), e.get("size")]
+                for e in manifest.get("entries", [])
+                if e.get("path") != TARGET_EVIDENCE_NAME
+            ]
+            try:
+                ev_manifest_ok = manifest_content_digest(entries) == evidence.get("evidence_manifest_sha256")
+            except Exception:
+                ev_manifest_ok = False
+        self.check("evidence_manifest_binding", bool(ev_manifest_ok), "manifest_content_digest_mismatch")
+
+        # closure: disk == manifest (no orphan post-manifest files)
+        disk_rels = set()
+        for p in root.rglob("*"):
+            if p.is_file():
+                rel = p.relative_to(root).as_posix().replace("\\", "/")
+                if rel == MANIFEST_NAME:
+                    continue
+                if rel.split("/", 1)[0] in BUNDLE_EXCLUDED_TOPS:
+                    continue
+                disk_rels.add(rel)
+        self.check(
+            "no_orphan_files",
+            manifest is not None and disk_rels == set(by_path),
+            "post_manifest_write_or_untracked_file",
+        )
+
+        ok = all(self.checks.values())
+        return {
+            "EVIDENCE_BUNDLE_REPLAY_OK": ok,
+            "failed_checks": self.errors,
+            "check_count": len(self.checks),
+            "checks": self.checks,
+        }
+
 
 def surface_of(summary_p: Path) -> str | None:
     if not summary_p.is_file():
@@ -2871,13 +3267,27 @@ def cmd_verify_retained(args) -> int:
     """Package-job post-upload replay: the downloaded artifact must bind
     exact head / run / attempt / surface by name, replay read-only, and
     record a roundtrip receipt OUTSIDE the bundle. The downloaded original
-    bundle is never mutated or re-uploaded."""
+    bundle is never mutated or re-uploaded. Auto-detects the bundle class:
+    a bundle carrying the target shadow evidence doc is verified against
+    the MAIN-PUSH context (M / exact single parent P / run binding) and the
+    market-vault-p2-9-target-* name template; otherwise the PR context and
+    the market-vault-p2-9-source-* template apply. A valid source bundle
+    passed with a V1-style attestation name (or any other name) fails the
+    exact name binding and is REJECTED."""
     root = Path(args.bundle_dir).resolve()
-    ctx = run_context(Path(args.repo).resolve())
-    expected_name = (
-        f"{P2_9_ARTIFACT_PREFIX}-{args.surface}-"
-        f"{ctx['pr_head_sha']}-attempt-{ctx['run_attempt']}"
-    )
+    repo = Path(args.repo).resolve()
+    if (root / TARGET_EVIDENCE_NAME).is_file():
+        ctx = main_push_context(repo)
+        expected_name = (
+            f"{P2_9_TARGET_ARTIFACT_PREFIX}-{args.surface}-"
+            f"{ctx['target_sha']}-attempt-{ctx['run_attempt']}"
+        )
+    else:
+        ctx = run_context(repo)
+        expected_name = (
+            f"{P2_9_ARTIFACT_PREFIX}-{args.surface}-"
+            f"{ctx['pr_head_sha']}-attempt-{ctx['run_attempt']}"
+        )
     name_ok = args.name == expected_name
     if not name_ok:
         lines = [
@@ -2911,6 +3321,1030 @@ def cmd_validate_evidence(args) -> int:
         return 1
     print("SOURCE_EVIDENCE_VALID=true")
     return 0
+
+
+# ---------------------------------------------------------------------------
+# Phase-T pre-staged target-side machinery (main-push shadow measurement)
+#
+# Independent-review correction: the measured Phase-T P..M delta MUST NOT
+# later modify ci.yml, the P2-9 probe code, the source locator, the target
+# evaluator, the V2 shadow evidence schema, or the evidence verifier —
+# therefore this Phase-S PR carries the complete measurement-only Phase-T
+# machinery NOW. Every primitive below is shadow/measurement only:
+#   - main_push_context: M / exact single parent P / trees / run binding;
+#     fail-closed on not-main-push, merge topology, malformed identity.
+#   - locate_source_evidence: read-only GitHub API; one generation back
+#     from P. None / duplicate / ambiguity / malformed / expired /
+#     mismatched => source unavailable => surface RUN, never REUSE.
+#   - main_push_delta / classify_delta_paths: exact P..M changed paths with
+#     the sealed P2-8 fail-close contract (src/**, pyproject.toml,
+#     CI/control-plane inputs, repo-wide conftest, unknown/unclassified
+#     paths, selected-input changes all invalidate).
+#   - target shadow evidence class p2_9_target_shadow_v1 (exact 25-field
+#     schema): distinct from the V1 FULL attestation and the source
+#     evidence class; unknown/missing fields => INVALID; a REUSED verdict
+#     is valid only when every source/runtime/delta predicate proves true.
+#   - cmd_target_probe / cmd_aggregate: the main-push probe and the
+#     package/main-push aggregator, with the P2-7 retained-evidence closure
+#     (FINALIZE -> MANIFEST -> PRE-UPLOAD REPLAY -> NO FURTHER WRITES ->
+#     UPLOAD -> DOWNLOAD RETAINED -> POST-UPLOAD REPLAY).
+# On the Phase-S merge push P itself the evaluator legitimately fail-closes
+# to all RUN / source-unavailable (parent(P) has no qualifying P2-9 source
+# evidence); that is expected and must not activate anything.
+
+
+def _git_quiet(repo: Path, *argv: str) -> str:
+    proc = subprocess.run(
+        ["git", "-C", str(repo), *argv],
+        capture_output=True, text=True, check=False,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(f"git_error:{' '.join(argv[:3])}:{proc.stderr.strip()[-300:]}")
+    return proc.stdout.strip()
+
+
+def main_push_context(repo: Path, env=None) -> dict:
+    """Derive the exact main-push target context: M (GITHUB_SHA), P (the
+    exact single parent of M), tree(M), tree(P), run_id, run_attempt,
+    workflow, repository. Fails closed on: not a main push, a merge commit /
+    multiple parents where the contract expects exactly one, malformed or
+    missing identity, or unexpected topology."""
+    if env is None:
+        env = os.environ
+    event_name = env.get("GITHUB_EVENT_NAME", "")
+    ref = env.get("GITHUB_REF", "")
+    if event_name != "push":
+        raise RuntimeError(f"main_push_event_required:push_got:{event_name or 'missing'}")
+    if ref != "refs/heads/main":
+        raise RuntimeError(f"main_push_ref_required:refs/heads/main_got:{ref or 'missing'}")
+
+    repository = env.get("GITHUB_REPOSITORY", "")
+    workflow = env.get("GITHUB_WORKFLOW", "") or EXPECTED_WORKFLOW
+    run_id = env.get("GITHUB_RUN_ID", "")
+    run_attempt = env.get("GITHUB_RUN_ATTEMPT", "")
+    target_sha = env.get("GITHUB_SHA", "")
+    missing = sorted(
+        k for k, v in {
+            "GITHUB_REPOSITORY": repository, "GITHUB_RUN_ID": run_id,
+            "GITHUB_RUN_ATTEMPT": run_attempt, "GITHUB_SHA": target_sha,
+        }.items() if not v
+    )
+    if missing:
+        raise RuntimeError("main_push_context_missing:" + ",".join(missing))
+    if repository != EXPECTED_REPOSITORY:
+        raise RuntimeError(f"main_push_repository_mismatch:{repository}")
+    if workflow != EXPECTED_WORKFLOW:
+        raise RuntimeError(f"main_push_workflow_mismatch:{workflow}")
+    if not _HEX40_RE.fullmatch(target_sha):
+        raise RuntimeError(f"main_push_target_sha_malformed:{target_sha}")
+    try:
+        run_id_i = int(run_id)
+        run_attempt_i = int(run_attempt)
+    except ValueError as exc:
+        raise RuntimeError(f"main_push_id_malformed:{exc}") from exc
+    if run_id_i <= 0 or run_attempt_i <= 0:
+        raise RuntimeError("main_push_id_nonpositive")
+
+    # exact single parent (merge topology fail-closed: "M <parent>" exactly)
+    parent_line = _git_quiet(repo, "rev-list", "--parents", "-n", "1", target_sha)
+    tokens = parent_line.split()
+    if len(tokens) != 2 or tokens[0] != target_sha:
+        raise RuntimeError(f"main_push_parent_expected_single:{parent_line or 'unresolvable'}")
+    parent_sha = tokens[1]
+    if not _HEX40_RE.fullmatch(parent_sha):
+        raise RuntimeError(f"main_push_parent_sha_malformed:{parent_sha}")
+
+    target_tree_sha = _git_quiet(repo, "rev-parse", f"{target_sha}^{{tree}}")
+    parent_tree_sha = _git_quiet(repo, "rev-parse", f"{parent_sha}^{{tree}}")
+    if not _HEX40_RE.fullmatch(target_tree_sha) or not _HEX40_RE.fullmatch(parent_tree_sha):
+        raise RuntimeError("main_push_tree_sha_malformed")
+
+    return {
+        "repository": repository,
+        "workflow": workflow,
+        "run_id": run_id_i,
+        "run_attempt": run_attempt_i,
+        "target_sha": target_sha,
+        "parent_sha": parent_sha,
+        "target_tree_sha": target_tree_sha,
+        "parent_tree_sha": parent_tree_sha,
+    }
+
+
+class SourceLocatorError(RuntimeError):
+    """Fail-closed: no / duplicate / ambiguous / malformed / expired /
+    mismatched source evidence => source unavailable => surface RUN.
+    INVALID never means REUSE."""
+
+
+def _gh_api(api_path: str, env=None) -> object:
+    proc = subprocess.run(
+        ["gh", "api", api_path],
+        capture_output=True, text=True, env=env or os.environ, check=False,
+    )
+    if proc.returncode != 0:
+        raise SourceLocatorError(f"gh_api_error:{api_path}:{proc.stderr.strip()[-200:]}")
+    try:
+        return json.loads(proc.stdout)
+    except Exception as exc:
+        raise SourceLocatorError(f"gh_api_malformed:{api_path}:{exc}") from exc
+
+
+def _gh_run_download(run_id: int, name: str, dest: Path, repo_slug: str, env=None) -> None:
+    dest.mkdir(parents=True, exist_ok=True)
+    proc = subprocess.run(
+        ["gh", "run", "download", str(run_id), "--name", name,
+         "--dir", str(dest), "-R", repo_slug],
+        capture_output=True, text=True, env=env or os.environ, check=False,
+    )
+    if proc.returncode != 0:
+        raise SourceLocatorError(
+            f"gh_run_download_error:{name}:{proc.stderr.strip()[-200:]}"
+        )
+    artifact_dir = dest / name
+    if not artifact_dir.is_dir():
+        raise SourceLocatorError(f"gh_run_download_layout_unexpected:{name}")
+
+
+def locate_source_evidence(repo: Path, ctx: dict, env=None) -> dict:
+    """One-generation-back source evidence locator: given P, locate the
+    exact merged PR whose squash commit is P; locate the exact qualifying
+    source PR-head FULL run/attempt; require the exact four formal jobs all
+    success (check_jobs-equivalent semantics); locate exactly one valid V1
+    FULL attestation with tested_tree_sha == tree(P); locate exactly one
+    test-3.14 and exactly one pyarrow24 P2-9 source artifact; validate
+    artifact head/run/attempt/surface bindings; replay retained source
+    artifacts read-only. Read-only GitHub API access only. Any violation
+    raises SourceLocatorError => source unavailable => surface RUN."""
+    repo_slug = ctx["repository"]
+    parent_sha = ctx["parent_sha"]
+    parent_tree_sha = ctx["parent_tree_sha"]
+
+    # 1. the merged PR whose squash commit is P
+    pulls = _gh_api(f"repos/{repo_slug}/commits/{parent_sha}/pulls", env)
+    merged = [
+        pp for pp in (pulls if isinstance(pulls, list) else [])
+        if pp.get("merged_at") and pp.get("state") == "closed"
+        and pp.get("merge_commit_sha") == parent_sha
+    ]
+    if len(merged) != 1:
+        raise SourceLocatorError(
+            "source_pr_" + ("ambiguous" if len(merged) > 1 else "none")
+        )
+    pr = merged[0]
+    pr_number = pr.get("number")
+    head_sha = pr.get("head", {}).get("sha", "")
+    if not isinstance(pr_number, int) or pr_number <= 0:
+        raise SourceLocatorError(f"source_pr_number_malformed:{pr_number}")
+    if not _HEX40_RE.fullmatch(head_sha):
+        raise SourceLocatorError(f"source_pr_head_sha_malformed:{head_sha}")
+
+    # 2. the exact qualifying source PR-head FULL run/attempt
+    runs = _gh_api(
+        f"repos/{repo_slug}/actions/runs?head_sha={head_sha}&per_page=100", env
+    )
+    run_list = runs.get("workflow_runs", []) if isinstance(runs, dict) else []
+    candidates = [
+        r for r in run_list
+        if r.get("event") == "pull_request"
+        and r.get("head_sha") == head_sha
+        and r.get("path") == ".github/workflows/ci.yml"
+        and r.get("status") == "completed"
+    ]
+    success = [r for r in candidates if r.get("conclusion") == "success"]
+    if len(success) != 1:
+        raise SourceLocatorError(
+            "source_run_" + ("ambiguous" if len(success) > 1 else "not_found")
+        )
+    run = success[0]
+    try:
+        run_id = int(run.get("id"))
+        run_attempt = int(run.get("run_attempt"))
+    except (TypeError, ValueError) as exc:
+        raise SourceLocatorError(f"source_run_id_malformed:{exc}") from exc
+    if run_id <= 0 or run_attempt <= 0:
+        raise SourceLocatorError("source_run_id_nonpositive")
+
+    # 3. the exact four formal jobs, all success
+    jobs = _gh_api(f"repos/{repo_slug}/actions/runs/{run_id}/jobs?per_page=100", env)
+    job_list = jobs.get("jobs", []) if isinstance(jobs, dict) else []
+    job_names = sorted(j.get("name", "") for j in job_list)
+    expected_jobs = sorted(
+        ["test (3.11)", "test (3.14)", "portability-pyarrow24", "package"]
+    )
+    if job_names != expected_jobs:
+        raise SourceLocatorError(f"source_jobs_not_exact_four:{','.join(job_names) or 'none'}")
+    if any(j.get("conclusion") != "success" for j in job_list):
+        raise SourceLocatorError("source_jobs_not_all_success")
+
+    # 4. exactly one valid V1 FULL attestation (tested_tree_sha == tree(P))
+    arts = _gh_api(f"repos/{repo_slug}/actions/runs/{run_id}/artifacts?per_page=100", env)
+    art_list = arts.get("artifacts", []) if isinstance(arts, dict) else []
+    art_names = [a.get("name") for a in art_list]
+    att_name = f"market-vault-full-ci-attestation-{head_sha}-attempt-{run_attempt}"
+    att_matches = [n for n in art_names if n == att_name]
+    if len(att_matches) != 1:
+        raise SourceLocatorError(
+            "v1_attestation_" + ("ambiguous" if len(att_matches) > 1 else "not_found")
+        )
+    tmp_att = Path(tempfile.mkdtemp(prefix="p29_loc_att_"))
+    _gh_run_download(run_id, att_name, tmp_att, repo_slug, env)
+    att_path = tmp_att / att_name / "ci_full_attestation.json"
+    if not att_path.is_file():
+        raise SourceLocatorError("v1_attestation_content_missing")
+    try:
+        att = json.loads(att_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise SourceLocatorError(f"v1_attestation_malformed:{exc}") from exc
+    att_keys = set(att)
+    att_ok = (
+        att_keys == set(V1_ATTESTATION_FIELDS)
+        and att.get("tier") == "full"
+        and att.get("full_matrix_required") is True
+        and att.get("head_sha") == head_sha
+        and att.get("tested_tree_sha") == parent_tree_sha
+        and att.get("run_id") == run_id
+        and att.get("run_attempt") == run_attempt
+        and att.get("pr_number") == pr_number
+        and att.get("repository") == repo_slug
+        and att.get("workflow") == EXPECTED_WORKFLOW
+    )
+    if not att_ok:
+        raise SourceLocatorError("v1_attestation_invalid:class_or_binding")
+    att_sha256 = sha256_file(att_path)
+
+    # 5. exactly one P2-9 source bundle per surface; replay read-only
+    bundles = {}
+    for surface in SURFACES:
+        name = f"{P2_9_ARTIFACT_PREFIX}-{surface}-{head_sha}-attempt-{run_attempt}"
+        matches = [n for n in art_names if n == name]
+        if len(matches) != 1:
+            raise SourceLocatorError(
+                f"source_bundle_{surface}_"
+                + ("ambiguous" if len(matches) > 1 else "not_found")
+            )
+        tmp_b = Path(tempfile.mkdtemp(prefix=f"p29_loc_{surface}_"))
+        _gh_run_download(run_id, name, tmp_b, repo_slug, env)
+        bundle_dir = tmp_b / name
+        ev_p = bundle_dir / SOURCE_EVIDENCE_NAME
+        if not ev_p.is_file():
+            raise SourceLocatorError(f"source_bundle_{surface}_evidence_missing")
+        try:
+            ev = json.loads(ev_p.read_text(encoding="utf-8"))
+        except Exception as exc:
+            raise SourceLocatorError(
+                f"source_bundle_{surface}_evidence_malformed:{exc}"
+            ) from exc
+        schema_failures = validate_source_evidence(ev)
+        if schema_failures:
+            raise SourceLocatorError(
+                f"source_bundle_{surface}_schema_invalid:{';'.join(schema_failures[:5])}"
+            )
+        binding_ok = (
+            ev.get("surface") == surface
+            and ev.get("pr_head_sha") == head_sha
+            and ev.get("run_id") == run_id
+            and ev.get("run_attempt") == run_attempt
+            and ev.get("tested_tree_sha") == parent_tree_sha
+        )
+        if not binding_ok:
+            raise SourceLocatorError(f"source_bundle_{surface}_binding_mismatch")
+        # Retained replay runs the bundle's OWN verifier_source.py copy as a
+        # subprocess (read-only; the in-process verifier self-identity check
+        # would fail against a non-copy __file__). The replay summary goes
+        # to stdout only; the downloaded bundle is never mutated.
+        replay_proc = subprocess.run(
+            [sys.executable, str(bundle_dir / VERIFIER_NAME), "verify-bundle",
+             "--bundle-dir", str(bundle_dir)],
+            capture_output=True, text=True,
+        )
+        replay_ok = replay_proc.returncode == 0
+        check_count = ""
+        for ln in replay_proc.stdout.splitlines():
+            if ln.startswith("CHECK_COUNT="):
+                check_count = ln.split("=", 1)[1]
+        if not replay_ok:
+            failed = ""
+            for ln in replay_proc.stdout.splitlines():
+                if ln.startswith("FAILED_CHECK="):
+                    failed = ln.split("=", 1)[1]
+                    break
+            raise SourceLocatorError(
+                f"source_bundle_{surface}_replay_failed:{failed or 'replay_crashed'}"
+            )
+        norm_doc = {}
+        norm_p = bundle_dir / DOC_NORMALIZED
+        if norm_p.is_file():
+            try:
+                norm_doc = json.loads(norm_p.read_text(encoding="utf-8"))
+            except Exception:
+                norm_doc = {}
+        bundles[surface] = {
+            "artifact_name": name,
+            "bundle_dir": bundle_dir,
+            "replay_check_count": check_count,
+            "evidence": ev,
+            "runtime_identity_sha256": ev["runtime_identity_sha256"],
+            "normalized_fingerprint_sha256": norm_doc.get("fingerprint_sha256") or "",
+            "selected_input_contract_sha256": ev["selected_input_contract_sha256"],
+        }
+
+    return {
+        "source_available": True,
+        "reason": "ok",
+        "pr_number": pr_number,
+        "pr_head_sha": head_sha,
+        "run_id": run_id,
+        "run_attempt": run_attempt,
+        "attestation": {"artifact_name": att_name, "sha256": att_sha256, "valid": True},
+        "bundles": bundles,
+    }
+
+
+def main_push_delta(repo: Path, target_sha: str, parent_sha: str) -> list:
+    """Exact P..M changed paths (git diff --name-only, sorted, unique).
+    Fail-closed on unresolvable diffs or unsafe path forms."""
+    proc = subprocess.run(
+        ["git", "-C", str(repo), "diff", "--name-only", parent_sha, target_sha],
+        capture_output=True, text=True, check=False,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(f"main_push_delta_unresolvable:{proc.stderr.strip()[-300:]}")
+    paths = sorted({ln.strip() for ln in proc.stdout.splitlines() if ln.strip()})
+    for p in paths:
+        if p.startswith("/") or "\\" in p or ".." in p.split("/"):
+            raise RuntimeError(f"main_push_delta_unsafe_path:{p}")
+    return paths
+
+
+def classify_delta_paths(paths: list, surface: str, contract: dict) -> dict:
+    """Apply the sealed fail-close contract to the exact P..M changed
+    paths: any invalidator (src/**, pyproject.toml, CI/control-plane
+    inputs, repo-wide conftest, sealed P2-9 machinery), any selected-input
+    change, or any unknown/unclassified path invalidates the candidate. A
+    path is an "unaffected candidate" only when explicitly classified
+    known-benign (the audited pyarrow24 relation to the Phase-T target
+    file)."""
+    files = set(contract.get("selectors", {}).get("files", []))
+    benign = set(contract.get("change_classification", {}).get("known_benign_paths", []))
+    invalidators = contract.get("change_classification", {}).get("invalidators", [])
+    affected, invalidated, unknown, benign_hits = [], [], [], []
+    for p in paths:
+        if any(fnmatch.fnmatchcase(p, pat) for pat in invalidators):
+            invalidated.append(p)
+        elif p in files:
+            affected.append(p)
+        elif p in benign:
+            benign_hits.append(p)
+        else:
+            unknown.append(p)
+    verdict = "unaffected" if not (affected or invalidated or unknown) else "affected"
+    return {
+        "changed_paths": paths,
+        "affected": affected,
+        "invalidated": invalidated,
+        "unknown": unknown,
+        "benign": benign_hits,
+        "selected_input_verdict": verdict,
+    }
+
+
+def delta_identity_sha256(paths: list, surface: str, selected_input_verdict: str) -> str:
+    """delta_identity_sha256: sha256 of canonical_serialize over the exact
+    P..M changed paths + surface + selected-input verdict. The derivation
+    is documented in the normalization contract and re-derived by the
+    verifier."""
+    return sha256_bytes(
+        canonical_serialize(
+            {
+                "surface": surface,
+                "changed_paths": sorted(paths),
+                "selected_input_verdict": selected_input_verdict,
+            }
+        ).encode()
+    )
+
+
+def validate_target_probe_payload(doc) -> list:
+    """Exact target probe payload schema (16 fields). Unknown or missing
+    keys, wrong types, wrong class literal => INVALID."""
+    failures = []
+    if not isinstance(doc, dict):
+        return ["target_probe_payload_not_object"]
+    keys = set(doc)
+    expected = set(TARGET_PROBE_PAYLOAD_FIELDS)
+    missing = sorted(expected - keys)
+    unknown = sorted(keys - expected)
+    if missing:
+        failures.append("missing_keys:" + ",".join(missing))
+    if unknown:
+        failures.append("unknown_keys:" + ",".join(unknown))
+    if doc.get("schema_version") != SCHEMA_VERSION:
+        failures.append(
+            f"schema_version_expected_{SCHEMA_VERSION}_got:{doc.get('schema_version')!r}"
+        )
+    if doc.get("artifact_class") != TARGET_PROBE_ARTIFACT_CLASS:
+        failures.append(
+            f"artifact_class_expected_{TARGET_PROBE_ARTIFACT_CLASS}_got:{doc.get('artifact_class')!r}"
+        )
+    if doc.get("repository") != EXPECTED_REPOSITORY:
+        failures.append(f"repository_mismatch:{doc.get('repository')!r}")
+    if doc.get("workflow") != EXPECTED_WORKFLOW:
+        failures.append(f"workflow_mismatch:{doc.get('workflow')!r}")
+    if doc.get("surface") not in SURFACES:
+        failures.append(f"surface_invalid:{doc.get('surface')!r}")
+    for key in ("run_id", "run_attempt"):
+        v = doc.get(key)
+        if not isinstance(v, int) or v <= 0:
+            failures.append(f"{key}_expected_positive_int:{v!r}")
+    for key in ("target_sha", "parent_sha", "target_tree_sha", "parent_tree_sha"):
+        v = doc.get(key)
+        if not isinstance(v, str) or not _HEX40_RE.fullmatch(v):
+            failures.append(f"{key}_expected_40_lower_hex:{v!r}")
+    for key in ("runtime_identity_sha256", "runtime_environment_sha256",
+                "normalized_identity_sha256", "selected_input_contract_sha256",
+                "probe_source_sha256"):
+        v = doc.get(key)
+        if not isinstance(v, str) or not _HEX64_RE.fullmatch(v):
+            failures.append(f"{key}_expected_64_lower_hex:{v!r}")
+    return failures
+
+
+def validate_target_shadow_evidence(doc) -> list:
+    """Exact target shadow evidence schema (25 fields). Unknown or missing
+    fields => INVALID. verdict ∈ {run, reused}; a REUSED verdict requires
+    every source/runtime/delta predicate to prove true. The source_* fields
+    are either all real (source available) or all zeroed (source
+    unavailable); mixed patterns are INVALID."""
+    failures = []
+    if not isinstance(doc, dict):
+        return ["target_shadow_evidence_not_object"]
+    keys = set(doc)
+    expected = set(TARGET_SHADOW_FIELDS)
+    missing = sorted(expected - keys)
+    unknown = sorted(keys - expected)
+    if missing:
+        failures.append("missing_keys:" + ",".join(missing))
+    if unknown:
+        failures.append("unknown_keys:" + ",".join(unknown))
+    if doc.get("schema_version") != SCHEMA_VERSION:
+        failures.append(
+            f"schema_version_expected_{SCHEMA_VERSION}_got:{doc.get('schema_version')!r}"
+        )
+    if doc.get("artifact_class") != TARGET_ARTIFACT_CLASS:
+        failures.append(
+            f"artifact_class_expected_{TARGET_ARTIFACT_CLASS}_got:{doc.get('artifact_class')!r}"
+        )
+    if doc.get("repository") != EXPECTED_REPOSITORY:
+        failures.append(f"repository_mismatch:{doc.get('repository')!r}")
+    if doc.get("workflow") != EXPECTED_WORKFLOW:
+        failures.append(f"workflow_mismatch:{doc.get('workflow')!r}")
+    if doc.get("surface") not in SURFACES:
+        failures.append(f"surface_invalid:{doc.get('surface')!r}")
+    for key in ("run_id", "run_attempt"):
+        v = doc.get(key)
+        if not isinstance(v, int) or v <= 0:
+            failures.append(f"{key}_expected_positive_int:{v!r}")
+    for key in ("target_sha", "parent_sha", "target_tree_sha", "parent_tree_sha"):
+        v = doc.get(key)
+        if not isinstance(v, str) or not _HEX40_RE.fullmatch(v):
+            failures.append(f"{key}_expected_40_lower_hex:{v!r}")
+    if doc.get("verdict") not in (VERDICT_RUN, VERDICT_REUSED):
+        failures.append(f"verdict_invalid:{doc.get('verdict')!r}")
+    if not isinstance(doc.get("reason"), str) or not doc["reason"]:
+        failures.append("reason_expected_nonempty_str")
+    if doc.get("selected_input_verdict") not in ("affected", "unaffected"):
+        failures.append(f"selected_input_verdict_invalid:{doc.get('selected_input_verdict')!r}")
+    if not isinstance(doc.get("global_runtime_match"), bool):
+        failures.append("global_runtime_match_expected_bool")
+    if doc.get("retained_replay_state") != TARGET_RETAINED_REPLAY_STATE:
+        failures.append(
+            f"retained_replay_state_expected_{TARGET_RETAINED_REPLAY_STATE}_got:{doc.get('retained_replay_state')!r}"
+        )
+    for key in ("target_runtime_identity_sha256", "delta_identity_sha256",
+                "evidence_manifest_sha256"):
+        v = doc.get(key)
+        if not isinstance(v, str) or not _HEX64_RE.fullmatch(v):
+            failures.append(f"{key}_expected_64_lower_hex:{v!r}")
+
+    src_pattern_ok, src_available = _source_identity_pattern(doc)
+    if not src_pattern_ok:
+        failures.append("source_identity_pattern_invalid")
+    if doc.get("verdict") == VERDICT_REUSED and not (
+        src_available
+        and doc.get("global_runtime_match") is True
+        and doc.get("selected_input_verdict") == "unaffected"
+    ):
+        failures.append("reused_requires_all_predicates")
+    return failures
+
+
+def _source_identity_pattern(doc) -> tuple:
+    """The source_* fields must be either all zeroed (source unavailable)
+    or all real (source available); mixed patterns are INVALID."""
+    pr_number = doc.get("source_pr_number")
+    pr_head = doc.get("source_pr_head_sha")
+    run_id = doc.get("source_run_id")
+    run_attempt = doc.get("source_run_attempt")
+    artifact_name = doc.get("source_artifact_name")
+    tested_tree = doc.get("source_tested_tree_sha")
+    unavailable = (
+        pr_number == 0
+        and pr_head == "0" * 40
+        and run_id == 0
+        and run_attempt == 0
+        and artifact_name == ""
+        and tested_tree == "0" * 40
+    )
+    available = (
+        isinstance(pr_number, int) and pr_number > 0
+        and isinstance(pr_head, str) and _HEX40_RE.fullmatch(pr_head)
+        and isinstance(run_id, int) and run_id > 0
+        and isinstance(run_attempt, int) and run_attempt > 0
+        and isinstance(artifact_name, str) and bool(artifact_name)
+        and isinstance(tested_tree, str) and _HEX40_RE.fullmatch(tested_tree)
+    )
+    return (unavailable or available), available
+
+
+def _runtime_environment_sha256(runtime_doc: dict) -> str:
+    """Head/surface-insensitive environment identity of the strict runtime
+    identity doc: the sealed DOC_RUNTIME minus its run-specific wrapper
+    fields (schema_version / document_type / surface / head). This is the
+    derivation that makes the source PR run and the main-push target run
+    cross-run comparable (the full DOC_RUNTIME sha embeds the run-specific
+    head literal and is NOT cross-run comparable)."""
+    payload = {
+        k: v for k, v in runtime_doc.items()
+        if k not in ("schema_version", "document_type", "surface", "head")
+    }
+    return sha256_bytes(canonical_serialize(payload).encode())
+
+
+def _load_runtime_doc(bundle_dir: Path) -> dict:
+    try:
+        return json.loads((bundle_dir / DOC_RUNTIME).read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _runtime_match_detail(payload: dict, locator: dict, surface: str) -> str:
+    bundle = locator["bundles"][surface]
+    parts = []
+    if payload.get("normalized_identity_sha256") != bundle["normalized_fingerprint_sha256"]:
+        parts.append("normalized_identity_mismatch")
+    if (
+        payload.get("runtime_environment_sha256")
+        != _runtime_environment_sha256(_load_runtime_doc(bundle["bundle_dir"]))
+    ):
+        parts.append("runtime_environment_mismatch")
+    if not parts:
+        return "normalized_identity_and_environment_equal"
+    return ",".join(parts)
+
+
+def evaluate_target_surface(surface, ctx, payload, locator, locator_reason,
+                            paths, contract) -> tuple:
+    """Compute the truthful target verdict for one surface: REUSE only when
+    every source/runtime/delta predicate proves true; otherwise RUN."""
+    sel = classify_delta_paths(paths, surface, contract)
+    sel_verdict = sel["selected_input_verdict"]
+    if locator is None:
+        return (VERDICT_RUN, f"run:source_unavailable:{locator_reason}", "affected", False)
+    bundle = locator["bundles"][surface]
+    contract_ok = (
+        payload.get("selected_input_contract_sha256")
+        == bundle["selected_input_contract_sha256"]
+    )
+    if not contract_ok:
+        sel_verdict = "affected"
+    runtime_match = (
+        payload.get("normalized_identity_sha256") == bundle["normalized_fingerprint_sha256"]
+        and payload.get("runtime_environment_sha256")
+        == _runtime_environment_sha256(_load_runtime_doc(bundle["bundle_dir"]))
+    )
+    if sel_verdict == "unaffected" and runtime_match:
+        return (VERDICT_REUSED, "reused:all_predicates_valid", sel_verdict, True)
+    parts = ["run"]
+    if sel_verdict == "affected":
+        parts.append("selected_input_affected" if not contract_ok else "delta_affected")
+    if not runtime_match:
+        parts.append("runtime_mismatch")
+    return (VERDICT_RUN, ":".join(parts), sel_verdict, runtime_match)
+
+
+def _target_receipt_doc(ctx: dict, surface: str, verifier_sha: str) -> dict:
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "document_type": "evidence_receipt",
+        "surface": surface,
+        "target_sha": ctx["target_sha"],
+        "parent_sha": ctx["parent_sha"],
+        "target_tree_sha": ctx["target_tree_sha"],
+        "parent_tree_sha": ctx["parent_tree_sha"],
+        "verifier_script_sha256": verifier_sha,
+        "repository": ctx["repository"],
+        "workflow": ctx["workflow"],
+        "run_id": ctx["run_id"],
+        "run_attempt": ctx["run_attempt"],
+        "generated": "target_bundle_finalize_stage",
+    }
+
+
+def _finalize_target_bundle(bdir: Path, ctx: dict, surface: str, pdir: Path,
+                            payload: dict, paths: list, contract: dict,
+                            locator, locator_reason: str, verdict: str,
+                            reason: str, sel_verdict: str,
+                            runtime_match: bool) -> bool:
+    """Stage a target shadow evidence bundle with the P2-7 closure
+    discipline: verifier self-copy FIRST, receipt, probe payload + identity
+    docs, delta doc, source reference doc, target evidence doc, and
+    EVIDENCE_MANIFEST.json LAST (no writes after the manifest)."""
+    # 1. verifier self-copy FIRST (manifest-bound)
+    verifier_dst = bdir / VERIFIER_NAME
+    verifier_dst.write_bytes(Path(__file__).resolve().read_bytes())
+    verifier_sha = sha256_file(verifier_dst)
+
+    # 2. receipt
+    receipt = _target_receipt_doc(ctx, surface, verifier_sha)
+    (bdir / RECEIPT_NAME).write_text(canonical_serialize(receipt), encoding="utf-8")
+
+    # 3. probe payload + identity docs (copied from the uploaded probe dir)
+    shutil.copyfile(pdir / TARGET_PROBE_PAYLOAD_NAME, bdir / TARGET_PROBE_PAYLOAD_NAME)
+    shutil.copyfile(pdir / DOC_RUNTIME, bdir / DOC_RUNTIME)
+    shutil.copyfile(pdir / DOC_NORMALIZED, bdir / DOC_NORMALIZED)
+
+    # 4. delta evaluator doc
+    cls = classify_delta_paths(paths, surface, contract)
+    delta_doc = {
+        "schema_version": SCHEMA_VERSION,
+        "document_type": "delta_evaluator",
+        "surface": surface,
+        "target_sha": ctx["target_sha"],
+        "parent_sha": ctx["parent_sha"],
+        "changed_paths": cls["changed_paths"],
+        "affected": cls["affected"],
+        "invalidated": cls["invalidated"],
+        "unknown": cls["unknown"],
+        "benign": cls["benign"],
+        "selected_input_verdict": sel_verdict,
+        "delta_identity_sha256": delta_identity_sha256(paths, surface, sel_verdict),
+    }
+    (bdir / DELTA_EVALUATOR_NAME).write_text(canonical_serialize(delta_doc), encoding="utf-8")
+
+    # 5. source reference doc (exact identity of the located source evidence)
+    if locator is not None:
+        ref = {
+            "schema_version": SCHEMA_VERSION,
+            "document_type": "source_reference",
+            "source_available": True,
+            "reason": "ok",
+            "source_pr_number": locator["pr_number"],
+            "source_pr_head_sha": locator["pr_head_sha"],
+            "source_run_id": locator["run_id"],
+            "source_run_attempt": locator["run_attempt"],
+            "source_artifact_name": locator["bundles"][surface]["artifact_name"],
+            "source_tested_tree_sha": locator["bundles"][surface]["evidence"]["tested_tree_sha"],
+            "v1_attestation_artifact_name": locator["attestation"]["artifact_name"],
+            "v1_attestation_valid": True,
+            "v1_attestation_sha256": locator["attestation"]["sha256"],
+            "runtime_match": runtime_match,
+            "runtime_match_detail": _runtime_match_detail(payload, locator, surface),
+        }
+    else:
+        ref = {
+            "schema_version": SCHEMA_VERSION,
+            "document_type": "source_reference",
+            "source_available": False,
+            "reason": locator_reason,
+            "source_pr_number": 0,
+            "source_pr_head_sha": "0" * 40,
+            "source_run_id": 0,
+            "source_run_attempt": 0,
+            "source_artifact_name": "",
+            "source_tested_tree_sha": "0" * 40,
+            "v1_attestation_artifact_name": "",
+            "v1_attestation_valid": False,
+            "v1_attestation_sha256": "",
+            "runtime_match": False,
+            "runtime_match_detail": "source_unavailable",
+        }
+    (bdir / SOURCE_REFERENCE_NAME).write_text(canonical_serialize(ref), encoding="utf-8")
+
+    # 6. target evidence doc (root doc; seals manifest-minus-self)
+    if locator is not None:
+        src_ev = locator["bundles"][surface]["evidence"]
+        src_fields = {
+            "source_pr_number": locator["pr_number"],
+            "source_pr_head_sha": locator["pr_head_sha"],
+            "source_run_id": locator["run_id"],
+            "source_run_attempt": locator["run_attempt"],
+            "source_artifact_name": locator["bundles"][surface]["artifact_name"],
+            "source_tested_tree_sha": src_ev["tested_tree_sha"],
+        }
+    else:
+        src_fields = {
+            "source_pr_number": 0,
+            "source_pr_head_sha": "0" * 40,
+            "source_run_id": 0,
+            "source_run_attempt": 0,
+            "source_artifact_name": "",
+            "source_tested_tree_sha": "0" * 40,
+        }
+
+    def entry(rel):
+        p = bdir / rel
+        return [rel, sha256_file(p), p.stat().st_size]
+
+    other_entries = sorted(
+        entry(rel) for rel in _walk_files(bdir)
+        if rel not in (MANIFEST_NAME, TARGET_EVIDENCE_NAME)
+    )
+    evidence_doc = {
+        "schema_version": SCHEMA_VERSION,
+        "artifact_class": TARGET_ARTIFACT_CLASS,
+        "repository": ctx["repository"],
+        "workflow": ctx["workflow"],
+        "run_id": ctx["run_id"],
+        "run_attempt": ctx["run_attempt"],
+        "target_sha": ctx["target_sha"],
+        "parent_sha": ctx["parent_sha"],
+        "target_tree_sha": ctx["target_tree_sha"],
+        "parent_tree_sha": ctx["parent_tree_sha"],
+        "surface": surface,
+        "verdict": verdict,
+        "reason": reason,
+        **src_fields,
+        "target_runtime_identity_sha256": payload["runtime_identity_sha256"],
+        "delta_identity_sha256": delta_doc["delta_identity_sha256"],
+        "selected_input_verdict": sel_verdict,
+        "global_runtime_match": runtime_match,
+        "retained_replay_state": TARGET_RETAINED_REPLAY_STATE,
+        "evidence_manifest_sha256": manifest_content_digest(other_entries),
+    }
+    schema_failures = validate_target_shadow_evidence(evidence_doc)
+    if schema_failures:
+        print("aggregate_error=target_evidence_invalid:" + ";".join(schema_failures[:5]))
+        return False
+    (bdir / TARGET_EVIDENCE_NAME).write_text(canonical_serialize(evidence_doc), encoding="utf-8")
+
+    # 7. manifest LAST (no writes after this line)
+    entries = []
+    seen = set()
+    for rel in _walk_files(bdir):
+        if rel == MANIFEST_NAME:
+            continue
+        if rel in seen:
+            raise RuntimeError(f"TARGET_EVIDENCE_MANIFEST_INVALID reason=duplicate_path:{rel}")
+        seen.add(rel)
+        e = entry(rel)
+        entries.append({"path": e[0], "size": e[2], "sha256": e[1]})
+    manifest = {
+        "schema_version": SCHEMA_VERSION,
+        "document_type": "EVIDENCE_MANIFEST",
+        "entries": entries,
+    }
+    (bdir / MANIFEST_NAME).write_bytes(canonical_serialize(manifest).encode())
+    print(f"TARGET_EVIDENCE_MANIFEST_COMPLETE_{surface}=true")
+    print(f"MANIFEST_ENTRY_COUNT_{surface}={len(entries)}")
+    return True
+
+
+def cmd_target_probe(args) -> int:
+    """MAIN-PUSH target runtime probe (Phase-T pre-stage): validates the
+    exact main-push target context, runs the SAME sealed per-surface
+    measurement as the source probe against M, and emits the schema-bound
+    target probe payload + identity docs into the upload-only payload dir.
+    Runs even when POST_MERGE_REUSE=true and never changes V1 skip
+    semantics."""
+    repo = Path(args.repo).resolve()
+    try:
+        ctx = main_push_context(repo)
+    except RuntimeError as exc:
+        print(f"target_probe_error=main_push_context:{exc}")
+        return 2
+    surface = args.surface
+    work = Path(args.work_dir).resolve()
+    payload_dir = Path(args.payload_out_dir).resolve()
+    if work.exists():
+        shutil.rmtree(work)
+    work.mkdir(parents=True, exist_ok=True)
+    payload_dir.mkdir(parents=True, exist_ok=True)
+
+    summary = {
+        "SURFACE": surface,
+        "HEAD": ctx["target_sha"],
+        "P2_9_TARGET_PROBE_VERSION": "1",
+        "MAIN_PUSH_CONTEXT_OK": "true",
+        "RUN_ID": str(ctx["run_id"]),
+        "RUN_ATTEMPT": str(ctx["run_attempt"]),
+        "TARGET_SHA": ctx["target_sha"],
+        "PARENT_SHA": ctx["parent_sha"],
+        "TARGET_TREE_SHA": ctx["target_tree_sha"],
+        "PARENT_TREE_SHA": ctx["parent_tree_sha"],
+        "PROBE_SOURCE_SHA256": sha256_file(Path(__file__).resolve()),
+    }
+    t0 = time.monotonic()
+    try:
+        _measure(work, repo, surface, ctx["target_sha"], summary)
+    except BaseException:
+        (work / "measure_crash.log").write_text(traceback.format_exc(), encoding="utf-8", errors="replace")
+        summary["MEASURE_CRASH"] = "true"
+    else:
+        summary["MEASURE_CRASH"] = "false"
+    summary["MEASURE_ELAPSED_SECONDS"] = f"{time.monotonic() - t0:.1f}"
+    verdict = evaluate_verdict(summary)
+    for k, v in verdict.items():
+        summary[f"EVALUATED_{k.upper()}"] = str(v).lower()
+    (work / PROBE_NAME).write_text(
+        "\n".join(f"{k}={v}" for k, v in sorted(summary.items())) + "\n",
+        encoding="utf-8",
+    )
+    if summary["MEASURE_CRASH"] != "false":
+        print("target_probe_error=measure_crashed")
+        return 2
+
+    try:
+        runtime_doc = json.loads((work / DOC_RUNTIME).read_text(encoding="utf-8"))
+        norm_doc = json.loads((work / DOC_NORMALIZED).read_text(encoding="utf-8"))
+    except Exception as exc:
+        print(f"target_probe_error=identity_doc_malformed:{exc}")
+        return 2
+    contract = compute_selected_input_contract(repo, surface)
+    payload = {
+        "schema_version": SCHEMA_VERSION,
+        "artifact_class": TARGET_PROBE_ARTIFACT_CLASS,
+        "repository": ctx["repository"],
+        "workflow": ctx["workflow"],
+        "run_id": ctx["run_id"],
+        "run_attempt": ctx["run_attempt"],
+        "surface": surface,
+        "target_sha": ctx["target_sha"],
+        "parent_sha": ctx["parent_sha"],
+        "target_tree_sha": ctx["target_tree_sha"],
+        "parent_tree_sha": ctx["parent_tree_sha"],
+        "runtime_identity_sha256": sha256_file(work / DOC_RUNTIME),
+        "runtime_environment_sha256": _runtime_environment_sha256(runtime_doc),
+        "normalized_identity_sha256": norm_doc.get("fingerprint_sha256") or "",
+        "selected_input_contract_sha256": sha256_bytes(canonical_serialize(contract).encode()),
+        "probe_source_sha256": sha256_file(Path(__file__).resolve()),
+    }
+    failures = validate_target_probe_payload(payload)
+    if failures:
+        print("target_probe_error=payload_invalid:" + ";".join(failures[:5]))
+        return 2
+    (payload_dir / TARGET_PROBE_PAYLOAD_NAME).write_text(canonical_serialize(payload), encoding="utf-8")
+    (payload_dir / PROBE_NAME).write_text(
+        "\n".join(f"{k}={v}" for k, v in sorted(summary.items())) + "\n",
+        encoding="utf-8",
+    )
+    shutil.copyfile(work / DOC_RUNTIME, payload_dir / DOC_RUNTIME)
+    shutil.copyfile(work / DOC_NORMALIZED, payload_dir / DOC_NORMALIZED)
+    print("TARGET_PROBE_OK=true")
+    print(f"TARGET_SHA={ctx['target_sha']}")
+    print(f"PARENT_SHA={ctx['parent_sha']}")
+    print(f"RUNTIME_IDENTITY_SHA256={payload['runtime_identity_sha256']}")
+    print(f"NORMALIZED_IDENTITY_SHA256={payload['normalized_identity_sha256']}")
+    print(f"RUNTIME_ENVIRONMENT_SHA256={payload['runtime_environment_sha256']}")
+    print(f"SELECTED_INPUT_CONTRACT_SHA256={payload['selected_input_contract_sha256']}")
+    return 0
+
+
+def cmd_aggregate(args) -> int:
+    """MAIN-PUSH target shadow aggregator (Phase-T pre-stage): source
+    evidence locator (read-only GitHub API, one generation back from P),
+    exact P..M delta evaluator, target shadow evidence class, P2-7 closure
+    finalize + pre-upload replay. Source unavailable => every surface RUN,
+    never REUSE; nothing activates. Read-only GitHub API access only."""
+    repo = Path(args.repo).resolve()
+    try:
+        ctx = main_push_context(repo)
+    except RuntimeError as exc:
+        print(f"aggregate_error=main_push_context:{exc}")
+        return 2
+    out_root = Path(args.out_dir).resolve()
+    probe_dir = Path(args.probe_dir).resolve()
+
+    # probe payloads: exact per-surface bindings vs the main-push context
+    payloads = {}
+    for surface in SURFACES:
+        pdir = probe_dir / surface
+        pp = pdir / TARGET_PROBE_PAYLOAD_NAME
+        if not pp.is_file():
+            print(f"aggregate_error=target_probe_payload_missing:{surface}")
+            return 2
+        try:
+            payload = json.loads(pp.read_text(encoding="utf-8"))
+        except Exception as exc:
+            print(f"aggregate_error=target_probe_payload_malformed:{surface}:{exc}")
+            return 2
+        failures = validate_target_probe_payload(payload)
+        if failures:
+            print("aggregate_error=target_probe_payload_invalid:" + ";".join(failures[:5]))
+            return 2
+        bound = (
+            payload["surface"] == surface
+            and payload["run_id"] == ctx["run_id"]
+            and payload["run_attempt"] == ctx["run_attempt"]
+            and payload["target_sha"] == ctx["target_sha"]
+            and payload["parent_sha"] == ctx["parent_sha"]
+            and payload["target_tree_sha"] == ctx["target_tree_sha"]
+            and payload["parent_tree_sha"] == ctx["parent_tree_sha"]
+        )
+        if not bound:
+            print(f"aggregate_error=target_probe_payload_binding_mismatch:{surface}")
+            return 2
+        # payload <-> identity docs consistency (same probe semantics)
+        try:
+            runtime_doc = json.loads((pdir / DOC_RUNTIME).read_text(encoding="utf-8"))
+            norm_doc = json.loads((pdir / DOC_NORMALIZED).read_text(encoding="utf-8"))
+        except Exception as exc:
+            print(f"aggregate_error=target_identity_doc_malformed:{surface}:{exc}")
+            return 2
+        consistent = (
+            sha256_file(pdir / DOC_RUNTIME) == payload["runtime_identity_sha256"]
+            and _runtime_environment_sha256(runtime_doc) == payload["runtime_environment_sha256"]
+            and (norm_doc.get("fingerprint_sha256") or "") == payload["normalized_identity_sha256"]
+        )
+        if not consistent:
+            print(f"aggregate_error=target_probe_identity_mismatch:{surface}")
+            return 2
+        payloads[surface] = payload
+
+    # exact P..M delta (fail-closed)
+    try:
+        paths = main_push_delta(repo, ctx["target_sha"], ctx["parent_sha"])
+    except RuntimeError as exc:
+        print(f"aggregate_error=delta:{exc}")
+        return 2
+
+    # source locator (fail-closed: source unavailable => all RUN)
+    locator = None
+    locator_reason = ""
+    try:
+        locator = locate_source_evidence(repo, ctx)
+    except SourceLocatorError as exc:
+        locator_reason = str(exc)
+    print(f"SOURCE_LOCATOR_AVAILABLE={'true' if locator is not None else 'false'}")
+    if locator_reason:
+        print(f"SOURCE_LOCATOR_REASON={locator_reason}")
+    print(f"DELTA_CHANGED_PATH_COUNT={len(paths)}")
+    for p in paths:
+        print(f"DELTA_CHANGED_PATH={p}")
+
+    rc = 0
+    for surface in SURFACES:
+        contract = compute_selected_input_contract(repo, surface)
+        verdict, reason, sel_verdict, runtime_match = evaluate_target_surface(
+            surface, ctx, payloads[surface], locator, locator_reason, paths, contract
+        )
+        bdir = out_root / surface
+        bdir.mkdir(parents=True, exist_ok=True)
+        ok = _finalize_target_bundle(
+            bdir, ctx, surface, probe_dir / surface, payloads[surface],
+            paths, contract, locator, locator_reason, verdict, reason,
+            sel_verdict, runtime_match,
+        )
+        if not ok:
+            rc = 2
+            continue
+        # Pre-upload replay runs the bundle's OWN verifier_source.py copy as
+        # a subprocess (same discipline as the source leg; the in-process
+        # verifier self-identity check would fail against a non-copy
+        # __file__). The replay summary goes to stdout only — nothing is
+        # ever written inside the bundle after the manifest.
+        replay_proc = subprocess.run(
+            [sys.executable, str(bdir / VERIFIER_NAME), "verify-bundle",
+             "--bundle-dir", str(bdir)],
+            capture_output=True, text=True,
+        )
+        replay_ok = replay_proc.returncode == 0
+        check_count = ""
+        for ln in replay_proc.stdout.splitlines():
+            if ln.startswith("CHECK_COUNT="):
+                check_count = ln.split("=", 1)[1]
+        if replay_ok:
+            print(f"TARGET_EVIDENCE_BUNDLE_REPLAY_OK_{surface}=true")
+            print(f"CHECK_COUNT_{surface}={check_count}")
+        else:
+            print(f"TARGET_EVIDENCE_BUNDLE_REPLAY_OK_{surface}=false")
+            for ln in replay_proc.stdout.splitlines():
+                if ln.startswith("FAILED_CHECK="):
+                    print(f"FAILED_CHECK_{surface}={ln.split('=', 1)[1]}")
+            if not replay_proc.stdout.strip():
+                print(f"FAILED_CHECK_{surface}=replay_crashed:{replay_proc.stderr.strip()[-200:]}")
+            rc = 2
+        print(f"TARGET_VERDICT_{surface}={verdict}")
+        print(f"TARGET_REASON_{surface}={reason}")
+        print(f"SELECTED_INPUT_VERDICT_{surface}={sel_verdict}")
+        print(f"GLOBAL_RUNTIME_MATCH_{surface}={str(runtime_match).lower()}")
+        ev = json.loads((bdir / TARGET_EVIDENCE_NAME).read_text(encoding="utf-8"))
+        print(f"TARGET_EVIDENCE_MANIFEST_SHA256_{surface}={ev['evidence_manifest_sha256']}")
+    if rc == 0:
+        print("TARGET_EVIDENCE_OK=true")
+    else:
+        print("TARGET_EVIDENCE_OK=false")
+    return rc
 
 
 # ---------------------------------------------------------------------------
@@ -2951,6 +4385,19 @@ def main(argv=None) -> int:
     p_val = sub.add_parser("validate-evidence", help="validate a source evidence doc")
     p_val.add_argument("--doc", required=True)
     p_val.set_defaults(func=cmd_validate_evidence)
+
+    p_tprobe = sub.add_parser("target-probe", help="main-push target runtime probe (Phase-T pre-stage)")
+    p_tprobe.add_argument("--work-dir", required=True)
+    p_tprobe.add_argument("--payload-out-dir", required=True)
+    p_tprobe.add_argument("--surface", required=True, choices=list(SURFACES))
+    p_tprobe.add_argument("--repo", required=True)
+    p_tprobe.set_defaults(func=cmd_target_probe)
+
+    p_agg = sub.add_parser("aggregate", help="main-push target shadow aggregator (Phase-T pre-stage)")
+    p_agg.add_argument("--out-dir", required=True)
+    p_agg.add_argument("--probe-dir", required=True)
+    p_agg.add_argument("--repo", required=True)
+    p_agg.set_defaults(func=cmd_aggregate)
 
     args = ap.parse_args(argv)
     return args.func(args)
