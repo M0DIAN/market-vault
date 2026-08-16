@@ -2177,3 +2177,69 @@ def test_main_push_shadow_steps_prestaged_in_ci_yml():
     for name, region in steps:
         if v1_binding in region:
             assert name == "Post-merge FULL reuse proof", name
+
+
+def test_main_push_aggregation_step_mkdir_before_tee():
+    """Phase-S plumbing repair (P0 main-push run 31923040590 failed here):
+    the aggregation step tees its log into p2_9_target_out/aggregate.log,
+    but on main pushes nothing created p2_9_target_out before tee opened
+    the file, so the step died with 'tee: p2_9_target_out/aggregate.log:
+    No such file or directory' (pipefail => package job failure). The step
+    must mkdir the output directory BEFORE the pipeline; tee must keep the
+    same path; pipefail must stay; no '|| true', no output moves, no new
+    POST_MERGE_REUSE guard; the GH_TOKEN binding stays step-scoped; the
+    push-only guard stays unchanged; downstream upload / retained replay
+    steps stay unchanged."""
+    ci = CI_YML.read_text(encoding="utf-8")
+    guard = (
+        "github.event_name == 'push' && github.ref == 'refs/heads/main' "
+        "&& env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' "
+        "&& env.CI_TIER != 'control_plane'"
+    )
+    steps = _ci_step_regions(ci)
+    agg = next(region for name, region in steps
+               if name == "Run P2-9 main-push target shadow aggregation")
+
+    # guard + auth contract unchanged
+    assert f"if: {guard}" in agg
+    assert "POST_MERGE_REUSE" not in agg
+    assert "GH_TOKEN: ${{ github.token }}" in agg
+    assert "GITHUB_TOKEN: ${{ github.token }}" not in agg
+
+    # exact ordering contract: pipefail -> mkdir -> pipeline that tees the
+    # same path. mkdir MUST precede the pipeline so the directory exists
+    # before tee opens aggregate.log.
+    assert "set -o pipefail" in agg
+    assert "mkdir -p p2_9_target_out" in agg
+    assert agg.index("set -o pipefail") < agg.index("mkdir -p p2_9_target_out")
+    assert agg.index("mkdir -p p2_9_target_out") < agg.index(
+        "| tee p2_9_target_out/aggregate.log"
+    )
+    assert "--out-dir p2_9_target_out" in agg
+    # no failure hiding, no output relocation
+    assert "|| true" not in agg
+
+    # the mkdir exists in exactly one place: the aggregation step (a second
+    # site would decouple the ordering contract this test pins)
+    assert ci.count("mkdir -p p2_9_target_out") == 1
+
+    # downstream upload + retained replay steps unchanged: same guard, same
+    # artifact templates, same upload globs, same retained replay
+    # invocation, same receipt grep
+    for surface in tool.SURFACES:
+        up = next(region for name, region in steps
+                  if name == f"Upload P2-9 main-push target shadow evidence ({surface})")
+        assert f"if: {guard}" in up
+        assert f"path: p2_9_target_out/{surface}/**" in up
+        assert (
+            f"name: {tool.P2_9_TARGET_ARTIFACT_PREFIX}-{surface}-"
+            f"${{{{ github.sha }}}}-attempt-${{{{ github.run_attempt }}}}"
+        ) in up
+        dl = next(region for name, region in steps
+                  if name == f"Download retained P2-9 main-push target bundle ({surface})")
+        assert f"path: p2_9_target_retained/{surface}" in dl
+        rp = next(region for name, region in steps
+                  if name == f"Replay retained P2-9 main-push target bundle ({surface})")
+        assert f"if: {guard}" in rp
+        assert "verify-retained" in rp
+        assert "ROUNDTRIP_RECEIPT=OK" in rp
