@@ -201,6 +201,75 @@ jobs:
             "${PY314_SELECTORS[@]}" \
             -q --durations=200
 
+      # P2-9S (GAP-P2-8 T0/T1 source preconditions): production-topology
+      # shadow source-evidence setup. The probe runs the full sealed source
+      # measurement ALONGSIDE the validated surface above — it never skips
+      # or replaces validation, and no new skip conditions are added. The
+      # bundle is finalized (verifier copy -> receipt -> evidence doc ->
+      # manifest LAST), replayed offline BEFORE upload (P2-6 gap #2
+      # discipline: no further writes after the manifest), and only then
+      # uploaded. Artifact names bind exact head / run_attempt / surface.
+      # P2-9 pinned-action contract (fail-closed, audited full-SHA pins):
+      #   uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      #   uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+      #   uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      #   uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      # The probe/finalize/replay/upload steps are PR-only: source evidence
+      # is pull_request-bound (run_context fails closed without a PR), the
+      # same way the FULL CI attestation steps are PR-gated.
+      - name: Run P2-9 source fingerprint probe (test-3.14)
+        if: github.event_name == 'pull_request' && env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.14'
+        run: python scripts/ci_p29_production_topology_shadow.py probe --out-dir p2_9_probe/test-3.14 --surface test-3.14 --head "${{ github.event.pull_request.head.sha }}" --repo "$GITHUB_WORKSPACE"
+
+      - name: Finalize P2-9 source evidence bundle (test-3.14)
+        if: github.event_name == 'pull_request' && env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.14'
+        run: python scripts/ci_p29_production_topology_shadow.py finalize --out-dir p2_9_probe/test-3.14 --surface test-3.14 --head "${{ github.event.pull_request.head.sha }}" --repo "$GITHUB_WORKSPACE"
+
+      - name: Pre-upload offline replay P2-9 source bundle (test-3.14)
+        if: github.event_name == 'pull_request' && env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.14'
+        run: |
+          python p2_9_probe/test-3.14/verifier_source.py verify-bundle \
+            --bundle-dir p2_9_probe/test-3.14 \
+            --summary-out p2_9_outside/test-3.14/pre_upload_replay.txt
+          grep -q "EVIDENCE_BUNDLE_REPLAY_OK=true" p2_9_outside/test-3.14/pre_upload_replay.txt
+          cat p2_9_outside/test-3.14/pre_upload_replay.txt
+
+      - name: Upload P2-9 source evidence bundle (test-3.14)
+        if: github.event_name == 'pull_request' && env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.14'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: market-vault-p2-9-source-test-3.14-${{ github.event.pull_request.head.sha }}-attempt-${{ github.run_attempt }}
+          path: |
+            p2_9_probe/test-3.14/**
+            !p2_9_probe/test-3.14/venvs/**
+            !p2_9_probe/test-3.14/sdist_extract_1/**
+            !p2_9_probe/test-3.14/sdist_extract_2/**
+            !p2_9_probe/test-3.14/remainder_wheelhouse/**
+          if-no-files-found: error
+          retention-days: 30
+          overwrite: false
+
+      # P2-9 main-push target runtime probe (Phase-T pre-stage): on the exact
+      # main-push context (push on refs/heads/main, single parent) the probe
+      # runs the SAME sealed per-surface measurement as the source leg against
+      # M and emits the schema-bound target probe payload + identity docs.
+      # It MUST execute on main pushes even when POST_MERGE_REUSE=true; V1
+      # skip semantics and the PR-only source-evidence guards above are
+      # unchanged. Artifact name binds exact main SHA / attempt / surface.
+      - name: Run P2-9 main-push target probe (test-3.14)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && matrix.python-version == '3.14'
+        run: python scripts/ci_p29_production_topology_shadow.py target-probe --work-dir p2_9_target_measure/test-3.14 --payload-out-dir p2_9_target_probe/test-3.14 --surface test-3.14 --repo "$GITHUB_WORKSPACE"
+
+      - name: Upload P2-9 main-push target probe payload (test-3.14)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && matrix.python-version == '3.14'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: market-vault-p2-9-target-probe-test-3.14-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: p2_9_target_probe/test-3.14/**
+          if-no-files-found: error
+          retention-days: 30
+          overwrite: false
+
       # P1-2 control-plane tier (PR #71): the conservative six-file
       # control-plane pytest surface, executed only on Python 3.11 for
       # CI_TIER=control_plane. The file list is literal and reviewable;
@@ -365,6 +434,61 @@ jobs:
             tests/test_pit_sample_assembly.py \
             tests/test_dataset_end_to_end_regression.py \
             -q --durations=100
+
+      # P2-9S (GAP-P2-8 T0/T1 source preconditions): pyarrow24-leg shadow
+      # source-evidence setup — same discipline as the test-3.14 leg (probe
+      # alongside validation, finalize manifest-last, pre-upload offline
+      # replay, PR-only, head/run_attempt/surface-bound artifact names).
+      # The P2-9 pinned-action contract (audited full-SHA pins above in the
+      # test-3.14 leg) applies to this job's upload step as well.
+      - name: Run P2-9 source fingerprint probe (pyarrow24)
+        if: github.event_name == 'pull_request' && env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
+        run: python scripts/ci_p29_production_topology_shadow.py probe --out-dir p2_9_probe/pyarrow24 --surface pyarrow24 --head "${{ github.event.pull_request.head.sha }}" --repo "$GITHUB_WORKSPACE"
+
+      - name: Finalize P2-9 source evidence bundle (pyarrow24)
+        if: github.event_name == 'pull_request' && env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
+        run: python scripts/ci_p29_production_topology_shadow.py finalize --out-dir p2_9_probe/pyarrow24 --surface pyarrow24 --head "${{ github.event.pull_request.head.sha }}" --repo "$GITHUB_WORKSPACE"
+
+      - name: Pre-upload offline replay P2-9 source bundle (pyarrow24)
+        if: github.event_name == 'pull_request' && env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
+        run: |
+          python p2_9_probe/pyarrow24/verifier_source.py verify-bundle \
+            --bundle-dir p2_9_probe/pyarrow24 \
+            --summary-out p2_9_outside/pyarrow24/pre_upload_replay.txt
+          grep -q "EVIDENCE_BUNDLE_REPLAY_OK=true" p2_9_outside/pyarrow24/pre_upload_replay.txt
+          cat p2_9_outside/pyarrow24/pre_upload_replay.txt
+
+      - name: Upload P2-9 source evidence bundle (pyarrow24)
+        if: github.event_name == 'pull_request' && env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: market-vault-p2-9-source-pyarrow24-${{ github.event.pull_request.head.sha }}-attempt-${{ github.run_attempt }}
+          path: |
+            p2_9_probe/pyarrow24/**
+            !p2_9_probe/pyarrow24/venvs/**
+            !p2_9_probe/pyarrow24/sdist_extract_1/**
+            !p2_9_probe/pyarrow24/sdist_extract_2/**
+            !p2_9_probe/pyarrow24/remainder_wheelhouse/**
+          if-no-files-found: error
+          retention-days: 30
+          overwrite: false
+
+      # P2-9 main-push target runtime probe (Phase-T pre-stage): same protocol
+      # as the test-3.14 leg. This surface has no matrix condition — the
+      # pyarrow24 job is already the exact pyarrow24 runtime.
+      - name: Run P2-9 main-push target probe (pyarrow24)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane'
+        run: python scripts/ci_p29_production_topology_shadow.py target-probe --work-dir p2_9_target_measure/pyarrow24 --payload-out-dir p2_9_target_probe/pyarrow24 --surface pyarrow24 --repo "$GITHUB_WORKSPACE"
+
+      - name: Upload P2-9 main-push target probe payload (pyarrow24)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: market-vault-p2-9-target-probe-pyarrow24-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: p2_9_target_probe/pyarrow24/**
+          if-no-files-found: error
+          retention-days: 30
+          overwrite: false
 
       - name: FULL tests reused from verified PR
         if: env.POST_MERGE_REUSE == 'true'
@@ -727,6 +851,167 @@ jobs:
           print(f"PACKAGE_ARTIFACT_DIGEST={pdigest}")
           print("V061_PACKAGE_AUDIT_OK")
           EOF
+
+      # P2-9S retained-evidence closure: after the FULL matrix uploaded the
+      # two source bundles, the package job downloads each retained artifact
+      # (name must bind exact head / run / attempt / surface), replays it
+      # read-only with its OWN verifier_source.py, and records a roundtrip
+      # receipt OUTSIDE the bundle. The downloaded original is never mutated
+      # or re-uploaded. Same PR-only guard as the probe/finalize/upload
+      # steps, so fast-tier and post-merge-reuse runs skip both sides
+      # consistently.
+      - name: Download retained P2-9 source evidence bundle (test-3.14)
+        if: github.event_name == 'pull_request' && env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: market-vault-p2-9-source-test-3.14-${{ github.event.pull_request.head.sha }}-attempt-${{ github.run_attempt }}
+          path: p2_9_retained/test-3.14
+
+      - name: Replay retained P2-9 source evidence bundle (test-3.14)
+        if: github.event_name == 'pull_request' && env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
+        run: |
+          python p2_9_retained/test-3.14/verifier_source.py verify-retained \
+            --bundle-dir p2_9_retained/test-3.14 \
+            --name "market-vault-p2-9-source-test-3.14-${{ github.event.pull_request.head.sha }}-attempt-${{ github.run_attempt }}" \
+            --surface test-3.14 \
+            --repo "$GITHUB_WORKSPACE" \
+            --summary-out p2_9_roundtrip/test-3.14/roundtrip.txt
+          grep -q "ROUNDTRIP_RECEIPT=OK" p2_9_roundtrip/test-3.14/roundtrip.txt
+          cat p2_9_roundtrip/test-3.14/roundtrip.txt
+
+      - name: Download retained P2-9 source evidence bundle (pyarrow24)
+        if: github.event_name == 'pull_request' && env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: market-vault-p2-9-source-pyarrow24-${{ github.event.pull_request.head.sha }}-attempt-${{ github.run_attempt }}
+          path: p2_9_retained/pyarrow24
+
+      - name: Replay retained P2-9 source evidence bundle (pyarrow24)
+        if: github.event_name == 'pull_request' && env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
+        run: |
+          python p2_9_retained/pyarrow24/verifier_source.py verify-retained \
+            --bundle-dir p2_9_retained/pyarrow24 \
+            --name "market-vault-p2-9-source-pyarrow24-${{ github.event.pull_request.head.sha }}-attempt-${{ github.run_attempt }}" \
+            --surface pyarrow24 \
+            --repo "$GITHUB_WORKSPACE" \
+            --summary-out p2_9_roundtrip/pyarrow24/roundtrip.txt
+          grep -q "ROUNDTRIP_RECEIPT=OK" p2_9_roundtrip/pyarrow24/roundtrip.txt
+          cat p2_9_roundtrip/pyarrow24/roundtrip.txt
+
+      # P2-9 main-push target shadow aggregation (Phase-T pre-stage): the
+      # package job downloads the exact current-run/current-attempt target
+      # probe payloads, then the aggregator validates main-push context,
+      # evaluates the exact P..M delta, locates the qualifying source PR
+      # (read-only GitHub API, one generation back from P), and finalizes
+      # per-surface target shadow evidence bundles with P2-7 closure
+      # (manifest last, pre-upload replay outside the bundle). Source
+      # unavailable / ambiguous / expired / mismatch => every surface RUN,
+      # never REUSE; nothing activates. The step MUST run on main pushes even
+      # when POST_MERGE_REUSE=true. The output is measurement-only shadow
+      # evidence; the FULL attestation steps below remain unchanged.
+      - name: Download P2-9 main-push target probe payload (test-3.14)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: market-vault-p2-9-target-probe-test-3.14-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: p2_9_target_probe/test-3.14
+
+      - name: Download P2-9 main-push target probe payload (pyarrow24)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: market-vault-p2-9-target-probe-pyarrow24-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: p2_9_target_probe/pyarrow24
+
+      - name: Run P2-9 main-push target shadow aggregation
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane'
+        # Read-only, step-scoped GitHub CLI auth (Phase-S): the aggregator
+        # invokes the GitHub CLI (gh api / gh run download), and official
+        # GitHub Actions guidance requires GH_TOKEN for each workflow step
+        # using the GitHub CLI. The binding is deliberately GH_TOKEN —
+        # never a fourth GITHUB_TOKEN — so the sealed v061 audit contract
+        # (exactly three step-scoped GITHUB_TOKEN bindings, one per
+        # "Post-merge FULL reuse proof" step) stays byte-semantically
+        # intact. Read-only under the workflow permissions; never printed;
+        # never written into evidence; never inherited by unrelated steps.
+        # The locator fail-closes on missing auth (source_auth_missing);
+        # any locator/API failure => source unavailable => every surface
+        # RUN, never REUSE.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -o pipefail
+          python scripts/ci_p29_production_topology_shadow.py aggregate \
+            --out-dir p2_9_target_out \
+            --probe-dir p2_9_target_probe \
+            --repo "$GITHUB_WORKSPACE" | tee p2_9_target_out/aggregate.log
+          grep -q "TARGET_EVIDENCE_BUNDLE_REPLAY_OK_test-3.14=true" p2_9_target_out/aggregate.log
+          grep -q "TARGET_EVIDENCE_BUNDLE_REPLAY_OK_pyarrow24=true" p2_9_target_out/aggregate.log
+          grep -q "TARGET_EVIDENCE_OK=true" p2_9_target_out/aggregate.log
+          cat p2_9_target_out/aggregate.log
+
+      - name: Upload P2-9 main-push target shadow evidence (test-3.14)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: market-vault-p2-9-target-test-3.14-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: p2_9_target_out/test-3.14/**
+          if-no-files-found: error
+          retention-days: 30
+          overwrite: false
+
+      - name: Upload P2-9 main-push target shadow evidence (pyarrow24)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: market-vault-p2-9-target-pyarrow24-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: p2_9_target_out/pyarrow24/**
+          if-no-files-found: error
+          retention-days: 30
+          overwrite: false
+
+      # Retained-evidence closure for the target shadow bundles (P2-7
+      # discipline): download the exact uploaded original, replay it
+      # read-only with its OWN verifier_source.py copy, and record a
+      # roundtrip receipt OUTSIDE the bundle. The downloaded original is
+      # never mutated or re-uploaded.
+      - name: Download retained P2-9 main-push target bundle (test-3.14)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: market-vault-p2-9-target-test-3.14-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: p2_9_target_retained/test-3.14
+
+      - name: Replay retained P2-9 main-push target bundle (test-3.14)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane'
+        run: |
+          python p2_9_target_retained/test-3.14/verifier_source.py verify-retained \
+            --bundle-dir p2_9_target_retained/test-3.14 \
+            --name "market-vault-p2-9-target-test-3.14-${{ github.sha }}-attempt-${{ github.run_attempt }}" \
+            --surface test-3.14 \
+            --repo "$GITHUB_WORKSPACE" \
+            --summary-out p2_9_target_roundtrip/test-3.14/roundtrip.txt
+          grep -q "ROUNDTRIP_RECEIPT=OK" p2_9_target_roundtrip/test-3.14/roundtrip.txt
+          cat p2_9_target_roundtrip/test-3.14/roundtrip.txt
+
+      - name: Download retained P2-9 main-push target bundle (pyarrow24)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: market-vault-p2-9-target-pyarrow24-${{ github.sha }}-attempt-${{ github.run_attempt }}
+          path: p2_9_target_retained/pyarrow24
+
+      - name: Replay retained P2-9 main-push target bundle (pyarrow24)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane'
+        run: |
+          python p2_9_target_retained/pyarrow24/verifier_source.py verify-retained \
+            --bundle-dir p2_9_target_retained/pyarrow24 \
+            --name "market-vault-p2-9-target-pyarrow24-${{ github.sha }}-attempt-${{ github.run_attempt }}" \
+            --surface pyarrow24 \
+            --repo "$GITHUB_WORKSPACE" \
+            --summary-out p2_9_target_roundtrip/pyarrow24/roundtrip.txt
+          grep -q "ROUNDTRIP_RECEIPT=OK" p2_9_target_roundtrip/pyarrow24/roundtrip.txt
+          cat p2_9_target_roundtrip/pyarrow24/roundtrip.txt
 
       # PR FULL attestation (PR #61): after the package job's full chain
       # (which depends on test + portability-pyarrow24 completing FULL)
