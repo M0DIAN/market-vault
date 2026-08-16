@@ -224,11 +224,14 @@ TARGET_SHADOW_FIELDS = (
 # Target probe payload schema: exact 16-field set. runtime_identity_sha256
 # is the sha256 of the strict runtime_sdist_identity.json bytes (same
 # derivation as the source evidence's runtime_identity_sha256);
-# runtime_environment_sha256 is the head/surface-insensitive environment
-# identity (canonical_serialize of the runtime doc minus its run-specific
-# wrapper fields) so the source PR run and the main-push target run are
-# cross-run comparable; normalized_identity_sha256 is the sealed
-# DOC_NORMALIZED fingerprint (also head-insensitive).
+# runtime_environment_sha256 is the cross-run canonical projection of the
+# strict runtime doc (minus its run-specific wrapper fields AND the raw
+# exact_built_wheel_sha256 build evidence, which is already proven eligible
+# for timestamp-only normalization) so the source PR run and the main-push
+# target run are cross-run comparable; normalized_identity_sha256 is the
+# cross-run canonical projection of DOC_NORMALIZED (the exhaustive
+# fingerprint_sha256 stays the internal document-integrity seal and is
+# never used as the cross-run equality digest).
 TARGET_PROBE_PAYLOAD_FIELDS = (
     "schema_version",
     "artifact_class",
@@ -1344,7 +1347,21 @@ def compute_selected_input_contract(repo: Path, surface: str) -> dict:
 def normalize_contract_doc(surface: str) -> dict:
     """The sealed normalization contract document. Its sha256 is
     normalization_contract_sha256 (bound by source_evidence.json; the doc
-    itself never carries its own hash)."""
+    itself never carries its own hash).
+
+    In addition to the normalization verdict fields below, this document
+    documents the two cross-run equality derivations:
+      runtime_environment_sha256   — cross-run canonical projection of the
+                                     strict runtime identity doc excluding
+                                     run wrapper fields and
+                                     exact_built_wheel_sha256 ONLY;
+      normalized_identity_sha256   — cross-run canonical projection of
+                                     DOC_NORMALIZED excluding raw diagnostic
+                                     hashes and permitted timestamp-only
+                                     diagnostic counts while retaining
+                                     normalization validity/reason/
+                                     allowed-difference/unclassified.
+    """
     return {
         "schema_version": SCHEMA_VERSION,
         "document_type": "normalization_contract",
@@ -1370,6 +1387,8 @@ def normalize_contract_doc(surface: str) -> dict:
             "selected_input_contract_sha256": "sha256 of selected_input_contract.json bytes",
             "normalization_contract_sha256": "sha256 of this document's bytes (bound by source_evidence.json; never self-referential)",
             "evidence_manifest_sha256": "sha256 of canonical_serialize over the sorted [[path, sha256, size], ...] entries of EVIDENCE_MANIFEST.json EXCLUDING the source_evidence.json entry",
+            "runtime_environment_sha256": "cross-run canonical projection of the strict runtime identity doc: sha256 of canonical_serialize over the doc EXCLUDING schema_version, document_type, surface, head, and exact_built_wheel_sha256 only; every other strict runtime/build/dependency field is bound",
+            "normalized_identity_sha256": "cross-run canonical projection of DOC_NORMALIZED: sha256 of canonical_serialize over the doc EXCLUDING fingerprint_sha256, raw_diagnostic, raw_diagnostic_sha256, and within raw_mismatch_verdict the permitted timestamp-only diagnostics diff_byte_count and diff_attribution.local_or_central_timestamp only; normalization_valid, reason, allowed_difference, and diff_attribution.unclassified are always bound",
         },
     }
 
@@ -3089,7 +3108,7 @@ class BundleVerifier:
                     and runtime_doc.get("surface") == payload.get("surface")
                     and _runtime_environment_sha256(runtime_doc) == payload.get("runtime_environment_sha256")
                     and bool(fp) and fp_recompute == fp
-                    and fp == payload.get("normalized_identity_sha256")
+                    and _normalized_cross_run_sha256(norm_doc) == payload.get("normalized_identity_sha256")
                 )
             except Exception:
                 id_ok = False
@@ -3728,6 +3747,11 @@ def locate_source_evidence(repo: Path, ctx: dict, env=None) -> dict:
             "evidence": ev,
             "runtime_identity_sha256": ev["runtime_identity_sha256"],
             "normalized_fingerprint_sha256": norm_doc.get("fingerprint_sha256") or "",
+            # the cross-run equality digest: the SAME derivation the target
+            # probe records as normalized_identity_sha256. The exhaustive
+            # fingerprint_sha256 above remains the internal document
+            # integrity seal and is never used as the cross-run identity.
+            "normalized_cross_run_sha256": _normalized_cross_run_sha256(norm_doc) if norm_doc else "",
             "selected_input_contract_sha256": ev["selected_input_contract_sha256"],
         }
 
@@ -3950,16 +3974,60 @@ def _source_identity_pattern(doc) -> tuple:
 
 
 def _runtime_environment_sha256(runtime_doc: dict) -> str:
-    """Head/surface-insensitive environment identity of the strict runtime
-    identity doc: the sealed DOC_RUNTIME minus its run-specific wrapper
-    fields (schema_version / document_type / surface / head). This is the
-    derivation that makes the source PR run and the main-push target run
-    cross-run comparable (the full DOC_RUNTIME sha embeds the run-specific
-    head literal and is NOT cross-run comparable)."""
+    """Cross-run environment identity of the strict runtime identity doc:
+    the sealed DOC_RUNTIME minus its run-specific wrapper fields
+    (schema_version / document_type / surface / head) and minus
+    exact_built_wheel_sha256 — the raw build/container evidence already
+    proven eligible for timestamp-only normalization (two real builds of
+    the same source produce different raw wheel SHAs and the SAME payload;
+    binding raw wheel SHAs into the cross-run equality produces a
+    false-negative runtime_mismatch and a safe-but-wrong RUN). Every other
+    strict runtime/build/dependency field (runner, python, resolver,
+    dependency_contract, action_contract, resolved_distributions,
+    source_sdist, source_build_environment, build_contract,
+    wheel_payload_identity, installed_payload_identity, normalized_verdict,
+    marketvault_build_identity, final_runtime_identity, shadow_surface,
+    selected_input_contract_sha256, normalization_contract_sha256,
+    probe_source_sha256, valid_flags) remains bound, so the full DOC_RUNTIME
+    sha stays the exhaustive run-specific binding."""
     payload = {
         k: v for k, v in runtime_doc.items()
-        if k not in ("schema_version", "document_type", "surface", "head")
+        if k not in (
+            "schema_version", "document_type", "surface", "head",
+            "exact_built_wheel_sha256",
+        )
     }
+    return sha256_bytes(canonical_serialize(payload).encode())
+
+
+def _normalized_cross_run_sha256(norm_doc: dict) -> str:
+    """Cross-run canonical projection of DOC_NORMALIZED, distinct from the
+    exhaustive internal fingerprint_sha256. Excludes ONLY the fields whose
+    cross-run variability is the already-proved timestamp-only diagnostic
+    variance: fingerprint_sha256 (run-specific seal), raw_diagnostic and
+    raw_diagnostic_sha256 (raw wheel build hashes retained as evidence but
+    not cross-run identity), and within raw_mismatch_verdict the permitted
+    variable diagnostics diff_byte_count and
+    diff_attribution.local_or_central_timestamp. Everything else is bound,
+    so the projected raw_mismatch_verdict still proves normalization state
+    (raw_wheel_reproducible / normalization_valid), normalization reason,
+    the exact allowed_difference literal, and the unclassified difference
+    count. A source/target pair with unclassified != 0, normalization_valid
+    drift, reason drift, or allowed_difference drift MUST NOT compare
+    equal."""
+    payload = {
+        k: v for k, v in norm_doc.items()
+        if k not in ("fingerprint_sha256", "raw_diagnostic", "raw_diagnostic_sha256")
+    }
+    raw_mv = payload.get("raw_mismatch_verdict")
+    if isinstance(raw_mv, dict):
+        raw_mv = {k: v for k, v in raw_mv.items() if k != "diff_byte_count"}
+        attr = raw_mv.get("diff_attribution")
+        if isinstance(attr, dict):
+            raw_mv["diff_attribution"] = {
+                k: v for k, v in attr.items() if k != "local_or_central_timestamp"
+            }
+        payload["raw_mismatch_verdict"] = raw_mv
     return sha256_bytes(canonical_serialize(payload).encode())
 
 
@@ -3973,7 +4041,7 @@ def _load_runtime_doc(bundle_dir: Path) -> dict:
 def _runtime_match_detail(payload: dict, locator: dict, surface: str) -> str:
     bundle = locator["bundles"][surface]
     parts = []
-    if payload.get("normalized_identity_sha256") != bundle["normalized_fingerprint_sha256"]:
+    if payload.get("normalized_identity_sha256") != bundle.get("normalized_cross_run_sha256"):
         parts.append("normalized_identity_mismatch")
     if (
         payload.get("runtime_environment_sha256")
@@ -4001,7 +4069,7 @@ def evaluate_target_surface(surface, ctx, payload, locator, locator_reason,
     if not contract_ok:
         sel_verdict = "affected"
     runtime_match = (
-        payload.get("normalized_identity_sha256") == bundle["normalized_fingerprint_sha256"]
+        payload.get("normalized_identity_sha256") == bundle.get("normalized_cross_run_sha256")
         and payload.get("runtime_environment_sha256")
         == _runtime_environment_sha256(_load_runtime_doc(bundle["bundle_dir"]))
     )
@@ -4267,7 +4335,7 @@ def cmd_target_probe(args) -> int:
         "parent_tree_sha": ctx["parent_tree_sha"],
         "runtime_identity_sha256": sha256_file(work / DOC_RUNTIME),
         "runtime_environment_sha256": _runtime_environment_sha256(runtime_doc),
-        "normalized_identity_sha256": norm_doc.get("fingerprint_sha256") or "",
+        "normalized_identity_sha256": _normalized_cross_run_sha256(norm_doc),
         "selected_input_contract_sha256": sha256_bytes(canonical_serialize(contract).encode()),
         "probe_source_sha256": sha256_file(Path(__file__).resolve()),
     }
@@ -4347,7 +4415,7 @@ def cmd_aggregate(args) -> int:
         consistent = (
             sha256_file(pdir / DOC_RUNTIME) == payload["runtime_identity_sha256"]
             and _runtime_environment_sha256(runtime_doc) == payload["runtime_environment_sha256"]
-            and (norm_doc.get("fingerprint_sha256") or "") == payload["normalized_identity_sha256"]
+            and _normalized_cross_run_sha256(norm_doc) == payload["normalized_identity_sha256"]
         )
         if not consistent:
             print(f"aggregate_error=target_probe_identity_mismatch:{surface}")

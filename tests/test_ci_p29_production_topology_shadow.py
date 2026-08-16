@@ -1134,6 +1134,20 @@ def test_tamper_normalized_identity_rejected(finalized_bundle, tmp_path):
     )
 
 
+def test_tamper_raw_diagnostic_rejected(finalized_bundle, tmp_path):
+    """A retained raw diagnostic is manifest-bound evidence: tampering
+    raw_diagnostic without regenerating the seals must fail the replay at
+    the manifest check (which fires before the identity-doc checks), not
+    pass silently or fall through to a digest mismatch."""
+    bundle, _ = finalized_bundle
+    p = bundle / tool.DOC_NORMALIZED
+    d = json.loads(p.read_text(encoding="utf-8"))
+    d["raw_diagnostic"]["raw_wheel_sha256_2"] = "0" * 64
+    p.write_text(json.dumps(d), encoding="utf-8")
+    lines = _tamper_and_verify(bundle, tmp_path)
+    assert any(ln.startswith("FAILED_CHECK=manifest_hashes") for ln in lines)
+
+
 def test_tamper_normalization_marker_rejected(finalized_bundle, tmp_path):
     """An unclassified raw wheel difference (marker claims normalization
     validity while the wheels re-derive raw_equal) must fail the contract."""
@@ -1605,6 +1619,470 @@ def test_runtime_environment_sha256_head_insensitive(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Phase-T comparator repair: cross-run equality projections. The full
+# exhaustive seals (runtime_identity_sha256 / fingerprint_sha256) stay
+# run-specific; the cross-run projections exclude ONLY the proved
+# timestamp-only diagnostic variability (raw wheel build SHAs and the
+# timestamp-only diff counts).
+
+
+def _strict_runtime_doc(surface: str, head: str, raw_wheel_1: str, raw_wheel_2: str) -> dict:
+    """A realistic strict runtime identity doc (mirrors the probe builder):
+    every strict runtime/build/dependency field present. Cross-run
+    variability under test: head literal + exact_built_wheel_sha256 raw
+    build hashes; everything else fixed."""
+    return {
+        "schema_version": tool.SCHEMA_VERSION,
+        "document_type": tool.DOC_RUNTIME,
+        "surface": surface,
+        "head": head,
+        "runner": {"image": "ubuntu-22.04", "version": "20260816.1.0"},
+        "python": {"version": "3.14.2"},
+        "resolver": {"name": "pip", "version": "26.2.1"},
+        "dependency_contract": {"sha256": "1" * 64},
+        "action_contract": {"sha256": "2" * 64},
+        "resolved_distributions": [
+            {"name": "moomoo-api", "version": "10.9.6908",
+             "sha256": "3" * 64, "artifact_type": "wheel"}
+        ],
+        "source_sdist": {
+            "canonical_name": "moomoo-api", "version": "10.9.6908",
+            "artifact": "moomoo_api-10.9.6908.tar.gz", "sha256": "4" * 64,
+        },
+        "source_build_environment": {"identity_sha256": "5" * 64, "distributions": []},
+        "build_contract": {"kind": "closed_world", "sha256": "6" * 64},
+        "exact_built_wheel_sha256": {"build_1": raw_wheel_1, "build_2": raw_wheel_2},
+        "wheel_payload_identity": {
+            "wheel_payload_sha256": "7" * 64, "entry_count": 423, "record_valid": True,
+        },
+        "installed_payload_identity": {"installed_payload_sha256": "8" * 64, "record_valid": True},
+        "normalized_verdict": {
+            "raw_wheel_reproducible": False, "normalization_valid": True,
+            "reason": "timestamp_only_contract_ok",
+        },
+        "marketvault_build_identity": {"p2_5_closed_world_contract_used": True, "editable_install_ok": True},
+        "final_runtime_identity": {
+            "final_runtime_match": True, "wheels_only": True, "unexpected_sdist": False,
+            "wheel_count": 1, "sdist_count": 0,
+        },
+        "shadow_surface": {"pass": True, "audited_surface": "test-3.14"},
+        "selected_input_contract_sha256": "9" * 64,
+        "normalization_contract_sha256": "a" * 64,
+        "probe_source_sha256": "b" * 64,
+        "valid_flags": {
+            "source_build_identity_valid": True,
+            "normalized_install_artifact_identity_valid": True,
+            "final_runtime_match": True,
+            "shadow_surface_pass": True,
+            "measure_crash": False,
+        },
+    }
+
+
+def _norm_doc_full(surface: str, *, raw_1: str = "c" * 64, raw_2: str = "d" * 64,
+                   diff_bytes: int = 4, ts_attr: int = 4, unclassified: int = 0,
+                   reason: str = "timestamp_only_contract_ok",
+                   normalization_valid: bool = True) -> dict:
+    """A realistic DOC_NORMALIZED with the full raw_mismatch_verdict, with
+    the exhaustive fingerprint derivation mirrored exactly."""
+    doc = {
+        "schema_version": tool.SCHEMA_VERSION,
+        "document_type": tool.DOC_NORMALIZED,
+        "surface": surface,
+        "canonical_name": "moomoo-api",
+        "version": "10.9.6908",
+        "resolver_identity": {"name": "pip", "version": "26.2.1"},
+        "sdist_sha256": "e" * 64,
+        "build_contract": {"kind": "closed_world", "sha256": "e" * 64},
+        "closed_world_build_env": {"identity_sha256": "1" * 64, "requirements_file_sha256": "2" * 64},
+        "wheel_tags": {"python_tag": "py3", "abi_tag": "none", "platform_tag": "any"},
+        "wheel_metadata_identity": "3" * 64,
+        "wheel_payload_sha256": "4" * 64,
+        "installed_payload_sha256": "5" * 64,
+        "payload_entry_count": 423,
+        "record_validation": {"wheel_1": True, "wheel_2": True, "installed": True},
+        "raw_mismatch_verdict": {
+            "raw_wheel_reproducible": False,
+            "normalization_valid": normalization_valid,
+            "reason": reason,
+            "diff_byte_count": diff_bytes,
+            "diff_attribution": {"local_or_central_timestamp": ts_attr, "unclassified": unclassified},
+            "allowed_difference": "zip_dos_modification_timestamps_of_build_generated_members_only",
+        },
+        "final_installed_identity": {
+            "installed_payload_sha256": "5" * 64, "installed_record_valid": True,
+            "survived_remainder": True, "survived_all": True,
+        },
+        "final_runtime_identity": {
+            "final_runtime_match": True, "wheels_only": True, "wheel_count": 1, "sdist_count": 0,
+        },
+        "marketvault_build_identity": {"p2_5_closed_world_contract_used": True, "editable_install_ok": True},
+        "shadow_surface": {"pass": True, "audited_surface": "test-3.14"},
+        "raw_diagnostic": {
+            "raw_wheel_sha256_1": raw_1, "raw_wheel_sha256_2": raw_2,
+            "note": "retained diagnostic only; never normalized away",
+        },
+    }
+    fp_doc = {k: v for k, v in doc.items() if k != "raw_diagnostic"}
+    fp_doc["raw_diagnostic_sha256"] = tool.sha256_bytes(
+        tool.canonical_serialize(doc["raw_diagnostic"]).encode()
+    )
+    doc["raw_diagnostic_sha256"] = fp_doc["raw_diagnostic_sha256"]
+    doc["fingerprint_sha256"] = tool.sha256_bytes(tool.canonical_serialize(fp_doc).encode())
+    return doc
+
+
+def test_runtime_environment_cross_run_equality_excludes_built_wheel():
+    """Regression A: two strict runtime docs identical except head and
+    exact_built_wheel_sha256 raw build hashes MUST produce the SAME
+    runtime_environment_sha256 (the raw build evidence is the already-proved
+    timestamp-only variability) while their FULL runtime doc SHAs MUST
+    remain DIFFERENT (the exhaustive run-specific binding is retained)."""
+    base = _strict_runtime_doc("pyarrow24", "a" * 40, "1" * 64, "2" * 64)
+    other = _strict_runtime_doc("pyarrow24", "f" * 40, "3" * 64, "4" * 64)
+    assert tool.sha256_bytes(tool.canonical_serialize(base).encode()) != tool.sha256_bytes(
+        tool.canonical_serialize(other).encode()
+    )
+    assert tool._runtime_environment_sha256(other) == tool._runtime_environment_sha256(base)
+    # the projection is sensitive to every OTHER strict runtime field
+    drifted = dict(base)
+    drifted["python"] = {"version": "3.14.3"}
+    assert tool._runtime_environment_sha256(drifted) != tool._runtime_environment_sha256(base)
+    drifted = dict(base)
+    drifted["valid_flags"] = dict(base["valid_flags"], measure_crash=True)
+    assert tool._runtime_environment_sha256(drifted) != tool._runtime_environment_sha256(base)
+
+
+def test_normalized_cross_run_sha256_equality_excludes_raw_diagnostics():
+    """Regression B: two normalized docs identical except the permitted
+    timestamp-only variability (raw wheel SHAs, raw_diagnostic_sha256,
+    diff_byte_count, local_or_central_timestamp, fingerprint_sha256) MUST
+    produce the SAME normalized cross-run SHA while their exhaustive
+    fingerprint_sha256 may remain different."""
+    a = _norm_doc_full("pyarrow24")
+    b = _norm_doc_full("pyarrow24", raw_1="9" * 64, raw_2="8" * 64, diff_bytes=7,
+                       ts_attr=7)
+    assert a["fingerprint_sha256"] != b["fingerprint_sha256"]
+    assert (a["raw_diagnostic_sha256"] != b["raw_diagnostic_sha256"])
+    assert (a["raw_mismatch_verdict"]["diff_byte_count"]
+            != b["raw_mismatch_verdict"]["diff_byte_count"])
+    assert (a["raw_mismatch_verdict"]["diff_attribution"]["local_or_central_timestamp"]
+            != b["raw_mismatch_verdict"]["diff_attribution"]["local_or_central_timestamp"])
+    assert tool._normalized_cross_run_sha256(a) == tool._normalized_cross_run_sha256(b)
+
+
+def test_normalized_cross_run_sha256_semantic_drifts_never_equal():
+    """The cross-run projection must still bind the normalization verdict:
+    normalization_valid drift, reason drift, allowed_difference drift, or
+    unclassified != 0 MUST change the cross-run digest."""
+    base = _norm_doc_full("pyarrow24")
+    base_sha = tool._normalized_cross_run_sha256(base)
+    variants = {
+        "normalization_valid_false": dict(base, raw_mismatch_verdict=dict(
+            base["raw_mismatch_verdict"], normalization_valid=False)),
+        "reason_drift": dict(base, raw_mismatch_verdict=dict(
+            base["raw_mismatch_verdict"], reason="drift")),
+        "allowed_difference_drift": dict(base, raw_mismatch_verdict=dict(
+            base["raw_mismatch_verdict"],
+            allowed_difference="any_difference_allowed")),
+        "unclassified_one": dict(base, raw_mismatch_verdict=dict(
+            base["raw_mismatch_verdict"], diff_attribution=dict(
+                base["raw_mismatch_verdict"]["diff_attribution"], unclassified=1))),
+    }
+    for name, v in variants.items():
+        assert tool._normalized_cross_run_sha256(v) != base_sha, name
+        # a semantic (non-timestamp) normalized field drift must differ too
+    for key in ("wheel_payload_sha256", "sdist_sha256", "payload_entry_count"):
+        v = dict(base)
+        v[key] = "x" if key != "payload_entry_count" else 999
+        assert tool._normalized_cross_run_sha256(v) != base_sha, key
+
+
+_DEFAULT_RAW_MISMATCH_VERDICT = {
+    "raw_wheel_reproducible": False,
+    "normalization_valid": True,
+    "reason": "timestamp_only_contract_ok",
+    "diff_byte_count": 4,
+    "diff_attribution": {"local_or_central_timestamp": 4, "unclassified": 0},
+    "allowed_difference": "zip_dos_modification_timestamps_of_build_generated_members_only",
+}
+
+
+def _eval_pair(tmp_path, surface, paths=("tests/test_calendar_v03.py",)):
+    """A source-bundle + target-payload pair whose cross-run identities
+    MATCH (the REUSED baseline for an unaffected surface), built from the
+    synthetic probe trees with different run heads. Mirrors the real probe
+    payload and locator derivations. The two runs deliberately differ in
+    head, exact_built_wheel_sha256, and raw diagnostics — all proved
+    timestamp-only — while every strict runtime / normalized semantic field
+    is identical."""
+    src = tmp_path / f"src_{surface}"
+    build_probe_out(src, surface, "a" * 40,
+                    _pr_env_custom(_git_head_sha(), 42, 1, 84, "a" * 40, tmp_path))
+    tgt = tmp_path / f"tgt_{surface}"
+    build_probe_out(tgt, surface, "b" * 40,
+                    _pr_env_custom(_git_head_sha(), 43, 1, 84, "b" * 40, tmp_path))
+    # upgrade the minimal fixture docs to full realistic docs: the strict
+    # runtime doc carries every strict runtime/build/dependency field (raw
+    # build wheel hashes differ per run — the timestamp-only variability),
+    # the normalized doc carries every semantic field plus the full
+    # raw_mismatch_verdict and a differing raw diagnostic.
+    src_rt = _strict_runtime_doc(surface, "a" * 40, "1" * 64, "2" * 64)
+    tgt_rt = _strict_runtime_doc(surface, "b" * 40, "3" * 64, "4" * 64)
+    (src / tool.DOC_RUNTIME).write_text(tool.canonical_serialize(src_rt), encoding="utf-8")
+    (tgt / tool.DOC_RUNTIME).write_text(tool.canonical_serialize(tgt_rt), encoding="utf-8")
+    src_norm = _norm_doc_full(surface)
+    tgt_norm = _norm_doc_full(surface, raw_1="9" * 64, raw_2="8" * 64, diff_bytes=7, ts_attr=7)
+    (src / tool.DOC_NORMALIZED).write_text(tool.canonical_serialize(src_norm), encoding="utf-8")
+    (tgt / tool.DOC_NORMALIZED).write_text(tool.canonical_serialize(tgt_norm), encoding="utf-8")
+    contract = tool.compute_selected_input_contract(ROOT, surface)
+    contract_sha = tool.sha256_bytes(tool.canonical_serialize(contract).encode())
+    payload = {
+        "schema_version": 1,
+        "artifact_class": tool.TARGET_PROBE_ARTIFACT_CLASS,
+        "repository": "M0DIAN/market-vault",
+        "workflow": "CI",
+        "run_id": 43,
+        "run_attempt": 1,
+        "surface": surface,
+        "target_sha": "b" * 40,
+        "parent_sha": "a" * 40,
+        "target_tree_sha": "c" * 40,
+        "parent_tree_sha": "d" * 40,
+        "runtime_identity_sha256": tool.sha256_file(tgt / tool.DOC_RUNTIME),
+        "runtime_environment_sha256": tool._runtime_environment_sha256(tgt_rt),
+        "normalized_identity_sha256": tool._normalized_cross_run_sha256(tgt_norm),
+        "selected_input_contract_sha256": contract_sha,
+        "probe_source_sha256": tool.sha256_file(SCRIPT),
+    }
+    locator = {
+        "source_available": True,
+        "bundles": {surface: {
+            "bundle_dir": src,
+            "normalized_fingerprint_sha256": src_norm.get("fingerprint_sha256") or "",
+            "normalized_cross_run_sha256": tool._normalized_cross_run_sha256(src_norm),
+            "selected_input_contract_sha256": contract_sha,
+        }},
+    }
+    return payload, locator, contract, src, tgt
+
+
+def _set_dot(doc: dict, path: str, value):
+    parts = path.split(".")
+    cur = doc
+    for p in parts[:-1]:
+        if p.endswith("]") and "[" in p:
+            name, idx = p[:-1].split("[")
+            cur = cur[name][int(idx)]
+        else:
+            cur = cur[p]
+    last = parts[-1]
+    if last.endswith("]") and "[" in last:
+        name, idx = last[:-1].split("[")
+        cur[name][int(idx)] = value
+    else:
+        cur[last] = value
+
+
+def test_phase_t_semantic_positive_target_relations(tmp_path):
+    """Regression C (evaluator regression, not prose): for the exact
+    Phase-T delta tests/test_calendar_v03.py with source available and
+    cross-run identities equal — test-3.14: selected_input=affected,
+    runtime_match=true, verdict=RUN; pyarrow24: selected_input=unaffected,
+    runtime_match=true, verdict=REUSED with reused:all_predicates_valid."""
+    paths = ("tests/test_calendar_v03.py",)
+    for surface in tool.SURFACES:
+        payload, locator, contract, src, tgt = _eval_pair(tmp_path, surface, paths)
+        # the equality is genuinely cross-run: full exhaustive seals differ
+        src_norm = json.loads((src / tool.DOC_NORMALIZED).read_text(encoding="utf-8"))
+        tgt_norm = json.loads((tgt / tool.DOC_NORMALIZED).read_text(encoding="utf-8"))
+        assert src_norm["fingerprint_sha256"] != tgt_norm["fingerprint_sha256"], surface
+        assert (src_norm["raw_diagnostic_sha256"] != tgt_norm["raw_diagnostic_sha256"]), surface
+        assert tool.sha256_file(src / tool.DOC_RUNTIME) != tool.sha256_file(
+            tgt / tool.DOC_RUNTIME
+        ), surface
+        sel, reason, sel_verdict, runtime_match = tool.evaluate_target_surface(
+            surface, {}, payload, locator, "ok", list(paths), contract
+        )
+        assert runtime_match is True, surface
+        if surface == "test-3.14":
+            assert sel == tool.VERDICT_RUN, surface
+            assert sel_verdict == "affected", surface
+            assert reason == "run:delta_affected", surface
+        else:
+            assert sel == tool.VERDICT_REUSED, surface
+            assert sel_verdict == "unaffected", surface
+            assert reason == "reused:all_predicates_valid", surface
+
+
+STRICT_RUNTIME_MUTATIONS = [
+    ("runner", "runner.version"),
+    ("python", "python.version"),
+    ("resolver", "resolver.version"),
+    ("dependency_contract", "dependency_contract.sha256"),
+    ("action_contract", "action_contract.sha256"),
+    ("resolved_distributions", "resolved_distributions[0].version"),
+    ("source_sdist", "source_sdist.sha256"),
+    ("source_build_environment", "source_build_environment.identity_sha256"),
+    ("build_contract", "build_contract.sha256"),
+    ("wheel_payload_identity", "wheel_payload_identity.wheel_payload_sha256"),
+    ("installed_payload_identity", "installed_payload_identity.installed_payload_sha256"),
+    ("final_runtime_identity", "final_runtime_identity.final_runtime_match"),
+    ("shadow_surface", "shadow_surface.pass"),
+    ("selected_input_contract_sha256", "selected_input_contract_sha256"),
+    ("normalization_contract_sha256", "normalization_contract_sha256"),
+    ("probe_source_sha256", "probe_source_sha256"),
+    ("valid_flags", "valid_flags.measure_crash"),
+]
+
+NORMALIZED_SEMANTIC_MUTATIONS = [
+    ("canonical_name", "canonical_name"),
+    ("version", "version"),
+    ("resolver_identity", "resolver_identity.version"),
+    ("sdist_sha256", "sdist_sha256"),
+    ("build_contract", "build_contract.sha256"),
+    ("closed_world_build_env", "closed_world_build_env.identity_sha256"),
+    ("wheel_tags", "wheel_tags.python_tag"),
+    ("wheel_metadata_identity", "wheel_metadata_identity"),
+    ("wheel_payload_sha256", "wheel_payload_sha256"),
+    ("installed_payload_sha256", "installed_payload_sha256"),
+    ("payload_entry_count", "payload_entry_count"),
+    ("record_validation", "record_validation.wheel_1"),
+    ("final_installed_identity", "final_installed_identity.survived_all"),
+    ("final_runtime_identity", "final_runtime_identity.final_runtime_match"),
+    ("marketvault_build_identity", "marketvault_build_identity.p2_5_closed_world_contract_used"),
+    ("shadow_surface", "shadow_surface.pass"),
+]
+
+NORMALIZATION_SAFETY_MUTATIONS = [
+    ("normalization_valid", "raw_mismatch_verdict.normalization_valid"),
+    ("reason", "raw_mismatch_verdict.reason"),
+    ("allowed_difference", "raw_mismatch_verdict.allowed_difference"),
+    ("unclassified", "raw_mismatch_verdict.diff_attribution.unclassified"),
+]
+
+_MUTATION_NEW_VALUES = {
+    "runner.version": "9.9.9",
+    "python.version": "3.14.99",
+    "resolver.version": "0.0.1",
+    "dependency_contract.sha256": "f" * 64,
+    "action_contract.sha256": "f" * 64,
+    "resolved_distributions[0].version": "9.9.9",
+    "source_sdist.sha256": "f" * 64,
+    "source_build_environment.identity_sha256": "f" * 64,
+    "build_contract.sha256": "f" * 64,
+    "wheel_payload_identity.wheel_payload_sha256": "f" * 64,
+    "installed_payload_identity.installed_payload_sha256": "f" * 64,
+    "final_runtime_identity.final_runtime_match": False,
+    "shadow_surface.pass": False,
+    "selected_input_contract_sha256": "f" * 64,
+    "normalization_contract_sha256": "f" * 64,
+    "probe_source_sha256": "f" * 64,
+    "valid_flags.measure_crash": True,
+    "canonical_name": "other",
+    "version": "9.9.9",
+    "resolver_identity.version": "0.0.1",
+    "sdist_sha256": "f" * 64,
+    "closed_world_build_env.identity_sha256": "f" * 64,
+    "wheel_tags.python_tag": "cp311",
+    "wheel_metadata_identity": "f" * 64,
+    "wheel_payload_sha256": "f" * 64,
+    "installed_payload_sha256": "f" * 64,
+    "payload_entry_count": 999,
+    "record_validation.wheel_1": False,
+    "final_installed_identity.survived_all": False,
+    "final_runtime_identity.final_runtime_match": False,
+    "marketvault_build_identity.p2_5_closed_world_contract_used": False,
+    "raw_mismatch_verdict.normalization_valid": False,
+    "raw_mismatch_verdict.reason": "drift",
+    "raw_mismatch_verdict.allowed_difference": "any_difference_allowed",
+    "raw_mismatch_verdict.diff_attribution.unclassified": 1,
+}
+
+
+@pytest.mark.parametrize("label,path", STRICT_RUNTIME_MUTATIONS)
+def test_cross_run_strict_runtime_mutations_prevent_reused(tmp_path, label, path):
+    """Every strict runtime field remains bound by the cross-run runtime
+    projection: mutating ONE field in the source runtime doc keeps the
+    pair at runtime_mismatch / RUN — never REUSED."""
+    payload, locator, contract, src, tgt = _eval_pair(tmp_path, "pyarrow24")
+    rt_doc = json.loads((src / tool.DOC_RUNTIME).read_text(encoding="utf-8"))
+    _set_dot(rt_doc, path, _MUTATION_NEW_VALUES[path])
+    (src / tool.DOC_RUNTIME).write_text(tool.canonical_serialize(rt_doc), encoding="utf-8")
+    sel, reason, sel_verdict, runtime_match = tool.evaluate_target_surface(
+        "pyarrow24", {}, payload, locator, "ok", ["tests/test_calendar_v03.py"], contract
+    )
+    assert runtime_match is False, label
+    assert sel == tool.VERDICT_RUN, label
+    assert reason.endswith("runtime_mismatch"), (label, reason)
+
+
+@pytest.mark.parametrize("label,path", NORMALIZED_SEMANTIC_MUTATIONS)
+def test_cross_run_normalized_semantic_mutations_prevent_reused(tmp_path, label, path):
+    """Every semantic normalized field remains bound by the cross-run
+    projection of DOC_NORMALIZED: mutating ONE field (with the locator
+    recomputing the source cross-run digest as it would against the
+    retained source doc) keeps the pair at runtime_mismatch / RUN."""
+    payload, locator, contract, src, tgt = _eval_pair(tmp_path, "pyarrow24")
+    norm_doc = json.loads((src / tool.DOC_NORMALIZED).read_text(encoding="utf-8"))
+    _set_dot(norm_doc, path, _MUTATION_NEW_VALUES[path])
+    (src / tool.DOC_NORMALIZED).write_text(tool.canonical_serialize(norm_doc), encoding="utf-8")
+    locator["bundles"]["pyarrow24"]["normalized_cross_run_sha256"] = (
+        tool._normalized_cross_run_sha256(norm_doc)
+    )
+    sel, reason, sel_verdict, runtime_match = tool.evaluate_target_surface(
+        "pyarrow24", {}, payload, locator, "ok", ["tests/test_calendar_v03.py"], contract
+    )
+    assert runtime_match is False, label
+    assert sel == tool.VERDICT_RUN, label
+    assert reason.endswith("runtime_mismatch"), (label, reason)
+
+
+@pytest.mark.parametrize("label,path", NORMALIZATION_SAFETY_MUTATIONS)
+def test_cross_run_normalization_safety_mutations_prevent_reused(tmp_path, label, path):
+    """The normalization verdict fields stay inside the cross-run equality:
+    normalization_valid drift, reason drift, allowed_difference drift, or
+    unclassified > 0 each keep the pair at runtime_mismatch / RUN."""
+    payload, locator, contract, src, tgt = _eval_pair(tmp_path, "pyarrow24")
+    norm_doc = json.loads((src / tool.DOC_NORMALIZED).read_text(encoding="utf-8"))
+    assert norm_doc["raw_mismatch_verdict"] == _DEFAULT_RAW_MISMATCH_VERDICT
+    _set_dot(norm_doc, path, _MUTATION_NEW_VALUES[path])
+    (src / tool.DOC_NORMALIZED).write_text(tool.canonical_serialize(norm_doc), encoding="utf-8")
+    locator["bundles"]["pyarrow24"]["normalized_cross_run_sha256"] = (
+        tool._normalized_cross_run_sha256(norm_doc)
+    )
+    sel, reason, sel_verdict, runtime_match = tool.evaluate_target_surface(
+        "pyarrow24", {}, payload, locator, "ok", ["tests/test_calendar_v03.py"], contract
+    )
+    assert runtime_match is False, label
+    assert sel == tool.VERDICT_RUN, label
+    assert reason.endswith("runtime_mismatch"), (label, reason)
+
+
+def test_cross_run_target_side_identity_drift_prevent_reused(tmp_path):
+    """The target side is equally bound: a stale/foreign target payload
+    identity (cross-run digest or runtime environment digest recorded by a
+    target probe from a different runtime) must never REUSE."""
+    payload, locator, contract, src, tgt = _eval_pair(tmp_path, "pyarrow24")
+    stale = dict(payload)
+    stale["normalized_identity_sha256"] = "f" * 64
+    sel, reason, sel_verdict, runtime_match = tool.evaluate_target_surface(
+        "pyarrow24", {}, stale, locator, "ok", ["tests/test_calendar_v03.py"], contract
+    )
+    assert runtime_match is False
+    assert sel == tool.VERDICT_RUN
+    assert reason.endswith("runtime_mismatch")
+    stale = dict(payload)
+    stale["runtime_environment_sha256"] = "f" * 64
+    sel, reason, sel_verdict, runtime_match = tool.evaluate_target_surface(
+        "pyarrow24", {}, stale, locator, "ok", ["tests/test_calendar_v03.py"], contract
+    )
+    assert runtime_match is False
+    assert sel == tool.VERDICT_RUN
+    assert reason.endswith("runtime_mismatch")
+
+
+# ---------------------------------------------------------------------------
 # Phase-T pre-stage: source evidence locator (mocked read-only GitHub API)
 
 
@@ -1928,6 +2406,11 @@ def test_locate_source_evidence_ok(tmp_path, monkeypatch):
         assert b["evidence"]["pr_head_sha"] == head_sha
         assert int(b["replay_check_count"]) > 0
         assert b["normalized_fingerprint_sha256"]
+        # the locator records the SAME cross-run equality digest the target
+        # probe derives from DOC_NORMALIZED — never the exhaustive seal
+        norm_doc = json.loads((b["bundle_dir"] / tool.DOC_NORMALIZED).read_text(encoding="utf-8"))
+        assert b["normalized_cross_run_sha256"] == tool._normalized_cross_run_sha256(norm_doc)
+        assert b["normalized_cross_run_sha256"] != b["normalized_fingerprint_sha256"]
         # DIRECT-layout contract: the resolved bundle root IS the download
         # destination — source_evidence.json sits at the root and no
         # artifact-name subdirectory exists. If the fake_download fixture
@@ -2127,7 +2610,7 @@ def _build_target_payload(pdir: Path, surface: str, main_env: dict) -> dict:
         "parent_tree_sha": ctx["parent_tree_sha"],
         "runtime_identity_sha256": tool.sha256_file(work / tool.DOC_RUNTIME),
         "runtime_environment_sha256": tool._runtime_environment_sha256(runtime_doc),
-        "normalized_identity_sha256": norm_doc["fingerprint_sha256"],
+        "normalized_identity_sha256": tool._normalized_cross_run_sha256(norm_doc),
         "selected_input_contract_sha256": tool.sha256_bytes(
             tool.canonical_serialize(contract).encode()
         ),
