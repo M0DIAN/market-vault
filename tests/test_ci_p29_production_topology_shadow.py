@@ -1609,10 +1609,25 @@ def test_runtime_environment_sha256_head_insensitive(tmp_path):
 
 
 def _locator_canned(tmp_path, monkeypatch, *, pulls, runs, jobs, art_names,
-                    att_doc, bundles=None):
+                    att_doc, bundles=None, att_missing=False,
+                    bundle_missing=(), bundle_transform=None):
     """Monkeypatch tool._gh_api / tool._gh_run_download with canned
     read-only API responses. bundles maps artifact name -> finalized bundle
-    dir for download simulation."""
+    dir for download simulation.
+
+    The simulated download models the REAL single-artifact --dir layout
+    (proven by real main-push run 31929326960): the artifact's contents
+    are written DIRECTLY into dest — never under dest/<artifact_name>.
+    Reverting this fixture to the old synthetic nested layout must fail
+    the direct-layout positive regression.
+
+    Failure-mode hooks (fail-closed on the locator side):
+      att_missing         — the attestation download yields content that is
+                            NOT the expected ci_full_attestation.json;
+      bundle_missing      — surfaces whose downloaded bundle is missing
+                            source_evidence.json;
+      bundle_transform    — callable(surface, dest) applied to a downloaded
+                            bundle before the locator consumes it (tamper)."""
     head_sha = "b" * 40
 
     def fake_api(path, env=None):
@@ -1628,19 +1643,96 @@ def _locator_canned(tmp_path, monkeypatch, *, pulls, runs, jobs, art_names,
 
     def fake_download(run_id, name, dest, repo_slug, env=None):
         if name == f"market-vault-full-ci-attestation-{head_sha}-attempt-1":
-            (dest / name).mkdir(parents=True, exist_ok=True)
-            (dest / name / "ci_full_attestation.json").write_text(
-                json.dumps(att_doc, sort_keys=True), encoding="utf-8"
-            )
+            if att_missing:
+                # downloaded artifact present, expected exact content absent
+                (dest / "unexpected.txt").write_text(
+                    "not the attestation\n", encoding="utf-8"
+                )
+            else:
+                (dest / "ci_full_attestation.json").write_text(
+                    json.dumps(att_doc, sort_keys=True), encoding="utf-8"
+                )
         else:
             surface = next(
                 s for s in tool.SURFACES
                 if name == f"{tool.P2_9_ARTIFACT_PREFIX}-{s}-{head_sha}-attempt-1"
             )
-            shutil.copytree(bundles[surface], dest / name, dirs_exist_ok=True)
+            shutil.copytree(bundles[surface], dest, dirs_exist_ok=True)
+            if surface in bundle_missing:
+                (dest / tool.SOURCE_EVIDENCE_NAME).unlink()
+            if bundle_transform is not None:
+                bundle_transform(surface, dest)
+        # direct-layout contract: the resolved bundle root is the
+        # destination itself (same return contract as _gh_run_download)
+        return dest
 
     monkeypatch.setattr(tool, "_gh_api", fake_api)
     monkeypatch.setattr(tool, "_gh_run_download", fake_download)
+
+
+def _locator_tamper_evidence_schema(surface, dest):
+    p = dest / tool.SOURCE_EVIDENCE_NAME
+    d = json.loads(p.read_text(encoding="utf-8"))
+    d["unexpected_key"] = "x"
+    p.write_text(json.dumps(d, sort_keys=True), encoding="utf-8")
+
+
+def _locator_tamper_evidence_binding(surface, dest):
+    p = dest / tool.SOURCE_EVIDENCE_NAME
+    d = json.loads(p.read_text(encoding="utf-8"))
+    d["tested_tree_sha"] = "9" * 40
+    p.write_text(json.dumps(d, sort_keys=True), encoding="utf-8")
+
+
+def _locator_tamper_wheel_bytes(surface, dest):
+    (dest / "built_wheels" / "1" / WHEEL_NAME).write_bytes(
+        make_wheel_bytes(module_content=b"# tampered\n")
+    )
+
+
+class _FakeGhDownload:
+    """Simulates the REAL gh run download single-artifact behavior: a
+    successful gh process writes the artifact's contents DIRECTLY under
+    the --dir destination (the layout proven by real main-push run
+    31929326960); the artifact-name subdirectory is never created.
+    layout: "direct" | "nested" | "mixed" | "empty"."""
+
+    def __init__(self, layout, rc, real_run):
+        self.layout = layout
+        self.rc = rc
+        self._real_run = real_run
+
+    def __call__(self, cmd, *args, **kwargs):
+        if cmd[0] != "gh":
+            return self._real_run(cmd, *args, **kwargs)
+        assert cmd[1:3] == ["run", "download"], cmd
+        dest = Path(cmd[cmd.index("--dir") + 1])
+        name = cmd[cmd.index("--name") + 1]
+        dest.mkdir(parents=True, exist_ok=True)
+        if self.layout == "direct":
+            (dest / "ci_full_attestation.json").write_text("{}\n", encoding="utf-8")
+            # legitimate top-level subdirectory content survives the direct
+            # extraction (the real bundle carries positive_control/ etc.)
+            (dest / "positive_control").mkdir(exist_ok=True)
+            (dest / "positive_control" / "verify.json").write_text("{}\n", encoding="utf-8")
+        elif self.layout == "nested":
+            (dest / name).mkdir(parents=True, exist_ok=True)
+            (dest / name / "ci_full_attestation.json").write_text("{}\n", encoding="utf-8")
+        elif self.layout == "mixed":
+            (dest / "ci_full_attestation.json").write_text("{}\n", encoding="utf-8")
+            (dest / name).mkdir(parents=True, exist_ok=True)
+            (dest / name / "extra.json").write_text("{}\n", encoding="utf-8")
+        elif self.layout == "empty":
+            pass
+        else:
+            raise AssertionError(f"unknown layout: {self.layout}")
+        return subprocess.CompletedProcess(
+            cmd, self.rc, stdout="", stderr="gh: download failed" if self.rc else ""
+        )
+
+
+def _gh_run_download_with(monkeypatch, layout, rc=0):
+    monkeypatch.setattr(tool.subprocess, "run", _FakeGhDownload(layout, rc, subprocess.run))
 
 
 def _locator_ctx() -> dict:
@@ -1678,6 +1770,66 @@ def _locator_att_doc(head_sha, parent, parent_tree, run_id=777):
     }
 
 
+def test_gh_run_download_direct_layout_positive(monkeypatch, tmp_path):
+    """Dedicated layout regression for _gh_run_download itself: a
+    SUCCESSFUL gh process that writes files DIRECTLY under the --dir
+    destination must resolve the bundle root as the destination itself
+    (the layout proven by real main-push run 31929326960). This test
+    fails if the fixture is changed back to the old synthetic nested
+    layout (dest/<artifact_name>/...)."""
+    _gh_run_download_with(monkeypatch, "direct", rc=0)
+    dest = tmp_path / "att_dest"
+    name = f"market-vault-full-ci-attestation-{'b' * 40}-attempt-1"
+    root = tool._gh_run_download(777, name, dest, "M0DIAN/market-vault")
+    # returned / resolved bundle root == the direct destination
+    assert root == dest
+    assert (root / "ci_full_attestation.json").is_file()
+    # legitimate top-level subdirectory content survives the direct layout
+    assert (root / "positive_control" / "verify.json").is_file()
+    # the artifact-name subdirectory never exists under the direct layout
+    assert not (root / name).exists()
+
+
+def test_gh_run_download_fails_closed_empty(monkeypatch, tmp_path):
+    # successful gh process but zero downloaded entries => fail closed
+    _gh_run_download_with(monkeypatch, "empty", rc=0)
+    with pytest.raises(tool.SourceLocatorError, match="gh_run_download_empty"):
+        tool._gh_run_download(777, "att-name", tmp_path / "d", "M0DIAN/market-vault")
+
+
+def test_gh_run_download_fails_closed_nested_only(monkeypatch, tmp_path):
+    # old unexpected nested-only layout (dest/<artifact_name>/...) must
+    # NOT be silently interpreted as the direct layout => fail closed
+    _gh_run_download_with(monkeypatch, "nested", rc=0)
+    with pytest.raises(tool.SourceLocatorError, match="gh_run_download_layout_unexpected"):
+        tool._gh_run_download(777, "att-name", tmp_path / "d", "M0DIAN/market-vault")
+
+
+def test_gh_run_download_fails_closed_mixed_direct_nested(monkeypatch, tmp_path):
+    # mixed direct + nested layout => fail closed (no first-match
+    # ambiguity, never silently preferred over the direct layout)
+    _gh_run_download_with(monkeypatch, "mixed", rc=0)
+    with pytest.raises(tool.SourceLocatorError, match="gh_run_download_layout_unexpected"):
+        tool._gh_run_download(777, "att-name", tmp_path / "d", "M0DIAN/market-vault")
+
+
+def test_gh_run_download_fails_closed_gh_error(monkeypatch, tmp_path):
+    # gh return code != 0 => existing download error
+    _gh_run_download_with(monkeypatch, "direct", rc=1)
+    with pytest.raises(tool.SourceLocatorError, match="gh_run_download_error"):
+        tool._gh_run_download(777, "att-name", tmp_path / "d", "M0DIAN/market-vault")
+
+
+def test_gh_run_download_fails_closed_dest_not_empty(monkeypatch, tmp_path):
+    # destination must be fresh / empty before the download
+    dest = tmp_path / "d"
+    dest.mkdir()
+    (dest / "stale.txt").write_text("stale\n", encoding="utf-8")
+    _gh_run_download_with(monkeypatch, "direct", rc=0)
+    with pytest.raises(tool.SourceLocatorError, match="gh_run_download_dest_not_empty"):
+        tool._gh_run_download(777, "att-name", dest, "M0DIAN/market-vault")
+
+
 def test_locate_source_evidence_ok(tmp_path, monkeypatch):
     # Phase-S auth contract: with a mocked gh-CLI auth source the locator
     # passes the auth gate and reaches the existing positive locator path.
@@ -1713,10 +1865,16 @@ def test_locate_source_evidence_ok(tmp_path, monkeypatch):
         bundles=bundles,
     )
     loc = tool.locate_source_evidence(ROOT, _locator_ctx())
+    # Section-5 direct-layout positive: exact bindings for the single prior
+    # merged PR — exact PR association, exact successful FULL run/attempt,
+    # exact four jobs (fixture), one V1 FULL attestation, both source
+    # bundles, tested_tree == parent tree, source_available == true.
     assert loc["source_available"] is True
     assert loc["reason"] == "ok"
     assert loc["pr_number"] == 84
+    assert loc["pr_head_sha"] == head_sha
     assert loc["run_id"] == 777
+    assert loc["run_attempt"] == 1
     assert loc["attestation"]["valid"] is True
     assert loc["attestation"]["sha256"] == tool.sha256_bytes(
         json.dumps(att_doc, sort_keys=True).encode()
@@ -1727,6 +1885,16 @@ def test_locate_source_evidence_ok(tmp_path, monkeypatch):
         assert b["evidence"]["pr_head_sha"] == head_sha
         assert int(b["replay_check_count"]) > 0
         assert b["normalized_fingerprint_sha256"]
+        # DIRECT-layout contract: the resolved bundle root IS the download
+        # destination — source_evidence.json sits at the root and no
+        # artifact-name subdirectory exists. If the fake_download fixture
+        # is reverted to the old synthetic nested layout
+        # (dest/<artifact_name>/...), the locator's resolution (and these
+        # assertions) must fail.
+        root = b["bundle_dir"]
+        assert root.name.startswith("p29_loc_")
+        assert (root / tool.SOURCE_EVIDENCE_NAME).is_file()
+        assert not (root / b["artifact_name"]).exists()
     # Phase-S auth contract: the token VALUE never appears in locator
     # output or in the produced source evidence / attestation / replay
     # state — presence is asserted, contents are never persisted.
@@ -1797,11 +1965,49 @@ def test_locate_source_evidence_fail_closed_cases(tmp_path, monkeypatch):
          [f"market-vault-full-ci-attestation-{head_sha}-attempt-1"]
          + [f"{tool.P2_9_ARTIFACT_PREFIX}-test-3.14-{head_sha}-attempt-1"],
          att_doc),
+        # duplicate/ambiguous artifact => fail closed
+        ("v1_attestation_ambiguous", [pull], {"workflow_runs": [run]}, jobs_ok,
+         [f"market-vault-full-ci-attestation-{head_sha}-attempt-1"] * 2
+         + [f"{tool.P2_9_ARTIFACT_PREFIX}-{s}-{head_sha}-attempt-1" for s in tool.SURFACES],
+         att_doc),
+        ("source_bundle_test-3.14_ambiguous", [pull], {"workflow_runs": [run]}, jobs_ok,
+         [f"market-vault-full-ci-attestation-{head_sha}-attempt-1"]
+         + [f"{tool.P2_9_ARTIFACT_PREFIX}-test-3.14-{head_sha}-attempt-1"] * 2
+         + [f"{tool.P2_9_ARTIFACT_PREFIX}-pyarrow24-{head_sha}-attempt-1"],
+         att_doc),
+        ("source_bundle_pyarrow24_ambiguous", [pull], {"workflow_runs": [run]}, jobs_ok,
+         [f"market-vault-full-ci-attestation-{head_sha}-attempt-1"]
+         + [f"{tool.P2_9_ARTIFACT_PREFIX}-test-3.14-{head_sha}-attempt-1"]
+         + [f"{tool.P2_9_ARTIFACT_PREFIX}-pyarrow24-{head_sha}-attempt-1"] * 2,
+         att_doc),
+        # V1 attestation downloaded but the expected exact content is
+        # absent => fail closed (no recursive first-match search)
+        ("v1_attestation_content_missing", [pull], {"workflow_runs": [run]}, jobs_ok,
+         art_names, att_doc, {"att_missing": True}),
+        # source bundle downloaded but missing source_evidence.json =>
+        # fail closed
+        ("source_bundle_test-3.14_evidence_missing", [pull], {"workflow_runs": [run]},
+         jobs_ok, art_names, att_doc, {"bundle_missing": ("test-3.14",)}),
+        ("source_bundle_pyarrow24_evidence_missing", [pull], {"workflow_runs": [run]},
+         jobs_ok, art_names, att_doc, {"bundle_missing": ("pyarrow24",)}),
+        # downloaded bundle tampered => schema / binding / replay fail
+        # closed (evidence validation is never weakened)
+        ("source_bundle_test-3.14_schema_invalid", [pull], {"workflow_runs": [run]},
+         jobs_ok, art_names, att_doc,
+         {"bundle_transform": _locator_tamper_evidence_schema}),
+        ("source_bundle_test-3.14_binding_mismatch", [pull], {"workflow_runs": [run]},
+         jobs_ok, art_names, att_doc,
+         {"bundle_transform": _locator_tamper_evidence_binding}),
+        ("source_bundle_test-3.14_replay_failed", [pull], {"workflow_runs": [run]},
+         jobs_ok, art_names, att_doc,
+         {"bundle_transform": _locator_tamper_wheel_bytes}),
     ]
-    for expect, pulls, runs, jobs, names, att in cases:
+    for case in cases:
+        expect, pulls, runs, jobs, names, att = case[:6]
+        kwargs = case[6] if len(case) > 6 else {}
         _locator_canned(
             tmp_path, monkeypatch, pulls=pulls, runs=runs, jobs=jobs,
-            art_names=names, att_doc=att, bundles=bundles,
+            art_names=names, att_doc=att, bundles=bundles, **kwargs,
         )
         with pytest.raises(tool.SourceLocatorError, match=expect):
             tool.locate_source_evidence(ROOT, _locator_ctx())

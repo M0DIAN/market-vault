@@ -3455,8 +3455,46 @@ def _gh_api(api_path: str, env=None) -> object:
         raise SourceLocatorError(f"gh_api_malformed:{api_path}:{exc}") from exc
 
 
-def _gh_run_download(run_id: int, name: str, dest: Path, repo_slug: str, env=None) -> None:
-    dest.mkdir(parents=True, exist_ok=True)
+def _gh_run_download(run_id: int, name: str, dest: Path, repo_slug: str, env=None) -> Path:
+    """Download ONE named artifact with gh run download and resolve its
+    contents under the ACTUAL single-artifact --dir layout.
+
+    Layout contract (pinned; proven by the real main-push run
+    31929326960): ``gh run download <run> --name <single artifact>
+    --dir <dest>`` writes the artifact's contents DIRECTLY under dest —
+    never under a ``dest/<artifact_name>`` subdirectory. The previous
+    implementation required ``dest/<artifact_name>`` to exist and failed
+    with gh_run_download_layout_unexpected against the real runner.
+
+    Fail-closed rules:
+      - dest must be fresh / empty before the download (stale or mixed
+        prior content would poison the evidence => fail closed);
+      - gh return code != 0 => existing gh_run_download_error;
+      - zero downloaded entries => fail closed (gh_run_download_empty);
+      - any top-level entry whose name equals the artifact name => the
+        old synthetic nested layout or a mixed direct+nested layout =>
+        fail closed (gh_run_download_layout_unexpected); a nested layout
+        is NEVER silently interpreted as equivalent to the direct layout;
+      - the downloaded evidence is consumed in place from the destination
+        root: it is never moved, rewritten, repacked, or mutated, and
+        never searched recursively (no first-match ambiguity).
+    Token values never enter errors, evidence, or logs — gh receives the
+    token through the subprocess environment only.
+
+    Returns the resolved bundle root: the destination itself.
+    """
+    if dest.exists():
+        if not dest.is_dir():
+            raise SourceLocatorError(f"gh_run_download_dest_not_dir:{name}")
+        try:
+            if any(dest.iterdir()):
+                raise SourceLocatorError(f"gh_run_download_dest_not_empty:{name}")
+        except OSError as exc:
+            raise SourceLocatorError(
+                f"gh_run_download_dest_unreadable:{name}:{exc}"
+            ) from exc
+    else:
+        dest.mkdir(parents=True, exist_ok=True)
     proc = subprocess.run(
         ["gh", "run", "download", str(run_id), "--name", name,
          "--dir", str(dest), "-R", repo_slug],
@@ -3466,9 +3504,17 @@ def _gh_run_download(run_id: int, name: str, dest: Path, repo_slug: str, env=Non
         raise SourceLocatorError(
             f"gh_run_download_error:{name}:{proc.stderr.strip()[-200:]}"
         )
-    artifact_dir = dest / name
-    if not artifact_dir.is_dir():
+    try:
+        entries = list(dest.iterdir())
+    except OSError as exc:
+        raise SourceLocatorError(
+            f"gh_run_download_dest_unreadable:{name}:{exc}"
+        ) from exc
+    if not entries:
+        raise SourceLocatorError(f"gh_run_download_empty:{name}")
+    if any(p.name == name for p in entries):
         raise SourceLocatorError(f"gh_run_download_layout_unexpected:{name}")
+    return dest
 
 
 def locate_source_evidence(repo: Path, ctx: dict, env=None) -> dict:
@@ -3479,7 +3525,13 @@ def locate_source_evidence(repo: Path, ctx: dict, env=None) -> dict:
     FULL attestation with tested_tree_sha == tree(P); locate exactly one
     test-3.14 and exactly one pyarrow24 P2-9 source artifact; validate
     artifact head/run/attempt/surface bindings; replay retained source
-    artifacts read-only. Read-only GitHub API access only, gated on an
+    artifacts read-only. Every download uses the direct --dir layout
+    contract (_gh_run_download): artifact contents resolve at the fresh
+    empty destination root — the V1 attestation consumer requires
+    <dest>/ci_full_attestation.json exactly, and each source bundle
+    consumer treats <dest> as the bundle root (strict
+    bundle/schema/manifest/verifier validation unchanged). Read-only
+    GitHub API access only, gated on an
     explicit gh-CLI auth source: without GH_TOKEN (or the gh-CLI-documented
     GITHUB_TOKEN alias) the locator fail-closes BEFORE any positive locator
     work with the stable source_auth_missing reason — it never silently
@@ -3569,8 +3621,10 @@ def locate_source_evidence(repo: Path, ctx: dict, env=None) -> dict:
             "v1_attestation_" + ("ambiguous" if len(att_matches) > 1 else "not_found")
         )
     tmp_att = Path(tempfile.mkdtemp(prefix="p29_loc_att_"))
-    _gh_run_download(run_id, att_name, tmp_att, repo_slug, env)
-    att_path = tmp_att / att_name / "ci_full_attestation.json"
+    att_root = _gh_run_download(run_id, att_name, tmp_att, repo_slug, env)
+    # Direct-layout contract: the single-artifact download's contents live
+    # at the destination root (never under <dest>/<artifact_name>).
+    att_path = att_root / "ci_full_attestation.json"
     if not att_path.is_file():
         raise SourceLocatorError("v1_attestation_content_missing")
     try:
@@ -3605,8 +3659,11 @@ def locate_source_evidence(repo: Path, ctx: dict, env=None) -> dict:
                 + ("ambiguous" if len(matches) > 1 else "not_found")
             )
         tmp_b = Path(tempfile.mkdtemp(prefix=f"p29_loc_{surface}_"))
-        _gh_run_download(run_id, name, tmp_b, repo_slug, env)
-        bundle_dir = tmp_b / name
+        # Direct-layout contract: the downloaded bundle root IS the
+        # destination; the existing strict bundle/schema/manifest/verifier
+        # validation below runs against that root (never under a
+        # <dest>/<artifact_name> subdirectory).
+        bundle_dir = _gh_run_download(run_id, name, tmp_b, repo_slug, env)
         ev_p = bundle_dir / SOURCE_EVIDENCE_NAME
         if not ev_p.is_file():
             raise SourceLocatorError(f"source_bundle_{surface}_evidence_missing")
