@@ -3442,13 +3442,14 @@ class SourceLocatorError(RuntimeError):
 
 def _gh_api(api_path: str, env=None) -> object:
     # Reachable only behind the locate_source_evidence auth gate; the
-    # token value is passed in the subprocess env, never printed.
+    # token value is passed in the subprocess env, never printed, and
+    # never echoed into the error: gh stderr is NOT interpolated.
     proc = subprocess.run(
         ["gh", "api", api_path],
         capture_output=True, text=True, env=env or os.environ, check=False,
     )
     if proc.returncode != 0:
-        raise SourceLocatorError(f"gh_api_error:{api_path}:{proc.stderr.strip()[-200:]}")
+        raise SourceLocatorError(f"gh_api_error:{api_path}:rc={proc.returncode}")
     try:
         return json.loads(proc.stdout)
     except Exception as exc:
@@ -3469,7 +3470,10 @@ def _gh_run_download(run_id: int, name: str, dest: Path, repo_slug: str, env=Non
     Fail-closed rules:
       - dest must be fresh / empty before the download (stale or mixed
         prior content would poison the evidence => fail closed);
-      - gh return code != 0 => existing gh_run_download_error;
+      - gh return code != 0 => gh_run_download_error:<name>:rc=<N>: the
+        reason carries the rc ONLY — raw gh stderr is never interpolated
+        into the exception, so a token value that gh might echo on a
+        failure can never reach errors, evidence, or logs;
       - zero downloaded entries => fail closed (gh_run_download_empty);
       - any top-level entry whose name equals the artifact name => the
         old synthetic nested layout or a mixed direct+nested layout =>
@@ -3502,7 +3506,7 @@ def _gh_run_download(run_id: int, name: str, dest: Path, repo_slug: str, env=Non
     )
     if proc.returncode != 0:
         raise SourceLocatorError(
-            f"gh_run_download_error:{name}:{proc.stderr.strip()[-200:]}"
+            f"gh_run_download_error:{name}:rc={proc.returncode}"
         )
     try:
         entries = list(dest.iterdir())

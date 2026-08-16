@@ -1735,6 +1735,22 @@ def _gh_run_download_with(monkeypatch, layout, rc=0):
     monkeypatch.setattr(tool.subprocess, "run", _FakeGhDownload(layout, rc, subprocess.run))
 
 
+class _FakeGhError:
+    """Simulates gh failing with rc=1 whose raw stderr carries the
+    sensitive token value — the exact leak vector the rc-only error
+    contract must neutralize (token must never reach the exception)."""
+
+    def __init__(self, real_run):
+        self._real_run = real_run
+
+    def __call__(self, cmd, *args, **kwargs):
+        if cmd[0] != "gh":
+            return self._real_run(cmd, *args, **kwargs)
+        return subprocess.CompletedProcess(
+            cmd, 1, stdout="", stderr=f"fatal: {SENSITIVE_TEST_TOKEN}"
+        )
+
+
 def _locator_ctx() -> dict:
     return tool.main_push_context(ROOT, _main_push_env())
 
@@ -1828,6 +1844,33 @@ def test_gh_run_download_fails_closed_dest_not_empty(monkeypatch, tmp_path):
     _gh_run_download_with(monkeypatch, "direct", rc=0)
     with pytest.raises(tool.SourceLocatorError, match="gh_run_download_dest_not_empty"):
         tool._gh_run_download(777, "att-name", dest, "M0DIAN/market-vault")
+
+
+def test_gh_run_download_error_omits_stderr_and_token(monkeypatch, tmp_path):
+    """Token-safe error path: a FAILING gh run download whose raw stderr
+    would echo the token must raise the stable rc-only reason
+    gh_run_download_error:<name>:rc=<N> — raw stderr is never
+    interpolated, so the token cannot reach the exception (or anything
+    the exception is later propagated into: aggregate output/evidence)."""
+    monkeypatch.setenv("GH_TOKEN", SENSITIVE_TEST_TOKEN)
+    monkeypatch.setattr(tool.subprocess, "run", _FakeGhError(subprocess.run))
+    with pytest.raises(tool.SourceLocatorError) as exc:
+        tool._gh_run_download(777, "att-name", tmp_path / "d", "M0DIAN/market-vault")
+    assert str(exc.value) == "gh_run_download_error:att-name:rc=1"
+    assert SENSITIVE_TEST_TOKEN not in str(exc.value)
+
+
+def test_gh_api_error_omits_stderr_and_token(monkeypatch):
+    """Token-safe error path: a FAILING gh api whose raw stderr would
+    echo the token must raise the stable rc-only reason
+    gh_api_error:<api-path>:rc=<N> — raw stderr is never interpolated,
+    so the token cannot reach the exception."""
+    monkeypatch.setenv("GH_TOKEN", SENSITIVE_TEST_TOKEN)
+    monkeypatch.setattr(tool.subprocess, "run", _FakeGhError(subprocess.run))
+    with pytest.raises(tool.SourceLocatorError) as exc:
+        tool._gh_api("repos/M0DIAN/market-vault/actions/runs/777")
+    assert str(exc.value) == "gh_api_error:repos/M0DIAN/market-vault/actions/runs/777:rc=1"
+    assert SENSITIVE_TEST_TOKEN not in str(exc.value)
 
 
 def test_locate_source_evidence_ok(tmp_path, monkeypatch):
@@ -2160,6 +2203,124 @@ def test_aggregate_fail_closes_to_all_run_on_source_unavailable(tmp_path, monkey
             if e["path"] != tool.TARGET_EVIDENCE_NAME
         ]
         assert tool.manifest_content_digest(entries) == ev["evidence_manifest_sha256"]
+
+
+def _run_aggregate_gh_token_failure(tmp_path, monkeypatch, capsys, fail_gh):
+    """Run cmd_aggregate with GH_TOKEN=SENSITIVE_TEST_TOKEN where gh
+    invocations selected by fail_gh(cmd) return rc=1 with raw stderr
+    carrying the token value. Returns (rc, out_lines, out_dir)."""
+    main_env = _main_push_env()
+    probe_dir = tmp_path / "probe"
+    for surface in tool.SURFACES:
+        _build_target_payload(probe_dir / surface, surface, main_env)
+    for k, v in main_env.items():
+        if k.startswith("GITHUB_"):
+            monkeypatch.setenv(k, v)
+    monkeypatch.setenv("GH_TOKEN", SENSITIVE_TEST_TOKEN)
+    real_run = subprocess.run  # capture BEFORE the monkeypatch below
+
+    def gh_or_real(cmd, *args, **kwargs):
+        if cmd[0] == "gh":
+            if fail_gh(cmd):
+                return subprocess.CompletedProcess(
+                    cmd, 1, stdout="", stderr=f"fatal: {SENSITIVE_TEST_TOKEN}"
+                )
+            raise AssertionError(f"unexpected gh invocation: {cmd}")
+        return real_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(tool.subprocess, "run", gh_or_real)
+    out = tmp_path / "out"
+    ns = argparse.Namespace(out_dir=str(out), probe_dir=str(probe_dir), repo=str(ROOT))
+    rc = tool.cmd_aggregate(ns)
+    out_lines = capsys.readouterr().out
+    return rc, out_lines, out
+
+
+def _assert_aggregate_token_fail_closed(rc, out_lines, out, tmp_path, reason):
+    """Shared assertions: the failing locator must leave the aggregate
+    RUN-never-REUSED on every surface, with the STABLE rc-only reason in
+    the aggregate output and the token absent from every stdout line and
+    every on-disk evidence byte."""
+    assert rc == 0
+    assert "SOURCE_LOCATOR_AVAILABLE=false" in out_lines
+    assert f"SOURCE_LOCATOR_REASON={reason}" in out_lines
+    assert SENSITIVE_TEST_TOKEN not in out_lines
+    for surface in tool.SURFACES:
+        assert f"TARGET_VERDICT_{surface}=run" in out_lines
+        assert f"TARGET_REASON_{surface}=run:source_unavailable:{reason}" in out_lines
+        # per-surface retained bundle still replays offline with its own
+        # verifier copy (the closure must not be poisoned by the failure)
+        summary_out = tmp_path / f"replay_{surface}.txt"
+        proc = run_verify_bundle(out / surface, summary_out)
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+    # the token is absent from EVERY captured output line and EVERY file
+    # the aggregate wrote (target evidence, source reference, receipts)
+    for p in sorted(out.rglob("*")):
+        if p.is_file():
+            assert SENSITIVE_TEST_TOKEN.encode() not in p.read_bytes(), p
+
+
+def test_aggregate_gh_run_download_error_token_not_leaked(tmp_path, monkeypatch, capsys):
+    """End-to-end token safety for the gh run download failure path: the
+    locator reaches the download stage, gh fails with rc=1 and token-
+    carrying stderr, the locator fail-closes with the stable rc-only
+    reason gh_run_download_error:<name>:rc=1, the aggregate stays RUN on
+    every surface (never REUSE), and the token is absent from the
+    aggregate stdout AND from every on-disk evidence file."""
+    head_sha = "b" * 40
+    parent = MAIN_PUSH_PARENT_SHA
+    att_name = f"market-vault-full-ci-attestation-{head_sha}-attempt-1"
+
+    def canned_api(path, env=None):
+        if path.startswith(f"repos/M0DIAN/market-vault/commits/"):
+            return [{
+                "number": 84, "merged_at": "2026-08-15T00:00:00Z",
+                "state": "closed", "merge_commit_sha": parent,
+                "head": {"sha": head_sha},
+            }]
+        if "actions/runs?head_sha=" in path:
+            return {"workflow_runs": [{
+                "event": "pull_request", "head_sha": head_sha,
+                "path": ".github/workflows/ci.yml", "status": "completed",
+                "conclusion": "success", "id": 777, "run_attempt": 1,
+            }]}
+        if "/jobs?" in path:
+            return {"jobs": [
+                {"name": n, "conclusion": "success"}
+                for n in ["test (3.11)", "test (3.14)", "portability-pyarrow24", "package"]
+            ]}
+        if "/artifacts?" in path:
+            return {"artifacts": [{"name": att_name}]}
+        raise AssertionError(f"unexpected api path: {path}")
+
+    monkeypatch.setattr(tool, "_gh_api", canned_api)
+    rc, out_lines, out = _run_aggregate_gh_token_failure(
+        tmp_path, monkeypatch, capsys,
+        fail_gh=lambda cmd: cmd[1:3] == ["run", "download"],
+    )
+    _assert_aggregate_token_fail_closed(
+        rc, out_lines, out, tmp_path,
+        f"gh_run_download_error:{att_name}:rc=1",
+    )
+
+
+def test_aggregate_gh_api_error_token_not_leaked(tmp_path, monkeypatch, capsys):
+    """End-to-end token safety for the gh api failure path: the FIRST gh
+    api call fails with rc=1 and token-carrying stderr, the locator
+    fail-closes with the stable rc-only reason gh_api_error:<api-path>:rc=1
+    before any download, the aggregate stays RUN on every surface (never
+    REUSE), and the token is absent from the aggregate stdout AND from
+    every on-disk evidence file."""
+    main_env = _main_push_env()
+    ctx = tool.main_push_context(ROOT, main_env)
+    api_path = f"repos/M0DIAN/market-vault/commits/{ctx['parent_sha']}/pulls"
+    rc, out_lines, out = _run_aggregate_gh_token_failure(
+        tmp_path, monkeypatch, capsys,
+        fail_gh=lambda cmd: cmd[1:3] == ["api", api_path],
+    )
+    _assert_aggregate_token_fail_closed(
+        rc, out_lines, out, tmp_path, f"gh_api_error:{api_path}:rc=1",
+    )
 
 
 def test_aggregate_fails_closed_on_missing_auth(tmp_path, monkeypatch, capsys):
