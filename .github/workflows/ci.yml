@@ -941,6 +941,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -o pipefail
+          # Phase-S plumbing repair: the pipeline below tees the aggregate
+          # log into p2_9_target_out/aggregate.log, so the output directory
+          # must exist before tee opens the file. Without this mkdir the
+          # step failed on main-push runs (p2_9_target_out is only created
+          # by the aggregator itself, and tee races ahead of it).
+          mkdir -p p2_9_target_out
           python scripts/ci_p29_production_topology_shadow.py aggregate \
             --out-dir p2_9_target_out \
             --probe-dir p2_9_target_probe \
