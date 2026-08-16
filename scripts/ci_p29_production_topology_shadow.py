@@ -3333,9 +3333,12 @@ def cmd_validate_evidence(args) -> int:
 # machinery NOW. Every primitive below is shadow/measurement only:
 #   - main_push_context: M / exact single parent P / trees / run binding;
 #     fail-closed on not-main-push, merge topology, malformed identity.
-#   - locate_source_evidence: read-only GitHub API; one generation back
-#     from P. None / duplicate / ambiguity / malformed / expired /
-#     mismatched => source unavailable => surface RUN, never REUSE.
+#   - locate_source_evidence: read-only GitHub API (gh CLI, auth-gated:
+#     GH_TOKEN or the gh-CLI-documented GITHUB_TOKEN alias required —
+#     missing auth fails closed with source_auth_missing, never silent
+#     unauthenticated public-repo access); one generation back from P.
+#     None / duplicate / ambiguity / malformed / expired / mismatched /
+#     auth missing => source unavailable => surface RUN, never REUSE.
 #   - main_push_delta / classify_delta_paths: exact P..M changed paths with
 #     the sealed P2-8 fail-close contract (src/**, pyproject.toml,
 #     CI/control-plane inputs, repo-wide conftest, unknown/unclassified
@@ -3438,6 +3441,8 @@ class SourceLocatorError(RuntimeError):
 
 
 def _gh_api(api_path: str, env=None) -> object:
+    # Reachable only behind the locate_source_evidence auth gate; the
+    # token value is passed in the subprocess env, never printed.
     proc = subprocess.run(
         ["gh", "api", api_path],
         capture_output=True, text=True, env=env or os.environ, check=False,
@@ -3474,8 +3479,24 @@ def locate_source_evidence(repo: Path, ctx: dict, env=None) -> dict:
     FULL attestation with tested_tree_sha == tree(P); locate exactly one
     test-3.14 and exactly one pyarrow24 P2-9 source artifact; validate
     artifact head/run/attempt/surface bindings; replay retained source
-    artifacts read-only. Read-only GitHub API access only. Any violation
+    artifacts read-only. Read-only GitHub API access only, gated on an
+    explicit gh-CLI auth source: without GH_TOKEN (or the gh-CLI-documented
+    GITHUB_TOKEN alias) the locator fail-closes BEFORE any positive locator
+    work with the stable source_auth_missing reason — it never silently
+    assumes unauthenticated public-repository gh access. Any violation
     raises SourceLocatorError => source unavailable => surface RUN."""
+    if env is None:
+        env = os.environ
+    # Phase-S auth contract (fail closed): the locator drives the GitHub
+    # CLI (gh api / gh run download), and official GitHub Actions guidance
+    # requires GH_TOKEN for each workflow step using the GitHub CLI. Never
+    # silently assume unauthenticated public-repository gh access: without
+    # an explicit auth source the locator refuses before any positive
+    # locator work. The token VALUE is never printed, never written into
+    # evidence, never echoed into errors. source_auth_missing => source
+    # unavailable => every surface RUN, never REUSE.
+    if not (env.get("GH_TOKEN") or env.get("GITHUB_TOKEN")):
+        raise SourceLocatorError("source_auth_missing")
     repo_slug = ctx["repository"]
     parent_sha = ctx["parent_sha"]
     parent_tree_sha = ctx["parent_tree_sha"]
@@ -4212,10 +4233,11 @@ def cmd_target_probe(args) -> int:
 
 def cmd_aggregate(args) -> int:
     """MAIN-PUSH target shadow aggregator (Phase-T pre-stage): source
-    evidence locator (read-only GitHub API, one generation back from P),
-    exact P..M delta evaluator, target shadow evidence class, P2-7 closure
-    finalize + pre-upload replay. Source unavailable => every surface RUN,
-    never REUSE; nothing activates. Read-only GitHub API access only."""
+    evidence locator (read-only GitHub API via the gh CLI, one generation
+    back from P; auth-gated — missing GH_TOKEN/GITHUB_TOKEN fails closed
+    with source_auth_missing), exact P..M delta evaluator, target shadow
+    evidence class, P2-7 closure finalize + pre-upload replay. Source
+    unavailable => every surface RUN, never REUSE; nothing activates."""
     repo = Path(args.repo).resolve()
     try:
         ctx = main_push_context(repo)

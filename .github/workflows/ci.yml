@@ -925,12 +925,20 @@ jobs:
 
       - name: Run P2-9 main-push target shadow aggregation
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane'
-        # Read-only, step-scoped, unauthenticated GitHub API access only
-        # (public repo): no GITHUB_TOKEN binding — the sealed v061 audit
-        # contract pins exactly three step-scoped token bindings, one per
-        # "Post-merge FULL reuse proof" step. Any locator/API failure
-        # fail-closes to source unavailable => every surface RUN, never
-        # REUSE.
+        # Read-only, step-scoped GitHub CLI auth (Phase-S): the aggregator
+        # invokes the GitHub CLI (gh api / gh run download), and official
+        # GitHub Actions guidance requires GH_TOKEN for each workflow step
+        # using the GitHub CLI. The binding is deliberately GH_TOKEN —
+        # never a fourth GITHUB_TOKEN — so the sealed v061 audit contract
+        # (exactly three step-scoped GITHUB_TOKEN bindings, one per
+        # "Post-merge FULL reuse proof" step) stays byte-semantically
+        # intact. Read-only under the workflow permissions; never printed;
+        # never written into evidence; never inherited by unrelated steps.
+        # The locator fail-closes on missing auth (source_auth_missing);
+        # any locator/API failure => source unavailable => every surface
+        # RUN, never REUSE.
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -o pipefail
           python scripts/ci_p29_production_topology_shadow.py aggregate \

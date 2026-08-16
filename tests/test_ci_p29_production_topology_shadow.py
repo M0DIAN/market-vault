@@ -50,6 +50,21 @@ CI_YML = ROOT / ".github" / "workflows" / "ci.yml"
 MAIN_PUSH_TARGET_SHA = "a12694fff7f99e61ec34b787d7147655c81d9008"
 MAIN_PUSH_PARENT_SHA = "8b3d789c2445bf3d5b62bfe0e43a5ab9ae18b0ee"
 
+# Phase-S auth contract: a distinctive mocked gh-CLI token used to pin
+# that the token VALUE never appears in aggregate log, target evidence,
+# source evidence, replay receipt, or exception output.
+SENSITIVE_TEST_TOKEN = "ghp_P2_9_SENSITIVE_TOKEN_VALUE_0001"
+
+
+def _ci_step_regions(ci: str) -> list[tuple[str, str]]:
+    """[(step name, step region)] over every '- name:' step of ci.yml."""
+    anchors = [(m.start(), m.group(1))
+               for m in re.finditer(r"(?m)^      - name: (.+)$", ci)]
+    return [
+        (name, ci[pos:(anchors[i + 1][0] if i + 1 < len(anchors) else len(ci))])
+        for i, (pos, name) in enumerate(anchors)
+    ]
+
 
 def _load_tool() -> "module":
     spec = importlib.util.spec_from_file_location("ci_p29_tool", SCRIPT)
@@ -1664,6 +1679,9 @@ def _locator_att_doc(head_sha, parent, parent_tree, run_id=777):
 
 
 def test_locate_source_evidence_ok(tmp_path, monkeypatch):
+    # Phase-S auth contract: with a mocked gh-CLI auth source the locator
+    # passes the auth gate and reaches the existing positive locator path.
+    monkeypatch.setenv("GH_TOKEN", SENSITIVE_TEST_TOKEN)
     head_sha = "b" * 40
     parent = MAIN_PUSH_PARENT_SHA
     parent_tree = subprocess.check_output(
@@ -1709,9 +1727,23 @@ def test_locate_source_evidence_ok(tmp_path, monkeypatch):
         assert b["evidence"]["pr_head_sha"] == head_sha
         assert int(b["replay_check_count"]) > 0
         assert b["normalized_fingerprint_sha256"]
+    # Phase-S auth contract: the token VALUE never appears in locator
+    # output or in the produced source evidence / attestation / replay
+    # state — presence is asserted, contents are never persisted.
+    assert SENSITIVE_TEST_TOKEN not in json.dumps(loc, sort_keys=True, default=str)
+    for surface in tool.SURFACES:
+        b = loc["bundles"][surface]
+        for p in b["bundle_dir"].rglob("*"):
+            if p.is_file():
+                assert SENSITIVE_TEST_TOKEN not in p.read_text(
+                    encoding="utf-8", errors="replace"
+                ), p
 
 
 def test_locate_source_evidence_fail_closed_cases(tmp_path, monkeypatch):
+    # Phase-S auth contract: every retained none/duplicate/ambiguous/
+    # tamper negative is still reached behind a mocked gh-CLI auth source.
+    monkeypatch.setenv("GH_TOKEN", "test-token")
     head_sha = "b" * 40
     parent = MAIN_PUSH_PARENT_SHA
     parent_tree = subprocess.check_output(
@@ -1775,6 +1807,44 @@ def test_locate_source_evidence_fail_closed_cases(tmp_path, monkeypatch):
             tool.locate_source_evidence(ROOT, _locator_ctx())
 
 
+def test_locate_source_evidence_fails_closed_without_auth(monkeypatch):
+    """Phase-S auth contract: without an explicit gh-CLI auth source
+    (GH_TOKEN or its gh-CLI-documented GITHUB_TOKEN alias) the locator
+    fail-closes with the stable source_auth_missing reason BEFORE any
+    positive locator work — it must never silently assume
+    unauthenticated public-repository gh access, and the failure is a
+    bare stable reason (no token, no environment dump)."""
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    env = {k: v for k, v in _main_push_env().items()
+           if k not in ("GH_TOKEN", "GITHUB_TOKEN")}
+
+    def unexpected_gh_call(*args, **kwargs):
+        raise AssertionError("locator must fail closed before any gh call")
+
+    monkeypatch.setattr(tool, "_gh_api", unexpected_gh_call)
+    with pytest.raises(tool.SourceLocatorError) as exc:
+        tool.locate_source_evidence(ROOT, _locator_ctx(), env=env)
+    assert str(exc.value) == "source_auth_missing"
+
+
+def test_locate_source_evidence_accepts_gh_cli_token_alias(monkeypatch):
+    """Phase-S auth contract: the gh-CLI-documented GITHUB_TOKEN alias is
+    an explicitly supported equivalent auth source — with it set the
+    locator passes the auth gate into positive locator work instead of
+    failing source_auth_missing."""
+    env = {k: v for k, v in _main_push_env().items()
+           if k not in ("GH_TOKEN", "GITHUB_TOKEN")}
+    env["GITHUB_TOKEN"] = "test-token-alias"
+
+    def first_gh_call_is_auth_past(*args, **kwargs):
+        raise tool.SourceLocatorError("source_pr_none")
+
+    monkeypatch.setattr(tool, "_gh_api", first_gh_call_is_auth_past)
+    with pytest.raises(tool.SourceLocatorError, match="source_pr_none"):
+        tool.locate_source_evidence(ROOT, _locator_ctx(), env=env)
+
+
 # ---------------------------------------------------------------------------
 # Phase-T pre-stage: aggregate (main-push target shadow, fail-close to RUN)
 
@@ -1823,7 +1893,7 @@ def _build_target_payload(pdir: Path, surface: str, main_env: dict) -> dict:
     return payload
 
 
-def _run_aggregate(tmp_path, monkeypatch, capsys):
+def _run_aggregate(tmp_path, monkeypatch, capsys, token="test-token"):
     main_env = _main_push_env()
     probe_dir = tmp_path / "probe"
     for surface in tool.SURFACES:
@@ -1831,6 +1901,10 @@ def _run_aggregate(tmp_path, monkeypatch, capsys):
     for k, v in main_env.items():
         if k.startswith("GITHUB_"):
             monkeypatch.setenv(k, v)
+    # Phase-S auth contract: a mocked gh-CLI auth source is required to
+    # reach the locator path (token=None exercises the no-auth fail-close).
+    if token is not None:
+        monkeypatch.setenv("GH_TOKEN", token)
 
     def source_unavailable(*args, **kwargs):
         raise tool.SourceLocatorError("source_pr_none")
@@ -1880,6 +1954,48 @@ def test_aggregate_fail_closes_to_all_run_on_source_unavailable(tmp_path, monkey
             if e["path"] != tool.TARGET_EVIDENCE_NAME
         ]
         assert tool.manifest_content_digest(entries) == ev["evidence_manifest_sha256"]
+
+
+def test_aggregate_fails_closed_on_missing_auth(tmp_path, monkeypatch, capsys):
+    """Phase-S auth contract end-to-end: with no gh-CLI auth source the
+    aggregator fail-closes to source unavailable (SOURCE_LOCATOR_REASON=
+    source_auth_missing) and every surface RUNs — never REUSE, and the
+    target evidence closure still completes."""
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    rc, out_lines, out, _ = _run_aggregate(tmp_path, monkeypatch, capsys, token=None)
+    assert rc == 0
+    assert "SOURCE_LOCATOR_AVAILABLE=false" in out_lines
+    assert "SOURCE_LOCATOR_REASON=source_auth_missing" in out_lines
+    assert "TARGET_EVIDENCE_OK=true" in out_lines
+    for surface in tool.SURFACES:
+        assert f"TARGET_VERDICT_{surface}=run" in out_lines
+        assert f"TARGET_REASON_{surface}=run:source_unavailable:source_auth_missing" in out_lines
+        assert f"TARGET_EVIDENCE_BUNDLE_REPLAY_OK_{surface}=true" in out_lines
+
+
+def test_aggregate_never_leaks_token_value(tmp_path, monkeypatch, capsys):
+    """Phase-S auth contract: the step-scoped token VALUE never appears in
+    the aggregate log, the target evidence / source reference / manifest
+    docs, or the post-upload replay receipt — presence is asserted,
+    contents are never printed or persisted."""
+    monkeypatch.setenv("GH_TOKEN", SENSITIVE_TEST_TOKEN)
+    rc, out_lines, out, _ = _run_aggregate(
+        tmp_path, monkeypatch, capsys, token=SENSITIVE_TEST_TOKEN
+    )
+    assert rc == 0
+    assert "SOURCE_LOCATOR_REASON=source_pr_none" in out_lines
+    assert SENSITIVE_TEST_TOKEN not in out_lines
+    for p in out.rglob("*"):
+        if p.is_file():
+            assert SENSITIVE_TEST_TOKEN not in p.read_text(
+                encoding="utf-8", errors="replace"
+            ), p
+    for surface in tool.SURFACES:
+        summary = tmp_path / f"leak_replay_{surface}.txt"
+        proc = run_verify_bundle(out / surface, summary)
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert SENSITIVE_TEST_TOKEN not in summary.read_text(encoding="utf-8")
 
 
 def test_aggregate_target_evidence_cross_doc_consistency(tmp_path, monkeypatch, capsys):
@@ -2035,8 +2151,29 @@ def test_main_push_shadow_steps_prestaged_in_ci_yml():
         assert f"{tool.P2_9_TARGET_PROBE_ARTIFACT_PREFIX}-{surface}-" in ci
         assert f"{tool.P2_9_TARGET_ARTIFACT_PREFIX}-{surface}-${{{{ github.sha }}}}-attempt-${{{{ github.run_attempt }}}}" in ci
     assert "Run P2-9 main-push target shadow aggregation" in ci
-    assert "GITHUB_TOKEN: ${{ github.token }}" in ci
     # the aggregate output feeds exact target bundle uploads + retained replays
     for action in ("actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
                    "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"):
         assert action in ci
+    # Phase-S auth contract: the aggregation step is the ONLY step
+    # carrying the step-scoped GH_TOKEN binding (official GitHub Actions
+    # guidance requires GH_TOKEN for each workflow step using the GitHub
+    # CLI), and the sealed v061 contract stays byte-semantically intact —
+    # exactly three GITHUB_TOKEN bindings, each inside a "Post-merge FULL
+    # reuse proof" step only. The P2-9 step must not add a fourth
+    # GITHUB_TOKEN.
+    gh_binding = "GH_TOKEN: ${{ github.token }}"
+    v1_binding = "GITHUB_TOKEN: ${{ github.token }}"
+    steps = _ci_step_regions(ci)
+    gh_steps = [name for name, region in steps if gh_binding in region]
+    assert gh_steps == ["Run P2-9 main-push target shadow aggregation"]
+    agg_region = next(
+        region for name, region in steps
+        if name == "Run P2-9 main-push target shadow aggregation"
+    )
+    assert gh_binding in agg_region
+    assert v1_binding not in agg_region
+    assert ci.count(v1_binding) == 3
+    for name, region in steps:
+        if v1_binding in region:
+            assert name == "Post-merge FULL reuse proof", name
