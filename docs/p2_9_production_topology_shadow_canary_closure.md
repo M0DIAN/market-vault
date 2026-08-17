@@ -5,9 +5,9 @@
 The P2-9 production-topology shadow canary measured, end to end and on the
 real production topology, whether a single-file delta between a formally
 verified source PR and a production target main push could be safely
-resolved per-surface (REUSE or RUN) by the V1-reuse semantic machinery
-implemented in `scripts/ci_post_merge_reuse.py`. The canary is now formally
-closed.
+resolved per surface (REUSE or RUN) by the temporary P2-9 shadow machinery,
+using the existing V1 FULL attestation / exact-tree provenance path as a
+source-proof anchor. The canary is now formally closed.
 
 **No activation:** Partial Reuse V2 remains **OFF**. Nothing in this
 experiment activates V2. The V2 foundation remains present in the tree but
@@ -141,13 +141,21 @@ PRODUCTION_TOPOLOGY_SHADOW_CANARY=PASS
   is NOT rewritten.** It is sealed historical review truth at that commit:
   the production V2 surface-evidence bridge was **OPEN** in #83.
 - The later P2-9 experiment **closed that specific production-topology
-  bridge**: it exercised the full P → M chain on real production runs and
-  demonstrated the V1 semantic machinery resolving a real single-file delta
-  per surface (RUN for the affected surface, REUSE for the unaffected
-  surface), with exact tree equivalence backing the V1 decision.
+  bridge**: the temporary P2-9 shadow evaluator resolved the controlled
+  single-file delta per surface — RUN for the affected test-3.14 surface
+  and REUSED for the unaffected pyarrow24 surface — while the independent
+  V1 gate simultaneously proved its separate global FULL exact-tree reuse
+  contract and supplied attestation/provenance evidence used by the source
+  proof. The separation is explicit:
+
+  - **V1**: global FULL exact-tree reuse.
+  - **P2-9 shadow**: per-surface production-topology measurement.
+  - **V2**: future production partial-reuse mechanism, still **OFF**.
 - **Successful shadow evidence does NOT itself authorize activation.** The
-  canary is measurement-only; its PASS is evidence about the V1 path, not a
-  V2 enablement decision.
+  canary is measurement-only; its PASS closes the specific P2-9
+  production-topology / per-surface evidence bridge left OPEN by PR #83.
+  It does not mean that V1 performs per-surface reuse, and it does not
+  activate V2.
 - **V2 activation requires a separate, explicitly reviewed production PR**
   with its own exact-head FULL CI and independent review. Nothing in this
   canary, its reports, or its closure constitutes that review.
