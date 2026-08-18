@@ -30,12 +30,17 @@ value; an unknown version fails closed.
 | `docs` | `["docs/"]` | docs scope: changes limited to these paths classify `docs_fast` |
 | `package_docs` | `["README.md"]` | package-metadata docs: a change limited to these plus `docs` classifies `package_docs` |
 | `control_plane` | *required* | control-plane surface: mutating any of these forces FULL (reported as `shared_changed`) |
-| `control_plane_eligible` | `[workflow_path, config file]` | the exact fast-eligible subset that may classify `control_plane` |
+| `control_plane_eligible` | `[]` (disabled) | OPT-IN: the exact fast-eligible subset that may classify `control_plane`; there is NO auto-default to the workflow path or config filename |
 
 `control_plane` is required: a conservative default would silently make
 control-plane mutations eligible for fast paths, which is never
-acceptable. `control_plane_eligible` must be an exact allowlist —
-anything outside it (including other control-plane paths) stays FULL.
+acceptable. `control_plane_eligible` is an OPT-IN extension, disabled
+by default — the generic framework never silently claims a
+downstream-specific control-plane validation surface. Omission and an
+explicit `[]` are equivalent (disabled); every non-empty eligible rule
+must be contained by `[paths].control_plane` (else `ConfigError`), and
+anything outside the eligible subset (including other control-plane
+paths) stays FULL.
 
 Rules match exactly or by directory prefix (`"docs/"` matches
 `docs/a.md`; `"ciopt.toml"` matches only that file). Trailing slashes

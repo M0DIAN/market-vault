@@ -40,6 +40,7 @@ Concretely, every ambiguity lands on the expensive side:
 | verifier process crash (non-zero exit) | workflow exports `POST_MERGE_REUSE=false` (`reason=verifier_crash_fail_closed`) |
 | classifier failure (non-zero exit) | workflow exports `CI_TIER=full` (`CI_TIER_REASON=classifier_error_fail_closed`) |
 | anything other than the literal `"true"` in `POST_MERGE_REUSE` | heavy validation RUNS |
+| a fast tier that does not cover the exact surface (e.g. `package_docs` reaching the package surface) | heavy validation RUNS — a heavy surface may skip only when that exact surface is explicitly unnecessary under a validated tier contract, or `POST_MERGE_REUSE` is the literal `"true"` |
 
 ## Attack / failure cases
 

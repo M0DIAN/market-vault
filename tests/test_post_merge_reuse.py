@@ -14,6 +14,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
+from pathlib import Path
 
 import pytest
 
@@ -23,7 +24,9 @@ from ci_optimizer.github_api import APIError, GitHubAPI
 from ci_optimizer.post_merge_reuse import (
     REUSE_OK_REASON,
     Verdict,
+    effective_control_plane_paths,
     render_verdict,
+    resolve_config_repo_path,
     run_verifier,
     skip_heavy_validation,
 )
@@ -31,6 +34,7 @@ from ci_optimizer.post_merge_reuse import (
 from .conftest import (
     ATTEMPT,
     BASE,
+    CONFIG_TEXT,
     HEAD,
     MAIN,
     MERGE,
@@ -137,10 +141,14 @@ class FakeGit:
         parents: tuple[str, ...] = (BASE,),
         tree: str = TREE,
         changed: list[str] | tuple[str, ...] = (),
+        repo_dir: str | None = None,
     ):
         self.parents = list(parents)
         self.tree = tree
         self.changed = list(changed)
+        # Mirrors the real Git(repo_dir=...) attribute the verifier uses
+        # to resolve the active config path (mandatory self-protection).
+        self.repo_dir = repo_dir
         self.calls: list[str] = []
 
     def changed_paths(
@@ -230,7 +238,11 @@ def run_verifier_f(
     **shape: object,
 ) -> Verdict:
     """Run the full orchestrator with a fully valid context; override the
-    event shape, the API fakes, or the git fakes as needed."""
+    event shape, the API fakes, or the git fakes as needed.
+
+    The fake repo root defaults to the active config file's directory so
+    the mandatory config-path self-protection resolves (as it does in
+    production, where the config lives inside the checkout)."""
     event = {
         "repository": REPO,
         "event_name": "push",
@@ -240,13 +252,21 @@ def run_verifier_f(
     }
     event.update(shape)
     api = FakeAPI(**(api_kwargs or {}))
-    git = FakeGit(**(git_kwargs or {}))
+    kwargs = dict(git_kwargs or {})
+    kwargs.setdefault("repo_dir", str(Path(config.config_path).parent))
+    git = FakeGit(**kwargs)
     return run_verifier(config=config, api=api, git=git, **event)
 
 
 def marker_of(verdict: Verdict) -> str:
     """The POST_MERGE_REUSE value the workflow would parse from the log."""
     return render_verdict(verdict).splitlines()[0].split("=", 1)[1]
+
+
+def fake_git_dir(config) -> str:
+    """Repo root the fake git wrapper runs in: the config's directory (as
+    in production, where the active config lives inside the checkout)."""
+    return str(Path(config.config_path).parent)
 
 
 # ---------------------------------------------------------------------------
@@ -446,7 +466,8 @@ def test_candidates_inspected_newest_first(config) -> None:
     )
     v = run_verifier(
         config=config, repository=REPO, event_name="push", ref=MAIN_REF,
-        before_sha=BASE, main_sha=MAIN, api=api, git=FakeGit(),
+        before_sha=BASE, main_sha=MAIN, api=api,
+        git=FakeGit(repo_dir=fake_git_dir(config)),
     )
     assert v.reuse is True
     assert v.pr_run_id == RUN_ID
@@ -462,7 +483,8 @@ def test_all_candidates_failing_denies_reuse(config) -> None:
     )
     v = run_verifier(
         config=config, repository=REPO, event_name="push", ref=MAIN_REF,
-        before_sha=BASE, main_sha=MAIN, api=api, git=FakeGit(),
+        before_sha=BASE, main_sha=MAIN, api=api,
+        git=FakeGit(repo_dir=fake_git_dir(config)),
     )
     assert v.reuse is False and v.reason == "jobs_missing_surface"
 
@@ -757,7 +779,8 @@ def test_multiple_changes_with_one_control_path_forces_full(config) -> None:
 def test_control_plane_check_runs_before_any_api_call(config) -> None:
     """The early control-plane gate must deny reuse without spending API
     calls."""
-    git = FakeGit(changed=[".github/workflows/ci.yml"])
+    git = FakeGit(changed=[".github/workflows/ci.yml"],
+                  repo_dir=fake_git_dir(config))
     api = FakeAPI(fail="pulls", raise_reason="network_error")
     v = run_verifier(
         config=config, repository=REPO, event_name="push", ref=MAIN_REF,
@@ -766,6 +789,188 @@ def test_control_plane_check_runs_before_any_api_call(config) -> None:
     assert v.reuse is False and v.reason == "control_plane_changed"
     assert api.calls == []  # control-plane gate consumed no API calls
     assert git.calls == ["changed_paths"]
+
+
+# ---------------------------------------------------------------------------
+# MANDATORY V1 self-protection (§7): the configured workflow_path and the
+# active config file path are always in the control-plane exclusion set;
+# user [reuse].control_plane_paths may only widen it.
+# ---------------------------------------------------------------------------
+
+
+def make_config(tmp_path, text: str):
+    from ci_optimizer.policy import load_config
+
+    path = tmp_path / "ciopt.toml"
+    path.write_text(text, encoding="utf-8")
+    return load_config(path)
+
+
+def test_self_protection_a_user_omits_workflow_path(tmp_path) -> None:
+    """A. User control_plane_paths omits workflow_path: a merged workflow
+    change still forces reuse=false (mandatory path)."""
+    config = make_config(
+        tmp_path,
+        CONFIG_TEXT.replace(
+            'control_plane_paths = [".github/workflows/", "ciopt.toml"]',
+            'control_plane_paths = ["ciopt.toml"]',
+        ),
+    )
+    v = run_verifier_f(
+        config, git_kwargs={"changed": [".github/workflows/ci.yml"]}
+    )
+    assert v.reuse is False and v.reason == "control_plane_changed"
+
+
+def test_self_protection_b_user_omits_config_path(tmp_path) -> None:
+    """B. User control_plane_paths omits the active config file: a merged
+    config change still forces reuse=false (mandatory path)."""
+    config = make_config(
+        tmp_path,
+        CONFIG_TEXT.replace(
+            'control_plane_paths = [".github/workflows/", "ciopt.toml"]',
+            'control_plane_paths = [".github/workflows/"]',
+        ),
+    )
+    v = run_verifier_f(config, git_kwargs={"changed": ["ciopt.toml"]})
+    assert v.reuse is False and v.reason == "control_plane_changed"
+
+
+def test_self_protection_c_user_widens_extra_paths(tmp_path) -> None:
+    """C. Widening adds protection; the mandatory paths stay protected."""
+    config = make_config(
+        tmp_path,
+        CONFIG_TEXT.replace(
+            'control_plane_paths = [".github/workflows/", "ciopt.toml"]',
+            'control_plane_paths = [".github/workflows/", "ciopt.toml", "docs/private/"]',
+        ),
+    )
+    v = run_verifier_f(
+        config, git_kwargs={"changed": ["docs/private/secrets.md"]}
+    )
+    assert v.reuse is False and v.reason == "control_plane_changed"
+    # Mandatory paths are still protected despite the widening.
+    v = run_verifier_f(
+        config, git_kwargs={"changed": [".github/workflows/ci.yml"]}
+    )
+    assert v.reuse is False and v.reason == "control_plane_changed"
+
+
+def test_self_protection_d_config_outside_repo(config, tmp_path) -> None:
+    """D. Active config path outside the checkout: reuse=false with
+    config_path_untrusted_or_outside_repo (never silently dropped)."""
+    # A sibling directory of the repo root: the config lives at
+    # tmp_path/ciopt.toml, the checkout root is tmp_path/elsewhere.
+    outside = str(Path(tmp_path) / "elsewhere")
+    Path(outside).mkdir()
+    v = run_verifier_f(config, git_kwargs={"repo_dir": outside})
+    assert v.reuse is False and v.reason == "config_path_untrusted_or_outside_repo"
+
+
+def test_self_protection_d_no_repo_root_fails_closed(config) -> None:
+    """D. Git wrapper with no known repo root: the config path cannot be
+    trusted, so reuse fails closed."""
+    v = run_verifier_f(config, git_kwargs={"repo_dir": None})
+    assert v.reuse is False and v.reason == "config_path_untrusted_or_outside_repo"
+
+
+def test_self_protection_e_config_inside_repo_trusted(tmp_path) -> None:
+    """E. Config file inside the checked-out repository: trusted (normal
+    production shape), the valid exact-tree case still reuses."""
+    config = make_config(tmp_path, CONFIG_TEXT)
+    v = run_verifier_f(
+        config,
+        git_kwargs={"repo_dir": str(Path(config.config_path).parent)},
+    )
+    assert v.reuse is True  # config INSIDE the repo: trusted, normal case
+
+
+def test_self_protection_e_normal_exact_tree_case_still_reuse_true(
+    config,
+) -> None:
+    """E. The normal exact-tree valid case remains reuse=true."""
+    v = run_verifier_f(config, git_kwargs={"tree": TREE, "changed": []})
+    assert v.reuse is True
+    assert marker_of(v) == "true"
+
+
+def test_self_protection_config_path_is_always_mandatory(tmp_path) -> None:
+    """The active config file path and workflow_path are both mandatory
+    members of the effective exclusion set regardless of user config."""
+    config = make_config(
+        tmp_path,
+        CONFIG_TEXT.replace(
+            'control_plane_paths = [".github/workflows/", "ciopt.toml"]',
+            'control_plane_paths = ["scripts/release.py"]',
+        ),
+    )
+    v = run_verifier_f(config, git_kwargs={"changed": ["scripts/release.py"]})
+    assert v.reuse is False and v.reason == "control_plane_changed"
+
+
+# ---------------------------------------------------------------------------
+# Pure helpers: repo-relative config resolution + effective exclusion set.
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_config_repo_path_inside_repo(tmp_path) -> None:
+    rel = resolve_config_repo_path(
+        str(tmp_path / "ciopt.toml"), str(tmp_path)
+    )
+    assert rel == "ciopt.toml"
+
+
+def test_resolve_config_repo_path_outside_repo(tmp_path) -> None:
+    outside = tmp_path.parent / f"{tmp_path.name}-outside"
+    outside.mkdir()
+    try:
+        assert (
+            resolve_config_repo_path(str(outside / "ciopt.toml"), str(tmp_path))
+            is None
+        )
+    finally:
+        outside.rmdir()
+
+
+def test_resolve_config_repo_path_degenerate_repo_root(tmp_path) -> None:
+    assert resolve_config_repo_path(str(tmp_path), str(tmp_path)) is None
+
+
+def test_resolve_config_repo_path_unknown_repo_dir(tmp_path) -> None:
+    assert resolve_config_repo_path(str(tmp_path / "ciopt.toml"), None) is None
+
+
+def test_resolve_config_repo_path_nested_subdir(tmp_path) -> None:
+    cfg_dir = tmp_path / "configs"
+    cfg_dir.mkdir()
+    rel = resolve_config_repo_path(str(cfg_dir / "ciopt.toml"), str(tmp_path))
+    assert rel == "configs/ciopt.toml"
+
+
+def test_effective_control_plane_paths_mandatory_union(config) -> None:
+    effective = effective_control_plane_paths(config, "ciopt.toml")
+    # Mandatory workflow_path + config path, normalized (trailing slash
+    # stripped), sorted, plus the user's configured control_plane_paths.
+    assert effective == (".github/workflows", ".github/workflows/ci.yml", "ciopt.toml")
+
+
+def test_effective_control_plane_paths_none_on_untrusted(config) -> None:
+    assert effective_control_plane_paths(config, None) is None
+
+
+def test_effective_control_plane_paths_widened_keeps_mandatory(tmp_path) -> None:
+    config = make_config(
+        tmp_path,
+        CONFIG_TEXT.replace(
+            'control_plane_paths = [".github/workflows/", "ciopt.toml"]',
+            'control_plane_paths = ["scripts/release.py"]',
+        ),
+    )
+    effective = effective_control_plane_paths(config, "ciopt.toml")
+    # Mandatory paths survive; the user's widening is added.
+    assert ".github/workflows/ci.yml" in effective
+    assert "ciopt.toml" in effective
+    assert "scripts/release.py" in effective
 
 
 # ---------------------------------------------------------------------------
@@ -797,7 +1002,8 @@ def test_git_error_denies_reuse(config) -> None:
 
     v = run_verifier(
         config=config, repository=REPO, event_name="push", ref=MAIN_REF,
-        before_sha=BASE, main_sha=MAIN, api=FakeAPI(), git=BrokenGit(),
+        before_sha=BASE, main_sha=MAIN, api=FakeAPI(),
+        git=BrokenGit(repo_dir=fake_git_dir(config)),
     )
     assert v.reuse is False and v.reason == "git_changed_paths_malformed"
 
@@ -809,7 +1015,8 @@ def test_unexpected_verifier_error_fail_closed_never_skips(config) -> None:
 
     v = run_verifier(
         config=config, repository=REPO, event_name="push", ref=MAIN_REF,
-        before_sha=BASE, main_sha=MAIN, api=FakeAPI(), git=BrokenGit(),
+        before_sha=BASE, main_sha=MAIN, api=FakeAPI(),
+        git=BrokenGit(repo_dir=fake_git_dir(config)),
     )
     assert v.reuse is False and v.reason == "verifier_internal_error"
 

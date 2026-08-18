@@ -48,15 +48,23 @@ The classifier maps a change range to one of four stable tiers:
 
 | tier | meaning |
 | --- | --- |
-| `docs_fast` | every changed path is inside the configured docs scope |
-| `package_docs` | every changed path is docs or a package-doc file (e.g. README), and a package-doc file changed |
-| `control_plane` | every changed path is inside the exact configured control-plane eligible subset (a validated subset tier) |
+| `docs_fast` | every changed path is inside the configured docs scope (validated generic fast path) |
+| `package_docs` | every changed path is docs or a package-doc file (e.g. README), and a package-doc file changed — core tests may skip, package validation MUST still run |
+| `control_plane` | OPT-IN, disabled by default: every changed path is inside the exact configured control-plane eligible subset — a downstream-specific conservative validation surface |
 | `full` | everything else — including empty diffs, unknown paths, and any failure to classify |
 
 **Component impact is exposed separately from the tier and never
 authorizes skip.** A registered `[components.*]` surface may report
 `independent_only=true`, but the tier stays `full` unless an explicit
 validated validation contract exists.
+
+**The tiers are per-surface, not a single switch.** A tier authorizes a
+skip only for the surface whose validation is unnecessary under that
+tier's contract: `docs_fast` may skip both the core matrix and package
+validation; `package_docs` may skip the core matrix but MUST still run
+package validation (a package-doc change such as README is package
+metadata); `control_plane` is never claimed by the generic template —
+the framework does not auto-provide a validated control-plane subset.
 
 ## Security principle
 
@@ -127,9 +135,14 @@ discouraged: enabling all optimizations at once.**
 
 1. **Phase 1 — classification only / observe.** Add the classifier to
    your workflow and log `CI_TIER` for every run. Nothing is skipped yet.
-2. **Phase 2 — enable safe tiers.** Once the observed classifications
-   match your expectations, let `docs_fast` / `package_docs` /
-   `control_plane` skip their guarded heavy steps.
+2. **Phase 2 — enable safe tiers per surface.** Once the observed
+   classifications match your expectations, guard each heavy step with
+   its own tier: `docs_fast` may skip any heavy surface; `package_docs`
+   may skip the core test matrix but must still run package validation.
+   `control_plane` stays disabled (empty `control_plane_eligible`):
+   activate it only after implementing and reviewing a dedicated
+   conservative control-plane validation surface, populating the
+   eligible list, gating the FULL surfaces, and shadow-observing first.
 3. **Phase 3 — enable post-merge FULL reuse.** Only after phases 1–2 are
    stable, add the attestation creation step and the post-merge reuse
    proof.

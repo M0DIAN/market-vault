@@ -4,6 +4,8 @@ precedence, and the regression corpus A-O."""
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from ci_optimizer.classifier import (
     REASON_COMPONENT_NO_VALIDATION,
     REASON_CONTROL_PLANE,
@@ -19,6 +21,21 @@ from ci_optimizer.classifier import (
     TIER_PACKAGE_DOCS,
     classify,
 )
+from ci_optimizer.policy import load_config
+
+from .conftest import CONFIG_TEXT
+
+
+def config_without_eligible(tmp_path: Path):
+    """CONFIG_TEXT with the control_plane_eligible line removed: the
+    default (empty) eligible surface used by every downstream config."""
+    text = CONFIG_TEXT.replace(
+        'control_plane_eligible = [".github/workflows/ci.yml", "ciopt.toml"]\n',
+        "",
+    )
+    path = tmp_path / "ciopt.toml"
+    path.write_text(text, encoding="utf-8")
+    return load_config(path)
 
 
 def tier_of(config, paths: list[str]) -> tuple[str, str]:
@@ -92,6 +109,55 @@ def test_control_plane_with_docs_mixture_classifies_control_plane(config) -> Non
 def test_control_plane_full_matrix_not_required(config) -> None:
     _, _, impact = classify([".github/workflows/ci.yml"], config)
     assert impact.full_matrix_required is False
+
+
+# ---------------------------------------------------------------------------
+# §5: eligible is OPT-IN — default empty means a workflow mutation is FULL.
+# ---------------------------------------------------------------------------
+
+
+def test_default_empty_eligible_workflow_change_classifies_full(tmp_path) -> None:
+    # The generic framework must never auto-claim the workflow as fast:
+    # with eligible omitted, a workflow change is a control-plane mutation
+    # that runs FULL.
+    config = config_without_eligible(tmp_path)
+    assert config.control_plane_eligible == ()
+    tier, reason = tier_of(config, [".github/workflows/ci.yml"])
+    assert tier == TIER_FULL
+    assert reason == REASON_SHARED
+
+
+def test_default_empty_eligible_workflow_change_requires_full(tmp_path) -> None:
+    config = config_without_eligible(tmp_path)
+    _, _, impact = classify([".github/workflows/ci.yml"], config)
+    assert impact.shared_changed is True
+    assert impact.unknown_changed is True
+    assert impact.full_matrix_required is True
+
+
+def test_default_empty_eligible_config_change_classifies_full(tmp_path) -> None:
+    config = config_without_eligible(tmp_path)
+    tier, reason = tier_of(config, ["ciopt.toml"])
+    assert tier == TIER_FULL
+    assert reason == REASON_SHARED
+
+
+def test_explicit_eligible_workflow_change_is_control_plane(config) -> None:
+    # The conftest fixture is the explicitly validated eligible subset:
+    # workflow change => control_plane (fast), full_matrix NOT required.
+    tier, reason = tier_of(config, [".github/workflows/ci.yml"])
+    assert tier == TIER_CONTROL_PLANE
+    assert reason == REASON_CONTROL_PLANE
+    _, _, impact = classify([".github/workflows/ci.yml"], config)
+    assert impact.full_matrix_required is False
+
+
+def test_explicit_eligible_but_non_eligible_workflow_change_is_full(config) -> None:
+    # A second workflow file stays FULL even when eligible is populated:
+    # the tier is claimable only for the exact validated rules.
+    tier, reason = tier_of(config, [".github/workflows/release.yml"])
+    assert tier == TIER_FULL
+    assert reason == REASON_SHARED
 
 
 # ---------------------------------------------------------------------------

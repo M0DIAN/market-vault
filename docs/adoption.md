@@ -32,21 +32,54 @@ logged. Nothing is skipped yet.
 Phase 1 alone already gives you the audit trail: every change range
 carries its classification reason in the CI log.
 
-## Phase 2 — enable safe tiers
+## Phase 2 — enable safe tiers per surface
 
-Goal: the guarded heavy steps skip only for the validated subset tiers.
+Goal: each guarded heavy step skips only for the validated tier whose
+contract makes that exact surface unnecessary. **The tiers are
+per-surface, not a single switch** — one guard does not fit every
+heavy step.
 
-1. Add the guard `env.CI_TIER != 'docs_fast' && env.CI_TIER !=
-   'package_docs' && env.POST_MERGE_REUSE != 'true'` to the heavy steps
-   (test matrix legs, build, package chain) — exactly as in the
-   template.
-2. Add the fast-path marker steps so skips are visible in the logs
-   (skips alone are silent).
-3. If you use the `control_plane` tier, add a conservative control-plane
-   test surface step that runs **only** when `env.CI_TIER ==
-   'control_plane'` — the subset that validates the exact eligible
-   paths. Keep it explicit and reviewable; never widen the eligible
-   list beyond what that surface covers.
+1. **Test surface (full matrix) — triple guard**, exactly as in the
+   template: `docs_fast` may skip it, and `package_docs` may skip it
+   (core tests are unnecessary under a validated package-doc contract):
+
+   ```yaml
+   if: |
+     env.POST_MERGE_REUSE != 'true' &&
+     env.CI_TIER != 'docs_fast' &&
+     env.CI_TIER != 'package_docs'
+   ```
+
+2. **Package surface (build + package validation) — double guard**:
+   `package_docs` MUST NOT skip package validation — a package-doc
+   change (e.g. README) is package metadata. Only `docs_fast` may skip
+   this surface:
+
+   ```yaml
+   if: |
+     env.POST_MERGE_REUSE != 'true' &&
+     env.CI_TIER != 'docs_fast'
+   ```
+
+   Add the marker steps so skips are visible in the logs (skips alone
+   are silent): `PACKAGE_DOCS_TESTS_MAY_SKIP=true` on the test surface
+   and `PACKAGE_DOCS_PACKAGE_VALIDATION_MUST_RUN=true` on the package
+   surface.
+
+3. **`control_plane` is OPT-IN and disabled by default** — the
+   template never claims a validated control-plane subset. Activation
+   requires, in order:
+   a. implement a dedicated, conservative control-plane validation
+      surface step that runs **only** when `env.CI_TIER ==
+      'control_plane'` — validating exactly the eligible paths;
+   b. populate `control_plane_eligible` (every rule must be contained
+      by `[paths].control_plane`);
+   c. gate every FULL surface (any workflow/config/control-plane
+      mutation not covered by that surface must stay `full`);
+   d. shadow/observe first — compare the `control_plane` fast results
+      against FULL on the same change before trusting it.
+
+   Never widen the eligible list beyond what that surface covers.
 
 The guards keep the fail-closed property: unset or unknown
 `CI_TIER` means the heavy steps run.
@@ -84,8 +117,11 @@ safely) denies reuse forever — it never skips validation.
 
 ## Guard checklist (never weaken)
 
-- heavy steps skip only when `POST_MERGE_REUSE == "true"` — or when a
-  validated fast tier is active;
+- a heavy surface skips only when EITHER that exact surface is
+  explicitly unnecessary under a validated tier contract (`docs_fast`
+  may skip any heavy surface; `package_docs` may skip the core matrix
+  but never the package surface), OR `POST_MERGE_REUSE` is the exact
+  literal `"true"`;
 - an unset / unknown `CI_TIER` or `POST_MERGE_REUSE` always runs;
 - the classifier wrapper never lets a classifier failure become a fast
   tier: non-zero exit ⇒ explicit `CI_TIER=full` /

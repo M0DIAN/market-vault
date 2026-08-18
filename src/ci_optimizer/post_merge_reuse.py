@@ -39,8 +39,14 @@ Conditions (all must pass):
    the squash commit have different identities); TREE equality is
    required.
 8. Control-plane exclusion: even with tree equivalence, reuse is denied
-   when the merged change touches configured control-plane paths
-   (``[reuse] control_plane_paths``; rename old+new paths both count).
+   when the merged change touches the effective control-plane exclusion
+   set. The set is MANDATORY self-protection the user cannot remove:
+   the configured ``[repository] workflow_path`` and the active config
+   file path used by ``verify-reuse`` are always excluded, PLUS the
+   user's ``[reuse] control_plane_paths`` (rename old+new paths both
+   count). If the active config path cannot be represented safely as a
+   repository-relative path, reuse is denied with
+   ``config_path_untrusted_or_outside_repo``.
 
 Critical invariant:
 
@@ -59,6 +65,7 @@ attestation output path, no repository / tag / ref mutation.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 from .attestation import (
     ATTESTATION_MAX_BYTES,
@@ -127,12 +134,18 @@ def render_verdict(verdict: Verdict) -> str:
 
 
 def skip_heavy_validation(post_merge_reuse: str | None) -> bool:
-    """The ONLY predicate under which a heavy validation step may skip.
+    """The reuse-driven skip predicate: a heavy surface skips under
+    post-merge reuse only for the exact literal ``"true"``.
 
     Anything other than the exact literal ``"true"`` — ``false``, unset,
     empty, ``"TRUE"``, garbage — runs heavy validation. The workflow's
     ``if: env.POST_MERGE_REUSE != 'true'`` guards express exactly this
     predicate; the invariant is regression-tested.
+
+    Tier policy is a separate guard dimension handled by the workflow:
+    a validated tier contract (docs_fast / package_docs / control_plane)
+    may make a specific surface unnecessary, but reuse authorization is
+    ONLY ever this exact literal.
     """
     return post_merge_reuse == "true"
 
@@ -336,13 +349,62 @@ def check_control_plane(
     changed_paths: list[str], control_plane_paths: tuple[str, ...]
 ) -> tuple[bool, str | None]:
     """Condition 8 — control-plane exclusion. Any changed path inside the
-    configured control-plane surface denies reuse (rename old+new paths
-    are both included by the git layer)."""
+    effective control-plane exclusion set denies reuse (rename old+new
+    paths are both included by the git layer)."""
     for path in changed_paths:
         normalized = path.replace("\\", "/")
         if any(rule_matches(rule, normalized) for rule in control_plane_paths):
             return False, "control_plane_changed"
     return True, None
+
+
+def resolve_config_repo_path(config_path: str, repo_dir: str | None) -> str | None:
+    """Repository-relative form of the active config file path, or None
+    when it cannot be represented safely inside the checked-out
+    repository.
+
+    MANDATORY V1 self-protection: the config file used by ``verify-reuse``
+    is itself part of the control-plane exclusion set (a merged change to
+    the config must force FULL). The repo root is the git wrapper's
+    working directory; the config must resolve strictly inside it.
+    Degenerate (config == repo root), missing, or outside roots are
+    untrusted and return None.
+    """
+    if not repo_dir:
+        return None
+    try:
+        root = Path(repo_dir).resolve()
+        cfg = Path(config_path).resolve()
+        rel = cfg.relative_to(root)
+    except (OSError, ValueError):
+        return None
+    if rel == Path("."):
+        return None
+    return rel.as_posix()
+
+
+def effective_control_plane_paths(
+    config: Config, config_repo_path: str | None
+) -> tuple[str, ...] | None:
+    """The effective control-plane exclusion set for the verifier.
+
+    MANDATORY paths — the configured ``[repository] workflow_path`` and
+    the repository-relative active config path — can never be removed by
+    user configuration; ``[reuse] control_plane_paths`` may only widen
+    the set. Returns None when the config path is untrusted, which the
+    verifier converts to ``config_path_untrusted_or_outside_repo``.
+    """
+    if config_repo_path is None:
+        return None
+    mandatory = {
+        config.workflow_path.replace("\\", "/").rstrip("/"),
+        config_repo_path,
+    }
+    widened = {
+        path.replace("\\", "/").rstrip("/")
+        for path in config.reuse_control_plane_paths
+    }
+    return tuple(sorted(mandatory | widened))
 
 
 # ---------------------------------------------------------------------------
@@ -411,6 +473,15 @@ def run_verifier(
     a specific reason. Internal/adapter errors can never produce
     reuse=True."""
     try:
+        # MANDATORY self-protection first: the active config file must be
+        # safely inside the checked-out repository, and its path plus the
+        # configured workflow_path are always part of the control-plane
+        # exclusion set. User configuration may widen, never shrink.
+        repo_dir = getattr(git, "repo_dir", None)
+        config_repo_path = resolve_config_repo_path(config.config_path, repo_dir)
+        exclusion = effective_control_plane_paths(config, config_repo_path)
+        if exclusion is None:
+            return Verdict(False, "config_path_untrusted_or_outside_repo")
         reason = check_event_shape(
             event_name, ref, before_sha, main_sha, main_ref=config.main_ref
         )
@@ -421,7 +492,7 @@ def run_verifier(
         # a control-plane merge must not even spend API calls, and must
         # always fall back to normal FULL.
         changed = git.changed_paths(before_sha, main_sha, merge_base=False)
-        ok, reason = check_control_plane(changed, config.reuse_control_plane_paths)
+        ok, reason = check_control_plane(changed, exclusion)
         if not ok:
             return Verdict(False, reason)
         parents = git.rev_list_parents(main_sha)

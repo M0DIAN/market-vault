@@ -31,8 +31,13 @@ MarketVault. Source extraction baseline:
 - Read-only GitHub REST adapter with minimal permissions
   (`contents: read`, `pull-requests: read`, `actions: read`); token
   never logged, stripped on cross-host redirect.
-- Fail-closed GitHub Actions integration: heavy validation may skip
-  ONLY when `POST_MERGE_REUSE == "true"`; anything else runs.
+- Fail-closed GitHub Actions integration: a heavy surface may skip
+  only when EITHER (1) that exact surface is explicitly unnecessary
+  under a validated tier contract (`docs_fast` may skip any heavy
+  surface; `package_docs` may skip the core matrix but must still run
+  package validation; `control_plane` is OPT-IN and disabled by
+  default), OR (2) `POST_MERGE_REUSE` is the exact literal `"true"`.
+  Anything else runs.
 
 ### Not supported in v0.1.0
 

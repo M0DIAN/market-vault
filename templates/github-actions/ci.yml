@@ -29,6 +29,8 @@ on:
       - main
   pull_request:
 
+# Minimum read-only permission set required by V1 (associated PR API,
+# actions runs API, jobs API, artifacts API). No write permissions.
 permissions:
   contents: read
   pull-requests: read
@@ -132,6 +134,10 @@ jobs:
         if: env.CI_TIER == 'docs_fast' || env.CI_TIER == 'package_docs'
         run: echo "FULL_TESTS_SKIPPED_BY_POLICY=true"
 
+      - name: Marker — package_docs may skip core tests
+        if: env.CI_TIER == 'package_docs'
+        run: echo "PACKAGE_DOCS_TESTS_MAY_SKIP=true"
+
   package:
     runs-on: ubuntu-latest
     needs: [test]
@@ -204,15 +210,21 @@ jobs:
           # <PLACEHOLDER> cheap package/repo checks that always run:
           python -m compileall -q src
 
+      # package_docs MUST NOT skip package validation: a package-doc
+      # change (e.g. README) is package-metadata-sensitive. Only
+      # docs_fast may skip this surface.
       - name: Build and validate package (heavy)
         if: |
           env.POST_MERGE_REUSE != 'true' &&
-          env.CI_TIER != 'docs_fast' &&
-          env.CI_TIER != 'package_docs'
+          env.CI_TIER != 'docs_fast'
         run: |
           # <PLACEHOLDER> build + package validation:
           python -m build
           python -m twine check dist/*
+
+      - name: Marker — package_docs runs package validation
+        if: env.CI_TIER == 'package_docs'
+        run: echo "PACKAGE_DOCS_PACKAGE_VALIDATION_MUST_RUN=true"
 
       - name: Create FULL CI attestation
         if: |

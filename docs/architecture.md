@@ -43,6 +43,13 @@ The tier decision is deliberately conservative and ordered
 8. any registered component without a validation contract ⇒ `full`
 9. anything else ⇒ `full`
 
+Rule 5 is an OPT-IN extension: `control_plane_eligible` defaults to
+empty (disabled), so in every default config a workflow/config mutation
+lands on `full` via rule 6. The generic template never claims a
+validated control-plane subset; a downstream repository activates the
+tier only after implementing and reviewing its own conservative
+control-plane validation surface (see [adoption.md](adoption.md)).
+
 ### Config
 
 `ciopt.toml` (schema version 1) is the single place where project
@@ -111,7 +118,16 @@ explicitly exports `POST_MERGE_REUSE=false` /
 `reason=verifier_crash_fail_closed`. Invariant: proof failure or
 verifier crash ⇒ fresh heavy validation runs.
 
-**Heavy validation is guarded by the exact literal** in every job:
+**Every heavy surface is guarded by the exact literal, and tier
+semantics are per-surface.** Two dimensions compose, never merge:
+
+1. **Reuse dimension (post-merge):** the guard always contains
+   `env.POST_MERGE_REUSE != 'true'`.
+2. **Tier dimension (per-surface):** a surface may skip only when its
+   own validation is explicitly unnecessary under a validated tier
+   contract.
+
+The template's test surface (full matrix) uses the full triple guard:
 
 ```yaml
 if: |
@@ -120,12 +136,25 @@ if: |
   env.CI_TIER != 'package_docs'
 ```
 
-Heavy validation may skip **only** when `POST_MERGE_REUSE == "true"`.
-Anything else — including an unset or unknown tier — runs. An unset
-`CI_TIER` fails closed because the guard compares `!= 'docs_fast'`.
-Cheap checks (compile, metadata sanity) run unconditionally; on PR FULL
-runs the real package surface still executes before the attestation is
-created, so attestation evidence always covers a real validation run.
+The package surface uses only the double guard — `package_docs` MUST
+NOT skip package validation (a package-doc change such as README is
+package metadata):
+
+```yaml
+if: |
+  env.POST_MERGE_REUSE != 'true' &&
+  env.CI_TIER != 'docs_fast'
+```
+
+**A heavy surface may skip only when EITHER (1) that exact surface is
+explicitly unnecessary under a validated tier contract, OR (2)
+`POST_MERGE_REUSE` is the exact literal `"true"`. Anything else runs.**
+In particular, `package_docs` does NOT authorize skipping package
+validation. An unset `CI_TIER` fails closed because the guards compare
+`!= 'docs_fast'` / `!= 'package_docs'`. Cheap checks (compile, metadata
+sanity) run unconditionally; on PR FULL runs the real package surface
+still executes before the attestation is created, so attestation
+evidence always covers a real validation run.
 
 ### Exact-tree model
 

@@ -77,13 +77,19 @@ def _check_table(data: dict, name: str, keys: frozenset[str], where: str) -> Non
             )
 
 
-def _string_list(value: object, where: str, what: str) -> tuple[str, ...]:
-    if (
-        not isinstance(value, list)
-        or not value
-        or not all(isinstance(item, str) and item for item in value)
+def _string_list(
+    value: object, where: str, what: str, *, allow_empty: bool = False
+) -> tuple[str, ...]:
+    if not isinstance(value, list) or not all(
+        isinstance(item, str) and item for item in value
     ):
-        raise ConfigError(f"invalid config {where}: {what} must be a non-empty list of non-empty strings")
+        raise ConfigError(
+            f"invalid config {where}: {what} must be a list of non-empty strings"
+        )
+    if not value and not allow_empty:
+        raise ConfigError(
+            f"invalid config {where}: {what} must be a non-empty list of non-empty strings"
+        )
     return tuple(value)
 
 
@@ -97,6 +103,11 @@ def load_config(path: str | Path) -> Config:
     - ``[paths].control_plane`` is required: a conservative default
       would silently make control-plane mutations eligible for fast
       paths, which is never acceptable
+    - ``[paths].control_plane_eligible`` is an opt-in extension: it
+      defaults to empty (disabled), an explicit ``[]`` is valid, and
+      every non-empty eligible rule must be contained by
+      ``[paths].control_plane``. The generic framework never claims a
+      downstream control-plane validation surface exists.
     """
     config_path = str(path)
     try:
@@ -148,10 +159,20 @@ def load_config(path: str | Path) -> Config:
     control_plane = _string_list(paths["control_plane"], config_path, "[paths].control_plane")
     if "control_plane_eligible" in paths:
         control_plane_eligible = _string_list(
-            paths["control_plane_eligible"], config_path, "[paths].control_plane_eligible"
+            paths["control_plane_eligible"], config_path,
+            "[paths].control_plane_eligible", allow_empty=True,
         )
     else:
-        control_plane_eligible = (workflow_path, Path(config_path).name)
+        # Omission defaults to DISABLED (empty). The control_plane tier
+        # is an opt-in extension: the generic framework must never
+        # silently claim a downstream control-plane validation surface.
+        control_plane_eligible = ()
+    for rule in control_plane_eligible:
+        if not any(rule_matches(surface, rule) for surface in control_plane):
+            raise ConfigError(
+                f"invalid config {config_path}: [paths].control_plane_eligible "
+                f"rule {rule!r} is not contained by [paths].control_plane"
+            )
 
     components: list[Component] = []
     raw_components = data.get("components")

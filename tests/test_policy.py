@@ -73,11 +73,9 @@ def test_minimal_config_with_defaults(tmp_path) -> None:
     assert config.docs == ("docs/",)
     assert config.package_docs == ("README.md",)
     assert config.control_plane == (".github/workflows/",)
-    # control_plane_eligible defaults to (workflow_path, config filename).
-    assert config.control_plane_eligible == (
-        ".github/workflows/ci.yml",
-        "ciopt.toml",
-    )
+    # control_plane_eligible defaults to DISABLED (empty): the tier is an
+    # opt-in extension, never auto-claimed by the generic framework.
+    assert config.control_plane_eligible == ()
     assert config.components == ()
     assert config.reuse_enabled is False
     assert config.reuse_control_plane_paths == (".github/workflows/",)
@@ -158,6 +156,70 @@ def test_reuse_disabled_does_not_require_jobs(tmp_path) -> None:
     config = load_config(write_config(tmp_path, MINIMAL))
     assert config.reuse_enabled is False
     assert config.required_jobs == ()
+
+
+# ---------------------------------------------------------------------------
+# control_plane_eligible: opt-in extension, fail-closed by default (§3).
+# ---------------------------------------------------------------------------
+
+
+def test_explicit_empty_eligible_is_valid(tmp_path) -> None:
+    config = load_config(
+        write_config(
+            tmp_path,
+            MINIMAL.replace("[paths]", '[paths]\ncontrol_plane_eligible = []'),
+        )
+    )
+    assert config.control_plane_eligible == ()
+
+
+def test_omission_defaults_to_disabled(tmp_path) -> None:
+    config = load_config(write_config(tmp_path, MINIMAL))
+    # The generic framework must NEVER auto-claim workflow/config paths
+    # as fast-eligible.
+    assert config.control_plane_eligible == ()
+
+
+def test_eligible_rule_outside_control_plane_rejected(tmp_path) -> None:
+    with pytest.raises(ConfigError) as exc:
+        load_config(
+            write_config(
+                tmp_path,
+                'schema_version = 1\n\n'
+                '[paths]\n'
+                'control_plane = [".github/workflows/"]\n'
+                'control_plane_eligible = ["src/"]\n',
+            )
+        )
+    assert "not contained by [paths].control_plane" in str(exc.value)
+
+
+def test_eligible_rule_covered_by_control_plane_prefix_accepted(tmp_path) -> None:
+    config = load_config(
+        write_config(
+            tmp_path,
+            'schema_version = 1\n\n'
+            '[paths]\n'
+            'control_plane = [".github/workflows/"]\n'
+            'control_plane_eligible = [".github/workflows/ci.yml"]\n'
+            '\n[reuse]\nenabled = false\n',
+        )
+    )
+    assert config.control_plane_eligible == (".github/workflows/ci.yml",)
+
+
+def test_eligible_empty_string_rule_rejected(tmp_path) -> None:
+    with pytest.raises(ConfigError) as exc:
+        load_config(
+            write_config(
+                tmp_path,
+                'schema_version = 1\n\n'
+                '[paths]\n'
+                'control_plane = [".github/workflows/"]\n'
+                'control_plane_eligible = [""]\n',
+            )
+        )
+    assert "[paths].control_plane_eligible" in str(exc.value)
 
 
 # ---------------------------------------------------------------------------

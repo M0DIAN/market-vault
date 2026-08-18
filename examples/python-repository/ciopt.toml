@@ -12,9 +12,13 @@ workflow_path = ".github/workflows/ci.yml"
 docs = ["docs/"]
 package_docs = ["README.md"]
 control_plane = [".github/workflows/", "ciopt.toml", "pyproject.toml"]
-# Only these exact paths may classify control_plane (the fast-eligible
-# subset). Everything else in control_plane forces FULL.
-control_plane_eligible = [".github/workflows/ci.yml", "ciopt.toml"]
+# The control_plane tier is an OPT-IN extension, disabled by default
+# (empty list). Populate this list only after the downstream repository
+# has implemented and reviewed a dedicated conservative control-plane
+# validation surface. While empty, any workflow/config/control-plane
+# mutation classifies FULL. Every eligible rule must be contained by
+# [paths].control_plane above.
+control_plane_eligible = []
 
 [components.core]
 paths = ["src/"]

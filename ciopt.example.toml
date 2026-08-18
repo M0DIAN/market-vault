@@ -30,15 +30,13 @@ control_plane = [
     "ciopt.toml",
 ]
 
-# Fast-eligible control-plane subset: the exact allowlist that may
-# classify as the validated control_plane tier (with at least one
-# control-plane path). Defaults to [workflow_path, config file] when
-# omitted. Anything outside this exact list — including other
-# control-plane paths — stays FULL.
-control_plane_eligible = [
-    ".github/workflows/ci.yml",
-    "ciopt.toml",
-]
+# The control_plane tier is an OPT-IN extension, disabled by default
+# (empty list). Populate this list only after the downstream repository
+# has implemented and reviewed a dedicated conservative control-plane
+# validation surface. While empty, any workflow/config/control-plane
+# mutation classifies FULL. Every eligible rule must be contained by
+# [paths].control_plane above.
+control_plane_eligible = []
 
 [components.core]
 paths = ["src/"]
