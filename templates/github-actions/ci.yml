@@ -1,0 +1,144 @@
+# CI Optimization Framework — downstream workflow template
+#
+# Consuming repositories adapt this template: replace every <PLACEHOLDER>
+# with the project's real values. The classify → cheap-checks → guarded
+# heavy-jobs → attestation → reuse-proof structure, the tier guards, and
+# the exact-literal POST_MERGE_REUSE guard are part of the fail-closed
+# contract and should not be weakened.
+#
+# Reads: contents / pull-requests / actions (read only). The reuse proof
+# step binds a step-scoped token so no job-wide secret is needed.
+
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: read
+  actions: read
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install framework
+        run: pip install ci-optimization-framework
+
+      - name: Classify change tier
+        id: classify
+        run: |
+          ci-opt classify --config ciopt.toml --mode pull_request \
+            --base "${{ github.event.pull_request.base.sha || github.event.before }}" \
+            --head "${{ github.event.pull_request.head.sha || github.sha }}" \
+            >> "$GITHUB_ENV"
+
+      - name: Run fast checks (always)
+        run: |
+          # <PLACEHOLDER> cheap checks that always run:
+          #   - formatting/lint (fast)
+          #   - syntax compile
+          python -m compileall -q src tests
+
+      - name: Run full test matrix
+        if: |
+          env.CI_TIER != 'docs_fast' &&
+          env.CI_TIER != 'package_docs' &&
+          env.POST_MERGE_REUSE != 'true'
+        run: |
+          # <PLACEHOLDER> full test command:
+          python -m pytest -q
+
+      - name: Marker — FULL tests reused from verified PR
+        if: env.POST_MERGE_REUSE == 'true'
+        run: echo "FULL_TESTS_REUSED_FROM_VERIFIED_PR=true"
+
+      - name: Marker — FULL tests skipped by policy
+        if: env.CI_TIER == 'docs_fast' || env.CI_TIER == 'package_docs'
+        run: echo "FULL_TESTS_SKIPPED_BY_POLICY=true"
+
+  package:
+    runs-on: ubuntu-latest
+    needs: [test]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install framework
+        run: pip install ci-optimization-framework
+
+      - name: Classify change tier
+        id: classify
+        run: |
+          ci-opt classify --config ciopt.toml --mode pull_request \
+            --base "${{ github.event.pull_request.base.sha || github.event.before }}" \
+            --head "${{ github.event.pull_request.head.sha || github.sha }}" \
+            >> "$GITHUB_ENV"
+
+      - name: Run package chain (always runs: package surfaces are never skipped by policy)
+        run: |
+          # <PLACEHOLDER> build + package validation:
+          python -m build
+          python -m twine check dist/*
+
+      - name: Create FULL CI attestation
+        if: |
+          github.event_name == 'pull_request' &&
+          env.CI_TIER == 'full' &&
+          env.CI_FULL_MATRIX_REQUIRED == 'true'
+        run: |
+          ci-opt create-attestation --config ciopt.toml ci_full_attestation.json
+          ls -la ci_full_attestation.json
+
+      - name: Upload FULL CI attestation
+        if: |
+          github.event_name == 'pull_request' &&
+          env.CI_TIER == 'full' &&
+          env.CI_FULL_MATRIX_REQUIRED == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ vars.CI_ATTESTATION_PREFIX | default('ci-full-attestation-') }}${{ github.event.pull_request.head.sha }}-attempt-${{ github.run_attempt }}
+          path: ci_full_attestation.json
+          if-no-files-found: error
+
+      - name: Post-merge FULL reuse proof
+        if: |
+          github.event_name == 'push' &&
+          github.ref == 'refs/heads/main' &&
+          env.CI_TIER == 'full'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_BEFORE: ${{ github.event.before }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+        run: |
+          # Exact-literal guard: the verifier emits POST_MERGE_REUSE=true
+          # only when every proof succeeds; anything else (including
+          # failure) leaves it unset/false and the guarded steps RUN.
+          ci-opt verify-reuse --config ciopt.toml >> "$GITHUB_ENV"
+          echo "POST_MERGE_REUSE=${POST_MERGE_REUSE:-false}"

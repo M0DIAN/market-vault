@@ -1,0 +1,70 @@
+# CI Optimization Framework configuration (schema version 1).
+#
+# Copy this file to ciopt.toml in your repository root and adjust it to
+# your project. The framework is fail-closed: an unset, unknown, or
+# malformed value never makes validation faster. Unknown paths require
+# FULL; an empty diff requires FULL; a config parse failure fails closed
+# to FULL.
+
+schema_version = 1
+
+[repository]
+main_branch = "main"
+workflow_name = "CI"
+workflow_path = ".github/workflows/ci.yml"
+
+[paths]
+# docs_fast scope: paths whose change only affects documentation.
+docs = ["docs/"]
+
+# package_docs scope: files that are package metadata in addition to
+# being documentation (e.g. the README referenced from pyproject.toml).
+# A change limited to these files plus docs/ classifies package_docs.
+package_docs = ["README.md"]
+
+# Control-plane surface: mutating any of these changes the CI / config /
+# packaging contract itself, so it always forces FULL. This is the
+# "shared" surface reported by the classifier's impact model.
+control_plane = [
+    ".github/workflows/",
+    "ciopt.toml",
+]
+
+# Fast-eligible control-plane subset: the exact allowlist that may
+# classify as the validated control_plane tier (with at least one
+# control-plane path). Defaults to [workflow_path, config file] when
+# omitted. Anything outside this exact list — including other
+# control-plane paths — stays FULL.
+control_plane_eligible = [
+    ".github/workflows/ci.yml",
+    "ciopt.toml",
+]
+
+[components.core]
+paths = ["src/"]
+requires_full = true
+
+[components.package]
+paths = ["pyproject.toml", "README.md"]
+requires_package = true
+
+[reuse]
+enabled = true
+# The exact formal job set of your CI workflow. Post-merge reuse is
+# authorized only when the PR run's jobs terminate SUCCESS on exactly
+# these surfaces — no missing, duplicate, unexpected, or non-success
+# job. Keep this list in exact sync with your workflow's job names.
+required_jobs = [
+    "test (3.11)",
+    "test (3.12)",
+    "package",
+]
+# A merged change touching any of these denies post-merge reuse
+# (normal FULL validation). Rename old + new paths both count.
+control_plane_paths = [
+    ".github/workflows/",
+    "ciopt.toml",
+]
+# Attestation artifact prefix; the attempt is always encoded in the
+# artifact name (<prefix><head_sha>-attempt-<run_attempt>).
+artifact_prefix = "ci-full-attestation-"
