@@ -386,10 +386,33 @@ attestation / tree identity 无法证明 → `NO_REUSE` / FULL。未来若想打
 "未走到 attestation 点的 PR run 中独立成功的 surface"，需要另行设计
 per-surface attestation——本 PR 不声称该能力。
 
-**Rollout 序列**：#65 evidence model foundation → independent review →
-control-plane FULL post-merge verification（#65 自身是控制面变更，其
-main push 不得复用证据）→ #66 实际 surface-level workflow gating →
-专门 production canaries / mutation cases。
+**历史 PR-#65 时代的计划 rollout 序列（historical，非当前激活计划）**：
+#65 evidence model foundation → independent review → control-plane FULL
+post-merge verification（#65 自身是控制面变更，其 main push 不得复用
+证据）→ #66 实际 surface-level workflow gating → 专门 production
+canaries / mutation cases。这是 PR #65 foundation 落地时规划的方向，
+**不是**当前激活中的计划；后续独立决策见下方 "V2-A0" 小节。
+
+**V2-A0 Post-Merge Activation Decision（2026-08-17）**
+
+后续的独立架构评审（V2-A0）对 post-merge Partial Reuse V2 生产激活做出
+了正式决策，永久记录于
+[partial_reuse_v2_post_merge_activation_decision.md](partial_reuse_v2_post_merge_activation_decision.md)。
+当前状态：
+
+- P2-9 production-topology shadow canary 后来已成功完成（P2-9
+  LIFECYCLE COMPLETE / PASS）。
+- 该技术 PASS 本身并不授权激活。
+- V2-A0 随后在现行 V1 precedence 与治理下审计了生产可达性与价值。
+- V2-A0 正式结论 = **OUTCOME C**。
+- Post-merge V2 生产激活被**刻意不采用**（`POST_MERGE_V2_ACTIVATION=
+  DO_NOT_ACTIVATE`）。
+- V2 foundation 保持存在且 UNWIRED。
+- 当前没有任何生产 `if:` 消费 V2 输出。
+- 未来重新考虑 post-merge 需要满足永久决策记录中 reopen criteria 的
+  新一轮明确架构评审。
+- PR-head reuse 是独立的方向，仅作为未来 research/design 方向，
+  **此处不授权**（`PR_HEAD_REUSE_AUTHORIZED=false`）。
 
 **V2 未在生产实现。** 任何把 V2 输出当作生产 skip 依据的改动，必须先
 通过上述完整评审与 canary 流程。
