@@ -5,6 +5,10 @@ Subcommands:
 - ``classify``:          classify a change range into one of the stable
                          risk tiers (docs_fast / package_docs /
                          control_plane / full), with component impact.
+                         Output formats: ``json`` (default),
+                         ``env`` (production key=value lines), and
+                         ``github-env`` (only valid GitHub Actions
+                         ``CI_*`` environment assignments).
 - ``verify-reuse``:      prove post-merge FULL reuse eligibility (V1).
                          Proof failure is never a CI failure: the CLI
                          always exits 0 for a proof verdict and prints
@@ -67,6 +71,23 @@ def _print_classify(
     paths: list[str],
     output: str,
 ) -> None:
+    if output == "github-env":
+        # Only valid GitHub Actions environment assignments; no
+        # "files:" / "- path" lines. Safe to append to $GITHUB_ENV.
+        lines = [
+            f"CI_TIER={tier}",
+            f"CI_TIER_REASON={reason}",
+            f"CI_COMPONENTS={','.join(impact.components) if impact.components else 'none'}",
+            f"CI_CORE_CHANGED={'true' if impact.core_changed else 'false'}",
+            f"CI_PACKAGE_CHANGED={'true' if impact.package_changed else 'false'}",
+            f"CI_UNKNOWN_CHANGED={'true' if impact.unknown_changed else 'false'}",
+            f"CI_SHARED_CHANGED={'true' if impact.shared_changed else 'false'}",
+            f"CI_INDEPENDENT_ONLY={'true' if impact.independent_only else 'false'}",
+            f"CI_FULL_MATRIX_REQUIRED={'true' if impact.full_matrix_required else 'false'}",
+            f"CI_CHANGED_FILES={len(paths)}",
+        ]
+        sys.stdout.write("\n".join(lines) + "\n")
+        return
     if output == "json":
         payload = {
             "tier": tier,
@@ -104,6 +125,16 @@ def _print_classify(
 
 
 def _print_classify_error(reason: str, error: str, output: str) -> None:
+    if output == "github-env":
+        # Fail-closed assignment block: classifier inability is never a
+        # fast tier. The workflow additionally re-exports these exact
+        # values on any non-zero exit.
+        sys.stdout.write(
+            "CI_TIER=full\n"
+            f"CI_TIER_REASON={reason}\n"
+            "CI_FULL_MATRIX_REQUIRED=true\n"
+        )
+        return
     if output == "json":
         payload = {
             "tier": TIER_FULL,
@@ -250,8 +281,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="head git ref (PR head SHA / pushed SHA)",
     )
     p_classify.add_argument(
-        "--output", choices=("json", "env"), default="json",
-        help="output format (default: json)",
+        "--output", choices=("json", "env", "github-env"), default="json",
+        help="output format (default: json); github-env emits only valid "
+             "GitHub Actions CI_* environment assignments",
     )
 
     p_verify = sub.add_parser(

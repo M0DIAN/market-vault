@@ -80,16 +80,52 @@ redirects (artifact CDN). Network/API failures map to `reuse=false`.
 
 ### Workflow guards
 
-The template ([templates/github-actions/ci.yml](../templates/github-actions/ci.yml))
-guards every heavy step with the exact literal:
+Every formal job in the template
+([templates/github-actions/ci.yml](../templates/github-actions/ci.yml))
+and in the framework self-CI
+([.github/workflows/ci.yml](../.github/workflows/ci.yml)) runs the same
+order: checkout (`fetch-depth: 0`) → setup → install → classify →
+post-merge FULL reuse proof (V1) → cheap checks → heavy validation.
+
+**Classification is event-aware and fail-closed.** The step selects the
+mode and refs from the event (`pull_request` → `base.sha`/`head.sha`/`pull_request`;
+anything else → `github.event.before`/`github.sha`/`push`) and invokes
+`ci-opt classify --output github-env`, which emits only valid GitHub
+Actions `CI_*` environment assignments (never raw `files:` blocks). If
+the classifier exits non-zero — config error, unresolvable ref, git
+failure — the workflow explicitly exports:
+
+```text
+CI_TIER=full
+CI_TIER_REASON=classifier_error_fail_closed
+CI_FULL_MATRIX_REQUIRED=true
+```
+
+Classifier inability must never silently create a fast tier.
+
+**The V1 reuse proof runs before heavy validation, in every formal
+job** (job-scoped `GITHUB_ENV` does not propagate between jobs). On a
+full push to `main` the proof step runs `ci-opt verify-reuse`; on
+success its output is consumed, on any non-zero exit the workflow
+explicitly exports `POST_MERGE_REUSE=false` /
+`reason=verifier_crash_fail_closed`. Invariant: proof failure or
+verifier crash ⇒ fresh heavy validation runs.
+
+**Heavy validation is guarded by the exact literal** in every job:
 
 ```yaml
-if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.POST_MERGE_REUSE != 'true'
+if: |
+  env.POST_MERGE_REUSE != 'true' &&
+  env.CI_TIER != 'docs_fast' &&
+  env.CI_TIER != 'package_docs'
 ```
 
 Heavy validation may skip **only** when `POST_MERGE_REUSE == "true"`.
 Anything else — including an unset or unknown tier — runs. An unset
 `CI_TIER` fails closed because the guard compares `!= 'docs_fast'`.
+Cheap checks (compile, metadata sanity) run unconditionally; on PR FULL
+runs the real package surface still executes before the attestation is
+created, so attestation evidence always covers a real validation run.
 
 ### Exact-tree model
 

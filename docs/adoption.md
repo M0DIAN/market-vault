@@ -13,10 +13,17 @@ logged. Nothing is skipped yet.
 1. Copy `ciopt.example.toml` to `ciopt.toml`; set the docs scope,
    package-doc files, control-plane surfaces, registered components,
    and the formal job set to match your repository exactly.
-2. Add the `Classify change tier` step from
+2. Add the `Classify change tier (event-aware, fail-closed)` step from
    [templates/github-actions/ci.yml](../templates/github-actions/ci.yml)
-   to every job. It exports `CI_TIER` (and `CI_TIER_REASON`) but
-   **no guard depends on it yet**.
+   to every job. It resolves the mode/refs from the event
+   (`pull_request` → `base.sha`/`head.sha`; anything else →
+   `github.event.before`/`github.sha`), invokes
+   `ci-opt classify --output github-env`, and exports the `CI_*`
+   assignments — or, if the classifier exits non-zero, explicitly
+   exports `CI_TIER=full` /
+   `CI_TIER_REASON=classifier_error_fail_closed` /
+   `CI_FULL_MATRIX_REQUIRED=true`. **No guard depends on the tier
+   yet**; the fail-closed wrapper is already in place.
 3. Run CI for a while. Every run logs `tier=<...>` and
    `reason=<...>`. Check that the observed classifications match your
    expectations — especially that nothing surprising classifies as a
@@ -53,13 +60,21 @@ instead of rerunning the FULL matrix — only when every proof succeeds.
    (`ci-opt create-attestation --config ciopt.toml ci_full_attestation.json`)
    guarded by `github.event_name == 'pull_request' && env.CI_TIER ==
    'full' && env.CI_FULL_MATRIX_REQUIRED == 'true'`, and upload the
-   result as
-   `<prefix>${{ github.event.pull_request.head.sha }}-attempt-${{ github.run_attempt }}`
-   (with `if-no-files-found: error`).
-2. In every job, add the `Post-merge FULL reuse proof` step
-   (`ci-opt verify-reuse --config ciopt.toml`) guarded by
-   `github.event_name == 'push' && github.ref == 'refs/heads/main' && env.CI_TIER == 'full'`,
-   exporting `POST_MERGE_REUSE` to `$GITHUB_ENV`.
+   result with the hardcoded name
+   `ci-full-attestation-${{ github.event.pull_request.head.sha }}-attempt-${{ github.run_attempt }}`
+   (with `if-no-files-found: error`). The upload name must stay
+   identical to the config `artifact_prefix` — both are
+   `ci-full-attestation-` by default; never parameterize the workflow
+   name with `vars` / `default(...)`.
+2. In **every** formal job, add the `Post-merge FULL reuse proof (V1,
+   read-only)` step **before the guarded heavy steps** — never after
+   them — guarded by `github.event_name == 'push' && github.ref ==
+   'refs/heads/main' && env.CI_TIER == 'full'`. The step runs
+   `ci-opt verify-reuse --config ciopt.toml`, consumes its output, and
+   on any non-zero exit (verifier crash) explicitly exports
+   `POST_MERGE_REUSE=false` / `reason=verifier_crash_fail_closed` so
+   heavy validation still runs. `$GITHUB_ENV` is job-scoped: each job
+   must run its own proof; there is no cross-job plumbing.
 3. Verify the marker steps: `FULL_TESTS_REUSED_FROM_VERIFIED_PR` when
    reuse fired, `FULL_TESTS_SKIPPED_BY_POLICY` for fast tiers.
 
@@ -72,6 +87,15 @@ safely) denies reuse forever — it never skips validation.
 - heavy steps skip only when `POST_MERGE_REUSE == "true"` — or when a
   validated fast tier is active;
 - an unset / unknown `CI_TIER` or `POST_MERGE_REUSE` always runs;
+- the classifier wrapper never lets a classifier failure become a fast
+  tier: non-zero exit ⇒ explicit `CI_TIER=full` /
+  `CI_TIER_REASON=classifier_error_fail_closed` /
+  `CI_FULL_MATRIX_REQUIRED=true`;
+- the verifier wrapper never lets a verifier crash become reuse:
+  non-zero exit ⇒ explicit `POST_MERGE_REUSE=false` /
+  `reason=verifier_crash_fail_closed`;
+- every checkout uses `fetch-depth: 0` (the classifier and verifier
+  resolve refs and diff against full history);
 - the attestation upload uses `if-no-files-found: error` (a missing
   attestation must fail the run, never enable reuse);
 - the token binding for the reuse proof is step-scoped and read-only.

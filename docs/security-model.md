@@ -37,6 +37,8 @@ Concretely, every ambiguity lands on the expensive side:
 | unresolvable ref / git failure | `full` (classify) / `reuse=false` (verify) |
 | GitHub API / network failure | `reuse=false` |
 | verifier internal error | `reuse=false` (`verifier_internal_error`) |
+| verifier process crash (non-zero exit) | workflow exports `POST_MERGE_REUSE=false` (`reason=verifier_crash_fail_closed`) |
+| classifier failure (non-zero exit) | workflow exports `CI_TIER=full` (`CI_TIER_REASON=classifier_error_fail_closed`) |
 | anything other than the literal `"true"` in `POST_MERGE_REUSE` | heavy validation RUNS |
 
 ## Attack / failure cases
@@ -99,3 +101,12 @@ Any unexpected exception inside the verifier is caught and converted to
 `reuse=false` — never to `reuse=true`. `skip_heavy_validation()` is the
 only predicate under which a heavy step may skip, and it returns `True`
 only for the exact literal `"true"`.
+
+Beyond the in-process catch, the workflow wraps the verifier invocation:
+a verifier **process crash** (non-zero exit — interpreter crash, kill,
+OOM, anything that bypasses the in-process catch) makes the wrapper
+explicitly export `POST_MERGE_REUSE=false` /
+`reason=verifier_crash_fail_closed`, and the guarded heavy steps run.
+The classifier is wrapped the same way: any non-zero exit exports
+`CI_TIER=full` / `CI_TIER_REASON=classifier_error_fail_closed` /
+`CI_FULL_MATRIX_REQUIRED=true`. There is no code path that fails open.

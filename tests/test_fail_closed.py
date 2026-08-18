@@ -6,6 +6,7 @@ CI failure; attestation failure is."""
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 
@@ -159,6 +160,90 @@ def test_classify_empty_diff_env_output(tmp_path, capsys) -> None:
     assert "tier=full" in lines
     assert "reason=empty_diff" in lines
     assert "full_matrix_required=true" in lines
+
+
+# ---------------------------------------------------------------------------
+# classify: github-env renderer — only valid CI_* assignments, no
+# "files:" / "- path" lines (§3 export integration contract).
+# ---------------------------------------------------------------------------
+
+_GITHUB_ENV_KEYS = (
+    "CI_TIER",
+    "CI_TIER_REASON",
+    "CI_COMPONENTS",
+    "CI_CORE_CHANGED",
+    "CI_PACKAGE_CHANGED",
+    "CI_UNKNOWN_CHANGED",
+    "CI_SHARED_CHANGED",
+    "CI_INDEPENDENT_ONLY",
+    "CI_FULL_MATRIX_REQUIRED",
+    "CI_CHANGED_FILES",
+)
+
+
+def assert_github_env_lines(lines: list[str]) -> None:
+    assert len(lines) == 10
+    assert [line.split("=", 1)[0] for line in lines] == list(_GITHUB_ENV_KEYS)
+    for line in lines:
+        # Valid GitHub Actions env assignment: KEY=VALUE, no quoting,
+        # no "files:" / "- path" blocks.
+        assert re.match(r"^[A-Z0-9_]+=", line), line
+        assert not line.startswith("files:")
+        assert not line.startswith("- ")
+
+
+def test_classify_github_env_output_lines(tmp_path, capsys) -> None:
+    path = write_config(tmp_path)
+    args = make_args("classify", "--config", path, "--mode", "push",
+                     "--base", "a" * 40, "--head", "b" * 40, "--output", "github-env")
+    assert cmd_classify(args, git=FakeGit(paths=["README.md"])) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert_github_env_lines(lines)
+    assert lines[0] == "CI_TIER=package_docs"
+    assert lines[1] == "CI_TIER_REASON=package_doc_changed_in_docs_scope"
+    assert lines[3] == "CI_CORE_CHANGED=false"
+    assert lines[4] == "CI_PACKAGE_CHANGED=true"
+    assert lines[5] == "CI_UNKNOWN_CHANGED=false"
+    assert lines[8] == "CI_FULL_MATRIX_REQUIRED=false"
+    assert lines[9] == "CI_CHANGED_FILES=1"
+
+
+def test_classify_github_env_full_tier(tmp_path, capsys) -> None:
+    path = write_config(tmp_path)
+    args = make_args("classify", "--config", path, "--mode", "push",
+                     "--base", "a" * 40, "--head", "b" * 40, "--output", "github-env")
+    assert cmd_classify(args, git=FakeGit(paths=["src/ci_optimizer/cli.py"])) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert_github_env_lines(lines)
+    assert lines[0] == "CI_TIER=full"
+    assert lines[8] == "CI_FULL_MATRIX_REQUIRED=true"
+
+
+def test_classify_github_env_error_fails_closed(tmp_path, capsys) -> None:
+    path = write_config(tmp_path)
+    args = make_args("classify", "--config", path, "--mode", "push",
+                     "--base", "a" * 40, "--head", "b" * 40, "--output", "github-env")
+    assert cmd_classify(args, git=FakeGit(fail="resolve")) == 2
+    lines = capsys.readouterr().out.splitlines()
+    # Exactly the fail-closed assignment block; safe to append to GITHUB_ENV.
+    assert lines == [
+        "CI_TIER=full",
+        "CI_TIER_REASON=classifier_error_fail_closed",
+        "CI_FULL_MATRIX_REQUIRED=true",
+    ]
+
+
+def test_classify_github_env_invalid_config_fails_closed(tmp_path, capsys) -> None:
+    path = write_config(tmp_path, "schema_version = = 1\n")
+    args = make_args("classify", "--config", path, "--mode", "push",
+                     "--base", "a" * 40, "--head", "b" * 40, "--output", "github-env")
+    assert cmd_classify(args) == 2
+    lines = capsys.readouterr().out.splitlines()
+    assert lines == [
+        "CI_TIER=full",
+        "CI_TIER_REASON=invalid_config_fail_closed",
+        "CI_FULL_MATRIX_REQUIRED=true",
+    ]
 
 
 # ---------------------------------------------------------------------------

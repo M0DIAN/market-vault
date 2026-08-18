@@ -1,10 +1,22 @@
 # CI Optimization Framework — downstream workflow template
 #
 # Consuming repositories adapt this template: replace every <PLACEHOLDER>
-# with the project's real values. The classify → cheap-checks → guarded
-# heavy-jobs → attestation → reuse-proof structure, the tier guards, and
-# the exact-literal POST_MERGE_REUSE guard are part of the fail-closed
-# contract and should not be weakened.
+# with the project's real values. Every formal job runs the same order:
+#
+#   checkout (fetch-depth: 0) -> setup -> install -> classify ->
+#   post-merge FULL reuse proof (V1) -> cheap checks -> heavy validation
+#
+# Fail-closed invariants (never fail open, never silently fast):
+#   * Classifier failure (any non-zero exit) explicitly exports
+#     CI_TIER=full / CI_TIER_REASON=classifier_error_fail_closed /
+#     CI_FULL_MATRIX_REQUIRED=true.
+#   * Verifier process crash exports POST_MERGE_REUSE=false /
+#     reason=verifier_crash_fail_closed; heavy validation always runs.
+#   * Heavy steps skip only for a proven fast tier (docs_fast /
+#     package_docs) or the exact literal POST_MERGE_REUSE == 'true'.
+#   * The attestation upload name is hardcoded to
+#     ci-full-attestation-<head sha>-attempt-<run attempt> and must stay
+#     identical to config artifact_prefix ("ci-full-attestation-").
 #
 # Reads: contents / pull-requests / actions (read only). The reuse proof
 # step binds a step-scoped token so no job-wide secret is needed.
@@ -33,23 +45,68 @@ jobs:
         python-version: ["3.11", "3.12"]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
 
       - name: Install framework
-        run: pip install ci-optimization-framework
-
-      - name: Classify change tier
-        id: classify
         run: |
-          ci-opt classify --config ciopt.toml --mode pull_request \
-            --base "${{ github.event.pull_request.base.sha || github.event.before }}" \
-            --head "${{ github.event.pull_request.head.sha || github.sha }}" \
-            >> "$GITHUB_ENV"
+          # v0.1.0 is NOT published to PyPI. Pin the framework source
+          # explicitly; replace <OWNER>/<FRAMEWORK_REPO> and <TAG>:
+          python -m pip install \
+            "git+https://github.com/<OWNER>/<FRAMEWORK_REPO>.git@<TAG>"
+
+      - name: Classify change tier (event-aware, fail-closed)
+        id: classify
+        env:
+          CI_EVENT: ${{ github.event.pull_request && 'pull_request' || 'push' }}
+        run: |
+          if [[ "$CI_EVENT" == "pull_request" ]]; then
+            CI_BASE="${{ github.event.pull_request.base.sha }}"
+            CI_HEAD="${{ github.event.pull_request.head.sha }}"
+          else
+            CI_BASE="${{ github.event.before }}"
+            CI_HEAD="${{ github.sha }}"
+          fi
+          if ci-opt classify --config ciopt.toml \
+              --mode "$CI_EVENT" --base "$CI_BASE" --head "$CI_HEAD" \
+              --output github-env > classify.env 2>&1; then
+            cat classify.env >> "$GITHUB_ENV"
+          else
+            # Classifier inability is never a fast tier.
+            echo "CI_TIER=full" >> "$GITHUB_ENV"
+            echo "CI_TIER_REASON=classifier_error_fail_closed" >> "$GITHUB_ENV"
+            echo "CI_FULL_MATRIX_REQUIRED=true" >> "$GITHUB_ENV"
+            tail -n 10 classify.env
+          fi
+
+      - name: Post-merge FULL reuse proof (V1, read-only)
+        if: |
+          github.event_name == 'push' &&
+          github.ref == 'refs/heads/main' &&
+          env.CI_TIER == 'full'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+        run: |
+          if ci-opt verify-reuse --config ciopt.toml > reuse.env 2>&1; then
+            cat reuse.env >> "$GITHUB_ENV"
+          else
+            # Verifier crash: fail closed, never fail open.
+            echo "POST_MERGE_REUSE=false" >> "$GITHUB_ENV"
+            echo "reason=verifier_crash_fail_closed" >> "$GITHUB_ENV"
+            tail -n 10 reuse.env
+          fi
 
       - name: Run fast checks (always)
         run: |
@@ -60,9 +117,9 @@ jobs:
 
       - name: Run full test matrix
         if: |
+          env.POST_MERGE_REUSE != 'true' &&
           env.CI_TIER != 'docs_fast' &&
-          env.CI_TIER != 'package_docs' &&
-          env.POST_MERGE_REUSE != 'true'
+          env.CI_TIER != 'package_docs'
         run: |
           # <PLACEHOLDER> full test command:
           python -m pytest -q
@@ -79,25 +136,79 @@ jobs:
     runs-on: ubuntu-latest
     needs: [test]
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install framework
-        run: pip install ci-optimization-framework
-
-      - name: Classify change tier
-        id: classify
         run: |
-          ci-opt classify --config ciopt.toml --mode pull_request \
-            --base "${{ github.event.pull_request.base.sha || github.event.before }}" \
-            --head "${{ github.event.pull_request.head.sha || github.sha }}" \
-            >> "$GITHUB_ENV"
+          # v0.1.0 is NOT published to PyPI. Pin the framework source
+          # explicitly; replace <OWNER>/<FRAMEWORK_REPO> and <TAG>:
+          python -m pip install \
+            "git+https://github.com/<OWNER>/<FRAMEWORK_REPO>.git@<TAG>"
 
-      - name: Run package chain (always runs: package surfaces are never skipped by policy)
+      - name: Classify change tier (event-aware, fail-closed)
+        id: classify
+        env:
+          CI_EVENT: ${{ github.event.pull_request && 'pull_request' || 'push' }}
+        run: |
+          if [[ "$CI_EVENT" == "pull_request" ]]; then
+            CI_BASE="${{ github.event.pull_request.base.sha }}"
+            CI_HEAD="${{ github.event.pull_request.head.sha }}"
+          else
+            CI_BASE="${{ github.event.before }}"
+            CI_HEAD="${{ github.sha }}"
+          fi
+          if ci-opt classify --config ciopt.toml \
+              --mode "$CI_EVENT" --base "$CI_BASE" --head "$CI_HEAD" \
+              --output github-env > classify.env 2>&1; then
+            cat classify.env >> "$GITHUB_ENV"
+          else
+            # Classifier inability is never a fast tier.
+            echo "CI_TIER=full" >> "$GITHUB_ENV"
+            echo "CI_TIER_REASON=classifier_error_fail_closed" >> "$GITHUB_ENV"
+            echo "CI_FULL_MATRIX_REQUIRED=true" >> "$GITHUB_ENV"
+            tail -n 10 classify.env
+          fi
+
+      - name: Post-merge FULL reuse proof (V1, read-only)
+        if: |
+          github.event_name == 'push' &&
+          github.ref == 'refs/heads/main' &&
+          env.CI_TIER == 'full'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+        run: |
+          if ci-opt verify-reuse --config ciopt.toml > reuse.env 2>&1; then
+            cat reuse.env >> "$GITHUB_ENV"
+          else
+            # Verifier crash: fail closed, never fail open.
+            echo "POST_MERGE_REUSE=false" >> "$GITHUB_ENV"
+            echo "reason=verifier_crash_fail_closed" >> "$GITHUB_ENV"
+            tail -n 10 reuse.env
+          fi
+
+      - name: Cheap package checks (always run)
+        run: |
+          # <PLACEHOLDER> cheap package/repo checks that always run:
+          python -m compileall -q src
+
+      - name: Build and validate package (heavy)
+        if: |
+          env.POST_MERGE_REUSE != 'true' &&
+          env.CI_TIER != 'docs_fast' &&
+          env.CI_TIER != 'package_docs'
         run: |
           # <PLACEHOLDER> build + package validation:
           python -m build
@@ -117,28 +228,10 @@ jobs:
           github.event_name == 'pull_request' &&
           env.CI_TIER == 'full' &&
           env.CI_FULL_MATRIX_REQUIRED == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: ${{ vars.CI_ATTESTATION_PREFIX | default('ci-full-attestation-') }}${{ github.event.pull_request.head.sha }}-attempt-${{ github.run_attempt }}
+          # Must stay identical to config artifact_prefix ("ci-full-attestation-")
+          # and to the framework self-CI's upload step.
+          name: ci-full-attestation-${{ github.event.pull_request.head.sha }}-attempt-${{ github.run_attempt }}
           path: ci_full_attestation.json
           if-no-files-found: error
-
-      - name: Post-merge FULL reuse proof
-        if: |
-          github.event_name == 'push' &&
-          github.ref == 'refs/heads/main' &&
-          env.CI_TIER == 'full'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          GITHUB_EVENT_NAME: ${{ github.event_name }}
-          GITHUB_REF: ${{ github.ref }}
-          GITHUB_BEFORE: ${{ github.event.before }}
-          GITHUB_SHA: ${{ github.sha }}
-          GITHUB_EVENT_PATH: ${{ github.event_path }}
-        run: |
-          # Exact-literal guard: the verifier emits POST_MERGE_REUSE=true
-          # only when every proof succeeds; anything else (including
-          # failure) leaves it unset/false and the guarded steps RUN.
-          ci-opt verify-reuse --config ciopt.toml >> "$GITHUB_ENV"
-          echo "POST_MERGE_REUSE=${POST_MERGE_REUSE:-false}"

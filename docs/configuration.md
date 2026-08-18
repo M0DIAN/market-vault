@@ -77,6 +77,15 @@ until the project registers an explicit validated validation contract.
 (including matrix leg names such as `"test (3.11)"`). A missing,
 duplicate, or extra job in the PR run denies reuse.
 
+`artifact_prefix` must also be in exact sync with the workflow's
+attestation upload step: the template hardcodes the artifact name
+`ci-full-attestation-${{ github.event.pull_request.head.sha }}-attempt-${{ github.run_attempt }}`
+and the config default prefix is `ci-full-attestation-`. Keep the
+workflow name and the config prefix identical; never parameterize the
+workflow name with `vars` / `default(...)` — the verifier matches the
+artifact name against the config prefix, and a mismatch denies reuse
+(safely, but permanently).
+
 ## Fail-closed behavior
 
 - missing file, unparseable TOML, wrong types ⇒ `ConfigError`

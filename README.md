@@ -87,8 +87,21 @@ workflow runs the validation itself.
 
 ## Installation
 
+**v0.1.0 is not published to PyPI.** Install it from source.
+
+For local framework development, install the checkout in editable mode
+with the dev extras:
+
 ```console
-python -m pip install ci-optimization-framework
+python -m pip install -e ".[dev]"
+```
+
+Downstream repositories pin the framework source with a git install.
+Replace `<OWNER>/<FRAMEWORK_REPO>` and `<TAG>` with the final values:
+
+```console
+python -m pip install \
+  "git+https://github.com/<OWNER>/<FRAMEWORK_REPO>.git@<TAG>"
 ```
 
 `ci-opt` is the CLI; `python -m ci_optimizer` works too. Copy
@@ -99,6 +112,13 @@ it (see [docs/configuration.md](docs/configuration.md)).
 ci-opt classify --config ciopt.toml \
   --mode pull_request --base <BASE_SHA> --head <HEAD_SHA>
 ```
+
+`classify` prints JSON by default; `--output env` emits production
+key=value lines; `--output github-env` emits only valid GitHub Actions
+environment assignments (`CI_TIER`, `CI_TIER_REASON`, `CI_COMPONENTS`,
+`CI_CORE_CHANGED`, `CI_PACKAGE_CHANGED`, `CI_UNKNOWN_CHANGED`,
+`CI_SHARED_CHANGED`, `CI_INDEPENDENT_ONLY`, `CI_FULL_MATRIX_REQUIRED`,
+`CI_CHANGED_FILES`) — the renderer used by the workflow templates.
 
 ## Adoption path
 
