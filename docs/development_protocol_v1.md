@@ -414,6 +414,34 @@ canaries / mutation cases。这是 PR #65 foundation 落地时规划的方向，
 - PR-head reuse 是独立的方向，仅作为未来 research/design 方向，
   **此处不授权**（`PR_HEAD_REUSE_AUTHORIZED=false`）。
 
+**PR-Head Reuse Phase-0B Product-Workload Decision（2026-08-18）**
+
+后续的独立评审（Phase 0B）对 PR-head / PR 迭代复用进行了代表性产品
+工作负载测量，永久记录于
+[pr_head_reuse_phase_0b_product_workload_decision.md](pr_head_reuse_phase_0b_product_workload_decision.md)。
+要点：
+
+- Phase 0 初步发现了一个同类重复工作案例（尤其 PR #90），但样本以
+  CI / P2 / 控制面工作为主。
+- 独立评审要求测量有代表性的产品工作负载；Phase 0B 因此测量了 33
+  个产品 PR。
+- 多 head 产品开发是常见的（26/33 为多 head）。
+- 大多数被观察到的 head 间变更是对代码/测试有实质影响（affecting）
+  的变更。
+- commit-chain 节点与可证明的远程 PR head 是两个不同的证据类别；
+  在现有证据下，正确的观察数据集为 **78 个观察 head / 45 条观察
+  转换**（`7b3e0b6` 目前为 `UNPROVEN_AS_REMOTE_PR_HEAD`）。
+- 增量 docs-only 并不等于当前 workflow 是 docs_fast：当累计
+  PR base->head 仍为 FULL 时，该 head 今天仍然运行 FULL。
+- 这些累计-FULL 产品 head 情形下
+  `ALREADY_SOLVED_BY_CURRENT_TIER_POLICY=0`。
+- `INTERMEDIATE_PR_HEAD_REUSE_CANDIDATES=0`。
+- `SAVEABLE_UNDER_FINAL_FRESHNESS=0`。
+- Phase-0B 正式结论 = **OUTCOME C**。
+- 不追求 PR-head 复用的实现/shadow 工作。
+- `PR_HEAD_REUSE_AUTHORIZED=false`。
+- 未来重新考虑必须满足新永久决策记录中的 reopen criteria。
+
 **V2 未在生产实现。** 任何把 V2 输出当作生产 skip 依据的改动，必须先
 通过上述完整评审与 canary 流程。
 
