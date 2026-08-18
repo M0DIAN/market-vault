@@ -8,7 +8,7 @@
 This document permanently records the independently accepted architectural
 decision: post-merge Partial Reuse V2 is **NOT** activated under the current
 V1 precedence / tier policy / governance. The decision is deliberate and
-revisitable only under the criteria in §9.
+revisitable only under the criteria in §12.
 
 **No activation:** this decision record changes nothing executable. It does
 not activate V2, change V1, change workflow gating, change tests, restore
