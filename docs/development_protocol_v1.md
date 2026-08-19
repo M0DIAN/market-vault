@@ -3,9 +3,9 @@
 MarketVault 工程流程的架构 / roadmap 文档。本文档说明 Development Protocol
 v1（DP1）的动机，记录优化前的旧流程观测值，并定义后续 PR 实现的方向。
 
-- 策略文档：[DEVELOPMENT_PLAYBOOK.md](../DEVELOPMENT_PLAYBOOK.md) 与
-  [RELEASE_PLAYBOOK.md](../RELEASE_PLAYBOOK.md)。
-- Agent 执行契约：[AGENT_HANDOFF.md](../AGENT_HANDOFF.md)。
+- 策略文档：[DEVELOPMENT_PLAYBOOK.md](governance/DEVELOPMENT_PLAYBOOK.md) 与
+  [RELEASE_PLAYBOOK.md](governance/RELEASE_PLAYBOOK.md)。
+- Agent 执行契约：[AGENT_HANDOFF.md](governance/AGENT_HANDOFF.md)。
 
 ## 1. 状态
 
@@ -84,7 +84,7 @@ DP1 的策略减少的是重复验证（同一变更反复跑本地完整套件�
 三个本地验证层级——LEVEL 1 focused development、LEVEL 2 submission
 readiness、LEVEL 3 authoritative full verification——让小编辑只跑它需要的
 验证，完整套件的权威落在 final-head CI。策略见
-[DEVELOPMENT_PLAYBOOK.md](../DEVELOPMENT_PLAYBOOK.md) 第 2 节。
+[DEVELOPMENT_PLAYBOOK.md](governance/DEVELOPMENT_PLAYBOOK.md) 第 2 节。
 
 ### 4.2 并行测试（Parallel Testing）
 
@@ -106,9 +106,9 @@ independent review 仍由人类或独立审查者判断。
 ### 4.4 仓库原生 playbooks / handoff（Repository-Native Playbooks / Handoff）
 
 **状态：DP1 implemented**。本仓库现在携带 playbooks 与 agent 执行契约
-（[DEVELOPMENT_PLAYBOOK.md](../DEVELOPMENT_PLAYBOOK.md)、
-[RELEASE_PLAYBOOK.md](../RELEASE_PLAYBOOK.md)、
-[AGENT_HANDOFF.md](../AGENT_HANDOFF.md)），未来任务引用它们而不是在每次
+（[DEVELOPMENT_PLAYBOOK.md](governance/DEVELOPMENT_PLAYBOOK.md)、
+[RELEASE_PLAYBOOK.md](governance/RELEASE_PLAYBOOK.md)、
+[AGENT_HANDOFF.md](governance/AGENT_HANDOFF.md)），未来任务引用它们而不是在每次
 prompt 中重复完整 gate 规范。
 
 ### 4.5 Lifecycle-State Decoupling
