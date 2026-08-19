@@ -295,9 +295,9 @@ def test_cli_existing_failure_exit_codes_unchanged():
 # --- Documentation ----------------------------------------------------------
 
 
-def test_readme_title_is_v070():
+def test_readme_title_is_landing_page():
     first_line = (ROOT / "README.md").read_text(encoding="utf-8").splitlines()[0]
-    assert first_line.strip() == "# MarketVault v0.7.0"
+    assert first_line.strip() == "# MarketVault"
 
 
 def test_readme_no_development_wording():
@@ -307,21 +307,28 @@ def test_readme_no_development_wording():
     assert "release preparation pending" not in text
 
 
-def test_readme_incremental_uses_trading_day_semantics():
+def test_user_guide_incremental_uses_trading_day_semantics():
+    # The next-trading-date calendar semantics re-homed from the README
+    # wording check: the canonical guide must describe the incremental
+    # start point as the first trading date strictly after each symbol's
+    # latest completed date.
     text = (ROOT / "README.md").read_text(encoding="utf-8")
     assert "one calendar day after" not in text
-    assert "first trading date strictly after" in text
+    guide = (ROOT / "docs" / "USER_GUIDE.md").read_text(encoding="utf-8")
+    assert "first trading date strictly after" in guide
 
 
-def test_readme_mentions_boundary_not_evaluated():
-    text = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "boundary_coverage" in text or "session boundaries" in text
+def test_user_guide_mentions_boundary_not_evaluated():
+    # The "session boundary coverage is not evaluated" fact re-homed from
+    # the README wording check.
+    text = (ROOT / "docs" / "USER_GUIDE.md").read_text(encoding="utf-8")
+    assert "session boundary coverage" in text
 
 
-def test_readme_does_not_claim_fixed_bar_counts():
-    text = (ROOT / "README.md").read_text(encoding="utf-8")
+def test_user_guide_does_not_claim_fixed_bar_counts():
+    text = (ROOT / "docs" / "USER_GUIDE.md").read_text(encoding="utf-8")
     # Fixed counts only appear as negated boundaries ("no fixed daily bar
-    # counts"); the README must never assert an expected count.
+    # counts"); the guide must never assert an expected count.
     assert "exactly 1440" not in text
     assert "exactly 390" not in text
     assert "exactly 1201" not in text
@@ -414,60 +421,52 @@ def test_release_notes_contain_dataset_boundaries():
     assert "No cross-trading-day Label" in text
 
 
-def test_readme_contains_v04_foundation():
-    text = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "V0.4 canonical and dataset foundation" in text
+def test_docs_do_not_claim_builder_not_implemented():
+    # The stale pre-release claim must never return to any user-facing doc:
+    # the README (landing page) and the USER_GUIDE (canonical guide).
+    for path in (ROOT / "README.md", ROOT / "docs" / "USER_GUIDE.md"):
+        text = path.read_text(encoding="utf-8")
+        assert "final Dataset builder is not implemented" not in text
+        assert "no final Dataset CLI" not in text
+        assert "no automatic Feature/Label value computation" not in text
+        assert "no final Dataset Parquet export" not in text
 
 
-def test_readme_contains_upgrade_from_v03():
-    text = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "Upgrade from v0.3" in text
-
-
-def test_readme_contains_upgrade_from_v04():
-    text = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "Upgrade from v0.4" in text
-
-
-def test_readme_does_not_claim_builder_not_implemented():
-    text = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "final Dataset builder is not implemented" not in text
-    assert "no final Dataset CLI" not in text
-    assert "no automatic Feature/Label value computation" not in text
-    assert "no final Dataset Parquet export" not in text
-
-
-def test_readme_contains_v05_builder_section():
-    text = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "V0.5 deterministic Dataset builder" in text
-
-
-def test_readme_describes_dataset_cli_commands():
-    text = (ROOT / "README.md").read_text(encoding="utf-8")
+def test_user_guide_describes_dataset_commands():
+    # The Dataset CLI command surface re-homed from the README builder
+    # section to the canonical user guide.
+    text = (ROOT / "docs" / "USER_GUIDE.md").read_text(encoding="utf-8")
     assert "dataset-build --plan" in text
     assert "dataset-verify --build-dir" in text
     assert "dataset-inspect --build-dir" in text
+    assert "dataset_status = EMPTY" in text
 
 
-def test_readme_describes_full_dataset_chain():
-    text = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "verified Canonical builds" in text
-    assert "verified Dataset reader" in text
-    assert "immutable Dataset materialization" in text
-    assert "label_status" in text
-    assert "actual_label_end_time" in text
+def test_user_guide_describes_full_dataset_chain():
+    guide = (ROOT / "docs" / "USER_GUIDE.md").read_text(encoding="utf-8")
+    assert "load_verified_canonical_build" in guide
+    assert "verified Dataset reader" in guide
+    assert "immutable Dataset materialization" in guide
+    # Dataset-schema fields re-homed to the formal Dataset contract docs.
+    contract = (ROOT / "docs" / "contracts" / "chronological_splits_and_purging.md").read_text(
+        encoding="utf-8"
+    )
+    assert "label_status" in contract
+    assert "actual_label_end_time" in contract
 
 
-def test_readme_describes_explicit_build_plan():
-    text = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "explicit" in text
+def test_user_guide_describes_explicit_build_plan():
+    text = (ROOT / "docs" / "USER_GUIDE.md").read_text(encoding="utf-8")
     assert "build-plan JSON" in text
+    assert "market-vault-dataset-build-plan-v1" in text
+    assert "dataset-build" in text
 
 
-def test_readme_claims_v06_capabilities():
-    text = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "# MarketVault v0.7.0" in text
-    assert "deterministic sample generation" in text
+def test_user_guide_claims_current_capabilities():
+    text = (ROOT / "docs" / "USER_GUIDE.md").read_text(encoding="utf-8")
+    first_line = text.splitlines()[0]
+    assert first_line.strip() == "# MarketVault 使用说明"
+    assert "Sample Generation" in text
     assert "Dataset Catalog" in text
     assert "sample-generate" in text
     assert "dataset-catalog-build" in text
@@ -482,33 +481,39 @@ def test_direction_document_is_released():
     assert "3b4d03c785123e204885faea08df7b9d7ed07ec0" in text
 
 
-def test_readme_describes_ci_matrix():
-    text = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "Normal CI on Python 3.11 and 3.14" in text
+def test_changelog_describes_ci_matrix():
+    # The CI-matrix facts re-homed from the README to the CHANGELOG's
+    # v0.6.0 / v0.7.0 entries (the README is now a versionless landing page).
+    text = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert "Normal CI remains Python 3.11 and 3.14" in text
     assert "PyArrow24 full-suite compatibility gate" in text
 
 
-def test_readme_contains_empty_build_semantics():
-    text = (ROOT / "README.md").read_text(encoding="utf-8")
+def test_user_guide_contains_empty_build_semantics():
+    text = (ROOT / "docs" / "USER_GUIDE.md").read_text(encoding="utf-8")
+    assert "dataset_status = EMPTY" in text
     assert "no eligible COMPLETE snapshots" in text
     assert "deterministic EMPTY build" in text
-    assert "not converted into synthetic rows or internal-gap sidecar entries" in text
+    assert "internal-gap sidecar entries" in text
 
 
-def test_readme_contains_gap_sidecar_scope():
-    text = (ROOT / "README.md").read_text(encoding="utf-8")
+def test_user_guide_contains_gap_sidecar_scope():
+    text = (ROOT / "docs" / "USER_GUIDE.md").read_text(encoding="utf-8")
     assert "internal nominal-spacing gaps" in text
     assert "never infers leading/trailing/session gaps" in text
 
 
-def test_readme_contains_market_available_at_precision():
-    text = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "exact for bars known to span the complete nominal interval" in text
+def test_contract_contains_market_available_at_precision():
+    # The market_available_at precision facts re-homed from the README to
+    # the formal timestamp-semantics contract.
+    text = (
+        ROOT / "docs" / "contracts" / "market_bar_timestamp_semantics.md"
+    ).read_text(encoding="utf-8")
     assert "conservative leakage-safe not-before bound" in text
 
 
-def test_readme_contains_dataset_boundaries():
-    text = (ROOT / "README.md").read_text(encoding="utf-8")
+def test_user_guide_contains_dataset_boundaries():
+    text = (ROOT / "docs" / "USER_GUIDE.md").read_text(encoding="utf-8")
     assert "adjustment = NONE" in text
     assert "cross-trading-day" in text
     assert "arbitrary user code" in text
@@ -517,10 +522,15 @@ def test_readme_contains_dataset_boundaries():
     assert "automatic trading" in text
 
 
-def test_upgrade_notes_contain_legacy_compatibility():
-    text = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "Upgrade from v0.2" in text
-    assert "batch-<batch_key>.parquet" in text
+def test_user_guide_does_not_carry_upgrade_notes():
+    # Legacy upgrade notes are historical narrative; the README must not
+    # carry them and the USER_GUIDE must not either. The immutable
+    # snapshot-naming fact lives in the guide.
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    guide = (ROOT / "docs" / "USER_GUIDE.md").read_text(encoding="utf-8")
+    assert "Upgrade from v0.2" not in readme
+    assert "Upgrade from v0.2" not in guide
+    assert "batch-<batch_key>-<run_id>.parquet" in guide
 
 
 # --- V0.6 public API imports ------------------------------------------------
@@ -670,7 +680,7 @@ def test_release_checker_fails_on_readme_title_mismatch(tmp_path):
     readme = repo / "README.md"
     readme.write_text(
         readme.read_text(encoding="utf-8").replace(
-            "# MarketVault v0.7", "# MarketVault v9.9"
+            "# MarketVault\n", "# MarketVault v9.9\n"
         ),
         encoding="utf-8",
     )
@@ -760,7 +770,7 @@ def test_release_checker_reports_all_failures_at_once(tmp_path):
     readme = repo / "README.md"
     readme.write_text(
         readme.read_text(encoding="utf-8").replace(
-            "# MarketVault v0.7", "# MarketVault v9.9"
+            "# MarketVault\n", "# MarketVault v9.9\n"
         ),
         encoding="utf-8",
     )
@@ -2083,39 +2093,59 @@ def test_release_checker_fails_when_release_notes_lose_merge_record(
 # --- V0.6.1 README / version / CI release-preparation guards ----------------
 
 
-def test_readme_v061_section_states_maintenance_facts():
-    text = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "## V0.6.1 stability, auditability, and usability maintenance" in text
-    assert "V0.6.1 adds NO new product capability" in text
-    assert "### A. Lifecycle / release-state truth" in text
-    assert "### B. CLI usability wording" in text
-    assert "### C. CI/package auditability" in text
-    assert "SHA256SUMS.txt" in text
-    assert "V061_PACKAGE_AUDIT_OK" in text
-    assert "v0.6.1 formal release is published and sealed" in text
-    assert "37614d539171ef7b738e47415f3cd6ca2de332d1" in text
-    assert "MarketVault v0.6.1" in text
-    assert "PyPI: NOT PUBLISHED" in text
-    assert "TestPyPI: NOT PUBLISHED" in text
-    assert "the v0.6.1 formal release does not exist yet" not in text
+def test_v061_maintenance_facts_are_rehomed():
+    # The v0.6.1 maintenance facts re-homed from the README section:
+    # CI/package auditability facts live in CHANGELOG.md, release-state
+    # truth lives in the formal v0.6.1 release record. The README is a
+    # versionless landing page and must not carry the maintenance section.
+    changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert "SHA256SUMS.txt" in changelog
+    assert "V061_PACKAGE_AUDIT_OK" in changelog
+    release = (ROOT / "docs" / "release_v0_6_1.md").read_text(encoding="utf-8")
+    assert "formally released and sealed" in release
+    assert "37614d539171ef7b738e47415f3cd6ca2de332d1" in release
+    assert "MarketVault v0.6.1" in release
+    assert "PyPI: NOT PUBLISHED" in release
+    assert "TestPyPI: NOT PUBLISHED" in release
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "the v0.6.1 formal release does not exist yet" not in readme
 
 
-def test_release_checker_fails_when_readme_loses_v061_section(tmp_path):
-    # Removing the v0.6.1 maintenance section header must fail the
-    # checker.
+def test_release_checker_fails_when_changelog_loses_v061_fact(tmp_path):
+    # Removing a v0.6.1 auditability fact from the CHANGELOG (its re-homed
+    # location) must fail the checker.
     repo = copy_repo(tmp_path)
-    readme = repo / "README.md"
-    readme.write_text(
-        readme.read_text(encoding="utf-8").replace(
-            "## V0.6.1 stability, auditability, and usability maintenance",
-            "## V0.6.1 section removed",
+    changelog = repo / "CHANGELOG.md"
+    changelog.write_text(
+        changelog.read_text(encoding="utf-8").replace(
+            "V061_PACKAGE_AUDIT_OK",
+            "V061_PACKAGE_AUDIT_REMOVED",
         ),
         encoding="utf-8",
     )
     assert_check_fails(
-        _check_release.check_readme_v061_section,
+        _check_release.check_changelog_v061_facts,
         repo,
-        "does not state the v0.6.1 maintenance fact '## V0.6.1 stability, auditability, and usability maintenance'",
+        "CHANGELOG.md is missing the v0.6.1 fact 'V061_PACKAGE_AUDIT_OK'",
+    )
+
+
+def test_release_checker_fails_when_changelog_loses_v051_fact(tmp_path):
+    # Removing a v0.5.1 maintenance fact from the CHANGELOG (its re-homed
+    # location) must fail the checker.
+    repo = copy_repo(tmp_path)
+    changelog = repo / "CHANGELOG.md"
+    changelog.write_text(
+        changelog.read_text(encoding="utf-8").replace(
+            "warning-as-error",
+            "warning-as-success",
+        ),
+        encoding="utf-8",
+    )
+    assert_check_fails(
+        _check_release.check_changelog_v051_facts,
+        repo,
+        "CHANGELOG.md is missing the v0.5.1 fact 'warning-as-error'",
     )
 
 
@@ -2131,9 +2161,9 @@ def test_release_checker_fails_when_readme_reverts_to_not_released(tmp_path):
         encoding="utf-8",
     )
     assert_check_fails(
-        _check_release.check_readme_v061_section,
+        _check_release.check_readme_no_stale_wording,
         repo,
-        "README contains the stale v0.6.1 release-state wording 'the v0.6.1 formal release does not exist yet'",
+        "README still contains the outdated wording 'the v0.6.1 formal release does not exist yet'",
     )
 
 
@@ -2159,18 +2189,113 @@ def test_release_checker_fails_when_version_reverts_to_060(tmp_path):
     assert_check_fails(_check_release.check_package_version, repo, "package __version__")
 
 
-def test_release_checker_fails_when_readme_title_reverts_to_v060(tmp_path):
-    # Reverting the README title to v0.6.0 must fail the checker.
+def test_release_checker_fails_when_readme_title_reverts_to_versioned(tmp_path):
+    # Reverting the README title to a versioned heading must fail the
+    # checker (the landing-page title is exactly "# MarketVault").
     repo = copy_repo(tmp_path)
     readme = repo / "README.md"
     readme.write_text(
         readme.read_text(encoding="utf-8").replace(
-            "# MarketVault v0.7.0",
-            "# MarketVault v0.6.0",
+            "# MarketVault\n",
+            "# MarketVault v0.6.0\n",
         ),
         encoding="utf-8",
     )
     assert_check_fails(_check_release.check_readme_title, repo, "README first line")
+
+
+def test_release_checker_fails_when_readme_gains_version_timeline(tmp_path):
+    # The README is a versionless landing page: re-introducing version
+    # narrative must fail the checker.
+    repo = copy_repo(tmp_path)
+    readme = repo / "README.md"
+    readme.write_text(
+        readme.read_text(encoding="utf-8")
+        + "\n## V0.6 stability, auditability, and usability maintenance\n",
+        encoding="utf-8",
+    )
+    assert_check_fails(
+        _check_release.check_readme_no_version_timeline,
+        repo,
+        "README no longer carries version narrative",
+    )
+
+
+def test_release_checker_fails_when_readme_loses_landing_marker(tmp_path):
+    # The README landing page must keep the user-guide / version-history /
+    # release-truth markers: dropping one must fail the checker.
+    repo = copy_repo(tmp_path)
+    readme = repo / "README.md"
+    readme.write_text(
+        readme.read_text(encoding="utf-8").replace(
+            "docs/USER_GUIDE.md", "docs/MISSING.md"
+        ),
+        encoding="utf-8",
+    )
+    assert_check_fails(
+        _check_release.check_readme_landing_page,
+        repo,
+        "README does not contain the landing-page marker 'docs/USER_GUIDE.md'",
+    )
+
+
+def test_release_checker_fails_when_user_guide_missing(tmp_path):
+    repo = copy_repo(tmp_path)
+    (repo / "docs" / "USER_GUIDE.md").unlink()
+    assert_check_fails(_check_release.check_user_guide_exists, repo, "docs/USER_GUIDE.md is missing")
+
+
+def test_release_checker_fails_when_user_guide_loses_workflow_marker(tmp_path):
+    # Dropping the next-trading-day calendar semantics (re-homed wording
+    # check) from the guide must fail the checker.
+    repo = copy_repo(tmp_path)
+    guide = repo / "docs" / "USER_GUIDE.md"
+    guide.write_text(
+        guide.read_text(encoding="utf-8").replace(
+            "first trading date strictly after", "first calendar date after"
+        ),
+        encoding="utf-8",
+    )
+    assert_check_fails(
+        _check_release.check_user_guide_workflow,
+        repo,
+        "missing the workflow marker 'first trading date strictly after'",
+    )
+
+
+def test_release_checker_fails_when_user_guide_loses_boundary_marker(tmp_path):
+    # Dropping the no-cross-trading-day Dataset boundary from the guide
+    # must fail the checker.
+    repo = copy_repo(tmp_path)
+    guide = repo / "docs" / "USER_GUIDE.md"
+    guide.write_text(
+        guide.read_text(encoding="utf-8").replace(
+            "cross-trading-day", "cross-session"
+        ),
+        encoding="utf-8",
+    )
+    assert_check_fails(
+        _check_release.check_user_guide_dataset,
+        repo,
+        "missing the Dataset marker 'cross-trading-day'",
+    )
+
+
+def test_release_checker_fails_when_user_guide_gains_version_history(tmp_path):
+    # The guide must not carry version history either: re-introducing an
+    # upgrade section must fail the checker.
+    repo = copy_repo(tmp_path)
+    guide = repo / "docs" / "USER_GUIDE.md"
+    guide.write_text(
+        guide.read_text(encoding="utf-8")
+        + "\n## Upgrade from v0.2\n",
+        encoding="utf-8",
+    )
+    assert_check_fails(
+        _check_release.check_user_guide_no_version_history,
+        repo,
+        "must not carry version history",
+    )
 
 
 def test_release_checker_fails_when_changelog_loses_061_entry(tmp_path):
@@ -8813,8 +8938,18 @@ EXPECTED_CHECKS = (
     ("README title", "check_readme_title"),
     ("CHANGELOG entry", "check_changelog"),
     ("README wording", "check_readme_no_stale_wording"),
-    ("README maintenance section", "check_readme_maintenance_section"),
-    ("README v0.6.1 section", "check_readme_v061_section"),
+    ("README landing page", "check_readme_landing_page"),
+    ("README no version timeline", "check_readme_no_version_timeline"),
+    ("CHANGELOG v0.5.1 facts", "check_changelog_v051_facts"),
+    ("CHANGELOG v0.6.1 facts", "check_changelog_v061_facts"),
+    ("USER_GUIDE exists", "check_user_guide_exists"),
+    ("USER_GUIDE workflow", "check_user_guide_workflow"),
+    ("USER_GUIDE dataset", "check_user_guide_dataset"),
+    ("USER_GUIDE sample generation", "check_user_guide_sample_generation"),
+    ("USER_GUIDE dataset catalog", "check_user_guide_dataset_catalog"),
+    ("USER_GUIDE ArtifactClient", "check_user_guide_artifact_client"),
+    ("USER_GUIDE boundaries", "check_user_guide_boundaries"),
+    ("USER_GUIDE no version history", "check_user_guide_no_version_history"),
     ("direction status", "check_direction_status"),
     ("release notes", "check_release_notes"),
     ("v0.5.1 release notes", "check_v051_release_notes"),
@@ -8855,11 +8990,6 @@ EXPECTED_CHECKS = (
     ("old release notes", "check_old_release_notes"),
     ("warning guard", "check_warning_guard"),
     ("examples", "check_examples"),
-    ("README upgrade notes", "check_readme_upgrade_sections"),
-    ("README dataset builder", "check_readme_dataset_builder_section"),
-    ("README explicit plan", "check_readme_explicit_build_plan"),
-    ("README adjustment boundary", "check_readme_adjustment_none"),
-    ("README dataset boundaries", "check_readme_dataset_boundaries"),
     ("CI version assertions", "check_ci_version_assertions"),
     ("build artifacts untracked", "check_build_artifacts_untracked"),
     ("PEP 440 version", "check_pep440"),
