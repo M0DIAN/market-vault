@@ -223,7 +223,7 @@ market-vault --settings config/settings.yaml backfill `
 
 ## 8. Inventory / audit / intraday audit / query
 
-这四个命令全部**纯本地、只读**：不连接 OpenD、不修改任何数据文件、不做自动修复或重新采集。修复缺口永远是显式的 `backfill` 运行。报告写入 `reports/data_quality/`。
+这四个命令均为**纯本地**操作，不连接 OpenD；对已有市场数据（Raw / Curated 等不可变 artifact）**只读**，不会修改数据，也不会自动修复或重新采集——修复缺口永远是显式的 `backfill` 运行。需要生成报告的操作仍会按正式行为写入配置的 `report_dir`（默认 `reports/data_quality/`）。
 
 ### inventory
 
@@ -369,7 +369,7 @@ market-vault dataset-inspect --build-dir $complete.build_path --offset 0 --limit
 - COMPLETE 不保证：只有验证读取器从实际输入证明满足 Feature lookback、Label horizon、同交易日、split/purge 等条件时才 COMPLETE。
 - 完整示例包（FeatureSpec / LabelSpec / split-spec 文件、COMPLETE 与 EMPTY 计划模板、stdlib-only 渲染器、Windows PowerShell 全流程、24 项常见错误）见 [examples/dataset_cli/README.md](../examples/dataset_cli/README.md)。
 
-**Dataset 策略边界**（policy boundaries）：默认 `adjustment = NONE`，Dataset 只含原始复权价格，**不**提供任何 `adjusted-price` 系列；feature / label 窗口**不**跨越交易边界（no cross-trading-day windows）；Dataset 是只读数据产物，不执行 arbitrary user code；所有读取走 verified Dataset reader（严格验证读取器）与 immutable Dataset materialization（不可变物化），任何不一致都 fail closed。
+**Dataset 策略边界**（policy boundaries）：当前 PIT / Dataset policy 仅支持 `adjustment = NONE`（不做复权）；adjusted-price 的 corporate-action as-of / PIT reconstruction 尚未实现，adjusted requests 会 fail closed。Feature window 按正式 PIT contract 的半开时间窗（half-open `[feature_window_start, feature_window_close)`）以及 market / archive availability 规则处理，不受 anchor-market-calendar-date 限制。默认的 no-cross-trading-day policy 作用于 Label：每个 Label row 必须属于该 sample 的 `anchor_market_calendar_date`。Dataset 是只读数据产物，不执行 arbitrary user code；所有读取走 verified Dataset reader（严格验证读取器）与 immutable Dataset materialization（不可变物化），任何不一致都 fail closed。
 
 ## 12. Sample Generation
 
