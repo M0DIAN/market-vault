@@ -7,7 +7,7 @@ MarketVault 的仓库级开发手册。Claude Code、Codex 以及人工开发者
 - 正式发布流程：见 [RELEASE_PLAYBOOK.md](RELEASE_PLAYBOOK.md)。
 - Agent 执行协议：见 [AGENT_HANDOFF.md](AGENT_HANDOFF.md)。
 - 动机与路线图：见
-  [docs/development_protocol_v1.md](docs/development_protocol_v1.md)。
+  [docs/development_protocol_v1.md](../development_protocol_v1.md)。
 
 本手册是 Development Protocol v1（DP1）的策略。DP1 只定义策略，不修改 CI、
 测试或工具链；后续 PR 负责实现。
@@ -96,8 +96,8 @@ post-merge 验证。报告 COMPLETE 的任务必须先等 exact merge/main commi
 CI 到达 terminal 状态（与 1.7 相同规则）。
 
 main verification 有两种闭合路径（Post-Merge Verified FULL Reuse，
-[scripts/ci_post_merge_reuse.py](scripts/ci_post_merge_reuse.py)，
-详见 [docs/development_protocol_v1.md](docs/development_protocol_v1.md)
+[scripts/ci_post_merge_reuse.py](../../scripts/ci_post_merge_reuse.py)，
+详见 [docs/development_protocol_v1.md](../development_protocol_v1.md)
 第 4.8 节）：
 
 - **A — VERIFIED REUSE closure**：当新 main 树被证明与一个成功完成的
@@ -141,7 +141,7 @@ main verification 有两种闭合路径（Post-Merge Verified FULL Reuse，
 要求完整本地套件。
 
 提交前可运行机械 scope audit 工具（DP2 implemented，
-[scripts/audit_pr.py](scripts/audit_pr.py)）：
+[scripts/audit_pr.py](../../scripts/audit_pr.py)）：
 
 ```
 python scripts/audit_pr.py --base <base> --head <head> --allow <path_or_prefix> ...
@@ -149,13 +149,13 @@ python scripts/audit_pr.py --base <base> --head <head> --allow <path_or_prefix> 
 
 它只检查 changed-file list 与显式 allow 规则是否一致（read-only，不访问
 GitHub / network），是 scope audit 的机械部分；independent review 仍由人类
-或独立审查者判断。详见 [docs/development_protocol_v1.md](docs/development_protocol_v1.md)
+或独立审查者判断。详见 [docs/development_protocol_v1.md](../development_protocol_v1.md)
 第 4.3 节。
 
 ### LEVEL 3 — authoritative full verification
 
 - GitHub final-head CI，按仓库策略
-  （[.github/workflows/ci.yml](.github/workflows/ci.yml)）：完整测试矩阵
+  （[.github/workflows/ci.yml](../../.github/workflows/ci.yml)）：完整测试矩阵
   （Python 3.11 与 3.14）、PyArrow 24 可移植性 gate、以及 package
   build / fresh-wheel / SHA256 closure job。
 - merge 前（适用时）的权威验证。完整矩阵的权威从来不在本地机器，而是
@@ -166,26 +166,28 @@ GitHub / network），是 scope audit 的机械部分；independent review 仍�
   terminal 之后才允许报告 COMPLETE（见 1.10）。
 
 final-head CI 按 changed paths 分层（CI Risk-Tier Optimization Phase 1，
-详见 [docs/development_protocol_v1.md](docs/development_protocol_v1.md)
+详见 [docs/development_protocol_v1.md](../development_protocol_v1.md)
 第 4.6 节）：
 
-- **DOCS_FAST**：仅 `docs/` 与三个顶层 policy 文档（DEVELOPMENT_PLAYBOOK.md /
-  RELEASE_PLAYBOOK.md / AGENT_HANDOFF.md）变更 —— 不跑 full pytest /
-  PyArrow suite / package build，但保留分类、whitespace、repo hygiene
-  与 release checker（release / document 一致性检查），
-  target ≤ 5 min（prefer ≤ 3 min）。
+- **DOCS_FAST**：仅 `docs/` 范围内文档变更（包括
+  `docs/governance/` 下的 DEVELOPMENT_PLAYBOOK.md /
+  RELEASE_PLAYBOOK.md / AGENT_HANDOFF.md）；分类器仍保留三个历史
+  root-level policy filename 的兼容 allowlist，但当前正式文件均位于
+  `docs/governance/`。不跑 full pytest / PyArrow suite / package build，
+  但保留分类、whitespace、repo hygiene 与 release checker（release /
+  document 一致性检查），target ≤ 5 min（prefer ≤ 3 min）。
 - **PACKAGE_DOCS**：DOCS_FAST set + `README.md` 变更（README 是 package
   metadata 敏感路径）—— package job 保持完整验证。
 - **FULL**：任何其他变更 —— 当前完整矩阵不变。unknown / unset tier
   一律按 FULL 处理（fail-safe）。
 
-分类由 [scripts/ci_risk_tier.py](scripts/ci_risk_tier.py) 完成
+分类由 [scripts/ci_risk_tier.py](../../scripts/ci_risk_tier.py) 完成
 （read-only、fail-closed）。
 
 分类是分层的：Phase 1 path-tier（docs_fast / package_docs / full）
 已完成；下一层是 component-aware impact classification
-（[docs/development_protocol_v1.md](docs/development_protocol_v1.md)
-第 4.7 节）。组件注册表 [ci/components.toml](ci/components.toml)
+（[docs/development_protocol_v1.md](../development_protocol_v1.md)
+第 4.7 节）。组件注册表 [ci/components.toml](../../ci/components.toml)
 登记组件路径面，分类器额外输出组件 impact（`components=` /
 `core_changed=` / `package_changed=` / `unknown_changed=` /
 `shared_changed=` / `independent_only=` / `full_matrix_required=`）。
@@ -219,6 +221,6 @@ final head 的权威完整验证是 GitHub CI。本地完整套件在 CI 覆盖�
 
 ## 4. DP1 当前不修改 CI
 
-DP1 不改 CI 行为。[.github/workflows/ci.yml](.github/workflows/ci.yml)
+DP1 不改 CI 行为。[.github/workflows/ci.yml](../../.github/workflows/ci.yml)
 定义的 final-head CI——完整矩阵、PyArrow 24 gate、package job——保持原样，
 不被削弱。任何未来的 CI 变更都是独立的、带自己审查的 PR。

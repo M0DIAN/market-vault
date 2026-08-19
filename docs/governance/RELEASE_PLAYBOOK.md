@@ -3,7 +3,7 @@
 MarketVault 的仓库级正式发布流程。本文件记录每个 MarketVault release 必须
 通过的正式 release gate。当前正式发布流程是在 v0.3.0 到 v0.7.0 的实践中
 逐步完善的，其中 v0.7.0 是当前完整独立审计过的参考发布流程；已记录的
-v0.7.0 示例见 [docs/release_v0_7_0.md](docs/release_v0_7_0.md)。
+v0.7.0 示例见 [docs/release_v0_7_0.md](../release_v0_7_0.md)。
 
 ## 1. 正式 release gate
 
@@ -97,7 +97,7 @@ NOT PUBLISHED）记录在 release record 中。
 
 发布之后，mutable lifecycle 事实作为明确的 point-in-time / historical
 release record 记录到可以继续演进的 main 上——例如
-[docs/release_v0_7_0.md](docs/release_v0_7_0.md) 已有的模式：正式状态小节
+[docs/release_v0_7_0.md](../release_v0_7_0.md) 已有的模式：正式状态小节
 与历史 release-preparation 记录小节分开。
 
 tag-created state、tag object SHA、GitHub Release publication state、
