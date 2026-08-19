@@ -71,6 +71,7 @@ STALE_README_PHRASES = (
     "V0.5 development",
     "V0.5 remains under development",
     "release preparation pending",
+    "the v0.6.1 formal release does not exist yet",
 )
 # Stale v0.5.0 direction status wording that must never appear in the current
 # direction document.
@@ -1194,43 +1195,110 @@ V060_FALSE_IMPLEMENTATION_PHRASES = (
     "released in v0.5.1",
 )
 V060_CATALOG_IMPLEMENTED_RE = re.compile(r"Dataset Catalog is implemented(?!\s+by\b)")
-# Facts the v0.5.1 maintenance section of the README must state.
-README_MAINTENANCE_FACTS = (
+# The README is the concise project landing page. Chronological version
+# narrative, upgrade sections, maintenance-release sections, and long
+# Dataset contract exposition must never return to it; version history
+# lives in CHANGELOG.md and the version-specific release documents.
+README_VERSION_TIMELINE_PHRASES = (
+    "Upgrade from v0.2",
+    "Upgrade from v0.3",
+    "Upgrade from v0.4",
+    "V0.4 canonical and dataset foundation",
+    "V0.5 deterministic Dataset builder",
     "V0.5.1 stability and usability maintenance",
-    "Compatibility cleanup",
+    "V0.6.1 stability, auditability, and usability maintenance",
+    "V0.1 focused",
+    "V0.2 added",
+    "V0.3 adds",
+    "V0.4 adds",
+    "V0.5 adds",
+    "V0.6 adds",
+    "V0.7 adds",
+    "## V0.4 ",
+    "## V0.5 ",
+    "## V0.5.1 ",
+    "## V0.6 ",
+    "## V0.6.1 ",
+    "## V0.7 ",
+)
+# The v0.5.1 maintenance facts must remain in the historical record:
+# CHANGELOG.md is their home now that the README no longer carries
+# maintenance-release sections.
+CHANGELOG_V051_FACTS = (
     "warning-as-error",
     "examples/dataset_cli/README.md",
     "stdlib-only",
+    "Dataset identity, Canonical identity, schema versions",
 )
-# Facts the v0.6.1 maintenance section of the README must state: the
-# fixed maintenance scope (three areas, no new capability), the CLI and CI
-# auditability content, and the published-and-sealed release truth.
-README_V061_SECTION_MARKERS = (
-    "## V0.6.1 stability, auditability, and usability maintenance",
-    "V0.6.1 adds NO new product capability",
-    "### A. Lifecycle / release-state truth",
-    "### B. CLI usability wording",
-    "### C. CI/package auditability",
-    "No command, business argument, default, exit-code, or JSON behavior changes",
+# The v0.6.1 CI/package auditability facts must remain in the historical
+# record: CHANGELOG.md is their home now that the README no longer carries
+# the v0.6.1 maintenance section. Strings match the CHANGELOG wording
+# exactly.
+CHANGELOG_V061_FACTS = (
+    "SHA256SUMS.txt",
+    "V061_PACKAGE_AUDIT_OK",
     "actions/checkout@v6",
     "actions/setup-python@v6",
     "actions/upload-artifact@v7",
-    "SHA256SUMS.txt",
-    "V061_PACKAGE_AUDIT_OK",
-    "runtime dependencies unchanged",
+    "Runtime dependencies unchanged",
     "CLI command set unchanged",
-    "no artifact migration/rewrite",
-    "v0.6.1 formal release is published and sealed",
-    "37614d539171ef7b738e47415f3cd6ca2de332d1",
-    "MarketVault v0.6.1",
-    "PyPI: NOT PUBLISHED",
-    "TestPyPI: NOT PUBLISHED",
+    "No artifact migration or rewrite",
 )
-# Stale pre-release claims that must never appear in the README: the
-# v0.6.1 formal release is now published and sealed, and the README must
-# never claim it was not released or that the release state is pending.
-README_V061_STALE_PHRASES = (
-    "the v0.6.1 formal release does not exist yet",
+# The canonical user-facing operational guide: docs/USER_GUIDE.md.
+USER_GUIDE_PATH = "docs/USER_GUIDE.md"
+USER_GUIDE_TITLE = "# MarketVault 使用说明"
+# Current supported collection / audit workflow markers, including the
+# next-trading-date calendar semantics re-homed from the old README
+# wording check.
+USER_GUIDE_WORKFLOW_MARKERS = (
+    "init-catalog",
+    "calendar",
+    "backfill",
+    "inventory",
+    "audit",
+    "intraday-audit",
+    "query",
+    "first trading date strictly after",
+)
+# Current Dataset workflow facts (the re-homed explicit-plan, adjustment,
+# and Dataset boundary assertions from the old README checks).
+USER_GUIDE_DATASET_MARKERS = (
+    "dataset-build",
+    "dataset-verify",
+    "dataset-inspect",
+    "market-vault-dataset-build-plan-v1",
+    "build-plan JSON",
+    "adjustment = NONE",
+    "adjusted-price",
+    "cross-trading-day",
+    "arbitrary user code",
+)
+USER_GUIDE_SAMPLE_GENERATION_MARKERS = (
+    "sample-generate",
+    "PITSampleRequest",
+)
+USER_GUIDE_DATASET_CATALOG_MARKERS = (
+    "dataset-catalog-build",
+    "dataset-catalog-verify",
+    "dataset-catalog-list",
+    "dataset-catalog-show",
+)
+USER_GUIDE_ARTIFACT_CLIENT_MARKERS = (
+    "ArtifactClient()",
+    "load_canonical_build(build_dir)",
+    "load_dataset(build_dir)",
+    "load_dataset_catalog(snapshot_dir)",
+)
+USER_GUIDE_BOUNDARY_MARKERS = (
+    "Bid/Ask",
+    "order-book depth",
+    "Greeks",
+    "IV",
+    "automatic trading",
+    "signals",
+    "ML training",
+    "cannot be reconstructed after the fact",
+    "no `latest` auto-discovery",
 )
 # Facts the v0.7.0 direction document must state: the active PR-6
 # release-preparation status, the v0.6.1 baseline, the PR-1 / PR-2 / PR-3
@@ -1792,8 +1860,8 @@ def check_readme_title(root: Path) -> list[str]:
     if not path.exists():
         return ["README.md is missing"]
     first_line = path.read_text(encoding="utf-8").splitlines()[0]
-    if first_line.strip() != "# MarketVault v0.7.0":
-        return [f"README first line is {first_line.strip()!r}, expected '# MarketVault v0.7.0'"]
+    if first_line.strip() != "# MarketVault":
+        return [f"README first line is {first_line.strip()!r}, expected '# MarketVault'"]
     return []
 
 
@@ -1837,8 +1905,143 @@ def check_readme_no_stale_wording(root: Path) -> list[str]:
             failures.append(f"README still contains the outdated wording {phrase!r}")
     if "one calendar day after" in text:
         failures.append("README still contains the outdated 'one calendar day after' phrasing")
-    if "next trading date" not in text and "first trading date strictly after" not in text:
-        failures.append("README does not describe the next-trading-date calendar semantics")
+    return failures
+
+
+def _check_marker_facts(
+    name: str, path: Path, markers: tuple[str, ...], description: str
+) -> list[str]:
+    text = path.read_text(encoding="utf-8")
+    failures = []
+    for marker in markers:
+        if marker not in text:
+            failures.append(f"{name} is missing the {description} {marker!r}")
+    return failures
+
+
+def check_readme_landing_page(root: Path) -> list[str]:
+    path = root / "README.md"
+    if not path.exists():
+        return ["README.md is missing"]
+    text = path.read_text(encoding="utf-8")
+    failures = []
+    for marker in ("docs/USER_GUIDE.md", "CHANGELOG.md", "v0.7.0"):
+        if marker not in text:
+            failures.append(f"README does not contain the landing-page marker {marker!r}")
+    for phrase in (
+        "PyPI: not published",
+        "TestPyPI: not published",
+        "GitHub Release: published",
+    ):
+        if phrase not in text:
+            failures.append(f"README does not state the release truth {phrase!r}")
+    return failures
+
+
+def check_readme_no_version_timeline(root: Path) -> list[str]:
+    path = root / "README.md"
+    if not path.exists():
+        return ["README.md is missing"]
+    text = path.read_text(encoding="utf-8")
+    failures = []
+    for phrase in README_VERSION_TIMELINE_PHRASES:
+        if phrase in text:
+            failures.append(f"README no longer carries version narrative: {phrase!r} must not appear")
+    return failures
+
+
+def check_changelog_v051_facts(root: Path) -> list[str]:
+    path = root / "CHANGELOG.md"
+    if not path.exists():
+        return ["CHANGELOG.md is missing"]
+    return _check_marker_facts("CHANGELOG.md", path, CHANGELOG_V051_FACTS, "v0.5.1 fact")
+
+
+def check_changelog_v061_facts(root: Path) -> list[str]:
+    path = root / "CHANGELOG.md"
+    if not path.exists():
+        return ["CHANGELOG.md is missing"]
+    return _check_marker_facts("CHANGELOG.md", path, CHANGELOG_V061_FACTS, "v0.6.1 fact")
+
+
+def check_user_guide_exists(root: Path) -> list[str]:
+    path = root / USER_GUIDE_PATH
+    if not path.exists():
+        return [f"{USER_GUIDE_PATH} is missing"]
+    text = path.read_text(encoding="utf-8")
+    if text.splitlines()[0].strip() != USER_GUIDE_TITLE:
+        return [f"{USER_GUIDE_PATH} first line is not {USER_GUIDE_TITLE!r}"]
+    return []
+
+
+def check_user_guide_workflow(root: Path) -> list[str]:
+    path = root / USER_GUIDE_PATH
+    if not path.exists():
+        return [f"{USER_GUIDE_PATH} is missing"]
+    return _check_marker_facts(
+        USER_GUIDE_PATH, path, USER_GUIDE_WORKFLOW_MARKERS, "missing the workflow marker"
+    )
+
+
+def check_user_guide_dataset(root: Path) -> list[str]:
+    path = root / USER_GUIDE_PATH
+    if not path.exists():
+        return [f"{USER_GUIDE_PATH} is missing"]
+    return _check_marker_facts(
+        USER_GUIDE_PATH, path, USER_GUIDE_DATASET_MARKERS, "missing the Dataset marker"
+    )
+
+
+def check_user_guide_sample_generation(root: Path) -> list[str]:
+    path = root / USER_GUIDE_PATH
+    if not path.exists():
+        return [f"{USER_GUIDE_PATH} is missing"]
+    return _check_marker_facts(
+        USER_GUIDE_PATH, path, USER_GUIDE_SAMPLE_GENERATION_MARKERS,
+        "missing the Sample Generation marker",
+    )
+
+
+def check_user_guide_dataset_catalog(root: Path) -> list[str]:
+    path = root / USER_GUIDE_PATH
+    if not path.exists():
+        return [f"{USER_GUIDE_PATH} is missing"]
+    return _check_marker_facts(
+        USER_GUIDE_PATH, path, USER_GUIDE_DATASET_CATALOG_MARKERS,
+        "missing the Dataset Catalog marker",
+    )
+
+
+def check_user_guide_artifact_client(root: Path) -> list[str]:
+    path = root / USER_GUIDE_PATH
+    if not path.exists():
+        return [f"{USER_GUIDE_PATH} is missing"]
+    return _check_marker_facts(
+        USER_GUIDE_PATH, path, USER_GUIDE_ARTIFACT_CLIENT_MARKERS,
+        "missing the ArtifactClient marker",
+    )
+
+
+def check_user_guide_boundaries(root: Path) -> list[str]:
+    path = root / USER_GUIDE_PATH
+    if not path.exists():
+        return [f"{USER_GUIDE_PATH} is missing"]
+    return _check_marker_facts(
+        USER_GUIDE_PATH, path, USER_GUIDE_BOUNDARY_MARKERS, "missing the boundary marker"
+    )
+
+
+def check_user_guide_no_version_history(root: Path) -> list[str]:
+    path = root / USER_GUIDE_PATH
+    if not path.exists():
+        return [f"{USER_GUIDE_PATH} is missing"]
+    text = path.read_text(encoding="utf-8")
+    failures = []
+    for phrase in README_VERSION_TIMELINE_PHRASES:
+        if phrase in text:
+            failures.append(
+                f"{USER_GUIDE_PATH} must not carry version history: {phrase!r} must not appear"
+            )
     return failures
 
 
@@ -4019,41 +4222,6 @@ def check_old_release_notes(root: Path) -> list[str]:
     return failures
 
 
-def check_readme_maintenance_section(root: Path) -> list[str]:
-    path = root / "README.md"
-    if not path.exists():
-        return ["README.md is missing"]
-    text = path.read_text(encoding="utf-8")
-    failures = []
-    for fact in README_MAINTENANCE_FACTS:
-        if fact not in text:
-            failures.append(f"README does not state the v0.5.1 maintenance fact {fact!r}")
-    return failures
-
-
-def check_readme_v061_section(root: Path) -> list[str]:
-    """The README states the v0.6.1 maintenance section markers and the
-    published-and-sealed release truth, and never contains the stale
-    pre-release wording."""
-    path = root / "README.md"
-    if not path.exists():
-        return ["README.md is missing"]
-    text = path.read_text(encoding="utf-8")
-    failures = []
-    for fact in README_V061_SECTION_MARKERS:
-        if fact not in text:
-            failures.append(
-                f"README does not state the v0.6.1 maintenance fact {fact!r}"
-            )
-    for phrase in README_V061_STALE_PHRASES:
-        if phrase in text:
-            failures.append(
-                "README contains the stale v0.6.1 release-state "
-                f"wording {phrase!r}"
-            )
-    return failures
-
-
 def check_warning_guard(root: Path) -> list[str]:
     path = root / "pyproject.toml"
     if not path.exists():
@@ -4095,77 +4263,6 @@ def check_examples(root: Path) -> list[str]:
                     f"examples/dataset_cli/render_plans.py is missing the "
                     f"marker {marker!r}"
                 )
-    return failures
-
-
-def check_readme_upgrade_sections(root: Path) -> list[str]:
-    path = root / "README.md"
-    if not path.exists():
-        return ["README.md is missing"]
-    text = path.read_text(encoding="utf-8")
-    failures = []
-    if "Upgrade from v0.4" not in text:
-        failures.append("README does not contain 'Upgrade from v0.4'")
-    if "Upgrade from v0.3" not in text:
-        failures.append("README does not contain 'Upgrade from v0.3'")
-    return failures
-
-
-def check_readme_dataset_builder_section(root: Path) -> list[str]:
-    path = root / "README.md"
-    if not path.exists():
-        return ["README.md is missing"]
-    text = path.read_text(encoding="utf-8")
-    failures = []
-    if "V0.5 deterministic Dataset builder" not in text:
-        failures.append("README does not contain the 'V0.5 deterministic Dataset builder' section")
-    for command in ("dataset-build", "dataset-verify", "dataset-inspect"):
-        if command not in text:
-            failures.append(f"README does not describe the {command} command")
-    if "verified Dataset reader" not in text:
-        failures.append("README does not mention the verified Dataset reader")
-    if "immutable Dataset materialization" not in text:
-        failures.append("README does not mention immutable Dataset materialization")
-    return failures
-
-
-def check_readme_explicit_build_plan(root: Path) -> list[str]:
-    path = root / "README.md"
-    if not path.exists():
-        return ["README.md is missing"]
-    text = path.read_text(encoding="utf-8")
-    if "explicit" not in text or "build-plan JSON" not in text:
-        return ["README does not describe the explicit, pinned build-plan JSON input"]
-    return []
-
-
-def check_readme_adjustment_none(root: Path) -> list[str]:
-    path = root / "README.md"
-    if not path.exists():
-        return ["README.md is missing"]
-    text = path.read_text(encoding="utf-8")
-    failures = []
-    if "adjustment" not in text or "NONE" not in text:
-        failures.append("README does not mention the adjustment NONE default")
-    if "adjusted-price" not in text:
-        failures.append("README does not mention the no-adjusted-price boundary")
-    return failures
-
-
-def check_readme_dataset_boundaries(root: Path) -> list[str]:
-    path = root / "README.md"
-    if not path.exists():
-        return ["README.md is missing"]
-    text = path.read_text(encoding="utf-8")
-    failures = []
-    if "cross-trading-day" not in text:
-        failures.append("README does not mention the no-cross-trading-day boundary")
-    if "arbitrary user code" not in text:
-        failures.append("README does not mention the no-arbitrary-user-code boundary")
-    if "ML training" not in text or "backtest" not in text or "automatic trading" not in text:
-        failures.append(
-            "README does not mention the no-ML/backtest/trading boundary"
-        )
     return failures
 
 
@@ -5258,8 +5355,18 @@ CHECKS = (
     ("README title", check_readme_title),
     ("CHANGELOG entry", check_changelog),
     ("README wording", check_readme_no_stale_wording),
-    ("README maintenance section", check_readme_maintenance_section),
-    ("README v0.6.1 section", check_readme_v061_section),
+    ("README landing page", check_readme_landing_page),
+    ("README no version timeline", check_readme_no_version_timeline),
+    ("CHANGELOG v0.5.1 facts", check_changelog_v051_facts),
+    ("CHANGELOG v0.6.1 facts", check_changelog_v061_facts),
+    ("USER_GUIDE exists", check_user_guide_exists),
+    ("USER_GUIDE workflow", check_user_guide_workflow),
+    ("USER_GUIDE dataset", check_user_guide_dataset),
+    ("USER_GUIDE sample generation", check_user_guide_sample_generation),
+    ("USER_GUIDE dataset catalog", check_user_guide_dataset_catalog),
+    ("USER_GUIDE ArtifactClient", check_user_guide_artifact_client),
+    ("USER_GUIDE boundaries", check_user_guide_boundaries),
+    ("USER_GUIDE no version history", check_user_guide_no_version_history),
     ("direction status", check_direction_status),
     ("release notes", check_release_notes),
     ("v0.5.1 release notes", check_v051_release_notes),
@@ -5300,11 +5407,6 @@ CHECKS = (
     ("old release notes", check_old_release_notes),
     ("warning guard", check_warning_guard),
     ("examples", check_examples),
-    ("README upgrade notes", check_readme_upgrade_sections),
-    ("README dataset builder", check_readme_dataset_builder_section),
-    ("README explicit plan", check_readme_explicit_build_plan),
-    ("README adjustment boundary", check_readme_adjustment_none),
-    ("README dataset boundaries", check_readme_dataset_boundaries),
     ("CI version assertions", check_ci_version_assertions),
     ("build artifacts untracked", check_build_artifacts_untracked),
     ("PEP 440 version", check_pep440),
