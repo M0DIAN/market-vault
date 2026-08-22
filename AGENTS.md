@@ -1,36 +1,86 @@
 # Repository Guidelines
 
-## Project Structure & Module Organization
+## Authority and Agent Role
 
-MarketVault is a Python 3.11 package under `src/market_vault`. Core entry points are `cli.py`, `api.py`, and `service.py`. Data collection lives in `collectors/`, Parquet and DuckDB persistence in `storage/`, bar normalization in `normalization/`, and data-quality checks in `quality/`. Configuration examples live in `config/settings.yaml` and `config/universe.yaml`. Windows helper scripts are in `scripts/`. Tests are in `tests/` and mirror feature areas such as collectors, normalization, and quality.
+Codex is the default primary implementation and development agent for
+MarketVault. These rules are tool-agnostic and apply equally to any other
+agent or contributor. Repository code, checked-in contracts, tests, and
+governance documents outrank conversational memory or prior reports. Read the
+relevant source and contracts before changing behavior.
 
-Runtime output is expected under generated paths such as `data/`, `catalog/`, `manifests/`, and `reports/`; keep these out of source changes unless explicitly adding fixtures.
+The repository owner retains product and release authority. An independent
+reviewer provides architecture, merge, and release audit; the implementing
+agent's own report is not independent approval. See
+`docs/AGENT_GOVERNANCE.md` and `docs/governance/`.
 
-## Build, Test, and Development Commands
+## Required Development Flow
 
-Create a local editable environment:
+Use this normal path:
 
-```powershell
-py -3.11 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-pip install -e ".[dev]"
+```text
+current origin/main -> feature branch -> inspect -> implement -> tests
+-> local validation -> PR -> PR CI/review -> squash merge
+-> exact main SHA -> post-merge CI verification
 ```
 
-Run the offline test suite with `pytest`. Initialize the DuckDB catalog with `market-vault --settings config/settings.yaml init-catalog`. Collect a closed trading date with `market-vault --settings config/settings.yaml collect --date 2026-07-31 --groups core_universe --interval 1m --session ALL --adjustment NONE`. Query curated bars with `market-vault --settings config/settings.yaml query --code US.MU --trade-date 2026-07-31 --interval 1m`.
+Never develop directly on `main`. Verify the exact current `origin/main` SHA
+and a clean worktree before branching. Keep changes within the declared scope,
+use feature branches and pull requests for writes, and stop before merge unless
+the repository owner explicitly authorizes it. Squash merge is the default.
+Never force-push or rewrite `main` history.
 
-## Coding Style & Naming Conventions
+Important Git and CI claims must identify the exact SHA. CI evidence must also
+identify the relevant run attempt when the repository contract binds evidence
+to an attempt. Green PR CI does not prove a merged change healthy: verify CI for
+the exact resulting `main` SHA after merge. Derive the current CI tier and
+fail-closed behavior from `scripts/ci_risk_tier.py`,
+`scripts/ci_post_merge_reuse.py`, `.github/workflows/ci.yml`, and their tests;
+do not rely on a copied summary. If validation scope cannot be proven safe,
+fail closed.
 
-Use standard Python formatting: 4-space indentation, descriptive snake_case for functions and variables, PascalCase for classes, and type hints for public interfaces. Keep imports grouped as standard library, third-party, then local package imports. Prefer `pathlib.Path`, dataclasses, and small pure functions where the existing modules already do. CLI arguments should use kebab-case externally and snake_case internally.
+## Project Structure
 
-## Testing Guidelines
+Python code lives in `src/market_vault`; tests are in `tests`; settings
+templates are in `config`; operational and CI helpers are in `scripts`.
+Formal data, Dataset, point-in-time, CLI, and storage contracts live in
+`docs/contracts`. Development and release rules live in `docs/governance`.
+Runtime output belongs under ignored paths such as `data`, `catalog`,
+`manifests`, and `reports`.
 
-Tests use `pytest` and are configured in `pyproject.toml` with `pythonpath = ["src"]` and `testpaths = ["tests"]`. Name files `test_*.py` and test functions `test_*`. Keep tests offline; they should not require moomoo OpenD, network access, or market-data permissions. Add focused fixtures or sample DataFrames near the tests that consume them.
+## Implementation and Validation
 
-## Commit & Pull Request Guidelines
+Use Python 3.11+ conventions already present in the repository: four-space
+indentation, snake_case functions and variables, PascalCase classes, type
+hints on public interfaces, and focused tests named `test_*.py`. Keep tests
+offline unless a task explicitly requires live integration. Do not weaken,
+skip, delete, or dilute tests, assertions, contracts, or validation merely to
+obtain a green result.
 
-This checkout does not include local Git history, so use concise imperative commit messages such as `Add parquet catalog migration` or `Fix option symbol parsing`. Pull requests should describe the data or CLI behavior changed, list tests run, mention any schema or storage-layout impact, and include sample command output when changing user-facing CLI behavior.
+Run checks appropriate to the changed surface and the repository's actual CI
+classifier. Typical local checks include:
 
-## Security & Configuration Tips
+```powershell
+python -m pytest
+python scripts/check_repo_hygiene.py
+python scripts/check_release.py
+git diff --check
+```
 
-Do not commit account credentials, OpenD session details, or generated market-data archives. Keep local endpoint changes in `config/settings.yaml` minimal and document any required non-default OpenD host, port, quota, or permission assumptions in the PR.
+Do not manually force a reduced CI tier. Inspect the full diff and changed-file
+scope before committing. PRs must state behavior and contract impact, tests
+run, and any remaining live validation.
+
+## Contract and Security Boundaries
+
+Do not silently change schema, storage layout, data or point-in-time semantics,
+compatibility guarantees, CLI behavior, CI architecture, or release process.
+Make such impact explicit in the PR and obtain the required review visibility.
+Keep OpenD SDK imports and tests compatible with the repository's offline
+design unless a task explicitly changes that contract.
+
+Never commit or expose credentials, tokens, passwords, account details,
+OpenD session details, or generated market data. Do not track `.env`, local
+databases, Parquet output, caches, virtual environments, or runtime data
+directories. Never move, delete, or recreate formal tags, and never create or
+mutate GitHub Releases or their assets without explicit repository-owner
+authorization.
