@@ -295,6 +295,9 @@ market-vault --settings config/settings.yaml intraday-audit `
 - 校验：请求元数据、时间戳有效性、UTC / 市场时钟一致性、`market_calendar_date` 一致性、session 标签（`OVERNIGHT` / `PRE_MARKET` / `REGULAR` / `AFTER_HOURS`）、重复 bar、分钟边界对齐、间隔网格、连续观察段内部缺口。
 - 内部缺口只报 `WARN`（不 `FAIL`）：停牌、熔断、无成交时段可以合法地产生空 bar。
 - 不评估：段首/段尾覆盖（session boundary coverage）、整段缺失的 session、固定日 bar 数（无 1440/390/1201 硬编码）、提前收盘。
+- 该限制的 OpenD/SDK 证据和最小安全后续设计见
+  [Intraday Boundary Schedule Evidence](intraday_boundary_schedule_evidence.md)。在获得可覆盖
+  `Session.ALL` 的权威逐日时段表之前，不能用已观察 K 线、`trade_date_type` 或静态交易时间推断边界完整性。
 
 ### query
 
