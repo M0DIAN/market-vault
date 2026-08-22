@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date, datetime
+from math import ceil
 from pathlib import Path
 
 import pandas as pd
@@ -11,7 +13,42 @@ from .config import load_settings
 from .intraday_audit import IntradayAuditReport, run_intraday_audit
 from .models import Settings
 from .normalization.calendar import normalize_calendar_code, normalize_calendar_market
+from .service import collect_trading_calendar
 from .storage import Catalog
+
+
+DEFAULT_PAGE_SIZE = 100
+MAX_PAGE_SIZE = 1000
+
+
+@dataclass(frozen=True)
+class QueryPage:
+    """One bounded page returned by a local MarketVault query."""
+
+    data: pd.DataFrame
+    page: int
+    page_size: int
+    total_rows: int
+
+    @property
+    def total_pages(self) -> int:
+        return max(1, ceil(self.total_rows / self.page_size))
+
+    @property
+    def has_previous(self) -> bool:
+        return self.page > 1
+
+    @property
+    def has_next(self) -> bool:
+        return self.page < self.total_pages
+
+
+def _validated_page(page: int, page_size: int) -> tuple[int, int, int]:
+    if page < 1:
+        raise ValueError("page must be at least 1")
+    if page_size < 1 or page_size > MAX_PAGE_SIZE:
+        raise ValueError(f"page_size must be between 1 and {MAX_PAGE_SIZE}")
+    return page, page_size, (page - 1) * page_size
 
 
 class MarketVault:
@@ -56,6 +93,66 @@ class MarketVault:
         with self.catalog.connect() as con:
             return con.execute(sql, params).fetchdf()
 
+    def load_bars_page(
+        self,
+        *,
+        code: str,
+        page: int = 1,
+        page_size: int = DEFAULT_PAGE_SIZE,
+        start_date: str | date | None = None,
+        end_date: str | date | None = None,
+        interval: str = "1m",
+        requested_session: str | None = None,
+        bar_session: str | None = None,
+        adjustment: str = "NONE",
+    ) -> QueryPage:
+        """Return one bounded page from the local latest market-bar view.
+
+        This method never connects to OpenD. Date filters apply to the
+        collection request's trade date; ``bar_session`` applies to the
+        normalized per-row session label.
+        """
+        page, page_size, offset = _validated_page(page, page_size)
+        normalized_code = code.strip().upper()
+        if not normalized_code:
+            raise ValueError("code cannot be blank")
+        if start_date is not None and end_date is not None:
+            if pd.Timestamp(start_date).date() > pd.Timestamp(end_date).date():
+                raise ValueError("start_date must be on or before end_date")
+        if not self.catalog.refresh_market_bars_view():
+            return QueryPage(pd.DataFrame(), page, page_size, 0)
+
+        clauses = ["code = ?", "interval = ?", "adjustment = ?"]
+        params: list[object] = [normalized_code, interval.strip().lower(), adjustment.strip().upper()]
+        if start_date is not None:
+            clauses.append("requested_trade_date >= ?")
+            params.append(start_date)
+        if end_date is not None:
+            clauses.append("requested_trade_date <= ?")
+            params.append(end_date)
+        if requested_session:
+            clauses.append("requested_session = ?")
+            params.append(requested_session.strip().upper())
+        if bar_session:
+            clauses.append("session = ?")
+            params.append(bar_session.strip().upper())
+        where = " AND ".join(clauses)
+        with self.catalog.connect() as con:
+            total_rows = int(
+                con.execute(f"SELECT COUNT(*) FROM market_bars WHERE {where}", params).fetchone()[0]
+            )
+            data = con.execute(
+                f"""
+                SELECT *
+                FROM market_bars
+                WHERE {where}
+                ORDER BY time_utc, ingestion_run_id
+                LIMIT ? OFFSET ?
+                """,
+                [*params, page_size, offset],
+            ).fetchdf()
+        return QueryPage(data, page, page_size, total_rows)
+
     def load_trading_calendar(
         self,
         market: str | None = None,
@@ -89,6 +186,144 @@ class MarketVault:
         """
         with self.catalog.connect() as con:
             return con.execute(sql, params).fetchdf()
+
+    def load_trading_calendar_page(
+        self,
+        *,
+        market: str | None = None,
+        code: str | None = None,
+        start_date: str | date | None = None,
+        end_date: str | date | None = None,
+        page: int = 1,
+        page_size: int = DEFAULT_PAGE_SIZE,
+    ) -> QueryPage:
+        """Return one bounded page from the local calendar latest view."""
+        page, page_size, offset = _validated_page(page, page_size)
+        normalized_market = normalize_calendar_market(market)
+        normalized_code = normalize_calendar_code(code)
+        if bool(normalized_market) == bool(normalized_code):
+            raise ValueError("Provide exactly one of market or code")
+        if start_date is not None and end_date is not None:
+            if pd.Timestamp(start_date).date() > pd.Timestamp(end_date).date():
+                raise ValueError("start_date must be on or before end_date")
+        if not self.catalog.refresh_trading_calendar_views():
+            return QueryPage(pd.DataFrame(), page, page_size, 0)
+
+        scope_type = "MARKET" if normalized_market else "CODE"
+        scope_value = normalized_market or normalized_code
+        clauses = ["scope_type = ?", "scope_value = ?"]
+        params: list[object] = [scope_type, scope_value]
+        if start_date is not None:
+            clauses.append("trade_date >= ?")
+            params.append(start_date)
+        if end_date is not None:
+            clauses.append("trade_date <= ?")
+            params.append(end_date)
+        where = " AND ".join(clauses)
+        with self.catalog.connect() as con:
+            total_rows = int(
+                con.execute(
+                    f"SELECT COUNT(*) FROM trading_calendar_latest WHERE {where}", params
+                ).fetchone()[0]
+            )
+            data = con.execute(
+                f"""
+                SELECT *
+                FROM trading_calendar_latest
+                WHERE {where}
+                ORDER BY trade_date, ingestion_run_id
+                LIMIT ? OFFSET ?
+                """,
+                [*params, page_size, offset],
+            ).fetchdf()
+        return QueryPage(data, page, page_size, total_rows)
+
+    def load_run_history_page(
+        self,
+        *,
+        page: int = 1,
+        page_size: int = 100,
+        status: str | None = None,
+        dataset: str | None = None,
+    ) -> QueryPage:
+        """Return a bounded, read-only projection of collection run status."""
+        page, page_size, offset = _validated_page(page, page_size)
+        if not self.settings.catalog_path.exists():
+            return QueryPage(pd.DataFrame(), page, page_size, 0)
+        clauses: list[str] = []
+        params: list[object] = []
+        if status:
+            clauses.append("status = ?")
+            params.append(status.strip().upper())
+        if dataset:
+            clauses.append("dataset = ?")
+            params.append(dataset.strip())
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        runs_sql = """
+            SELECT
+                'COLLECTION' AS run_kind,
+                'market_bars' AS dataset,
+                run_id,
+                started_at,
+                finished_at,
+                status,
+                row_count,
+                CAST(requested_symbols AS VARCHAR) AS requested_items,
+                CAST(failed_symbols AS VARCHAR) AS errors
+            FROM ingestion_runs
+            UNION ALL
+            SELECT
+                'DATASET' AS run_kind,
+                dataset,
+                run_id,
+                started_at,
+                finished_at,
+                status,
+                row_count,
+                CAST(requested_items AS VARCHAR) AS requested_items,
+                CAST(failed_items AS VARCHAR) AS errors
+            FROM dataset_ingestion_runs
+        """
+        with self.catalog.connect() as con:
+            table_names = {
+                row[0]
+                for row in con.execute(
+                    "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'"
+                ).fetchall()
+            }
+            if not {"ingestion_runs", "dataset_ingestion_runs"}.issubset(table_names):
+                return QueryPage(pd.DataFrame(), page, page_size, 0)
+            total_rows = int(
+                con.execute(f"SELECT COUNT(*) FROM ({runs_sql}) runs {where}", params).fetchone()[0]
+            )
+            data = con.execute(
+                f"""
+                SELECT *
+                FROM ({runs_sql}) runs
+                {where}
+                ORDER BY started_at DESC NULLS LAST, run_id DESC
+                LIMIT ? OFFSET ?
+                """,
+                [*params, page_size, offset],
+            ).fetchdf()
+        return QueryPage(data, page, page_size, total_rows)
+
+    def collect_trading_calendar(
+        self,
+        *,
+        start_date: date,
+        end_date: date,
+        market: str | None = None,
+        code: str | None = None,
+    ):
+        """Explicitly collect a trading-calendar snapshot through OpenD."""
+        return collect_trading_calendar(
+            self.settings,
+            start_date=start_date,
+            end_date=end_date,
+            market=market,
+            code=code,
+        )
 
     def plan_backfill(
         self,
