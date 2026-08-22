@@ -14,6 +14,7 @@
 - Python >= 3.11。
 - moomoo OpenD：仅真正通过 OpenD 采集/检查的命令需要本机 OpenD 正在运行、已登录且账号具备所需权限——`collect`、`calendar`、`backfill`、`option-chain`、`option-volatility`、`doctor`。
 - 纯本地命令**不需要** OpenD：`inventory`、`audit`、`intraday-audit`、`query`、`calendar-query`，以及 Dataset / Sample Generation / Dataset Catalog 全部命令和 `ArtifactClient`。
+- MarketVault Console 默认纯本地；只有界面中明确确认的 Trading Calendar `Fetch from OpenD` 与 Backfill `Execute via OpenD` 操作可能连接 OpenD。
 - 操作系统：安装脚本与示例以 Windows PowerShell 为准（`scripts/setup_windows.ps1`、`scripts/first_collection.ps1`）。
 
 ## 3. 安装
@@ -94,6 +95,33 @@ collector:
 - OpenD 不在默认端点（`127.0.0.1:11111`）时修改 `opend.host` / `opend.port`。
 - `collect` / `backfill` / `query` / `audit` / `intraday-audit` 省略 `--session` / `--adjustment` 时，回退到 `collector.default_session`（`ALL`）与 `collector.default_adjustment`（`NONE`）；显式传值覆盖默认值。
 - Dataset、Sample Generation、Dataset Catalog 命令与 `ArtifactClient` 是 settings-independent：不读 settings.yaml、不连接 OpenD、不访问网络。
+
+### MarketVault Console v0.1 foundation
+
+Windows 桌面 Console 使用 Python 标准库 Tkinter/ttk，不新增 GUI dependency：
+
+```powershell
+python -m market_vault.console --settings config/settings.yaml
+```
+
+需要 Python 安装包含可用的 Tcl/Tk runtime（标准 Python.org Windows installer
+默认包含）。若 Tcl/Tk 缺失，Console 会以简洁错误退出，不会回退到第三方 GUI 包。
+
+当前提供 Dashboard、Data Explorer、Inventory、Coverage Audit、Intraday
+Audit、Trading Calendar、Backfill plan/execute 与 Runs。界面不直接执行 SQL、
+不打开 DuckDB 内部表、不修改 Parquet，也不提供文件删除或 purge 操作；所有业务
+操作均经过 `ConsoleBackend` 和公开 `MarketVault` API/service。
+
+- Data Explorer、Calendar 和 Runs 使用分页查询；page size 范围为 1..1000。
+- 导出仅限当前已加载页面，支持 CSV/JSON，最多 1000 行；不提供无界 Parquet 导出。
+- `Plan locally` 不连接 OpenD；`Fetch from OpenD` 和 `Execute via OpenD` 会显示
+  host/port 并要求确认。
+- GUI 同一时间只运行一个后台操作；错误以状态栏和简洁对话框显示，不向普通用户
+  展示异常堆栈。
+- destructive purge 尚未实现；其非规范设计草案见
+  [console_destructive_purge_contract_draft.md](console_destructive_purge_contract_draft.md)。
+
+精确行为以 [Console v0.1 contract](contracts/console_v01.md) 为准。
 
 ## 6. 推荐的数据采集与审计流程
 

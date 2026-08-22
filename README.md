@@ -21,6 +21,7 @@ safely. It does not train models, produce signals, or trade automatically.
 - Local trading calendar and resumable historical backfill
 - Immutable Raw / Curated snapshots
 - Inventory, coverage, and intraday integrity auditing
+- Windows desktop Console foundation for bounded local queries and explicit operations
 - Verified immutable Canonical builds
 - Deterministic point-in-time-safe Dataset construction
 - Deterministic Sample Generation and immutable Dataset Catalog
@@ -73,6 +74,17 @@ market-vault --version
 market-vault --help
 ```
 
+Launch the development Console foundation on Windows:
+
+```powershell
+python -m market_vault.console --settings config/settings.yaml
+```
+
+The Console uses stdlib Tkinter/ttk and adds no GUI dependency. It is
+local-only by default: only the explicitly confirmed Trading Calendar fetch
+and Backfill execute actions may connect to OpenD. Tables are paginated with a
+maximum page size of 1000, and export is limited to the current CSV/JSON page.
+
 For the full workflow (`init-catalog` → `calendar` → `backfill` →
 `inventory` → `audit` → `intraday-audit` → `query`), see the
 [MarketVault 使用说明](docs/USER_GUIDE.md).
@@ -114,6 +126,8 @@ details in the [user guide](docs/USER_GUIDE.md) and the
 - Formal v0.7.0 release record: [docs/release_v0_7_0.md](docs/release_v0_7_0.md)
 - Python Client detailed guide: [docs/v0_7_0_python_client_usage.md](docs/v0_7_0_python_client_usage.md)
 - Contracts: [docs/contracts/](docs/contracts/)
+- Console v0.1 contract: [docs/contracts/console_v01.md](docs/contracts/console_v01.md)
+- Future purge design (not implemented): [docs/console_destructive_purge_contract_draft.md](docs/console_destructive_purge_contract_draft.md)
 - Development / governance: [docs/governance/](docs/governance/)
 
 ## Current release
