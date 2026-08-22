@@ -83,6 +83,30 @@ def table_page_from_records(
     return TablePage(columns, rows, page, page_size, len(records) if total_rows is None else total_rows)
 
 
+def _audit_summary(report: Any) -> dict[str, Any]:
+    summary = report.summary.as_dict() if report.summary is not None else {}
+    summary["status"] = report.status
+    calendar = getattr(report, "calendar", None)
+    if calendar is None:
+        return summary
+
+    coverage_complete = bool(calendar.coverage_complete)
+    coverage_gaps = list(calendar.coverage_gaps)
+    summary["calendar_coverage_complete"] = coverage_complete
+    summary["calendar_coverage_gaps"] = coverage_gaps
+    if not coverage_complete:
+        ranges = ", ".join(
+            f"{gap.get('start_date', '?')}..{gap.get('end_date', '?')}"
+            for gap in coverage_gaps
+        )
+        suffix = f" Missing ranges: {ranges}." if ranges else ""
+        summary["failure_reason"] = (
+            "Trading-calendar coverage is incomplete; audit classifications "
+            f"were not evaluated.{suffix}"
+        )
+    return summary
+
+
 class ConsoleBackend:
     """Headless application service used by the Tkinter Console.
 
@@ -185,8 +209,7 @@ class ConsoleBackend:
             session=session,
             adjustment=adjustment,
         )
-        summary = report.summary.as_dict() if report.summary else {}
-        summary["status"] = report.status
+        summary = _audit_summary(report)
         return summary, table_page_from_records(
             [item.as_dict() for item in report.symbols[:MAX_REPORT_DISPLAY_ROWS]],
             page_size=MAX_REPORT_DISPLAY_ROWS,
@@ -238,8 +261,7 @@ class ConsoleBackend:
                 )
             if len(records) >= MAX_REPORT_DISPLAY_ROWS:
                 break
-        summary = report.summary.as_dict()
-        summary["status"] = report.status
+        summary = _audit_summary(report)
         return summary, table_page_from_records(
             records,
             page_size=MAX_REPORT_DISPLAY_ROWS,

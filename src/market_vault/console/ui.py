@@ -585,6 +585,9 @@ class ConsoleApp:
     def _summary_text(summary: dict[str, Any]) -> str:
         preferred = (
             "status",
+            "calendar_coverage_complete",
+            "failure_reason",
+            "calendar_coverage_gaps",
             "symbol_count",
             "snapshot_count",
             "total_expected_items",

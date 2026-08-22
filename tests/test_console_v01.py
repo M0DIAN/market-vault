@@ -15,6 +15,7 @@ import pandas as pd
 import pytest
 
 from market_vault.api import MarketVault, QueryPage
+from market_vault.audit import AuditCalendarInfo, AuditReport
 from market_vault.console.backend import (
     ConsoleBackend,
     parse_iso_date,
@@ -23,6 +24,7 @@ from market_vault.console.backend import (
 )
 from market_vault.console.models import TablePage
 from market_vault.console.tasks import SerialTaskRunner
+from market_vault.intraday_audit import IntradayAuditReport, IntradayCalendarInfo
 from market_vault.models import DatasetRunManifest, RunManifest, Settings
 from market_vault.storage import Catalog
 
@@ -332,6 +334,70 @@ def test_audit_backends_preserve_not_evaluated_boundary_state():
     boundary_index = intraday.columns.index("boundary_evaluated")
     assert intraday.rows[0][boundary_index] == "False"
     assert fake.calls == ["audit_market_bars", "audit_intraday_market_bars"]
+
+
+def test_intraday_audit_preserves_failed_calendar_coverage_without_summary():
+    fake = FakeVault()
+    fake.audit_intraday_market_bars = lambda **kwargs: IntradayAuditReport(
+        run_id="intraday-failed",
+        started_at="2026-08-22T00:00:00+00:00",
+        status="FAILED",
+        calendar=IntradayCalendarInfo(
+            coverage_complete=False,
+            coverage_gaps=[{"start_date": "2026-07-02", "end_date": "2026-07-03"}],
+            expected_trade_date_count=0,
+            expected_trade_dates=[],
+        ),
+        summary=None,
+    )
+
+    summary, details = ConsoleBackend(fake).intraday_audit(
+        symbols="US.SPY",
+        start_date="2026-07-01",
+        end_date="2026-07-03",
+        calendar_market="US",
+    )
+
+    assert summary["status"] == "FAILED"
+    assert summary["calendar_coverage_complete"] is False
+    assert summary["calendar_coverage_gaps"] == [
+        {"start_date": "2026-07-02", "end_date": "2026-07-03"}
+    ]
+    assert "audit classifications were not evaluated" in summary["failure_reason"]
+    assert "coverage_percentage" not in summary
+    assert details.rows == ()
+    assert details.total_rows == 0
+
+
+def test_coverage_audit_preserves_failed_calendar_coverage_without_summary():
+    fake = FakeVault()
+    fake.audit_market_bars = lambda **kwargs: AuditReport(
+        run_id="coverage-failed",
+        started_at="2026-08-22T00:00:00+00:00",
+        status="FAILED",
+        calendar=AuditCalendarInfo(
+            coverage_complete=False,
+            coverage_gaps=[{"start_date": "2026-07-02", "end_date": "2026-07-03"}],
+        ),
+        summary=None,
+    )
+
+    summary, details = ConsoleBackend(fake).coverage_audit(
+        symbols="US.SPY",
+        start_date="2026-07-01",
+        end_date="2026-07-03",
+        calendar_market="US",
+    )
+
+    assert summary["status"] == "FAILED"
+    assert summary["calendar_coverage_complete"] is False
+    assert summary["calendar_coverage_gaps"] == [
+        {"start_date": "2026-07-02", "end_date": "2026-07-03"}
+    ]
+    assert "audit classifications were not evaluated" in summary["failure_reason"]
+    assert "coverage_percentage" not in summary
+    assert details.rows == ()
+    assert details.total_rows == 0
 
 
 def test_report_display_is_bounded_but_preserves_total_count():
