@@ -23,8 +23,10 @@ runtime data paths. All business reads and operations go through
 `ConsoleBackend` and the public `MarketVault` API/service abstraction.
 
 The Console provides no arbitrary SQL editor, Parquet editor, file browser
-delete action, purge button, or repair action. Existing immutable Raw,
-Curated, Canonical, Dataset, and Catalog contracts remain unchanged.
+delete action, permanent-delete action, or repair action. Its Storage / Purge
+workspace can only call the reviewed two-phase Safe Purge API. Existing
+immutable Canonical, Dataset, and Catalog artifacts are retained without
+cascade.
 
 ## 3. Operation Classification
 
@@ -80,6 +82,9 @@ unbounded `MarketVault.load_bars` method remains available for compatibility;
 the Console never calls it. No source schema, Parquet layout, DuckDB table,
 manifest, quality, CI, version, tag, or release contract changes in v0.1.
 
-Destructive data lifecycle behavior is out of scope. A non-normative design
-for a future reviewed implementation is recorded in
-[`../console_destructive_purge_contract_draft.md`](../console_destructive_purge_contract_draft.md).
+Storage / Purge requires an exact physical-scope preview followed by typed
+`PURGE <plan_id>` confirmation. A refused plan, including a partial symbol
+selection of a multi-symbol file, never enables execution. Successful
+execution moves whole Raw/Curated pairs to quarantine and never permanently
+deletes them. The normative lifecycle behavior is recorded in
+[`safe_purge_v01.md`](safe_purge_v01.md).

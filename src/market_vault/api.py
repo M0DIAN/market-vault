@@ -13,6 +13,7 @@ from .config import load_settings
 from .intraday_audit import IntradayAuditReport, run_intraday_audit
 from .models import Settings
 from .normalization.calendar import normalize_calendar_code, normalize_calendar_market
+from .purge import PurgePlan, PurgeResult, purge_execute, purge_plan
 from .service import collect_trading_calendar
 from .storage import Catalog
 
@@ -323,6 +324,39 @@ class MarketVault:
             end_date=end_date,
             market=market,
             code=code,
+        )
+
+    def purge_plan(
+        self,
+        *,
+        source: str,
+        symbols: list[str],
+        start_date: date,
+        end_date: date,
+        interval: str,
+        requested_session: str,
+        adjustment: str,
+        source_schema_version: str,
+    ) -> PurgePlan:
+        """Seal a local Safe Purge plan; no OpenD or market-data mutation."""
+        return purge_plan(
+            self.settings,
+            source=source,
+            symbols=symbols,
+            start_date=start_date,
+            end_date=end_date,
+            interval=interval,
+            requested_session=requested_session,
+            adjustment=adjustment,
+            source_schema_version=source_schema_version,
+        )
+
+    def purge_execute(self, *, plan_id: str, confirmation: str) -> PurgeResult:
+        """Execute one exact sealed plan by moving files to quarantine."""
+        return purge_execute(
+            self.settings,
+            plan_id=plan_id,
+            confirmation=confirmation,
         )
 
     def plan_backfill(

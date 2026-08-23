@@ -46,6 +46,16 @@ class BackfillPlanView:
 
 
 @dataclass(frozen=True)
+class PurgePlanView:
+    plan_id: str
+    status: str
+    executable: bool
+    summary: dict[str, Any]
+    refusal_reasons: tuple[dict[str, Any], ...]
+    items: TablePage
+
+
+@dataclass(frozen=True)
 class ExportResult:
     path: str
     format: str

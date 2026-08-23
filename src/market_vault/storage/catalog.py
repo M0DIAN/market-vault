@@ -144,6 +144,22 @@ class Catalog:
                 )
                 """
             )
+            con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS purge_operations (
+                    plan_id VARCHAR PRIMARY KEY,
+                    plan_hash VARCHAR NOT NULL,
+                    state VARCHAR NOT NULL,
+                    scope_json JSON NOT NULL,
+                    plan_file VARCHAR NOT NULL,
+                    result_file VARCHAR,
+                    planned_at TIMESTAMPTZ NOT NULL,
+                    started_at TIMESTAMPTZ,
+                    finished_at TIMESTAMPTZ,
+                    error VARCHAR
+                )
+                """
+            )
 
     def record_run(self, manifest: RunManifest) -> None:
         self.initialize()
@@ -230,10 +246,108 @@ class Catalog:
                 ],
             )
 
+    def record_purge_plan(
+        self,
+        *,
+        plan_id: str,
+        plan_hash: str,
+        state: str,
+        scope_json: str,
+        plan_file: str,
+        planned_at: datetime,
+    ) -> None:
+        """Index one immutable purge plan without replacing existing state."""
+        self.initialize()
+        with self.connect() as con:
+            existing = con.execute(
+                """
+                SELECT plan_hash, scope_json::VARCHAR, plan_file
+                FROM purge_operations
+                WHERE plan_id = ?
+                """,
+                [plan_id],
+            ).fetchone()
+            if existing is not None:
+                if existing != (plan_hash, scope_json, plan_file):
+                    raise RuntimeError(f"purge plan index conflict for {plan_id}")
+                return
+            con.execute(
+                """
+                INSERT INTO purge_operations (
+                    plan_id, plan_hash, state, scope_json, plan_file,
+                    result_file, planned_at, started_at, finished_at, error
+                ) VALUES (?, ?, ?, ?::JSON, ?, NULL, ?, NULL, NULL, NULL)
+                """,
+                [plan_id, plan_hash, state, scope_json, plan_file, planned_at],
+            )
+
+    def purge_operation(self, plan_id: str) -> dict | None:
+        self.initialize()
+        with self.connect() as con:
+            row = con.execute(
+                """
+                SELECT plan_id, plan_hash, state, scope_json::VARCHAR,
+                       plan_file, result_file, planned_at, started_at,
+                       finished_at, error
+                FROM purge_operations
+                WHERE plan_id = ?
+                """,
+                [plan_id],
+            ).fetchone()
+        if row is None:
+            return None
+        keys = (
+            "plan_id",
+            "plan_hash",
+            "state",
+            "scope_json",
+            "plan_file",
+            "result_file",
+            "planned_at",
+            "started_at",
+            "finished_at",
+            "error",
+        )
+        return dict(zip(keys, row, strict=True))
+
+    def update_purge_operation(
+        self,
+        plan_id: str,
+        *,
+        state: str,
+        result_file: str | None = None,
+        started_at: datetime | None = None,
+        finished_at: datetime | None = None,
+        error: str | None = None,
+    ) -> None:
+        self.initialize()
+        with self.connect() as con:
+            exists = con.execute(
+                "SELECT 1 FROM purge_operations WHERE plan_id = ?", [plan_id]
+            ).fetchone()
+            if exists is None:
+                raise RuntimeError(f"unknown purge plan id: {plan_id}")
+            con.execute(
+                """
+                UPDATE purge_operations
+                SET state = ?,
+                    result_file = COALESCE(?, result_file),
+                    started_at = COALESCE(?, started_at),
+                    finished_at = ?,
+                    error = ?
+                WHERE plan_id = ?
+                """,
+                [state, result_file, started_at, finished_at, error, plan_id],
+            )
+
     def refresh_market_bars_view(self) -> bool:
         curated_root = self.settings.data_root / "curated" / f"source={self.settings.source}" / "dataset=market_bars"
         files = list(curated_root.rglob("*.parquet")) if curated_root.exists() else []
         if not files:
+            if self.settings.catalog_path.exists():
+                with self.connect() as con:
+                    con.execute("DROP VIEW IF EXISTS market_bars")
+                    con.execute("DROP VIEW IF EXISTS market_bars_snapshots")
             return False
         glob_path = (curated_root / "**" / "*.parquet").as_posix().replace("'", "''")
         with self.connect() as con:

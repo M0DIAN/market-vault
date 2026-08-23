@@ -1,8 +1,8 @@
 # Destructive Purge Contract Draft
 
-> **Status: design only, non-normative, not implemented.** MarketVault
-> Console v0.1 has no purge API, command, button, SQL action, or file deletion
-> path. This draft exists solely for explicit review before a later PR.
+> **Status: superseded design record.** The reviewed Safe Purge v0.1 behavior
+> is defined by [contracts/safe_purge_v01.md](contracts/safe_purge_v01.md).
+> This file remains as the original non-normative review input.
 
 ## Safety Objective
 

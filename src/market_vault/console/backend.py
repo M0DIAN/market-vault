@@ -9,7 +9,7 @@ from typing import Any
 import pandas as pd
 
 from ..api import MarketVault, QueryPage
-from .models import BackfillPlanView, DashboardSnapshot, ExportResult, TablePage
+from .models import BackfillPlanView, DashboardSnapshot, ExportResult, PurgePlanView, TablePage
 
 
 MAX_EXPORT_ROWS = 1000
@@ -110,13 +110,15 @@ def _audit_summary(report: Any) -> dict[str, Any]:
 class ConsoleBackend:
     """Headless application service used by the Tkinter Console.
 
-    Local query methods never invoke OpenD. The two methods whose names start
-    with ``collect_`` or ``execute_`` are explicit operator actions and may
-    connect to OpenD through MarketVault service abstractions.
+    Local query, audit, purge-plan, and purge-execute methods never invoke
+    OpenD. Only ``collect_calendar`` and ``execute_backfill`` are explicit
+    network-capable operator actions, routed through MarketVault service
+    abstractions.
     """
 
     def __init__(self, vault: MarketVault):
         self.vault = vault
+        self._executable_purge_plan_id: str | None = None
 
     @classmethod
     def from_settings(cls, settings_path: str | Path) -> "ConsoleBackend":
@@ -333,6 +335,70 @@ class ConsoleBackend:
     def execute_backfill(self, **values: Any) -> dict[str, Any]:
         manifest = self.vault.backfill(**self._backfill_arguments(values, execute=True))
         return manifest.as_dict()
+
+    def preview_purge(
+        self,
+        *,
+        source: str,
+        symbols: str,
+        start_date: str,
+        end_date: str,
+        interval: str,
+        session: str,
+        adjustment: str,
+        source_schema_version: str,
+    ) -> PurgePlanView:
+        """Create the only plan that this backend instance may execute."""
+        self._executable_purge_plan_id = None
+        plan = self.vault.purge_plan(
+            source=source.strip(),
+            symbols=parse_symbols(symbols),
+            start_date=parse_iso_date(start_date, "start_date"),
+            end_date=parse_iso_date(end_date, "end_date"),
+            interval=interval.strip(),
+            requested_session=session.strip(),
+            adjustment=adjustment.strip(),
+            source_schema_version=source_schema_version.strip(),
+        )
+        records = []
+        for target in plan.targets[:MAX_PLAN_DISPLAY_ROWS]:
+            facts = target["curated"]["facts"]
+            records.append(
+                {
+                    "ingestion_run_id": target["ingestion_run_id"],
+                    "physical_scope_status": target["physical_scope_status"],
+                    "symbols": facts["symbols"],
+                    "dates": facts["dates"],
+                    "affected_rows": target["affected_row_count"],
+                    "raw_bytes": target["raw"]["byte_size"],
+                    "curated_bytes": target["curated"]["byte_size"],
+                    "raw_path": target["raw"]["relative_path"],
+                    "curated_path": target["curated"]["relative_path"],
+                }
+            )
+        if plan.executable:
+            self._executable_purge_plan_id = plan.plan_id
+        return PurgePlanView(
+            plan_id=plan.plan_id,
+            status=plan.status,
+            executable=plan.executable,
+            summary=plan.summary,
+            refusal_reasons=plan.refusal_reasons,
+            items=table_page_from_records(
+                records,
+                page_size=MAX_PLAN_DISPLAY_ROWS,
+                total_rows=len(plan.targets),
+            ),
+        )
+
+    def execute_purge(self, *, plan_id: str, confirmation: str) -> dict[str, Any]:
+        if not self._executable_purge_plan_id:
+            raise ValueError("Preview an executable purge plan before execution")
+        if plan_id != self._executable_purge_plan_id:
+            raise ValueError("The requested purge plan is not the current reviewed plan")
+        result = self.vault.purge_execute(plan_id=plan_id, confirmation=confirmation)
+        self._executable_purge_plan_id = None
+        return result.as_dict()
 
     def runs(
         self,

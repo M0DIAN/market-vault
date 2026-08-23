@@ -28,6 +28,7 @@ from .dataset.sample_generation_cli import (
 )
 from .doctor import run_doctor
 from .intraday_audit import run_intraday_audit
+from .purge import PurgeError
 from .service import collect_history, collect_option_chain, collect_option_volatility, collect_trading_calendar
 from .storage import Catalog
 
@@ -225,6 +226,26 @@ def build_parser() -> argparse.ArgumentParser:
     intraday.add_argument("--max-gap-details", type=int, default=100)
     intraday.add_argument("--fail-on-warn", action="store_true")
 
+    purge_plan_parser = sub.add_parser(
+        "purge-plan",
+        help="Seal a local Safe Purge plan for physical market-bar snapshot pairs",
+    )
+    purge_plan_parser.add_argument("--source", required=True)
+    purge_plan_parser.add_argument("--symbols", nargs="+", required=True)
+    purge_plan_parser.add_argument("--start-date", required=True, type=_parse_date)
+    purge_plan_parser.add_argument("--end-date", required=True, type=_parse_date)
+    purge_plan_parser.add_argument("--interval", required=True)
+    purge_plan_parser.add_argument("--session", required=True)
+    purge_plan_parser.add_argument("--adjustment", required=True)
+    purge_plan_parser.add_argument("--source-schema-version", required=True)
+
+    purge_execute_parser = sub.add_parser(
+        "purge-execute",
+        help="Execute an exact sealed Safe Purge plan into quarantine",
+    )
+    purge_execute_parser.add_argument("--plan-id", required=True)
+    purge_execute_parser.add_argument("--confirmation", required=True)
+
     return parser
 
 
@@ -260,6 +281,36 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "doctor":
         print(json.dumps(run_doctor(settings), ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "purge-plan":
+        try:
+            plan = MarketVault(settings).purge_plan(
+                source=args.source,
+                symbols=args.symbols,
+                start_date=args.start_date,
+                end_date=args.end_date,
+                interval=args.interval,
+                requested_session=args.session,
+                adjustment=args.adjustment,
+                source_schema_version=args.source_schema_version,
+            )
+        except (ValueError, PurgeError) as exc:
+            print(json.dumps({"status": "FAILED", "error": str(exc)}, indent=2))
+            return 1
+        print(json.dumps(plan.as_dict(), ensure_ascii=False, indent=2))
+        return 0 if plan.executable else 2
+
+    if args.command == "purge-execute":
+        try:
+            result = MarketVault(settings).purge_execute(
+                plan_id=args.plan_id,
+                confirmation=args.confirmation,
+            )
+        except PurgeError as exc:
+            print(json.dumps({"status": "FAILED", "error": str(exc)}, indent=2))
+            return 1
+        print(json.dumps(result.as_dict(), ensure_ascii=False, indent=2))
         return 0
 
     if args.command == "collect":

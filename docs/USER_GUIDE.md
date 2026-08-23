@@ -108,9 +108,9 @@ python -m market_vault.console --settings config/settings.yaml
 默认包含）。若 Tcl/Tk 缺失，Console 会以简洁错误退出，不会回退到第三方 GUI 包。
 
 当前提供 Dashboard、Data Explorer、Inventory、Coverage Audit、Intraday
-Audit、Trading Calendar、Backfill plan/execute 与 Runs。界面不直接执行 SQL、
-不打开 DuckDB 内部表、不修改 Parquet，也不提供文件删除或 purge 操作；所有业务
-操作均经过 `ConsoleBackend` 和公开 `MarketVault` API/service。
+Audit、Trading Calendar、Backfill plan/execute、Storage / Purge 与 Runs。
+界面不直接执行 SQL、不打开 DuckDB 内部表、不改写 Parquet，也不提供任意路径
+删除；所有业务操作均经过 `ConsoleBackend` 和公开 `MarketVault` API/service。
 
 - Data Explorer、Calendar 和 Runs 使用分页查询；page size 范围为 1..1000。
 - 导出仅限当前已加载页面，支持 CSV/JSON，最多 1000 行；不提供无界 Parquet 导出。
@@ -118,10 +118,40 @@ Audit、Trading Calendar、Backfill plan/execute 与 Runs。界面不直接执�
   host/port 并要求确认。
 - GUI 同一时间只运行一个后台操作；错误以状态栏和简洁对话框显示，不向普通用户
   展示异常堆栈。
-- destructive purge 尚未实现；其非规范设计草案见
-  [console_destructive_purge_contract_draft.md](console_destructive_purge_contract_draft.md)。
+- Storage / Purge 仅支持先 Preview 再输入 `PURGE <plan_id>`；共置未选择
+  symbol 的物理文件会显示 `REFUSED`，不会启用执行。
+- 成功执行只把完整 Raw/Curated 文件对移入 `data/quarantine/`，不永久删除，
+  不级联修改 Canonical、Dataset 或 Dataset Catalog。
 
 精确行为以 [Console v0.1 contract](contracts/console_v01.md) 为准。
+
+### Safe Purge v0.1
+
+先生成完全本地的 sealed plan：
+
+```powershell
+market-vault --settings config/settings.yaml purge-plan `
+  --source moomoo `
+  --symbols US.SPY `
+  --start-date 2026-07-01 `
+  --end-date 2026-07-31 `
+  --interval 1m `
+  --session ALL `
+  --adjustment NONE `
+  --source-schema-version 10.9
+```
+
+仅当计划状态为 `PLANNED` 且没有 refusal reason 时执行：
+
+```powershell
+market-vault --settings config/settings.yaml purge-execute `
+  --plan-id <plan_id> `
+  --confirmation "PURGE <plan_id>"
+```
+
+Safe Purge 不连接 OpenD、不接受文件路径、不拆分或重写 Parquet。物理文件中
+只要包含请求范围外的 symbol、日期或 request key，整个计划即拒绝。正式规则见
+[Safe Purge v0.1 contract](contracts/safe_purge_v01.md)。
 
 ## 6. 推荐的数据采集与审计流程
 
