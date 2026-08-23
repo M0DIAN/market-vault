@@ -729,6 +729,84 @@ def _write_immutable(path: Path, payload: dict[str, Any]) -> None:
             raise PurgeError(f"immutable purge evidence already exists with different bytes: {path}")
 
 
+def _fsync_staged_result(stream: Any) -> None:
+    os.fsync(stream.fileno())
+
+
+def _write_staged_result(path: Path, data: bytes) -> None:
+    with path.open("xb") as stream:
+        stream.write(data)
+        stream.flush()
+        _fsync_staged_result(stream)
+
+
+def _publish_no_replace(staging_path: Path, result_path: Path) -> None:
+    if os.name == "nt":
+        os.rename(staging_path, result_path)
+        return
+    os.link(staging_path, result_path)
+    try:
+        staging_path.unlink()
+    except OSError:
+        # The terminal name is already committed. A leftover staging name is
+        # non-terminal residue and does not weaken the published evidence.
+        pass
+
+
+def _publish_terminal_result(
+    path: Path, payload: dict[str, Any], *, expected_hash: str
+) -> PurgeResult:
+    data = _canonical_bytes(payload)
+    prepared = _parse_result_payload(payload, expected_hash=expected_hash)
+    if prepared.status != "SUCCESS":
+        raise PurgeError("only SUCCESS evidence may use terminal result publication")
+
+    verify_directory_chain(path.parent, label="purge result directory")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    verify_directory_chain(path.parent, label="purge result directory")
+    reject_link(path, "purge result evidence")
+
+    def verify_published() -> PurgeResult:
+        reject_link(path, "purge result evidence")
+        if not path.is_file():
+            raise PurgeError("completed purge result evidence is not a regular file")
+        try:
+            raw = path.read_bytes()
+        except OSError as exc:
+            raise PurgeError("completed purge result evidence cannot be read") from exc
+        if raw != data:
+            raise PurgeError(
+                "pre-existing terminal purge result has different bytes; refusing overwrite"
+            )
+        try:
+            return _result_from_file(path, expected_hash=expected_hash)
+        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+            raise PurgeError("completed purge result evidence cannot be parsed") from exc
+
+    if path.exists():
+        return verify_published()
+
+    staging_path = path.parent / f".{path.name}.staging-{uuid4().hex}.tmp"
+    reject_link(staging_path, "purge result staging file")
+    _write_staged_result(staging_path, data)
+    reject_link(staging_path, "purge result staging file")
+    if not staging_path.is_file() or staging_path.read_bytes() != data:
+        raise PurgeError("staged terminal purge result failed byte verification")
+    try:
+        staged_payload = json.loads(data)
+        _parse_result_payload(staged_payload, expected_hash=expected_hash)
+    except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise PurgeError("staged terminal purge result failed integrity verification") from exc
+
+    try:
+        _publish_no_replace(staging_path, path)
+    except FileExistsError:
+        if not path.exists():
+            raise PurgeError("terminal purge result staging path already exists")
+        return verify_published()
+    return verify_published()
+
+
 def _plan_from_payload(payload: dict[str, Any], plan_file: Path) -> PurgePlan:
     return PurgePlan(
         plan_id=payload["plan_id"],
@@ -1048,17 +1126,12 @@ def _load_success_result(
         raise PurgeError("purge result index points outside the authoritative evidence path") from exc
     verify_directory_chain(root, label="purge result directory")
     reject_link(path, "purge result evidence")
-    if not path.exists():
-        # Catalog SUCCESS is the commit point. A crash after that transaction
-        # is recovered by publishing the exact integrity-bound payload sealed
-        # in the immutable precommit evidence.
-        _write_immutable(path, prepared.as_dict())
-    if not path.is_file():
-        raise PurgeError("completed purge result evidence is not a regular file")
-    try:
-        result = _result_from_file(path, expected_hash=record["result_hash"])
-    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
-        raise PurgeError("completed purge result evidence cannot be parsed") from exc
+    # Catalog SUCCESS is the commit point. A crash after that transaction is
+    # recovered by staging and atomically publishing the exact payload sealed
+    # in the immutable precommit evidence.
+    result = _publish_terminal_result(
+        path, prepared.as_dict(), expected_hash=record["result_hash"]
+    )
     expected_moved = tuple(
         {
             **target[key],
@@ -1173,7 +1246,11 @@ def purge_execute(settings: Settings, *, plan_id: str, confirmation: str) -> Pur
             committed = True
             # Publication is recoverable: a retry can reproduce these exact
             # bytes from the immutable precommit after validating quarantine.
-            _write_immutable(Path(result.result_file), result.as_dict())
+            _publish_terminal_result(
+                Path(result.result_file),
+                result.as_dict(),
+                expected_hash=result.evidence_hash,
+            )
             return result
         except BaseException as exc:
             if committed:

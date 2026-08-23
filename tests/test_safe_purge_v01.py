@@ -432,30 +432,41 @@ def test_catalog_success_failure_rolls_back_and_never_reports_success(monkeypatc
     assert all(payload["status"] != "SUCCESS" for payload in terminal_payloads)
 
 
-def test_committed_result_publication_recovers_idempotently(monkeypatch, tmp_path):
+def test_partial_terminal_write_after_commit_recovers_idempotently(monkeypatch, tmp_path):
     cfg = settings(tmp_path)
     raw, curated = write_batch(cfg, symbols=["US.SPY"])
     sealed = plan(cfg, ["US.SPY"])
     from market_vault import purge as purge_module
 
-    real_write = purge_module._write_immutable
-    blocked = True
+    real_write = purge_module._write_staged_result
 
-    def fail_terminal_success(path, payload):
-        nonlocal blocked
-        if blocked and payload.get("status") == "SUCCESS":
-            blocked = False
-            raise OSError("simulated terminal publication interruption")
-        return real_write(path, payload)
+    def partial_write(path, data):
+        with path.open("xb") as stream:
+            stream.write(data[: max(1, len(data) // 3)])
+            stream.flush()
+        raise OSError("simulated partial terminal staging write")
 
-    monkeypatch.setattr(purge_module, "_write_immutable", fail_terminal_success)
+    monkeypatch.setattr(purge_module, "_write_staged_result", partial_write)
     with pytest.raises(PurgeError, match="committed.*idempotent retry"):
         purge_execute(cfg, plan_id=sealed.plan_id, confirmation=f"PURGE {sealed.plan_id}")
     record = Catalog(cfg).purge_operation(sealed.plan_id)
     assert record["state"] == "SUCCESS"
     assert not Path(record["result_file"]).exists()
     assert not raw.exists() and not curated.exists()
+    staging = list(Path(record["result_file"]).parent.glob(".*.staging-*.tmp"))
+    assert len(staging) == 1
+    assert 0 < staging[0].stat().st_size < len(
+        json.dumps(
+            json.loads(Path(record["precommit_file"]).read_text(encoding="utf-8"))[
+                "terminal_result"
+            ],
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        ).encode("utf-8")
+    )
 
+    monkeypatch.setattr(purge_module, "_write_staged_result", real_write)
     recovered = purge_execute(
         cfg, plan_id=sealed.plan_id, confirmation=f"PURGE {sealed.plan_id}"
     )
@@ -464,13 +475,74 @@ def test_committed_result_publication_recovers_idempotently(monkeypatch, tmp_pat
     assert recovered.evidence_hash == record["result_hash"]
 
 
-def test_successful_plan_retry_is_idempotent(tmp_path):
+def test_fsync_failure_after_commit_recovers_idempotently(monkeypatch, tmp_path):
+    cfg = settings(tmp_path)
+    raw, curated = write_batch(cfg, symbols=["US.SPY"])
+    sealed = plan(cfg, ["US.SPY"])
+    from market_vault import purge as purge_module
+
+    real_fsync = purge_module._fsync_staged_result
+
+    def fail_fsync(_stream):
+        raise OSError("simulated terminal staging fsync failure")
+
+    monkeypatch.setattr(purge_module, "_fsync_staged_result", fail_fsync)
+    with pytest.raises(PurgeError, match="committed.*idempotent retry"):
+        purge_execute(cfg, plan_id=sealed.plan_id, confirmation=f"PURGE {sealed.plan_id}")
+    record = Catalog(cfg).purge_operation(sealed.plan_id)
+    assert record["state"] == "SUCCESS"
+    assert not Path(record["result_file"]).exists()
+    assert not raw.exists() and not curated.exists()
+    assert list(Path(record["result_file"]).parent.glob(".*.staging-*.tmp"))
+
+    monkeypatch.setattr(purge_module, "_fsync_staged_result", real_fsync)
+    recovered = purge_execute(
+        cfg, plan_id=sealed.plan_id, confirmation=f"PURGE {sealed.plan_id}"
+    )
+    assert recovered.status == "SUCCESS"
+    assert Path(recovered.result_file).is_file()
+    assert recovered.evidence_hash == record["result_hash"]
+
+
+def test_pre_existing_exact_final_is_accepted_without_republication(monkeypatch, tmp_path):
     cfg = settings(tmp_path)
     write_batch(cfg, symbols=["US.SPY"])
     sealed = plan(cfg, ["US.SPY"])
+    from market_vault import purge as purge_module
+
     first = purge_execute(cfg, plan_id=sealed.plan_id, confirmation=f"PURGE {sealed.plan_id}")
+
+    def unexpected_staging_write(_path, _data):
+        raise AssertionError("exact terminal result must not be republished")
+
+    monkeypatch.setattr(purge_module, "_write_staged_result", unexpected_staging_write)
     second = purge_execute(cfg, plan_id=sealed.plan_id, confirmation=f"PURGE {sealed.plan_id}")
     assert second.as_dict() == first.as_dict()
+
+
+def test_pre_existing_conflicting_final_is_refused_without_overwrite(monkeypatch, tmp_path):
+    cfg = settings(tmp_path)
+    write_batch(cfg, symbols=["US.SPY"])
+    sealed = plan(cfg, ["US.SPY"])
+    from market_vault import purge as purge_module
+
+    real_fsync = purge_module._fsync_staged_result
+    monkeypatch.setattr(
+        purge_module,
+        "_fsync_staged_result",
+        lambda _stream: (_ for _ in ()).throw(OSError("simulated fsync failure")),
+    )
+    with pytest.raises(PurgeError, match="committed.*idempotent retry"):
+        purge_execute(cfg, plan_id=sealed.plan_id, confirmation=f"PURGE {sealed.plan_id}")
+    record = Catalog(cfg).purge_operation(sealed.plan_id)
+    result_path = Path(record["result_file"])
+    conflicting = b'{"status":"SUCCESS","truncated":true}'
+    result_path.write_bytes(conflicting)
+    monkeypatch.setattr(purge_module, "_fsync_staged_result", real_fsync)
+
+    with pytest.raises(PurgeError, match="different bytes; refusing overwrite"):
+        purge_execute(cfg, plan_id=sealed.plan_id, confirmation=f"PURGE {sealed.plan_id}")
+    assert result_path.read_bytes() == conflicting
 
 
 def test_completed_result_tampering_blocks_idempotent_retry(tmp_path):
@@ -496,7 +568,7 @@ def test_completed_result_tampering_blocks_idempotent_retry(tmp_path):
         encoding="utf-8",
         newline="",
     )
-    with pytest.raises(PurgeError, match="hash mismatch"):
+    with pytest.raises(PurgeError, match="different bytes; refusing overwrite"):
         purge_execute(cfg, plan_id=sealed.plan_id, confirmation=f"PURGE {sealed.plan_id}")
 
 

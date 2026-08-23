@@ -63,13 +63,20 @@ result JSON are the detailed evidence. SUCCESS uses an explicit protocol:
 1. write an immutable, non-terminal precommit containing the complete proposed
    canonical result and its hash;
 2. atomically commit the Catalog `SUCCESS` row and exact result hash/path;
-3. publish the terminal immutable result bytes.
+3. write, flush, fsync, and integrity-check a temporary result in the same
+   directory, then atomically publish it without replacing an existing final
+   result.
 
 Catalog commit is the operation commit point. A commit failure rolls back the
 files and can leave only non-terminal precommit plus `FAILED` evidence, never a
 terminal `SUCCESS` result. If publication is interrupted after commit, an
 idempotent retry validates the run bindings, quarantine identities, Catalog
-hash, and precommit hash before publishing exactly the precommitted bytes.
+hash, and precommit hash before staging and publishing exactly the
+precommitted bytes. The final `result-*.json` name is never used as a write
+target: it becomes visible only after complete canonical bytes pass integrity
+verification. A byte-identical existing final result is accepted
+idempotently; a conflicting existing result is retained and execution fails
+closed without overwrite. Interrupted staging files are non-terminal residue.
 The complete result schema, including message and timestamps, is integrity-bound.
 
 Ingestion runs, collection manifests,
