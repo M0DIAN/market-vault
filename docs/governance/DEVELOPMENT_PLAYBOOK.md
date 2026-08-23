@@ -118,6 +118,37 @@ main verification 有两种闭合路径（Post-Merge Verified FULL Reuse，
 
 三层定义本地需要跑多少验证。高层包含低层。
 
+### Windows 本地 FULL 安全入口
+
+Windows 上需要运行本地完整离线套件时，唯一标准入口是：
+
+```powershell
+.\scripts\verify_full.ps1
+```
+
+不要在 MarketVault 仓库或任何已注册 Git worktree 内使用 `--basetemp`
+运行 FULL pytest，包括 `.pytest_cache/full`。测试可能递归复制仓库；worktree
+内的 basetemp 会让复制包含自身，导致递归增长和磁盘耗尽。
+
+wrapper 从脚本位置和 Git 元数据发现当前仓库，通过
+`git worktree list --porcelain` 核验所有已注册 worktree。每次运行使用唯一
+run ID，并优先选择 `D:\MarketVault-TestTemp\<run-id>`；D: 不可用时才选择
+安全的仓库外平台目录。启动 pytest 前要求实际 basetemp 所在文件系统至少有
+10 GiB 可用空间。任何路径归属或磁盘空间无法证明时均拒绝运行。
+
+可使用绝对路径覆盖共享 temp parent：
+
+```powershell
+$env:MARKET_VAULT_TEST_TEMP_ROOT = "E:\MarketVault-TestTemp"
+.\scripts\verify_full.ps1
+```
+
+覆盖路径仍执行相同的 worktree containment 和磁盘检查，不能绕过安全规则。
+wrapper 仅删除本次 `<run-id>` 目录，不删除共享 parent。Windows ACL 或文件锁
+导致清理失败时，它会报告并保留该精确 run 目录，不扩大删除范围。该入口不
+改变 pytest 的测试选择，并禁用 worktree 内 pytest cache 写入；focused
+development 仍可直接运行指定测试文件。
+
 ### LEVEL 1 — focused development
 
 用于开发迭代，快速反馈：
