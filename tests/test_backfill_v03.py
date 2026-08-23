@@ -217,7 +217,7 @@ def make_fake_collect_history(cfg: Settings, monkeypatch, responses: dict):
         run_ids.append(manifest.run_id)
         return manifest
 
-    monkeypatch.setattr(backfill_module, "collect_history", fake_collect_history)
+    monkeypatch.setattr(backfill_module, "_collect_history_locked", fake_collect_history)
     return call_log, run_ids
 
 
@@ -449,7 +449,7 @@ def test_calendar_coverage_gap_fails_and_does_not_create_collector(monkeypatch, 
         requested_end_date=date(2026, 7, 31),
         run_id="run-2",
     )
-    monkeypatch.setattr(backfill_module, "collect_history", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError()))
+    monkeypatch.setattr(backfill_module, "_collect_history_locked", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError()))
 
     manifest = collect_history_backfill(
         cfg,
@@ -803,7 +803,7 @@ def test_backfill_all_skip_makes_no_requests(monkeypatch, tmp_path):
         requested_end_date=date(2026, 7, 1),
     )
     write_completed_bar(cfg, code="US.MU", trade_date=date(2026, 7, 1))
-    monkeypatch.setattr(backfill_module, "collect_history", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError()))
+    monkeypatch.setattr(backfill_module, "_collect_history_locked", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError()))
 
     manifest = collect_history_backfill(
         cfg,
@@ -1430,7 +1430,7 @@ def test_incremental_next_trading_day_beyond_end_date_is_empty_success(monkeypat
         requested_end_date=date(2026, 7, 6),
     )
     write_completed_bar(cfg, code="US.MU", trade_date=date(2026, 7, 6))
-    monkeypatch.setattr(backfill_module, "collect_history", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError()))
+    monkeypatch.setattr(backfill_module, "_collect_history_locked", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError()))
 
     manifest = collect_history_backfill(
         cfg,
@@ -1503,7 +1503,7 @@ def test_incremental_missing_calendar_not_treated_as_caught_up(monkeypatch, tmp_
     write_completed_bar(cfg, code="US.MU", trade_date=date(2026, 7, 3))
     monkeypatch.setattr(
         backfill_module,
-        "collect_history",
+            "_collect_history_locked",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("collect_history must not be called")),
     )
 
@@ -1538,7 +1538,7 @@ def test_incremental_covered_range_without_trading_days_allows_empty_plan(monkey
     write_completed_bar(cfg, code="US.MU", trade_date=date(2026, 7, 3))
     monkeypatch.setattr(
         backfill_module,
-        "collect_history",
+            "_collect_history_locked",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("collect_history must not be called")),
     )
 
@@ -1575,7 +1575,7 @@ def test_incremental_mixed_symbols_fail_when_calendar_coverage_missing(monkeypat
     write_completed_bar(cfg, code="US.NVDA", trade_date=date(2026, 7, 6))
     monkeypatch.setattr(
         backfill_module,
-        "collect_history",
+            "_collect_history_locked",
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("collect_history must not be called")),
     )
 
@@ -1943,7 +1943,7 @@ def test_empty_plan_no_trading_dates_manifest_success(monkeypatch, tmp_path):
         requested_start_date=date(2026, 7, 1),
         requested_end_date=date(2026, 7, 2),
     )
-    monkeypatch.setattr(backfill_module, "collect_history", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError()))
+    monkeypatch.setattr(backfill_module, "_collect_history_locked", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError()))
 
     manifest = collect_history_backfill(
         cfg,
@@ -1970,7 +1970,7 @@ def test_incremental_caught_up_to_end_date_manifest_success(monkeypatch, tmp_pat
         requested_end_date=date(2026, 7, 2),
     )
     write_completed_bar(cfg, code="US.MU", trade_date=date(2026, 7, 2))
-    monkeypatch.setattr(backfill_module, "collect_history", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError()))
+    monkeypatch.setattr(backfill_module, "_collect_history_locked", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError()))
 
     manifest = collect_history_backfill(
         cfg,

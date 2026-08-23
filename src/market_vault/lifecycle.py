@@ -12,27 +12,54 @@ class LifecycleLockError(RuntimeError):
     """Raised when the market-bar lifecycle lock cannot be acquired safely."""
 
 
+FILE_ATTRIBUTE_REPARSE_POINT = 0x400
+INVALID_FILE_ATTRIBUTES = 0xFFFFFFFF
+
+
+def _running_on_windows() -> bool:
+    return os.name == "nt"
+
+
+def _windows_file_attributes(path: Path) -> int:
+    """Read Windows attributes or fail closed with the native error code."""
+    import ctypes
+
+    try:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        get_attributes = kernel32.GetFileAttributesW
+        get_attributes.argtypes = [ctypes.c_wchar_p]
+        get_attributes.restype = ctypes.c_uint32
+        ctypes.set_last_error(0)
+        attributes = int(get_attributes(str(path)))
+        error_code = int(ctypes.get_last_error())
+    except (AttributeError, OSError, TypeError) as exc:
+        raise LifecycleLockError(
+            f"cannot verify Windows file attributes for {path}: {exc}"
+        ) from exc
+    if attributes == INVALID_FILE_ATTRIBUTES:
+        if error_code in {2, 3} and not os.path.lexists(path):
+            return 0
+        raise LifecycleLockError(
+            f"cannot verify Windows file attributes for {path}: "
+            f"INVALID_FILE_ATTRIBUTES (Windows error {error_code})"
+        )
+    return attributes
+
+
 def is_junction_or_reparse(path: Path) -> bool:
     """Return whether *path* is a Windows junction or reparse point.
 
     Python 3.11 has no ``Path.is_junction``. On Windows the file attributes
     are queried directly and an uncheckable path fails closed.
     """
+    if _running_on_windows():
+        # Path.is_junction() does not cover every reparse-point type. The
+        # native attribute is authoritative and is always inspected on
+        # Windows, including Python versions that expose is_junction().
+        return bool(_windows_file_attributes(path) & FILE_ATTRIBUTE_REPARSE_POINT)
     if hasattr(path, "is_junction"):
         return path.is_junction()
-    if os.name != "nt":
-        return False
-    import ctypes
-
-    try:
-        attributes = ctypes.windll.kernel32.GetFileAttributesW(str(path))
-    except (AttributeError, OSError, TypeError) as exc:
-        raise LifecycleLockError(
-            f"cannot verify Windows reparse-point status for {path}"
-        ) from exc
-    if attributes == 0xFFFFFFFF:
-        return False
-    return bool(attributes & 0x400)
+    return False
 
 
 def reject_link(path: Path, label: str) -> None:

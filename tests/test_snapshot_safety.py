@@ -292,7 +292,7 @@ def test_force_recollect_does_not_overwrite_old_snapshots(monkeypatch, tmp_path)
         new_run_ids.append(manifest.run_id)
         return manifest
 
-    monkeypatch.setattr(backfill_module, "collect_history", fake_collect_history)
+    monkeypatch.setattr(backfill_module, "_collect_history_locked", fake_collect_history)
 
     manifest = collect_history_backfill(
         cfg,

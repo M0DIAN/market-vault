@@ -22,8 +22,9 @@ from .models import Settings
 from .storage import Catalog
 
 
-PURGE_PLAN_VERSION = "market-vault-safe-purge-plan-v1"
-PURGE_RESULT_VERSION = "market-vault-safe-purge-result-v1"
+PURGE_PLAN_VERSION = "market-vault-safe-purge-plan-v2"
+PURGE_RESULT_VERSION = "market-vault-safe-purge-result-v2"
+PURGE_PRECOMMIT_VERSION = "market-vault-safe-purge-precommit-v1"
 RETENTION_POLICY = "RETAIN_VERIFIED_DERIVED_ARTIFACTS_V1"
 _PLAN_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 _PARTITION_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
@@ -152,6 +153,7 @@ class PurgeResult:
     result_version: str
     plan_id: str
     content_hash: str
+    evidence_hash: str
     status: str
     moved_files: tuple[dict[str, Any], ...]
     result_file: str
@@ -163,6 +165,7 @@ class PurgeResult:
             "result_version": self.result_version,
             "plan_id": self.plan_id,
             "content_hash": self.content_hash,
+            "evidence_hash": self.evidence_hash,
             "status": self.status,
             "moved_files": list(self.moved_files),
             "result_file": self.result_file,
@@ -438,6 +441,82 @@ def _catalog_runs(catalog: Catalog, scope: PurgeScope) -> tuple[list[tuple], lis
     return selected, active
 
 
+def _metadata_relative_path(settings: Settings, value: str, *, label: str) -> str:
+    path = _path_from_metadata(settings, value)
+    root = Path(os.path.abspath(settings.data_root))
+    try:
+        return path.relative_to(root).as_posix()
+    except ValueError as exc:
+        raise PurgeError(f"{label} metadata path is outside data_root: {path}") from exc
+
+
+def _run_binding(settings: Settings, row: tuple) -> dict[str, Any]:
+    try:
+        symbols = sorted({_symbol(value) for value in json.loads(row[2])})
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise PurgeError(f"run {row[0]} has invalid requested_symbols metadata") from exc
+    if not row[6] or not row[7]:
+        raise PurgeError(f"run {row[0]} does not have a complete physical file pair")
+    trade_date = row[1]
+    if not hasattr(trade_date, "isoformat"):
+        raise PurgeError(f"run {row[0]} has invalid requested_trade_date metadata")
+    return {
+        "run_id": str(row[0]),
+        "requested_trade_date": trade_date.isoformat(),
+        "requested_symbols": symbols,
+        "interval": str(row[3]).strip().lower(),
+        "requested_session": str(row[4]).strip().upper(),
+        "adjustment": str(row[5]).strip().upper(),
+        "raw_relative_path": _metadata_relative_path(
+            settings, str(row[6]), label=f"run {row[0]} Raw"
+        ),
+        "curated_relative_path": _metadata_relative_path(
+            settings, str(row[7]), label=f"run {row[0]} Curated"
+        ),
+        "status": str(row[8]).strip().upper(),
+    }
+
+
+def _resolve_run(catalog: Catalog, run_id: str) -> tuple | None:
+    catalog.initialize()
+    with catalog.connect() as con:
+        return con.execute(
+            """
+            SELECT run_id, requested_trade_date, requested_symbols::VARCHAR,
+                   interval, session, adjustment, raw_file, curated_file, status
+            FROM ingestion_runs
+            WHERE run_id = ?
+            """,
+            [run_id],
+        ).fetchone()
+
+
+def _verify_run_bindings(settings: Settings, catalog: Catalog, plan: PurgePlan) -> None:
+    """Rebind every sealed physical pair to its current ingestion run row."""
+    for target in plan.targets:
+        sealed = target.get("run_binding")
+        if not isinstance(sealed, dict):
+            raise PurgeDriftError(
+                f"sealed target lacks an ingestion run binding: {target.get('ingestion_run_id')}"
+            )
+        run_id = str(target["ingestion_run_id"])
+        current_row = _resolve_run(catalog, run_id)
+        if current_row is None:
+            raise PurgeDriftError(f"planned ingestion run disappeared: {run_id}")
+        try:
+            current = _run_binding(settings, current_row)
+        except PurgeError as exc:
+            raise PurgeDriftError(str(exc)) from exc
+        if current != sealed:
+            raise PurgeDriftError(f"planned ingestion run metadata drifted: {run_id}")
+        if (
+            sealed["raw_relative_path"] != target["raw"]["relative_path"]
+            or sealed["curated_relative_path"] != target["curated"]["relative_path"]
+            or sealed["run_id"] != run_id
+        ):
+            raise PurgeDriftError(f"sealed target binding is inconsistent: {run_id}")
+
+
 def _partition_files(settings: Settings, scope: PurgeScope, layer: str) -> list[Path]:
     root = _active_root(settings, scope, layer)
     if not root.exists():
@@ -488,7 +567,11 @@ def _build_plan_content(settings: Settings, scope: PurgeScope) -> dict[str, Any]
     matched_symbols: set[str] = set()
     data_root = Path(os.path.abspath(settings.data_root))
     for row in rows:
-        run_id, _, _, _, _, _, raw_text, curated_text, _ = row
+        run_id, _, _, _, _, _, raw_text, curated_text, status = row
+        if not raw_text and not curated_text and str(status).upper() == "FAILED":
+            # Failed requests with no physical output remain historical run
+            # evidence, but they do not form a purge lifecycle unit.
+            continue
         if not raw_text or not curated_text:
             refusals.append(
                 _refusal(
@@ -515,6 +598,7 @@ def _build_plan_content(settings: Settings, scope: PurgeScope) -> dict[str, Any]
             )
             raw_facts = _read_facts(raw_path, curated=False)
             curated_facts = _read_facts(curated_path, curated=True)
+            run_binding = _run_binding(settings, row)
         except (PurgeError, LifecycleLockError) as exc:
             refusals.append(
                 _refusal("UNSAFE_OR_MISSING_TARGET", str(exc), run_id=str(run_id))
@@ -529,6 +613,7 @@ def _build_plan_content(settings: Settings, scope: PurgeScope) -> dict[str, Any]
         targets.append(
             {
                 "ingestion_run_id": str(run_id),
+                "run_binding": run_binding,
                 "raw": {**raw_identity, "facts": raw_facts.as_dict()},
                 "curated": {**curated_identity, "facts": curated_facts.as_dict()},
                 "affected_row_count": curated_facts.row_count,
@@ -770,6 +855,78 @@ def _move_file(source: Path, destination: Path) -> None:
     os.unlink(source)
 
 
+_RESULT_KEYS = {
+    "result_version",
+    "plan_id",
+    "content_hash",
+    "evidence_hash",
+    "status",
+    "moved_files",
+    "result_file",
+    "completed_at",
+    "message",
+}
+
+
+def _build_result(
+    plan: PurgePlan,
+    *,
+    status: str,
+    moved_files: list[dict[str, Any]],
+    message: str,
+    result_path: Path,
+) -> PurgeResult:
+    content = {
+        "result_version": PURGE_RESULT_VERSION,
+        "plan_id": plan.plan_id,
+        "content_hash": plan.content_hash,
+        "status": status,
+        "moved_files": moved_files,
+        "result_file": str(result_path),
+        "completed_at": datetime.now(timezone.utc).isoformat(),
+        "message": message,
+    }
+    evidence_hash = hashlib.sha256(_canonical_bytes(content)).hexdigest()
+    return PurgeResult(
+        result_version=PURGE_RESULT_VERSION,
+        plan_id=plan.plan_id,
+        content_hash=plan.content_hash,
+        evidence_hash=evidence_hash,
+        status=status,
+        moved_files=tuple(moved_files),
+        result_file=str(result_path),
+        completed_at=content["completed_at"],
+        message=message,
+    )
+
+
+def _parse_result_payload(
+    payload: dict[str, Any], *, expected_hash: str | None = None
+) -> PurgeResult:
+    if set(payload) != _RESULT_KEYS:
+        raise PurgeError("purge result evidence has an unexpected canonical schema")
+    content = {key: value for key, value in payload.items() if key != "evidence_hash"}
+    digest = hashlib.sha256(_canonical_bytes(content)).hexdigest()
+    if digest != payload.get("evidence_hash") or (
+        expected_hash is not None and digest != expected_hash
+    ):
+        raise PurgeError("purge result evidence hash mismatch")
+    try:
+        return PurgeResult(
+            result_version=payload["result_version"],
+            plan_id=payload["plan_id"],
+            content_hash=payload["content_hash"],
+            evidence_hash=payload["evidence_hash"],
+            status=payload["status"],
+            moved_files=tuple(payload["moved_files"]),
+            result_file=payload["result_file"],
+            completed_at=payload["completed_at"],
+            message=payload["message"],
+        )
+    except (KeyError, TypeError) as exc:
+        raise PurgeError("purge result evidence cannot be parsed") from exc
+
+
 def _write_result(
     settings: Settings,
     plan: PurgePlan,
@@ -778,38 +935,112 @@ def _write_result(
     moved_files: list[dict[str, Any]],
     message: str,
 ) -> PurgeResult:
-    completed_at = datetime.now(timezone.utc).isoformat()
-    result_path = _evidence_path(settings, "results", plan.plan_id)
-    result = PurgeResult(
-        PURGE_RESULT_VERSION,
-        plan.plan_id,
-        plan.content_hash,
-        status,
-        tuple(moved_files),
-        str(result_path),
-        completed_at,
-        message,
+    result = _build_result(
+        plan,
+        status=status,
+        moved_files=moved_files,
+        message=message,
+        result_path=_evidence_path(settings, "results", plan.plan_id),
     )
-    _write_immutable(result_path, result.as_dict())
+    _write_immutable(Path(result.result_file), result.as_dict())
     return result
 
 
-def _result_from_file(path: Path) -> PurgeResult:
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    return PurgeResult(
-        payload["result_version"],
-        payload["plan_id"],
-        payload["content_hash"],
-        payload["status"],
-        tuple(payload["moved_files"]),
-        payload["result_file"],
-        payload["completed_at"],
-        payload["message"],
+def _prepare_success_result(
+    settings: Settings,
+    plan: PurgePlan,
+    moved_files: list[dict[str, Any]],
+) -> tuple[PurgeResult, Path]:
+    attempt_id = uuid4().hex
+    root = Path(os.path.abspath(settings.manifest_dir)) / "purge" / "results" / plan.plan_id
+    result_path = root / f"result-{attempt_id}.json"
+    precommit_path = root / f"precommit-{attempt_id}.json"
+    result = _build_result(
+        plan,
+        status="SUCCESS",
+        moved_files=moved_files,
+        message=(
+            "Selected physical Raw/Curated snapshot pairs moved to quarantine; "
+            "no permanent deletion occurred."
+        ),
+        result_path=result_path,
     )
+    content = {
+        "precommit_version": PURGE_PRECOMMIT_VERSION,
+        "plan_id": plan.plan_id,
+        "plan_hash": plan.content_hash,
+        "terminal_result": result.as_dict(),
+        "terminal_result_hash": result.evidence_hash,
+    }
+    payload = {
+        **content,
+        "precommit_hash": hashlib.sha256(_canonical_bytes(content)).hexdigest(),
+    }
+    _write_immutable(precommit_path, payload)
+    return result, precommit_path
 
 
-def _load_success_result(settings: Settings, plan: PurgePlan, result_file: str) -> PurgeResult:
-    path = Path(os.path.abspath(result_file))
+def _load_precommit(
+    settings: Settings, plan: PurgePlan, record: dict[str, Any]
+) -> PurgeResult:
+    if not record.get("precommit_file") or not record.get("result_hash"):
+        raise PurgeError("completed purge index is missing precommit integrity evidence")
+    path = Path(os.path.abspath(record["precommit_file"]))
+    root = Path(os.path.abspath(settings.manifest_dir)) / "purge" / "results" / plan.plan_id
+    try:
+        path.relative_to(root)
+    except ValueError as exc:
+        raise PurgeError("purge precommit index points outside its evidence path") from exc
+    verify_directory_chain(root, label="purge result directory")
+    reject_link(path, "purge precommit evidence")
+    try:
+        raw = path.read_bytes()
+        payload = json.loads(raw)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise PurgeError("purge precommit evidence cannot be parsed") from exc
+    if raw != _canonical_bytes(payload):
+        raise PurgeError("purge precommit evidence is not canonical")
+    expected_keys = {
+        "precommit_version",
+        "plan_id",
+        "plan_hash",
+        "terminal_result",
+        "terminal_result_hash",
+        "precommit_hash",
+    }
+    if set(payload) != expected_keys:
+        raise PurgeError("purge precommit evidence has an unexpected schema")
+    content = {key: value for key, value in payload.items() if key != "precommit_hash"}
+    if hashlib.sha256(_canonical_bytes(content)).hexdigest() != payload["precommit_hash"]:
+        raise PurgeError("purge precommit evidence hash mismatch")
+    if (
+        payload["precommit_version"] != PURGE_PRECOMMIT_VERSION
+        or payload["plan_id"] != plan.plan_id
+        or payload["plan_hash"] != plan.content_hash
+        or payload["terminal_result_hash"] != record["result_hash"]
+    ):
+        raise PurgeError("purge precommit evidence is inconsistent")
+    result = _parse_result_payload(
+        payload["terminal_result"], expected_hash=record["result_hash"]
+    )
+    if result.result_file != record.get("result_file"):
+        raise PurgeError("purge precommit result path is inconsistent")
+    return result
+
+
+def _result_from_file(path: Path, *, expected_hash: str) -> PurgeResult:
+    raw = path.read_bytes()
+    payload = json.loads(raw)
+    if raw != _canonical_bytes(payload):
+        raise PurgeError("purge result evidence is not canonical")
+    return _parse_result_payload(payload, expected_hash=expected_hash)
+
+
+def _load_success_result(
+    settings: Settings, plan: PurgePlan, record: dict[str, Any]
+) -> PurgeResult:
+    prepared = _load_precommit(settings, plan, record)
+    path = Path(os.path.abspath(record["result_file"]))
     root = Path(os.path.abspath(settings.manifest_dir)) / "purge" / "results" / plan.plan_id
     try:
         path.relative_to(root)
@@ -817,10 +1048,15 @@ def _load_success_result(settings: Settings, plan: PurgePlan, result_file: str) 
         raise PurgeError("purge result index points outside the authoritative evidence path") from exc
     verify_directory_chain(root, label="purge result directory")
     reject_link(path, "purge result evidence")
+    if not path.exists():
+        # Catalog SUCCESS is the commit point. A crash after that transaction
+        # is recovered by publishing the exact integrity-bound payload sealed
+        # in the immutable precommit evidence.
+        _write_immutable(path, prepared.as_dict())
     if not path.is_file():
-        raise PurgeError("completed purge result evidence is missing")
+        raise PurgeError("completed purge result evidence is not a regular file")
     try:
-        result = _result_from_file(path)
+        result = _result_from_file(path, expected_hash=record["result_hash"])
     except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
         raise PurgeError("completed purge result evidence cannot be parsed") from exc
     expected_moved = tuple(
@@ -840,6 +1076,7 @@ def _load_success_result(settings: Settings, plan: PurgePlan, result_file: str) 
         or result.status != "SUCCESS"
         or Path(result.result_file) != path
         or result.moved_files != expected_moved
+        or result.as_dict() != prepared.as_dict()
     ):
         raise PurgeError("completed purge result evidence is inconsistent")
     return result
@@ -854,23 +1091,27 @@ def purge_execute(settings: Settings, *, plan_id: str, confirmation: str) -> Pur
         codes = ", ".join(reason["code"] for reason in plan.refusal_reasons)
         raise PurgeRefusedError(f"purge plan is REFUSED: {codes}")
     catalog = Catalog(settings)
-    record = catalog.purge_operation(plan_id)
-    if record and record["state"] == "SUCCESS":
-        if not record["result_file"]:
-            raise PurgeError("completed purge index is missing result evidence")
-        result = _load_success_result(settings, plan, record["result_file"])
-        for target in plan.targets:
-            for key in ("raw", "curated"):
-                destination = _quarantine_path(settings, plan_id, target[key])
-                _verify_identity(destination, target[key], settings, quarantine=True)
-        return result
-
     moved_this_attempt: list[tuple[Path, Path, dict[str, Any]]] = []
     moved_evidence: list[dict[str, Any]] = []
     started_at = datetime.now(timezone.utc)
     with MarketBarLifecycleLock(settings.data_root, f"purge_execute:{plan_id}"):
-        catalog.update_purge_operation(plan_id, state="EXECUTING", started_at=started_at)
+        record = catalog.purge_operation(plan_id)
+        if record is None:
+            raise PurgeError(f"unknown purge plan id: {plan_id}")
+        _verify_run_bindings(settings, catalog, plan)
+        if record["state"] == "SUCCESS":
+            for target in plan.targets:
+                for key in ("raw", "curated"):
+                    destination = _quarantine_path(settings, plan_id, target[key])
+                    _verify_identity(destination, target[key], settings, quarantine=True)
+            return _load_success_result(settings, plan, record)
+
+        catalog.begin_purge_operation(plan_id, started_at=started_at)
+        committed = False
         try:
+            # This second binding check occurs after the attempt transition;
+            # both checks are under the same cross-process mutation lock.
+            _verify_run_bindings(settings, catalog, plan)
             _, active_runs = _catalog_runs(catalog, plan.scope)
             if active_runs:
                 raise PurgeDriftError(f"matching RUNNING ingestion runs appeared: {active_runs}")
@@ -916,22 +1157,32 @@ def purge_execute(settings: Settings, *, plan_id: str, confirmation: str) -> Pur
                     )
 
             catalog.refresh_market_bars_view()
-            result = _write_result(
-                settings,
-                plan,
-                status="SUCCESS",
-                moved_files=moved_evidence,
-                message="Selected physical Raw/Curated snapshot pairs moved to quarantine; no permanent deletion occurred.",
+            result, precommit_path = _prepare_success_result(
+                settings, plan, moved_evidence
             )
-            catalog.update_purge_operation(
+            # The Catalog transaction is the commit point. No terminal
+            # SUCCESS evidence exists before this call succeeds.
+            catalog.commit_purge_operation(
                 plan_id,
-                state="SUCCESS",
+                plan_hash=plan.content_hash,
+                precommit_file=str(precommit_path),
                 result_file=result.result_file,
-                started_at=started_at,
+                result_hash=result.evidence_hash,
                 finished_at=datetime.now(timezone.utc),
             )
+            committed = True
+            # Publication is recoverable: a retry can reproduce these exact
+            # bytes from the immutable precommit after validating quarantine.
+            _write_immutable(Path(result.result_file), result.as_dict())
             return result
         except BaseException as exc:
+            if committed:
+                if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                    raise
+                raise PurgeError(
+                    "purge committed but terminal result publication requires "
+                    f"an idempotent retry: {exc}"
+                ) from exc
             rollback_errors: list[str] = []
             for source, destination, identity in reversed(moved_this_attempt):
                 try:
@@ -966,11 +1217,10 @@ def purge_execute(settings: Settings, *, plan_id: str, confirmation: str) -> Pur
                     moved_files=moved_evidence,
                     message=error,
                 )
-                catalog.update_purge_operation(
+                catalog.fail_purge_operation(
                     plan_id,
-                    state="FAILED",
                     result_file=failure.result_file,
-                    started_at=started_at,
+                    result_hash=failure.evidence_hash,
                     finished_at=datetime.now(timezone.utc),
                     error=error,
                 )

@@ -414,6 +414,20 @@ class ConsoleApp:
         )
         self.purge_execute_button.pack(side="left")
         self._purge_plan_id: str | None = None
+        self._bind_purge_scope_invalidation()
+
+    def _bind_purge_scope_invalidation(self) -> None:
+        for variable in self.purge_vars.values():
+            variable.trace_add("write", self._invalidate_purge_review)
+
+    def _invalidate_purge_review(self, *_args) -> None:
+        """Require a fresh sealed Preview after any scope field changes."""
+        self._purge_plan_id = None
+        self.backend.invalidate_purge_preview()
+        self.purge_confirmation.set("")
+        self.purge_execute_button.configure(state="disabled")
+        self.purge_summary.set("Scope changed; run Preview again")
+        self.purge_refusals.set("")
 
     def _entry(self, parent, label: str, variable: tk.Variable, column: int) -> None:
         frame = ttk.Frame(parent)

@@ -400,6 +400,10 @@ class ConsoleBackend:
         self._executable_purge_plan_id = None
         return result.as_dict()
 
+    def invalidate_purge_preview(self) -> None:
+        """Invalidate the reviewed plan after any Console scope edit."""
+        self._executable_purge_plan_id = None
+
     def runs(
         self,
         *,

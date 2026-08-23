@@ -152,13 +152,21 @@ class Catalog:
                     state VARCHAR NOT NULL,
                     scope_json JSON NOT NULL,
                     plan_file VARCHAR NOT NULL,
+                    precommit_file VARCHAR,
                     result_file VARCHAR,
+                    result_hash VARCHAR,
                     planned_at TIMESTAMPTZ NOT NULL,
                     started_at TIMESTAMPTZ,
                     finished_at TIMESTAMPTZ,
                     error VARCHAR
                 )
                 """
+            )
+            con.execute(
+                "ALTER TABLE purge_operations ADD COLUMN IF NOT EXISTS precommit_file VARCHAR"
+            )
+            con.execute(
+                "ALTER TABLE purge_operations ADD COLUMN IF NOT EXISTS result_hash VARCHAR"
             )
 
     def record_run(self, manifest: RunManifest) -> None:
@@ -275,8 +283,9 @@ class Catalog:
                 """
                 INSERT INTO purge_operations (
                     plan_id, plan_hash, state, scope_json, plan_file,
-                    result_file, planned_at, started_at, finished_at, error
-                ) VALUES (?, ?, ?, ?::JSON, ?, NULL, ?, NULL, NULL, NULL)
+                    precommit_file, result_file, result_hash, planned_at,
+                    started_at, finished_at, error
+                ) VALUES (?, ?, ?, ?::JSON, ?, NULL, NULL, NULL, ?, NULL, NULL, NULL)
                 """,
                 [plan_id, plan_hash, state, scope_json, plan_file, planned_at],
             )
@@ -287,8 +296,8 @@ class Catalog:
             row = con.execute(
                 """
                 SELECT plan_id, plan_hash, state, scope_json::VARCHAR,
-                       plan_file, result_file, planned_at, started_at,
-                       finished_at, error
+                       plan_file, precommit_file, result_file, result_hash,
+                       planned_at, started_at, finished_at, error
                 FROM purge_operations
                 WHERE plan_id = ?
                 """,
@@ -302,13 +311,95 @@ class Catalog:
             "state",
             "scope_json",
             "plan_file",
+            "precommit_file",
             "result_file",
+            "result_hash",
             "planned_at",
             "started_at",
             "finished_at",
             "error",
         )
         return dict(zip(keys, row, strict=True))
+
+    def begin_purge_operation(self, plan_id: str, *, started_at: datetime) -> None:
+        """Start one attempt and clear only its mutable Catalog evidence pointers."""
+        self.initialize()
+        with self.connect() as con:
+            row = con.execute(
+                "SELECT state FROM purge_operations WHERE plan_id = ?", [plan_id]
+            ).fetchone()
+            if row is None:
+                raise RuntimeError(f"unknown purge plan id: {plan_id}")
+            if row[0] == "SUCCESS":
+                raise RuntimeError(f"completed purge plan cannot be restarted: {plan_id}")
+            con.execute(
+                """
+                UPDATE purge_operations
+                SET state = 'EXECUTING', precommit_file = NULL,
+                    result_file = NULL, result_hash = NULL,
+                    started_at = ?, finished_at = NULL, error = NULL
+                WHERE plan_id = ?
+                """,
+                [started_at, plan_id],
+            )
+
+    def commit_purge_operation(
+        self,
+        plan_id: str,
+        *,
+        plan_hash: str,
+        precommit_file: str,
+        result_file: str,
+        result_hash: str,
+        finished_at: datetime,
+    ) -> None:
+        """Atomically make quarantine authoritative before SUCCESS publication."""
+        self.initialize()
+        with self.connect() as con:
+            row = con.execute(
+                "SELECT plan_hash, state FROM purge_operations WHERE plan_id = ?",
+                [plan_id],
+            ).fetchone()
+            if row != (plan_hash, "EXECUTING"):
+                raise RuntimeError(
+                    f"purge commit precondition failed for {plan_id}: {row!r}"
+                )
+            con.execute(
+                """
+                UPDATE purge_operations
+                SET state = 'SUCCESS', precommit_file = ?, result_file = ?,
+                    result_hash = ?, finished_at = ?, error = NULL
+                WHERE plan_id = ?
+                """,
+                [precommit_file, result_file, result_hash, finished_at, plan_id],
+            )
+
+    def fail_purge_operation(
+        self,
+        plan_id: str,
+        *,
+        result_file: str | None,
+        result_hash: str | None,
+        finished_at: datetime,
+        error: str,
+    ) -> None:
+        """Record a failed, non-committed attempt without claiming SUCCESS."""
+        self.initialize()
+        with self.connect() as con:
+            exists = con.execute(
+                "SELECT 1 FROM purge_operations WHERE plan_id = ?", [plan_id]
+            ).fetchone()
+            if exists is None:
+                raise RuntimeError(f"unknown purge plan id: {plan_id}")
+            con.execute(
+                """
+                UPDATE purge_operations
+                SET state = 'FAILED', result_file = ?, result_hash = ?,
+                    finished_at = ?, error = ?
+                WHERE plan_id = ? AND state <> 'SUCCESS'
+                """,
+                [result_file, result_hash, finished_at, error, plan_id],
+            )
 
     def update_purge_operation(
         self,
@@ -320,6 +411,10 @@ class Catalog:
         finished_at: datetime | None = None,
         error: str | None = None,
     ) -> None:
+        if state == "SUCCESS":
+            raise RuntimeError(
+                "SUCCESS requires commit_purge_operation with precommit and result hashes"
+            )
         self.initialize()
         with self.connect() as con:
             exists = con.execute(

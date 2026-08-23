@@ -14,7 +14,12 @@ or cascade into another dataset kind.
 One ingestion run's complete Raw and Curated files form one lifecycle unit.
 Planning inspects the files' actual columns and values and seals their relative
 paths, SHA-256 hashes, byte sizes, row counts, symbols, dates, request key, and
-run ID. If either file contains a symbol, date, or request-key value outside
+run ID. It also seals the exact `ingestion_runs` Raw/Curated paths, request
+metadata, and status. Execution re-resolves and compares every run row under
+the lifecycle lock; deletion or any path, status, or metadata drift refuses
+mutation. A `FAILED` run with neither physical path remains evidence but is
+not a target. A one-sided pair is always refused. If either file contains a
+symbol, date, or request-key value outside
 the requested scope, the entire plan is `REFUSED` with `COLOCATED_SYMBOLS` or
 `COLOCATED_DATA`. Immutable Parquet files are never split or rewritten.
 
@@ -53,12 +58,29 @@ or permanent-delete operation in v0.1.
 
 The backward-compatible `purge_operations` Catalog table indexes `PLANNED`,
 `REFUSED`, `EXECUTING`, `SUCCESS`, and `FAILED` operations. Immutable plan and
-result JSON are the detailed evidence. Ingestion runs, collection manifests,
+result JSON are the detailed evidence. SUCCESS uses an explicit protocol:
+
+1. write an immutable, non-terminal precommit containing the complete proposed
+   canonical result and its hash;
+2. atomically commit the Catalog `SUCCESS` row and exact result hash/path;
+3. publish the terminal immutable result bytes.
+
+Catalog commit is the operation commit point. A commit failure rolls back the
+files and can leave only non-terminal precommit plus `FAILED` evidence, never a
+terminal `SUCCESS` result. If publication is interrupted after commit, an
+idempotent retry validates the run bindings, quarantine identities, Catalog
+hash, and precommit hash before publishing exactly the precommitted bytes.
+The complete result schema, including message and timestamps, is integrity-bound.
+
+Ingestion runs, collection manifests,
 and quality reports remain intact. Interrupted or partially rolled-back work
 never becomes `SUCCESS`; an exact completed retry is idempotent.
 
-`collect_history`, purge planning, and purge execution share an exclusive
-cross-process directory lock under `data/.lifecycle/`. A stale lock is not
+`collect_history`, the complete `collect_history_backfill` operation, purge
+planning, and purge execution share an exclusive cross-process directory lock
+under `data/.lifecycle/`. Backfill holds one reservation from local planning
+through every child write and calls the locked collector core, so purge cannot
+run between children. A stale lock is not
 automatically reclaimed. Read-only queries do not take this lock; during a
 short lifecycle transition they may fail or retry, but they must not infer
 missing data as a successful purge. Views are refreshed after movement or
