@@ -96,6 +96,7 @@ from market_vault.dataset import (
 )
 from market_vault.models import QualityResult, RunManifest, Settings
 from market_vault.normalization import normalize_bars, normalize_trading_calendar
+from market_vault.purge import purge_execute, purge_plan
 from market_vault.storage import Catalog, ParquetStore
 
 NY = "America/New_York"
@@ -181,7 +182,15 @@ def write_snapshot(
         requested_session="ALL", adjustment="NONE", source=cfg.source,
         source_schema_version=cfg.source_schema_version, run_id=run_id,
     )
-    store.write_curated(
+    raw["requested_trade_date"] = trade_date
+    raw["interval"] = "1m"
+    raw["requested_session"] = "ALL"
+    raw["adjustment"] = "NONE"
+    raw["ingestion_run_id"] = run_id
+    raw_path = store.write_raw(
+        raw, trade_date, "1m", [code], "ALL", "NONE", run_id=run_id
+    )
+    curated_path = store.write_curated(
         curated, trade_date, "1m", [code], "ALL", "NONE", run_id=run_id
     )
     run = RunManifest(
@@ -189,6 +198,9 @@ def write_snapshot(
         interval="1m", session="ALL", adjustment="NONE", run_id=run_id,
     )
     run.successful_symbols = [code]
+    run.raw_file = str(raw_path)
+    run.curated_file = str(curated_path)
+    run.row_count = len(curated)
     run.status = "SUCCESS"
     run.finished_at = datetime(
         trade_date.year, trade_date.month, trade_date.day, 14, 0, tzinfo=UTC
@@ -403,6 +415,65 @@ def artifact_chain(tmp_path_factory) -> ArtifactChain:
         dataset=dataset,
         catalog=catalog,
     )
+
+
+def test_verified_derived_chain_survives_source_snapshot_quarantine(tmp_path):
+    """The formal retention policy is backed by the existing readers.
+
+    Canonical embeds source identities, Dataset is self-contained, and the
+    Catalog reader never reloads recorded Dataset paths. Quarantining the
+    original Raw/Curated pairs therefore cannot invalidate committed official
+    derived artifacts and never cascades into them.
+    """
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    canonical_a = build_canonical(
+        cfg,
+        run_id="purge-run-a",
+        time_keys=minute_keys("2026-07-01 09:30:00", 6),
+    )
+    canonical_f = build_canonical(
+        cfg,
+        run_id="purge-run-f",
+        time_keys=minute_keys("2026-07-01 09:36:00", 6),
+    )
+    dataset = build_dataset(cfg, [canonical_a, canonical_f], tmp_path)
+    catalog_snapshot = build_catalog_snapshot(dataset, tmp_path)
+    before = (
+        load_verified_canonical_build(canonical_a),
+        load_verified_canonical_build(canonical_f),
+        load_verified_dataset(dataset),
+        load_verified_dataset_catalog(catalog_snapshot),
+    )
+
+    sealed = purge_plan(
+        cfg,
+        source="moomoo",
+        symbols=["US.MU"],
+        start_date=date(2026, 7, 1),
+        end_date=date(2026, 7, 1),
+        interval="1m",
+        requested_session="ALL",
+        adjustment="NONE",
+        source_schema_version="10.9",
+    )
+    assert sealed.executable
+    result = purge_execute(
+        cfg,
+        plan_id=sealed.plan_id,
+        confirmation=f"PURGE {sealed.plan_id}",
+    )
+    assert result.status == "SUCCESS"
+
+    after = (
+        load_verified_canonical_build(canonical_a),
+        load_verified_canonical_build(canonical_f),
+        load_verified_dataset(dataset),
+        load_verified_dataset_catalog(catalog_snapshot),
+    )
+    assert after == before
+    assert canonical_a.exists() and canonical_f.exists()
+    assert dataset.exists() and catalog_snapshot.exists()
 
 
 # ---------------------------------------------------------------------------

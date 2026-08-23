@@ -8,7 +8,7 @@ from tkinter import filedialog, messagebox, ttk
 from typing import Any, Callable
 
 from .backend import ConsoleBackend
-from .models import BackfillPlanView, DashboardSnapshot, TablePage
+from .models import BackfillPlanView, DashboardSnapshot, PurgePlanView, TablePage
 from .tasks import SerialTaskRunner
 
 
@@ -109,6 +109,7 @@ class ConsoleApp:
         self._build_intraday_audit()
         self._build_calendar()
         self._build_backfill()
+        self._build_purge()
         self._build_runs()
         self._build_status_bar()
 
@@ -357,6 +358,77 @@ class ConsoleApp:
         self.runs_table = TableView(tab, paged=True)
         self.runs_table.pack(fill="both", expand=True)
 
+    def _build_purge(self) -> None:
+        tab = self._new_tab("Storage / Purge")
+        form = ttk.LabelFrame(tab, text="Exact physical market-bar snapshot scope", padding=10)
+        form.pack(fill="x")
+        self.purge_vars = {
+            "source": tk.StringVar(value=self.backend.vault.settings.source),
+            "symbols": tk.StringVar(value="US.SPY"),
+            "start_date": tk.StringVar(),
+            "end_date": tk.StringVar(),
+            "interval": tk.StringVar(value="1m"),
+            "session": tk.StringVar(value="ALL"),
+            "adjustment": tk.StringVar(value="NONE"),
+            "source_schema_version": tk.StringVar(
+                value=self.backend.vault.settings.source_schema_version
+            ),
+        }
+        for index, key in enumerate(self.purge_vars):
+            self._entry(form, key.replace("_", " ").title(), self.purge_vars[key], index)
+        review = ttk.Frame(tab)
+        review.pack(fill="x", pady=8)
+        ttk.Button(review, text="Preview purge", command=self._preview_purge).pack(side="left")
+        self.purge_summary = tk.StringVar(value="No sealed plan")
+        ttk.Label(review, textvariable=self.purge_summary, style="Muted.TLabel").pack(
+            side="left", padx=14
+        )
+        self.purge_refusals = tk.StringVar(value="")
+        ttk.Label(tab, textvariable=self.purge_refusals, style="Error.TLabel").pack(
+            fill="x", anchor="w"
+        )
+        self.purge_table = TableView(tab)
+        self.purge_table.pack(fill="both", expand=True)
+        confirmation = ttk.LabelFrame(tab, text="Execute reviewed plan", padding=10)
+        confirmation.pack(fill="x", pady=(8, 0))
+        ttk.Label(
+            confirmation,
+            text=(
+                "This removes the selected data from the active MarketVault archive and moves "
+                "it to quarantine. It does not permanently erase quarantine contents."
+            ),
+            wraplength=1050,
+        ).pack(anchor="w")
+        row = ttk.Frame(confirmation)
+        row.pack(fill="x", pady=(8, 0))
+        ttk.Label(row, text="Type PURGE <plan_id>").pack(side="left")
+        self.purge_confirmation = tk.StringVar()
+        ttk.Entry(row, textvariable=self.purge_confirmation, width=55).pack(
+            side="left", padx=8
+        )
+        self.purge_execute_button = ttk.Button(
+            row,
+            text="Move to quarantine",
+            state="disabled",
+            command=self._execute_purge,
+        )
+        self.purge_execute_button.pack(side="left")
+        self._purge_plan_id: str | None = None
+        self._bind_purge_scope_invalidation()
+
+    def _bind_purge_scope_invalidation(self) -> None:
+        for variable in self.purge_vars.values():
+            variable.trace_add("write", self._invalidate_purge_review)
+
+    def _invalidate_purge_review(self, *_args) -> None:
+        """Require a fresh sealed Preview after any scope field changes."""
+        self._purge_plan_id = None
+        self.backend.invalidate_purge_preview()
+        self.purge_confirmation.set("")
+        self.purge_execute_button.configure(state="disabled")
+        self.purge_summary.set("Scope changed; run Preview again")
+        self.purge_refusals.set("")
+
     def _entry(self, parent, label: str, variable: tk.Variable, column: int) -> None:
         frame = ttk.Frame(parent)
         frame.grid(row=0 if column < 8 else 1, column=column % 8, padx=(0, 8), sticky="ew")
@@ -546,6 +618,54 @@ class ConsoleApp:
             lambda: self.backend.execute_backfill(**values),
             success,
             requires_opend=True,
+        )
+
+    def _preview_purge(self) -> None:
+        values = {key: variable.get() for key, variable in self.purge_vars.items()}
+        self._purge_plan_id = None
+        self.purge_execute_button.configure(state="disabled")
+        self.purge_confirmation.set("")
+
+        def success(plan: PurgePlanView) -> None:
+            self.purge_table.set_page(plan.items)
+            summary = plan.summary
+            self.purge_summary.set(
+                f"{plan.status} | plan {plan.plan_id} | {summary.get('affected_snapshot_count', 0)} "
+                f"snapshot pairs | {summary.get('affected_row_count', 0)} rows"
+            )
+            refusal_text = []
+            for reason in plan.refusal_reasons:
+                detail = reason.get("symbols") or reason.get("outside_dates") or ""
+                refusal_text.append(f"{reason.get('code')}: {reason.get('message')} {detail}")
+            self.purge_refusals.set(" | ".join(refusal_text))
+            if plan.executable:
+                self._purge_plan_id = plan.plan_id
+                self.purge_execute_button.configure(state="normal")
+
+        self._submit("Purge preview", lambda: self.backend.preview_purge(**values), success)
+
+    def _execute_purge(self) -> None:
+        if not self._purge_plan_id:
+            messagebox.showerror("Safe Purge", "Preview an executable purge plan first.")
+            return
+        plan_id = self._purge_plan_id
+        confirmation = self.purge_confirmation.get()
+
+        def success(result: dict[str, Any]) -> None:
+            self.purge_summary.set(
+                f"{result.get('status')} | plan {result.get('plan_id')} | "
+                f"moved {len(result.get('moved_files', []))} files"
+            )
+            self._purge_plan_id = None
+            self.purge_execute_button.configure(state="disabled")
+
+        self._submit(
+            "Safe Purge execute",
+            lambda: self.backend.execute_purge(
+                plan_id=plan_id,
+                confirmation=confirmation,
+            ),
+            success,
         )
 
     def _query_runs(self, page: int) -> None:

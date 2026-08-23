@@ -9,6 +9,7 @@ import pandas as pd
 
 from .collectors import MoomooCalendarCollector, MoomooHistoryCollector, MoomooOptionCollector
 from .collectors.moomoo_options import OPTION_VOLATILITY_PERIOD_VALUES, select_option_volatility_period
+from .lifecycle import MarketBarLifecycleLock
 from .models import DatasetRunManifest, RunManifest, Settings
 from .normalization import (
     normalize_bars,
@@ -44,6 +45,26 @@ def option_chain_date_chunks(start_date: date, end_date: date) -> list[tuple[dat
 
 
 def collect_history(
+    settings: Settings,
+    trade_date: date,
+    symbols: list[str],
+    interval: str,
+    session: str,
+    adjustment: str,
+) -> RunManifest:
+    """Collect one market-bar batch under the shared lifecycle lock."""
+    with MarketBarLifecycleLock(settings.data_root, "collect_history"):
+        return _collect_history_locked(
+            settings,
+            trade_date,
+            symbols,
+            interval,
+            session,
+            adjustment,
+        )
+
+
+def _collect_history_locked(
     settings: Settings,
     trade_date: date,
     symbols: list[str],

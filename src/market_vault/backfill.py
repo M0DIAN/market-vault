@@ -7,7 +7,8 @@ from datetime import date, datetime, timedelta, timezone
 
 from .models import DatasetRunManifest, QualityResult, Settings
 from .normalization.calendar import normalize_calendar_code, normalize_calendar_market
-from .service import _hash_config, collect_history
+from .lifecycle import MarketBarLifecycleLock
+from .service import _collect_history_locked, _hash_config
 from .storage import Catalog
 
 
@@ -309,6 +310,45 @@ def collect_history_backfill(
     retry_backoff_seconds: float = 2.0,
     today: date | None = None,
 ) -> DatasetRunManifest:
+    """Reserve the market-bar lifecycle for the complete backfill operation."""
+    with MarketBarLifecycleLock(settings.data_root, "collect_history_backfill"):
+        return _collect_history_backfill_locked_operation(
+            settings,
+            symbols=symbols,
+            end_date=end_date,
+            calendar_market=calendar_market,
+            calendar_code=calendar_code,
+            start_date=start_date,
+            interval=interval,
+            session=session,
+            adjustment=adjustment,
+            force=force,
+            incremental=incremental,
+            bootstrap_start_date=bootstrap_start_date,
+            max_retries=max_retries,
+            retry_backoff_seconds=retry_backoff_seconds,
+            today=today,
+        )
+
+
+def _collect_history_backfill_locked_operation(
+    settings: Settings,
+    *,
+    symbols: list[str],
+    end_date: date,
+    calendar_market: str | None = None,
+    calendar_code: str | None = None,
+    start_date: date | None = None,
+    interval: str = "1m",
+    session: str = "ALL",
+    adjustment: str = "NONE",
+    force: bool = False,
+    incremental: bool = False,
+    bootstrap_start_date: date | None = None,
+    max_retries: int = 2,
+    retry_backoff_seconds: float = 2.0,
+    today: date | None = None,
+) -> DatasetRunManifest:
     requested_items = _safe_requested_items(symbols)
     interval, session, adjustment = normalize_history_parameters(
         interval,
@@ -432,7 +472,7 @@ def collect_history_backfill(
             if not remaining_symbols:
                 break
             try:
-                child_manifest = collect_history(
+                child_manifest = _collect_history_locked(
                     settings=settings,
                     trade_date=trade_date,
                     symbols=remaining_symbols,
