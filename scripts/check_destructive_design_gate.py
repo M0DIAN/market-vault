@@ -526,8 +526,50 @@ def _call_name(node: ast.AST) -> str | None:
     return None
 
 
-def _destructive_call_signal(call: ast.Call) -> str | None:
-    name = _call_name(call.func)
+def _resolve_name(name: str | None, aliases: dict[str, str]) -> str | None:
+    if name is None:
+        return None
+    first, separator, remainder = name.partition(".")
+    resolved = aliases.get(first, first)
+    return f"{resolved}.{remainder}" if separator else resolved
+
+
+def _collect_import_aliases(tree: ast.AST) -> dict[str, str]:
+    aliases: dict[str, str] = {}
+
+    def register(local: str, qualified: str) -> None:
+        existing = aliases.get(local)
+        if existing is not None and existing != qualified:
+            raise GateError(
+                f"ambiguous destructive-analysis import alias {local!r}: "
+                f"{existing!r} versus {qualified!r}"
+            )
+        aliases[local] = qualified
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for item in node.names:
+                if item.name in {"os", "shutil", "pathlib"}:
+                    register(item.asname or item.name, item.name)
+        elif isinstance(node, ast.ImportFrom) and node.module in {
+            "os",
+            "shutil",
+            "pathlib",
+        }:
+            for item in node.names:
+                if item.name == "*":
+                    raise GateError(
+                        f"wildcard import from {node.module} prevents bounded "
+                        "destructive-surface analysis"
+                    )
+                register(item.asname or item.name, f"{node.module}.{item.name}")
+    return aliases
+
+
+def _destructive_call_signal(
+    call: ast.Call, aliases: dict[str, str]
+) -> str | None:
+    name = _resolve_name(_call_name(call.func), aliases)
     if name in {
         "os.remove",
         "os.unlink",
@@ -542,14 +584,14 @@ def _destructive_call_signal(call: ast.Call) -> str | None:
         return f"path.{call.func.attr}"
     if isinstance(call.func, ast.Attribute) and call.func.attr == "replace":
         receiver = call.func.value
-        if _looks_like_path_expression(receiver):
+        if _looks_like_path_expression(receiver, aliases):
             return "path.replace"
     return None
 
 
-def _looks_like_path_expression(node: ast.AST) -> bool:
+def _looks_like_path_expression(node: ast.AST, aliases: dict[str, str]) -> bool:
     if isinstance(node, ast.Call):
-        return _call_name(node.func) in {"Path", "pathlib.Path"}
+        return _resolve_name(_call_name(node.func), aliases) == "pathlib.Path"
     if isinstance(node, ast.Name):
         name = node.id.lower()
         return name in {"path", "source", "destination", "target"} or name.endswith(
@@ -573,9 +615,10 @@ def _sql_signal(call: ast.Call) -> str | None:
 
 
 class _InventoryVisitor(ast.NodeVisitor):
-    def __init__(self, path: str, source: str) -> None:
+    def __init__(self, path: str, source: str, aliases: dict[str, str]) -> None:
         self.path = path
         self.source = source
+        self.aliases = aliases
         self.stack: list[str] = []
         self.findings: list[Finding] = []
         self.symbol_hashes: dict[tuple[str, str], str] = {}
@@ -616,7 +659,7 @@ class _InventoryVisitor(ast.NodeVisitor):
         self._enter_symbol(node, node.name)
 
     def visit_Call(self, node: ast.Call) -> None:
-        signal = _destructive_call_signal(node)
+        signal = _destructive_call_signal(node, self.aliases)
         kind = "destructive_call"
         if signal is None:
             signal = _sql_signal(node)
@@ -644,7 +687,8 @@ def _analyze_source(path: str, data: bytes) -> tuple[list[Finding], dict[tuple[s
         tree = ast.parse(text, filename=path)
     except SyntaxError as exc:
         raise GateError(f"{path}: AST parse failed: {exc}") from exc
-    visitor = _InventoryVisitor(path, text)
+    aliases = _collect_import_aliases(tree)
+    visitor = _InventoryVisitor(path, text, aliases)
     visitor.visit(tree)
     return visitor.findings, visitor.symbol_hashes
 

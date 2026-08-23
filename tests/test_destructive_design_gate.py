@@ -292,6 +292,31 @@ def publish(target_path: Path, text: str):
     ]
 
 
+def test_module_and_direct_import_aliases_cannot_bypass_detection():
+    source = b'''import os as operating_system
+from os import unlink as erase
+from pathlib import Path as FilePath
+
+def mutate(target_path):
+    operating_system.remove("runtime.db")
+    erase("runtime.db")
+    FilePath("staging").replace(target_path)
+'''
+    findings, _ = gate._analyze_source("src/market_vault/example.py", source)
+    assert [
+        finding.signal
+        for finding in findings
+        if finding.kind == "destructive_call"
+    ] == ["os.remove", "os.unlink", "path.replace"]
+
+
+def test_wildcard_destructive_module_import_fails_closed():
+    with pytest.raises(gate.GateError, match="wildcard import"):
+        gate._analyze_source(
+            "src/market_vault/example.py", b"from os import *\nremove('x')\n"
+        )
+
+
 def _git(repo: Path, *args: str) -> str:
     env = {
         **os.environ,
