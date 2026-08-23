@@ -127,6 +127,27 @@ jobs:
       - name: Check repository hygiene
         run: python scripts/check_repo_hygiene.py
 
+      # Destructive-operation design gate: PR mode binds implementation
+      # changes to contracts already present in the exact PR base. Push mode
+      # revalidates the complete checked-in registry and production inventory.
+      # The checker is stdlib-only and fail-closed, so it runs before project
+      # dependency installation and on every CI tier.
+      - name: Check destructive-operation design gate
+        if: matrix.python-version == '3.11'
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            python scripts/check_destructive_design_gate.py \
+              --repo . \
+              --mode pull_request \
+              --base "${{ github.event.pull_request.base.sha }}" \
+              --head "${{ github.event.pull_request.head.sha }}"
+          else
+            python scripts/check_destructive_design_gate.py \
+              --repo . \
+              --mode repository
+          fi
+
       # P1-2 control-plane tier (PR #71): dependency setup and the
       # compile check still run on control_plane, but ONLY on the Python
       # 3.11 leg that executes the conservative six-file control-plane

@@ -1,0 +1,333 @@
+{
+  "schema_version": "market-vault-destructive-operation-v1",
+  "operation_id": "safe_purge_v01",
+  "approval": {
+    "status": "APPROVED",
+    "rationale": "Bootstrap registration of the independently reviewed Safe Purge v0.1 behavior already present before this governance gate."
+  },
+  "identity": {
+    "name": "Safe Purge v0.1",
+    "purpose": "Move exact, sealed market-bar Raw and Curated physical snapshot pairs out of active archive globs into same-volume quarantine without permanent deletion."
+  },
+  "implementation_bindings": [
+    {
+      "path": "src/market_vault/purge.py",
+      "symbols": [
+        "purge_plan",
+        "purge_execute",
+        "_move_file",
+        "_publish_no_replace"
+      ],
+      "role": "MUTATION_OWNER",
+      "allowed_surface_kinds": [
+        "destructive_call",
+        "destructive_public_name"
+      ],
+      "rationale": "The purge module owns sealed planning, execution, no-replace evidence publication, quarantine movement, rollback, and idempotent recovery."
+    },
+    {
+      "path": "src/market_vault/api.py",
+      "symbols": [
+        "MarketVault.purge_plan",
+        "MarketVault.purge_execute"
+      ],
+      "role": "ENTRYPOINT",
+      "allowed_surface_kinds": [
+        "destructive_public_name"
+      ],
+      "rationale": "The public Python API delegates purge requests to the service-owned Safe Purge boundary."
+    },
+    {
+      "path": "src/market_vault/console/backend.py",
+      "symbols": [
+        "ConsoleBackend.preview_purge",
+        "ConsoleBackend.execute_purge",
+        "ConsoleBackend.invalidate_purge_preview"
+      ],
+      "role": "ENTRYPOINT",
+      "allowed_surface_kinds": [
+        "destructive_public_name"
+      ],
+      "rationale": "The Console backend exposes only reviewed preview, exact-confirmation execution, and stale-preview invalidation."
+    },
+    {
+      "path": "src/market_vault/console/ui.py",
+      "symbols": [
+        "ConsoleApp._build_purge",
+        "ConsoleApp._bind_purge_scope_invalidation",
+        "ConsoleApp._invalidate_purge_review",
+        "ConsoleApp._preview_purge",
+        "ConsoleApp._execute_purge"
+      ],
+      "role": "USER_INTERFACE",
+      "allowed_surface_kinds": [
+        "destructive_call",
+        "destructive_public_name"
+      ],
+      "rationale": "The Console UI is a non-authoritative adapter that invalidates reviewed plans whenever scope changes and never performs storage mutation directly."
+    },
+    {
+      "path": "src/market_vault/storage/catalog.py",
+      "symbols": [
+        "Catalog.record_purge_plan",
+        "Catalog.purge_operation",
+        "Catalog.begin_purge_operation",
+        "Catalog.commit_purge_operation",
+        "Catalog.fail_purge_operation",
+        "Catalog.update_purge_operation"
+      ],
+      "role": "STATE_AUTHORITY",
+      "allowed_surface_kinds": [
+        "destructive_public_name",
+        "destructive_sql"
+      ],
+      "rationale": "The Catalog stores the purge lifecycle index and owns the atomic durable SUCCESS transition, while immutable JSON remains detailed evidence."
+    }
+  ],
+  "authority_boundary": {
+    "initiators": [
+      "MarketVault.purge_plan and MarketVault.purge_execute callers",
+      "market-vault purge-plan and purge-execute CLI callers",
+      "Console preview and exact-confirmation execute actions"
+    ],
+    "mutation_owner": "src/market_vault/purge.py purge_execute under MarketBarLifecycleLock",
+    "forbidden_bypass_layers": [
+      "Console widgets must not mutate Parquet, quarantine, or DuckDB directly",
+      "API adapters must not move files outside purge_execute",
+      "storage helpers must not authorize an unsealed or stale plan"
+    ]
+  },
+  "persistent_scope": {
+    "mutated_assets": [
+      "Complete Raw and Curated market_bars Parquet pairs sealed by ingestion run",
+      "Same-volume quarantine paths preserving original data-root-relative paths",
+      "purge_operations lifecycle index rows",
+      "Immutable purge plan, precommit, and result JSON evidence",
+      "DuckDB market-bar views refreshed after movement or rollback"
+    ],
+    "excluded_assets": [
+      "Canonical builds",
+      "Dataset artifacts",
+      "Dataset Catalog snapshots",
+      "Ingestion runs, collection manifests, and quality reports",
+      "Options and trading-calendar datasets",
+      "Quarantine contents after successful movement",
+      "Arbitrary external user paths and consumers"
+    ]
+  },
+  "state_machine": {
+    "states": [
+      "PLANNED",
+      "REFUSED",
+      "EXECUTING",
+      "SUCCESS",
+      "FAILED"
+    ],
+    "initial_state": "PLANNED",
+    "terminal_states": [
+      "REFUSED",
+      "SUCCESS"
+    ],
+    "allowed_transitions": [
+      {
+        "from": "PLANNED",
+        "to": "REFUSED",
+        "rationale": "Planning may seal a non-executable refusal when physical scope or evidence is unsafe."
+      },
+      {
+        "from": "PLANNED",
+        "to": "EXECUTING",
+        "rationale": "An exact confirmed executable plan may begin under the lifecycle lock."
+      },
+      {
+        "from": "FAILED",
+        "to": "EXECUTING",
+        "rationale": "A non-committed failed attempt may retry after all sealed identities are revalidated."
+      },
+      {
+        "from": "EXECUTING",
+        "to": "FAILED",
+        "rationale": "A pre-commit failure records non-success evidence after rollback is attempted."
+      },
+      {
+        "from": "EXECUTING",
+        "to": "SUCCESS",
+        "rationale": "Only the atomic Catalog commit with precommit and result hashes makes success authoritative."
+      }
+    ],
+    "forbidden_transitions": [
+      {
+        "from": "SUCCESS",
+        "to": "EXECUTING",
+        "rationale": "A completed exact plan is handled as an idempotent read and publication recovery, not restarted mutation."
+      },
+      {
+        "from": "SUCCESS",
+        "to": "FAILED",
+        "rationale": "Post-commit publication failure cannot roll back or demote the authoritative Catalog commit."
+      },
+      {
+        "from": "REFUSED",
+        "to": "EXECUTING",
+        "rationale": "A refused sealed plan is never executable."
+      },
+      {
+        "from": "FAILED",
+        "to": "SUCCESS",
+        "rationale": "SUCCESS cannot be assigned without a new EXECUTING attempt and atomic commit."
+      }
+    ]
+  },
+  "commit_point": {
+    "durable_authority": "Catalog.commit_purge_operation atomically changes the exact EXECUTING row to SUCCESS and binds plan hash, immutable precommit path, terminal result path, result hash, and completion time.",
+    "before_state": "EXECUTING",
+    "after_state": "SUCCESS",
+    "success_authoritative_when": "The Catalog SUCCESS transaction commits only after all planned files are in verified quarantine and immutable precommit evidence seals the complete canonical terminal result."
+  },
+  "crash_semantics": {
+    "pre_commit": [
+      "A crash may leave some sealed files in quarantine and a Catalog state other than SUCCESS.",
+      "A pre-commit failure attempts reverse-order rollback and refreshes active market-bar views.",
+      "Immutable precommit evidence is non-terminal and must never by itself prove SUCCESS."
+    ],
+    "post_commit": [
+      "Rollback is no longer legal after Catalog SUCCESS commits.",
+      "A crash may leave only non-terminal staging residue while the final result path remains absent.",
+      "An exact retry reconstructs and atomically publishes the precommitted terminal bytes after revalidation."
+    ]
+  },
+  "rollback_recovery": {
+    "restorable": [
+      "Before commit, files moved by the current attempt are moved back to their sealed active paths in reverse order.",
+      "A duplicated POSIX link created before unlink failure is removed only after both names and hashes verify."
+    ],
+    "non_restorable": [
+      "After Catalog SUCCESS, automatic rollback is prohibited because quarantine is authoritative.",
+      "Safe Purge v0.1 provides no restore operation and no permanent deletion operation."
+    ],
+    "interruption_detection": [
+      "Catalog EXECUTING or FAILED state cannot be interpreted as SUCCESS.",
+      "Catalog SUCCESS with absent terminal result triggers exact precommit-based publication recovery.",
+      "Any quarantine, Catalog, plan, precommit, or result identity conflict fails closed."
+    ]
+  },
+  "idempotence": {
+    "same_request_retry": [
+      "The same sealed plan ID is reloaded and content-hash verified.",
+      "A failed non-committed attempt may retry only after exact active or quarantine identities and Catalog run bindings verify."
+    ],
+    "completed_retry": [
+      "A Catalog SUCCESS retry performs no market-data movement.",
+      "A byte-identical existing final result is accepted; an absent final is republished from the immutable precommit."
+    ],
+    "conflicting_retry": [
+      "A different plan hash, scope, run binding, quarantine identity, precommit, Catalog result hash, or final result is refused without overwrite."
+    ]
+  },
+  "locking_concurrency": {
+    "lock_authority": [
+      "MarketBarLifecycleLock uses exclusive atomic directory creation under the configured data root and never auto-reclaims stale locks."
+    ],
+    "lock_scope": [
+      "purge_execute holds the market-bar lifecycle lock across revalidation, movement, Catalog commit, publication attempt, rollback, and view refresh.",
+      "collect_history and operation-wide collect_history_backfill use the same lifecycle boundary."
+    ],
+    "under_lock_revalidation": [
+      "Every planned ingestion run and Raw/Curated identity is re-resolved before mutation.",
+      "Matching RUNNING runs and unplanned matching active snapshots are refused."
+    ],
+    "concurrent_behavior": [
+      "A concurrent supported market-bar writer or purge cannot acquire the lock and must fail closed.",
+      "Read-only queries may fail or retry during transition but must not infer missing active data as successful purge evidence."
+    ]
+  },
+  "execution_revalidation": {
+    "identities": [
+      "Exact plan ID, canonical plan content hash, scope, target list, and plan-file location",
+      "Exact ingestion run ID, status, Raw path, Curated path, symbols, date, interval, requested session, adjustment, source, and schema version",
+      "Every target relative path, byte size, SHA-256, row count, symbols, dates, and request-key facts",
+      "Active and quarantine file identity, same-filesystem destination, and absence of unplanned matching snapshots"
+    ],
+    "drift_behavior": [
+      "Any missing, changed, one-sided, co-located, unsafe, newly matching, or otherwise unprovable identity refuses before additional mutation.",
+      "Execution never rewrites or splits immutable Parquet to satisfy narrower logical scope."
+    ]
+  },
+  "success_evidence": {
+    "authoritative_evidence": [
+      "Catalog purge_operations state SUCCESS with exact plan hash, precommit path, final result path, result hash, and completion timestamp",
+      "Immutable precommit containing the complete canonical proposed terminal result and matching result hash",
+      "Complete canonical final result atomically published without replacement, or recoverably absent immediately after commit"
+    ],
+    "non_success_evidence": [
+      "PLANNED, REFUSED, EXECUTING, or FAILED Catalog state",
+      "Plan JSON, failure result JSON, precommit JSON, staging residue, or quarantined files without Catalog SUCCESS",
+      "A partial, malformed, hash-conflicting, or unflushed terminal result"
+    ],
+    "integrity_binding": [
+      "Canonical JSON bytes bind every terminal result field including message and timestamps to SHA-256.",
+      "Catalog result_hash and immutable precommit terminal_result_hash must equal the canonical final bytes.",
+      "Atomic no-replace publication never overwrites a conflicting final result."
+    ]
+  },
+  "path_safety": {
+    "mutates_paths": true,
+    "windows_reparse_policy": "FAIL_CLOSED_FILE_ATTRIBUTE_REPARSE_POINT",
+    "unverifiable_path_policy": "FAIL_CLOSED"
+  },
+  "stale_plan_ui": {
+    "invalidation_triggers": [
+      "Any Console Purge scope field modification after Preview invalidates the reviewed plan."
+    ],
+    "confirmation_invalidation": [
+      "Scope modification clears exact confirmation and disables Execute until a new Preview succeeds."
+    ],
+    "execution_policy": [
+      "Execution requires the exact text PURGE followed by one space and the sealed plan ID.",
+      "The backend reloads the plan rather than trusting mutable widget state."
+    ]
+  },
+  "physical_atomicity": {
+    "lifecycle_unit": [
+      "One ingestion run's complete Raw plus Curated immutable Parquet pair is the minimum physical lifecycle unit."
+    ],
+    "partial_mutation": [
+      "A one-sided pair or partial symbol/date/request-key selection within a co-located file refuses the entire plan.",
+      "An interrupted multi-file move remains non-success until rollback or committed recovery completes."
+    ],
+    "rollback_expectation": [
+      "Before commit, every file moved by the attempt is rolled back when safely provable.",
+      "Rollback uncertainty is reported and never converted into terminal SUCCESS."
+    ]
+  },
+  "unsupported_cascade": {
+    "retained_dependents": [
+      "Committed Verified Canonical builds with embedded source hashes and provenance",
+      "Committed Dataset artifacts that verify without reloading Canonical",
+      "Committed Dataset Catalog snapshots that verify without reloading recorded Dataset paths",
+      "Ingestion runs, collection manifests, and quality reports"
+    ],
+    "refused_cases": [
+      "Raw-only or Curated-only physical state",
+      "Co-located symbols, dates, or request-key facts outside the exact requested scope",
+      "Wildcard scope, arbitrary paths, path drift, Catalog drift, or unverified reparse points"
+    ],
+    "unsupported_cases": [
+      "Cascade mutation of Canonical, Dataset, or Dataset Catalog artifacts",
+      "Discovery or lifecycle guarantees for arbitrary external user code and paths",
+      "Restore, garbage collection, quarantine expiry, and permanent deletion"
+    ]
+  },
+  "permanent_deletion": {
+    "supported": false,
+    "rationale": "Safe Purge v0.1 only moves exact immutable snapshot pairs into retained same-volume quarantine and exposes no permanent-delete command or API."
+  },
+  "implementation_tests": [
+    "Exact whole-physical-batch and complete co-located multi-symbol purge succeeds",
+    "Partial co-located scope, one-sided pairs, drift, bad confirmation, tampering, reparse paths, and lock conflicts refuse",
+    "Pre-commit failures roll back without terminal SUCCESS evidence",
+    "Post-commit terminal publication interruption recovers exact canonical bytes idempotently",
+    "Existing committed Canonical, Dataset, and Dataset Catalog artifacts remain independently verifiable after source quarantine",
+    "Console scope changes invalidate Preview and confirmation"
+  ]
+}

@@ -85,6 +85,15 @@ Make such impact explicit in the PR and obtain the required review visibility.
 Keep OpenD SDK imports and tests compatible with the repository's offline
 design unless a task explicitly changes that contract.
 
+Before implementing a new operation that can delete, quarantine, restore over,
+replace, incompatibly migrate, or otherwise make persistent runtime state
+unavailable, stop and prepare a separate design-only PR under
+`docs/governance/destructive_operations/`. The approved contract must already
+exist in the implementation PR's base commit; adding or materially changing it
+beside the implementation fails the repository gate. Follow
+`docs/governance/DESTRUCTIVE_OPERATIONS.md`. Prompt text and developer intent
+are not substitutes for the checked-in contract and CI gate.
+
 Never commit or expose credentials, tokens, passwords, account details,
 OpenD session details, or generated market data. Do not track `.env`, local
 databases, Parquet output, caches, virtual environments, or runtime data

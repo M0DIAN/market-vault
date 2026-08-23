@@ -1,0 +1,195 @@
+{
+  "schema_version": "market-vault-destructive-exemptions-v1",
+  "exemptions": [
+    {
+      "exemption_id": "canonical_atomic_publish_rename",
+      "path": "src/market_vault/canonical/materialization.py",
+      "symbol": "_materialize_build",
+      "kind": "destructive_call",
+      "signal": "path.rename",
+      "fingerprint": "29e13518042ecfc7ca3cc22b2e257d8dd24859050fe296d5fd926b9e5e5015fa",
+      "expected_count": 1,
+      "rationale": "Publishes the run-owned canonical staging directory to a previously absent immutable content-addressed destination; it is not a user deletion or replacement API."
+    },
+    {
+      "exemption_id": "canonical_failed_staging_cleanup",
+      "path": "src/market_vault/canonical/materialization.py",
+      "symbol": "_materialize_build",
+      "kind": "destructive_call",
+      "signal": "shutil.rmtree",
+      "fingerprint": "1d45199927d5640e11fe0f0f9b803722cdb29438700d992ef1c1ae63130b0ee9",
+      "expected_count": 1,
+      "rationale": "Best-effort cleanup is restricted to the unique staging directory created by the failed canonical materialization call."
+    },
+    {
+      "exemption_id": "dataset_catalog_failed_staging_cleanup",
+      "path": "src/market_vault/dataset/dataset_catalog_materialization.py",
+      "symbol": "_remove_tree",
+      "kind": "destructive_call",
+      "signal": "shutil.rmtree",
+      "fingerprint": "011ce22ff3f2b9ad3ace77aaa05b7bb42080347a218e86241c3797c4920f45da",
+      "expected_count": 1,
+      "rationale": "Private helper removes only a Dataset Catalog staging directory created by the current failed publication attempt."
+    },
+    {
+      "exemption_id": "dataset_manifest_atomic_race_temp_cleanup",
+      "path": "src/market_vault/dataset/manifest.py",
+      "symbol": "write_dataset_manifest_atomic",
+      "kind": "destructive_call",
+      "signal": "path.unlink",
+      "fingerprint": "ebf8ebfa0bd95599185ce129dc012649ea9ee74df755b8c3af3ab96831691455",
+      "expected_count": 1,
+      "rationale": "Removes only the exact temporary manifest file created by this call when no-replace publication loses a destination race."
+    },
+    {
+      "exemption_id": "dataset_manifest_failed_temp_cleanup",
+      "path": "src/market_vault/dataset/manifest.py",
+      "symbol": "_cleanup_temp",
+      "kind": "destructive_call",
+      "signal": "path.unlink",
+      "fingerprint": "ebf8ebfa0bd95599185ce129dc012649ea9ee74df755b8c3af3ab96831691455",
+      "expected_count": 1,
+      "rationale": "Private cleanup removes only the exact temporary manifest path owned by the failed atomic writer."
+    },
+    {
+      "exemption_id": "dataset_failed_staging_cleanup",
+      "path": "src/market_vault/dataset/materialization.py",
+      "symbol": "_remove_tree",
+      "kind": "destructive_call",
+      "signal": "shutil.rmtree",
+      "fingerprint": "011ce22ff3f2b9ad3ace77aaa05b7bb42080347a218e86241c3797c4920f45da",
+      "expected_count": 1,
+      "rationale": "Private helper removes only a Dataset staging directory created by the current failed publication attempt."
+    },
+    {
+      "exemption_id": "dataset_windows_no_replace_publish",
+      "path": "src/market_vault/dataset/materialization.py",
+      "symbol": "_rename_directory_no_replace_windows",
+      "kind": "destructive_call",
+      "signal": "os.rename",
+      "fingerprint": "6c2a243fd84e4f09c36f0e63a49315b30f0f6d9f9baf4f94c824c921ce552c9f",
+      "expected_count": 1,
+      "rationale": "Windows atomic directory publication is explicitly no-replace and refuses an existing immutable Dataset destination."
+    },
+    {
+      "exemption_id": "sample_generation_partial_output_cleanup",
+      "path": "src/market_vault/dataset/sample_generation_cli.py",
+      "symbol": "_remove_partial_output",
+      "kind": "destructive_call",
+      "signal": "path.unlink",
+      "fingerprint": "098a23fc5e8c896ae0b346c7e67cb854ba575c37e501cccf71ec781f12d6cc55",
+      "expected_count": 1,
+      "rationale": "Failure cleanup is limited to the exact incomplete output plan created by the current sample-generation command."
+    },
+    {
+      "exemption_id": "lifecycle_failed_acquire_owner_cleanup",
+      "path": "src/market_vault/lifecycle.py",
+      "symbol": "MarketBarLifecycleLock.acquire",
+      "kind": "destructive_call",
+      "signal": "path.unlink",
+      "fingerprint": "ca1a222619a175e1626c02dbab2098c36689de5a68b44d6a643f353fd8317342",
+      "expected_count": 1,
+      "rationale": "Failed lock acquisition removes only the owner marker created with the current unique lock token before re-raising."
+    },
+    {
+      "exemption_id": "lifecycle_failed_acquire_directory_cleanup",
+      "path": "src/market_vault/lifecycle.py",
+      "symbol": "MarketBarLifecycleLock.acquire",
+      "kind": "destructive_call",
+      "signal": "path.rmdir",
+      "fingerprint": "bbd62bf73c6cc64bbc254f060418bb9a1d5a636b8065cfb5e8458472b3bfc727",
+      "expected_count": 1,
+      "rationale": "Failed acquisition removes only the empty exact lock directory atomically created by that acquisition attempt."
+    },
+    {
+      "exemption_id": "lifecycle_owned_release_marker",
+      "path": "src/market_vault/lifecycle.py",
+      "symbol": "MarketBarLifecycleLock.release",
+      "kind": "destructive_call",
+      "signal": "path.unlink",
+      "fingerprint": "36860e364aded0940d71a7c40863a940b7ea5db242c23f4a9f364faacb8dd6ea",
+      "expected_count": 1,
+      "rationale": "Release removes the exact owner marker only after its unique token proves current-process lock ownership."
+    },
+    {
+      "exemption_id": "lifecycle_owned_release_directory",
+      "path": "src/market_vault/lifecycle.py",
+      "symbol": "MarketBarLifecycleLock.release",
+      "kind": "destructive_call",
+      "signal": "path.rmdir",
+      "fingerprint": "bbd62bf73c6cc64bbc254f060418bb9a1d5a636b8065cfb5e8458472b3bfc727",
+      "expected_count": 1,
+      "rationale": "Release removes only the now-empty exact lifecycle lock directory after owner-token verification."
+    },
+    {
+      "exemption_id": "report_atomic_replace",
+      "path": "src/market_vault/reporting.py",
+      "symbol": "write_json_report_atomic",
+      "kind": "destructive_call",
+      "signal": "os.replace",
+      "fingerprint": "0c13d3531d94eb1f3b608af34d1d5eb1e15e7333993d3fb145db55627286d8c8",
+      "expected_count": 1,
+      "rationale": "This is the existing bounded atomic publication primitive for a caller-selected report path, replacing only that report after complete temporary serialization."
+    },
+    {
+      "exemption_id": "report_failed_temp_cleanup",
+      "path": "src/market_vault/reporting.py",
+      "symbol": "write_json_report_atomic",
+      "kind": "destructive_call",
+      "signal": "os.unlink",
+      "fingerprint": "d49fa239940accebecd6d7fa66d1d099970538c8c5c756f2c815aa148f3149ef",
+      "expected_count": 1,
+      "rationale": "Failure handling removes only the mkstemp path created by the same report writer invocation."
+    },
+    {
+      "exemption_id": "catalog_ingestion_run_idempotent_replace",
+      "path": "src/market_vault/storage/catalog.py",
+      "symbol": "Catalog.record_run",
+      "kind": "destructive_sql",
+      "signal": "sql.DELETE_FROM",
+      "fingerprint": "e411eab56dd259db41754b09ec3c51cfd90929d55dfbbf434b5b8af3bb09d0e6",
+      "expected_count": 1,
+      "rationale": "The exact run_id row is removed inside the existing idempotent ingestion-run recording transaction before the same run evidence is reinserted."
+    },
+    {
+      "exemption_id": "catalog_quality_idempotent_replace",
+      "path": "src/market_vault/storage/catalog.py",
+      "symbol": "Catalog.record_quality",
+      "kind": "destructive_sql",
+      "signal": "sql.DELETE_FROM",
+      "fingerprint": "39d546fa65d3274c078fa2779303b07692acd965fe26e490c5e1e66be4f423b5",
+      "expected_count": 1,
+      "rationale": "The exact run_id quality rows are transactionally replaced by the complete current quality result set; market data and unrelated run evidence are untouched."
+    },
+    {
+      "exemption_id": "catalog_dataset_run_idempotent_replace",
+      "path": "src/market_vault/storage/catalog.py",
+      "symbol": "Catalog.record_dataset_run",
+      "kind": "destructive_sql",
+      "signal": "sql.DELETE_FROM",
+      "fingerprint": "43b26b91167096f022c5b516059c7c72504b171dec067dd919712541ab1780bd",
+      "expected_count": 1,
+      "rationale": "The exact dataset run_id index row is replaced inside its existing idempotent recording transaction without deleting immutable Dataset artifacts."
+    },
+    {
+      "exemption_id": "catalog_empty_market_bars_view_drop",
+      "path": "src/market_vault/storage/catalog.py",
+      "symbol": "Catalog.refresh_market_bars_view",
+      "kind": "destructive_sql",
+      "signal": "sql.DROP_VIEW",
+      "fingerprint": "938068a7a278e9b2ed53d80af71e7c95c272ae90e48a0a341e2005ba9f4d0769",
+      "expected_count": 1,
+      "rationale": "Refresh removes only the derived market_bars DuckDB view when no active curated Parquet exists; it does not remove tables, files, or ingestion evidence."
+    },
+    {
+      "exemption_id": "catalog_empty_market_bar_snapshots_view_drop",
+      "path": "src/market_vault/storage/catalog.py",
+      "symbol": "Catalog.refresh_market_bars_view",
+      "kind": "destructive_sql",
+      "signal": "sql.DROP_VIEW",
+      "fingerprint": "9e17ac5caeaf52c97d291ea3de275f21fc0086e6893723ba02c0ec62ef2c42a6",
+      "expected_count": 1,
+      "rationale": "Refresh removes only the derived market_bars_snapshots DuckDB view when no active curated Parquet exists; persistent rows and files remain intact."
+    }
+  ]
+}
