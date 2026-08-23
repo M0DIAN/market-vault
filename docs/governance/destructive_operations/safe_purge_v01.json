@@ -13,17 +13,77 @@
     {
       "path": "src/market_vault/purge.py",
       "symbols": [
-        "purge_plan",
-        "purge_execute",
-        "_move_file",
+        "purge_plan"
+      ],
+      "role": "MUTATION_OWNER",
+      "surfaces": [
+        {
+          "kind": "destructive_public_name",
+          "signal": "name.purge",
+          "expected_count": 1
+        }
+      ],
+      "rationale": "The purge planning entry point owns the reviewed Safe Purge plan surface."
+    },
+    {
+      "path": "src/market_vault/purge.py",
+      "symbols": [
+        "purge_execute"
+      ],
+      "role": "MUTATION_OWNER",
+      "surfaces": [
+        {
+          "kind": "destructive_public_name",
+          "signal": "name.purge",
+          "expected_count": 1
+        },
+        {
+          "kind": "destructive_call",
+          "signal": "path.unlink",
+          "expected_count": 1
+        }
+      ],
+      "rationale": "The purge execution entry point owns exact-confirmation execution and its reviewed staging cleanup."
+    },
+    {
+      "path": "src/market_vault/purge.py",
+      "symbols": [
+        "_move_file"
+      ],
+      "role": "MUTATION_OWNER",
+      "surfaces": [
+        {
+          "kind": "destructive_call",
+          "signal": "os.rename",
+          "expected_count": 1
+        },
+        {
+          "kind": "destructive_call",
+          "signal": "os.unlink",
+          "expected_count": 1
+        }
+      ],
+      "rationale": "The physical movement helper owns one reviewed no-overwrite rename and one reviewed rollback unlink surface."
+    },
+    {
+      "path": "src/market_vault/purge.py",
+      "symbols": [
         "_publish_no_replace"
       ],
       "role": "MUTATION_OWNER",
-      "allowed_surface_kinds": [
-        "destructive_call",
-        "destructive_public_name"
+      "surfaces": [
+        {
+          "kind": "destructive_call",
+          "signal": "os.rename",
+          "expected_count": 1
+        },
+        {
+          "kind": "destructive_call",
+          "signal": "path.unlink",
+          "expected_count": 1
+        }
       ],
-      "rationale": "The purge module owns sealed planning, execution, no-replace evidence publication, quarantine movement, rollback, and idempotent recovery."
+      "rationale": "The terminal evidence publisher owns one reviewed no-replace rename and one reviewed staging cleanup surface."
     },
     {
       "path": "src/market_vault/api.py",
@@ -32,8 +92,12 @@
         "MarketVault.purge_execute"
       ],
       "role": "ENTRYPOINT",
-      "allowed_surface_kinds": [
-        "destructive_public_name"
+      "surfaces": [
+        {
+          "kind": "destructive_public_name",
+          "signal": "name.purge",
+          "expected_count": 1
+        }
       ],
       "rationale": "The public Python API delegates purge requests to the service-owned Safe Purge boundary."
     },
@@ -45,26 +109,14 @@
         "ConsoleBackend.invalidate_purge_preview"
       ],
       "role": "ENTRYPOINT",
-      "allowed_surface_kinds": [
-        "destructive_public_name"
+      "surfaces": [
+        {
+          "kind": "destructive_public_name",
+          "signal": "name.purge",
+          "expected_count": 1
+        }
       ],
       "rationale": "The Console backend exposes only reviewed preview, exact-confirmation execution, and stale-preview invalidation."
-    },
-    {
-      "path": "src/market_vault/console/ui.py",
-      "symbols": [
-        "ConsoleApp._build_purge",
-        "ConsoleApp._bind_purge_scope_invalidation",
-        "ConsoleApp._invalidate_purge_review",
-        "ConsoleApp._preview_purge",
-        "ConsoleApp._execute_purge"
-      ],
-      "role": "USER_INTERFACE",
-      "allowed_surface_kinds": [
-        "destructive_call",
-        "destructive_public_name"
-      ],
-      "rationale": "The Console UI is a non-authoritative adapter that invalidates reviewed plans whenever scope changes and never performs storage mutation directly."
     },
     {
       "path": "src/market_vault/storage/catalog.py",
@@ -77,9 +129,12 @@
         "Catalog.update_purge_operation"
       ],
       "role": "STATE_AUTHORITY",
-      "allowed_surface_kinds": [
-        "destructive_public_name",
-        "destructive_sql"
+      "surfaces": [
+        {
+          "kind": "destructive_public_name",
+          "signal": "name.purge",
+          "expected_count": 1
+        }
       ],
       "rationale": "The Catalog stores the purge lifecycle index and owns the atomic durable SUCCESS transition, while immutable JSON remains detailed evidence."
     }

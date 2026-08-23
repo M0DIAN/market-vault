@@ -36,6 +36,7 @@ def _planned_contract(
     operation_id: str = "planned_remove_v01",
     path: str = "src/market_vault/example.py",
     symbol: str = "dangerous",
+    surfaces: list[dict] | None = None,
 ) -> dict:
     value = _base_contract()
     value["operation_id"] = operation_id
@@ -48,10 +49,13 @@ def _planned_contract(
             "path": path,
             "symbols": [symbol],
             "role": "MUTATION_OWNER",
-            "allowed_surface_kinds": [
-                "destructive_call",
-                "destructive_public_name",
-                "destructive_sql",
+            "surfaces": surfaces
+            or [
+                {
+                    "kind": "destructive_call",
+                    "signal": "os.remove",
+                    "expected_count": 1,
+                }
             ],
             "rationale": "Exact planned implementation boundary for the test fixture.",
         }
@@ -124,6 +128,20 @@ def test_wildcard_contract_symbol_fails():
     value = _base_contract()
     value["implementation_bindings"][0]["symbols"] = ["purge_*"]
     with pytest.raises(gate.GateError, match="exact symbols"):
+        _validate(value)
+
+
+def test_wildcard_contract_signal_fails():
+    value = _base_contract()
+    value["implementation_bindings"][0]["surfaces"][0]["signal"] = "os.*"
+    with pytest.raises(gate.GateError, match="signal must be exact"):
+        _validate(value)
+
+
+def test_contract_surface_count_must_be_positive():
+    value = _base_contract()
+    value["implementation_bindings"][0]["surfaces"][0]["expected_count"] = 0
+    with pytest.raises(gate.GateError, match="positive integer"):
         _validate(value)
 
 
@@ -218,7 +236,12 @@ def test_existing_safe_purge_contract_and_inventory_validate():
         for finding in snapshot.findings
         if snapshot.contracts["safe_purge_v01"].covers(finding)
     ]
-    assert purge_findings
+    expected_count = sum(
+        surface.expected_count * len(binding.symbols)
+        for binding in snapshot.contracts["safe_purge_v01"].bindings
+        for surface in binding.surfaces
+    )
+    assert len(purge_findings) == expected_count == 18
 
 
 def test_known_infrastructure_exemption_is_exactly_bound():
@@ -259,6 +282,24 @@ def test_new_destructive_logic_beside_exemption_is_not_automatically_exempt():
     )
     errors = gate.validate_snapshot(snapshot)
     assert any("expected exactly 1" in error and "found 2" in error for error in errors)
+
+
+def test_contract_surface_count_rejects_missing_occurrence():
+    source = b"def dangerous():\n    return None\n"
+    contract = _planned_contract()
+    snapshot = gate._build_snapshot(
+        {"src/market_vault/example.py": source},
+        {
+            gate.EXEMPTIONS_PATH.as_posix(): _json_bytes(_empty_exemptions()),
+            f"{gate.CONTRACT_ROOT}/planned_remove_v01.json": _json_bytes(contract),
+        },
+    )
+    errors = gate.validate_snapshot(snapshot)
+    assert any(
+        "expected exactly 1 destructive_call:os.remove" in error
+        and "found 0" in error
+        for error in errors
+    )
 
 
 def test_checker_parse_failure_fails_closed():
@@ -401,7 +442,7 @@ def test_contract_added_only_in_head_with_implementation_fails(tmp_path):
 
 
 def test_contract_changed_with_destructive_implementation_fails(tmp_path):
-    repo, _ = _new_repo(tmp_path, source="def dangerous():\n    return None\n")
+    repo, _ = _new_repo(tmp_path)
     contract_path = repo / gate.CONTRACT_ROOT.as_posix() / "planned_remove_v01.json"
     value = _planned_contract()
     _write_json(contract_path, value)
@@ -419,7 +460,7 @@ def test_contract_changed_with_destructive_implementation_fails(tmp_path):
 
 
 def test_approved_matching_contract_already_in_base_passes(tmp_path):
-    repo, _ = _new_repo(tmp_path, source="def dangerous():\n    return None\n")
+    repo, _ = _new_repo(tmp_path)
     _write_json(
         repo / gate.CONTRACT_ROOT.as_posix() / "planned_remove_v01.json",
         _planned_contract(),
@@ -433,6 +474,162 @@ def test_approved_matching_contract_already_in_base_passes(tmp_path):
     head = _commit(repo, "implementation")
     _, errors = gate.validate_pull_request(repo, base, head)
     assert errors == []
+
+
+def test_base_rename_binding_does_not_authorize_new_remove_signal(tmp_path):
+    source = "import os\n\ndef dangerous():\n    os.rename('a', 'b')\n"
+    repo, _ = _new_repo(tmp_path, source=source)
+    _write_json(
+        repo / gate.CONTRACT_ROOT.as_posix() / "planned_remove_v01.json",
+        _planned_contract(
+            surfaces=[
+                {
+                    "kind": "destructive_call",
+                    "signal": "os.rename",
+                    "expected_count": 1,
+                }
+            ]
+        ),
+    )
+    base = _commit(repo, "approve rename design")
+    (repo / "src" / "market_vault" / "example.py").write_text(
+        source.replace(
+            "    os.rename('a', 'b')\n",
+            "    os.rename('a', 'b')\n    os.remove('runtime.db')\n",
+        ),
+        encoding="utf-8",
+        newline="\n",
+    )
+    head = _commit(repo, "add unapproved remove")
+    _, errors = gate.validate_pull_request(repo, base, head)
+    assert any("unclassified" in error and "os.remove" in error for error in errors)
+
+
+def test_base_unlink_count_rejects_second_identical_call(tmp_path):
+    source = "def dangerous(path):\n    path.unlink()\n"
+    repo, _ = _new_repo(tmp_path, source=source)
+    _write_json(
+        repo / gate.CONTRACT_ROOT.as_posix() / "planned_remove_v01.json",
+        _planned_contract(
+            surfaces=[
+                {
+                    "kind": "destructive_call",
+                    "signal": "path.unlink",
+                    "expected_count": 1,
+                }
+            ]
+        ),
+    )
+    base = _commit(repo, "approve one unlink")
+    (repo / "src" / "market_vault" / "example.py").write_text(
+        "def dangerous(path):\n    path.unlink()\n    path.unlink()\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    head = _commit(repo, "add second unlink")
+    _, errors = gate.validate_pull_request(repo, base, head)
+    assert any(
+        "expected exactly 1 destructive_call:path.unlink" in error
+        and "found 2" in error
+        for error in errors
+    )
+
+
+def test_base_delete_binding_does_not_authorize_drop_table(tmp_path):
+    source = '''class Catalog:
+    def mutate(self, con):
+        con.execute("DELETE FROM records")
+'''
+    repo, _ = _new_repo(tmp_path, source=source)
+    _write_json(
+        repo / gate.CONTRACT_ROOT.as_posix() / "planned_remove_v01.json",
+        _planned_contract(
+            symbol="Catalog.mutate",
+            surfaces=[
+                {
+                    "kind": "destructive_sql",
+                    "signal": "sql.DELETE_FROM",
+                    "expected_count": 1,
+                }
+            ],
+        ),
+    )
+    base = _commit(repo, "approve delete design")
+    (repo / "src" / "market_vault" / "example.py").write_text(
+        source.replace(
+            '        con.execute("DELETE FROM records")\n',
+            '        con.execute("DELETE FROM records")\n'
+            '        con.execute("DROP TABLE records")\n',
+        ),
+        encoding="utf-8",
+        newline="\n",
+    )
+    head = _commit(repo, "add unapproved drop table")
+    _, errors = gate.validate_pull_request(repo, base, head)
+    assert any("unclassified" in error and "sql.DROP_TABLE" in error for error in errors)
+
+
+def test_same_pr_surface_count_expansion_cannot_authorize_implementation(tmp_path):
+    source = "def dangerous(path):\n    path.unlink()\n"
+    repo, _ = _new_repo(tmp_path, source=source)
+    contract_path = repo / gate.CONTRACT_ROOT.as_posix() / "planned_remove_v01.json"
+    value = _planned_contract(
+        surfaces=[
+            {
+                "kind": "destructive_call",
+                "signal": "path.unlink",
+                "expected_count": 1,
+            }
+        ]
+    )
+    _write_json(contract_path, value)
+    base = _commit(repo, "approve one unlink")
+    value["implementation_bindings"][0]["surfaces"][0]["expected_count"] = 2
+    _write_json(contract_path, value)
+    (repo / "src" / "market_vault" / "example.py").write_text(
+        "def dangerous(path):\n    path.unlink()\n    path.unlink()\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    head = _commit(repo, "expand contract and implementation")
+    _, errors = gate.validate_pull_request(repo, base, head)
+    assert any("contract changed together" in error for error in errors)
+
+
+def test_same_pr_new_signal_cannot_authorize_implementation(tmp_path):
+    source = "import os\n\ndef dangerous():\n    os.rename('a', 'b')\n"
+    repo, _ = _new_repo(tmp_path, source=source)
+    contract_path = repo / gate.CONTRACT_ROOT.as_posix() / "planned_remove_v01.json"
+    value = _planned_contract(
+        surfaces=[
+            {
+                "kind": "destructive_call",
+                "signal": "os.rename",
+                "expected_count": 1,
+            }
+        ]
+    )
+    _write_json(contract_path, value)
+    base = _commit(repo, "approve rename design")
+    value["implementation_bindings"][0]["surfaces"].append(
+        {
+            "kind": "destructive_call",
+            "signal": "os.remove",
+            "expected_count": 1,
+        }
+    )
+    _write_json(contract_path, value)
+    (repo / "src" / "market_vault" / "example.py").write_text(
+        source.replace(
+            "    os.rename('a', 'b')\n",
+            "    os.rename('a', 'b')\n    os.remove('runtime.db')\n",
+        ),
+        encoding="utf-8",
+        newline="\n",
+    )
+    head = _commit(repo, "expand signals and implementation")
+    _, errors = gate.validate_pull_request(repo, base, head)
+    assert any("contract changed together" in error for error in errors)
 
 
 def test_design_only_contract_with_future_path_passes(tmp_path):

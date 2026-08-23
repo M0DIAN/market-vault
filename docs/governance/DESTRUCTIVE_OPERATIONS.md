@@ -46,8 +46,12 @@ They describe authority, persistent scope, state transitions, commit point,
 crash behavior, rollback and recovery, idempotence, locking, execution-time
 revalidation, integrity-bound success evidence, path/reparse safety, stale UI
 state, physical atomicity, unsupported cascades, permanent deletion policy, and
-required implementation evidence. Planned bindings may name future exact files
-and symbols, allowing design approval before source exists.
+required implementation evidence. Each implementation binding authorizes an
+exact file, symbol, finding kind, signal, and occurrence count. It does not
+authorize a different primitive or another occurrence in the same symbol.
+Changing a planned signal or count requires a separate design-only contract PR
+before implementation. Planned bindings may name future exact files and symbols,
+allowing design approval before source exists without a source fingerprint.
 
 Run a complete local consistency check with:
 
@@ -60,7 +64,8 @@ destructive implementation must resolve to one unchanged approved contract in
 the base tree. A HEAD-only contract cannot authorize that implementation. A
 contract-only PR may pass without its planned source existing. Parse errors,
 unknown schema or enum values, malformed Git evidence, unclassified surfaces,
-unused or overbroad exemptions, and ambiguous ownership fail closed.
+missing or extra contract-bound occurrences, unused or overbroad exemptions,
+and ambiguous ownership fail closed.
 
 ## Current Registration
 

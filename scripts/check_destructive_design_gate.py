@@ -89,17 +89,27 @@ class Finding:
 
 
 @dataclass(frozen=True)
+class ApprovedSurface:
+    kind: str
+    signal: str
+    expected_count: int
+
+    def matches(self, finding: Finding) -> bool:
+        return finding.kind == self.kind and finding.signal == self.signal
+
+
+@dataclass(frozen=True)
 class Binding:
     path: str
     symbols: tuple[str, ...]
     role: str
-    allowed_kinds: frozenset[str]
+    surfaces: tuple[ApprovedSurface, ...]
 
     def covers(self, finding: Finding) -> bool:
         return (
             finding.path == self.path
             and finding.symbol in self.symbols
-            and finding.kind in self.allowed_kinds
+            and any(surface.matches(finding) for surface in self.surfaces)
         )
 
 
@@ -310,7 +320,7 @@ def _validate_contract(value: Any, label: str) -> Contract:
         binding = _expect_object(raw, binding_label)
         _expect_exact_keys(
             binding,
-            {"path", "symbols", "role", "allowed_surface_kinds", "rationale"},
+            {"path", "symbols", "role", "surfaces", "rationale"},
             binding_label,
         )
         path = _safe_source_path(binding["path"], f"{binding_label}.path")
@@ -322,21 +332,48 @@ def _validate_contract(value: Any, label: str) -> Contract:
             raise GateError(f"{binding_label}.symbols must contain exact symbols")
         if binding["role"] not in ALLOWED_BINDING_ROLES:
             raise GateError(f"{binding_label}.role is unknown")
-        kinds = frozenset(
-            _string_list(
-                binding["allowed_surface_kinds"],
-                f"{binding_label}.allowed_surface_kinds",
+        raw_surfaces = binding["surfaces"]
+        if not isinstance(raw_surfaces, list) or not raw_surfaces:
+            raise GateError(f"{binding_label}.surfaces must be a non-empty list")
+        surfaces: list[ApprovedSurface] = []
+        seen_surfaces: set[tuple[str, str]] = set()
+        for surface_index, raw_surface in enumerate(raw_surfaces):
+            surface_label = f"{binding_label}.surfaces[{surface_index}]"
+            surface = _expect_object(raw_surface, surface_label)
+            _expect_exact_keys(
+                surface, {"kind", "signal", "expected_count"}, surface_label
             )
-        )
-        if not kinds <= ALLOWED_FINDING_KINDS:
-            raise GateError(f"{binding_label}.allowed_surface_kinds contains unknown values")
+            kind = _nonempty_string(surface["kind"], f"{surface_label}.kind")
+            if kind not in ALLOWED_FINDING_KINDS:
+                raise GateError(f"{surface_label}.kind is unknown")
+            signal = _nonempty_string(
+                surface["signal"], f"{surface_label}.signal"
+            )
+            if any(char in signal for char in "*?[]"):
+                raise GateError(f"{surface_label}.signal must be exact")
+            expected_count = surface["expected_count"]
+            if (
+                not isinstance(expected_count, int)
+                or isinstance(expected_count, bool)
+                or expected_count < 1
+            ):
+                raise GateError(
+                    f"{surface_label}.expected_count must be a positive integer"
+                )
+            key = (kind, signal)
+            if key in seen_surfaces:
+                raise GateError(f"{binding_label} duplicates approved surface {key}")
+            seen_surfaces.add(key)
+            surfaces.append(ApprovedSurface(kind, signal, expected_count))
         _nonempty_string(binding["rationale"], f"{binding_label}.rationale")
         for symbol in symbols:
             key = (path, symbol)
             if key in seen_bindings:
                 raise GateError(f"{label}: duplicate implementation binding {key}")
             seen_bindings.add(key)
-        bindings.append(Binding(path, tuple(symbols), binding["role"], kinds))
+        bindings.append(
+            Binding(path, tuple(symbols), binding["role"], tuple(surfaces))
+        )
 
     authority = _expect_object(obj["authority_boundary"], f"{label}.authority_boundary")
     _expect_exact_keys(
@@ -821,6 +858,29 @@ def validate_snapshot(snapshot: Snapshot) -> list[str]:
                 f"exemption {exemption.exemption_id} expected exactly "
                 f"{exemption.expected_count} matching surface(s), found {actual}"
             )
+    for contract in snapshot.contracts.values():
+        for binding in contract.bindings:
+            for symbol in binding.symbols:
+                # A design-only contract may bind a future exact symbol. Once
+                # the symbol exists, every approved signal count is exact.
+                if (binding.path, symbol) not in snapshot.symbol_hashes:
+                    continue
+                symbol_findings = [
+                    finding
+                    for finding in snapshot.findings
+                    if finding.path == binding.path and finding.symbol == symbol
+                ]
+                for surface in binding.surfaces:
+                    actual = sum(
+                        1 for finding in symbol_findings if surface.matches(finding)
+                    )
+                    if actual != surface.expected_count:
+                        errors.append(
+                            f"contract {contract.operation_id} binding "
+                            f"{binding.path}:{symbol} expected exactly "
+                            f"{surface.expected_count} {surface.kind}:{surface.signal} "
+                            f"surface(s), found {actual}"
+                        )
     return errors
 
 
