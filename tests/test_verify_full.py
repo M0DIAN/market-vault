@@ -128,7 +128,10 @@ def test_pytest_exit_code_is_preserved_and_preflight_prints_before_mutation(
         return SimpleNamespace(returncode=pytest_exit)
 
     result = verify_full.execute_validation(
-        preflight, emit=emit, run_process=fake_run
+        preflight,
+        emit=emit,
+        run_process=fake_run,
+        refresh_worktrees=lambda: preflight.worktrees,
     )
     assert result == pytest_exit
     assert not preflight.run_dir.exists()
@@ -150,6 +153,7 @@ def test_cleanup_removes_only_exact_run_owned_directory(tmp_path):
         preflight,
         run_process=lambda *_args, **_kwargs: SimpleNamespace(returncode=0),
         cleanup=cleanup,
+        refresh_worktrees=lambda: preflight.worktrees,
     )
     assert result == 0
     assert cleanup_calls == [preflight.run_dir]
@@ -171,6 +175,7 @@ def test_cleanup_failure_reports_retained_exact_path_without_broadening(tmp_path
         emit=output.append,
         run_process=lambda *_args, **_kwargs: SimpleNamespace(returncode=0),
         cleanup=locked_cleanup,
+        refresh_worktrees=lambda: preflight.worktrees,
     )
     assert result == 0
     assert cleanup_calls == [preflight.run_dir]
@@ -183,6 +188,62 @@ def test_cleanup_failure_reports_retained_exact_path_without_broadening(tmp_path
         )
         for line in output
     )
+
+
+def test_post_create_worktree_refresh_is_used_before_pytest(tmp_path):
+    preflight = make_preflight(tmp_path)
+    refresh_calls = 0
+    launched = False
+
+    def refresh_worktrees():
+        nonlocal refresh_calls
+        refresh_calls += 1
+        if refresh_calls == 1:
+            return (preflight.repo_root,)
+        return (preflight.repo_root, preflight.run_dir)
+
+    def unexpected_run(*_args, **_kwargs):
+        nonlocal launched
+        launched = True
+        raise AssertionError("pytest must not launch")
+
+    with pytest.raises(verify_full.ValidationSafetyError, match="inside.*worktree"):
+        verify_full.execute_validation(
+            preflight,
+            run_process=unexpected_run,
+            refresh_worktrees=refresh_worktrees,
+        )
+    assert refresh_calls == 2
+    assert not launched
+    assert preflight.run_dir.is_dir()
+
+
+def test_windows_arbitrary_reparse_cleanup_target_is_refused(monkeypatch, tmp_path):
+    preflight = make_preflight(tmp_path)
+    preflight.temp_parent.mkdir(parents=True)
+    preflight.run_dir.mkdir()
+    cleanup_calls: list[Path] = []
+    attribute_reads: list[Path] = []
+
+    monkeypatch.setattr(verify_full, "_running_on_windows", lambda: True)
+    monkeypatch.setattr(Path, "is_junction", lambda _self: False, raising=False)
+    monkeypatch.setattr(
+        verify_full,
+        "_windows_file_attributes",
+        lambda path: attribute_reads.append(path)
+        or verify_full.FILE_ATTRIBUTE_REPARSE_POINT,
+    )
+
+    with pytest.raises(verify_full.ValidationSafetyError, match="reparse"):
+        verify_full.cleanup_run_directory(
+            preflight.run_dir,
+            temp_parent=preflight.temp_parent,
+            run_id=preflight.run_id,
+            cleanup=cleanup_calls.append,
+        )
+    assert attribute_reads == [preflight.run_dir]
+    assert cleanup_calls == []
+    assert preflight.run_dir.is_dir()
 
 
 def test_worktree_porcelain_parser_uses_nul_delimited_authoritative_paths(tmp_path):

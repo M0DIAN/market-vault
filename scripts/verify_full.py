@@ -20,6 +20,8 @@ from uuid import uuid4
 GIB = 1024**3
 MINIMUM_FREE_BYTES = 10 * GIB
 RUN_ID_RE = re.compile(r"^run-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{12}$")
+FILE_ATTRIBUTE_REPARSE_POINT = 0x400
+INVALID_FILE_ATTRIBUTES = 0xFFFFFFFF
 
 
 class ValidationSafetyError(RuntimeError):
@@ -265,12 +267,48 @@ def _emit_line(line: str) -> None:
     print(line, flush=True)
 
 
-def _is_link_or_junction(path: Path) -> bool:
+def _running_on_windows() -> bool:
+    return os.name == "nt"
+
+
+def _windows_file_attributes(path: Path) -> int:
+    """Read native attributes or fail closed with the Windows error code."""
+    import ctypes
+
+    try:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        get_attributes = kernel32.GetFileAttributesW
+        get_attributes.argtypes = [ctypes.c_wchar_p]
+        get_attributes.restype = ctypes.c_uint32
+        ctypes.set_last_error(0)
+        attributes = int(get_attributes(str(path)))
+        error_code = int(ctypes.get_last_error())
+    except (AttributeError, OSError, TypeError) as exc:
+        raise ValidationSafetyError(
+            f"cannot verify Windows file attributes for cleanup target {path}: {exc}"
+        ) from exc
+    if attributes == INVALID_FILE_ATTRIBUTES:
+        if error_code in {2, 3} and not os.path.lexists(path):
+            return 0
+        raise ValidationSafetyError(
+            f"cannot verify Windows file attributes for cleanup target {path}: "
+            f"INVALID_FILE_ATTRIBUTES (Windows error {error_code})"
+        )
+    return attributes
+
+
+def _is_link_or_reparse(path: Path) -> bool:
     try:
         if path.is_symlink():
             return True
+        if _running_on_windows():
+            return bool(
+                _windows_file_attributes(path) & FILE_ATTRIBUTE_REPARSE_POINT
+            )
         is_junction = getattr(path, "is_junction", None)
         return bool(is_junction and is_junction())
+    except ValidationSafetyError:
+        raise
     except OSError as exc:
         raise ValidationSafetyError(f"cannot inspect cleanup target: {path}") from exc
 
@@ -290,7 +328,7 @@ def cleanup_run_directory(
         raise ValidationSafetyError(
             f"refusing cleanup outside the exact run-owned directory: {actual}"
         )
-    if _is_link_or_junction(actual):
+    if _is_link_or_reparse(actual):
         raise ValidationSafetyError(
             f"refusing cleanup of a linked or reparse run directory: {actual}"
         )
@@ -322,16 +360,20 @@ def execute_validation(
             f"temp_root={preflight.run_dir}"
         )
 
+    def current_worktrees() -> tuple[Path, ...]:
+        if refresh_worktrees is not None:
+            return tuple(refresh_worktrees())
+        return discover_worktrees(preflight.repo_root)
+
     preflight.temp_parent.mkdir(parents=True, exist_ok=True)
-    current_worktrees = tuple(
-        refresh_worktrees() if refresh_worktrees else preflight.worktrees
-    )
+    pre_create_worktrees = current_worktrees()
     assert_outside_worktrees(
-        preflight.run_dir, preflight.repo_root, current_worktrees
+        preflight.run_dir, preflight.repo_root, pre_create_worktrees
     )
     preflight.run_dir.mkdir(parents=False, exist_ok=False)
+    post_create_worktrees = current_worktrees()
     assert_outside_worktrees(
-        preflight.run_dir, preflight.repo_root, current_worktrees
+        preflight.run_dir, preflight.repo_root, post_create_worktrees
     )
 
     child_env = os.environ.copy()
