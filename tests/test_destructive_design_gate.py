@@ -63,6 +63,19 @@ def _planned_contract(
     return value
 
 
+def _add_transition(
+    value: dict,
+    target_surfaces: list[dict],
+    *,
+    transition_id: str = "planned_surface_transition_v01",
+) -> None:
+    value["implementation_bindings"][0]["prospective_transition"] = {
+        "transition_id": transition_id,
+        "target_surfaces": target_surfaces,
+        "rationale": "Test-only prospective transition approved before implementation.",
+    }
+
+
 def _json_bytes(value: object) -> bytes:
     return (json.dumps(value, indent=2, sort_keys=True) + "\n").encode()
 
@@ -630,6 +643,254 @@ def test_same_pr_new_signal_cannot_authorize_implementation(tmp_path):
     head = _commit(repo, "expand signals and implementation")
     _, errors = gate.validate_pull_request(repo, base, head)
     assert any("contract changed together" in error for error in errors)
+
+
+def test_existing_unlink_to_rename_design_only_transition_passes(tmp_path):
+    source = "import os\n\ndef dangerous(path):\n    path.unlink()\n"
+    repo, _ = _new_repo(tmp_path, source=source)
+    contract_path = repo / gate.CONTRACT_ROOT.as_posix() / "planned_remove_v01.json"
+    value = _planned_contract(
+        surfaces=[
+            {
+                "kind": "destructive_call",
+                "signal": "path.unlink",
+                "expected_count": 1,
+            }
+        ]
+    )
+    _write_json(contract_path, value)
+    base = _commit(repo, "register current unlink")
+    _add_transition(
+        value,
+        [
+            {
+                "kind": "destructive_call",
+                "signal": "os.rename",
+                "expected_count": 1,
+            }
+        ],
+    )
+    _write_json(contract_path, value)
+    head = _commit(repo, "approve rename target")
+    _, errors = gate.validate_pull_request(repo, base, head)
+    assert errors == []
+
+
+def test_existing_unlink_to_rename_implementation_consumes_base_target(tmp_path):
+    source = "import os\n\ndef dangerous(path):\n    path.unlink()\n"
+    repo, _ = _new_repo(tmp_path, source=source)
+    contract_path = repo / gate.CONTRACT_ROOT.as_posix() / "planned_remove_v01.json"
+    value = _planned_contract(
+        surfaces=[
+            {
+                "kind": "destructive_call",
+                "signal": "path.unlink",
+                "expected_count": 1,
+            }
+        ]
+    )
+    _add_transition(
+        value,
+        [
+            {
+                "kind": "destructive_call",
+                "signal": "os.rename",
+                "expected_count": 1,
+            }
+        ],
+    )
+    _write_json(contract_path, value)
+    base = _commit(repo, "approve rename target")
+    (repo / "src" / "market_vault" / "example.py").write_text(
+        "import os\n\ndef dangerous(path):\n    os.rename('a', 'b')\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    head = _commit(repo, "consume rename target")
+    _, errors = gate.validate_pull_request(repo, base, head)
+    assert errors == []
+
+
+def test_transition_rejects_unapproved_third_surface_state(tmp_path):
+    source = "import os\n\ndef dangerous(path):\n    path.unlink()\n"
+    repo, _ = _new_repo(tmp_path, source=source)
+    contract_path = repo / gate.CONTRACT_ROOT.as_posix() / "planned_remove_v01.json"
+    value = _planned_contract(
+        surfaces=[
+            {
+                "kind": "destructive_call",
+                "signal": "path.unlink",
+                "expected_count": 1,
+            }
+        ]
+    )
+    _add_transition(
+        value,
+        [
+            {
+                "kind": "destructive_call",
+                "signal": "os.rename",
+                "expected_count": 1,
+            }
+        ],
+    )
+    _write_json(contract_path, value)
+    base = _commit(repo, "approve rename target")
+    (repo / "src" / "market_vault" / "example.py").write_text(
+        "import os\n\ndef dangerous(path):\n    os.remove('runtime.db')\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    head = _commit(repo, "attempt unapproved remove")
+    _, errors = gate.validate_pull_request(repo, base, head)
+    assert any("unclassified" in error and "os.remove" in error for error in errors)
+    assert any("to match CURRENT" in error and "or TARGET" in error for error in errors)
+
+
+def test_count_two_to_one_transition_design_and_implementation_pass(tmp_path):
+    source = "def dangerous(path):\n    path.unlink()\n    path.unlink()\n"
+    repo, _ = _new_repo(tmp_path, source=source)
+    contract_path = repo / gate.CONTRACT_ROOT.as_posix() / "planned_remove_v01.json"
+    value = _planned_contract(
+        surfaces=[
+            {
+                "kind": "destructive_call",
+                "signal": "path.unlink",
+                "expected_count": 2,
+            }
+        ]
+    )
+    _write_json(contract_path, value)
+    steady_base = _commit(repo, "register two unlinks")
+    _add_transition(
+        value,
+        [
+            {
+                "kind": "destructive_call",
+                "signal": "path.unlink",
+                "expected_count": 1,
+            }
+        ],
+    )
+    _write_json(contract_path, value)
+    implementation_base = _commit(repo, "approve one unlink target")
+    _, design_errors = gate.validate_pull_request(repo, steady_base, implementation_base)
+    assert design_errors == []
+    (repo / "src" / "market_vault" / "example.py").write_text(
+        "def dangerous(path):\n    path.unlink()\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    head = _commit(repo, "consume one unlink target")
+    _, implementation_errors = gate.validate_pull_request(repo, implementation_base, head)
+    assert implementation_errors == []
+
+
+def test_signal_removal_to_zero_transition_design_and_implementation_pass(tmp_path):
+    source = "def dangerous(path):\n    path.unlink()\n"
+    repo, _ = _new_repo(tmp_path, source=source)
+    contract_path = repo / gate.CONTRACT_ROOT.as_posix() / "planned_remove_v01.json"
+    value = _planned_contract(
+        surfaces=[
+            {
+                "kind": "destructive_call",
+                "signal": "path.unlink",
+                "expected_count": 1,
+            }
+        ]
+    )
+    _write_json(contract_path, value)
+    steady_base = _commit(repo, "register unlink")
+    _add_transition(value, [])
+    _write_json(contract_path, value)
+    implementation_base = _commit(repo, "approve removal target")
+    _, design_errors = gate.validate_pull_request(repo, steady_base, implementation_base)
+    assert design_errors == []
+    (repo / "src" / "market_vault" / "example.py").write_text(
+        "def dangerous(path):\n    return path\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    head = _commit(repo, "consume removal target")
+    _, implementation_errors = gate.validate_pull_request(repo, implementation_base, head)
+    assert implementation_errors == []
+
+
+def test_same_pr_transition_approval_and_implementation_fails(tmp_path):
+    source = "import os\n\ndef dangerous(path):\n    path.unlink()\n"
+    repo, _ = _new_repo(tmp_path, source=source)
+    contract_path = repo / gate.CONTRACT_ROOT.as_posix() / "planned_remove_v01.json"
+    value = _planned_contract(
+        surfaces=[
+            {
+                "kind": "destructive_call",
+                "signal": "path.unlink",
+                "expected_count": 1,
+            }
+        ]
+    )
+    _write_json(contract_path, value)
+    base = _commit(repo, "register current unlink")
+    _add_transition(
+        value,
+        [
+            {
+                "kind": "destructive_call",
+                "signal": "os.rename",
+                "expected_count": 1,
+            }
+        ],
+    )
+    _write_json(contract_path, value)
+    (repo / "src" / "market_vault" / "example.py").write_text(
+        "import os\n\ndef dangerous(path):\n    os.rename('a', 'b')\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    head = _commit(repo, "approve and implement rename")
+    _, errors = gate.validate_pull_request(repo, base, head)
+    assert any("contract changed together" in error for error in errors)
+
+
+def test_consumed_transition_cannot_reverse_to_old_state(tmp_path):
+    source = "import os\n\ndef dangerous(path):\n    path.unlink()\n"
+    repo, _ = _new_repo(tmp_path, source=source)
+    contract_path = repo / gate.CONTRACT_ROOT.as_posix() / "planned_remove_v01.json"
+    value = _planned_contract(
+        surfaces=[
+            {
+                "kind": "destructive_call",
+                "signal": "path.unlink",
+                "expected_count": 1,
+            }
+        ]
+    )
+    _add_transition(
+        value,
+        [
+            {
+                "kind": "destructive_call",
+                "signal": "os.rename",
+                "expected_count": 1,
+            }
+        ],
+    )
+    _write_json(contract_path, value)
+    _commit(repo, "approve rename target")
+    (repo / "src" / "market_vault" / "example.py").write_text(
+        "import os\n\ndef dangerous(path):\n    os.rename('a', 'b')\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    consumed_base = _commit(repo, "consume rename target")
+    (repo / "src" / "market_vault" / "example.py").write_text(
+        source,
+        encoding="utf-8",
+        newline="\n",
+    )
+    head = _commit(repo, "attempt transition reuse")
+    _, errors = gate.validate_pull_request(repo, consumed_base, head)
+    assert any("already consumed" in error and "reverse/reuse" in error for error in errors)
 
 
 def test_design_only_contract_with_future_path_passes(tmp_path):

@@ -99,17 +99,31 @@ class ApprovedSurface:
 
 
 @dataclass(frozen=True)
+class ProspectiveTransition:
+    transition_id: str
+    target_surfaces: tuple[ApprovedSurface, ...]
+    rationale: str
+
+
+@dataclass(frozen=True)
 class Binding:
     path: str
     symbols: tuple[str, ...]
     role: str
     surfaces: tuple[ApprovedSurface, ...]
+    prospective_transition: ProspectiveTransition | None
+
+    @property
+    def authorized_surfaces(self) -> tuple[ApprovedSurface, ...]:
+        if self.prospective_transition is None:
+            return self.surfaces
+        return self.surfaces + self.prospective_transition.target_surfaces
 
     def covers(self, finding: Finding) -> bool:
         return (
             finding.path == self.path
             and finding.symbol in self.symbols
-            and any(surface.matches(finding) for surface in self.surfaces)
+            and any(surface.matches(finding) for surface in self.authorized_surfaces)
         )
 
 
@@ -267,6 +281,43 @@ def _safe_source_path(value: Any, label: str) -> str:
     return text
 
 
+def _validate_surfaces(
+    value: Any, label: str, *, allow_empty: bool
+) -> tuple[ApprovedSurface, ...]:
+    if not isinstance(value, list) or (not value and not allow_empty):
+        requirement = "a list" if allow_empty else "a non-empty list"
+        raise GateError(f"{label} must be {requirement}")
+    surfaces: list[ApprovedSurface] = []
+    seen: set[tuple[str, str]] = set()
+    for index, raw_surface in enumerate(value):
+        surface_label = f"{label}[{index}]"
+        surface = _expect_object(raw_surface, surface_label)
+        _expect_exact_keys(
+            surface, {"kind", "signal", "expected_count"}, surface_label
+        )
+        kind = _nonempty_string(surface["kind"], f"{surface_label}.kind")
+        if kind not in ALLOWED_FINDING_KINDS:
+            raise GateError(f"{surface_label}.kind is unknown")
+        signal = _nonempty_string(surface["signal"], f"{surface_label}.signal")
+        if any(char in signal for char in "*?[]"):
+            raise GateError(f"{surface_label}.signal must be exact")
+        expected_count = surface["expected_count"]
+        if (
+            not isinstance(expected_count, int)
+            or isinstance(expected_count, bool)
+            or expected_count < 1
+        ):
+            raise GateError(
+                f"{surface_label}.expected_count must be a positive integer"
+            )
+        key = (kind, signal)
+        if key in seen:
+            raise GateError(f"{label} duplicates approved surface {key}")
+        seen.add(key)
+        surfaces.append(ApprovedSurface(kind, signal, expected_count))
+    return tuple(surfaces)
+
+
 def _validate_contract(value: Any, label: str) -> Contract:
     obj = _expect_object(value, label)
     required = {
@@ -315,14 +366,22 @@ def _validate_contract(value: Any, label: str) -> Contract:
         raise GateError(f"{label}.implementation_bindings must be a non-empty list")
     bindings: list[Binding] = []
     seen_bindings: set[tuple[str, str]] = set()
+    seen_transition_ids: set[str] = set()
     for index, raw in enumerate(raw_bindings):
         binding_label = f"{label}.implementation_bindings[{index}]"
         binding = _expect_object(raw, binding_label)
-        _expect_exact_keys(
-            binding,
-            {"path", "symbols", "role", "surfaces", "rationale"},
-            binding_label,
+        required_binding_keys = {"path", "symbols", "role", "surfaces", "rationale"}
+        actual_binding_keys = set(binding)
+        missing_binding_keys = required_binding_keys - actual_binding_keys
+        extra_binding_keys = actual_binding_keys - (
+            required_binding_keys | {"prospective_transition"}
         )
+        if missing_binding_keys or extra_binding_keys:
+            raise GateError(
+                f"{binding_label}: fields mismatch; "
+                f"missing={sorted(missing_binding_keys)} "
+                f"extra={sorted(extra_binding_keys)}"
+            )
         path = _safe_source_path(binding["path"], f"{binding_label}.path")
         symbols = _string_list(binding["symbols"], f"{binding_label}.symbols")
         if any(
@@ -332,39 +391,57 @@ def _validate_contract(value: Any, label: str) -> Contract:
             raise GateError(f"{binding_label}.symbols must contain exact symbols")
         if binding["role"] not in ALLOWED_BINDING_ROLES:
             raise GateError(f"{binding_label}.role is unknown")
-        raw_surfaces = binding["surfaces"]
-        if not isinstance(raw_surfaces, list) or not raw_surfaces:
-            raise GateError(f"{binding_label}.surfaces must be a non-empty list")
-        surfaces: list[ApprovedSurface] = []
-        seen_surfaces: set[tuple[str, str]] = set()
-        for surface_index, raw_surface in enumerate(raw_surfaces):
-            surface_label = f"{binding_label}.surfaces[{surface_index}]"
-            surface = _expect_object(raw_surface, surface_label)
+        surfaces = _validate_surfaces(
+            binding["surfaces"], f"{binding_label}.surfaces", allow_empty=False
+        )
+        transition = None
+        if "prospective_transition" in binding:
+            transition_value = _expect_object(
+                binding["prospective_transition"],
+                f"{binding_label}.prospective_transition",
+            )
             _expect_exact_keys(
-                surface, {"kind", "signal", "expected_count"}, surface_label
+                transition_value,
+                {"transition_id", "target_surfaces", "rationale"},
+                f"{binding_label}.prospective_transition",
             )
-            kind = _nonempty_string(surface["kind"], f"{surface_label}.kind")
-            if kind not in ALLOWED_FINDING_KINDS:
-                raise GateError(f"{surface_label}.kind is unknown")
-            signal = _nonempty_string(
-                surface["signal"], f"{surface_label}.signal"
+            transition_id = _nonempty_string(
+                transition_value["transition_id"],
+                f"{binding_label}.prospective_transition.transition_id",
             )
-            if any(char in signal for char in "*?[]"):
-                raise GateError(f"{surface_label}.signal must be exact")
-            expected_count = surface["expected_count"]
-            if (
-                not isinstance(expected_count, int)
-                or isinstance(expected_count, bool)
-                or expected_count < 1
-            ):
+            if not ID_PATTERN.fullmatch(transition_id):
                 raise GateError(
-                    f"{surface_label}.expected_count must be a positive integer"
+                    f"{binding_label}.prospective_transition.transition_id "
+                    "has invalid syntax"
                 )
-            key = (kind, signal)
-            if key in seen_surfaces:
-                raise GateError(f"{binding_label} duplicates approved surface {key}")
-            seen_surfaces.add(key)
-            surfaces.append(ApprovedSurface(kind, signal, expected_count))
+            if transition_id in seen_transition_ids:
+                raise GateError(f"{label}: duplicate transition_id {transition_id}")
+            seen_transition_ids.add(transition_id)
+            target_surfaces = _validate_surfaces(
+                transition_value["target_surfaces"],
+                f"{binding_label}.prospective_transition.target_surfaces",
+                allow_empty=True,
+            )
+            current_surface_counts = {
+                (surface.kind, surface.signal): surface.expected_count
+                for surface in surfaces
+            }
+            target_surface_counts = {
+                (surface.kind, surface.signal): surface.expected_count
+                for surface in target_surfaces
+            }
+            if target_surface_counts == current_surface_counts:
+                raise GateError(
+                    f"{binding_label}.prospective_transition must change the surface set"
+                )
+            transition = ProspectiveTransition(
+                transition_id,
+                target_surfaces,
+                _nonempty_string(
+                    transition_value["rationale"],
+                    f"{binding_label}.prospective_transition.rationale",
+                ),
+            )
         _nonempty_string(binding["rationale"], f"{binding_label}.rationale")
         for symbol in symbols:
             key = (path, symbol)
@@ -372,7 +449,7 @@ def _validate_contract(value: Any, label: str) -> Contract:
                 raise GateError(f"{label}: duplicate implementation binding {key}")
             seen_bindings.add(key)
         bindings.append(
-            Binding(path, tuple(symbols), binding["role"], tuple(surfaces))
+            Binding(path, tuple(symbols), binding["role"], surfaces, transition)
         )
 
     authority = _expect_object(obj["authority_boundary"], f"{label}.authority_boundary")
@@ -831,6 +908,58 @@ def load_git_snapshot(
     )
 
 
+def _binding_findings(
+    snapshot: Snapshot, binding: Binding, symbol: str
+) -> list[Finding]:
+    return [
+        finding
+        for finding in snapshot.findings
+        if finding.path == binding.path and finding.symbol == symbol
+    ]
+
+
+def _surface_count_map(
+    surfaces: tuple[ApprovedSurface, ...],
+) -> dict[tuple[str, str], int]:
+    return {(surface.kind, surface.signal): surface.expected_count for surface in surfaces}
+
+
+def _binding_surface_state(
+    snapshot: Snapshot, binding: Binding, symbol: str
+) -> str:
+    if (binding.path, symbol) not in snapshot.symbol_hashes:
+        return "ABSENT"
+    current = _surface_count_map(binding.surfaces)
+    target = (
+        _surface_count_map(binding.prospective_transition.target_surfaces)
+        if binding.prospective_transition is not None
+        else None
+    )
+    authorized_keys = set(current)
+    if target is not None:
+        authorized_keys.update(target)
+    actual = {key: 0 for key in authorized_keys}
+    for finding in _binding_findings(snapshot, binding, symbol):
+        key = (finding.kind, finding.signal)
+        if key in actual:
+            actual[key] += 1
+    actual = {key: count for key, count in actual.items() if count}
+    if actual == current:
+        return "CURRENT"
+    if target is not None and actual == target:
+        return "TARGET"
+    return "INVALID"
+
+
+def _format_surface_set(surfaces: tuple[ApprovedSurface, ...]) -> str:
+    if not surfaces:
+        return "[]"
+    return "[" + ", ".join(
+        f"{surface.kind}:{surface.signal}={surface.expected_count}"
+        for surface in surfaces
+    ) + "]"
+
+
 def validate_snapshot(snapshot: Snapshot) -> list[str]:
     errors: list[str] = []
     exemption_matches = {row.exemption_id: 0 for row in snapshot.exemptions}
@@ -861,26 +990,40 @@ def validate_snapshot(snapshot: Snapshot) -> list[str]:
     for contract in snapshot.contracts.values():
         for binding in contract.bindings:
             for symbol in binding.symbols:
-                # A design-only contract may bind a future exact symbol. Once
-                # the symbol exists, every approved signal count is exact.
                 if (binding.path, symbol) not in snapshot.symbol_hashes:
-                    continue
-                symbol_findings = [
-                    finding
-                    for finding in snapshot.findings
-                    if finding.path == binding.path and finding.symbol == symbol
-                ]
-                for surface in binding.surfaces:
-                    actual = sum(
-                        1 for finding in symbol_findings if surface.matches(finding)
-                    )
-                    if actual != surface.expected_count:
+                    # Steady design-only contracts may bind future exact symbols.
+                    # Prospective transitions are reserved for existing symbols.
+                    if binding.prospective_transition is not None:
                         errors.append(
-                            f"contract {contract.operation_id} binding "
-                            f"{binding.path}:{symbol} expected exactly "
-                            f"{surface.expected_count} {surface.kind}:{surface.signal} "
-                            f"surface(s), found {actual}"
+                            f"contract {contract.operation_id} prospective transition "
+                            f"{binding.prospective_transition.transition_id} requires "
+                            f"existing symbol {binding.path}:{symbol}"
                         )
+                    continue
+                if binding.prospective_transition is None:
+                    symbol_findings = _binding_findings(snapshot, binding, symbol)
+                    for surface in binding.surfaces:
+                        actual = sum(
+                            1
+                            for finding in symbol_findings
+                            if surface.matches(finding)
+                        )
+                        if actual != surface.expected_count:
+                            errors.append(
+                                f"contract {contract.operation_id} binding "
+                                f"{binding.path}:{symbol} expected exactly "
+                                f"{surface.expected_count} {surface.kind}:{surface.signal} "
+                                f"surface(s), found {actual}"
+                            )
+                    continue
+                if _binding_surface_state(snapshot, binding, symbol) == "INVALID":
+                    transition = binding.prospective_transition
+                    errors.append(
+                        f"contract {contract.operation_id} prospective transition "
+                        f"{transition.transition_id} requires {binding.path}:{symbol} "
+                        f"to match CURRENT {_format_surface_set(binding.surfaces)} or "
+                        f"TARGET {_format_surface_set(transition.target_surfaces)}"
+                    )
     return errors
 
 
@@ -986,6 +1129,37 @@ def validate_pull_request(repo: Path, base: str, head: str) -> tuple[Snapshot, l
                     f"removed destructive surface and BASE contract changed together for "
                     f"{contract.operation_id}: {finding.display()}"
                 )
+
+    # An unchanged prospective transition is directional. The design-only PR
+    # leaves BASE in CURRENT; one later implementation PR may move to TARGET.
+    # Once an exact BASE already matches TARGET, the old state is no longer an
+    # authorized destination even though repository snapshots can validate
+    # either side while the transition contract remains checked in.
+    for operation_id, head_contract in head_snapshot.contracts.items():
+        base_contract = base_snapshot.contracts.get(operation_id)
+        if (
+            base_contract is None
+            or base_contract.canonical_bytes != head_contract.canonical_bytes
+        ):
+            continue
+        for binding in head_contract.bindings:
+            transition = binding.prospective_transition
+            if transition is None:
+                continue
+            for symbol in binding.symbols:
+                base_state = _binding_surface_state(base_snapshot, binding, symbol)
+                head_state = _binding_surface_state(head_snapshot, binding, symbol)
+                if base_state not in {"CURRENT", "TARGET"}:
+                    errors.append(
+                        f"prospective transition {transition.transition_id} cannot "
+                        f"prove exact BASE state for {binding.path}:{symbol}: {base_state}"
+                    )
+                elif base_state == "TARGET" and head_state == "CURRENT":
+                    errors.append(
+                        f"prospective transition {transition.transition_id} was already "
+                        f"consumed in exact BASE; reverse/reuse is forbidden for "
+                        f"{binding.path}:{symbol}"
+                    )
     return head_snapshot, errors
 
 

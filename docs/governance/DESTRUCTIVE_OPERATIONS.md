@@ -53,6 +53,17 @@ Changing a planned signal or count requires a separate design-only contract PR
 before implementation. Planned bindings may name future exact files and symbols,
 allowing design approval before source exists without a source fingerprint.
 
+For an existing bound symbol, a design-only PR may add one explicit
+`prospective_transition`. The binding's `surfaces` remain the exact current
+state; `target_surfaces` are the exact reviewed target and may be empty when the
+operation removes all destructive occurrences from that symbol. Repository
+validation accepts only the complete current or complete target set. In the
+later implementation PR, the unchanged exact-BASE contract authorizes only the
+forward current-to-target move. Once BASE already matches the target, returning
+to the old state is rejected as transition reuse. Adding or changing the
+transition beside its implementation remains prohibited. A later design-only
+PR may replace the consumed transition with the target as the steady state.
+
 Run a complete local consistency check with:
 
 ```powershell
@@ -65,7 +76,8 @@ the base tree. A HEAD-only contract cannot authorize that implementation. A
 contract-only PR may pass without its planned source existing. Parse errors,
 unknown schema or enum values, malformed Git evidence, unclassified surfaces,
 missing or extra contract-bound occurrences, unused or overbroad exemptions,
-and ambiguous ownership fail closed.
+invalid transition states, reverse transition reuse, and ambiguous ownership
+fail closed.
 
 ## Current Registration
 
