@@ -60,11 +60,18 @@ Run checks appropriate to the changed surface and the repository's actual CI
 classifier. Typical local checks include:
 
 ```powershell
-python -m pytest
+python -m pytest tests/<focused-test-file>.py
+./scripts/verify_full.ps1
 python scripts/check_repo_hygiene.py
 python scripts/check_release.py
 git diff --check
 ```
+
+On Windows, `scripts/verify_full.ps1` is the canonical local FULL test entry
+point. Do not run FULL pytest with `--basetemp` inside a MarketVault repository
+or any registered Git worktree. The wrapper proves an external temporary path
+safe and checks disk capacity before pytest starts; see the Development
+Playbook for its override and cleanup contract.
 
 Do not manually force a reduced CI tier. Inspect the full diff and changed-file
 scope before committing. PRs must state behavior and contract impact, tests

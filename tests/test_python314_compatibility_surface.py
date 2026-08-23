@@ -406,12 +406,19 @@ def test_manifest_hash_mismatch_fails(tmp_path):
 def test_crlf_manifest_normalizes_to_lf(tmp_path, sealed_nodeids):
     """A CRLF checkout must validate the same as an LF checkout: CRLF is
     normalized before every static check and before the hash."""
-    repo = make_repo(tmp_path)
-    data = REAL_MANIFEST.read_bytes().replace(b"\n", b"\r\n")
-    (repo / MANIFEST_REL).write_bytes(data)
-    runner = FakeRunner(FakeProc(stdout=nodeids_stdout(sealed_nodeids)))
-    failures = surface.validate(repo, runner=runner)
-    assert failures == []
+    normalized, error = surface._normalize_manifest(REAL_MANIFEST.read_bytes())
+    assert error is None
+    lf_data = normalized.encode("utf-8")
+    crlf_data = lf_data.replace(b"\n", b"\r\n")
+
+    results = []
+    for name, data in (("lf", lf_data), ("crlf", crlf_data)):
+        repo = tmp_path / name
+        (repo / "ci").mkdir(parents=True)
+        (repo / MANIFEST_REL).write_bytes(data)
+        runner = FakeRunner(FakeProc(stdout=nodeids_stdout(sealed_nodeids)))
+        results.append(surface.validate(repo, runner=runner))
+    assert results == [[], []]
 
 
 # ---------------------------------------------------------------------------
