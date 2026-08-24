@@ -6,6 +6,8 @@ MarketVault 的仓库级开发手册。Claude Code、Codex 以及人工开发者
 - PR 生命周期与本地验证层级：本文件。
 - 正式发布流程：见 [RELEASE_PLAYBOOK.md](RELEASE_PLAYBOOK.md)。
 - Agent 执行协议：见 [AGENT_HANDOFF.md](AGENT_HANDOFF.md)。
+- 破坏性操作两阶段设计门：见
+  [DESTRUCTIVE_OPERATIONS.md](DESTRUCTIVE_OPERATIONS.md)。
 - 动机与路线图：见
   [docs/development_protocol_v1.md](../development_protocol_v1.md)。
 
@@ -44,6 +46,10 @@ MarketVault 的仓库级开发手册。Claude Code、Codex 以及人工开发者
 
 在分支上实现冻结的范围。保持与周围代码一致的风格与注释密度。不得静默添加
 相邻工作。
+
+若范围涉及删除、隔离、覆盖、恢复覆盖、破坏性迁移或其他可能使持久状态不可用
+的操作，实施前必须先完成独立的 design-only PR。实施 PR 的 base 必须已经包含
+批准的机器可读合同；合同与首次实现不得位于同一个 PR。
 
 ### 1.5 本地验证层级
 
