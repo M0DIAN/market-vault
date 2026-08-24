@@ -272,11 +272,14 @@ def test_windows_reparse_policy_cannot_be_omitted_for_path_mutation():
         _validate(value)
 
 
-def test_existing_safe_purge_contract_and_inventory_validate():
+def test_existing_destructive_contracts_and_inventory_validate():
     snapshot = gate.load_worktree_snapshot(ROOT)
     assert gate.validate_snapshot(snapshot) == []
-    assert set(snapshot.contracts) == {"safe_purge_v01"}
-    assert len(snapshot.exemptions) == 19
+    assert set(snapshot.contracts) == {
+        "safe_purge_v01",
+        "catalog_ingestion_run_recording_v1",
+    }
+    assert len(snapshot.exemptions) == 18
     assert len(snapshot.findings) == 37
     purge_findings = [
         finding
@@ -289,6 +292,21 @@ def test_existing_safe_purge_contract_and_inventory_validate():
         for surface in binding.surfaces
     )
     assert len(purge_findings) == expected_count == 18
+
+    catalog_contract = snapshot.contracts["catalog_ingestion_run_recording_v1"]
+    catalog_findings = [
+        finding
+        for finding in snapshot.findings
+        if finding.path == "src/market_vault/storage/catalog.py"
+        and finding.symbol == "Catalog.record_run"
+        and finding.kind == "destructive_sql"
+        and finding.signal == "sql.DELETE_FROM"
+        and catalog_contract.covers(finding)
+    ]
+    assert len(catalog_findings) == 1
+    assert "catalog_ingestion_run_idempotent_replace" not in {
+        exemption.exemption_id for exemption in snapshot.exemptions
+    }
 
 
 def test_known_infrastructure_exemption_is_exactly_bound():
