@@ -1,17 +1,13 @@
 from __future__ import annotations
 
-import argparse
 import sys
 
-
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Launch MarketVault Console")
-    parser.add_argument("--settings", default="config/settings.yaml")
-    return parser
+from ..windows_launcher import build_parser, resolve_settings_path
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    settings_path = resolve_settings_path(args.settings, frozen=False)
     try:
         from .ui import run_console
     except ModuleNotFoundError as exc:
@@ -25,7 +21,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    return run_console(args.settings)
+    return run_console(str(settings_path))
 
 
 if __name__ == "__main__":

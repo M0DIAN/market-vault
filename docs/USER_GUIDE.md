@@ -125,6 +125,24 @@ Audit、Trading Calendar、Backfill plan/execute、Storage / Purge 与 Runs。
 
 精确行为以 [Console v0.1 contract](contracts/console_v01.md) 为准。
 
+### Windows development EXE build
+
+Windows developers can build the Console as a PyInstaller onedir application.
+Install the dedicated build dependency and run the canonical script from any
+working directory:
+
+```powershell
+python -m pip install -e ".[windows-exe]"
+.\scripts\build_windows_console.ps1
+```
+
+The development bundle is written to `dist\MarketVault\`, with the editable
+settings file at `dist\MarketVault\config\settings.yaml` and supporting native
+runtime files under `_internal\`. `MarketVault.exe` resolves this settings file
+from its own directory, not the process working directory. The build refuses to
+overwrite an existing distributable or ZIP; it never removes a shared `dist`
+directory. This is a development artifact, not an official release.
+
 ### Safe Purge v0.1
 
 先生成完全本地的 sealed plan：
