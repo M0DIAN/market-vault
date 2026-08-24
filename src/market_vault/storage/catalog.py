@@ -233,35 +233,47 @@ class Catalog:
     def record_run(self, manifest: RunManifest) -> None:
         self.initialize()
         with self.connect() as con:
-            con.execute("DELETE FROM ingestion_runs WHERE run_id = ?", [manifest.run_id])
-            con.execute(
-                """
-                INSERT INTO ingestion_runs (
-                    run_id, started_at, finished_at, requested_trade_date,
-                    requested_symbols, interval, session, adjustment,
-                    successful_symbols, failed_symbols, raw_file, curated_file,
-                    row_count, status, config_hash, snapshot_binding_mode
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                [
-                    manifest.run_id,
-                    manifest.started_at,
-                    manifest.finished_at,
-                    manifest.requested_trade_date,
-                    json.dumps(manifest.requested_symbols),
-                    manifest.interval,
-                    manifest.session,
-                    manifest.adjustment,
-                    json.dumps(manifest.successful_symbols),
-                    json.dumps(manifest.failed_symbols),
-                    manifest.raw_file,
-                    manifest.curated_file,
-                    manifest.row_count,
-                    manifest.status,
-                    manifest.config_hash,
-                    manifest.snapshot_binding_mode,
-                ],
-            )
+            con.execute("BEGIN TRANSACTION")
+            try:
+                con.execute("DELETE FROM ingestion_runs WHERE run_id = ?", [manifest.run_id])
+                self._insert_ingestion_run_row(con, manifest)
+                con.execute("COMMIT")
+            except BaseException:
+                con.execute("ROLLBACK")
+                raise
+
+    @staticmethod
+    def _insert_ingestion_run_row(
+        con: duckdb.DuckDBPyConnection, manifest: RunManifest
+    ) -> None:
+        con.execute(
+            """
+            INSERT INTO ingestion_runs (
+                run_id, started_at, finished_at, requested_trade_date,
+                requested_symbols, interval, session, adjustment,
+                successful_symbols, failed_symbols, raw_file, curated_file,
+                row_count, status, config_hash, snapshot_binding_mode
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                manifest.run_id,
+                manifest.started_at,
+                manifest.finished_at,
+                manifest.requested_trade_date,
+                json.dumps(manifest.requested_symbols),
+                manifest.interval,
+                manifest.session,
+                manifest.adjustment,
+                json.dumps(manifest.successful_symbols),
+                json.dumps(manifest.failed_symbols),
+                manifest.raw_file,
+                manifest.curated_file,
+                manifest.row_count,
+                manifest.status,
+                manifest.config_hash,
+                manifest.snapshot_binding_mode,
+            ],
+        )
 
     @staticmethod
     def _snapshot_pair_from_row(row: tuple) -> MarketBarSnapshotPair:

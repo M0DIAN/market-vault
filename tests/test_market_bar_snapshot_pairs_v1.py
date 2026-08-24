@@ -326,6 +326,101 @@ def test_historical_catalog_rows_keep_null_mode(tmp_path):
     assert row == (None,)
 
 
+def test_record_run_replacement_rolls_back_atomically_and_retries(monkeypatch, tmp_path):
+    cfg = settings(tmp_path)
+    catalog = Catalog(cfg)
+    original = RunManifest(
+        requested_trade_date=TRADE_DATE,
+        requested_symbols=["US.SPY"],
+        interval="1m",
+        session="ALL",
+        adjustment="NONE",
+        run_id="replace-run",
+        status="FAILED",
+        config_hash="original-config",
+    )
+    unrelated = RunManifest(
+        requested_trade_date=TRADE_DATE,
+        requested_symbols=["US.QQQ"],
+        interval="1m",
+        session="ALL",
+        adjustment="NONE",
+        run_id="unrelated-run",
+        status="SUCCESS",
+        config_hash="unrelated-config",
+    )
+    catalog.record_run(original)
+    catalog.record_run(unrelated)
+
+    replacement = RunManifest(
+        requested_trade_date=TRADE_DATE,
+        requested_symbols=["US.SPY"],
+        interval="1m",
+        session="ALL",
+        adjustment="NONE",
+        run_id="replace-run",
+        status="SUCCESS",
+        successful_symbols=["US.SPY"],
+        row_count=2,
+        config_hash="replacement-config",
+        snapshot_binding_mode="REGISTERED_PER_SYMBOL",
+    )
+
+    def fail_after_delete(_con, _manifest):
+        raise RuntimeError("injected insert failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            Catalog,
+            "_insert_ingestion_run_row",
+            staticmethod(fail_after_delete),
+        )
+        with pytest.raises(RuntimeError, match="injected insert failure"):
+            catalog.record_run(replacement)
+
+    with catalog.connect() as con:
+        rows = con.execute(
+            """
+            SELECT run_id, status, config_hash, snapshot_binding_mode
+            FROM ingestion_runs
+            ORDER BY run_id
+            """
+        ).fetchall()
+    assert rows == [
+        ("replace-run", "FAILED", "original-config", None),
+        ("unrelated-run", "SUCCESS", "unrelated-config", None),
+    ]
+
+    catalog.record_run(replacement)
+    with catalog.connect() as con:
+        rows = con.execute(
+            """
+            SELECT run_id, status, successful_symbols, row_count, config_hash,
+                   snapshot_binding_mode
+            FROM ingestion_runs
+            ORDER BY run_id
+            """
+        ).fetchall()
+    assert rows == [
+        (
+            "replace-run",
+            "SUCCESS",
+            '["US.SPY"]',
+            2,
+            "replacement-config",
+            "REGISTERED_PER_SYMBOL",
+        ),
+        (
+            "unrelated-run",
+            "SUCCESS",
+            "[]",
+            0,
+            "unrelated-config",
+            None,
+        ),
+    ]
+
+
 def test_registered_symbol_can_be_purged_without_sibling(monkeypatch, tmp_path):
     cfg = settings(tmp_path)
     manifest = collect(
@@ -507,6 +602,58 @@ def test_registered_pair_catalog_drift_refuses_before_mutation(monkeypatch, tmp_
     with pytest.raises(PurgeError, match="snapshot-pair binding drifted"):
         purge_execute(cfg, plan_id=sealed.plan_id, confirmation=f"PURGE {sealed.plan_id}")
     assert Path(manifest.raw_file).exists() and Path(manifest.curated_file).exists()
+
+
+@pytest.mark.parametrize(
+    ("column", "value"),
+    [
+        ("raw_file", "wrong-raw.parquet"),
+        ("symbol", "US.WRONG"),
+    ],
+)
+def test_registered_pair_identity_drift_refuses_before_mutation(
+    monkeypatch, tmp_path, column, value
+):
+    cfg = settings(tmp_path)
+    manifest = collect(monkeypatch, cfg, {"US.SPY": raw_frame("US.SPY")})
+    sealed = purge_for(cfg, ["US.SPY"])
+    with Catalog(cfg).connect() as con:
+        con.execute(
+            f"UPDATE market_bar_snapshot_pairs SET {column} = ? "
+            "WHERE run_id = ? AND symbol = 'US.SPY'",
+            [value, manifest.run_id],
+        )
+    with pytest.raises(PurgeError, match="snapshot-pair binding drifted"):
+        purge_execute(cfg, plan_id=sealed.plan_id, confirmation=f"PURGE {sealed.plan_id}")
+    assert Path(manifest.raw_file).exists() and Path(manifest.curated_file).exists()
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_code"),
+    [
+        ("DELETE FROM ingestion_runs WHERE run_id = ?", "UNREGISTERED_SNAPSHOT"),
+        ("UPDATE ingestion_runs SET status = 'RUNNING' WHERE run_id = ?", "ACTIVE_RUN"),
+        (
+            "UPDATE ingestion_runs SET successful_symbols = '[]' WHERE run_id = ?",
+            "REGISTERED_RUN_SYMBOL_MISMATCH",
+        ),
+    ],
+)
+def test_registered_run_authority_corruption_refuses_planning(
+    monkeypatch, tmp_path, mutation, expected_code
+):
+    cfg = settings(tmp_path)
+    collect(monkeypatch, cfg, {"US.SPY": raw_frame("US.SPY")})
+    catalog = Catalog(cfg)
+    with catalog.connect() as con:
+        run_id = con.execute(
+            "SELECT run_id FROM ingestion_runs WHERE snapshot_binding_mode = ?",
+            ["REGISTERED_PER_SYMBOL"],
+        ).fetchone()[0]
+        con.execute(mutation, [run_id])
+    refused = purge_for(cfg, ["US.SPY"])
+    assert refused.status == "REFUSED"
+    assert any(item["code"] == expected_code for item in refused.refusal_reasons)
 
 
 def test_extra_intersecting_unregistered_parquet_refuses_registered_plan(monkeypatch, tmp_path):
