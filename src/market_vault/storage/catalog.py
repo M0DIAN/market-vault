@@ -9,7 +9,13 @@ from typing import Iterable
 import duckdb
 import pandas as pd
 
-from ..models import DatasetRunManifest, QualityResult, RunManifest, Settings
+from ..models import (
+    DatasetRunManifest,
+    MarketBarSnapshotPair,
+    QualityResult,
+    RunManifest,
+    Settings,
+)
 
 
 @dataclass(frozen=True)
@@ -39,6 +45,7 @@ class SnapshotRows:
 
 #: Stable order for incomplete-item reasons reported to audits.
 INCOMPLETE_REASON_PRIORITY = (
+    "SNAPSHOT_BINDING_INVALID",
     "QUALITY_FAIL",
     "RUN_FAILED",
     "RUN_RUNNING",
@@ -54,6 +61,7 @@ def _snapshot_incomplete_reason(
     has_quality_fail: bool,
     run_metadata: tuple | None,
     curated_metadata: tuple,
+    binding_valid: bool = True,
 ) -> str | None:
     """Reason why a single snapshot cannot satisfy the completion criteria.
 
@@ -68,6 +76,8 @@ def _snapshot_incomplete_reason(
         return "RUN_STATUS_UNKNOWN"
     if run_status is None:
         return "ORPHANED_RUN"
+    if not binding_valid:
+        return "SNAPSHOT_BINDING_INVALID"
     if has_quality_fail:
         return "QUALITY_FAIL"
     if run_status == "FAILED":
@@ -79,6 +89,36 @@ def _snapshot_incomplete_reason(
     if run_metadata != curated_metadata:
         return "RUN_METADATA_MISMATCH"
     return None
+
+
+_MARKET_BAR_BINDING_PREDICATE = """
+(
+    (
+        r.snapshot_binding_mode IS NULL
+        AND NOT EXISTS (
+            SELECT 1 FROM market_bar_snapshot_pairs any_pair
+            WHERE any_pair.run_id = r.run_id
+        )
+    )
+    OR
+    (
+        r.snapshot_binding_mode = 'REGISTERED_PER_SYMBOL'
+        AND p.run_id IS NOT NULL
+        AND p.requested_trade_date = c.requested_trade_date
+        AND p.interval = c.interval
+        AND p.session = c.requested_session
+        AND p.adjustment = c.adjustment
+        AND p.source = c.source
+        AND p.source_schema_version = c.source_schema_version
+        AND replace(p.curated_file, chr(92), '/') = replace(c.filename, chr(92), '/')
+        AND EXISTS (
+            SELECT 1
+            FROM json_each(r.successful_symbols) successful
+            WHERE upper(trim(both '"' FROM successful.value::VARCHAR)) = upper(c.code)
+        )
+    )
+)
+"""
 
 
 class Catalog:
@@ -109,6 +149,27 @@ class Catalog:
                     row_count BIGINT,
                     status VARCHAR,
                     config_hash VARCHAR
+                )
+                """
+            )
+            con.execute(
+                "ALTER TABLE ingestion_runs ADD COLUMN IF NOT EXISTS snapshot_binding_mode VARCHAR"
+            )
+            con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS market_bar_snapshot_pairs (
+                    run_id VARCHAR NOT NULL,
+                    symbol VARCHAR NOT NULL,
+                    requested_trade_date DATE NOT NULL,
+                    interval VARCHAR NOT NULL,
+                    session VARCHAR NOT NULL,
+                    adjustment VARCHAR NOT NULL,
+                    source VARCHAR NOT NULL,
+                    source_schema_version VARCHAR NOT NULL,
+                    raw_file VARCHAR NOT NULL,
+                    curated_file VARCHAR NOT NULL,
+                    row_count BIGINT NOT NULL,
+                    PRIMARY KEY (run_id, symbol)
                 )
                 """
             )
@@ -175,7 +236,12 @@ class Catalog:
             con.execute("DELETE FROM ingestion_runs WHERE run_id = ?", [manifest.run_id])
             con.execute(
                 """
-                INSERT INTO ingestion_runs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO ingestion_runs (
+                    run_id, started_at, finished_at, requested_trade_date,
+                    requested_symbols, interval, session, adjustment,
+                    successful_symbols, failed_symbols, raw_file, curated_file,
+                    row_count, status, config_hash, snapshot_binding_mode
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     manifest.run_id,
@@ -193,8 +259,116 @@ class Catalog:
                     manifest.row_count,
                     manifest.status,
                     manifest.config_hash,
+                    manifest.snapshot_binding_mode,
                 ],
             )
+
+    @staticmethod
+    def _snapshot_pair_from_row(row: tuple) -> MarketBarSnapshotPair:
+        return MarketBarSnapshotPair.create(
+            run_id=row[0],
+            symbol=row[1],
+            requested_trade_date=row[2],
+            interval=row[3],
+            session=row[4],
+            adjustment=row[5],
+            source=row[6],
+            source_schema_version=row[7],
+            raw_file=row[8],
+            curated_file=row[9],
+            row_count=row[10],
+        )
+
+    def register_market_bar_snapshot_pair(self, pair: MarketBarSnapshotPair) -> None:
+        """Insert one exact physical binding or validate an identical existing row."""
+        normalized = MarketBarSnapshotPair.create(**pair.__dict__)
+        values = (
+            normalized.run_id,
+            normalized.symbol,
+            normalized.requested_trade_date,
+            normalized.interval,
+            normalized.session,
+            normalized.adjustment,
+            normalized.source,
+            normalized.source_schema_version,
+            normalized.raw_file,
+            normalized.curated_file,
+            normalized.row_count,
+        )
+        self.initialize()
+        with self.connect() as con:
+            existing = con.execute(
+                """
+                SELECT run_id, symbol, requested_trade_date, interval, session,
+                       adjustment, source, source_schema_version, raw_file,
+                       curated_file, row_count
+                FROM market_bar_snapshot_pairs
+                WHERE run_id = ? AND symbol = ?
+                """,
+                [normalized.run_id, normalized.symbol],
+            ).fetchone()
+            if existing is not None:
+                if tuple(existing) != values:
+                    raise RuntimeError(
+                        "market-bar snapshot pair conflict for "
+                        f"({normalized.run_id}, {normalized.symbol})"
+                    )
+                return
+            con.execute(
+                """
+                INSERT INTO market_bar_snapshot_pairs (
+                    run_id, symbol, requested_trade_date, interval, session,
+                    adjustment, source, source_schema_version, raw_file,
+                    curated_file, row_count
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                values,
+            )
+
+    def market_bar_snapshot_pair(
+        self, run_id: str, symbol: str
+    ) -> MarketBarSnapshotPair | None:
+        self.initialize()
+        normalized_symbol = symbol.strip().upper()
+        with self.connect() as con:
+            row = con.execute(
+                """
+                SELECT run_id, symbol, requested_trade_date, interval, session,
+                       adjustment, source, source_schema_version, raw_file,
+                       curated_file, row_count
+                FROM market_bar_snapshot_pairs
+                WHERE run_id = ? AND symbol = ?
+                """,
+                [run_id, normalized_symbol],
+            ).fetchone()
+        return self._snapshot_pair_from_row(row) if row is not None else None
+
+    def market_bar_snapshot_pairs_for_run(
+        self, run_id: str
+    ) -> list[MarketBarSnapshotPair]:
+        self.initialize()
+        with self.connect() as con:
+            rows = con.execute(
+                """
+                SELECT run_id, symbol, requested_trade_date, interval, session,
+                       adjustment, source, source_schema_version, raw_file,
+                       curated_file, row_count
+                FROM market_bar_snapshot_pairs
+                WHERE run_id = ?
+                ORDER BY symbol
+                """,
+                [run_id],
+            ).fetchall()
+        return [self._snapshot_pair_from_row(row) for row in rows]
+
+    def market_bar_snapshot_pair_count(self, run_id: str) -> int:
+        self.initialize()
+        with self.connect() as con:
+            row = con.execute(
+                "SELECT count(*) FROM market_bar_snapshot_pairs WHERE run_id = ?",
+                [run_id],
+            ).fetchone()
+        return int(row[0])
 
     def record_quality(self, run_id: str, results: Iterable[QualityResult]) -> None:
         self.initialize()
@@ -582,12 +756,6 @@ class Catalog:
                     FROM quality_results
                     WHERE result = 'FAIL'
                 ),
-                eligible_runs AS (
-                    SELECT run_id, requested_trade_date, interval, session, adjustment
-                    FROM ingestion_runs
-                    WHERE status IN ('SUCCESS', 'PARTIAL')
-                      AND run_id NOT IN (SELECT run_id FROM failed_runs)
-                ),
                 curated AS (
                     SELECT
                         code,
@@ -596,24 +764,37 @@ class Catalog:
                         adjustment,
                         {requested_session_expr},
                         {source_schema_expr},
-                        ingestion_run_id
-                    FROM read_parquet('{curated_glob}', union_by_name = true, hive_partitioning = true)
+                        source,
+                        ingestion_run_id,
+                        filename
+                    FROM read_parquet(
+                        '{curated_glob}',
+                        union_by_name = true,
+                        hive_partitioning = true,
+                        filename = true
+                    )
                     WHERE requested_trade_date >= ?
                       AND requested_trade_date <= ?
                       AND code IN ({codes_clause})
                 )
                 SELECT DISTINCT c.code, c.requested_trade_date
                 FROM curated c
-                JOIN eligible_runs r
+                JOIN ingestion_runs r
                   ON r.run_id = c.ingestion_run_id
                  AND r.requested_trade_date = c.requested_trade_date
                  AND r.interval = c.interval
                  AND r.adjustment = c.adjustment
                  AND r.session = c.requested_session
+                LEFT JOIN market_bar_snapshot_pairs p
+                  ON p.run_id = c.ingestion_run_id
+                 AND p.symbol = c.code
                 WHERE c.interval = ?
                   AND c.adjustment = ?
                   AND c.requested_session = ?
                   AND c.source_schema_version = ?
+                  AND upper(r.status) IN ('SUCCESS', 'PARTIAL')
+                  AND r.run_id NOT IN (SELECT run_id FROM failed_runs)
+                  AND {_MARKET_BAR_BINDING_PREDICATE}
             """
             params: list[object] = [min_date, max_date, *symbols, interval, adjustment, requested_session, source_schema_version]
             rows = con.execute(sql, params).fetchall()
@@ -735,8 +916,15 @@ class Catalog:
                         adjustment,
                         {session_expr},
                         {schema_expr},
-                        {run_id_expr}
-                    FROM read_parquet('{curated_glob}', union_by_name = true, hive_partitioning = true)
+                        source,
+                        {run_id_expr},
+                        filename
+                    FROM read_parquet(
+                        '{curated_glob}',
+                        union_by_name = true,
+                        hive_partitioning = true,
+                        filename = true
+                    )
                     WHERE requested_trade_date >= ?
                       AND requested_trade_date <= ?
                       AND code IN ({codes_clause})
@@ -748,7 +936,9 @@ class Catalog:
                         requested_trade_date,
                         interval,
                         session,
-                        adjustment
+                        adjustment,
+                        snapshot_binding_mode,
+                        successful_symbols
                     FROM ingestion_runs
                 ),
                 failed AS (
@@ -765,10 +955,17 @@ class Catalog:
                     r.requested_trade_date AS run_requested_trade_date,
                     r.interval AS run_interval,
                     r.session AS run_session,
-                    r.adjustment AS run_adjustment
+                    r.adjustment AS run_adjustment,
+                    CASE
+                        WHEN r.run_id IS NULL THEN TRUE
+                        ELSE {_MARKET_BAR_BINDING_PREDICATE}
+                    END AS binding_valid
                 FROM curated c
                 LEFT JOIN runs r ON r.run_id = c.ingestion_run_id
                 LEFT JOIN failed f ON f.run_id = c.ingestion_run_id
+                LEFT JOIN market_bar_snapshot_pairs p
+                  ON p.run_id = c.ingestion_run_id
+                 AND p.symbol = c.code
                 WHERE c.interval = ?
                   AND c.adjustment = ?
                   AND c.requested_session = ?
@@ -795,6 +992,7 @@ class Catalog:
             run_interval,
             run_session,
             run_adjustment,
+            binding_valid,
         ) in rows:
             # Both tuples follow the same field order: trade date, interval,
             # session, adjustment -- expanding the request-key parameters
@@ -815,6 +1013,7 @@ class Catalog:
                     requested_session,
                     adjustment,
                 ),
+                binding_valid=bool(binding_valid),
             )
             if reason is not None:
                 reasons.setdefault((code, trade_date), set()).add(reason)
@@ -883,6 +1082,7 @@ class Catalog:
                         adjustment,
                         {session_expr},
                         {schema_expr},
+                        source,
                         {run_id_expr},
                         {ingested_expr},
                         filename
@@ -912,6 +1112,9 @@ class Catalog:
                      AND r.interval = c.interval
                      AND r.adjustment = c.adjustment
                      AND r.session = c.requested_session
+                    LEFT JOIN market_bar_snapshot_pairs p
+                      ON p.run_id = c.ingestion_run_id
+                     AND p.symbol = c.code
                     WHERE c.interval = ?
                       AND c.adjustment = ?
                       AND c.requested_session = ?
@@ -920,6 +1123,7 @@ class Catalog:
                       AND c.ingestion_run_id NOT IN (
                           SELECT run_id FROM quality_results WHERE result = 'FAIL'
                       )
+                      AND {_MARKET_BAR_BINDING_PREDICATE}
                     GROUP BY
                         c.code,
                         c.requested_trade_date,
@@ -1146,12 +1350,6 @@ class Catalog:
                     FROM quality_results
                     WHERE result = 'FAIL'
                 ),
-                eligible_runs AS (
-                    SELECT run_id, requested_trade_date, interval, session, adjustment
-                    FROM ingestion_runs
-                    WHERE status IN ('SUCCESS', 'PARTIAL')
-                      AND run_id NOT IN (SELECT run_id FROM failed_runs)
-                ),
                 curated AS (
                     SELECT
                         code,
@@ -1160,23 +1358,36 @@ class Catalog:
                         adjustment,
                         {requested_session_expr},
                         {source_schema_expr},
-                        ingestion_run_id
-                    FROM read_parquet('{curated_glob}', union_by_name = true, hive_partitioning = true)
+                        source,
+                        ingestion_run_id,
+                        filename
+                    FROM read_parquet(
+                        '{curated_glob}',
+                        union_by_name = true,
+                        hive_partitioning = true,
+                        filename = true
+                    )
                     WHERE requested_trade_date <= ?
                       AND code IN ({codes_clause})
                 )
                 SELECT c.code, max(c.requested_trade_date) AS latest_trade_date
                 FROM curated c
-                JOIN eligible_runs r
+                JOIN ingestion_runs r
                   ON r.run_id = c.ingestion_run_id
                  AND r.requested_trade_date = c.requested_trade_date
                  AND r.interval = c.interval
                  AND r.adjustment = c.adjustment
                  AND r.session = c.requested_session
+                LEFT JOIN market_bar_snapshot_pairs p
+                  ON p.run_id = c.ingestion_run_id
+                 AND p.symbol = c.code
                 WHERE c.interval = ?
                   AND c.adjustment = ?
                   AND c.requested_session = ?
                   AND c.source_schema_version = ?
+                  AND upper(r.status) IN ('SUCCESS', 'PARTIAL')
+                  AND r.run_id NOT IN (SELECT run_id FROM failed_runs)
+                  AND {_MARKET_BAR_BINDING_PREDICATE}
                 GROUP BY c.code
             """
             params: list[object] = [end_date, *symbols, interval, adjustment, requested_session, source_schema_version]

@@ -42,6 +42,71 @@ class QualityResult:
         }
 
 
+@dataclass(frozen=True)
+class MarketBarSnapshotPair:
+    run_id: str
+    symbol: str
+    requested_trade_date: date
+    interval: str
+    session: str
+    adjustment: str
+    source: str
+    source_schema_version: str
+    raw_file: str
+    curated_file: str
+    row_count: int
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        run_id: str,
+        symbol: str,
+        requested_trade_date: date,
+        interval: str,
+        session: str,
+        adjustment: str,
+        source: str,
+        source_schema_version: str,
+        raw_file: str,
+        curated_file: str,
+        row_count: int,
+    ) -> "MarketBarSnapshotPair":
+        normalized_symbol = symbol.strip().upper()
+        if not normalized_symbol:
+            raise ValueError("symbol cannot be blank")
+        if row_count < 0:
+            raise ValueError("row_count cannot be negative")
+        return cls(
+            run_id=run_id,
+            symbol=normalized_symbol,
+            requested_trade_date=requested_trade_date,
+            interval=interval.lower(),
+            session=session.upper(),
+            adjustment=adjustment.upper(),
+            source=source,
+            source_schema_version=source_schema_version,
+            raw_file=raw_file,
+            curated_file=curated_file,
+            row_count=int(row_count),
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "run_id": self.run_id,
+            "symbol": self.symbol,
+            "requested_trade_date": self.requested_trade_date.isoformat(),
+            "interval": self.interval,
+            "session": self.session,
+            "adjustment": self.adjustment,
+            "source": self.source,
+            "source_schema_version": self.source_schema_version,
+            "raw_file": self.raw_file,
+            "curated_file": self.curated_file,
+            "row_count": self.row_count,
+        }
+
+
 @dataclass
 class RunManifest:
     requested_trade_date: date
@@ -59,6 +124,8 @@ class RunManifest:
     curated_file: str | None = None
     row_count: int = 0
     config_hash: str = ""
+    snapshot_binding_mode: str | None = None
+    snapshot_pairs: list[MarketBarSnapshotPair] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -77,6 +144,10 @@ class RunManifest:
             "row_count": self.row_count,
             "status": self.status,
             "config_hash": self.config_hash,
+            "snapshot_binding_mode": self.snapshot_binding_mode,
+            "snapshot_pairs": [
+                pair.as_dict() for pair in sorted(self.snapshot_pairs, key=lambda item: item.symbol)
+            ],
         }
 
 
