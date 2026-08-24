@@ -11,17 +11,18 @@ or cascade into another dataset kind.
 
 ## Physical Lifecycle Unit
 
-Safe Purge supports two fail-closed discovery modes. If an ingestion run has
-one or more rows in `market_bar_snapshot_pairs`, those rows are authoritative:
-each row binds one independently purgeable per-symbol Raw+Curated pair. The
-plan seals the run metadata and the complete registry row. It does not use an
-`ingestion_runs` compatibility pointer as a substitute for registered pair
-discovery. Selecting one exact registered symbol from a multi-symbol run is
-therefore permitted when its two files contain only that exact scope.
+Safe Purge supports two fail-closed discovery modes using the nullable
+`ingestion_runs.snapshot_binding_mode` as the durable protocol discriminator.
+Every P0-3 run stores `REGISTERED_PER_SYMBOL`, even with zero successful pairs.
+For that mode, registry rows are authoritative and each row binds one
+independently purgeable per-symbol Raw+Curated pair. Zero rows means no
+authoritative pair, never permission to use compatibility pointers.
 
-Legacy classification requires the run to have zero registry rows. For a
+Legacy classification requires both null mode and zero registry rows. For a
 proven legacy run, its complete `ingestion_runs.raw_file` and `curated_file`
-pair remains one lifecycle unit.
+pair remains one lifecycle unit. Null mode with nonzero rows is inconsistent
+and refused. Any unknown non-null mode fails closed.
+
 Planning inspects the files' actual columns and values and seals their relative
 paths, SHA-256 hashes, byte sizes, row counts, symbols, dates, request key, and
 run ID. Partial logical scope in a legacy co-located file remains `REFUSED`
@@ -32,10 +33,13 @@ active files without an authoritative legacy pointer or registry binding remain
 
 Execution re-resolves and compares every sealed run row and, in registered
 mode, the exact `(run_id, symbol)` registry row under the lifecycle lock.
-Deletion or any path, status, metadata, registry, or file-fact drift refuses
-mutation. Matching active Parquet without an authoritative binding is
-`UNREGISTERED_SNAPSHOT`. A `FAILED` run with neither physical path nor pair
-row remains evidence but is not a target. A one-sided pair is always refused.
+Registered targets seal and revalidate exact mode. Explicit legacy targets and
+historical v2 targets without `binding_mode` revalidate both null run mode and
+zero registry rows. Deletion or any path, mode, status, metadata, registry, or
+file-fact drift refuses mutation. Matching active Parquet without an
+authoritative binding is `UNREGISTERED_SNAPSHOT`. A `FAILED` run with neither
+physical path nor pair row remains evidence but is not a target. A one-sided
+pair is always refused.
 Immutable Parquet files are never split or rewritten. The complete physical
 model is defined by
 [`market_bar_physical_snapshots_v1.md`](market_bar_physical_snapshots_v1.md).
@@ -69,18 +73,25 @@ run metadata; new legacy targets may identify `LEGACY_INGESTION_RUN`
 explicitly. This does not bump the plan version. Unknown modes and incomplete
 registered bindings are refused, so previously sealed legacy plans are not
 reinterpreted as registered plans. Under the lifecycle lock, execution of every
-legacy target MUST re-query `market_bar_snapshot_pairs` for its exact run and
-prove that zero rows still exist before mutation. This includes historical v2
-targets without `binding_mode`. Any newly present row is mode/authority drift
-and refuses execution before files move.
+legacy target MUST re-query the exact run mode and its
+`market_bar_snapshot_pairs` rows, proving null mode and zero rows before
+mutation. This includes historical v2 targets without `binding_mode`. Any
+non-null mode or newly present row is mode/authority drift and refuses
+execution before files move.
 
 For new-format collection runs, `successful_symbols` and compatibility pointers
 are authoritative only after exact pair verification and registry insertion.
+Their manifests and terminal `ingestion_runs` rows always carry
+`snapshot_binding_mode: REGISTERED_PER_SYMBOL`, including zero-success runs.
 Files left behind by a failed insertion are unregistered evidence: they do not
 make a symbol successful, do not populate compatibility pointers, and are not
 adopted as a legacy pair. If one symbol is registered and another symbol's
 insertion fails, registered mode remains authoritative for the run and the
 unregistered symbol's files cause lifecycle refusal.
+
+A single-symbol registered run may retain compatibility pointers. If its pair
+row later disappears, the durable registered mode prevents legacy fallback and
+the files are refused as unregistered evidence.
 
 Eligible files move on the same filesystem to:
 

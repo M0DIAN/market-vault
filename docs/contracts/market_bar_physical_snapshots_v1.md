@@ -87,8 +87,21 @@ MAY split or rewrite an immutable file after publication.
 
 ## 3. Physical-Pair Registry
 
-Catalog initialization MUST add the following backward-compatible table
-without destructively migrating `ingestion_runs`:
+Catalog initialization MUST add a nullable physical-protocol discriminator to
+`ingestion_runs` without destructively migrating existing rows:
+
+```sql
+ALTER TABLE ingestion_runs
+ADD COLUMN IF NOT EXISTS snapshot_binding_mode VARCHAR;
+```
+
+Existing and pre-P0-3 rows retain null. Every P0-3 market-bar run MUST store
+the exact value `REGISTERED_PER_SYMBOL`, including a run that finishes with
+zero successful symbols and zero pair rows. The mode describes the run's
+physical publication protocol, not its pair count. No other non-null value is
+defined by v1.
+
+Catalog initialization MUST also add the following backward-compatible table:
 
 ```sql
 CREATE TABLE IF NOT EXISTS market_bar_snapshot_pairs (
@@ -111,7 +124,8 @@ CREATE TABLE IF NOT EXISTS market_bar_snapshot_pairs (
 and `adjustment` are uppercase. `row_count` is the verified row count shared by
 the Raw and Curated files. One row binds exactly one physical pair.
 `ingestion_runs` remains authoritative for the run ID, requested/successful/
-failed symbols, status, request metadata, configuration hash, and timestamps.
+failed symbols, status, request metadata, configuration hash, timestamps, and
+run-level `snapshot_binding_mode`.
 
 Registration MUST use insert-with-validation semantics. A missing key MAY be
 inserted. Re-registering `(run_id, symbol)` is idempotent only when every field
@@ -142,6 +156,16 @@ sorted by `symbol` ascending and each entry MUST have exactly this shape:
 }
 ```
 
+Every new-format manifest MUST also contain this deterministic top-level field:
+
+```json
+"snapshot_binding_mode": "REGISTERED_PER_SYMBOL"
+```
+
+Legacy manifests without the field remain readable and represent no affirmative
+new-format claim. Terminal run publication MUST write the same exact mode in
+the `ingestion_runs` row as part of publishing that run record.
+
 The list contains only verified, registered successful pairs and its symbol set
 MUST equal terminal `successful_symbols`. Its path strings MUST equal the
 corresponding registry fields. Existing top-level fields remain backward
@@ -168,29 +192,32 @@ schema, Dataset schema, timestamp meaning, or source schema.
 
 ## 6. Safe Purge Interaction
 
-Safe Purge has two mutually exclusive discovery modes per ingestion run:
+Safe Purge MUST select authority from the run-level mode and registry count:
 
-1. **REGISTERED_PER_SYMBOL**: if the run has one or more
-   `market_bar_snapshot_pairs` rows, those rows are authoritative. A selected
-   symbol's exact pair MAY be planned independently. The plan seals both the
-   run metadata and the complete registry row.
-2. **LEGACY_INGESTION_RUN**: a run is eligible for legacy classification only
-   if it has zero registry rows. For a proven legacy run, current
-   `ingestion_runs.raw_file` / `curated_file` discovery remains authoritative.
-   A legacy co-located file remains one immutable unit, so partial symbol or
-   data scope is refused.
+1. mode is null and registry count is zero: the run is a
+   **LEGACY_INGESTION_RUN candidate**. Existing legacy pair and physical proofs
+   still apply.
+2. mode is null and registry count is nonzero: authority is inconsistent and
+   planning MUST refuse; it MUST NOT silently adopt registered mode.
+3. mode is `REGISTERED_PER_SYMBOL`: registered mode is permanently
+   authoritative. With rows, each exact row binds an independently selectable
+   pair. With zero rows, there is no authoritative pair; matching physical
+   files are unregistered evidence and legacy pointers MUST NOT be used.
+4. mode is any other non-null value: planning MUST fail closed.
 
-Zero registry rows is necessary, but not sufficient, for an executable legacy
-target: planning MUST also prove the existing legacy pair and absence of
-intersecting unregistered evidence. Registered mode MUST NOT fall back to
-legacy pointers. A matching active file without a resolvable registry binding
-is `UNREGISTERED_SNAPSHOT` and causes refusal. Registry rows are retained
+Thus null mode plus zero rows is necessary, but not sufficient, for an
+executable legacy target: planning MUST also prove the existing legacy pair and
+absence of intersecting unregistered evidence. Registered mode MUST NOT fall
+back to legacy pointers even when compatibility pointers are populated. A
+matching active file without the binding required by its mode is
+`UNREGISTERED_SNAPSHOT` and causes refusal. Registry rows are retained
 historical provenance after quarantine; their active paths are not rewritten
 to quarantine paths and no cascade cleanup occurs.
 
 Under the shared lifecycle lock, execution of a registered target MUST prove:
 
 - the exact run still exists and its sealed metadata is unchanged;
+- `snapshot_binding_mode` remains exactly `REGISTERED_PER_SYMBOL`;
 - the exact `(run_id, symbol)` row still exists and every field is unchanged;
 - Raw and Curated paths are exact regular, non-reparse files within the active
   configured roots;
@@ -200,10 +227,11 @@ Under the shared lifecycle lock, execution of a registered target MUST prove:
 
 Any uncertainty or drift MUST fail before mutation.
 
-For every legacy target, execution MUST re-query
-`market_bar_snapshot_pairs` for the exact run while holding the lifecycle lock
-and MUST prove the result is still empty before moving any file. The appearance
-of any row is mode/authority drift. This rule applies both to targets carrying
+For every legacy target, execution MUST re-query the run and
+`market_bar_snapshot_pairs` while holding the lifecycle lock. It MUST prove
+that `snapshot_binding_mode` is still null and the registry result is still
+empty before moving any file. A non-null/changed mode or any row is
+mode/authority drift. This applies both to targets carrying
 `binding_mode: "LEGACY_INGESTION_RUN"` and to historical v2 targets with no
 `binding_mode` field.
 
@@ -212,8 +240,8 @@ of any row is mode/authority drift. This rule applies both to targets carrying
 `market-vault-safe-purge-plan-v2` remains the plan version. Existing v2 targets
 without a binding-mode field retain their exact legacy interpretation and
 remain executable only when all existing legacy proofs pass and execution
-again proves that the run has zero registry rows. New legacy targets
-MAY state `binding_mode: "LEGACY_INGESTION_RUN"`; new registered targets MUST
+again proves that the run mode is null and registry count is zero. New legacy
+targets MAY state `binding_mode: "LEGACY_INGESTION_RUN"`; new registered targets MUST
 state `binding_mode: "REGISTERED_PER_SYMBOL"` and add a
 `snapshot_pair_binding` object containing all eleven registry fields. Their
 `run_binding` MUST also seal the current run metadata and the actual legacy
@@ -226,8 +254,10 @@ For a new registered target, `run_binding` MUST contain the exact current
 `requested_trade_date`, sorted normalized `requested_symbols`, `interval`,
 `requested_session` (the Catalog `session` value), `adjustment`, sorted
 normalized `successful_symbols`, canonical `failed_symbols`, `raw_file`,
-`curated_file`, `row_count`, `status`, and `config_hash`. Null compatibility
-pointers remain explicit nulls. `snapshot_pair_binding` MUST contain exactly
+`curated_file`, `row_count`, `status`, `config_hash`, and
+`snapshot_binding_mode`. The registered value MUST be
+`REGISTERED_PER_SYMBOL`; null compatibility pointers remain explicit nulls.
+`snapshot_pair_binding` MUST contain exactly
 the registry columns in Section 3, with `requested_trade_date` serialized as
 ISO `YYYY-MM-DD`. The target's existing `raw` and `curated` file-identity
 objects continue to seal resolved data-root-relative paths and physical facts.
@@ -251,8 +281,9 @@ transaction, is the v1 boundary.
 
 A registered pair is eligible for lifecycle operations only when its symbol is
 present in the run's `successful_symbols`, the run is terminal `SUCCESS` or
-`PARTIAL`, and all request metadata agrees. Other physical evidence remains
-visible to inventory but is not silently promoted to a valid pair.
+`PARTIAL`, its run mode is exactly `REGISTERED_PER_SYMBOL`, and all request
+metadata agrees. Other physical evidence remains visible to inventory but is
+not silently promoted to a valid pair.
 
 ## 8. Required Adversarial Outcomes
 
@@ -281,6 +312,19 @@ visible to inventory but is not silently promoted to a valid pair.
     lifecycle operations refuse.
 15. A legacy plan is sealed with zero registry rows and a row appears before
     execution: under-lock mode revalidation refuses before mutation.
+16. A successful single-symbol new-format run retains compatibility pointers,
+    then its registry row disappears: mode remains `REGISTERED_PER_SYMBOL`, the
+    files become unregistered evidence, and Safe Purge never falls back to the
+    pointers.
+17. A new-format run ends with zero successful symbols and zero registry rows:
+    mode remains `REGISTERED_PER_SYMBOL`, so stray files cannot gain legacy
+    authority.
+18. A genuine historical run with null mode and zero registry rows retains
+    existing legacy behavior when every other legacy proof passes.
+19. A historical null-mode run unexpectedly gains registry rows: authority is
+    inconsistent and planning refuses instead of changing modes.
+20. A historical v2 legacy plan is sealed, then the run mode becomes non-null
+    before execution: under-lock revalidation refuses before mutation.
 
 ## 9. Non-Goals
 

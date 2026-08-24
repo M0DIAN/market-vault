@@ -245,7 +245,8 @@
       "A pre-commit failure attempts reverse-order rollback and refreshes active market-bar views.",
       "Immutable precommit evidence is non-terminal and must never by itself prove SUCCESS.",
       "One-sided, unregistered, orphaned-registry, or partially published multi-symbol collection evidence is not a valid registered physical pair and is refused rather than guessed.",
-      "A new-format symbol is not successful and cannot populate compatibility pointers until Raw and Curated publication, exact-pair verification, and exact registry insertion all succeed."
+      "A new-format symbol is not successful and cannot populate compatibility pointers until Raw and Curated publication, exact-pair verification, and exact registry insertion all succeed.",
+      "Every new-format run durably records snapshot_binding_mode REGISTERED_PER_SYMBOL even when it publishes zero pairs, so missing registry evidence cannot create legacy authority."
     ],
     "post_commit": [
       "Rollback is no longer legal after Catalog SUCCESS commits.",
@@ -292,8 +293,8 @@
     ],
     "under_lock_revalidation": [
       "Every planned ingestion run and Raw/Curated identity is re-resolved before mutation.",
-      "Registered targets also re-resolve the exact (run_id, symbol) market_bar_snapshot_pairs row and compare every field.",
-      "Every explicit or historical implicit legacy target re-queries market_bar_snapshot_pairs and proves zero rows still exist for the run before mutation.",
+      "Registered targets re-prove run-level snapshot_binding_mode REGISTERED_PER_SYMBOL, then re-resolve the exact (run_id, symbol) market_bar_snapshot_pairs row and compare every field.",
+      "Every explicit or historical implicit legacy target re-proves null snapshot_binding_mode and zero market_bar_snapshot_pairs rows for the run before mutation.",
       "Matching RUNNING runs, unregistered matching files, and unplanned matching active snapshots are refused."
     ],
     "concurrent_behavior": [
@@ -304,14 +305,14 @@
   "execution_revalidation": {
     "identities": [
       "Exact plan ID, canonical plan content hash, scope, target list, and plan-file location",
-      "Exact ingestion run ID, status, requested and successful symbols, legacy pointer values including nulls, date, interval, requested session, adjustment, and configuration identity",
+      "Exact ingestion run ID, snapshot_binding_mode, status, requested and successful symbols, legacy pointer values including nulls, date, interval, requested session, adjustment, and configuration identity",
       "For registered targets, the exact market_bar_snapshot_pairs run ID, symbol, date, interval, session, adjustment, source, schema version, Raw path, Curated path, and row count",
-      "For explicit LEGACY_INGESTION_RUN and historical v2 targets without binding_mode, an exact empty market_bar_snapshot_pairs result for the run",
+      "For explicit LEGACY_INGESTION_RUN and historical v2 targets without binding_mode, exact null snapshot_binding_mode plus an empty market_bar_snapshot_pairs result for the run",
       "Every target relative path, byte size, SHA-256, row count, symbols, dates, and request-key facts",
       "Active and quarantine file identity, same-filesystem destination, and absence of unplanned matching snapshots"
     ],
     "drift_behavior": [
-      "Any missing, changed, one-sided, co-located, unregistered, unsafe, newly matching, mode-drifted, or otherwise unprovable identity refuses before additional mutation.",
+      "Any missing, changed, one-sided, co-located, unregistered, unsafe, newly matching, unknown-mode, mode-drifted, or otherwise unprovable identity refuses before additional mutation.",
       "Execution never rewrites or splits immutable Parquet to satisfy narrower logical scope."
     ]
   },
@@ -351,14 +352,15 @@
   },
   "physical_atomicity": {
     "lifecycle_unit": [
-      "For a run with one or more market_bar_snapshot_pairs rows, each exact registered per-symbol Raw plus Curated pair is one minimum physical lifecycle unit.",
-      "For a run with zero registry rows, the complete legacy ingestion_runs Raw plus Curated pair remains the minimum physical lifecycle unit only while zero rows are re-proven at execution.",
+      "For a run whose snapshot_binding_mode is REGISTERED_PER_SYMBOL, each exact registered per-symbol Raw plus Curated pair is one minimum physical lifecycle unit; zero rows means no authoritative pair.",
+      "For a null-mode run with zero registry rows, the complete legacy ingestion_runs Raw plus Curated pair remains the minimum physical lifecycle unit only while null mode and zero rows are re-proven at execution.",
       "New-format successful_symbols, snapshot_pairs, and compatibility pointers are derived exclusively from verified registered pairs."
     ],
     "partial_mutation": [
       "A one-sided pair or partial symbol/date/request-key selection within a legacy co-located file refuses the entire plan.",
       "Registered discovery never falls back to legacy pointers, and an unregistered intersecting active file refuses the entire plan.",
       "A registry insertion failure after physical publication leaves non-success unregistered evidence and never creates compatibility pointers or implicit legacy authority.",
+      "A registered-mode run never falls back to compatibility pointers after a registry row disappears, and a null-mode run with registry rows is refused as inconsistent authority.",
       "An interrupted multi-file move remains non-success until rollback or committed recovery completes."
     ],
     "rollback_expectation": [
@@ -378,6 +380,7 @@
       "Missing, conflicting, orphaned, or drifted per-symbol registry binding",
       "A registered pair whose symbol is absent from successful_symbols or whose run is absent, non-terminal, or request-inconsistent",
       "A legacy plan whose run gains any market_bar_snapshot_pairs row after planning",
+      "A registered-mode run with a missing required registry row, a null-mode run with registry rows, any unknown non-null mode, or any mode change after planning",
       "Co-located symbols, dates, or request-key facts outside the exact requested scope",
       "Wildcard scope, arbitrary paths, path drift, Catalog drift, or unverified reparse points"
     ],
@@ -395,7 +398,8 @@
     "Exact whole-physical-batch and complete co-located multi-symbol legacy purge succeeds",
     "An exact registered symbol pair can be purged independently from a multi-symbol logical run without moving sibling pairs",
     "Single-symbol and partial multi-symbol registry insertion failures never publish unregistered files as successful, compatible, or legacy pairs",
-    "Explicit and historical implicit legacy targets refuse when any registry row appears after planning",
+    "Registered-mode single-symbol pointer fallback is refused after registry loss, including zero-pair new-format runs",
+    "Explicit and historical implicit legacy targets refuse when run mode becomes non-null or any registry row appears after planning",
     "Partial legacy co-located scope, unregistered snapshots, one-sided pairs, registry or run drift, bad confirmation, tampering, reparse paths, and lock conflicts refuse",
     "Pre-commit failures roll back without terminal SUCCESS evidence",
     "Post-commit terminal publication interruption recovers exact canonical bytes idempotently",
