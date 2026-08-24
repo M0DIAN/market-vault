@@ -116,6 +116,30 @@ _MARKET_BAR_BINDING_PREDICATE = """
             FROM json_each(r.successful_symbols) successful
             WHERE upper(trim(both '"' FROM successful.value::VARCHAR)) = upper(c.code)
         )
+        AND NOT EXISTS (
+            SELECT 1
+            FROM json_each(r.successful_symbols) successful_set
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM market_bar_snapshot_pairs registered_set
+                WHERE registered_set.run_id = r.run_id
+                  AND upper(trim(registered_set.symbol)) = upper(
+                      trim(both '"' FROM successful_set.value::VARCHAR)
+                  )
+            )
+        )
+        AND NOT EXISTS (
+            SELECT 1
+            FROM market_bar_snapshot_pairs registered_set
+            WHERE registered_set.run_id = r.run_id
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM json_each(r.successful_symbols) successful_set
+                  WHERE upper(
+                      trim(both '"' FROM successful_set.value::VARCHAR)
+                  ) = upper(trim(registered_set.symbol))
+              )
+        )
     )
 )
 """

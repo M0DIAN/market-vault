@@ -467,6 +467,107 @@ def test_registered_binding_disappearance_and_mode_drift_refuse(monkeypatch, tmp
     )
 
 
+def test_registered_run_completion_rejects_all_symbols_when_one_pair_disappears(
+    monkeypatch, tmp_path
+):
+    cfg = settings(tmp_path)
+    manifest = collect(
+        monkeypatch,
+        cfg,
+        {"US.SPY": raw_frame("US.SPY"), "US.QQQ": raw_frame("US.QQQ")},
+    )
+    catalog = Catalog(cfg)
+    completion_kwargs = {
+        "symbols": ["US.SPY", "US.QQQ"],
+        "interval": "1m",
+        "requested_session": "ALL",
+        "adjustment": "NONE",
+        "source_schema_version": cfg.source_schema_version,
+    }
+    expected_items = {("US.SPY", TRADE_DATE), ("US.QQQ", TRADE_DATE)}
+
+    assert catalog.completed_market_bar_items(
+        **completion_kwargs, trade_dates=[TRADE_DATE]
+    ) == expected_items
+    assert set(
+        catalog.latest_complete_market_bar_snapshots(
+            **completion_kwargs, trade_dates=[TRADE_DATE]
+        )
+    ) == expected_items
+    assert catalog.latest_completed_market_bar_dates(
+        **completion_kwargs, end_date=TRADE_DATE
+    ) == {"US.SPY": TRADE_DATE, "US.QQQ": TRADE_DATE}
+
+    with catalog.connect() as con:
+        con.execute(
+            "DELETE FROM market_bar_snapshot_pairs WHERE run_id = ? AND symbol = 'US.QQQ'",
+            [manifest.run_id],
+        )
+
+    assert not catalog.completed_market_bar_items(
+        **completion_kwargs, trade_dates=[TRADE_DATE]
+    )
+    assert not catalog.latest_complete_market_bar_snapshots(
+        **completion_kwargs, trade_dates=[TRADE_DATE]
+    )
+    assert not catalog.latest_completed_market_bar_dates(
+        **completion_kwargs, end_date=TRADE_DATE
+    )
+    assert catalog.incomplete_market_bar_item_reasons(
+        **completion_kwargs, trade_dates=[TRADE_DATE]
+    ) == {
+        ("US.SPY", TRADE_DATE): ["SNAPSHOT_BINDING_INVALID"],
+        ("US.QQQ", TRADE_DATE): ["SNAPSHOT_BINDING_INVALID"],
+    }
+    refused = purge_for(cfg, ["US.SPY"])
+    assert refused.status == "REFUSED"
+    assert any(
+        item["code"] == "REGISTERED_RUN_SYMBOL_MISMATCH"
+        for item in refused.refusal_reasons
+    )
+
+
+def test_registered_run_completion_rejects_registry_symbol_absent_from_success_set(
+    monkeypatch, tmp_path
+):
+    cfg = settings(tmp_path)
+    manifest = collect(
+        monkeypatch,
+        cfg,
+        {"US.SPY": raw_frame("US.SPY"), "US.QQQ": raw_frame("US.QQQ")},
+    )
+    catalog = Catalog(cfg)
+    with catalog.connect() as con:
+        con.execute(
+            "UPDATE ingestion_runs SET successful_symbols = '[\"US.SPY\"]' "
+            "WHERE run_id = ?",
+            [manifest.run_id],
+        )
+
+    completion_kwargs = {
+        "symbols": ["US.SPY", "US.QQQ"],
+        "interval": "1m",
+        "requested_session": "ALL",
+        "adjustment": "NONE",
+        "source_schema_version": cfg.source_schema_version,
+    }
+    assert not catalog.completed_market_bar_items(
+        **completion_kwargs, trade_dates=[TRADE_DATE]
+    )
+    assert not catalog.latest_complete_market_bar_snapshots(
+        **completion_kwargs, trade_dates=[TRADE_DATE]
+    )
+    assert not catalog.latest_completed_market_bar_dates(
+        **completion_kwargs, end_date=TRADE_DATE
+    )
+    assert catalog.incomplete_market_bar_item_reasons(
+        **completion_kwargs, trade_dates=[TRADE_DATE]
+    ) == {
+        ("US.SPY", TRADE_DATE): ["SNAPSHOT_BINDING_INVALID"],
+        ("US.QQQ", TRADE_DATE): ["SNAPSHOT_BINDING_INVALID"],
+    }
+
+
 def test_legacy_authority_requires_null_mode_and_zero_registry_rows(tmp_path):
     cfg = settings(tmp_path)
     manifest, raw_path, curated_path = legacy_pair(cfg, ["US.SPY"])
