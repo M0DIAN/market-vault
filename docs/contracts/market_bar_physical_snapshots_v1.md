@@ -31,6 +31,35 @@ A failed symbol MUST NOT produce or register a successful pair. Recollection,
 including forced collection, MUST use a new `run_id`, create another pair, and
 MUST NOT overwrite an earlier file.
 
+### New-format publication invariant
+
+For every P0-3 run, a symbol MUST NOT enter `RunManifest.successful_symbols`
+until all of the following have succeeded in order:
+
+1. Raw publication;
+2. Curated publication;
+3. verification that Raw and Curated facts form one exact pair; and
+4. insertion, or exact-idempotent validation, of the corresponding
+   `market_bar_snapshot_pairs` row.
+
+For a terminal new-format run, the normalized set in `successful_symbols`
+MUST equal the normalized symbol set represented by its verified registered
+`snapshot_pairs`. `RunManifest.snapshot_pairs` MUST contain exactly those
+registered successful pairs and no unregistered physical evidence.
+
+The compatibility pointers MUST be derived only from that registered list:
+
+- zero registered pairs: `raw_file` and `curated_file` are both null;
+- one registered pair: both point to that exact registered pair;
+- more than one registered pair: both are null.
+
+If registry insertion fails after both files were written, the symbol MUST NOT
+be published as successful, the failure MUST be represented in the run's
+failed-symbol evidence, and those paths MUST NOT populate the compatibility
+pointers. The files remain immutable unregistered physical evidence. They MAY
+be reported by inventory, but completion and lifecycle operations MUST refuse
+to infer a successful or legacy pair from them.
+
 The existing hierarchy is unchanged:
 
 ```text
@@ -113,9 +142,10 @@ sorted by `symbol` ascending and each entry MUST have exactly this shape:
 }
 ```
 
-The list contains only verified, registered successful pairs. Its path strings
-MUST equal the corresponding registry fields. Existing top-level fields remain
-backward compatible:
+The list contains only verified, registered successful pairs and its symbol set
+MUST equal terminal `successful_symbols`. Its path strings MUST equal the
+corresponding registry fields. Existing top-level fields remain backward
+compatible and are derived only from this list:
 
 - exactly one pair: `raw_file` and `curated_file` point to that pair;
 - more than one pair: both fields MUST be null;
@@ -144,16 +174,19 @@ Safe Purge has two mutually exclusive discovery modes per ingestion run:
    `market_bar_snapshot_pairs` rows, those rows are authoritative. A selected
    symbol's exact pair MAY be planned independently. The plan seals both the
    run metadata and the complete registry row.
-2. **LEGACY_INGESTION_RUN**: if the run has zero registry rows, current
+2. **LEGACY_INGESTION_RUN**: a run is eligible for legacy classification only
+   if it has zero registry rows. For a proven legacy run, current
    `ingestion_runs.raw_file` / `curated_file` discovery remains authoritative.
    A legacy co-located file remains one immutable unit, so partial symbol or
    data scope is refused.
 
-Registered mode MUST NOT fall back to legacy pointers. A matching active file
-without a resolvable registry binding is `UNREGISTERED_SNAPSHOT` and causes
-refusal. Registry rows are retained historical provenance after quarantine;
-their active paths are not rewritten to quarantine paths and no cascade
-cleanup occurs.
+Zero registry rows is necessary, but not sufficient, for an executable legacy
+target: planning MUST also prove the existing legacy pair and absence of
+intersecting unregistered evidence. Registered mode MUST NOT fall back to
+legacy pointers. A matching active file without a resolvable registry binding
+is `UNREGISTERED_SNAPSHOT` and causes refusal. Registry rows are retained
+historical provenance after quarantine; their active paths are not rewritten
+to quarantine paths and no cascade cleanup occurs.
 
 Under the shared lifecycle lock, execution of a registered target MUST prove:
 
@@ -167,11 +200,19 @@ Under the shared lifecycle lock, execution of a registered target MUST prove:
 
 Any uncertainty or drift MUST fail before mutation.
 
+For every legacy target, execution MUST re-query
+`market_bar_snapshot_pairs` for the exact run while holding the lifecycle lock
+and MUST prove the result is still empty before moving any file. The appearance
+of any row is mode/authority drift. This rule applies both to targets carrying
+`binding_mode: "LEGACY_INGESTION_RUN"` and to historical v2 targets with no
+`binding_mode` field.
+
 ### Sealed plan compatibility
 
 `market-vault-safe-purge-plan-v2` remains the plan version. Existing v2 targets
 without a binding-mode field retain their exact legacy interpretation and
-remain executable when all existing legacy proofs pass. New legacy targets
+remain executable only when all existing legacy proofs pass and execution
+again proves that the run has zero registry rows. New legacy targets
 MAY state `binding_mode: "LEGACY_INGESTION_RUN"`; new registered targets MUST
 state `binding_mode: "REGISTERED_PER_SYMBOL"` and add a
 `snapshot_pair_binding` object containing all eleven registry fields. Their
@@ -230,6 +271,16 @@ visible to inventory but is not silently promoted to a valid pair.
     behavior and MUST be prevented by implementation tests.
 12. A mixed legacy SPY and new per-symbol QQQ archive remains readable and
     auditable.
+13. A single-symbol new run writes Raw and Curated but registry insertion
+    fails: the symbol is not successful, `snapshot_pairs` is empty, both
+    compatibility pointers are null, and completion and Safe Purge refuse the
+    unregistered files rather than treating them as legacy.
+14. SPY registration succeeds while QQQ registration fails after its files
+    are written: only SPY is registered and successful, registered mode remains
+    authoritative for the run, and QQQ files are unregistered evidence whose
+    lifecycle operations refuse.
+15. A legacy plan is sealed with zero registry rows and a row appears before
+    execution: under-lock mode revalidation refuses before mutation.
 
 ## 9. Non-Goals
 

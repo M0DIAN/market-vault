@@ -19,12 +19,16 @@ plan seals the run metadata and the complete registry row. It does not use an
 discovery. Selecting one exact registered symbol from a multi-symbol run is
 therefore permitted when its two files contain only that exact scope.
 
-If a run has zero registry rows, the run is legacy. Its complete
-`ingestion_runs.raw_file` and `curated_file` pair remains one lifecycle unit.
+Legacy classification requires the run to have zero registry rows. For a
+proven legacy run, its complete `ingestion_runs.raw_file` and `curated_file`
+pair remains one lifecycle unit.
 Planning inspects the files' actual columns and values and seals their relative
 paths, SHA-256 hashes, byte sizes, row counts, symbols, dates, request key, and
 run ID. Partial logical scope in a legacy co-located file remains `REFUSED`
-with `COLOCATED_SYMBOLS` or `COLOCATED_DATA`.
+with `COLOCATED_SYMBOLS` or `COLOCATED_DATA`. Zero registry rows is a necessary
+legacy condition, not permission to adopt unregistered files: intersecting
+active files without an authoritative legacy pointer or registry binding remain
+`UNREGISTERED_SNAPSHOT` and refuse the plan.
 
 Execution re-resolves and compares every sealed run row and, in registered
 mode, the exact `(run_id, symbol)` registry row under the lifecycle lock.
@@ -64,7 +68,19 @@ their legacy meaning. New registered targets use an additive
 run metadata; new legacy targets may identify `LEGACY_INGESTION_RUN`
 explicitly. This does not bump the plan version. Unknown modes and incomplete
 registered bindings are refused, so previously sealed legacy plans are not
-reinterpreted as registered plans.
+reinterpreted as registered plans. Under the lifecycle lock, execution of every
+legacy target MUST re-query `market_bar_snapshot_pairs` for its exact run and
+prove that zero rows still exist before mutation. This includes historical v2
+targets without `binding_mode`. Any newly present row is mode/authority drift
+and refuses execution before files move.
+
+For new-format collection runs, `successful_symbols` and compatibility pointers
+are authoritative only after exact pair verification and registry insertion.
+Files left behind by a failed insertion are unregistered evidence: they do not
+make a symbol successful, do not populate compatibility pointers, and are not
+adopted as a legacy pair. If one symbol is registered and another symbol's
+insertion fails, registered mode remains authoritative for the run and the
+unregistered symbol's files cause lifecycle refusal.
 
 Eligible files move on the same filesystem to:
 
