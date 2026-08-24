@@ -935,15 +935,10 @@ def _binding_surface_state(
         if binding.prospective_transition is not None
         else None
     )
-    authorized_keys = set(current)
-    if target is not None:
-        authorized_keys.update(target)
-    actual = {key: 0 for key in authorized_keys}
+    actual: dict[tuple[str, str], int] = {}
     for finding in _binding_findings(snapshot, binding, symbol):
         key = (finding.kind, finding.signal)
-        if key in actual:
-            actual[key] += 1
-    actual = {key: count for key, count in actual.items() if count}
+        actual[key] = actual.get(key, 0) + 1
     if actual == current:
         return "CURRENT"
     if target is not None and actual == target:
@@ -1015,6 +1010,12 @@ def validate_snapshot(snapshot: Snapshot) -> list[str]:
                                 f"{surface.expected_count} {surface.kind}:{surface.signal} "
                                 f"surface(s), found {actual}"
                             )
+                    if _binding_surface_state(snapshot, binding, symbol) == "INVALID":
+                        errors.append(
+                            f"contract {contract.operation_id} binding "
+                            f"{binding.path}:{symbol} must match CURRENT "
+                            f"{_format_surface_set(binding.surfaces)} exactly"
+                        )
                     continue
                 if _binding_surface_state(snapshot, binding, symbol) == "INVALID":
                     transition = binding.prospective_transition
@@ -1105,6 +1106,18 @@ def validate_pull_request(repo: Path, base: str, head: str) -> tuple[Snapshot, l
             )
             continue
         operation_id, base_contract = next(iter(base_contracts.items()))
+        unauthorized_new = {
+            finding.identity: finding
+            for finding in surfaces
+            if finding.identity not in base_findings
+            and not base_contract.covers(finding)
+        }
+        for finding in sorted(unauthorized_new.values()):
+            errors.append(
+                "destructive implementation delta is outside the approved BASE "
+                f"contract CURRENT/TARGET surfaces for {operation_id}: "
+                f"{finding.display()}"
+            )
         head_contract = head_snapshot.contracts.get(operation_id)
         if head_contract is None:
             errors.append(

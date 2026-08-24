@@ -87,6 +87,40 @@ def _empty_exemptions() -> dict:
     }
 
 
+def _exact_exemption_registry(
+    source: str,
+    *,
+    symbol: str,
+    signal: str,
+    exemption_id: str = "exact_test_infrastructure_cleanup",
+) -> dict:
+    findings, _ = gate._analyze_source(
+        "src/market_vault/example.py", source.encode("utf-8")
+    )
+    matches = [
+        finding
+        for finding in findings
+        if finding.symbol == symbol and finding.signal == signal
+    ]
+    assert len(matches) == 1
+    finding = matches[0]
+    return {
+        "schema_version": gate.EXEMPTION_SCHEMA_VERSION,
+        "exemptions": [
+            {
+                "exemption_id": exemption_id,
+                "path": finding.path,
+                "symbol": finding.symbol,
+                "kind": finding.kind,
+                "signal": finding.signal,
+                "fingerprint": finding.fingerprint,
+                "expected_count": 1,
+                "rationale": "Exact test-only infrastructure exemption.",
+            }
+        ],
+    }
+
+
 def _validate(value: dict):
     return gate._validate_contract(value, "contract.json")
 
@@ -891,6 +925,192 @@ def test_consumed_transition_cannot_reverse_to_old_state(tmp_path):
     head = _commit(repo, "attempt transition reuse")
     _, errors = gate.validate_pull_request(repo, consumed_base, head)
     assert any("already consumed" in error and "reverse/reuse" in error for error in errors)
+
+
+def test_head_exemption_cannot_authorize_new_signal_in_base_bound_symbol(tmp_path):
+    source = "def dangerous(path):\n    path.unlink()\n"
+    repo, _ = _new_repo(tmp_path, source=source)
+    contract_path = repo / gate.CONTRACT_ROOT.as_posix() / "planned_remove_v01.json"
+    _write_json(
+        contract_path,
+        _planned_contract(
+            surfaces=[
+                {
+                    "kind": "destructive_call",
+                    "signal": "path.unlink",
+                    "expected_count": 1,
+                }
+            ]
+        ),
+    )
+    base = _commit(repo, "approve unlink")
+    head_source = (
+        "import os\n\n"
+        "def dangerous(path):\n"
+        "    path.unlink()\n"
+        "    os.remove('runtime.db')\n"
+    )
+    (repo / "src" / "market_vault" / "example.py").write_text(
+        head_source, encoding="utf-8", newline="\n"
+    )
+    _write_json(
+        repo / gate.EXEMPTIONS_PATH.as_posix(),
+        _exact_exemption_registry(
+            head_source, symbol="dangerous", signal="os.remove"
+        ),
+    )
+    head = _commit(repo, "add exempted remove")
+    _, errors = gate.validate_pull_request(repo, base, head)
+    assert any("outside the approved BASE contract" in error for error in errors)
+    assert any("match CURRENT" in error for error in errors)
+
+
+def test_head_exemption_cannot_expand_prospective_target_symbol(tmp_path):
+    source = "def dangerous(path):\n    path.unlink()\n"
+    repo, _ = _new_repo(tmp_path, source=source)
+    contract_path = repo / gate.CONTRACT_ROOT.as_posix() / "planned_remove_v01.json"
+    value = _planned_contract(
+        surfaces=[
+            {
+                "kind": "destructive_call",
+                "signal": "path.unlink",
+                "expected_count": 1,
+            }
+        ]
+    )
+    _add_transition(
+        value,
+        [
+            {
+                "kind": "destructive_call",
+                "signal": "os.rename",
+                "expected_count": 1,
+            }
+        ],
+    )
+    _write_json(contract_path, value)
+    base = _commit(repo, "approve rename target")
+    head_source = (
+        "import os\n\n"
+        "def dangerous(path):\n"
+        "    os.rename('a', 'b')\n"
+        "    os.remove('runtime.db')\n"
+    )
+    (repo / "src" / "market_vault" / "example.py").write_text(
+        head_source, encoding="utf-8", newline="\n"
+    )
+    _write_json(
+        repo / gate.EXEMPTIONS_PATH.as_posix(),
+        _exact_exemption_registry(
+            head_source, symbol="dangerous", signal="os.remove"
+        ),
+    )
+    head = _commit(repo, "expand target with exempted remove")
+    _, errors = gate.validate_pull_request(repo, base, head)
+    assert any("outside the approved BASE contract" in error for error in errors)
+    assert any("to match CURRENT" in error and "or TARGET" in error for error in errors)
+
+
+def test_exempted_extra_signal_makes_contract_bound_repository_state_invalid():
+    source = (
+        "import os\n\n"
+        "def dangerous(path):\n"
+        "    path.unlink()\n"
+        "    os.remove('runtime.db')\n"
+    )
+    contract = _planned_contract(
+        surfaces=[
+            {
+                "kind": "destructive_call",
+                "signal": "path.unlink",
+                "expected_count": 1,
+            }
+        ]
+    )
+    snapshot = gate._build_snapshot(
+        {"src/market_vault/example.py": source.encode("utf-8")},
+        {
+            gate.EXEMPTIONS_PATH.as_posix(): _json_bytes(
+                _exact_exemption_registry(
+                    source, symbol="dangerous", signal="os.remove"
+                )
+            ),
+            f"{gate.CONTRACT_ROOT}/planned_remove_v01.json": _json_bytes(contract),
+        },
+    )
+    errors = gate.validate_snapshot(snapshot)
+    assert any("match CURRENT" in error for error in errors)
+
+
+def test_standalone_exact_exemption_outside_contract_bound_symbol_still_passes():
+    source = (
+        "import os\n\n"
+        "def dangerous(path):\n"
+        "    path.unlink()\n\n"
+        "def publish_temp():\n"
+        "    os.remove('runtime.db')\n"
+    )
+    contract = _planned_contract(
+        surfaces=[
+            {
+                "kind": "destructive_call",
+                "signal": "path.unlink",
+                "expected_count": 1,
+            }
+        ]
+    )
+    snapshot = gate._build_snapshot(
+        {"src/market_vault/example.py": source.encode("utf-8")},
+        {
+            gate.EXEMPTIONS_PATH.as_posix(): _json_bytes(
+                _exact_exemption_registry(
+                    source, symbol="publish_temp", signal="os.remove"
+                )
+            ),
+            f"{gate.CONTRACT_ROOT}/planned_remove_v01.json": _json_bytes(contract),
+        },
+    )
+    assert gate.validate_snapshot(snapshot) == []
+
+
+def test_complete_current_and_consumed_target_repository_states_pass():
+    contract = _planned_contract(
+        surfaces=[
+            {
+                "kind": "destructive_call",
+                "signal": "path.unlink",
+                "expected_count": 1,
+            }
+        ]
+    )
+    _add_transition(
+        contract,
+        [
+            {
+                "kind": "destructive_call",
+                "signal": "os.rename",
+                "expected_count": 1,
+            }
+        ],
+    )
+    governance = {
+        gate.EXEMPTIONS_PATH.as_posix(): _json_bytes(_empty_exemptions()),
+        f"{gate.CONTRACT_ROOT}/planned_remove_v01.json": _json_bytes(contract),
+    }
+    current = gate._build_snapshot(
+        {"src/market_vault/example.py": b"def dangerous(path):\n    path.unlink()\n"},
+        governance,
+    )
+    target = gate._build_snapshot(
+        {
+            "src/market_vault/example.py": (
+                b"import os\n\ndef dangerous(path):\n    os.rename('a', 'b')\n"
+            )
+        },
+        governance,
+    )
+    assert gate.validate_snapshot(current) == []
+    assert gate.validate_snapshot(target) == []
 
 
 def test_design_only_contract_with_future_path_passes(tmp_path):
