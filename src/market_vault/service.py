@@ -6,11 +6,12 @@ import time
 from datetime import date, datetime, timedelta, timezone
 
 import pandas as pd
+import pyarrow.parquet as pq
 
 from .collectors import MoomooCalendarCollector, MoomooHistoryCollector, MoomooOptionCollector
 from .collectors.moomoo_options import OPTION_VOLATILITY_PERIOD_VALUES, select_option_volatility_period
 from .lifecycle import MarketBarLifecycleLock
-from .models import DatasetRunManifest, RunManifest, Settings
+from .models import DatasetRunManifest, MarketBarSnapshotPair, RunManifest, Settings
 from .normalization import (
     normalize_bars,
     normalize_option_contracts,
@@ -64,6 +65,65 @@ def collect_history(
         )
 
 
+def _persisted_market_bar_values(frame: pd.DataFrame, column: str, transform) -> set:
+    if column not in frame.columns:
+        raise RuntimeError(f"Persisted market-bar snapshot is missing {column!r}")
+    return {transform(value) for value in frame[column].tolist()}
+
+
+def _verify_persisted_market_bar_pair(
+    *,
+    raw_path,
+    curated_path,
+    symbol: str,
+    trade_date: date,
+    interval: str,
+    session: str,
+    adjustment: str,
+    source: str,
+    source_schema_version: str,
+    run_id: str,
+) -> int:
+    frames: dict[str, pd.DataFrame] = {}
+    for layer, path in (("Raw", raw_path), ("Curated", curated_path)):
+        if not path.is_file():
+            raise RuntimeError(f"{layer} market-bar snapshot was not published: {path}")
+        try:
+            frames[layer] = pq.ParquetFile(path).read().to_pandas()
+        except Exception as exc:
+            raise RuntimeError(f"Cannot verify persisted {layer} market-bar snapshot: {exc}") from exc
+
+    if not len(frames["Raw"]) or len(frames["Raw"]) != len(frames["Curated"]):
+        raise RuntimeError("Persisted Raw and Curated market-bar row counts do not match")
+
+    def normalized_date(value):
+        return pd.Timestamp(value).date()
+
+    common = {
+        "code": ({symbol}, lambda value: str(value).strip().upper()),
+        "requested_trade_date": ({trade_date}, normalized_date),
+        "interval": ({interval}, lambda value: str(value).strip().lower()),
+        "requested_session": ({session}, lambda value: str(value).strip().upper()),
+        "adjustment": ({adjustment}, lambda value: str(value).strip().upper()),
+        "ingestion_run_id": ({run_id}, lambda value: str(value).strip()),
+    }
+    for column, (expected, transform) in common.items():
+        raw_values = _persisted_market_bar_values(frames["Raw"], column, transform)
+        curated_values = _persisted_market_bar_values(frames["Curated"], column, transform)
+        if raw_values != expected or curated_values != expected or raw_values != curated_values:
+            raise RuntimeError(f"Persisted market-bar pair has mismatched {column}")
+
+    curated_only = {
+        "source": ({source}, lambda value: str(value)),
+        "source_schema_version": ({source_schema_version}, lambda value: str(value)),
+    }
+    for column, (expected, transform) in curated_only.items():
+        values = _persisted_market_bar_values(frames["Curated"], column, transform)
+        if values != expected:
+            raise RuntimeError(f"Persisted Curated market-bar snapshot has mismatched {column}")
+    return len(frames["Curated"])
+
+
 def _collect_history_locked(
     settings: Settings,
     trade_date: date,
@@ -75,12 +135,16 @@ def _collect_history_locked(
     if not symbols:
         raise ValueError("At least one symbol is required")
 
+    normalized_symbols = sorted({str(symbol).strip().upper() for symbol in symbols})
+    if not all(normalized_symbols):
+        raise ValueError("symbols cannot contain blank values")
     manifest = RunManifest(
         requested_trade_date=trade_date,
-        requested_symbols=sorted(set(symbols)),
+        requested_symbols=normalized_symbols,
         interval=interval.lower(),
         session=session.upper(),
         adjustment=adjustment.upper(),
+        snapshot_binding_mode="REGISTERED_PER_SYMBOL",
     )
     manifest.config_hash = _hash_config(
         {
@@ -93,8 +157,9 @@ def _collect_history_locked(
         }
     )
 
-    raw_frames: list[pd.DataFrame] = []
     curated_frames: list[pd.DataFrame] = []
+    store = ParquetStore(settings)
+    catalog = Catalog(settings)
 
     with MoomooHistoryCollector(settings) as collector:
         for index, symbol in enumerate(manifest.requested_symbols):
@@ -114,7 +179,6 @@ def _collect_history_locked(
                 raw["adjustment"] = manifest.adjustment
                 raw["requested_session"] = manifest.session
                 raw["ingestion_run_id"] = manifest.run_id
-                raw_frames.append(raw)
 
                 curated = normalize_bars(
                     frame=raw,
@@ -126,41 +190,72 @@ def _collect_history_locked(
                     source_schema_version=settings.source_schema_version,
                     run_id=manifest.run_id,
                 )
+                raw_path = store.write_raw(
+                    raw,
+                    trade_date,
+                    manifest.interval,
+                    [symbol],
+                    manifest.session,
+                    manifest.adjustment,
+                    run_id=manifest.run_id,
+                )
+                curated_path = store.write_curated(
+                    curated,
+                    trade_date,
+                    manifest.interval,
+                    [symbol],
+                    manifest.session,
+                    manifest.adjustment,
+                    run_id=manifest.run_id,
+                )
+                row_count = _verify_persisted_market_bar_pair(
+                    raw_path=raw_path,
+                    curated_path=curated_path,
+                    symbol=symbol,
+                    trade_date=trade_date,
+                    interval=manifest.interval,
+                    session=manifest.session,
+                    adjustment=manifest.adjustment,
+                    source=settings.source,
+                    source_schema_version=settings.source_schema_version,
+                    run_id=manifest.run_id,
+                )
+                pair = MarketBarSnapshotPair.create(
+                    run_id=manifest.run_id,
+                    symbol=symbol,
+                    requested_trade_date=trade_date,
+                    interval=manifest.interval,
+                    session=manifest.session,
+                    adjustment=manifest.adjustment,
+                    source=settings.source,
+                    source_schema_version=settings.source_schema_version,
+                    raw_file=str(raw_path),
+                    curated_file=str(curated_path),
+                    row_count=row_count,
+                )
+                catalog.register_market_bar_snapshot_pair(pair)
                 curated_frames.append(curated)
+                manifest.snapshot_pairs.append(pair)
                 manifest.successful_symbols.append(symbol)
             except Exception as exc:  # preserve per-symbol failures and continue the batch
                 manifest.failed_symbols[symbol] = str(exc)
             if index < len(manifest.requested_symbols) - 1:
                 time.sleep(settings.request_pause_seconds)
 
-    store = ParquetStore(settings)
-    catalog = Catalog(settings)
     quality_results = []
 
-    if raw_frames:
-        raw_all = pd.concat(raw_frames, ignore_index=True)
+    manifest.snapshot_pairs.sort(key=lambda item: item.symbol)
+    manifest.successful_symbols = [pair.symbol for pair in manifest.snapshot_pairs]
+    manifest.row_count = sum(pair.row_count for pair in manifest.snapshot_pairs)
+    if len(manifest.snapshot_pairs) == 1:
+        manifest.raw_file = manifest.snapshot_pairs[0].raw_file
+        manifest.curated_file = manifest.snapshot_pairs[0].curated_file
+    else:
+        manifest.raw_file = None
+        manifest.curated_file = None
+
+    if curated_frames:
         curated_all = pd.concat(curated_frames, ignore_index=True)
-        raw_path = store.write_raw(
-            raw_all,
-            trade_date,
-            manifest.interval,
-            manifest.requested_symbols,
-            manifest.session,
-            manifest.adjustment,
-            run_id=manifest.run_id,
-        )
-        curated_path = store.write_curated(
-            curated_all,
-            trade_date,
-            manifest.interval,
-            manifest.requested_symbols,
-            manifest.session,
-            manifest.adjustment,
-            run_id=manifest.run_id,
-        )
-        manifest.raw_file = str(raw_path)
-        manifest.curated_file = str(curated_path)
-        manifest.row_count = len(curated_all)
         quality_results = run_bar_quality_checks(curated_all)
         catalog.refresh_market_bars_view()
 

@@ -18,7 +18,7 @@ from .lifecycle import (
     reject_link,
     verify_directory_chain,
 )
-from .models import Settings
+from .models import MarketBarSnapshotPair, Settings
 from .storage import Catalog
 
 
@@ -26,6 +26,8 @@ PURGE_PLAN_VERSION = "market-vault-safe-purge-plan-v2"
 PURGE_RESULT_VERSION = "market-vault-safe-purge-result-v2"
 PURGE_PRECOMMIT_VERSION = "market-vault-safe-purge-precommit-v1"
 RETENTION_POLICY = "RETAIN_VERIFIED_DERIVED_ARTIFACTS_V1"
+REGISTERED_PER_SYMBOL = "REGISTERED_PER_SYMBOL"
+LEGACY_INGESTION_RUN = "LEGACY_INGESTION_RUN"
 _PLAN_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 _PARTITION_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
@@ -198,6 +200,26 @@ class _Facts:
             "sources": list(self.sources),
             "source_schema_versions": list(self.schema_versions),
         }
+
+
+@dataclass(frozen=True)
+class _RunRecord:
+    run_id: str
+    started_at: datetime | None
+    finished_at: datetime | None
+    requested_trade_date: date
+    requested_symbols_json: str
+    interval: str
+    session: str
+    adjustment: str
+    successful_symbols_json: str
+    failed_symbols_json: str
+    raw_file: str | None
+    curated_file: str | None
+    row_count: int
+    status: str
+    config_hash: str
+    snapshot_binding_mode: str | None
 
 
 def _nonblank(value: Any, label: str) -> str:
@@ -406,14 +428,66 @@ def _active_root(settings: Settings, scope: PurgeScope, layer: str) -> Path:
     )
 
 
-def _catalog_runs(catalog: Catalog, scope: PurgeScope) -> tuple[list[tuple], list[str]]:
+_RUN_SELECT = """
+    SELECT run_id, started_at, finished_at, requested_trade_date,
+           requested_symbols::VARCHAR, interval, session, adjustment,
+           successful_symbols::VARCHAR, failed_symbols::VARCHAR,
+           raw_file, curated_file, row_count, status, config_hash,
+           snapshot_binding_mode
+    FROM ingestion_runs
+"""
+
+
+def _run_record(row: tuple) -> _RunRecord:
+    return _RunRecord(
+        run_id=str(row[0]),
+        started_at=row[1],
+        finished_at=row[2],
+        requested_trade_date=row[3],
+        requested_symbols_json=row[4],
+        interval=str(row[5]),
+        session=str(row[6]),
+        adjustment=str(row[7]),
+        successful_symbols_json=row[8],
+        failed_symbols_json=row[9],
+        raw_file=row[10],
+        curated_file=row[11],
+        row_count=int(row[12] or 0),
+        status=str(row[13]),
+        config_hash=str(row[14] or ""),
+        snapshot_binding_mode=row[15],
+    )
+
+
+def _symbols_from_json(value: str, *, run_id: str, label: str) -> list[str]:
+    try:
+        parsed = json.loads(value)
+        if not isinstance(parsed, list):
+            raise ValueError
+        return sorted({_symbol(item) for item in parsed})
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise PurgeError(f"run {run_id} has invalid {label} metadata") from exc
+
+
+def _failed_symbols_from_json(value: str, *, run_id: str) -> dict[str, str]:
+    try:
+        parsed = json.loads(value)
+        if not isinstance(parsed, dict):
+            raise ValueError
+        normalized = {_symbol(key): str(item) for key, item in parsed.items()}
+        if len(normalized) != len(parsed):
+            raise ValueError
+        return {key: normalized[key] for key in sorted(normalized)}
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise PurgeError(f"run {run_id} has invalid failed_symbols metadata") from exc
+
+
+def _catalog_runs(catalog: Catalog, scope: PurgeScope) -> tuple[list[_RunRecord], list[str]]:
     catalog.initialize()
     with catalog.connect() as con:
         rows = con.execute(
-            """
-            SELECT run_id, requested_trade_date, requested_symbols::VARCHAR,
-                   interval, session, adjustment, raw_file, curated_file, status
-            FROM ingestion_runs
+            _RUN_SELECT
+            + """
             WHERE requested_trade_date >= ? AND requested_trade_date <= ?
               AND lower(interval) = ? AND upper(session) = ? AND upper(adjustment) = ?
             ORDER BY requested_trade_date, run_id
@@ -426,17 +500,21 @@ def _catalog_runs(catalog: Catalog, scope: PurgeScope) -> tuple[list[tuple], lis
                 scope.adjustment,
             ],
         ).fetchall()
-    selected: list[tuple] = []
+    selected: list[_RunRecord] = []
     active: list[str] = []
-    for row in rows:
-        try:
-            requested = {_symbol(value) for value in json.loads(row[2])}
-        except (TypeError, ValueError, json.JSONDecodeError) as exc:
-            raise PurgeError(f"run {row[0]} has invalid requested_symbols metadata") from exc
+    for raw_row in rows:
+        row = _run_record(raw_row)
+        requested = set(
+            _symbols_from_json(
+                row.requested_symbols_json,
+                run_id=row.run_id,
+                label="requested_symbols",
+            )
+        )
         if not requested.intersection(scope.symbols):
             continue
-        if str(row[8]).upper() == "RUNNING":
-            active.append(str(row[0]))
+        if row.status.strip().upper() == "RUNNING":
+            active.append(row.run_id)
         selected.append(row)
     return selected, active
 
@@ -450,45 +528,117 @@ def _metadata_relative_path(settings: Settings, value: str, *, label: str) -> st
         raise PurgeError(f"{label} metadata path is outside data_root: {path}") from exc
 
 
-def _run_binding(settings: Settings, row: tuple) -> dict[str, Any]:
-    try:
-        symbols = sorted({_symbol(value) for value in json.loads(row[2])})
-    except (TypeError, ValueError, json.JSONDecodeError) as exc:
-        raise PurgeError(f"run {row[0]} has invalid requested_symbols metadata") from exc
-    if not row[6] or not row[7]:
-        raise PurgeError(f"run {row[0]} does not have a complete physical file pair")
-    trade_date = row[1]
+def _relative_pointer(settings: Settings, value: str | None, *, label: str) -> str | None:
+    if value is None:
+        return None
+    return _metadata_relative_path(settings, value, label=label)
+
+
+def _run_binding(settings: Settings, row: _RunRecord) -> dict[str, Any]:
+    trade_date = row.requested_trade_date
     if not hasattr(trade_date, "isoformat"):
-        raise PurgeError(f"run {row[0]} has invalid requested_trade_date metadata")
+        raise PurgeError(f"run {row.run_id} has invalid requested_trade_date metadata")
     return {
-        "run_id": str(row[0]),
+        "run_id": row.run_id,
+        "started_at": row.started_at.isoformat() if row.started_at else None,
+        "finished_at": row.finished_at.isoformat() if row.finished_at else None,
         "requested_trade_date": trade_date.isoformat(),
-        "requested_symbols": symbols,
-        "interval": str(row[3]).strip().lower(),
-        "requested_session": str(row[4]).strip().upper(),
-        "adjustment": str(row[5]).strip().upper(),
-        "raw_relative_path": _metadata_relative_path(
-            settings, str(row[6]), label=f"run {row[0]} Raw"
+        "requested_symbols": _symbols_from_json(
+            row.requested_symbols_json,
+            run_id=row.run_id,
+            label="requested_symbols",
         ),
-        "curated_relative_path": _metadata_relative_path(
-            settings, str(row[7]), label=f"run {row[0]} Curated"
+        "interval": row.interval.strip().lower(),
+        "requested_session": row.session.strip().upper(),
+        "adjustment": row.adjustment.strip().upper(),
+        "successful_symbols": _symbols_from_json(
+            row.successful_symbols_json,
+            run_id=row.run_id,
+            label="successful_symbols",
         ),
-        "status": str(row[8]).strip().upper(),
+        "failed_symbols": _failed_symbols_from_json(
+            row.failed_symbols_json, run_id=row.run_id
+        ),
+        "raw_relative_path": _relative_pointer(
+            settings, row.raw_file, label=f"run {row.run_id} Raw"
+        ),
+        "curated_relative_path": _relative_pointer(
+            settings, row.curated_file, label=f"run {row.run_id} Curated"
+        ),
+        "row_count": row.row_count,
+        "status": row.status.strip().upper(),
+        "config_hash": row.config_hash,
+        "snapshot_binding_mode": row.snapshot_binding_mode,
     }
 
 
-def _resolve_run(catalog: Catalog, run_id: str) -> tuple | None:
+def _legacy_v2_run_binding(settings: Settings, row: _RunRecord) -> dict[str, Any]:
+    if not row.raw_file or not row.curated_file:
+        raise PurgeError(f"run {row.run_id} does not have a complete physical file pair")
+    return {
+        "run_id": row.run_id,
+        "requested_trade_date": row.requested_trade_date.isoformat(),
+        "requested_symbols": _symbols_from_json(
+            row.requested_symbols_json,
+            run_id=row.run_id,
+            label="requested_symbols",
+        ),
+        "interval": row.interval.strip().lower(),
+        "requested_session": row.session.strip().upper(),
+        "adjustment": row.adjustment.strip().upper(),
+        "raw_relative_path": _metadata_relative_path(
+            settings, row.raw_file, label=f"run {row.run_id} Raw"
+        ),
+        "curated_relative_path": _metadata_relative_path(
+            settings, row.curated_file, label=f"run {row.run_id} Curated"
+        ),
+        "status": row.status.strip().upper(),
+    }
+
+
+def _resolve_run(catalog: Catalog, run_id: str) -> _RunRecord | None:
     catalog.initialize()
     with catalog.connect() as con:
-        return con.execute(
-            """
-            SELECT run_id, requested_trade_date, requested_symbols::VARCHAR,
-                   interval, session, adjustment, raw_file, curated_file, status
-            FROM ingestion_runs
-            WHERE run_id = ?
-            """,
-            [run_id],
-        ).fetchone()
+        row = con.execute(_RUN_SELECT + " WHERE run_id = ?", [run_id]).fetchone()
+    return _run_record(row) if row is not None else None
+
+
+def _verify_target_physical_binding(
+    settings: Settings,
+    plan: PurgePlan,
+    target: dict[str, Any],
+    *,
+    plan_id: str,
+) -> None:
+    paths: dict[str, Path] = {}
+    for key in ("raw", "curated"):
+        identity = target[key]
+        active = _identity_path(settings, identity)
+        quarantine = _quarantine_path(settings, plan_id, identity)
+        if active.exists() and quarantine.exists():
+            raise PurgeDriftError(
+                f"target exists in both active archive and quarantine: {identity['relative_path']}"
+            )
+        if active.exists():
+            _verify_identity(active, identity, settings)
+            paths[key] = active
+        elif quarantine.exists():
+            _verify_identity(quarantine, identity, settings, quarantine=True)
+            paths[key] = quarantine
+        else:
+            raise PurgeDriftError(f"sealed target is missing: {identity['relative_path']}")
+    raw_path = paths["raw"]
+    curated_path = paths["curated"]
+    raw_facts = _read_facts(raw_path, curated=False)
+    curated_facts = _read_facts(curated_path, curated=True)
+    if (
+        raw_facts.as_dict() != target["raw"].get("facts")
+        or curated_facts.as_dict() != target["curated"].get("facts")
+        or _scope_refusals(raw_facts, curated_facts, plan.scope, target["ingestion_run_id"])
+    ):
+        raise PurgeDriftError(
+            f"planned physical snapshot facts drifted: {target['ingestion_run_id']}"
+        )
 
 
 def _verify_run_bindings(settings: Settings, catalog: Catalog, plan: PurgePlan) -> None:
@@ -503,15 +653,50 @@ def _verify_run_bindings(settings: Settings, catalog: Catalog, plan: PurgePlan) 
         current_row = _resolve_run(catalog, run_id)
         if current_row is None:
             raise PurgeDriftError(f"planned ingestion run disappeared: {run_id}")
+        binding_mode = target.get("binding_mode")
+        registry_count = catalog.market_bar_snapshot_pair_count(run_id)
         try:
-            current = _run_binding(settings, current_row)
+            if binding_mode is None:
+                if current_row.snapshot_binding_mode is not None or registry_count != 0:
+                    raise PurgeDriftError(
+                        f"historical legacy target authority drifted: {run_id}"
+                    )
+                current = _legacy_v2_run_binding(settings, current_row)
+            elif binding_mode == LEGACY_INGESTION_RUN:
+                if current_row.snapshot_binding_mode is not None or registry_count != 0:
+                    raise PurgeDriftError(f"legacy target authority drifted: {run_id}")
+                current = _run_binding(settings, current_row)
+            elif binding_mode == REGISTERED_PER_SYMBOL:
+                if current_row.snapshot_binding_mode != REGISTERED_PER_SYMBOL:
+                    raise PurgeDriftError(f"registered target authority drifted: {run_id}")
+                pair_binding = target.get("snapshot_pair_binding")
+                if not isinstance(pair_binding, dict):
+                    raise PurgeDriftError(
+                        f"registered target lacks snapshot-pair binding: {run_id}"
+                    )
+                pair = catalog.market_bar_snapshot_pair(run_id, pair_binding.get("symbol", ""))
+                if pair is None or pair.as_dict() != pair_binding:
+                    raise PurgeDriftError(f"registered snapshot-pair binding drifted: {run_id}")
+                current = _run_binding(settings, current_row)
+            else:
+                raise PurgeDriftError(f"unknown sealed target binding mode: {binding_mode!r}")
         except PurgeError as exc:
             raise PurgeDriftError(str(exc)) from exc
         if current != sealed:
             raise PurgeDriftError(f"planned ingestion run metadata drifted: {run_id}")
+        expected_raw = sealed.get("raw_relative_path")
+        expected_curated = sealed.get("curated_relative_path")
+        if binding_mode == REGISTERED_PER_SYMBOL:
+            pair_binding = target["snapshot_pair_binding"]
+            expected_raw = _metadata_relative_path(
+                settings, pair_binding["raw_file"], label=f"pair {run_id} Raw"
+            )
+            expected_curated = _metadata_relative_path(
+                settings, pair_binding["curated_file"], label=f"pair {run_id} Curated"
+            )
         if (
-            sealed["raw_relative_path"] != target["raw"]["relative_path"]
-            or sealed["curated_relative_path"] != target["curated"]["relative_path"]
+            expected_raw != target["raw"]["relative_path"]
+            or expected_curated != target["curated"]["relative_path"]
             or sealed["run_id"] != run_id
         ):
             raise PurgeDriftError(f"sealed target binding is inconsistent: {run_id}")
@@ -567,59 +752,162 @@ def _build_plan_content(settings: Settings, scope: PurgeScope) -> dict[str, Any]
     matched_symbols: set[str] = set()
     data_root = Path(os.path.abspath(settings.data_root))
     for row in rows:
-        run_id, _, _, _, _, _, raw_text, curated_text, status = row
-        if not raw_text and not curated_text and str(status).upper() == "FAILED":
-            # Failed requests with no physical output remain historical run
-            # evidence, but they do not form a purge lifecycle unit.
-            continue
-        if not raw_text or not curated_text:
+        run_id = row.run_id
+        registry_pairs = catalog.market_bar_snapshot_pairs_for_run(run_id)
+        mode = row.snapshot_binding_mode
+        if mode is None and registry_pairs:
             refusals.append(
                 _refusal(
-                    "RAW_CURATED_MISMATCH",
-                    "matching run does not record a complete Raw/Curated file pair",
+                    "INCONSISTENT_SNAPSHOT_AUTHORITY",
+                    "legacy-format run unexpectedly has registered snapshot pairs",
                     run_id=run_id,
                 )
             )
             continue
-        raw_path = _path_from_metadata(settings, raw_text)
-        curated_path = _path_from_metadata(settings, curated_text)
-        try:
-            raw_identity = _file_identity(
-                raw_path,
-                data_root,
-                _active_root(settings, scope, "raw"),
-                layer="raw",
-            )
-            curated_identity = _file_identity(
-                curated_path,
-                data_root,
-                _active_root(settings, scope, "curated"),
-                layer="curated",
-            )
-            raw_facts = _read_facts(raw_path, curated=False)
-            curated_facts = _read_facts(curated_path, curated=True)
-            run_binding = _run_binding(settings, row)
-        except (PurgeError, LifecycleLockError) as exc:
+        if mode not in {None, REGISTERED_PER_SYMBOL}:
             refusals.append(
-                _refusal("UNSAFE_OR_MISSING_TARGET", str(exc), run_id=str(run_id))
+                _refusal(
+                    "UNKNOWN_SNAPSHOT_BINDING_MODE",
+                    "run uses an unsupported snapshot binding mode",
+                    run_id=run_id,
+                    snapshot_binding_mode=mode,
+                )
             )
             continue
-        referenced.update({raw_identity["relative_path"], curated_identity["relative_path"]})
-        if not _facts_intersect_scope(curated_facts, scope, curated=True):
-            continue
-        pair_refusals = _scope_refusals(raw_facts, curated_facts, scope, str(run_id))
-        refusals.extend(pair_refusals)
-        matched_symbols.update(set(curated_facts.symbols).intersection(scope.symbols))
-        targets.append(
-            {
-                "ingestion_run_id": str(run_id),
+
+        if mode is None:
+            if not row.raw_file and not row.curated_file and row.status.strip().upper() == "FAILED":
+                # Failed requests with no physical output remain historical run
+                # evidence, but they do not form a purge lifecycle unit.
+                continue
+            if not row.raw_file or not row.curated_file:
+                refusals.append(
+                    _refusal(
+                        "RAW_CURATED_MISMATCH",
+                        "matching legacy run does not record a complete Raw/Curated file pair",
+                        run_id=run_id,
+                    )
+                )
+                continue
+            physical_pairs = [(None, row.raw_file, row.curated_file)]
+            binding_mode = LEGACY_INGESTION_RUN
+        else:
+            successful = set(
+                _symbols_from_json(
+                    row.successful_symbols_json,
+                    run_id=run_id,
+                    label="successful_symbols",
+                )
+            )
+            registered_symbols = {pair.symbol for pair in registry_pairs}
+            if registry_pairs and row.status.strip().upper() not in {"SUCCESS", "PARTIAL"}:
+                refusals.append(
+                    _refusal(
+                        "INCOMPLETE_REGISTERED_RUN",
+                        "registered snapshot run is not terminal",
+                        run_id=run_id,
+                    )
+                )
+            if successful != registered_symbols:
+                refusals.append(
+                    _refusal(
+                        "REGISTERED_RUN_SYMBOL_MISMATCH",
+                        "successful_symbols do not equal registered snapshot symbols",
+                        run_id=run_id,
+                        successful_symbols=sorted(successful),
+                        registered_symbols=sorted(registered_symbols),
+                    )
+                )
+            requested = set(
+                _symbols_from_json(
+                    row.requested_symbols_json,
+                    run_id=run_id,
+                    label="requested_symbols",
+                )
+            )
+            for pair in registry_pairs:
+                if (
+                    pair.symbol not in requested
+                    or pair.requested_trade_date != row.requested_trade_date
+                    or pair.interval != row.interval.strip().lower()
+                    or pair.session != row.session.strip().upper()
+                    or pair.adjustment != row.adjustment.strip().upper()
+                    or pair.source != scope.source
+                    or pair.source_schema_version != scope.source_schema_version
+                ):
+                    refusals.append(
+                        _refusal(
+                            "SNAPSHOT_PAIR_RUN_MISMATCH",
+                            "registered snapshot pair does not match its ingestion run",
+                            run_id=run_id,
+                            symbol=pair.symbol,
+                        )
+                    )
+            physical_pairs = [
+                (pair, pair.raw_file, pair.curated_file)
+                for pair in registry_pairs
+                if pair.symbol in scope.symbols
+            ]
+            binding_mode = REGISTERED_PER_SYMBOL
+
+        for pair, raw_text, curated_text in physical_pairs:
+            raw_path = _path_from_metadata(settings, raw_text)
+            curated_path = _path_from_metadata(settings, curated_text)
+            try:
+                raw_identity = _file_identity(
+                    raw_path,
+                    data_root,
+                    _active_root(settings, scope, "raw"),
+                    layer="raw",
+                )
+                curated_identity = _file_identity(
+                    curated_path,
+                    data_root,
+                    _active_root(settings, scope, "curated"),
+                    layer="curated",
+                )
+                raw_facts = _read_facts(raw_path, curated=False)
+                curated_facts = _read_facts(curated_path, curated=True)
+                run_binding = _run_binding(settings, row)
+            except (PurgeError, LifecycleLockError) as exc:
+                refusals.append(
+                    _refusal("UNSAFE_OR_MISSING_TARGET", str(exc), run_id=run_id)
+                )
+                continue
+            referenced.update(
+                {raw_identity["relative_path"], curated_identity["relative_path"]}
+            )
+            if not _facts_intersect_scope(curated_facts, scope, curated=True):
+                continue
+            pair_refusals = _scope_refusals(raw_facts, curated_facts, scope, run_id)
+            if pair is not None and (
+                raw_facts.row_count != pair.row_count
+                or curated_facts.row_count != pair.row_count
+                or raw_facts.symbols != (pair.symbol,)
+                or curated_facts.symbols != (pair.symbol,)
+            ):
+                pair_refusals.append(
+                    _refusal(
+                        "SNAPSHOT_PAIR_FACT_MISMATCH",
+                        "registered snapshot pair does not match its physical files",
+                        run_id=run_id,
+                        symbol=pair.symbol,
+                    )
+                )
+            refusals.extend(pair_refusals)
+            matched_symbols.update(set(curated_facts.symbols).intersection(scope.symbols))
+            target = {
+                "binding_mode": binding_mode,
+                "ingestion_run_id": run_id,
                 "run_binding": run_binding,
                 "raw": {**raw_identity, "facts": raw_facts.as_dict()},
                 "curated": {**curated_identity, "facts": curated_facts.as_dict()},
                 "affected_row_count": curated_facts.row_count,
                 "physical_scope_status": "REFUSED" if pair_refusals else "EXACT",
             }
-        )
+            if pair is not None:
+                target["snapshot_pair_binding"] = pair.as_dict()
+            targets.append(target)
 
     for layer, curated in (("raw", False), ("curated", True)):
         try:
@@ -694,6 +982,7 @@ def _build_plan_content(settings: Settings, scope: PurgeScope) -> dict[str, Any]
         },
         "retained_evidence": [
             "ingestion_runs",
+            "market_bar_snapshot_pairs",
             "quality_results",
             "collection_manifests",
             "quality_reports",
@@ -1199,6 +1488,11 @@ def purge_execute(settings: Settings, *, plan_id: str, confirmation: str) -> Pur
                     relative = path.relative_to(settings.data_root).as_posix()
                     if _facts_intersect_scope(facts, plan.scope, curated=curated) and relative not in expected_active:
                         raise PurgeDriftError(f"unplanned matching snapshot appeared: {relative}")
+
+            for target in plan.targets:
+                _verify_target_physical_binding(
+                    settings, plan, target, plan_id=plan_id
+                )
 
             for target in plan.targets:
                 for key in ("raw", "curated"):
