@@ -74,6 +74,7 @@ def test_build_definition_is_onedir_and_external_config() -> None:
         encoding="utf-8"
     )
     assert "COLLECT(" in spec
+    assert "PROJECT_ROOT = Path(SPECPATH).resolve().parent" in spec
     assert 'name="MarketVault"' in spec
     assert "console=False" in spec
     assert "config/settings.yaml" not in spec

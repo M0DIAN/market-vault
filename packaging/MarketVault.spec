@@ -3,7 +3,7 @@ from pathlib import Path
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 
-PROJECT_ROOT = Path(SPECPATH).resolve().parent.parent
+PROJECT_ROOT = Path(SPECPATH).resolve().parent
 SOURCE_ROOT = PROJECT_ROOT / "src"
 ENTRY_POINT = SOURCE_ROOT / "market_vault" / "windows_launcher.py"
 
