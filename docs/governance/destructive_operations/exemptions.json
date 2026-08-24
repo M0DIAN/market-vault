@@ -142,16 +142,6 @@
       "rationale": "Failure handling removes only the mkstemp path created by the same report writer invocation."
     },
     {
-      "exemption_id": "catalog_ingestion_run_idempotent_replace",
-      "path": "src/market_vault/storage/catalog.py",
-      "symbol": "Catalog.record_run",
-      "kind": "destructive_sql",
-      "signal": "sql.DELETE_FROM",
-      "fingerprint": "e411eab56dd259db41754b09ec3c51cfd90929d55dfbbf434b5b8af3bb09d0e6",
-      "expected_count": 1,
-      "rationale": "The exact run_id row is removed inside the existing idempotent ingestion-run recording transaction before the same run evidence is reinserted."
-    },
-    {
       "exemption_id": "catalog_quality_idempotent_replace",
       "path": "src/market_vault/storage/catalog.py",
       "symbol": "Catalog.record_quality",
