@@ -1,0 +1,221 @@
+{
+  "schema_version": "market-vault-destructive-operation-v1",
+  "operation_id": "catalog_ingestion_run_recording_v1",
+  "approval": {
+    "status": "APPROVED",
+    "rationale": "Promotes the existing exact Catalog.record_run ingestion-row replacement from a fingerprint exemption to a reviewed contract without changing its destructive surface."
+  },
+  "identity": {
+    "name": "Catalog ingestion-run recording v1",
+    "purpose": "Publish or replace the complete ingestion_runs evidence row for one concrete RunManifest run_id inside one DuckDB transaction."
+  },
+  "implementation_bindings": [
+    {
+      "path": "src/market_vault/storage/catalog.py",
+      "symbols": [
+        "Catalog.record_run"
+      ],
+      "role": "STATE_AUTHORITY",
+      "surfaces": [
+        {
+          "kind": "destructive_sql",
+          "signal": "sql.DELETE_FROM",
+          "expected_count": 1
+        }
+      ],
+      "rationale": "Catalog.record_run owns one exact-run-id DELETE followed by publication of that run's complete ingestion evidence row."
+    }
+  ],
+  "authority_boundary": {
+    "initiators": [
+      "MarketVault service paths that hold one complete RunManifest with a concrete run_id"
+    ],
+    "mutation_owner": "src/market_vault/storage/catalog.py Catalog.record_run for the exact manifest.run_id",
+    "forbidden_bypass_layers": [
+      "Callers must not use Catalog.record_run as a generic ingestion_runs deletion API",
+      "Catalog.record_run must not accept wildcard or multi-run deletion scope",
+      "Catalog.record_run must not mutate physical artifacts or unrelated Catalog tables"
+    ]
+  },
+  "persistent_scope": {
+    "mutated_assets": [
+      "The single ingestion_runs row whose run_id exactly equals the supplied complete RunManifest run_id"
+    ],
+    "excluded_assets": [
+      "All ingestion_runs rows with another run_id",
+      "market_bar_snapshot_pairs, quality_results, dataset_ingestion_runs, and purge_operations rows",
+      "Parquet files, manifests, reports, Canonical artifacts, and Dataset artifacts",
+      "Safe Purge state, quarantine contents, garbage collection, and permanent deletion"
+    ]
+  },
+  "state_machine": {
+    "states": [
+      "PREPARED",
+      "COMMITTED",
+      "FAILED"
+    ],
+    "initial_state": "PREPARED",
+    "terminal_states": [
+      "COMMITTED",
+      "FAILED"
+    ],
+    "allowed_transitions": [
+      {
+        "from": "PREPARED",
+        "to": "COMMITTED",
+        "rationale": "The exact old row is replaced by the complete current row when the DuckDB transaction commits."
+      },
+      {
+        "from": "PREPARED",
+        "to": "FAILED",
+        "rationale": "A transaction error prevents publication and leaves no partially committed replacement."
+      },
+      {
+        "from": "FAILED",
+        "to": "COMMITTED",
+        "rationale": "A caller may retry publication for the same exact run_id with complete current run evidence."
+      }
+    ],
+    "forbidden_transitions": [
+      {
+        "from": "COMMITTED",
+        "to": "PREPARED",
+        "rationale": "A committed row is not exposed as a partially reopened mutation."
+      },
+      {
+        "from": "COMMITTED",
+        "to": "FAILED",
+        "rationale": "A later caller failure does not retroactively make a committed DuckDB transaction partial."
+      }
+    ]
+  },
+  "commit_point": {
+    "durable_authority": "The successful DuckDB transaction commit containing the complete replacement ingestion_runs row for the exact manifest.run_id.",
+    "before_state": "PREPARED",
+    "after_state": "COMMITTED",
+    "success_authoritative_when": "The transaction has committed the caller's complete current run evidence at the same exact run_id."
+  },
+  "crash_semantics": {
+    "pre_commit": [
+      "DuckDB transaction rollback prevents a committed half-replacement or partially inserted new row.",
+      "Failure before commit does not authorize deletion of any other ingestion run or artifact."
+    ],
+    "post_commit": [
+      "The complete row at the exact run_id is authoritative after commit.",
+      "A retry remains confined to replacement of that same exact run_id."
+    ]
+  },
+  "rollback_recovery": {
+    "restorable": [
+      "Before commit, DuckDB transaction rollback restores the prior committed Catalog state."
+    ],
+    "non_restorable": [
+      "No filesystem restore, artifact restore, or permanent deletion operation is part of this contract."
+    ],
+    "interruption_detection": [
+      "A transaction exception is non-success and must not be reported as a committed replacement."
+    ]
+  },
+  "idempotence": {
+    "same_request_retry": [
+      "Repeated publication may replace only the row with the same concrete run_id using the caller's complete current run evidence."
+    ],
+    "completed_retry": [
+      "Re-publishing complete evidence for the same exact run_id is permitted and must leave unrelated rows unchanged."
+    ],
+    "conflicting_retry": [
+      "A request for a different run_id is a separate exact-row publication and cannot delete or replace the previously addressed row."
+    ]
+  },
+  "locking_concurrency": {
+    "lock_authority": [
+      "Catalog.record_run relies on its DuckDB transaction and the existing caller lifecycle authority where the product design already requires one."
+    ],
+    "lock_scope": [
+      "This contract does not create a new external lock or broaden existing market-bar lifecycle locking semantics."
+    ],
+    "under_lock_revalidation": [
+      "The caller supplies one concrete, complete RunManifest and Catalog.record_run binds mutation to its exact run_id."
+    ],
+    "concurrent_behavior": [
+      "DuckDB transaction failure is reported as non-success; this contract does not authorize a bypass or broader retry scope."
+    ]
+  },
+  "execution_revalidation": {
+    "identities": [
+      "The concrete RunManifest run_id and the complete row values being published for that run"
+    ],
+    "drift_behavior": [
+      "The method may replace only the exact row addressed by manifest.run_id and must not expand scope through wildcard or unrelated identifiers."
+    ]
+  },
+  "success_evidence": {
+    "authoritative_evidence": [
+      "A committed ingestion_runs row at the exact manifest.run_id containing the caller's complete current run evidence"
+    ],
+    "non_success_evidence": [
+      "An exception, rolled-back transaction, in-memory manifest, or uncommitted row"
+    ],
+    "integrity_binding": [
+      "The transaction binds deletion and insertion to one exact run_id and commits the complete replacement row atomically."
+    ]
+  },
+  "path_safety": {
+    "mutates_paths": false,
+    "windows_reparse_policy": {
+      "applicable": false,
+      "rationale": "Catalog.record_run mutates no filesystem path."
+    },
+    "unverifiable_path_policy": {
+      "applicable": false,
+      "rationale": "No path is accepted as a mutation target by this operation."
+    }
+  },
+  "stale_plan_ui": {
+    "invalidation_triggers": {
+      "applicable": false,
+      "rationale": "This internal Catalog publication has no user-reviewed plan or Console preview."
+    },
+    "confirmation_invalidation": {
+      "applicable": false,
+      "rationale": "This operation exposes no destructive confirmation UI."
+    },
+    "execution_policy": {
+      "applicable": false,
+      "rationale": "This contract authorizes only internal exact-run-id record publication, not an external destructive command."
+    }
+  },
+  "physical_atomicity": {
+    "lifecycle_unit": [
+      "One complete ingestion_runs row identified by one exact run_id"
+    ],
+    "partial_mutation": [
+      "The DELETE and replacement INSERT must commit in one DuckDB transaction; a half-replacement is non-success."
+    ],
+    "rollback_expectation": [
+      "A pre-commit failure rolls back the transaction and must not affect unrelated rows."
+    ]
+  },
+  "unsupported_cascade": {
+    "retained_dependents": [
+      "All unrelated Catalog rows and all filesystem artifacts remain outside this exact-row mutation."
+    ],
+    "refused_cases": [
+      "Wildcard deletion, unrelated run IDs, incomplete row publication, and mutation of another Catalog table are outside this authority."
+    ],
+    "unsupported_cases": [
+      "Deletion of market_bar_snapshot_pairs, quality_results, dataset_ingestion_runs, purge_operations, Parquet, manifests, reports, Canonical, or Dataset artifacts",
+      "Safe Purge, garbage collection, cascade cleanup, and permanent deletion"
+    ]
+  },
+  "permanent_deletion": {
+    "supported": false,
+    "rationale": "The exact old ingestion_runs row is replaced transactionally by complete current evidence for the same run_id; this contract exposes no permanent-delete operation."
+  },
+  "implementation_tests": [
+    "Repository inventory assigns Catalog.record_run destructive_sql sql.DELETE_FROM expected_count 1 to this contract and to no exemption",
+    "Repeated recording replaces only the same exact run_id and leaves unrelated ingestion_runs rows unchanged",
+    "A transaction failure does not commit a half-replacement",
+    "No additional DELETE, DROP, TRUNCATE, filesystem deletion, Safe Purge, or wildcard surface is authorized"
+  ]
+}
