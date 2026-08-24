@@ -78,6 +78,8 @@ def test_build_definition_is_onedir_and_external_config() -> None:
     assert 'name="MarketVault"' in spec
     assert "console=False" in spec
     assert "config/settings.yaml" not in spec
+    assert 'startswith("pyarrow/tests/")' in spec
+    assert '("moomoo.examples", "moomoo.tools")' in spec
     assert "Copy-Item -LiteralPath $ConfigTemplate" in build_script
     assert "Refusing to overwrite an existing distributable" in build_script
     assert "Remove-Item" not in build_script

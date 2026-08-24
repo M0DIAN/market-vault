@@ -18,7 +18,12 @@ hidden_imports = [
     "tkinter.ttk",
     "yaml",
 ]
-hidden_imports.extend(collect_submodules("moomoo"))
+hidden_imports.extend(
+    collect_submodules(
+        "moomoo",
+        filter=lambda name: not name.startswith(("moomoo.examples", "moomoo.tools")),
+    )
+)
 
 analysis = Analysis(
     [str(ENTRY_POINT)],
@@ -29,10 +34,22 @@ analysis = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=["pytest", "tests"],
+    excludes=[
+        "moomoo.examples",
+        "moomoo.tools",
+        "pandas.tests",
+        "pyarrow.tests",
+        "pytest",
+        "tests",
+    ],
     noarchive=False,
     optimize=0,
 )
+analysis.datas = [
+    item
+    for item in analysis.datas
+    if not item[0].replace("\\", "/").startswith("pyarrow/tests/")
+]
 pyz = PYZ(analysis.pure)
 
 exe = EXE(
