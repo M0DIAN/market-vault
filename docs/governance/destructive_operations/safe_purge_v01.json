@@ -3,11 +3,11 @@
   "operation_id": "safe_purge_v01",
   "approval": {
     "status": "APPROVED",
-    "rationale": "Bootstrap registration of the independently reviewed Safe Purge v0.1 behavior already present before this governance gate."
+    "rationale": "The current Safe Purge v0.1 implementation remains approved. This design-only revision prospectively authorizes registered per-symbol physical-pair discovery while preserving exact legacy behavior; implementation requires a later PR from this contract in its exact base."
   },
   "identity": {
     "name": "Safe Purge v0.1",
-    "purpose": "Move exact, sealed market-bar Raw and Curated physical snapshot pairs out of active archive globs into same-volume quarantine without permanent deletion."
+    "purpose": "Move exact, sealed market-bar Raw and Curated physical snapshot pairs, discovered through authoritative per-symbol registry bindings or unchanged legacy run bindings, out of active archive globs into same-volume quarantine without permanent deletion."
   },
   "implementation_bindings": [
     {
@@ -154,7 +154,7 @@
   },
   "persistent_scope": {
     "mutated_assets": [
-      "Complete Raw and Curated market_bars Parquet pairs sealed by ingestion run",
+      "Complete Raw and Curated market_bars Parquet pairs sealed by registered (run_id, symbol) binding or legacy ingestion-run binding",
       "Same-volume quarantine paths preserving original data-root-relative paths",
       "purge_operations lifecycle index rows",
       "Immutable purge plan, precommit, and result JSON evidence",
@@ -164,7 +164,7 @@
       "Canonical builds",
       "Dataset artifacts",
       "Dataset Catalog snapshots",
-      "Ingestion runs, collection manifests, and quality reports",
+      "Ingestion runs, market_bar_snapshot_pairs rows, collection manifests, and quality reports",
       "Options and trading-calendar datasets",
       "Quarantine contents after successful movement",
       "Arbitrary external user paths and consumers"
@@ -243,7 +243,8 @@
     "pre_commit": [
       "A crash may leave some sealed files in quarantine and a Catalog state other than SUCCESS.",
       "A pre-commit failure attempts reverse-order rollback and refreshes active market-bar views.",
-      "Immutable precommit evidence is non-terminal and must never by itself prove SUCCESS."
+      "Immutable precommit evidence is non-terminal and must never by itself prove SUCCESS.",
+      "One-sided, unregistered, orphaned-registry, or partially published multi-symbol collection evidence is not a valid registered physical pair and is refused rather than guessed."
     ],
     "post_commit": [
       "Rollback is no longer legal after Catalog SUCCESS commits.",
@@ -269,14 +270,15 @@
   "idempotence": {
     "same_request_retry": [
       "The same sealed plan ID is reloaded and content-hash verified.",
-      "A failed non-committed attempt may retry only after exact active or quarantine identities and Catalog run bindings verify."
+      "A failed non-committed attempt may retry only after exact active or quarantine identities and Catalog run bindings verify.",
+      "Registered targets additionally require an unchanged exact market_bar_snapshot_pairs binding."
     ],
     "completed_retry": [
       "A Catalog SUCCESS retry performs no market-data movement.",
       "A byte-identical existing final result is accepted; an absent final is republished from the immutable precommit."
     ],
     "conflicting_retry": [
-      "A different plan hash, scope, run binding, quarantine identity, precommit, Catalog result hash, or final result is refused without overwrite."
+      "A different plan hash, scope, run binding, snapshot-pair registry binding, quarantine identity, precommit, Catalog result hash, or final result is refused without overwrite."
     ]
   },
   "locking_concurrency": {
@@ -289,7 +291,8 @@
     ],
     "under_lock_revalidation": [
       "Every planned ingestion run and Raw/Curated identity is re-resolved before mutation.",
-      "Matching RUNNING runs and unplanned matching active snapshots are refused."
+      "Registered targets also re-resolve the exact (run_id, symbol) market_bar_snapshot_pairs row and compare every field.",
+      "Matching RUNNING runs, unregistered matching files, and unplanned matching active snapshots are refused."
     ],
     "concurrent_behavior": [
       "A concurrent supported market-bar writer or purge cannot acquire the lock and must fail closed.",
@@ -299,12 +302,13 @@
   "execution_revalidation": {
     "identities": [
       "Exact plan ID, canonical plan content hash, scope, target list, and plan-file location",
-      "Exact ingestion run ID, status, Raw path, Curated path, symbols, date, interval, requested session, adjustment, source, and schema version",
+      "Exact ingestion run ID, status, requested and successful symbols, legacy pointer values including nulls, date, interval, requested session, adjustment, and configuration identity",
+      "For registered targets, the exact market_bar_snapshot_pairs run ID, symbol, date, interval, session, adjustment, source, schema version, Raw path, Curated path, and row count",
       "Every target relative path, byte size, SHA-256, row count, symbols, dates, and request-key facts",
       "Active and quarantine file identity, same-filesystem destination, and absence of unplanned matching snapshots"
     ],
     "drift_behavior": [
-      "Any missing, changed, one-sided, co-located, unsafe, newly matching, or otherwise unprovable identity refuses before additional mutation.",
+      "Any missing, changed, one-sided, co-located, unregistered, unsafe, newly matching, or otherwise unprovable identity refuses before additional mutation.",
       "Execution never rewrites or splits immutable Parquet to satisfy narrower logical scope."
     ]
   },
@@ -344,10 +348,12 @@
   },
   "physical_atomicity": {
     "lifecycle_unit": [
-      "One ingestion run's complete Raw plus Curated immutable Parquet pair is the minimum physical lifecycle unit."
+      "For a run with one or more market_bar_snapshot_pairs rows, each exact registered per-symbol Raw plus Curated pair is one minimum physical lifecycle unit.",
+      "For a run with zero registry rows, the complete legacy ingestion_runs Raw plus Curated pair remains the minimum physical lifecycle unit."
     ],
     "partial_mutation": [
-      "A one-sided pair or partial symbol/date/request-key selection within a co-located file refuses the entire plan.",
+      "A one-sided pair or partial symbol/date/request-key selection within a legacy co-located file refuses the entire plan.",
+      "Registered discovery never falls back to legacy pointers, and an unregistered intersecting active file refuses the entire plan.",
       "An interrupted multi-file move remains non-success until rollback or committed recovery completes."
     ],
     "rollback_expectation": [
@@ -360,10 +366,12 @@
       "Committed Verified Canonical builds with embedded source hashes and provenance",
       "Committed Dataset artifacts that verify without reloading Canonical",
       "Committed Dataset Catalog snapshots that verify without reloading recorded Dataset paths",
-      "Ingestion runs, collection manifests, and quality reports"
+      "Ingestion runs, market_bar_snapshot_pairs rows, collection manifests, and quality reports"
     ],
     "refused_cases": [
       "Raw-only or Curated-only physical state",
+      "Missing, conflicting, orphaned, or drifted per-symbol registry binding",
+      "A registered pair whose symbol is absent from successful_symbols or whose run is absent, non-terminal, or request-inconsistent",
       "Co-located symbols, dates, or request-key facts outside the exact requested scope",
       "Wildcard scope, arbitrary paths, path drift, Catalog drift, or unverified reparse points"
     ],
@@ -378,8 +386,9 @@
     "rationale": "Safe Purge v0.1 only moves exact immutable snapshot pairs into retained same-volume quarantine and exposes no permanent-delete command or API."
   },
   "implementation_tests": [
-    "Exact whole-physical-batch and complete co-located multi-symbol purge succeeds",
-    "Partial co-located scope, one-sided pairs, drift, bad confirmation, tampering, reparse paths, and lock conflicts refuse",
+    "Exact whole-physical-batch and complete co-located multi-symbol legacy purge succeeds",
+    "An exact registered symbol pair can be purged independently from a multi-symbol logical run without moving sibling pairs",
+    "Partial legacy co-located scope, unregistered snapshots, one-sided pairs, registry or run drift, bad confirmation, tampering, reparse paths, and lock conflicts refuse",
     "Pre-commit failures roll back without terminal SUCCESS evidence",
     "Post-commit terminal publication interruption recovers exact canonical bytes idempotently",
     "Existing committed Canonical, Dataset, and Dataset Catalog artifacts remain independently verifiable after source quarantine",
