@@ -11,17 +11,38 @@ or cascade into another dataset kind.
 
 ## Physical Lifecycle Unit
 
-One ingestion run's complete Raw and Curated files form one lifecycle unit.
+Safe Purge supports two fail-closed discovery modes using the nullable
+`ingestion_runs.snapshot_binding_mode` as the durable protocol discriminator.
+Every P0-3 run stores `REGISTERED_PER_SYMBOL`, even with zero successful pairs.
+For that mode, registry rows are authoritative and each row binds one
+independently purgeable per-symbol Raw+Curated pair. Zero rows means no
+authoritative pair, never permission to use compatibility pointers.
+
+Legacy classification requires both null mode and zero registry rows. For a
+proven legacy run, its complete `ingestion_runs.raw_file` and `curated_file`
+pair remains one lifecycle unit. Null mode with nonzero rows is inconsistent
+and refused. Any unknown non-null mode fails closed.
+
 Planning inspects the files' actual columns and values and seals their relative
 paths, SHA-256 hashes, byte sizes, row counts, symbols, dates, request key, and
-run ID. It also seals the exact `ingestion_runs` Raw/Curated paths, request
-metadata, and status. Execution re-resolves and compares every run row under
-the lifecycle lock; deletion or any path, status, or metadata drift refuses
-mutation. A `FAILED` run with neither physical path remains evidence but is
-not a target. A one-sided pair is always refused. If either file contains a
-symbol, date, or request-key value outside
-the requested scope, the entire plan is `REFUSED` with `COLOCATED_SYMBOLS` or
-`COLOCATED_DATA`. Immutable Parquet files are never split or rewritten.
+run ID. Partial logical scope in a legacy co-located file remains `REFUSED`
+with `COLOCATED_SYMBOLS` or `COLOCATED_DATA`. Zero registry rows is a necessary
+legacy condition, not permission to adopt unregistered files: intersecting
+active files without an authoritative legacy pointer or registry binding remain
+`UNREGISTERED_SNAPSHOT` and refuse the plan.
+
+Execution re-resolves and compares every sealed run row and, in registered
+mode, the exact `(run_id, symbol)` registry row under the lifecycle lock.
+Registered targets seal and revalidate exact mode. Explicit legacy targets and
+historical v2 targets without `binding_mode` revalidate both null run mode and
+zero registry rows. Deletion or any path, mode, status, metadata, registry, or
+file-fact drift refuses mutation. Matching active Parquet without an
+authoritative binding is `UNREGISTERED_SNAPSHOT`. A `FAILED` run with neither
+physical path nor pair row remains evidence but is not a target. A one-sided
+pair is always refused.
+Immutable Parquet files are never split or rewritten. The complete physical
+model is defined by
+[`market_bar_physical_snapshots_v1.md`](market_bar_physical_snapshots_v1.md).
 
 ## Derived Artifact Retention
 
@@ -44,6 +65,33 @@ state in DuckDB. `purge_execute` accepts only the exact confirmation
 `PURGE <plan_id>`, reloads and hashes the sealed plan, acquires the shared
 market-bar lifecycle lock, and revalidates every file before mutation. New,
 missing, changed, unsafe, unpaired, or unplanned files fail closed.
+
+Existing `market-vault-safe-purge-plan-v2` targets without a binding mode keep
+their legacy meaning. New registered targets use an additive
+`REGISTERED_PER_SYMBOL` binding that seals the complete registry row as well as
+run metadata; new legacy targets may identify `LEGACY_INGESTION_RUN`
+explicitly. This does not bump the plan version. Unknown modes and incomplete
+registered bindings are refused, so previously sealed legacy plans are not
+reinterpreted as registered plans. Under the lifecycle lock, execution of every
+legacy target MUST re-query the exact run mode and its
+`market_bar_snapshot_pairs` rows, proving null mode and zero rows before
+mutation. This includes historical v2 targets without `binding_mode`. Any
+non-null mode or newly present row is mode/authority drift and refuses
+execution before files move.
+
+For new-format collection runs, `successful_symbols` and compatibility pointers
+are authoritative only after exact pair verification and registry insertion.
+Their manifests and terminal `ingestion_runs` rows always carry
+`snapshot_binding_mode: REGISTERED_PER_SYMBOL`, including zero-success runs.
+Files left behind by a failed insertion are unregistered evidence: they do not
+make a symbol successful, do not populate compatibility pointers, and are not
+adopted as a legacy pair. If one symbol is registered and another symbol's
+insertion fails, registered mode remains authoritative for the run and the
+unregistered symbol's files cause lifecycle refusal.
+
+A single-symbol registered run may retain compatibility pointers. If its pair
+row later disappears, the durable registered mode prevents legacy fallback and
+the files are refused as unregistered evidence.
 
 Eligible files move on the same filesystem to:
 
@@ -79,9 +127,11 @@ idempotently; a conflicting existing result is retained and execution fails
 closed without overwrite. Interrupted staging files are non-terminal residue.
 The complete result schema, including message and timestamps, is integrity-bound.
 
-Ingestion runs, collection manifests,
-and quality reports remain intact. Interrupted or partially rolled-back work
-never becomes `SUCCESS`; an exact completed retry is idempotent.
+Ingestion runs, `market_bar_snapshot_pairs`, collection manifests, and quality
+reports remain intact. Registry paths remain historical collection provenance
+and are not rewritten to quarantine paths. Interrupted or partially
+rolled-back work never becomes `SUCCESS`; an exact completed retry is
+idempotent.
 
 `collect_history`, the complete `collect_history_backfill` operation, purge
 planning, and purge execution share an exclusive cross-process directory lock
