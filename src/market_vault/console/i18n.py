@@ -16,15 +16,15 @@ LOCALES_BY_NAME = {name: locale for locale, name in LANGUAGE_NAMES.items()}
 
 EN = {
     "app.title": "MarketVault Console",
-    "header.title": "MarketVault Console",
-    "header.local_mode": "LOCAL MODE",
+    "header.title": "MarketVault",
+    "header.local_mode": "Local Mode",
     "header.context": "Settings: {settings_path} | OpenD only on explicit Fetch or Execute",
     "header.language": "Language:",
     "status.ready": "Ready | Local operations only",
     "status.running": "Running: {operation}",
     "status.completed": "Completed: {operation}",
     "status.failed": "Failed: {operation}",
-    "tabs.dashboard": "Dashboard",
+    "tabs.dashboard": "Home",
     "tabs.explorer": "Data Explorer",
     "tabs.inventory": "Inventory",
     "tabs.coverage": "Coverage Audit",
@@ -183,10 +183,10 @@ EN = {
 
 
 ZH_CN = {
-    "app.title": "MarketVault 控制台", "header.title": "MarketVault 控制台", "header.local_mode": "本地模式",
+    "app.title": "MarketVault 控制台", "header.title": "MarketVault", "header.local_mode": "本地模式",
     "header.context": "设置：{settings_path} | 仅在明确获取或执行时连接 OpenD", "header.language": "语言：",
     "status.ready": "就绪 | 仅限本地操作", "status.running": "正在运行：{operation}", "status.completed": "已完成：{operation}", "status.failed": "失败：{operation}",
-    "tabs.dashboard": "仪表盘", "tabs.explorer": "数据浏览", "tabs.inventory": "数据清单", "tabs.coverage": "覆盖审计", "tabs.intraday": "盘中审计", "tabs.calendar": "交易日历", "tabs.backfill": "历史数据回填", "tabs.purge": "存储 / 清理", "tabs.runs": "运行记录",
+    "tabs.dashboard": "首页", "tabs.explorer": "数据浏览", "tabs.inventory": "数据清单", "tabs.coverage": "覆盖审计", "tabs.intraday": "盘中审计", "tabs.calendar": "交易日历", "tabs.backfill": "历史数据回填", "tabs.purge": "存储 / 清理", "tabs.runs": "运行记录",
     "sections.archive_overview": "本地归档概览", "sections.recent_runs": "最近运行", "sections.explorer": "受限本地行情查询", "sections.inventory": "本地物理与逻辑数据清单", "sections.coverage": "交易日覆盖审计", "sections.intraday": "最新完整快照结构", "sections.calendar": "本地查询与显式 OpenD 获取", "sections.backfill": "按交易日历进行历史数据回填", "sections.runs": "本地采集与数据集运行记录", "sections.purge": "精确的行情物理快照范围", "sections.purge_execute": "执行已审核计划",
     "metrics.symbols": "标的", "metrics.snapshots": "快照", "metrics.latest_rows": "最新行数", "metrics.completed_dates": "完整日期", "metrics.incomplete_dates": "不完整日期", "metrics.latest_trade_date": "最新交易日",
     "fields.code": "代码", "fields.symbols": "标的", "fields.start_date": "开始日期", "fields.end_date": "结束日期", "fields.interval": "周期", "fields.requested_session": "请求时段", "fields.bar_session": "K 线时段", "fields.session": "时段", "fields.adjustment": "复权", "fields.page_size": "每页行数", "fields.calendar_market": "日历市场", "fields.calendar_code": "日历代码", "fields.scope": "范围", "fields.market": "市场", "fields.bootstrap_start_date": "初始开始日期", "fields.max_retries": "最大重试次数", "fields.retry_backoff_seconds": "重试退避秒数", "fields.status": "状态", "fields.dataset": "数据集", "fields.source": "来源", "fields.source_schema_version": "来源架构版本",
@@ -204,10 +204,10 @@ ZH_CN = {
 
 
 JA = {
-    "app.title": "MarketVault コンソール", "header.title": "MarketVault コンソール", "header.local_mode": "ローカルモード",
+    "app.title": "MarketVault コンソール", "header.title": "MarketVault", "header.local_mode": "ローカルモード",
     "header.context": "設定：{settings_path} | 明示的な取得または実行時のみ OpenD に接続", "header.language": "言語：",
     "status.ready": "準備完了 | ローカル操作のみ", "status.running": "実行中：{operation}", "status.completed": "完了：{operation}", "status.failed": "失敗：{operation}",
-    "tabs.dashboard": "ダッシュボード", "tabs.explorer": "データエクスプローラー", "tabs.inventory": "インベントリ", "tabs.coverage": "カバレッジ監査", "tabs.intraday": "日中監査", "tabs.calendar": "取引カレンダー", "tabs.backfill": "履歴データ補完", "tabs.purge": "ストレージ / パージ", "tabs.runs": "実行履歴",
+    "tabs.dashboard": "ホーム", "tabs.explorer": "データエクスプローラー", "tabs.inventory": "インベントリ", "tabs.coverage": "カバレッジ監査", "tabs.intraday": "日中監査", "tabs.calendar": "取引カレンダー", "tabs.backfill": "履歴データ補完", "tabs.purge": "ストレージ / パージ", "tabs.runs": "実行履歴",
     "sections.archive_overview": "ローカルアーカイブ概要", "sections.recent_runs": "最近の実行", "sections.explorer": "件数制限付きローカル市場データ照会", "sections.inventory": "ローカル物理・論理インベントリ", "sections.coverage": "取引日カバレッジ監査", "sections.intraday": "最新完全スナップショット構造", "sections.calendar": "ローカル照会と明示的な OpenD 取得", "sections.backfill": "取引カレンダーによる履歴データ補完", "sections.runs": "ローカル収集・データセット実行履歴", "sections.purge": "市場データ物理スナップショットの厳密な範囲", "sections.purge_execute": "確認済み計画を実行",
     "metrics.symbols": "銘柄", "metrics.snapshots": "スナップショット", "metrics.latest_rows": "最新行数", "metrics.completed_dates": "完了日", "metrics.incomplete_dates": "未完了日", "metrics.latest_trade_date": "最新取引日",
     "fields.code": "コード", "fields.symbols": "銘柄", "fields.start_date": "開始日", "fields.end_date": "終了日", "fields.interval": "足種", "fields.requested_session": "要求セッション", "fields.bar_session": "バーセッション", "fields.session": "セッション", "fields.adjustment": "株価調整", "fields.page_size": "1ページの行数", "fields.calendar_market": "カレンダー市場", "fields.calendar_code": "カレンダーコード", "fields.scope": "範囲", "fields.market": "市場", "fields.bootstrap_start_date": "初期開始日", "fields.max_retries": "最大再試行回数", "fields.retry_backoff_seconds": "再試行待機秒数", "fields.status": "ステータス", "fields.dataset": "データセット", "fields.source": "ソース", "fields.source_schema_version": "ソーススキーマ版",
@@ -347,6 +347,86 @@ JA.update(
         "columns.run_kind": "実行種別",
         "columns.requested_items": "要求項目",
         "columns.errors": "エラー",
+    }
+)
+
+
+EN.update(
+    {
+        "header.subtitle": "Local Market Data Vault",
+        "header.settings_path": "Settings: {settings_path}",
+        "navigation.groups.data": "DATA",
+        "navigation.groups.explore": "EXPLORE",
+        "navigation.groups.quality": "QUALITY",
+        "navigation.groups.activity": "ACTIVITY",
+        "navigation.groups.advanced": "ADVANCED",
+        "navigation.items.home": "Home",
+        "navigation.items.historical_data": "Historical Data",
+        "navigation.items.trading_calendar": "Trading Calendar",
+        "navigation.items.market_data": "Market Data",
+        "navigation.items.inventory": "Inventory",
+        "navigation.items.coverage_audit": "Coverage Audit",
+        "navigation.items.intraday_audit": "Intraday Audit",
+        "navigation.items.runs": "Runs",
+        "navigation.items.storage_cleanup": "Storage & Cleanup",
+        "home.title": "Local data overview",
+        "home.unloaded.body": "Refresh to inspect the current local archive.",
+        "home.empty.body": (
+            "No market data yet.\n"
+            "Prepare a trading calendar or open Historical Data to begin."
+        ),
+    }
+)
+ZH_CN.update(
+    {
+        "header.subtitle": "本地市场数据仓库",
+        "header.settings_path": "设置：{settings_path}",
+        "navigation.groups.data": "数据",
+        "navigation.groups.explore": "浏览",
+        "navigation.groups.quality": "质量检查",
+        "navigation.groups.activity": "运行",
+        "navigation.groups.advanced": "高级管理",
+        "navigation.items.home": "首页",
+        "navigation.items.historical_data": "历史数据",
+        "navigation.items.trading_calendar": "交易日历",
+        "navigation.items.market_data": "行情数据",
+        "navigation.items.inventory": "数据库存",
+        "navigation.items.coverage_audit": "覆盖检查",
+        "navigation.items.intraday_audit": "分钟数据检查",
+        "navigation.items.runs": "运行记录",
+        "navigation.items.storage_cleanup": "存储与清理",
+        "home.title": "本地数据概览",
+        "home.unloaded.body": "点击刷新以查看当前本地数据仓库。",
+        "home.empty.body": (
+            "暂无市场数据。\n"
+            "可以先准备交易日历，或进入“历史数据”开始操作。"
+        ),
+    }
+)
+JA.update(
+    {
+        "header.subtitle": "ローカル市場データ保管庫",
+        "header.settings_path": "設定：{settings_path}",
+        "navigation.groups.data": "データ",
+        "navigation.groups.explore": "閲覧",
+        "navigation.groups.quality": "品質チェック",
+        "navigation.groups.activity": "実行",
+        "navigation.groups.advanced": "詳細管理",
+        "navigation.items.home": "ホーム",
+        "navigation.items.historical_data": "履歴データ",
+        "navigation.items.trading_calendar": "取引カレンダー",
+        "navigation.items.market_data": "市場データ",
+        "navigation.items.inventory": "インベントリ",
+        "navigation.items.coverage_audit": "カバレッジ監査",
+        "navigation.items.intraday_audit": "日中データ監査",
+        "navigation.items.runs": "実行履歴",
+        "navigation.items.storage_cleanup": "ストレージとクリーンアップ",
+        "home.title": "ローカルデータ概要",
+        "home.unloaded.body": "更新して現在のローカルデータを確認してください。",
+        "home.empty.body": (
+            "市場データはまだありません。\n"
+            "取引カレンダーを準備するか、「履歴データ」を開いて開始できます。"
+        ),
     }
 )
 

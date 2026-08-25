@@ -19,10 +19,19 @@ from .i18n import (
 )
 from .models import BackfillPlanView, DashboardSnapshot, PurgePlanView, TablePage
 from .preferences import UiPreferenceStore
+from .shell import (
+    HOME_METRICS,
+    NAVIGATION_GROUPS,
+    PAGE_TAB_KEYS,
+    HomeState,
+    PageId,
+    dashboard_home_state,
+)
 from .tasks import SerialTaskRunner
 
 
 PAGE_SIZES = (50, 100, 250, 500, 1000)
+FORM_COLUMNS = 4
 
 
 class TableView(ttk.Frame):
@@ -142,16 +151,36 @@ class ConsoleApp:
 
         self.localization.bind(root.title, "app.title")
         configure_window_icon(root)
-        root.geometry("1480x900")
-        root.minsize(1120, 720)
+        root.geometry("1280x820")
+        root.minsize(1100, 700)
         root.protocol("WM_DELETE_WINDOW", self._close)
         self._configure_style()
 
         self.status_text = tk.StringVar()
         self.error_text = tk.StringVar(value="")
         self._build_header()
-        self.notebook = ttk.Notebook(root)
-        self.notebook.pack(fill="both", expand=True, padx=14, pady=(0, 8))
+        self._build_shell()
+        self._build_status_bar()
+        self.localization.on_refresh(self._refresh_dynamic_text)
+        self._refresh_dynamic_text()
+
+    def _build_shell(self) -> None:
+        shell = ttk.Frame(self.root)
+        shell.pack(fill="both", expand=True, padx=(14, 14), pady=(0, 8))
+
+        self.sidebar = ttk.Frame(shell, style="Sidebar.TFrame", width=216)
+        self.sidebar.pack(side="left", fill="y", padx=(0, 12))
+        self.sidebar.pack_propagate(False)
+        workspace = ttk.Frame(shell)
+        workspace.pack(side="right", fill="both", expand=True)
+
+        self.pages: dict[PageId, ttk.Frame] = {}
+        self._page_ids_by_widget: dict[str, PageId] = {}
+        self.navigation_buttons: dict[PageId, tk.Button] = {}
+        self.navigation_indicators: dict[PageId, tk.Frame] = {}
+        self.current_page_id = PageId.HOME
+        self.notebook = ttk.Notebook(workspace, style="Hidden.TNotebook")
+        self.notebook.pack(fill="both", expand=True)
         self._build_dashboard()
         self._build_explorer()
         self._build_inventory()
@@ -161,9 +190,10 @@ class ConsoleApp:
         self._build_backfill()
         self._build_purge()
         self._build_runs()
-        self._build_status_bar()
-        self.localization.on_refresh(self._refresh_dynamic_text)
-        self._refresh_dynamic_text()
+        self._build_navigation()
+        self._configure_fonts()
+        self.notebook.bind("<<NotebookTabChanged>>", self._notebook_page_changed)
+        self.select_page(PageId.HOME)
 
     def _configure_style(self) -> None:
         self.style = ttk.Style(self.root)
@@ -173,6 +203,15 @@ class ConsoleApp:
         self.style.configure("Muted.TLabel", foreground="#5b6470")
         self.style.configure("Error.TLabel", foreground="#a4262c")
         self.style.configure("Network.TButton", foreground="#8a3b00")
+        self.style.configure("Header.TFrame", background="#f7f7f7")
+        self.style.configure("Sidebar.TFrame", background="#f2f2f2")
+        self.style.configure(
+            "NavigationGroup.TLabel",
+            background="#f2f2f2",
+            foreground="#626262",
+        )
+        self.style.layout("Hidden.TNotebook.Tab", [])
+        self.style.configure("Hidden.TNotebook", borderwidth=0, tabmargins=0)
         self._configure_fonts()
 
     def _configure_fonts(self) -> None:
@@ -186,22 +225,30 @@ class ConsoleApp:
         self.style.configure("Section.TLabel", font=(family, 12, "bold"))
         self.style.configure("Subsection.TLabel", font=(family, 11, "bold"))
         self.style.configure("Metric.TLabel", font=(family, 17, "bold"))
+        self.style.configure("NavigationGroup.TLabel", font=(family, 8, "bold"))
         self.style.configure("Treeview", rowheight=25, font=(family, 9))
         self.style.configure("Treeview.Heading", font=(family, 9, "bold"))
+        for button in getattr(self, "navigation_buttons", {}).values():
+            button.configure(font=(family, 9))
 
     def _build_header(self) -> None:
-        header = ttk.Frame(self.root, padding=(16, 12))
+        header = ttk.Frame(self.root, padding=(16, 12), style="Header.TFrame")
         header.pack(fill="x")
-        title = ttk.Label(header, style="Title.TLabel")
-        title.pack(side="left")
+        identity = ttk.Frame(header, style="Header.TFrame")
+        identity.pack(side="left")
+        title = ttk.Label(identity, style="Title.TLabel", background="#f7f7f7")
+        title.pack(anchor="w")
         self._bind_widget(title, "header.title")
-        context = ttk.Frame(header)
+        subtitle = ttk.Label(identity, style="Muted.TLabel", background="#f7f7f7")
+        subtitle.pack(anchor="w")
+        self._bind_widget(subtitle, "header.subtitle")
+        context = ttk.Frame(header, style="Header.TFrame")
         context.pack(side="right")
-        language_row = ttk.Frame(context)
+        language_row = ttk.Frame(context, style="Header.TFrame")
         language_row.pack(anchor="e")
-        language_label = ttk.Label(language_row)
-        language_label.pack(side="left", padx=(0, 6))
-        self._bind_widget(language_label, "header.language")
+        local_mode = ttk.Label(language_row, style="Muted.TLabel", background="#f7f7f7")
+        local_mode.pack(side="left", padx=(0, 12))
+        self._bind_widget(local_mode, "header.local_mode")
         self.language_name = tk.StringVar(value=LANGUAGE_NAMES[self.translator.locale])
         self.language_selector = ttk.Combobox(
             language_row,
@@ -212,14 +259,13 @@ class ConsoleApp:
         )
         self.language_selector.pack(side="left")
         self.language_selector.bind("<<ComboboxSelected>>", self._change_language)
-        local_mode = ttk.Label(context, foreground="#107c10")
-        local_mode.pack(anchor="e")
-        self._bind_widget(local_mode, "header.local_mode")
-        settings_context = ttk.Label(context, style="Muted.TLabel")
-        settings_context.pack(anchor="e")
+        settings_context = ttk.Label(
+            context, style="Muted.TLabel", background="#f7f7f7"
+        )
+        settings_context.pack(anchor="e", pady=(4, 0))
         self.localization.bind(
             lambda value: settings_context.configure(text=value),
-            "header.context",
+            "header.settings_path",
             settings_path=self.settings_path,
         )
 
@@ -231,42 +277,128 @@ class ConsoleApp:
         ttk.Label(bar, textvariable=self.status_text).pack(side="left")
         ttk.Label(bar, textvariable=self.error_text, style="Error.TLabel").pack(side="left", padx=16)
 
-    def _new_tab(self, key: str) -> ttk.Frame:
+    def _new_tab(self, page_id: PageId) -> ttk.Frame:
         tab = ttk.Frame(self.notebook, padding=12)
         self.notebook.add(tab, text="")
-        self.localization.bind(lambda value: self.notebook.tab(tab, text=value), key)
+        self.pages[page_id] = tab
+        self._page_ids_by_widget[str(tab)] = page_id
+        self.localization.bind(
+            lambda value: self.notebook.tab(tab, text=value), PAGE_TAB_KEYS[page_id]
+        )
         return tab
 
+    def _build_navigation(self) -> None:
+        for group_index, group in enumerate(NAVIGATION_GROUPS):
+            if group.label_key is not None:
+                group_label = ttk.Label(self.sidebar, style="NavigationGroup.TLabel")
+                group_label.pack(fill="x", padx=14, pady=(12, 4))
+                self._bind_widget(group_label, group.label_key)
+            elif group_index == 0:
+                ttk.Frame(self.sidebar, style="Sidebar.TFrame", height=8).pack(fill="x")
+            for item in group.items:
+                row = tk.Frame(self.sidebar, background="#f2f2f2", height=36)
+                row.pack(fill="x")
+                row.pack_propagate(False)
+                indicator = tk.Frame(row, width=3, background="#f2f2f2")
+                indicator.pack(side="left", fill="y")
+                button = tk.Button(
+                    row,
+                    anchor="w",
+                    background="#f2f2f2",
+                    activebackground="#e7e7e7",
+                    activeforeground="#202020",
+                    borderwidth=0,
+                    cursor="hand2",
+                    foreground="#303030",
+                    highlightthickness=0,
+                    padx=12,
+                    relief="flat",
+                    takefocus=True,
+                    command=lambda page_id=item.page_id: self.select_page(page_id),
+                )
+                button.pack(side="left", fill="both", expand=True)
+                self.localization.bind(
+                    lambda value, widget=button: widget.configure(text=value),
+                    item.label_key,
+                )
+                self.navigation_buttons[item.page_id] = button
+                self.navigation_indicators[item.page_id] = indicator
+
+    def select_page(self, page_id: PageId | str) -> None:
+        normalized = PageId(page_id)
+        self.notebook.select(self.pages[normalized])
+        self.current_page_id = normalized
+        self._refresh_navigation_selection()
+
+    def _notebook_page_changed(self, _event=None) -> None:
+        selected = self.notebook.select()
+        page_id = self._page_ids_by_widget.get(str(selected))
+        if page_id is not None:
+            self.current_page_id = page_id
+            self._refresh_navigation_selection()
+
+    def _refresh_navigation_selection(self) -> None:
+        for page_id, button in self.navigation_buttons.items():
+            selected = page_id == self.current_page_id
+            button.configure(
+                background="#eee6d2" if selected else "#f2f2f2",
+                activebackground="#e8dfc8" if selected else "#e7e7e7",
+                foreground="#4f3b08" if selected else "#303030",
+            )
+            self.navigation_indicators[page_id].configure(
+                background="#b48a28" if selected else "#f2f2f2"
+            )
+
     def _build_dashboard(self) -> None:
-        tab = self._new_tab("tabs.dashboard")
+        tab = self._new_tab(PageId.HOME)
         top = ttk.Frame(tab)
         top.pack(fill="x")
         overview = ttk.Label(top, style="Section.TLabel")
         overview.pack(side="left")
-        self._bind_widget(overview, "sections.archive_overview")
+        self._bind_widget(overview, "home.title")
         refresh = ttk.Button(top, command=self._refresh_dashboard)
         refresh.pack(side="right")
         self._bind_widget(refresh, "buttons.refresh")
-        self.dashboard_metrics = ttk.Frame(tab)
-        self.dashboard_metrics.pack(fill="x", pady=12)
+
+        self.home_summary = ttk.Frame(tab)
+        self.home_summary.pack(fill="x", pady=(10, 12))
+        self.home_message = ttk.Label(
+            self.home_summary, style="Muted.TLabel", justify="left", wraplength=700
+        )
+        self.home_message.pack(anchor="w")
+        self.home_message_binding = self.localization.bind(
+            lambda value: self.home_message.configure(text=value), "home.unloaded.body"
+        )
+        self.home_quick_actions = ttk.Frame(self.home_summary)
+        self.home_quick_actions.pack(anchor="w", pady=(10, 0))
+        self._button(
+            self.home_quick_actions,
+            "navigation.items.historical_data",
+            lambda: self.select_page(PageId.HISTORICAL_DATA),
+        ).pack(side="left")
+        self._button(
+            self.home_quick_actions,
+            "navigation.items.trading_calendar",
+            lambda: self.select_page(PageId.TRADING_CALENDAR),
+        ).pack(side="left", padx=(8, 0))
+
+        self.dashboard_metrics = ttk.Frame(self.home_summary)
         self.metric_values: dict[str, tk.StringVar] = {}
-        for index, (name, key) in enumerate(
-            (
-                ("Symbols", "metrics.symbols"),
-                ("Snapshots", "metrics.snapshots"),
-                ("Latest rows", "metrics.latest_rows"),
-                ("Completed dates", "metrics.completed_dates"),
-                ("Incomplete dates", "metrics.incomplete_dates"),
-                ("Latest trade date", "metrics.latest_trade_date"),
-            )
-        ):
+        for index, (name, key) in enumerate(HOME_METRICS):
             panel = ttk.LabelFrame(self.dashboard_metrics, padding=10)
-            panel.grid(row=0, column=index, padx=(0, 8), sticky="nsew")
+            panel.grid(
+                row=index // 3,
+                column=index % 3,
+                padx=(0, 8),
+                pady=(0, 8),
+                sticky="nsew",
+            )
             self._bind_widget(panel, key)
             value = tk.StringVar(value="-")
             self.metric_values[name] = value
             ttk.Label(panel, textvariable=value, style="Metric.TLabel").pack()
-            self.dashboard_metrics.columnconfigure(index, weight=1)
+            self.dashboard_metrics.columnconfigure(index % 3, weight=1)
+        self.home_state = HomeState.UNLOADED
         recent = ttk.Label(tab, style="Subsection.TLabel")
         recent.pack(anchor="w", pady=(8, 6))
         self._bind_widget(recent, "sections.recent_runs")
@@ -274,7 +406,7 @@ class ConsoleApp:
         self.dashboard_runs.pack(fill="both", expand=True)
 
     def _build_explorer(self) -> None:
-        tab = self._new_tab("tabs.explorer")
+        tab = self._new_tab(PageId.MARKET_DATA)
         form = ttk.LabelFrame(tab, padding=10)
         form.pack(fill="x")
         self._bind_widget(form, "sections.explorer")
@@ -305,7 +437,7 @@ class ConsoleApp:
         self.explorer_table.pack(fill="both", expand=True)
 
     def _build_inventory(self) -> None:
-        tab = self._new_tab("tabs.inventory")
+        tab = self._new_tab(PageId.INVENTORY)
         form = ttk.LabelFrame(tab, padding=10)
         form.pack(fill="x")
         self._bind_widget(form, "sections.inventory")
@@ -332,7 +464,7 @@ class ConsoleApp:
         self.inventory_table.pack(fill="both", expand=True)
 
     def _build_coverage_audit(self) -> None:
-        tab = self._new_tab("tabs.coverage")
+        tab = self._new_tab(PageId.COVERAGE_AUDIT)
         self.coverage_vars = self._audit_form(tab, "sections.coverage")
         actions = ttk.Frame(tab)
         actions.pack(fill="x", pady=8)
@@ -347,7 +479,7 @@ class ConsoleApp:
         self.coverage_table.pack(fill="both", expand=True)
 
     def _build_intraday_audit(self) -> None:
-        tab = self._new_tab("tabs.intraday")
+        tab = self._new_tab(PageId.INTRADAY_AUDIT)
         self.intraday_vars = self._audit_form(tab, "sections.intraday")
         actions = ttk.Frame(tab)
         actions.pack(fill="x", pady=8)
@@ -380,7 +512,7 @@ class ConsoleApp:
         return values
 
     def _build_calendar(self) -> None:
-        tab = self._new_tab("tabs.calendar")
+        tab = self._new_tab(PageId.TRADING_CALENDAR)
         form = ttk.LabelFrame(tab, padding=10)
         form.pack(fill="x")
         self._bind_widget(form, "sections.calendar")
@@ -409,7 +541,7 @@ class ConsoleApp:
         self.calendar_table.pack(fill="both", expand=True)
 
     def _build_backfill(self) -> None:
-        tab = self._new_tab("tabs.backfill")
+        tab = self._new_tab(PageId.HISTORICAL_DATA)
         form = ttk.LabelFrame(tab, padding=10)
         form.pack(fill="x")
         self._bind_widget(form, "sections.backfill")
@@ -454,7 +586,7 @@ class ConsoleApp:
         self.backfill_table.pack(fill="both", expand=True)
 
     def _build_runs(self) -> None:
-        tab = self._new_tab("tabs.runs")
+        tab = self._new_tab(PageId.RUNS)
         form = ttk.LabelFrame(tab, padding=10)
         form.pack(fill="x")
         self._bind_widget(form, "sections.runs")
@@ -474,7 +606,7 @@ class ConsoleApp:
         self.runs_table.pack(fill="both", expand=True)
 
     def _build_purge(self) -> None:
-        tab = self._new_tab("tabs.purge")
+        tab = self._new_tab(PageId.STORAGE_CLEANUP)
         form = ttk.LabelFrame(tab, padding=10)
         form.pack(fill="x")
         self._bind_widget(form, "sections.purge")
@@ -511,7 +643,7 @@ class ConsoleApp:
         confirmation = ttk.LabelFrame(tab, padding=10)
         confirmation.pack(fill="x", pady=(8, 0))
         self._bind_widget(confirmation, "sections.purge_execute")
-        description = ttk.Label(confirmation, wraplength=1050)
+        description = ttk.Label(confirmation, wraplength=720)
         description.pack(anchor="w")
         self._bind_widget(description, "purge.description")
         row = ttk.Frame(confirmation)
@@ -520,7 +652,7 @@ class ConsoleApp:
         confirmation_label.pack(side="left")
         self._bind_widget(confirmation_label, "purge.confirmation")
         self.purge_confirmation = tk.StringVar()
-        ttk.Entry(row, textvariable=self.purge_confirmation, width=55).pack(
+        ttk.Entry(row, textvariable=self.purge_confirmation, width=46).pack(
             side="left", padx=8
         )
         self.purge_execute_button = ttk.Button(
@@ -565,21 +697,33 @@ class ConsoleApp:
 
     def _entry(self, parent, label_key: str, variable: tk.Variable, column: int) -> None:
         frame = ttk.Frame(parent)
-        frame.grid(row=0 if column < 8 else 1, column=column % 8, padx=(0, 8), sticky="ew")
+        frame.grid(
+            row=column // FORM_COLUMNS,
+            column=column % FORM_COLUMNS,
+            padx=(0, 8),
+            pady=(0, 6),
+            sticky="ew",
+        )
         label = ttk.Label(frame)
         label.pack(anchor="w")
         self._bind_widget(label, label_key)
         ttk.Entry(frame, textvariable=variable, width=17).pack(fill="x")
-        parent.columnconfigure(column % 8, weight=1)
+        parent.columnconfigure(column % FORM_COLUMNS, weight=1)
 
     def _combo(self, parent, label_key: str, variable: tk.Variable, values, column: int) -> None:
         frame = ttk.Frame(parent)
-        frame.grid(row=0 if column < 8 else 1, column=column % 8, padx=(0, 8), sticky="ew")
+        frame.grid(
+            row=column // FORM_COLUMNS,
+            column=column % FORM_COLUMNS,
+            padx=(0, 8),
+            pady=(0, 6),
+            sticky="ew",
+        )
         label = ttk.Label(frame)
         label.pack(anchor="w")
         self._bind_widget(label, label_key)
         ttk.Combobox(frame, textvariable=variable, values=values, state="readonly", width=15).pack(fill="x")
-        parent.columnconfigure(column % 8, weight=1)
+        parent.columnconfigure(column % FORM_COLUMNS, weight=1)
 
     def _change_language(self, _event=None) -> None:
         locale = LOCALES_BY_NAME.get(self.language_name.get(), "en")
@@ -669,11 +813,28 @@ class ConsoleApp:
 
     def _refresh_dashboard(self) -> None:
         def success(snapshot: DashboardSnapshot) -> None:
-            for name, value in snapshot.metrics.items():
-                self.metric_values[name].set(value)
+            for name, _key in HOME_METRICS:
+                self.metric_values[name].set(snapshot.metrics.get(name, "-"))
             self.dashboard_runs.set_page(snapshot.recent_runs)
+            self._set_home_state(dashboard_home_state(snapshot))
 
         self._submit("operations.dashboard_refresh", self.backend.dashboard, success)
+
+    def _set_home_state(self, state: HomeState) -> None:
+        self.home_state = state
+        if state == HomeState.POPULATED:
+            self.home_message.pack_forget()
+            self.home_quick_actions.pack_forget()
+            self.dashboard_metrics.pack(fill="x")
+            return
+
+        self.dashboard_metrics.pack_forget()
+        message_key = (
+            "home.empty.body" if state == HomeState.EMPTY else "home.unloaded.body"
+        )
+        self.home_message_binding.update(message_key)
+        self.home_message.pack(anchor="w")
+        self.home_quick_actions.pack(anchor="w", pady=(10, 0))
 
     def _query_explorer(self, page: int) -> None:
         values = {key: variable.get() for key, variable in self.explorer_vars.items()}
