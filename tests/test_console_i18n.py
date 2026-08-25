@@ -238,6 +238,10 @@ def test_console_language_handler_persists_and_only_refreshes_presentation():
             self.saved.append(locale)
             return True
 
+    class Root:
+        def update_idletasks(self):
+            presentation["idle_flushed"] = True
+
     translator = Translator("en")
     presentation = {}
     app = ConsoleApp.__new__(ConsoleApp)
@@ -249,6 +253,7 @@ def test_console_language_handler_persists_and_only_refreshes_presentation():
     app.language_name = Variable("简体中文")
     app.preference_store = Store()
     app._configure_fonts = lambda: presentation.__setitem__("font_refreshed", True)
+    app.root = Root()
     business_state = {
         "selected_tab": 6,
         "form_value": "US.SPY US.QQQ",
@@ -259,7 +264,11 @@ def test_console_language_handler_persists_and_only_refreshes_presentation():
 
     assert translator.locale == "zh-CN"
     assert app.preference_store.saved == ["zh-CN"]
-    assert presentation == {"tab": "历史数据回填", "font_refreshed": True}
+    assert presentation == {
+        "tab": "历史数据回填",
+        "font_refreshed": True,
+        "idle_flushed": True,
+    }
     assert business_state["selected_tab"] == 6
     assert business_state["form_value"] == "US.SPY US.QQQ"
     assert business_state["page"].page == 2
