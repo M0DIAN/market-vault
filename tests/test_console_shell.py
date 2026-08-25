@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 from types import SimpleNamespace
 
-from market_vault.console.i18n import LocalizationBindings, Translator
+from market_vault.console.i18n import LANGUAGE_NAMES, LocalizationBindings, Translator
 from market_vault.console.models import DashboardSnapshot, TablePage
 from market_vault.console.shell import (
     HOME_METRICS,
@@ -122,6 +122,7 @@ def test_language_switch_preserves_workspace_and_loaded_business_state():
     app.language_name = Variable()
     app.preference_store = SimpleNamespace(save_language=lambda locale: locale == "zh-CN")
     app._configure_fonts = lambda: None
+    app.root = SimpleNamespace(update_idletasks=lambda: None)
     state = {
         "form": "US.SPY",
         "table": TablePage(("code",), (("US.SPY",),), page=2, total_rows=75),
@@ -138,6 +139,74 @@ def test_language_switch_preserves_workspace_and_loaded_business_state():
     assert state["purge_plan_id"] == "plan-123"
 
 
+def test_live_language_switch_refreshes_every_shell_home_binding_before_return():
+    keys = (
+        "header.subtitle",
+        "header.local_mode",
+        "header.settings_path",
+        "navigation.groups.data",
+        "navigation.groups.explore",
+        "navigation.groups.quality",
+        "navigation.groups.activity",
+        "navigation.groups.advanced",
+        "navigation.items.home",
+        "home.title",
+        "home.unloaded.body",
+        "navigation.items.historical_data",
+        "navigation.items.trading_calendar",
+        "sections.recent_runs",
+        "buttons.refresh",
+        "empty.no_data",
+    )
+
+    class Variable:
+        value = LANGUAGE_NAMES["en"]
+
+        def get(self):
+            return self.value
+
+    rendered = {}
+    saved = []
+    flushes = []
+    app = ConsoleApp.__new__(ConsoleApp)
+    app.translator = Translator("en")
+    app.localization = LocalizationBindings(app.translator)
+    for key in keys:
+        values = (
+            {"settings_path": "C:/MarketVault/config/settings.yaml"}
+            if key == "header.settings_path"
+            else {}
+        )
+        app.localization.bind(
+            lambda value, binding_key=key: rendered.__setitem__(binding_key, value),
+            key,
+            **values,
+        )
+    app.language_name = Variable()
+    app.preference_store = SimpleNamespace(save_language=lambda locale: saved.append(locale))
+    app._configure_fonts = lambda: None
+    app.root = SimpleNamespace(update_idletasks=lambda: flushes.append(True))
+    app.pages = {page_id: object() for page_id in PageId}
+    original_pages = dict(app.pages)
+    app.backend = SimpleNamespace()
+
+    for locale in ("zh-CN", "ja", "en"):
+        app.language_name.value = LANGUAGE_NAMES[locale]
+        app._change_language()
+        for key in keys:
+            values = (
+                {"settings_path": "C:/MarketVault/config/settings.yaml"}
+                if key == "header.settings_path"
+                else {}
+            )
+            assert rendered[key] == app.translator.t(key, **values)
+
+    assert saved == ["zh-CN", "ja", "en"]
+    assert len(flushes) == 3
+    assert app.pages == original_pages
+    assert all(app.pages[key] is value for key, value in original_pages.items())
+
+
 def test_navigation_method_has_no_business_or_network_operation():
     source = inspect.getsource(ConsoleApp.select_page)
     forbidden = ("backend", "OpenD", "backfill", "purge_execute", "_submit")
@@ -151,6 +220,20 @@ def test_shell_uses_hidden_notebook_and_home_is_default():
     assert source.index("self._build_navigation()") < source.index("self._configure_fonts()")
     assert "backend.dashboard" not in inspect.getsource(ConsoleApp.__init__)
     assert "_refresh_dashboard()" not in inspect.getsource(ConsoleApp._build_dashboard)
+
+
+def test_root_grid_reserves_status_bar_at_minimum_geometry():
+    init_source = inspect.getsource(ConsoleApp.__init__)
+    header_source = inspect.getsource(ConsoleApp._build_header)
+    shell_source = inspect.getsource(ConsoleApp._build_shell)
+    status_source = inspect.getsource(ConsoleApp._build_status_bar)
+
+    assert 'root.geometry("1280x820")' in init_source
+    assert 'root.minsize(1100, 700)' in init_source
+    assert "root.rowconfigure(1, weight=1)" in init_source
+    assert "header.grid(row=0, column=0" in header_source
+    assert "shell.grid(row=1, column=0" in shell_source
+    assert "bar.grid(row=2, column=0" in status_source
 
 
 def test_dashboard_state_uses_only_authoritative_symbol_and_snapshot_counts():

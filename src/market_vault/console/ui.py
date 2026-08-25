@@ -153,6 +153,8 @@ class ConsoleApp:
         configure_window_icon(root)
         root.geometry("1280x820")
         root.minsize(1100, 700)
+        root.columnconfigure(0, weight=1)
+        root.rowconfigure(1, weight=1)
         root.protocol("WM_DELETE_WINDOW", self._close)
         self._configure_style()
 
@@ -166,7 +168,7 @@ class ConsoleApp:
 
     def _build_shell(self) -> None:
         shell = ttk.Frame(self.root)
-        shell.pack(fill="both", expand=True, padx=(14, 14), pady=(0, 8))
+        shell.grid(row=1, column=0, sticky="nsew", padx=(14, 14), pady=(0, 8))
 
         self.sidebar = ttk.Frame(shell, style="Sidebar.TFrame", width=216)
         self.sidebar.pack(side="left", fill="y", padx=(0, 12))
@@ -233,7 +235,7 @@ class ConsoleApp:
 
     def _build_header(self) -> None:
         header = ttk.Frame(self.root, padding=(16, 12), style="Header.TFrame")
-        header.pack(fill="x")
+        header.grid(row=0, column=0, sticky="ew")
         identity = ttk.Frame(header, style="Header.TFrame")
         identity.pack(side="left")
         title = ttk.Label(identity, style="Title.TLabel", background="#f7f7f7")
@@ -271,7 +273,7 @@ class ConsoleApp:
 
     def _build_status_bar(self) -> None:
         bar = ttk.Frame(self.root, padding=(14, 6))
-        bar.pack(fill="x", side="bottom")
+        bar.grid(row=2, column=0, sticky="ew")
         self.progress = ttk.Progressbar(bar, mode="indeterminate", length=160)
         self.progress.pack(side="right")
         ttk.Label(bar, textvariable=self.status_text).pack(side="left")
@@ -730,6 +732,7 @@ class ConsoleApp:
         self.preference_store.save_language(locale)
         self.localization.set_locale(locale)
         self._configure_fonts()
+        self.root.update_idletasks()
 
     def _refresh_dynamic_text(self) -> None:
         if self._status_operation_key is None:
