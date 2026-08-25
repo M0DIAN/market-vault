@@ -89,6 +89,11 @@ The Storage / Purge workspace is local-only and requires a sealed preview plus
 typed plan confirmation; it moves whole physical file pairs to quarantine and
 does not permanently delete data.
 
+The Console supports live switching between English, Simplified Chinese, and
+Japanese. The first-use default is English; the Windows user preference is
+stored outside the application bundle at
+`%LOCALAPPDATA%\MarketVault\ui-preferences.json`.
+
 For the full workflow (`init-catalog` → `calendar` → `backfill` →
 `inventory` → `audit` → `intraday-audit` → `query`), see the
 [MarketVault 使用说明](docs/USER_GUIDE.md).

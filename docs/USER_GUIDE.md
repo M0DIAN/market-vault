@@ -123,6 +123,13 @@ Audit、Trading Calendar、Backfill plan/execute、Storage / Purge 与 Runs。
 - 成功执行只把完整 Raw/Curated 文件对移入 `data/quarantine/`，不永久删除，
   不级联修改 Canonical、Dataset 或 Dataset Catalog。
 
+Console 顶部的语言选择器支持 `English`、`简体中文` 和 `日本語`。首次启动
+固定使用英语，不读取 Windows 系统区域设置；切换后立即更新现有界面，不重置
+当前标签页、表单、分页或已加载结果。Windows 偏好保存在
+`%LOCALAPPDATA%\MarketVault\ui-preferences.json`，不写入安装目录、项目配置、
+Catalog、manifest 或行情数据。偏好文件缺失、损坏或不可读时会安全回退到英语，
+不会阻止访问 MarketVault 数据。
+
 精确行为以 [Console v0.1 contract](contracts/console_v01.md) 为准。
 
 ### Windows development EXE build
