@@ -143,6 +143,20 @@ from its own directory, not the process working directory. The build refuses to
 overwrite an existing distributable or ZIP; it never removes a shared `dist`
 directory. This is a development artifact, not an official release.
 
+The executable and Tk window use the approved MarketVault Windows icon. To
+create a desktop shortcut for an installed onedir bundle, run:
+
+```powershell
+.\scripts\install_windows_shortcut.ps1 `
+  -ExePath "D:\MarketVault\App\MarketVault\MarketVault.exe"
+```
+
+The shortcut targets the complete onedir installation, uses its directory as
+the working directory, and takes its icon from `MarketVault.exe`. The installer
+refuses a missing executable or an existing shortcut; it does not silently
+replace desktop state. Use `-ShortcutPath` to create a shortcut in a separate
+test directory instead of the real Desktop.
+
 ### Safe Purge v0.1
 
 先生成完全本地的 sealed plan：

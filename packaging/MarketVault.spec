@@ -6,6 +6,7 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 PROJECT_ROOT = Path(SPECPATH).resolve().parent
 SOURCE_ROOT = PROJECT_ROOT / "src"
 ENTRY_POINT = SOURCE_ROOT / "market_vault" / "windows_launcher.py"
+WINDOWS_ICON = PROJECT_ROOT / "assets" / "windows" / "market-vault.ico"
 
 hidden_imports = [
     "duckdb",
@@ -29,7 +30,8 @@ analysis = Analysis(
     [str(ENTRY_POINT)],
     pathex=[str(SOURCE_ROOT)],
     binaries=[],
-    datas=collect_data_files("moomoo", include_py_files=False),
+    datas=collect_data_files("moomoo", include_py_files=False)
+    + [(str(WINDOWS_ICON), "assets/windows")],
     hiddenimports=hidden_imports,
     hookspath=[],
     hooksconfig={},
@@ -64,6 +66,7 @@ exe = EXE(
     upx=False,
     console=False,
     disable_windowed_traceback=False,
+    icon=str(WINDOWS_ICON),
 )
 
 collection = COLLECT(

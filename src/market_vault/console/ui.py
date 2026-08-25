@@ -7,6 +7,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Any, Callable
 
+from ..windows_launcher import configure_window_icon
 from .backend import ConsoleBackend
 from .models import BackfillPlanView, DashboardSnapshot, PurgePlanView, TablePage
 from .tasks import SerialTaskRunner
@@ -92,6 +93,7 @@ class ConsoleApp:
         self._busy = False
 
         root.title("MarketVault Console")
+        configure_window_icon(root)
         root.geometry("1480x900")
         root.minsize(1120, 720)
         root.protocol("WM_DELETE_WINDOW", self._close)
