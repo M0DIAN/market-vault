@@ -107,8 +107,11 @@ python -m market_vault.console --settings config/settings.yaml
 需要 Python 安装包含可用的 Tcl/Tk runtime（标准 Python.org Windows installer
 默认包含）。若 Tcl/Tk 缺失，Console 会以简洁错误退出，不会回退到第三方 GUI 包。
 
-当前提供 Dashboard、Data Explorer、Inventory、Coverage Audit、Intraday
-Audit、Trading Calendar、Backfill plan/execute、Storage / Purge 与 Runs。
+桌面壳层使用左侧导航，提供 Home、Historical Data、Trading Calendar、Market
+Data、Inventory、Coverage Audit、Intraday Audit、Runs 与 Storage & Cleanup。
+切换工作区不会重建页面，因此现有表单、表格、分页与已审核的清理预览状态会保留。
+Home 初始保持被动状态，只有点击 Refresh 后才通过现有 Dashboard backend
+读取本地归档概览；打开应用或切换导航不会连接 OpenD。
 界面不直接执行 SQL、不打开 DuckDB 内部表、不改写 Parquet，也不提供任意路径
 删除；所有业务操作均经过 `ConsoleBackend` 和公开 `MarketVault` API/service。
 
@@ -123,7 +126,9 @@ Audit、Trading Calendar、Backfill plan/execute、Storage / Purge 与 Runs。
 - 成功执行只把完整 Raw/Curated 文件对移入 `data/quarantine/`，不永久删除，
   不级联修改 Canonical、Dataset 或 Dataset Catalog。
 
-Console 顶部的语言选择器支持 `English`、`简体中文` 和 `日本語`。首次启动
+Console 顶部的语言选择器支持 `English`、`简体中文` 和 `日本語`。切换语言时，
+左侧导航、Header 与 Home 会即时更新，同时保留当前工作区、输入值、表格与分页。
+首次启动
 固定使用英语，不读取 Windows 系统区域设置；切换后立即更新现有界面，不重置
 当前标签页、表单、分页或已加载结果。Windows 偏好保存在
 `%LOCALAPPDATA%\MarketVault\ui-preferences.json`，不写入安装目录、项目配置、

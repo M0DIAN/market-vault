@@ -133,7 +133,7 @@ def test_translation_catalogs_have_exact_key_parity():
 def test_native_language_names_and_representative_page_translations():
     assert LANGUAGE_NAMES == {"en": "English", "zh-CN": "简体中文", "ja": "日本語"}
     expected = {
-        "tabs.dashboard": ("Dashboard", "仪表盘", "ダッシュボード"),
+        "tabs.dashboard": ("Home", "首页", "ホーム"),
         "tabs.explorer": ("Data Explorer", "数据浏览", "データエクスプローラー"),
         "tabs.inventory": ("Inventory", "数据清单", "インベントリ"),
         "tabs.coverage": ("Coverage Audit", "覆盖审计", "カバレッジ監査"),
@@ -142,6 +142,37 @@ def test_native_language_names_and_representative_page_translations():
         "tabs.backfill": ("Backfill", "历史数据回填", "履歴データ補完"),
         "tabs.purge": ("Storage / Purge", "存储 / 清理", "ストレージ / パージ"),
         "tabs.runs": ("Runs", "运行记录", "実行履歴"),
+    }
+    for key, values in expected.items():
+        assert tuple(Translator(locale).t(key) for locale in SUPPORTED_LOCALES) == values
+
+
+def test_shell_and_home_translations_cover_all_three_locales():
+    expected = {
+        "header.subtitle": (
+            "Local Market Data Vault",
+            "本地市场数据仓库",
+            "ローカル市場データ保管庫",
+        ),
+        "navigation.groups.data": ("DATA", "数据", "データ"),
+        "navigation.groups.explore": ("EXPLORE", "浏览", "閲覧"),
+        "navigation.groups.quality": ("QUALITY", "质量检查", "品質チェック"),
+        "navigation.groups.activity": ("ACTIVITY", "运行", "実行"),
+        "navigation.groups.advanced": ("ADVANCED", "高级管理", "詳細管理"),
+        "navigation.items.home": ("Home", "首页", "ホーム"),
+        "navigation.items.historical_data": ("Historical Data", "历史数据", "履歴データ"),
+        "navigation.items.trading_calendar": ("Trading Calendar", "交易日历", "取引カレンダー"),
+        "navigation.items.market_data": ("Market Data", "行情数据", "市場データ"),
+        "navigation.items.inventory": ("Inventory", "数据库存", "インベントリ"),
+        "navigation.items.coverage_audit": ("Coverage Audit", "覆盖检查", "カバレッジ監査"),
+        "navigation.items.intraday_audit": ("Intraday Audit", "分钟数据检查", "日中データ監査"),
+        "navigation.items.runs": ("Runs", "运行记录", "実行履歴"),
+        "navigation.items.storage_cleanup": (
+            "Storage & Cleanup",
+            "存储与清理",
+            "ストレージとクリーンアップ",
+        ),
+        "home.title": ("Local data overview", "本地数据概览", "ローカルデータ概要"),
     }
     for key, values in expected.items():
         assert tuple(Translator(locale).t(key) for locale in SUPPORTED_LOCALES) == values

@@ -81,17 +81,22 @@ Launch the development Console foundation on Windows:
 python -m market_vault.console --settings config/settings.yaml
 ```
 
-The Console uses stdlib Tkinter/ttk and adds no GUI dependency. It is
-local-only by default: only the explicitly confirmed Trading Calendar fetch
-and Backfill execute actions may connect to OpenD. Tables are paginated with a
-maximum page size of 1000, and export is limited to the current CSV/JSON page.
+The Console uses stdlib Tkinter/ttk and adds no GUI dependency. Its desktop
+shell uses a left navigation rail with Home, data, exploration, quality,
+activity, and advanced workspaces; selecting a workspace preserves its loaded
+forms, tables, and pagination. It is local-only by default: only the explicitly
+confirmed Trading Calendar fetch and Backfill execute actions may connect to
+OpenD. Tables are paginated with a maximum page size of 1000, and export is
+limited to the current CSV/JSON page.
 The Storage / Purge workspace is local-only and requires a sealed preview plus
 typed plan confirmation; it moves whole physical file pairs to quarantine and
 does not permanently delete data.
 
-The Console supports live switching between English, Simplified Chinese, and
-Japanese. The first-use default is English; the Windows user preference is
-stored outside the application bundle at
+Home remains passive until its explicit Refresh action loads the local archive
+overview. The Console supports live switching between English, Simplified
+Chinese, and Japanese without rebuilding the selected workspace. The first-use
+default is English; the Windows user preference is stored outside the
+application bundle at
 `%LOCALAPPDATA%\MarketVault\ui-preferences.json`.
 
 For the full workflow (`init-catalog` → `calendar` → `backfill` →
