@@ -191,6 +191,7 @@ class ConsoleApp:
         self._build_purge()
         self._build_runs()
         self._build_navigation()
+        self._configure_fonts()
         self.notebook.bind("<<NotebookTabChanged>>", self._notebook_page_changed)
         self.select_page(PageId.HOME)
 

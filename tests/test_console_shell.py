@@ -148,6 +148,7 @@ def test_shell_uses_hidden_notebook_and_home_is_default():
     source = inspect.getsource(ConsoleApp._build_shell)
     assert 'style="Hidden.TNotebook"' in source
     assert "self.select_page(PageId.HOME)" in source
+    assert source.index("self._build_navigation()") < source.index("self._configure_fonts()")
     assert "backend.dashboard" not in inspect.getsource(ConsoleApp.__init__)
     assert "_refresh_dashboard()" not in inspect.getsource(ConsoleApp._build_dashboard)
 
