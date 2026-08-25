@@ -168,7 +168,7 @@ class ConsoleApp:
         shell = ttk.Frame(self.root)
         shell.pack(fill="both", expand=True, padx=(14, 14), pady=(0, 8))
 
-        self.sidebar = ttk.Frame(shell, style="Sidebar.TFrame", width=204)
+        self.sidebar = ttk.Frame(shell, style="Sidebar.TFrame", width=216)
         self.sidebar.pack(side="left", fill="y", padx=(0, 12))
         self.sidebar.pack_propagate(False)
         workspace = ttk.Frame(shell)
@@ -228,7 +228,7 @@ class ConsoleApp:
         self.style.configure("Treeview", rowheight=25, font=(family, 9))
         self.style.configure("Treeview.Heading", font=(family, 9, "bold"))
         for button in getattr(self, "navigation_buttons", {}).values():
-            button.configure(font=(family, 10))
+            button.configure(font=(family, 9))
 
     def _build_header(self) -> None:
         header = ttk.Frame(self.root, padding=(16, 12), style="Header.TFrame")
