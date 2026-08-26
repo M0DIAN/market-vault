@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 import tkinter as tk
 from concurrent.futures import Future
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from tkinter import filedialog, font as tkfont, messagebox, ttk
 from typing import Any, Callable
 
@@ -32,6 +32,125 @@ from .tasks import SerialTaskRunner
 
 PAGE_SIZES = (50, 100, 250, 500, 1000)
 FORM_COLUMNS = 4
+HOME_METRIC_COLUMNS = 3
+
+APP_BG = "#EEEAE0"
+HEADER_BG = "#F8F5ED"
+SIDEBAR_BG = "#E5E0D4"
+WORKSPACE_BG = "#F5F1E8"
+CARD_BG = "#FBF8F0"
+CARD_BORDER = "#C8B98F"
+CARD_HIGHLIGHT = "#FFFDF7"
+GOLD = "#B58A2A"
+GOLD_DARK = "#80601B"
+GOLD_SOFT = "#EEE6D2"
+TEXT_PRIMARY = "#282722"
+TEXT_SECONDARY = "#777166"
+NAV_HOVER = "#ECE6D9"
+NAV_SELECTED = "#F2E7C9"
+STATUS_BG = "#E9E3D6"
+ERROR = "#A4262C"
+WARNING = "#8A3B00"
+
+
+def compact_settings_path(path: str) -> str:
+    """Compact only deep presentation paths while preserving final components."""
+
+    if not path:
+        return path
+    path_type = PureWindowsPath if "\\" in path else PurePosixPath
+    parsed = path_type(path)
+    if len(parsed.parts) <= 3:
+        return str(parsed)
+    separator = "\\" if path_type is PureWindowsPath else "/"
+    return f"…{separator}{separator.join(parsed.parts[-2:])}"
+
+
+class ActivityIndicator(tk.Frame):
+    """Theme-independent activity indicator with deterministic idle cleanup."""
+
+    ACTIVE_COLOR = GOLD
+
+    def __init__(self, parent, *, width: int = 160, height: int = 8):
+        super().__init__(
+            parent,
+            background=CARD_BORDER,
+            borderwidth=0,
+            height=height + 2,
+            width=width + 2,
+        )
+        self.pack_propagate(False)
+        self._width = width
+        self._height = height
+        self._segment_width = 34
+        self._position = 0
+        self._interval = 12
+        self._after_job: str | None = None
+        self._running = False
+        self.canvas = tk.Canvas(
+            self,
+            background=STATUS_BG,
+            borderwidth=0,
+            height=height,
+            highlightthickness=0,
+            width=width,
+        )
+        self.canvas.pack(fill="both", expand=True, padx=1, pady=1)
+        self._segment = self.canvas.create_rectangle(
+            0,
+            0,
+            0,
+            height,
+            fill=GOLD,
+            outline="",
+            state="hidden",
+        )
+
+    @property
+    def is_active(self) -> bool:
+        return self._running
+
+    def start(self, interval: int = 12) -> None:
+        self.stop()
+        self._running = True
+        self._interval = max(10, int(interval))
+        self._position = 0
+        self._render_segment()
+        self._schedule_tick()
+
+    def stop(self) -> None:
+        self._running = False
+        if self._after_job is not None:
+            try:
+                self.after_cancel(self._after_job)
+            except tk.TclError:
+                pass
+            self._after_job = None
+        self.canvas.coords(self._segment, 0, 0, 0, self._height)
+        self.canvas.itemconfigure(self._segment, state="hidden")
+
+    def _schedule_tick(self) -> None:
+        self._after_job = self.after(self._interval, self._tick)
+
+    def _tick(self) -> None:
+        self._after_job = None
+        if not self._running:
+            return
+        self._position += 7
+        if self._position >= self._width:
+            self._position = -self._segment_width
+        self._render_segment()
+        self._schedule_tick()
+
+    def _render_segment(self) -> None:
+        start = max(0, self._position)
+        end = min(self._width, self._position + self._segment_width)
+        self.canvas.coords(self._segment, start, 0, end, self._height)
+        self.canvas.itemconfigure(
+            self._segment,
+            fill=GOLD,
+            state="normal",
+        )
 
 
 class TableView(ttk.Frame):
@@ -153,6 +272,7 @@ class ConsoleApp:
         configure_window_icon(root)
         root.geometry("1280x820")
         root.minsize(1100, 700)
+        root.configure(background=APP_BG)
         root.columnconfigure(0, weight=1)
         root.rowconfigure(1, weight=1)
         root.protocol("WM_DELETE_WINDOW", self._close)
@@ -167,13 +287,15 @@ class ConsoleApp:
         self._refresh_dynamic_text()
 
     def _build_shell(self) -> None:
-        shell = ttk.Frame(self.root)
+        shell = ttk.Frame(self.root, style="App.TFrame")
         shell.grid(row=1, column=0, sticky="nsew", padx=(14, 14), pady=(0, 8))
 
         self.sidebar = ttk.Frame(shell, style="Sidebar.TFrame", width=216)
-        self.sidebar.pack(side="left", fill="y", padx=(0, 12))
+        self.sidebar.pack(side="left", fill="y")
         self.sidebar.pack_propagate(False)
-        workspace = ttk.Frame(shell)
+        tk.Frame(shell, background=CARD_BORDER, width=1).pack(side="left", fill="y")
+        workspace = ttk.Frame(shell, style="Workspace.TFrame")
+        workspace.configure(padding=(12, 0, 0, 0))
         workspace.pack(side="right", fill="both", expand=True)
 
         self.pages: dict[PageId, ttk.Frame] = {}
@@ -202,18 +324,32 @@ class ConsoleApp:
         available = self.style.theme_names()
         if "vista" in available:
             self.style.theme_use("vista")
-        self.style.configure("Muted.TLabel", foreground="#5b6470")
-        self.style.configure("Error.TLabel", foreground="#a4262c")
-        self.style.configure("Network.TButton", foreground="#8a3b00")
-        self.style.configure("Header.TFrame", background="#f7f7f7")
-        self.style.configure("Sidebar.TFrame", background="#f2f2f2")
+        self.style.configure("App.TFrame", background=APP_BG)
+        self.style.configure("Header.TFrame", background=HEADER_BG)
+        self.style.configure("Workspace.TFrame", background=WORKSPACE_BG)
+        self.style.configure("Sidebar.TFrame", background=SIDEBAR_BG)
+        self.style.configure("Status.TFrame", background=STATUS_BG)
+        self.style.configure("HeaderTitle.TLabel", background=HEADER_BG, foreground=TEXT_PRIMARY)
+        self.style.configure("HeaderMuted.TLabel", background=HEADER_BG, foreground=TEXT_SECONDARY)
+        self.style.configure("HomeSection.TLabel", background=WORKSPACE_BG, foreground=TEXT_PRIMARY)
+        self.style.configure("HomeSubsection.TLabel", background=WORKSPACE_BG, foreground=TEXT_PRIMARY)
+        self.style.configure("Status.TLabel", background=STATUS_BG, foreground=TEXT_PRIMARY)
+        self.style.configure("StatusError.TLabel", background=STATUS_BG, foreground=ERROR)
+        self.style.configure("Muted.TLabel", foreground=TEXT_SECONDARY)
+        self.style.configure("Error.TLabel", foreground=ERROR)
+        self.style.configure("Network.TButton", foreground=WARNING)
         self.style.configure(
             "NavigationGroup.TLabel",
-            background="#f2f2f2",
-            foreground="#626262",
+            background=SIDEBAR_BG,
+            foreground=TEXT_SECONDARY,
         )
         self.style.layout("Hidden.TNotebook.Tab", [])
-        self.style.configure("Hidden.TNotebook", borderwidth=0, tabmargins=0)
+        self.style.configure(
+            "Hidden.TNotebook",
+            background=WORKSPACE_BG,
+            borderwidth=0,
+            tabmargins=0,
+        )
         self._configure_fonts()
 
     def _configure_fonts(self) -> None:
@@ -223,32 +359,40 @@ class ConsoleApp:
         self.style.configure("TCheckbutton", font=(family, 9))
         self.style.configure("TNotebook.Tab", font=(family, 9))
         self.style.configure("TLabelframe.Label", font=(family, 9, "bold"))
-        self.style.configure("Title.TLabel", font=(family, 18, "bold"))
-        self.style.configure("Section.TLabel", font=(family, 12, "bold"))
-        self.style.configure("Subsection.TLabel", font=(family, 11, "bold"))
+        self.style.configure("HeaderTitle.TLabel", font=(family, 18, "bold"))
+        self.style.configure("HomeSection.TLabel", font=(family, 12, "bold"))
+        self.style.configure("HomeSubsection.TLabel", font=(family, 11, "bold"))
         self.style.configure("Metric.TLabel", font=(family, 17, "bold"))
         self.style.configure("NavigationGroup.TLabel", font=(family, 8, "bold"))
         self.style.configure("Treeview", rowheight=25, font=(family, 9))
         self.style.configure("Treeview.Heading", font=(family, 9, "bold"))
         for button in getattr(self, "navigation_buttons", {}).values():
             button.configure(font=(family, 9))
+        for button in getattr(self, "home_buttons", []):
+            button.configure(font=(family, 9))
+        for label in getattr(self, "metric_label_widgets", []):
+            label.configure(font=(family, 9))
+        for value in getattr(self, "metric_value_widgets", []):
+            value.configure(font=(family, 18, "bold"))
 
     def _build_header(self) -> None:
-        header = ttk.Frame(self.root, padding=(16, 12), style="Header.TFrame")
+        header = tk.Frame(self.root, background=CARD_BORDER)
         header.grid(row=0, column=0, sticky="ew")
-        identity = ttk.Frame(header, style="Header.TFrame")
+        content = ttk.Frame(header, padding=(18, 11), style="Header.TFrame")
+        content.pack(fill="x", pady=(0, 1))
+        identity = ttk.Frame(content, style="Header.TFrame")
         identity.pack(side="left")
-        title = ttk.Label(identity, style="Title.TLabel", background="#f7f7f7")
+        title = ttk.Label(identity, style="HeaderTitle.TLabel")
         title.pack(anchor="w")
         self._bind_widget(title, "header.title")
-        subtitle = ttk.Label(identity, style="Muted.TLabel", background="#f7f7f7")
-        subtitle.pack(anchor="w")
+        subtitle = ttk.Label(identity, style="HeaderMuted.TLabel")
+        subtitle.pack(anchor="w", pady=(2, 0))
         self._bind_widget(subtitle, "header.subtitle")
-        context = ttk.Frame(header, style="Header.TFrame")
+        context = ttk.Frame(content, style="Header.TFrame")
         context.pack(side="right")
         language_row = ttk.Frame(context, style="Header.TFrame")
         language_row.pack(anchor="e")
-        local_mode = ttk.Label(language_row, style="Muted.TLabel", background="#f7f7f7")
+        local_mode = ttk.Label(language_row, style="HeaderMuted.TLabel")
         local_mode.pack(side="left", padx=(0, 12))
         self._bind_widget(local_mode, "header.local_mode")
         self.language_name = tk.StringVar(value=LANGUAGE_NAMES[self.translator.locale])
@@ -261,26 +405,32 @@ class ConsoleApp:
         )
         self.language_selector.pack(side="left")
         self.language_selector.bind("<<ComboboxSelected>>", self._change_language)
-        settings_context = ttk.Label(
-            context, style="Muted.TLabel", background="#f7f7f7"
-        )
+        settings_context = ttk.Label(context, style="HeaderMuted.TLabel")
         settings_context.pack(anchor="e", pady=(4, 0))
         self.localization.bind(
             lambda value: settings_context.configure(text=value),
             "header.settings_path",
-            settings_path=self.settings_path,
+            settings_path=compact_settings_path(self.settings_path),
         )
 
     def _build_status_bar(self) -> None:
-        bar = ttk.Frame(self.root, padding=(14, 6))
+        bar = tk.Frame(self.root, background=CARD_BORDER)
         bar.grid(row=2, column=0, sticky="ew")
-        self.progress = ttk.Progressbar(bar, mode="indeterminate", length=160)
+        content = ttk.Frame(bar, padding=(14, 6), style="Status.TFrame")
+        content.pack(fill="x", pady=(1, 0))
+        self.progress = ActivityIndicator(content, width=160, height=8)
         self.progress.pack(side="right")
-        ttk.Label(bar, textvariable=self.status_text).pack(side="left")
-        ttk.Label(bar, textvariable=self.error_text, style="Error.TLabel").pack(side="left", padx=16)
+        ttk.Label(content, textvariable=self.status_text, style="Status.TLabel").pack(
+            side="left"
+        )
+        ttk.Label(
+            content,
+            textvariable=self.error_text,
+            style="StatusError.TLabel",
+        ).pack(side="left", padx=16)
 
     def _new_tab(self, page_id: PageId) -> ttk.Frame:
-        tab = ttk.Frame(self.notebook, padding=12)
+        tab = ttk.Frame(self.notebook, padding=12, style="Workspace.TFrame")
         self.notebook.add(tab, text="")
         self.pages[page_id] = tab
         self._page_ids_by_widget[str(tab)] = page_id
@@ -296,22 +446,22 @@ class ConsoleApp:
                 group_label.pack(fill="x", padx=14, pady=(12, 4))
                 self._bind_widget(group_label, group.label_key)
             elif group_index == 0:
-                ttk.Frame(self.sidebar, style="Sidebar.TFrame", height=8).pack(fill="x")
+                ttk.Frame(self.sidebar, style="Sidebar.TFrame", height=10).pack(fill="x")
             for item in group.items:
-                row = tk.Frame(self.sidebar, background="#f2f2f2", height=36)
+                row = tk.Frame(self.sidebar, background=SIDEBAR_BG, height=38)
                 row.pack(fill="x")
                 row.pack_propagate(False)
-                indicator = tk.Frame(row, width=3, background="#f2f2f2")
+                indicator = tk.Frame(row, width=4, background=SIDEBAR_BG)
                 indicator.pack(side="left", fill="y")
                 button = tk.Button(
                     row,
                     anchor="w",
-                    background="#f2f2f2",
-                    activebackground="#e7e7e7",
-                    activeforeground="#202020",
+                    background=SIDEBAR_BG,
+                    activebackground=NAV_HOVER,
+                    activeforeground=TEXT_PRIMARY,
                     borderwidth=0,
                     cursor="hand2",
-                    foreground="#303030",
+                    foreground=TEXT_PRIMARY,
                     highlightthickness=0,
                     padx=12,
                     relief="flat",
@@ -343,65 +493,123 @@ class ConsoleApp:
         for page_id, button in self.navigation_buttons.items():
             selected = page_id == self.current_page_id
             button.configure(
-                background="#eee6d2" if selected else "#f2f2f2",
-                activebackground="#e8dfc8" if selected else "#e7e7e7",
-                foreground="#4f3b08" if selected else "#303030",
+                background=NAV_SELECTED if selected else SIDEBAR_BG,
+                activebackground=NAV_SELECTED if selected else NAV_HOVER,
+                foreground=GOLD_DARK if selected else TEXT_PRIMARY,
             )
             self.navigation_indicators[page_id].configure(
-                background="#b48a28" if selected else "#f2f2f2"
+                background=GOLD if selected else SIDEBAR_BG
             )
 
     def _build_dashboard(self) -> None:
         tab = self._new_tab(PageId.HOME)
-        top = ttk.Frame(tab)
+        self.home_buttons: list[tk.Button] = []
+        top = ttk.Frame(tab, style="Workspace.TFrame")
         top.pack(fill="x")
-        overview = ttk.Label(top, style="Section.TLabel")
+        overview = ttk.Label(top, style="HomeSection.TLabel")
         overview.pack(side="left")
         self._bind_widget(overview, "home.title")
-        refresh = ttk.Button(top, command=self._refresh_dashboard)
+        refresh = self._home_button(
+            top,
+            "buttons.refresh",
+            self._refresh_dashboard,
+            primary=True,
+        )
         refresh.pack(side="right")
-        self._bind_widget(refresh, "buttons.refresh")
 
-        self.home_summary = ttk.Frame(tab)
+        self.home_summary = ttk.Frame(tab, style="Workspace.TFrame")
         self.home_summary.pack(fill="x", pady=(10, 12))
-        self.home_message = ttk.Label(
-            self.home_summary, style="Muted.TLabel", justify="left", wraplength=700
+        self.home_intro_card = tk.Frame(self.home_summary, background=CARD_BORDER)
+        self.home_intro_card.pack(fill="x")
+        intro = tk.Frame(self.home_intro_card, background=CARD_BG)
+        intro.pack(fill="x", padx=1, pady=1)
+        tk.Frame(intro, background=CARD_HIGHLIGHT, height=1).pack(fill="x")
+        intro_body = tk.Frame(intro, background=CARD_BG, padx=14, pady=12)
+        intro_body.pack(fill="x")
+        self.home_message = tk.Label(
+            intro_body,
+            background=CARD_BG,
+            foreground=TEXT_SECONDARY,
+            justify="left",
+            wraplength=700,
         )
         self.home_message.pack(anchor="w")
         self.home_message_binding = self.localization.bind(
             lambda value: self.home_message.configure(text=value), "home.unloaded.body"
         )
-        self.home_quick_actions = ttk.Frame(self.home_summary)
+        self.home_quick_actions = tk.Frame(intro_body, background=CARD_BG)
         self.home_quick_actions.pack(anchor="w", pady=(10, 0))
-        self._button(
+        self._home_button(
             self.home_quick_actions,
             "navigation.items.historical_data",
             lambda: self.select_page(PageId.HISTORICAL_DATA),
         ).pack(side="left")
-        self._button(
+        self._home_button(
             self.home_quick_actions,
             "navigation.items.trading_calendar",
             lambda: self.select_page(PageId.TRADING_CALENDAR),
         ).pack(side="left", padx=(8, 0))
 
-        self.dashboard_metrics = ttk.Frame(self.home_summary)
+        self.dashboard_metrics = ttk.Frame(
+            self.home_summary,
+            style="Workspace.TFrame",
+        )
         self.metric_values: dict[str, tk.StringVar] = {}
+        self.metric_cards: dict[str, tk.Frame] = {}
+        self.metric_label_widgets: list[tk.Label] = []
+        self.metric_value_widgets: list[tk.Label] = []
+        for column in range(HOME_METRIC_COLUMNS):
+            self.dashboard_metrics.columnconfigure(
+                column,
+                weight=1,
+                uniform="home_metric",
+            )
         for index, (name, key) in enumerate(HOME_METRICS):
-            panel = ttk.LabelFrame(self.dashboard_metrics, padding=10)
+            row = index // HOME_METRIC_COLUMNS
+            column = index % HOME_METRIC_COLUMNS
+            panel = tk.Frame(self.dashboard_metrics, background=CARD_BORDER)
             panel.grid(
-                row=index // 3,
-                column=index % 3,
-                padx=(0, 8),
-                pady=(0, 8),
+                row=row,
+                column=column,
+                padx=(0, 8 if column < HOME_METRIC_COLUMNS - 1 else 0),
+                pady=(0, 8 if row == 0 else 0),
                 sticky="nsew",
             )
-            self._bind_widget(panel, key)
+            self.metric_cards[name] = panel
+            inner = tk.Frame(panel, background=CARD_BG)
+            inner.pack(fill="both", expand=True, padx=1, pady=1)
+            tk.Frame(inner, background=CARD_HIGHLIGHT, height=1).pack(fill="x")
+            tk.Frame(inner, background=GOLD_SOFT, height=1).pack(
+                side="bottom",
+                fill="x",
+            )
+            card_body = tk.Frame(inner, background=CARD_BG, padx=12, pady=10)
+            card_body.pack(fill="both", expand=True)
+            tk.Frame(card_body, background=GOLD, width=3).pack(side="left", fill="y")
+            copy = tk.Frame(card_body, background=CARD_BG)
+            copy.pack(side="left", fill="both", expand=True, padx=(10, 0))
+            label = tk.Label(
+                copy,
+                anchor="w",
+                background=CARD_BG,
+                foreground=TEXT_SECONDARY,
+            )
+            label.pack(fill="x")
+            self._bind_widget(label, key)
+            self.metric_label_widgets.append(label)
             value = tk.StringVar(value="-")
             self.metric_values[name] = value
-            ttk.Label(panel, textvariable=value, style="Metric.TLabel").pack()
-            self.dashboard_metrics.columnconfigure(index % 3, weight=1)
+            value_label = tk.Label(
+                copy,
+                anchor="w",
+                background=CARD_BG,
+                foreground=TEXT_PRIMARY,
+                textvariable=value,
+            )
+            value_label.pack(fill="x", pady=(3, 0))
+            self.metric_value_widgets.append(value_label)
         self.home_state = HomeState.UNLOADED
-        recent = ttk.Label(tab, style="Subsection.TLabel")
+        recent = ttk.Label(tab, style="HomeSubsection.TLabel")
         recent.pack(anchor="w", pady=(8, 6))
         self._bind_widget(recent, "sections.recent_runs")
         self.dashboard_runs = TableView(tab, self.localization)
@@ -697,6 +905,29 @@ class ConsoleApp:
         self._bind_widget(button, key)
         return button
 
+    def _home_button(self, parent, key: str, command, *, primary: bool = False):
+        button = tk.Button(
+            parent,
+            activebackground=NAV_SELECTED if primary else NAV_HOVER,
+            activeforeground=GOLD_DARK if primary else TEXT_PRIMARY,
+            background=GOLD_SOFT if primary else CARD_BG,
+            borderwidth=0,
+            command=command,
+            cursor="hand2",
+            foreground=GOLD_DARK if primary else TEXT_PRIMARY,
+            highlightbackground=GOLD if primary else CARD_BORDER,
+            highlightcolor=GOLD,
+            highlightthickness=1,
+            overrelief="solid",
+            padx=12,
+            pady=4,
+            relief="flat",
+            takefocus=True,
+        )
+        self._bind_widget(button, key)
+        self.home_buttons.append(button)
+        return button
+
     def _entry(self, parent, label_key: str, variable: tk.Variable, column: int) -> None:
         frame = ttk.Frame(parent)
         frame.grid(
@@ -826,8 +1057,7 @@ class ConsoleApp:
     def _set_home_state(self, state: HomeState) -> None:
         self.home_state = state
         if state == HomeState.POPULATED:
-            self.home_message.pack_forget()
-            self.home_quick_actions.pack_forget()
+            self.home_intro_card.pack_forget()
             self.dashboard_metrics.pack(fill="x")
             return
 
@@ -836,8 +1066,7 @@ class ConsoleApp:
             "home.empty.body" if state == HomeState.EMPTY else "home.unloaded.body"
         )
         self.home_message_binding.update(message_key)
-        self.home_message.pack(anchor="w")
-        self.home_quick_actions.pack(anchor="w", pady=(10, 0))
+        self.home_intro_card.pack(fill="x")
 
     def _query_explorer(self, page: int) -> None:
         values = {key: variable.get() for key, variable in self.explorer_vars.items()}
@@ -1092,6 +1321,7 @@ class ConsoleApp:
                 self.translator.t("dialog.running.close_body"),
             )
             return
+        self.progress.stop()
         self.tasks.close()
         self.root.destroy()
 
