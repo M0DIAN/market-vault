@@ -52,6 +52,144 @@ STATUS_BG = "#E9E3D6"
 ERROR = "#A4262C"
 WARNING = "#8A3B00"
 
+TABLE_BG = CARD_BG
+TABLE_ALT_BG = "#F7F2E7"
+TABLE_HEADER_BG = GOLD_SOFT
+TABLE_HEADER_TEXT = GOLD_DARK
+TABLE_SELECTION_BG = NAV_SELECTED
+TABLE_SELECTION_TEXT = TEXT_PRIMARY
+TABLE_ROWHEIGHT = 29
+
+
+def _configure_table_elements(style: ttk.Style) -> None:
+    """Use colorable scoped elements without changing the application theme."""
+
+    if "clam" not in style.theme_names():
+        return
+    elements = (
+        ("MarketVault.Treeview.field", "Treeview.field"),
+        ("MarketVault.Treeview.padding", "Treeview.padding"),
+        ("MarketVault.Treeview.treearea", "Treeview.treearea"),
+        ("MarketVault.Treeheading.cell", "Treeheading.cell"),
+        ("MarketVault.Treeheading.border", "Treeheading.border"),
+        ("MarketVault.Treeheading.padding", "Treeheading.padding"),
+        ("MarketVault.Treeheading.image", "Treeheading.image"),
+        ("MarketVault.Treeheading.text", "Treeheading.text"),
+    )
+    existing = set(style.element_names())
+    for target, source in elements:
+        if target not in existing:
+            style.element_create(target, "from", "clam", source)
+    style.layout(
+        "MarketVault.Treeview",
+        [
+            (
+                "MarketVault.Treeview.field",
+                {
+                    "sticky": "nswe",
+                    "border": "1",
+                    "children": [
+                        (
+                            "MarketVault.Treeview.padding",
+                            {
+                                "sticky": "nswe",
+                                "children": [
+                                    ("MarketVault.Treeview.treearea", {"sticky": "nswe"})
+                                ],
+                            },
+                        )
+                    ],
+                },
+            )
+        ],
+    )
+    style.layout(
+        "MarketVault.Treeview.Heading",
+        [
+            ("MarketVault.Treeheading.cell", {"sticky": "nswe"}),
+            (
+                "MarketVault.Treeheading.border",
+                {
+                    "sticky": "nswe",
+                    "children": [
+                        (
+                            "MarketVault.Treeheading.padding",
+                            {
+                                "sticky": "nswe",
+                                "children": [
+                                    (
+                                        "MarketVault.Treeheading.image",
+                                        {"side": "right", "sticky": ""},
+                                    ),
+                                    ("MarketVault.Treeheading.text", {"sticky": "we"}),
+                                ],
+                            },
+                        )
+                    ],
+                },
+            ),
+        ],
+    )
+
+
+def configure_table_styles(style: ttk.Style, *, font_family: str | None = None) -> None:
+    """Configure the shared Golden Archive table presentation."""
+
+    _configure_table_elements(style)
+    table_font = (font_family, 9) if font_family else None
+    heading_font = (font_family, 9, "bold") if font_family else None
+    style.configure(
+        "MarketVault.Treeview",
+        background=TABLE_BG,
+        fieldbackground=TABLE_BG,
+        foreground=TEXT_PRIMARY,
+        borderwidth=0,
+        relief="flat",
+        rowheight=TABLE_ROWHEIGHT,
+        **({"font": table_font} if table_font else {}),
+    )
+    style.map(
+        "MarketVault.Treeview",
+        background=[("selected", TABLE_SELECTION_BG)],
+        foreground=[("selected", TABLE_SELECTION_TEXT)],
+    )
+    style.configure(
+        "MarketVault.Treeview.Heading",
+        background=TABLE_HEADER_BG,
+        foreground=TABLE_HEADER_TEXT,
+        borderwidth=1,
+        relief="flat",
+        padding=(8, 6),
+        **({"font": heading_font} if heading_font else {}),
+    )
+    style.map(
+        "MarketVault.Treeview.Heading",
+        background=[("active", NAV_HOVER), ("pressed", NAV_SELECTED)],
+        foreground=[("active", TABLE_HEADER_TEXT), ("pressed", TABLE_HEADER_TEXT)],
+    )
+    style.configure("MarketVault.Table.TFrame", background=TABLE_BG)
+    style.configure("MarketVault.TableFooter.TFrame", background=TABLE_BG)
+    style.configure(
+        "MarketVault.TableInfo.TLabel",
+        background=TABLE_BG,
+        foreground=TEXT_SECONDARY,
+        **({"font": table_font} if table_font else {}),
+    )
+    style.configure(
+        "MarketVault.Table.TButton",
+        padding=(10, 4),
+        **({"font": table_font} if table_font else {}),
+    )
+    scrollbar_options = {
+        "background": CARD_BORDER,
+        "troughcolor": TABLE_BG,
+        "bordercolor": TABLE_BG,
+        "arrowcolor": GOLD_DARK,
+        "relief": "flat",
+    }
+    style.configure("MarketVault.Vertical.TScrollbar", **scrollbar_options)
+    style.configure("MarketVault.Horizontal.TScrollbar", **scrollbar_options)
+
 
 def compact_settings_path(path: str) -> str:
     """Compact only deep presentation paths while preserving final components."""
@@ -162,11 +300,30 @@ class TableView(ttk.Frame):
         self._previous: Callable[[], None] | None = None
         self._next: Callable[[], None] | None = None
 
-        table_frame = ttk.Frame(self)
-        table_frame.pack(fill="both", expand=True)
-        self.tree = ttk.Treeview(table_frame, show="headings", selectmode="browse")
-        vertical = ttk.Scrollbar(table_frame, orient="vertical", command=self.tree.yview)
-        horizontal = ttk.Scrollbar(table_frame, orient="horizontal", command=self.tree.xview)
+        self.table_border = tk.Frame(self, background=CARD_BORDER, borderwidth=0)
+        self.table_border.pack(fill="both", expand=True)
+        table_frame = ttk.Frame(self.table_border, style="MarketVault.Table.TFrame")
+        table_frame.pack(fill="both", expand=True, padx=1, pady=1)
+        self.tree = ttk.Treeview(
+            table_frame,
+            show="headings",
+            selectmode="browse",
+            style="MarketVault.Treeview",
+        )
+        self.tree.tag_configure("table-even", background=TABLE_BG, foreground=TEXT_PRIMARY)
+        self.tree.tag_configure("table-odd", background=TABLE_ALT_BG, foreground=TEXT_PRIMARY)
+        vertical = ttk.Scrollbar(
+            table_frame,
+            orient="vertical",
+            command=self.tree.yview,
+            style="MarketVault.Vertical.TScrollbar",
+        )
+        horizontal = ttk.Scrollbar(
+            table_frame,
+            orient="horizontal",
+            command=self.tree.xview,
+            style="MarketVault.Horizontal.TScrollbar",
+        )
         self.tree.configure(yscrollcommand=vertical.set, xscrollcommand=horizontal.set)
         self.tree.grid(row=0, column=0, sticky="nsew")
         vertical.grid(row=0, column=1, sticky="ns")
@@ -174,13 +331,25 @@ class TableView(ttk.Frame):
         table_frame.rowconfigure(0, weight=1)
         table_frame.columnconfigure(0, weight=1)
 
-        footer = ttk.Frame(self)
-        footer.pack(fill="x", pady=(6, 0))
-        self.info = ttk.Label(footer)
+        footer = ttk.Frame(
+            table_frame,
+            style="MarketVault.TableFooter.TFrame",
+            padding=(8, 6, 6, 5),
+        )
+        footer.grid(row=2, column=0, columnspan=2, sticky="ew")
+        self.info = ttk.Label(footer, style="MarketVault.TableInfo.TLabel")
         self.info.pack(side="left")
-        self.next_button = ttk.Button(footer, state="disabled", command=self._go_next)
+        self.next_button = ttk.Button(
+            footer,
+            state="disabled",
+            command=self._go_next,
+            style="MarketVault.Table.TButton",
+        )
         self.previous_button = ttk.Button(
-            footer, state="disabled", command=self._go_previous
+            footer,
+            state="disabled",
+            command=self._go_previous,
+            style="MarketVault.Table.TButton",
         )
         self._info_binding = localization.bind(
             lambda value: self.info.configure(text=value), "empty.no_data"
@@ -213,8 +382,9 @@ class TableView(ttk.Frame):
             self.tree.heading(column, text=heading)
             width = min(280, max(95, len(heading) * 9 + 24))
             self.tree.column(column, width=width, minwidth=70, stretch=True)
-        for row in page.rows:
-            self.tree.insert("", "end", values=row)
+        for index, row in enumerate(page.rows):
+            row_tag = "table-even" if index % 2 == 0 else "table-odd"
+            self.tree.insert("", "end", values=row, tags=(row_tag,))
         start = (page.page - 1) * page.page_size + 1 if page.total_rows else 0
         end = min(page.page * page.page_size, page.total_rows)
         self._info_binding.update(
@@ -364,8 +534,7 @@ class ConsoleApp:
         self.style.configure("HomeSubsection.TLabel", font=(family, 11, "bold"))
         self.style.configure("Metric.TLabel", font=(family, 17, "bold"))
         self.style.configure("NavigationGroup.TLabel", font=(family, 8, "bold"))
-        self.style.configure("Treeview", rowheight=25, font=(family, 9))
-        self.style.configure("Treeview.Heading", font=(family, 9, "bold"))
+        configure_table_styles(self.style, font_family=family)
         for button in getattr(self, "navigation_buttons", {}).values():
             button.configure(font=(family, 9))
         for button in getattr(self, "home_buttons", []):
