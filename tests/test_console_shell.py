@@ -29,12 +29,21 @@ from market_vault.console.ui import (
     NAV_SELECTED,
     SIDEBAR_BG,
     STATUS_BG,
+    TABLE_ALT_BG,
+    TABLE_BG,
+    TABLE_HEADER_BG,
+    TABLE_HEADER_TEXT,
+    TABLE_ROWHEIGHT,
+    TABLE_SELECTION_BG,
+    TABLE_SELECTION_TEXT,
     TEXT_PRIMARY,
     TEXT_SECONDARY,
     WARNING,
     WORKSPACE_BG,
     ConsoleApp,
+    TableView,
     compact_settings_path,
+    configure_table_styles,
 )
 
 
@@ -66,6 +75,80 @@ class FakeCanvas:
 
     def itemconfigure(self, _item, **options):
         self.options.update(options)
+
+
+class FakeStyle:
+    def __init__(self):
+        self.configurations = {}
+        self.mappings = {}
+
+    def configure(self, name, **options):
+        self.configurations.setdefault(name, {}).update(options)
+
+    def map(self, name, **options):
+        self.mappings.setdefault(name, {}).update(options)
+
+
+class FakeTableTree:
+    def __init__(self):
+        self.options = {}
+        self.headings = {}
+        self.columns = {}
+        self.items = []
+        self.deleted = []
+        self.selected = ()
+        self.insert_count = 0
+
+    def __setitem__(self, key, value):
+        self.options[key] = value
+
+    def get_children(self):
+        return tuple(item[0] for item in self.items)
+
+    def delete(self, *items):
+        self.deleted.extend(items)
+        self.items = []
+
+    def heading(self, column, **options):
+        self.headings.setdefault(column, {}).update(options)
+
+    def column(self, column, **options):
+        self.columns.setdefault(column, {}).update(options)
+
+    def insert(self, parent, index, *, values, tags=()):
+        item_id = f"item-{self.insert_count}"
+        self.insert_count += 1
+        self.items.append((item_id, parent, index, values, tags))
+        return item_id
+
+    def selection(self):
+        return self.selected
+
+
+class FakeInfoBinding:
+    def __init__(self):
+        self.key = None
+        self.values = None
+
+    def update(self, key=None, **values):
+        self.key = key
+        self.values = values
+
+
+def make_table_view(localization: LocalizationBindings | None = None) -> TableView:
+    localization = localization or LocalizationBindings(Translator("en"))
+    view = TableView.__new__(TableView)
+    view.localization = localization
+    view.translator = localization.translator
+    view.current_page = TablePage((), ())
+    view._previous = None
+    view._next = None
+    view.tree = FakeTableTree()
+    view.previous_button = FakeWidget()
+    view.next_button = FakeWidget()
+    view._info_binding = FakeInfoBinding()
+    localization.on_refresh(view._refresh_headings)
+    return view
 
 
 def make_activity_indicator() -> tuple[ActivityIndicator, list[str], list[tuple[int, object]]]:
@@ -344,6 +427,119 @@ def test_completed_and_failed_paths_clear_activity_before_presenting_result():
     assert "ttk.Progressbar" not in status_bar
     assert "green" not in indicator.lower()
     assert ActivityIndicator.ACTIVE_COLOR == GOLD
+
+
+def test_shared_table_style_uses_golden_archive_palette_and_density():
+    style = FakeStyle()
+
+    configure_table_styles(style, font_family="Segoe UI")
+
+    tree = style.configurations["MarketVault.Treeview"]
+    heading = style.configurations["MarketVault.Treeview.Heading"]
+    selection = style.mappings["MarketVault.Treeview"]
+    assert tree["background"] == TABLE_BG == CARD_BG
+    assert tree["fieldbackground"] == TABLE_BG
+    assert tree["foreground"] == TEXT_PRIMARY
+    assert tree["rowheight"] == TABLE_ROWHEIGHT
+    assert 28 <= TABLE_ROWHEIGHT <= 30
+    assert heading["background"] == TABLE_HEADER_BG == GOLD_SOFT
+    assert heading["foreground"] == TABLE_HEADER_TEXT == GOLD_DARK
+    assert selection["background"] == [("selected", TABLE_SELECTION_BG)]
+    assert selection["foreground"] == [("selected", TABLE_SELECTION_TEXT)]
+    assert TABLE_SELECTION_BG == NAV_SELECTED
+    assert TABLE_ALT_BG == "#F7F2E7"
+    assert "#0078D7" not in inspect.getsource(configure_table_styles)
+
+
+def test_table_page_preserves_data_order_pagination_and_callbacks_with_zebra_rows():
+    view = make_table_view()
+    calls = []
+    rows = (("run-2", "SUCCESS"), ("run-1", "FAILED"), ("run-0", "WARN"))
+    page = TablePage(
+        ("run_id", "status"),
+        rows,
+        page=2,
+        page_size=3,
+        total_rows=8,
+    )
+    previous = lambda: calls.append("previous")
+    next_ = lambda: calls.append("next")
+
+    view.set_page(page, previous=previous, next_=next_)
+
+    assert view.current_page is page
+    assert view.tree.options["columns"] == page.columns
+    assert tuple(item[3] for item in view.tree.items) == rows
+    assert tuple(item[4] for item in view.tree.items) == (
+        ("table-even",),
+        ("table-odd",),
+        ("table-even",),
+    )
+    assert page.columns == ("run_id", "status")
+    assert page.rows == rows
+    assert page.page == 2
+    assert page.page_size == 3
+    assert page.total_rows == 8
+    assert view._info_binding.key == "pagination.info"
+    assert view._info_binding.values == {
+        "start": 4,
+        "end": 6,
+        "total": 8,
+        "page": 2,
+        "pages": 3,
+    }
+    assert view.previous_button.options["state"] == "normal"
+    assert view.next_button.options["state"] == "normal"
+    view._go_previous()
+    view._go_next()
+    assert calls == ["previous", "next"]
+
+    view.set_page(page)
+    assert view.previous_button.options["state"] == "disabled"
+    assert view.next_button.options["state"] == "disabled"
+
+
+def test_table_heading_localization_preserves_rows_page_and_selection():
+    localization = LocalizationBindings(Translator("en"))
+    view = make_table_view(localization)
+    page = TablePage(
+        ("run_id", "status"),
+        (("run-1", "SUCCESS"), ("run-2", "FAILED")),
+        page=3,
+        page_size=2,
+        total_rows=6,
+    )
+    view.set_page(page)
+    view.tree.selected = ("item-1",)
+    original_items = tuple(view.tree.items)
+    original_insert_count = view.tree.insert_count
+    expected = {
+        "en": ("Run ID", "Status"),
+        "zh-CN": ("运行 ID", "状态"),
+        "ja": ("実行 ID", "ステータス"),
+    }
+
+    for locale in ("zh-CN", "ja", "en"):
+        localization.set_locale(locale)
+        assert tuple(view.tree.headings[column]["text"] for column in page.columns) == expected[
+            locale
+        ]
+        assert tuple(view.tree.items) == original_items
+        assert view.tree.insert_count == original_insert_count
+        assert view.tree.selection() == ("item-1",)
+        assert view.current_page is page
+        assert view.current_page.page == 3
+
+
+def test_tableview_is_presentation_only_and_uses_shared_styles():
+    source = inspect.getsource(TableView)
+    for forbidden in ("backend", "OpenD", "collect", "backfill", "purge", "DuckDB", "Parquet", "_submit"):
+        assert forbidden not in source
+    assert 'style="MarketVault.Treeview"' in source
+    assert 'style="MarketVault.Vertical.TScrollbar"' in source
+    assert 'style="MarketVault.Horizontal.TScrollbar"' in source
+    assert "background=CARD_BORDER" in source
+    assert 'padding=(8, 6, 6, 5)' in source
 
 
 def test_settings_path_compaction_preserves_internal_value_and_path_components():
