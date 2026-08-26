@@ -61,9 +61,81 @@ TABLE_SELECTION_TEXT = TEXT_PRIMARY
 TABLE_ROWHEIGHT = 29
 
 
+def _configure_table_elements(style: ttk.Style) -> None:
+    """Use colorable scoped elements without changing the application theme."""
+
+    if "clam" not in style.theme_names():
+        return
+    elements = (
+        ("MarketVault.Treeview.field", "Treeview.field"),
+        ("MarketVault.Treeview.padding", "Treeview.padding"),
+        ("MarketVault.Treeview.treearea", "Treeview.treearea"),
+        ("MarketVault.Treeheading.cell", "Treeheading.cell"),
+        ("MarketVault.Treeheading.border", "Treeheading.border"),
+        ("MarketVault.Treeheading.padding", "Treeheading.padding"),
+        ("MarketVault.Treeheading.image", "Treeheading.image"),
+        ("MarketVault.Treeheading.text", "Treeheading.text"),
+    )
+    existing = set(style.element_names())
+    for target, source in elements:
+        if target not in existing:
+            style.element_create(target, "from", "clam", source)
+    style.layout(
+        "MarketVault.Treeview",
+        [
+            (
+                "MarketVault.Treeview.field",
+                {
+                    "sticky": "nswe",
+                    "border": "1",
+                    "children": [
+                        (
+                            "MarketVault.Treeview.padding",
+                            {
+                                "sticky": "nswe",
+                                "children": [
+                                    ("MarketVault.Treeview.treearea", {"sticky": "nswe"})
+                                ],
+                            },
+                        )
+                    ],
+                },
+            )
+        ],
+    )
+    style.layout(
+        "MarketVault.Treeview.Heading",
+        [
+            ("MarketVault.Treeheading.cell", {"sticky": "nswe"}),
+            (
+                "MarketVault.Treeheading.border",
+                {
+                    "sticky": "nswe",
+                    "children": [
+                        (
+                            "MarketVault.Treeheading.padding",
+                            {
+                                "sticky": "nswe",
+                                "children": [
+                                    (
+                                        "MarketVault.Treeheading.image",
+                                        {"side": "right", "sticky": ""},
+                                    ),
+                                    ("MarketVault.Treeheading.text", {"sticky": "we"}),
+                                ],
+                            },
+                        )
+                    ],
+                },
+            ),
+        ],
+    )
+
+
 def configure_table_styles(style: ttk.Style, *, font_family: str | None = None) -> None:
     """Configure the shared Golden Archive table presentation."""
 
+    _configure_table_elements(style)
     table_font = (font_family, 9) if font_family else None
     heading_font = (font_family, 9, "bold") if font_family else None
     style.configure(

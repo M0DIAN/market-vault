@@ -81,6 +81,20 @@ class FakeStyle:
     def __init__(self):
         self.configurations = {}
         self.mappings = {}
+        self.elements = []
+        self.layouts = {}
+
+    def theme_names(self):
+        return ("vista", "clam")
+
+    def element_names(self):
+        return tuple(name for name, _theme, _source in self.elements)
+
+    def element_create(self, name, _operation, theme, source):
+        self.elements.append((name, theme, source))
+
+    def layout(self, name, value):
+        self.layouts[name] = value
 
     def configure(self, name, **options):
         self.configurations.setdefault(name, {}).update(options)
@@ -449,6 +463,12 @@ def test_shared_table_style_uses_golden_archive_palette_and_density():
     assert TABLE_SELECTION_BG == NAV_SELECTED
     assert TABLE_ALT_BG == "#F7F2E7"
     assert "#0078D7" not in inspect.getsource(configure_table_styles)
+    assert style.layouts["MarketVault.Treeview"][0][0] == "MarketVault.Treeview.field"
+    assert style.layouts["MarketVault.Treeview.Heading"][0][0] == (
+        "MarketVault.Treeheading.cell"
+    )
+    assert ("MarketVault.Treeview.field", "clam", "Treeview.field") in style.elements
+    assert ("MarketVault.Treeheading.cell", "clam", "Treeheading.cell") in style.elements
 
 
 def test_table_page_preserves_data_order_pagination_and_callbacks_with_zebra_rows():
