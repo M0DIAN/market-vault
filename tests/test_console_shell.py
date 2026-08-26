@@ -14,6 +14,7 @@ from market_vault.console.shell import (
     dashboard_home_state,
 )
 from market_vault.console.ui import (
+    ActivityIndicator,
     APP_BG,
     CARD_BG,
     CARD_BORDER,
@@ -33,6 +34,7 @@ from market_vault.console.ui import (
     WARNING,
     WORKSPACE_BG,
     ConsoleApp,
+    compact_settings_path,
 )
 
 
@@ -52,6 +54,41 @@ class FakeNotebook:
         if page is not None:
             self.selected = page
         return self.selected
+
+
+class FakeCanvas:
+    def __init__(self):
+        self.coordinates = None
+        self.options = {}
+
+    def coords(self, _item, *coordinates):
+        self.coordinates = coordinates
+
+    def itemconfigure(self, _item, **options):
+        self.options.update(options)
+
+
+def make_activity_indicator() -> tuple[ActivityIndicator, list[str], list[tuple[int, object]]]:
+    indicator = object.__new__(ActivityIndicator)
+    indicator.canvas = FakeCanvas()
+    indicator._segment = "segment"
+    indicator._width = 160
+    indicator._height = 8
+    indicator._segment_width = 34
+    indicator._position = 0
+    indicator._interval = 12
+    indicator._after_job = None
+    indicator._running = False
+    cancelled = []
+    scheduled = []
+
+    def after(interval, callback):
+        scheduled.append((interval, callback))
+        return f"job-{len(scheduled)}"
+
+    indicator.after = after
+    indicator.after_cancel = cancelled.append
+    return indicator, cancelled, scheduled
 
 
 def make_navigation_app() -> ConsoleApp:
@@ -257,6 +294,81 @@ def test_root_grid_reserves_status_bar_at_minimum_geometry():
     assert "bar.grid(row=2, column=0" in status_source
 
 
+def test_custom_activity_indicator_is_idle_until_started_and_clears_on_stop():
+    indicator, cancelled, scheduled = make_activity_indicator()
+
+    indicator.stop()
+    assert indicator.is_active is False
+    assert indicator.canvas.coordinates == (0, 0, 0, 8)
+    assert indicator.canvas.options["state"] == "hidden"
+
+    indicator.start(12)
+    assert indicator.is_active is True
+    assert indicator.canvas.coordinates == (0, 0, 34, 8)
+    assert indicator.canvas.options == {"state": "normal", "fill": GOLD}
+    assert scheduled[0][0] == 12
+
+    indicator.stop()
+    assert indicator.is_active is False
+    assert indicator.canvas.coordinates == (0, 0, 0, 8)
+    assert indicator.canvas.options["state"] == "hidden"
+    assert cancelled == ["job-1"]
+
+
+def test_custom_activity_indicator_repeated_start_stop_is_callback_safe():
+    indicator, cancelled, scheduled = make_activity_indicator()
+
+    indicator.start(1)
+    indicator.start(20)
+    indicator.stop()
+    indicator.stop()
+
+    assert [interval for interval, _callback in scheduled] == [10, 20]
+    assert cancelled == ["job-1", "job-2"]
+    assert indicator.is_active is False
+    assert indicator._after_job is None
+    assert indicator.canvas.options["state"] == "hidden"
+
+
+def test_completed_and_failed_paths_clear_activity_before_presenting_result():
+    completed = inspect.getsource(ConsoleApp._poll_future)
+    failed = inspect.getsource(ConsoleApp._finish_error)
+    status_bar = inspect.getsource(ConsoleApp._build_status_bar)
+    indicator = inspect.getsource(ActivityIndicator)
+
+    assert completed.index("self.progress.stop()") < completed.index("future.result()")
+    assert failed.index("self.progress.stop()") < failed.index(
+        'self._set_status("status.failed"'
+    )
+    assert "ActivityIndicator(" in status_bar
+    assert "ttk.Progressbar" not in status_bar
+    assert "green" not in indicator.lower()
+    assert ActivityIndicator.ACTIVE_COLOR == GOLD
+
+
+def test_settings_path_compaction_preserves_internal_value_and_path_components():
+    deep_windows = (
+        r"C:\Users\Example\Documents\MarketVault\feature\config\settings.yaml"
+    )
+    deep_unicode = r"C:\用户\市场仓库\config\settings.yaml"
+    short_windows = r"config\settings.yaml"
+    short_posix = "config/settings.yaml"
+
+    app = ConsoleApp.__new__(ConsoleApp)
+    app.settings_path = deep_windows
+
+    assert compact_settings_path(app.settings_path) == r"…\config\settings.yaml"
+    assert compact_settings_path(deep_unicode) == r"…\config\settings.yaml"
+    assert compact_settings_path(short_windows) == short_windows
+    assert compact_settings_path(short_posix) == short_posix
+    assert compact_settings_path(deep_windows) == compact_settings_path(deep_windows)
+    assert app.settings_path == deep_windows
+    assert len(compact_settings_path(deep_windows)) < len(deep_windows)
+    assert "compact_settings_path(self.settings_path)" in inspect.getsource(
+        ConsoleApp._build_header
+    )
+
+
 def test_golden_archive_palette_is_exact_and_preserves_visual_hierarchy():
     assert {
         "APP_BG": APP_BG,
@@ -323,6 +435,7 @@ def test_home_metrics_use_six_hard_edge_cards_in_a_fixed_three_by_two_grid():
     assert "self.metric_cards[name] = panel" in source
     assert "background=CARD_BORDER" in source
     assert "background=CARD_HIGHLIGHT" in source
+    assert "background=GOLD_SOFT, height=1" in source
     assert "background=GOLD, width=3" in source
     assert "ttk.LabelFrame(self.dashboard_metrics" not in source
 
@@ -342,6 +455,16 @@ def test_visual_shell_builders_do_not_cross_business_operation_boundaries():
         assert "OpenD" not in source
         assert "_submit(" not in source
         assert "purge_execute" not in source
+
+
+def test_home_buttons_have_explicit_primary_and_secondary_visual_boundaries():
+    source = inspect.getsource(ConsoleApp._home_button)
+
+    assert "background=GOLD_SOFT if primary else CARD_BG" in source
+    assert "activebackground=NAV_SELECTED if primary else NAV_HOVER" in source
+    assert "highlightbackground=GOLD if primary else CARD_BORDER" in source
+    assert "highlightthickness=1" in source
+    assert 'relief="flat"' in source
 
 
 def test_dashboard_refresh_uses_existing_submit_path_and_preserves_exact_data():

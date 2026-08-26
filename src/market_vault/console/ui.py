@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 import tkinter as tk
 from concurrent.futures import Future
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from tkinter import filedialog, font as tkfont, messagebox, ttk
 from typing import Any, Callable
 
@@ -51,6 +51,106 @@ NAV_SELECTED = "#F2E7C9"
 STATUS_BG = "#E9E3D6"
 ERROR = "#A4262C"
 WARNING = "#8A3B00"
+
+
+def compact_settings_path(path: str) -> str:
+    """Compact only deep presentation paths while preserving final components."""
+
+    if not path:
+        return path
+    path_type = PureWindowsPath if "\\" in path else PurePosixPath
+    parsed = path_type(path)
+    if len(parsed.parts) <= 3:
+        return str(parsed)
+    separator = "\\" if path_type is PureWindowsPath else "/"
+    return f"…{separator}{separator.join(parsed.parts[-2:])}"
+
+
+class ActivityIndicator(tk.Frame):
+    """Theme-independent activity indicator with deterministic idle cleanup."""
+
+    ACTIVE_COLOR = GOLD
+
+    def __init__(self, parent, *, width: int = 160, height: int = 8):
+        super().__init__(
+            parent,
+            background=CARD_BORDER,
+            borderwidth=0,
+            height=height + 2,
+            width=width + 2,
+        )
+        self.pack_propagate(False)
+        self._width = width
+        self._height = height
+        self._segment_width = 34
+        self._position = 0
+        self._interval = 12
+        self._after_job: str | None = None
+        self._running = False
+        self.canvas = tk.Canvas(
+            self,
+            background=STATUS_BG,
+            borderwidth=0,
+            height=height,
+            highlightthickness=0,
+            width=width,
+        )
+        self.canvas.pack(fill="both", expand=True, padx=1, pady=1)
+        self._segment = self.canvas.create_rectangle(
+            0,
+            0,
+            0,
+            height,
+            fill=GOLD,
+            outline="",
+            state="hidden",
+        )
+
+    @property
+    def is_active(self) -> bool:
+        return self._running
+
+    def start(self, interval: int = 12) -> None:
+        self.stop()
+        self._running = True
+        self._interval = max(10, int(interval))
+        self._position = 0
+        self._render_segment()
+        self._schedule_tick()
+
+    def stop(self) -> None:
+        self._running = False
+        if self._after_job is not None:
+            try:
+                self.after_cancel(self._after_job)
+            except tk.TclError:
+                pass
+            self._after_job = None
+        self.canvas.coords(self._segment, 0, 0, 0, self._height)
+        self.canvas.itemconfigure(self._segment, state="hidden")
+
+    def _schedule_tick(self) -> None:
+        self._after_job = self.after(self._interval, self._tick)
+
+    def _tick(self) -> None:
+        self._after_job = None
+        if not self._running:
+            return
+        self._position += 7
+        if self._position >= self._width:
+            self._position = -self._segment_width
+        self._render_segment()
+        self._schedule_tick()
+
+    def _render_segment(self) -> None:
+        start = max(0, self._position)
+        end = min(self._width, self._position + self._segment_width)
+        self.canvas.coords(self._segment, start, 0, end, self._height)
+        self.canvas.itemconfigure(
+            self._segment,
+            fill=GOLD,
+            state="normal",
+        )
 
 
 class TableView(ttk.Frame):
@@ -250,14 +350,6 @@ class ConsoleApp:
             borderwidth=0,
             tabmargins=0,
         )
-        self.style.configure(
-            "Gold.Horizontal.TProgressbar",
-            background=GOLD,
-            troughcolor=CARD_BG,
-            bordercolor=CARD_BORDER,
-            lightcolor=GOLD,
-            darkcolor=GOLD_DARK,
-        )
         self._configure_fonts()
 
     def _configure_fonts(self) -> None:
@@ -318,7 +410,7 @@ class ConsoleApp:
         self.localization.bind(
             lambda value: settings_context.configure(text=value),
             "header.settings_path",
-            settings_path=self.settings_path,
+            settings_path=compact_settings_path(self.settings_path),
         )
 
     def _build_status_bar(self) -> None:
@@ -326,12 +418,7 @@ class ConsoleApp:
         bar.grid(row=2, column=0, sticky="ew")
         content = ttk.Frame(bar, padding=(14, 6), style="Status.TFrame")
         content.pack(fill="x", pady=(1, 0))
-        self.progress = ttk.Progressbar(
-            content,
-            mode="indeterminate",
-            length=160,
-            style="Gold.Horizontal.TProgressbar",
-        )
+        self.progress = ActivityIndicator(content, width=160, height=8)
         self.progress.pack(side="right")
         ttk.Label(content, textvariable=self.status_text, style="Status.TLabel").pack(
             side="left"
@@ -492,6 +579,10 @@ class ConsoleApp:
             inner = tk.Frame(panel, background=CARD_BG)
             inner.pack(fill="both", expand=True, padx=1, pady=1)
             tk.Frame(inner, background=CARD_HIGHLIGHT, height=1).pack(fill="x")
+            tk.Frame(inner, background=GOLD_SOFT, height=1).pack(
+                side="bottom",
+                fill="x",
+            )
             card_body = tk.Frame(inner, background=CARD_BG, padx=12, pady=10)
             card_body.pack(fill="both", expand=True)
             tk.Frame(card_body, background=GOLD, width=3).pack(side="left", fill="y")
@@ -827,6 +918,7 @@ class ConsoleApp:
             highlightbackground=GOLD if primary else CARD_BORDER,
             highlightcolor=GOLD,
             highlightthickness=1,
+            overrelief="solid",
             padx=12,
             pady=4,
             relief="flat",
@@ -1229,6 +1321,7 @@ class ConsoleApp:
                 self.translator.t("dialog.running.close_body"),
             )
             return
+        self.progress.stop()
         self.tasks.close()
         self.root.destroy()
 
