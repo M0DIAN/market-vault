@@ -13,7 +13,27 @@ from market_vault.console.shell import (
     PageId,
     dashboard_home_state,
 )
-from market_vault.console.ui import ConsoleApp
+from market_vault.console.ui import (
+    APP_BG,
+    CARD_BG,
+    CARD_BORDER,
+    CARD_HIGHLIGHT,
+    ERROR,
+    GOLD,
+    GOLD_DARK,
+    GOLD_SOFT,
+    HEADER_BG,
+    HOME_METRIC_COLUMNS,
+    NAV_HOVER,
+    NAV_SELECTED,
+    SIDEBAR_BG,
+    STATUS_BG,
+    TEXT_PRIMARY,
+    TEXT_SECONDARY,
+    WARNING,
+    WORKSPACE_BG,
+    ConsoleApp,
+)
 
 
 class FakeWidget:
@@ -82,8 +102,9 @@ def test_every_navigation_item_selects_existing_page_without_rebuilding_pages():
         app.select_page(page_id)
         assert app.current_page_id == page_id
         assert app.notebook.selected is original_pages[page_id]
-        assert app.navigation_buttons[page_id].options["background"] == "#eee6d2"
-        assert app.navigation_indicators[page_id].options["background"] == "#b48a28"
+        assert app.navigation_buttons[page_id].options["background"] == NAV_SELECTED
+        assert app.navigation_buttons[page_id].options["foreground"] == GOLD_DARK
+        assert app.navigation_indicators[page_id].options["background"] == GOLD
 
     assert app.pages == original_pages
     assert all(app.pages[key] is value for key, value in original_pages.items())
@@ -236,6 +257,48 @@ def test_root_grid_reserves_status_bar_at_minimum_geometry():
     assert "bar.grid(row=2, column=0" in status_source
 
 
+def test_golden_archive_palette_is_exact_and_preserves_visual_hierarchy():
+    assert {
+        "APP_BG": APP_BG,
+        "HEADER_BG": HEADER_BG,
+        "SIDEBAR_BG": SIDEBAR_BG,
+        "WORKSPACE_BG": WORKSPACE_BG,
+        "CARD_BG": CARD_BG,
+        "CARD_BORDER": CARD_BORDER,
+        "CARD_HIGHLIGHT": CARD_HIGHLIGHT,
+        "GOLD": GOLD,
+        "GOLD_DARK": GOLD_DARK,
+        "GOLD_SOFT": GOLD_SOFT,
+        "TEXT_PRIMARY": TEXT_PRIMARY,
+        "TEXT_SECONDARY": TEXT_SECONDARY,
+        "NAV_HOVER": NAV_HOVER,
+        "NAV_SELECTED": NAV_SELECTED,
+        "STATUS_BG": STATUS_BG,
+        "ERROR": ERROR,
+        "WARNING": WARNING,
+    } == {
+        "APP_BG": "#EEEAE0",
+        "HEADER_BG": "#F8F5ED",
+        "SIDEBAR_BG": "#E5E0D4",
+        "WORKSPACE_BG": "#F5F1E8",
+        "CARD_BG": "#FBF8F0",
+        "CARD_BORDER": "#C8B98F",
+        "CARD_HIGHLIGHT": "#FFFDF7",
+        "GOLD": "#B58A2A",
+        "GOLD_DARK": "#80601B",
+        "GOLD_SOFT": "#EEE6D2",
+        "TEXT_PRIMARY": "#282722",
+        "TEXT_SECONDARY": "#777166",
+        "NAV_HOVER": "#ECE6D9",
+        "NAV_SELECTED": "#F2E7C9",
+        "STATUS_BG": "#E9E3D6",
+        "ERROR": "#A4262C",
+        "WARNING": "#8A3B00",
+    }
+    assert len({APP_BG, HEADER_BG, SIDEBAR_BG, WORKSPACE_BG, STATUS_BG}) == 5
+    assert ERROR != WARNING != GOLD
+
+
 def test_dashboard_state_uses_only_authoritative_symbol_and_snapshot_counts():
     assert dashboard_home_state(snapshot(symbols="0", snapshots="0")) == HomeState.EMPTY
     assert dashboard_home_state(snapshot(symbols="1", snapshots="0")) == HomeState.POPULATED
@@ -248,6 +311,37 @@ def test_dashboard_state_uses_only_authoritative_symbol_and_snapshot_counts():
         "Latest trade date",
         "Latest rows",
     )
+
+
+def test_home_metrics_use_six_hard_edge_cards_in_a_fixed_three_by_two_grid():
+    source = inspect.getsource(ConsoleApp._build_dashboard)
+
+    assert HOME_METRIC_COLUMNS == 3
+    assert len(HOME_METRICS) == 6
+    assert "row = index // HOME_METRIC_COLUMNS" in source
+    assert "column = index % HOME_METRIC_COLUMNS" in source
+    assert "self.metric_cards[name] = panel" in source
+    assert "background=CARD_BORDER" in source
+    assert "background=CARD_HIGHLIGHT" in source
+    assert "background=GOLD, width=3" in source
+    assert "ttk.LabelFrame(self.dashboard_metrics" not in source
+
+
+def test_visual_shell_builders_do_not_cross_business_operation_boundaries():
+    presentation_methods = (
+        ConsoleApp._configure_style,
+        ConsoleApp._build_header,
+        ConsoleApp._build_navigation,
+        ConsoleApp._build_status_bar,
+        ConsoleApp._home_button,
+    )
+
+    for method in presentation_methods:
+        source = inspect.getsource(method)
+        assert "backend." not in source
+        assert "OpenD" not in source
+        assert "_submit(" not in source
+        assert "purge_execute" not in source
 
 
 def test_dashboard_refresh_uses_existing_submit_path_and_preserves_exact_data():
