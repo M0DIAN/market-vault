@@ -95,9 +95,20 @@ Write-Output "PyInstaller: $PyInstallerVersion"
 Write-Output "Git HEAD: $HeadSha"
 Write-Output ("Build command: {0} {1}" -f $PythonExecutable, ($BuildArguments -join " "))
 
-& $PythonExecutable @BuildArguments
-if ($LASTEXITCODE -ne 0) {
-    throw "PyInstaller failed with exit code $LASTEXITCODE"
+$OriginalPath = $env:PATH
+$env:PATH = @(
+    (Join-Path $env:SystemRoot "System32"),
+    $env:SystemRoot,
+    (Join-Path $env:SystemRoot "System32\Wbem")
+) -join [IO.Path]::PathSeparator
+try {
+    & $PythonExecutable @BuildArguments
+    $PyInstallerExitCode = $LASTEXITCODE
+} finally {
+    $env:PATH = $OriginalPath
+}
+if ($PyInstallerExitCode -ne 0) {
+    throw "PyInstaller failed with exit code $PyInstallerExitCode"
 }
 
 $ExePath = Join-Path $FinalApp "MarketVaultQmlCanary.exe"
@@ -149,6 +160,7 @@ $Metadata = [ordered]@{
     pyinstaller_version = $PyInstallerVersion
     windows_version = [Environment]::OSVersion.VersionString
     architecture = if ([Environment]::Is64BitProcess) { "x64" } else { "x86" }
+    build_path_sanitized = $true
     unrelated_cwd_smoke_exit_code = $SmokeProcess.ExitCode
     built_at_utc = [DateTime]::UtcNow.ToString("o")
 }

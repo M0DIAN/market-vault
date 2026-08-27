@@ -190,6 +190,9 @@ def test_parallel_spec_and_build_script_do_not_cut_over_production():
     assert 'name="MarketVaultQmlCanary"' in canary_spec
     assert "MarketVaultQmlCanary.exe" in canary_build
     assert "collect_all" not in canary_spec
+    assert "$OriginalPath = $env:PATH" in canary_build
+    assert "$env:PATH = $OriginalPath" in canary_build
+    assert "build_path_sanitized = $true" in canary_build
     for excluded in (
         '"market_vault.api"',
         '"market_vault.artifact_client"',
