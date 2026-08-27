@@ -121,7 +121,7 @@ def ambient_visibility(horizontal_fraction: float) -> float:
     """Smoothly fade the field from nearly hidden left to visible right."""
 
     normalized = min(1.0, max(0.0, float(horizontal_fraction)))
-    progress = min(1.0, max(0.0, (normalized - 0.24) / 0.36))
+    progress = min(1.0, max(0.0, (normalized - 0.12) / 0.33))
     return progress * progress * (3.0 - 2.0 * progress)
 
 
@@ -131,13 +131,13 @@ def ambient_fill(x: float, y: float, phase: float, horizontal_fraction: float) -
     visibility = ambient_visibility(horizontal_fraction)
     color_field = ambient_field_value(x * 0.61 + 5.0, y * 0.67 - 3.0, phase * 0.63)
     if color_field > 0.72:
-        foreground, maximum_alpha = AMBIENT_VERMILION, 0.085
+        foreground, maximum_alpha = AMBIENT_VERMILION, 0.14
     elif color_field < -0.74:
-        foreground, maximum_alpha = AMBIENT_SAGE, 0.085
+        foreground, maximum_alpha = AMBIENT_SAGE, 0.14
     elif color_field > 0.28:
-        foreground, maximum_alpha = AMBIENT_GOLD, 0.145
+        foreground, maximum_alpha = AMBIENT_GOLD, 0.25
     else:
-        foreground, maximum_alpha = AMBIENT_NEUTRAL, 0.105
+        foreground, maximum_alpha = AMBIENT_NEUTRAL, 0.20
     return blend_color(foreground, WORKSPACE_BG, visibility * maximum_alpha)
 
 
