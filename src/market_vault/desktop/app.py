@@ -114,6 +114,9 @@ def run_application(
 
     from market_vault.desktop.bridge import DesktopBridge
     from market_vault.desktop.dashboard import DashboardController
+    from market_vault.desktop.localization import I18nBridge
+    from market_vault.desktop.preferences import DesktopPreferenceStore
+    from market_vault.desktop.shell import ShellController
 
     qml_path = resolve_qml_path()
     if not qml_path.is_file():
@@ -125,10 +128,17 @@ def run_application(
     engine = QQmlApplicationEngine()
     bridge = DesktopBridge(parent=engine)
     dashboard = DashboardController(settings_path=settings_path, parent=engine)
+    preferences = DesktopPreferenceStore()
+    i18n = I18nBridge(preference_store=preferences, parent=engine)
+    shell = ShellController(parent=engine)
     engine.rootContext().setContextProperty("desktopBridge", bridge)
     engine.rootContext().setContextProperty("dashboardController", dashboard)
+    engine.rootContext().setContextProperty("i18nBridge", i18n)
+    engine.rootContext().setContextProperty("shellController", shell)
     engine._market_vault_desktop_bridge = bridge
     engine._market_vault_dashboard_controller = dashboard
+    engine._market_vault_i18n_bridge = i18n
+    engine._market_vault_shell_controller = shell
     engine.load(QUrl.fromLocalFile(str(qml_path)))
     if not engine.rootObjects():
         dashboard.shutdown()

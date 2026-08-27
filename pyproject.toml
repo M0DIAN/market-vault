@@ -39,7 +39,11 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-"market_vault.desktop" = ["qml/*.qml"]
+"market_vault.desktop" = [
+  "qml/*.qml",
+  "qml/components/*.qml",
+  "qml/pages/*.qml",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

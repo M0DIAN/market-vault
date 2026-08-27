@@ -129,6 +129,9 @@ def test_canary_startup_source_has_no_eager_business_imports():
         DESKTOP_ROOT / "app.py",
         DESKTOP_ROOT / "bridge.py",
         DESKTOP_ROOT / "dashboard.py",
+        DESKTOP_ROOT / "localization.py",
+        DESKTOP_ROOT / "preferences.py",
+        DESKTOP_ROOT / "shell.py",
     ):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         top_level = tree.body
@@ -140,15 +143,27 @@ def test_canary_startup_source_has_no_eager_business_imports():
     assert imported.isdisjoint(BUSINESS_MODULES)
 
 
-def test_main_qml_exercises_dashboard_controller_and_generic_table():
-    qml = (DESKTOP_ROOT / "qml" / "Main.qml").read_text(encoding="utf-8")
-    assert "import QtQuick\n" in qml
-    assert "import QtQuick.Controls\n" in qml
-    assert "import QtQuick.Layouts\n" in qml
-    assert "desktopBridge.ping()" in qml
-    assert "text: desktopBridge.status" in qml
-    assert "dashboardController.refresh()" in qml
-    assert "dashboardController.backendConfigured && !dashboardController.busy" in qml
+def test_componentized_qml_exercises_dashboard_controller_and_generic_table():
+    qml_root = DESKTOP_ROOT / "qml"
+    main = (qml_root / "Main.qml").read_text(encoding="utf-8")
+    home = (qml_root / "pages" / "HomePage.qml").read_text(encoding="utf-8")
+    sidebar = (qml_root / "components" / "Sidebar.qml").read_text(encoding="utf-8")
+    switcher = (qml_root / "components" / "LanguageSwitcher.qml").read_text(
+        encoding="utf-8"
+    )
+    placeholder = (qml_root / "pages" / "PlaceholderPage.qml").read_text(
+        encoding="utf-8"
+    )
+    assert "import QtQuick\n" in main
+    assert 'import "components" as Components' in main
+    assert 'import "pages" as Pages' in main
+    assert "Pages.HomePage" in main
+    assert "Pages.PlaceholderPage" in main
+    assert "dashboardController.refresh()" not in main
+    assert "home.desktop.ping()" in home
+    assert "text: home.desktop.status" in home
+    assert "home.dashboard.refresh()" in home
+    assert "home.dashboard.backendConfigured && !home.dashboard.busy" in home
     for metric in (
         "Symbols",
         "Snapshots",
@@ -157,15 +172,19 @@ def test_main_qml_exercises_dashboard_controller_and_generic_table():
         "Incomplete dates",
         "Latest trade date",
     ):
-        assert f'"{metric}"' in qml
-    assert "recent_runs" not in qml
-    assert "HorizontalHeaderView" in qml
-    assert "TableView" in qml
-    assert 'objectName: "recentRunsTable"' in qml
-    assert 'objectName: "recentRunsHeader"' in qml
-    assert 'objectName: "recentRunsEmptyState"' in qml
-    assert "dashboardController.recentRunsModel" in qml
-    assert "ApplicationWindow" in qml
+        assert f'"{metric}"' in home
+    assert "dashboardController.recent_runs" not in main + home
+    assert "home.dashboard.recent_runs" not in home
+    assert "HorizontalHeaderView" in home
+    assert "TableView" in home
+    assert 'objectName: "recentRunsTable"' in home
+    assert 'objectName: "recentRunsHeader"' in home
+    assert 'objectName: "recentRunsEmptyState"' in home
+    assert "home.dashboard.recentRunsModel" in home
+    assert "ApplicationWindow" in main
+    assert "shell.selectPage(modelData.id)" in sidebar
+    assert "i18n.setLanguage(currentValue)" in switcher
+    assert "later migration phase" not in placeholder
     for forbidden in (
         "ConsoleBackend",
         "Catalog",
@@ -175,7 +194,7 @@ def test_main_qml_exercises_dashboard_controller_and_generic_table():
         "market_vault.service",
         "market_vault.storage",
     ):
-        assert forbidden not in qml
+        assert forbidden not in main + home + sidebar + switcher + placeholder
 
 
 def test_bridge_property_signal_and_slot_round_trip():
@@ -203,14 +222,21 @@ from PySide6.QtQuickControls2 import QQuickStyle
 from market_vault.console.models import TablePage
 from market_vault.desktop.bridge import DesktopBridge
 from market_vault.desktop.dashboard import DashboardController
+from market_vault.desktop.localization import I18nBridge
+from market_vault.desktop.preferences import DesktopPreferenceStore
+from market_vault.desktop.shell import ShellController
 
 QQuickStyle.setStyle('Basic')
 app = QGuiApplication([])
 engine = QQmlApplicationEngine()
 bridge = DesktopBridge(parent=engine)
 dashboard = DashboardController(parent=engine)
+i18n = I18nBridge(preference_store=DesktopPreferenceStore(root={str(tmp_path / 'preferences')!r}), parent=engine)
+shell = ShellController(parent=engine)
 engine.rootContext().setContextProperty('desktopBridge', bridge)
 engine.rootContext().setContextProperty('dashboardController', dashboard)
+engine.rootContext().setContextProperty('i18nBridge', i18n)
+engine.rootContext().setContextProperty('shellController', shell)
 engine.load(QUrl.fromLocalFile({str(DESKTOP_ROOT / 'qml' / 'Main.qml')!r}))
 root = engine.rootObjects()[0]
 table = root.findChild(object, 'recentRunsTable')
@@ -241,6 +267,7 @@ dashboard.shutdown()
     env["PYTHONPATH"] = str(ROOT / "src")
     env["QT_QPA_PLATFORM"] = "offscreen"
     env["QSG_RHI_BACKEND"] = "software"
+    env["LOCALAPPDATA"] = str(tmp_path / "local app data")
     result = subprocess.run(
         [sys.executable, "-c", script],
         cwd=tmp_path,
@@ -270,6 +297,7 @@ def test_source_smoke_is_cwd_independent_and_side_effect_free(tmp_path):
     env["PYTHONPATH"] = str(ROOT / "src")
     env["QT_QPA_PLATFORM"] = "offscreen"
     env["QSG_RHI_BACKEND"] = "software"
+    env["LOCALAPPDATA"] = str(tmp_path / "local app data")
     result = subprocess.run(
         [
             sys.executable,
@@ -289,6 +317,7 @@ def test_source_smoke_is_cwd_independent_and_side_effect_free(tmp_path):
     assert not (RUNTIME_NAMES & {path.name for path in tmp_path.iterdir()})
     assert not list(tmp_path.rglob("*.duckdb"))
     assert not list(tmp_path.rglob("*.parquet"))
+    assert not list(tmp_path.rglob("desktop-preferences.json"))
 
 
 def test_source_startup_with_settings_remains_lazy_and_side_effect_free(tmp_path):
@@ -320,6 +349,7 @@ def test_source_startup_with_settings_remains_lazy_and_side_effect_free(tmp_path
     assert result.returncode == 0, result.stderr
     assert not settings.parent.exists()
     assert list(cwd.iterdir()) == []
+    assert not list(tmp_path.rglob("desktop-preferences.json"))
 
 
 def test_parallel_spec_and_build_script_do_not_cut_over_production():
@@ -348,6 +378,10 @@ def test_parallel_spec_and_build_script_do_not_cut_over_production():
     assert "market_vault.desktop" not in production_launcher
     assert 'name="MarketVaultQmlCanary"' in canary_spec
     assert "MarketVaultQmlCanary.exe" in canary_build
+    assert '"LanguageSwitcher.qml", "Sidebar.qml"' in canary_spec
+    assert '"HomePage.qml", "PlaceholderPage.qml"' in canary_spec
+    assert '"market_vault/desktop/qml/components"' in canary_spec
+    assert '"market_vault/desktop/qml/pages"' in canary_spec
     assert "collect_all" not in canary_spec
     assert 'hookspath=[str(HOOKS_ROOT)]' in canary_spec
     assert "collect_qtqml_files" not in canary_hook
@@ -382,4 +416,6 @@ def test_pyproject_keeps_qt_optional_and_packages_only_canary_qml():
     assert 'desktop = [\n  "PySide6==6.11.2",\n]' in text
     core_dependencies = text.split("[project.optional-dependencies]", 1)[0]
     assert "PySide6" not in core_dependencies
-    assert '"market_vault.desktop" = ["qml/*.qml"]' in text
+    assert '"qml/*.qml"' in text
+    assert '"qml/components/*.qml"' in text
+    assert '"qml/pages/*.qml"' in text

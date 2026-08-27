@@ -1,228 +1,132 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import "components" as Components
+import "pages" as Pages
 
 ApplicationWindow {
     id: window
     objectName: "canaryWindow"
     visible: true
-    width: 900
+    width: 1100
     height: 700
-    minimumWidth: 760
-    minimumHeight: 620
-    title: "MarketVault QML Canary"
+    minimumWidth: 1000
+    minimumHeight: 650
+    title: i18nBridge.catalog["app.title"]
     color: "#f3eee2"
 
-    Rectangle {
+    ColumnLayout {
         anchors.fill: parent
-        anchors.margins: 24
-        color: "#fffaf0"
-        border.color: "#c59a3d"
-        border.width: 1
+        spacing: 0
 
-        ColumnLayout {
-            anchors.fill: parent
-            anchors.margins: 20
-            spacing: 12
-
-            Label {
-                Layout.alignment: Qt.AlignHCenter
-                text: "MarketVault"
-                color: "#2b2418"
-                font.pixelSize: 30
-                font.weight: Font.DemiBold
-            }
-
-            Label {
-                Layout.alignment: Qt.AlignHCenter
-                text: "PySide6 + QML migration canary"
-                color: "#665d50"
-                font.pixelSize: 16
-            }
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 76
+            color: "#fffaf0"
+            border.color: "#d8c9a6"
+            border.width: 1
 
             RowLayout {
-                Layout.alignment: Qt.AlignHCenter
-                spacing: 12
+                anchors.fill: parent
+                anchors.leftMargin: 22
+                anchors.rightMargin: 22
+                spacing: 16
 
-                Button {
-                    id: pingButton
-                    objectName: "pingButton"
-                    text: "PING PYTHON"
-                    onClicked: desktopBridge.ping()
-                }
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 1
 
-                Button {
-                    id: dashboardButton
-                    objectName: "dashboardButton"
-                    text: dashboardController.backendConfigured
-                        ? (dashboardController.busy ? "REFRESHING..." : "REFRESH DASHBOARD")
-                        : "DASHBOARD UNCONFIGURED"
-                    enabled: dashboardController.backendConfigured && !dashboardController.busy
-                    onClicked: dashboardController.refresh()
-                }
-            }
+                    Label {
+                        text: i18nBridge.catalog["app.title"]
+                        color: "#2b2418"
+                        font.pixelSize: 24
+                        font.weight: Font.DemiBold
+                    }
 
-            RowLayout {
-                Layout.alignment: Qt.AlignHCenter
-                spacing: 8
-
-                Label {
-                    text: "Status:"
-                    color: "#665d50"
-                    font.pixelSize: 14
-                }
-
-                Label {
-                    id: statusValue
-                    objectName: "statusValue"
-                    text: desktopBridge.status
-                    color: "#8a651a"
-                    font.pixelSize: 18
-                    font.weight: Font.DemiBold
-                }
-
-                Label {
-                    text: "Dashboard: " + dashboardController.status
-                    color: "#665d50"
-                    font.pixelSize: 14
-                }
-            }
-
-            Label {
-                Layout.alignment: Qt.AlignHCenter
-                visible: dashboardController.error.length > 0
-                text: dashboardController.error
-                color: "#8b2f24"
-                font.pixelSize: 13
-            }
-
-            GridLayout {
-                Layout.alignment: Qt.AlignHCenter
-                columns: 3
-                columnSpacing: 24
-                rowSpacing: 8
-
-                Repeater {
-                    model: [
-                        "Symbols",
-                        "Snapshots",
-                        "Latest rows",
-                        "Completed dates",
-                        "Incomplete dates",
-                        "Latest trade date"
-                    ]
-
-                    ColumnLayout {
-                        Layout.minimumWidth: 130
-
-                        Label {
-                            Layout.alignment: Qt.AlignHCenter
-                            text: modelData
-                            color: "#665d50"
-                            font.pixelSize: 12
-                        }
-
-                        Label {
-                            Layout.alignment: Qt.AlignHCenter
-                            text: dashboardController.metrics[modelData] || "-"
-                            color: "#2b2418"
-                            font.pixelSize: 16
-                            font.weight: Font.DemiBold
-                        }
+                    Label {
+                        text: i18nBridge.catalog["app.subtitle"]
+                        color: "#665d50"
+                        font.pixelSize: 13
                     }
                 }
+
+                Label {
+                    text: i18nBridge.catalog["language.control"]
+                    color: "#665d50"
+                    font.pixelSize: 12
+                }
+
+                Components.LanguageSwitcher {
+                    objectName: "languageSwitcher"
+                    i18n: i18nBridge
+                    Layout.preferredWidth: 120
+                }
+            }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            spacing: 0
+
+            Components.Sidebar {
+                objectName: "sidebar"
+                Layout.preferredWidth: 220
+                Layout.fillHeight: true
+                shell: shellController
+                i18n: i18nBridge
             }
 
-            Label {
-                text: "Recent Runs"
-                color: "#2b2418"
-                font.pixelSize: 17
-                font.weight: Font.DemiBold
-            }
-
-            Item {
+            Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                Layout.minimumHeight: 180
+                color: "#f3eee2"
 
                 ColumnLayout {
                     anchors.fill: parent
-                    spacing: 0
-                    visible: dashboardController.recentRunsModel.totalRows > 0
+                    anchors.margins: 22
+                    spacing: 12
 
-                    HorizontalHeaderView {
-                        id: recentRunsHeader
-                        objectName: "recentRunsHeader"
-                        Layout.fillWidth: true
-                        syncView: recentRunsTable
-                        clip: true
-
-                        delegate: Rectangle {
-                            implicitWidth: 150
-                            implicitHeight: 30
-                            color: "#eee4cf"
-                            border.color: "#c9b990"
-                            border.width: 1
-
-                            required property string display
-
-                            Label {
-                                anchors.fill: parent
-                                anchors.leftMargin: 7
-                                anchors.rightMargin: 7
-                                verticalAlignment: Text.AlignVCenter
-                                elide: Text.ElideRight
-                                text: parent.display
-                                color: "#2b2418"
-                                font.weight: Font.DemiBold
-                            }
-                        }
+                    Label {
+                        id: pageTitle
+                        objectName: "pageTitle"
+                        text: i18nBridge.catalog[shellController.currentPageLabelKey]
+                        color: "#2b2418"
+                        font.pixelSize: 22
+                        font.weight: Font.DemiBold
                     }
 
-                    TableView {
-                        id: recentRunsTable
-                        objectName: "recentRunsTable"
+                    Loader {
+                        id: pageContent
+                        objectName: "pageContent"
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        model: dashboardController.recentRunsModel
-                        clip: true
-                        boundsBehavior: Flickable.StopAtBounds
-                        ScrollBar.horizontal: ScrollBar {}
-                        ScrollBar.vertical: ScrollBar {}
-
-                        delegate: Rectangle {
-                            implicitWidth: 150
-                            implicitHeight: 30
-                            color: row % 2 === 0 ? "#fffaf0" : "#f8f1e4"
-                            border.color: "#e1d6bd"
-                            border.width: 1
-
-                            required property string display
-                            required property int row
-
-                            Label {
-                                anchors.fill: parent
-                                anchors.leftMargin: 7
-                                anchors.rightMargin: 7
-                                verticalAlignment: Text.AlignVCenter
-                                elide: Text.ElideRight
-                                text: parent.display
-                                color: "#2b2418"
-                            }
-                        }
+                        sourceComponent: shellController.currentPage === "home"
+                            ? homePageComponent
+                            : placeholderPageComponent
                     }
                 }
-
-                Label {
-                    id: recentRunsEmptyState
-                    objectName: "recentRunsEmptyState"
-                    anchors.centerIn: parent
-                    visible: dashboardController.recentRunsModel.totalRows === 0
-                    text: "No recent runs"
-                    color: "#665d50"
-                    font.pixelSize: 14
-                }
             }
+        }
+    }
+
+    Component {
+        id: homePageComponent
+
+        Pages.HomePage {
+            objectName: "homePage"
+            dashboard: dashboardController
+            desktop: desktopBridge
+            i18n: i18nBridge
+        }
+    }
+
+    Component {
+        id: placeholderPageComponent
+
+        Pages.PlaceholderPage {
+            pageLabel: i18nBridge.catalog[shellController.currentPageLabelKey]
+            message: i18nBridge.catalog["placeholder.message"]
         }
     }
 }
