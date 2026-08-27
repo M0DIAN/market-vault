@@ -281,17 +281,57 @@ def test_existing_destructive_contracts_and_inventory_validate():
     }
     assert len(snapshot.exemptions) == 18
     assert len(snapshot.findings) == 37
+    purge_contract = snapshot.contracts["safe_purge_v01"]
     purge_findings = [
         finding
         for finding in snapshot.findings
-        if snapshot.contracts["safe_purge_v01"].covers(finding)
+        if purge_contract.covers(finding)
     ]
-    expected_count = sum(
-        surface.expected_count * len(binding.symbols)
-        for binding in snapshot.contracts["safe_purge_v01"].bindings
-        for surface in binding.surfaces
-    )
-    assert len(purge_findings) == expected_count == 18
+    realized_expected_count = 0
+    future_approved_surfaces = []
+    total_authorized_count = 0
+    for binding in purge_contract.bindings:
+        for symbol in binding.symbols:
+            binding_key = (binding.path, symbol)
+            for surface in binding.surfaces:
+                total_authorized_count += surface.expected_count
+                if binding_key not in snapshot.symbol_hashes:
+                    future_approved_surfaces.append(
+                        (
+                            binding.path,
+                            symbol,
+                            surface.kind,
+                            surface.signal,
+                            surface.expected_count,
+                        )
+                    )
+                    continue
+                realized_expected_count += surface.expected_count
+                realized_findings = [
+                    finding
+                    for finding in snapshot.findings
+                    if finding.path == binding.path
+                    and finding.symbol == symbol
+                    and finding.kind == surface.kind
+                    and finding.signal == surface.signal
+                ]
+                assert len(realized_findings) == surface.expected_count
+
+    assert len(purge_findings) == realized_expected_count == 18
+    assert future_approved_surfaces == [
+        (
+            "src/market_vault/desktop/storage_cleanup.py",
+            "StorageCleanupController.execute_purge",
+            "destructive_public_name",
+            "name.purge",
+            1,
+        )
+    ]
+    assert total_authorized_count == 19
+    assert (
+        "src/market_vault/desktop/storage_cleanup.py",
+        "StorageCleanupController.execute_purge",
+    ) not in snapshot.symbol_hashes
 
     catalog_contract = snapshot.contracts["catalog_ingestion_run_recording_v1"]
     catalog_findings = [
