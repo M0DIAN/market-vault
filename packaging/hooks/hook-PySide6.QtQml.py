@@ -16,6 +16,8 @@ _QML_MODULES = (
     "QtQuick/Controls/Basic",
     "QtQuick/Controls/Basic/impl",
     "QtQuick/Controls/impl",
+    "QtQuick/Dialogs",
+    "QtQuick/Dialogs/quickimpl",
     "QtQuick/Effects",
     "QtQuick/Layouts",
     "QtQuick/Shapes",

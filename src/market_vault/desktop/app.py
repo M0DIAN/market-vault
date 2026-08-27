@@ -113,10 +113,20 @@ def run_application(
     from PySide6.QtQuickControls2 import QQuickStyle
 
     from market_vault.desktop.bridge import DesktopBridge
+    from market_vault.desktop.controllers import (
+        AuditController,
+        HistoricalDataController,
+        InventoryController,
+        MarketDataController,
+        RunsController,
+        TradingCalendarController,
+    )
     from market_vault.desktop.dashboard import DashboardController
     from market_vault.desktop.localization import I18nBridge
     from market_vault.desktop.preferences import DesktopPreferenceStore
+    from market_vault.desktop.runtime import DesktopOperationRuntime
     from market_vault.desktop.shell import ShellController
+    from market_vault.desktop.storage_cleanup import StorageCleanupController
 
     qml_path = resolve_qml_path()
     if not qml_path.is_file():
@@ -127,24 +137,57 @@ def run_application(
     application.setApplicationName("MarketVault QML Canary")
     engine = QQmlApplicationEngine()
     bridge = DesktopBridge(parent=engine)
-    dashboard = DashboardController(settings_path=settings_path, parent=engine)
+    runtime = DesktopOperationRuntime(settings_path=settings_path, parent=engine)
+    dashboard = DashboardController(runtime=runtime, parent=engine)
+    historical = HistoricalDataController(runtime, parent=engine)
+    calendar = TradingCalendarController(runtime, parent=engine)
+    market_data = MarketDataController(runtime, parent=engine)
+    inventory = InventoryController(runtime, parent=engine)
+    coverage = AuditController(
+        runtime, method_name="coverage_audit", parent=engine
+    )
+    intraday = AuditController(
+        runtime, method_name="intraday_audit", parent=engine
+    )
+    runs = RunsController(runtime, parent=engine)
+    storage = StorageCleanupController(runtime, parent=engine)
     preferences = DesktopPreferenceStore()
     i18n = I18nBridge(preference_store=preferences, parent=engine)
     shell = ShellController(parent=engine)
     engine.rootContext().setContextProperty("desktopBridge", bridge)
+    engine.rootContext().setContextProperty("operationRuntime", runtime)
     engine.rootContext().setContextProperty("dashboardController", dashboard)
+    engine.rootContext().setContextProperty("historicalDataController", historical)
+    engine.rootContext().setContextProperty("tradingCalendarController", calendar)
+    engine.rootContext().setContextProperty("marketDataController", market_data)
+    engine.rootContext().setContextProperty("inventoryController", inventory)
+    engine.rootContext().setContextProperty("coverageAuditController", coverage)
+    engine.rootContext().setContextProperty("intradayAuditController", intraday)
+    engine.rootContext().setContextProperty("runsController", runs)
+    engine.rootContext().setContextProperty("storageCleanupController", storage)
     engine.rootContext().setContextProperty("i18nBridge", i18n)
     engine.rootContext().setContextProperty("shellController", shell)
     engine._market_vault_desktop_bridge = bridge
+    engine._market_vault_operation_runtime = runtime
     engine._market_vault_dashboard_controller = dashboard
+    engine._market_vault_page_controllers = (
+        historical,
+        calendar,
+        market_data,
+        inventory,
+        coverage,
+        intraday,
+        runs,
+        storage,
+    )
     engine._market_vault_i18n_bridge = i18n
     engine._market_vault_shell_controller = shell
     engine.load(QUrl.fromLocalFile(str(qml_path)))
     if not engine.rootObjects():
-        dashboard.shutdown()
+        runtime.shutdown()
         raise RuntimeError(f"QML failed to create a root object: {qml_path}")
 
-    application.aboutToQuit.connect(dashboard.shutdown)
+    application.aboutToQuit.connect(runtime.shutdown)
     dashboard_smoke_timer = None
     if dashboard_smoke:
         completed = False
@@ -190,7 +233,7 @@ def run_application(
     try:
         return application.exec()
     finally:
-        dashboard.shutdown()
+        runtime.shutdown()
 
 
 def main(argv: Sequence[str] | None = None) -> int:
