@@ -9,11 +9,29 @@ ENTRY_POINT = SOURCE_ROOT / "market_vault" / "desktop" / "app.py"
 QML_ENTRY_POINT = SOURCE_ROOT / "market_vault" / "desktop" / "qml" / "Main.qml"
 QML_COMPONENTS = [
     SOURCE_ROOT / "market_vault" / "desktop" / "qml" / "components" / name
-    for name in ("LanguageSwitcher.qml", "Sidebar.qml")
+    for name in (
+        "DataTable.qml",
+        "LabeledComboBox.qml",
+        "LabeledTextField.qml",
+        "LanguageSwitcher.qml",
+        "OpenDConfirmDialog.qml",
+        "SaveExportDialog.qml",
+        "Sidebar.qml",
+        "SummaryStrip.qml",
+    )
 ]
 QML_PAGES = [
     SOURCE_ROOT / "market_vault" / "desktop" / "qml" / "pages" / name
-    for name in ("HomePage.qml", "PlaceholderPage.qml")
+    for name in (
+        "AuditPage.qml",
+        "HistoricalDataPage.qml",
+        "HomePage.qml",
+        "InventoryPage.qml",
+        "MarketDataPage.qml",
+        "RunsPage.qml",
+        "StorageCleanupPage.qml",
+        "TradingCalendarPage.qml",
+    )
 ]
 WINDOWS_ICON = PROJECT_ROOT / "assets" / "windows" / "market-vault.ico"
 HOOKS_ROOT = PROJECT_ROOT / "packaging" / "hooks"

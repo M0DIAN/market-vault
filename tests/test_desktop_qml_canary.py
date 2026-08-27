@@ -128,10 +128,13 @@ def test_canary_startup_source_has_no_eager_business_imports():
     for path in (
         DESKTOP_ROOT / "app.py",
         DESKTOP_ROOT / "bridge.py",
+        DESKTOP_ROOT / "controllers.py",
         DESKTOP_ROOT / "dashboard.py",
         DESKTOP_ROOT / "localization.py",
         DESKTOP_ROOT / "preferences.py",
+        DESKTOP_ROOT / "runtime.py",
         DESKTOP_ROOT / "shell.py",
+        DESKTOP_ROOT / "storage_cleanup.py",
     ):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         top_level = tree.body
@@ -151,14 +154,28 @@ def test_componentized_qml_exercises_dashboard_controller_and_generic_table():
     switcher = (qml_root / "components" / "LanguageSwitcher.qml").read_text(
         encoding="utf-8"
     )
-    placeholder = (qml_root / "pages" / "PlaceholderPage.qml").read_text(
+    data_table = (qml_root / "components" / "DataTable.qml").read_text(
         encoding="utf-8"
     )
     assert "import QtQuick\n" in main
     assert 'import "components" as Components' in main
     assert 'import "pages" as Pages' in main
     assert "Pages.HomePage" in main
-    assert "Pages.PlaceholderPage" in main
+    assert "StackLayout" in main
+    assert "if (operationRuntime.busy)" in main
+    assert "close.accepted = false" in main
+    assert "Pages.PlaceholderPage" not in main
+    assert not (qml_root / "pages" / "PlaceholderPage.qml").exists()
+    for page in (
+        "HistoricalDataPage",
+        "TradingCalendarPage",
+        "MarketDataPage",
+        "InventoryPage",
+        "AuditPage",
+        "RunsPage",
+        "StorageCleanupPage",
+    ):
+        assert f"Pages.{page}" in main
     assert "dashboardController.refresh()" not in main
     assert "home.desktop.ping()" in home
     assert "text: home.desktop.status" in home
@@ -175,16 +192,17 @@ def test_componentized_qml_exercises_dashboard_controller_and_generic_table():
         assert f'"{metric}"' in home
     assert "dashboardController.recent_runs" not in main + home
     assert "home.dashboard.recent_runs" not in home
-    assert "HorizontalHeaderView" in home
-    assert "TableView" in home
+    assert "Components.DataTable" in home
+    assert "HorizontalHeaderView" in data_table
+    assert "TableView" in data_table
     assert 'objectName: "recentRunsTable"' in home
-    assert 'objectName: "recentRunsHeader"' in home
-    assert 'objectName: "recentRunsEmptyState"' in home
+    assert 'objectName: root.objectName + "Header"' in data_table
+    assert 'objectName: root.objectName + "EmptyState"' in data_table
     assert "home.dashboard.recentRunsModel" in home
     assert "ApplicationWindow" in main
     assert "shell.selectPage(modelData.id)" in sidebar
     assert "i18n.setLanguage(currentValue)" in switcher
-    assert "later migration phase" not in placeholder
+    assert "later migration phase" not in main + home + data_table
     for forbidden in (
         "ConsoleBackend",
         "Catalog",
@@ -194,7 +212,7 @@ def test_componentized_qml_exercises_dashboard_controller_and_generic_table():
         "market_vault.service",
         "market_vault.storage",
     ):
-        assert forbidden not in main + home + sidebar + switcher + placeholder
+        assert forbidden not in main + home + sidebar + switcher + data_table
 
 
 def test_bridge_property_signal_and_slot_round_trip():
@@ -222,26 +240,47 @@ from PySide6.QtQuickControls2 import QQuickStyle
 from market_vault.console.models import TablePage
 from market_vault.desktop.bridge import DesktopBridge
 from market_vault.desktop.dashboard import DashboardController
+from market_vault.desktop.controllers import AuditController, HistoricalDataController, InventoryController, MarketDataController, RunsController, TradingCalendarController
 from market_vault.desktop.localization import I18nBridge
 from market_vault.desktop.preferences import DesktopPreferenceStore
+from market_vault.desktop.runtime import DesktopOperationRuntime
 from market_vault.desktop.shell import ShellController
+from market_vault.desktop.storage_cleanup import StorageCleanupController
 
 QQuickStyle.setStyle('Basic')
 app = QGuiApplication([])
 engine = QQmlApplicationEngine()
 bridge = DesktopBridge(parent=engine)
-dashboard = DashboardController(parent=engine)
+runtime = DesktopOperationRuntime(parent=engine)
+dashboard = DashboardController(runtime=runtime, parent=engine)
+historical = HistoricalDataController(runtime, parent=engine)
+calendar = TradingCalendarController(runtime, parent=engine)
+market_data = MarketDataController(runtime, parent=engine)
+inventory = InventoryController(runtime, parent=engine)
+coverage = AuditController(runtime, method_name='coverage_audit', parent=engine)
+intraday = AuditController(runtime, method_name='intraday_audit', parent=engine)
+runs = RunsController(runtime, parent=engine)
+storage = StorageCleanupController(runtime, parent=engine)
 i18n = I18nBridge(preference_store=DesktopPreferenceStore(root={str(tmp_path / 'preferences')!r}), parent=engine)
 shell = ShellController(parent=engine)
 engine.rootContext().setContextProperty('desktopBridge', bridge)
+engine.rootContext().setContextProperty('operationRuntime', runtime)
 engine.rootContext().setContextProperty('dashboardController', dashboard)
+engine.rootContext().setContextProperty('historicalDataController', historical)
+engine.rootContext().setContextProperty('tradingCalendarController', calendar)
+engine.rootContext().setContextProperty('marketDataController', market_data)
+engine.rootContext().setContextProperty('inventoryController', inventory)
+engine.rootContext().setContextProperty('coverageAuditController', coverage)
+engine.rootContext().setContextProperty('intradayAuditController', intraday)
+engine.rootContext().setContextProperty('runsController', runs)
+engine.rootContext().setContextProperty('storageCleanupController', storage)
 engine.rootContext().setContextProperty('i18nBridge', i18n)
 engine.rootContext().setContextProperty('shellController', shell)
 engine.load(QUrl.fromLocalFile({str(DESKTOP_ROOT / 'qml' / 'Main.qml')!r}))
 root = engine.rootObjects()[0]
 table = root.findChild(object, 'recentRunsTable')
-header = root.findChild(object, 'recentRunsHeader')
-empty = root.findChild(object, 'recentRunsEmptyState')
+header = root.findChild(object, 'recentRunsTableHeader')
+empty = root.findChild(object, 'recentRunsTableEmptyState')
 app.processEvents()
 empty_before = bool(empty.property('visible'))
 model = dashboard.recentRunsModel
@@ -255,13 +294,13 @@ print(json.dumps({{
     'table': table is not None,
     'header': header is not None,
     'empty': empty is not None,
-    'model_connected': table.property('model') == model,
+    'model_connected': table.property('tableModel') == model,
     'empty_before': empty_before,
     'empty_after': bool(empty.property('visible')),
     'rows': model.rowCount(),
     'columns': model.columnCount(),
 }}))
-dashboard.shutdown()
+runtime.shutdown()
 """
     env = os.environ.copy()
     env["PYTHONPATH"] = str(ROOT / "src")
@@ -378,14 +417,34 @@ def test_parallel_spec_and_build_script_do_not_cut_over_production():
     assert "market_vault.desktop" not in production_launcher
     assert 'name="MarketVaultQmlCanary"' in canary_spec
     assert "MarketVaultQmlCanary.exe" in canary_build
-    assert '"LanguageSwitcher.qml", "Sidebar.qml"' in canary_spec
-    assert '"HomePage.qml", "PlaceholderPage.qml"' in canary_spec
+    for component in (
+        "DataTable.qml",
+        "LanguageSwitcher.qml",
+        "OpenDConfirmDialog.qml",
+        "SaveExportDialog.qml",
+        "Sidebar.qml",
+    ):
+        assert f'"{component}"' in canary_spec
+    for page in (
+        "AuditPage.qml",
+        "HistoricalDataPage.qml",
+        "HomePage.qml",
+        "InventoryPage.qml",
+        "MarketDataPage.qml",
+        "RunsPage.qml",
+        "StorageCleanupPage.qml",
+        "TradingCalendarPage.qml",
+    ):
+        assert f'"{page}"' in canary_spec
+    assert "PlaceholderPage.qml" not in canary_spec
     assert '"market_vault/desktop/qml/components"' in canary_spec
     assert '"market_vault/desktop/qml/pages"' in canary_spec
     assert "collect_all" not in canary_spec
     assert 'hookspath=[str(HOOKS_ROOT)]' in canary_spec
     assert "collect_qtqml_files" not in canary_hook
     assert '"QtQuick/Controls/Basic"' in canary_hook
+    assert '"QtQuick/Dialogs"' in canary_hook
+    assert '"QtQuick/Dialogs/quickimpl"' in canary_hook
     assert '("QtQuick", "Controls", "designer")' in canary_hook
     assert "$BundledForbiddenQml.Count -gt 0" in canary_build
     for unneeded_style in ("Fusion", "Imagine", "Material", "Universal"):

@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import "../components" as Components
 
 Item {
     id: home
@@ -126,91 +127,14 @@ Item {
             font.weight: Font.DemiBold
         }
 
-        Item {
+        Components.DataTable {
+            objectName: "recentRunsTable"
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.minimumHeight: 180
-
-            ColumnLayout {
-                anchors.fill: parent
-                spacing: 0
-                visible: home.dashboard.recentRunsModel.totalRows > 0
-
-                HorizontalHeaderView {
-                    id: recentRunsHeader
-                    objectName: "recentRunsHeader"
-                    Layout.fillWidth: true
-                    syncView: recentRunsTable
-                    clip: true
-
-                    delegate: Rectangle {
-                        implicitWidth: 150
-                        implicitHeight: 30
-                        color: "#eee4cf"
-                        border.color: "#c9b990"
-                        border.width: 1
-
-                        required property string display
-
-                        Label {
-                            anchors.fill: parent
-                            anchors.leftMargin: 7
-                            anchors.rightMargin: 7
-                            verticalAlignment: Text.AlignVCenter
-                            elide: Text.ElideRight
-                            text: {
-                                home.i18n.language
-                                return home.i18n.columnLabel(parent.display)
-                            }
-                            color: "#2b2418"
-                            font.weight: Font.DemiBold
-                        }
-                    }
-                }
-
-                TableView {
-                    id: recentRunsTable
-                    objectName: "recentRunsTable"
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    model: home.dashboard.recentRunsModel
-                    clip: true
-                    boundsBehavior: Flickable.StopAtBounds
-                    ScrollBar.horizontal: ScrollBar {}
-                    ScrollBar.vertical: ScrollBar {}
-
-                    delegate: Rectangle {
-                        implicitWidth: 150
-                        implicitHeight: 30
-                        color: row % 2 === 0 ? "#fffaf0" : "#f8f1e4"
-                        border.color: "#e1d6bd"
-                        border.width: 1
-
-                        required property string display
-                        required property int row
-
-                        Label {
-                            anchors.fill: parent
-                            anchors.leftMargin: 7
-                            anchors.rightMargin: 7
-                            verticalAlignment: Text.AlignVCenter
-                            elide: Text.ElideRight
-                            text: parent.display
-                            color: "#2b2418"
-                        }
-                    }
-                }
-            }
-
-            Label {
-                id: recentRunsEmptyState
-                objectName: "recentRunsEmptyState"
-                anchors.centerIn: parent
-                visible: home.dashboard.recentRunsModel.totalRows === 0
-                text: home.i18n.catalog["home.no_recent_runs"]
-                color: "#665d50"
-                font.pixelSize: 14
-            }
+            tableModel: home.dashboard.recentRunsModel
+            i18n: home.i18n
+            paged: false
         }
     }
 }

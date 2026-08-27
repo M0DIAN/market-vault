@@ -88,6 +88,10 @@ class ShellController(QObject):
     def currentPageLabelKey(self) -> str:  # noqa: N802
         return PAGE_LABEL_KEYS[self._current_page]
 
+    @Property(int, notify=currentPageChanged)
+    def currentPageIndex(self) -> int:  # noqa: N802
+        return PAGE_IDS.index(self._current_page)
+
     @Property("QVariantList", constant=True)
     def pages(self) -> list[dict[str, object]]:
         return [dict(page) for page in PAGE_DEFINITIONS]

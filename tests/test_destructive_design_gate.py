@@ -280,7 +280,7 @@ def test_existing_destructive_contracts_and_inventory_validate():
         "catalog_ingestion_run_recording_v1",
     }
     assert len(snapshot.exemptions) == 18
-    assert len(snapshot.findings) == 37
+    assert len(snapshot.findings) == 38
     purge_contract = snapshot.contracts["safe_purge_v01"]
     purge_findings = [
         finding
@@ -317,21 +317,13 @@ def test_existing_destructive_contracts_and_inventory_validate():
                 ]
                 assert len(realized_findings) == surface.expected_count
 
-    assert len(purge_findings) == realized_expected_count == 18
-    assert future_approved_surfaces == [
-        (
-            "src/market_vault/desktop/storage_cleanup.py",
-            "StorageCleanupController.execute_purge",
-            "destructive_public_name",
-            "name.purge",
-            1,
-        )
-    ]
+    assert len(purge_findings) == realized_expected_count == 19
+    assert future_approved_surfaces == []
     assert total_authorized_count == 19
     assert (
         "src/market_vault/desktop/storage_cleanup.py",
         "StorageCleanupController.execute_purge",
-    ) not in snapshot.symbol_hashes
+    ) in snapshot.symbol_hashes
 
     catalog_contract = snapshot.contracts["catalog_ingestion_run_recording_v1"]
     catalog_findings = [

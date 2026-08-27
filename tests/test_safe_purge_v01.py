@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from datetime import date, datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -124,6 +125,75 @@ def plan(cfg: Settings, symbols: list[str], *, start=TRADE_DATE, end=TRADE_DATE)
         adjustment="NONE",
         source_schema_version="10.9",
     )
+
+
+def test_qml_storage_controller_executes_only_exact_reviewed_sandbox_pair(tmp_path):
+    pytest.importorskip("PySide6")
+    from PySide6.QtCore import QCoreApplication
+
+    from market_vault.console.tasks import SerialTaskRunner
+    from market_vault.desktop.runtime import DesktopOperationRuntime
+    from market_vault.desktop.storage_cleanup import StorageCleanupController
+
+    application = QCoreApplication.instance() or QCoreApplication([])
+    cfg = settings(tmp_path)
+    raw, curated = write_batch(cfg, symbols=["US.SPY"])
+    unrelated = tmp_path / "unrelated.txt"
+    unrelated.write_text("retained", encoding="utf-8")
+    runtime = DesktopOperationRuntime(
+        settings_path=(tmp_path / "settings.yaml").resolve(),
+        backend_factory=lambda path: ConsoleBackend(MarketVault(cfg)),
+        runner_factory=SerialTaskRunner,
+        poll_interval_ms=1,
+    )
+    controller = StorageCleanupController(runtime)
+    for key, value in {
+        "source": "moomoo",
+        "symbols": "US.SPY",
+        "start_date": TRADE_DATE.isoformat(),
+        "end_date": TRADE_DATE.isoformat(),
+        "interval": "1m",
+        "session": "ALL",
+        "adjustment": "NONE",
+        "source_schema_version": "10.9",
+    }.items():
+        assert controller.setScopeField(key, value)
+
+    def wait_idle():
+        deadline = time.monotonic() + 10
+        while runtime.busy:
+            application.processEvents()
+            if time.monotonic() >= deadline:
+                raise AssertionError("QML storage operation timed out")
+            time.sleep(0.005)
+        application.processEvents()
+
+    assert controller.review()
+    wait_idle()
+    assert controller.planExecutable
+    first_plan = controller.planId
+    controller.setConfirmation(f"PURGE {first_plan}")
+    assert controller.execute_purge("wrong-plan", f"PURGE {first_plan}") is False
+    assert raw.exists() and curated.exists()
+
+    controller.setScopeField("symbols", "US.QQQ")
+    assert controller.planId == ""
+    assert controller.executeEnabled is False
+    controller.setScopeField("symbols", "US.SPY")
+    assert controller.review()
+    wait_idle()
+    plan_id = controller.planId
+    controller.setConfirmation(f"PURGE {plan_id}")
+    assert controller.execute_purge(plan_id, f"PURGE {plan_id}")
+    wait_idle()
+
+    quarantine = cfg.data_root / "quarantine" / f"purge_id={plan_id}"
+    assert not raw.exists() and not curated.exists()
+    assert (quarantine / raw.relative_to(cfg.data_root)).is_file()
+    assert (quarantine / curated.relative_to(cfg.data_root)).is_file()
+    assert unrelated.read_text(encoding="utf-8") == "retained"
+    assert controller.planExecutable is False
+    runtime.shutdown()
 
 
 def test_exact_whole_physical_batch_moves_pair_without_rewriting(tmp_path):

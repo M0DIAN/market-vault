@@ -14,6 +14,12 @@ ApplicationWindow {
     minimumHeight: 650
     title: i18nBridge.catalog["app.title"]
     color: "#f3eee2"
+    onClosing: function(close) {
+        if (operationRuntime.busy) {
+            close.accepted = false
+            closeBusyDialog.open()
+        }
+    }
 
     ColumnLayout {
         anchors.fill: parent
@@ -96,37 +102,60 @@ ApplicationWindow {
                         font.weight: Font.DemiBold
                     }
 
-                    Loader {
+                    StackLayout {
                         id: pageContent
                         objectName: "pageContent"
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        sourceComponent: shellController.currentPage === "home"
-                            ? homePageComponent
-                            : placeholderPageComponent
+                        currentIndex: shellController.currentPageIndex
+
+                        Pages.HomePage { objectName: "homePage"; dashboard: dashboardController; desktop: desktopBridge; i18n: i18nBridge }
+                        Pages.HistoricalDataPage { objectName: "historicalDataPage"; controller: historicalDataController; i18n: i18nBridge }
+                        Pages.TradingCalendarPage { objectName: "tradingCalendarPage"; controller: tradingCalendarController; i18n: i18nBridge }
+                        Pages.MarketDataPage { objectName: "marketDataPage"; controller: marketDataController; i18n: i18nBridge }
+                        Pages.InventoryPage { objectName: "inventoryPage"; controller: inventoryController; i18n: i18nBridge }
+                        Pages.AuditPage { objectName: "coverageAuditPage"; tableObjectName: "coverageAuditTable"; controller: coverageAuditController; i18n: i18nBridge }
+                        Pages.AuditPage { objectName: "intradayAuditPage"; tableObjectName: "intradayAuditTable"; controller: intradayAuditController; i18n: i18nBridge }
+                        Pages.RunsPage { objectName: "runsPage"; controller: runsController; i18n: i18nBridge }
+                        Pages.StorageCleanupPage { objectName: "storageCleanupPage"; controller: storageCleanupController; i18n: i18nBridge }
                     }
+                }
+            }
+        }
+
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 34
+            color: "#fffaf0"
+            border.color: "#d8c9a6"
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 16
+                anchors.rightMargin: 16
+                Label {
+                    text: i18nBridge.catalog["common.status"] + ": "
+                        + operationRuntime.status
+                        + (operationRuntime.activeOperation.length > 0
+                            ? " / " + operationRuntime.activeOperation : "")
+                    color: "#665d50"
+                }
+                Item { Layout.fillWidth: true }
+                Label {
+                    text: operationRuntime.error
+                    visible: text.length > 0
+                    color: "#8b2f24"
+                    elide: Text.ElideRight
+                    Layout.maximumWidth: 520
                 }
             }
         }
     }
 
-    Component {
-        id: homePageComponent
-
-        Pages.HomePage {
-            objectName: "homePage"
-            dashboard: dashboardController
-            desktop: desktopBridge
-            i18n: i18nBridge
-        }
-    }
-
-    Component {
-        id: placeholderPageComponent
-
-        Pages.PlaceholderPage {
-            pageLabel: i18nBridge.catalog[shellController.currentPageLabelKey]
-            message: i18nBridge.catalog["placeholder.message"]
-        }
+    Dialog {
+        id: closeBusyDialog
+        title: i18nBridge.catalog["common.running"]
+        modal: true
+        standardButtons: Dialog.Ok
+        Label { text: i18nBridge.catalog["common.close_busy"]; wrapMode: Text.Wrap }
     }
 }

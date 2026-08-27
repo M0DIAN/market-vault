@@ -40,7 +40,9 @@ def test_translation_catalogs_have_exact_key_parity_and_representative_strings()
     assert ZH_CN["nav.home"] == "首页"
     assert EN["home.recent_runs"] == "Recent Runs"
     assert ZH_CN["columns.run_id"] == "运行 ID"
-    assert EN["placeholder.message"].startswith("This page")
+    assert EN["historical.execute"] == "Execute via OpenD"
+    assert ZH_CN["storage.execute"] == "执行安全清理"
+    assert EN["common.close_busy"].startswith("An operation")
 
 
 def test_bridge_defaults_to_english_without_startup_write(qt_app, tmp_path):

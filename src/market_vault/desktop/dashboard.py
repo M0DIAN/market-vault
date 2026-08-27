@@ -1,13 +1,18 @@
-"""Qt-safe dashboard controller for the parallel QML canary."""
+"""Qt-safe dashboard controller for the parallel QML desktop."""
 
 from __future__ import annotations
 
-from concurrent.futures import Future
 from pathlib import Path
 from typing import Any, Callable
 
-from PySide6.QtCore import Property, QObject, QThread, QTimer, Signal, Slot
+from PySide6.QtCore import Property, QObject, QThread, Signal, Slot
 
+from market_vault.desktop.runtime import (
+    POLL_INTERVAL_MS,
+    DesktopOperationRuntime,
+    _production_backend_factory,
+    _production_runner_factory,
+)
 from market_vault.desktop.table_model import QtTableModel
 
 
@@ -19,23 +24,10 @@ DASHBOARD_METRIC_NAMES = (
     "Incomplete dates",
     "Latest trade date",
 )
-POLL_INTERVAL_MS = 20
-
-
-def _production_backend_factory(settings_path: Path) -> Any:
-    from market_vault.console.backend import ConsoleBackend
-
-    return ConsoleBackend.from_settings(settings_path)
-
-
-def _production_runner_factory() -> Any:
-    from market_vault.console.tasks import SerialTaskRunner
-
-    return SerialTaskRunner()
 
 
 class DashboardController(QObject):
-    """Run the existing dashboard service off-thread and publish Qt state."""
+    """Run the existing dashboard service through the shared desktop runtime."""
 
     busyChanged = Signal()
     statusChanged = Signal()
@@ -47,6 +39,7 @@ class DashboardController(QObject):
     def __init__(
         self,
         *,
+        runtime: DesktopOperationRuntime | None = None,
         settings_path: Path | None = None,
         backend_factory: Callable[[Path], Any] | None = None,
         runner_factory: Callable[[], Any] | None = None,
@@ -54,26 +47,25 @@ class DashboardController(QObject):
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
-        if settings_path is not None and not Path(settings_path).is_absolute():
-            raise ValueError("Dashboard settings path must be absolute.")
-        if poll_interval_ms < 1:
-            raise ValueError("poll_interval_ms must be positive")
-
-        self._settings_path = Path(settings_path) if settings_path is not None else None
-        self._backend_factory = backend_factory or _production_backend_factory
-        self._runner_factory = runner_factory or _production_runner_factory
-        self._backend: Any | None = None
-        self._runner: Any | None = None
-        self._future: Future[Any] | None = None
+        if runtime is not None and any(
+            value is not None
+            for value in (settings_path, backend_factory, runner_factory)
+        ):
+            raise ValueError("Shared runtime cannot be combined with runtime factories.")
+        self._owns_runtime = runtime is None
+        self._runtime = runtime or DesktopOperationRuntime(
+            settings_path=settings_path,
+            backend_factory=backend_factory,
+            runner_factory=runner_factory,
+            poll_interval_ms=poll_interval_ms,
+            parent=self,
+        )
         self._busy = False
-        self._status = "READY" if self._settings_path is not None else "UNCONFIGURED"
+        self._status = "READY" if self._runtime.backendConfigured else "UNCONFIGURED"
         self._error = ""
         self._metrics = {name: "-" for name in DASHBOARD_METRIC_NAMES}
         self._recent_runs_model = QtTableModel(parent=self)
         self._closed = False
-        self._poll_timer = QTimer(self)
-        self._poll_timer.setInterval(poll_interval_ms)
-        self._poll_timer.timeout.connect(self._poll_future)
 
     def _assert_controller_thread(self) -> None:
         if QThread.currentThread() != self.thread():
@@ -96,47 +88,26 @@ class DashboardController(QObject):
         return dict(self._metrics)
 
     @Property(QObject, constant=True)
-    def recentRunsModel(self) -> QObject:  # noqa: N802 - QML property name
+    def recentRunsModel(self) -> QObject:  # noqa: N802
         return self._recent_runs_model
 
     @Property(bool, constant=True)
-    def backendConfigured(self) -> bool:  # noqa: N802 - QML property name
-        return self._settings_path is not None
+    def backendConfigured(self) -> bool:  # noqa: N802
+        return self._runtime.backendConfigured
 
     def _set_busy(self, value: bool) -> None:
-        self._assert_controller_thread()
-        if self._busy == value:
-            return
-        self._busy = value
-        self.busyChanged.emit()
+        if self._busy != value:
+            self._busy = value
+            self.busyChanged.emit()
 
-    def _set_status(self, value: str) -> None:
+    def _finish_failure(self, exc: Exception) -> None:
         self._assert_controller_thread()
-        if self._status == value:
-            return
-        self._status = value
+        self._status = "FAILED"
+        self._error = str(exc).strip() or exc.__class__.__name__
+        self._set_busy(False)
         self.statusChanged.emit()
-
-    def _set_error(self, value: str) -> None:
-        self._assert_controller_thread()
-        if self._error == value:
-            return
-        self._error = value
         self.errorChanged.emit()
-
-    def _set_metrics(self, values: dict[str, str]) -> None:
-        self._assert_controller_thread()
-        if self._metrics == values:
-            return
-        self._metrics = values
-        self.metricsChanged.emit()
-
-    def _dashboard_operation(self) -> Any:
-        if self._backend is None:
-            if self._settings_path is None:
-                raise RuntimeError("Dashboard settings are not configured.")
-            self._backend = self._backend_factory(self._settings_path)
-        return self._backend.dashboard()
+        self.dashboardFailed.emit()
 
     @Slot(result=bool)
     def refresh(self) -> bool:
@@ -144,63 +115,40 @@ class DashboardController(QObject):
         if self._closed:
             self._finish_failure(RuntimeError("Dashboard controller is closed."))
             return False
-        if self._busy:
+        if self._busy or self._runtime.busy:
             return False
-        if self._settings_path is None:
+        if not self._runtime.backendConfigured:
             self._finish_failure(RuntimeError("Dashboard settings are not configured."))
             return False
-
-        self._set_error("")
-        self._set_status("RUNNING")
+        self._status = "RUNNING"
+        self._error = ""
         self._set_busy(True)
-        try:
-            if self._runner is None:
-                self._runner = self._runner_factory()
-            self._future = self._runner.submit("dashboard", self._dashboard_operation)
-        except Exception as exc:
-            self._finish_failure(exc)
-            return False
-        self._poll_timer.start()
-        return True
+        self.statusChanged.emit()
+        self.errorChanged.emit()
 
-    @Slot()
-    def _poll_future(self) -> None:
-        self._assert_controller_thread()
-        future = self._future
-        if future is None or not future.done():
-            return
-        self._poll_timer.stop()
-        self._future = None
-        try:
-            snapshot = future.result()
-        except Exception as exc:
-            self._finish_failure(exc)
-            return
-
-        try:
-            metrics = {
+        def apply(snapshot: Any) -> None:
+            self._metrics = {
                 name: str(snapshot.metrics.get(name, "-"))
                 for name in DASHBOARD_METRIC_NAMES
             }
-            self._set_metrics(metrics)
             self._recent_runs_model.set_page(snapshot.recent_runs)
-        except Exception as exc:
-            self._finish_failure(exc)
-            return
-        self._set_error("")
-        self._set_status(str(snapshot.status))
-        self._set_busy(False)
-        self.dashboardLoaded.emit()
+            self._status = str(snapshot.status)
+            self._error = ""
+            self._set_busy(False)
+            self.metricsChanged.emit()
+            self.statusChanged.emit()
+            self.errorChanged.emit()
+            self.dashboardLoaded.emit()
 
-    def _finish_failure(self, exc: Exception) -> None:
-        self._assert_controller_thread()
-        message = str(exc).strip() or exc.__class__.__name__
-        self._poll_timer.stop()
-        self._future = None
-        self._set_status("FAILED")
-        self._set_error(message)
-        self._set_busy(False)
-        self.dashboardFailed.emit()
+        accepted = self._runtime.submit(
+            "dashboard",
+            lambda backend: backend.dashboard(),
+            apply,
+            self._finish_failure,
+        )
+        if not accepted and self._busy:
+            self._set_busy(False)
+        return accepted
 
     @Slot()
     def shutdown(self) -> None:
@@ -208,7 +156,5 @@ class DashboardController(QObject):
         if self._closed:
             return
         self._closed = True
-        self._poll_timer.stop()
-        if self._runner is not None:
-            self._runner.close()
-            self._runner = None
+        if self._owns_runtime:
+            self._runtime.shutdown()
