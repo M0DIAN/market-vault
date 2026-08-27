@@ -190,6 +190,14 @@ def test_parallel_spec_and_build_script_do_not_cut_over_production():
     assert 'name="MarketVaultQmlCanary"' in canary_spec
     assert "MarketVaultQmlCanary.exe" in canary_build
     assert "collect_all" not in canary_spec
+    for excluded in (
+        '"market_vault.api"',
+        '"market_vault.artifact_client"',
+        '"duckdb"',
+        '"pandas"',
+        '"pyarrow"',
+    ):
+        assert excluded in canary_spec
 
 
 def test_pyproject_keeps_qt_optional_and_packages_only_canary_qml():
