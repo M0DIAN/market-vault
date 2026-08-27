@@ -98,3 +98,53 @@ def test_non_windows_fallback_is_deterministic(monkeypatch, tmp_path):
 def test_explicit_path_and_root_are_mutually_exclusive(tmp_path):
     with pytest.raises(ValueError, match="either preference root or path"):
         DesktopPreferenceStore(root=tmp_path, path=tmp_path / "preferences.json")
+
+
+def test_atomic_save_disables_direct_fallback_and_failed_commit_retains_bytes(tmp_path):
+    path = tmp_path / "desktop-preferences.json"
+    path.write_text(
+        json.dumps({"schema": DESKTOP_PREFERENCE_SCHEMA, "language": "en"}),
+        encoding="utf-8",
+    )
+    original = path.read_bytes()
+
+    class FailingSaveFile:
+        def __init__(self, destination):
+            assert destination == str(path)
+            self.direct_fallback = None
+            self.cancelled = False
+
+        def setDirectWriteFallback(self, enabled):
+            self.direct_fallback = enabled
+            assert enabled is False
+
+        def open(self, mode):
+            return True
+
+        def write(self, data):
+            return len(data)
+
+        def commit(self):
+            return False
+
+        def cancelWriting(self):
+            self.cancelled = True
+
+    created = []
+
+    def factory(destination):
+        item = FailingSaveFile(destination)
+        created.append(item)
+        return item
+
+    store = DesktopPreferenceStore(path=path, save_file_factory=factory)
+    assert store.save_language("zh-CN") is False
+    assert path.read_bytes() == original
+    assert created[0].direct_fallback is False
+    assert created[0].cancelled is True
+
+
+def test_successful_atomic_save_leaves_no_temporary_residue(tmp_path):
+    store = DesktopPreferenceStore(root=tmp_path)
+    assert store.save_language("zh-CN") is True
+    assert [path.name for path in tmp_path.iterdir()] == ["desktop-preferences.json"]

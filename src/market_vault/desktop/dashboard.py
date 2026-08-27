@@ -14,6 +14,7 @@ from market_vault.desktop.runtime import (
     _production_runner_factory,
 )
 from market_vault.desktop.table_model import QtTableModel
+from market_vault.desktop.table_model import validate_table_page
 
 
 DASHBOARD_METRIC_NAMES = (
@@ -127,12 +128,15 @@ class DashboardController(QObject):
         self.errorChanged.emit()
 
         def apply(snapshot: Any) -> None:
-            self._metrics = {
+            prepared_metrics = {
                 name: str(snapshot.metrics.get(name, "-"))
                 for name in DASHBOARD_METRIC_NAMES
             }
+            prepared_status = str(snapshot.status)
+            validate_table_page(snapshot.recent_runs)
             self._recent_runs_model.set_page(snapshot.recent_runs)
-            self._status = str(snapshot.status)
+            self._metrics = prepared_metrics
+            self._status = prepared_status
             self._error = ""
             self._set_busy(False)
             self.metricsChanged.emit()

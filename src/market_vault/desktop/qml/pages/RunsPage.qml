@@ -19,8 +19,8 @@ Item {
         RowLayout {
             Button { text: root.i18n.catalog["runs.refresh"]; enabled: !operationRuntime.busy; onClicked: root.controller.refresh(root.values()) }
             Button { text: root.i18n.catalog["common.export_csv"]; onClicked: exportDialog.open() }
-            Label { text: root.controller.status; color: "#665d50" }
-            Label { text: root.controller.error; color: "#8b2f24"; visible: text.length > 0 }
+            Label { text: { root.i18n.language; return root.i18n.statusLabel(root.controller.status) } color: "#665d50" }
+            Label { Layout.fillWidth: true; text: root.i18n.catalog["common.error"] + ": " + root.controller.error; color: "#8b2f24"; visible: root.controller.error.length > 0; wrapMode: Text.Wrap }
         }
         Components.DataTable { objectName: "runsTable"; Layout.fillWidth: true; Layout.fillHeight: true; tableModel: root.controller.tableModel; i18n: root.i18n; paged: true; onPreviousRequested: root.controller.previousPage(); onNextRequested: root.controller.nextPage() }
     }

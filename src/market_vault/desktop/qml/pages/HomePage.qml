@@ -63,8 +63,11 @@ Item {
             }
 
             Label {
-                text: home.i18n.catalog["status.dashboard"]
-                    + ": " + home.dashboard.status
+                text: {
+                    home.i18n.language
+                    return home.i18n.catalog["status.dashboard"]
+                        + ": " + home.i18n.statusLabel(home.dashboard.status)
+                }
                 color: "#665d50"
                 font.pixelSize: 12
             }
@@ -73,7 +76,8 @@ Item {
         Label {
             Layout.fillWidth: true
             visible: home.dashboard.error.length > 0
-            text: home.dashboard.error
+            text: home.i18n.catalog["common.error"] + ": "
+                + home.dashboard.error
             color: "#8b2f24"
             font.pixelSize: 13
             wrapMode: Text.Wrap

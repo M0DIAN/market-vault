@@ -162,7 +162,7 @@ def test_componentized_qml_exercises_dashboard_controller_and_generic_table():
     assert 'import "pages" as Pages' in main
     assert "Pages.HomePage" in main
     assert "StackLayout" in main
-    assert "if (operationRuntime.busy)" in main
+    assert "if (!operationRuntime.requestShutdown())" in main
     assert "close.accepted = false" in main
     assert "Pages.PlaceholderPage" not in main
     assert not (qml_root / "pages" / "PlaceholderPage.qml").exists()

@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import sys
+from typing import Any, Callable
 
 
 DESKTOP_PREFERENCE_SCHEMA = "market-vault-desktop-preferences-v1"
@@ -35,6 +36,7 @@ class DesktopPreferenceStore:
         *,
         root: Path | None = None,
         path: Path | None = None,
+        save_file_factory: Callable[[str], Any] | None = None,
     ) -> None:
         if root is not None and path is not None:
             raise ValueError("Specify either preference root or path, not both.")
@@ -44,6 +46,7 @@ class DesktopPreferenceStore:
             self._path = Path(root) / PREFERENCE_FILENAME
         else:
             self._path = default_desktop_preference_path()
+        self._save_file_factory = save_file_factory
 
     @property
     def path(self) -> Path:
@@ -70,12 +73,26 @@ class DesktopPreferenceStore:
             "schema": DESKTOP_PREFERENCE_SCHEMA,
             "language": language,
         }
+        data = (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode(
+            "utf-8"
+        )
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
-            self._path.write_text(
-                json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-                encoding="utf-8",
-            )
-        except OSError:
+            from PySide6.QtCore import QIODevice, QSaveFile
+
+            factory = self._save_file_factory or QSaveFile
+            save_file = factory(str(self._path))
+            save_file.setDirectWriteFallback(False)
+            if not save_file.open(QIODevice.OpenModeFlag.WriteOnly):
+                return False
+            committed = False
+            try:
+                if save_file.write(data) != len(data):
+                    return False
+                committed = bool(save_file.commit())
+                return committed
+            finally:
+                if not committed:
+                    save_file.cancelWriting()
+        except (OSError, RuntimeError, TypeError, ValueError):
             return False
-        return True

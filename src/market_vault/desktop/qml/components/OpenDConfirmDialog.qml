@@ -11,13 +11,20 @@ Dialog {
     property int port: 0
     title: i18n.catalog["opend.title"]
     modal: true
+    closePolicy: Popup.CloseOnEscape
     standardButtons: Dialog.Ok | Dialog.Cancel
     onAccepted: controller.resolveConfirmation(true)
     onRejected: controller.resolveConfirmation(false)
     contentItem: ColumnLayout {
         spacing: 8
         Label { text: root.i18n.catalog["opend.message"]; wrapMode: Text.Wrap }
-        Label { text: root.i18n.catalog["opend.operation"] + ": " + root.operationName }
+        Label {
+            text: {
+                root.i18n.language
+                return root.i18n.catalog["opend.operation"] + ": "
+                    + root.i18n.operationLabel(root.operationName)
+            }
+        }
         Label { text: root.i18n.catalog["opend.host"] + ": " + root.host }
         Label { text: root.i18n.catalog["opend.port"] + ": " + root.port }
     }

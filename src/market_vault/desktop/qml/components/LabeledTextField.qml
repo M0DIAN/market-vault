@@ -13,6 +13,7 @@ ColumnLayout {
     TextField {
         id: field
         Layout.fillWidth: true
+        activeFocusOnTab: true
         placeholderText: root.placeholderText
         selectByMouse: true
         onTextEdited: root.edited(text)

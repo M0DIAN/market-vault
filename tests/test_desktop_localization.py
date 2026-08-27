@@ -97,7 +97,7 @@ def test_unsupported_language_and_unknown_key_fail_safely(qt_app, tmp_path):
     assert bridge.columnLabel("unknown_backend_column") == "unknown_backend_column"
 
 
-def test_persistence_failure_does_not_block_live_language_change(qt_app):
+def test_persistence_failure_retains_live_language(qt_app):
     class FailingStore:
         def load_language(self):
             return "en"
@@ -111,9 +111,19 @@ def test_persistence_failure_does_not_block_live_language_change(qt_app):
     bridge.languageChanged.connect(lambda: changes.append(bridge.language))
 
     assert bridge.setLanguage("zh-CN") is False
-    assert bridge.language == "zh-CN"
-    assert bridge.catalog == ZH_CN
-    assert changes == ["zh-CN"]
+    assert bridge.language == "en"
+    assert bridge.catalog == EN
+    assert changes == []
+
+
+def test_status_and_operation_labels_are_bilingual(qt_app, tmp_path):
+    bridge = I18nBridge(preference_store=DesktopPreferenceStore(root=tmp_path))
+    assert bridge.statusLabel("UNREVIEWED") == "Not reviewed"
+    assert bridge.operationLabel("storage_execute") == "Safe Purge execution"
+    assert bridge.statusLabel("UNKNOWN_STATUS") == "UNKNOWN_STATUS"
+    assert bridge.setLanguage("zh-CN") is True
+    assert bridge.statusLabel("UNREVIEWED") == "尚未检查"
+    assert bridge.operationLabel("storage_execute") == "执行安全清理"
 
 
 def test_available_languages_are_exact_native_labels(qt_app, tmp_path):
