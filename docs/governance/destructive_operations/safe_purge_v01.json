@@ -119,6 +119,21 @@
       "rationale": "The Console backend exposes only reviewed preview, exact-confirmation execution, and stale-preview invalidation."
     },
     {
+      "path": "src/market_vault/desktop/storage_cleanup.py",
+      "symbols": [
+        "StorageCleanupController.execute_purge"
+      ],
+      "role": "USER_INTERFACE",
+      "surfaces": [
+        {
+          "kind": "destructive_public_name",
+          "signal": "name.purge",
+          "expected_count": 1
+        }
+      ],
+      "rationale": "The future PySide6/QML Storage & Cleanup controller may expose only the reviewed exact-confirmation execution entry point and must delegate all mutation authority to ConsoleBackend and Safe Purge."
+    },
+    {
       "path": "src/market_vault/storage/catalog.py",
       "symbols": [
         "Catalog.record_purge_plan",
@@ -143,11 +158,13 @@
     "initiators": [
       "MarketVault.purge_plan and MarketVault.purge_execute callers",
       "market-vault purge-plan and purge-execute CLI callers",
-      "Console preview and exact-confirmation execute actions"
+      "Legacy Tk Console preview and exact-confirmation execute actions",
+      "Future PySide6/QML Storage & Cleanup review and exact-confirmation execute actions through StorageCleanupController and ConsoleBackend"
     ],
     "mutation_owner": "src/market_vault/purge.py purge_execute under MarketBarLifecycleLock",
     "forbidden_bypass_layers": [
-      "Console widgets must not mutate Parquet, quarantine, or DuckDB directly",
+      "Legacy Tk Console widgets and PySide6/QML presentation must not mutate Parquet, quarantine, or DuckDB directly",
+      "StorageCleanupController must not move, unlink, or rename files; write purge Catalog state; construct purge success evidence; or decide that a plan is safe to execute",
       "API adapters must not move files outside purge_execute",
       "storage helpers must not authorize an unsealed or stale plan"
     ]
@@ -340,14 +357,19 @@
   },
   "stale_plan_ui": {
     "invalidation_triggers": [
-      "Any Console Purge scope field modification after Preview invalidates the reviewed plan."
+      "Any legacy Tk Console Purge scope field modification after Preview invalidates the reviewed plan.",
+      "Any future PySide6/QML Storage & Cleanup scope field modification after Review invalidates the Python controller's reviewed plan and exact scope fingerprint."
     ],
     "confirmation_invalidation": [
-      "Scope modification clears exact confirmation and disables Execute until a new Preview succeeds."
+      "Legacy Tk scope modification clears exact confirmation and disables Execute until a new Preview succeeds.",
+      "Future PySide6/QML scope modification clears confirmation and disables Execute until a new Review succeeds; QML enabled state is presentation only."
     ],
     "execution_policy": [
       "Execution requires the exact text PURGE followed by one space and the sealed plan ID.",
-      "The backend reloads the plan rather than trusting mutable widget state."
+      "The future StorageCleanupController retains the current reviewed plan ID, executable state, exact scope fingerprint, invalidation state, confirmation validity, and execute eligibility in Python.",
+      "StorageCleanupController rejects execution when no executable review exists, the plan ID or scope differs, review is invalidated, or confirmation is not exact, even if QML presentation state is wrong.",
+      "ConsoleBackend independently rechecks its current reviewed plan and reloads the plan rather than trusting mutable widget state.",
+      "purge_execute independently retains exact confirmation and sealed-plan revalidation authority."
     ]
   },
   "physical_atomicity": {
@@ -404,6 +426,12 @@
     "Pre-commit failures roll back without terminal SUCCESS evidence",
     "Post-commit terminal publication interruption recovers exact canonical bytes idempotently",
     "Existing committed Canonical, Dataset, and Dataset Catalog artifacts remain independently verifiable after source quarantine",
-    "Console scope changes invalidate Preview and confirmation"
+    "Console scope changes invalidate Preview and confirmation",
+    "Future QML scope mutation invalidates the Python controller's reviewed plan state and confirmation",
+    "Future QML execution rejects stale scope even when presentation enabled state is wrong",
+    "Future QML execution rejects a wrong plan ID",
+    "Future QML execution rejects incorrect exact confirmation",
+    "Future QML execution delegates through ConsoleBackend and does not mutate files directly",
+    "An exact valid future QML reviewed plan can execute only through existing Safe Purge authority"
   ]
 }
