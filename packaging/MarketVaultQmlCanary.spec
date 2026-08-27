@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+
 
 PROJECT_ROOT = Path(SPECPATH).resolve().parent
 SOURCE_ROOT = PROJECT_ROOT / "src"
@@ -8,21 +10,38 @@ QML_ENTRY_POINT = SOURCE_ROOT / "market_vault" / "desktop" / "qml" / "Main.qml"
 WINDOWS_ICON = PROJECT_ROOT / "assets" / "windows" / "market-vault.ico"
 HOOKS_ROOT = PROJECT_ROOT / "packaging" / "hooks"
 
+hidden_imports = [
+    "PySide6.QtCore",
+    "PySide6.QtGui",
+    "PySide6.QtQml",
+    "PySide6.QtQuick",
+    "PySide6.QtQuickControls2",
+    "duckdb",
+    "market_vault.api",
+    "market_vault.console.backend",
+    "market_vault.console.tasks",
+    "pandas",
+    "pyarrow",
+    "pyarrow.parquet",
+    "yaml",
+]
+hidden_imports.extend(
+    collect_submodules(
+        "moomoo",
+        filter=lambda name: not name.startswith(("moomoo.examples", "moomoo.tools")),
+    )
+)
+
 analysis = Analysis(
     [str(ENTRY_POINT)],
     pathex=[str(SOURCE_ROOT)],
     binaries=[],
-    datas=[
+    datas=collect_data_files("moomoo", include_py_files=False)
+    + [
         (str(QML_ENTRY_POINT), "market_vault/desktop/qml"),
         (str(WINDOWS_ICON), "assets/windows"),
     ],
-    hiddenimports=[
-        "PySide6.QtCore",
-        "PySide6.QtGui",
-        "PySide6.QtQml",
-        "PySide6.QtQuick",
-        "PySide6.QtQuickControls2",
-    ],
+    hiddenimports=hidden_imports,
     hookspath=[str(HOOKS_ROOT)],
     hooksconfig={},
     runtime_hooks=[],
@@ -30,19 +49,22 @@ analysis = Analysis(
         "PyQt5",
         "PyQt6",
         "PySide2",
-        "duckdb",
-        "market_vault.api",
         "market_vault.artifact_client",
-        "moomoo",
-        "pandas",
-        "pyarrow",
+        "moomoo.examples",
+        "moomoo.tools",
+        "pandas.tests",
+        "pyarrow.tests",
         "pytest",
         "tests",
-        "yaml",
     ],
     noarchive=False,
     optimize=0,
 )
+analysis.datas = [
+    item
+    for item in analysis.datas
+    if not item[0].replace("\\", "/").startswith("pyarrow/tests/")
+]
 pyz = PYZ(analysis.pure)
 
 exe = EXE(
