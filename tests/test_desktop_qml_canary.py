@@ -196,6 +196,8 @@ def test_parallel_spec_and_build_script_do_not_cut_over_production():
     assert 'hookspath=[str(HOOKS_ROOT)]' in canary_spec
     assert "collect_qtqml_files" not in canary_hook
     assert '"QtQuick/Controls/Basic"' in canary_hook
+    assert '("QtQuick", "Controls", "designer")' in canary_hook
+    assert "$BundledForbiddenQml.Count -gt 0" in canary_build
     for unneeded_style in ("Fusion", "Imagine", "Material", "Universal"):
         assert f'"QtQuick/Controls/{unneeded_style}"' not in canary_hook
     assert "$OriginalPath = $env:PATH" in canary_build

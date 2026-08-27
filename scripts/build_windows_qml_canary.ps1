@@ -119,6 +119,14 @@ $QWindows = @(Get-ChildItem -LiteralPath $FinalApp -Filter "qwindows.dll" -File 
 if ($QWindows.Count -ne 1) {
     throw "Expected exactly one qwindows.dll in the bundle, found $($QWindows.Count)."
 }
+$QmlControlsRoot = Join-Path $FinalApp "_internal\PySide6\qml\QtQuick\Controls"
+$ForbiddenQmlDirectories = @("designer", "Fusion", "Imagine", "Material", "Universal")
+$BundledForbiddenQml = @($ForbiddenQmlDirectories | Where-Object {
+    Test-Path -LiteralPath (Join-Path $QmlControlsRoot $_)
+})
+if ($BundledForbiddenQml.Count -gt 0) {
+    throw "Non-runtime QML controls entered the canary bundle: $($BundledForbiddenQml -join ', ')"
+}
 
 $ForbiddenTopLevel = @(".git", "tests", "data", "catalog", "manifests", "reports", "quarantine")
 $TopLevelNames = Get-ChildItem -LiteralPath $FinalApp -Force | ForEach-Object { $_.Name }
