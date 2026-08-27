@@ -75,6 +75,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_DASHBOARD_SMOKE_TIMEOUT_MS,
         help="Bounded timeout for --dashboard-smoke.",
     )
+    parser.add_argument(
+        "--dashboard-smoke-require-recent-runs",
+        action="store_true",
+        help="Require at least one recent-run row before dashboard smoke succeeds.",
+    )
     return parser
 
 
@@ -98,6 +103,7 @@ def run_application(
     settings_path: Path | None = None,
     dashboard_smoke: bool = False,
     dashboard_smoke_timeout_ms: int = DEFAULT_DASHBOARD_SMOKE_TIMEOUT_MS,
+    dashboard_smoke_require_recent_runs: bool = False,
 ) -> int:
     """Create the Qt application and load the minimal QML scene."""
 
@@ -150,7 +156,17 @@ def run_application(
             print("Dashboard smoke timed out.", file=sys.stderr)
             finish_dashboard_smoke(4)
 
-        dashboard.dashboardLoaded.connect(lambda: finish_dashboard_smoke(0))
+        def dashboard_loaded() -> None:
+            if (
+                dashboard_smoke_require_recent_runs
+                and dashboard.recentRunsModel.rowCount() < 1
+            ):
+                print("Dashboard smoke requires recent-run rows.", file=sys.stderr)
+                finish_dashboard_smoke(5)
+                return
+            finish_dashboard_smoke(0)
+
+        dashboard.dashboardLoaded.connect(dashboard_loaded)
         dashboard.dashboardFailed.connect(dashboard_failed)
         dashboard_smoke_timer = QTimer(engine)
         dashboard_smoke_timer.setSingleShot(True)
@@ -174,12 +190,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("--dashboard-smoke requires --settings")
     if args.dashboard_smoke and args.smoke_exit_ms is not None:
         parser.error("--dashboard-smoke cannot be combined with --smoke-exit-ms")
+    if args.dashboard_smoke_require_recent_runs and not args.dashboard_smoke:
+        parser.error("--dashboard-smoke-require-recent-runs requires --dashboard-smoke")
     try:
         return run_application(
             smoke_exit_ms=args.smoke_exit_ms,
             settings_path=args.settings,
             dashboard_smoke=args.dashboard_smoke,
             dashboard_smoke_timeout_ms=args.dashboard_smoke_timeout_ms,
+            dashboard_smoke_require_recent_runs=(
+                args.dashboard_smoke_require_recent_runs
+            ),
         )
     except Exception as exc:
         print(f"MarketVault QML canary startup failed: {exc}", file=sys.stderr)

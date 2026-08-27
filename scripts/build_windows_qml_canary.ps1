@@ -3,6 +3,7 @@ param(
     [string]$PythonExecutable = "",
     [string]$OutputRoot = "",
     [string]$DashboardSmokeSettings = "",
+    [switch]$DashboardSmokeRequireRecentRuns,
     [switch]$NoZip
 )
 
@@ -56,6 +57,8 @@ if ($DashboardSmokeSettings) {
     if (-not (Test-Path -LiteralPath $ResolvedDashboardSmokeSettings -PathType Leaf)) {
         throw "Dashboard smoke settings file not found: $ResolvedDashboardSmokeSettings"
     }
+} elseif ($DashboardSmokeRequireRecentRuns) {
+    throw "DashboardSmokeRequireRecentRuns requires DashboardSmokeSettings."
 }
 $SourceRoot = [IO.Path]::GetFullPath((Join-Path $ProjectRoot "src"))
 if ($OutputRoot.Equals($ProjectRoot, [StringComparison]::OrdinalIgnoreCase) -or
@@ -170,13 +173,17 @@ if ($ResolvedDashboardSmokeSettings) {
     $DashboardSmokeRoot = Join-Path $OutputRoot "_dashboard_smoke\$RunId"
     New-Item -ItemType Directory -Force -Path $DashboardSmokeRoot | Out-Null
     $QuotedDashboardSettings = '"{0}"' -f $ResolvedDashboardSmokeSettings
+    $DashboardSmokeArguments = @(
+        "--settings",
+        $QuotedDashboardSettings,
+        "--dashboard-smoke"
+    )
+    if ($DashboardSmokeRequireRecentRuns) {
+        $DashboardSmokeArguments += "--dashboard-smoke-require-recent-runs"
+    }
     $DashboardSmokeProcess = Start-Process `
         -FilePath $ExePath `
-        -ArgumentList @(
-            "--settings",
-            $QuotedDashboardSettings,
-            "--dashboard-smoke"
-        ) `
+        -ArgumentList $DashboardSmokeArguments `
         -WorkingDirectory $DashboardSmokeRoot `
         -Wait `
         -PassThru
@@ -207,6 +214,7 @@ $Metadata = [ordered]@{
     build_path_sanitized = $true
     unrelated_cwd_smoke_exit_code = $SmokeProcess.ExitCode
     dashboard_smoke_settings = $ResolvedDashboardSmokeSettings
+    dashboard_smoke_require_recent_runs = [bool]$DashboardSmokeRequireRecentRuns
     dashboard_smoke_exit_code = if ($DashboardSmokeProcess) { $DashboardSmokeProcess.ExitCode } else { $null }
     built_at_utc = [DateTime]::UtcNow.ToString("o")
 }
