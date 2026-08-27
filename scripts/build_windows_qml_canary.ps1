@@ -2,6 +2,7 @@
 param(
     [string]$PythonExecutable = "",
     [string]$OutputRoot = "",
+    [string]$DashboardSmokeSettings = "",
     [switch]$NoZip
 )
 
@@ -46,6 +47,16 @@ if (-not $OutputRoot) {
     $OutputRoot = Join-Path $ProjectRoot $OutputRoot
 }
 $OutputRoot = [IO.Path]::GetFullPath($OutputRoot)
+$ResolvedDashboardSmokeSettings = $null
+if ($DashboardSmokeSettings) {
+    if (-not [IO.Path]::IsPathRooted($DashboardSmokeSettings)) {
+        throw "Dashboard smoke settings path must be absolute: $DashboardSmokeSettings"
+    }
+    $ResolvedDashboardSmokeSettings = [IO.Path]::GetFullPath($DashboardSmokeSettings)
+    if (-not (Test-Path -LiteralPath $ResolvedDashboardSmokeSettings -PathType Leaf)) {
+        throw "Dashboard smoke settings file not found: $ResolvedDashboardSmokeSettings"
+    }
+}
 $SourceRoot = [IO.Path]::GetFullPath((Join-Path $ProjectRoot "src"))
 if ($OutputRoot.Equals($ProjectRoot, [StringComparison]::OrdinalIgnoreCase) -or
     $OutputRoot.Equals($SourceRoot, [StringComparison]::OrdinalIgnoreCase) -or
@@ -153,6 +164,31 @@ if ($UnexpectedSmokeEntries.Count -ne 0) {
     throw "Frozen smoke created unexpected CWD state: $($UnexpectedSmokeEntries.FullName -join ', ')"
 }
 
+$DashboardSmokeProcess = $null
+$DashboardSmokeRoot = $null
+if ($ResolvedDashboardSmokeSettings) {
+    $DashboardSmokeRoot = Join-Path $OutputRoot "_dashboard_smoke\$RunId"
+    New-Item -ItemType Directory -Force -Path $DashboardSmokeRoot | Out-Null
+    $QuotedDashboardSettings = '"{0}"' -f $ResolvedDashboardSmokeSettings
+    $DashboardSmokeProcess = Start-Process `
+        -FilePath $ExePath `
+        -ArgumentList @(
+            "--settings",
+            $QuotedDashboardSettings,
+            "--dashboard-smoke"
+        ) `
+        -WorkingDirectory $DashboardSmokeRoot `
+        -Wait `
+        -PassThru
+    if ($DashboardSmokeProcess.ExitCode -ne 0) {
+        throw "Frozen dashboard smoke failed with exit code $($DashboardSmokeProcess.ExitCode)."
+    }
+    $UnexpectedDashboardCwdEntries = @(Get-ChildItem -LiteralPath $DashboardSmokeRoot -Force)
+    if ($UnexpectedDashboardCwdEntries.Count -ne 0) {
+        throw "Frozen dashboard smoke created unexpected CWD state: $($UnexpectedDashboardCwdEntries.FullName -join ', ')"
+    }
+}
+
 $ExeFile = Get-Item -LiteralPath $ExePath
 $ExeHash = (Get-FileHash -LiteralPath $ExePath -Algorithm SHA256).Hash.ToLowerInvariant()
 $Metadata = [ordered]@{
@@ -170,6 +206,8 @@ $Metadata = [ordered]@{
     architecture = if ([Environment]::Is64BitProcess) { "x64" } else { "x86" }
     build_path_sanitized = $true
     unrelated_cwd_smoke_exit_code = $SmokeProcess.ExitCode
+    dashboard_smoke_settings = $ResolvedDashboardSmokeSettings
+    dashboard_smoke_exit_code = if ($DashboardSmokeProcess) { $DashboardSmokeProcess.ExitCode } else { $null }
     built_at_utc = [DateTime]::UtcNow.ToString("o")
 }
 $MetadataPath = Join-Path $FinalApp "build-metadata.json"
@@ -205,6 +243,7 @@ $Evidence = [ordered]@{
     }
     qwindows_plugin = $QWindows[0].FullName
     smoke_path = $SmokeRoot
+    dashboard_smoke_path = $DashboardSmokeRoot
     zip = $ZipEvidence
     build = $Metadata
     work_path = $WorkPath

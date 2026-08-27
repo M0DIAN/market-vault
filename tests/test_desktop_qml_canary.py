@@ -65,6 +65,33 @@ def test_smoke_exit_argument_accepts_bounded_values(value):
     )
 
 
+def test_dashboard_arguments_require_explicit_absolute_settings(tmp_path):
+    absolute = tmp_path / "settings.yaml"
+    args = app.build_parser().parse_args(["--settings", str(absolute)])
+    assert args.settings == absolute
+
+    with pytest.raises(SystemExit):
+        app.build_parser().parse_args(["--settings", "config/settings.yaml"])
+    with pytest.raises(SystemExit):
+        app.main(["--dashboard-smoke"])
+    with pytest.raises(SystemExit):
+        app.main(
+            [
+                "--settings",
+                str(absolute),
+                "--dashboard-smoke",
+                "--smoke-exit-ms",
+                "100",
+            ]
+        )
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "120001", "not-an-integer"])
+def test_dashboard_smoke_timeout_rejects_invalid_values(value):
+    with pytest.raises(SystemExit):
+        app.build_parser().parse_args(["--dashboard-smoke-timeout-ms", value])
+
+
 def test_desktop_import_does_not_eagerly_initialize_business_modules(tmp_path):
     script = """
 import json
@@ -93,11 +120,16 @@ print(json.dumps(blocked))
     assert list(tmp_path.iterdir()) == []
 
 
-def test_canary_startup_source_has_no_business_imports():
+def test_canary_startup_source_has_no_eager_business_imports():
     imported = set()
-    for path in (DESKTOP_ROOT / "app.py", DESKTOP_ROOT / "bridge.py"):
+    for path in (
+        DESKTOP_ROOT / "app.py",
+        DESKTOP_ROOT / "bridge.py",
+        DESKTOP_ROOT / "dashboard.py",
+    ):
         tree = ast.parse(path.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
+        top_level = tree.body
+        for node in top_level:
             if isinstance(node, ast.Import):
                 imported.update(alias.name for alias in node.names)
             elif isinstance(node, ast.ImportFrom) and node.module:
@@ -105,13 +137,26 @@ def test_canary_startup_source_has_no_business_imports():
     assert imported.isdisjoint(BUSINESS_MODULES)
 
 
-def test_main_qml_is_minimal_and_exercises_bridge():
+def test_main_qml_is_minimal_and_exercises_dashboard_controller():
     qml = (DESKTOP_ROOT / "qml" / "Main.qml").read_text(encoding="utf-8")
     assert "import QtQuick\n" in qml
     assert "import QtQuick.Controls\n" in qml
     assert "import QtQuick.Layouts\n" in qml
     assert "desktopBridge.ping()" in qml
     assert "text: desktopBridge.status" in qml
+    assert "dashboardController.refresh()" in qml
+    assert "dashboardController.backendConfigured && !dashboardController.busy" in qml
+    for metric in (
+        "Symbols",
+        "Snapshots",
+        "Latest rows",
+        "Completed dates",
+        "Incomplete dates",
+        "Latest trade date",
+    ):
+        assert f'"{metric}"' in qml
+    assert "recent_runs" not in qml
+    assert "TableView" not in qml
     assert "ApplicationWindow" in qml
     for forbidden in (
         "ConsoleBackend",
@@ -166,6 +211,37 @@ def test_source_smoke_is_cwd_independent_and_side_effect_free(tmp_path):
     assert not list(tmp_path.rglob("*.parquet"))
 
 
+def test_source_startup_with_settings_remains_lazy_and_side_effect_free(tmp_path):
+    pytest.importorskip("PySide6")
+    settings = (tmp_path / "sandbox" / "config" / "settings.yaml").resolve()
+    cwd = tmp_path / "unrelated cwd"
+    cwd.mkdir()
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(ROOT / "src")
+    env["QT_QPA_PLATFORM"] = "offscreen"
+    env["QSG_RHI_BACKEND"] = "software"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "market_vault.desktop.app",
+            "--settings",
+            str(settings),
+            "--smoke-exit-ms",
+            "100",
+        ],
+        cwd=cwd,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert not settings.parent.exists()
+    assert list(cwd.iterdir()) == []
+
+
 def test_parallel_spec_and_build_script_do_not_cut_over_production():
     production_spec = (ROOT / "packaging" / "MarketVault.spec").read_text(
         encoding="utf-8"
@@ -203,14 +279,20 @@ def test_parallel_spec_and_build_script_do_not_cut_over_production():
     assert "$OriginalPath = $env:PATH" in canary_build
     assert "$env:PATH = $OriginalPath" in canary_build
     assert "build_path_sanitized = $true" in canary_build
-    for excluded in (
+    for packaged in (
         '"market_vault.api"',
-        '"market_vault.artifact_client"',
+        '"market_vault.console.backend"',
+        '"market_vault.console.tasks"',
         '"duckdb"',
         '"pandas"',
         '"pyarrow"',
+        '"yaml"',
     ):
-        assert excluded in canary_spec
+        assert packaged in canary_spec
+    assert 'collect_submodules(' in canary_spec
+    assert 'collect_data_files("moomoo"' in canary_spec
+    assert "$DashboardSmokeSettings" in canary_build
+    assert '"--dashboard-smoke"' in canary_build
 
 
 def test_pyproject_keeps_qt_optional_and_packages_only_canary_qml():

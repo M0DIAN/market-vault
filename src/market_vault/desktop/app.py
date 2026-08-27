@@ -9,6 +9,8 @@ from typing import Sequence
 
 
 MAX_SMOKE_EXIT_MS = 60_000
+DEFAULT_DASHBOARD_SMOKE_TIMEOUT_MS = 30_000
+MAX_DASHBOARD_SMOKE_TIMEOUT_MS = 120_000
 
 
 def smoke_exit_milliseconds(value: str) -> int:
@@ -25,6 +27,29 @@ def smoke_exit_milliseconds(value: str) -> int:
     return milliseconds
 
 
+def dashboard_smoke_timeout_milliseconds(value: str) -> int:
+    """Parse a bounded dashboard smoke timeout."""
+
+    try:
+        milliseconds = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be an integer") from exc
+    if not 1 <= milliseconds <= MAX_DASHBOARD_SMOKE_TIMEOUT_MS:
+        raise argparse.ArgumentTypeError(
+            f"must be between 1 and {MAX_DASHBOARD_SMOKE_TIMEOUT_MS} milliseconds"
+        )
+    return milliseconds
+
+
+def absolute_settings_path(value: str) -> Path:
+    """Accept only an explicit absolute settings path for backend use."""
+
+    path = Path(value)
+    if not path.is_absolute():
+        raise argparse.ArgumentTypeError("must be an absolute path")
+    return path
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run the MarketVault QML canary.")
     parser.add_argument(
@@ -32,6 +57,23 @@ def build_parser() -> argparse.ArgumentParser:
         type=smoke_exit_milliseconds,
         default=None,
         help="Exit automatically after a bounded number of milliseconds.",
+    )
+    parser.add_argument(
+        "--settings",
+        type=absolute_settings_path,
+        default=None,
+        help="Absolute settings path used only after an explicit dashboard refresh.",
+    )
+    parser.add_argument(
+        "--dashboard-smoke",
+        action="store_true",
+        help="Refresh the dashboard once and exit according to the result.",
+    )
+    parser.add_argument(
+        "--dashboard-smoke-timeout-ms",
+        type=dashboard_smoke_timeout_milliseconds,
+        default=DEFAULT_DASHBOARD_SMOKE_TIMEOUT_MS,
+        help="Bounded timeout for --dashboard-smoke.",
     )
     return parser
 
@@ -50,7 +92,13 @@ def resolve_qml_path(*, frozen_root: Path | None = None) -> Path:
     return Path(__file__).resolve().parent / "qml" / "Main.qml"
 
 
-def run_application(*, smoke_exit_ms: int | None = None) -> int:
+def run_application(
+    *,
+    smoke_exit_ms: int | None = None,
+    settings_path: Path | None = None,
+    dashboard_smoke: bool = False,
+    dashboard_smoke_timeout_ms: int = DEFAULT_DASHBOARD_SMOKE_TIMEOUT_MS,
+) -> int:
     """Create the Qt application and load the minimal QML scene."""
 
     from PySide6.QtCore import QTimer, QUrl
@@ -59,6 +107,7 @@ def run_application(*, smoke_exit_ms: int | None = None) -> int:
     from PySide6.QtQuickControls2 import QQuickStyle
 
     from market_vault.desktop.bridge import DesktopBridge
+    from market_vault.desktop.dashboard import DashboardController
 
     qml_path = resolve_qml_path()
     if not qml_path.is_file():
@@ -69,20 +118,69 @@ def run_application(*, smoke_exit_ms: int | None = None) -> int:
     application.setApplicationName("MarketVault QML Canary")
     engine = QQmlApplicationEngine()
     bridge = DesktopBridge(parent=engine)
+    dashboard = DashboardController(settings_path=settings_path, parent=engine)
     engine.rootContext().setContextProperty("desktopBridge", bridge)
+    engine.rootContext().setContextProperty("dashboardController", dashboard)
+    engine._market_vault_desktop_bridge = bridge
+    engine._market_vault_dashboard_controller = dashboard
     engine.load(QUrl.fromLocalFile(str(qml_path)))
     if not engine.rootObjects():
+        dashboard.shutdown()
         raise RuntimeError(f"QML failed to create a root object: {qml_path}")
+
+    application.aboutToQuit.connect(dashboard.shutdown)
+    dashboard_smoke_timer = None
+    if dashboard_smoke:
+        completed = False
+
+        def finish_dashboard_smoke(exit_code: int) -> None:
+            nonlocal completed
+            if completed:
+                return
+            completed = True
+            if dashboard_smoke_timer is not None:
+                dashboard_smoke_timer.stop()
+            application.exit(exit_code)
+
+        def dashboard_failed() -> None:
+            print(f"Dashboard smoke failed: {dashboard.error}", file=sys.stderr)
+            finish_dashboard_smoke(3)
+
+        def dashboard_timed_out() -> None:
+            print("Dashboard smoke timed out.", file=sys.stderr)
+            finish_dashboard_smoke(4)
+
+        dashboard.dashboardLoaded.connect(lambda: finish_dashboard_smoke(0))
+        dashboard.dashboardFailed.connect(dashboard_failed)
+        dashboard_smoke_timer = QTimer(engine)
+        dashboard_smoke_timer.setSingleShot(True)
+        dashboard_smoke_timer.timeout.connect(dashboard_timed_out)
+        dashboard_smoke_timer.start(dashboard_smoke_timeout_ms)
+        engine._market_vault_dashboard_smoke_timer = dashboard_smoke_timer
+        QTimer.singleShot(0, dashboard.refresh)
 
     if smoke_exit_ms is not None:
         QTimer.singleShot(smoke_exit_ms, application.quit)
-    return application.exec()
+    try:
+        return application.exec()
+    finally:
+        dashboard.shutdown()
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.dashboard_smoke and args.settings is None:
+        parser.error("--dashboard-smoke requires --settings")
+    if args.dashboard_smoke and args.smoke_exit_ms is not None:
+        parser.error("--dashboard-smoke cannot be combined with --smoke-exit-ms")
     try:
-        return run_application(smoke_exit_ms=args.smoke_exit_ms)
+        return run_application(
+            smoke_exit_ms=args.smoke_exit_ms,
+            settings_path=args.settings,
+            dashboard_smoke=args.dashboard_smoke,
+            dashboard_smoke_timeout_ms=args.dashboard_smoke_timeout_ms,
+        )
     except Exception as exc:
         print(f"MarketVault QML canary startup failed: {exc}", file=sys.stderr)
         return 2

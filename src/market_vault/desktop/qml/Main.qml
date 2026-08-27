@@ -6,10 +6,10 @@ ApplicationWindow {
     id: window
     objectName: "canaryWindow"
     visible: true
-    width: 720
-    height: 420
-    minimumWidth: 560
-    minimumHeight: 340
+    width: 840
+    height: 620
+    minimumWidth: 720
+    minimumHeight: 560
     title: "MarketVault QML Canary"
     color: "#f3eee2"
 
@@ -51,6 +51,17 @@ ApplicationWindow {
                     onClicked: desktopBridge.ping()
                 }
 
+                Button {
+                    id: dashboardButton
+                    objectName: "dashboardButton"
+                    Layout.alignment: Qt.AlignHCenter
+                    text: dashboardController.backendConfigured
+                        ? (dashboardController.busy ? "REFRESHING..." : "REFRESH DASHBOARD")
+                        : "DASHBOARD UNCONFIGURED"
+                    enabled: dashboardController.backendConfigured && !dashboardController.busy
+                    onClicked: dashboardController.refresh()
+                }
+
                 Label {
                     Layout.alignment: Qt.AlignHCenter
                     text: "Status:"
@@ -66,6 +77,58 @@ ApplicationWindow {
                     color: "#8a651a"
                     font.pixelSize: 18
                     font.weight: Font.DemiBold
+                }
+
+                Label {
+                    Layout.alignment: Qt.AlignHCenter
+                    text: "Dashboard: " + dashboardController.status
+                    color: "#665d50"
+                    font.pixelSize: 14
+                }
+
+                Label {
+                    Layout.alignment: Qt.AlignHCenter
+                    visible: dashboardController.error.length > 0
+                    text: dashboardController.error
+                    color: "#8b2f24"
+                    font.pixelSize: 13
+                }
+
+                GridLayout {
+                    Layout.alignment: Qt.AlignHCenter
+                    columns: 3
+                    columnSpacing: 24
+                    rowSpacing: 8
+
+                    Repeater {
+                        model: [
+                            "Symbols",
+                            "Snapshots",
+                            "Latest rows",
+                            "Completed dates",
+                            "Incomplete dates",
+                            "Latest trade date"
+                        ]
+
+                        ColumnLayout {
+                            Layout.minimumWidth: 130
+
+                            Label {
+                                Layout.alignment: Qt.AlignHCenter
+                                text: modelData
+                                color: "#665d50"
+                                font.pixelSize: 12
+                            }
+
+                            Label {
+                                Layout.alignment: Qt.AlignHCenter
+                                text: dashboardController.metrics[modelData] || "-"
+                                color: "#2b2418"
+                                font.pixelSize: 16
+                                font.weight: Font.DemiBold
+                            }
+                        }
+                    }
                 }
             }
         }
