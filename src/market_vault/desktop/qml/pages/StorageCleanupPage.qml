@@ -24,7 +24,7 @@ Item {
         RowLayout {
             Button { objectName: "storageReviewButton"; text: root.i18n.catalog["storage.review"]; enabled: !operationRuntime.busy; onClicked: root.controller.review() }
             Label { text: root.i18n.catalog["storage.plan_id"] + ": " + (root.controller.planId || "-"); color: "#665d50" }
-            Label { text: root.controller.planStatus; color: "#665d50" }
+            Label { text: { root.i18n.language; return root.i18n.statusLabel(root.controller.planStatus) } color: "#665d50" }
         }
         Components.SummaryStrip { Layout.fillWidth: true; summary: root.controller.summary; i18n: root.i18n }
         ColumnLayout {
@@ -45,9 +45,9 @@ Item {
         Components.DataTable { objectName: "storageReviewTable"; Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 130; tableModel: root.controller.tableModel; i18n: root.i18n }
         Label { Layout.fillWidth: true; text: root.i18n.catalog["storage.confirmation_help"]; color: "#665d50"; wrapMode: Text.Wrap }
         RowLayout {
-            TextField { objectName: "storageConfirmation"; Layout.fillWidth: true; text: root.controller.confirmation; placeholderText: "PURGE <plan_id>"; onTextEdited: root.controller.setConfirmation(text) }
+            TextField { objectName: "storageConfirmation"; Layout.fillWidth: true; activeFocusOnTab: true; text: root.controller.confirmation; placeholderText: "PURGE <plan_id>"; onTextEdited: root.controller.setConfirmation(text) }
             Button { objectName: "storageExecuteButton"; text: root.i18n.catalog["storage.execute"]; enabled: root.controller.executeEnabled && !operationRuntime.busy; onClicked: root.controller.execute_purge(root.controller.planId, root.controller.confirmation) }
         }
-        Label { Layout.fillWidth: true; text: root.controller.error; color: "#8b2f24"; visible: text.length > 0; wrapMode: Text.Wrap }
+        Label { Layout.fillWidth: true; text: root.i18n.catalog["common.error"] + ": " + root.controller.error; color: "#8b2f24"; visible: root.controller.error.length > 0; wrapMode: Text.Wrap }
     }
 }

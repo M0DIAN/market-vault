@@ -24,6 +24,7 @@ Item {
         spacing: 10
         GridLayout {
             Layout.fillWidth: true
+            enabled: !root.controller.confirmationPending
             columns: 4
             columnSpacing: 10
             rowSpacing: 7
@@ -38,13 +39,16 @@ Item {
             Components.LabeledComboBox { id: adjustment; label: root.i18n.catalog["field.adjustment"]; model: ["NONE", "QFQ", "HFQ"] }
             Components.LabeledTextField { id: retries; label: root.i18n.catalog["field.max_retries"]; text: "2" }
             Components.LabeledTextField { id: backoff; label: root.i18n.catalog["field.retry_backoff"]; text: "2.0" }
-            RowLayout { CheckBox { id: force; text: root.i18n.catalog["field.force"] } CheckBox { id: incremental; text: root.i18n.catalog["field.incremental"] } }
+            RowLayout {
+                CheckBox { id: force; objectName: "backfillForce"; text: root.i18n.catalog["field.force"]; palette.text: "#2b2418"; palette.windowText: "#2b2418" }
+                CheckBox { id: incremental; objectName: "backfillIncremental"; text: root.i18n.catalog["field.incremental"]; palette.text: "#2b2418"; palette.windowText: "#2b2418" }
+            }
         }
         RowLayout {
             Button { objectName: "backfillPlanButton"; text: root.i18n.catalog["historical.plan"]; enabled: !operationRuntime.busy; onClicked: root.controller.plan(root.values()) }
-            Button { objectName: "backfillExecuteButton"; text: root.i18n.catalog["historical.execute"]; enabled: !operationRuntime.busy; onClicked: root.controller.requestExecute(root.values()) }
-            Label { text: root.controller.status; color: "#665d50" }
-            Label { text: root.controller.error; color: "#8b2f24"; visible: text.length > 0 }
+            Button { objectName: "backfillExecuteButton"; text: root.i18n.catalog["historical.execute"]; enabled: !operationRuntime.busy && !root.controller.confirmationPending; onClicked: root.controller.requestExecute(root.values()) }
+            Label { text: { root.i18n.language; return root.i18n.statusLabel(root.controller.status) } color: "#665d50" }
+            Label { Layout.fillWidth: true; text: root.i18n.catalog["common.error"] + ": " + root.controller.error; color: "#8b2f24"; visible: root.controller.error.length > 0; wrapMode: Text.Wrap }
         }
         Components.SummaryStrip { Layout.fillWidth: true; summary: root.controller.summary; i18n: root.i18n }
         Components.DataTable { objectName: "backfillPlanTable"; Layout.fillWidth: true; Layout.fillHeight: true; tableModel: root.controller.tableModel; i18n: root.i18n }

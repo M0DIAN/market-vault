@@ -47,6 +47,7 @@ Rectangle {
                         height: 38
                         text: sidebar.i18n.catalog[modelData.labelKey]
                         checkable: true
+                        activeFocusOnTab: true
                         checked: sidebar.shell.currentPage === modelData.id
                         onClicked: sidebar.shell.selectPage(modelData.id)
 

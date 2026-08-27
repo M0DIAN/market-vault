@@ -72,6 +72,32 @@ EN: Final[dict[str, str]] = {
     "common.ready": "Ready",
     "common.running": "Running",
     "common.close_busy": "An operation is still running. Wait for it to finish before closing.",
+    "common.error": "Error",
+    "status.ready": "Ready",
+    "status.running": "Running",
+    "status.success": "Success",
+    "status.failed": "Failed",
+    "status.busy": "Busy",
+    "status.unconfigured": "Unconfigured",
+    "status.unreviewed": "Not reviewed",
+    "status.planned": "Planned",
+    "status.refused": "Refused",
+    "status.empty": "Empty",
+    "status.partial": "Partial",
+    "status.validation_error": "Validation error",
+    "operation.dashboard": "Dashboard refresh",
+    "operation.market_data": "Market data query",
+    "operation.calendar_query": "Calendar query",
+    "operation.calendar_collect": "Calendar collection",
+    "operation.backfill_plan": "Backfill plan",
+    "operation.backfill_execute": "Backfill execution",
+    "operation.inventory": "Inventory",
+    "operation.coverage_audit": "Coverage audit",
+    "operation.intraday_audit": "Intraday audit",
+    "operation.runs": "Run history",
+    "operation.storage_review": "Storage review",
+    "operation.storage_execute": "Safe Purge execution",
+    "operation.export": "Export",
     "opend.title": "Confirm OpenD operation",
     "opend.message": "This operation may connect to OpenD.",
     "opend.operation": "Operation",
@@ -203,6 +229,32 @@ ZH_CN: Final[dict[str, str]] = {
     "common.ready": "就绪",
     "common.running": "正在运行",
     "common.close_busy": "操作仍在运行，请等待完成后再关闭。",
+    "common.error": "错误",
+    "status.ready": "就绪",
+    "status.running": "正在运行",
+    "status.success": "成功",
+    "status.failed": "失败",
+    "status.busy": "忙碌",
+    "status.unconfigured": "未配置",
+    "status.unreviewed": "尚未检查",
+    "status.planned": "已生成计划",
+    "status.refused": "已拒绝",
+    "status.empty": "无数据",
+    "status.partial": "部分成功",
+    "status.validation_error": "输入验证失败",
+    "operation.dashboard": "刷新仪表盘",
+    "operation.market_data": "查询行情数据",
+    "operation.calendar_query": "查询交易日历",
+    "operation.calendar_collect": "获取交易日历",
+    "operation.backfill_plan": "生成回填计划",
+    "operation.backfill_execute": "执行历史数据回填",
+    "operation.inventory": "检查库存",
+    "operation.coverage_audit": "运行覆盖检查",
+    "operation.intraday_audit": "运行分钟数据检查",
+    "operation.runs": "查询运行记录",
+    "operation.storage_review": "检查存储范围",
+    "operation.storage_execute": "执行安全清理",
+    "operation.export": "导出",
     "opend.title": "确认 OpenD 操作",
     "opend.message": "此操作可能连接 OpenD。",
     "opend.operation": "操作",
@@ -320,9 +372,11 @@ class I18nBridge(QObject):
             return False
         if locale == self._language:
             return True
+        if not self._preference_store.save_language(locale):
+            return False
         self._language = locale
         self.languageChanged.emit()
-        return self._preference_store.save_language(locale)
+        return True
 
     @Slot(str, result=str)
     def translate(self, key: str) -> str:
@@ -332,3 +386,13 @@ class I18nBridge(QObject):
     def columnLabel(self, raw_key: str) -> str:  # noqa: N802
         key = f"columns.{raw_key}"
         return self.translate(key) if key in EN else raw_key
+
+    @Slot(str, result=str)
+    def statusLabel(self, raw_status: str) -> str:  # noqa: N802
+        key = f"status.{str(raw_status).strip().lower()}"
+        return self.translate(key) if key in EN else str(raw_status)
+
+    @Slot(str, result=str)
+    def operationLabel(self, operation_id: str) -> str:  # noqa: N802
+        key = f"operation.{str(operation_id).strip()}"
+        return self.translate(key) if key in EN else str(operation_id)

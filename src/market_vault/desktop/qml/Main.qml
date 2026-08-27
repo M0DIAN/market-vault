@@ -15,7 +15,7 @@ ApplicationWindow {
     title: i18nBridge.catalog["app.title"]
     color: "#f3eee2"
     onClosing: function(close) {
-        if (operationRuntime.busy) {
+        if (!operationRuntime.requestShutdown()) {
             close.accepted = false
             closeBusyDialog.open()
         }
@@ -133,19 +133,26 @@ ApplicationWindow {
                 anchors.leftMargin: 16
                 anchors.rightMargin: 16
                 Label {
-                    text: i18nBridge.catalog["common.status"] + ": "
-                        + operationRuntime.status
-                        + (operationRuntime.activeOperation.length > 0
-                            ? " / " + operationRuntime.activeOperation : "")
+                    text: {
+                        i18nBridge.language
+                        return i18nBridge.catalog["common.status"] + ": "
+                            + i18nBridge.statusLabel(operationRuntime.status)
+                            + (operationRuntime.activeOperation.length > 0
+                                ? " / " + i18nBridge.operationLabel(
+                                    operationRuntime.activeOperation) : "")
+                    }
                     color: "#665d50"
                 }
                 Item { Layout.fillWidth: true }
                 Label {
-                    text: operationRuntime.error
-                    visible: text.length > 0
+                    Layout.fillWidth: true
+                    text: i18nBridge.catalog["common.error"] + ": "
+                        + operationRuntime.error
+                    visible: operationRuntime.error.length > 0
                     color: "#8b2f24"
-                    elide: Text.ElideRight
-                    Layout.maximumWidth: 520
+                    horizontalAlignment: Text.AlignRight
+                    wrapMode: Text.Wrap
+                    Layout.maximumWidth: 600
                 }
             }
         }
@@ -155,6 +162,7 @@ ApplicationWindow {
         id: closeBusyDialog
         title: i18nBridge.catalog["common.running"]
         modal: true
+        closePolicy: Popup.CloseOnEscape
         standardButtons: Dialog.Ok
         Label { text: i18nBridge.catalog["common.close_busy"]; wrapMode: Text.Wrap }
     }

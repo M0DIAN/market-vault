@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+import math
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
 from PySide6.QtCore import Property, QObject, QThread, QTimer, QUrl, Signal, Slot
 
 from market_vault.desktop.runtime import DesktopOperationRuntime
-from market_vault.desktop.table_model import QtTableModel
+from market_vault.desktop.table_model import QtTableModel, validate_table_page
 
 
 if TYPE_CHECKING:
@@ -17,6 +19,57 @@ if TYPE_CHECKING:
 
 def _values(values: dict[str, Any]) -> dict[str, Any]:
     return {str(key): value for key, value in dict(values).items()}
+
+
+def _bounded_int(value: Any, field_name: str, minimum: int, maximum: int) -> int:
+    if isinstance(value, bool):
+        raise ValueError(f"{field_name} must be an integer")
+    if isinstance(value, float) and (not math.isfinite(value) or not value.is_integer()):
+        raise ValueError(f"{field_name} must be an integer")
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(f"{field_name} must be an integer") from exc
+    if not minimum <= parsed <= maximum:
+        raise ValueError(f"{field_name} must be between {minimum} and {maximum}")
+    return parsed
+
+
+def _nonnegative_float(value: Any, field_name: str) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(f"{field_name} must be a non-negative number") from exc
+    if not math.isfinite(parsed) or parsed < 0:
+        raise ValueError(f"{field_name} must be a non-negative number")
+    return parsed
+
+
+def _summary_values(summary: Any) -> dict[str, str]:
+    if not isinstance(summary, Mapping):
+        raise TypeError("result summary must be a mapping")
+    return {str(key): str(value) for key, value in summary.items()}
+
+
+def _paged_values(values: dict[str, Any]) -> tuple[dict[str, Any], int]:
+    arguments = _values(values)
+    page = _bounded_int(arguments.get("page", 1), "page", 1, 2_147_483_647)
+    arguments["page"] = page
+    arguments["page_size"] = _bounded_int(
+        arguments.get("page_size", 100), "page_size", 1, 1000
+    )
+    return arguments, page
+
+
+def _backfill_values(values: dict[str, Any]) -> dict[str, Any]:
+    arguments = _values(values)
+    arguments["max_retries"] = _bounded_int(
+        arguments.get("max_retries", 2), "max_retries", 0, 2_147_483_647
+    )
+    arguments["retry_backoff_seconds"] = _nonnegative_float(
+        arguments.get("retry_backoff_seconds", 2.0), "retry_backoff_seconds"
+    )
+    return arguments
 
 
 class PageController(QObject):
@@ -91,6 +144,13 @@ class PageController(QObject):
             self.stateChanged.emit()
         return accepted
 
+    def _reject_input(self, exc: Exception) -> bool:
+        self._assert_thread()
+        self._status = "VALIDATION_ERROR"
+        self._error = str(exc).strip() or exc.__class__.__name__
+        self.stateChanged.emit()
+        return False
+
 
 class TablePageController(PageController):
     pageChanged = Signal()
@@ -126,6 +186,7 @@ class TablePageController(PageController):
         return self._page.has_next if self._page is not None else False
 
     def _set_page(self, page: TablePage) -> None:
+        validate_table_page(page)
         self._model.set_page(page)
         self._page = page
         self.pageChanged.emit()
@@ -137,26 +198,29 @@ class TablePageController(PageController):
             self._error = "Load a table page before exporting."
             self.stateChanged.emit()
             return False
-        text = destination.strip()
-        direct_path = Path(text).expanduser()
-        url = QUrl(text)
-        if direct_path.is_absolute():
-            path = direct_path
-        elif url.scheme():
-            if not url.isLocalFile():
-                path = Path()
+        try:
+            text = destination.strip()
+            direct_path = Path(text).expanduser()
+            url = QUrl(text)
+            if direct_path.is_absolute():
+                path = direct_path
+            elif url.scheme():
+                if not url.isLocalFile():
+                    path = Path()
+                else:
+                    path = Path(url.toLocalFile())
             else:
-                path = Path(url.toLocalFile())
-        else:
-            path = direct_path
+                path = direct_path
+        except (AttributeError, OSError, TypeError, ValueError) as exc:
+            return self._reject_input(exc)
         if not text or not path.is_absolute():
-            self._status = "FAILED"
-            self._error = "Export destination must be an absolute local path."
-            self.stateChanged.emit()
-            return False
+            return self._reject_input(
+                ValueError("Export destination must be an absolute local path.")
+            )
+        loaded_page = self._page
         return self._submit(
             "export",
-            lambda backend: backend.export_page(self._page, path, format_name),
+            lambda backend: backend.export_page(loaded_page, path, format_name),
             lambda result: setattr(
                 self, "_summary", {"path": result.path, "rows": str(result.row_count)}
             ),
@@ -166,13 +230,16 @@ class TablePageController(PageController):
 class MarketDataController(TablePageController):
     @Slot("QVariantMap", result=bool)
     def query(self, values: dict[str, Any]) -> bool:
-        self._last_values = _values(values)
-        return self._query_page(int(self._last_values.get("page", 1)))
+        try:
+            arguments, page = _paged_values(values)
+        except (TypeError, ValueError) as exc:
+            return self._reject_input(exc)
+        self._last_values = arguments
+        return self._query_page(page)
 
     def _query_page(self, page: int) -> bool:
         values = dict(self._last_values)
         values["page"] = page
-        values["page_size"] = int(values.get("page_size", 100))
         return self._submit(
             "market_data",
             lambda backend: backend.query_bars(**values),
@@ -191,12 +258,17 @@ class MarketDataController(TablePageController):
 class InventoryController(TablePageController):
     @Slot("QVariantMap", result=bool)
     def refresh(self, values: dict[str, Any]) -> bool:
-        arguments = _values(values)
+        try:
+            arguments = _values(values)
+        except (TypeError, ValueError) as exc:
+            return self._reject_input(exc)
 
         def apply(result: tuple[dict[str, Any], TablePage]) -> None:
             summary, page = result
+            prepared_summary = _summary_values(summary)
+            validate_table_page(page)
+            self._summary = prepared_summary
             self._set_page(page)
-            self._summary = {str(k): str(v) for k, v in summary.items()}
 
         return self._submit(
             "inventory", lambda backend: backend.inventory(**arguments), apply
@@ -216,15 +288,20 @@ class AuditController(TablePageController):
 
     @Slot("QVariantMap", result=bool)
     def run(self, values: dict[str, Any]) -> bool:
-        arguments = _values(values)
+        try:
+            arguments = _values(values)
+        except (TypeError, ValueError) as exc:
+            return self._reject_input(exc)
 
         def operation(backend: Any) -> Any:
             return getattr(backend, self._method_name)(**arguments)
 
         def apply(result: tuple[dict[str, Any], TablePage]) -> None:
             summary, page = result
+            prepared_summary = _summary_values(summary)
+            validate_table_page(page)
+            self._summary = prepared_summary
             self._set_page(page)
-            self._summary = {str(k): str(v) for k, v in summary.items()}
 
         return self._submit(self._method_name, operation, apply)
 
@@ -232,13 +309,16 @@ class AuditController(TablePageController):
 class RunsController(TablePageController):
     @Slot("QVariantMap", result=bool)
     def refresh(self, values: dict[str, Any]) -> bool:
-        self._last_values = _values(values)
-        return self._query_page(int(self._last_values.get("page", 1)))
+        try:
+            arguments, page = _paged_values(values)
+        except (TypeError, ValueError) as exc:
+            return self._reject_input(exc)
+        self._last_values = arguments
+        return self._query_page(page)
 
     def _query_page(self, page: int) -> bool:
         values = dict(self._last_values)
         values["page"] = page
-        values["page_size"] = int(values.get("page_size", 100))
         return self._submit(
             "runs", lambda backend: backend.runs(**values), self._set_page
         )
@@ -254,10 +334,19 @@ class RunsController(TablePageController):
 
 class NetworkController(TablePageController):
     confirmationRequested = Signal(str, str, int)
+    confirmationPendingChanged = Signal()
+    _NETWORK_METHODS = {
+        "calendar_collect": "collect_calendar",
+        "backfill_execute": "execute_backfill",
+    }
 
     def __init__(self, runtime: DesktopOperationRuntime, *, parent: QObject | None = None):
         super().__init__(runtime, parent=parent)
         self._pending: tuple[str, dict[str, Any], Callable[[Any], Any]] | None = None
+
+    @Property(bool, notify=confirmationPendingChanged)
+    def confirmationPending(self) -> bool:  # noqa: N802
+        return self._pending is not None
 
     def _request_network(
         self,
@@ -266,6 +355,8 @@ class NetworkController(TablePageController):
         apply: Callable[[Any], Any],
     ) -> bool:
         self._assert_thread()
+        if name not in self._NETWORK_METHODS:
+            return self._reject_input(ValueError("Unsupported network operation."))
         if self._pending is not None or self._runtime.busy:
             return False
         try:
@@ -280,6 +371,7 @@ class NetworkController(TablePageController):
             self.stateChanged.emit()
             return False
         self._pending = (name, dict(values), apply)
+        self.confirmationPendingChanged.emit()
         self.confirmationRequested.emit(name, settings.opend_host, settings.opend_port)
         return True
 
@@ -287,11 +379,16 @@ class NetworkController(TablePageController):
     def resolveConfirmation(self, accepted: bool) -> bool:  # noqa: N802
         self._assert_thread()
         pending = self._pending
+        if pending is None:
+            return False
         self._pending = None
-        if pending is None or not accepted:
+        self.confirmationPendingChanged.emit()
+        if not accepted:
             return False
         name, values, apply = pending
-        method_name = "collect_calendar" if name == "calendar_collect" else "execute_backfill"
+        method_name = self._NETWORK_METHODS.get(name)
+        if method_name is None:
+            return self._reject_input(ValueError("Unsupported network operation."))
         return self._submit(
             name,
             lambda backend: getattr(backend, method_name)(**values),
@@ -302,13 +399,16 @@ class NetworkController(TablePageController):
 class TradingCalendarController(NetworkController):
     @Slot("QVariantMap", result=bool)
     def query(self, values: dict[str, Any]) -> bool:
-        self._last_values = _values(values)
-        return self._query_page(int(self._last_values.get("page", 1)))
+        try:
+            arguments, page = _paged_values(values)
+        except (TypeError, ValueError) as exc:
+            return self._reject_input(exc)
+        self._last_values = arguments
+        return self._query_page(page)
 
     def _query_page(self, page: int) -> bool:
         values = dict(self._last_values)
         values["page"] = page
-        values["page_size"] = int(values.get("page_size", 100))
         return self._submit(
             "calendar_query",
             lambda backend: backend.query_calendar(**values),
@@ -317,12 +417,16 @@ class TradingCalendarController(NetworkController):
 
     @Slot("QVariantMap", result=bool)
     def requestCollect(self, values: dict[str, Any]) -> bool:  # noqa: N802
-        self._last_values = _values(values)
+        try:
+            arguments_with_page, _ = _paged_values(values)
+        except (TypeError, ValueError) as exc:
+            return self._reject_input(exc)
+        self._last_values = arguments_with_page
         arguments = dict(self._last_values)
         for key in ("page", "page_size"):
             arguments.pop(key, None)
         def apply(result: dict[str, Any]) -> None:
-            self._summary = {str(k): str(v) for k, v in result.items()}
+            self._summary = _summary_values(result)
             QTimer.singleShot(0, lambda: self._query_page(1))
 
         return self._request_network(
@@ -347,17 +451,22 @@ class HistoricalDataController(NetworkController):
 
     @Slot("QVariantMap", result=bool)
     def plan(self, values: dict[str, Any]) -> bool:
-        arguments = _values(values)
+        try:
+            arguments = _backfill_values(values)
+        except (TypeError, ValueError) as exc:
+            return self._reject_input(exc)
 
         def apply(plan: Any) -> None:
-            self._set_page(plan.items)
-            self._summary = {
-                "scope": plan.scope,
-                "symbols": ", ".join(plan.symbols),
+            prepared_summary = {
+                "scope": str(plan.scope),
+                "symbols": ", ".join(str(symbol) for symbol in plan.symbols),
                 "trading_dates": str(plan.trading_date_count),
                 "pending": str(plan.pending_count),
                 "skipped": str(plan.skipped_count),
             }
+            validate_table_page(plan.items)
+            self._summary = prepared_summary
+            self._set_page(plan.items)
 
         return self._submit(
             "backfill_plan", lambda backend: backend.plan_backfill(**arguments), apply
@@ -365,10 +474,14 @@ class HistoricalDataController(NetworkController):
 
     @Slot("QVariantMap", result=bool)
     def requestExecute(self, values: dict[str, Any]) -> bool:  # noqa: N802
+        try:
+            arguments = _backfill_values(values)
+        except (TypeError, ValueError) as exc:
+            return self._reject_input(exc)
         return self._request_network(
             "backfill_execute",
-            _values(values),
+            arguments,
             lambda result: setattr(
-                self, "_summary", {str(k): str(v) for k, v in result.items()}
+                self, "_summary", _summary_values(result)
             ),
         )

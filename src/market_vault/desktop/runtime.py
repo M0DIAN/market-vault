@@ -6,7 +6,7 @@ from concurrent.futures import Future
 from pathlib import Path
 from typing import Any, Callable
 
-from PySide6.QtCore import Property, QObject, QThread, QTimer, Signal
+from PySide6.QtCore import Property, QObject, QThread, QTimer, Signal, Slot
 
 
 POLL_INTERVAL_MS = 20
@@ -113,7 +113,8 @@ class DesktopOperationRuntime(QObject):
         if self._closed or self.busy:
             return False
         if self._settings_path is None:
-            failure(RuntimeError("Desktop settings are not configured."))
+            exc = RuntimeError("Desktop settings are not configured.")
+            self._deliver_failure(failure, exc)
             return False
         self._error = ""
         self._status = "RUNNING"
@@ -133,7 +134,7 @@ class DesktopOperationRuntime(QObject):
             self._error = str(exc).strip() or exc.__class__.__name__
             self.errorChanged.emit()
             self.statusChanged.emit()
-            failure(exc)
+            self._deliver_failure(failure, exc)
             return False
         self._success = success
         self._failure = failure
@@ -141,6 +142,22 @@ class DesktopOperationRuntime(QObject):
         self.operationStarted.emit(name)
         self._timer.start()
         return True
+
+    def _deliver_failure(
+        self,
+        failure: Callable[[Exception], None] | None,
+        exc: Exception,
+    ) -> None:
+        if failure is None:
+            return
+        try:
+            failure(exc)
+        except Exception as callback_exc:
+            self._status = "FAILED"
+            self._error = (
+                str(callback_exc).strip()
+                or callback_exc.__class__.__name__
+            )
 
     def _poll(self) -> None:
         self._assert_thread()
@@ -156,8 +173,7 @@ class DesktopOperationRuntime(QObject):
         except Exception as exc:
             self._status = "FAILED"
             self._error = str(exc).strip() or exc.__class__.__name__
-            if failure is not None:
-                failure(exc)
+            self._deliver_failure(failure, exc)
         else:
             self._status = "SUCCESS"
             self._error = ""
@@ -167,8 +183,7 @@ class DesktopOperationRuntime(QObject):
                 except Exception as exc:
                     self._status = "FAILED"
                     self._error = str(exc).strip() or exc.__class__.__name__
-                    if failure is not None:
-                        failure(exc)
+                    self._deliver_failure(failure, exc)
         finally:
             self._future = None
             self._success = None
@@ -179,12 +194,21 @@ class DesktopOperationRuntime(QObject):
             self.busyChanged.emit()
             self.operationFinished.emit(name)
 
-    def shutdown(self) -> None:
+    @Slot(result=bool)
+    def requestShutdown(self) -> bool:  # noqa: N802
+        """Close the idle runtime, or veto shutdown while work is active."""
+
         self._assert_thread()
         if self._closed:
-            return
+            return True
+        if self.busy:
+            return False
         self._closed = True
         self._timer.stop()
         if self._runner is not None:
             self._runner.close()
             self._runner = None
+        return True
+
+    def shutdown(self) -> bool:
+        return self.requestShutdown()

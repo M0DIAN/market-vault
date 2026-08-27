@@ -10,6 +10,7 @@ from PySide6.QtCore import Property, QObject, Signal, Slot
 
 from market_vault.desktop.controllers import TablePageController
 from market_vault.desktop.runtime import DesktopOperationRuntime
+from market_vault.desktop.table_model import validate_table_page
 
 
 SCOPE_FIELDS = (
@@ -148,14 +149,20 @@ class StorageCleanupController(TablePageController):
                 if backend is not None:
                     backend.invalidate_purge_preview()
                 raise RuntimeError("Storage scope changed while review was running.")
-            self._plan_id = str(plan.plan_id)
-            self._plan_status = str(plan.status)
-            self._plan_executable = bool(plan.executable)
+            prepared_plan_id = str(plan.plan_id)
+            prepared_status = str(plan.status)
+            prepared_executable = bool(plan.executable)
+            prepared_refusals = [dict(item) for item in plan.refusal_reasons]
+            prepared_summary = {str(k): str(v) for k, v in plan.summary.items()}
+            validate_table_page(plan.items)
+            self._plan_id = prepared_plan_id
+            self._plan_status = prepared_status
+            self._plan_executable = prepared_executable
             self._reviewed_fingerprint = fingerprint
             self._confirmation = ""
-            self._refusal_reasons = [dict(item) for item in plan.refusal_reasons]
+            self._refusal_reasons = prepared_refusals
+            self._summary = prepared_summary
             self._set_page(plan.items)
-            self._summary = {str(k): str(v) for k, v in plan.summary.items()}
             self.reviewChanged.emit()
 
         return self._submit(

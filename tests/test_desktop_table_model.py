@@ -10,6 +10,7 @@ from PySide6.QtCore import QCoreApplication, QModelIndex, Qt
 
 from market_vault.console.models import TablePage
 from market_vault.desktop.table_model import QtTableModel
+from market_vault.desktop.table_model import validate_table_page
 
 
 @pytest.fixture(scope="module")
@@ -130,3 +131,18 @@ def test_worker_thread_model_mutation_is_rejected(qt_app):
             future.result(timeout=5)
 
     assert model.rowCount() == 0
+
+
+@pytest.mark.parametrize(
+    "page",
+    [
+        TablePage(columns=("x",), rows=(("1",),), page=0, total_rows=1),
+        TablePage(columns=("x",), rows=(("1",),), page_size=0, total_rows=1),
+        TablePage(columns=("x",), rows=(("1",),), page_size=1001, total_rows=1),
+        TablePage(columns=("x",), rows=(("1",),), total_rows=0),
+        TablePage(columns=("x",), rows=(("1",),), page=2, total_rows=1),
+    ],
+)
+def test_complete_table_metadata_validation_fails_closed(page):
+    with pytest.raises(ValueError):
+        validate_table_page(page)

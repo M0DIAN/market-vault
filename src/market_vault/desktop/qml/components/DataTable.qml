@@ -93,6 +93,8 @@ Item {
             Layout.fillWidth: true
             visible: root.paged
             Button {
+                objectName: root.objectName + "Previous"
+                activeFocusOnTab: true
                 text: root.i18n.catalog["common.previous"]
                 enabled: root.tableModel.hasPrevious
                 onClicked: root.previousRequested()
@@ -106,6 +108,8 @@ Item {
             }
             Item { Layout.fillWidth: true }
             Button {
+                objectName: root.objectName + "Next"
+                activeFocusOnTab: true
                 text: root.i18n.catalog["common.next"]
                 enabled: root.tableModel.hasNext
                 onClicked: root.nextRequested()

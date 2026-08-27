@@ -14,6 +14,7 @@ ColumnLayout {
     ComboBox {
         id: combo
         Layout.fillWidth: true
+        activeFocusOnTab: true
         onActivated: root.selected(currentText)
     }
 }
