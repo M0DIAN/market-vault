@@ -8,6 +8,7 @@ from market_vault.application import (
     LOGGER_NAME,
     build_application_context,
     configure_application_logging,
+    resolve_application_settings_path,
 )
 from market_vault.console.backend import ConsoleBackend
 
@@ -68,6 +69,24 @@ def test_application_context_constructs_one_dependency_graph_and_closes_once(tmp
     context.shutdown()
     assert context.closed is True
     assert runner.close_count == 1
+
+
+def test_ui_neutral_settings_resolver_handles_source_and_frozen_paths(tmp_path):
+    source_default = tmp_path / "source" / "config" / "settings.yaml"
+    executable = tmp_path / "bundle" / "MarketVaultQmlCanary.exe"
+
+    assert resolve_application_settings_path(
+        source_default=source_default
+    ) == source_default.resolve()
+    assert resolve_application_settings_path(
+        "custom/settings.yaml",
+        frozen=True,
+        executable=str(executable),
+    ) == (executable.parent / "custom" / "settings.yaml").resolve()
+    assert resolve_application_settings_path(
+        frozen=True,
+        executable=str(executable),
+    ) == (executable.parent / "config" / "settings.yaml").resolve()
 
 
 def test_production_context_uses_existing_backend_without_runtime_mutation(tmp_path):

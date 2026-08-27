@@ -5,10 +5,35 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import logging
 from pathlib import Path
+import sys
 from typing import Any, Callable
 
 
 LOGGER_NAME = "market_vault"
+
+
+def resolve_application_settings_path(
+    explicit: str | None = None,
+    *,
+    frozen: bool = False,
+    executable: str | None = None,
+    source_default: str | Path = "config/settings.yaml",
+) -> Path:
+    """Resolve external settings without importing either desktop toolkit."""
+
+    if frozen:
+        application_root = Path(executable or sys.executable).resolve().parent
+        if explicit:
+            candidate = Path(explicit).expanduser()
+            return (
+                candidate.resolve()
+                if candidate.is_absolute()
+                else (application_root / candidate).resolve()
+            )
+        return (application_root / "config" / "settings.yaml").resolve()
+    if explicit:
+        return Path(explicit).expanduser().resolve()
+    return Path(source_default).expanduser().resolve()
 
 
 def configure_application_logging() -> logging.Logger:

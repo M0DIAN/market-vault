@@ -49,16 +49,17 @@ def resolve_desktop_settings_path(
 ) -> Path:
     """Resolve settings independently of CWD for source and frozen launches."""
 
-    from market_vault.windows_launcher import resolve_settings_path
+    from market_vault.application import resolve_application_settings_path
 
     frozen_value = bool(getattr(sys, "frozen", False)) if frozen is None else frozen
-    if explicit is not None or frozen_value:
-        return resolve_settings_path(
-            explicit,
-            frozen=frozen_value,
-            executable=executable,
-        ).resolve()
-    return (Path(__file__).resolve().parents[3] / "config" / "settings.yaml").resolve()
+    return resolve_application_settings_path(
+        explicit,
+        frozen=frozen_value,
+        executable=executable,
+        source_default=Path(__file__).resolve().parents[3]
+        / "config"
+        / "settings.yaml",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:

@@ -417,6 +417,7 @@ def test_parallel_spec_and_build_script_do_not_cut_over_production():
     production_launcher = (
         ROOT / "src" / "market_vault" / "windows_launcher.py"
     ).read_text(encoding="utf-8")
+    qml_launcher = (DESKTOP_ROOT / "app.py").read_text(encoding="utf-8")
     canary_spec = (ROOT / "packaging" / "MarketVaultQmlCanary.spec").read_text(
         encoding="utf-8"
     )
@@ -431,6 +432,7 @@ def test_parallel_spec_and_build_script_do_not_cut_over_production():
     assert "MarketVaultQmlCanary" not in production_spec
     assert "MarketVaultQmlCanary" not in production_build
     assert "market_vault.desktop" not in production_launcher
+    assert "market_vault.windows_launcher" not in qml_launcher
     assert 'name="MarketVaultQmlCanary"' in canary_spec
     assert "MarketVaultQmlCanary.exe" in canary_build
     for component in (
