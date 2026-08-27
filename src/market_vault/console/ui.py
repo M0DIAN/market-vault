@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import sys
 import tkinter as tk
 from concurrent.futures import Future
@@ -59,6 +60,120 @@ TABLE_HEADER_TEXT = GOLD_DARK
 TABLE_SELECTION_BG = NAV_SELECTED
 TABLE_SELECTION_TEXT = TEXT_PRIMARY
 TABLE_ROWHEIGHT = 29
+
+AMBIENT_UPDATE_INTERVAL_MS = 120
+AMBIENT_MAX_GLYPHS = 1200
+AMBIENT_GLYPH_SPACING = 22
+AMBIENT_REGION_HEIGHT = 92
+AMBIENT_PHASE_STEP = 0.018
+AMBIENT_NEUTRAL = "#716A5C"
+AMBIENT_GOLD = GOLD
+AMBIENT_VERMILION = "#9A6752"
+AMBIENT_SAGE = "#71806C"
+
+
+def blend_color(foreground: str, background: str, alpha: float) -> str:
+    """Preblend a foreground color for Tk widgets without alpha support."""
+
+    bounded_alpha = min(1.0, max(0.0, float(alpha)))
+
+    def channels(value: str) -> tuple[int, int, int]:
+        if len(value) != 7 or not value.startswith("#"):
+            raise ValueError(f"expected #RRGGBB color, got {value!r}")
+        try:
+            return tuple(int(value[index : index + 2], 16) for index in (1, 3, 5))
+        except ValueError as exc:
+            raise ValueError(f"expected #RRGGBB color, got {value!r}") from exc
+
+    foreground_rgb = channels(foreground)
+    background_rgb = channels(background)
+    mixed = tuple(
+        round(
+            foreground_channel * bounded_alpha
+            + background_channel * (1.0 - bounded_alpha)
+        )
+        for foreground_channel, background_channel in zip(
+            foreground_rgb, background_rgb, strict=True
+        )
+    )
+    return "#" + "".join(f"{channel:02X}" for channel in mixed)
+
+
+def ambient_field_value(x: float, y: float, phase: float) -> float:
+    """Return a deterministic, spatially and temporally continuous field."""
+
+    return (
+        math.sin(x * 0.31 + phase * 0.73)
+        + math.sin(y * 0.37 - phase * 0.51)
+        + math.sin((x + y) * 0.19 + phase * 0.29)
+        + math.cos((x - y) * 0.23 - phase * 0.41)
+    ) / 4.0
+
+
+def ambient_digit(x: float, y: float, phase: float) -> str:
+    """Discretize the continuous field into the only allowed glyphs."""
+
+    threshold = 0.08 * math.sin(x * 0.11 - y * 0.13 + phase * 0.17)
+    return "1" if ambient_field_value(x, y, phase) > threshold else "0"
+
+
+def ambient_visibility(horizontal_fraction: float) -> float:
+    """Smoothly fade the field from nearly hidden left to visible right."""
+
+    normalized = min(1.0, max(0.0, float(horizontal_fraction)))
+    progress = min(1.0, max(0.0, (normalized - 0.24) / 0.36))
+    return progress * progress * (3.0 - 2.0 * progress)
+
+
+def ambient_fill(x: float, y: float, phase: float, horizontal_fraction: float) -> str:
+    """Return a low-contrast preblended color for one ambient glyph."""
+
+    visibility = ambient_visibility(horizontal_fraction)
+    color_field = ambient_field_value(x * 0.61 + 5.0, y * 0.67 - 3.0, phase * 0.63)
+    if color_field > 0.72:
+        foreground, maximum_alpha = AMBIENT_VERMILION, 0.085
+    elif color_field < -0.74:
+        foreground, maximum_alpha = AMBIENT_SAGE, 0.085
+    elif color_field > 0.28:
+        foreground, maximum_alpha = AMBIENT_GOLD, 0.145
+    else:
+        foreground, maximum_alpha = AMBIENT_NEUTRAL, 0.105
+    return blend_color(foreground, WORKSPACE_BG, visibility * maximum_alpha)
+
+
+def ambient_grid_positions(
+    width: int,
+    height: int,
+    *,
+    spacing: int = AMBIENT_GLYPH_SPACING,
+    max_glyphs: int = AMBIENT_MAX_GLYPHS,
+) -> tuple[tuple[int, int, int, int, float], ...]:
+    """Return a bounded deterministic grid for a canvas size."""
+
+    safe_width = max(0, int(width))
+    safe_height = max(0, int(height))
+    safe_spacing = max(8, int(spacing))
+    safe_cap = max(1, int(max_glyphs))
+    columns = max(1, safe_width // safe_spacing) if safe_width else 0
+    rows = max(1, safe_height // safe_spacing) if safe_height else 0
+    if columns * rows > safe_cap:
+        scale = math.sqrt((columns * rows) / safe_cap)
+        safe_spacing = max(safe_spacing, math.ceil(safe_spacing * scale))
+        columns = max(1, safe_width // safe_spacing) if safe_width else 0
+        rows = max(1, safe_height // safe_spacing) if safe_height else 0
+
+    positions = []
+    for row in range(rows):
+        for column in range(columns):
+            if len(positions) >= safe_cap:
+                return tuple(positions)
+            x_position = min(safe_width - 1, safe_spacing // 2 + column * safe_spacing)
+            y_position = min(safe_height - 1, safe_spacing // 2 + row * safe_spacing)
+            horizontal_fraction = x_position / max(1, safe_width - 1)
+            positions.append(
+                (column, row, x_position, y_position, horizontal_fraction)
+            )
+    return tuple(positions)
 
 
 def _configure_table_elements(style: ttk.Style) -> None:
@@ -202,6 +317,133 @@ def compact_settings_path(path: str) -> str:
         return str(parsed)
     separator = "\\" if path_type is PureWindowsPath else "/"
     return f"…{separator}{separator.join(parsed.parts[-2:])}"
+
+
+class AmbientNumericField(tk.Canvas):
+    """A bounded, deterministic binary field used only by the Home page."""
+
+    def __init__(
+        self,
+        parent,
+        *,
+        height: int = AMBIENT_REGION_HEIGHT,
+        update_interval_ms: int = AMBIENT_UPDATE_INTERVAL_MS,
+        max_glyphs: int = AMBIENT_MAX_GLYPHS,
+    ):
+        super().__init__(
+            parent,
+            background=WORKSPACE_BG,
+            borderwidth=0,
+            height=height,
+            highlightthickness=0,
+        )
+        self._update_interval_ms = max(100, int(update_interval_ms))
+        self._max_glyphs = min(AMBIENT_MAX_GLYPHS, max(1, int(max_glyphs)))
+        self._phase = 0.0
+        self._running = False
+        self._after_job: str | None = None
+        self._resize_job: str | None = None
+        self._destroyed = False
+        self._glyphs: list[tuple[int, int, int, float]] = []
+        fixed_font = tkfont.nametofont("TkFixedFont")
+        self._glyph_font = (fixed_font.actual("family"), 8, "normal")
+        self.bind("<Configure>", self._queue_grid_rebuild, add="+")
+
+    @property
+    def is_active(self) -> bool:
+        return self._running
+
+    @property
+    def glyph_count(self) -> int:
+        return len(self._glyphs)
+
+    def start(self) -> None:
+        if self._running or self._destroyed:
+            return
+        self._running = True
+        if not self._glyphs:
+            self._rebuild_grid()
+        self._render()
+        self._schedule_tick()
+
+    def stop(self) -> None:
+        self._running = False
+        if self._after_job is not None:
+            try:
+                self.after_cancel(self._after_job)
+            except tk.TclError:
+                pass
+            self._after_job = None
+
+    def shutdown(self) -> None:
+        self._destroyed = True
+        self.stop()
+        if self._resize_job is not None:
+            try:
+                self.after_cancel(self._resize_job)
+            except tk.TclError:
+                pass
+            self._resize_job = None
+
+    def destroy(self) -> None:
+        self.shutdown()
+        super().destroy()
+
+    def _queue_grid_rebuild(self, _event=None) -> None:
+        if self._destroyed:
+            return
+        if self._resize_job is not None:
+            try:
+                self.after_cancel(self._resize_job)
+            except tk.TclError:
+                pass
+        self._resize_job = self.after(90, self._rebuild_grid)
+
+    def _rebuild_grid(self) -> None:
+        self._resize_job = None
+        if self._destroyed:
+            return
+        positions = ambient_grid_positions(
+            self.winfo_width(),
+            self.winfo_height(),
+            max_glyphs=self._max_glyphs,
+        )
+        self.delete("ambient-glyph")
+        self._glyphs = []
+        for column, row, x_position, y_position, horizontal_fraction in positions:
+            item = self.create_text(
+                x_position,
+                y_position,
+                anchor="center",
+                fill=WORKSPACE_BG,
+                font=self._glyph_font,
+                tags=("ambient-glyph",),
+                text="0",
+            )
+            self._glyphs.append((item, column, row, horizontal_fraction))
+        self._render()
+
+    def _schedule_tick(self) -> None:
+        if self._running and self._after_job is None and not self._destroyed:
+            self._after_job = self.after(self._update_interval_ms, self._tick)
+
+    def _tick(self) -> None:
+        self._after_job = None
+        if not self._running or self._destroyed:
+            return
+        self._phase += AMBIENT_PHASE_STEP
+        self._render()
+        self._schedule_tick()
+
+    def _render(self) -> None:
+        if self._destroyed:
+            return
+        for item, column, row, horizontal_fraction in self._glyphs:
+            self.itemconfigure(
+                item,
+                fill=ambient_fill(column, row, self._phase, horizontal_fraction),
+                text=ambient_digit(column, row, self._phase),
+            )
 
 
 class ActivityIndicator(tk.Frame):
@@ -650,6 +892,7 @@ class ConsoleApp:
         self.notebook.select(self.pages[normalized])
         self.current_page_id = normalized
         self._refresh_navigation_selection()
+        self._sync_home_ambient_state()
 
     def _notebook_page_changed(self, _event=None) -> None:
         selected = self.notebook.select()
@@ -657,6 +900,16 @@ class ConsoleApp:
         if page_id is not None:
             self.current_page_id = page_id
             self._refresh_navigation_selection()
+            self._sync_home_ambient_state()
+
+    def _sync_home_ambient_state(self) -> None:
+        field = getattr(self, "ambient_field", None)
+        if field is None:
+            return
+        if self.current_page_id == PageId.HOME:
+            field.start()
+        else:
+            field.stop()
 
     def _refresh_navigation_selection(self) -> None:
         for page_id, button in self.navigation_buttons.items():
@@ -673,18 +926,25 @@ class ConsoleApp:
     def _build_dashboard(self) -> None:
         tab = self._new_tab(PageId.HOME)
         self.home_buttons: list[tk.Button] = []
-        top = ttk.Frame(tab, style="Workspace.TFrame")
-        top.pack(fill="x")
-        overview = ttk.Label(top, style="HomeSection.TLabel")
-        overview.pack(side="left")
+        hero = tk.Frame(
+            tab,
+            background=WORKSPACE_BG,
+            height=AMBIENT_REGION_HEIGHT,
+        )
+        hero.pack(fill="x")
+        hero.pack_propagate(False)
+        self.ambient_field = AmbientNumericField(hero)
+        self.ambient_field.place(x=0, y=0, relwidth=1, relheight=1)
+        overview = ttk.Label(hero, style="HomeSection.TLabel")
+        overview.place(x=0, rely=0.5, anchor="w")
         self._bind_widget(overview, "home.title")
         refresh = self._home_button(
-            top,
+            hero,
             "buttons.refresh",
             self._refresh_dashboard,
             primary=True,
         )
-        refresh.pack(side="right")
+        refresh.place(relx=1.0, x=-8, y=12, anchor="ne")
 
         self.home_summary = ttk.Frame(tab, style="Workspace.TFrame")
         self.home_summary.pack(fill="x", pady=(10, 12))
@@ -1490,6 +1750,7 @@ class ConsoleApp:
                 self.translator.t("dialog.running.close_body"),
             )
             return
+        self.ambient_field.shutdown()
         self.progress.stop()
         self.tasks.close()
         self.root.destroy()
