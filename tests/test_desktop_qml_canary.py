@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -75,6 +76,8 @@ def test_dashboard_arguments_require_explicit_absolute_settings(tmp_path):
     with pytest.raises(SystemExit):
         app.main(["--dashboard-smoke"])
     with pytest.raises(SystemExit):
+        app.main(["--dashboard-smoke-require-recent-runs"])
+    with pytest.raises(SystemExit):
         app.main(
             [
                 "--settings",
@@ -137,7 +140,7 @@ def test_canary_startup_source_has_no_eager_business_imports():
     assert imported.isdisjoint(BUSINESS_MODULES)
 
 
-def test_main_qml_is_minimal_and_exercises_dashboard_controller():
+def test_main_qml_exercises_dashboard_controller_and_generic_table():
     qml = (DESKTOP_ROOT / "qml" / "Main.qml").read_text(encoding="utf-8")
     assert "import QtQuick\n" in qml
     assert "import QtQuick.Controls\n" in qml
@@ -156,7 +159,12 @@ def test_main_qml_is_minimal_and_exercises_dashboard_controller():
     ):
         assert f'"{metric}"' in qml
     assert "recent_runs" not in qml
-    assert "TableView" not in qml
+    assert "HorizontalHeaderView" in qml
+    assert "TableView" in qml
+    assert 'objectName: "recentRunsTable"' in qml
+    assert 'objectName: "recentRunsHeader"' in qml
+    assert 'objectName: "recentRunsEmptyState"' in qml
+    assert "dashboardController.recentRunsModel" in qml
     assert "ApplicationWindow" in qml
     for forbidden in (
         "ConsoleBackend",
@@ -182,6 +190,78 @@ def test_bridge_property_signal_and_slot_round_trip():
     bridge.ping()
     assert bridge.status == "Python bridge OK"
     assert notifications == ["Python bridge OK"]
+
+
+def test_qml_loads_table_objects_and_tracks_empty_state(tmp_path):
+    pytest.importorskip("PySide6")
+    script = f"""
+import json
+from PySide6.QtCore import QUrl
+from PySide6.QtGui import QGuiApplication
+from PySide6.QtQml import QQmlApplicationEngine
+from PySide6.QtQuickControls2 import QQuickStyle
+from market_vault.console.models import TablePage
+from market_vault.desktop.bridge import DesktopBridge
+from market_vault.desktop.dashboard import DashboardController
+
+QQuickStyle.setStyle('Basic')
+app = QGuiApplication([])
+engine = QQmlApplicationEngine()
+bridge = DesktopBridge(parent=engine)
+dashboard = DashboardController(parent=engine)
+engine.rootContext().setContextProperty('desktopBridge', bridge)
+engine.rootContext().setContextProperty('dashboardController', dashboard)
+engine.load(QUrl.fromLocalFile({str(DESKTOP_ROOT / 'qml' / 'Main.qml')!r}))
+root = engine.rootObjects()[0]
+table = root.findChild(object, 'recentRunsTable')
+header = root.findChild(object, 'recentRunsHeader')
+empty = root.findChild(object, 'recentRunsEmptyState')
+app.processEvents()
+empty_before = bool(empty.property('visible'))
+model = dashboard.recentRunsModel
+model.set_page(TablePage(
+    columns=('run_id', 'status'),
+    rows=(('qml-run-1', 'SUCCESS'),),
+    total_rows=1,
+))
+app.processEvents()
+print(json.dumps({{
+    'table': table is not None,
+    'header': header is not None,
+    'empty': empty is not None,
+    'model_connected': table.property('model') == model,
+    'empty_before': empty_before,
+    'empty_after': bool(empty.property('visible')),
+    'rows': model.rowCount(),
+    'columns': model.columnCount(),
+}}))
+dashboard.shutdown()
+"""
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(ROOT / "src")
+    env["QT_QPA_PLATFORM"] = "offscreen"
+    env["QSG_RHI_BACKEND"] = "software"
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=tmp_path,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    evidence = json.loads(result.stdout.strip())
+    assert evidence == {
+        "table": True,
+        "header": True,
+        "empty": True,
+        "model_connected": True,
+        "empty_before": True,
+        "empty_after": False,
+        "rows": 1,
+        "columns": 2,
+    }
 
 
 def test_source_smoke_is_cwd_independent_and_side_effect_free(tmp_path):
@@ -292,7 +372,9 @@ def test_parallel_spec_and_build_script_do_not_cut_over_production():
     assert 'collect_submodules(' in canary_spec
     assert 'collect_data_files("moomoo"' in canary_spec
     assert "$DashboardSmokeSettings" in canary_build
+    assert "$DashboardSmokeRequireRecentRuns" in canary_build
     assert '"--dashboard-smoke"' in canary_build
+    assert '"--dashboard-smoke-require-recent-runs"' in canary_build
 
 
 def test_pyproject_keeps_qt_optional_and_packages_only_canary_qml():

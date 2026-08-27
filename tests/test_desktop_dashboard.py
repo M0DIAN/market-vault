@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from datetime import date, datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -14,8 +15,9 @@ import pytest
 
 
 PySide6 = pytest.importorskip("PySide6")
-from PySide6.QtCore import QCoreApplication, QThread
+from PySide6.QtCore import QCoreApplication, Qt, QThread
 
+from market_vault.console.models import TablePage
 from market_vault.desktop.dashboard import (
     DASHBOARD_METRIC_NAMES,
     DashboardController,
@@ -58,10 +60,21 @@ def _wait_until(qt_app, predicate, timeout: float = 5.0) -> None:
     qt_app.processEvents()
 
 
-def _snapshot(*, status: str = "SUCCESS"):
+def _snapshot(
+    *,
+    status: str = "SUCCESS",
+    rows: tuple[tuple[str, ...], ...] = (("run-1", "SUCCESS"),),
+):
     return SimpleNamespace(
         status=status,
         metrics={name: f"value:{index}" for index, name in enumerate(DASHBOARD_METRIC_NAMES)},
+        recent_runs=TablePage(
+            columns=("run_id", "status"),
+            rows=rows,
+            page=1,
+            page_size=20,
+            total_rows=len(rows),
+        ),
     )
 
 
@@ -76,6 +89,7 @@ def test_controller_is_lazy_and_unconfigured_refresh_fails_closed(qt_app, tmp_pa
     controller.dashboardFailed.connect(lambda: failures.append(controller.error))
 
     assert controller.backendConfigured is False
+    assert controller.recentRunsModel.rowCount() == 0
     assert controller.status == "UNCONFIGURED"
     assert controller.refresh() is False
     assert controller.status == "FAILED"
@@ -120,6 +134,13 @@ def test_success_is_consumed_on_controller_thread_and_backend_is_cached(qt_app, 
         poll_interval_ms=1,
     )
     controller.metricsChanged.connect(lambda: signal_threads.append(QThread.currentThread()))
+    model_identity = controller.recentRunsModel
+    loaded_cells = []
+    controller.dashboardLoaded.connect(
+        lambda: loaded_cells.append(
+            controller.recentRunsModel.data(controller.recentRunsModel.index(0, 0))
+        )
+    )
 
     assert created == []
     assert controller.refresh() is True
@@ -132,11 +153,15 @@ def test_success_is_consumed_on_controller_thread_and_backend_is_cached(qt_app, 
     assert created == [settings]
     assert backend_threads[0] != controller.thread()
     assert signal_threads == [controller.thread()]
+    assert controller.recentRunsModel is model_identity
+    assert controller.recentRunsModel.rowCount() == 1
+    assert loaded_cells == ["run-1"]
 
     assert controller.refresh() is True
     _wait_until(qt_app, lambda: not controller.busy)
     assert created == [settings]
     assert runner.submissions == 2
+    assert controller.recentRunsModel is model_identity
     controller.shutdown()
     assert runner.closed is True
 
@@ -197,6 +222,53 @@ def test_failure_is_consumed_on_controller_thread_and_retry_is_safe(qt_app, tmp_
     _wait_until(qt_app, lambda: not controller.busy)
     assert controller.status == "EMPTY"
     assert controller.error == ""
+    controller.shutdown()
+
+
+def test_successive_refreshes_reset_same_model_and_failure_retains_last_good(
+    qt_app, tmp_path
+):
+    runner = _Runner()
+    attempts = 0
+
+    class Backend:
+        def dashboard(self):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                return _snapshot(rows=(("run-1", "SUCCESS"),))
+            if attempts == 2:
+                return _snapshot(
+                    rows=(("run-2", "SUCCESS"), ("run-3", "FAILED"))
+                )
+            raise RuntimeError("later refresh failed")
+
+    controller = DashboardController(
+        settings_path=(tmp_path / "settings.yaml").resolve(),
+        backend_factory=lambda path: Backend(),
+        runner_factory=lambda: runner,
+        poll_interval_ms=1,
+    )
+    model = controller.recentRunsModel
+    reset_threads = []
+    model.modelReset.connect(lambda: reset_threads.append(QThread.currentThread()))
+
+    controller.refresh()
+    _wait_until(qt_app, lambda: not controller.busy)
+    assert model.data(model.index(0, 0)) == "run-1"
+
+    controller.refresh()
+    _wait_until(qt_app, lambda: not controller.busy)
+    assert controller.recentRunsModel is model
+    assert model.rowCount() == 2
+    assert model.data(model.index(0, 0)) == "run-2"
+
+    controller.refresh()
+    _wait_until(qt_app, lambda: not controller.busy)
+    assert controller.status == "FAILED"
+    assert model.rowCount() == 2
+    assert model.data(model.index(0, 0)) == "run-2"
+    assert reset_threads == [controller.thread(), controller.thread()]
     controller.shutdown()
 
 
@@ -284,6 +356,40 @@ def _write_sandbox_settings(root: Path) -> Path:
     return settings
 
 
+def _seed_dashboard_run_history(settings: Path):
+    from market_vault.api import MarketVault
+    from market_vault.models import DatasetRunManifest, RunManifest
+
+    vault = MarketVault(settings)
+    collection = RunManifest(
+        requested_trade_date=date(2026, 8, 21),
+        requested_symbols=["US.SPY"],
+        interval="1m",
+        session="ALL",
+        adjustment="NONE",
+        run_id="qml-3-collection-run",
+        started_at=datetime(2026, 8, 21, 19, 0, tzinfo=timezone.utc),
+        status="SUCCESS",
+        successful_symbols=["US.SPY"],
+        row_count=2,
+    )
+    collection.finished_at = datetime(2026, 8, 21, 20, 0, tzinfo=timezone.utc)
+    vault.catalog.record_run(collection)
+    dataset = DatasetRunManifest(
+        dataset="trading_calendar",
+        requested_items=["US"],
+        parameters={"fixture": "qml-3"},
+        run_id="qml-3-calendar-run",
+        started_at=datetime(2026, 8, 21, 19, 1, tzinfo=timezone.utc),
+        status="SUCCESS",
+        successful_items=["US"],
+        row_count=1,
+    )
+    dataset.finished_at = datetime(2026, 8, 21, 20, 1, tzinfo=timezone.utc)
+    vault.catalog.record_dataset_run(dataset)
+    return vault
+
+
 def test_source_dashboard_smoke_uses_real_backend_in_sandbox(tmp_path):
     sandbox = tmp_path / "dashboard sandbox"
     settings = _write_sandbox_settings(sandbox).resolve()
@@ -321,3 +427,128 @@ def test_source_dashboard_smoke_uses_real_backend_in_sandbox(tmp_path):
     assert not list(sandbox.rglob("*.parquet"))
     assert not (sandbox / "quarantine").exists()
     assert list(unrelated_cwd.iterdir()) == []
+
+
+def test_source_dashboard_smoke_recent_runs_requirement_fails_on_empty_catalog(
+    tmp_path,
+):
+    sandbox = tmp_path / "empty required dashboard sandbox"
+    settings = _write_sandbox_settings(sandbox).resolve()
+    unrelated_cwd = tmp_path / "empty required unrelated cwd"
+    unrelated_cwd.mkdir()
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(ROOT / "src")
+    env["QT_QPA_PLATFORM"] = "offscreen"
+    env["QSG_RHI_BACKEND"] = "software"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "market_vault.desktop.app",
+            "--settings",
+            str(settings),
+            "--dashboard-smoke",
+            "--dashboard-smoke-require-recent-runs",
+            "--dashboard-smoke-timeout-ms",
+            "20000",
+        ],
+        cwd=unrelated_cwd,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 5
+    assert result.stderr.strip() == "Dashboard smoke requires recent-run rows."
+    assert list(unrelated_cwd.iterdir()) == []
+    assert not list(sandbox.rglob("*.parquet"))
+    assert not (sandbox / "quarantine").exists()
+
+
+def test_source_dashboard_smoke_requires_seeded_real_run_history(tmp_path):
+    sandbox = tmp_path / "nonempty dashboard sandbox"
+    settings = _write_sandbox_settings(sandbox).resolve()
+    vault = _seed_dashboard_run_history(settings)
+
+    unrelated_cwd = tmp_path / "nonempty unrelated cwd"
+    unrelated_cwd.mkdir()
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(ROOT / "src")
+    env["QT_QPA_PLATFORM"] = "offscreen"
+    env["QSG_RHI_BACKEND"] = "software"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "market_vault.desktop.app",
+            "--settings",
+            str(settings),
+            "--dashboard-smoke",
+            "--dashboard-smoke-require-recent-runs",
+            "--dashboard-smoke-timeout-ms",
+            "20000",
+        ],
+        cwd=unrelated_cwd,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stderr
+    page = vault.load_run_history_page(page_size=20)
+    assert page.total_rows == 2
+    assert set(page.data["run_id"]) == {
+        "qml-3-collection-run",
+        "qml-3-calendar-run",
+    }
+    assert len(page.data.columns) > 1
+    assert list(unrelated_cwd.iterdir()) == []
+    assert not list(sandbox.rglob("*.parquet"))
+    assert not (sandbox / "quarantine").exists()
+
+
+def test_real_backend_roundtrip_populates_known_headers_and_cells(qt_app, tmp_path):
+    sandbox = tmp_path / "real backend model sandbox"
+    settings = _write_sandbox_settings(sandbox).resolve()
+    _seed_dashboard_run_history(settings)
+    runner = _Runner()
+    controller = DashboardController(
+        settings_path=settings,
+        runner_factory=lambda: runner,
+        poll_interval_ms=1,
+    )
+
+    assert controller.refresh() is True
+    _wait_until(qt_app, lambda: not controller.busy)
+
+    model = controller.recentRunsModel
+    assert controller.status == "EMPTY"
+    assert model.rowCount() == 2
+    assert model.columnCount() == 9
+    headers = [
+        model.headerData(index, Qt.Orientation.Horizontal)
+        for index in range(model.columnCount())
+    ]
+    assert headers == [
+        "run_kind",
+        "dataset",
+        "run_id",
+        "started_at",
+        "finished_at",
+        "status",
+        "row_count",
+        "requested_items",
+        "errors",
+    ]
+    run_id_column = headers.index("run_id")
+    assert {
+        model.data(model.index(row, run_id_column))
+        for row in range(model.rowCount())
+    } == {"qml-3-collection-run", "qml-3-calendar-run"}
+    assert model.totalRows == 2
+    controller.shutdown()

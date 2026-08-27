@@ -8,6 +8,8 @@ from typing import Any, Callable
 
 from PySide6.QtCore import Property, QObject, QThread, QTimer, Signal, Slot
 
+from market_vault.desktop.table_model import QtTableModel
+
 
 DASHBOARD_METRIC_NAMES = (
     "Symbols",
@@ -67,6 +69,7 @@ class DashboardController(QObject):
         self._status = "READY" if self._settings_path is not None else "UNCONFIGURED"
         self._error = ""
         self._metrics = {name: "-" for name in DASHBOARD_METRIC_NAMES}
+        self._recent_runs_model = QtTableModel(parent=self)
         self._closed = False
         self._poll_timer = QTimer(self)
         self._poll_timer.setInterval(poll_interval_ms)
@@ -91,6 +94,10 @@ class DashboardController(QObject):
     @Property("QVariantMap", notify=metricsChanged)
     def metrics(self) -> dict[str, str]:
         return dict(self._metrics)
+
+    @Property(QObject, constant=True)
+    def recentRunsModel(self) -> QObject:  # noqa: N802 - QML property name
+        return self._recent_runs_model
 
     @Property(bool, constant=True)
     def backendConfigured(self) -> bool:  # noqa: N802 - QML property name
@@ -170,11 +177,16 @@ class DashboardController(QObject):
             self._finish_failure(exc)
             return
 
-        metrics = {
-            name: str(snapshot.metrics.get(name, "-"))
-            for name in DASHBOARD_METRIC_NAMES
-        }
-        self._set_metrics(metrics)
+        try:
+            metrics = {
+                name: str(snapshot.metrics.get(name, "-"))
+                for name in DASHBOARD_METRIC_NAMES
+            }
+            self._set_metrics(metrics)
+            self._recent_runs_model.set_page(snapshot.recent_runs)
+        except Exception as exc:
+            self._finish_failure(exc)
+            return
         self._set_error("")
         self._set_status(str(snapshot.status))
         self._set_busy(False)
