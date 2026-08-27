@@ -7,6 +7,14 @@ PROJECT_ROOT = Path(SPECPATH).resolve().parent
 SOURCE_ROOT = PROJECT_ROOT / "src"
 ENTRY_POINT = SOURCE_ROOT / "market_vault" / "desktop" / "app.py"
 QML_ENTRY_POINT = SOURCE_ROOT / "market_vault" / "desktop" / "qml" / "Main.qml"
+QML_COMPONENTS = [
+    SOURCE_ROOT / "market_vault" / "desktop" / "qml" / "components" / name
+    for name in ("LanguageSwitcher.qml", "Sidebar.qml")
+]
+QML_PAGES = [
+    SOURCE_ROOT / "market_vault" / "desktop" / "qml" / "pages" / name
+    for name in ("HomePage.qml", "PlaceholderPage.qml")
+]
 WINDOWS_ICON = PROJECT_ROOT / "assets" / "windows" / "market-vault.ico"
 HOOKS_ROOT = PROJECT_ROOT / "packaging" / "hooks"
 
@@ -39,6 +47,14 @@ analysis = Analysis(
     datas=collect_data_files("moomoo", include_py_files=False)
     + [
         (str(QML_ENTRY_POINT), "market_vault/desktop/qml"),
+        *[
+            (str(path), "market_vault/desktop/qml/components")
+            for path in QML_COMPONENTS
+        ],
+        *[
+            (str(path), "market_vault/desktop/qml/pages")
+            for path in QML_PAGES
+        ],
         (str(WINDOWS_ICON), "assets/windows"),
     ],
     hiddenimports=hidden_imports,
