@@ -63,12 +63,8 @@ class DesktopOperationRuntime(QObject):
         self._application_context = application_context
         self._backend_factory = backend_factory or _production_backend_factory
         self._runner_factory = runner_factory or _production_runner_factory
-        self._backend: Any | None = (
-            application_context.backend if application_context is not None else None
-        )
-        self._runner: Any | None = (
-            application_context.task_runner if application_context is not None else None
-        )
+        self._backend: Any | None = None
+        self._runner: Any | None = None
         self._owns_runner = application_context is None
         self._future: Future[Any] | None = None
         self._success: Callable[[Any], None] | None = None
@@ -117,11 +113,18 @@ class DesktopOperationRuntime(QObject):
     def application_context(self) -> Any | None:
         return self._application_context
 
+    @property
+    def task_runner_if_initialized(self) -> Any | None:
+        return self._runner
+
     def _backend_operation(self, operation: Callable[[Any], Any]) -> Any:
         if self._backend is None:
-            if self._settings_path is None:
+            if self._application_context is not None:
+                self._backend = self._application_context.get_backend()
+            elif self._settings_path is None:
                 raise RuntimeError("Desktop settings are not configured.")
-            self._backend = self._backend_factory(self._settings_path)
+            else:
+                self._backend = self._backend_factory(self._settings_path)
         return operation(self._backend)
 
     def submit(
@@ -145,7 +148,10 @@ class DesktopOperationRuntime(QObject):
         self.statusChanged.emit()
         try:
             if self._runner is None:
-                self._runner = self._runner_factory()
+                if self._application_context is not None:
+                    self._runner = self._application_context.get_task_runner()
+                else:
+                    self._runner = self._runner_factory()
             self._future = self._runner.submit(
                 name, lambda: self._backend_operation(operation)
             )

@@ -45,8 +45,16 @@ class QmlApplicationSession:
 
         if self.runtime.application_context is not self.context:
             raise RuntimeError("QML runtime is not bound to the application context.")
-        if self.runtime.backend_if_initialized is not self.context.backend:
+        if (
+            self.runtime.backend_if_initialized
+            is not self.context.backend_if_initialized
+        ):
             raise RuntimeError("QML runtime is not bound to the shared backend.")
+        if (
+            self.runtime.task_runner_if_initialized
+            is not self.context.task_runner_if_initialized
+        ):
+            raise RuntimeError("QML runtime is not bound to the shared task runner.")
         qml_context = self.engine.rootContext()
         for name, value in self.context_properties.items():
             if qml_context.contextProperty(name) is not value:

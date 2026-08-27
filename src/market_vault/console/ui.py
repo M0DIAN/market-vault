@@ -1779,10 +1779,10 @@ def run_console(settings_path: str) -> int:
     try:
         ConsoleApp(
             root,
-            context.backend,
+            context.get_backend(),
             str(context.settings_path),
             preference_store=preference_store,
-            task_runner=context.task_runner,
+            task_runner=context.get_task_runner(),
             shutdown_callback=context.shutdown,
         )
         root.mainloop()

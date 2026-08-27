@@ -10,7 +10,6 @@ from market_vault.application import (
     configure_application_logging,
     resolve_application_settings_path,
 )
-from market_vault.console.backend import ConsoleBackend
 
 
 def _write_settings(root: Path) -> Path:
@@ -43,7 +42,7 @@ class _Runner:
         self.close_count += 1
 
 
-def test_application_context_constructs_one_dependency_graph_and_closes_once(tmp_path):
+def test_application_context_constructs_dependencies_lazily_and_closes_once(tmp_path):
     settings_path = tmp_path / "deep path" / "settings.yaml"
     settings = SimpleNamespace(name="settings")
     runner = _Runner()
@@ -59,6 +58,14 @@ def test_application_context_constructs_one_dependency_graph_and_closes_once(tmp
 
     assert context.settings_path == settings_path.resolve()
     assert context.settings is settings
+    assert seen == [("settings", settings_path.resolve())]
+    assert context.backend_if_initialized is None
+    assert context.task_runner_if_initialized is None
+
+    backend = context.get_backend()
+    assert context.get_backend() is backend
+    assert context.get_task_runner() is runner
+    assert context.get_task_runner() is runner
     assert seen == [
         ("settings", settings_path.resolve()),
         ("backend", settings),
@@ -89,20 +96,43 @@ def test_ui_neutral_settings_resolver_handles_source_and_frozen_paths(tmp_path):
     ) == (executable.parent / "config" / "settings.yaml").resolve()
 
 
-def test_production_context_uses_existing_backend_without_runtime_mutation(tmp_path):
+def test_production_context_construction_is_filesystem_side_effect_free_and_lazy(
+    tmp_path,
+):
     sandbox = tmp_path / "bootstrap sandbox"
     settings_path = _write_settings(sandbox)
 
     context = build_application_context(settings_path)
     try:
-        assert isinstance(context.backend, ConsoleBackend)
-        assert context.backend.vault.settings is context.settings
         assert context.settings_path == settings_path.resolve()
-        assert context.backend.vault.catalog.settings is context.settings
-        assert not (sandbox / "catalog" / "market_vault.duckdb").exists()
+        assert context.backend_if_initialized is None
+        assert context.task_runner_if_initialized is None
+        assert not (sandbox / "data").exists()
+        assert not (sandbox / "catalog").exists()
+        assert not (sandbox / "manifests").exists()
+        assert not (sandbox / "reports").exists()
         assert not list(sandbox.rglob("*.parquet"))
     finally:
         context.shutdown()
+
+    assert context.backend_if_initialized is None
+    assert context.task_runner_if_initialized is None
+
+
+def test_uninitialized_context_shutdown_does_not_construct_dependencies(tmp_path):
+    calls = []
+    context = build_application_context(
+        tmp_path / "settings.yaml",
+        settings_loader=lambda path: object(),
+        backend_factory=lambda settings: calls.append("backend"),
+        runner_factory=lambda: calls.append("runner"),
+    )
+
+    context.shutdown()
+    context.shutdown()
+
+    assert context.closed is True
+    assert calls == []
 
 
 def test_application_logging_is_initialized_without_file_handler():
@@ -123,6 +153,6 @@ def test_tk_console_consumes_the_shared_application_context():
     ).read_text(encoding="utf-8")
 
     assert "context = build_application_context(settings_path)" in source
-    assert "context.backend" in source
-    assert "task_runner=context.task_runner" in source
+    assert "context.get_backend()" in source
+    assert "task_runner=context.get_task_runner()" in source
     assert "shutdown_callback=context.shutdown" in source

@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 import logging
 from pathlib import Path
 import sys
+from threading import Lock
 from typing import Any, Callable
 
 
@@ -61,26 +62,63 @@ def _production_task_runner() -> Any:
 
 @dataclass
 class ApplicationContext:
-    """One process-wide backend/runner pair shared by a desktop UI."""
+    """One process-wide lazy backend/runner pair shared by a desktop UI."""
 
     settings_path: Path
     settings: Any
-    backend: Any
-    task_runner: Any
     logger: logging.Logger
+    backend_factory: Callable[[Any], Any] = field(repr=False)
+    runner_factory: Callable[[], Any] = field(repr=False)
+    _backend: Any | None = field(default=None, init=False, repr=False)
+    _task_runner: Any | None = field(default=None, init=False, repr=False)
     _closed: bool = field(default=False, init=False, repr=False)
+    _lock: Lock = field(default_factory=Lock, init=False, repr=False)
 
     @property
     def closed(self) -> bool:
-        return self._closed
+        with self._lock:
+            return self._closed
+
+    @property
+    def backend_if_initialized(self) -> Any | None:
+        with self._lock:
+            return self._backend
+
+    @property
+    def task_runner_if_initialized(self) -> Any | None:
+        with self._lock:
+            return self._task_runner
+
+    def get_backend(self) -> Any:
+        """Create the process backend on first explicit business access."""
+
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("Application context is closed.")
+            if self._backend is None:
+                self._backend = self.backend_factory(self.settings)
+            return self._backend
+
+    def get_task_runner(self) -> Any:
+        """Create the process task runner on first explicit business access."""
+
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("Application context is closed.")
+            if self._task_runner is None:
+                self._task_runner = self.runner_factory()
+            return self._task_runner
 
     def shutdown(self) -> None:
         """Release process-owned resources exactly once."""
 
-        if self._closed:
-            return
-        self.task_runner.close()
-        self._closed = True
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            task_runner = self._task_runner
+        if task_runner is not None:
+            task_runner.close()
 
 
 def build_application_context(
@@ -98,13 +136,11 @@ def build_application_context(
     resolved_settings = Path(settings_path).expanduser().resolve()
     loader = settings_loader or load_settings
     settings = loader(resolved_settings)
-    backend = (backend_factory or _production_backend)(settings)
     logger = (logging_factory or configure_application_logging)()
-    runner = (runner_factory or _production_task_runner)()
     return ApplicationContext(
         settings_path=resolved_settings,
         settings=settings,
-        backend=backend,
-        task_runner=runner,
         logger=logger,
+        backend_factory=backend_factory or _production_backend,
+        runner_factory=runner_factory or _production_task_runner,
     )
