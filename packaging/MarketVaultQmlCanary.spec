@@ -6,6 +6,7 @@ SOURCE_ROOT = PROJECT_ROOT / "src"
 ENTRY_POINT = SOURCE_ROOT / "market_vault" / "desktop" / "app.py"
 QML_ENTRY_POINT = SOURCE_ROOT / "market_vault" / "desktop" / "qml" / "Main.qml"
 WINDOWS_ICON = PROJECT_ROOT / "assets" / "windows" / "market-vault.ico"
+HOOKS_ROOT = PROJECT_ROOT / "packaging" / "hooks"
 
 analysis = Analysis(
     [str(ENTRY_POINT)],
@@ -22,7 +23,7 @@ analysis = Analysis(
         "PySide6.QtQuick",
         "PySide6.QtQuickControls2",
     ],
-    hookspath=[],
+    hookspath=[str(HOOKS_ROOT)],
     hooksconfig={},
     runtime_hooks=[],
     excludes=[

@@ -182,6 +182,9 @@ def test_parallel_spec_and_build_script_do_not_cut_over_production():
     canary_build = (
         ROOT / "scripts" / "build_windows_qml_canary.ps1"
     ).read_text(encoding="utf-8")
+    canary_hook = (
+        ROOT / "packaging" / "hooks" / "hook-PySide6.QtQml.py"
+    ).read_text(encoding="utf-8")
 
     assert 'name="MarketVault"' in production_spec
     assert "MarketVaultQmlCanary" not in production_spec
@@ -190,6 +193,11 @@ def test_parallel_spec_and_build_script_do_not_cut_over_production():
     assert 'name="MarketVaultQmlCanary"' in canary_spec
     assert "MarketVaultQmlCanary.exe" in canary_build
     assert "collect_all" not in canary_spec
+    assert 'hookspath=[str(HOOKS_ROOT)]' in canary_spec
+    assert "collect_qtqml_files" not in canary_hook
+    assert '"QtQuick/Controls/Basic"' in canary_hook
+    for unneeded_style in ("Fusion", "Imagine", "Material", "Universal"):
+        assert f'"QtQuick/Controls/{unneeded_style}"' not in canary_hook
     assert "$OriginalPath = $env:PATH" in canary_build
     assert "$env:PATH = $OriginalPath" in canary_build
     assert "build_path_sanitized = $true" in canary_build

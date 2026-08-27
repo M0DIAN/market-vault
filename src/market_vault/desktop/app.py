@@ -56,6 +56,7 @@ def run_application(*, smoke_exit_ms: int | None = None) -> int:
     from PySide6.QtCore import QTimer, QUrl
     from PySide6.QtGui import QGuiApplication
     from PySide6.QtQml import QQmlApplicationEngine
+    from PySide6.QtQuickControls2 import QQuickStyle
 
     from market_vault.desktop.bridge import DesktopBridge
 
@@ -63,6 +64,7 @@ def run_application(*, smoke_exit_ms: int | None = None) -> int:
     if not qml_path.is_file():
         raise RuntimeError(f"QML entry point is missing: {qml_path}")
 
+    QQuickStyle.setStyle("Basic")
     application = QGuiApplication([sys.argv[0]])
     application.setApplicationName("MarketVault QML Canary")
     engine = QQmlApplicationEngine()
