@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import builtins
+import importlib.util
 import json
 from pathlib import Path
 
@@ -10,6 +12,33 @@ from market_vault.desktop.preferences import (
     DESKTOP_PREFERENCE_SCHEMA,
     DesktopPreferenceStore,
 )
+
+
+class _SuccessfulSaveFile:
+    def __init__(self, destination: str) -> None:
+        self._destination = Path(destination)
+        self._data = b""
+
+    def setDirectWriteFallback(self, enabled: bool) -> None:
+        assert enabled is False
+
+    def open(self, mode: object) -> bool:
+        return True
+
+    def write(self, data: bytes) -> int:
+        self._data = bytes(data)
+        return len(data)
+
+    def commit(self) -> bool:
+        self._destination.write_bytes(self._data)
+        return True
+
+    def cancelWriting(self) -> None:
+        raise AssertionError("successful save must not be cancelled")
+
+
+def _test_store(*, root: Path | None = None) -> DesktopPreferenceStore:
+    return DesktopPreferenceStore(root=root, save_file_factory=_SuccessfulSaveFile)
 
 
 @pytest.mark.parametrize(
@@ -34,7 +63,7 @@ def test_missing_or_invalid_preferences_fail_safely_to_english(tmp_path, content
 
 @pytest.mark.parametrize("language", ["en", "zh-CN"])
 def test_supported_language_save_and_load_uses_exact_schema(tmp_path, language):
-    store = DesktopPreferenceStore(root=tmp_path)
+    store = _test_store(root=tmp_path)
 
     assert store.save_language(language) is True
     assert json.loads(store.path.read_text(encoding="utf-8")) == {
@@ -45,7 +74,7 @@ def test_supported_language_save_and_load_uses_exact_schema(tmp_path, language):
 
 
 def test_latest_supported_language_wins_and_unsupported_save_is_rejected(tmp_path):
-    store = DesktopPreferenceStore(root=tmp_path)
+    store = _test_store(root=tmp_path)
 
     assert store.save_language("zh-CN") is True
     original = store.path.read_bytes()
@@ -69,7 +98,7 @@ def test_injected_root_is_cwd_independent_and_isolated(monkeypatch, tmp_path):
     unrelated.mkdir()
     monkeypatch.chdir(unrelated)
 
-    store = DesktopPreferenceStore(root=root)
+    store = _test_store(root=root)
     assert store.path == root / "desktop-preferences.json"
     assert store.save_language("zh-CN") is True
     assert not list(unrelated.iterdir())
@@ -144,7 +173,24 @@ def test_atomic_save_disables_direct_fallback_and_failed_commit_retains_bytes(tm
     assert created[0].cancelled is True
 
 
+def test_missing_qt_save_runtime_fails_closed_without_creating_file(monkeypatch, tmp_path):
+    real_import = builtins.__import__
+
+    def guarded_import(name, *args, **kwargs):
+        if name == "PySide6.QtCore":
+            raise ModuleNotFoundError("PySide6 is unavailable")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    store = DesktopPreferenceStore(root=tmp_path)
+
+    assert store.save_language("zh-CN") is False
+    assert store.path.exists() is False
+
+
 def test_successful_atomic_save_leaves_no_temporary_residue(tmp_path):
+    if importlib.util.find_spec("PySide6") is None:
+        pytest.skip("real QSaveFile success requires the desktop extra")
     store = DesktopPreferenceStore(root=tmp_path)
     assert store.save_language("zh-CN") is True
     assert [path.name for path in tmp_path.iterdir()] == ["desktop-preferences.json"]

@@ -78,12 +78,17 @@ class DesktopPreferenceStore:
         )
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
-            from PySide6.QtCore import QIODevice, QSaveFile
+            if self._save_file_factory is None:
+                from PySide6.QtCore import QIODevice, QSaveFile
 
-            factory = self._save_file_factory or QSaveFile
+                factory = QSaveFile
+                write_only_mode = QIODevice.OpenModeFlag.WriteOnly
+            else:
+                factory = self._save_file_factory
+                write_only_mode = 2
             save_file = factory(str(self._path))
             save_file.setDirectWriteFallback(False)
-            if not save_file.open(QIODevice.OpenModeFlag.WriteOnly):
+            if not save_file.open(write_only_mode):
                 return False
             committed = False
             try:
@@ -94,5 +99,5 @@ class DesktopPreferenceStore:
             finally:
                 if not committed:
                     save_file.cancelWriting()
-        except (OSError, RuntimeError, TypeError, ValueError):
+        except (ImportError, OSError, RuntimeError, TypeError, ValueError):
             return False
