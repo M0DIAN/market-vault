@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import re
 from types import SimpleNamespace
 
 from market_vault.console.i18n import LANGUAGE_NAMES, LocalizationBindings, Translator
@@ -14,6 +15,12 @@ from market_vault.console.shell import (
     dashboard_home_state,
 )
 from market_vault.console.ui import (
+    AMBIENT_GLYPH_SPACING,
+    AMBIENT_MAX_GLYPHS,
+    AMBIENT_PHASE_STEP,
+    AMBIENT_REGION_HEIGHT,
+    AMBIENT_UPDATE_INTERVAL_MS,
+    AmbientNumericField,
     ActivityIndicator,
     APP_BG,
     CARD_BG,
@@ -42,6 +49,12 @@ from market_vault.console.ui import (
     WORKSPACE_BG,
     ConsoleApp,
     TableView,
+    ambient_digit,
+    ambient_field_value,
+    ambient_fill,
+    ambient_grid_positions,
+    ambient_visibility,
+    blend_color,
     compact_settings_path,
     configure_table_styles,
 )
@@ -149,6 +162,26 @@ class FakeInfoBinding:
         self.values = values
 
 
+class FakeAmbientField:
+    def __init__(self):
+        self.running = False
+        self.start_count = 0
+        self.stop_count = 0
+
+    def start(self):
+        if not self.running:
+            self.running = True
+            self.start_count += 1
+
+    def stop(self):
+        if self.running:
+            self.running = False
+            self.stop_count += 1
+
+    def shutdown(self):
+        self.stop()
+
+
 def make_table_view(localization: LocalizationBindings | None = None) -> TableView:
     localization = localization or LocalizationBindings(Translator("en"))
     view = TableView.__new__(TableView)
@@ -186,6 +219,35 @@ def make_activity_indicator() -> tuple[ActivityIndicator, list[str], list[tuple[
     indicator.after = after
     indicator.after_cancel = cancelled.append
     return indicator, cancelled, scheduled
+
+
+def make_ambient_field() -> tuple[
+    AmbientNumericField,
+    list[str],
+    list[tuple[int, object]],
+    list[tuple[object, dict[str, str]]],
+]:
+    field = object.__new__(AmbientNumericField)
+    field._update_interval_ms = AMBIENT_UPDATE_INTERVAL_MS
+    field._max_glyphs = AMBIENT_MAX_GLYPHS
+    field._phase = 0.0
+    field._running = False
+    field._after_job = None
+    field._resize_job = None
+    field._destroyed = False
+    field._glyphs = [("glyph-1", 4, 2, 0.8)]
+    cancelled = []
+    scheduled = []
+    configured = []
+
+    def after(interval, callback):
+        scheduled.append((interval, callback))
+        return f"ambient-job-{len(scheduled)}"
+
+    field.after = after
+    field.after_cancel = cancelled.append
+    field.itemconfigure = lambda item, **options: configured.append((item, options))
+    return field, cancelled, scheduled, configured
 
 
 def make_navigation_app() -> ConsoleApp:
@@ -362,6 +424,35 @@ def test_live_language_switch_refreshes_every_shell_home_binding_before_return()
     assert all(app.pages[key] is value for key, value in original_pages.items())
 
 
+def test_language_switch_preserves_running_ambient_field_without_backend_query():
+    class Variable:
+        value = LANGUAGE_NAMES["en"]
+
+        def get(self):
+            return self.value
+
+    app = ConsoleApp.__new__(ConsoleApp)
+    app.translator = Translator("en")
+    app.localization = LocalizationBindings(app.translator)
+    app.language_name = Variable()
+    app.preference_store = SimpleNamespace(save_language=lambda _locale: None)
+    app._configure_fonts = lambda: None
+    app.root = SimpleNamespace(update_idletasks=lambda: None)
+    app.ambient_field = FakeAmbientField()
+    app.ambient_field.start()
+    original_field = app.ambient_field
+    app.backend = SimpleNamespace(dashboard=lambda: (_ for _ in ()).throw(AssertionError()))
+
+    for locale in ("zh-CN", "ja", "en"):
+        app.language_name.value = LANGUAGE_NAMES[locale]
+        app._change_language()
+
+    assert app.ambient_field is original_field
+    assert app.ambient_field.running is True
+    assert app.ambient_field.start_count == 1
+    assert app.ambient_field.stop_count == 0
+
+
 def test_navigation_method_has_no_business_or_network_operation():
     source = inspect.getsource(ConsoleApp.select_page)
     forbidden = ("backend", "OpenD", "backfill", "purge_execute", "_submit")
@@ -425,6 +516,169 @@ def test_custom_activity_indicator_repeated_start_stop_is_callback_safe():
     assert indicator.is_active is False
     assert indicator._after_job is None
     assert indicator.canvas.options["state"] == "hidden"
+
+
+def test_ambient_binary_field_math_is_deterministic_continuous_and_binary():
+    coordinates = (7.25, 3.5, 1.125)
+    first = ambient_field_value(*coordinates)
+
+    assert ambient_field_value(*coordinates) == first
+    assert abs(ambient_field_value(7.251, 3.5, 1.125) - first) < 0.01
+    assert abs(ambient_field_value(7.25, 3.5, 1.126) - first) < 0.01
+    assert {
+        ambient_digit(column, row, phase)
+        for column in range(20)
+        for row in range(8)
+        for phase in (0.0, 0.5, 1.0)
+    } == {"0", "1"}
+    source = inspect.getsource(AmbientNumericField)
+    assert "random" not in source.lower()
+    assert 'delete("all")' not in source
+
+
+def test_ambient_visibility_and_color_blending_are_bounded_and_monotonic():
+    samples = [ambient_visibility(index / 20) for index in range(21)]
+
+    assert samples == sorted(samples)
+    assert samples[0] == 0.0
+    assert samples[-1] == 1.0
+    assert all(0.0 <= sample <= 1.0 for sample in samples)
+    assert blend_color("#000000", "#FFFFFF", 0.0) == "#FFFFFF"
+    assert blend_color("#000000", "#FFFFFF", 1.0) == "#000000"
+    assert blend_color("#000000", "#FFFFFF", -1.0) == "#FFFFFF"
+    assert blend_color("#000000", "#FFFFFF", 2.0) == "#000000"
+    for horizontal_fraction in (0.0, 0.3, 0.55, 1.0):
+        assert re.fullmatch(
+            r"#[0-9A-F]{6}",
+            ambient_fill(3, 5, 0.75, horizontal_fraction),
+        )
+
+
+def test_ambient_grid_is_stable_responsive_and_hard_capped():
+    default = ambient_grid_positions(1000, AMBIENT_REGION_HEIGHT)
+    repeated = ambient_grid_positions(1000, AMBIENT_REGION_HEIGHT)
+    minimum = ambient_grid_positions(800, AMBIENT_REGION_HEIGHT)
+    large = ambient_grid_positions(5000, 2000)
+
+    assert default == repeated
+    assert 0 < len(minimum) < len(default)
+    assert len(large) <= AMBIENT_MAX_GLYPHS
+    assert all(0 <= item[2] < 5000 and 0 <= item[3] < 2000 for item in large)
+    assert AMBIENT_GLYPH_SPACING == 22
+    assert AMBIENT_MAX_GLYPHS <= 1500
+
+
+def test_ambient_start_stop_is_idempotent_and_does_not_leak_after_loops():
+    field, cancelled, scheduled, configured = make_ambient_field()
+
+    field.start()
+    field.start()
+
+    assert field.is_active is True
+    assert len(scheduled) == 1
+    assert scheduled[0][0] == AMBIENT_UPDATE_INTERVAL_MS == 120
+    assert configured[-1][1]["text"] in {"0", "1"}
+    scheduled[0][1]()
+    assert field._phase == AMBIENT_PHASE_STEP
+    assert len(scheduled) == 2
+
+    field.stop()
+    field.stop()
+
+    assert field.is_active is False
+    assert field._after_job is None
+    assert cancelled == ["ambient-job-2"]
+
+
+def test_ambient_shutdown_cancels_active_and_resize_callbacks():
+    field, cancelled, scheduled, _configured = make_ambient_field()
+    field.start()
+    field._resize_job = "resize-job"
+
+    field.shutdown()
+    field.shutdown()
+
+    assert field._destroyed is True
+    assert field.is_active is False
+    assert field._after_job is None
+    assert field._resize_job is None
+    assert cancelled == ["ambient-job-1", "resize-job"]
+    assert len(scheduled) == 1
+
+
+def test_home_navigation_pauses_and_resumes_one_ambient_loop():
+    app = make_navigation_app()
+    app.ambient_field = FakeAmbientField()
+
+    app.select_page(PageId.HOME)
+    app.select_page(PageId.HOME)
+    app.select_page(PageId.MARKET_DATA)
+    app.select_page(PageId.INVENTORY)
+    app.select_page(PageId.HOME)
+
+    assert app.ambient_field.running is True
+    assert app.ambient_field.start_count == 2
+    assert app.ambient_field.stop_count == 1
+
+
+def test_notebook_page_change_uses_same_home_ambient_lifecycle():
+    app = make_navigation_app()
+    app.ambient_field = FakeAmbientField()
+    app._page_ids_by_widget = {str(widget): page_id for page_id, widget in app.pages.items()}
+
+    app.notebook.select(app.pages[PageId.HOME])
+    app._notebook_page_changed()
+    app.notebook.select(app.pages[PageId.RUNS])
+    app._notebook_page_changed()
+    app.notebook.select(app.pages[PageId.HOME])
+    app._notebook_page_changed()
+
+    assert app.ambient_field.running is True
+    assert app.ambient_field.start_count == 2
+    assert app.ambient_field.stop_count == 1
+
+
+def test_close_stops_ambient_callback_before_destroying_window():
+    events = []
+    app = ConsoleApp.__new__(ConsoleApp)
+    app._busy = False
+    app.ambient_field = SimpleNamespace(
+        shutdown=lambda: events.append("ambient-shutdown")
+    )
+    app.progress = SimpleNamespace(stop=lambda: events.append("progress-stop"))
+    app.tasks = SimpleNamespace(close=lambda: events.append("tasks-close"))
+    app.root = SimpleNamespace(destroy=lambda: events.append("root-destroy"))
+
+    app._close()
+
+    assert events == [
+        "ambient-shutdown",
+        "progress-stop",
+        "tasks-close",
+        "root-destroy",
+    ]
+
+
+def test_ambient_component_is_home_only_and_has_no_business_boundary_access():
+    component = inspect.getsource(AmbientNumericField)
+    dashboard = inspect.getsource(ConsoleApp._build_dashboard)
+    lifecycle = inspect.getsource(ConsoleApp._sync_home_ambient_state)
+
+    assert "AmbientNumericField(hero)" in dashboard
+    assert "PageId.HOME" in lifecycle
+    for forbidden in (
+        "backend",
+        "OpenD",
+        "network",
+        "DuckDB",
+        "Parquet",
+        "manifest",
+        "preference",
+        "SerialTaskRunner",
+        "asyncio",
+        "thread",
+    ):
+        assert forbidden.lower() not in component.lower()
 
 
 def test_completed_and_failed_paths_clear_activity_before_presenting_result():
