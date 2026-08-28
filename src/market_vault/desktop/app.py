@@ -62,13 +62,22 @@ def resolve_desktop_settings_path(
     )
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run the MarketVault QML desktop.")
+def add_application_arguments(
+    parser: argparse.ArgumentParser,
+    *,
+    hide_internal_smoke_options: bool = False,
+) -> argparse.ArgumentParser:
+    """Add the shared desktop arguments to a source or frozen launcher parser."""
+
+    smoke_help = argparse.SUPPRESS if hide_internal_smoke_options else None
     parser.add_argument(
         "--smoke-exit-ms",
         type=smoke_exit_milliseconds,
         default=None,
-        help="Exit automatically after a bounded number of milliseconds.",
+        help=(
+            smoke_help
+            or "Exit automatically after a bounded number of milliseconds."
+        ),
     )
     parser.add_argument(
         "--settings",
@@ -78,20 +87,42 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--dashboard-smoke",
         action="store_true",
-        help="Refresh the dashboard once and exit according to the result.",
+        help=(
+            smoke_help
+            or "Refresh the dashboard once and exit according to the result."
+        ),
     )
     parser.add_argument(
         "--dashboard-smoke-timeout-ms",
         type=dashboard_smoke_timeout_milliseconds,
         default=DEFAULT_DASHBOARD_SMOKE_TIMEOUT_MS,
-        help="Bounded timeout for --dashboard-smoke.",
+        help=smoke_help or "Bounded timeout for --dashboard-smoke.",
     )
     parser.add_argument(
         "--dashboard-smoke-require-recent-runs",
         action="store_true",
-        help="Require at least one recent-run row before dashboard smoke succeeds.",
+        help=(
+            smoke_help
+            or "Require at least one recent-run row before dashboard smoke succeeds."
+        ),
     )
     return parser
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Run the MarketVault QML desktop.")
+    return add_application_arguments(parser)
+
+
+def validate_application_arguments(
+    parser: argparse.ArgumentParser, args: argparse.Namespace
+) -> None:
+    """Validate relationships shared by source and production launchers."""
+
+    if args.dashboard_smoke and args.smoke_exit_ms is not None:
+        parser.error("--dashboard-smoke cannot be combined with --smoke-exit-ms")
+    if args.dashboard_smoke_require_recent_runs and not args.dashboard_smoke:
+        parser.error("--dashboard-smoke-require-recent-runs requires --dashboard-smoke")
 
 
 def resolve_qml_path(*, frozen_root: Path | None = None) -> Path:
@@ -135,7 +166,7 @@ def run_application(
     QQuickStyle.setStyle("Basic")
     try:
         application = QGuiApplication([sys.argv[0]])
-        application.setApplicationName("MarketVault QML")
+        application.setApplicationName("MarketVault")
         engine = QQmlApplicationEngine()
         session = create_qml_application_session(context, engine)
     except Exception:
@@ -205,10 +236,7 @@ def run_application(
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    if args.dashboard_smoke and args.smoke_exit_ms is not None:
-        parser.error("--dashboard-smoke cannot be combined with --smoke-exit-ms")
-    if args.dashboard_smoke_require_recent_runs and not args.dashboard_smoke:
-        parser.error("--dashboard-smoke-require-recent-runs requires --dashboard-smoke")
+    validate_application_arguments(parser, args)
     try:
         settings_path = resolve_desktop_settings_path(args.settings)
         return run_application(
