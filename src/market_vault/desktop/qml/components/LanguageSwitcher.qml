@@ -1,7 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 
-ComboBox {
+PixelComboBox {
     id: selector
     required property var i18n
     model: i18n.availableLanguages

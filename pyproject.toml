@@ -43,6 +43,9 @@ where = ["src"]
   "qml/*.qml",
   "qml/components/*.qml",
   "qml/pages/*.qml",
+  "qml/theme/*.qml",
+  "qml/theme/qmldir",
+  "assets/fonts/fusion-pixel-12px-proportional-zh_hans-v2026.07.20/*",
 ]
 
 [tool.pytest.ini_options]

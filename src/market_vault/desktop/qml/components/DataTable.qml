@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import "../theme" as Theme
 
 Item {
     id: root
@@ -12,11 +13,14 @@ Item {
 
     ColumnLayout {
         anchors.fill: parent
-        spacing: 6
+        spacing: Theme.PixelTheme.spacingSm
 
-        Item {
+        PixelFrame {
             Layout.fillWidth: true
             Layout.fillHeight: true
+            padding: 1
+            fillColor: Theme.PixelTheme.surfaceRaised
+            borderColor: Theme.PixelTheme.line
 
             ColumnLayout {
                 anchors.fill: parent
@@ -31,21 +35,32 @@ Item {
                     clip: true
                     delegate: Rectangle {
                         implicitWidth: 145
-                        implicitHeight: 30
-                        color: "#eee4cf"
-                        border.color: "#c9b990"
+                        implicitHeight: Theme.PixelTheme.tableHeaderHeight
+                        color: Theme.PixelTheme.goldPale
+                        border.color: Theme.PixelTheme.goldDark
                         required property string display
+                        Rectangle {
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.top: parent.top
+                            height: 1
+                            color: Theme.PixelTheme.goldHighlight
+                        }
+                        Rectangle { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; height: 1; color: Theme.PixelTheme.goldDark }
+                        Rectangle { anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom; width: 1; color: Theme.PixelTheme.goldLight }
                         Label {
                             anchors.fill: parent
-                            anchors.leftMargin: 7
-                            anchors.rightMargin: 7
+                            anchors.leftMargin: 8
+                            anchors.rightMargin: 8
                             verticalAlignment: Text.AlignVCenter
                             elide: Text.ElideRight
                             text: {
                                 root.i18n.language
                                 return root.i18n.columnLabel(parent.display)
                             }
-                            color: "#2b2418"
+                            color: Theme.PixelTheme.ink
+                            font.family: Theme.PixelTheme.fontForLanguage(root.i18n.language)
+                            font.pixelSize: Theme.PixelTheme.fontSm
                             font.weight: Font.DemiBold
                         }
                     }
@@ -58,62 +73,45 @@ Item {
                     model: root.tableModel
                     clip: true
                     boundsBehavior: Flickable.StopAtBounds
-                    ScrollBar.horizontal: ScrollBar {}
-                    ScrollBar.vertical: ScrollBar {}
+                    ScrollBar.horizontal: PixelScrollBar {}
+                    ScrollBar.vertical: PixelScrollBar {}
                     delegate: Rectangle {
                         implicitWidth: 145
-                        implicitHeight: 30
-                        color: row % 2 === 0 ? "#fffaf0" : "#f8f1e4"
-                        border.color: "#e1d6bd"
+                        implicitHeight: Theme.PixelTheme.tableRowHeight
+                        color: row % 2 === 0 ? Theme.PixelTheme.surfaceRaised : Theme.PixelTheme.surface
+                        border.color: Theme.PixelTheme.lineSoft
                         required property string display
                         required property int row
                         Label {
                             anchors.fill: parent
-                            anchors.leftMargin: 7
-                            anchors.rightMargin: 7
+                            anchors.leftMargin: 8
+                            anchors.rightMargin: 8
                             verticalAlignment: Text.AlignVCenter
                             elide: Text.ElideRight
                             text: parent.display
-                            color: "#2b2418"
+                            color: Theme.PixelTheme.ink
+                            font.family: Theme.PixelTheme.dataFont
+                            font.pixelSize: Theme.PixelTheme.fontSm
                         }
                     }
                 }
             }
 
-            Label {
+            PixelEmptyState {
                 objectName: root.objectName + "EmptyState"
                 anchors.centerIn: parent
                 visible: root.tableModel.totalRows === 0
                 text: root.i18n.catalog["common.no_data"]
-                color: "#665d50"
             }
         }
 
-        RowLayout {
+        PixelPagination {
             Layout.fillWidth: true
             visible: root.paged
-            Button {
-                objectName: root.objectName + "Previous"
-                activeFocusOnTab: true
-                text: root.i18n.catalog["common.previous"]
-                enabled: root.tableModel.hasPrevious
-                onClicked: root.previousRequested()
-            }
-            Label {
-                text: root.i18n.catalog["common.page"] + " " + root.tableModel.page
-                    + " " + root.i18n.catalog["common.of"] + " "
-                    + root.tableModel.totalPages + " (" + root.tableModel.totalRows
-                    + " " + root.i18n.catalog["common.rows"] + ")"
-                color: "#665d50"
-            }
-            Item { Layout.fillWidth: true }
-            Button {
-                objectName: root.objectName + "Next"
-                activeFocusOnTab: true
-                text: root.i18n.catalog["common.next"]
-                enabled: root.tableModel.hasNext
-                onClicked: root.nextRequested()
-            }
+            tableModel: root.tableModel
+            i18n: root.i18n
+            onPreviousRequested: root.previousRequested()
+            onNextRequested: root.nextRequested()
         }
     }
 }

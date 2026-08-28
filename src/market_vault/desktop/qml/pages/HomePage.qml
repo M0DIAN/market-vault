@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import "../components" as Components
+import "../theme" as Theme
 
 Item {
     id: home
@@ -10,132 +11,189 @@ Item {
     required property var i18n
 
     readonly property var metricDefinitions: [
-        {"sourceKey": "Symbols", "labelKey": "metric.symbols"},
-        {"sourceKey": "Snapshots", "labelKey": "metric.snapshots"},
-        {"sourceKey": "Latest rows", "labelKey": "metric.latest_rows"},
-        {"sourceKey": "Completed dates", "labelKey": "metric.completed_dates"},
-        {"sourceKey": "Incomplete dates", "labelKey": "metric.incomplete_dates"},
-        {"sourceKey": "Latest trade date", "labelKey": "metric.latest_trade_date"}
+        {"sourceKey": "Symbols", "labelKey": "metric.symbols", "glyph": "chart"},
+        {"sourceKey": "Snapshots", "labelKey": "metric.snapshots", "glyph": "storage"},
+        {"sourceKey": "Latest rows", "labelKey": "metric.latest_rows", "glyph": "inventory"},
+        {"sourceKey": "Completed dates", "labelKey": "metric.completed_dates", "glyph": "check"},
+        {"sourceKey": "Incomplete dates", "labelKey": "metric.incomplete_dates", "glyph": "warning"},
+        {"sourceKey": "Latest trade date", "labelKey": "metric.latest_trade_date", "glyph": "calendar"}
     ]
 
     ColumnLayout {
         anchors.fill: parent
-        spacing: 12
+        spacing: Theme.PixelTheme.spacingSm
+
+        Components.PixelPanel {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 84
+            padding: 0
+            accented: true
+            fillColor: Theme.PixelTheme.surfaceRaised
+
+            Components.AmbientBinaryField { anchors.fill: parent }
+
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 14
+                anchors.rightMargin: 14
+                spacing: 10
+
+                Components.GoldFloppyMark {
+                    Layout.preferredWidth: 34
+                    Layout.preferredHeight: 34
+                }
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 1
+                    Label {
+                        text: home.i18n.catalog["page.home"]
+                        color: Theme.PixelTheme.ink
+                        font.family: Theme.PixelTheme.displayFont
+                        font.pixelSize: Theme.PixelTheme.fontLg
+                        font.weight: Font.DemiBold
+                    }
+                    Label {
+                        text: home.i18n.catalog["app.subtitle"]
+                        color: Theme.PixelTheme.inkMuted
+                        font.pixelSize: Theme.PixelTheme.fontSm
+                    }
+                }
+
+                Components.PixelButton {
+                    id: pingButton
+                    objectName: "pingButton"
+                    variant: "ghost"
+                    glyph: "network"
+                    text: home.i18n.catalog["home.ping"]
+                    onClicked: home.desktop.ping()
+                }
+
+                Components.PixelButton {
+                    id: dashboardButton
+                    objectName: "dashboardButton"
+                    variant: "primary"
+                    glyph: "refresh"
+                    text: home.dashboard.backendConfigured
+                        ? (home.dashboard.busy ? home.i18n.catalog["home.refreshing"] : home.i18n.catalog["home.refresh"])
+                        : home.i18n.catalog["home.unconfigured"]
+                    enabled: home.dashboard.backendConfigured && !home.dashboard.busy
+                    onClicked: home.dashboard.refresh()
+                }
+            }
+        }
 
         RowLayout {
             Layout.fillWidth: true
-            spacing: 10
-
-            Button {
-                id: pingButton
-                objectName: "pingButton"
-                text: home.i18n.catalog["home.ping"]
-                onClicked: home.desktop.ping()
+            spacing: 8
+            Components.PixelStatusBadge {
+                status: home.dashboard.status
+                text: {
+                    home.i18n.language
+                    return home.i18n.catalog["status.dashboard"] + ": "
+                        + home.i18n.statusLabel(home.dashboard.status)
+                }
             }
-
-            Button {
-                id: dashboardButton
-                objectName: "dashboardButton"
-                text: home.dashboard.backendConfigured
-                    ? (home.dashboard.busy
-                        ? home.i18n.catalog["home.refreshing"]
-                        : home.i18n.catalog["home.refresh"])
-                    : home.i18n.catalog["home.unconfigured"]
-                enabled: home.dashboard.backendConfigured && !home.dashboard.busy
-                onClicked: home.dashboard.refresh()
-            }
-
-            Item { Layout.fillWidth: true }
-
-            Label {
+            Components.PixelTag {
                 text: home.i18n.catalog["status.bridge"] + ":"
-                color: "#665d50"
-                font.pixelSize: 12
+                accentColor: Theme.PixelTheme.line
             }
-
             Label {
                 id: statusValue
                 objectName: "statusValue"
                 text: home.desktop.status
-                color: "#8a651a"
-                font.pixelSize: 13
+                color: Theme.PixelTheme.goldDark
+                font.pixelSize: Theme.PixelTheme.fontSm
                 font.weight: Font.DemiBold
             }
-
+            Item { Layout.fillWidth: true }
             Label {
-                text: {
-                    home.i18n.language
-                    return home.i18n.catalog["status.dashboard"]
-                        + ": " + home.i18n.statusLabel(home.dashboard.status)
-                }
-                color: "#665d50"
-                font.pixelSize: 12
+                visible: home.dashboard.error.length > 0
+                text: home.i18n.catalog["common.error"] + ": " + home.dashboard.error
+                color: Theme.PixelTheme.vermilionDark
+                font.pixelSize: Theme.PixelTheme.fontSm
+                elide: Text.ElideRight
+                Layout.maximumWidth: 500
             }
-        }
-
-        Label {
-            Layout.fillWidth: true
-            visible: home.dashboard.error.length > 0
-            text: home.i18n.catalog["common.error"] + ": "
-                + home.dashboard.error
-            color: "#8b2f24"
-            font.pixelSize: 13
-            wrapMode: Text.Wrap
         }
 
         GridLayout {
             Layout.fillWidth: true
             columns: 3
-            columnSpacing: 12
-            rowSpacing: 10
+            columnSpacing: Theme.PixelTheme.spacingSm
+            rowSpacing: Theme.PixelTheme.spacingSm
 
             Repeater {
                 model: home.metricDefinitions
 
-                Rectangle {
+                Components.PixelPanel {
                     required property var modelData
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 68
-                    color: "#fffaf0"
-                    border.color: "#d8c9a6"
-                    border.width: 1
+                    Layout.preferredHeight: 72
+                    padding: 9
+                    fillColor: Theme.PixelTheme.surfaceRaised
+                    accentColor: modelData.sourceKey === "Incomplete dates"
+                        ? Theme.PixelTheme.warning : Theme.PixelTheme.gold
+                    accented: true
 
-                    ColumnLayout {
+                    RowLayout {
                         anchors.fill: parent
-                        anchors.margins: 10
-                        spacing: 2
-
-                        Label {
-                            text: home.i18n.catalog[modelData.labelKey]
-                            color: "#665d50"
-                            font.pixelSize: 11
-                            elide: Text.ElideRight
+                        spacing: 9
+                        Components.PixelGlyph {
+                            glyph: modelData.glyph
+                            color: Theme.PixelTheme.goldDark
+                            Layout.preferredWidth: 20
+                            Layout.preferredHeight: 20
                         }
-
-                        Label {
-                            text: home.dashboard.metrics[modelData.sourceKey] || "-"
-                            color: "#2b2418"
-                            font.pixelSize: 17
-                            font.weight: Font.DemiBold
-                            elide: Text.ElideRight
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 1
+                            Label {
+                                text: home.i18n.catalog[modelData.labelKey]
+                                color: Theme.PixelTheme.inkMuted
+                                font.pixelSize: Theme.PixelTheme.fontSm
+                                elide: Text.ElideRight
+                                Layout.fillWidth: true
+                            }
+                            Label {
+                                text: home.dashboard.metrics[modelData.sourceKey] || "-"
+                                color: Theme.PixelTheme.ink
+                                font.family: Theme.PixelTheme.displayFont
+                                font.pixelSize: Theme.PixelTheme.fontLg
+                                font.weight: Font.DemiBold
+                                elide: Text.ElideRight
+                                Layout.fillWidth: true
+                            }
                         }
                     }
                 }
             }
         }
 
-        Label {
-            text: home.i18n.catalog["home.recent_runs"]
-            color: "#2b2418"
-            font.pixelSize: 17
-            font.weight: Font.DemiBold
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 7
+            Components.PixelGlyph {
+                glyph: "runs"
+                color: Theme.PixelTheme.goldDark
+                Layout.preferredWidth: 16
+                Layout.preferredHeight: 16
+            }
+            Label {
+                text: home.i18n.catalog["home.recent_runs"]
+                color: Theme.PixelTheme.ink
+                font.family: Theme.PixelTheme.fontForLanguage(home.i18n.language)
+                font.pixelSize: Theme.PixelTheme.fontLg
+                font.weight: Font.DemiBold
+            }
+            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: Theme.PixelTheme.lineSoft }
         }
 
         Components.DataTable {
             objectName: "recentRunsTable"
             Layout.fillWidth: true
             Layout.fillHeight: true
-            Layout.minimumHeight: 180
+            Layout.minimumHeight: 150
             tableModel: home.dashboard.recentRunsModel
             i18n: home.i18n
             paged: false
