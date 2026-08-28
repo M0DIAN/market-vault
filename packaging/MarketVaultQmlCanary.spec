@@ -10,14 +10,51 @@ QML_ENTRY_POINT = SOURCE_ROOT / "market_vault" / "desktop" / "qml" / "Main.qml"
 QML_COMPONENTS = [
     SOURCE_ROOT / "market_vault" / "desktop" / "qml" / "components" / name
     for name in (
+        "AmbientBinaryField.qml",
         "DataTable.qml",
+        "GoldFloppyMark.qml",
         "LabeledComboBox.qml",
         "LabeledTextField.qml",
         "LanguageSwitcher.qml",
+        "MetalSheen.qml",
         "OpenDConfirmDialog.qml",
+        "PixelButton.qml",
+        "PixelCheckBox.qml",
+        "PixelComboBox.qml",
+        "PixelDivider.qml",
+        "PixelEmptyState.qml",
+        "PixelFrame.qml",
+        "PixelGlyph.qml",
+        "PixelPagination.qml",
+        "PixelPanel.qml",
+        "PixelProgress.qml",
+        "PixelScrollBar.qml",
+        "PixelStatusBadge.qml",
+        "PixelTag.qml",
+        "PixelTextField.qml",
         "SaveExportDialog.qml",
         "Sidebar.qml",
         "SummaryStrip.qml",
+    )
+]
+QML_THEME = [
+    SOURCE_ROOT / "market_vault" / "desktop" / "qml" / "theme" / name
+    for name in ("PixelTheme.qml", "qmldir")
+]
+FONT_ROOT = (
+    SOURCE_ROOT
+    / "market_vault"
+    / "desktop"
+    / "assets"
+    / "fonts"
+    / "fusion-pixel-12px-proportional-zh_hans-v2026.07.20"
+)
+FONT_ASSETS = [
+    FONT_ROOT / name
+    for name in (
+        "fusion-pixel-12px-proportional-zh_hans.otf",
+        "NOTICE.md",
+        "OFL.txt",
     )
 ]
 QML_PAGES = [
@@ -74,6 +111,18 @@ analysis = Analysis(
         *[
             (str(path), "market_vault/desktop/qml/pages")
             for path in QML_PAGES
+        ],
+        *[
+            (str(path), "market_vault/desktop/qml/theme")
+            for path in QML_THEME
+        ],
+        *[
+            (
+                str(path),
+                "market_vault/desktop/assets/fonts/"
+                "fusion-pixel-12px-proportional-zh_hans-v2026.07.20",
+            )
+            for path in FONT_ASSETS
         ],
         (str(WINDOWS_ICON), "assets/windows"),
     ],
