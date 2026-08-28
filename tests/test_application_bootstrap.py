@@ -80,7 +80,7 @@ def test_application_context_constructs_dependencies_lazily_and_closes_once(tmp_
 
 def test_ui_neutral_settings_resolver_handles_source_and_frozen_paths(tmp_path):
     source_default = tmp_path / "source" / "config" / "settings.yaml"
-    executable = tmp_path / "bundle" / "MarketVaultQmlCanary.exe"
+    executable = tmp_path / "bundle" / "MarketVault.exe"
 
     assert resolve_application_settings_path(
         source_default=source_default
@@ -143,16 +143,16 @@ def test_application_logging_is_initialized_without_file_handler():
     assert not any(isinstance(handler, logging.FileHandler) for handler in logger.handlers)
 
 
-def test_tk_console_consumes_the_shared_application_context():
+def test_production_desktop_consumes_the_shared_application_context():
     source = (
         Path(__file__).resolve().parents[1]
         / "src"
         / "market_vault"
-        / "console"
-        / "ui.py"
+        / "desktop"
+        / "app.py"
     ).read_text(encoding="utf-8")
 
-    assert "context = build_application_context(settings_path)" in source
-    assert "context.get_backend()" in source
-    assert "task_runner=context.get_task_runner()" in source
-    assert "shutdown_callback=context.shutdown" in source
+    assert "context = build_application_context(resolved_settings)" in source
+    assert "create_qml_application_session(context, engine)" in source
+    assert "application.aboutToQuit.connect(session.shutdown)" in source
+    assert "session.shutdown()" in source

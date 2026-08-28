@@ -14,7 +14,7 @@
 - Python >= 3.11。
 - moomoo OpenD：仅真正通过 OpenD 采集/检查的命令需要本机 OpenD 正在运行、已登录且账号具备所需权限——`collect`、`calendar`、`backfill`、`option-chain`、`option-volatility`、`doctor`。
 - 纯本地命令**不需要** OpenD：`inventory`、`audit`、`intraday-audit`、`query`、`calendar-query`，以及 Dataset / Sample Generation / Dataset Catalog 全部命令和 `ArtifactClient`。
-- MarketVault Console 默认纯本地；只有界面中明确确认的 Trading Calendar `Fetch from OpenD` 与 Backfill `Execute via OpenD` 操作可能连接 OpenD。
+- MarketVault 桌面应用默认纯本地；只有界面中明确确认的 Trading Calendar `Fetch from OpenD` 与 Backfill `Execute via OpenD` 操作可能连接 OpenD。
 - 操作系统：安装脚本与示例以 Windows PowerShell 为准（`scripts/setup_windows.ps1`、`scripts/first_collection.ps1`）。
 
 ## 3. 安装
@@ -96,17 +96,11 @@ collector:
 - `collect` / `backfill` / `query` / `audit` / `intraday-audit` 省略 `--session` / `--adjustment` 时，回退到 `collector.default_session`（`ALL`）与 `collector.default_adjustment`（`NONE`）；显式传值覆盖默认值。
 - Dataset、Sample Generation、Dataset Catalog 命令与 `ArtifactClient` 是 settings-independent：不读 settings.yaml、不连接 OpenD、不访问网络。
 
-### MarketVault Console v0.1 foundation
+### MarketVault PySide6/QML 桌面应用
 
-正式 `MarketVault.exe` 使用 PySide6/QML 桌面界面。以下 Python 标准库
-Tkinter/ttk Console 仅保留为内部源码开发入口：
-
-```powershell
-python -m market_vault.console --settings config/settings.yaml
-```
-
-需要 Python 安装包含可用的 Tcl/Tk runtime（标准 Python.org Windows installer
-默认包含）。若 Tcl/Tk 缺失，Console 会以简洁错误退出，不会回退到第三方 GUI 包。
+正式 `MarketVault.exe` 使用唯一受支持的 PySide6/QML 桌面界面。内部源码开发可使用
+`python -m market_vault.desktop.app`；`market_vault.console` 仅保留 UI-neutral
+backend、models 与 task runner，不再提供 Tk presentation 或源码 UI 入口。
 
 桌面壳层使用左侧导航，提供 Home、Historical Data、Trading Calendar、Market
 Data、Inventory、Coverage Audit、Intraday Audit、Runs 与 Storage & Cleanup。
@@ -127,26 +121,24 @@ Home 初始保持被动状态，只有点击 Refresh 后才通过现有 Dashboar
 - 成功执行只把完整 Raw/Curated 文件对移入 `data/quarantine/`，不永久删除，
   不级联修改 Canonical、Dataset 或 Dataset Catalog。
 
-Console 顶部的语言选择器支持 `English`、`简体中文` 和 `日本語`。切换语言时，
+桌面顶部的语言选择器仅支持 `English` 和 `中文`。切换语言时，
 左侧导航、Header 与 Home 会即时更新，同时保留当前工作区、输入值、表格与分页。
 首次启动
 固定使用英语，不读取 Windows 系统区域设置；切换后立即更新现有界面，不重置
 当前标签页、表单、分页或已加载结果。Windows 偏好保存在
-`%LOCALAPPDATA%\MarketVault\ui-preferences.json`，不写入安装目录、项目配置、
+`%LOCALAPPDATA%\MarketVault\desktop-preferences.json`，不写入安装目录、项目配置、
 Catalog、manifest 或行情数据。偏好文件缺失、损坏或不可读时会安全回退到英语，
 不会阻止访问 MarketVault 数据。
 
-精确行为以 [Console v0.1 contract](contracts/console_v01.md) 为准。
+### Windows desktop development build
 
-### Windows development EXE build
-
-Windows developers can build the Console as a PyInstaller onedir application.
+Windows developers can build the desktop as a PyInstaller onedir application.
 Install the dedicated build dependency and run the canonical script from any
 working directory:
 
 ```powershell
 python -m pip install -e ".[windows-exe]"
-.\scripts\build_windows_console.ps1
+.\scripts\build_windows_desktop.ps1
 ```
 
 The development bundle is written to `dist\MarketVault\`, with the editable

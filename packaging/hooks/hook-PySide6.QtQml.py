@@ -1,4 +1,4 @@
-"""Collect the QML-1 import closure instead of every installed QML module."""
+"""Collect the production QML import closure, not every installed QML module."""
 
 from pathlib import Path, PurePath
 

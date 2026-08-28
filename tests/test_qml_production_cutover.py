@@ -10,9 +10,9 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 PRODUCTION_SPEC = ROOT / "packaging" / "MarketVault.spec"
-CANARY_SPEC = ROOT / "packaging" / "MarketVaultQmlCanary.spec"
-PRODUCTION_BUILD = ROOT / "scripts" / "build_windows_console.ps1"
+PRODUCTION_BUILD = ROOT / "scripts" / "build_windows_desktop.ps1"
 PRODUCTION_LAUNCHER = ROOT / "src" / "market_vault" / "windows_launcher.py"
+QML_ROOT = ROOT / "src" / "market_vault" / "desktop" / "qml"
 FONT = (
     ROOT
     / "src"
@@ -29,19 +29,19 @@ def _quoted_qml_names(text: str) -> set[str]:
     return set(re.findall(r'"([^"/]+\.qml)"', text))
 
 
-def test_production_and_canary_specs_have_exact_qml_asset_parity() -> None:
+def test_production_spec_has_exact_qml_asset_inventory() -> None:
     production = PRODUCTION_SPEC.read_text(encoding="utf-8")
-    canary = CANARY_SPEC.read_text(encoding="utf-8")
 
-    assert _quoted_qml_names(production) == _quoted_qml_names(canary)
-    assert len(_quoted_qml_names(production)) == 35
+    expected_qml = {path.name for path in QML_ROOT.rglob("*.qml")}
+    assert _quoted_qml_names(production) == expected_qml
+    assert len(expected_qml) == 35
     for asset in (
         "qmldir",
         "fusion-pixel-12px-proportional-zh_hans.otf",
         "NOTICE.md",
         "OFL.txt",
     ):
-        assert production.count(f'"{asset}"') == canary.count(f'"{asset}"')
+        assert production.count(f'"{asset}"') >= 1
     for runtime_import in (
         "PySide6.QtCore",
         "PySide6.QtGui",
@@ -60,19 +60,16 @@ def test_production_and_canary_specs_have_exact_qml_asset_parity() -> None:
         "yaml",
     ):
         assert f'"{runtime_import}"' in production
-        assert f'"{runtime_import}"' in canary
     assert "collect_all" not in production
     assert 'hookspath=[str(HOOKS_ROOT)]' in production
 
 
 def test_production_identity_and_tk_exclusions_are_explicit() -> None:
     production = PRODUCTION_SPEC.read_text(encoding="utf-8")
-    canary = CANARY_SPEC.read_text(encoding="utf-8")
     launcher = PRODUCTION_LAUNCHER.read_text(encoding="utf-8")
 
     assert 'ENTRY_POINT = SOURCE_ROOT / "market_vault" / "windows_launcher.py"' in production
     assert production.count('name="MarketVault"') == 2
-    assert canary.count('name="MarketVaultQmlCanary"') == 2
     for excluded in ("_tkinter", "tkinter", "market_vault.console.ui"):
         assert f'"{excluded}"' in production
     for excluded in (
@@ -85,6 +82,8 @@ def test_production_identity_and_tk_exclusions_are_explicit() -> None:
     assert "market_vault.desktop.app" in launcher
     assert "run_application" in launcher
     assert "run_console" not in launcher
+    assert not (ROOT / "packaging" / "MarketVaultQmlCanary.spec").exists()
+    assert not (ROOT / "scripts" / "build_windows_qml_canary.ps1").exists()
 
 
 def test_production_build_audits_qml_identity_laziness_and_tk_absence() -> None:

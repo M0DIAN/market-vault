@@ -1,10 +1,6 @@
 from __future__ import annotations
 
 import ast
-import builtins
-import os
-import subprocess
-import sys
 import tomllib
 from threading import Event
 from datetime import date, datetime, timezone
@@ -476,51 +472,7 @@ def test_serial_task_runner_rejects_overlap_and_reports_failure():
     runner.close()
 
 
-def test_console_help_is_headless_and_does_not_import_tkinter():
-    env = dict(os.environ)
-    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
-    proc = subprocess.run(
-        [sys.executable, "-m", "market_vault.console", "--help"],
-        check=False,
-        capture_output=True,
-        text=True,
-        env=env,
-    )
-    assert proc.returncode == 0
-    assert "Launch MarketVault Console" in proc.stdout
-    probe = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys, market_vault.console; assert 'tkinter' not in sys.modules",
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-        env=env,
-    )
-    assert probe.returncode == 0, probe.stderr
-
-
-def test_console_entrypoint_reports_missing_tkinter_without_traceback(monkeypatch, capsys):
-    from market_vault.console import __main__ as console_main
-
-    real_import = builtins.__import__
-
-    def missing_tkinter(name, globals=None, locals=None, fromlist=(), level=0):
-        if name == "ui" and level == 1:
-            raise ModuleNotFoundError("No module named 'tkinter'", name="tkinter")
-        return real_import(name, globals, locals, fromlist, level)
-
-    monkeypatch.setattr(builtins, "__import__", missing_tkinter)
-    assert console_main.main([]) == 1
-    captured = capsys.readouterr()
-    assert captured.out == ""
-    assert "does not include Tkinter" in captured.err
-    assert "Traceback" not in captured.err
-
-
-def test_console_package_uses_api_boundary_and_stdlib_tkinter_only():
+def test_console_adapters_use_api_boundary_without_gui_dependencies():
     repository_root = Path(__file__).resolve().parents[1]
     console_root = repository_root / "src" / "market_vault" / "console"
     forbidden_imports = {
