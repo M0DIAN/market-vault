@@ -98,7 +98,8 @@ collector:
 
 ### MarketVault Console v0.1 foundation
 
-Windows 桌面 Console 使用 Python 标准库 Tkinter/ttk，不新增 GUI dependency：
+正式 `MarketVault.exe` 使用 PySide6/QML 桌面界面。以下 Python 标准库
+Tkinter/ttk Console 仅保留为内部源码开发入口：
 
 ```powershell
 python -m market_vault.console --settings config/settings.yaml
@@ -155,7 +156,7 @@ from its own directory, not the process working directory. The build refuses to
 overwrite an existing distributable or ZIP; it never removes a shared `dist`
 directory. This is a development artifact, not an official release.
 
-The executable and Tk window use the approved MarketVault Windows icon. To
+The executable and QML window use the approved MarketVault Windows icon. To
 create a desktop shortcut for an installed onedir bundle, run:
 
 ```powershell

@@ -75,13 +75,14 @@ market-vault --version
 market-vault --help
 ```
 
-Launch the development Console foundation on Windows:
+Launch the retained legacy Tk Console in source development mode on Windows:
 
 ```powershell
 python -m market_vault.console --settings config/settings.yaml
 ```
 
-The Console uses stdlib Tkinter/ttk and adds no GUI dependency. Its desktop
+The production `MarketVault.exe` uses the PySide6/QML desktop. The source-only
+legacy Console above uses stdlib Tkinter/ttk. The desktop
 shell uses a left navigation rail with Home, data, exploration, quality,
 activity, and advanced workspaces; selecting a workspace preserves its loaded
 forms, tables, and pagination. It is local-only by default: only the explicitly

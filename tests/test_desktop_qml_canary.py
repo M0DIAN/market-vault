@@ -407,7 +407,7 @@ storage:
     assert not list(tmp_path.rglob("desktop-preferences.json"))
 
 
-def test_parallel_spec_and_build_script_do_not_cut_over_production():
+def test_production_cutover_retains_separately_buildable_qml_canary():
     production_spec = (ROOT / "packaging" / "MarketVault.spec").read_text(
         encoding="utf-8"
     )
@@ -431,7 +431,9 @@ def test_parallel_spec_and_build_script_do_not_cut_over_production():
     assert 'name="MarketVault"' in production_spec
     assert "MarketVaultQmlCanary" not in production_spec
     assert "MarketVaultQmlCanary" not in production_build
-    assert "market_vault.desktop" not in production_launcher
+    assert "market_vault.desktop.app" in production_launcher
+    assert "run_application" in production_launcher
+    assert "market_vault.console.ui" not in production_launcher
     assert "market_vault.windows_launcher" not in qml_launcher
     assert 'name="MarketVaultQmlCanary"' in canary_spec
     assert "MarketVaultQmlCanary.exe" in canary_build
@@ -492,10 +494,28 @@ def test_parallel_spec_and_build_script_do_not_cut_over_production():
     assert '"--dashboard-smoke"' in canary_build
     assert '"--dashboard-smoke-require-recent-runs"' in canary_build
 
+    for packaged in (
+        "Main.qml",
+        "PixelTheme.qml",
+        "fusion-pixel-12px-proportional-zh_hans.otf",
+        '"PySide6.QtQml"',
+        '"market_vault.desktop.bootstrap"',
+    ):
+        assert packaged in production_spec
+        assert packaged in canary_spec
+    assert '"market_vault.console.ui"' in production_spec
+    assert '"tkinter"' in production_spec
+    assert '"_tkinter"' in production_spec
+    assert 'name="MarketVaultQmlCanary"' in canary_spec
+
 
 def test_pyproject_keeps_qt_optional_and_packages_only_canary_qml():
     text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert 'desktop = [\n  "PySide6==6.11.2",\n]' in text
+    assert (
+        'windows-exe = [\n  "pyinstaller==6.22.2",\n'
+        '  "PySide6==6.11.2",\n]'
+    ) in text
     core_dependencies = text.split("[project.optional-dependencies]", 1)[0]
     assert "PySide6" not in core_dependencies
     assert '"qml/*.qml"' in text

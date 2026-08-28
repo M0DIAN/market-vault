@@ -95,13 +95,10 @@ def configure_window_icon(
 
 
 def build_parser() -> argparse.ArgumentParser:
+    from market_vault.desktop.app import add_application_arguments
+
     parser = argparse.ArgumentParser(description="Launch MarketVault Console")
-    parser.add_argument(
-        "--settings",
-        default=None,
-        help="Settings file. Frozen relative paths resolve from the executable directory.",
-    )
-    return parser
+    return add_application_arguments(parser, hide_internal_smoke_options=True)
 
 
 def _show_frozen_error(message: str) -> None:
@@ -109,19 +106,33 @@ def _show_frozen_error(message: str) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
-    settings_path = resolve_settings_path(args.settings)
+    settings_path: Path | None = None
     try:
-        from market_vault.console.ui import run_console
+        parser = build_parser()
+        args = parser.parse_args(argv)
+        from market_vault.desktop.app import (
+            run_application,
+            validate_application_arguments,
+        )
 
-        return run_console(str(settings_path))
+        validate_application_arguments(parser, args)
+        settings_path = resolve_settings_path(args.settings)
+        return run_application(
+            smoke_exit_ms=args.smoke_exit_ms,
+            settings_path=settings_path,
+            dashboard_smoke=args.dashboard_smoke,
+            dashboard_smoke_timeout_ms=args.dashboard_smoke_timeout_ms,
+            dashboard_smoke_require_recent_runs=(
+                args.dashboard_smoke_require_recent_runs
+            ),
+        )
     except Exception as exc:
         if not is_frozen():
             raise
         _show_frozen_error(
             "MarketVault could not start.\n\n"
             f"{exc.__class__.__name__}: {exc}\n\n"
-            f"Settings: {settings_path}"
+            f"Settings: {settings_path or 'unresolved'}"
         )
         return 1
 
