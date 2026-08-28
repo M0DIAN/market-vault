@@ -36,6 +36,7 @@ class DesktopOperationRuntime(QObject):
     def __init__(
         self,
         *,
+        application_context: Any | None = None,
         settings_path: Path | None = None,
         backend_factory: Callable[[Path], Any] | None = None,
         runner_factory: Callable[[], Any] | None = None,
@@ -43,15 +44,28 @@ class DesktopOperationRuntime(QObject):
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
+        if application_context is not None and any(
+            value is not None
+            for value in (settings_path, backend_factory, runner_factory)
+        ):
+            raise ValueError(
+                "Application context cannot be combined with runtime factories."
+            )
+        if application_context is not None and application_context.closed:
+            raise ValueError("Application context is already closed.")
+        if application_context is not None:
+            settings_path = application_context.settings_path
         if settings_path is not None and not Path(settings_path).is_absolute():
             raise ValueError("Desktop settings path must be absolute.")
         if poll_interval_ms < 1:
             raise ValueError("poll_interval_ms must be positive")
         self._settings_path = Path(settings_path) if settings_path is not None else None
+        self._application_context = application_context
         self._backend_factory = backend_factory or _production_backend_factory
         self._runner_factory = runner_factory or _production_runner_factory
         self._backend: Any | None = None
         self._runner: Any | None = None
+        self._owns_runner = application_context is None
         self._future: Future[Any] | None = None
         self._success: Callable[[Any], None] | None = None
         self._failure: Callable[[Exception], None] | None = None
@@ -95,11 +109,22 @@ class DesktopOperationRuntime(QObject):
     def backend_if_initialized(self) -> Any | None:
         return self._backend
 
+    @property
+    def application_context(self) -> Any | None:
+        return self._application_context
+
+    @property
+    def task_runner_if_initialized(self) -> Any | None:
+        return self._runner
+
     def _backend_operation(self, operation: Callable[[Any], Any]) -> Any:
         if self._backend is None:
-            if self._settings_path is None:
+            if self._application_context is not None:
+                self._backend = self._application_context.get_backend()
+            elif self._settings_path is None:
                 raise RuntimeError("Desktop settings are not configured.")
-            self._backend = self._backend_factory(self._settings_path)
+            else:
+                self._backend = self._backend_factory(self._settings_path)
         return operation(self._backend)
 
     def submit(
@@ -123,7 +148,10 @@ class DesktopOperationRuntime(QObject):
         self.statusChanged.emit()
         try:
             if self._runner is None:
-                self._runner = self._runner_factory()
+                if self._application_context is not None:
+                    self._runner = self._application_context.get_task_runner()
+                else:
+                    self._runner = self._runner_factory()
             self._future = self._runner.submit(
                 name, lambda: self._backend_operation(operation)
             )
@@ -205,9 +233,9 @@ class DesktopOperationRuntime(QObject):
             return False
         self._closed = True
         self._timer.stop()
-        if self._runner is not None:
+        if self._runner is not None and self._owns_runner:
             self._runner.close()
-            self._runner = None
+        self._runner = None
         return True
 
     def shutdown(self) -> bool:

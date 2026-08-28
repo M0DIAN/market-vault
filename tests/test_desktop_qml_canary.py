@@ -66,22 +66,26 @@ def test_smoke_exit_argument_accepts_bounded_values(value):
     )
 
 
-def test_dashboard_arguments_require_explicit_absolute_settings(tmp_path):
-    absolute = tmp_path / "settings.yaml"
-    args = app.build_parser().parse_args(["--settings", str(absolute)])
-    assert args.settings == absolute
+def test_qml_settings_resolution_is_cwd_independent_in_source_and_frozen_modes(
+    tmp_path,
+):
+    relative = Path("config/settings.yaml")
+    args = app.build_parser().parse_args(["--settings", str(relative)])
+    assert args.settings == str(relative)
+    assert app.resolve_desktop_settings_path() == ROOT / relative
+    assert app.resolve_desktop_settings_path(
+        str(relative),
+        frozen=True,
+        executable=str(tmp_path / "bundle" / "MarketVaultQmlCanary.exe"),
+    ) == (tmp_path / "bundle" / relative).resolve()
 
-    with pytest.raises(SystemExit):
-        app.build_parser().parse_args(["--settings", "config/settings.yaml"])
-    with pytest.raises(SystemExit):
-        app.main(["--dashboard-smoke"])
     with pytest.raises(SystemExit):
         app.main(["--dashboard-smoke-require-recent-runs"])
     with pytest.raises(SystemExit):
         app.main(
             [
                 "--settings",
-                str(absolute),
+                str(tmp_path / "settings.yaml"),
                 "--dashboard-smoke",
                 "--smoke-exit-ms",
                 "100",
@@ -362,6 +366,17 @@ def test_source_smoke_is_cwd_independent_and_side_effect_free(tmp_path):
 def test_source_startup_with_settings_remains_lazy_and_side_effect_free(tmp_path):
     pytest.importorskip("PySide6")
     settings = (tmp_path / "sandbox" / "config" / "settings.yaml").resolve()
+    settings.parent.mkdir(parents=True)
+    settings.write_text(
+        """
+storage:
+  root_dir: ./data
+  catalog_path: ./catalog/market_vault.duckdb
+  manifest_dir: ./manifests
+  report_dir: ./reports/data_quality
+""".lstrip(),
+        encoding="utf-8",
+    )
     cwd = tmp_path / "unrelated cwd"
     cwd.mkdir()
     env = os.environ.copy()
@@ -386,7 +401,8 @@ def test_source_startup_with_settings_remains_lazy_and_side_effect_free(tmp_path
         timeout=30,
     )
     assert result.returncode == 0, result.stderr
-    assert not settings.parent.exists()
+    assert settings.is_file()
+    assert not (settings.parent.parent / "catalog" / "market_vault.duckdb").exists()
     assert list(cwd.iterdir()) == []
     assert not list(tmp_path.rglob("desktop-preferences.json"))
 
@@ -401,6 +417,7 @@ def test_parallel_spec_and_build_script_do_not_cut_over_production():
     production_launcher = (
         ROOT / "src" / "market_vault" / "windows_launcher.py"
     ).read_text(encoding="utf-8")
+    qml_launcher = (DESKTOP_ROOT / "app.py").read_text(encoding="utf-8")
     canary_spec = (ROOT / "packaging" / "MarketVaultQmlCanary.spec").read_text(
         encoding="utf-8"
     )
@@ -415,6 +432,7 @@ def test_parallel_spec_and_build_script_do_not_cut_over_production():
     assert "MarketVaultQmlCanary" not in production_spec
     assert "MarketVaultQmlCanary" not in production_build
     assert "market_vault.desktop" not in production_launcher
+    assert "market_vault.windows_launcher" not in qml_launcher
     assert 'name="MarketVaultQmlCanary"' in canary_spec
     assert "MarketVaultQmlCanary.exe" in canary_build
     for component in (
@@ -453,15 +471,20 @@ def test_parallel_spec_and_build_script_do_not_cut_over_production():
     assert "$env:PATH = $OriginalPath" in canary_build
     assert "build_path_sanitized = $true" in canary_build
     for packaged in (
+        '"market_vault.application"',
         '"market_vault.api"',
         '"market_vault.console.backend"',
         '"market_vault.console.tasks"',
+        '"market_vault.desktop.bootstrap"',
         '"duckdb"',
         '"pandas"',
         '"pyarrow"',
         '"yaml"',
     ):
         assert packaged in canary_spec
+    assert '$ConfigTemplate = Join-Path $ProjectRoot "config\\settings.yaml"' in canary_build
+    assert 'Copy-Item -LiteralPath $ConfigTemplate' in canary_build
+    assert 'application_context = "shared-production-backend"' in canary_build
     assert 'collect_submodules(' in canary_spec
     assert 'collect_data_files("moomoo"' in canary_spec
     assert "$DashboardSmokeSettings" in canary_build

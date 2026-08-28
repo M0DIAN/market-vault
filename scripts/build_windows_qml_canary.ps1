@@ -18,8 +18,12 @@ if (-not [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
 
 $ProjectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $SpecPath = Join-Path $ProjectRoot "packaging\MarketVaultQmlCanary.spec"
+$ConfigTemplate = Join-Path $ProjectRoot "config\settings.yaml"
 if (-not (Test-Path -LiteralPath $SpecPath -PathType Leaf)) {
     throw "PyInstaller spec not found: $SpecPath"
+}
+if (-not (Test-Path -LiteralPath $ConfigTemplate -PathType Leaf)) {
+    throw "Settings template not found: $ConfigTemplate"
 }
 
 if (-not $PythonExecutable) {
@@ -129,6 +133,8 @@ $ExePath = Join-Path $FinalApp "MarketVaultQmlCanary.exe"
 if (-not (Test-Path -LiteralPath $ExePath -PathType Leaf)) {
     throw "MarketVaultQmlCanary.exe was not produced: $ExePath"
 }
+New-Item -ItemType Directory -Path (Join-Path $FinalApp "config") | Out-Null
+Copy-Item -LiteralPath $ConfigTemplate -Destination (Join-Path $FinalApp "config\settings.yaml")
 $QWindows = @(Get-ChildItem -LiteralPath $FinalApp -Filter "qwindows.dll" -File -Recurse)
 if ($QWindows.Count -ne 1) {
     throw "Expected exactly one qwindows.dll in the bundle, found $($QWindows.Count)."
@@ -216,6 +222,8 @@ $Metadata = [ordered]@{
     dashboard_smoke_settings = $ResolvedDashboardSmokeSettings
     dashboard_smoke_require_recent_runs = [bool]$DashboardSmokeRequireRecentRuns
     dashboard_smoke_exit_code = if ($DashboardSmokeProcess) { $DashboardSmokeProcess.ExitCode } else { $null }
+    application_context = "shared-production-backend"
+    external_settings = "config/settings.yaml"
     built_at_utc = [DateTime]::UtcNow.ToString("o")
 }
 $MetadataPath = Join-Path $FinalApp "build-metadata.json"

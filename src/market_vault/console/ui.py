@@ -667,11 +667,14 @@ class ConsoleApp:
         settings_path: str,
         *,
         preference_store: UiPreferenceStore | None = None,
+        task_runner: SerialTaskRunner | None = None,
+        shutdown_callback: Callable[[], None] | None = None,
     ):
         self.root = root
         self.backend = backend
         self.settings_path = str(Path(settings_path).resolve())
-        self.tasks = SerialTaskRunner()
+        self.tasks = task_runner or SerialTaskRunner()
+        self._shutdown_callback = shutdown_callback or self.tasks.close
         self._busy = False
         self.preference_store = preference_store or UiPreferenceStore()
         self.translator = Translator(self.preference_store.load_language())
@@ -1752,11 +1755,13 @@ class ConsoleApp:
             return
         self.ambient_field.shutdown()
         self.progress.stop()
-        self.tasks.close()
+        getattr(self, "_shutdown_callback", self.tasks.close)()
         self.root.destroy()
 
 
 def run_console(settings_path: str) -> int:
+    from market_vault.application import build_application_context
+
     preference_store = UiPreferenceStore()
     translator = Translator(preference_store.load_language())
     try:
@@ -1765,12 +1770,22 @@ def run_console(settings_path: str) -> int:
         print(translator.t("startup.tk_unavailable", details=exc), file=sys.stderr)
         return 1
     try:
-        backend = ConsoleBackend.from_settings(settings_path)
+        context = build_application_context(settings_path)
     except Exception as exc:
         root.withdraw()
         messagebox.showerror(translator.t("app.title"), str(exc))
         root.destroy()
         return 1
-    ConsoleApp(root, backend, settings_path, preference_store=preference_store)
-    root.mainloop()
+    try:
+        ConsoleApp(
+            root,
+            context.get_backend(),
+            str(context.settings_path),
+            preference_store=preference_store,
+            task_runner=context.get_task_runner(),
+            shutdown_callback=context.shutdown,
+        )
+        root.mainloop()
+    finally:
+        context.shutdown()
     return 0
