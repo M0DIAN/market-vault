@@ -1,4 +1,4 @@
-"""Production-like bootstrap for the parallel PySide6/QML desktop."""
+"""Production bootstrap for the MarketVault PySide6/QML desktop."""
 
 from __future__ import annotations
 

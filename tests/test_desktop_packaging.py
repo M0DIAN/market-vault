@@ -76,7 +76,7 @@ def test_qml_settings_resolution_is_cwd_independent_in_source_and_frozen_modes(
     assert app.resolve_desktop_settings_path(
         str(relative),
         frozen=True,
-        executable=str(tmp_path / "bundle" / "MarketVaultQmlCanary.exe"),
+        executable=str(tmp_path / "bundle" / "MarketVault.exe"),
     ) == (tmp_path / "bundle" / relative).resolve()
 
     with pytest.raises(SystemExit):
@@ -127,7 +127,7 @@ print(json.dumps(blocked))
     assert list(tmp_path.iterdir()) == []
 
 
-def test_canary_startup_source_has_no_eager_business_imports():
+def test_production_startup_source_has_no_eager_business_imports():
     imported = set()
     for path in (
         DESKTOP_ROOT / "app.py",
@@ -407,36 +407,27 @@ storage:
     assert not list(tmp_path.rglob("desktop-preferences.json"))
 
 
-def test_production_cutover_retains_separately_buildable_qml_canary():
+def test_production_packaging_retains_complete_qml_runtime_contract():
     production_spec = (ROOT / "packaging" / "MarketVault.spec").read_text(
         encoding="utf-8"
     )
-    production_build = (ROOT / "scripts" / "build_windows_console.ps1").read_text(
-        encoding="utf-8"
-    )
+    production_build = (
+        ROOT / "scripts" / "build_windows_desktop.ps1"
+    ).read_text(encoding="utf-8")
     production_launcher = (
         ROOT / "src" / "market_vault" / "windows_launcher.py"
     ).read_text(encoding="utf-8")
     qml_launcher = (DESKTOP_ROOT / "app.py").read_text(encoding="utf-8")
-    canary_spec = (ROOT / "packaging" / "MarketVaultQmlCanary.spec").read_text(
-        encoding="utf-8"
-    )
-    canary_build = (
-        ROOT / "scripts" / "build_windows_qml_canary.ps1"
-    ).read_text(encoding="utf-8")
-    canary_hook = (
+    production_hook = (
         ROOT / "packaging" / "hooks" / "hook-PySide6.QtQml.py"
     ).read_text(encoding="utf-8")
 
     assert 'name="MarketVault"' in production_spec
-    assert "MarketVaultQmlCanary" not in production_spec
-    assert "MarketVaultQmlCanary" not in production_build
+    assert "MarketVaultQmlCanary" not in production_spec + production_build
     assert "market_vault.desktop.app" in production_launcher
     assert "run_application" in production_launcher
     assert "market_vault.console.ui" not in production_launcher
     assert "market_vault.windows_launcher" not in qml_launcher
-    assert 'name="MarketVaultQmlCanary"' in canary_spec
-    assert "MarketVaultQmlCanary.exe" in canary_build
     for component in (
         "DataTable.qml",
         "LanguageSwitcher.qml",
@@ -444,7 +435,7 @@ def test_production_cutover_retains_separately_buildable_qml_canary():
         "SaveExportDialog.qml",
         "Sidebar.qml",
     ):
-        assert f'"{component}"' in canary_spec
+        assert f'"{component}"' in production_spec
     for page in (
         "AuditPage.qml",
         "HistoricalDataPage.qml",
@@ -455,23 +446,22 @@ def test_production_cutover_retains_separately_buildable_qml_canary():
         "StorageCleanupPage.qml",
         "TradingCalendarPage.qml",
     ):
-        assert f'"{page}"' in canary_spec
-    assert "PlaceholderPage.qml" not in canary_spec
-    assert '"market_vault/desktop/qml/components"' in canary_spec
-    assert '"market_vault/desktop/qml/pages"' in canary_spec
-    assert "collect_all" not in canary_spec
-    assert 'hookspath=[str(HOOKS_ROOT)]' in canary_spec
-    assert "collect_qtqml_files" not in canary_hook
-    assert '"QtQuick/Controls/Basic"' in canary_hook
-    assert '"QtQuick/Dialogs"' in canary_hook
-    assert '"QtQuick/Dialogs/quickimpl"' in canary_hook
-    assert '("QtQuick", "Controls", "designer")' in canary_hook
-    assert "$BundledForbiddenQml.Count -gt 0" in canary_build
+        assert f'"{page}"' in production_spec
+    assert "PlaceholderPage.qml" not in production_spec
+    assert '"market_vault/desktop/qml/components"' in production_spec
+    assert '"market_vault/desktop/qml/pages"' in production_spec
+    assert "collect_all" not in production_spec
+    assert 'hookspath=[str(HOOKS_ROOT)]' in production_spec
+    assert "collect_qtqml_files" not in production_hook
+    assert '"QtQuick/Controls/Basic"' in production_hook
+    assert '"QtQuick/Dialogs"' in production_hook
+    assert '"QtQuick/Dialogs/quickimpl"' in production_hook
+    assert '("QtQuick", "Controls", "designer")' in production_hook
     for unneeded_style in ("Fusion", "Imagine", "Material", "Universal"):
-        assert f'"QtQuick/Controls/{unneeded_style}"' not in canary_hook
-    assert "$OriginalPath = $env:PATH" in canary_build
-    assert "$env:PATH = $OriginalPath" in canary_build
-    assert "build_path_sanitized = $true" in canary_build
+        assert f'"QtQuick/Controls/{unneeded_style}"' not in production_hook
+    assert "$OriginalPath = $env:PATH" in production_build
+    assert "$env:PATH = $OriginalPath" in production_build
+    assert "build_path_sanitized = $true" in production_build
     for packaged in (
         '"market_vault.application"',
         '"market_vault.api"',
@@ -483,33 +473,19 @@ def test_production_cutover_retains_separately_buildable_qml_canary():
         '"pyarrow"',
         '"yaml"',
     ):
-        assert packaged in canary_spec
-    assert '$ConfigTemplate = Join-Path $ProjectRoot "config\\settings.yaml"' in canary_build
-    assert 'Copy-Item -LiteralPath $ConfigTemplate' in canary_build
-    assert 'application_context = "shared-production-backend"' in canary_build
-    assert 'collect_submodules(' in canary_spec
-    assert 'collect_data_files("moomoo"' in canary_spec
-    assert "$DashboardSmokeSettings" in canary_build
-    assert "$DashboardSmokeRequireRecentRuns" in canary_build
-    assert '"--dashboard-smoke"' in canary_build
-    assert '"--dashboard-smoke-require-recent-runs"' in canary_build
-
-    for packaged in (
-        "Main.qml",
-        "PixelTheme.qml",
-        "fusion-pixel-12px-proportional-zh_hans.otf",
-        '"PySide6.QtQml"',
-        '"market_vault.desktop.bootstrap"',
-    ):
         assert packaged in production_spec
-        assert packaged in canary_spec
-    assert '"market_vault.console.ui"' in production_spec
-    assert '"tkinter"' in production_spec
-    assert '"_tkinter"' in production_spec
-    assert 'name="MarketVaultQmlCanary"' in canary_spec
+    assert '$ConfigTemplate = Join-Path $ProjectRoot "config\\settings.yaml"' in production_build
+    assert 'Copy-Item -LiteralPath $ConfigTemplate' in production_build
+    assert 'application_context = "shared-lazy"' in production_build
+    assert 'collect_submodules(' in production_spec
+    assert 'collect_data_files("moomoo"' in production_spec
+    assert "$DashboardSmokeSettings" in production_build
+    assert "$DashboardSmokeRequireRecentRuns" in production_build
+    assert '"--dashboard-smoke"' in production_build
+    assert '"--dashboard-smoke-require-recent-runs"' in production_build
 
 
-def test_pyproject_keeps_qt_optional_and_packages_only_canary_qml():
+def test_pyproject_keeps_qt_optional_and_packages_production_qml():
     text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert 'desktop = [\n  "PySide6==6.11.2",\n]' in text
     assert (

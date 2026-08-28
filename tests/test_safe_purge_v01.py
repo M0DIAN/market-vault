@@ -13,7 +13,6 @@ import pytest
 from market_vault.api import MarketVault
 from market_vault.backfill import BackfillItem, BackfillPlan, collect_history_backfill
 from market_vault.console.backend import ConsoleBackend
-from market_vault.console.ui import ConsoleApp
 from market_vault.cli import build_parser
 from market_vault.lifecycle import LifecycleLockError, MarketBarLifecycleLock
 from market_vault.models import QualityResult, RunManifest, Settings
@@ -809,7 +808,7 @@ class FakePurgeVault:
         return SimpleNamespace(as_dict=lambda: {"status": "SUCCESS", **kwargs})
 
 
-def test_console_requires_preview_and_does_not_expose_permanent_delete():
+def test_backend_requires_review_and_does_not_expose_permanent_delete():
     fake_plan = SimpleNamespace(
         plan_id="a" * 32,
         status="PLANNED",
@@ -840,7 +839,7 @@ def test_console_requires_preview_and_does_not_expose_permanent_delete():
     assert not hasattr(backend, "permanent_delete")
 
 
-def test_console_refused_colocated_plan_never_enables_execution():
+def test_backend_refused_colocated_plan_never_enables_execution():
     refused = SimpleNamespace(
         plan_id="b" * 32,
         status="REFUSED",
@@ -864,74 +863,5 @@ def test_console_refused_colocated_plan_never_enables_execution():
     )
     assert view.status == "REFUSED"
     assert view.refusal_reasons[0]["symbols"] == ["US.QQQ"]
-    with pytest.raises(ValueError, match="Preview"):
-        backend.execute_purge(plan_id=view.plan_id, confirmation=f"PURGE {view.plan_id}")
-
-
-def test_console_scope_edit_invalidates_preview_confirmation_and_execute():
-    fake_plan = SimpleNamespace(
-        plan_id="c" * 32,
-        status="PLANNED",
-        executable=True,
-        summary={"affected_snapshot_count": 1},
-        refusal_reasons=(),
-        targets=(),
-    )
-    backend = ConsoleBackend(FakePurgeVault(fake_plan))
-    view = backend.preview_purge(
-        source="moomoo",
-        symbols="US.SPY",
-        start_date="2026-07-01",
-        end_date="2026-07-01",
-        interval="1m",
-        session="ALL",
-        adjustment="NONE",
-        source_schema_version="10.9",
-    )
-
-    class FakeVar:
-        def __init__(self, value=""):
-            self.value = value
-            self.callbacks = []
-
-        def trace_add(self, mode, callback):
-            assert mode == "write"
-            self.callbacks.append(callback)
-
-        def set(self, value):
-            self.value = value
-
-    class FakeButton:
-        def __init__(self):
-            self.state = "normal"
-
-        def configure(self, *, state):
-            self.state = state
-
-    app = ConsoleApp.__new__(ConsoleApp)
-    app.backend = backend
-    app.purge_vars = {name: FakeVar() for name in (
-        "source",
-        "symbols",
-        "start_date",
-        "end_date",
-        "interval",
-        "session",
-        "adjustment",
-        "source_schema_version",
-    )}
-    app.purge_confirmation = FakeVar(f"PURGE {view.plan_id}")
-    app.purge_summary = FakeVar("PLANNED")
-    app.purge_refusals = FakeVar("old")
-    app.purge_execute_button = FakeButton()
-    app._purge_plan_id = view.plan_id
-    app._bind_purge_scope_invalidation()
-    assert all(len(variable.callbacks) == 1 for variable in app.purge_vars.values())
-
-    app.purge_vars["symbols"].callbacks[0]()
-    assert app._purge_plan_id is None
-    assert app.purge_confirmation.value == ""
-    assert app.purge_execute_button.state == "disabled"
-    assert app.purge_summary.value == "Scope changed; run Preview again"
     with pytest.raises(ValueError, match="Preview"):
         backend.execute_purge(plan_id=view.plan_id, confirmation=f"PURGE {view.plan_id}")

@@ -20,7 +20,7 @@ FONT_ROOT = (
 def test_visual_system_has_one_packaged_theme_and_complete_native_components():
     theme = (QML_ROOT / "theme" / "PixelTheme.qml").read_text(encoding="utf-8")
     qmldir = (QML_ROOT / "theme" / "qmldir").read_text(encoding="utf-8")
-    spec = (ROOT / "packaging" / "MarketVaultQmlCanary.spec").read_text(
+    spec = (ROOT / "packaging" / "MarketVault.spec").read_text(
         encoding="utf-8"
     )
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
@@ -73,7 +73,7 @@ def test_official_fusion_pixel_font_is_pinned_licensed_and_packaged():
     license_text = (FONT_ROOT / "OFL.txt").read_text(encoding="utf-8")
     main = (QML_ROOT / "Main.qml").read_text(encoding="utf-8")
     theme = (QML_ROOT / "theme" / "PixelTheme.qml").read_text(encoding="utf-8")
-    spec = (ROOT / "packaging" / "MarketVaultQmlCanary.spec").read_text(
+    spec = (ROOT / "packaging" / "MarketVault.spec").read_text(
         encoding="utf-8"
     )
 

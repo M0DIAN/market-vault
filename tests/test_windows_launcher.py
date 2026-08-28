@@ -170,7 +170,7 @@ def test_source_qml_startup_failure_does_not_fall_back_to_tk(
 def test_build_definition_is_onedir_and_external_config() -> None:
     root = Path(__file__).resolve().parents[1]
     spec = (root / "packaging" / "MarketVault.spec").read_text(encoding="utf-8")
-    build_script = (root / "scripts" / "build_windows_console.ps1").read_text(
+    build_script = (root / "scripts" / "build_windows_desktop.ps1").read_text(
         encoding="utf-8"
     )
     assert "COLLECT(" in spec

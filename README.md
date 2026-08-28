@@ -21,7 +21,7 @@ safely. It does not train models, produce signals, or trade automatically.
 - Local trading calendar and resumable historical backfill
 - Immutable Raw / Curated snapshots
 - Inventory, coverage, and intraday integrity auditing
-- Windows desktop Console foundation for bounded local queries and explicit operations
+- Windows PySide6/QML desktop for bounded local queries and explicit operations
 - Two-phase Safe Purge of exact physical Raw/Curated market-bar batches into quarantine
 - Verified immutable Canonical builds
 - Deterministic point-in-time-safe Dataset construction
@@ -75,15 +75,8 @@ market-vault --version
 market-vault --help
 ```
 
-Launch the retained legacy Tk Console in source development mode on Windows:
-
-```powershell
-python -m market_vault.console --settings config/settings.yaml
-```
-
-The production `MarketVault.exe` uses the PySide6/QML desktop. The source-only
-legacy Console above uses stdlib Tkinter/ttk. The desktop
-shell uses a left navigation rail with Home, data, exploration, quality,
+The production `MarketVault.exe` uses the PySide6/QML desktop. Its shell uses a
+left navigation rail with Home, data, exploration, quality,
 activity, and advanced workspaces; selecting a workspace preserves its loaded
 forms, tables, and pagination. It is local-only by default: only the explicitly
 confirmed Trading Calendar fetch and Backfill execute actions may connect to
@@ -94,11 +87,10 @@ typed plan confirmation; it moves whole physical file pairs to quarantine and
 does not permanently delete data.
 
 Home remains passive until its explicit Refresh action loads the local archive
-overview. The Console supports live switching between English, Simplified
-Chinese, and Japanese without rebuilding the selected workspace. The first-use
-default is English; the Windows user preference is stored outside the
-application bundle at
-`%LOCALAPPDATA%\MarketVault\ui-preferences.json`.
+overview. The desktop supports live switching between English and Simplified
+Chinese without rebuilding the selected workspace. The first-use default is
+English; the Windows user preference is stored outside the application bundle
+at `%LOCALAPPDATA%\MarketVault\desktop-preferences.json`.
 
 For the full workflow (`init-catalog` → `calendar` → `backfill` →
 `inventory` → `audit` → `intraday-audit` → `query`), see the
@@ -141,7 +133,7 @@ details in the [user guide](docs/USER_GUIDE.md) and the
 - Formal v0.7.0 release record: [docs/release_v0_7_0.md](docs/release_v0_7_0.md)
 - Python Client detailed guide: [docs/v0_7_0_python_client_usage.md](docs/v0_7_0_python_client_usage.md)
 - Contracts: [docs/contracts/](docs/contracts/)
-- Console v0.1 contract: [docs/contracts/console_v01.md](docs/contracts/console_v01.md)
+- Historical Console v0.1 contract: [docs/contracts/console_v01.md](docs/contracts/console_v01.md)
 - Original purge design record: [docs/console_destructive_purge_contract_draft.md](docs/console_destructive_purge_contract_draft.md)
 - Safe Purge v0.1 contract: [docs/contracts/safe_purge_v01.md](docs/contracts/safe_purge_v01.md)
 - Development / governance: [docs/governance/](docs/governance/)

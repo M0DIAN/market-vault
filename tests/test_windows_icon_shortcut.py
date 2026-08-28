@@ -9,8 +9,6 @@ from pathlib import Path
 
 import pytest
 
-from market_vault import windows_launcher
-
 
 ROOT = Path(__file__).resolve().parents[1]
 PNG_SHA256 = "2319f14f6acae05e3ae02ba3d5cd258ee1f0f8194103a9a031173141ddb3f616"
@@ -37,70 +35,6 @@ def test_pyinstaller_uses_approved_icon_without_changing_onedir_mode() -> None:
     assert "icon=str(WINDOWS_ICON)" in spec
     assert "COLLECT(" in spec
     assert "console=False" in spec
-
-
-def test_frozen_window_icon_resolution_is_cwd_independent(tmp_path: Path) -> None:
-    runtime_root = tmp_path / "bundle" / "_internal"
-    first_cwd = tmp_path / "first"
-    second_cwd = tmp_path / "second"
-    first_cwd.mkdir()
-    second_cwd.mkdir()
-    original = Path.cwd()
-    try:
-        os.chdir(first_cwd)
-        first = windows_launcher.resolve_window_icon_path(
-            frozen=True, runtime_root=runtime_root
-        )
-        os.chdir(second_cwd)
-        second = windows_launcher.resolve_window_icon_path(
-            frozen=True, runtime_root=runtime_root
-        )
-    finally:
-        os.chdir(original)
-    expected = runtime_root.resolve() / "assets" / "windows" / "market-vault.ico"
-    assert first == second == expected
-
-
-def test_source_window_icon_resolution_uses_repository_root() -> None:
-    assert windows_launcher.resolve_window_icon_path(frozen=False) == (
-        ROOT / "assets" / "windows" / "market-vault.ico"
-    ).resolve()
-
-
-def test_configure_window_icon_calls_tk_with_exact_approved_path(tmp_path: Path) -> None:
-    icon = tmp_path / "assets" / "windows" / "market-vault.ico"
-    icon.parent.mkdir(parents=True)
-    icon.write_bytes(b"ico")
-
-    class FakeRoot:
-        def __init__(self) -> None:
-            self.default: str | None = None
-
-        def iconbitmap(self, *, default: str) -> None:
-            self.default = default
-
-    root = FakeRoot()
-    assert windows_launcher.configure_window_icon(
-        root, frozen=True, runtime_root=tmp_path
-    ) == icon.resolve()
-    assert root.default == str(icon.resolve())
-
-
-def test_source_mode_missing_window_icon_is_safe(tmp_path: Path) -> None:
-    class FakeRoot:
-        def iconbitmap(self, *, default: str) -> None:
-            raise AssertionError(f"unexpected icon call: {default}")
-
-    assert windows_launcher.configure_window_icon(
-        FakeRoot(), frozen=False, source_root=tmp_path
-    ) is None
-
-
-def test_frozen_mode_missing_window_icon_fails_closed(tmp_path: Path) -> None:
-    with pytest.raises(FileNotFoundError, match="window icon not found"):
-        windows_launcher.configure_window_icon(
-            object(), frozen=True, runtime_root=tmp_path
-        )
 
 
 def test_shortcut_script_is_no_overwrite_and_desktop_is_api_resolved() -> None:
