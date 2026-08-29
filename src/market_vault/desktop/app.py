@@ -139,6 +139,51 @@ def resolve_qml_path(*, frozen_root: Path | None = None) -> Path:
     return Path(__file__).resolve().parent / "qml" / "Main.qml"
 
 
+def resolve_application_icon_path(*, frozen_root: Path | None = None) -> Path:
+    """Resolve the shared Windows icon without consulting the current directory."""
+
+    if frozen_root is not None:
+        root = Path(frozen_root)
+    elif getattr(sys, "frozen", False):
+        bundle_root = getattr(sys, "_MEIPASS", None)
+        if not bundle_root:
+            raise RuntimeError("Frozen application icon root is unavailable.")
+        root = Path(bundle_root)
+    else:
+        root = Path(__file__).resolve().parents[3]
+    return root / "assets" / "windows" / "market-vault.ico"
+
+
+def _load_application_icon(icon_factory, *, frozen_root: Path | None = None):
+    """Load the optional runtime icon without making startup depend on it."""
+
+    try:
+        icon_path = resolve_application_icon_path(frozen_root=frozen_root)
+        if not icon_path.is_file():
+            return None
+        icon = icon_factory(str(icon_path))
+        if icon.isNull():
+            return None
+        return icon
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return None
+
+
+def _apply_application_icon(target, icon) -> bool:
+    """Apply a loaded icon to a Qt application or window as best-effort chrome."""
+
+    if icon is None:
+        return False
+    try:
+        if hasattr(target, "setWindowIcon"):
+            target.setWindowIcon(icon)
+        else:
+            target.setIcon(icon)
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return False
+    return True
+
+
 def run_application(
     *,
     smoke_exit_ms: int | None = None,
@@ -168,14 +213,8 @@ def run_application(
     try:
         application = QGuiApplication([sys.argv[0]])
         application.setApplicationName("MarketVault")
-        icon_path = (
-            Path(__file__).resolve().parents[3]
-            / "assets"
-            / "windows"
-            / "market-vault.ico"
-        )
-        if icon_path.is_file():
-            application.setWindowIcon(QIcon(str(icon_path)))
+        application_icon = _load_application_icon(QIcon)
+        _apply_application_icon(application, application_icon)
         engine = QQmlApplicationEngine()
         session = create_qml_application_session(context, engine)
     except Exception:
@@ -185,9 +224,11 @@ def run_application(
         engine.load(QUrl.fromLocalFile(str(qml_path)))
         if not engine.rootObjects():
             raise RuntimeError(f"QML failed to create a root object: {qml_path}")
-        engine._market_vault_native_caption_applied = apply_native_caption(
-            engine.rootObjects()[0]
+        root_window = engine.rootObjects()[0]
+        engine._market_vault_window_icon_applied = _apply_application_icon(
+            root_window, application_icon
         )
+        engine._market_vault_native_caption_applied = apply_native_caption(root_window)
         session.validate_wiring()
     except Exception:
         session.shutdown()

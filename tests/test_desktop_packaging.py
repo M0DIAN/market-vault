@@ -53,6 +53,75 @@ def test_qml_resolver_frozen_mode_is_cwd_independent(monkeypatch, tmp_path):
     )
 
 
+def test_application_icon_resolver_source_mode_is_cwd_independent(
+    monkeypatch, tmp_path
+):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delattr(sys, "frozen", raising=False)
+    monkeypatch.delattr(sys, "_MEIPASS", raising=False)
+
+    resolved = app.resolve_application_icon_path()
+
+    assert resolved == ROOT / "assets" / "windows" / "market-vault.ico"
+    assert resolved.is_file()
+    assert tmp_path not in resolved.parents
+
+
+def test_application_icon_resolver_frozen_mode_is_cwd_independent(
+    monkeypatch, tmp_path
+):
+    bundle_root = tmp_path / "bundle root"
+    unrelated = tmp_path / "unrelated cwd"
+    unrelated.mkdir()
+    monkeypatch.chdir(unrelated)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", str(bundle_root), raising=False)
+
+    assert app.resolve_application_icon_path() == (
+        bundle_root / "assets" / "windows" / "market-vault.ico"
+    )
+
+
+def test_missing_optional_application_icon_is_contained(tmp_path):
+    calls = []
+
+    assert app._load_application_icon(
+        lambda path: calls.append(path), frozen_root=tmp_path / "missing bundle"
+    ) is None
+    assert calls == []
+
+
+def test_loaded_application_icon_is_applied_to_application_and_root_window():
+    loaded_paths = []
+    application_calls = []
+    window_calls = []
+
+    class Icon:
+        def __init__(self, path):
+            loaded_paths.append(Path(path))
+
+        def isNull(self):
+            return False
+
+    class ApplicationTarget:
+        def setWindowIcon(self, value):
+            application_calls.append(value)
+
+    class WindowTarget:
+        def setIcon(self, value):
+            window_calls.append(value)
+
+    icon = app._load_application_icon(Icon)
+
+    assert icon is not None
+    assert not icon.isNull()
+    assert loaded_paths == [ROOT / "assets" / "windows" / "market-vault.ico"]
+    assert app._apply_application_icon(ApplicationTarget(), icon)
+    assert app._apply_application_icon(WindowTarget(), icon)
+    assert application_calls == [icon]
+    assert window_calls == [icon]
+
+
 @pytest.mark.parametrize("value", ["0", "-1", "60001", "not-an-integer"])
 def test_smoke_exit_argument_rejects_invalid_values(value):
     with pytest.raises(SystemExit):
