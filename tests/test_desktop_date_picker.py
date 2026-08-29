@@ -55,6 +55,8 @@ ApplicationWindow {{
     property string enLocale: ""
     property string selectedText: ""
     property bool popupClosedAfterSelection: false
+    property bool popupVisibleAfterOpen: false
+    property real popupYAfterOpen: -1
     property string storageFieldName: ""
     property string storageFieldValue: ""
     property bool storagePlanInvalidated: false
@@ -102,6 +104,7 @@ ApplicationWindow {{
     function inspect() {{
         field.text = ""
         field.openCalendar()
+        root.popupVisibleAfterOpen = field.popupVisible
         const now = new Date()
         root.emptyYear = field.displayYear
         root.emptyMonth = field.displayMonth
@@ -181,6 +184,18 @@ if not QMetaObject.invokeMethod(
     raise RuntimeError("PixelDateField manual textEdited signal could not be invoked")
 app.processEvents()
 
+calendar_popup = root.findChild(QObject, "dateFieldCalendarPopup")
+if calendar_popup is None:
+    raise RuntimeError("PixelDateField popup was not exposed")
+date_field = root.findChild(QObject, "dateField")
+if date_field is None or not QMetaObject.invokeMethod(
+    date_field, "openCalendar", Qt.ConnectionType.DirectConnection
+):
+    raise RuntimeError("PixelDateField popup could not be reopened")
+app.processEvents()
+root.setProperty("popupYAfterOpen", calendar_popup.property("y"))
+root.setProperty("popupVisibleAfterOpen", calendar_popup.property("visible"))
+
 print(json.dumps({{
     "empty_year": root.property("emptyYear"),
     "empty_month": root.property("emptyMonth"),
@@ -195,6 +210,8 @@ print(json.dumps({{
     "en_locale": root.property("enLocale"),
     "selected_text": root.property("selectedText"),
     "popup_closed": root.property("popupClosedAfterSelection"),
+    "popup_visible_after_open": root.property("popupVisibleAfterOpen"),
+    "popup_y_after_open": root.property("popupYAfterOpen"),
     "edits": root.property("edits").toVariant(),
     "storage_field_name": root.property("storageFieldName"),
     "storage_field_value": root.property("storageFieldValue"),
@@ -232,6 +249,8 @@ print(json.dumps({{
     assert "August" in evidence["en_title"] and "2026" in evidence["en_title"]
     assert evidence["selected_text"] == "2026-09-03"
     assert evidence["popup_closed"] is True
+    assert evidence["popup_visible_after_open"] is True
+    assert evidence["popup_y_after_open"] >= 0
     assert evidence["edits"] == ["2026-09-03", "2026-10-04"]
     assert evidence["storage_field_name"] == "start_date"
     assert evidence["storage_field_value"] == "2026-09-04"

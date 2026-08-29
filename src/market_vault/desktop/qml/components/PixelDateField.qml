@@ -129,17 +129,27 @@ ColumnLayout {
         id: calendarPopup
         objectName: root.objectName.length > 0
             ? root.objectName + "CalendarPopup" : "pixelDateFieldCalendarPopup"
-        parent: Overlay.overlay
         width: 272
         height: 292
         padding: 8
         modal: false
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         x: {
-            const point = dateRow.mapToItem(Overlay.overlay, 0, 0)
-            return Math.max(4, Math.min(point.x, Overlay.overlay.width - width - 4))
+            const window = root.Window.window
+            if (!window)
+                return 0
+            const point = root.mapToItem(window.contentItem, 0, 0)
+            const target = Math.max(4, Math.min(point.x, window.width - width - 4))
+            return target - point.x
         }
-        y: dateRow.mapToItem(Overlay.overlay, 0, dateRow.height + 4).y
+        y: {
+            const window = root.Window.window
+            if (!window)
+                return root.height + 4
+            const point = root.mapToItem(window.contentItem, 0, 0)
+            const below = point.y + root.height + 4
+            return below + height <= window.height - 4 ? root.height + 4 : -height - 4
+        }
 
         background: Item {
             Rectangle {
