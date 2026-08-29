@@ -63,7 +63,7 @@ ComboBox {
         width: control.width - 2
         height: Theme.PixelTheme.compactControlHeight
         contentItem: Text {
-            text: control.textRole ? model[control.textRole] : modelData
+            text: model[control.textRole]
             color: Theme.PixelTheme.ink
             font: control.font
             verticalAlignment: Text.AlignVCenter
