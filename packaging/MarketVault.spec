@@ -85,6 +85,7 @@ hidden_imports = [
     "market_vault.console.backend",
     "market_vault.console.tasks",
     "market_vault.desktop.bootstrap",
+    "market_vault.desktop.windows_chrome",
     "pandas",
     "pyarrow",
     "pyarrow.parquet",

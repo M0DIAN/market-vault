@@ -150,12 +150,13 @@ def run_application(
     """Create the Qt application over one shared production backend context."""
 
     from PySide6.QtCore import QTimer, QUrl
-    from PySide6.QtGui import QGuiApplication
+    from PySide6.QtGui import QGuiApplication, QIcon
     from PySide6.QtQml import QQmlApplicationEngine
     from PySide6.QtQuickControls2 import QQuickStyle
 
     from market_vault.application import build_application_context
     from market_vault.desktop.bootstrap import create_qml_application_session
+    from market_vault.desktop.windows_chrome import apply_native_caption
 
     qml_path = resolve_qml_path()
     if not qml_path.is_file():
@@ -167,6 +168,14 @@ def run_application(
     try:
         application = QGuiApplication([sys.argv[0]])
         application.setApplicationName("MarketVault")
+        icon_path = (
+            Path(__file__).resolve().parents[3]
+            / "assets"
+            / "windows"
+            / "market-vault.ico"
+        )
+        if icon_path.is_file():
+            application.setWindowIcon(QIcon(str(icon_path)))
         engine = QQmlApplicationEngine()
         session = create_qml_application_session(context, engine)
     except Exception:
@@ -176,6 +185,9 @@ def run_application(
         engine.load(QUrl.fromLocalFile(str(qml_path)))
         if not engine.rootObjects():
             raise RuntimeError(f"QML failed to create a root object: {qml_path}")
+        engine._market_vault_native_caption_applied = apply_native_caption(
+            engine.rootObjects()[0]
+        )
         session.validate_wiring()
     except Exception:
         session.shutdown()
