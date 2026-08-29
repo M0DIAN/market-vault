@@ -1,0 +1,260 @@
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
+import "../theme" as Theme
+
+ColumnLayout {
+    id: root
+    implicitWidth: Theme.PixelTheme.formFieldWidth
+    Layout.fillWidth: true
+    Layout.minimumWidth: Theme.PixelTheme.formFieldMinimumWidth
+    Layout.maximumWidth: Theme.PixelTheme.formFieldWidth
+
+    property alias text: field.text
+    property string label: ""
+    property string placeholderText: ""
+    property string language: "en"
+    property int displayYear: 0
+    property int displayMonth: 0
+    property int selectedYear: -1
+    property int selectedMonth: -1
+    property int selectedDay: -1
+    readonly property bool popupVisible: calendarPopup.visible
+    readonly property var calendarLocale: Qt.locale(language === "zh-CN" ? "zh_CN" : "en_US")
+    readonly property string monthTitle: new Date(displayYear, displayMonth, 1, 12)
+        .toLocaleString(calendarLocale, language === "zh-CN" ? "yyyy年M月" : "MMMM yyyy")
+
+    signal edited(string value)
+
+    spacing: 4
+
+    function parseDate(value) {
+        const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
+        if (!match)
+            return null
+        const year = Number(match[1])
+        const month = Number(match[2]) - 1
+        const day = Number(match[3])
+        const parsed = new Date(year, month, day, 12)
+        if (parsed.getFullYear() !== year || parsed.getMonth() !== month
+                || parsed.getDate() !== day)
+            return null
+        return parsed
+    }
+
+    function canonicalDate(value) {
+        const year = value.getFullYear().toString().padStart(4, "0")
+        const month = (value.getMonth() + 1).toString().padStart(2, "0")
+        const day = value.getDate().toString().padStart(2, "0")
+        return year + "-" + month + "-" + day
+    }
+
+    function openCalendar() {
+        const parsed = parseDate(field.text)
+        const initial = parsed || new Date()
+        displayYear = initial.getFullYear()
+        displayMonth = initial.getMonth()
+        selectedYear = parsed ? parsed.getFullYear() : -1
+        selectedMonth = parsed ? parsed.getMonth() : -1
+        selectedDay = parsed ? parsed.getDate() : -1
+        calendarPopup.open()
+    }
+
+    function closeCalendar() {
+        calendarPopup.close()
+    }
+
+    function previousMonth() {
+        const previous = new Date(displayYear, displayMonth - 1, 1, 12)
+        displayYear = previous.getFullYear()
+        displayMonth = previous.getMonth()
+    }
+
+    function nextMonth() {
+        const next = new Date(displayYear, displayMonth + 1, 1, 12)
+        displayYear = next.getFullYear()
+        displayMonth = next.getMonth()
+    }
+
+    function commitDate(value) {
+        const canonical = canonicalDate(value)
+        field.text = canonical
+        selectedYear = value.getFullYear()
+        selectedMonth = value.getMonth()
+        selectedDay = value.getDate()
+        root.edited(canonical)
+        calendarPopup.close()
+    }
+
+    Label {
+        text: root.label
+        color: Theme.PixelTheme.inkMuted
+        font.family: Theme.PixelTheme.uiFont
+        font.pixelSize: Theme.PixelTheme.fontSm
+        elide: Text.ElideRight
+        Layout.fillWidth: true
+    }
+
+    RowLayout {
+        id: dateRow
+        Layout.fillWidth: true
+        spacing: 4
+
+        PixelTextField {
+            id: field
+            objectName: root.objectName.length > 0
+                ? root.objectName + "Input" : "pixelDateFieldInput"
+            Layout.fillWidth: true
+            placeholderText: root.placeholderText
+            onTextEdited: root.edited(text)
+        }
+
+        PixelButton {
+            objectName: root.objectName.length > 0
+                ? root.objectName + "CalendarButton" : "pixelDateFieldCalendarButton"
+            Layout.preferredWidth: Theme.PixelTheme.compactControlHeight
+            Layout.minimumWidth: Theme.PixelTheme.compactControlHeight
+            Layout.maximumWidth: Theme.PixelTheme.compactControlHeight
+            implicitWidth: Theme.PixelTheme.compactControlHeight
+            compact: true
+            leftPadding: 6
+            rightPadding: 6
+            glyph: "calendar"
+            Accessible.name: root.label
+            onClicked: root.openCalendar()
+        }
+    }
+
+    Popup {
+        id: calendarPopup
+        objectName: root.objectName.length > 0
+            ? root.objectName + "CalendarPopup" : "pixelDateFieldCalendarPopup"
+        parent: Overlay.overlay
+        width: 272
+        height: 292
+        padding: 8
+        modal: false
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
+        x: {
+            const point = dateRow.mapToItem(Overlay.overlay, 0, 0)
+            return Math.max(4, Math.min(point.x, Overlay.overlay.width - width - 4))
+        }
+        y: dateRow.mapToItem(Overlay.overlay, 0, dateRow.height + 4).y
+
+        background: Item {
+            Rectangle {
+                anchors.fill: parent
+                color: Theme.PixelTheme.goldDark
+            }
+            Rectangle {
+                anchors.fill: parent
+                anchors.margins: 2
+                color: Theme.PixelTheme.surfaceRaised
+            }
+            Rectangle {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.margins: 3
+                height: 1
+                color: Theme.PixelTheme.goldLight
+            }
+            Rectangle { width: 2; height: 2; color: Theme.PixelTheme.canvas; anchors.left: parent.left; anchors.top: parent.top }
+            Rectangle { width: 2; height: 2; color: Theme.PixelTheme.canvas; anchors.right: parent.right; anchors.top: parent.top }
+            Rectangle { width: 2; height: 2; color: Theme.PixelTheme.canvas; anchors.left: parent.left; anchors.bottom: parent.bottom }
+            Rectangle { width: 2; height: 2; color: Theme.PixelTheme.canvas; anchors.right: parent.right; anchors.bottom: parent.bottom }
+        }
+
+        contentItem: ColumnLayout {
+            spacing: 5
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 6
+
+                PixelButton {
+                    objectName: root.objectName.length > 0
+                        ? root.objectName + "PreviousMonth" : "pixelDateFieldPreviousMonth"
+                    Layout.preferredWidth: 30
+                    Layout.minimumWidth: 30
+                    Layout.maximumWidth: 30
+                    implicitWidth: 30
+                    compact: true
+                    leftPadding: 6
+                    rightPadding: 6
+                    glyph: "previous"
+                    onClicked: root.previousMonth()
+                }
+                Label {
+                    Layout.fillWidth: true
+                    text: root.monthTitle
+                    color: Theme.PixelTheme.ink
+                    font.family: Theme.PixelTheme.uiFont
+                    font.pixelSize: Theme.PixelTheme.fontMd
+                    font.weight: Font.DemiBold
+                    horizontalAlignment: Text.AlignHCenter
+                }
+                PixelButton {
+                    objectName: root.objectName.length > 0
+                        ? root.objectName + "NextMonth" : "pixelDateFieldNextMonth"
+                    Layout.preferredWidth: 30
+                    Layout.minimumWidth: 30
+                    Layout.maximumWidth: 30
+                    implicitWidth: 30
+                    compact: true
+                    leftPadding: 6
+                    rightPadding: 6
+                    glyph: "next"
+                    onClicked: root.nextMonth()
+                }
+            }
+
+            DayOfWeekRow {
+                Layout.fillWidth: true
+                locale: root.calendarLocale
+                delegate: Label {
+                    required property var model
+                    text: model.shortName
+                    color: Theme.PixelTheme.inkMuted
+                    font.family: Theme.PixelTheme.uiFont
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                }
+            }
+
+            MonthGrid {
+                id: monthGrid
+                objectName: root.objectName.length > 0
+                    ? root.objectName + "MonthGrid" : "pixelDateFieldMonthGrid"
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                month: root.displayMonth
+                year: root.displayYear
+                locale: root.calendarLocale
+                onClicked: function(date) { root.commitDate(date) }
+
+                delegate: Rectangle {
+                    required property var model
+                    readonly property bool inMonth: model.month === monthGrid.month
+                    readonly property bool selected: model.year === root.selectedYear
+                        && model.month === root.selectedMonth
+                        && model.day === root.selectedDay
+                    color: selected ? Theme.PixelTheme.goldPale : Theme.PixelTheme.transparent
+                    border.color: selected ? Theme.PixelTheme.goldDark
+                        : (model.today ? Theme.PixelTheme.gold : Theme.PixelTheme.transparent)
+                    border.width: selected ? 2 : (model.today ? 1 : 0)
+                    opacity: inMonth ? 1 : 0.18
+
+                    Label {
+                        anchors.centerIn: parent
+                        text: parent.model.day
+                        color: parent.selected ? Theme.PixelTheme.goldDark : Theme.PixelTheme.ink
+                        font.family: Theme.PixelTheme.dataFont
+                        font.pixelSize: Theme.PixelTheme.fontSm
+                    }
+                }
+            }
+        }
+    }
+}

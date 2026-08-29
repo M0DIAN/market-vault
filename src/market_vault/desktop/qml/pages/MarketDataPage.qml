@@ -27,8 +27,8 @@ Item {
                 columnSpacing: Theme.PixelTheme.spacingMd
                 rowSpacing: 6
                 Components.LabeledTextField { id: code; objectName: "marketDataCode"; label: root.i18n.catalog["field.code"]; text: "US.SPY" }
-                Components.LabeledTextField { id: startDate; objectName: "marketDataStartDate"; label: root.i18n.catalog["field.start_date"] }
-                Components.LabeledTextField { id: endDate; label: root.i18n.catalog["field.end_date"] }
+                Components.PixelDateField { id: startDate; objectName: "marketDataStartDate"; label: root.i18n.catalog["field.start_date"]; language: root.i18n.language }
+                Components.PixelDateField { id: endDate; objectName: "marketDataEndDate"; label: root.i18n.catalog["field.end_date"]; language: root.i18n.language }
                 Components.LabeledComboBox { id: interval; label: root.i18n.catalog["field.interval"]; model: ["1m", "5m", "15m", "30m", "60m", "day"] }
                 Components.LabeledComboBox { id: requestedSession; label: root.i18n.catalog["field.requested_session"]; model: ["", "ALL", "RTH", "ETH"] }
                 Components.LabeledComboBox { id: barSession; label: root.i18n.catalog["field.bar_session"]; model: ["", "OVERNIGHT", "PRE_MARKET", "REGULAR", "AFTER_HOURS"] }

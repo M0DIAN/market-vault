@@ -21,6 +21,7 @@ QML_COMPONENTS = [
         "PixelButton.qml",
         "PixelCheckBox.qml",
         "PixelComboBox.qml",
+        "PixelDateField.qml",
         "PixelDivider.qml",
         "PixelEmptyState.qml",
         "PixelFrame.qml",

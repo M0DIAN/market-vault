@@ -501,6 +501,7 @@ def test_production_packaging_retains_complete_qml_runtime_contract():
         "DataTable.qml",
         "LanguageSwitcher.qml",
         "OpenDConfirmDialog.qml",
+        "PixelDateField.qml",
         "SaveExportDialog.qml",
         "Sidebar.qml",
     ):
