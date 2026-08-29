@@ -13,7 +13,7 @@ ApplicationWindow {
     height: 700
     minimumWidth: 1000
     minimumHeight: 650
-    title: i18nBridge.catalog["app.title"]
+    title: "MARKETVAULT"
     color: Theme.PixelTheme.canvas
     font.family: Theme.PixelTheme.fontForLanguage(i18nBridge.language)
 
@@ -48,64 +48,6 @@ ApplicationWindow {
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
-
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: Theme.PixelTheme.headerHeight
-            color: Theme.PixelTheme.surfaceRaised
-
-            Rectangle {
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.bottom: parent.bottom
-                height: 2
-                color: Theme.PixelTheme.gold
-            }
-
-            RowLayout {
-                anchors.fill: parent
-                anchors.leftMargin: 18
-                anchors.rightMargin: 18
-                anchors.topMargin: 8
-                anchors.bottomMargin: 9
-                spacing: 12
-
-                RowLayout {
-                    Layout.alignment: Qt.AlignVCenter
-                    spacing: 14
-                    Components.GoldFloppyMark {
-                        Layout.preferredWidth: 38
-                        Layout.preferredHeight: 38
-                    }
-                    ColumnLayout {
-                        spacing: 0
-                        Label {
-                            text: i18nBridge.catalog["app.title"]
-                            color: Theme.PixelTheme.ink
-                            font.family: Theme.PixelTheme.displayFont
-                            font.pixelSize: Theme.PixelTheme.fontBrand
-                            font.weight: Font.DemiBold
-                        }
-                        Label {
-                            text: i18nBridge.catalog["app.subtitle"]
-                            color: Theme.PixelTheme.inkMuted
-                            font.family: Theme.PixelTheme.fontForLanguage(i18nBridge.language)
-                            font.pixelSize: Theme.PixelTheme.fontSm
-                        }
-                    }
-                }
-
-                Item {
-                    Layout.fillWidth: true
-                }
-
-                Components.LanguageSwitcher {
-                    objectName: "languageSwitcher"
-                    i18n: i18nBridge
-                    Layout.preferredWidth: 122
-                }
-            }
-        }
 
         RowLayout {
             Layout.fillWidth: true
@@ -160,6 +102,12 @@ ApplicationWindow {
                             Layout.preferredHeight: 2
                             Layout.leftMargin: 16
                             Components.PixelDivider { objectName: "pageTitleDivider"; anchors.fill: parent }
+                        }
+                        Components.LanguageSwitcher {
+                            objectName: "languageSwitcher"
+                            i18n: i18nBridge
+                            Layout.preferredWidth: 104
+                            Layout.preferredHeight: Theme.PixelTheme.compactControlHeight
                         }
                     }
 

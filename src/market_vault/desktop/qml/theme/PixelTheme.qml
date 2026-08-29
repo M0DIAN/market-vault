@@ -36,7 +36,6 @@ QtObject {
     readonly property int tableHeaderHeight: 30
     readonly property int tableRowHeight: 29
     readonly property int sidebarWidth: 218
-    readonly property int headerHeight: 68
     readonly property int statusHeight: 32
 
     readonly property int fontXs: 10
@@ -44,7 +43,6 @@ QtObject {
     readonly property int fontMd: 13
     readonly property int fontLg: 17
     readonly property int fontTitle: 21
-    readonly property int fontBrand: 22
     readonly property string uiFont: "Fusion Pixel 12px Prop zh_hans"
     readonly property string fallbackUiFont: Qt.platform.os === "windows" ? "Microsoft YaHei UI" : "sans-serif"
     readonly property string dataFont: Qt.platform.os === "windows" ? "Cascadia Mono" : "monospace"

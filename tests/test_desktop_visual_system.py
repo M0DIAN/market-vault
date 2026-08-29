@@ -129,6 +129,9 @@ def test_visual_assets_are_original_native_qml_and_table_cells_stay_lightweight(
 
 def test_shell_retains_native_window_and_safe_purge_danger_semantics():
     main = (QML_ROOT / "Main.qml").read_text(encoding="utf-8")
+    chrome = (
+        ROOT / "src" / "market_vault" / "desktop" / "windows_chrome.py"
+    ).read_text(encoding="utf-8")
     storage = (QML_ROOT / "pages" / "StorageCleanupPage.qml").read_text(
         encoding="utf-8"
     )
@@ -136,11 +139,25 @@ def test_shell_retains_native_window_and_safe_purge_danger_semantics():
 
     assert "ApplicationWindow" in main
     assert "flags: Qt.FramelessWindowHint" not in main
+    assert "Qt.ExpandedClientAreaHint" not in main
+    assert "Qt.NoTitleBarBackgroundHint" not in main
     assert "minimumWidth: 1000" in main
     assert "minimumHeight: 650" in main
     assert "StackLayout" in main
     assert "operationRuntime.requestShutdown()" in main
-    assert "Components.GoldFloppyMark" in main
+    assert 'title: "MARKETVAULT"' in main
+    assert "Components.GoldFloppyMark" not in main
+    assert "Components.LanguageSwitcher" in main
+    assert main.index("Components.LanguageSwitcher") > main.index("pageTitleDividerSlot")
+    assert "headerHeight" not in main
+    assert "DwmSetWindowAttribute" in chrome
+    assert "DWMWA_USE_IMMERSIVE_DARK_MODE = 20" in chrome
+    assert "DWMWA_BORDER_COLOR = 34" in chrome
+    assert "DWMWA_CAPTION_COLOR = 35" in chrome
+    assert "DWMWA_TEXT_COLOR = 36" in chrome
+    assert "nativeEvent" not in chrome
+    assert "WndProc" not in chrome
+    assert "WM_NCHITTEST" not in chrome
     assert "Components.AmbientBinaryField" in home
     assert 'objectName: "storageExecuteButton"' in storage
     assert 'variant: "danger"' in storage
@@ -150,7 +167,8 @@ def test_shell_retains_native_window_and_safe_purge_danger_semantics():
     assert "Components.PixelDivider" in main
     assert 'objectName: "pageTitleDividerSlot"' in main
     assert "Layout.preferredWidth: 640" in main
-    assert "spacing: 14" in main
+    assert "Layout.preferredWidth: 104" in main
+    assert "Theme.PixelTheme.compactControlHeight" in main
     assert "parent: Overlay.overlay" in main
     assert "anchors.centerIn: parent" in main
     assert "Layout.preferredWidth: operationRuntime.busy ? 54 : 0" in main

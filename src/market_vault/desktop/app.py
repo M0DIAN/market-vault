@@ -139,6 +139,51 @@ def resolve_qml_path(*, frozen_root: Path | None = None) -> Path:
     return Path(__file__).resolve().parent / "qml" / "Main.qml"
 
 
+def resolve_application_icon_path(*, frozen_root: Path | None = None) -> Path:
+    """Resolve the shared Windows icon without consulting the current directory."""
+
+    if frozen_root is not None:
+        root = Path(frozen_root)
+    elif getattr(sys, "frozen", False):
+        bundle_root = getattr(sys, "_MEIPASS", None)
+        if not bundle_root:
+            raise RuntimeError("Frozen application icon root is unavailable.")
+        root = Path(bundle_root)
+    else:
+        root = Path(__file__).resolve().parents[3]
+    return root / "assets" / "windows" / "market-vault.ico"
+
+
+def _load_application_icon(icon_factory, *, frozen_root: Path | None = None):
+    """Load the optional runtime icon without making startup depend on it."""
+
+    try:
+        icon_path = resolve_application_icon_path(frozen_root=frozen_root)
+        if not icon_path.is_file():
+            return None
+        icon = icon_factory(str(icon_path))
+        if icon.isNull():
+            return None
+        return icon
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return None
+
+
+def _apply_application_icon(target, icon) -> bool:
+    """Apply a loaded icon to a Qt application or window as best-effort chrome."""
+
+    if icon is None:
+        return False
+    try:
+        if hasattr(target, "setWindowIcon"):
+            target.setWindowIcon(icon)
+        else:
+            target.setIcon(icon)
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return False
+    return True
+
+
 def run_application(
     *,
     smoke_exit_ms: int | None = None,
@@ -150,12 +195,13 @@ def run_application(
     """Create the Qt application over one shared production backend context."""
 
     from PySide6.QtCore import QTimer, QUrl
-    from PySide6.QtGui import QGuiApplication
+    from PySide6.QtGui import QGuiApplication, QIcon
     from PySide6.QtQml import QQmlApplicationEngine
     from PySide6.QtQuickControls2 import QQuickStyle
 
     from market_vault.application import build_application_context
     from market_vault.desktop.bootstrap import create_qml_application_session
+    from market_vault.desktop.windows_chrome import apply_native_caption
 
     qml_path = resolve_qml_path()
     if not qml_path.is_file():
@@ -167,6 +213,8 @@ def run_application(
     try:
         application = QGuiApplication([sys.argv[0]])
         application.setApplicationName("MarketVault")
+        application_icon = _load_application_icon(QIcon)
+        _apply_application_icon(application, application_icon)
         engine = QQmlApplicationEngine()
         session = create_qml_application_session(context, engine)
     except Exception:
@@ -176,6 +224,11 @@ def run_application(
         engine.load(QUrl.fromLocalFile(str(qml_path)))
         if not engine.rootObjects():
             raise RuntimeError(f"QML failed to create a root object: {qml_path}")
+        root_window = engine.rootObjects()[0]
+        engine._market_vault_window_icon_applied = _apply_application_icon(
+            root_window, application_icon
+        )
+        engine._market_vault_native_caption_applied = apply_native_caption(root_window)
         session.validate_wiring()
     except Exception:
         session.shutdown()
