@@ -154,14 +154,34 @@ def resolve_application_icon_path(*, frozen_root: Path | None = None) -> Path:
     return root / "assets" / "windows" / "market-vault.ico"
 
 
-def _load_application_icon(icon_factory, *, frozen_root: Path | None = None):
+def _application_icon_url(icon_path: Path) -> str:
+    """Return a QML-safe file URL for an existing application icon."""
+
+    try:
+        if not icon_path.is_file():
+            return ""
+        from PySide6.QtCore import QUrl
+
+        return QUrl.fromLocalFile(str(icon_path)).toString()
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return ""
+
+
+def _load_application_icon(
+    icon_factory,
+    *,
+    icon_path: Path | None = None,
+    frozen_root: Path | None = None,
+):
     """Load the optional runtime icon without making startup depend on it."""
 
     try:
-        icon_path = resolve_application_icon_path(frozen_root=frozen_root)
-        if not icon_path.is_file():
+        resolved_icon_path = icon_path or resolve_application_icon_path(
+            frozen_root=frozen_root
+        )
+        if not resolved_icon_path.is_file():
             return None
-        icon = icon_factory(str(icon_path))
+        icon = icon_factory(str(resolved_icon_path))
         if icon.isNull():
             return None
         return icon
@@ -213,10 +233,18 @@ def run_application(
     try:
         application = QGuiApplication([sys.argv[0]])
         application.setApplicationName("MarketVault")
-        application_icon = _load_application_icon(QIcon)
+        application_icon_path = resolve_application_icon_path()
+        application_icon_url = _application_icon_url(application_icon_path)
+        application_icon = _load_application_icon(
+            QIcon, icon_path=application_icon_path
+        )
         _apply_application_icon(application, application_icon)
         engine = QQmlApplicationEngine()
-        session = create_qml_application_session(context, engine)
+        session = create_qml_application_session(
+            context,
+            engine,
+            application_icon_url=application_icon_url,
+        )
     except Exception:
         context.shutdown()
         raise

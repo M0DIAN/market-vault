@@ -82,6 +82,20 @@ def test_application_icon_resolver_frozen_mode_is_cwd_independent(
     )
 
 
+def test_application_icon_url_uses_the_resolved_source_asset(monkeypatch, tmp_path):
+    qt_core = pytest.importorskip("PySide6.QtCore")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delattr(sys, "frozen", raising=False)
+    monkeypatch.delattr(sys, "_MEIPASS", raising=False)
+
+    icon_path = app.resolve_application_icon_path()
+    icon_url = app._application_icon_url(icon_path)
+
+    assert Path(qt_core.QUrl(icon_url).toLocalFile()) == icon_path
+    assert icon_path == ROOT / "assets" / "windows" / "market-vault.ico"
+    assert tmp_path not in icon_path.parents
+
+
 def test_missing_optional_application_icon_is_contained(tmp_path):
     calls = []
 
@@ -292,11 +306,13 @@ def test_bridge_property_signal_and_slot_round_trip():
     pytest.importorskip("PySide6")
     from market_vault.desktop.bridge import DesktopBridge
 
-    bridge = DesktopBridge()
+    application_icon_url = "file:///C:/MarketVault/market-vault.ico"
+    bridge = DesktopBridge(application_icon_url=application_icon_url)
     notifications = []
     bridge.statusChanged.connect(lambda: notifications.append(bridge.status))
 
     assert bridge.status == "QML ready"
+    assert bridge.applicationIconUrl == application_icon_url
     bridge.ping()
     assert bridge.status == "Python bridge OK"
     assert notifications == ["Python bridge OK"]

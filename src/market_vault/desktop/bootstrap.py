@@ -76,11 +76,15 @@ def create_qml_application_session(
     context: ApplicationContext,
     engine: QQmlApplicationEngine,
     *,
+    application_icon_url: str = "",
     preference_store: DesktopPreferenceStore | None = None,
 ) -> QmlApplicationSession:
     """Compose every QML controller over one backend and serial runner."""
 
-    bridge = DesktopBridge(parent=engine)
+    bridge = DesktopBridge(
+        application_icon_url=application_icon_url,
+        parent=engine,
+    )
     runtime = DesktopOperationRuntime(application_context=context, parent=engine)
     dashboard = DashboardController(runtime=runtime, parent=engine)
     historical = HistoricalDataController(runtime, parent=engine)

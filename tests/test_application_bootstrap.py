@@ -153,6 +153,8 @@ def test_production_desktop_consumes_the_shared_application_context():
     ).read_text(encoding="utf-8")
 
     assert "context = build_application_context(resolved_settings)" in source
-    assert "create_qml_application_session(context, engine)" in source
+    assert "application_icon_path = resolve_application_icon_path()" in source
+    assert "application_icon_url = _application_icon_url(application_icon_path)" in source
+    assert "application_icon_url=application_icon_url" in source
     assert "application.aboutToQuit.connect(session.shutdown)" in source
     assert "session.shutdown()" in source
