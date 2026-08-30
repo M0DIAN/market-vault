@@ -60,9 +60,11 @@ def test_qml_session_wires_all_pages_to_one_application_context(qt_app, tmp_path
         runner_factory=lambda: runner,
     )
     engine = QQmlApplicationEngine()
+    application_icon_url = "file:///C:/MarketVault/market-vault.ico"
     session = create_qml_application_session(
         context,
         engine,
+        application_icon_url=application_icon_url,
         preference_store=DesktopPreferenceStore(root=tmp_path / "preferences"),
     )
 
@@ -74,6 +76,7 @@ def test_qml_session_wires_all_pages_to_one_application_context(qt_app, tmp_path
     assert context.task_runner_if_initialized is None
     assert session.runtime.settings_path == context.settings_path
     assert session.dashboard._runtime is session.runtime
+    assert session.bridge.applicationIconUrl == application_icon_url
     assert all(controller._runtime is session.runtime for controller in session.controllers)
     assert engine._market_vault_application_session is session
 

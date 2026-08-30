@@ -8,9 +8,18 @@ class DesktopBridge(QObject):
 
     statusChanged = Signal()
 
-    def __init__(self, parent: QObject | None = None) -> None:
+    def __init__(
+        self,
+        application_icon_url: str = "",
+        parent: QObject | None = None,
+    ) -> None:
         super().__init__(parent)
+        self._application_icon_url = application_icon_url
         self._status = "QML ready"
+
+    @Property(str, constant=True)
+    def applicationIconUrl(self) -> str:
+        return self._application_icon_url
 
     @Property(str, notify=statusChanged)
     def status(self) -> str:

@@ -11,12 +11,12 @@ Item {
     required property var i18n
 
     readonly property var metricDefinitions: [
-        {"sourceKey": "Symbols", "labelKey": "metric.symbols", "glyph": "chart"},
-        {"sourceKey": "Snapshots", "labelKey": "metric.snapshots", "glyph": "storage"},
-        {"sourceKey": "Latest rows", "labelKey": "metric.latest_rows", "glyph": "inventory"},
-        {"sourceKey": "Completed dates", "labelKey": "metric.completed_dates", "glyph": "check"},
-        {"sourceKey": "Incomplete dates", "labelKey": "metric.incomplete_dates", "glyph": "warning"},
-        {"sourceKey": "Latest trade date", "labelKey": "metric.latest_trade_date", "glyph": "calendar"}
+        {"objectKey": "symbols", "sourceKey": "Symbols", "labelKey": "metric.symbols", "glyph": "chart"},
+        {"objectKey": "snapshots", "sourceKey": "Snapshots", "labelKey": "metric.snapshots", "glyph": "storage"},
+        {"objectKey": "latestRows", "sourceKey": "Latest rows", "labelKey": "metric.latest_rows", "glyph": "inventory"},
+        {"objectKey": "completedDates", "sourceKey": "Completed dates", "labelKey": "metric.completed_dates", "glyph": "check"},
+        {"objectKey": "incompleteDates", "sourceKey": "Incomplete dates", "labelKey": "metric.incomplete_dates", "glyph": "warning"},
+        {"objectKey": "latestTradeDate", "sourceKey": "Latest trade date", "labelKey": "metric.latest_trade_date", "glyph": "calendar"}
     ]
 
     ColumnLayout {
@@ -38,9 +38,33 @@ Item {
                 anchors.rightMargin: 14
                 spacing: 10
 
-                Components.GoldFloppyMark {
-                    Layout.preferredWidth: 34
-                    Layout.preferredHeight: 34
+                Item {
+                    id: applicationIconContainer
+                    objectName: "homeApplicationIconContainer"
+                    readonly property bool applicationIconReady:
+                        applicationIcon.status === Image.Ready
+                    Layout.preferredWidth: 42
+                    Layout.preferredHeight: 42
+                    Layout.alignment: Qt.AlignVCenter
+
+                    Image {
+                        id: applicationIcon
+                        objectName: "homeApplicationIcon"
+                        anchors.fill: parent
+                        source: home.desktop.applicationIconUrl
+                        fillMode: Image.PreserveAspectFit
+                        smooth: false
+                        mipmap: false
+                        visible: applicationIconContainer.applicationIconReady
+                    }
+
+                    Components.GoldFloppyMark {
+                        objectName: "homeApplicationIconFallback"
+                        anchors.centerIn: parent
+                        width: 34
+                        height: 34
+                        visible: !applicationIconContainer.applicationIconReady
+                    }
                 }
 
                 ColumnLayout {
@@ -128,6 +152,7 @@ Item {
 
                 Components.PixelPanel {
                     required property var modelData
+                    objectName: "homeMetricCard_" + modelData.objectKey
                     Layout.fillWidth: true
                     Layout.preferredHeight: 72
                     padding: 9
@@ -140,10 +165,12 @@ Item {
                         anchors.fill: parent
                         spacing: 9
                         Components.PixelGlyph {
+                            objectName: "homeMetricGlyph_" + modelData.objectKey
                             glyph: modelData.glyph
                             color: Theme.PixelTheme.goldDark
-                            Layout.preferredWidth: 20
-                            Layout.preferredHeight: 20
+                            Layout.preferredWidth: 24
+                            Layout.preferredHeight: 24
+                            Layout.alignment: Qt.AlignVCenter
                         }
                         ColumnLayout {
                             Layout.fillWidth: true
