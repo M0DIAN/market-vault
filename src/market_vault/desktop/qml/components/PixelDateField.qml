@@ -109,18 +109,48 @@ ColumnLayout {
             onTextEdited: root.edited(text)
         }
 
-        PixelButton {
+        Button {
+            id: calendarTrigger
             objectName: root.objectName.length > 0
                 ? root.objectName + "CalendarButton" : "pixelDateFieldCalendarButton"
-            Layout.preferredWidth: Theme.PixelTheme.compactControlHeight
-            Layout.minimumWidth: Theme.PixelTheme.compactControlHeight
-            Layout.maximumWidth: Theme.PixelTheme.compactControlHeight
-            implicitWidth: Theme.PixelTheme.compactControlHeight
-            compact: true
-            leftPadding: 6
-            rightPadding: 6
-            glyph: "calendar"
+            readonly property real glyphSize: Math.max(14, Math.min(22,
+                Math.min(field.height * 0.60, field.width * 0.12)))
+            Layout.preferredWidth: field.height
+            Layout.preferredHeight: field.height
+            Layout.alignment: Qt.AlignVCenter
+            implicitWidth: field.implicitHeight
+            implicitHeight: field.implicitHeight
+            padding: 0
+            activeFocusOnTab: true
+            hoverEnabled: true
             Accessible.name: root.label
+
+            Keys.onPressed: function(event) {
+                if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter
+                        || event.key === Qt.Key_Space) {
+                    event.accepted = true
+                    root.openCalendar()
+                }
+            }
+
+            background: Item { visible: false }
+
+            contentItem: Item {
+                PixelGlyph {
+                    objectName: root.objectName.length > 0
+                        ? root.objectName + "CalendarGlyph" : "pixelDateFieldCalendarGlyph"
+                    anchors.centerIn: parent
+                    anchors.horizontalCenterOffset: calendarTrigger.down ? 1 : 0
+                    anchors.verticalCenterOffset: calendarTrigger.down ? 1 : 0
+                    width: calendarTrigger.glyphSize
+                    height: calendarTrigger.glyphSize
+                    glyph: "calendar"
+                    color: calendarTrigger.hovered || calendarTrigger.activeFocus
+                        || calendarTrigger.down
+                        ? Theme.PixelTheme.goldDark : Theme.PixelTheme.inkMuted
+                }
+            }
+
             onClicked: root.openCalendar()
         }
     }

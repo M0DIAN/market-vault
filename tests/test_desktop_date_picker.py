@@ -26,6 +26,7 @@ from PySide6.QtCore import QByteArray, QMetaObject, QObject, Qt, QUrl
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuickControls2 import QQuickStyle
+from PySide6.QtTest import QTest
 
 QQuickStyle.setStyle("Basic")
 app = QGuiApplication([])
@@ -57,6 +58,9 @@ ApplicationWindow {{
     property bool popupClosedAfterSelection: false
     property bool popupVisibleAfterOpen: false
     property real popupYAfterOpen: -1
+    property bool popupOpenedByClick: false
+    property bool popupOpenedByEnter: false
+    property bool popupOpenedBySpace: false
     property string storageFieldName: ""
     property string storageFieldValue: ""
     property bool storagePlanInvalidated: false
@@ -187,6 +191,12 @@ app.processEvents()
 calendar_popup = root.findChild(QObject, "dateFieldCalendarPopup")
 if calendar_popup is None:
     raise RuntimeError("PixelDateField popup was not exposed")
+calendar_trigger = root.findChild(QObject, "dateFieldCalendarButton")
+if calendar_trigger is None:
+    raise RuntimeError("PixelDateField calendar trigger was not exposed")
+calendar_glyph = root.findChild(QObject, "dateFieldCalendarGlyph")
+if calendar_glyph is None:
+    raise RuntimeError("PixelDateField calendar glyph was not exposed")
 date_field = root.findChild(QObject, "dateField")
 if date_field is None or not QMetaObject.invokeMethod(
     date_field, "openCalendar", Qt.ConnectionType.DirectConnection
@@ -195,6 +205,33 @@ if date_field is None or not QMetaObject.invokeMethod(
 app.processEvents()
 root.setProperty("popupYAfterOpen", calendar_popup.property("y"))
 root.setProperty("popupVisibleAfterOpen", calendar_popup.property("visible"))
+date_field.closeCalendar()
+
+if not QMetaObject.invokeMethod(
+    calendar_trigger, "click", Qt.ConnectionType.DirectConnection
+):
+    raise RuntimeError("PixelDateField calendar trigger could not be clicked")
+app.processEvents()
+root.setProperty("popupOpenedByClick", calendar_popup.property("visible"))
+date_field.closeCalendar()
+
+if not QMetaObject.invokeMethod(
+    calendar_trigger, "forceActiveFocus", Qt.ConnectionType.DirectConnection
+):
+    raise RuntimeError("PixelDateField calendar trigger could not receive focus")
+QTest.keyClick(root, Qt.Key.Key_Return)
+app.processEvents()
+root.setProperty("popupOpenedByEnter", calendar_popup.property("visible"))
+date_field.closeCalendar()
+
+QMetaObject.invokeMethod(
+    calendar_trigger, "forceActiveFocus", Qt.ConnectionType.DirectConnection
+)
+QTest.keyClick(root, Qt.Key.Key_Space)
+app.processEvents()
+root.setProperty("popupOpenedBySpace", calendar_popup.property("visible"))
+
+calendar_background = calendar_trigger.property("background")
 
 print(json.dumps({{
     "empty_year": root.property("emptyYear"),
@@ -212,6 +249,15 @@ print(json.dumps({{
     "popup_closed": root.property("popupClosedAfterSelection"),
     "popup_visible_after_open": root.property("popupVisibleAfterOpen"),
     "popup_y_after_open": root.property("popupYAfterOpen"),
+    "popup_opened_by_click": root.property("popupOpenedByClick"),
+    "popup_opened_by_enter": root.property("popupOpenedByEnter"),
+    "popup_opened_by_space": root.property("popupOpenedBySpace"),
+    "trigger_background_visible": calendar_background.property("visible"),
+    "trigger_width": calendar_trigger.property("width"),
+    "trigger_height": calendar_trigger.property("height"),
+    "glyph_name": calendar_glyph.property("glyph"),
+    "glyph_width": calendar_glyph.property("width"),
+    "glyph_height": calendar_glyph.property("height"),
     "edits": root.property("edits").toVariant(),
     "storage_field_name": root.property("storageFieldName"),
     "storage_field_value": root.property("storageFieldValue"),
@@ -251,6 +297,14 @@ print(json.dumps({{
     assert evidence["popup_closed"] is True
     assert evidence["popup_visible_after_open"] is True
     assert evidence["popup_y_after_open"] >= 0
+    assert evidence["popup_opened_by_click"] is True
+    assert evidence["popup_opened_by_enter"] is True
+    assert evidence["popup_opened_by_space"] is True
+    assert evidence["trigger_background_visible"] is False
+    assert evidence["trigger_width"] == pytest.approx(evidence["trigger_height"])
+    assert evidence["glyph_name"] == "calendar"
+    assert evidence["glyph_width"] == pytest.approx(evidence["glyph_height"])
+    assert 14 <= evidence["glyph_width"] <= 22
     assert evidence["edits"] == ["2026-09-03", "2026-10-04"]
     assert evidence["storage_field_name"] == "start_date"
     assert evidence["storage_field_value"] == "2026-09-04"
@@ -313,3 +367,25 @@ def test_pixel_date_field_uses_qt_calendar_and_is_packaged():
     assert "calendarPopup.close()" in component
     assert 'glyph: "calendar"' in component
     assert '"PixelDateField.qml"' in spec
+
+
+def test_pixel_date_field_calendar_trigger_is_borderless_and_adaptive():
+    component = (COMPONENTS_ROOT / "PixelDateField.qml").read_text(encoding="utf-8")
+    trigger = component.split("id: calendarTrigger", maxsplit=1)[1].split(
+        "Popup {", maxsplit=1
+    )[0]
+
+    assert "PixelButton" not in trigger
+    assert "background: Item { visible: false }" in trigger
+    assert 'glyph: "calendar"' in trigger
+    assert "Layout.preferredWidth: field.height" in trigger
+    assert "Layout.preferredHeight: field.height" in trigger
+    assert "Math.max(14, Math.min(22," in trigger
+    assert "width: calendarTrigger.glyphSize" in trigger
+    assert "height: calendarTrigger.glyphSize" in trigger
+    assert "Theme.PixelTheme.inkMuted" in trigger
+    assert "Theme.PixelTheme.goldDark" in trigger
+    assert "Accessible.name: root.label" in trigger
+    assert "event.key === Qt.Key_Return" in trigger
+    assert "event.key === Qt.Key_Enter" in trigger
+    assert "event.key === Qt.Key_Space" in trigger
