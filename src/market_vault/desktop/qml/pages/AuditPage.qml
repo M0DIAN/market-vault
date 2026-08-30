@@ -23,8 +23,8 @@ Item {
                 columnSpacing: Theme.PixelTheme.spacingMd
                 rowSpacing: 6
                 Components.LabeledTextField { id: symbols; label: root.i18n.catalog["field.symbols"]; text: "US.SPY" }
-                Components.LabeledTextField { id: startDate; label: root.i18n.catalog["field.start_date"] }
-                Components.LabeledTextField { id: endDate; label: root.i18n.catalog["field.end_date"] }
+                Components.PixelDateField { id: startDate; objectName: root.tableObjectName + "StartDate"; label: root.i18n.catalog["field.start_date"]; language: root.i18n.language }
+                Components.PixelDateField { id: endDate; objectName: root.tableObjectName + "EndDate"; label: root.i18n.catalog["field.end_date"]; language: root.i18n.language }
                 Components.LabeledTextField { id: calendarMarket; label: root.i18n.catalog["field.calendar_market"]; text: "US" }
                 Components.LabeledTextField { id: calendarCode; label: root.i18n.catalog["field.calendar_code"] }
                 Components.LabeledComboBox { id: interval; label: root.i18n.catalog["field.interval"]; model: ["1m", "5m", "15m", "30m", "60m", "day"] }

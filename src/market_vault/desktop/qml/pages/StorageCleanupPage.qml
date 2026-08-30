@@ -39,8 +39,8 @@ Item {
                 rowSpacing: 6
                 Components.LabeledTextField { label: root.i18n.catalog["field.source"]; text: root.controller.scope.source; onEdited: value => root.controller.setScopeField("source", value) }
                 Components.LabeledTextField { id: storageSymbols; objectName: "storageSymbols"; label: root.i18n.catalog["field.symbols"]; text: root.controller.scope.symbols; onEdited: value => root.controller.setScopeField("symbols", value) }
-                Components.LabeledTextField { label: root.i18n.catalog["field.start_date"]; text: root.controller.scope.start_date; onEdited: value => root.controller.setScopeField("start_date", value) }
-                Components.LabeledTextField { label: root.i18n.catalog["field.end_date"]; text: root.controller.scope.end_date; onEdited: value => root.controller.setScopeField("end_date", value) }
+                Components.PixelDateField { objectName: "storageStartDate"; label: root.i18n.catalog["field.start_date"]; language: root.i18n.language; text: root.controller.scope.start_date; onEdited: value => root.controller.setScopeField("start_date", value) }
+                Components.PixelDateField { objectName: "storageEndDate"; label: root.i18n.catalog["field.end_date"]; language: root.i18n.language; text: root.controller.scope.end_date; onEdited: value => root.controller.setScopeField("end_date", value) }
                 Components.LabeledTextField { label: root.i18n.catalog["field.interval"]; text: root.controller.scope.interval; onEdited: value => root.controller.setScopeField("interval", value) }
                 Components.LabeledTextField { label: root.i18n.catalog["field.session"]; text: root.controller.scope.session; onEdited: value => root.controller.setScopeField("session", value) }
                 Components.LabeledTextField { label: root.i18n.catalog["field.adjustment"]; text: root.controller.scope.adjustment; onEdited: value => root.controller.setScopeField("adjustment", value) }

@@ -31,8 +31,8 @@ Item {
                 Components.LabeledComboBox { id: scope; label: root.i18n.catalog["field.scope"]; model: ["MARKET", "CODE"] }
                 Components.LabeledTextField { id: market; label: root.i18n.catalog["field.market"]; text: "US" }
                 Components.LabeledTextField { id: code; label: root.i18n.catalog["field.code"] }
-                Components.LabeledTextField { id: startDate; label: root.i18n.catalog["field.start_date"] }
-                Components.LabeledTextField { id: endDate; label: root.i18n.catalog["field.end_date"] }
+                Components.PixelDateField { id: startDate; objectName: "calendarStartDate"; label: root.i18n.catalog["field.start_date"]; language: root.i18n.language }
+                Components.PixelDateField { id: endDate; objectName: "calendarEndDate"; label: root.i18n.catalog["field.end_date"]; language: root.i18n.language }
                 Components.LabeledTextField { id: pageSize; label: root.i18n.catalog["field.page_size"]; text: "100" }
             }
         }

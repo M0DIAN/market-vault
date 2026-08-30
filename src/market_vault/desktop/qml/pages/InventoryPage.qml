@@ -22,8 +22,8 @@ Item {
                 columnSpacing: Theme.PixelTheme.spacingMd
                 rowSpacing: 6
                 Components.LabeledTextField { id: symbols; label: root.i18n.catalog["field.symbols"] }
-                Components.LabeledTextField { id: startDate; label: root.i18n.catalog["field.start_date"] }
-                Components.LabeledTextField { id: endDate; label: root.i18n.catalog["field.end_date"] }
+                Components.PixelDateField { id: startDate; objectName: "inventoryStartDate"; label: root.i18n.catalog["field.start_date"]; language: root.i18n.language }
+                Components.PixelDateField { id: endDate; objectName: "inventoryEndDate"; label: root.i18n.catalog["field.end_date"]; language: root.i18n.language }
                 Components.LabeledTextField { id: interval; label: root.i18n.catalog["field.interval"] }
                 Components.LabeledTextField { id: session; label: root.i18n.catalog["field.session"] }
                 Components.LabeledTextField { id: adjustment; label: root.i18n.catalog["field.adjustment"] }
