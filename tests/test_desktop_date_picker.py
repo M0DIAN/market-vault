@@ -20,9 +20,10 @@ def test_pixel_date_field_runtime_contract(tmp_path):
     components_uri = COMPONENTS_ROOT.as_uri()
     script = f'''
 import json
+import math
 import time
 
-from PySide6.QtCore import QByteArray, QMetaObject, QObject, Qt, QUrl
+from PySide6.QtCore import QByteArray, QMetaObject, QObject, QPointF, Qt, QUrl
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuickControls2 import QQuickStyle
@@ -232,6 +233,20 @@ app.processEvents()
 root.setProperty("popupOpenedBySpace", calendar_popup.property("visible"))
 
 calendar_background = calendar_trigger.property("background")
+glyph_width = float(calendar_glyph.property("width"))
+glyph_height = float(calendar_glyph.property("height"))
+glyph_unit = int(calendar_glyph.property("pixelUnitOverride"))
+glyph_origin = calendar_glyph.mapToItem(calendar_trigger, QPointF(0, 0))
+offset_x = math.floor((glyph_width - 12 * glyph_unit) / 2)
+offset_y = math.floor((glyph_height - 12 * glyph_unit) / 2)
+visible_bounds = [
+    glyph_origin.x() + offset_x + 2 * glyph_unit,
+    glyph_origin.y() + offset_y + 2 * glyph_unit,
+    glyph_origin.x() + offset_x + 10 * glyph_unit,
+    glyph_origin.y() + offset_y + 10 * glyph_unit,
+]
+trigger_width = float(calendar_trigger.property("width"))
+trigger_height = float(calendar_trigger.property("height"))
 
 print(json.dumps({{
     "empty_year": root.property("emptyYear"),
@@ -253,11 +268,17 @@ print(json.dumps({{
     "popup_opened_by_enter": root.property("popupOpenedByEnter"),
     "popup_opened_by_space": root.property("popupOpenedBySpace"),
     "trigger_background_visible": calendar_background.property("visible"),
-    "trigger_width": calendar_trigger.property("width"),
-    "trigger_height": calendar_trigger.property("height"),
+    "trigger_width": trigger_width,
+    "trigger_height": trigger_height,
     "glyph_name": calendar_glyph.property("glyph"),
-    "glyph_width": calendar_glyph.property("width"),
-    "glyph_height": calendar_glyph.property("height"),
+    "glyph_width": glyph_width,
+    "glyph_height": glyph_height,
+    "glyph_pixel_unit": glyph_unit,
+    "glyph_visible_bounds": visible_bounds,
+    "glyph_contained": visible_bounds[0] >= 0 and visible_bounds[1] >= 0
+        and visible_bounds[2] <= trigger_width and visible_bounds[3] <= trigger_height,
+    "glyph_centered": abs((visible_bounds[0] + visible_bounds[2]) / 2 - trigger_width / 2) < 0.01
+        and abs((visible_bounds[1] + visible_bounds[3]) / 2 - trigger_height / 2) < 0.01,
     "edits": root.property("edits").toVariant(),
     "storage_field_name": root.property("storageFieldName"),
     "storage_field_value": root.property("storageFieldValue"),
@@ -302,10 +323,14 @@ print(json.dumps({{
     assert evidence["popup_opened_by_space"] is True
     assert evidence["trigger_background_visible"] is False
     assert evidence["trigger_width"] == pytest.approx(evidence["trigger_height"])
+    assert evidence["trigger_width"] == pytest.approx(34)
     assert evidence["glyph_name"] == "calendar"
     assert evidence["glyph_width"] == pytest.approx(evidence["glyph_height"])
-    assert 24 <= evidence["glyph_width"] <= 28
-    assert int(evidence["glyph_width"] // 12) == 2
+    assert evidence["glyph_width"] == pytest.approx(evidence["trigger_width"])
+    assert evidence["glyph_pixel_unit"] == 3
+    assert evidence["glyph_visible_bounds"] == pytest.approx([5, 5, 29, 29])
+    assert evidence["glyph_contained"] is True
+    assert evidence["glyph_centered"] is True
     assert evidence["edits"] == ["2026-09-03", "2026-10-04"]
     assert evidence["storage_field_name"] == "start_date"
     assert evidence["storage_field_value"] == "2026-09-04"
@@ -370,7 +395,7 @@ def test_pixel_date_field_uses_qt_calendar_and_is_packaged():
     assert '"PixelDateField.qml"' in spec
 
 
-def test_pixel_date_field_calendar_trigger_is_borderless_and_adaptive():
+def test_pixel_date_field_calendar_trigger_is_borderless_and_scaled():
     component = (COMPONENTS_ROOT / "PixelDateField.qml").read_text(encoding="utf-8")
     trigger = component.split("id: calendarTrigger", maxsplit=1)[1].split(
         "Popup {", maxsplit=1
@@ -381,14 +406,28 @@ def test_pixel_date_field_calendar_trigger_is_borderless_and_adaptive():
     assert 'glyph: "calendar"' in trigger
     assert "Layout.preferredWidth: field.height" in trigger
     assert "Layout.preferredHeight: field.height" in trigger
-    assert "readonly property int glyphSize" in trigger
-    assert "Math.max(24, Math.min(28," in trigger
-    assert "Math.floor(Math.min(field.height * 0.78, field.width * 0.16))" in trigger
-    assert "width: calendarTrigger.glyphSize" in trigger
-    assert "height: calendarTrigger.glyphSize" in trigger
+    assert "readonly property int glyphSize" not in trigger
+    assert "width: calendarTrigger.width" in trigger
+    assert "height: calendarTrigger.height" in trigger
+    assert "pixelUnitOverride: 3" in trigger
     assert "Theme.PixelTheme.inkMuted" in trigger
     assert "Theme.PixelTheme.goldDark" in trigger
     assert "Accessible.name: root.label" in trigger
     assert "event.key === Qt.Key_Return" in trigger
     assert "event.key === Qt.Key_Enter" in trigger
     assert "event.key === Qt.Key_Space" in trigger
+
+
+def test_pixel_glyph_unit_override_is_opt_in_and_date_field_only():
+    glyph = (COMPONENTS_ROOT / "PixelGlyph.qml").read_text(encoding="utf-8")
+
+    assert "property int pixelUnitOverride: 0" in glyph
+    assert "onPixelUnitOverrideChanged: requestPaint()" in glyph
+    assert "root.pixelUnitOverride > 0 ? root.pixelUnitOverride" in glyph
+    assert ": Math.max(1, Math.floor(Math.min(width, height) / 12))" in glyph
+
+    override_users = []
+    for path in QML_ROOT.rglob("*.qml"):
+        if "pixelUnitOverride: 3" in path.read_text(encoding="utf-8"):
+            override_users.append(path.relative_to(QML_ROOT).as_posix())
+    assert override_users == ["components/PixelDateField.qml"]
