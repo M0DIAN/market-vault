@@ -113,8 +113,8 @@ ColumnLayout {
             id: calendarTrigger
             objectName: root.objectName.length > 0
                 ? root.objectName + "CalendarButton" : "pixelDateFieldCalendarButton"
-            readonly property real glyphSize: Math.max(14, Math.min(22,
-                Math.min(field.height * 0.60, field.width * 0.12)))
+            readonly property int glyphSize: Math.max(24, Math.min(28,
+                Math.floor(Math.min(field.height * 0.78, field.width * 0.16))))
             Layout.preferredWidth: field.height
             Layout.preferredHeight: field.height
             Layout.alignment: Qt.AlignVCenter

@@ -13,9 +13,16 @@ Item {
         anchors.fill: parent
         spacing: Theme.PixelTheme.spacingSm
         Components.PixelPanel {
+            id: formPanel
+            objectName: "inventoryFormPanel"
             Layout.fillWidth: true
-            Layout.preferredHeight: 116
+            Layout.preferredHeight: formGrid.implicitHeight
+                + 2 * (formPanel.padding + 1)
+            Layout.minimumHeight: formGrid.implicitHeight
+                + 2 * (formPanel.padding + 1)
             GridLayout {
+                id: formGrid
+                objectName: "inventoryFormGrid"
                 anchors.fill: parent
                 columns: 3
                 uniformCellWidths: true

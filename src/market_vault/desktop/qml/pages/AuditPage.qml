@@ -14,12 +14,18 @@ Item {
         anchors.fill: parent
         spacing: Theme.PixelTheme.spacingSm
         Components.PixelPanel {
+            id: formPanel
+            objectName: root.tableObjectName + "FormPanel"
             Layout.fillWidth: true
-            Layout.preferredHeight: 116
+            Layout.preferredHeight: formGrid.implicitHeight
+                + 2 * (formPanel.padding + 1)
+            Layout.minimumHeight: formGrid.implicitHeight
+                + 2 * (formPanel.padding + 1)
             GridLayout {
+                id: formGrid
+                objectName: root.tableObjectName + "FormGrid"
                 anchors.fill: parent
                 columns: 4
-                uniformCellWidths: true
                 columnSpacing: Theme.PixelTheme.spacingMd
                 rowSpacing: 6
                 Components.LabeledTextField { id: symbols; label: root.i18n.catalog["field.symbols"]; text: "US.SPY" }

@@ -183,7 +183,9 @@ def test_shell_retains_native_window_and_safe_purge_danger_semantics():
         QML_ROOT / "pages" / "HistoricalDataPage.qml"
     ).read_text(encoding="utf-8")
     assert "Layout.topMargin: 4" in historical
-    assert "Layout.preferredHeight: 222" in historical
+    assert "Layout.preferredHeight: formGrid.implicitHeight" in historical
+    assert "Layout.minimumHeight: formGrid.implicitHeight" in historical
+    assert "Layout.preferredHeight: 222" not in historical
 
 
 def test_pixel_controls_share_stepped_metal_focus_and_press_language():
