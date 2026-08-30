@@ -304,7 +304,8 @@ print(json.dumps({{
     assert evidence["trigger_width"] == pytest.approx(evidence["trigger_height"])
     assert evidence["glyph_name"] == "calendar"
     assert evidence["glyph_width"] == pytest.approx(evidence["glyph_height"])
-    assert 14 <= evidence["glyph_width"] <= 22
+    assert 24 <= evidence["glyph_width"] <= 28
+    assert int(evidence["glyph_width"] // 12) == 2
     assert evidence["edits"] == ["2026-09-03", "2026-10-04"]
     assert evidence["storage_field_name"] == "start_date"
     assert evidence["storage_field_value"] == "2026-09-04"
@@ -380,7 +381,9 @@ def test_pixel_date_field_calendar_trigger_is_borderless_and_adaptive():
     assert 'glyph: "calendar"' in trigger
     assert "Layout.preferredWidth: field.height" in trigger
     assert "Layout.preferredHeight: field.height" in trigger
-    assert "Math.max(14, Math.min(22," in trigger
+    assert "readonly property int glyphSize" in trigger
+    assert "Math.max(24, Math.min(28," in trigger
+    assert "Math.floor(Math.min(field.height * 0.78, field.width * 0.16))" in trigger
     assert "width: calendarTrigger.glyphSize" in trigger
     assert "height: calendarTrigger.glyphSize" in trigger
     assert "Theme.PixelTheme.inkMuted" in trigger

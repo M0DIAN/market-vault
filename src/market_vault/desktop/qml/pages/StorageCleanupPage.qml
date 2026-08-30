@@ -29,12 +29,18 @@ Item {
         }
 
         Components.PixelPanel {
+            id: formPanel
+            objectName: "storageCleanupFormPanel"
             Layout.fillWidth: true
-            Layout.preferredHeight: 116
+            Layout.preferredHeight: formGrid.implicitHeight
+                + 2 * (formPanel.padding + 1)
+            Layout.minimumHeight: formGrid.implicitHeight
+                + 2 * (formPanel.padding + 1)
             GridLayout {
+                id: formGrid
+                objectName: "storageCleanupFormGrid"
                 anchors.fill: parent
                 columns: 4
-                uniformCellWidths: true
                 columnSpacing: Theme.PixelTheme.spacingMd
                 rowSpacing: 6
                 Components.LabeledTextField { label: root.i18n.catalog["field.source"]; text: root.controller.scope.source; onEdited: value => root.controller.setScopeField("source", value) }

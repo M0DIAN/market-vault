@@ -18,11 +18,18 @@ Item {
         anchors.fill: parent
         spacing: Theme.PixelTheme.spacingSm
         Components.PixelPanel {
+            id: formPanel
+            objectName: "tradingCalendarFormPanel"
             Layout.fillWidth: true
-            Layout.preferredHeight: 116
+            Layout.preferredHeight: formGrid.implicitHeight
+                + 2 * (formPanel.padding + 1)
+            Layout.minimumHeight: formGrid.implicitHeight
+                + 2 * (formPanel.padding + 1)
             enabled: !root.controller.confirmationPending
             opacity: enabled ? 1 : Theme.PixelTheme.disabledOpacity
             GridLayout {
+                id: formGrid
+                objectName: "tradingCalendarFormGrid"
                 anchors.fill: parent
                 columns: 3
                 uniformCellWidths: true

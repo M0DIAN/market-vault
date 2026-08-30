@@ -25,14 +25,20 @@ Item {
         spacing: Theme.PixelTheme.spacingSm
 
         Components.PixelPanel {
+            id: formPanel
+            objectName: "historicalDataFormPanel"
             Layout.fillWidth: true
-            Layout.preferredHeight: 222
+            Layout.preferredHeight: formGrid.implicitHeight
+                + 2 * (formPanel.padding + 1)
+            Layout.minimumHeight: formGrid.implicitHeight
+                + 2 * (formPanel.padding + 1)
             enabled: !root.controller.confirmationPending
             opacity: enabled ? 1 : Theme.PixelTheme.disabledOpacity
             GridLayout {
+                id: formGrid
+                objectName: "historicalDataFormGrid"
                 anchors.fill: parent
                 columns: 4
-                uniformCellWidths: true
                 columnSpacing: Theme.PixelTheme.spacingMd
                 rowSpacing: 6
                 Components.LabeledTextField { id: symbols; objectName: "backfillSymbols"; label: root.i18n.catalog["field.symbols"]; text: "US.SPY" }
