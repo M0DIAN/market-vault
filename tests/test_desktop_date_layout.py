@@ -69,6 +69,7 @@ def test_date_form_runtime_geometry_across_dpi_language_and_minimum_window(
     surfaces = repr(FORM_SURFACES)
     script = f'''
 import json
+import math
 
 from PySide6.QtCore import QObject, QPointF, QUrl
 from PySide6.QtGui import QGuiApplication
@@ -251,14 +252,32 @@ if trigger is None or glyph is None or field_input is None:
     raise RuntimeError("calendar trigger geometry target is missing")
 background = trigger.property("background")
 glyph_width = number(glyph, "width")
+glyph_height = number(glyph, "height")
+glyph_unit = int(glyph.property("pixelUnitOverride"))
+glyph_origin = glyph.mapToItem(trigger, QPointF(0, 0))
+offset_x = math.floor((glyph_width - 12 * glyph_unit) / 2)
+offset_y = math.floor((glyph_height - 12 * glyph_unit) / 2)
+visible_bounds = [
+    glyph_origin.x() + offset_x + 2 * glyph_unit,
+    glyph_origin.y() + offset_y + 2 * glyph_unit,
+    glyph_origin.x() + offset_x + 10 * glyph_unit,
+    glyph_origin.y() + offset_y + 10 * glyph_unit,
+]
+trigger_width = number(trigger, "width")
+trigger_height = number(trigger, "height")
 trigger_evidence = {{
-    "trigger_width": number(trigger, "width"),
-    "trigger_height": number(trigger, "height"),
+    "trigger_width": trigger_width,
+    "trigger_height": trigger_height,
     "input_width": number(field_input, "width"),
     "input_height": number(field_input, "height"),
     "glyph_width": glyph_width,
-    "glyph_height": number(glyph, "height"),
-    "glyph_pixel_unit": int(glyph_width // 12),
+    "glyph_height": glyph_height,
+    "glyph_pixel_unit": glyph_unit,
+    "glyph_visible_bounds": visible_bounds,
+    "glyph_contained": visible_bounds[0] >= 0 and visible_bounds[1] >= 0
+        and visible_bounds[2] <= trigger_width and visible_bounds[3] <= trigger_height,
+    "glyph_centered": abs((visible_bounds[0] + visible_bounds[2]) / 2 - trigger_width / 2) < 0.01
+        and abs((visible_bounds[1] + visible_bounds[3]) / 2 - trigger_height / 2) < 0.01,
     "glyph_antialiasing": bool(glyph.property("antialiasing")),
     "background_visible": bool(background.property("visible")),
 }}
@@ -308,10 +327,14 @@ runtime.shutdown()
 
     trigger = output["trigger"]
     assert trigger["trigger_width"] == pytest.approx(trigger["trigger_height"])
+    assert trigger["trigger_width"] == pytest.approx(34)
     assert trigger["trigger_height"] == pytest.approx(trigger["input_height"])
     assert trigger["input_width"] > trigger["trigger_width"]
-    assert 24 <= trigger["glyph_width"] <= 28
+    assert trigger["glyph_width"] == pytest.approx(trigger["trigger_width"])
     assert trigger["glyph_width"] == pytest.approx(trigger["glyph_height"])
-    assert trigger["glyph_pixel_unit"] == 2
+    assert trigger["glyph_pixel_unit"] == 3
+    assert trigger["glyph_visible_bounds"] == pytest.approx([5, 5, 29, 29])
+    assert trigger["glyph_contained"] is True
+    assert trigger["glyph_centered"] is True
     assert trigger["glyph_antialiasing"] is False
     assert trigger["background_visible"] is False

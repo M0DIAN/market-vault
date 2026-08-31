@@ -6,6 +6,7 @@ Canvas {
     property string glyph: "info"
     property color color: Theme.PixelTheme.ink
     property color accentColor: color
+    property int pixelUnitOverride: 0
     implicitWidth: 18
     implicitHeight: 18
     antialiasing: false
@@ -14,6 +15,7 @@ Canvas {
     onGlyphChanged: requestPaint()
     onColorChanged: requestPaint()
     onAccentColorChanged: requestPaint()
+    onPixelUnitOverrideChanged: requestPaint()
     onWidthChanged: requestPaint()
     onHeightChanged: requestPaint()
 
@@ -48,7 +50,7 @@ Canvas {
         const ctx = getContext("2d")
         ctx.reset()
         ctx.imageSmoothingEnabled = false
-        const unit = Math.max(1, Math.floor(Math.min(width, height) / 12))
+        const unit = root.pixelUnitOverride > 0 ? root.pixelUnitOverride : Math.max(1, Math.floor(Math.min(width, height) / 12))
         const offsetX = Math.floor((width - 12 * unit) / 2)
         const offsetY = Math.floor((height - 12 * unit) / 2)
         ctx.fillStyle = root.color

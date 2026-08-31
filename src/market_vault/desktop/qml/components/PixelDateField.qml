@@ -113,8 +113,6 @@ ColumnLayout {
             id: calendarTrigger
             objectName: root.objectName.length > 0
                 ? root.objectName + "CalendarButton" : "pixelDateFieldCalendarButton"
-            readonly property int glyphSize: Math.max(24, Math.min(28,
-                Math.floor(Math.min(field.height * 0.78, field.width * 0.16))))
             Layout.preferredWidth: field.height
             Layout.preferredHeight: field.height
             Layout.alignment: Qt.AlignVCenter
@@ -142,9 +140,10 @@ ColumnLayout {
                     anchors.centerIn: parent
                     anchors.horizontalCenterOffset: calendarTrigger.down ? 1 : 0
                     anchors.verticalCenterOffset: calendarTrigger.down ? 1 : 0
-                    width: calendarTrigger.glyphSize
-                    height: calendarTrigger.glyphSize
+                    width: calendarTrigger.width
+                    height: calendarTrigger.height
                     glyph: "calendar"
+                    pixelUnitOverride: 3
                     color: calendarTrigger.hovered || calendarTrigger.activeFocus
                         || calendarTrigger.down
                         ? Theme.PixelTheme.goldDark : Theme.PixelTheme.inkMuted
