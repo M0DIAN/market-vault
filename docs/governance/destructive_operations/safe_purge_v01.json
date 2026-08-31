@@ -3,11 +3,11 @@
   "operation_id": "safe_purge_v01",
   "approval": {
     "status": "APPROVED",
-    "rationale": "The current Safe Purge v0.1 implementation remains approved. This design-only revision prospectively authorizes registered per-symbol physical-pair discovery while preserving exact legacy behavior; implementation requires a later PR from this contract in its exact base."
+    "rationale": "The current Safe Purge v0.1 implementation remains approved. This design-only revision prospectively authorizes the explicit SUPERSEDED_ONLY planning policy while preserving EXACT_SCOPE as the default, retaining the existing mutation owner and confirmation boundary, and requiring a later implementation PR from this contract in its exact base."
   },
   "identity": {
     "name": "Safe Purge v0.1",
-    "purpose": "Move exact, sealed market-bar Raw and Curated physical snapshot pairs, discovered through authoritative per-symbol registry bindings or unchanged legacy run bindings, out of active archive globs into same-volume quarantine without permanent deletion."
+    "purpose": "Move exact, sealed market-bar Raw and Curated physical snapshot pairs, selected by explicit EXACT_SCOPE or prospectively authorized SUPERSEDED_ONLY planning and discovered through authoritative per-symbol registry bindings or unchanged legacy run bindings, out of active archive globs into same-volume quarantine without permanent deletion."
   },
   "implementation_bindings": [
     {
@@ -156,7 +156,7 @@
   ],
   "authority_boundary": {
     "initiators": [
-      "MarketVault.purge_plan and MarketVault.purge_execute callers",
+      "MarketVault.purge_plan callers selecting explicit cleanup policy and MarketVault.purge_execute callers",
       "market-vault purge-plan and purge-execute CLI callers",
       "Production PySide6/QML Storage & Cleanup review and exact-confirmation execute actions through StorageCleanupController and ConsoleBackend"
     ],
@@ -165,12 +165,13 @@
       "Production PySide6/QML presentation must not mutate Parquet, quarantine, or DuckDB directly",
       "StorageCleanupController must not move, unlink, or rename files; write purge Catalog state; construct purge success evidence; or decide that a plan is safe to execute",
       "API adapters must not move files outside purge_execute",
-      "storage helpers must not authorize an unsealed or stale plan"
+      "storage helpers must not authorize an unsealed or stale plan",
+      "SUPERSEDED_ONLY planning must not introduce a second latest-snapshot algorithm or any destructive executor outside purge_execute"
     ]
   },
   "persistent_scope": {
     "mutated_assets": [
-      "Complete Raw and Curated market_bars Parquet pairs sealed by registered (run_id, symbol) binding or legacy ingestion-run binding",
+      "Complete Raw and Curated market_bars Parquet pairs sealed by registered (run_id, symbol) binding or legacy ingestion-run binding and selected by the plan's explicit cleanup policy",
       "Same-volume quarantine paths preserving original data-root-relative paths",
       "purge_operations lifecycle index rows",
       "Immutable purge plan, precommit, and result JSON evidence",
@@ -181,6 +182,8 @@
       "Dataset artifacts",
       "Dataset Catalog snapshots",
       "Ingestion runs, market_bar_snapshot_pairs rows, collection manifests, and quality reports",
+      "The exact retained complete winner for every SUPERSEDED_ONLY logical key",
+      "Failed, running, orphaned, unregistered, metadata-mismatched, quality-failed, or otherwise unverifiable market-bar snapshots",
       "Options and trading-calendar datasets",
       "Quarantine contents after successful movement",
       "Arbitrary external user paths and consumers"
@@ -262,7 +265,8 @@
       "Immutable precommit evidence is non-terminal and must never by itself prove SUCCESS.",
       "One-sided, unregistered, orphaned-registry, or partially published multi-symbol collection evidence is not a valid registered physical pair and is refused rather than guessed.",
       "A new-format symbol is not successful and cannot populate compatibility pointers until Raw and Curated publication, exact-pair verification, and exact registry insertion all succeed.",
-      "Every new-format run durably records snapshot_binding_mode REGISTERED_PER_SYMBOL even when it publishes zero pairs, so missing registry evidence cannot create legacy authority."
+      "Every new-format run durably records snapshot_binding_mode REGISTERED_PER_SYMBOL even when it publishes zero pairs, so missing registry evidence cannot create legacy authority.",
+      "A SUPERSEDED_ONLY precommit must seal both every target pair and the exact retained active winner for each affected logical key; failure before Catalog SUCCESS rolls moved targets back without changing the sealed winner."
     ],
     "post_commit": [
       "Rollback is no longer legal after Catalog SUCCESS commits.",
@@ -289,14 +293,15 @@
     "same_request_retry": [
       "The same sealed plan ID is reloaded and content-hash verified.",
       "A failed non-committed attempt may retry only after exact active or quarantine identities and Catalog run bindings verify.",
-      "Registered targets additionally require an unchanged exact market_bar_snapshot_pairs binding."
+      "Registered targets additionally require an unchanged exact market_bar_snapshot_pairs binding.",
+      "A SUPERSEDED_ONLY retry requires the same cleanup policy, logical-key groups, target bindings, retained-winner bindings, and deterministic ranking facts."
     ],
     "completed_retry": [
       "A Catalog SUCCESS retry performs no market-data movement.",
       "A byte-identical existing final result is accepted; an absent final is republished from the immutable precommit."
     ],
     "conflicting_retry": [
-      "A different plan hash, scope, run binding, snapshot-pair registry binding, quarantine identity, precommit, Catalog result hash, or final result is refused without overwrite."
+      "A different plan hash, cleanup policy, scope, run binding, snapshot-pair registry binding, retained-winner binding, deterministic ranking result, quarantine identity, precommit, Catalog result hash, or final result is refused without overwrite."
     ]
   },
   "locking_concurrency": {
@@ -311,7 +316,9 @@
       "Every planned ingestion run and Raw/Curated identity is re-resolved before mutation.",
       "Registered targets re-prove run-level snapshot_binding_mode REGISTERED_PER_SYMBOL, then re-resolve the exact (run_id, symbol) market_bar_snapshot_pairs row and compare every field.",
       "Every explicit or historical implicit legacy target re-proves null snapshot_binding_mode and zero market_bar_snapshot_pairs rows for the run before mutation.",
-      "Matching RUNNING runs, unregistered matching files, and unplanned matching active snapshots are refused."
+      "Matching RUNNING runs, unregistered matching files, and unplanned matching active snapshots are refused.",
+      "SUPERSEDED_ONLY execution re-enumerates complete snapshots for every exact source, code, requested trade date, interval, requested session, adjustment, and source schema version key; reuses the Catalog latest-complete ranking; and proves every sealed retained winner is unchanged, active, complete, and still the unique winner before movement.",
+      "SUPERSEDED_ONLY execution refuses if a newly completed snapshot changes the winner, any sealed winner disappears or drifts, or any legacy pair is not fully superseded for every physically co-located symbol."
     ],
     "concurrent_behavior": [
       "A concurrent supported market-bar writer or purge cannot acquire the lock and must fail closed.",
@@ -320,15 +327,17 @@
   },
   "execution_revalidation": {
     "identities": [
-      "Exact plan ID, canonical plan content hash, scope, target list, and plan-file location",
+      "Exact plan ID, canonical plan content hash, cleanup policy, scope, target list, retained-winner list when applicable, and plan-file location",
       "Exact ingestion run ID, snapshot_binding_mode, status, requested and successful symbols, legacy pointer values including nulls, date, interval, requested session, adjustment, and configuration identity",
       "For registered targets, the exact market_bar_snapshot_pairs run ID, symbol, date, interval, session, adjustment, source, schema version, Raw path, Curated path, and row count",
       "For explicit LEGACY_INGESTION_RUN and historical v2 targets without binding_mode, exact null snapshot_binding_mode plus an empty market_bar_snapshot_pairs result for the run",
       "Every target relative path, byte size, SHA-256, row count, symbols, dates, and request-key facts",
+      "For SUPERSEDED_ONLY, each exact logical key consisting of source, code, requested trade date, interval, requested session, adjustment, and source schema version; every target-to-retained run mapping; retained Raw and Curated identity; snapshot_ingested_at, run_finished_at, ingestion_run_id, and snapshot_file ranking facts; and proof that one complete active winner remains",
       "Active and quarantine file identity, same-filesystem destination, and absence of unplanned matching snapshots"
     ],
     "drift_behavior": [
       "Any missing, changed, one-sided, co-located, unregistered, unsafe, newly matching, unknown-mode, mode-drifted, or otherwise unprovable identity refuses before additional mutation.",
+      "A SUPERSEDED_ONLY plan refuses before mutation when the deterministic winner differs from the sealed winner, a retained winner is no longer complete or active, a new complete version appears, a matching RUNNING writer or unregistered snapshot appears, or movement could leave zero complete active snapshots for any affected key.",
       "Execution never rewrites or splits immutable Parquet to satisfy narrower logical scope."
     ]
   },
@@ -356,30 +365,34 @@
   },
   "stale_plan_ui": {
     "invalidation_triggers": [
-      "Any production PySide6/QML Storage & Cleanup scope field modification after Review invalidates the Python controller's reviewed plan and exact scope fingerprint."
+      "Any production PySide6/QML Storage & Cleanup cleanup_policy, source, symbols, start date, end date, interval, session, adjustment, or schema modification after Review invalidates the Python controller's reviewed plan and exact scope fingerprint."
     ],
     "confirmation_invalidation": [
-      "Production PySide6/QML scope modification clears confirmation and disables Execute until a new Review succeeds; QML enabled state is presentation only."
+      "Production PySide6/QML cleanup-policy or scope modification clears confirmation and disables Execute until a new Review succeeds; QML enabled state is presentation only."
     ],
     "execution_policy": [
       "Execution requires the exact text PURGE followed by one space and the sealed plan ID.",
       "The production StorageCleanupController retains the current reviewed plan ID, executable state, exact scope fingerprint, invalidation state, confirmation validity, and execute eligibility in Python.",
       "StorageCleanupController rejects execution when no executable review exists, the plan ID or scope differs, review is invalidated, or confirmation is not exact, even if QML presentation state is wrong.",
       "ConsoleBackend independently rechecks its current reviewed plan and reloads the plan rather than trusting mutable widget state.",
-      "purge_execute independently retains exact confirmation and sealed-plan revalidation authority."
+      "purge_execute independently retains exact confirmation and sealed-plan revalidation authority.",
+      "EXACT_SCOPE remains the default; historical market-vault-safe-purge-plan-v2 evidence without cleanup_policy always means EXACT_SCOPE and remains executable under its original rules, while SUPERSEDED_ONLY requires a versioned v3 plan with explicit policy and sealed retained-winner evidence."
     ]
   },
   "physical_atomicity": {
     "lifecycle_unit": [
       "For a run whose snapshot_binding_mode is REGISTERED_PER_SYMBOL, each exact registered per-symbol Raw plus Curated pair is one minimum physical lifecycle unit; zero rows means no authoritative pair.",
       "For a null-mode run with zero registry rows, the complete legacy ingestion_runs Raw plus Curated pair remains the minimum physical lifecycle unit only while null mode and zero rows are re-proven at execution.",
-      "New-format successful_symbols, snapshot_pairs, and compatibility pointers are derived exclusively from verified registered pairs."
+      "New-format successful_symbols, snapshot_pairs, and compatibility pointers are derived exclusively from verified registered pairs.",
+      "SUPERSEDED_ONLY groups only COMPLETE snapshots by exact source, code, requested trade date, interval, requested session, adjustment, and source schema version and retains exactly one winner per key using snapshot_ingested_at DESC NULLS LAST, run_finished_at DESC NULLS LAST, ingestion_run_id DESC, and snapshot_file DESC."
     ],
     "partial_mutation": [
       "A one-sided pair or partial symbol/date/request-key selection within a legacy co-located file refuses the entire plan.",
       "Registered discovery never falls back to legacy pointers, and an unregistered intersecting active file refuses the entire plan.",
       "A registry insertion failure after physical publication leaves non-success unregistered evidence and never creates compatibility pointers or implicit legacy authority.",
       "A registered-mode run never falls back to compatibility pointers after a registry row disappears, and a null-mode run with registry rows is refused as inconsistent authority.",
+      "SUPERSEDED_ONLY may target one exact registered (run_id, symbol) pair without targeting siblings only when that pair is independently complete and superseded for its exact logical key.",
+      "A legacy multi-symbol Raw and Curated pair may be targeted only when every physically contained symbol has a different newer COMPLETE retained winner for its own exact logical key; otherwise the whole plan refuses with LEGACY_PAIR_NOT_FULLY_SUPERSEDED or an equivalent dedicated code.",
       "An interrupted multi-file move remains non-success until rollback or committed recovery completes."
     ],
     "rollback_expectation": [
@@ -401,11 +414,14 @@
       "A legacy plan whose run gains any market_bar_snapshot_pairs row after planning",
       "A registered-mode run with a missing required registry row, a null-mode run with registry rows, any unknown non-null mode, or any mode change after planning",
       "Co-located symbols, dates, or request-key facts outside the exact requested scope",
+      "A SUPERSEDED_ONLY candidate that is not COMPLETE, is the retained winner, lacks a newer COMPLETE winner for the exact logical key, or belongs to a legacy pair whose every symbol is not independently superseded",
+      "A SUPERSEDED_ONLY plan with a changed winner, newly complete matching version, missing or drifted retained winner, matching RUNNING run, matching unregistered file, or post-movement proof that fewer than one complete active snapshot would remain",
       "Wildcard scope, arbitrary paths, path drift, Catalog drift, or unverified reparse points"
     ],
     "unsupported_cases": [
       "Cascade mutation of Canonical, Dataset, or Dataset Catalog artifacts",
       "Discovery or lifecycle guarantees for arbitrary external user code and paths",
+      "A second destructive executor or a latest-snapshot ranking separate from the Catalog completion authority",
       "Restore, garbage collection, quarantine expiry, and permanent deletion"
     ]
   },
@@ -429,6 +445,18 @@
     "Production QML execution rejects a wrong plan ID",
     "Production QML execution rejects incorrect exact confirmation",
     "Production QML execution delegates through ConsoleBackend and does not mutate files directly",
-    "An exact valid production QML reviewed plan can execute only through existing Safe Purge authority"
+    "An exact valid production QML reviewed plan can execute only through existing Safe Purge authority",
+    "SUPERSEDED_ONLY with one complete snapshot for an exact logical key produces zero targets",
+    "SUPERSEDED_ONLY with two or three complete versions retains exactly the Catalog-ranked latest winner and targets only the older complete versions",
+    "Session, adjustment, interval, source, and source schema version differences produce separate logical-key groups",
+    "A failed, quality-FAIL, running, orphaned, unregistered, or otherwise incomplete newer snapshot does not supersede an older complete snapshot",
+    "A PARTIAL run may supply a complete registered symbol only through the existing completion predicate and exact registry authority",
+    "A matching unregistered snapshot or RUNNING run refuses SUPERSEDED_ONLY planning and execution",
+    "A changed, disappeared, inactive, quality-invalid, or newly displaced retained winner refuses execution before mutation",
+    "Target or retained Raw and Curated SHA-256, size, path, run, registry, request, or physical-fact drift refuses execution",
+    "A legacy multi-symbol pair is targetable only when every contained symbol is superseded; one unsuperseded symbol retains and refuses the whole pair",
+    "Successful SUPERSEDED_ONLY execution leaves the exact sealed winner active and queryable for every affected key and quarantines only sealed superseded pairs",
+    "EXACT_SCOPE behavior and historical sealed market-vault-safe-purge-plan-v2 execution remain unchanged; missing cleanup_policy means EXACT_SCOPE and cannot authorize SUPERSEDED_ONLY",
+    "Changing cleanup_policy or any existing scope field invalidates Review, clears confirmation, and requires a new plan"
   ]
 }
