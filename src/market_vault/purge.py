@@ -20,14 +20,20 @@ from .lifecycle import (
 )
 from .models import MarketBarSnapshotPair, Settings
 from .storage import Catalog
+from .storage.catalog import CompleteSnapshotRef
 
 
 PURGE_PLAN_VERSION = "market-vault-safe-purge-plan-v2"
+PURGE_PLAN_VERSION_V3 = "market-vault-safe-purge-plan-v3"
 PURGE_RESULT_VERSION = "market-vault-safe-purge-result-v2"
+PURGE_RESULT_VERSION_V3 = "market-vault-safe-purge-result-v3"
 PURGE_PRECOMMIT_VERSION = "market-vault-safe-purge-precommit-v1"
+PURGE_PRECOMMIT_VERSION_V3 = "market-vault-safe-purge-precommit-v3"
 RETENTION_POLICY = "RETAIN_VERIFIED_DERIVED_ARTIFACTS_V1"
 REGISTERED_PER_SYMBOL = "REGISTERED_PER_SYMBOL"
 LEGACY_INGESTION_RUN = "LEGACY_INGESTION_RUN"
+EXACT_SCOPE = "EXACT_SCOPE"
+SUPERSEDED_ONLY = "SUPERSEDED_ONLY"
 _PLAN_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 _PARTITION_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
@@ -128,14 +134,18 @@ class PurgePlan:
     refusal_reasons: tuple[dict[str, Any], ...]
     quarantine_root: str
     plan_file: str
+    plan_version: str = PURGE_PLAN_VERSION
+    cleanup_policy: str = EXACT_SCOPE
+    retained_current_snapshots: tuple[dict[str, Any], ...] = ()
+    target_to_retained: tuple[dict[str, Any], ...] = ()
 
     @property
     def executable(self) -> bool:
         return self.status == "PLANNED" and not self.refusal_reasons
 
     def as_dict(self) -> dict[str, Any]:
-        return {
-            "plan_version": PURGE_PLAN_VERSION,
+        payload = {
+            "plan_version": self.plan_version,
             "plan_id": self.plan_id,
             "content_hash": self.content_hash,
             "status": self.status,
@@ -148,6 +158,17 @@ class PurgePlan:
             "quarantine_root": self.quarantine_root,
             "plan_file": self.plan_file,
         }
+        if self.plan_version == PURGE_PLAN_VERSION_V3:
+            payload.update(
+                {
+                    "cleanup_policy": self.cleanup_policy,
+                    "retained_current_snapshots": list(
+                        self.retained_current_snapshots
+                    ),
+                    "target_to_retained": list(self.target_to_retained),
+                }
+            )
+        return payload
 
 
 @dataclass(frozen=True)
@@ -161,9 +182,12 @@ class PurgeResult:
     result_file: str
     completed_at: str
     message: str
+    cleanup_policy: str = EXACT_SCOPE
+    retained_current_snapshots: tuple[dict[str, Any], ...] = ()
+    target_to_retained: tuple[dict[str, Any], ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "result_version": self.result_version,
             "plan_id": self.plan_id,
             "content_hash": self.content_hash,
@@ -174,6 +198,17 @@ class PurgeResult:
             "completed_at": self.completed_at,
             "message": self.message,
         }
+        if self.result_version == PURGE_RESULT_VERSION_V3:
+            payload.update(
+                {
+                    "cleanup_policy": self.cleanup_policy,
+                    "retained_current_snapshots": list(
+                        self.retained_current_snapshots
+                    ),
+                    "target_to_retained": list(self.target_to_retained),
+                }
+            )
+        return payload
 
 
 @dataclass(frozen=True)
@@ -609,6 +644,7 @@ def _verify_target_physical_binding(
     target: dict[str, Any],
     *,
     plan_id: str,
+    allow_quarantine: bool = True,
 ) -> None:
     paths: dict[str, Path] = {}
     for key in ("raw", "curated"):
@@ -622,7 +658,7 @@ def _verify_target_physical_binding(
         if active.exists():
             _verify_identity(active, identity, settings)
             paths[key] = active
-        elif quarantine.exists():
+        elif allow_quarantine and quarantine.exists():
             _verify_identity(quarantine, identity, settings, quarantine=True)
             paths[key] = quarantine
         else:
@@ -634,7 +670,24 @@ def _verify_target_physical_binding(
     if (
         raw_facts.as_dict() != target["raw"].get("facts")
         or curated_facts.as_dict() != target["curated"].get("facts")
-        or _scope_refusals(raw_facts, curated_facts, plan.scope, target["ingestion_run_id"])
+        or (
+            _scope_refusals(
+                raw_facts,
+                curated_facts,
+                plan.scope,
+                target["ingestion_run_id"],
+            )
+            if plan.cleanup_policy == EXACT_SCOPE
+            else (
+                raw_facts.row_count != curated_facts.row_count
+                or raw_facts.symbols != curated_facts.symbols
+                or raw_facts.dates != curated_facts.dates
+                or raw_facts.intervals != curated_facts.intervals
+                or raw_facts.sessions != curated_facts.sessions
+                or raw_facts.adjustments != curated_facts.adjustments
+                or raw_facts.run_ids != curated_facts.run_ids
+            )
+        )
     ):
         raise PurgeDriftError(
             f"planned physical snapshot facts drifted: {target['ingestion_run_id']}"
@@ -643,7 +696,10 @@ def _verify_target_physical_binding(
 
 def _verify_run_bindings(settings: Settings, catalog: Catalog, plan: PurgePlan) -> None:
     """Rebind every sealed physical pair to its current ingestion run row."""
-    for target in plan.targets:
+    items = list(plan.targets)
+    if plan.cleanup_policy == SUPERSEDED_ONLY:
+        items.extend(plan.retained_current_snapshots)
+    for target in items:
         sealed = target.get("run_binding")
         if not isinstance(sealed, dict):
             raise PurgeDriftError(
@@ -731,7 +787,9 @@ def _dedupe_reasons(reasons: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [unique[key] for key in sorted(unique)]
 
 
-def _build_plan_content(settings: Settings, scope: PurgeScope) -> dict[str, Any]:
+def _build_exact_scope_plan_content(
+    settings: Settings, scope: PurgeScope
+) -> dict[str, Any]:
     if scope.source != settings.source:
         raise ValueError(
             f"source must equal configured collector source {settings.source!r}"
@@ -994,6 +1052,577 @@ def _build_plan_content(settings: Settings, scope: PurgeScope) -> dict[str, Any]
     }
 
 
+def _scope_dates(scope: PurgeScope) -> list[date]:
+    return [
+        date.fromordinal(value)
+        for value in range(scope.start_date.toordinal(), scope.end_date.toordinal() + 1)
+    ]
+
+
+def _scope_with_symbols(scope: PurgeScope, symbols: set[str]) -> PurgeScope:
+    return PurgeScope(
+        source=scope.source,
+        symbols=tuple(sorted(symbols)),
+        start_date=scope.start_date,
+        end_date=scope.end_date,
+        interval=scope.interval,
+        requested_session=scope.requested_session,
+        adjustment=scope.adjustment,
+        source_schema_version=scope.source_schema_version,
+    )
+
+
+def _logical_key(scope: PurgeScope, code: str, trade_date: date) -> dict[str, str]:
+    return {
+        "source": scope.source,
+        "code": _symbol(code),
+        "requested_trade_date": trade_date.isoformat(),
+        "interval": scope.interval,
+        "requested_session": scope.requested_session,
+        "adjustment": scope.adjustment,
+        "source_schema_version": scope.source_schema_version,
+    }
+
+
+def _logical_key_token(value: dict[str, Any]) -> bytes:
+    return _canonical_bytes(value)
+
+
+def _same_snapshot(left: CompleteSnapshotRef, right: CompleteSnapshotRef) -> bool:
+    return (
+        left.ingestion_run_id == right.ingestion_run_id
+        and left.snapshot_file == right.snapshot_file
+    )
+
+
+def _ranking_facts(snapshot: CompleteSnapshotRef) -> dict[str, Any]:
+    return {
+        "snapshot_ingested_at": (
+            snapshot.snapshot_ingested_at.isoformat()
+            if snapshot.snapshot_ingested_at is not None
+            else None
+        ),
+        "run_finished_at": (
+            snapshot.run_finished_at.isoformat()
+            if snapshot.run_finished_at is not None
+            else None
+        ),
+        "ingestion_run_id": snapshot.ingestion_run_id,
+        "snapshot_file": snapshot.snapshot_file,
+    }
+
+
+def _physical_snapshot_evidence(
+    settings: Settings,
+    catalog: Catalog,
+    scope: PurgeScope,
+    snapshot: CompleteSnapshotRef,
+) -> dict[str, Any]:
+    run_id = snapshot.ingestion_run_id
+    row = _resolve_run(catalog, run_id)
+    if row is None:
+        raise PurgeError(f"complete snapshot ingestion run disappeared: {run_id}")
+    registry_count = catalog.market_bar_snapshot_pair_count(run_id)
+    mode = row.snapshot_binding_mode
+    pair: MarketBarSnapshotPair | None = None
+    if mode is None:
+        if registry_count != 0:
+            raise PurgeError(f"legacy snapshot authority is inconsistent: {run_id}")
+        if not row.raw_file or not row.curated_file:
+            raise PurgeError(f"legacy snapshot lacks a complete file pair: {run_id}")
+        raw_text = row.raw_file
+        curated_text = row.curated_file
+        binding_mode = LEGACY_INGESTION_RUN
+    elif mode == REGISTERED_PER_SYMBOL:
+        pair = catalog.market_bar_snapshot_pair(run_id, snapshot.code)
+        if pair is None:
+            raise PurgeError(f"registered complete snapshot pair disappeared: {run_id}")
+        successful = set(
+            _symbols_from_json(
+                row.successful_symbols_json,
+                run_id=run_id,
+                label="successful_symbols",
+            )
+        )
+        registered = {
+            item.symbol for item in catalog.market_bar_snapshot_pairs_for_run(run_id)
+        }
+        if successful != registered:
+            raise PurgeError(
+                f"registered run successful-symbol authority is inconsistent: {run_id}"
+            )
+        if (
+            pair.requested_trade_date != snapshot.requested_trade_date
+            or pair.interval != scope.interval
+            or pair.session != scope.requested_session
+            or pair.adjustment != scope.adjustment
+            or pair.source != scope.source
+            or pair.source_schema_version != scope.source_schema_version
+        ):
+            raise PurgeError(f"registered snapshot pair metadata is inconsistent: {run_id}")
+        raw_text = pair.raw_file
+        curated_text = pair.curated_file
+        binding_mode = REGISTERED_PER_SYMBOL
+    else:
+        raise PurgeError(f"unsupported snapshot binding mode for run {run_id}: {mode!r}")
+
+    data_root = Path(os.path.abspath(settings.data_root))
+    raw_path = _path_from_metadata(settings, raw_text)
+    curated_path = _path_from_metadata(settings, curated_text)
+    raw_identity = _file_identity(
+        raw_path,
+        data_root,
+        _active_root(settings, scope, "raw"),
+        layer="raw",
+    )
+    curated_identity = _file_identity(
+        curated_path,
+        data_root,
+        _active_root(settings, scope, "curated"),
+        layer="curated",
+    )
+    if curated_identity["relative_path"] != snapshot.snapshot_file:
+        raise PurgeError(f"complete snapshot Curated authority is inconsistent: {run_id}")
+    raw_facts = _read_facts(raw_path, curated=False)
+    curated_facts = _read_facts(curated_path, curated=True)
+    expected_date = snapshot.requested_trade_date.isoformat()
+    physical_mismatch = (
+        raw_facts.row_count != curated_facts.row_count
+        or raw_facts.symbols != curated_facts.symbols
+        or raw_facts.dates != curated_facts.dates
+        or snapshot.code not in curated_facts.symbols
+        or raw_facts.dates != (expected_date,)
+        or raw_facts.intervals != (scope.interval,)
+        or curated_facts.intervals != (scope.interval,)
+        or raw_facts.sessions != (scope.requested_session,)
+        or curated_facts.sessions != (scope.requested_session,)
+        or raw_facts.adjustments != (scope.adjustment,)
+        or curated_facts.adjustments != (scope.adjustment,)
+        or raw_facts.run_ids != (run_id,)
+        or curated_facts.run_ids != (run_id,)
+        or curated_facts.sources != (scope.source,)
+        or curated_facts.schema_versions != (scope.source_schema_version,)
+    )
+    if physical_mismatch:
+        raise PurgeError(f"complete snapshot physical facts are inconsistent: {run_id}")
+    if pair is not None and (
+        raw_facts.symbols != (pair.symbol,)
+        or raw_facts.row_count != pair.row_count
+        or curated_facts.row_count != pair.row_count
+    ):
+        raise PurgeError(f"registered snapshot physical facts are inconsistent: {run_id}")
+
+    snapshot_id = hashlib.sha256(
+        _canonical_bytes(
+            {
+                "run_id": run_id,
+                "raw": raw_identity["relative_path"],
+                "curated": curated_identity["relative_path"],
+            }
+        )
+    ).hexdigest()[:32]
+    evidence: dict[str, Any] = {
+        "snapshot_id": snapshot_id,
+        "binding_mode": binding_mode,
+        "ingestion_run_id": run_id,
+        "run_binding": _run_binding(settings, row),
+        "logical_keys": [
+            _logical_key(scope, snapshot.code, snapshot.requested_trade_date)
+        ],
+        "ranking": _ranking_facts(snapshot),
+        "raw": {**raw_identity, "facts": raw_facts.as_dict()},
+        "curated": {**curated_identity, "facts": curated_facts.as_dict()},
+        "affected_row_count": curated_facts.row_count,
+        "physical_scope_status": "EXACT",
+    }
+    if pair is not None:
+        evidence["snapshot_pair_binding"] = pair.as_dict()
+    return evidence
+
+
+def _merge_logical_key(evidence: dict[str, Any], logical_key: dict[str, Any]) -> None:
+    keys = {
+        _logical_key_token(item): item for item in evidence.get("logical_keys", [])
+    }
+    keys[_logical_key_token(logical_key)] = logical_key
+    evidence["logical_keys"] = [keys[token] for token in sorted(keys)]
+
+
+def _complete_refs(
+    catalog: Catalog, scope: PurgeScope, symbols: set[str], trade_dates: list[date]
+) -> list[CompleteSnapshotRef]:
+    return catalog.complete_market_bar_snapshots(
+        symbols=sorted(symbols),
+        trade_dates=trade_dates,
+        interval=scope.interval,
+        requested_session=scope.requested_session,
+        adjustment=scope.adjustment,
+        source_schema_version=scope.source_schema_version,
+    )
+
+
+def _refs_by_key(
+    refs: list[CompleteSnapshotRef],
+) -> dict[tuple[str, date], list[CompleteSnapshotRef]]:
+    grouped: dict[tuple[str, date], list[CompleteSnapshotRef]] = {}
+    for ref in refs:
+        grouped.setdefault((ref.code, ref.requested_trade_date), []).append(ref)
+    return grouped
+
+
+def _build_superseded_plan_content(
+    settings: Settings, scope: PurgeScope
+) -> dict[str, Any]:
+    if scope.source != settings.source:
+        raise ValueError(
+            f"source must equal configured collector source {settings.source!r}"
+        )
+    catalog = Catalog(settings)
+    refusals: list[dict[str, Any]] = []
+    scoped_rows, active_runs = _catalog_runs(catalog, scope)
+    authority_referenced: set[str] = set()
+    if active_runs:
+        refusals.append(
+            _refusal(
+                "ACTIVE_RUN",
+                "matching market-bar ingestion runs are still RUNNING",
+                run_ids=active_runs,
+            )
+        )
+
+    for row in scoped_rows:
+        pairs = catalog.market_bar_snapshot_pairs_for_run(row.run_id)
+        if row.snapshot_binding_mode is None:
+            if pairs:
+                refusals.append(
+                    _refusal(
+                        "INCONSISTENT_SNAPSHOT_AUTHORITY",
+                        "legacy-format run unexpectedly has registered snapshot pairs",
+                        run_id=row.run_id,
+                    )
+                )
+                continue
+            pointers = [row.raw_file, row.curated_file]
+        elif row.snapshot_binding_mode == REGISTERED_PER_SYMBOL:
+            successful = set(
+                _symbols_from_json(
+                    row.successful_symbols_json,
+                    run_id=row.run_id,
+                    label="successful_symbols",
+                )
+            )
+            registered = {pair.symbol for pair in pairs}
+            if successful != registered:
+                refusals.append(
+                    _refusal(
+                        "REGISTERED_RUN_SYMBOL_MISMATCH",
+                        "successful_symbols do not equal registered snapshot symbols",
+                        run_id=row.run_id,
+                        successful_symbols=sorted(successful),
+                        registered_symbols=sorted(registered),
+                    )
+                )
+            requested = set(
+                _symbols_from_json(
+                    row.requested_symbols_json,
+                    run_id=row.run_id,
+                    label="requested_symbols",
+                )
+            )
+            for pair in pairs:
+                if (
+                    pair.symbol not in requested
+                    or pair.requested_trade_date != row.requested_trade_date
+                    or pair.interval != row.interval.strip().lower()
+                    or pair.session != row.session.strip().upper()
+                    or pair.adjustment != row.adjustment.strip().upper()
+                    or pair.source != scope.source
+                    or pair.source_schema_version != scope.source_schema_version
+                ):
+                    refusals.append(
+                        _refusal(
+                            "SNAPSHOT_PAIR_RUN_MISMATCH",
+                            "registered snapshot pair does not match its ingestion run",
+                            run_id=row.run_id,
+                            symbol=pair.symbol,
+                        )
+                    )
+            pointers = [
+                value
+                for pair in pairs
+                if pair.symbol in scope.symbols
+                for value in (pair.raw_file, pair.curated_file)
+            ]
+        else:
+            refusals.append(
+                _refusal(
+                    "UNKNOWN_SNAPSHOT_BINDING_MODE",
+                    "run uses an unsupported snapshot binding mode",
+                    run_id=row.run_id,
+                    snapshot_binding_mode=row.snapshot_binding_mode,
+                )
+            )
+            continue
+        for pointer in pointers:
+            if not pointer:
+                continue
+            try:
+                authority_referenced.add(
+                    _metadata_relative_path(
+                        settings,
+                        pointer,
+                        label=f"run {row.run_id} snapshot",
+                    )
+                )
+            except PurgeError as exc:
+                refusals.append(
+                    _refusal(
+                        "UNSAFE_OR_MISSING_TARGET", str(exc), run_id=row.run_id
+                    )
+                )
+
+    initial_refs = _complete_refs(catalog, scope, set(scope.symbols), _scope_dates(scope))
+    grouped = _refs_by_key(initial_refs)
+    evidence_cache: dict[tuple[str, str], dict[str, Any]] = {}
+    retained_by_id: dict[str, dict[str, Any]] = {}
+    retained_by_key: dict[bytes, dict[str, Any]] = {}
+    targets_by_id: dict[str, dict[str, Any]] = {}
+    mappings: dict[tuple[bytes, str], dict[str, Any]] = {}
+    all_logical_keys: dict[bytes, dict[str, Any]] = {}
+
+    def evidence_for(ref: CompleteSnapshotRef) -> dict[str, Any] | None:
+        cache_key = (ref.ingestion_run_id, ref.snapshot_file)
+        if cache_key in evidence_cache:
+            return evidence_cache[cache_key]
+        try:
+            evidence = _physical_snapshot_evidence(settings, catalog, scope, ref)
+        except (PurgeError, LifecycleLockError) as exc:
+            refusals.append(
+                _refusal(
+                    "UNSAFE_OR_MISSING_TARGET",
+                    str(exc),
+                    run_id=ref.ingestion_run_id,
+                    symbol=ref.code,
+                )
+            )
+            return None
+        evidence_cache[cache_key] = evidence
+        return evidence
+
+    def retain(ref: CompleteSnapshotRef, logical_key: dict[str, Any]) -> dict[str, Any] | None:
+        evidence = evidence_for(ref)
+        if evidence is None:
+            return None
+        _merge_logical_key(evidence, logical_key)
+        retained_by_id[evidence["snapshot_id"]] = evidence
+        retained_by_key[_logical_key_token(logical_key)] = evidence
+        all_logical_keys[_logical_key_token(logical_key)] = logical_key
+        return evidence
+
+    def map_target(
+        target: dict[str, Any],
+        retained: dict[str, Any],
+        logical_key: dict[str, Any],
+        target_ref: CompleteSnapshotRef,
+        retained_ref: CompleteSnapshotRef,
+    ) -> None:
+        _merge_logical_key(target, logical_key)
+        targets_by_id[target["snapshot_id"]] = target
+        token = _logical_key_token(logical_key)
+        mappings[(token, target["snapshot_id"])] = {
+            "logical_key": logical_key,
+            "target_snapshot_id": target["snapshot_id"],
+            "retained_snapshot_id": retained["snapshot_id"],
+            "superseded_run_id": target["ingestion_run_id"],
+            "retained_run_id": retained["ingestion_run_id"],
+            "superseded_ranking": _ranking_facts(target_ref),
+            "retained_ranking": _ranking_facts(retained_ref),
+        }
+        all_logical_keys[token] = logical_key
+
+    for (code, trade_date), versions in sorted(grouped.items()):
+        logical_key = _logical_key(scope, code, trade_date)
+        winner = versions[0]
+        winner_evidence = retain(winner, logical_key)
+        if winner_evidence is None:
+            continue
+        for candidate in versions[1:]:
+            target = evidence_for(candidate)
+            if target is None:
+                continue
+            if target["binding_mode"] == REGISTERED_PER_SYMBOL:
+                map_target(
+                    target,
+                    winner_evidence,
+                    logical_key,
+                    candidate,
+                    winner,
+                )
+                continue
+
+            physical_symbols = set(target["curated"]["facts"]["symbols"])
+            legacy_refs = _complete_refs(catalog, scope, physical_symbols, [trade_date])
+            legacy_groups = _refs_by_key(legacy_refs)
+            legacy_mappings: list[
+                tuple[dict[str, Any], CompleteSnapshotRef, CompleteSnapshotRef]
+            ] = []
+            missing: list[str] = []
+            for physical_symbol in sorted(physical_symbols):
+                symbol_versions = legacy_groups.get((physical_symbol, trade_date), [])
+                candidate_version = next(
+                    (item for item in symbol_versions if _same_snapshot(item, candidate)),
+                    None,
+                )
+                if (
+                    candidate_version is None
+                    or not symbol_versions
+                    or _same_snapshot(symbol_versions[0], candidate)
+                ):
+                    missing.append(physical_symbol)
+                    continue
+                symbol_key = _logical_key(scope, physical_symbol, trade_date)
+                retained = retain(symbol_versions[0], symbol_key)
+                if retained is None:
+                    missing.append(physical_symbol)
+                    continue
+                legacy_mappings.append(
+                    (symbol_key, candidate_version, symbol_versions[0])
+                )
+            if missing:
+                refusals.append(
+                    _refusal(
+                        "LEGACY_PAIR_NOT_FULLY_SUPERSEDED",
+                        "legacy physical pair is not superseded for every colocated symbol",
+                        run_id=candidate.ingestion_run_id,
+                        symbols=missing,
+                    )
+                )
+                continue
+            for symbol_key, candidate_version, retained_version in legacy_mappings:
+                retained = retained_by_key[_logical_key_token(symbol_key)]
+                map_target(
+                    target,
+                    retained,
+                    symbol_key,
+                    candidate_version,
+                    retained_version,
+                )
+
+    verification_symbols = {
+        item["code"] for item in all_logical_keys.values()
+    } or set(scope.symbols)
+    _, expanded_active_runs = _catalog_runs(
+        catalog, _scope_with_symbols(scope, verification_symbols)
+    )
+    if expanded_active_runs:
+        refusals.append(
+            _refusal(
+                "ACTIVE_RUN",
+                "matching market-bar ingestion runs are still RUNNING",
+                run_ids=expanded_active_runs,
+            )
+        )
+
+    referenced = authority_referenced | {
+        evidence[layer]["relative_path"]
+        for evidence in evidence_cache.values()
+        for layer in ("raw", "curated")
+    }
+    data_root = Path(os.path.abspath(settings.data_root))
+    for layer, curated in (("raw", False), ("curated", True)):
+        try:
+            partition_files = _partition_files(settings, scope, layer)
+        except LifecycleLockError as exc:
+            refusals.append(
+                _refusal("UNSAFE_OR_MISSING_TARGET", str(exc), layer=layer.upper())
+            )
+            continue
+        for path in partition_files:
+            relative = path.relative_to(data_root).as_posix()
+            if relative in referenced:
+                continue
+            try:
+                facts = _read_facts(path, curated=curated)
+            except PurgeError as exc:
+                refusals.append(
+                    _refusal("UNVERIFIABLE_SNAPSHOT", str(exc), layer=layer.upper())
+                )
+                continue
+            if _facts_intersect_scope(facts, scope, curated=curated):
+                refusals.append(
+                    _refusal(
+                        "UNREGISTERED_SNAPSHOT",
+                        "matching active snapshot is outside complete registered authority",
+                        layer=layer.upper(),
+                        relative_path=relative,
+                    )
+                )
+
+    targets = sorted(
+        targets_by_id.values(),
+        key=lambda item: (item["curated"]["relative_path"], item["ingestion_run_id"]),
+    )
+    retained = sorted(
+        retained_by_id.values(),
+        key=lambda item: (item["curated"]["relative_path"], item["ingestion_run_id"]),
+    )
+    mapping_rows = [mappings[key] for key in sorted(mappings)]
+    refusals = _dedupe_reasons(refusals)
+    raw_bytes = sum(item["raw"]["byte_size"] for item in targets)
+    curated_bytes = sum(item["curated"]["byte_size"] for item in targets)
+    return {
+        "plan_version": PURGE_PLAN_VERSION_V3,
+        "cleanup_policy": SUPERSEDED_ONLY,
+        "status": "REFUSED" if refusals else "PLANNED",
+        "scope": scope.as_dict(),
+        "targets": targets,
+        "retained_current_snapshots": retained,
+        "target_to_retained": mapping_rows,
+        "summary": {
+            "logical_key_count": len(all_logical_keys),
+            "retained_snapshot_count": len(retained_by_key),
+            "superseded_snapshot_count": len(targets),
+            "raw_file_count": len(targets),
+            "raw_bytes": raw_bytes,
+            "curated_file_count": len(targets),
+            "curated_bytes": curated_bytes,
+            "total_quarantine_bytes": raw_bytes + curated_bytes,
+        },
+        "dependency_state": {
+            "policy": RETENTION_POLICY,
+            "blocking": False,
+            "official_derived_artifacts": [
+                "VERIFIED_CANONICAL",
+                "DATASET",
+                "DATASET_CATALOG",
+            ],
+            "treatment": "RETAIN_NO_CASCADE",
+            "external_consumers": "OUTSIDE_MARKETVAULT_LIFECYCLE_GUARANTEE",
+        },
+        "retained_evidence": [
+            "ingestion_runs",
+            "market_bar_snapshot_pairs",
+            "quality_results",
+            "collection_manifests",
+            "quality_reports",
+            "purge_plan",
+            "purge_result",
+        ],
+        "refusal_reasons": refusals,
+        "quarantine_root_template": "quarantine/purge_id=<plan_id>",
+    }
+
+
+def _build_plan_content(
+    settings: Settings, scope: PurgeScope, cleanup_policy: str
+) -> dict[str, Any]:
+    if cleanup_policy == EXACT_SCOPE:
+        return _build_exact_scope_plan_content(settings, scope)
+    if cleanup_policy == SUPERSEDED_ONLY:
+        return _build_superseded_plan_content(settings, scope)
+    raise ValueError(f"unknown cleanup_policy: {cleanup_policy!r}")
+
+
 def _evidence_path(settings: Settings, kind: str, plan_id: str) -> Path:
     base = Path(os.path.abspath(settings.manifest_dir)) / "purge" / kind
     verify_directory_chain(base, label="purge evidence directory")
@@ -1111,7 +1740,81 @@ def _plan_from_payload(payload: dict[str, Any], plan_file: Path) -> PurgePlan:
             f"quarantine/purge_id={payload['plan_id']}"
         ),
         plan_file=str(plan_file),
+        plan_version=payload["plan_version"],
+        cleanup_policy=payload.get("cleanup_policy", EXACT_SCOPE),
+        retained_current_snapshots=tuple(
+            payload.get("retained_current_snapshots", [])
+        ),
+        target_to_retained=tuple(payload.get("target_to_retained", [])),
     )
+
+
+_PLAN_V2_KEYS = {
+    "plan_version",
+    "plan_id",
+    "content_hash",
+    "status",
+    "scope",
+    "targets",
+    "summary",
+    "dependency_state",
+    "retained_evidence",
+    "refusal_reasons",
+    "quarantine_root_template",
+}
+_PLAN_V3_KEYS = _PLAN_V2_KEYS | {
+    "cleanup_policy",
+    "retained_current_snapshots",
+    "target_to_retained",
+}
+
+
+def _validate_plan_payload(payload: dict[str, Any]) -> None:
+    version = payload.get("plan_version")
+    if version == PURGE_PLAN_VERSION:
+        if set(payload) != _PLAN_V2_KEYS:
+            raise PurgeError("sealed v2 purge plan has an unexpected canonical schema")
+        return
+    if version != PURGE_PLAN_VERSION_V3 or set(payload) != _PLAN_V3_KEYS:
+        raise PurgeError("sealed purge plan version or canonical schema is invalid")
+    if payload.get("cleanup_policy") != SUPERSEDED_ONLY:
+        raise PurgeError("sealed v3 purge plan has an unknown cleanup policy")
+    targets = payload.get("targets")
+    retained = payload.get("retained_current_snapshots")
+    mappings = payload.get("target_to_retained")
+    if not isinstance(targets, list) or not isinstance(retained, list) or not isinstance(mappings, list):
+        raise PurgeError("sealed v3 purge plan retention evidence is malformed")
+    target_ids = {item.get("snapshot_id") for item in targets if isinstance(item, dict)}
+    retained_ids = {
+        item.get("snapshot_id") for item in retained if isinstance(item, dict)
+    }
+    if (
+        len(target_ids) != len(targets)
+        or len(retained_ids) != len(retained)
+        or None in target_ids
+        or None in retained_ids
+        or target_ids.intersection(retained_ids)
+    ):
+        raise PurgeError("sealed v3 target and retained snapshot identities are invalid")
+    mapped_targets: set[str] = set()
+    mapping_keys: set[tuple[bytes, str]] = set()
+    for mapping in mappings:
+        if not isinstance(mapping, dict):
+            raise PurgeError("sealed v3 target-to-retained mapping is malformed")
+        target_id = mapping.get("target_snapshot_id")
+        retained_id = mapping.get("retained_snapshot_id")
+        if target_id not in target_ids or retained_id not in retained_ids:
+            raise PurgeError("sealed v3 target-to-retained mapping is inconsistent")
+        try:
+            mapping_key = (_logical_key_token(mapping["logical_key"]), target_id)
+        except (KeyError, TypeError) as exc:
+            raise PurgeError("sealed v3 target-to-retained mapping is malformed") from exc
+        if mapping_key in mapping_keys:
+            raise PurgeError("sealed v3 target-to-retained mapping is duplicated")
+        mapping_keys.add(mapping_key)
+        mapped_targets.add(target_id)
+    if target_ids != mapped_targets:
+        raise PurgeError("sealed v3 purge plan is missing retained-winner proof")
 
 
 def purge_plan(
@@ -1125,6 +1828,7 @@ def purge_plan(
     requested_session: str,
     adjustment: str,
     source_schema_version: str,
+    cleanup_policy: str = EXACT_SCOPE,
 ) -> PurgePlan:
     """Create an immutable local plan without mutating active market data."""
     scope = PurgeScope.create(
@@ -1138,18 +1842,21 @@ def purge_plan(
         source_schema_version=source_schema_version,
     )
     with MarketBarLifecycleLock(settings.data_root, "purge_plan"):
-        content = _build_plan_content(settings, scope)
+        content = _build_plan_content(settings, scope, cleanup_policy)
         content_hash = hashlib.sha256(_canonical_bytes(content)).hexdigest()
         plan_id = content_hash[:32]
         plan_file = _evidence_path(settings, "plans", plan_id)
         payload = {**content, "plan_id": plan_id, "content_hash": content_hash}
         _write_immutable(plan_file, payload)
         plan = _plan_from_payload(payload, plan_file)
+        recorded_scope = scope.as_dict()
+        if cleanup_policy == SUPERSEDED_ONLY:
+            recorded_scope = {**recorded_scope, "cleanup_policy": cleanup_policy}
         Catalog(settings).record_purge_plan(
             plan_id=plan_id,
             plan_hash=content_hash,
             state=plan.status,
-            scope_json=json.dumps(scope.as_dict(), sort_keys=True, separators=(",", ":")),
+            scope_json=json.dumps(recorded_scope, sort_keys=True, separators=(",", ":")),
             plan_file=str(plan_file),
             planned_at=datetime.now(timezone.utc),
         )
@@ -1170,8 +1877,9 @@ def _load_sealed_plan(settings: Settings, plan_id: str) -> PurgePlan:
         payload = json.loads(expected_path.read_text(encoding="utf-8"))
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         raise PurgeError(f"cannot read sealed purge plan {plan_id}") from exc
-    if payload.get("plan_id") != plan_id or payload.get("plan_version") != PURGE_PLAN_VERSION:
-        raise PurgeError("sealed purge plan identity or version is invalid")
+    if payload.get("plan_id") != plan_id:
+        raise PurgeError("sealed purge plan identity is invalid")
+    _validate_plan_payload(payload)
     content = {key: value for key, value in payload.items() if key not in {"plan_id", "content_hash"}}
     digest = hashlib.sha256(_canonical_bytes(content)).hexdigest()
     if digest != payload.get("content_hash") or digest != record["plan_hash"]:
@@ -1233,6 +1941,11 @@ _RESULT_KEYS = {
     "completed_at",
     "message",
 }
+_RESULT_V3_KEYS = _RESULT_KEYS | {
+    "cleanup_policy",
+    "retained_current_snapshots",
+    "target_to_retained",
+}
 
 
 def _build_result(
@@ -1243,8 +1956,13 @@ def _build_result(
     message: str,
     result_path: Path,
 ) -> PurgeResult:
+    result_version = (
+        PURGE_RESULT_VERSION_V3
+        if plan.cleanup_policy == SUPERSEDED_ONLY
+        else PURGE_RESULT_VERSION
+    )
     content = {
-        "result_version": PURGE_RESULT_VERSION,
+        "result_version": result_version,
         "plan_id": plan.plan_id,
         "content_hash": plan.content_hash,
         "status": status,
@@ -1253,9 +1971,19 @@ def _build_result(
         "completed_at": datetime.now(timezone.utc).isoformat(),
         "message": message,
     }
+    if result_version == PURGE_RESULT_VERSION_V3:
+        content.update(
+            {
+                "cleanup_policy": plan.cleanup_policy,
+                "retained_current_snapshots": list(
+                    plan.retained_current_snapshots
+                ),
+                "target_to_retained": list(plan.target_to_retained),
+            }
+        )
     evidence_hash = hashlib.sha256(_canonical_bytes(content)).hexdigest()
     return PurgeResult(
-        result_version=PURGE_RESULT_VERSION,
+        result_version=result_version,
         plan_id=plan.plan_id,
         content_hash=plan.content_hash,
         evidence_hash=evidence_hash,
@@ -1264,14 +1992,23 @@ def _build_result(
         result_file=str(result_path),
         completed_at=content["completed_at"],
         message=message,
+        cleanup_policy=plan.cleanup_policy,
+        retained_current_snapshots=plan.retained_current_snapshots,
+        target_to_retained=plan.target_to_retained,
     )
 
 
 def _parse_result_payload(
     payload: dict[str, Any], *, expected_hash: str | None = None
 ) -> PurgeResult:
-    if set(payload) != _RESULT_KEYS:
+    version = payload.get("result_version")
+    expected_keys = (
+        _RESULT_V3_KEYS if version == PURGE_RESULT_VERSION_V3 else _RESULT_KEYS
+    )
+    if version not in {PURGE_RESULT_VERSION, PURGE_RESULT_VERSION_V3} or set(payload) != expected_keys:
         raise PurgeError("purge result evidence has an unexpected canonical schema")
+    if version == PURGE_RESULT_VERSION_V3 and payload.get("cleanup_policy") != SUPERSEDED_ONLY:
+        raise PurgeError("purge result evidence has an invalid cleanup policy")
     content = {key: value for key, value in payload.items() if key != "evidence_hash"}
     digest = hashlib.sha256(_canonical_bytes(content)).hexdigest()
     if digest != payload.get("evidence_hash") or (
@@ -1289,6 +2026,11 @@ def _parse_result_payload(
             result_file=payload["result_file"],
             completed_at=payload["completed_at"],
             message=payload["message"],
+            cleanup_policy=payload.get("cleanup_policy", EXACT_SCOPE),
+            retained_current_snapshots=tuple(
+                payload.get("retained_current_snapshots", [])
+            ),
+            target_to_retained=tuple(payload.get("target_to_retained", [])),
         )
     except (KeyError, TypeError) as exc:
         raise PurgeError("purge result evidence cannot be parsed") from exc
@@ -1332,13 +2074,28 @@ def _prepare_success_result(
         ),
         result_path=result_path,
     )
+    precommit_version = (
+        PURGE_PRECOMMIT_VERSION_V3
+        if plan.cleanup_policy == SUPERSEDED_ONLY
+        else PURGE_PRECOMMIT_VERSION
+    )
     content = {
-        "precommit_version": PURGE_PRECOMMIT_VERSION,
+        "precommit_version": precommit_version,
         "plan_id": plan.plan_id,
         "plan_hash": plan.content_hash,
         "terminal_result": result.as_dict(),
         "terminal_result_hash": result.evidence_hash,
     }
+    if precommit_version == PURGE_PRECOMMIT_VERSION_V3:
+        content.update(
+            {
+                "cleanup_policy": plan.cleanup_policy,
+                "retained_current_snapshots": list(
+                    plan.retained_current_snapshots
+                ),
+                "target_to_retained": list(plan.target_to_retained),
+            }
+        )
     payload = {
         **content,
         "precommit_hash": hashlib.sha256(_canonical_bytes(content)).hexdigest(),
@@ -1375,18 +2132,38 @@ def _load_precommit(
         "terminal_result_hash",
         "precommit_hash",
     }
+    expected_version = (
+        PURGE_PRECOMMIT_VERSION_V3
+        if plan.cleanup_policy == SUPERSEDED_ONLY
+        else PURGE_PRECOMMIT_VERSION
+    )
+    if expected_version == PURGE_PRECOMMIT_VERSION_V3:
+        expected_keys.update(
+            {
+                "cleanup_policy",
+                "retained_current_snapshots",
+                "target_to_retained",
+            }
+        )
     if set(payload) != expected_keys:
         raise PurgeError("purge precommit evidence has an unexpected schema")
     content = {key: value for key, value in payload.items() if key != "precommit_hash"}
     if hashlib.sha256(_canonical_bytes(content)).hexdigest() != payload["precommit_hash"]:
         raise PurgeError("purge precommit evidence hash mismatch")
     if (
-        payload["precommit_version"] != PURGE_PRECOMMIT_VERSION
+        payload["precommit_version"] != expected_version
         or payload["plan_id"] != plan.plan_id
         or payload["plan_hash"] != plan.content_hash
         or payload["terminal_result_hash"] != record["result_hash"]
     ):
         raise PurgeError("purge precommit evidence is inconsistent")
+    if expected_version == PURGE_PRECOMMIT_VERSION_V3 and (
+        payload["cleanup_policy"] != plan.cleanup_policy
+        or tuple(payload["retained_current_snapshots"])
+        != plan.retained_current_snapshots
+        or tuple(payload["target_to_retained"]) != plan.target_to_retained
+    ):
+        raise PurgeError("purge precommit retention evidence is inconsistent")
     result = _parse_result_payload(
         payload["terminal_result"], expected_hash=record["result_hash"]
     )
@@ -1432,7 +2209,12 @@ def _load_success_result(
         for key in ("raw", "curated")
     )
     if (
-        result.result_version != PURGE_RESULT_VERSION
+        result.result_version
+        != (
+            PURGE_RESULT_VERSION_V3
+            if plan.cleanup_policy == SUPERSEDED_ONLY
+            else PURGE_RESULT_VERSION
+        )
         or result.plan_id != plan.plan_id
         or result.content_hash != plan.content_hash
         or result.status != "SUCCESS"
@@ -1442,6 +2224,103 @@ def _load_success_result(
     ):
         raise PurgeError("completed purge result evidence is inconsistent")
     return result
+
+
+def _verify_superseded_authority(
+    settings: Settings,
+    catalog: Catalog,
+    plan: PurgePlan,
+    *,
+    plan_id: str,
+) -> None:
+    if plan.cleanup_policy != SUPERSEDED_ONLY:
+        return
+    retained_by_id = {
+        item["snapshot_id"]: item for item in plan.retained_current_snapshots
+    }
+    target_by_id = {item["snapshot_id"]: item for item in plan.targets}
+    expected_by_key: dict[bytes, dict[str, Any]] = {}
+    all_keys: dict[bytes, dict[str, Any]] = {}
+    for mapping in plan.target_to_retained:
+        logical_key = mapping["logical_key"]
+        token = _logical_key_token(logical_key)
+        retained = retained_by_id.get(mapping["retained_snapshot_id"])
+        target = target_by_id.get(mapping["target_snapshot_id"])
+        if retained is None or target is None:
+            raise PurgeDriftError("sealed target-to-retained authority is inconsistent")
+        if mapping["retained_ranking"] != retained.get("ranking"):
+            raise PurgeDriftError("sealed retained-winner ranking is inconsistent")
+        expected_by_key[token] = retained
+        all_keys[token] = logical_key
+    for retained in plan.retained_current_snapshots:
+        for logical_key in retained.get("logical_keys", []):
+            token = _logical_key_token(logical_key)
+            expected_by_key.setdefault(token, retained)
+            all_keys[token] = logical_key
+
+    symbols = {value["code"] for value in all_keys.values()}
+    trade_dates = sorted(
+        {date.fromisoformat(value["requested_trade_date"]) for value in all_keys.values()}
+    )
+    verification_scope = _scope_with_symbols(plan.scope, symbols or set(plan.scope.symbols))
+    _, active_runs = _catalog_runs(catalog, verification_scope)
+    if active_runs:
+        raise PurgeDriftError(f"matching RUNNING ingestion runs appeared: {active_runs}")
+    current_refs = _complete_refs(catalog, plan.scope, symbols, trade_dates) if symbols else []
+    grouped = _refs_by_key(current_refs)
+    sealed_snapshot_refs = {
+        (item["ingestion_run_id"], item["curated"]["relative_path"])
+        for item in (*plan.targets, *plan.retained_current_snapshots)
+    }
+    for ref in current_refs:
+        if (ref.ingestion_run_id, ref.snapshot_file) not in sealed_snapshot_refs:
+            raise PurgeDriftError(
+                f"new or unplanned complete snapshot appeared: {ref.snapshot_file}"
+            )
+    for token, logical_key in all_keys.items():
+        versions = grouped.get(
+            (logical_key["code"], date.fromisoformat(logical_key["requested_trade_date"])),
+            [],
+        )
+        retained = expected_by_key.get(token)
+        if retained is None or not versions:
+            raise PurgeDriftError("sealed retained winner is no longer COMPLETE and active")
+        winner = versions[0]
+        if (
+            winner.ingestion_run_id != retained["ingestion_run_id"]
+            or winner.snapshot_file != retained["curated"]["relative_path"]
+            or _ranking_facts(winner) != retained["ranking"]
+        ):
+            raise PurgeDriftError(
+                "deterministic retained winner changed after plan review"
+            )
+
+    for target in plan.targets:
+        _verify_target_physical_binding(
+            settings, plan, target, plan_id=plan_id, allow_quarantine=True
+        )
+    for retained in plan.retained_current_snapshots:
+        _verify_target_physical_binding(
+            settings, plan, retained, plan_id=plan_id, allow_quarantine=False
+        )
+
+    expected_paths = {
+        item[layer]["relative_path"]
+        for item in (*plan.targets, *plan.retained_current_snapshots)
+        for layer in ("raw", "curated")
+    }
+    data_root = Path(os.path.abspath(settings.data_root))
+    for layer, curated in (("raw", False), ("curated", True)):
+        for path in _partition_files(settings, verification_scope, layer):
+            facts = _read_facts(path, curated=curated)
+            relative = path.relative_to(data_root).as_posix()
+            if (
+                _facts_intersect_scope(facts, verification_scope, curated=curated)
+                and relative not in expected_paths
+            ):
+                raise PurgeDriftError(
+                    f"unregistered or unplanned matching snapshot appeared: {relative}"
+                )
 
 
 def purge_execute(settings: Settings, *, plan_id: str, confirmation: str) -> PurgeResult:
@@ -1474,20 +2353,34 @@ def purge_execute(settings: Settings, *, plan_id: str, confirmation: str) -> Pur
             # This second binding check occurs after the attempt transition;
             # both checks are under the same cross-process mutation lock.
             _verify_run_bindings(settings, catalog, plan)
-            _, active_runs = _catalog_runs(catalog, plan.scope)
-            if active_runs:
-                raise PurgeDriftError(f"matching RUNNING ingestion runs appeared: {active_runs}")
-            expected_active = {
-                target[key]["relative_path"]
-                for target in plan.targets
-                for key in ("raw", "curated")
-            }
-            for layer, curated in (("raw", False), ("curated", True)):
-                for path in _partition_files(settings, plan.scope, layer):
-                    facts = _read_facts(path, curated=curated)
-                    relative = path.relative_to(settings.data_root).as_posix()
-                    if _facts_intersect_scope(facts, plan.scope, curated=curated) and relative not in expected_active:
-                        raise PurgeDriftError(f"unplanned matching snapshot appeared: {relative}")
+            if plan.cleanup_policy == SUPERSEDED_ONLY:
+                _verify_superseded_authority(
+                    settings, catalog, plan, plan_id=plan_id
+                )
+            else:
+                _, active_runs = _catalog_runs(catalog, plan.scope)
+                if active_runs:
+                    raise PurgeDriftError(
+                        f"matching RUNNING ingestion runs appeared: {active_runs}"
+                    )
+                expected_active = {
+                    target[key]["relative_path"]
+                    for target in plan.targets
+                    for key in ("raw", "curated")
+                }
+                for layer, curated in (("raw", False), ("curated", True)):
+                    for path in _partition_files(settings, plan.scope, layer):
+                        facts = _read_facts(path, curated=curated)
+                        relative = path.relative_to(settings.data_root).as_posix()
+                        if (
+                            _facts_intersect_scope(
+                                facts, plan.scope, curated=curated
+                            )
+                            and relative not in expected_active
+                        ):
+                            raise PurgeDriftError(
+                                f"unplanned matching snapshot appeared: {relative}"
+                            )
 
             for target in plan.targets:
                 _verify_target_physical_binding(
@@ -1524,6 +2417,10 @@ def purge_execute(settings: Settings, *, plan_id: str, confirmation: str) -> Pur
                     )
 
             catalog.refresh_market_bars_view()
+            if plan.cleanup_policy == SUPERSEDED_ONLY:
+                _verify_superseded_authority(
+                    settings, catalog, plan, plan_id=plan_id
+                )
             result, precommit_path = _prepare_success_result(
                 settings, plan, moved_evidence
             )

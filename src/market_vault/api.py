@@ -337,6 +337,7 @@ class MarketVault:
         requested_session: str,
         adjustment: str,
         source_schema_version: str,
+        cleanup_policy: str = "EXACT_SCOPE",
     ) -> PurgePlan:
         """Seal a local Safe Purge plan; no OpenD or market-data mutation."""
         return purge_plan(
@@ -349,6 +350,7 @@ class MarketVault:
             requested_session=requested_session,
             adjustment=adjustment,
             source_schema_version=source_schema_version,
+            cleanup_policy=cleanup_policy,
         )
 
     def purge_execute(self, *, plan_id: str, confirmation: str) -> PurgeResult:

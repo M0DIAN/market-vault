@@ -127,6 +127,7 @@ EN: Final[dict[str, str]] = {
     "field.source": "Source",
     "field.source_schema_version": "Source schema version",
     "field.confirmation": "Exact confirmation",
+    "field.cleanup_policy": "Cleanup policy",
     "historical.plan": "Plan locally",
     "historical.execute": "Execute via OpenD",
     "historical.plan_items": "Backfill plan items",
@@ -142,6 +143,8 @@ EN: Final[dict[str, str]] = {
     "storage.plan_id": "Reviewed plan ID",
     "storage.refusals": "Refusal reasons",
     "storage.confirmation_help": "Enter exactly PURGE <plan_id> after reviewing an executable plan.",
+    "storage.policy.exact_scope": "Exact Scope",
+    "storage.policy.superseded_only": "Superseded Only",
     "columns.code": "Code",
     "columns.symbol": "Symbol",
     "columns.trade_date": "Trade date",
@@ -167,6 +170,12 @@ EN: Final[dict[str, str]] = {
     "columns.curated_bytes": "Curated bytes",
     "columns.raw_path": "Raw path",
     "columns.curated_path": "Curated path",
+    "columns.requested_session": "Requested session",
+    "columns.source_schema_version": "Source schema version",
+    "columns.superseded_run_id": "Superseded run ID",
+    "columns.retained_run_id": "Retained run ID",
+    "columns.superseded_ingested_at": "Superseded ingested at",
+    "columns.retained_ingested_at": "Retained ingested at",
 }
 
 ZH_CN: Final[dict[str, str]] = {
@@ -284,6 +293,7 @@ ZH_CN: Final[dict[str, str]] = {
     "field.source": "数据源",
     "field.source_schema_version": "数据源模式版本",
     "field.confirmation": "精确确认文本",
+    "field.cleanup_policy": "清理策略",
     "historical.plan": "本地生成计划",
     "historical.execute": "通过 OpenD 执行",
     "historical.plan_items": "回填计划项目",
@@ -299,6 +309,8 @@ ZH_CN: Final[dict[str, str]] = {
     "storage.plan_id": "已检查计划 ID",
     "storage.refusals": "拒绝原因",
     "storage.confirmation_help": "检查可执行计划后，请准确输入 PURGE <plan_id>。",
+    "storage.policy.exact_scope": "精确范围清理",
+    "storage.policy.superseded_only": "仅清理旧快照",
     "columns.code": "代码",
     "columns.symbol": "标的",
     "columns.trade_date": "交易日期",
@@ -324,6 +336,12 @@ ZH_CN: Final[dict[str, str]] = {
     "columns.curated_bytes": "Curated 字节数",
     "columns.raw_path": "Raw 路径",
     "columns.curated_path": "Curated 路径",
+    "columns.requested_session": "请求时段",
+    "columns.source_schema_version": "数据源模式版本",
+    "columns.superseded_run_id": "旧快照运行 ID",
+    "columns.retained_run_id": "保留运行 ID",
+    "columns.superseded_ingested_at": "旧快照采集时间",
+    "columns.retained_ingested_at": "保留快照采集时间",
 }
 
 TRANSLATIONS: Final[dict[str, dict[str, str]]] = {
