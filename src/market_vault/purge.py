@@ -1544,6 +1544,27 @@ def _build_superseded_plan_content(
                 ):
                     missing.append(physical_symbol)
                     continue
+                if physical_symbol not in scope.symbols:
+                    extra_versions = [
+                        item
+                        for item in symbol_versions
+                        if not _same_snapshot(item, candidate)
+                        and not _same_snapshot(item, symbol_versions[0])
+                    ]
+                    if extra_versions:
+                        refusals.append(
+                            _refusal(
+                                "LEGACY_VERIFICATION_SCOPE_HAS_EXTRA_COMPLETE_SNAPSHOTS",
+                                "verification-only symbol has additional COMPLETE snapshots",
+                                symbol=physical_symbol,
+                                run_ids=sorted(
+                                    {item.ingestion_run_id for item in extra_versions}
+                                ),
+                                snapshot_files=sorted(
+                                    {item.snapshot_file for item in extra_versions}
+                                ),
+                            )
+                        )
                 symbol_key = _logical_key(scope, physical_symbol, trade_date)
                 retained = retain(symbol_versions[0], symbol_key)
                 if retained is None:
@@ -1583,6 +1604,21 @@ def _build_superseded_plan_content(
                 "ACTIVE_RUN",
                 "matching market-bar ingestion runs are still RUNNING",
                 run_ids=expanded_active_runs,
+            )
+        )
+    try:
+        authority_referenced.update(
+            _catalog_authoritative_snapshot_paths(
+                settings,
+                catalog,
+                verification_scope,
+            )
+        )
+    except (PurgeError, LifecycleLockError) as exc:
+        refusals.append(
+            _refusal(
+                "INCONSISTENT_SNAPSHOT_AUTHORITY",
+                str(exc),
             )
         )
 

@@ -823,6 +823,86 @@ def test_legacy_expanded_scope_detects_unregistered_colocated_symbol_at_review(
     )
 
 
+def test_legacy_expanded_scope_keeps_authoritative_incomplete_qqq_untouched(
+    monkeypatch, tmp_path
+):
+    cfg = settings(tmp_path)
+    legacy, legacy_raw, legacy_curated = legacy_pair(
+        cfg, ["US.SPY", "US.QQQ"]
+    )
+    retained = collect_multi(
+        monkeypatch,
+        cfg,
+        {
+            "US.SPY": raw_frame("US.SPY", 200),
+            "US.QQQ": raw_frame("US.QQQ", 300),
+        },
+    )
+    incomplete = collect(monkeypatch, cfg, symbol="US.QQQ", close=400)
+    Catalog(cfg).record_quality(incomplete.run_id, [QualityResult("fixture", "FAIL")])
+    retained_pairs = {
+        pair.symbol: pair
+        for pair in Catalog(cfg).market_bar_snapshot_pairs_for_run(retained.run_id)
+    }
+    incomplete_paths = (Path(incomplete.raw_file), Path(incomplete.curated_file))
+
+    sealed = plan(cfg)
+
+    assert sealed.status == "PLANNED"
+    assert not any(
+        item["code"] == "UNREGISTERED_SNAPSHOT"
+        for item in sealed.refusal_reasons
+    )
+    assert [item["ingestion_run_id"] for item in sealed.targets] == [legacy.run_id]
+    assert incomplete.run_id not in {
+        item["ingestion_run_id"] for item in sealed.targets
+    }
+
+    result = purge_execute(
+        cfg,
+        plan_id=sealed.plan_id,
+        confirmation=f"PURGE {sealed.plan_id}",
+    )
+
+    assert result.status == "SUCCESS"
+    assert not legacy_raw.exists() and not legacy_curated.exists()
+    for pair in retained_pairs.values():
+        assert Path(pair.raw_file).exists() and Path(pair.curated_file).exists()
+    assert all(path.exists() for path in incomplete_paths)
+
+
+def test_legacy_verification_scope_extra_complete_snapshot_refuses_review(
+    monkeypatch, tmp_path
+):
+    cfg = settings(tmp_path)
+    legacy, _, _ = legacy_pair(cfg, ["US.SPY", "US.QQQ"])
+    extra_qqq = collect(monkeypatch, cfg, symbol="US.QQQ", close=150)
+    collect_multi(
+        monkeypatch,
+        cfg,
+        {
+            "US.SPY": raw_frame("US.SPY", 200),
+            "US.QQQ": raw_frame("US.QQQ", 300),
+        },
+    )
+
+    sealed = plan(cfg)
+
+    assert sealed.status == "REFUSED"
+    reason = next(
+        item
+        for item in sealed.refusal_reasons
+        if item["code"]
+        == "LEGACY_VERIFICATION_SCOPE_HAS_EXTRA_COMPLETE_SNAPSHOTS"
+    )
+    assert reason["symbol"] == "US.QQQ"
+    assert reason["run_ids"] == [extra_qqq.run_id]
+    assert [item["ingestion_run_id"] for item in sealed.targets] == [legacy.run_id]
+    assert extra_qqq.run_id not in {
+        item["ingestion_run_id"] for item in sealed.targets
+    }
+
+
 def test_legacy_multisymbol_whole_pair_executes_once_and_keeps_both_winners(
     monkeypatch, tmp_path
 ):
