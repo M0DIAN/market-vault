@@ -14,6 +14,7 @@ from market_vault.desktop.table_model import validate_table_page
 
 
 SCOPE_FIELDS = (
+    "cleanup_policy",
     "source",
     "symbols",
     "start_date",
@@ -38,6 +39,7 @@ class StorageCleanupController(TablePageController):
     ) -> None:
         super().__init__(runtime, parent=parent)
         self._scope = {
+            "cleanup_policy": "EXACT_SCOPE",
             "source": "moomoo",
             "symbols": "US.SPY",
             "start_date": "",
@@ -125,6 +127,11 @@ class StorageCleanupController(TablePageController):
         if self._runtime.busy and self._runtime.activeOperation == "storage_execute":
             return False
         normalized = str(value)
+        if name == "cleanup_policy" and normalized not in {
+            "EXACT_SCOPE",
+            "SUPERSEDED_ONLY",
+        }:
+            return False
         if self._scope[name] == normalized:
             return True
         self._scope[name] = normalized

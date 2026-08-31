@@ -34,6 +34,11 @@ class CompleteSnapshotRef:
     snapshot_ingested_at: datetime | None
     run_finished_at: datetime | None
     eligible_row_count: int
+    source: str = ""
+    interval: str = ""
+    requested_session: str = ""
+    adjustment: str = ""
+    source_schema_version: str = ""
 
 
 @dataclass(frozen=True)
@@ -1058,7 +1063,7 @@ class Catalog:
             for key, values in reasons.items()
         }
 
-    def latest_complete_market_bar_snapshots(
+    def _complete_market_bar_snapshots(
         self,
         *,
         symbols: list[str],
@@ -1067,24 +1072,24 @@ class Catalog:
         requested_session: str,
         adjustment: str,
         source_schema_version: str,
-    ) -> dict[tuple[str, date], CompleteSnapshotRef]:
-        """Latest complete physical snapshot per (code, trade_date) for the
-        exact key.
+        latest_only: bool,
+    ) -> list[CompleteSnapshotRef]:
+        """Return COMPLETE physical snapshots through one eligibility query.
 
         Snapshot eligibility is identical to completed_market_bar_items: exact
         curated key match, run linked to ingestion_runs, run status SUCCESS or
         PARTIAL, no FAIL quality result, and run metadata matching the curated
         row. The curated glob is read with ``filename = true`` so each Parquet
         file is its own physical snapshot; the same run id in two files yields
-        two snapshots and their row counts are never merged. The newest wins
-        by snapshot_ingested_at DESC NULLS LAST, run_finished_at DESC NULLS
-        LAST, ingestion_run_id DESC, snapshot_file DESC -- stable and
-        deterministic.
+        two snapshots and their row counts are never merged. When
+        ``latest_only`` is true, the newest wins by snapshot_ingested_at DESC
+        NULLS LAST, run_finished_at DESC NULLS LAST, ingestion_run_id DESC,
+        snapshot_file DESC -- stable and deterministic.
         """
         self.initialize()
         files, curated_glob = self._market_bars_curated_glob(self.settings)
         if not curated_glob or not symbols or not trade_dates:
-            return {}
+            return []
         min_date = min(trade_dates)
         max_date = max(trade_dates)
         codes_clause = ", ".join("?" for _ in symbols)
@@ -1109,6 +1114,7 @@ class Catalog:
                 if self._parquet_files_have_column(con, files, "ingested_at")
                 else "NULL::TIMESTAMPTZ AS ingested_at"
             )
+            ranked_filter = "WHERE _rn = 1" if latest_only else ""
             sql = f"""
                 WITH curated AS (
                     SELECT
@@ -1188,8 +1194,12 @@ class Catalog:
                     run_finished_at,
                     row_count
                 FROM ranked
-                WHERE _rn = 1
-                ORDER BY requested_trade_date, code
+                {ranked_filter}
+                ORDER BY requested_trade_date, code,
+                         snapshot_ingested_at DESC NULLS LAST,
+                         run_finished_at DESC NULLS LAST,
+                         ingestion_run_id DESC,
+                         snapshot_file DESC
             """
             params: list[object] = [
                 min_date,
@@ -1201,8 +1211,8 @@ class Catalog:
                 source_schema_version,
             ]
             rows = con.execute(sql, params).fetchall()
-        return {
-            (row[0], row[1]): CompleteSnapshotRef(
+        return [
+            CompleteSnapshotRef(
                 code=row[0],
                 requested_trade_date=row[1],
                 ingestion_run_id=row[2],
@@ -1210,9 +1220,57 @@ class Catalog:
                 snapshot_ingested_at=row[4],
                 run_finished_at=row[5],
                 eligible_row_count=int(row[6]),
+                source=self.settings.source,
+                interval=interval,
+                requested_session=requested_session,
+                adjustment=adjustment,
+                source_schema_version=source_schema_version,
             )
             for row in rows
-        }
+        ]
+
+    def complete_market_bar_snapshots(
+        self,
+        *,
+        symbols: list[str],
+        trade_dates: list[date],
+        interval: str,
+        requested_session: str,
+        adjustment: str,
+        source_schema_version: str,
+    ) -> list[CompleteSnapshotRef]:
+        """Every COMPLETE physical version for the exact request scope."""
+        return self._complete_market_bar_snapshots(
+            symbols=symbols,
+            trade_dates=trade_dates,
+            interval=interval,
+            requested_session=requested_session,
+            adjustment=adjustment,
+            source_schema_version=source_schema_version,
+            latest_only=False,
+        )
+
+    def latest_complete_market_bar_snapshots(
+        self,
+        *,
+        symbols: list[str],
+        trade_dates: list[date],
+        interval: str,
+        requested_session: str,
+        adjustment: str,
+        source_schema_version: str,
+    ) -> dict[tuple[str, date], CompleteSnapshotRef]:
+        """Latest COMPLETE physical snapshot per exact request key."""
+        refs = self._complete_market_bar_snapshots(
+            symbols=symbols,
+            trade_dates=trade_dates,
+            interval=interval,
+            requested_session=requested_session,
+            adjustment=adjustment,
+            source_schema_version=source_schema_version,
+            latest_only=True,
+        )
+        return {(ref.code, ref.requested_trade_date): ref for ref in refs}
 
     def market_bar_snapshot_rows(
         self,

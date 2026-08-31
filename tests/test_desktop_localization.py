@@ -42,6 +42,12 @@ def test_translation_catalogs_have_exact_key_parity_and_representative_strings()
     assert ZH_CN["columns.run_id"] == "运行 ID"
     assert EN["historical.execute"] == "Execute via OpenD"
     assert ZH_CN["storage.execute"] == "执行安全清理"
+    assert EN["field.cleanup_policy"] == "Cleanup policy"
+    assert EN["storage.policy.exact_scope"] == "Exact Scope"
+    assert EN["storage.policy.superseded_only"] == "Superseded Only"
+    assert ZH_CN["field.cleanup_policy"] == "清理策略"
+    assert ZH_CN["storage.policy.exact_scope"] == "精确范围清理"
+    assert ZH_CN["storage.policy.superseded_only"] == "仅清理旧快照"
     assert EN["common.close_busy"].startswith("An operation")
 
 

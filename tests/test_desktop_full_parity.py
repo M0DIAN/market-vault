@@ -320,8 +320,10 @@ def test_storage_review_scope_invalidation_and_exact_execution(qt_app, tmp_path)
         def __init__(self):
             self.invalidations = 0
             self.executions = []
+            self.review_scopes = []
 
         def preview_purge(self, **scope):
+            self.review_scopes.append(scope)
             return PurgePlanView(
                 plan_id="plan-1",
                 status="PLANNED",
@@ -353,9 +355,20 @@ def test_storage_review_scope_invalidation_and_exact_execution(qt_app, tmp_path)
     assert controller.planId == "plan-1"
     assert controller.planExecutable is True
     assert controller.executeEnabled is False
+    assert backend.review_scopes[-1]["cleanup_policy"] == "EXACT_SCOPE"
 
     controller.setConfirmation("PURGE plan-1")
     assert controller.executeEnabled is True
+    controller.setScopeField("cleanup_policy", "SUPERSEDED_ONLY")
+    assert controller.planId == ""
+    assert controller.confirmation == ""
+    assert controller.executeEnabled is False
+    assert backend.invalidations == 1
+
+    assert controller.review()
+    _wait(qt_app, lambda: not runtime.busy)
+    assert backend.review_scopes[-1]["cleanup_policy"] == "SUPERSEDED_ONLY"
+    controller.setConfirmation("PURGE plan-1")
     assert controller.execute_purge("wrong-plan", "PURGE plan-1") is False
     assert backend.executions == []
 
@@ -363,7 +376,7 @@ def test_storage_review_scope_invalidation_and_exact_execution(qt_app, tmp_path)
     assert controller.planId == ""
     assert controller.confirmation == ""
     assert controller.executeEnabled is False
-    assert backend.invalidations == 1
+    assert backend.invalidations == 2
 
     assert controller.review()
     _wait(qt_app, lambda: not runtime.busy)

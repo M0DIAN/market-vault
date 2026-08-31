@@ -43,6 +43,18 @@ Item {
                 columns: 4
                 columnSpacing: Theme.PixelTheme.spacingMd
                 rowSpacing: 6
+                Components.LabeledComboBox {
+                    objectName: "storageCleanupPolicy"
+                    label: root.i18n.catalog["field.cleanup_policy"]
+                    model: [
+                        root.i18n.catalog["storage.policy.exact_scope"],
+                        root.i18n.catalog["storage.policy.superseded_only"]
+                    ]
+                    currentIndex: root.controller.scope.cleanup_policy === "SUPERSEDED_ONLY" ? 1 : 0
+                    onSelected: value => root.controller.setScopeField(
+                        "cleanup_policy", currentIndex === 1 ? "SUPERSEDED_ONLY" : "EXACT_SCOPE"
+                    )
+                }
                 Components.LabeledTextField { label: root.i18n.catalog["field.source"]; text: root.controller.scope.source; onEdited: value => root.controller.setScopeField("source", value) }
                 Components.LabeledTextField { id: storageSymbols; objectName: "storageSymbols"; label: root.i18n.catalog["field.symbols"]; text: root.controller.scope.symbols; onEdited: value => root.controller.setScopeField("symbols", value) }
                 Components.PixelDateField { objectName: "storageStartDate"; label: root.i18n.catalog["field.start_date"]; language: root.i18n.language; text: root.controller.scope.start_date; onEdited: value => root.controller.setScopeField("start_date", value) }

@@ -384,5 +384,10 @@ def test_qml_close_keyboard_and_destructive_activation_contracts_are_explicit():
     assert "closePolicy: Popup.CloseOnEscape" in main
     assert "closePolicy: Popup.CloseOnEscape" in confirmation
     assert "activeFocusOnTab: true" in storage
+    assert 'objectName: "storageCleanupPolicy"' in storage
+    assert '"cleanup_policy"' in storage
+    assert '"SUPERSEDED_ONLY"' in storage
+    assert "storage.policy.exact_scope" in storage
+    assert "storage.policy.superseded_only" in storage
     assert "Keys.onReturnPressed" not in storage
     assert "Keys.onEnterPressed" not in storage

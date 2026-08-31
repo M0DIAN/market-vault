@@ -351,6 +351,7 @@ class ConsoleBackend:
         session: str,
         adjustment: str,
         source_schema_version: str,
+        cleanup_policy: str = "EXACT_SCOPE",
     ) -> PurgePlanView:
         """Create the only plan that this backend instance may execute."""
         self._executable_purge_plan_id = None
@@ -363,23 +364,48 @@ class ConsoleBackend:
             requested_session=session.strip(),
             adjustment=adjustment.strip(),
             source_schema_version=source_schema_version.strip(),
+            cleanup_policy=cleanup_policy.strip(),
         )
         records = []
-        for target in plan.targets[:MAX_PLAN_DISPLAY_ROWS]:
-            facts = target["curated"]["facts"]
-            records.append(
-                {
-                    "ingestion_run_id": target["ingestion_run_id"],
-                    "physical_scope_status": target["physical_scope_status"],
-                    "symbols": facts["symbols"],
-                    "dates": facts["dates"],
-                    "affected_rows": target["affected_row_count"],
-                    "raw_bytes": target["raw"]["byte_size"],
-                    "curated_bytes": target["curated"]["byte_size"],
-                    "raw_path": target["raw"]["relative_path"],
-                    "curated_path": target["curated"]["relative_path"],
-                }
-            )
+        if getattr(plan, "cleanup_policy", "EXACT_SCOPE") == "SUPERSEDED_ONLY":
+            targets = {item["snapshot_id"]: item for item in plan.targets}
+            for mapping in plan.target_to_retained[:MAX_PLAN_DISPLAY_ROWS]:
+                target = targets[mapping["target_snapshot_id"]]
+                key = mapping["logical_key"]
+                records.append(
+                    {
+                        "code": key["code"],
+                        "requested_trade_date": key["requested_trade_date"],
+                        "interval": key["interval"],
+                        "requested_session": key["requested_session"],
+                        "adjustment": key["adjustment"],
+                        "source_schema_version": key["source_schema_version"],
+                        "superseded_run_id": mapping["superseded_run_id"],
+                        "retained_run_id": mapping["retained_run_id"],
+                        "superseded_ingested_at": mapping["superseded_ranking"]["snapshot_ingested_at"],
+                        "retained_ingested_at": mapping["retained_ranking"]["snapshot_ingested_at"],
+                        "raw_bytes": target["raw"]["byte_size"],
+                        "curated_bytes": target["curated"]["byte_size"],
+                    }
+                )
+            total_rows = len(plan.target_to_retained)
+        else:
+            for target in plan.targets[:MAX_PLAN_DISPLAY_ROWS]:
+                facts = target["curated"]["facts"]
+                records.append(
+                    {
+                        "ingestion_run_id": target["ingestion_run_id"],
+                        "physical_scope_status": target["physical_scope_status"],
+                        "symbols": facts["symbols"],
+                        "dates": facts["dates"],
+                        "affected_rows": target["affected_row_count"],
+                        "raw_bytes": target["raw"]["byte_size"],
+                        "curated_bytes": target["curated"]["byte_size"],
+                        "raw_path": target["raw"]["relative_path"],
+                        "curated_path": target["curated"]["relative_path"],
+                    }
+                )
+            total_rows = len(plan.targets)
         if plan.executable:
             self._executable_purge_plan_id = plan.plan_id
         return PurgePlanView(
@@ -391,7 +417,7 @@ class ConsoleBackend:
             items=table_page_from_records(
                 records,
                 page_size=MAX_PLAN_DISPLAY_ROWS,
-                total_rows=len(plan.targets),
+                total_rows=total_rows,
             ),
         )
 
