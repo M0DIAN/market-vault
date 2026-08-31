@@ -125,7 +125,10 @@ class ConsoleBackend:
         return cls(MarketVault(settings_path))
 
     def dashboard(self) -> DashboardSnapshot:
-        inventory = self.vault.inventory_market_bars(include_files=False)
+        inventory = self.vault.inventory_market_bars(
+            include_files=False,
+            persist_report=False,
+        )
         summary = inventory.summary
         metrics = {
             "Symbols": str(summary.symbol_count),
@@ -182,6 +185,7 @@ class ConsoleBackend:
             session=session or None,
             adjustment=adjustment or None,
             include_files=False,
+            persist_report=False,
         )
         return report.summary.as_dict(), table_page_from_records(
             [item.as_dict() for item in report.items[:MAX_REPORT_DISPLAY_ROWS]],

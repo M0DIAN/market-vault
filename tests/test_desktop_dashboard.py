@@ -420,8 +420,7 @@ def test_source_dashboard_smoke_uses_real_backend_in_sandbox(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     reports = list((sandbox / "reports" / "data_quality").glob("*.json"))
-    assert len(reports) == 1
-    assert json.loads(reports[0].read_text(encoding="utf-8"))["status"] == "EMPTY"
+    assert reports == []
     assert (sandbox / "catalog").is_dir()
     assert not (sandbox / "catalog" / "market_vault.duckdb").exists()
     assert not list(sandbox.rglob("*.parquet"))
@@ -551,4 +550,5 @@ def test_real_backend_roundtrip_populates_known_headers_and_cells(qt_app, tmp_pa
         for row in range(model.rowCount())
     } == {"qml-3-collection-run", "qml-3-calendar-run"}
     assert model.totalRows == 2
+    assert not list((sandbox / "reports" / "data_quality").glob("*.json"))
     controller.shutdown()
