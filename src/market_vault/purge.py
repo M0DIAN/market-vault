@@ -554,6 +554,86 @@ def _catalog_runs(catalog: Catalog, scope: PurgeScope) -> tuple[list[_RunRecord]
     return selected, active
 
 
+def _snapshot_pair_matches_run(
+    pair: MarketBarSnapshotPair,
+    row: _RunRecord,
+    requested_symbols: set[str],
+) -> bool:
+    """Compare only request metadata owned by the ingestion-run record."""
+    return (
+        pair.symbol in requested_symbols
+        and pair.requested_trade_date == row.requested_trade_date
+        and pair.interval == row.interval.strip().lower()
+        and pair.session == row.session.strip().upper()
+        and pair.adjustment == row.adjustment.strip().upper()
+    )
+
+
+def _catalog_authoritative_snapshot_paths(
+    settings: Settings,
+    catalog: Catalog,
+    scope: PurgeScope,
+) -> set[str]:
+    """Return active paths bound by Catalog, including incomplete snapshots."""
+    rows, _ = _catalog_runs(catalog, scope)
+    paths: set[str] = set()
+    for row in rows:
+        pairs = catalog.market_bar_snapshot_pairs_for_run(row.run_id)
+        if row.snapshot_binding_mode is None:
+            if pairs:
+                raise PurgeDriftError(
+                    f"legacy snapshot authority is inconsistent: {row.run_id}"
+                )
+            pointers = (row.raw_file, row.curated_file)
+        elif row.snapshot_binding_mode == REGISTERED_PER_SYMBOL:
+            successful = set(
+                _symbols_from_json(
+                    row.successful_symbols_json,
+                    run_id=row.run_id,
+                    label="successful_symbols",
+                )
+            )
+            registered = {pair.symbol for pair in pairs}
+            if successful != registered:
+                raise PurgeDriftError(
+                    f"registered run successful-symbol authority is inconsistent: {row.run_id}"
+                )
+            requested = set(
+                _symbols_from_json(
+                    row.requested_symbols_json,
+                    run_id=row.run_id,
+                    label="requested_symbols",
+                )
+            )
+            if any(
+                not _snapshot_pair_matches_run(pair, row, requested) for pair in pairs
+            ):
+                raise PurgeDriftError(
+                    f"registered snapshot-pair run binding is inconsistent: {row.run_id}"
+                )
+            pointers = tuple(
+                value
+                for pair in pairs
+                if pair.symbol in scope.symbols
+                for value in (pair.raw_file, pair.curated_file)
+            )
+        else:
+            raise PurgeDriftError(
+                f"unsupported snapshot binding mode for run {row.run_id}: "
+                f"{row.snapshot_binding_mode!r}"
+            )
+        for pointer in pointers:
+            if pointer:
+                paths.add(
+                    _metadata_relative_path(
+                        settings,
+                        pointer,
+                        label=f"run {row.run_id} snapshot",
+                    )
+                )
+    return paths
+
+
 def _metadata_relative_path(settings: Settings, value: str, *, label: str) -> str:
     path = _path_from_metadata(settings, value)
     root = Path(os.path.abspath(settings.data_root))
@@ -884,15 +964,7 @@ def _build_exact_scope_plan_content(
                 )
             )
             for pair in registry_pairs:
-                if (
-                    pair.symbol not in requested
-                    or pair.requested_trade_date != row.requested_trade_date
-                    or pair.interval != row.interval.strip().lower()
-                    or pair.session != row.session.strip().upper()
-                    or pair.adjustment != row.adjustment.strip().upper()
-                    or pair.source != scope.source
-                    or pair.source_schema_version != scope.source_schema_version
-                ):
+                if not _snapshot_pair_matches_run(pair, row, requested):
                     refusals.append(
                         _refusal(
                             "SNAPSHOT_PAIR_RUN_MISMATCH",
@@ -1153,11 +1225,11 @@ def _physical_snapshot_evidence(
             )
         if (
             pair.requested_trade_date != snapshot.requested_trade_date
-            or pair.interval != scope.interval
-            or pair.session != scope.requested_session
-            or pair.adjustment != scope.adjustment
-            or pair.source != scope.source
-            or pair.source_schema_version != scope.source_schema_version
+            or pair.interval != snapshot.interval
+            or pair.session != snapshot.requested_session
+            or pair.adjustment != snapshot.adjustment
+            or pair.source != snapshot.source
+            or pair.source_schema_version != snapshot.source_schema_version
         ):
             raise PurgeError(f"registered snapshot pair metadata is inconsistent: {run_id}")
         raw_text = pair.raw_file
@@ -1192,16 +1264,16 @@ def _physical_snapshot_evidence(
         or raw_facts.dates != curated_facts.dates
         or snapshot.code not in curated_facts.symbols
         or raw_facts.dates != (expected_date,)
-        or raw_facts.intervals != (scope.interval,)
-        or curated_facts.intervals != (scope.interval,)
-        or raw_facts.sessions != (scope.requested_session,)
-        or curated_facts.sessions != (scope.requested_session,)
-        or raw_facts.adjustments != (scope.adjustment,)
-        or curated_facts.adjustments != (scope.adjustment,)
+        or raw_facts.intervals != (snapshot.interval,)
+        or curated_facts.intervals != (snapshot.interval,)
+        or raw_facts.sessions != (snapshot.requested_session,)
+        or curated_facts.sessions != (snapshot.requested_session,)
+        or raw_facts.adjustments != (snapshot.adjustment,)
+        or curated_facts.adjustments != (snapshot.adjustment,)
         or raw_facts.run_ids != (run_id,)
         or curated_facts.run_ids != (run_id,)
-        or curated_facts.sources != (scope.source,)
-        or curated_facts.schema_versions != (scope.source_schema_version,)
+        or curated_facts.sources != (snapshot.source,)
+        or curated_facts.schema_versions != (snapshot.source_schema_version,)
     )
     if physical_mismatch:
         raise PurgeError(f"complete snapshot physical facts are inconsistent: {run_id}")
@@ -1330,15 +1402,7 @@ def _build_superseded_plan_content(
                 )
             )
             for pair in pairs:
-                if (
-                    pair.symbol not in requested
-                    or pair.requested_trade_date != row.requested_trade_date
-                    or pair.interval != row.interval.strip().lower()
-                    or pair.session != row.session.strip().upper()
-                    or pair.adjustment != row.adjustment.strip().upper()
-                    or pair.source != scope.source
-                    or pair.source_schema_version != scope.source_schema_version
-                ):
+                if not _snapshot_pair_matches_run(pair, row, requested):
                     refusals.append(
                         _refusal(
                             "SNAPSHOT_PAIR_RUN_MISMATCH",
@@ -1511,9 +1575,8 @@ def _build_superseded_plan_content(
     verification_symbols = {
         item["code"] for item in all_logical_keys.values()
     } or set(scope.symbols)
-    _, expanded_active_runs = _catalog_runs(
-        catalog, _scope_with_symbols(scope, verification_symbols)
-    )
+    verification_scope = _scope_with_symbols(scope, verification_symbols)
+    _, expanded_active_runs = _catalog_runs(catalog, verification_scope)
     if expanded_active_runs:
         refusals.append(
             _refusal(
@@ -1531,7 +1594,7 @@ def _build_superseded_plan_content(
     data_root = Path(os.path.abspath(settings.data_root))
     for layer, curated in (("raw", False), ("curated", True)):
         try:
-            partition_files = _partition_files(settings, scope, layer)
+            partition_files = _partition_files(settings, verification_scope, layer)
         except LifecycleLockError as exc:
             refusals.append(
                 _refusal("UNSAFE_OR_MISSING_TARGET", str(exc), layer=layer.upper())
@@ -1548,7 +1611,7 @@ def _build_superseded_plan_content(
                     _refusal("UNVERIFIABLE_SNAPSHOT", str(exc), layer=layer.upper())
                 )
                 continue
-            if _facts_intersect_scope(facts, scope, curated=curated):
+            if _facts_intersect_scope(facts, verification_scope, curated=curated):
                 refusals.append(
                     _refusal(
                         "UNREGISTERED_SNAPSHOT",
@@ -2309,6 +2372,13 @@ def _verify_superseded_authority(
         for item in (*plan.targets, *plan.retained_current_snapshots)
         for layer in ("raw", "curated")
     }
+    expected_paths.update(
+        _catalog_authoritative_snapshot_paths(
+            settings,
+            catalog,
+            verification_scope,
+        )
+    )
     data_root = Path(os.path.abspath(settings.data_root))
     for layer, curated in (("raw", False), ("curated", True)):
         for path in _partition_files(settings, verification_scope, layer):

@@ -29,7 +29,12 @@ from market_vault.storage import Catalog, ParquetStore
 TRADE_DATE = date(2026, 8, 3)
 
 
-def settings(tmp_path: Path, *, schema: str = "10.9") -> Settings:
+def settings(
+    tmp_path: Path,
+    *,
+    schema: str = "10.9",
+    source: str = "moomoo",
+) -> Settings:
     return Settings(
         project_root=tmp_path,
         opend_host="127.0.0.1",
@@ -38,6 +43,7 @@ def settings(tmp_path: Path, *, schema: str = "10.9") -> Settings:
         catalog_path=tmp_path / "catalog" / "market_vault.duckdb",
         manifest_dir=tmp_path / "manifests",
         report_dir=tmp_path / "reports",
+        source=source,
         source_schema_version=schema,
         request_pause_seconds=0,
     )
@@ -345,8 +351,27 @@ def test_different_schema_version_forms_a_separate_group(monkeypatch, tmp_path):
     old_plan = plan(old_cfg)
     new_plan = plan(new_cfg)
 
-    assert old_plan.summary["superseded_snapshot_count"] == 0
-    assert new_plan.summary["superseded_snapshot_count"] == 0
+    for sealed in (old_plan, new_plan):
+        assert sealed.status == "PLANNED"
+        assert sealed.refusal_reasons == ()
+        assert sealed.targets == ()
+        assert sealed.summary["superseded_snapshot_count"] == 0
+
+
+def test_different_source_forms_a_separate_group(monkeypatch, tmp_path):
+    first_cfg = settings(tmp_path, source="moomoo")
+    collect(monkeypatch, first_cfg, close=100)
+    second_cfg = settings(tmp_path, source="alternate")
+    collect(monkeypatch, second_cfg, close=200)
+
+    first_plan = plan(first_cfg)
+    second_plan = plan(second_cfg)
+
+    for sealed in (first_plan, second_plan):
+        assert sealed.status == "PLANNED"
+        assert sealed.refusal_reasons == ()
+        assert sealed.targets == ()
+        assert sealed.summary["superseded_snapshot_count"] == 0
 
 
 def test_failed_newer_run_does_not_supersede_complete_snapshot(monkeypatch, tmp_path):
@@ -387,6 +412,49 @@ def test_quality_fail_newer_run_does_not_supersede_or_become_unregistered(
     assert not any(
         item["code"] == "UNREGISTERED_SNAPSHOT" for item in sealed.refusal_reasons
     )
+
+
+def test_quality_fail_registered_snapshot_remains_untouched_during_execution(
+    monkeypatch, tmp_path
+):
+    cfg = settings(tmp_path)
+    old = collect(monkeypatch, cfg, close=100)
+    retained = collect(monkeypatch, cfg, close=200)
+    incomplete = collect(monkeypatch, cfg, close=300)
+    Catalog(cfg).record_quality(incomplete.run_id, [QualityResult("fixture", "FAIL")])
+    incomplete_paths = (Path(incomplete.raw_file), Path(incomplete.curated_file))
+
+    sealed = plan(cfg)
+
+    assert sealed.status == "PLANNED"
+    assert [item["ingestion_run_id"] for item in sealed.targets] == [old.run_id]
+    assert [
+        item["ingestion_run_id"] for item in sealed.retained_current_snapshots
+    ] == [retained.run_id]
+    assert incomplete.run_id not in {
+        item["ingestion_run_id"]
+        for item in (*sealed.targets, *sealed.retained_current_snapshots)
+    }
+
+    result = purge_execute(
+        cfg,
+        plan_id=sealed.plan_id,
+        confirmation=f"PURGE {sealed.plan_id}",
+    )
+
+    assert result.status == "SUCCESS"
+    assert not Path(old.raw_file).exists() and not Path(old.curated_file).exists()
+    assert Path(retained.raw_file).exists() and Path(retained.curated_file).exists()
+    assert all(path.exists() for path in incomplete_paths)
+    winner = Catalog(cfg).latest_complete_market_bar_snapshots(
+        symbols=["US.SPY"],
+        trade_dates=[TRADE_DATE],
+        interval="1m",
+        requested_session="ALL",
+        adjustment="NONE",
+        source_schema_version=cfg.source_schema_version,
+    )
+    assert winner[("US.SPY", TRADE_DATE)].ingestion_run_id == retained.run_id
 
 
 def test_partial_run_registered_symbol_uses_existing_complete_eligibility(
@@ -695,6 +763,64 @@ def test_legacy_multisymbol_pair_refuses_when_one_symbol_is_not_superseded(
     )
     assert reason["symbols"] == ["US.QQQ"]
     assert raw_path.exists() and curated_path.exists()
+
+
+def test_legacy_expanded_scope_detects_unregistered_colocated_symbol_at_review(
+    monkeypatch, tmp_path
+):
+    cfg = settings(tmp_path)
+    legacy_pair(cfg, ["US.SPY", "US.QQQ"])
+    collect_multi(
+        monkeypatch,
+        cfg,
+        {
+            "US.SPY": raw_frame("US.SPY", 200),
+            "US.QQQ": raw_frame("US.QQQ", 300),
+        },
+    )
+    stray = raw_frame("US.QQQ", 999)
+    stray["requested_trade_date"] = TRADE_DATE
+    stray["interval"] = "1m"
+    stray["requested_session"] = "ALL"
+    stray["adjustment"] = "NONE"
+    stray["ingestion_run_id"] = "unregistered-qqq"
+    curated = normalize_bars(
+        stray,
+        requested_trade_date=TRADE_DATE,
+        interval="1m",
+        requested_session="ALL",
+        adjustment="NONE",
+        source=cfg.source,
+        source_schema_version=cfg.source_schema_version,
+        run_id="unregistered-qqq",
+    )
+    store = ParquetStore(cfg)
+    store.write_raw(
+        stray,
+        TRADE_DATE,
+        "1m",
+        ["US.QQQ"],
+        "ALL",
+        "NONE",
+        "unregistered-qqq",
+    )
+    store.write_curated(
+        curated,
+        TRADE_DATE,
+        "1m",
+        ["US.QQQ"],
+        "ALL",
+        "NONE",
+        "unregistered-qqq",
+    )
+
+    sealed = plan(cfg)
+
+    assert sealed.status == "REFUSED"
+    assert any(
+        item["code"] == "UNREGISTERED_SNAPSHOT"
+        for item in sealed.refusal_reasons
+    )
 
 
 def test_legacy_multisymbol_whole_pair_executes_once_and_keeps_both_winners(
