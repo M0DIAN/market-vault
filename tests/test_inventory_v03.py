@@ -8,6 +8,7 @@ import pandas as pd
 import pytest
 
 import market_vault.cli as cli_module
+from market_vault.api import MarketVault
 from market_vault.audit import run_inventory
 from market_vault.models import QualityResult, RunManifest, Settings
 from market_vault.normalization import normalize_bars
@@ -454,6 +455,44 @@ def test_inventory_report_json_written(tmp_path):
     assert payload["run_id"] == report.run_id
     assert payload["report_type"] == "MARKET_BARS_INVENTORY"
     assert payload["summary"]["snapshot_row_count"] == 1
+
+
+def test_inventory_api_default_report_json_written(tmp_path):
+    cfg = settings(tmp_path)
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a")
+
+    report = MarketVault(cfg).inventory_market_bars()
+
+    assert report.report_file is not None
+    path = Path(report.report_file)
+    assert path.exists()
+    assert json.loads(path.read_text(encoding="utf-8"))["run_id"] == report.run_id
+
+
+def test_inventory_nonpersisting_empty_finishes_without_report(tmp_path):
+    cfg = settings(tmp_path)
+
+    report = run_inventory(cfg, persist_report=False)
+
+    assert report.status == "EMPTY"
+    assert report.finished_at is not None
+    assert report.report_file is None
+    assert not cfg.report_dir.exists()
+
+
+def test_inventory_nonpersisting_nonempty_finishes_without_report(tmp_path):
+    cfg = settings(tmp_path)
+    write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a")
+
+    report = run_inventory(cfg, persist_report=False)
+
+    assert report.status == "SUCCESS"
+    assert report.summary.symbol_count == 1
+    assert report.summary.snapshot_row_count == 1
+    assert [item.code for item in report.items] == ["US.MU"]
+    assert report.finished_at is not None
+    assert report.report_file is None
+    assert not cfg.report_dir.exists()
 
 
 def test_inventory_report_atomic_no_temp_files(tmp_path):

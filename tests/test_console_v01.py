@@ -195,6 +195,7 @@ class FakeVault:
     def __init__(self):
         self.settings = SimpleNamespace(opend_host="127.0.0.1", opend_port=11111)
         self.calls: list[str] = []
+        self.inventory_calls: list[dict] = []
 
     def load_bars_page(self, **kwargs):
         self.calls.append("load_bars_page")
@@ -202,6 +203,7 @@ class FakeVault:
 
     def inventory_market_bars(self, **kwargs):
         self.calls.append("inventory_market_bars")
+        self.inventory_calls.append(dict(kwargs))
         summary = SimpleNamespace(
             symbol_count=1,
             snapshot_count=2,
@@ -273,6 +275,9 @@ def test_dashboard_and_queries_are_local_only():
     bars = backend.query_bars(code="us.spy")
     calendar = backend.query_calendar(market="US")
     assert dashboard.metrics["Symbols"] == "1"
+    assert fake.inventory_calls == [
+        {"include_files": False, "persist_report": False}
+    ]
     assert bars.rows == (("US.SPY", "500.0"),)
     assert calendar.rows == (("2026-07-01",),)
     assert fake.calls == [
@@ -283,6 +288,54 @@ def test_dashboard_and_queries_are_local_only():
     ]
     assert "collect_trading_calendar" not in fake.calls
     assert "backfill" not in fake.calls
+
+
+def test_inventory_query_disables_report_persistence_with_exact_filters():
+    fake = FakeVault()
+
+    summary, items = ConsoleBackend(fake).inventory(
+        symbols="us.spy",
+        start_date="2026-07-01",
+        end_date="2026-07-02",
+        interval="1m",
+        session="ALL",
+        adjustment="NONE",
+    )
+
+    assert summary == {"symbol_count": 1}
+    assert items.rows == (("US.SPY",),)
+    assert fake.inventory_calls == [
+        {
+            "symbols": ["US.SPY"],
+            "start_date": date(2026, 7, 1),
+            "end_date": date(2026, 7, 2),
+            "interval": "1m",
+            "session": "ALL",
+            "adjustment": "NONE",
+            "include_files": False,
+            "persist_report": False,
+        }
+    ]
+
+
+def test_real_gui_inventory_paths_do_not_add_reports(tmp_path):
+    cfg = settings(tmp_path)
+    write_bars(cfg)
+    backend = ConsoleBackend(MarketVault(cfg))
+    before = set(cfg.report_dir.glob("market_bars_inventory_*.json"))
+
+    dashboard = backend.dashboard()
+    after_dashboard = set(cfg.report_dir.glob("market_bars_inventory_*.json"))
+    summary, items = backend.inventory(symbols="US.SPY", interval="1m")
+    after_inventory = set(cfg.report_dir.glob("market_bars_inventory_*.json"))
+
+    assert dashboard.status == "SUCCESS"
+    assert dashboard.metrics["Symbols"] == "1"
+    assert dashboard.metrics["Latest rows"] == "5"
+    assert dashboard.message == ""
+    assert summary["symbol_count"] == 1
+    assert items.total_rows == 1
+    assert before == after_dashboard == after_inventory == set()
 
 
 def test_explicit_network_operations_route_through_market_vault():

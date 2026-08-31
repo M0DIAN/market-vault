@@ -446,13 +446,15 @@ class MarketVault:
         adjustment: str | None = None,
         source_schema_version: str | None = None,
         include_files: bool = False,
+        persist_report: bool = True,
         today: date | None = None,
     ) -> InventoryReport:
         """Summarize local market-bar storage, snapshots, and coverage.
 
-        Pure local: no OpenD connection and no data mutation. ``symbols``
-        defaults to all local symbols; ``session``/``adjustment`` default to
-        no filter (unlike the audit command).
+        Pure local: no OpenD connection and no market-data mutation.
+        ``symbols`` defaults to all local symbols; ``session``/``adjustment``
+        default to no filter (unlike the audit command). The normal inventory
+        report artifact is persisted unless ``persist_report`` is false.
         """
         return run_inventory(
             self.settings,
@@ -464,6 +466,7 @@ class MarketVault:
             adjustment=adjustment,
             source_schema_version=source_schema_version,
             include_files=include_files,
+            persist_report=persist_report,
         )
 
     def audit_market_bars(

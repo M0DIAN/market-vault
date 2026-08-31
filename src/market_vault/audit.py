@@ -323,8 +323,16 @@ def _file_entries(
     return entries
 
 
-def _finish_report(report, prefix: str, settings: Settings) -> None:
+def _finish_report(
+    report,
+    prefix: str,
+    settings: Settings,
+    *,
+    persist: bool = True,
+) -> None:
     report.finished_at = _now_iso()
+    if not persist:
+        return
     report_path = settings.report_dir / f"{prefix}_{report.run_id}.json"
     payload = report.as_dict()
     payload["report_file"] = str(report_path)
@@ -343,10 +351,13 @@ def run_inventory(
     adjustment: str | None = None,
     source_schema_version: str | None = None,
     include_files: bool = False,
+    persist_report: bool = True,
 ) -> InventoryReport:
     """Summarize local market-bar storage, snapshots, and coverage.
 
-    Pure local: no collector, no OpenD connection, no data mutation.
+    Pure local: no collector, no OpenD connection, and no market-data
+    mutation. The normal inventory report artifact is persisted unless
+    ``persist_report`` is false.
     """
     report = InventoryReport(run_id=str(uuid4()), started_at=_now_iso())
     normalized_symbols = normalize_backfill_symbols(symbols) if symbols else None
@@ -373,7 +384,12 @@ def run_inventory(
     catalog = Catalog(settings)
     if not curated_files or not catalog.refresh_market_bars_view():
         report.status = EMPTY
-        _finish_report(report, "market_bars_inventory", settings)
+        _finish_report(
+            report,
+            "market_bars_inventory",
+            settings,
+            persist=persist_report,
+        )
         return report
 
     columns = catalog.market_bars_snapshot_columns()
@@ -509,7 +525,12 @@ def run_inventory(
         ),
     )
     report.items = items
-    _finish_report(report, "market_bars_inventory", settings)
+    _finish_report(
+        report,
+        "market_bars_inventory",
+        settings,
+        persist=persist_report,
+    )
     return report
 
 
