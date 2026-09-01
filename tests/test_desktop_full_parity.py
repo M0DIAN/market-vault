@@ -28,6 +28,8 @@ from market_vault.desktop.controllers import (
     RunsController,
     TradingCalendarController,
 )
+from market_vault.desktop.localization import I18nBridge
+from market_vault.desktop.preferences import DesktopPreferenceStore
 from market_vault.desktop.runtime import DesktopOperationRuntime
 from market_vault.desktop.storage_cleanup import StorageCleanupController
 from market_vault.api import MarketVault
@@ -263,6 +265,181 @@ def test_network_confirmation_is_single_use_and_reject_is_zero_calls(qt_app, tmp
     assert historical.resolveConfirmation(True)
     _wait(qt_app, lambda: not runtime.busy)
     assert backend.backfill_calls == 1
+    runtime.shutdown()
+
+
+@pytest.mark.parametrize(
+    (
+        "business_status",
+        "success_count",
+        "failure_count",
+        "row_count",
+        "english",
+        "chinese",
+    ),
+    (
+        ("SUCCESS", 1, 0, 2, "Success", "成功"),
+        ("PARTIAL", 1, 1, 2, "Partial", "部分成功"),
+        ("FAILED", 0, 1, 0, "Failed", "失败"),
+    ),
+)
+def test_historical_data_publishes_business_result_status_to_page_and_runtime(
+    qt_app,
+    tmp_path,
+    business_status,
+    success_count,
+    failure_count,
+    row_count,
+    english,
+    chinese,
+):
+    settings = _settings(tmp_path / "config" / "settings.yaml")
+    runner = _Runner()
+    result = {
+        "status": business_status,
+        "failure_count": failure_count,
+        "success_count": success_count,
+        "failed_items": ["US.SPY"] if failure_count else [],
+        "row_count": row_count,
+        "raw_file": None,
+        "curated_file": None,
+    }
+
+    class Backend:
+        def execute_backfill(self, **values):
+            return dict(result)
+
+    runtime = DesktopOperationRuntime(
+        settings_path=settings,
+        backend_factory=lambda path: Backend(),
+        runner_factory=lambda: runner,
+        poll_interval_ms=1,
+    )
+    controller = HistoricalDataController(runtime)
+    task_completions = []
+    technical_failures = []
+    controller.operationSucceeded.connect(lambda: task_completions.append(True))
+    controller.operationFailed.connect(lambda: technical_failures.append(True))
+
+    assert controller.requestExecute(
+        {
+            "symbols": "US.SPY",
+            "end_date": "2026-08-02",
+            "interval": "1m",
+            "session": "ALL",
+            "adjustment": "NONE",
+        }
+    )
+    assert controller.resolveConfirmation(True)
+    _wait(qt_app, lambda: not runtime.busy)
+
+    assert task_completions == [True]
+    assert technical_failures == []
+    assert controller.status == business_status
+    assert runtime.status == business_status
+    assert controller.error == ""
+    assert runtime.error == ""
+    assert controller.summary == {
+        str(key): str(value) for key, value in result.items()
+    }
+
+    bridge = I18nBridge(
+        preference_store=DesktopPreferenceStore(root=tmp_path / "preferences")
+    )
+    assert bridge.statusLabel(controller.status) == english
+    assert bridge.setLanguage("zh-CN") is True
+    assert bridge.statusLabel(controller.status) == chinese
+    if business_status == "FAILED":
+        assert bridge.statusLabel(controller.status) != "成功"
+    runtime.shutdown()
+
+
+def test_historical_data_unknown_business_status_fails_closed(qt_app, tmp_path):
+    settings = _settings(tmp_path / "config" / "settings.yaml")
+    runner = _Runner()
+
+    class Backend:
+        def execute_backfill(self, **values):
+            return {"status": "UNKNOWN", "row_count": 0}
+
+    runtime = DesktopOperationRuntime(
+        settings_path=settings,
+        backend_factory=lambda path: Backend(),
+        runner_factory=lambda: runner,
+        poll_interval_ms=1,
+    )
+    controller = HistoricalDataController(runtime)
+    task_completions = []
+    technical_failures = []
+    controller.operationSucceeded.connect(lambda: task_completions.append(True))
+    controller.operationFailed.connect(lambda: technical_failures.append(True))
+
+    assert controller.requestExecute(
+        {
+            "symbols": "US.SPY",
+            "end_date": "2026-08-02",
+            "interval": "1m",
+            "session": "ALL",
+            "adjustment": "NONE",
+        }
+    )
+    assert controller.resolveConfirmation(True)
+    _wait(qt_app, lambda: not runtime.busy)
+
+    assert task_completions == []
+    assert technical_failures == [True]
+    assert controller.status == "FAILED"
+    assert runtime.status == "FAILED"
+    assert controller.error == (
+        "backfill result status must be SUCCESS, PARTIAL, or FAILED"
+    )
+    assert runtime.error == controller.error
+    assert controller.summary == {}
+
+    bridge = I18nBridge(
+        preference_store=DesktopPreferenceStore(root=tmp_path / "preferences")
+    )
+    assert bridge.setLanguage("zh-CN") is True
+    assert bridge.statusLabel(controller.status) == "失败"
+    assert bridge.statusLabel(controller.status) != "成功"
+    runtime.shutdown()
+
+
+def test_historical_data_technical_failure_remains_distinct(qt_app, tmp_path):
+    settings = _settings(tmp_path / "config" / "settings.yaml")
+    runner = _Runner()
+
+    class Backend:
+        def execute_backfill(self, **values):
+            raise RuntimeError("task runner failed")
+
+    runtime = DesktopOperationRuntime(
+        settings_path=settings,
+        backend_factory=lambda path: Backend(),
+        runner_factory=lambda: runner,
+        poll_interval_ms=1,
+    )
+    controller = HistoricalDataController(runtime)
+    technical_failures = []
+    controller.operationFailed.connect(lambda: technical_failures.append(True))
+
+    assert controller.requestExecute(
+        {
+            "symbols": "US.SPY",
+            "end_date": "2026-08-02",
+            "interval": "1m",
+            "session": "ALL",
+            "adjustment": "NONE",
+        }
+    )
+    assert controller.resolveConfirmation(True)
+    _wait(qt_app, lambda: not runtime.busy)
+
+    assert technical_failures == [True]
+    assert controller.status == "FAILED"
+    assert runtime.status == "FAILED"
+    assert controller.error == "task runner failed"
+    assert runtime.error == "task runner failed"
     runtime.shutdown()
 
 

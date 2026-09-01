@@ -10,6 +10,7 @@ from PySide6.QtCore import Property, QObject, QThread, QTimer, Signal, Slot
 
 
 POLL_INTERVAL_MS = 20
+RESULT_STATUSES = frozenset({"SUCCESS", "PARTIAL", "FAILED"})
 
 
 def _production_backend_factory(settings_path: Path) -> Any:
@@ -69,6 +70,7 @@ class DesktopOperationRuntime(QObject):
         self._future: Future[Any] | None = None
         self._success: Callable[[Any], None] | None = None
         self._failure: Callable[[Exception], None] | None = None
+        self._result_status: Callable[[Any], str] | None = None
         self._active_operation = ""
         self._status = "READY" if self._settings_path is not None else "UNCONFIGURED"
         self._error = ""
@@ -133,6 +135,8 @@ class DesktopOperationRuntime(QObject):
         operation: Callable[[Any], Any],
         success: Callable[[Any], None],
         failure: Callable[[Exception], None],
+        *,
+        result_status: Callable[[Any], str] | None = None,
     ) -> bool:
         self._assert_thread()
         if self._closed or self.busy:
@@ -166,6 +170,7 @@ class DesktopOperationRuntime(QObject):
             return False
         self._success = success
         self._failure = failure
+        self._result_status = result_status
         self.busyChanged.emit()
         self.operationStarted.emit(name)
         self._timer.start()
@@ -196,6 +201,7 @@ class DesktopOperationRuntime(QObject):
         name = self._active_operation
         success = self._success
         failure = self._failure
+        result_status = self._result_status
         try:
             result = future.result()
         except Exception as exc:
@@ -203,19 +209,27 @@ class DesktopOperationRuntime(QObject):
             self._error = str(exc).strip() or exc.__class__.__name__
             self._deliver_failure(failure, exc)
         else:
-            self._status = "SUCCESS"
-            self._error = ""
-            if success is not None:
-                try:
+            try:
+                resolved_status = (
+                    "SUCCESS" if result_status is None else result_status(result)
+                )
+                if resolved_status not in RESULT_STATUSES:
+                    raise ValueError(
+                        "Operation result status must be SUCCESS, PARTIAL, or FAILED."
+                    )
+                self._status = resolved_status
+                self._error = ""
+                if success is not None:
                     success(result)
-                except Exception as exc:
-                    self._status = "FAILED"
-                    self._error = str(exc).strip() or exc.__class__.__name__
-                    self._deliver_failure(failure, exc)
+            except Exception as exc:
+                self._status = "FAILED"
+                self._error = str(exc).strip() or exc.__class__.__name__
+                self._deliver_failure(failure, exc)
         finally:
             self._future = None
             self._success = None
             self._failure = None
+            self._result_status = None
             self._active_operation = ""
             self.errorChanged.emit()
             self.statusChanged.emit()

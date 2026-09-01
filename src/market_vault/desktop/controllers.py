@@ -51,6 +51,18 @@ def _summary_values(summary: Any) -> dict[str, str]:
     return {str(key): str(value) for key, value in summary.items()}
 
 
+def _backfill_result_status(result: Any) -> str:
+    if not isinstance(result, Mapping):
+        raise TypeError("backfill result must be a mapping")
+    raw_status = result.get("status")
+    if not isinstance(raw_status, str):
+        raise ValueError("backfill result status must be SUCCESS, PARTIAL, or FAILED")
+    status = raw_status.strip().upper()
+    if status not in {"SUCCESS", "PARTIAL", "FAILED"}:
+        raise ValueError("backfill result status must be SUCCESS, PARTIAL, or FAILED")
+    return status
+
+
 def _paged_values(values: dict[str, Any]) -> tuple[dict[str, Any], int]:
     arguments = _values(values)
     page = _bounded_int(arguments.get("page", 1), "page", 1, 2_147_483_647)
@@ -110,6 +122,8 @@ class PageController(QObject):
         name: str,
         operation: Callable[[Any], Any],
         apply: Callable[[Any], None],
+        *,
+        result_status: Callable[[Any], str] | None = None,
     ) -> bool:
         self._assert_thread()
         if self._busy or self._runtime.busy:
@@ -123,7 +137,7 @@ class PageController(QObject):
             self._assert_thread()
             apply(result)
             self._busy = False
-            self._status = "SUCCESS"
+            self._status = self._runtime.status
             self._error = ""
             self.stateChanged.emit()
             self.operationSucceeded.emit()
@@ -136,7 +150,13 @@ class PageController(QObject):
             self.stateChanged.emit()
             self.operationFailed.emit()
 
-        accepted = self._runtime.submit(name, operation, success, failure)
+        accepted = self._runtime.submit(
+            name,
+            operation,
+            success,
+            failure,
+            result_status=result_status,
+        )
         if not accepted and self._busy:
             self._busy = False
             if not self._error:
@@ -342,7 +362,12 @@ class NetworkController(TablePageController):
 
     def __init__(self, runtime: DesktopOperationRuntime, *, parent: QObject | None = None):
         super().__init__(runtime, parent=parent)
-        self._pending: tuple[str, dict[str, Any], Callable[[Any], Any]] | None = None
+        self._pending: tuple[
+            str,
+            dict[str, Any],
+            Callable[[Any], Any],
+            Callable[[Any], str] | None,
+        ] | None = None
 
     @Property(bool, notify=confirmationPendingChanged)
     def confirmationPending(self) -> bool:  # noqa: N802
@@ -353,6 +378,8 @@ class NetworkController(TablePageController):
         name: str,
         values: dict[str, Any],
         apply: Callable[[Any], Any],
+        *,
+        result_status: Callable[[Any], str] | None = None,
     ) -> bool:
         self._assert_thread()
         if name not in self._NETWORK_METHODS:
@@ -370,7 +397,7 @@ class NetworkController(TablePageController):
             self._error = str(exc).strip() or exc.__class__.__name__
             self.stateChanged.emit()
             return False
-        self._pending = (name, dict(values), apply)
+        self._pending = (name, dict(values), apply, result_status)
         self.confirmationPendingChanged.emit()
         self.confirmationRequested.emit(name, settings.opend_host, settings.opend_port)
         return True
@@ -385,7 +412,7 @@ class NetworkController(TablePageController):
         self.confirmationPendingChanged.emit()
         if not accepted:
             return False
-        name, values, apply = pending
+        name, values, apply, result_status = pending
         method_name = self._NETWORK_METHODS.get(name)
         if method_name is None:
             return self._reject_input(ValueError("Unsupported network operation."))
@@ -393,6 +420,7 @@ class NetworkController(TablePageController):
             name,
             lambda backend: getattr(backend, method_name)(**values),
             apply,
+            result_status=result_status,
         )
 
 
@@ -484,4 +512,5 @@ class HistoricalDataController(NetworkController):
             lambda result: setattr(
                 self, "_summary", _summary_values(result)
             ),
+            result_status=_backfill_result_status,
         )
