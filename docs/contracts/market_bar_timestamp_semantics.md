@@ -1,7 +1,10 @@
 # Market-Bar Timestamp Semantics Contract
 
-Status: verified by inspection and offline tests (PR for ADR 0001
-prerequisite); no OpenD call was made for this verification.
+Status: the canonical interval-start model is active. The legacy `10.9`
+OpenD-label interpretation is contradicted by later live evidence; the
+`10.9-mv-ts2` compatibility transition is approved by design but is not yet
+implemented. See
+[`market_bar_timestamp_semantics_v2_compatibility.md`](../market_bar_timestamp_semantics_v2_compatibility.md).
 
 This contract answers the timestamp questions that
 [ADR 0001](../adr/0001-canonical-ml-dataset-boundary.md) flagged before any
@@ -29,33 +32,41 @@ defines the K-line time as the candlestick time in the market timezone; it
 does **not** explicitly distinguish interval start from interval end. This
 repository does not contain the official documentation itself.
 
-**MarketVault's adopted interpretation (evidence-supported, not documented
-verbatim):** `time_key` is treated as the interval-start time in market time
-(America/New_York), formatted as `YYYY-MM-DD HH:MM:SS`.
+The legacy `10.9` runtime adopted `time_key` directly as interval start. That
+interpretation was based on synthetic and stored-data shape evidence, not on
+an explicit provider definition, and is retained only as the immutable
+historical meaning of existing `10.9` Curated files.
 
-Evidence supporting the interpretation:
+Mandatory live re-verification was completed against OpenD 10.10.7008 using
+`US.SPY`, 2026-08-20, and `NONE`. It established session-dependent behavior:
 
-- API behavior examples: K-line times returned for minute intervals are
-  whole-minute values, which is the behavior expected of interval-start
-  labels; interval-end labels would surface seconds offsets on at least some
-  intervals.
-- The normalization path treats `time_key` as a point instant, never as a
-  closed interval: `parse_market_time_key` localizes it and derives a single
-  `time_market` column (see
-  [`src/market_vault/normalization/bars.py`](../../src/market_vault/normalization/bars.py)).
-- Existing stored data is consistent with 1-minute bars at whole-minute
-  instants: stored `time_key` values are whole-minute and, within observed
-  runs, consecutive. (Row counts alone do not prove interval-start
-  semantics; they are only consistency evidence.)
+- RTH 1m, 5m, 15m, and 30m values are interval-end labels;
+- RTH 60m values are interval-end labels with a truncated final 30m segment;
+- ALL 1m, 5m, 15m, and 30m values are interval-start labels;
+- ALL 60m values are interval-start labels with observed session-boundary
+  splits.
 
-**Re-verification requirement (mandatory):** because the official
-documentation does not explicitly distinguish interval start/end, this
-interpretation must be re-verified before canonicalization if any of the
-following change: the SDK behavior for returned K-line times, the
-normalization path, or the stored-data shape observed from real collections.
-The tests pin the current understanding with synthetic fixtures and must not
-be silently updated to accommodate a changed SDK without a documented
-re-verification.
+For example, OpenD returned 390 RTH 1m Raw labels from 09:31 through 16:00.
+The canonical interval-start sequence is 09:30 through 15:59. Direct adoption
+incorrectly labels the final row `AFTER_HOURS` and omits canonical 09:30.
+
+Therefore no global "parse and adopt" or "subtract the interval" rule is
+valid. `parse_market_time_key` continues to mean only "parse this value as a
+market-time instant." A future source-specific normalizer must translate
+verified Moomoo historical K-line conventions before deriving canonical
+`time_market`, `time_utc`, and `session`, and must reject unsupported geometry
+rather than guess.
+
+Raw `time_key` remains provider-native. Corrected Curated output belongs to a
+new archive compatibility cohort, `source_schema_version = 10.9-mv-ts2`.
+Existing `10.9` files are never rewritten. The approved cohort and default
+view isolation rules are frozen in the linked compatibility design; this
+design-only change does not claim the runtime already implements them.
+
+**Re-verification requirement remains mandatory:** provider version changes,
+new intervals, new sessions, early-close behavior, or any timestamp geometry
+outside the recorded evidence require new live evidence before support. Tests
+must not silently generalize the conversion.
 
 ## 3. `market_available_at` derivation
 
@@ -137,18 +148,21 @@ a conservative not-before bound otherwise).
 
 ## 8. Unresolved evidence gaps
 
-1. The official Moomoo documentation is not committed in the repository and
-   does not explicitly distinguish interval start from interval end; the
-   interval-start interpretation rests on API behavior examples, the
-   normalization path, and stored-data consistency, and carries a mandatory
-   re-verification requirement (see section 2).
-2. Real stored data was observed (multiple whole-minute runs, including one
-   full 24-hour Session.ALL run and one shorter observed run) but is not part
-   of the offline test suite; the tests use committed synthetic fixtures that
-   pin the same interpretation.
-3. `ingested_at` cross-batch differences within a run are allowed but not
+1. The official Moomoo documentation still does not explicitly define
+   interval start versus interval end. Support is limited to the exact live
+   geometries recorded in section 2 and the compatibility design.
+2. Early-close RTH behavior and other provider/session/interval combinations
+   remain unresolved. A future implementation must fail honestly outside its
+   verified conversion rules.
+3. The approved `10.9-mv-ts2` cohort, current-view filter, and production
+   settings cutover are not implemented by this design-only contract update.
+4. The current `market_bars` row-version partition omits
+   `requested_session`; that separate possible RTH/ALL collision is recorded
+   but not authorized for correction by this design.
+5. `ingested_at` cross-batch differences within a run are allowed but not
    asserted to be distinct; the contract only pins same-batch equality.
-4. Exact bar-end times at session boundaries and early closes are not known;
+6. Exact bar-end times at unverified session boundaries and early closes are
+   not known;
    `market_available_at = event_time + interval` is exact only for bars known
    to span their full nominal interval and is otherwise a conservative
    not-before bound (see section 3).
