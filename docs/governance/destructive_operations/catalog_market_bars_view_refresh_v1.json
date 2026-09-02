@@ -1,0 +1,255 @@
+{
+  "schema_version": "market-vault-destructive-operation-v1",
+  "operation_id": "catalog_market_bars_view_refresh_v1",
+  "approval": {
+    "status": "APPROVED",
+    "rationale": "Promotes the two existing Catalog.refresh_market_bars_view DROP VIEW findings from fingerprint exemptions to one reviewed contract without changing runtime behavior or destructive authority."
+  },
+  "identity": {
+    "name": "Catalog market-bar view refresh v1",
+    "purpose": "Maintain the reconstructible market_bars and market_bars_snapshots DuckDB views that project immutable Curated market-bar Parquet data."
+  },
+  "implementation_bindings": [
+    {
+      "path": "src/market_vault/storage/catalog.py",
+      "symbols": [
+        "Catalog.refresh_market_bars_view"
+      ],
+      "role": "STATE_AUTHORITY",
+      "surfaces": [
+        {
+          "kind": "destructive_sql",
+          "signal": "sql.DROP_VIEW",
+          "expected_count": 2
+        }
+      ],
+      "rationale": "The refresh authority may drop only the two derived market-bar views when no active Curated market-bar Parquet files exist."
+    }
+  ],
+  "authority_boundary": {
+    "initiators": [
+      "Internal market-bar Catalog readers and audit/query paths that refresh derived DuckDB views from the current filesystem state"
+    ],
+    "mutation_owner": "src/market_vault/storage/catalog.py Catalog.refresh_market_bars_view for the market_bars and market_bars_snapshots derived views only",
+    "forbidden_bypass_layers": [
+      "The operation must not accept or construct arbitrary view names",
+      "The operation must not mutate DuckDB tables or table rows",
+      "The operation must not mutate source Parquet or any other filesystem artifact",
+      "The operation is not Safe Purge, restore, garbage collection, or permanent deletion"
+    ]
+  },
+  "persistent_scope": {
+    "mutated_assets": [
+      "DuckDB derived view definition/state for market_bars",
+      "DuckDB derived view definition/state for market_bars_snapshots"
+    ],
+    "excluded_assets": [
+      "All DuckDB tables and table rows, including ingestion_runs, market_bar_snapshot_pairs, quality_results, dataset_ingestion_runs, and purge_operations",
+      "Raw and Curated Parquet files",
+      "Collection manifests, quality reports, and other reports",
+      "Quarantine, Canonical artifacts, Dataset artifacts, and production configuration"
+    ]
+  },
+  "state_machine": {
+    "states": [
+      "UNREFRESHED",
+      "AVAILABLE",
+      "UNAVAILABLE",
+      "FAILED"
+    ],
+    "initial_state": "UNREFRESHED",
+    "terminal_states": [
+      "AVAILABLE",
+      "UNAVAILABLE",
+      "FAILED"
+    ],
+    "allowed_transitions": [
+      {
+        "from": "UNREFRESHED",
+        "to": "AVAILABLE",
+        "rationale": "Compatible active Curated market-bar files permit the derived views to be created or replaced."
+      },
+      {
+        "from": "UNREFRESHED",
+        "to": "UNAVAILABLE",
+        "rationale": "No active Curated market-bar files exist, so the two derived views are dropped if present."
+      },
+      {
+        "from": "UNREFRESHED",
+        "to": "FAILED",
+        "rationale": "Malformed or unsupported archive geometry prevents a successful refresh without altering source data."
+      },
+      {
+        "from": "AVAILABLE",
+        "to": "AVAILABLE",
+        "rationale": "Repeated refresh reconstructs the same logical projection under the current runtime rules."
+      },
+      {
+        "from": "AVAILABLE",
+        "to": "UNAVAILABLE",
+        "rationale": "A later refresh observes no active Curated market-bar files and removes only the two stale derived views."
+      },
+      {
+        "from": "UNAVAILABLE",
+        "to": "UNAVAILABLE",
+        "rationale": "Repeated DROP VIEW IF EXISTS remains idempotent while no active files exist."
+      },
+      {
+        "from": "UNAVAILABLE",
+        "to": "AVAILABLE",
+        "rationale": "A later refresh can reconstruct both derived views when compatible active files exist."
+      },
+      {
+        "from": "FAILED",
+        "to": "AVAILABLE",
+        "rationale": "A later explicit refresh may succeed after compatible source geometry becomes available."
+      },
+      {
+        "from": "FAILED",
+        "to": "UNAVAILABLE",
+        "rationale": "A later explicit refresh may establish that no active Curated market-bar files exist."
+      }
+    ],
+    "forbidden_transitions": [
+      {
+        "from": "AVAILABLE",
+        "to": "UNREFRESHED",
+        "rationale": "A completed refresh state cannot become unrefreshed; a later call must establish AVAILABLE, UNAVAILABLE, or FAILED from observed Catalog and filesystem state."
+      }
+    ]
+  },
+  "commit_point": {
+    "durable_authority": "Successful completion of the exact DROP VIEW IF EXISTS market_bars and DROP VIEW IF EXISTS market_bars_snapshots statements on the no-active-Curated path, leaving both derived view definitions absent from the DuckDB catalog.",
+    "before_state": "AVAILABLE",
+    "after_state": "UNAVAILABLE",
+    "success_authoritative_when": "No active Curated market-bar Parquet exists for refresh, market_bars is absent, and market_bars_snapshots is absent."
+  },
+  "crash_semantics": {
+    "pre_commit": [
+      "An interruption may leave a derived view absent or stale, but it cannot authorize mutation of source Parquet or persistent table evidence.",
+      "An unsuccessful statement is not evidence that the requested derived-view state was established."
+    ],
+    "post_commit": [
+      "A successfully created, replaced, or dropped derived view reflects the completed DuckDB statement.",
+      "Derived-view loss never implies source-data loss."
+    ]
+  },
+  "rollback_recovery": {
+    "restorable": [
+      "Call Catalog.refresh_market_bars_view again to reconstruct derived views from active compatible Curated Parquet."
+    ],
+    "non_restorable": [
+      "No source-data restore, filesystem rewrite, or permanent deletion operation is part of this contract."
+    ],
+    "interruption_detection": [
+      "A DuckDB error or false refresh result is non-success and must not be represented as an available current view."
+    ]
+  },
+  "idempotence": {
+    "same_request_retry": [
+      "Repeated no-data refresh uses DROP VIEW IF EXISTS for only market_bars and market_bars_snapshots.",
+      "Repeated refresh with valid files rebuilds the same logical projections according to current runtime rules."
+    ],
+    "completed_retry": [
+      "Re-running refresh is the supported recovery path for absent or stale derived views."
+    ],
+    "conflicting_retry": [
+      "A retry must not broaden scope to another view, a table, a table row, or a filesystem artifact."
+    ]
+  },
+  "locking_concurrency": {
+    "lock_authority": [
+      "This internal derived-view refresh uses existing DuckDB statement behavior and does not create a new external destructive API or lock."
+    ],
+    "lock_scope": [
+      "Only the market_bars and market_bars_snapshots derived view definitions are in mutation scope."
+    ],
+    "under_lock_revalidation": [
+      "No destructive user plan or filesystem mutation is performed under this authority."
+    ],
+    "concurrent_behavior": [
+      "A concurrent DuckDB failure is reported as non-success; the caller may retry refresh without deleting source data."
+    ]
+  },
+  "execution_revalidation": {
+    "identities": [
+      "The exact derived view names market_bars and market_bars_snapshots",
+      "The current presence or absence of active Curated market-bar Parquet files"
+    ],
+    "drift_behavior": [
+      "The SELECT definition may evolve through reviewed implementation changes, but the destructive surface remains sql.DROP_VIEW expected_count 2 for the same exact symbol.",
+      "Any additional destructive signal, count, symbol, or asset requires another design review."
+    ]
+  },
+  "success_evidence": {
+    "authoritative_evidence": [
+      "The expected derived DuckDB views exist after a successful compatible-file refresh",
+      "Both exact derived views are absent after a successful no-file refresh"
+    ],
+    "non_success_evidence": [
+      "A DuckDB exception, malformed archive, unsupported geometry, or partial in-memory decision"
+    ],
+    "integrity_binding": [
+      "Repository governance assigns exactly two Catalog.refresh_market_bars_view destructive_sql sql.DROP_VIEW findings to this contract and no exemption."
+    ]
+  },
+  "path_safety": {
+    "mutates_paths": false,
+    "windows_reparse_policy": {
+      "applicable": false,
+      "rationale": "DROP VIEW mutates no filesystem path and accepts no filesystem mutation target."
+    },
+    "unverifiable_path_policy": {
+      "applicable": false,
+      "rationale": "No path is accepted as a destructive mutation target by this operation."
+    }
+  },
+  "stale_plan_ui": {
+    "invalidation_triggers": {
+      "applicable": false,
+      "rationale": "This internal derived-view maintenance operation has no user-reviewed destructive plan."
+    },
+    "confirmation_invalidation": {
+      "applicable": false,
+      "rationale": "This operation exposes no destructive confirmation phrase or UI action."
+    },
+    "execution_policy": {
+      "applicable": false,
+      "rationale": "Refresh is internal Catalog maintenance, not execution of a user-sealed destructive plan."
+    }
+  },
+  "physical_atomicity": {
+    "lifecycle_unit": [
+      "One DuckDB derived-view statement for market_bars or market_bars_snapshots"
+    ],
+    "partial_mutation": [
+      "An interruption may leave one derived view absent or stale; source data and persistent Catalog table evidence remain untouched."
+    ],
+    "rollback_expectation": [
+      "Recovery is a repeat refresh from active compatible Curated Parquet, never source-file deletion, migration, or rewrite."
+    ]
+  },
+  "unsupported_cascade": {
+    "retained_dependents": [
+      "All DuckDB tables and rows, Raw and Curated Parquet, manifests, reports, quarantine, Canonical artifacts, Dataset artifacts, and production configuration remain outside this authority."
+    ],
+    "refused_cases": [
+      "Arbitrary view names, DROP TABLE, DELETE FROM, TRUNCATE, and filesystem destructive calls are outside this contract."
+    ],
+    "unsupported_cases": [
+      "Safe Purge, restore, garbage collection, permanent deletion, and deletion or rewrite of any source artifact"
+    ]
+  },
+  "permanent_deletion": {
+    "supported": false,
+    "rationale": "DROP VIEW removes only reconstructible DuckDB derived-view definitions; no source market data or persistent table evidence is deleted."
+  },
+  "implementation_tests": [
+    "Repository inventory assigns both Catalog.refresh_market_bars_view destructive_sql sql.DROP_VIEW findings to this contract and to no exemption",
+    "The binding declares sql.DROP_VIEW expected_count 2 as one exact kind-and-signal surface",
+    "No DROP TABLE, DELETE FROM, TRUNCATE, or filesystem destructive call is authorized by this contract",
+    "Dropping the two derived views does not mutate source Parquet or persistent Catalog table evidence",
+    "Repeated no-data refresh remains idempotent",
+    "Timestamp Semantics V2 may change the SELECT definition while any destructive surface growth requires another design review"
+  ]
+}
