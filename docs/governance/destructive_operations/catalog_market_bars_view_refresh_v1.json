@@ -119,10 +119,10 @@
     ]
   },
   "commit_point": {
-    "durable_authority": "The DuckDB catalog state after each successful CREATE OR REPLACE VIEW or DROP VIEW statement for the two exact derived views.",
-    "before_state": "UNREFRESHED",
-    "after_state": "AVAILABLE",
-    "success_authoritative_when": "The current DuckDB catalog state reflects the filesystem-derived refresh result; source Curated Parquet remains the authority for reconstruction."
+    "durable_authority": "Successful completion of the exact DROP VIEW IF EXISTS market_bars and DROP VIEW IF EXISTS market_bars_snapshots statements on the no-active-Curated path, leaving both derived view definitions absent from the DuckDB catalog.",
+    "before_state": "AVAILABLE",
+    "after_state": "UNAVAILABLE",
+    "success_authoritative_when": "No active Curated market-bar Parquet exists for refresh, market_bars is absent, and market_bars_snapshots is absent."
   },
   "crash_semantics": {
     "pre_commit": [
