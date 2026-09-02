@@ -113,8 +113,8 @@
     "forbidden_transitions": [
       {
         "from": "AVAILABLE",
-        "to": "UNAVAILABLE",
-        "rationale": "The operation must not report unavailable by deleting source files or persistent Catalog evidence; only an observed no-file state permits this transition."
+        "to": "UNREFRESHED",
+        "rationale": "A completed refresh state cannot become unrefreshed; a later call must establish AVAILABLE, UNAVAILABLE, or FAILED from observed Catalog and filesystem state."
       }
     ]
   },
