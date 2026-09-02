@@ -160,26 +160,6 @@
       "fingerprint": "43b26b91167096f022c5b516059c7c72504b171dec067dd919712541ab1780bd",
       "expected_count": 1,
       "rationale": "The exact dataset run_id index row is replaced inside its existing idempotent recording transaction without deleting immutable Dataset artifacts."
-    },
-    {
-      "exemption_id": "catalog_empty_market_bars_view_drop",
-      "path": "src/market_vault/storage/catalog.py",
-      "symbol": "Catalog.refresh_market_bars_view",
-      "kind": "destructive_sql",
-      "signal": "sql.DROP_VIEW",
-      "fingerprint": "938068a7a278e9b2ed53d80af71e7c95c272ae90e48a0a341e2005ba9f4d0769",
-      "expected_count": 1,
-      "rationale": "Refresh removes only the derived market_bars DuckDB view when no active curated Parquet exists; it does not remove tables, files, or ingestion evidence."
-    },
-    {
-      "exemption_id": "catalog_empty_market_bar_snapshots_view_drop",
-      "path": "src/market_vault/storage/catalog.py",
-      "symbol": "Catalog.refresh_market_bars_view",
-      "kind": "destructive_sql",
-      "signal": "sql.DROP_VIEW",
-      "fingerprint": "9e17ac5caeaf52c97d291ea3de275f21fc0086e6893723ba02c0ec62ef2c42a6",
-      "expected_count": 1,
-      "rationale": "Refresh removes only the derived market_bars_snapshots DuckDB view when no active curated Parquet exists; persistent rows and files remain intact."
     }
   ]
 }

@@ -278,8 +278,9 @@ def test_existing_destructive_contracts_and_inventory_validate():
     assert set(snapshot.contracts) == {
         "safe_purge_v01",
         "catalog_ingestion_run_recording_v1",
+        "catalog_market_bars_view_refresh_v1",
     }
-    assert len(snapshot.exemptions) == 18
+    assert len(snapshot.exemptions) == 16
     assert len(snapshot.findings) == 38
     purge_contract = snapshot.contracts["safe_purge_v01"]
     purge_findings = [
@@ -336,9 +337,21 @@ def test_existing_destructive_contracts_and_inventory_validate():
         and catalog_contract.covers(finding)
     ]
     assert len(catalog_findings) == 1
-    assert "catalog_ingestion_run_idempotent_replace" not in {
-        exemption.exemption_id for exemption in snapshot.exemptions
-    }
+    view_contract = snapshot.contracts["catalog_market_bars_view_refresh_v1"]
+    view_findings = [
+        finding
+        for finding in snapshot.findings
+        if finding.path == "src/market_vault/storage/catalog.py"
+        and finding.symbol == "Catalog.refresh_market_bars_view"
+        and finding.kind == "destructive_sql"
+        and finding.signal == "sql.DROP_VIEW"
+        and view_contract.covers(finding)
+    ]
+    assert len(view_findings) == 2
+    exemption_ids = {exemption.exemption_id for exemption in snapshot.exemptions}
+    assert "catalog_ingestion_run_idempotent_replace" not in exemption_ids
+    assert "catalog_empty_market_bars_view_drop" not in exemption_ids
+    assert "catalog_empty_market_bar_snapshots_view_drop" not in exemption_ids
 
 
 def test_known_infrastructure_exemption_is_exactly_bound():
