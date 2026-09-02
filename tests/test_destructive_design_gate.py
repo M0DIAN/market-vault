@@ -338,6 +338,17 @@ def test_existing_destructive_contracts_and_inventory_validate():
     ]
     assert len(catalog_findings) == 1
     view_contract = snapshot.contracts["catalog_market_bars_view_refresh_v1"]
+    assert len(view_contract.bindings) == 1
+    view_binding = view_contract.bindings[0]
+    assert view_binding.path == "src/market_vault/storage/catalog.py"
+    assert view_binding.symbols == ("Catalog.refresh_market_bars_view",)
+    assert len(view_binding.surfaces) == 1
+    view_surface = view_binding.surfaces[0]
+    assert (
+        view_surface.kind,
+        view_surface.signal,
+        view_surface.expected_count,
+    ) == ("destructive_sql", "sql.DROP_VIEW", 2)
     view_findings = [
         finding
         for finding in snapshot.findings
