@@ -16,6 +16,17 @@ REQUIRED_SOURCE_COLUMNS = {
     "volume",
 }
 
+MARKET_TIME_ZONE = ZoneInfo("America/New_York")
+MOOMOO_TIMESTAMP_SEMANTICS_V2_SCHEMA = "10.9-mv-ts2"
+_MOOMOO_TS2_INTRADAY_MINUTES = {
+    "1m": 1,
+    "5m": 5,
+    "15m": 15,
+    "30m": 30,
+    "60m": 60,
+}
+_DAILY_INTERVALS = {"1d", "day", "k_day"}
+
 _OPTION_RE = re.compile(r"^(?P<market>[A-Z]+)\.(?P<root>[A-Z.]+)\d{6}[CP]\d+$")
 
 
@@ -41,11 +52,136 @@ def parse_market_time_key(series: pd.Series) -> pd.Series:
     parsed = pd.to_datetime(series, errors="raise")
     if parsed.dt.tz is None:
         parsed = parsed.dt.tz_localize(
-            ZoneInfo("America/New_York"), ambiguous="raise", nonexistent="raise"
+            MARKET_TIME_ZONE, ambiguous="raise", nonexistent="raise"
         )
     else:
-        parsed = parsed.dt.tz_convert(ZoneInfo("America/New_York"))
+        parsed = parsed.dt.tz_convert(MARKET_TIME_ZONE)
     return parsed
+
+
+def _market_timestamp(value: date, clock: str) -> pd.Timestamp:
+    return pd.Timestamp(f"{value.isoformat()} {clock}:00", tz=MARKET_TIME_ZONE)
+
+
+def _expected_moomoo_ts2_times(
+    requested_trade_date: date,
+    interval: str,
+    requested_session: str,
+) -> tuple[list[pd.Timestamp], list[pd.Timestamp]]:
+    midnight = _market_timestamp(requested_trade_date, "00:00")
+    regular_open = _market_timestamp(requested_trade_date, "09:30")
+    regular_close = _market_timestamp(requested_trade_date, "16:00")
+    minutes = _MOOMOO_TS2_INTRADAY_MINUTES[interval]
+
+    if requested_session == "RTH":
+        if interval == "60m":
+            provider = [
+                regular_open + pd.Timedelta(value, unit="h")
+                for value in range(1, 7)
+            ]
+            provider.append(regular_close)
+        else:
+            provider = list(
+                pd.date_range(
+                    regular_open + pd.Timedelta(minutes, unit="m"),
+                    regular_close,
+                    freq=f"{minutes}min",
+                )
+            )
+        canonical = [regular_open, *provider[:-1]]
+        return provider, canonical
+
+    if interval == "60m":
+        # OpenD splits 60m ALL bars at 09:30 and 16:00 session boundaries.
+        provider = [
+            *[
+                midnight + pd.Timedelta(value, unit="h")
+                for value in range(0, 10)
+            ],
+            *[
+                regular_open + pd.Timedelta(value, unit="h")
+                for value in range(0, 7)
+            ],
+            *[
+                _market_timestamp(requested_trade_date, "16:00")
+                + pd.Timedelta(value, unit="h")
+                for value in range(0, 4)
+            ],
+            *[
+                _market_timestamp(requested_trade_date, "20:00")
+                + pd.Timedelta(value, unit="h")
+                for value in range(0, 4)
+            ],
+        ]
+    else:
+        provider = list(
+            pd.date_range(
+                midnight,
+                midnight + pd.Timedelta(1, unit="D"),
+                freq=f"{minutes}min",
+                inclusive="left",
+            )
+        )
+    return provider, list(provider)
+
+
+def normalize_moomoo_intraday_timestamp_v2(
+    parsed_time_key: pd.Series,
+    codes: pd.Series,
+    *,
+    requested_trade_date: date,
+    interval: str,
+    requested_session: str,
+) -> pd.Series:
+    """Translate one verified Moomoo intraday response to interval starts.
+
+    The accepted shapes are deliberately exact. Provider changes, partial
+    sequences, and early-close geometry must be re-qualified instead of being
+    inferred from a nominal interval length.
+    """
+    interval_value = interval.strip().lower()
+    session_value = requested_session.strip().upper()
+    if interval_value not in _MOOMOO_TS2_INTRADAY_MINUTES:
+        raise ValueError(
+            "Unsupported Moomoo Timestamp Semantics V2 intraday interval: "
+            f"{interval!r}; supported: {', '.join(_MOOMOO_TS2_INTRADAY_MINUTES)}"
+        )
+    if session_value not in {"RTH", "ALL"}:
+        raise ValueError(
+            "Unsupported Moomoo Timestamp Semantics V2 requested_session: "
+            f"{requested_session!r}; supported: RTH, ALL"
+        )
+
+    expected_provider, expected_canonical = _expected_moomoo_ts2_times(
+        requested_trade_date,
+        interval_value,
+        session_value,
+    )
+    normalized_codes = codes.map(lambda value: str(value).strip().upper())
+    result = parsed_time_key.copy()
+    for code in sorted(normalized_codes.unique()):
+        indexes = normalized_codes.index[normalized_codes == code]
+        observed = parsed_time_key.loc[indexes]
+        if observed.duplicated().any():
+            raise ValueError(
+                "Moomoo Timestamp Semantics V2 geometry has duplicate provider "
+                f"endpoints for {code}"
+            )
+        if not observed.is_monotonic_increasing:
+            raise ValueError(
+                "Moomoo Timestamp Semantics V2 geometry has non-monotonic provider "
+                f"timestamps for {code}"
+            )
+        if observed.tolist() != expected_provider:
+            raise ValueError(
+                "Moomoo Timestamp Semantics V2 geometry mismatch for "
+                f"{code} {requested_trade_date.isoformat()} {interval_value} "
+                f"{session_value}: expected {len(expected_provider)} verified "
+                f"timestamps from {expected_provider[0]} through {expected_provider[-1]}, "
+                f"received {len(observed)}"
+            )
+        result.loc[indexes] = pd.Series(expected_canonical, index=indexes)
+    return result
 
 
 def bar_available_at(market_time: pd.Timestamp, interval_seconds: int) -> pd.Timestamp:
@@ -103,6 +239,22 @@ def normalize_bars(
 
     df = frame.copy()
     parsed = parse_market_time_key(df["time_key"])
+
+    if source_schema_version == MOOMOO_TIMESTAMP_SEMANTICS_V2_SCHEMA:
+        if source != "moomoo":
+            raise ValueError(
+                "Timestamp Semantics V2 requires source='moomoo', "
+                f"got {source!r}"
+            )
+        interval_value = interval.strip().lower()
+        if interval_value not in _DAILY_INTERVALS:
+            parsed = normalize_moomoo_intraday_timestamp_v2(
+                parsed,
+                df["code"],
+                requested_trade_date=requested_trade_date,
+                interval=interval_value,
+                requested_session=requested_session,
+            )
 
     df["time_market"] = parsed
     df["time_utc"] = parsed.dt.tz_convert("UTC")

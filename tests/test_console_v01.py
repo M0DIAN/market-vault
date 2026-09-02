@@ -59,6 +59,8 @@ def write_bars(cfg: Settings) -> None:
             "requested_session": ["ALL"] * 5,
             "session": ["REGULAR"] * 5,
             "adjustment": ["NONE"] * 5,
+            "source": [cfg.source] * 5,
+            "source_schema_version": [cfg.source_schema_version] * 5,
             "ingested_at": [pd.Timestamp("2026-07-02", tz="UTC")] * 5,
             "ingestion_run_id": ["run-bars"] * 5,
         }
@@ -193,7 +195,11 @@ def test_calendar_collection_api_delegates_to_service(monkeypatch, tmp_path):
 
 class FakeVault:
     def __init__(self):
-        self.settings = SimpleNamespace(opend_host="127.0.0.1", opend_port=11111)
+        self.settings = SimpleNamespace(
+            opend_host="127.0.0.1",
+            opend_port=11111,
+            source_schema_version="10.9",
+        )
         self.calls: list[str] = []
         self.inventory_calls: list[dict] = []
 
@@ -276,7 +282,11 @@ def test_dashboard_and_queries_are_local_only():
     calendar = backend.query_calendar(market="US")
     assert dashboard.metrics["Symbols"] == "1"
     assert fake.inventory_calls == [
-        {"include_files": False, "persist_report": False}
+        {
+            "source_schema_version": "10.9",
+            "include_files": False,
+            "persist_report": False,
+        }
     ]
     assert bars.rows == (("US.SPY", "500.0"),)
     assert calendar.rows == (("2026-07-01",),)

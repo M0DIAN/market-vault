@@ -158,6 +158,13 @@ class Catalog:
     def connect(self):
         return duckdb.connect(str(self.settings.catalog_path))
 
+    @staticmethod
+    def _sql_string_literal(value: str, field: str) -> str:
+        text = str(value)
+        if not text.strip():
+            raise ValueError(f"{field} cannot be blank")
+        return "'" + text.replace("'", "''") + "'"
+
     def initialize(self) -> None:
         with self.connect() as con:
             con.execute(
@@ -660,6 +667,11 @@ class Catalog:
                     con.execute("DROP VIEW IF EXISTS market_bars_snapshots")
             return False
         glob_path = (curated_root / "**" / "*.parquet").as_posix().replace("'", "''")
+        source_literal = self._sql_string_literal(self.settings.source, "settings.source")
+        schema_literal = self._sql_string_literal(
+            self.settings.source_schema_version,
+            "settings.source_schema_version",
+        )
         with self.connect() as con:
             con.execute(
                 f"""
@@ -668,6 +680,20 @@ class Catalog:
                 FROM read_parquet('{glob_path}', union_by_name = true, hive_partitioning = true)
                 """
             )
+            snapshot_columns = {
+                row[0]
+                for row in con.execute("DESCRIBE market_bars_snapshots").fetchall()
+            }
+            if not {"source", "source_schema_version"}.issubset(snapshot_columns):
+                con.execute(
+                    """
+                    CREATE OR REPLACE VIEW market_bars AS
+                    SELECT *
+                    FROM market_bars_snapshots
+                    WHERE FALSE
+                    """
+                )
+                return True
             try:
                 con.execute(
                     f"""
@@ -680,6 +706,8 @@ class Catalog:
                                    ORDER BY ingested_at DESC
                                ) AS _rn
                         FROM market_bars_snapshots
+                        WHERE source = {source_literal}
+                          AND source_schema_version = {schema_literal}
                     )
                     WHERE _rn = 1
                     """

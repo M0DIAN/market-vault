@@ -2,10 +2,10 @@
 
 ## Status
 
-This is an approved design contract for a future implementation. The runtime
-at this commit does not implement the timestamp conversion, current-view
-filter, or configuration cutover described here. This document authorizes no
-production-data mutation.
+This approved design contract is implemented for runtime timestamp conversion
+and current-view filtering. The checked-in and production configuration remain
+on `10.9`; the separately authorized configuration cutover has not occurred.
+This document authorizes no production-data mutation.
 
 The compatibility cohorts are:
 
@@ -277,7 +277,7 @@ the original `10.9` Raw and Curated hashes, Catalog rows, manifests, and
 quality results are unchanged and still discoverable through archive
 surfaces.
 
-## Future Implementation Acceptance
+## Implementation Acceptance
 
 The implementation phase must prove at least:
 

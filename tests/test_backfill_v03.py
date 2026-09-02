@@ -557,6 +557,35 @@ def test_non_matching_complete_key_does_not_skip(
         assert plan.pending_items == [BackfillItem("US.MU", date(2026, 7, 1))]
 
 
+def test_ts2_bounded_backfill_does_not_skip_legacy_complete_snapshot(tmp_path):
+    cfg = replace(settings(tmp_path), source_schema_version="10.9-mv-ts2")
+    write_calendar_snapshot(
+        cfg,
+        market="US",
+        trade_dates=[date(2026, 7, 1)],
+        requested_start_date=date(2026, 7, 1),
+        requested_end_date=date(2026, 7, 1),
+    )
+    write_completed_bar(
+        cfg,
+        code="US.MU",
+        trade_date=date(2026, 7, 1),
+        source_schema_version="10.9",
+    )
+
+    plan = plan_history_backfill(
+        cfg,
+        symbols=["US.MU"],
+        start_date=date(2026, 7, 1),
+        end_date=date(2026, 7, 1),
+        calendar_market="US",
+        today=date(2026, 8, 2),
+    )
+
+    assert plan.pending_items == [BackfillItem("US.MU", date(2026, 7, 1))]
+    assert plan.skipped_items == []
+
+
 def test_quality_fail_run_does_not_skip(tmp_path):
     cfg = settings(tmp_path)
     write_calendar_snapshot(
@@ -1291,6 +1320,39 @@ def test_incremental_uses_latest_completed_date_per_symbol(tmp_path):
         BackfillItem("US.MU", date(2026, 7, 6)),
         BackfillItem("US.MU", date(2026, 7, 7)),
         BackfillItem("US.NVDA", date(2026, 7, 7)),
+    ]
+
+
+def test_ts2_incremental_bootstrap_does_not_inherit_legacy_latest_date(tmp_path):
+    cfg = replace(settings(tmp_path), source_schema_version="10.9-mv-ts2")
+    write_calendar_snapshot(
+        cfg,
+        market="US",
+        trade_dates=[date(2026, 7, 1), date(2026, 7, 2)],
+        requested_start_date=date(2026, 7, 1),
+        requested_end_date=date(2026, 7, 2),
+    )
+    write_completed_bar(
+        cfg,
+        code="US.MU",
+        trade_date=date(2026, 7, 1),
+        source_schema_version="10.9",
+    )
+
+    plan = plan_history_backfill(
+        cfg,
+        symbols=["US.MU"],
+        end_date=date(2026, 7, 2),
+        calendar_market="US",
+        incremental=True,
+        bootstrap_start_date=date(2026, 7, 1),
+        today=date(2026, 8, 2),
+    )
+
+    assert plan.start_date_by_symbol == {"US.MU": date(2026, 7, 1)}
+    assert plan.pending_items == [
+        BackfillItem("US.MU", date(2026, 7, 1)),
+        BackfillItem("US.MU", date(2026, 7, 2)),
     ]
 
 

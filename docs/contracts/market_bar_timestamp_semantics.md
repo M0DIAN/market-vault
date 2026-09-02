@@ -2,8 +2,9 @@
 
 Status: the canonical interval-start model is active. The legacy `10.9`
 OpenD-label interpretation is contradicted by later live evidence; the
-`10.9-mv-ts2` compatibility transition is approved by design but is not yet
-implemented. See
+`10.9-mv-ts2` runtime compatibility transition is implemented, while the
+checked-in and production configuration remain on `10.9` pending a separately
+authorized operational cutover. See
 [`market_bar_timestamp_semantics_v2_compatibility.md`](../market_bar_timestamp_semantics_v2_compatibility.md).
 
 This contract answers the timestamp questions that
@@ -152,10 +153,11 @@ a conservative not-before bound otherwise).
    interval start versus interval end. Support is limited to the exact live
    geometries recorded in section 2 and the compatibility design.
 2. Early-close RTH behavior and other provider/session/interval combinations
-   remain unresolved. A future implementation must fail honestly outside its
-   verified conversion rules.
-3. The approved `10.9-mv-ts2` cohort, current-view filter, and production
-   settings cutover are not implemented by this design-only contract update.
+   remain unresolved. The implementation fails honestly outside its verified
+   conversion rules.
+3. The approved `10.9-mv-ts2` cohort and current-view filter are implemented.
+   The production settings cutover remains a separate operational phase and
+   has not been performed.
 4. The current `market_bars` row-version partition omits
    `requested_session`; that separate possible RTH/ALL collision is recorded
    but not authorized for correction by this design.
