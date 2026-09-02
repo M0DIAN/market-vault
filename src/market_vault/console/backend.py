@@ -126,6 +126,7 @@ class ConsoleBackend:
 
     def dashboard(self) -> DashboardSnapshot:
         inventory = self.vault.inventory_market_bars(
+            source_schema_version=self.vault.settings.source_schema_version,
             include_files=False,
             persist_report=False,
         )

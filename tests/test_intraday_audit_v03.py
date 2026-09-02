@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -857,6 +858,49 @@ def test_structure_rth_rejects_pre_market_rows(tmp_path):
     item = report.symbols[0].items[0]
     check = next(c for c in item.checks if c.name == "REQUESTED_SESSION_SCOPE")
     assert check.status == "FAIL"
+
+
+def test_ts2_rth_1m_has_390_regular_rows_and_no_false_scope_failure(tmp_path):
+    cfg = replace(settings(tmp_path), source_schema_version="10.9-mv-ts2")
+    write_calendar_snapshot(
+        cfg,
+        market="US",
+        trade_dates=[date(2026, 7, 1)],
+        requested_start_date=date(2026, 7, 1),
+        requested_end_date=date(2026, 7, 1),
+    )
+    write_snapshot(
+        cfg,
+        codes=["US.MU"],
+        trade_date=date(2026, 7, 1),
+        run_id="run-ts2-rth",
+        time_keys=minute_keys("2026-07-01 09:31:00", 390),
+        interval="1m",
+        session="RTH",
+        schema="10.9-mv-ts2",
+    )
+
+    report = intraday_mu(
+        cfg,
+        requested_session="RTH",
+        source_schema_version="10.9-mv-ts2",
+    )
+    item = report.symbols[0].items[0]
+    scope = next(c for c in item.checks if c.name == "REQUESTED_SESSION_SCOPE")
+
+    assert report.summary.audited_item_count == 1
+    assert report.summary.total_snapshot_rows == 390
+    assert report.summary.duplicate_timestamp_count == 0
+    assert report.summary.invalid_timestamp_count == 0
+    assert report.summary.internal_gap_count == 0
+    assert item.observed is not None
+    assert item.observed.session_row_counts == {
+        "OVERNIGHT": 0,
+        "PRE_MARKET": 0,
+        "REGULAR": 390,
+        "AFTER_HOURS": 0,
+    }
+    assert scope.status == "PASS"
 
 
 def test_structure_all_accepts_four_sessions(tmp_path):
