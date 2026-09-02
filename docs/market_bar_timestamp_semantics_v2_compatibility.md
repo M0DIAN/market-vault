@@ -3,8 +3,9 @@
 ## Status
 
 This approved design contract is implemented for runtime timestamp conversion
-and current-view filtering. The checked-in and production configuration remain
-on `10.9`; the separately authorized configuration cutover has not occurred.
+and current-view filtering. The separately authorized production activation of
+`10.9-mv-ts2` is complete and its result is sealed in
+[Market-Bar Timestamp Semantics V2 Production Activation](market_bar_timestamp_semantics_v2_production_activation.md).
 This document authorizes no production-data mutation.
 
 The compatibility cohorts are:
@@ -209,7 +210,7 @@ destructive executor, confirmation, plan evidence, or quarantine behavior.
 ## Configuration Cutover
 
 Changing production from `10.9` to `10.9-mv-ts2` is an explicit deployment
-operation, not an EXE-copy side effect. A future authorized deployment must:
+operation, not an EXE-copy side effect. An authorized deployment must:
 
 1. stop MarketVault normally and prove no collection is active;
 2. record the exact production settings path and before SHA-256;
@@ -222,6 +223,19 @@ operation, not an EXE-copy side effect. A future authorized deployment must:
    quarantine bytes;
 8. launch and verify that the configured cohort is `10.9-mv-ts2` before any
    collection.
+
+Before Coverage Audit, the operator must separately compare the complete audit
+scope with the authorized physical scope and visibly verify the selected
+session. Never rely on the default session selection. For an RTH TS2
+activation, `EXPECTED_COVERAGE_SESSION=RTH`, and the selected Coverage session
+must visibly equal `RTH` before execution. A successful RTH collection does not
+authorize an ALL audit scope.
+
+If an incorrect audit report is created, preserve it as incident evidence and
+perform a read-only scope classification. Do not silently delete the report,
+and do not recollect valid physical data merely to repair a report-only scope
+mistake. The completed production activation and its report-only incident are
+recorded in the linked production activation evidence seal.
 
 Build or ONEDIR promotion must not overwrite production settings. Rollback of
 the executable alone must not silently switch the configured cohort. Any
