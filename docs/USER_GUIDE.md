@@ -204,6 +204,7 @@ Safe Purge 不连接 OpenD、不接受文件路径、不拆分或重写 Parquet�
 
 - `calendar` 与 `backfill`（以及 `collect`、`option-chain`、`option-volatility`）可能连接 OpenD。
 - `inventory`、`audit`、`intraday-audit`、`query` 是纯本地读取，永不修改数据、永不触发自动重新采集。
+- 执行 Coverage Audit 前必须显式选择并核对 `session` 与获批物理范围一致，绝不依赖默认选择；RTH 激活的预期值必须明确为 `RTH`。
 
 ## 7. Historical collection
 
@@ -357,6 +358,8 @@ market-vault --settings config/settings.yaml audit `
 ```
 
 - 期望日期来自本地 `trading_calendar_latest`（绝不来自星期/假日规则）；日历快照的 requested 范围必须完整覆盖请求范围，否则以 `calendar_coverage_gaps` 失败。
+- 执行前必须逐项核对 symbol、日期范围、interval、session、adjustment 与 source schema；特别是必须显式选择 session，绝不依赖默认的 `ALL`。成功的 RTH 采集不授权 ALL 审计范围。
+- 如果误生成错误范围的审计报告，不得静默删除、改名、移动、编辑或隔离该报告；应保留证据并进行只读事件分类。若有效物理数据未受影响，不得仅为修复报告范围错误而重新采集。
 - 分类：`COMPLETE`（curated 行与精确请求键匹配、run 状态 `SUCCESS`/`PARTIAL`、无质量 `FAIL`）、`INCOMPLETE`（有行但不满足完成标准，含 `QUALITY_FAIL` / `RUN_FAILED` / `RUN_RUNNING` / `RUN_METADATA_MISMATCH` / `ORPHANED_RUN` / `RUN_STATUS_UNKNOWN` 原因）、`MISSING`（无行）。
 - 缺失与不完整日期总是报告；完整日期仅 `--include-complete-dates` 时报告。
 - 退出码：`PASS`=0，`WARN`=0（`--fail-on-gaps` 时 2），`FAILED`=1。
@@ -601,4 +604,5 @@ print(catalog.snapshot_id, catalog.dataset_count)
 - Dataset CLI 完整示例：[examples/dataset_cli/README.md](../examples/dataset_cli/README.md)
 - Python Client 详细指南：[v0_7_0_python_client_usage.md](v0_7_0_python_client_usage.md)
 - Python Client 源码树示例：[examples/python_client/README.md](../examples/python_client/README.md)
+- TS2 兼容性与生产激活证据：[market_bar_timestamp_semantics_v2_compatibility.md](market_bar_timestamp_semantics_v2_compatibility.md) / [market_bar_timestamp_semantics_v2_production_activation.md](market_bar_timestamp_semantics_v2_production_activation.md)
 - 开发 / 治理：[governance/](governance/)（DEVELOPMENT_PLAYBOOK / RELEASE_PLAYBOOK / AGENT_HANDOFF）
