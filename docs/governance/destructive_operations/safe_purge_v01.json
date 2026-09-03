@@ -3,11 +3,11 @@
   "operation_id": "safe_purge_v01",
   "approval": {
     "status": "APPROVED",
-    "rationale": "The current Safe Purge v0.1 implementation remains approved. This design-only revision prospectively authorizes the explicit SUPERSEDED_ONLY planning policy while preserving EXACT_SCOPE as the default, retaining the existing mutation owner and confirmation boundary, and requiring a later implementation PR from this contract in its exact base."
+    "rationale": "The current Safe Purge v0.1 implementation remains approved. This design-only revision prospectively authorizes read-only cross-policy lifecycle reconciliation and additive market-vault-safe-purge-plan-v4 evidence when EXACT_SCOPE materially excludes a prior VERIFIED_QUARANTINED unit. Historical v2 EXACT_SCOPE and v3 SUPERSEDED_ONLY meanings, the existing mutation owner, exact confirmation, lifecycle lock, persistent mutation types, destructive signals, and occurrence counts remain unchanged. A later implementation PR must contain this approved contract in its exact base."
   },
   "identity": {
     "name": "Safe Purge v0.1",
-    "purpose": "Move exact, sealed market-bar Raw and Curated physical snapshot pairs, selected by explicit EXACT_SCOPE or prospectively authorized SUPERSEDED_ONLY planning and discovered through authoritative per-symbol registry bindings or unchanged legacy run bindings, out of active archive globs into same-volume quarantine without permanent deletion."
+    "purpose": "Move exact, sealed market-bar Raw and Curated physical snapshot pairs, selected by explicit EXACT_SCOPE or SUPERSEDED_ONLY planning and discovered through authoritative per-symbol registry bindings or unchanged legacy run bindings, out of active archive globs into same-volume quarantine without permanent deletion. Prospectively, EXACT_SCOPE may use a sealed v4 plan to exclude historical units only after read-only proof that the exact pair is already VERIFIED_QUARANTINED by an earlier committed Safe Purge operation."
   },
   "implementation_bindings": [
     {
@@ -166,7 +166,9 @@
       "StorageCleanupController must not move, unlink, or rename files; write purge Catalog state; construct purge success evidence; or decide that a plan is safe to execute",
       "API adapters must not move files outside purge_execute",
       "storage helpers must not authorize an unsealed or stale plan",
-      "SUPERSEDED_ONLY planning must not introduce a second latest-snapshot algorithm or any destructive executor outside purge_execute"
+      "SUPERSEDED_ONLY planning must not introduce a second latest-snapshot algorithm or any destructive executor outside purge_execute",
+      "Cross-policy reconciliation is read-only evidence interpretation and must not move files, rewrite historical Catalog paths, publish an absent terminal result, or create lifecycle state",
+      "Only purge_execute may act on an explicitly reviewed v4 plan; no reconciliation helper may become a second mutation or result-publication authority"
     ]
   },
   "persistent_scope": {
@@ -186,7 +188,9 @@
       "Failed, running, orphaned, unregistered, metadata-mismatched, quality-failed, or otherwise unverifiable market-bar snapshots",
       "Options and trading-calendar datasets",
       "Quarantine contents after successful movement",
-      "Arbitrary external user paths and consumers"
+      "Arbitrary external user paths and consumers",
+      "Historical ingestion-run and market_bar_snapshot_pairs path values, which remain original collection provenance after quarantine",
+      "Derived ACTIVE, VERIFIED_QUARANTINED, MISSING_UNEXPLAINED, AMBIGUOUS, and INVALID lifecycle interpretations, which are not persisted as new Catalog state"
     ]
   },
   "state_machine": {
@@ -271,7 +275,9 @@
     "post_commit": [
       "Rollback is no longer legal after Catalog SUCCESS commits.",
       "A crash may leave only non-terminal staging residue while the final result path remains absent.",
-      "An exact retry reconstructs and atomically publishes the precommitted terminal bytes after revalidation."
+      "An exact retry reconstructs and atomically publishes the precommitted terminal bytes after revalidation.",
+      "Read-only reconciliation may accept an absent final result only when Catalog SUCCESS, the canonical precommit, its embedded terminal result and hash, and both quarantine identities form the complete committed-success chain.",
+      "The reconciliation reader never publishes an absent result; publication recovery remains exclusively an idempotent purge_execute retry."
     ]
   },
   "rollback_recovery": {
@@ -286,6 +292,7 @@
     "interruption_detection": [
       "Catalog EXECUTING or FAILED state cannot be interpreted as SUCCESS.",
       "Catalog SUCCESS with absent terminal result triggers exact precommit-based publication recovery.",
+      "Read-only lifecycle reconciliation may validate the exact committed precommit chain without triggering publication recovery.",
       "Any quarantine, Catalog, plan, precommit, or result identity conflict fails closed."
     ]
   },
@@ -294,14 +301,16 @@
       "The same sealed plan ID is reloaded and content-hash verified.",
       "A failed non-committed attempt may retry only after exact active or quarantine identities and Catalog run bindings verify.",
       "Registered targets additionally require an unchanged exact market_bar_snapshot_pairs binding.",
-      "A SUPERSEDED_ONLY retry requires the same cleanup policy, logical-key groups, target bindings, retained-winner bindings, and deterministic ranking facts."
+      "A SUPERSEDED_ONLY retry requires the same cleanup policy, logical-key groups, target bindings, retained-winner bindings, and deterministic ranking facts.",
+      "A v4 EXACT_SCOPE retry requires every sealed reconciled unit to remain VERIFIED_QUARANTINED through the same prior committed plan, precommit, terminal-result hash, and quarantine identities."
     ],
     "completed_retry": [
       "A Catalog SUCCESS retry performs no market-data movement.",
-      "A byte-identical existing final result is accepted; an absent final is republished from the immutable precommit."
+      "A byte-identical existing final result is accepted; an absent final is republished from the immutable precommit.",
+      "Final-result publication after v4 Review is not drift when it publishes the exact precommitted bytes and hash; final-result presence is not sealed as destructive authority."
     ],
     "conflicting_retry": [
-      "A different plan hash, cleanup policy, scope, run binding, snapshot-pair registry binding, retained-winner binding, deterministic ranking result, quarantine identity, precommit, Catalog result hash, or final result is refused without overwrite."
+      "A different plan hash, cleanup policy, scope, run binding, snapshot-pair registry binding, retained-winner binding, deterministic ranking result, reconciled lifecycle unit, prior purge authority, quarantine identity, precommit, Catalog result hash, or final result is refused without overwrite."
     ]
   },
   "locking_concurrency": {
@@ -318,7 +327,9 @@
       "Every explicit or historical implicit legacy target re-proves null snapshot_binding_mode and zero market_bar_snapshot_pairs rows for the run before mutation.",
       "Matching RUNNING runs, unregistered matching files, and unplanned matching active snapshots are refused.",
       "SUPERSEDED_ONLY execution re-enumerates complete snapshots for every exact source, code, requested trade date, interval, requested session, adjustment, and source schema version key; reuses the Catalog latest-complete ranking; and proves every sealed retained winner is unchanged, active, complete, and still the unique winner before movement.",
-      "SUPERSEDED_ONLY execution refuses if a newly completed snapshot changes the winner, any sealed winner disappears or drifts, or any legacy pair is not fully superseded for every physically co-located symbol."
+      "SUPERSEDED_ONLY execution refuses if a newly completed snapshot changes the winner, any sealed winner disappears or drifts, or any legacy pair is not fully superseded for every physically co-located symbol.",
+      "V4 EXACT_SCOPE execution revalidates every sealed prior plan, precommit, embedded terminal result and Catalog hash, both quarantine files, historical run or registry binding, and absence of conflicting success authority before the first new movement.",
+      "V4 EXACT_SCOPE execution refuses when any sealed VERIFIED_QUARANTINED unit becomes missing, ambiguous, invalid, active, or otherwise differs from the reviewed lifecycle classification."
     ],
     "concurrent_behavior": [
       "A concurrent supported market-bar writer or purge cannot acquire the lock and must fail closed.",
@@ -333,11 +344,13 @@
       "For explicit LEGACY_INGESTION_RUN and historical v2 targets without binding_mode, exact null snapshot_binding_mode plus an empty market_bar_snapshot_pairs result for the run",
       "Every target relative path, byte size, SHA-256, row count, symbols, dates, and request-key facts",
       "For SUPERSEDED_ONLY, each exact logical key consisting of source, code, requested trade date, interval, requested session, adjustment, and source schema version; every target-to-retained run mapping; retained Raw and Curated identity; snapshot_ingested_at, run_finished_at, ingestion_run_id, and snapshot_file ranking facts; and proof that one complete active winner remains",
+      "For v4 EXACT_SCOPE, cleanup_policy EXACT_SCOPE and every reconciled_quarantined_units entry binding the historical physical unit, original Raw and Curated identities, exact request identity, prior supported plan version and policy, plan path and hash, precommit path and hash, expected terminal-result path and hash, exact moved entries, and same-plan quarantine destinations",
       "Active and quarantine file identity, same-filesystem destination, and absence of unplanned matching snapshots"
     ],
     "drift_behavior": [
       "Any missing, changed, one-sided, co-located, unregistered, unsafe, newly matching, unknown-mode, mode-drifted, or otherwise unprovable identity refuses before additional mutation.",
       "A SUPERSEDED_ONLY plan refuses before mutation when the deterministic winner differs from the sealed winner, a retained winner is no longer complete or active, a new complete version appears, a matching RUNNING writer or unregistered snapshot appears, or movement could leave zero complete active snapshots for any affected key.",
+      "A v4 EXACT_SCOPE plan refuses before mutation when prior authority is absent, non-success, malformed, noncanonical, hash-conflicting, path-unsafe, incomplete, cross-scope, claimed by multiple successful operations, split across operations, or inconsistent with active state.",
       "Execution never rewrites or splits immutable Parquet to satisfy narrower logical scope."
     ]
   },
@@ -345,17 +358,20 @@
     "authoritative_evidence": [
       "Catalog purge_operations state SUCCESS with exact plan hash, precommit path, final result path, result hash, and completion timestamp",
       "Immutable precommit containing the complete canonical proposed terminal result and matching result hash",
-      "Complete canonical final result atomically published without replacement, or recoverably absent immediately after commit"
+      "Complete canonical final result atomically published without replacement, or recoverably absent immediately after commit",
+      "For VERIFIED_QUARANTINED interpretation, one non-conflicting supported prior plan whose exact Raw and Curated moved entries match historical binding and whose same-plan quarantine files verify by safe path, SHA-256, byte size, and physical facts"
     ],
     "non_success_evidence": [
       "PLANNED, REFUSED, EXECUTING, or FAILED Catalog state",
       "Plan JSON, failure result JSON, precommit JSON, staging residue, or quarantined files without Catalog SUCCESS",
-      "A partial, malformed, hash-conflicting, or unflushed terminal result"
+      "A partial, malformed, hash-conflicting, or unflushed terminal result",
+      "A quarantine pathname, a Catalog SUCCESS row without its complete integrity chain, or only one side of a Raw and Curated pair"
     ],
     "integrity_binding": [
       "Canonical JSON bytes bind every terminal result field including message and timestamps to SHA-256.",
       "Catalog result_hash and immutable precommit terminal_result_hash must equal the canonical final bytes.",
-      "Atomic no-replace publication never overwrites a conflicting final result."
+      "Atomic no-replace publication never overwrites a conflicting final result.",
+      "If the final result exists it must equal the precommitted terminal bytes; if absent, read-only reconciliation relies on the Catalog-bound precommit chain without publishing or treating absence as authority drift."
     ]
   },
   "path_safety": {
@@ -376,7 +392,8 @@
       "StorageCleanupController rejects execution when no executable review exists, the plan ID or scope differs, review is invalidated, or confirmation is not exact, even if QML presentation state is wrong.",
       "ConsoleBackend independently rechecks its current reviewed plan and reloads the plan rather than trusting mutable widget state.",
       "purge_execute independently retains exact confirmation and sealed-plan revalidation authority.",
-      "EXACT_SCOPE remains the default; historical market-vault-safe-purge-plan-v2 evidence without cleanup_policy always means EXACT_SCOPE and remains executable under its original rules, while SUPERSEDED_ONLY requires a versioned v3 plan with explicit policy and sealed retained-winner evidence."
+      "EXACT_SCOPE remains the default; historical market-vault-safe-purge-plan-v2 evidence without cleanup_policy always means EXACT_SCOPE and remains executable under its original rules; SUPERSEDED_ONLY requires v3 with explicit policy and sealed retained-winner evidence; and EXACT_SCOPE that materially excludes at least one VERIFIED_QUARANTINED unit requires v4 with explicit policy and sealed reconciliation evidence.",
+      "Ordinary active-only EXACT_SCOPE may continue emitting v2, and no new QML destructive control or layout is authorized for v4."
     ]
   },
   "physical_atomicity": {
@@ -384,7 +401,9 @@
       "For a run whose snapshot_binding_mode is REGISTERED_PER_SYMBOL, each exact registered per-symbol Raw plus Curated pair is one minimum physical lifecycle unit; zero rows means no authoritative pair.",
       "For a null-mode run with zero registry rows, the complete legacy ingestion_runs Raw plus Curated pair remains the minimum physical lifecycle unit only while null mode and zero rows are re-proven at execution.",
       "New-format successful_symbols, snapshot_pairs, and compatibility pointers are derived exclusively from verified registered pairs.",
-      "SUPERSEDED_ONLY groups only COMPLETE snapshots by exact source, code, requested trade date, interval, requested session, adjustment, and source schema version and retains exactly one winner per key using snapshot_ingested_at DESC NULLS LAST, run_finished_at DESC NULLS LAST, ingestion_run_id DESC, and snapshot_file DESC."
+      "SUPERSEDED_ONLY groups only COMPLETE snapshots by exact source, code, requested trade date, interval, requested session, adjustment, and source schema version and retains exactly one winner per key using snapshot_ingested_at DESC NULLS LAST, run_finished_at DESC NULLS LAST, ingestion_run_id DESC, and snapshot_file DESC.",
+      "Cross-policy reconciliation derives ACTIVE, VERIFIED_QUARANTINED, MISSING_UNEXPLAINED, AMBIGUOUS, or INVALID from existing evidence without adding Catalog lifecycle state or rewriting original provenance paths.",
+      "REGISTERED_PER_SYMBOL reconciliation applies only to the exact (run_id, symbol) pair; legacy reconciliation applies to the entire indivisible Raw and Curated pair and all physically contained symbols through one prior authority."
     ],
     "partial_mutation": [
       "A one-sided pair or partial symbol/date/request-key selection within a legacy co-located file refuses the entire plan.",
@@ -416,6 +435,7 @@
       "Co-located symbols, dates, or request-key facts outside the exact requested scope",
       "A SUPERSEDED_ONLY candidate that is not COMPLETE, is the retained winner, lacks a newer COMPLETE winner for the exact logical key, or belongs to a legacy pair whose every symbol is not independently superseded",
       "A SUPERSEDED_ONLY plan with a changed winner, newly complete matching version, missing or drifted retained winner, matching RUNNING run, matching unregistered file, or post-movement proof that fewer than one complete active snapshot would remain",
+      "A v4 EXACT_SCOPE reconciliation with unexplained missing bytes, active and quarantine conflict, conflicting successful claims, split Raw and Curated authority, incomplete quarantine, evidence tampering, unknown evidence schema, or request identity mismatch",
       "Wildcard scope, arbitrary paths, path drift, Catalog drift, or unverified reparse points"
     ],
     "unsupported_cases": [
@@ -457,6 +477,18 @@
     "A legacy multi-symbol pair is targetable only when every contained symbol is superseded; one unsuperseded symbol retains and refuses the whole pair",
     "Successful SUPERSEDED_ONLY execution leaves the exact sealed winner active and queryable for every affected key and quarantines only sealed superseded pairs",
     "EXACT_SCOPE behavior and historical sealed market-vault-safe-purge-plan-v2 execution remain unchanged; missing cleanup_policy means EXACT_SCOPE and cannot authorize SUPERSEDED_ONLY",
-    "Changing cleanup_policy or any existing scope field invalidates Review, clears confirmation, and requires a new plan"
+    "Changing cleanup_policy or any existing scope field invalidates Review, clears confirmation, and requires a new plan",
+    "Three complete versions followed by successful SUPERSEDED_ONLY quarantine produce a v4 EXACT_SCOPE plan targeting only the remaining active version and sealing both prior quarantines",
+    "Executing that v4 plan moves only the remaining active pair; a repeated review is REFUSED with NO_MATCHING_DATA and zero targets when all historical units are VERIFIED_QUARANTINED",
+    "Missing active files without committed-success evidence remain MISSING_UNEXPLAINED and refuse",
+    "Missing either quarantine side, quarantine hash or size drift, prior plan or precommit tampering, Catalog hash conflict, unsafe evidence paths, and unknown prior schemas refuse",
+    "PLANNED, REFUSED, EXECUTING, FAILED, precommit-only, staging-only, partial-quarantine, and rolled-back evidence never establish VERIFIED_QUARANTINED",
+    "Catalog SUCCESS with an absent final result reconciles read-only only through the valid precommit chain and never invokes publication recovery",
+    "A later exact publication of precommitted terminal bytes does not invalidate a v4 plan, while any conflicting final result refuses",
+    "Registered sibling symbols reconcile independently, and legacy co-located symbols reconcile only as one indivisible pair through the same authority",
+    "Requested session, source, symbol, requested trade date, interval, adjustment, and source schema version remain exact reconciliation boundaries",
+    "Quarantine evidence drift or a new matching active or unregistered snapshot after Review refuses v4 execution before movement",
+    "Historical v2 EXACT_SCOPE and v3 SUPERSEDED_ONLY plans retain their exact loaders and execution semantics",
+    "A successful v4 EXACT_SCOPE operation may serve as future reconciliation authority only through the same complete committed-success chain"
   ]
 }

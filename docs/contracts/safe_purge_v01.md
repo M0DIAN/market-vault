@@ -44,6 +44,56 @@ Immutable Parquet files are never split or rewritten. The complete physical
 model is defined by
 [`market_bar_physical_snapshots_v1.md`](market_bar_physical_snapshots_v1.md).
 
+## Cross-Policy Lifecycle Reconciliation
+
+Historical run and `market_bar_snapshot_pairs` paths remain original
+collection provenance after a successful purge. They are never rewritten to
+quarantine paths. A future planner may therefore derive, without writing
+Catalog state, one of five lifecycle interpretations for each authoritative
+physical unit:
+
+- `ACTIVE`: the exact bound Raw and Curated files both exist in the active
+  roots, their identities and physical facts verify, and no successful purge
+  authority conflicts with active ownership;
+- `VERIFIED_QUARANTINED`: both active files are absent and one complete,
+  non-conflicting committed-success chain proves that exact Raw and Curated
+  pair now exists at the quarantine destinations derived from the same purge
+  plan ID;
+- `MISSING_UNEXPLAINED`: historical binding exists, but missing active bytes
+  have no valid committed-success explanation;
+- `AMBIGUOUS`: active and quarantine claims conflict, multiple successful
+  operations claim the same original unit, or Raw and Curated are attributed
+  to different operations; or
+- `INVALID`: binding, canonical evidence, path safety, hash, size, physical
+  facts, request identity, or pair completeness cannot be proved.
+
+`VERIFIED_QUARANTINED` requires the exact historical run/registry binding, a
+canonical immutable prior plan and matching plan hash, Catalog
+`purge_operations.state == SUCCESS`, a canonical immutable precommit whose
+plan identity and hash match, an embedded canonical terminal result matching
+the Catalog result hash, exact Raw and Curated moved entries, same-plan
+quarantine destinations, and both quarantine files matching sealed SHA-256,
+byte size, and physical facts. A quarantine pathname alone and a Catalog
+`SUCCESS` row alone are never authority. `PLANNED`, `REFUSED`, `EXECUTING`, and
+`FAILED` operations, non-terminal precommit or staging residue, rolled-back
+movement, and partial quarantine are not successful quarantine authority.
+
+If a final terminal result exists, it must be canonical, match the Catalog
+result hash, and equal the terminal result sealed by the precommit. If it is
+absent after Catalog `SUCCESS`, the valid precommit, its embedded terminal
+result, the Catalog-bound result hash, and verified quarantine identities are
+sufficient for read-only reconciliation. The reconciliation reader must not
+publish the absent result; normal idempotent `purge_execute` retry remains the
+only result-publication recovery path. Later publication of those exact sealed
+bytes is not lifecycle drift.
+
+Registered reconciliation is limited to the exact `(run_id, symbol)` pair and
+does not confer state on sibling symbols. A legacy multi-symbol pair remains
+indivisible: every contained symbol resolves through the same physical pair
+and the same prior purge authority. Reconciliation never crosses source,
+symbol, requested trade date, interval, requested session, adjustment, or
+source schema version.
+
 ## Derived Artifact Retention
 
 Committed Verified Canonical builds are self-contained and retain embedded
@@ -78,6 +128,39 @@ legacy target MUST re-query the exact run mode and its
 mutation. This includes historical v2 targets without `binding_mode`. Any
 non-null mode or newly present row is mode/authority drift and refuses
 execution before files move.
+
+Plan-version meanings are additive and permanent:
+
+- `market-vault-safe-purge-plan-v2` is historical and ordinary `EXACT_SCOPE`;
+- `market-vault-safe-purge-plan-v3` is `SUPERSEDED_ONLY`; and
+- `market-vault-safe-purge-plan-v4` is `EXACT_SCOPE` whose reviewed authority
+  materially depends on at least one sealed `VERIFIED_QUARANTINED` exclusion.
+
+An ordinary `EXACT_SCOPE` review with no reconciled exclusion may continue to
+emit v2. A v4 plan preserves every v2 field, explicitly seals
+`cleanup_policy: EXACT_SCOPE`, and adds `reconciled_quarantined_units` with the
+exact historical physical unit, prior committed-success authority, moved-file
+identity, and quarantine destination needed for execution-time revalidation.
+It never retargets an already quarantined unit. `ACTIVE` units remain normal
+`EXACT_SCOPE` candidates; `MISSING_UNEXPLAINED`, `AMBIGUOUS`, and `INVALID`
+units refuse the plan. If all matching historical units are
+`VERIFIED_QUARANTINED`, the plan is `REFUSED` with `NO_MATCHING_DATA` and zero
+targets rather than becoming a successful no-op.
+
+Before v4 execution moves any new target, `purge_execute` must revalidate under
+`MarketBarLifecycleLock` the canonical plan and scope, every active target,
+every sealed prior plan/precommit/result binding, every quarantine Raw and
+Curated identity, historical run/registry bindings, absence of conflicting
+successful authority, and absence of new matching active or unregistered
+units. Any changed lifecycle classification refuses before the first new file
+movement. A successful v4 operation may later serve as prior authority through
+the same committed-success chain. Unknown plan, precommit, or result schemas
+fail closed.
+
+V4 continues to use the existing `EXACT_SCOPE` precommit and result schemas.
+Those records bind the complete v4 plan hash and the ordinary newly moved
+Raw/Curated targets, so no precommit or result version change is authorized.
+No Catalog lifecycle column or table is introduced.
 
 For new-format collection runs, `successful_symbols` and compatibility pointers
 are authoritative only after exact pair verification and registry insertion.
