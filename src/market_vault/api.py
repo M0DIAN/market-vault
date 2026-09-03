@@ -52,6 +52,38 @@ def _validated_page(page: int, page_size: int) -> tuple[int, int, int]:
     return page, page_size, (page - 1) * page_size
 
 
+def _resolve_requested_session(
+    con,
+    *,
+    clauses: list[str],
+    params: list[object],
+    requested_session: str | None,
+) -> str | None:
+    """Resolve one request cohort without using row-level session labels."""
+    if requested_session is not None and requested_session.strip():
+        return requested_session.strip().upper()
+
+    rows = con.execute(
+        f"""
+        SELECT requested_session
+        FROM market_bars
+        WHERE {' AND '.join(clauses)}
+        GROUP BY requested_session
+        ORDER BY requested_session NULLS FIRST
+        LIMIT 2
+        """,
+        params,
+    ).fetchall()
+    if not rows:
+        return None
+    if len(rows) != 1 or rows[0][0] is None or not str(rows[0][0]).strip():
+        raise ValueError(
+            "multiple or unverifiable requested_session values match; "
+            "specify requested_session explicitly"
+        )
+    return str(rows[0][0]).strip().upper()
+
+
 class MarketVault:
     def __init__(self, settings: Settings | str | Path = "config/settings.yaml"):
         self.settings = settings if isinstance(settings, Settings) else load_settings(settings)
@@ -66,6 +98,7 @@ class MarketVault:
         interval: str = "1m",
         session: str | None = None,
         adjustment: str = "NONE",
+        requested_session: str | None = None,
     ) -> pd.DataFrame:
         if not self.catalog.refresh_market_bars_view():
             return pd.DataFrame()
@@ -81,17 +114,25 @@ class MarketVault:
         if trade_date is not None:
             clauses.append("requested_trade_date = ?")
             params.append(trade_date)
-        if session is not None:
-            clauses.append("session = ?")
-            params.append(session.upper())
-
-        sql = f"""
-            SELECT *
-            FROM market_bars
-            WHERE {' AND '.join(clauses)}
-            ORDER BY time_utc
-        """
         with self.catalog.connect() as con:
+            resolved_requested_session = _resolve_requested_session(
+                con,
+                clauses=clauses,
+                params=params,
+                requested_session=requested_session,
+            )
+            if resolved_requested_session is not None:
+                clauses.append("requested_session = ?")
+                params.append(resolved_requested_session)
+            if session is not None:
+                clauses.append("session = ?")
+                params.append(session.strip().upper())
+            sql = f"""
+                SELECT *
+                FROM market_bars
+                WHERE {' AND '.join(clauses)}
+                ORDER BY time_utc
+            """
             return con.execute(sql, params).fetchdf()
 
     def load_bars_page(
@@ -131,14 +172,20 @@ class MarketVault:
         if end_date is not None:
             clauses.append("requested_trade_date <= ?")
             params.append(end_date)
-        if requested_session:
-            clauses.append("requested_session = ?")
-            params.append(requested_session.strip().upper())
-        if bar_session:
-            clauses.append("session = ?")
-            params.append(bar_session.strip().upper())
-        where = " AND ".join(clauses)
         with self.catalog.connect() as con:
+            resolved_requested_session = _resolve_requested_session(
+                con,
+                clauses=clauses,
+                params=params,
+                requested_session=requested_session,
+            )
+            if resolved_requested_session is not None:
+                clauses.append("requested_session = ?")
+                params.append(resolved_requested_session)
+            if bar_session:
+                clauses.append("session = ?")
+                params.append(bar_session.strip().upper())
+            where = " AND ".join(clauses)
             total_rows = int(
                 con.execute(f"SELECT COUNT(*) FROM market_bars WHERE {where}", params).fetchone()[0]
             )

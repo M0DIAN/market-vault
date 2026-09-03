@@ -202,9 +202,11 @@ class FakeVault:
         )
         self.calls: list[str] = []
         self.inventory_calls: list[dict] = []
+        self.query_calls: list[dict] = []
 
     def load_bars_page(self, **kwargs):
         self.calls.append("load_bars_page")
+        self.query_calls.append(dict(kwargs))
         return QueryPage(pd.DataFrame({"code": ["US.SPY"], "close": [500.0]}), 1, 100, 1)
 
     def inventory_market_bars(self, **kwargs):
@@ -298,6 +300,29 @@ def test_dashboard_and_queries_are_local_only():
     ]
     assert "collect_trading_calendar" not in fake.calls
     assert "backfill" not in fake.calls
+
+
+def test_query_backend_keeps_requested_and_bar_sessions_distinct():
+    fake = FakeVault()
+    backend = ConsoleBackend(fake)
+    backend.query_bars(
+        code="US.SPY",
+        requested_session="rth",
+        bar_session="regular",
+    )
+    assert fake.query_calls == [
+        {
+            "code": "US.SPY",
+            "start_date": None,
+            "end_date": None,
+            "interval": "1m",
+            "requested_session": "rth",
+            "bar_session": "regular",
+            "adjustment": "NONE",
+            "page": 1,
+            "page_size": 100,
+        }
+    ]
 
 
 def test_inventory_query_disables_report_persistence_with_exact_filters():
