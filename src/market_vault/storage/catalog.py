@@ -695,6 +695,27 @@ class Catalog:
                 )
                 return True
             try:
+                ambiguous_duplicate = con.execute(
+                    f"""
+                    SELECT 1
+                    FROM market_bars_snapshots
+                    WHERE source = {source_literal}
+                      AND source_schema_version = {schema_literal}
+                    GROUP BY
+                        code,
+                        requested_trade_date,
+                        interval,
+                        requested_session,
+                        adjustment,
+                        time_utc,
+                        ingested_at,
+                        ingestion_run_id
+                    HAVING COUNT(*) > 1
+                    LIMIT 1
+                    """
+                ).fetchone()
+                if ambiguous_duplicate is not None:
+                    return False
                 con.execute(
                     f"""
                     CREATE OR REPLACE VIEW market_bars AS
@@ -702,8 +723,16 @@ class Catalog:
                     FROM (
                         SELECT *,
                                row_number() OVER (
-                                   PARTITION BY code, interval, adjustment, time_utc
-                                   ORDER BY ingested_at DESC
+                                   PARTITION BY
+                                       code,
+                                       requested_trade_date,
+                                       interval,
+                                       requested_session,
+                                       adjustment,
+                                       time_utc
+                                   ORDER BY
+                                       ingested_at DESC NULLS LAST,
+                                       ingestion_run_id DESC
                                ) AS _rn
                         FROM market_bars_snapshots
                         WHERE source = {source_literal}

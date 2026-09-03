@@ -88,16 +88,24 @@ ambiguous boundaries.
 `market_bars_snapshots` remains the physical archive view. It may contain both
 `10.9` and `10.9-mv-ts2` Curated files and must not rewrite either cohort.
 
-`market_bars` is the current/default logical consumer view. Its future SQL
-must filter rows before applying existing row-version selection:
+`market_bars` is the current/default logical consumer view. Its SQL filters
+rows before applying row-version selection:
 
 ```sql
 SELECT * EXCLUDE (_rn)
 FROM (
     SELECT *,
            row_number() OVER (
-               PARTITION BY code, interval, adjustment, time_utc
-               ORDER BY ingested_at DESC
+               PARTITION BY
+                   code,
+                   requested_trade_date,
+                   interval,
+                   requested_session,
+                   adjustment,
+                   time_utc
+               ORDER BY
+                   ingested_at DESC NULLS LAST,
+                   ingestion_run_id DESC
            ) AS _rn
     FROM market_bars_snapshots
     WHERE source = <exact settings.source>
@@ -109,14 +117,15 @@ WHERE _rn = 1
 The implementation must safely quote exact, nonblank configuration values;
 wildcards and substring matching are forbidden. Because `source` and
 `source_schema_version` are constants after the filter, adding them to the
-`row_number` partition would be redundant. This transition preserves the
-existing partition key instead of changing unrelated deduplication semantics.
+`row_number` partition would be redundant. RTH and ALL are independent request
+identities and both remain current when both are present. The run ID is only a
+deterministic tie-break for equal ingestion timestamps, not chronological
+authority.
 
-Inspection found that the existing partition does not include
-`requested_session`. RTH and ALL rows at the same `time_utc` can therefore
-collide inside one schema cohort. That is a separate query/deduplication issue
-and is not authorized by this design. Its eventual correction needs its own
-review and regressions; it must not be bundled into Timestamp Semantics V2.
+The previously deferred requested-session collision is resolved by the
+Requested-Session-Safe Current View workstream. A refresh refuses ambiguous
+rows whose complete partition identity, `ingested_at`, and
+`ingestion_run_id` are all equal.
 
 With `settings.source_schema_version = 10.9-mv-ts2`, legacy `10.9` rows must
 never survive into `market_bars`. The coexistence regression must prove 390
@@ -129,8 +138,11 @@ both physical snapshots.
 
 Use the default-current pattern. `MarketVault.load_bars`,
 `MarketVault.load_bars_page`, and `ConsoleBackend.query_bars` continue to read
-`market_bars` without adding a required argument. An omitted schema never
-means all cohorts; it means the configured cohort through the view.
+`market_bars`. Requested collection session and normalized row session are
+separate filters. An omitted requested session remains compatible when zero
+or one request cohort matches, but fails closed when multiple request cohorts
+match. An omitted schema never means all schema cohorts; it means the
+configured cohort through the view.
 
 An explicit legacy schema selector for Market Data is not part of this
 transition. Operators retain archive visibility through Inventory, Catalog,

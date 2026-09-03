@@ -93,7 +93,8 @@ collector:
 要点：
 
 - OpenD 不在默认端点（`127.0.0.1:11111`）时修改 `opend.host` / `opend.port`。
-- `collect` / `backfill` / `query` / `audit` / `intraday-audit` 省略 `--session` / `--adjustment` 时，回退到 `collector.default_session`（`ALL`）与 `collector.default_adjustment`（`NONE`）；显式传值覆盖默认值。
+- `collect` / `backfill` / `audit` / `intraday-audit` 省略 `--session` / `--adjustment` 时，回退到 `collector.default_session`（`ALL`）与 `collector.default_adjustment`（`NONE`）；显式传值覆盖默认值。
+- `query` 的 `--requested-session` 是采集请求会话（`RTH` / `ALL` / `ETH`），`--bar-session` 是行级时段标签；旧 `--session` 仅作为 `--bar-session` 的兼容别名，不代表采集请求会话。
 - Dataset、Sample Generation、Dataset Catalog 命令与 `ArtifactClient` 是 settings-independent：不读 settings.yaml、不连接 OpenD、不访问网络。
 
 ### MarketVault PySide6/QML 桌面应用
@@ -406,8 +407,15 @@ market-vault --settings config/settings.yaml query `
   --code US.MU `
   --trade-date 2026-07-31 `
   --interval 1m `
-  --session REGULAR
+  --requested-session RTH `
+  --bar-session REGULAR
 ```
+
+`requested_session` 是当前视图身份的一部分，因此 RTH 与 ALL 可以同时
+保留。未提供 `--requested-session` 时，零个或仅一个匹配请求会话保持兼容；
+若多个请求会话同时匹配，查询会拒绝并要求显式选择。旧写法
+`--session REGULAR` 仍表示行级 `REGULAR`，不会被重新解释为 RTH/ALL；同时
+提供 `--session` 与 `--bar-session` 时，两者规范化后的值必须相同。
 
 ## 9. Option data
 

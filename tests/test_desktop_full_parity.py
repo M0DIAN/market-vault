@@ -490,6 +490,51 @@ def test_pagination_keeps_model_and_last_good_page_on_failure(qt_app, tmp_path):
     runtime.shutdown()
 
 
+def test_market_data_qml_and_controller_keep_session_concepts_distinct(
+    qt_app, tmp_path
+):
+    source = (
+        ROOT / "src" / "market_vault" / "desktop" / "qml" / "pages" / "MarketDataPage.qml"
+    ).read_text(encoding="utf-8")
+    assert "requested_session: requestedSession.currentText" in source
+    assert "bar_session: barSession.currentText" in source
+
+    calls = []
+
+    class Backend:
+        def query_bars(self, **values):
+            calls.append(dict(values))
+            return _page(total=1)
+
+    runtime = DesktopOperationRuntime(
+        settings_path=(tmp_path / "settings.yaml").resolve(),
+        backend_factory=lambda path: Backend(),
+        runner_factory=_Runner,
+        poll_interval_ms=1,
+    )
+    controller = MarketDataController(runtime)
+    assert controller.query(
+        {
+            "code": "US.SPY",
+            "requested_session": "RTH",
+            "bar_session": "REGULAR",
+            "page": 1,
+            "page_size": 100,
+        }
+    )
+    _wait(qt_app, lambda: not runtime.busy)
+    assert calls == [
+        {
+            "code": "US.SPY",
+            "requested_session": "RTH",
+            "bar_session": "REGULAR",
+            "page_size": 100,
+            "page": 1,
+        }
+    ]
+    runtime.shutdown()
+
+
 def test_storage_review_scope_invalidation_and_exact_execution(qt_app, tmp_path):
     runner = _Runner()
 

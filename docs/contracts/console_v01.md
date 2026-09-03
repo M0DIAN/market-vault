@@ -56,6 +56,13 @@ Page size must be between 1 and 1000. Each response includes exact total row
 count and page navigation facts. The widget layer receives immutable
 `TablePage` values, not an unbounded DataFrame.
 
+Market-bar queries distinguish the collection request identity
+`requested_session` (`RTH`/`ALL`/`ETH`) from the normalized per-row
+`bar_session` (`OVERNIGHT`/`PRE_MARKET`/`REGULAR`/`AFTER_HOURS`). If the
+request session is omitted and multiple request cohorts match, the API fails
+closed before counting or selecting a page. The QML Market Data page already
+passes the two filters separately.
+
 Console export is intentionally **current-page only**, supports CSV and JSON,
 and rejects more than 1000 loaded rows. It does not export Parquet or execute
 an unbounded database scan. Backfill plan display is capped at 1000 items;
@@ -77,10 +84,14 @@ records.
 
 ## 6. Compatibility
 
-Existing CLI commands and Python methods retain their behavior. The legacy
-unbounded `MarketVault.load_bars` method remains available for compatibility;
-the Console never calls it. No source schema, Parquet layout, DuckDB table,
-manifest, quality, CI, version, tag, or release contract changes in v0.1.
+The legacy unbounded `MarketVault.load_bars` method remains available and its
+`session` parameter remains a normalized row-session filter. It accepts a new
+optional `requested_session` filter. Calls that omit it remain compatible for
+zero or one matching request cohort and fail closed when multiple cohorts
+would otherwise be combined. The CLI preserves `query --session` as the
+legacy row-session alias while adding explicit `--requested-session` and
+`--bar-session` options. No source schema, Parquet layout, DuckDB table,
+manifest, quality, version, tag, or release contract changes.
 
 Storage / Purge requires an exact physical-scope preview followed by typed
 `PURGE <plan_id>` confirmation. A refused plan, including a partial symbol

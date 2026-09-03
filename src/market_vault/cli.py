@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from datetime import date
 from pathlib import Path
 
@@ -52,6 +53,41 @@ def _non_negative_float(value: str) -> float:
     if parsed < 0:
         raise argparse.ArgumentTypeError("Value must be non-negative")
     return parsed
+
+
+def _requested_session(value: str) -> str:
+    normalized = value.strip().upper()
+    if normalized not in {"RTH", "ALL", "ETH"}:
+        raise argparse.ArgumentTypeError(
+            "Requested session must be one of: RTH, ALL, ETH"
+        )
+    return normalized
+
+
+def _bar_session(value: str) -> str:
+    normalized = value.strip().upper()
+    if normalized not in {
+        "OVERNIGHT",
+        "PRE_MARKET",
+        "REGULAR",
+        "AFTER_HOURS",
+    }:
+        raise argparse.ArgumentTypeError(
+            "Bar session must be one of: OVERNIGHT, PRE_MARKET, REGULAR, AFTER_HOURS"
+        )
+    return normalized
+
+
+def _resolve_query_bar_session(
+    legacy_session: str | None,
+    bar_session: str | None,
+) -> str | None:
+    if legacy_session is not None and bar_session is not None:
+        if legacy_session != bar_session:
+            raise ValueError(
+                "--session and --bar-session must match when both are provided"
+            )
+    return bar_session or legacy_session
 
 
 def _resolve_symbols(args) -> list[str]:
@@ -109,7 +145,24 @@ def build_parser() -> argparse.ArgumentParser:
     query.add_argument("--code", required=True)
     query.add_argument("--trade-date")
     query.add_argument("--interval", default="1m")
-    query.add_argument("--session")
+    query.add_argument(
+        "--requested-session",
+        type=_requested_session,
+        help="Exact collection request session: RTH, ALL, or ETH",
+    )
+    query.add_argument(
+        "--bar-session",
+        type=_bar_session,
+        help=(
+            "Normalized row session: OVERNIGHT, PRE_MARKET, REGULAR, or "
+            "AFTER_HOURS"
+        ),
+    )
+    query.add_argument(
+        "--session",
+        type=_bar_session,
+        help="Legacy alias for --bar-session",
+    )
     query.add_argument("--adjustment", default="NONE")
     query.add_argument("--limit", type=int, default=20)
 
@@ -327,14 +380,23 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "query":
-        vault = MarketVault(settings)
-        frame = vault.load_bars(
-            code=args.code,
-            trade_date=args.trade_date,
-            interval=args.interval,
-            session=args.session,
-            adjustment=args.adjustment,
-        )
+        try:
+            bar_session = _resolve_query_bar_session(
+                args.session,
+                args.bar_session,
+            )
+            vault = MarketVault(settings)
+            frame = vault.load_bars(
+                code=args.code,
+                trade_date=args.trade_date,
+                interval=args.interval,
+                session=bar_session,
+                adjustment=args.adjustment,
+                requested_session=args.requested_session,
+            )
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
         print(frame.head(args.limit).to_string(index=False))
         return 0
 

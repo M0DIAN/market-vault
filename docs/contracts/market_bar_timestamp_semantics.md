@@ -2,10 +2,10 @@
 
 Status: the canonical interval-start model is active. The legacy `10.9`
 OpenD-label interpretation is contradicted by later live evidence; the
-`10.9-mv-ts2` runtime compatibility transition is implemented, while the
-checked-in and production configuration remain on `10.9` pending a separately
-authorized operational cutover. See
-[`market_bar_timestamp_semantics_v2_compatibility.md`](../market_bar_timestamp_semantics_v2_compatibility.md).
+`10.9-mv-ts2` runtime compatibility transition is implemented and its
+production activation is accepted. See
+[`market_bar_timestamp_semantics_v2_compatibility.md`](../market_bar_timestamp_semantics_v2_compatibility.md)
+and the linked production activation evidence seal.
 
 This contract answers the timestamp questions that
 [ADR 0001](../adr/0001-canonical-ml-dataset-boundary.md) flagged before any
@@ -155,16 +155,15 @@ a conservative not-before bound otherwise).
 2. Early-close RTH behavior and other provider/session/interval combinations
    remain unresolved. The implementation fails honestly outside its verified
    conversion rules.
-3. The approved `10.9-mv-ts2` cohort and current-view filter are implemented.
-   The production settings cutover remains a separate operational phase and
-   has not been performed.
-4. The current `market_bars` row-version partition omits
-   `requested_session`; that separate possible RTH/ALL collision is recorded
-   but not authorized for correction by this design.
-5. `ingested_at` cross-batch differences within a run are allowed but not
+3. `ingested_at` cross-batch differences within a run are allowed but not
    asserted to be distinct; the contract only pins same-batch equality.
-6. Exact bar-end times at unverified session boundaries and early closes are
+4. Exact bar-end times at unverified session boundaries and early closes are
    not known;
    `market_available_at = event_time + interval` is exact only for bars known
    to span their full nominal interval and is otherwise a conservative
    not-before bound (see section 3).
+
+The `10.9-mv-ts2` production activation is complete and accepted. The former
+RTH/ALL current-view collision is also closed: `requested_session` is part of
+the exact current-view identity, and unscoped multi-request-session queries
+fail closed instead of selecting or combining request cohorts.
