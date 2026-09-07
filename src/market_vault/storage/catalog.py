@@ -543,6 +543,35 @@ class Catalog:
         )
         return dict(zip(keys, row, strict=True))
 
+    def committed_success_operations(self) -> list[dict]:
+        """Return committed Safe Purge rows in deterministic read-only order."""
+        with self.connect() as con:
+            rows = con.execute(
+                """
+                SELECT plan_id, plan_hash, state, scope_json::VARCHAR,
+                       plan_file, precommit_file, result_file, result_hash,
+                       planned_at, started_at, finished_at, error
+                FROM purge_operations
+                WHERE state = 'SUCCESS'
+                ORDER BY planned_at, plan_id
+                """
+            ).fetchall()
+        keys = (
+            "plan_id",
+            "plan_hash",
+            "state",
+            "scope_json",
+            "plan_file",
+            "precommit_file",
+            "result_file",
+            "result_hash",
+            "planned_at",
+            "started_at",
+            "finished_at",
+            "error",
+        )
+        return [dict(zip(keys, row, strict=True)) for row in rows]
+
     def begin_purge_operation(self, plan_id: str, *, started_at: datetime) -> None:
         """Start one attempt and clear only its mutable Catalog evidence pointers."""
         self.initialize()

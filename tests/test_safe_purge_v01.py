@@ -264,7 +264,7 @@ def test_no_matching_data_and_pair_mismatch_are_refused(tmp_path):
     raw.unlink()
     mismatch = plan(cfg, ["US.SPY"])
     assert mismatch.status == "REFUSED"
-    assert any(reason["code"] == "UNSAFE_OR_MISSING_TARGET" for reason in mismatch.refusal_reasons)
+    assert any(reason["code"] == "QUARANTINE_PAIR_INCOMPLETE" for reason in mismatch.refusal_reasons)
 
 
 def test_bad_confirmation_unknown_id_and_plan_tampering_fail_closed(tmp_path):

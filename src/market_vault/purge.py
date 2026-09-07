@@ -25,6 +25,7 @@ from .storage.catalog import CompleteSnapshotRef
 
 PURGE_PLAN_VERSION = "market-vault-safe-purge-plan-v2"
 PURGE_PLAN_VERSION_V3 = "market-vault-safe-purge-plan-v3"
+PURGE_PLAN_VERSION_V4 = "market-vault-safe-purge-plan-v4"
 PURGE_RESULT_VERSION = "market-vault-safe-purge-result-v2"
 PURGE_RESULT_VERSION_V3 = "market-vault-safe-purge-result-v3"
 PURGE_PRECOMMIT_VERSION = "market-vault-safe-purge-precommit-v1"
@@ -34,6 +35,16 @@ REGISTERED_PER_SYMBOL = "REGISTERED_PER_SYMBOL"
 LEGACY_INGESTION_RUN = "LEGACY_INGESTION_RUN"
 EXACT_SCOPE = "EXACT_SCOPE"
 SUPERSEDED_ONLY = "SUPERSEDED_ONLY"
+LIFECYCLE_ACTIVE = "ACTIVE"
+LIFECYCLE_VERIFIED_QUARANTINED = "VERIFIED_QUARANTINED"
+LIFECYCLE_MISSING_UNEXPLAINED = "MISSING_UNEXPLAINED"
+LIFECYCLE_AMBIGUOUS = "AMBIGUOUS"
+LIFECYCLE_INVALID = "INVALID"
+CODE_QUARANTINE_EVIDENCE_MISSING = "QUARANTINE_EVIDENCE_MISSING"
+CODE_QUARANTINE_EVIDENCE_HASH_MISMATCH = "QUARANTINE_EVIDENCE_HASH_MISMATCH"
+CODE_QUARANTINE_PAIR_INCOMPLETE = "QUARANTINE_PAIR_INCOMPLETE"
+CODE_PURGE_RESULT_AUTHORITY_MISMATCH = "PURGE_RESULT_AUTHORITY_MISMATCH"
+CODE_CONFLICTING_PURGE_AUTHORITY = "CONFLICTING_PURGE_AUTHORITY"
 _PLAN_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 _PARTITION_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
@@ -48,6 +59,12 @@ class PurgeRefusedError(PurgeError):
 
 class PurgeDriftError(PurgeError):
     """The active archive no longer matches the sealed plan."""
+
+
+class _ReconciliationError(PurgeError):
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
 
 
 @dataclass(frozen=True)
@@ -138,6 +155,7 @@ class PurgePlan:
     cleanup_policy: str = EXACT_SCOPE
     retained_current_snapshots: tuple[dict[str, Any], ...] = ()
     target_to_retained: tuple[dict[str, Any], ...] = ()
+    reconciled_quarantined_units: tuple[dict[str, Any], ...] = ()
 
     @property
     def executable(self) -> bool:
@@ -166,6 +184,15 @@ class PurgePlan:
                         self.retained_current_snapshots
                     ),
                     "target_to_retained": list(self.target_to_retained),
+                }
+            )
+        elif self.plan_version == PURGE_PLAN_VERSION_V4:
+            payload.update(
+                {
+                    "cleanup_policy": self.cleanup_policy,
+                    "reconciled_quarantined_units": list(
+                        self.reconciled_quarantined_units
+                    ),
                 }
             )
         return payload
@@ -255,6 +282,14 @@ class _RunRecord:
     status: str
     config_hash: str
     snapshot_binding_mode: str | None
+
+
+@dataclass(frozen=True)
+class _LifecycleClassification:
+    state: str
+    evidence: dict[str, Any] | None = None
+    refusal: dict[str, Any] | None = None
+    committed_claimed: bool = False
 
 
 def _nonblank(value: Any, label: str) -> str:
@@ -867,261 +902,443 @@ def _dedupe_reasons(reasons: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [unique[key] for key in sorted(unique)]
 
 
-def _build_exact_scope_plan_content(
-    settings: Settings, scope: PurgeScope
-) -> dict[str, Any]:
-    if scope.source != settings.source:
-        raise ValueError(
-            f"source must equal configured collector source {settings.source!r}"
+def _catalog_success_scope_matches_unit(
+    record: dict[str, Any],
+    scope: PurgeScope,
+    row: _RunRecord,
+    symbols: set[str],
+) -> bool:
+    try:
+        value = json.loads(record["scope_json"])
+        prior_scope = PurgeScope.from_dict(value)
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return True
+    return (
+        prior_scope.source == scope.source
+        and prior_scope.interval == row.interval.strip().lower()
+        and prior_scope.requested_session == row.session.strip().upper()
+        and prior_scope.adjustment == row.adjustment.strip().upper()
+        and prior_scope.source_schema_version == scope.source_schema_version
+        and prior_scope.start_date <= row.requested_trade_date <= prior_scope.end_date
+        and bool(set(prior_scope.symbols).intersection(symbols))
+    )
+
+
+def _manifest_relative_path(settings: Settings, path: Path, *, label: str) -> str:
+    root = Path(os.path.abspath(settings.manifest_dir))
+    absolute = Path(os.path.abspath(path))
+    try:
+        relative = absolute.relative_to(root)
+    except ValueError as exc:
+        raise _ReconciliationError(
+            CODE_PURGE_RESULT_AUTHORITY_MISMATCH,
+            f"{label} is outside manifest_dir",
+        ) from exc
+    if relative.is_absolute() or ".." in relative.parts:
+        raise _ReconciliationError(
+            CODE_PURGE_RESULT_AUTHORITY_MISMATCH,
+            f"{label} has an unsafe relative path",
         )
-    catalog = Catalog(settings)
-    rows, active_runs = _catalog_runs(catalog, scope)
-    refusals: list[dict[str, Any]] = []
-    if active_runs:
-        refusals.append(
-            _refusal(
-                "ACTIVE_RUN",
-                "matching market-bar ingestion runs are still RUNNING",
-                run_ids=active_runs,
-            )
+    return relative.as_posix()
+
+
+def _readonly_success_authority(
+    settings: Settings, record: dict[str, Any]
+) -> tuple[PurgePlan, PurgeResult, dict[str, Any], Path, Path, Path]:
+    if record.get("state") != "SUCCESS":
+        raise _ReconciliationError(
+            CODE_PURGE_RESULT_AUTHORITY_MISMATCH,
+            "prior purge operation is not committed SUCCESS",
         )
-    targets: list[dict[str, Any]] = []
-    referenced: set[str] = set()
-    matched_symbols: set[str] = set()
-    data_root = Path(os.path.abspath(settings.data_root))
-    for row in rows:
-        run_id = row.run_id
-        registry_pairs = catalog.market_bar_snapshot_pairs_for_run(run_id)
-        mode = row.snapshot_binding_mode
-        if mode is None and registry_pairs:
-            refusals.append(
-                _refusal(
-                    "INCONSISTENT_SNAPSHOT_AUTHORITY",
-                    "legacy-format run unexpectedly has registered snapshot pairs",
-                    run_id=run_id,
-                )
-            )
-            continue
-        if mode not in {None, REGISTERED_PER_SYMBOL}:
-            refusals.append(
-                _refusal(
-                    "UNKNOWN_SNAPSHOT_BINDING_MODE",
-                    "run uses an unsupported snapshot binding mode",
-                    run_id=run_id,
-                    snapshot_binding_mode=mode,
-                )
-            )
-            continue
+    try:
+        plan = _load_sealed_plan(settings, str(record["plan_id"]))
+        result, precommit, precommit_path = _load_precommit_details(
+            settings, plan, record
+        )
+    except PurgeError as exc:
+        text = str(exc)
+        code = (
+            CODE_QUARANTINE_EVIDENCE_HASH_MISMATCH
+            if "hash" in text.lower() or "canonical" in text.lower()
+            else CODE_PURGE_RESULT_AUTHORITY_MISMATCH
+        )
+        raise _ReconciliationError(code, text) from exc
 
-        if mode is None:
-            if not row.raw_file and not row.curated_file and row.status.strip().upper() == "FAILED":
-                # Failed requests with no physical output remain historical run
-                # evidence, but they do not form a purge lifecycle unit.
-                continue
-            if not row.raw_file or not row.curated_file:
-                refusals.append(
-                    _refusal(
-                        "RAW_CURATED_MISMATCH",
-                        "matching legacy run does not record a complete Raw/Curated file pair",
-                        run_id=run_id,
-                    )
-                )
-                continue
-            physical_pairs = [(None, row.raw_file, row.curated_file)]
-            binding_mode = LEGACY_INGESTION_RUN
-        else:
-            successful = set(
-                _symbols_from_json(
-                    row.successful_symbols_json,
-                    run_id=run_id,
-                    label="successful_symbols",
-                )
-            )
-            registered_symbols = {pair.symbol for pair in registry_pairs}
-            if registry_pairs and row.status.strip().upper() not in {"SUCCESS", "PARTIAL"}:
-                refusals.append(
-                    _refusal(
-                        "INCOMPLETE_REGISTERED_RUN",
-                        "registered snapshot run is not terminal",
-                        run_id=run_id,
-                    )
-                )
-            if successful != registered_symbols:
-                refusals.append(
-                    _refusal(
-                        "REGISTERED_RUN_SYMBOL_MISMATCH",
-                        "successful_symbols do not equal registered snapshot symbols",
-                        run_id=run_id,
-                        successful_symbols=sorted(successful),
-                        registered_symbols=sorted(registered_symbols),
-                    )
-                )
-            requested = set(
-                _symbols_from_json(
-                    row.requested_symbols_json,
-                    run_id=run_id,
-                    label="requested_symbols",
-                )
-            )
-            for pair in registry_pairs:
-                if not _snapshot_pair_matches_run(pair, row, requested):
-                    refusals.append(
-                        _refusal(
-                            "SNAPSHOT_PAIR_RUN_MISMATCH",
-                            "registered snapshot pair does not match its ingestion run",
-                            run_id=run_id,
-                            symbol=pair.symbol,
-                        )
-                    )
-            physical_pairs = [
-                (pair, pair.raw_file, pair.curated_file)
-                for pair in registry_pairs
-                if pair.symbol in scope.symbols
-            ]
-            binding_mode = REGISTERED_PER_SYMBOL
-
-        for pair, raw_text, curated_text in physical_pairs:
-            raw_path = _path_from_metadata(settings, raw_text)
-            curated_path = _path_from_metadata(settings, curated_text)
-            try:
-                raw_identity = _file_identity(
-                    raw_path,
-                    data_root,
-                    _active_root(settings, scope, "raw"),
-                    layer="raw",
-                )
-                curated_identity = _file_identity(
-                    curated_path,
-                    data_root,
-                    _active_root(settings, scope, "curated"),
-                    layer="curated",
-                )
-                raw_facts = _read_facts(raw_path, curated=False)
-                curated_facts = _read_facts(curated_path, curated=True)
-                run_binding = _run_binding(settings, row)
-            except (PurgeError, LifecycleLockError) as exc:
-                refusals.append(
-                    _refusal("UNSAFE_OR_MISSING_TARGET", str(exc), run_id=run_id)
-                )
-                continue
-            referenced.update(
-                {raw_identity["relative_path"], curated_identity["relative_path"]}
-            )
-            if not _facts_intersect_scope(curated_facts, scope, curated=True):
-                continue
-            pair_refusals = _scope_refusals(raw_facts, curated_facts, scope, run_id)
-            if pair is not None and (
-                raw_facts.row_count != pair.row_count
-                or curated_facts.row_count != pair.row_count
-                or raw_facts.symbols != (pair.symbol,)
-                or curated_facts.symbols != (pair.symbol,)
-            ):
-                pair_refusals.append(
-                    _refusal(
-                        "SNAPSHOT_PAIR_FACT_MISMATCH",
-                        "registered snapshot pair does not match its physical files",
-                        run_id=run_id,
-                        symbol=pair.symbol,
-                    )
-                )
-            refusals.extend(pair_refusals)
-            matched_symbols.update(set(curated_facts.symbols).intersection(scope.symbols))
-            target = {
-                "binding_mode": binding_mode,
-                "ingestion_run_id": run_id,
-                "run_binding": run_binding,
-                "raw": {**raw_identity, "facts": raw_facts.as_dict()},
-                "curated": {**curated_identity, "facts": curated_facts.as_dict()},
-                "affected_row_count": curated_facts.row_count,
-                "physical_scope_status": "REFUSED" if pair_refusals else "EXACT",
-            }
-            if pair is not None:
-                target["snapshot_pair_binding"] = pair.as_dict()
-            targets.append(target)
-
-    for layer, curated in (("raw", False), ("curated", True)):
+    plan_path = Path(os.path.abspath(record["plan_file"]))
+    result_path = Path(os.path.abspath(record.get("result_file") or ""))
+    result_root = (
+        Path(os.path.abspath(settings.manifest_dir))
+        / "purge"
+        / "results"
+        / plan.plan_id
+    )
+    if (
+        precommit_path.parent != result_root
+        or not re.fullmatch(r"precommit-[0-9a-f]{32}\.json", precommit_path.name)
+        or result_path.parent != result_root
+        or not re.fullmatch(r"result-[0-9a-f]{32}\.json", result_path.name)
+    ):
+        raise _ReconciliationError(
+            CODE_PURGE_RESULT_AUTHORITY_MISMATCH,
+            "prior purge result evidence path is not canonical",
+        )
+    expected_moved = tuple(
+        {
+            **target[layer],
+            "quarantine_relative_path": _quarantine_path(
+                settings, plan.plan_id, target[layer]
+            ).relative_to(settings.data_root).as_posix(),
+        }
+        for target in plan.targets
+        for layer in ("raw", "curated")
+    )
+    expected_result_version = (
+        PURGE_RESULT_VERSION_V3
+        if plan.cleanup_policy == SUPERSEDED_ONLY
+        else PURGE_RESULT_VERSION
+    )
+    if (
+        result.result_version != expected_result_version
+        or result.plan_id != plan.plan_id
+        or result.content_hash != plan.content_hash
+        or result.status != "SUCCESS"
+        or Path(os.path.abspath(result.result_file)) != result_path
+        or result.moved_files != expected_moved
+    ):
+        raise _ReconciliationError(
+            CODE_PURGE_RESULT_AUTHORITY_MISMATCH,
+            "prior purge terminal result does not match its plan",
+        )
+    if result_path.exists():
+        reject_link(result_path, "prior purge result evidence")
         try:
-            partition_files = _partition_files(settings, scope, layer)
-        except LifecycleLockError as exc:
-            refusals.append(
-                _refusal(
-                    "UNSAFE_OR_MISSING_TARGET",
-                    str(exc),
-                    layer=layer.upper(),
-                )
+            published = _result_from_file(
+                result_path, expected_hash=str(record["result_hash"])
             )
-            continue
-        for path in partition_files:
-            relative = path.relative_to(data_root).as_posix()
-            if relative in referenced:
-                continue
-            try:
-                facts = _read_facts(path, curated=curated)
-            except PurgeError as exc:
-                refusals.append(_refusal("UNVERIFIABLE_SNAPSHOT", str(exc), layer=layer.upper()))
-                continue
-            if _facts_intersect_scope(facts, scope, curated=curated):
-                refusals.append(
-                    _refusal(
-                        "UNREGISTERED_SNAPSHOT",
-                        "matching active snapshot is not paired through ingestion metadata",
-                        layer=layer.upper(),
-                        relative_path=relative,
-                    )
-                )
+        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError, PurgeError) as exc:
+            raise _ReconciliationError(
+                CODE_QUARANTINE_EVIDENCE_HASH_MISMATCH,
+                f"prior final result evidence is invalid: {exc}",
+            ) from exc
+        if published.as_dict() != result.as_dict():
+            raise _ReconciliationError(
+                CODE_PURGE_RESULT_AUTHORITY_MISMATCH,
+                "prior final result differs from the precommitted terminal result",
+            )
+    return plan, result, precommit, plan_path, precommit_path, result_path
 
-    missing_symbols = sorted(set(scope.symbols) - matched_symbols)
-    if missing_symbols:
-        refusals.append(
-            _refusal(
-                "NO_MATCHING_SYMBOL_DATA",
-                "no complete physical snapshot pair matched one or more requested symbols",
-                symbols=missing_symbols,
-            )
+
+def _unit_logical_keys(
+    scope: PurgeScope, symbols: tuple[str, ...], dates: tuple[str, ...]
+) -> list[dict[str, str]]:
+    values = [
+        _logical_key(scope, symbol, date.fromisoformat(trade_date))
+        for symbol in symbols
+        for trade_date in dates
+    ]
+    return sorted(values, key=_logical_key_token)
+
+
+def _verify_prior_target_binding(
+    settings: Settings,
+    catalog: Catalog,
+    row: _RunRecord,
+    pair: MarketBarSnapshotPair | None,
+    binding_mode: str,
+    target: dict[str, Any],
+) -> None:
+    run_id = row.run_id
+    if target.get("ingestion_run_id") != run_id:
+        raise _ReconciliationError(
+            CODE_PURGE_RESULT_AUTHORITY_MISMATCH,
+            "prior purge target has a different ingestion run",
         )
-    if not targets and not refusals:
-        refusals.append(_refusal("NO_MATCHING_DATA", "no matching market-bar data was found"))
+    sealed_mode = target.get("binding_mode")
+    if binding_mode == REGISTERED_PER_SYMBOL:
+        if sealed_mode != REGISTERED_PER_SYMBOL or pair is None:
+            raise _ReconciliationError(
+                CODE_PURGE_RESULT_AUTHORITY_MISMATCH,
+                "prior purge target does not preserve registered authority",
+            )
+        if target.get("snapshot_pair_binding") != pair.as_dict():
+            raise _ReconciliationError(
+                CODE_PURGE_RESULT_AUTHORITY_MISMATCH,
+                "prior purge target snapshot-pair binding drifted",
+            )
+        expected_run_binding = _run_binding(settings, row)
+    else:
+        if sealed_mode is None:
+            if catalog.market_bar_snapshot_pair_count(run_id) != 0:
+                raise _ReconciliationError(
+                    CODE_PURGE_RESULT_AUTHORITY_MISMATCH,
+                    "historical legacy authority gained registered pairs",
+                )
+            expected_run_binding = _legacy_v2_run_binding(settings, row)
+        elif sealed_mode == LEGACY_INGESTION_RUN:
+            expected_run_binding = _run_binding(settings, row)
+        else:
+            raise _ReconciliationError(
+                CODE_PURGE_RESULT_AUTHORITY_MISMATCH,
+                "prior purge target does not preserve legacy authority",
+            )
+        if target.get("snapshot_pair_binding") is not None:
+            raise _ReconciliationError(
+                CODE_PURGE_RESULT_AUTHORITY_MISMATCH,
+                "legacy prior purge target has synthetic per-symbol authority",
+            )
+    if target.get("run_binding") != expected_run_binding:
+        raise _ReconciliationError(
+            CODE_PURGE_RESULT_AUTHORITY_MISMATCH,
+            "prior purge target run binding drifted",
+        )
 
-    targets.sort(key=lambda item: (item["curated"]["relative_path"], item["ingestion_run_id"]))
-    refusals = _dedupe_reasons(refusals)
-    raw_bytes = sum(item["raw"]["byte_size"] for item in targets)
-    curated_bytes = sum(item["curated"]["byte_size"] for item in targets)
-    return {
-        "plan_version": PURGE_PLAN_VERSION,
-        "status": "REFUSED" if refusals else "PLANNED",
-        "scope": scope.as_dict(),
-        "targets": targets,
-        "summary": {
-            "affected_snapshot_count": len(targets),
-            "affected_row_count": sum(item["affected_row_count"] for item in targets),
-            "raw_file_count": len(targets),
-            "raw_bytes": raw_bytes,
-            "curated_file_count": len(targets),
-            "curated_bytes": curated_bytes,
-        },
-        "dependency_state": {
-            "policy": RETENTION_POLICY,
-            "blocking": False,
-            "official_derived_artifacts": [
-                "VERIFIED_CANONICAL",
-                "DATASET",
-                "DATASET_CATALOG",
-            ],
-            "treatment": "RETAIN_NO_CASCADE",
-            "external_consumers": "OUTSIDE_MARKETVAULT_LIFECYCLE_GUARANTEE",
-        },
-        "retained_evidence": [
-            "ingestion_runs",
-            "market_bar_snapshot_pairs",
-            "quality_results",
-            "collection_manifests",
-            "quality_reports",
-            "purge_plan",
-            "purge_result",
-        ],
-        "refusal_reasons": refusals,
-        "quarantine_root_template": "quarantine/purge_id=<plan_id>",
+
+def _validate_quarantined_target(
+    settings: Settings,
+    catalog: Catalog,
+    scope: PurgeScope,
+    row: _RunRecord,
+    pair: MarketBarSnapshotPair | None,
+    binding_mode: str,
+    plan: PurgePlan,
+    result: PurgeResult,
+    precommit: dict[str, Any],
+    plan_path: Path,
+    precommit_path: Path,
+    result_path: Path,
+    target: dict[str, Any],
+) -> dict[str, Any]:
+    _verify_prior_target_binding(settings, catalog, row, pair, binding_mode, target)
+    raw_identity = target.get("raw")
+    curated_identity = target.get("curated")
+    if not isinstance(raw_identity, dict) or not isinstance(curated_identity, dict):
+        raise _ReconciliationError(
+            CODE_PURGE_RESULT_AUTHORITY_MISMATCH,
+            "prior purge target lacks complete Raw/Curated identities",
+        )
+    raw_path = _quarantine_path(settings, plan.plan_id, raw_identity)
+    curated_path = _quarantine_path(settings, plan.plan_id, curated_identity)
+    raw_exists = raw_path.exists()
+    curated_exists = curated_path.exists()
+    if raw_exists != curated_exists:
+        raise _ReconciliationError(
+            CODE_QUARANTINE_PAIR_INCOMPLETE,
+            "prior purge quarantine contains only one side of the physical pair",
+        )
+    if not raw_exists:
+        raise _ReconciliationError(
+            CODE_QUARANTINE_EVIDENCE_MISSING,
+            "prior purge quarantine pair is missing",
+        )
+    try:
+        _verify_identity(raw_path, raw_identity, settings, quarantine=True)
+        _verify_identity(curated_path, curated_identity, settings, quarantine=True)
+        raw_facts = _read_facts(raw_path, curated=False)
+        curated_facts = _read_facts(curated_path, curated=True)
+    except (PurgeError, LifecycleLockError) as exc:
+        raise _ReconciliationError(
+            CODE_QUARANTINE_EVIDENCE_HASH_MISMATCH,
+            f"prior purge quarantine identity is invalid: {exc}",
+        ) from exc
+    if (
+        raw_facts.as_dict() != raw_identity.get("facts")
+        or curated_facts.as_dict() != curated_identity.get("facts")
+    ):
+        raise _ReconciliationError(
+            CODE_QUARANTINE_EVIDENCE_HASH_MISMATCH,
+            "prior purge quarantine physical facts drifted",
+        )
+    scope_reasons = _scope_refusals(raw_facts, curated_facts, scope, row.run_id)
+    if scope_reasons:
+        raise _ReconciliationError(
+            CODE_PURGE_RESULT_AUTHORITY_MISMATCH,
+            "prior purge target does not match the exact current request identity",
+        )
+    if pair is not None and (
+        raw_facts.symbols != (pair.symbol,)
+        or curated_facts.symbols != (pair.symbol,)
+        or raw_facts.row_count != pair.row_count
+        or curated_facts.row_count != pair.row_count
+    ):
+        raise _ReconciliationError(
+            CODE_PURGE_RESULT_AUTHORITY_MISMATCH,
+            "prior purge target does not match the registered pair facts",
+        )
+    expected_entries = {
+        layer: {
+            **target[layer],
+            "quarantine_relative_path": _quarantine_path(
+                settings, plan.plan_id, target[layer]
+            ).relative_to(settings.data_root).as_posix(),
+        }
+        for layer in ("raw", "curated")
     }
+    for layer in ("raw", "curated"):
+        matches = [
+            item for item in result.moved_files if item == expected_entries[layer]
+        ]
+        if len(matches) != 1:
+            raise _ReconciliationError(
+                CODE_PURGE_RESULT_AUTHORITY_MISMATCH,
+                f"prior purge terminal result does not bind exactly one {layer} entry",
+            )
+    symbols = tuple(sorted(raw_facts.symbols))
+    logical_keys = _unit_logical_keys(plan.scope, symbols, raw_facts.dates)
+    return {
+        "lifecycle_state": LIFECYCLE_VERIFIED_QUARANTINED,
+        "binding_mode": binding_mode,
+        "ingestion_run_id": row.run_id,
+        "symbols": list(symbols),
+        "logical_keys": logical_keys,
+        "run_binding": _run_binding(settings, row),
+        "snapshot_pair_binding": pair.as_dict() if pair is not None else None,
+        "raw": {
+            "identity": raw_identity,
+            "quarantine_relative_path": expected_entries["raw"][
+                "quarantine_relative_path"
+            ],
+        },
+        "curated": {
+            "identity": curated_identity,
+            "quarantine_relative_path": expected_entries["curated"][
+                "quarantine_relative_path"
+            ],
+        },
+        "prior_purge_authority": {
+            "plan_id": plan.plan_id,
+            "plan_version": plan.plan_version,
+            "cleanup_policy": plan.cleanup_policy,
+            "plan_hash": plan.content_hash,
+            "plan_evidence_relative_path": _manifest_relative_path(
+                settings, plan_path, label="prior plan evidence"
+            ),
+            "precommit_version": precommit["precommit_version"],
+            "precommit_evidence_relative_path": _manifest_relative_path(
+                settings, precommit_path, label="prior precommit evidence"
+            ),
+            "precommit_hash": precommit["precommit_hash"],
+            "terminal_result_version": result.result_version,
+            "terminal_result_expected_relative_path": _manifest_relative_path(
+                settings, result_path, label="prior result evidence"
+            ),
+            "terminal_result_hash": result.evidence_hash,
+        },
+    }
+
+
+def _reconcile_historical_unit(
+    settings: Settings,
+    catalog: Catalog,
+    scope: PurgeScope,
+    row: _RunRecord,
+    pair: MarketBarSnapshotPair | None,
+    binding_mode: str,
+    raw_relative_path: str,
+    curated_relative_path: str,
+    success_records: list[dict[str, Any]],
+) -> _LifecycleClassification:
+    symbols = {pair.symbol} if pair is not None else set(
+        _symbols_from_json(
+            row.successful_symbols_json,
+            run_id=row.run_id,
+            label="successful_symbols",
+        )
+    )
+    if not symbols:
+        symbols = set(scope.symbols)
+    valid: list[dict[str, Any]] = []
+    errors: list[_ReconciliationError] = []
+    raw_claims: set[str] = set()
+    curated_claims: set[str] = set()
+    for record in success_records:
+        if not _catalog_success_scope_matches_unit(record, scope, row, symbols):
+            continue
+        try:
+            authority = _readonly_success_authority(settings, record)
+        except _ReconciliationError as exc:
+            errors.append(exc)
+            continue
+        plan, result, precommit, plan_path, precommit_path, result_path = authority
+        raw_targets = [
+            target
+            for target in plan.targets
+            if target.get("raw", {}).get("relative_path") == raw_relative_path
+        ]
+        curated_targets = [
+            target
+            for target in plan.targets
+            if target.get("curated", {}).get("relative_path")
+            == curated_relative_path
+        ]
+        if raw_targets:
+            raw_claims.add(plan.plan_id)
+        if curated_targets:
+            curated_claims.add(plan.plan_id)
+        complete = [target for target in raw_targets if target in curated_targets]
+        if not raw_targets and not curated_targets:
+            continue
+        if len(complete) != 1 or len(raw_targets) != 1 or len(curated_targets) != 1:
+            continue
+        try:
+            valid.append(
+                _validate_quarantined_target(
+                    settings,
+                    catalog,
+                    scope,
+                    row,
+                    pair,
+                    binding_mode,
+                    plan,
+                    result,
+                    precommit,
+                    plan_path,
+                    precommit_path,
+                    result_path,
+                    complete[0],
+                )
+            )
+        except _ReconciliationError as exc:
+            errors.append(exc)
+
+    claimed = bool(raw_claims or curated_claims)
+    if (
+        len(raw_claims | curated_claims) > 1
+        or raw_claims != curated_claims
+        or len(valid) > 1
+    ):
+        return _LifecycleClassification(
+            state=LIFECYCLE_AMBIGUOUS,
+            refusal=_refusal(
+                CODE_CONFLICTING_PURGE_AUTHORITY,
+                "multiple or split committed SUCCESS operations claim the physical unit",
+                run_id=row.run_id,
+            ),
+            committed_claimed=claimed,
+        )
+    if len(valid) == 1 and not errors:
+        return _LifecycleClassification(
+            state=LIFECYCLE_VERIFIED_QUARANTINED,
+            evidence=valid[0],
+            committed_claimed=claimed,
+        )
+    if errors:
+        error = sorted(errors, key=lambda item: (item.code, str(item)))[0]
+        return _LifecycleClassification(
+            state=LIFECYCLE_INVALID,
+            refusal=_refusal(error.code, str(error), run_id=row.run_id),
+            committed_claimed=claimed,
+        )
+    if claimed:
+        return _LifecycleClassification(
+            state=LIFECYCLE_INVALID,
+            refusal=_refusal(
+                CODE_QUARANTINE_PAIR_INCOMPLETE,
+                "committed SUCCESS evidence does not claim one complete Raw/Curated unit",
+                run_id=row.run_id,
+            ),
+            committed_claimed=True,
+        )
+    return _LifecycleClassification(state=LIFECYCLE_MISSING_UNEXPLAINED)
 
 
 def _scope_dates(scope: PurgeScope) -> list[date]:
@@ -1712,6 +1929,400 @@ def _build_superseded_plan_content(
     }
 
 
+def _build_exact_scope_plan_content(
+    settings: Settings, scope: PurgeScope
+) -> dict[str, Any]:
+    if scope.source != settings.source:
+        raise ValueError(
+            f"source must equal configured collector source {settings.source!r}"
+        )
+    catalog = Catalog(settings)
+    rows, active_runs = _catalog_runs(catalog, scope)
+    success_records = catalog.committed_success_operations()
+    refusals: list[dict[str, Any]] = []
+    if active_runs:
+        refusals.append(
+            _refusal(
+                "ACTIVE_RUN",
+                "matching market-bar ingestion runs are still RUNNING",
+                run_ids=active_runs,
+            )
+        )
+    targets: list[dict[str, Any]] = []
+    reconciled: list[dict[str, Any]] = []
+    referenced: set[str] = set()
+    matched_symbols: set[str] = set()
+    data_root = Path(os.path.abspath(settings.data_root))
+
+    for row in rows:
+        run_id = row.run_id
+        registry_pairs = catalog.market_bar_snapshot_pairs_for_run(run_id)
+        mode = row.snapshot_binding_mode
+        if mode is None and registry_pairs:
+            refusals.append(
+                _refusal(
+                    "INCONSISTENT_SNAPSHOT_AUTHORITY",
+                    "legacy-format run unexpectedly has registered snapshot pairs",
+                    run_id=run_id,
+                )
+            )
+            continue
+        if mode not in {None, REGISTERED_PER_SYMBOL}:
+            refusals.append(
+                _refusal(
+                    "UNKNOWN_SNAPSHOT_BINDING_MODE",
+                    "run uses an unsupported snapshot binding mode",
+                    run_id=run_id,
+                    snapshot_binding_mode=mode,
+                )
+            )
+            continue
+
+        if mode is None:
+            if (
+                not row.raw_file
+                and not row.curated_file
+                and row.status.strip().upper() == "FAILED"
+            ):
+                continue
+            if not row.raw_file or not row.curated_file:
+                refusals.append(
+                    _refusal(
+                        "RAW_CURATED_MISMATCH",
+                        "matching legacy run does not record a complete Raw/Curated file pair",
+                        run_id=run_id,
+                    )
+                )
+                continue
+            successful = set(
+                _symbols_from_json(
+                    row.successful_symbols_json,
+                    run_id=run_id,
+                    label="successful_symbols",
+                )
+            )
+            historical_symbols = successful.intersection(scope.symbols)
+            physical_pairs = [(None, row.raw_file, row.curated_file)]
+            binding_mode = LEGACY_INGESTION_RUN
+        else:
+            successful = set(
+                _symbols_from_json(
+                    row.successful_symbols_json,
+                    run_id=run_id,
+                    label="successful_symbols",
+                )
+            )
+            registered_symbols = {pair.symbol for pair in registry_pairs}
+            if registry_pairs and row.status.strip().upper() not in {"SUCCESS", "PARTIAL"}:
+                refusals.append(
+                    _refusal(
+                        "INCOMPLETE_REGISTERED_RUN",
+                        "registered snapshot run is not terminal",
+                        run_id=run_id,
+                    )
+                )
+            if successful != registered_symbols:
+                refusals.append(
+                    _refusal(
+                        "REGISTERED_RUN_SYMBOL_MISMATCH",
+                        "successful_symbols do not equal registered snapshot symbols",
+                        run_id=run_id,
+                        successful_symbols=sorted(successful),
+                        registered_symbols=sorted(registered_symbols),
+                    )
+                )
+            requested = set(
+                _symbols_from_json(
+                    row.requested_symbols_json,
+                    run_id=run_id,
+                    label="requested_symbols",
+                )
+            )
+            for registered_pair in registry_pairs:
+                if not _snapshot_pair_matches_run(registered_pair, row, requested):
+                    refusals.append(
+                        _refusal(
+                            "SNAPSHOT_PAIR_RUN_MISMATCH",
+                            "registered snapshot pair does not match its ingestion run",
+                            run_id=run_id,
+                            symbol=registered_pair.symbol,
+                        )
+                    )
+                if (
+                    registered_pair.symbol in scope.symbols
+                    and (
+                        registered_pair.source != scope.source
+                        or registered_pair.source_schema_version
+                        != scope.source_schema_version
+                    )
+                ):
+                    for pointer in (
+                        registered_pair.raw_file,
+                        registered_pair.curated_file,
+                    ):
+                        try:
+                            referenced.add(
+                                _metadata_relative_path(
+                                    settings,
+                                    pointer,
+                                    label=f"run {run_id} isolated snapshot",
+                                )
+                            )
+                        except PurgeError:
+                            pass
+            physical_pairs = [
+                (registered_pair, registered_pair.raw_file, registered_pair.curated_file)
+                for registered_pair in registry_pairs
+                if registered_pair.symbol in scope.symbols
+                and registered_pair.source == scope.source
+                and registered_pair.source_schema_version
+                == scope.source_schema_version
+            ]
+            historical_symbols = {
+                registered_pair.symbol for registered_pair, _, _ in physical_pairs
+            }
+            binding_mode = REGISTERED_PER_SYMBOL
+
+        matched_symbols.update(historical_symbols)
+        for pair, raw_text, curated_text in physical_pairs:
+            try:
+                raw_relative = _metadata_relative_path(
+                    settings, raw_text, label=f"run {run_id} Raw"
+                )
+                curated_relative = _metadata_relative_path(
+                    settings, curated_text, label=f"run {run_id} Curated"
+                )
+            except PurgeError as exc:
+                refusals.append(
+                    _refusal("UNSAFE_OR_MISSING_TARGET", str(exc), run_id=run_id)
+                )
+                continue
+            referenced.update({raw_relative, curated_relative})
+            raw_path = data_root / Path(raw_relative)
+            curated_path = data_root / Path(curated_relative)
+            raw_exists = raw_path.exists()
+            curated_exists = curated_path.exists()
+            if raw_exists != curated_exists:
+                refusals.append(
+                    _refusal(
+                        CODE_QUARANTINE_PAIR_INCOMPLETE,
+                        "historical physical unit has a one-sided active pair",
+                        run_id=run_id,
+                    )
+                )
+                continue
+
+            if not raw_exists:
+                classification = _reconcile_historical_unit(
+                    settings,
+                    catalog,
+                    scope,
+                    row,
+                    pair,
+                    binding_mode,
+                    raw_relative,
+                    curated_relative,
+                    success_records,
+                )
+                if (
+                    classification.state == LIFECYCLE_VERIFIED_QUARANTINED
+                    and classification.evidence is not None
+                ):
+                    reconciled.append(classification.evidence)
+                else:
+                    refusals.append(
+                        classification.refusal
+                        or _refusal(
+                            CODE_QUARANTINE_EVIDENCE_MISSING,
+                            "missing active physical unit has no committed-success explanation",
+                            run_id=run_id,
+                        )
+                    )
+                continue
+
+            try:
+                raw_identity = _file_identity(
+                    raw_path,
+                    data_root,
+                    _active_root(settings, scope, "raw"),
+                    layer="raw",
+                )
+                curated_identity = _file_identity(
+                    curated_path,
+                    data_root,
+                    _active_root(settings, scope, "curated"),
+                    layer="curated",
+                )
+                raw_facts = _read_facts(raw_path, curated=False)
+                curated_facts = _read_facts(curated_path, curated=True)
+                run_binding = _run_binding(settings, row)
+            except (PurgeError, LifecycleLockError) as exc:
+                refusals.append(
+                    _refusal("UNSAFE_OR_MISSING_TARGET", str(exc), run_id=run_id)
+                )
+                continue
+            if not _facts_intersect_scope(curated_facts, scope, curated=True):
+                continue
+            pair_refusals = _scope_refusals(raw_facts, curated_facts, scope, run_id)
+            if pair is not None and (
+                raw_facts.row_count != pair.row_count
+                or curated_facts.row_count != pair.row_count
+                or raw_facts.symbols != (pair.symbol,)
+                or curated_facts.symbols != (pair.symbol,)
+            ):
+                pair_refusals.append(
+                    _refusal(
+                        "SNAPSHOT_PAIR_FACT_MISMATCH",
+                        "registered snapshot pair does not match its physical files",
+                        run_id=run_id,
+                        symbol=pair.symbol,
+                    )
+                )
+            matched_symbols.update(set(curated_facts.symbols).intersection(scope.symbols))
+            target: dict[str, Any] = {
+                "binding_mode": binding_mode,
+                "ingestion_run_id": run_id,
+                "run_binding": run_binding,
+                "raw": {**raw_identity, "facts": raw_facts.as_dict()},
+                "curated": {**curated_identity, "facts": curated_facts.as_dict()},
+                "affected_row_count": curated_facts.row_count,
+                "physical_scope_status": "REFUSED" if pair_refusals else "EXACT",
+            }
+            if pair is not None:
+                target["snapshot_pair_binding"] = pair.as_dict()
+            targets.append(target)
+            refusals.extend(pair_refusals)
+
+            classification = _reconcile_historical_unit(
+                settings,
+                catalog,
+                scope,
+                row,
+                pair,
+                binding_mode,
+                raw_relative,
+                curated_relative,
+                success_records,
+            )
+            lifecycle_state = LIFECYCLE_ACTIVE
+            if classification.state == LIFECYCLE_VERIFIED_QUARANTINED:
+                lifecycle_state = LIFECYCLE_AMBIGUOUS
+                refusals.append(
+                    _refusal(
+                        CODE_CONFLICTING_PURGE_AUTHORITY,
+                        "active bytes conflict with committed quarantine authority",
+                        run_id=run_id,
+                    )
+                )
+            elif (
+                classification.refusal is not None
+                and classification.committed_claimed
+            ):
+                lifecycle_state = classification.state
+                refusals.append(classification.refusal)
+            if lifecycle_state != LIFECYCLE_ACTIVE:
+                target["physical_scope_status"] = "REFUSED"
+
+    for layer, curated_layer in (("raw", False), ("curated", True)):
+        try:
+            partition_files = _partition_files(settings, scope, layer)
+        except LifecycleLockError as exc:
+            refusals.append(
+                _refusal("UNSAFE_OR_MISSING_TARGET", str(exc), layer=layer.upper())
+            )
+            continue
+        for path in partition_files:
+            relative = path.relative_to(data_root).as_posix()
+            if relative in referenced:
+                continue
+            try:
+                facts = _read_facts(path, curated=curated_layer)
+            except PurgeError as exc:
+                refusals.append(
+                    _refusal("UNVERIFIABLE_SNAPSHOT", str(exc), layer=layer.upper())
+                )
+                continue
+            if _facts_intersect_scope(facts, scope, curated=curated_layer):
+                refusals.append(
+                    _refusal(
+                        "UNREGISTERED_SNAPSHOT",
+                        "matching active snapshot is not paired through ingestion metadata",
+                        layer=layer.upper(),
+                        relative_path=relative,
+                    )
+                )
+
+    missing_symbols = sorted(set(scope.symbols) - matched_symbols)
+    if missing_symbols:
+        refusals.append(
+            _refusal(
+                "NO_MATCHING_SYMBOL_DATA",
+                "no historical physical snapshot pair matched one or more requested symbols",
+                symbols=missing_symbols,
+            )
+        )
+    if not targets and not refusals:
+        refusals.append(_refusal("NO_MATCHING_DATA", "no matching market-bar data was found"))
+
+    targets.sort(key=lambda item: (item["curated"]["relative_path"], item["ingestion_run_id"]))
+    reconciled.sort(
+        key=lambda item: (
+            item["curated"]["identity"]["relative_path"],
+            item["ingestion_run_id"],
+        )
+    )
+    refusals = _dedupe_reasons(refusals)
+    raw_bytes = sum(item["raw"]["byte_size"] for item in targets)
+    curated_bytes = sum(item["curated"]["byte_size"] for item in targets)
+    summary = {
+        "affected_snapshot_count": len(targets),
+        "affected_row_count": sum(item["affected_row_count"] for item in targets),
+        "raw_file_count": len(targets),
+        "raw_bytes": raw_bytes,
+        "curated_file_count": len(targets),
+        "curated_bytes": curated_bytes,
+    }
+    plan_version = PURGE_PLAN_VERSION_V4 if reconciled else PURGE_PLAN_VERSION
+    content: dict[str, Any] = {
+        "plan_version": plan_version,
+        "status": "REFUSED" if refusals else "PLANNED",
+        "scope": scope.as_dict(),
+        "targets": targets,
+        "summary": summary,
+        "dependency_state": {
+            "policy": RETENTION_POLICY,
+            "blocking": False,
+            "official_derived_artifacts": [
+                "VERIFIED_CANONICAL",
+                "DATASET",
+                "DATASET_CATALOG",
+            ],
+            "treatment": "RETAIN_NO_CASCADE",
+            "external_consumers": "OUTSIDE_MARKETVAULT_LIFECYCLE_GUARANTEE",
+        },
+        "retained_evidence": [
+            "ingestion_runs",
+            "market_bar_snapshot_pairs",
+            "quality_results",
+            "collection_manifests",
+            "quality_reports",
+            "purge_plan",
+            "purge_result",
+        ],
+        "refusal_reasons": refusals,
+        "quarantine_root_template": "quarantine/purge_id=<plan_id>",
+    }
+    if reconciled:
+        summary["reconciled_quarantined_count"] = len(reconciled)
+        content.update(
+            {
+                "cleanup_policy": EXACT_SCOPE,
+                "reconciled_quarantined_units": reconciled,
+            }
+        )
+    return content
+
+
 def _build_plan_content(
     settings: Settings, scope: PurgeScope, cleanup_policy: str
 ) -> dict[str, Any]:
@@ -1845,6 +2456,9 @@ def _plan_from_payload(payload: dict[str, Any], plan_file: Path) -> PurgePlan:
             payload.get("retained_current_snapshots", [])
         ),
         target_to_retained=tuple(payload.get("target_to_retained", [])),
+        reconciled_quarantined_units=tuple(
+            payload.get("reconciled_quarantined_units", [])
+        ),
     )
 
 
@@ -1866,6 +2480,222 @@ _PLAN_V3_KEYS = _PLAN_V2_KEYS | {
     "retained_current_snapshots",
     "target_to_retained",
 }
+_PLAN_V4_KEYS = _PLAN_V2_KEYS | {
+    "cleanup_policy",
+    "reconciled_quarantined_units",
+}
+_PLAN_V4_UNIT_KEYS = {
+    "lifecycle_state",
+    "binding_mode",
+    "ingestion_run_id",
+    "symbols",
+    "logical_keys",
+    "run_binding",
+    "snapshot_pair_binding",
+    "raw",
+    "curated",
+    "prior_purge_authority",
+}
+_PLAN_V4_LAYER_KEYS = {"identity", "quarantine_relative_path"}
+_PLAN_V4_IDENTITY_KEYS = {"layer", "relative_path", "byte_size", "sha256", "facts"}
+_PLAN_V4_FACT_KEYS = {
+    "row_count",
+    "symbols",
+    "dates",
+    "intervals",
+    "requested_sessions",
+    "adjustments",
+    "ingestion_run_ids",
+    "sources",
+    "source_schema_versions",
+}
+_PLAN_V4_LOGICAL_KEY_KEYS = {
+    "source",
+    "code",
+    "requested_trade_date",
+    "interval",
+    "requested_session",
+    "adjustment",
+    "source_schema_version",
+}
+_PLAN_V4_PRIOR_AUTHORITY_KEYS = {
+    "plan_id",
+    "plan_version",
+    "cleanup_policy",
+    "plan_hash",
+    "plan_evidence_relative_path",
+    "precommit_version",
+    "precommit_evidence_relative_path",
+    "precommit_hash",
+    "terminal_result_version",
+    "terminal_result_expected_relative_path",
+    "terminal_result_hash",
+}
+_PLAN_V4_RUN_BINDING_KEYS = {
+    "run_id",
+    "started_at",
+    "finished_at",
+    "requested_trade_date",
+    "requested_symbols",
+    "interval",
+    "requested_session",
+    "adjustment",
+    "successful_symbols",
+    "failed_symbols",
+    "raw_relative_path",
+    "curated_relative_path",
+    "row_count",
+    "status",
+    "config_hash",
+    "snapshot_binding_mode",
+}
+_PLAN_V4_SNAPSHOT_PAIR_KEYS = {
+    "run_id",
+    "symbol",
+    "requested_trade_date",
+    "interval",
+    "session",
+    "adjustment",
+    "source",
+    "source_schema_version",
+    "raw_file",
+    "curated_file",
+    "row_count",
+}
+
+
+def _validate_v4_reconciled_unit(unit: Any) -> None:
+    if not isinstance(unit, dict) or set(unit) != _PLAN_V4_UNIT_KEYS:
+        raise PurgeError("sealed v4 reconciled unit has an unexpected canonical schema")
+    if unit.get("lifecycle_state") != LIFECYCLE_VERIFIED_QUARANTINED:
+        raise PurgeError("sealed v4 reconciled unit has an invalid lifecycle state")
+    binding_mode = unit.get("binding_mode")
+    if binding_mode not in {REGISTERED_PER_SYMBOL, LEGACY_INGESTION_RUN}:
+        raise PurgeError("sealed v4 reconciled unit has an invalid binding mode")
+    symbols = unit.get("symbols")
+    if (
+        not isinstance(symbols, list)
+        or not symbols
+        or symbols != sorted(set(symbols))
+        or (binding_mode == REGISTERED_PER_SYMBOL and len(symbols) != 1)
+    ):
+        raise PurgeError("sealed v4 reconciled unit has invalid symbols")
+    logical_keys = unit.get("logical_keys")
+    if (
+        not isinstance(logical_keys, list)
+        or not logical_keys
+        or any(
+            not isinstance(item, dict) or set(item) != _PLAN_V4_LOGICAL_KEY_KEYS
+            for item in logical_keys
+        )
+        or logical_keys != sorted(logical_keys, key=_logical_key_token)
+        or len({_logical_key_token(item) for item in logical_keys}) != len(logical_keys)
+    ):
+        raise PurgeError("sealed v4 reconciled unit has invalid logical keys")
+    run_binding = unit.get("run_binding")
+    if not isinstance(run_binding, dict) or set(run_binding) != _PLAN_V4_RUN_BINDING_KEYS:
+        raise PurgeError("sealed v4 reconciled unit has invalid run binding")
+    if run_binding.get("run_id") != unit.get("ingestion_run_id"):
+        raise PurgeError("sealed v4 reconciled unit has inconsistent run identity")
+    pair_binding = unit.get("snapshot_pair_binding")
+    if (binding_mode == REGISTERED_PER_SYMBOL) != isinstance(pair_binding, dict):
+        raise PurgeError("sealed v4 reconciled unit has invalid snapshot-pair binding")
+    if isinstance(pair_binding, dict) and set(pair_binding) != _PLAN_V4_SNAPSHOT_PAIR_KEYS:
+        raise PurgeError("sealed v4 reconciled unit has invalid snapshot-pair schema")
+    if binding_mode == LEGACY_INGESTION_RUN and pair_binding is not None:
+        raise PurgeError("sealed legacy v4 unit unexpectedly has a snapshot-pair binding")
+    for layer in ("raw", "curated"):
+        value = unit.get(layer)
+        if not isinstance(value, dict) or set(value) != _PLAN_V4_LAYER_KEYS:
+            raise PurgeError("sealed v4 reconciled layer has an unexpected schema")
+        identity = value.get("identity")
+        if not isinstance(identity, dict) or set(identity) != _PLAN_V4_IDENTITY_KEYS:
+            raise PurgeError("sealed v4 reconciled identity has an unexpected schema")
+        if identity.get("layer") != layer.upper():
+            raise PurgeError("sealed v4 reconciled identity has the wrong layer")
+        relative_path = identity.get("relative_path")
+        if (
+            not isinstance(relative_path, str)
+            or "\\" in relative_path
+            or relative_path.startswith("/")
+            or ".." in relative_path.split("/")
+            or not relative_path.startswith(f"{layer}/")
+            or not isinstance(identity.get("byte_size"), int)
+            or identity["byte_size"] < 0
+            or not isinstance(identity.get("sha256"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", identity["sha256"]) is None
+        ):
+            raise PurgeError("sealed v4 reconciled identity is invalid")
+        facts = identity.get("facts")
+        if not isinstance(facts, dict) or set(facts) != _PLAN_V4_FACT_KEYS:
+            raise PurgeError("sealed v4 reconciled facts have an unexpected schema")
+    authority = unit.get("prior_purge_authority")
+    if not isinstance(authority, dict) or set(authority) != _PLAN_V4_PRIOR_AUTHORITY_KEYS:
+        raise PurgeError("sealed v4 prior purge authority has an unexpected schema")
+    if authority.get("plan_version") not in {
+        PURGE_PLAN_VERSION,
+        PURGE_PLAN_VERSION_V3,
+        PURGE_PLAN_VERSION_V4,
+    }:
+        raise PurgeError("sealed v4 prior purge authority has an unknown plan version")
+    expected_policy = (
+        SUPERSEDED_ONLY
+        if authority["plan_version"] == PURGE_PLAN_VERSION_V3
+        else EXACT_SCOPE
+    )
+    if authority.get("cleanup_policy") != expected_policy:
+        raise PurgeError("sealed v4 prior purge authority has an invalid cleanup policy")
+    plan_id = authority.get("plan_id")
+    hashes = (
+        authority.get("plan_hash"),
+        authority.get("precommit_hash"),
+        authority.get("terminal_result_hash"),
+    )
+    if not isinstance(plan_id, str) or not _PLAN_ID_RE.fullmatch(plan_id):
+        raise PurgeError("sealed v4 prior purge authority has an invalid plan id")
+    if any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value) for value in hashes):
+        raise PurgeError("sealed v4 prior purge authority has an invalid evidence hash")
+    expected_precommit = (
+        PURGE_PRECOMMIT_VERSION_V3
+        if authority["plan_version"] == PURGE_PLAN_VERSION_V3
+        else PURGE_PRECOMMIT_VERSION
+    )
+    expected_result = (
+        PURGE_RESULT_VERSION_V3
+        if authority["plan_version"] == PURGE_PLAN_VERSION_V3
+        else PURGE_RESULT_VERSION
+    )
+    if (
+        authority.get("precommit_version") != expected_precommit
+        or authority.get("terminal_result_version") != expected_result
+    ):
+        raise PurgeError("sealed v4 prior purge authority has an unsupported evidence version")
+    evidence_paths = {
+        "plan_evidence_relative_path": rf"purge/plans/{plan_id}.json",
+        "precommit_evidence_relative_path": rf"purge/results/{plan_id}/precommit-[0-9a-f]{{32}}\.json",
+        "terminal_result_expected_relative_path": rf"purge/results/{plan_id}/result-[0-9a-f]{{32}}\.json",
+    }
+    for key, pattern in evidence_paths.items():
+        value = authority.get(key)
+        if (
+            not isinstance(value, str)
+            or "\\" in value
+            or value.startswith("/")
+            or ".." in value.split("/")
+            or re.fullmatch(pattern, value) is None
+        ):
+            raise PurgeError("sealed v4 prior purge authority has an unsafe evidence path")
+    for layer in ("raw", "curated"):
+        value = unit[layer]
+        expected = (
+            f"quarantine/purge_id={plan_id}/"
+            f"{value['identity']['relative_path']}"
+        )
+        if value.get("quarantine_relative_path") != expected:
+            raise PurgeError("sealed v4 reconciled unit has an invalid quarantine path")
+    logical_symbols = {item["code"] for item in logical_keys}
+    if logical_symbols != set(symbols):
+        raise PurgeError("sealed v4 reconciled logical keys do not cover its symbols")
 
 
 def _validate_plan_payload(payload: dict[str, Any]) -> None:
@@ -1873,6 +2703,24 @@ def _validate_plan_payload(payload: dict[str, Any]) -> None:
     if version == PURGE_PLAN_VERSION:
         if set(payload) != _PLAN_V2_KEYS:
             raise PurgeError("sealed v2 purge plan has an unexpected canonical schema")
+        return
+    if version == PURGE_PLAN_VERSION_V4:
+        if set(payload) != _PLAN_V4_KEYS or payload.get("cleanup_policy") != EXACT_SCOPE:
+            raise PurgeError("sealed v4 purge plan has an unexpected canonical schema")
+        units = payload.get("reconciled_quarantined_units")
+        if not isinstance(units, list) or not units:
+            raise PurgeError("sealed v4 purge plan lacks reconciliation evidence")
+        for unit in units:
+            _validate_v4_reconciled_unit(unit)
+        expected_order = sorted(
+            units,
+            key=lambda item: (
+                item["curated"]["identity"]["relative_path"],
+                item["ingestion_run_id"],
+            ),
+        )
+        if units != expected_order:
+            raise PurgeError("sealed v4 reconciled units are not deterministically ordered")
         return
     if version != PURGE_PLAN_VERSION_V3 or set(payload) != _PLAN_V3_KEYS:
         raise PurgeError("sealed purge plan version or canonical schema is invalid")
@@ -1949,7 +2797,7 @@ def purge_plan(
         _write_immutable(plan_file, payload)
         plan = _plan_from_payload(payload, plan_file)
         recorded_scope = scope.as_dict()
-        if cleanup_policy == SUPERSEDED_ONLY:
+        if cleanup_policy == SUPERSEDED_ONLY or plan.plan_version == PURGE_PLAN_VERSION_V4:
             recorded_scope = {**recorded_scope, "cleanup_policy": cleanup_policy}
         Catalog(settings).record_purge_plan(
             plan_id=plan_id,
@@ -1973,9 +2821,14 @@ def _load_sealed_plan(settings: Settings, plan_id: str) -> PurgePlan:
         raise PurgeError("purge plan index points outside the authoritative evidence path")
     reject_link(expected_path, "sealed purge plan")
     try:
-        payload = json.loads(expected_path.read_text(encoding="utf-8"))
+        raw = expected_path.read_bytes()
+        payload = json.loads(raw)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         raise PurgeError(f"cannot read sealed purge plan {plan_id}") from exc
+    if raw != _canonical_bytes(payload):
+        raise PurgeError(
+            "sealed purge plan content hash mismatch: evidence is not canonical"
+        )
     if payload.get("plan_id") != plan_id:
         raise PurgeError("sealed purge plan identity is invalid")
     _validate_plan_payload(payload)
@@ -2203,9 +3056,9 @@ def _prepare_success_result(
     return result, precommit_path
 
 
-def _load_precommit(
+def _load_precommit_details(
     settings: Settings, plan: PurgePlan, record: dict[str, Any]
-) -> PurgeResult:
+) -> tuple[PurgeResult, dict[str, Any], Path]:
     if not record.get("precommit_file") or not record.get("result_hash"):
         raise PurgeError("completed purge index is missing precommit integrity evidence")
     path = Path(os.path.abspath(record["precommit_file"]))
@@ -2249,11 +3102,13 @@ def _load_precommit(
     content = {key: value for key, value in payload.items() if key != "precommit_hash"}
     if hashlib.sha256(_canonical_bytes(content)).hexdigest() != payload["precommit_hash"]:
         raise PurgeError("purge precommit evidence hash mismatch")
+    if payload["precommit_version"] != expected_version:
+        raise PurgeError("purge precommit evidence version is unsupported")
+    if payload["terminal_result_hash"] != record["result_hash"]:
+        raise PurgeError("purge precommit result hash is inconsistent")
     if (
-        payload["precommit_version"] != expected_version
-        or payload["plan_id"] != plan.plan_id
+        payload["plan_id"] != plan.plan_id
         or payload["plan_hash"] != plan.content_hash
-        or payload["terminal_result_hash"] != record["result_hash"]
     ):
         raise PurgeError("purge precommit evidence is inconsistent")
     if expected_version == PURGE_PRECOMMIT_VERSION_V3 and (
@@ -2268,6 +3123,13 @@ def _load_precommit(
     )
     if result.result_file != record.get("result_file"):
         raise PurgeError("purge precommit result path is inconsistent")
+    return result, payload, path
+
+
+def _load_precommit(
+    settings: Settings, plan: PurgePlan, record: dict[str, Any]
+) -> PurgeResult:
+    result, _, _ = _load_precommit_details(settings, plan, record)
     return result
 
 
@@ -2429,6 +3291,33 @@ def _verify_superseded_authority(
                 )
 
 
+def _verify_v4_reconciliation_authority(
+    settings: Settings, plan: PurgePlan
+) -> None:
+    if plan.plan_version != PURGE_PLAN_VERSION_V4:
+        return
+    rebuilt = _build_exact_scope_plan_content(settings, plan.scope)
+    expected = {
+        "plan_version": plan.plan_version,
+        "cleanup_policy": plan.cleanup_policy,
+        "status": plan.status,
+        "scope": plan.scope.as_dict(),
+        "targets": list(plan.targets),
+        "reconciled_quarantined_units": list(
+            plan.reconciled_quarantined_units
+        ),
+        "summary": plan.summary,
+        "dependency_state": plan.dependency_state,
+        "retained_evidence": list(plan.retained_evidence),
+        "refusal_reasons": list(plan.refusal_reasons),
+        "quarantine_root_template": "quarantine/purge_id=<plan_id>",
+    }
+    if rebuilt != expected:
+        raise PurgeDriftError(
+            "v4 cross-policy reconciliation authority changed after plan review"
+        )
+
+
 def purge_execute(settings: Settings, *, plan_id: str, confirmation: str) -> PurgeResult:
     """Execute an exact sealed plan by moving whole file pairs to quarantine."""
     plan = _load_sealed_plan(settings, plan_id)
@@ -2464,6 +3353,7 @@ def purge_execute(settings: Settings, *, plan_id: str, confirmation: str) -> Pur
                     settings, catalog, plan, plan_id=plan_id
                 )
             else:
+                _verify_v4_reconciliation_authority(settings, plan)
                 _, active_runs = _catalog_runs(catalog, plan.scope)
                 if active_runs:
                     raise PurgeDriftError(
