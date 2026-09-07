@@ -378,6 +378,37 @@ def fail_v4_after_movement_with_incomplete_rollback(
     return quarantine_paths
 
 
+def place_v4_target_in_own_quarantine(
+    cfg: Settings,
+    sealed,
+    *,
+    catalog_state: str,
+) -> dict[str, Path]:
+    catalog = Catalog(cfg)
+    if catalog_state == "EXECUTING":
+        catalog.begin_purge_operation(
+            sealed.plan_id, started_at=datetime.now(timezone.utc)
+        )
+    else:
+        assert catalog_state == "PLANNED"
+    quarantine_paths: dict[str, Path] = {}
+    for layer in ("raw", "curated"):
+        source = cfg.data_root / sealed.targets[0][layer]["relative_path"]
+        destination = (
+            cfg.data_root
+            / "quarantine"
+            / f"purge_id={sealed.plan_id}"
+            / sealed.targets[0][layer]["relative_path"]
+        )
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        purge_module._move_file(source, destination)
+        quarantine_paths[layer] = destination
+    record = catalog.purge_operation(sealed.plan_id)
+    assert record is not None
+    assert record["state"] == catalog_state
+    return quarantine_paths
+
+
 @pytest.mark.parametrize(
     "rollback_failure_layers",
     [("raw", "curated"), ("curated",)],
@@ -463,6 +494,81 @@ def test_v4_failed_retry_rejects_tampered_own_quarantine_before_movement(
         hashlib.sha256(quarantine_paths["curated"].read_bytes()).hexdigest()
         == curated_before
     )
+
+
+def test_v4_executing_retry_recovers_exact_current_target_in_transit(
+    monkeypatch, tmp_path
+):
+    cfg = settings(tmp_path)
+    old_a, old_b, current, _ = three_versions(monkeypatch, cfg)
+    sealed = plan(cfg, EXACT_SCOPE)
+    prior_evidence = sealed.reconciled_quarantined_units
+    assert {item["ingestion_run_id"] for item in prior_evidence} == {
+        old_a.run_id,
+        old_b.run_id,
+    }
+
+    quarantine_paths = place_v4_target_in_own_quarantine(
+        cfg, sealed, catalog_state="EXECUTING"
+    )
+    result = execute(cfg, sealed)
+
+    assert result.status == "SUCCESS"
+    assert result.plan_id == sealed.plan_id
+    assert all(path.is_file() for path in quarantine_paths.values())
+    assert Catalog(cfg).purge_operation(sealed.plan_id)["state"] == "SUCCESS"
+    reloaded = purge_module._load_sealed_plan(cfg, sealed.plan_id)
+    assert [item["ingestion_run_id"] for item in reloaded.targets] == [current.run_id]
+    assert reloaded.reconciled_quarantined_units == prior_evidence
+
+
+def test_v4_executing_retry_rejects_tampered_own_quarantine_before_movement(
+    monkeypatch, tmp_path
+):
+    cfg = settings(tmp_path)
+    three_versions(monkeypatch, cfg)
+    sealed = plan(cfg, EXACT_SCOPE)
+    quarantine_paths = place_v4_target_in_own_quarantine(
+        cfg, sealed, catalog_state="EXECUTING"
+    )
+    quarantine_paths["raw"].write_bytes(
+        quarantine_paths["raw"].read_bytes() + b"tamper"
+    )
+    move_calls: list[tuple[Path, Path]] = []
+    real_move = purge_module._move_file
+
+    def track_move(source: Path, destination: Path) -> None:
+        move_calls.append((source, destination))
+        real_move(source, destination)
+
+    monkeypatch.setattr(purge_module, "_move_file", track_move)
+    with pytest.raises(PurgeError, match="sealed target identity changed"):
+        execute(cfg, sealed)
+
+    assert move_calls == []
+    assert Catalog(cfg).purge_operation(sealed.plan_id)["state"] == "FAILED"
+
+
+def test_v4_planned_state_does_not_accept_own_quarantine_as_retry_residue(
+    monkeypatch, tmp_path
+):
+    cfg = settings(tmp_path)
+    three_versions(monkeypatch, cfg)
+    sealed = plan(cfg, EXACT_SCOPE)
+    place_v4_target_in_own_quarantine(cfg, sealed, catalog_state="PLANNED")
+    move_calls: list[tuple[Path, Path]] = []
+    real_move = purge_module._move_file
+
+    def track_move(source: Path, destination: Path) -> None:
+        move_calls.append((source, destination))
+        real_move(source, destination)
+
+    monkeypatch.setattr(purge_module, "_move_file", track_move)
+    with pytest.raises(PurgeError, match="reconciliation authority changed"):
+        execute(cfg, sealed)
+
+    assert move_calls == []
+    assert Catalog(cfg).purge_operation(sealed.plan_id)["state"] == "FAILED"
 
 
 def test_three_version_review_execution_and_fully_quarantined_review(

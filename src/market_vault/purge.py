@@ -1933,7 +1933,7 @@ def _build_exact_scope_plan_content(
     settings: Settings,
     scope: PurgeScope,
     *,
-    failed_retry_plan: PurgePlan | None = None,
+    noncommitted_retry_plan: PurgePlan | None = None,
 ) -> dict[str, Any]:
     if scope.source != settings.source:
         raise ValueError(
@@ -1957,21 +1957,25 @@ def _build_exact_scope_plan_content(
     matched_symbols: set[str] = set()
     data_root = Path(os.path.abspath(settings.data_root))
     retry_targets: dict[tuple[str, str, str], dict[str, Any]] = {}
-    if failed_retry_plan is not None:
+    if noncommitted_retry_plan is not None:
         if (
-            failed_retry_plan.plan_version != PURGE_PLAN_VERSION_V4
-            or failed_retry_plan.cleanup_policy != EXACT_SCOPE
-            or failed_retry_plan.scope != scope
+            noncommitted_retry_plan.plan_version != PURGE_PLAN_VERSION_V4
+            or noncommitted_retry_plan.cleanup_policy != EXACT_SCOPE
+            or noncommitted_retry_plan.scope != scope
         ):
-            raise PurgeDriftError("invalid v4 FAILED retry reconstruction context")
-        for target in failed_retry_plan.targets:
+            raise PurgeDriftError(
+                "invalid v4 non-committed retry reconstruction context"
+            )
+        for target in noncommitted_retry_plan.targets:
             key = (
                 str(target["ingestion_run_id"]),
                 str(target["raw"]["relative_path"]),
                 str(target["curated"]["relative_path"]),
             )
             if key in retry_targets:
-                raise PurgeDriftError("duplicate sealed target in v4 FAILED retry")
+                raise PurgeDriftError(
+                    "duplicate sealed target in v4 non-committed retry"
+                )
             retry_targets[key] = target
 
     for row in rows:
@@ -2125,12 +2129,12 @@ def _build_exact_scope_plan_content(
             retry_key = (run_id, raw_relative, curated_relative)
             retry_target = retry_targets.pop(retry_key, None)
             if retry_target is not None:
-                assert failed_retry_plan is not None
+                assert noncommitted_retry_plan is not None
                 _verify_target_physical_binding(
                     settings,
-                    failed_retry_plan,
+                    noncommitted_retry_plan,
                     retry_target,
-                    plan_id=failed_retry_plan.plan_id,
+                    plan_id=noncommitted_retry_plan.plan_id,
                     allow_quarantine=True,
                 )
                 classification = _reconcile_historical_unit(
@@ -2152,9 +2156,10 @@ def _build_exact_scope_plan_content(
                         "current-plan retry target conflicts with committed SUCCESS "
                         f"quarantine authority: {run_id}"
                     )
-                # A FAILED, non-committed attempt may have left either side at
-                # this exact plan's own quarantine path.  It remains a sealed
-                # current target; it is never prior reconciled evidence.
+                # A non-committed FAILED or EXECUTING attempt may have left
+                # either side at this exact plan's own quarantine path. It
+                # remains a sealed current target, never prior reconciled
+                # evidence.
                 targets.append(retry_target)
                 continue
             if raw_exists != curated_exists:
@@ -2281,7 +2286,7 @@ def _build_exact_scope_plan_content(
     if retry_targets:
         missing_run_ids = sorted({key[0] for key in retry_targets})
         raise PurgeDriftError(
-            "sealed v4 FAILED retry targets are no longer catalog-bound: "
+            "sealed v4 non-committed retry targets are no longer catalog-bound: "
             f"{missing_run_ids}"
         )
 
@@ -3354,14 +3359,14 @@ def _verify_superseded_authority(
 
 
 def _verify_v4_reconciliation_authority(
-    settings: Settings, plan: PurgePlan, *, failed_retry: bool = False
+    settings: Settings, plan: PurgePlan, *, noncommitted_retry: bool = False
 ) -> None:
     if plan.plan_version != PURGE_PLAN_VERSION_V4:
         return
     rebuilt = _build_exact_scope_plan_content(
         settings,
         plan.scope,
-        failed_retry_plan=plan if failed_retry else None,
+        noncommitted_retry_plan=plan if noncommitted_retry else None,
     )
     expected = {
         "plan_version": plan.plan_version,
@@ -3408,7 +3413,7 @@ def purge_execute(settings: Settings, *, plan_id: str, confirmation: str) -> Pur
                     _verify_identity(destination, target[key], settings, quarantine=True)
             return _load_success_result(settings, plan, record)
 
-        failed_retry = record["state"] == "FAILED"
+        noncommitted_retry = record["state"] in {"FAILED", "EXECUTING"}
         catalog.begin_purge_operation(plan_id, started_at=started_at)
         committed = False
         try:
@@ -3421,7 +3426,7 @@ def purge_execute(settings: Settings, *, plan_id: str, confirmation: str) -> Pur
                 )
             else:
                 _verify_v4_reconciliation_authority(
-                    settings, plan, failed_retry=failed_retry
+                    settings, plan, noncommitted_retry=noncommitted_retry
                 )
                 _, active_runs = _catalog_runs(catalog, plan.scope)
                 if active_runs:
