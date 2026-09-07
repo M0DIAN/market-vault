@@ -333,6 +333,138 @@ def three_versions(monkeypatch: pytest.MonkeyPatch, cfg: Settings):
     return old_a, old_b, current, superseded
 
 
+def fail_v4_after_movement_with_incomplete_rollback(
+    monkeypatch: pytest.MonkeyPatch,
+    cfg: Settings,
+    sealed,
+    *,
+    rollback_failure_layers: tuple[str, ...],
+) -> dict[str, Path]:
+    real_prepare = purge_module._prepare_success_result
+    real_move = purge_module._move_file
+    quarantine_paths = {
+        layer: (
+            cfg.data_root
+            / "quarantine"
+            / f"purge_id={sealed.plan_id}"
+            / sealed.targets[0][layer]["relative_path"]
+        )
+        for layer in ("raw", "curated")
+    }
+    rollback_failures = {
+        quarantine_paths[layer] for layer in rollback_failure_layers
+    }
+
+    def fail_before_catalog_success(*_args, **_kwargs):
+        raise RuntimeError("injected failure before Catalog SUCCESS")
+
+    def move_with_incomplete_rollback(source: Path, destination: Path) -> None:
+        if Path(source) in rollback_failures:
+            raise OSError(f"injected rollback failure: {Path(source).name}")
+        real_move(source, destination)
+
+    monkeypatch.setattr(
+        purge_module, "_prepare_success_result", fail_before_catalog_success
+    )
+    monkeypatch.setattr(purge_module, "_move_file", move_with_incomplete_rollback)
+    with pytest.raises(PurgeError, match="injected failure before Catalog SUCCESS"):
+        execute(cfg, sealed)
+    monkeypatch.setattr(purge_module, "_prepare_success_result", real_prepare)
+    monkeypatch.setattr(purge_module, "_move_file", real_move)
+
+    record = Catalog(cfg).purge_operation(sealed.plan_id)
+    assert record is not None
+    assert record["state"] == "FAILED"
+    return quarantine_paths
+
+
+@pytest.mark.parametrize(
+    "rollback_failure_layers",
+    [("raw", "curated"), ("curated",)],
+    ids=["both-sides-own-quarantine", "raw-active-curated-own-quarantine"],
+)
+def test_v4_failed_retry_recovers_exact_current_target_in_transit(
+    monkeypatch, tmp_path, rollback_failure_layers
+):
+    cfg = settings(tmp_path)
+    old_a, old_b, current, _ = three_versions(monkeypatch, cfg)
+    sealed = plan(cfg, EXACT_SCOPE)
+    assert sealed.plan_version == PURGE_PLAN_VERSION_V4
+    assert [item["ingestion_run_id"] for item in sealed.targets] == [current.run_id]
+    prior_run_ids = {
+        item["ingestion_run_id"] for item in sealed.reconciled_quarantined_units
+    }
+    assert prior_run_ids == {old_a.run_id, old_b.run_id}
+    prior_quarantine = {
+        cfg.data_root / item[layer]["quarantine_relative_path"]
+        for item in sealed.reconciled_quarantined_units
+        for layer in ("raw", "curated")
+    }
+    prior_hashes = {
+        path: hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in prior_quarantine
+    }
+
+    quarantine_paths = fail_v4_after_movement_with_incomplete_rollback(
+        monkeypatch,
+        cfg,
+        sealed,
+        rollback_failure_layers=rollback_failure_layers,
+    )
+
+    for layer in rollback_failure_layers:
+        assert quarantine_paths[layer].is_file()
+    for layer in ({"raw", "curated"} - set(rollback_failure_layers)):
+        assert (cfg.data_root / sealed.targets[0][layer]["relative_path"]).is_file()
+
+    result = execute(cfg, sealed)
+
+    assert result.status == "SUCCESS"
+    assert result.plan_id == sealed.plan_id
+    assert Catalog(cfg).purge_operation(sealed.plan_id)["state"] == "SUCCESS"
+    assert all(path.is_file() for path in quarantine_paths.values())
+    assert all(
+        hashlib.sha256(path.read_bytes()).hexdigest() == digest
+        for path, digest in prior_hashes.items()
+    )
+    assert prior_run_ids == {
+        item["ingestion_run_id"] for item in sealed.reconciled_quarantined_units
+    }
+
+
+def test_v4_failed_retry_rejects_tampered_own_quarantine_before_movement(
+    monkeypatch, tmp_path
+):
+    cfg = settings(tmp_path)
+    _, _, current, _ = three_versions(monkeypatch, cfg)
+    sealed = plan(cfg, EXACT_SCOPE)
+    quarantine_paths = fail_v4_after_movement_with_incomplete_rollback(
+        monkeypatch,
+        cfg,
+        sealed,
+        rollback_failure_layers=("raw", "curated"),
+    )
+    quarantine_paths["raw"].write_bytes(
+        quarantine_paths["raw"].read_bytes() + b"tamper"
+    )
+    curated_before = hashlib.sha256(
+        quarantine_paths["curated"].read_bytes()
+    ).hexdigest()
+
+    with pytest.raises(PurgeError, match="sealed target identity changed"):
+        execute(cfg, sealed)
+
+    record = Catalog(cfg).purge_operation(sealed.plan_id)
+    assert record is not None
+    assert record["state"] == "FAILED"
+    assert not Path(current.raw_file).exists()
+    assert not Path(current.curated_file).exists()
+    assert (
+        hashlib.sha256(quarantine_paths["curated"].read_bytes()).hexdigest()
+        == curated_before
+    )
+
+
 def test_three_version_review_execution_and_fully_quarantined_review(
     monkeypatch, tmp_path
 ):
