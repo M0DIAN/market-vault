@@ -2,9 +2,11 @@
 
 ## Status And Scope
 
-This is a design-only authority record. It qualifies evidence for a future
-Moomoo Timestamp Semantics V2 implementation, but it does not authorize or
-claim that the runtime accepts early-close responses today.
+This record is the approved design and evidence authority. The authorized
+runtime implementation candidate now applies it through
+`src/market_vault/normalization/rth_session_geometry.py` and remains pending
+independent review, merge, and deployment. This status does not claim that
+formal main or the production runtime accepts early-close responses yet.
 
 The qualification is deliberately narrow:
 
@@ -19,8 +21,8 @@ The qualification is deliberately narrow:
 - provider SDK: `moomoo-api 10.9.6908`;
 - OpenD: `10.10.7008`.
 
-`Session.ALL`, Intraday Audit boundary certification, runtime implementation,
-production collection, and production migration are out of scope.
+`Session.ALL`, Intraday Audit boundary certification, production collection,
+and production migration remain out of scope.
 Independent review approval is not claimed by this document.
 
 ## Two Independent Authorities

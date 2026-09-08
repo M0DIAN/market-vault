@@ -6,6 +6,8 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
+from .rth_session_geometry import resolve_rth_session_geometry
+
 REQUIRED_SOURCE_COLUMNS = {
     "code",
     "time_key",
@@ -69,28 +71,29 @@ def _expected_moomoo_ts2_times(
     requested_session: str,
 ) -> tuple[list[pd.Timestamp], list[pd.Timestamp]]:
     midnight = _market_timestamp(requested_trade_date, "00:00")
-    regular_open = _market_timestamp(requested_trade_date, "09:30")
-    regular_close = _market_timestamp(requested_trade_date, "16:00")
     minutes = _MOOMOO_TS2_INTRADAY_MINUTES[interval]
 
     if requested_session == "RTH":
-        if interval == "60m":
-            provider = [
-                regular_open + pd.Timedelta(value, unit="h")
-                for value in range(1, 7)
-            ]
-            provider.append(regular_close)
-        else:
-            provider = list(
-                pd.date_range(
-                    regular_open + pd.Timedelta(minutes, unit="m"),
-                    regular_close,
-                    freq=f"{minutes}min",
-                )
+        geometry = resolve_rth_session_geometry(requested_trade_date)
+        regular_open = _market_timestamp(
+            requested_trade_date, geometry.open_time.strftime("%H:%M")
+        )
+        regular_close = _market_timestamp(
+            requested_trade_date, geometry.close_time.strftime("%H:%M")
+        )
+        provider = list(
+            pd.date_range(
+                regular_open + pd.Timedelta(minutes, unit="m"),
+                regular_close,
+                freq=f"{minutes}min",
             )
+        )
+        if not provider or provider[-1] != regular_close:
+            provider.append(regular_close)
         canonical = [regular_open, *provider[:-1]]
         return provider, canonical
 
+    regular_open = _market_timestamp(requested_trade_date, "09:30")
     if interval == "60m":
         # OpenD splits 60m ALL bars at 09:30 and 16:00 session boundaries.
         provider = [
@@ -136,8 +139,8 @@ def normalize_moomoo_intraday_timestamp_v2(
     """Translate one verified Moomoo intraday response to interval starts.
 
     The accepted shapes are deliberately exact. Provider changes, partial
-    sequences, and early-close geometry must be re-qualified instead of being
-    inferred from a nominal interval length.
+    sequences, and unsupported special-session geometry fail closed instead
+    of being inferred from observed bars.
     """
     interval_value = interval.strip().lower()
     session_value = requested_session.strip().upper()
