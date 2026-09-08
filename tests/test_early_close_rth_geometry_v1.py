@@ -14,6 +14,11 @@ from market_vault.normalization.bars import (
     normalize_bars,
 )
 from market_vault.normalization.rth_session_geometry import (
+    EXCHANGE_AUTHORITY_CAPTURE_METADATA,
+    EXCHANGE_AUTHORITY_REFERENCE,
+    EXCHANGE_AUTHORITY_REVIEW_METADATA,
+    PROVIDER_PROBE_MANIFEST_SHA256,
+    PROVIDER_PROFILE_VERSION,
     RTH_TIMEZONE,
     SPECIAL_RTH_SESSION_GEOMETRIES,
     SPECIAL_SESSION_AUTHORITY_VERSION,
@@ -200,6 +205,46 @@ def test_special_session_table_is_an_immutable_exact_override_allowlist() -> Non
         setattr(SPECIAL_RTH_SESSION_GEOMETRIES[0], "close_time", time(14, 0))
 
 
+def test_special_entries_bind_deterministic_two_authority_metadata() -> None:
+    for entry in SPECIAL_RTH_SESSION_GEOMETRIES:
+        assert entry.authority_reference == EXCHANGE_AUTHORITY_REFERENCE
+        assert (
+            entry.authority_capture_metadata
+            == EXCHANGE_AUTHORITY_CAPTURE_METADATA
+        )
+        assert entry.authority_review_metadata == (
+            EXCHANGE_AUTHORITY_REVIEW_METADATA
+        )
+        assert entry.provider_profile_version == PROVIDER_PROFILE_VERSION
+        assert entry.provider_probe_manifest_sha256 == PROBE_MANIFEST_SHA256
+        assert entry.provider_probe_manifest_sha256 == PROVIDER_PROBE_MANIFEST_SHA256
+
+
+def test_absent_normal_profile_does_not_claim_special_authority() -> None:
+    geometry = resolve_rth_session_geometry(date(2026, 8, 20))
+    assert geometry.classification == "NORMAL"
+    assert geometry.authority_capture_metadata is None
+    assert geometry.authority_review_metadata is None
+    assert geometry.provider_profile_version is None
+    assert geometry.provider_probe_manifest_sha256 is None
+
+
+@pytest.mark.parametrize("trade_date", QUALIFIED_DATES)
+def test_qualified_special_dates_resolve_with_two_authority_chain(
+    trade_date: date,
+) -> None:
+    geometry = resolve_rth_session_geometry(trade_date)
+    assert geometry.classification == "EARLY_CLOSE"
+    assert geometry.authority_capture_metadata == (
+        EXCHANGE_AUTHORITY_CAPTURE_METADATA
+    )
+    assert geometry.authority_review_metadata == (
+        EXCHANGE_AUTHORITY_REVIEW_METADATA
+    )
+    assert geometry.provider_profile_version == PROVIDER_PROFILE_VERSION
+    assert geometry.provider_probe_manifest_sha256 == PROBE_MANIFEST_SHA256
+
+
 @pytest.mark.parametrize("interval", INTERVAL_MINUTES)
 def test_absent_ordinary_date_uses_unchanged_normal_profile(interval: str) -> None:
     trade_date = date(2026, 8, 20)
@@ -290,6 +335,33 @@ def test_malformed_conflicting_and_unsupported_authority_fails_closed() -> None:
     unsupported = replace(valid, close_time=time(14, 0))
     with pytest.raises(ValueError, match="Unsupported"):
         resolve_rth_session_geometry(valid.trade_date, authorities=(unsupported,))
+
+
+@pytest.mark.parametrize(
+    ("replacement", "message"),
+    [
+        ({"authority_reference": ""}, "exchange authority reference"),
+        ({"provider_profile_version": None}, "provider profile version"),
+        (
+            {"provider_profile_version": "unknown-profile"},
+            "provider profile version",
+        ),
+        ({"provider_probe_manifest_sha256": None}, "provider probe manifest seal"),
+        (
+            {"provider_probe_manifest_sha256": "0" * 64},
+            "provider probe manifest seal",
+        ),
+        ({"authority_capture_metadata": None}, "authority capture metadata"),
+        ({"authority_review_metadata": None}, "authority review metadata"),
+    ],
+)
+def test_incomplete_or_unknown_two_authority_identity_fails_closed(
+    replacement: dict[str, object], message: str
+) -> None:
+    valid = SPECIAL_RTH_SESSION_GEOMETRIES[0]
+    invalid = replace(valid, **replacement)
+    with pytest.raises(ValueError, match=message):
+        resolve_rth_session_geometry(valid.trade_date, authorities=(invalid,))
 
 
 def test_session_all_geometry_does_not_use_the_rth_override() -> None:
