@@ -77,7 +77,12 @@ now qualifies Moomoo RTH endpoint geometry for two independently authoritative
 normal-date control. Runtime support is not implemented by that record and
 must continue to fail closed until a separately reviewed implementation
 lands. The exchange schedule authority and provider geometry authority remain
-independent.
+independent. Its future special-session table is an explicit override
+allowlist: a listed date uses its exact qualified override, while an absent
+date retains the existing 09:30-16:00 America/New_York normal profile. An
+unlisted early-close-shaped response therefore fails the unchanged exact
+normal-sequence comparison; table absence is not an ordinary-date runtime
+authority failure, and bar shape never creates an override.
 
 ## 3. `market_available_at` derivation
 

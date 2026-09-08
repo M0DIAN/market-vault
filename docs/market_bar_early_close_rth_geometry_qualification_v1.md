@@ -41,6 +41,9 @@ authority_version =
     us-rth-special-session-authority-v1
 authority_model =
     MODEL_A_VERSIONED_BUNDLED_IMMUTABLE_SPECIAL_SESSION_TABLE
+SPECIAL_SESSION_TABLE_IS_OVERRIDE_ALLOWLIST=true
+ABSENT_DATE_MEANS_NORMAL_PROFILE=true
+ABSENT_DATE_DOES_NOT_MEAN_RUNTIME_AUTHORITY_FAILURE=true
 ```
 
 The future immutable table must contain exact date, market,
@@ -48,19 +51,40 @@ The future immutable table must contain exact date, market,
 reference, authority capture metadata, authority review metadata, and the
 explicit authority version.
 
-| Date | Classification | Official RTH open | Official RTH close | Exact-date authority |
-|---|---|---|---|---|
-| 2025-11-28 | `EARLY_CLOSE` | 09:30 America/New_York | 13:00 America/New_York | [Nasdaq Trader Alert #2025-92](https://m.nasdaqtrader.com/TraderNews.aspx?id=ETA2025-92) |
-| 2025-12-24 | `EARLY_CLOSE` | 09:30 America/New_York | 13:00 America/New_York | [Nasdaq Trader Alert #2025-101](https://www.nasdaqtrader.com/TraderNews.aspx?id=ETA2025-101) |
-| 2025-12-26 | `NORMAL` control | 09:30 America/New_York | 16:00 America/New_York | [Nasdaq Trader Alert #2025-101](https://www.nasdaqtrader.com/TraderNews.aspx?id=ETA2025-101) |
+The table is an explicit special-session override allowlist, not an exhaustive
+calendar of ordinary dates. If `requested_trade_date` is present, runtime must
+use that entry's exact official RTH geometry and corresponding sealed,
+qualified Moomoo provider profile, then compare the complete observed endpoint
+sequence exactly. If the date is absent, runtime must retain the existing
+normal RTH profile of 09:30-16:00 America/New_York and perform the same exact
+full-sequence comparison. Absence therefore does not mean that ordinary
+runtime authority is missing.
 
-Alert #2025-92 states that the Nasdaq Day Session closes at 13:00 ET on
-2025-11-28. Alert #2025-101 states that markets close at 13:00 ET on
-2025-12-24 and operate on a regular schedule on 2025-12-26. The
-[NYSE hours page](https://www.nyse.com/trade/hours-calendars) corroborates
-the general 09:30-16:00 ET Core Session and 13:00 ET early-close convention,
-but its current-year table is not used as the sole historical authority for
-these 2025 dates.
+An unlisted real early-close date remains fail closed: the normal profile
+expects endpoints through 16:00, the provider response ends at 13:00, and the
+exact sequence comparison rejects the mismatch. Runtime must not infer an
+override from row count, the last observed bar, or a continuous prefix.
+
+| Date | Classification | Official RTH open | Official RTH close | Venue-aligned exact-date authority | Independent corroboration |
+|---|---|---|---|---|---|
+| 2025-11-28 | `EARLY_CLOSE` | 09:30 America/New_York | 13:00 America/New_York | [NYSE official 2025 Trading Calendar](https://www.nyse.com/publicdocs/ICE_NYSE_2025_Yearly_Trading_Calendar.pdf) | [Nasdaq Trader Alert #2025-92](https://m.nasdaqtrader.com/TraderNews.aspx?id=ETA2025-92) |
+| 2025-12-24 | `EARLY_CLOSE` | 09:30 America/New_York | 13:00 America/New_York | [NYSE official 2025 Trading Calendar](https://www.nyse.com/publicdocs/ICE_NYSE_2025_Yearly_Trading_Calendar.pdf) | [Nasdaq Trader Alert #2025-101](https://www.nasdaqtrader.com/TraderNews.aspx?id=ETA2025-101) |
+| 2025-12-26 | `NORMAL` control | 09:30 America/New_York | 16:00 America/New_York | [NYSE official 2025 Trading Calendar](https://www.nyse.com/publicdocs/ICE_NYSE_2025_Yearly_Trading_Calendar.pdf) | [Nasdaq Trader Alert #2025-101](https://www.nasdaqtrader.com/TraderNews.aspx?id=ETA2025-101) |
+
+The NYSE official 2025 calendar marks both 2025-11-28 and 2025-12-24 as
+13:00 ET early market closes. The official
+[NYSE Holidays and Trading Hours](https://www.nyse.com/trade/hours-calendars)
+scope applies the holiday schedule to all NYSE markets, explicitly includes
+NYSE Arca Equities, and defines its Core Trading Session as 09:30-16:00 ET.
+NYSE's official [Rule 608 appendix](https://www.nyse.com/publicdocs/nyse/regulation/nyse/Fourth_Amendment_to_Rule_608.pdf)
+identifies SPY's primary exchange as NYSE Arca. This makes NYSE's 2025 schedule
+the venue-aligned date authority for the probe symbol.
+
+Nasdaq Trader Alert #2025-92 independently corroborates the 13:00 ET close on
+2025-11-28. Alert #2025-101 independently corroborates the 13:00 ET close on
+2025-12-24 and the regular schedule on 2025-12-26. These Nasdaq alerts remain
+cross-market corroboration, not the sole venue authority. Their URLs in the
+sealed probe manifest and all sealed evidence bytes remain unchanged.
 
 Future runtime code must not infer a special session or official close from
 row count, the last observed bar, `trade_date_type`, a continuous prefix, or
@@ -173,12 +197,13 @@ auditable.
 
 The future runtime algorithm must:
 
-1. obtain exact official RTH geometry for the requested date from the bundled
-   authority;
-2. fail closed when qualified authority is missing, ambiguous, conflicting,
-   superseded by an emergency notice, or unsupported by a provider profile;
-3. distinguish normal geometry from the qualified 09:30-13:00 early-close
-   geometry;
+1. consult the bundled special-session override allowlist for the exact
+   requested date;
+2. when listed, use only that entry's official geometry and sealed, qualified
+   provider profile; fail closed when the entry is malformed, ambiguous,
+   conflicting, superseded by an emergency notice, or unsupported;
+3. when absent, use the unchanged normal 09:30-16:00 America/New_York RTH
+   profile rather than treating table absence as an authority failure;
 4. generate the complete expected provider endpoint sequence: begin at
    `open + interval`, include full nominal endpoints through the official
    close, and append the official close only when the final interval is
@@ -245,12 +270,18 @@ A later implementation PR must prove:
 - early-close RTH 1m, 5m, 15m, 30m, and 60m exact mapping;
 - fixtures for both 2025-11-28 and 2025-12-24;
 - the 2025-12-26 normal control;
+- an arbitrary ordinary date absent from the special-session table uses the
+  existing normal profile and passes an exact normal sequence;
+- an unlisted early-close-shaped response is rejected against the normal
+  profile;
+- a listed qualified 13:00 date passes only its exact qualified sequence;
+- a listed special date with the wrong sequence is rejected;
 - missing-last normal response refusal;
 - continuous-prefix normal response refusal;
 - middle-gap normal and early-close response refusal;
 - wrong early-close final endpoint refusal;
 - extra endpoint after official close refusal;
-- missing, ambiguous, or conflicting schedule authority refusal;
+- malformed, ambiguous, or conflicting listed authority refusal;
 - unsupported special date and provider profile refusal;
 - duplicate and nonmonotonic endpoint refusal;
 - provider-native Raw timestamps remain unchanged;

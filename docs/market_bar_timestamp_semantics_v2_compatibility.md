@@ -56,8 +56,17 @@ The sealed early-close probe additionally established this design authority:
 Both official early-close dates, 2025-11-28 and 2025-12-24, produced the same
 complete ordered sequences. The normal 2025-12-26 control reproduced the
 existing model, so provider geometry drift was not observed. This evidence
-does not infer official hours from bar shape: date-specific Nasdaq alerts are
-the independent schedule authority.
+does not infer official hours from bar shape. The NYSE official 2025 Trading
+Calendar is the venue-aligned exact-date schedule authority for NYSE
+Arca-listed SPY; Nasdaq Trader Alerts #2025-92 and #2025-101 remain independent
+cross-market corroboration.
+
+The future special-session table is an explicit override allowlist. A listed
+date selects its exact official geometry and sealed provider profile. A date
+absent from the table continues to use the existing normal 09:30-16:00
+America/New_York profile and exact comparison. Consequently, an unlisted real
+early-close response fails against the normal sequence rather than being
+accepted from its row count, final bar, or continuous-prefix shape.
 
 The existing `10.9` normalizer adopts Raw `time_key` directly as interval
 start. For the verified 1m RTH response this creates 389 `REGULAR` rows and
