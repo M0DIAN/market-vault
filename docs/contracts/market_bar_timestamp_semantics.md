@@ -65,9 +65,24 @@ view isolation rules are frozen in the linked compatibility design; this
 design-only change does not claim the runtime already implements them.
 
 **Re-verification requirement remains mandatory:** provider version changes,
-new intervals, new sessions, early-close behavior, or any timestamp geometry
-outside the recorded evidence require new live evidence before support. Tests
-must not silently generalize the conversion.
+new intervals, new sessions, early-close dates or close profiles outside the
+qualified authority, or any timestamp geometry outside the recorded evidence
+require new live evidence before support. Tests must not silently generalize
+the conversion.
+
+The design-only
+[Early-Close RTH Geometry Qualification V1](../market_bar_early_close_rth_geometry_qualification_v1.md)
+now qualifies Moomoo RTH endpoint geometry for two independently authoritative
+2025 US 13:00 early-close dates across 1m, 5m, 15m, 30m, and 60m, with a
+normal-date control. Runtime support is not implemented by that record and
+must continue to fail closed until a separately reviewed implementation
+lands. The exchange schedule authority and provider geometry authority remain
+independent. Its future special-session table is an explicit override
+allowlist: a listed date uses its exact qualified override, while an absent
+date retains the existing 09:30-16:00 America/New_York normal profile. An
+unlisted early-close-shaped response therefore fails the unchanged exact
+normal-sequence comparison; table absence is not an ordinary-date runtime
+authority failure, and bar shape never creates an override.
 
 ## 3. `market_available_at` derivation
 
@@ -152,13 +167,15 @@ a conservative not-before bound otherwise).
 1. The official Moomoo documentation still does not explicitly define
    interval start versus interval end. Support is limited to the exact live
    geometries recorded in section 2 and the compatibility design.
-2. Early-close RTH behavior and other provider/session/interval combinations
-   remain unresolved. The implementation fails honestly outside its verified
-   conversion rules.
+2. The 09:30-13:00 US RTH provider geometry is qualified for the exact dates,
+   intervals, SDK, and OpenD evidence recorded in the linked early-close
+   qualification. Runtime support remains unimplemented. Other early-close
+   profiles, dates without bundled authority, and other
+   provider/session/interval combinations remain unresolved.
 3. `ingested_at` cross-batch differences within a run are allowed but not
    asserted to be distinct; the contract only pins same-batch equality.
-4. Exact bar-end times at unverified session boundaries and early closes are
-   not known;
+4. Exact bar-end times at unverified session boundaries and unqualified early
+   closes are not known;
    `market_available_at = event_time + interval` is exact only for bars known
    to span their full nominal interval and is otherwise a conservative
    not-before bound (see section 3).

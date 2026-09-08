@@ -6,6 +6,10 @@ This approved design contract is implemented for runtime timestamp conversion
 and current-view filtering. The separately authorized production activation of
 `10.9-mv-ts2` is complete and its result is sealed in
 [Market-Bar Timestamp Semantics V2 Production Activation](market_bar_timestamp_semantics_v2_production_activation.md).
+The design-only
+[Early-Close RTH Geometry Qualification V1](market_bar_early_close_rth_geometry_qualification_v1.md)
+qualifies a narrow 09:30-13:00 RTH provider profile for future implementation;
+the current runtime still fails closed for that profile.
 This document authorizes no production-data mutation.
 
 The compatibility cohorts are:
@@ -38,6 +42,31 @@ right edge of the interval. Live re-verification against OpenD 10.10.7008 for
 | ALL | 15m | 96 | 00:00 | 23:45 | interval start |
 | ALL | 30m | 48 | 00:00 | 23:30 | interval start |
 | ALL | 60m | 25 | 00:00 | 23:00 | interval start with 30m session-boundary splits |
+
+The sealed early-close probe additionally established this design authority:
+
+| Requested session | Official geometry | Interval | Rows | First Raw label | Last Raw label | Observed convention |
+|---|---|---:|---:|---:|---:|---|
+| RTH | 09:30-13:00 | 1m | 210 | 09:31 | 13:00 | interval end |
+| RTH | 09:30-13:00 | 5m | 42 | 09:35 | 13:00 | interval end |
+| RTH | 09:30-13:00 | 15m | 14 | 09:45 | 13:00 | interval end |
+| RTH | 09:30-13:00 | 30m | 7 | 10:00 | 13:00 | interval end |
+| RTH | 09:30-13:00 | 60m | 4 | 10:30 | 13:00 | interval end; final interval is truncated to 30m |
+
+Both official early-close dates, 2025-11-28 and 2025-12-24, produced the same
+complete ordered sequences. The normal 2025-12-26 control reproduced the
+existing model, so provider geometry drift was not observed. This evidence
+does not infer official hours from bar shape. The NYSE official 2025 Trading
+Calendar is the venue-aligned exact-date schedule authority for NYSE
+Arca-listed SPY; Nasdaq Trader Alerts #2025-92 and #2025-101 remain independent
+cross-market corroboration.
+
+The future special-session table is an explicit override allowlist. A listed
+date selects its exact official geometry and sealed provider profile. A date
+absent from the table continues to use the existing normal 09:30-16:00
+America/New_York profile and exact comparison. Consequently, an unlisted real
+early-close response fails against the normal sequence rather than being
+accepted from its row count, final bar, or continuous-prefix shape.
 
 The existing `10.9` normalizer adopts Raw `time_key` directly as interval
 start. For the verified 1m RTH response this creates 389 `REGULAR` rows and
@@ -78,10 +107,12 @@ evidence must identify the new schema cohort. Curated must represent canonical
 interval starts in `time_market` and `time_utc`, and classify `session` from
 that canonical start.
 
-The future implementation must be provider-, interval-, and session-aware.
-Blind subtraction for every Moomoo row is forbidden. It must implement only
-geometries supported by live evidence and fail honestly for unresolved or
-ambiguous boundaries.
+The implementation is provider-, interval-, and session-aware. Blind
+subtraction for every Moomoo row is forbidden. Current runtime behavior
+implements only geometries already supported in `bars.py`; the design-only
+early-close qualification does not change that runtime. A future
+implementation may add only the exact qualified profile and must fail
+honestly for unresolved or ambiguous boundaries.
 
 ## Current And Archive Views
 
@@ -309,6 +340,13 @@ The implementation phase must prove at least:
 
 - provider-native Raw timestamps are byte/semantically preserved;
 - the verified RTH and ALL geometries produce canonical interval starts;
+- the qualified 09:30-13:00 RTH 1m, 5m, 15m, 30m, and 60m geometries produce
+  the exact canonical starts in the early-close qualification record;
+- both qualified early-close dates and the normal control retain exact
+  complete-sequence checks;
+- normal-day prefixes, missing middle/final endpoints, unsupported dates,
+  conflicting schedule authority, and endpoints after the official close
+  fail closed;
 - ambiguous or unsupported geometries fail rather than guess;
 - every new market-bar run and pair records `10.9-mv-ts2` after cutover;
 - archive view coexistence and current-view cohort isolation;
