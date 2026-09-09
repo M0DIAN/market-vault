@@ -227,3 +227,52 @@ consumer-side data handling on top of already verified facts; they never
 re-verify artifacts, never bypass the formal verified readers (for
 example by parsing `dataset.parquet` directly), and never write back into
 artifact directories.
+
+## 13.12 Post-v0.7 explicit Catalog selection extension (design only)
+
+```text
+POST_V0_7_CURRENT_MAIN_EXTENSION
+DESIGN_APPROVED=false
+RUNTIME_IMPLEMENTED=false
+```
+
+The formally released v0.7.0 `ArtifactClient` continues to be described
+historically by sections 13.1 through 13.11 and shipped with exactly the
+three load methods documented there. The following is a prospective
+current-main extension only; it is not a claim about the published v0.7.0
+artifacts.
+
+After a separately reviewed implementation, the future fourth public
+business method will be:
+
+```python
+ArtifactClient.select_dataset_catalog_entry(
+    catalog,
+    dataset_id,
+)
+```
+
+It will use a method-local import of
+`market_vault.dataset.dataset_catalog_selection.select_verified_dataset_catalog_entry`,
+pass the exact caller objects/values through, return the exact existing
+`DatasetCatalogSnapshotEntryRecord` unchanged, and propagate
+`DatasetCatalogSelectionError` unwrapped. The low-level formal selector will
+be public from `market_vault.dataset` but not from top-level `market_vault`.
+
+The `catalog` input must already be a `VerifiedDatasetCatalogSnapshot`.
+`dataset_id` is the only selector: strict lowercase 64-hex and exact equality
+with exactly one match. `CONTENT_ID_MODEL=MODEL_A`; there is no required,
+optional, or alternative `content_id` selector.
+
+The selector creates no second validation path. It does not accept a
+snapshot directory, call a reader, access files or recorded build paths,
+load a Dataset, discover latest state, or use settings, current time, OpenD,
+or the network. Its result preserves object identity. Its errors are the
+API-neutral `DatasetCatalogSelectionError(DatasetCatalogError)`, distinct
+from artifact-validation errors.
+
+The zero-argument stateless constructor and all three existing load methods
+remain unchanged. The complete prospective contract, CLI delegation rule,
+non-goals, and mandatory test matrix are frozen in
+`docs/dataset_catalog_selection_api_v1.md`. The release checker update is
+deferred and must be atomic with the actual fourth public method.
