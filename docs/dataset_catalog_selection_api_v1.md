@@ -3,9 +3,12 @@
 Status: POST_V0_7_CURRENT_MAIN_EXTENSION
 
 ```text
-DESIGN_APPROVED=false
+DESIGN_ONLY=true
+DESIGN_APPROVAL_REQUIRES_INDEPENDENT_REVIEW=true
+DESIGN_DOCUMENT_SELF_APPROVAL=false
+IMPLEMENTATION_REQUIRES_POST_MERGE_AUTHORIZATION=true
 RUNTIME_IMPLEMENTED=false
-IMPLEMENTATION_AUTHORIZED=false
+VERSION=0.7.0
 ```
 
 This document prospectively defines the smallest formal Python API for
@@ -323,15 +326,17 @@ Future implementation must prove:
 
 ## 17. Design status
 
-This document authorizes no implementation or merge. Independent review is
-required before this proposal may become approved design authority.
+This design document alone does not authorize implementation or merge;
+design approval and later implementation authorization are established
+externally through the required independent PR review and post-merge
+closure.
 
 ```text
 DESIGN_ONLY=true
-DESIGN_APPROVED=false
+DESIGN_APPROVAL_REQUIRES_INDEPENDENT_REVIEW=true
+DESIGN_DOCUMENT_SELF_APPROVAL=false
+IMPLEMENTATION_REQUIRES_POST_MERGE_AUTHORIZATION=true
 RUNTIME_IMPLEMENTED=false
-IMPLEMENTATION_AUTHORIZED=false
-MERGE_AUTHORIZED=false
 VERSION=0.7.0
 ```
 
