@@ -1,5 +1,4 @@
-"""Settings-independent ArtifactClient foundation + reader regression
-(v0.7.0 PR-2 foundation, PR-3 verified readers, PR-4 Catalog read).
+"""Settings-independent ArtifactClient foundation + reader regression.
 
 Asserts the v0.7.0 Python Client boundaries:
 
@@ -13,11 +12,10 @@ Asserts the v0.7.0 Python Client boundaries:
   ``config/settings.yaml`` and creates no files, imports no settings /
   storage / canonical / dataset modules, and no ``duckdb`` / ``pandas`` /
   ``moomoo`` / ``futu``;
-- after PR-4 the public business methods are exactly
-  ``load_canonical_build``, ``load_dataset`` and ``load_dataset_catalog``
-  — inspecting or binding them stays lightweight (no reader import before
-  actual invocation), and no convenience API exists beyond the three
-  verified reads;
+- the released v0.7.0 three-load surface remains unchanged and current main
+  adds exactly ``select_dataset_catalog_entry``; inspecting or binding any
+  method stays lightweight (no authority import before actual invocation),
+  and no convenience API exists beyond these four methods;
 - the production module has no module-level import except
   ``__future__.annotations``; reader imports live at the method-call
   boundary.
@@ -190,18 +188,17 @@ def test_instances_reject_arbitrary_state():
         client.custom_state = 1
 
 
-def test_public_business_methods_are_exactly_the_three_readers():
+def test_public_business_methods_are_exactly_four():
     from market_vault import ArtifactClient
 
     public_names = sorted(
         n for n in dir(ArtifactClient) if not n.startswith("_")
     )
-    # PR-4 freezes exactly three public business methods: the Canonical,
-    # Dataset and Dataset Catalog verified reads.
     assert public_names == [
         "load_canonical_build",
         "load_dataset",
         "load_dataset_catalog",
+        "select_dataset_catalog_entry",
     ]
 
 
@@ -216,6 +213,14 @@ def test_reader_method_signatures_are_frozen():
     assert list(dataset_sig.parameters) == ["self", "build_dir"]
     catalog_sig = inspect.signature(ArtifactClient.load_dataset_catalog)
     assert list(catalog_sig.parameters) == ["self", "snapshot_dir"]
+    selection_sig = inspect.signature(
+        ArtifactClient.select_dataset_catalog_entry
+    )
+    assert list(selection_sig.parameters) == [
+        "self",
+        "catalog",
+        "dataset_id",
+    ]
 
 
 def test_constructor_works_in_empty_cwd_without_settings():
@@ -258,7 +263,8 @@ def test_binding_reader_methods_stays_lightweight():
                 "cb = client.load_canonical_build",
                 "ds = client.load_dataset",
                 "cat = client.load_dataset_catalog",
-                "assert callable(cb) and callable(ds) and callable(cat)",
+                "sel = client.select_dataset_catalog_entry",
+                "assert all(callable(x) for x in (cb, ds, cat, sel))",
                 "assert 'market_vault.canonical' not in sys.modules",
                 "assert 'market_vault.dataset' not in sys.modules",
                 "assert 'market_vault.config' not in sys.modules",
@@ -292,8 +298,7 @@ def test_artifact_client_module_has_no_module_level_imports_besides_future():
 
 
 def test_reader_imports_are_method_local_only():
-    # The three formal reader imports must be scoped inside the reader
-    # methods (method-call boundary), never at module level.
+    # All formal authority imports must stay at the method-call boundary.
     tree = ast.parse(ARTIFACT_CLIENT_MODULE.read_text(encoding="utf-8"))
     top_imports = [
         node
@@ -306,12 +311,18 @@ def test_reader_imports_are_method_local_only():
         for node in ast.walk(tree)
         if isinstance(node, ast.FunctionDef)
         and node.name
-        in ("load_canonical_build", "load_dataset", "load_dataset_catalog")
+        in (
+            "load_canonical_build",
+            "load_dataset",
+            "load_dataset_catalog",
+            "select_dataset_catalog_entry",
+        )
     }
     assert set(methods) == {
         "load_canonical_build",
         "load_dataset",
         "load_dataset_catalog",
+        "select_dataset_catalog_entry",
     }
     body_imports = {
         name: sorted(
@@ -333,6 +344,13 @@ def test_reader_imports_are_method_local_only():
                 "dataset.dataset_catalog_reader",
                 1,
                 ("load_verified_dataset_catalog",),
+            )
+        ],
+        "select_dataset_catalog_entry": [
+            (
+                "dataset.dataset_catalog_selection",
+                1,
+                ("select_verified_dataset_catalog_entry",),
             )
         ],
     }

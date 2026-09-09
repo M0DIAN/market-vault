@@ -228,24 +228,23 @@ re-verify artifacts, never bypass the formal verified readers (for
 example by parsing `dataset.parquet` directly), and never write back into
 artifact directories.
 
-## 13.12 Post-v0.7 explicit Catalog selection extension (design only)
+## 13.12 Post-v0.7 explicit Catalog selection extension (current main)
 
 ```text
 POST_V0_7_CURRENT_MAIN_EXTENSION
 DESIGN_APPROVAL_REQUIRES_INDEPENDENT_REVIEW=true
 DESIGN_DOCUMENT_SELF_APPROVAL=false
 IMPLEMENTATION_REQUIRES_POST_MERGE_AUTHORIZATION=true
-RUNTIME_IMPLEMENTED=false
+RUNTIME_IMPLEMENTED=true
 ```
 
 The formally released v0.7.0 `ArtifactClient` continues to be described
 historically by sections 13.1 through 13.11 and shipped with exactly the
-three load methods documented there. The following is a prospective
-current-main extension only; it is not a claim about the published v0.7.0
-artifacts.
+three load methods documented there. The following is implemented on current
+main as a post-v0.7 extension only; it is not a claim about the published
+v0.7.0 artifacts.
 
-After a separately reviewed implementation, the future fourth public
-business method will be:
+The current-main fourth public business method is:
 
 ```python
 ArtifactClient.select_dataset_catalog_entry(
@@ -254,7 +253,7 @@ ArtifactClient.select_dataset_catalog_entry(
 )
 ```
 
-It will use a method-local import of
+It uses a method-local import of
 `market_vault.dataset.dataset_catalog_selection.select_verified_dataset_catalog_entry`,
 pass the exact caller objects/values through, return the exact existing
 `DatasetCatalogSnapshotEntryRecord` unchanged, and propagate
@@ -274,7 +273,8 @@ API-neutral `DatasetCatalogSelectionError(DatasetCatalogError)`, distinct
 from artifact-validation errors.
 
 The zero-argument stateless constructor and all three existing load methods
-remain unchanged. The complete prospective contract, CLI delegation rule,
+remain unchanged. The complete contract, CLI delegation rule,
 non-goals, and mandatory test matrix are frozen in
-`docs/dataset_catalog_selection_api_v1.md`. The release checker update is
-deferred and must be atomic with the actual fourth public method.
+`docs/dataset_catalog_selection_api_v1.md`. The release checker was deferred
+to implementation and is updated atomically with the actual fourth public
+method.

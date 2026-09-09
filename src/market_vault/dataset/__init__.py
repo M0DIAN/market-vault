@@ -278,6 +278,10 @@ from .dataset_catalog_reader_models import (
     DatasetCatalogSnapshotManifestRecord,
     VerifiedDatasetCatalogSnapshot,
 )
+from .dataset_catalog_selection import (
+    DatasetCatalogSelectionError,
+    select_verified_dataset_catalog_entry,
+)
 from .dataset_catalog_snapshot_identity import (
     DATASET_CATALOG_MATERIALIZER_VERSION,
     DATASET_CATALOG_READER_CONTRACT_VERSION,
@@ -699,6 +703,7 @@ __all__ = [
     "DatasetCatalogMaterializationError",
     "DatasetCatalogMaterializationResult",
     "DatasetCatalogObservedMetadata",
+    "DatasetCatalogSelectionError",
     "DatasetCatalogSnapshotEntryRecord",
     "DatasetCatalogSnapshotManifestRecord",
     "DatasetBuildReportRecord",
@@ -797,6 +802,7 @@ __all__ = [
     "pit_sample_version_id",
     "project_dataset_catalog_entry",
     "sample_generation_content_id",
+    "select_verified_dataset_catalog_entry",
     "serialize_dataset_manifest",
     "serialize_sample_generation_plan",
     "split_assignment_content_id",

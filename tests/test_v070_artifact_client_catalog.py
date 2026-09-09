@@ -19,7 +19,7 @@ Covers the frozen PR-4 Catalog reader surface (spec section 13):
   content mutation; M. no files deleted;
 - N. no second trust path: the client never independently parses,
   reads, or re-verifies artifact bytes;
-- O. exactly three public business methods;
+- O. exactly four current-main public business methods;
 - P. no list/show/filter/query convenience API;
 - Q. no settings/root/latest/discovery surface;
 - R. the constructor stays stateless.
@@ -450,8 +450,12 @@ def test_catalog_reader_import_is_method_local_only():
         m.name: m
         for m in ast.walk(tree)
         if isinstance(m, ast.FunctionDef)
-        and m.name in ("load_canonical_build", "load_dataset",
-                       "load_dataset_catalog")
+        and m.name in (
+            "load_canonical_build",
+            "load_dataset",
+            "load_dataset_catalog",
+            "select_dataset_catalog_entry",
+        )
     }
     catalog_method = methods["load_dataset_catalog"]
     body_imports = [
@@ -489,7 +493,8 @@ def test_catalog_method_binding_stays_lightweight_in_fresh_interpreter():
                 "cb = client.load_canonical_build",
                 "ds = client.load_dataset",
                 "cat = client.load_dataset_catalog",
-                "assert callable(cb) and callable(ds) and callable(cat)",
+                "sel = client.select_dataset_catalog_entry",
+                "assert all(callable(x) for x in (cb, ds, cat, sel))",
                 "assert 'market_vault.canonical' not in sys.modules",
                 "assert 'market_vault.dataset' not in sys.modules",
                 "assert 'market_vault.dataset.dataset_catalog_reader' "
@@ -656,7 +661,7 @@ def test_catalog_client_never_parses_bytes_at_runtime(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_public_business_methods_are_exactly_three():
+def test_public_business_methods_are_exactly_four():
     public = sorted(
         n for n in dir(ArtifactClient) if not n.startswith("_")
     )
@@ -664,6 +669,7 @@ def test_public_business_methods_are_exactly_three():
         "load_canonical_build",
         "load_dataset",
         "load_dataset_catalog",
+        "select_dataset_catalog_entry",
     ]
 
 

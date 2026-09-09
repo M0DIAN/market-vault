@@ -3276,8 +3276,8 @@ def test_release_checker_fails_when_client_gets_public_read_method(
     tmp_path,
 ):
     # Mutation guard 10 / PR-3 guard C / PR-4 guard 13: the ArtifactClient
-    # public business method set is frozen at exactly load_canonical_build,
-    # load_dataset and load_dataset_catalog; any extra public method —
+    # current-main public business method set is frozen at exactly the three
+    # released load methods plus select_dataset_catalog_entry; any extra —
     # including a load_dataset_catalog_latest convenience — must fail the
     # checker.
     repo = copy_repo(tmp_path)
@@ -3294,7 +3294,12 @@ def test_release_checker_fails_when_client_gets_public_read_method(
     assert_check_fails(
         _check_release.check_v070_artifact_client_foundation,
         repo,
-        'ArtifactClient public business methods must be exactly load_canonical_build, load_dataset and load_dataset_catalog, with only __init__ as constructor (found: __init__, load_canonical_build, load_dataset, load_dataset_catalog, load_dataset_catalog_latest)',
+        "ArtifactClient public business methods must be exactly "
+        "load_canonical_build, load_dataset, load_dataset_catalog and "
+        "select_dataset_catalog_entry, with only __init__ as constructor "
+        "(found: __init__, load_canonical_build, load_dataset, "
+        "load_dataset_catalog, load_dataset_catalog_latest, "
+        "select_dataset_catalog_entry)",
     )
 
 
@@ -4161,7 +4166,7 @@ def test_release_checker_fails_when_catalog_catches_exception(tmp_path):
 
 def test_release_checker_fails_when_catalog_adds_query_method(tmp_path):
     # PR-4 guard: a Catalog query/filter convenience method must fail the
-    # checker — the public surface is exactly the three verified reads.
+    # checker — current main exposes exactly four business methods.
     repo = copy_repo(tmp_path)
     module = repo / "src" / "market_vault" / "artifact_client.py"
     module.write_text(
@@ -4176,7 +4181,9 @@ def test_release_checker_fails_when_catalog_adds_query_method(tmp_path):
     assert_check_fails(
         _check_release.check_v070_artifact_client_foundation,
         repo,
-        'ArtifactClient public business methods must be exactly load_canonical_build, load_dataset and load_dataset_catalog, with only __init__ as constructor',
+        "ArtifactClient public business methods must be exactly "
+        "load_canonical_build, load_dataset, load_dataset_catalog and "
+        "select_dataset_catalog_entry, with only __init__ as constructor",
     )
 
 
@@ -4197,6 +4204,103 @@ def test_release_checker_fails_when_catalog_parses_files(tmp_path):
         _check_release.check_v070_artifact_client_catalog,
         repo,
         "ArtifactClient.load_dataset_catalog must not independently use the identifier 'hashlib' (no second trust path)",
+    )
+
+
+def test_release_checker_fails_when_selection_method_deleted(tmp_path):
+    repo = copy_repo(tmp_path)
+    module = repo / "src" / "market_vault" / "artifact_client.py"
+    text = module.read_text(encoding="utf-8")
+    text = (
+        text.split("\n    def select_dataset_catalog_entry", 1)[0].rstrip()
+        + "\n"
+    )
+    module.write_text(text, encoding="utf-8")
+    assert_check_fails(
+        _check_release.check_v070_artifact_client_readers,
+        repo,
+        "ArtifactClient.select_dataset_catalog_entry must exist and "
+        "delegate to select_verified_dataset_catalog_entry",
+    )
+
+
+def test_release_checker_fails_when_selection_signature_changes(tmp_path):
+    repo = copy_repo(tmp_path)
+    module = repo / "src" / "market_vault" / "artifact_client.py"
+    module.write_text(
+        module.read_text(encoding="utf-8").replace(
+            "def select_dataset_catalog_entry(self, catalog, dataset_id):",
+            "def select_dataset_catalog_entry(self, catalog, dataset_id, "
+            "latest=False):",
+        ),
+        encoding="utf-8",
+    )
+    assert_check_fails(
+        _check_release.check_v070_artifact_client_foundation,
+        repo,
+        "ArtifactClient.select_dataset_catalog_entry must take exactly "
+        "(self, catalog, dataset_id) and no other arguments",
+    )
+
+
+def test_release_checker_fails_when_selection_import_moves_to_module_level(
+    tmp_path,
+):
+    repo = copy_repo(tmp_path)
+    module = repo / "src" / "market_vault" / "artifact_client.py"
+    module.write_text(
+        module.read_text(encoding="utf-8")
+        + "\nfrom .dataset.dataset_catalog_selection import "
+        "select_verified_dataset_catalog_entry\n",
+        encoding="utf-8",
+    )
+    assert_check_fails(
+        _check_release.check_v070_artifact_client_foundation,
+        repo,
+        "artifact_client.py must not import anything except __future__.annotations",
+    )
+
+
+def test_release_checker_fails_when_selection_result_is_wrapped(tmp_path):
+    repo = copy_repo(tmp_path)
+    module = repo / "src" / "market_vault" / "artifact_client.py"
+    module.write_text(
+        module.read_text(encoding="utf-8").replace(
+            "return select_verified_dataset_catalog_entry(catalog, dataset_id)",
+            "return tuple((select_verified_dataset_catalog_entry("
+            "catalog, dataset_id),))",
+        ),
+        encoding="utf-8",
+    )
+    assert_check_fails(
+        _check_release.check_v070_artifact_client_readers,
+        repo,
+        "ArtifactClient.select_dataset_catalog_entry must return the direct "
+        "select_verified_dataset_catalog_entry(catalog, dataset_id) result "
+        "without wrapping",
+    )
+
+
+def test_release_checker_fails_when_selection_error_is_caught(tmp_path):
+    repo = copy_repo(tmp_path)
+    module = repo / "src" / "market_vault" / "artifact_client.py"
+    module.write_text(
+        module.read_text(encoding="utf-8").replace(
+            "        return select_verified_dataset_catalog_entry(catalog, dataset_id)",
+            "        try:\n"
+            "            return select_verified_dataset_catalog_entry(\n"
+            "                catalog, dataset_id\n"
+            "            )\n"
+            "        except Exception:\n"
+            "            raise\n",
+        ),
+        encoding="utf-8",
+    )
+    assert_check_fails(
+        _check_release.check_v070_artifact_client_foundation,
+        repo,
+        "ArtifactClient methods must not catch or wrap any exception "
+        "(no try/except, formal errors propagate unwrapped)",
     )
 
 

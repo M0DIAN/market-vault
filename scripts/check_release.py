@@ -558,6 +558,9 @@ DATASET_CATALOG_CONTRACT_FACTS = (
     "_SUCCESS",
     "no-overwrite",
     "no latest",
+    "select_verified_dataset_catalog_entry",
+    "DatasetCatalogSelectionError",
+    "RUNTIME_IMPLEMENTED=true",
 )
 # Explicit false claims that the boundary contracts must never contain.
 # The word "implemented" itself is allowed in explanatory text; only these
@@ -1288,6 +1291,7 @@ USER_GUIDE_ARTIFACT_CLIENT_MARKERS = (
     "load_canonical_build(build_dir)",
     "load_dataset(build_dir)",
     "load_dataset_catalog(snapshot_dir)",
+    "select_dataset_catalog_entry(catalog, dataset_id)",
 )
 USER_GUIDE_BOUNDARY_MARKERS = (
     "Bid/Ask",
@@ -1589,6 +1593,10 @@ V070_CONTRACT_FACTS = (
     "`load_canonical_build`",
     "`load_dataset`",
     "`load_dataset_catalog`",
+    "ArtifactClient.select_dataset_catalog_entry(",
+    "select_verified_dataset_catalog_entry",
+    "DatasetCatalogSelectionError",
+    "RUNTIME_IMPLEMENTED=true",
     "`load_verified_canonical_build`",
     "`load_verified_dataset`",
     "`load_verified_dataset_catalog`",
@@ -4537,10 +4545,11 @@ def check_v070_python_api_audit(root: Path) -> list[str]:
 
 
 def _check_artifact_client_module(module: Path) -> list[str]:
-    """AST structural checks for the PR-4 ArtifactClient module: exactly
+    """AST structural checks for the current-main ArtifactClient module: exactly
     one ``ArtifactClient`` class, the stateless ``__slots__ == ()``
     boundary, exactly the frozen method set (``__init__``,
-    ``load_canonical_build``, ``load_dataset``, ``load_dataset_catalog``),
+    ``load_canonical_build``, ``load_dataset``, ``load_dataset_catalog``,
+    ``select_dataset_catalog_entry``),
     a strict zero-argument ``__init__`` whose body performs no work, the
     exact reader method signatures, no try/except anywhere in the class,
     and no module import other than ``from __future__ import
@@ -4573,10 +4582,12 @@ def _check_artifact_client_module(module: Path) -> list[str]:
         "load_canonical_build",
         "load_dataset",
         "load_dataset_catalog",
+        "select_dataset_catalog_entry",
     ]:
         failures.append(
             "ArtifactClient public business methods must be exactly "
-            "load_canonical_build, load_dataset and load_dataset_catalog, "
+            "load_canonical_build, load_dataset, load_dataset_catalog and "
+            "select_dataset_catalog_entry, "
             "with only __init__ as constructor "
             f"(found: {', '.join(names)})"
         )
@@ -4636,6 +4647,11 @@ def _check_artifact_client_module(module: Path) -> list[str]:
             "load_canonical_build": ["self", "build_dir"],
             "load_dataset": ["self", "build_dir"],
             "load_dataset_catalog": ["self", "snapshot_dir"],
+            "select_dataset_catalog_entry": [
+                "self",
+                "catalog",
+                "dataset_id",
+            ],
         }.get(method.name)
         if expected_args is not None:
             args = method.args
@@ -4669,24 +4685,29 @@ def _check_artifact_client_module(module: Path) -> list[str]:
     return failures
 
 
-# The exact formal reader delegation authority per ArtifactClient method:
-# method name -> (relative reader module, formal reader function, the
-# exact argument name the method passes through).
-ARTIFACT_CLIENT_READER_DELEGATIONS = {
+# The exact formal delegation authority per ArtifactClient method:
+# method name -> (relative module, formal function, the exact argument
+# names the method passes through).
+ARTIFACT_CLIENT_DELEGATIONS = {
     "load_canonical_build": (
         ".canonical.reader",
         "load_verified_canonical_build",
-        "build_dir",
+        ("build_dir",),
     ),
     "load_dataset": (
         ".dataset.reader",
         "load_verified_dataset",
-        "build_dir",
+        ("build_dir",),
     ),
     "load_dataset_catalog": (
         ".dataset.dataset_catalog_reader",
         "load_verified_dataset_catalog",
-        "snapshot_dir",
+        ("snapshot_dir",),
+    ),
+    "select_dataset_catalog_entry": (
+        ".dataset.dataset_catalog_selection",
+        "select_verified_dataset_catalog_entry",
+        ("catalog", "dataset_id"),
     ),
 }
 # Identifiers the ArtifactClient production source must never use outside
@@ -4729,10 +4750,10 @@ CLIENT_FORBIDDEN_IDENTIFIERS = (
 
 
 def check_v070_artifact_client_readers(root: Path) -> list[str]:
-    """PR-4 required checks: each ArtifactClient reader method delegates
-    at the actual method-call boundary to the exact formal reader (a
+    """Current-main checks: each ArtifactClient business method delegates
+    at the actual method-call boundary to its exact formal authority (a
     method-local import plus a direct return of the formal call on the
-    method's own argument), and the client source contains no second
+    method's own arguments), and the client source contains no second
     trust path (no independent Path / open / json / hashlib / resolve /
     glob / walk / settings / config / latest / discover / network /
     requests / write / repair / materialize / build identifier use)."""
@@ -4763,8 +4784,8 @@ def check_v070_artifact_client_readers(root: Path) -> list[str]:
         for node in clients[0].body
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
-    for name, (reader_module, reader_func, arg_name) in (
-        ARTIFACT_CLIENT_READER_DELEGATIONS.items()
+    for name, (reader_module, reader_func, arg_names) in (
+        ARTIFACT_CLIENT_DELEGATIONS.items()
     ):
         method = methods.get(name)
         if method is None:
@@ -4794,9 +4815,12 @@ def check_v070_artifact_client_readers(root: Path) -> list[str]:
             and isinstance(node.value, ast.Call)
             and isinstance(node.value.func, ast.Name)
             and node.value.func.id == reader_func
-            and len(node.value.args) == 1
-            and isinstance(node.value.args[0], ast.Name)
-            and node.value.args[0].id == arg_name
+            and len(node.value.args) == len(arg_names)
+            and all(
+                isinstance(argument, ast.Name)
+                and argument.id == arg_name
+                for argument, arg_name in zip(node.value.args, arg_names)
+            )
             and not node.value.keywords
             for node in statements
         )
@@ -4806,9 +4830,10 @@ def check_v070_artifact_client_readers(root: Path) -> list[str]:
                 f"{reader_module!r} at the method-call boundary"
             )
         if not direct_return:
+            call = f"{reader_func}({', '.join(arg_names)})"
             failures.append(
                 f"ArtifactClient.{name} must return the direct "
-                f"{reader_func}({arg_name}) result without wrapping"
+                f"{call} result without wrapping"
             )
     for node in ast.walk(tree):
         identifier = None
