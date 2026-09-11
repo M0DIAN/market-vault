@@ -1,8 +1,9 @@
-"""Focused v0.7.0 PR-4 regression: ArtifactClient verified reader access.
+"""Focused ArtifactClient verified-reader compatibility regression.
 
 Covers the frozen PR-4 reader surface:
 
-- the exact three public business methods and their frozen signatures;
+- the unchanged three released load methods plus the exact current-main
+  selection method and their frozen signatures;
 - direct verbatim delegation: the exact ``build_dir`` / ``snapshot_dir``
   value reaches the formal reader and the exact formal result returns
   unchanged;
@@ -373,7 +374,7 @@ def catalog_snapshot(dataset_build):
 # ---------------------------------------------------------------------------
 
 
-def test_exactly_three_public_read_methods():
+def test_exactly_four_public_business_methods():
     public = sorted(
         n for n in dir(ArtifactClient) if not n.startswith("_")
     )
@@ -381,6 +382,7 @@ def test_exactly_three_public_read_methods():
         "load_canonical_build",
         "load_dataset",
         "load_dataset_catalog",
+        "select_dataset_catalog_entry",
     ]
 
 
@@ -398,6 +400,11 @@ def test_reader_signatures_are_exactly_self_and_the_read_arg():
     assert list(
         inspect.signature(ArtifactClient.load_dataset_catalog).parameters
     ) == ["self", "snapshot_dir"]
+    assert list(
+        inspect.signature(
+            ArtifactClient.select_dataset_catalog_entry
+        ).parameters
+    ) == ["self", "catalog", "dataset_id"]
 
 
 # ---------------------------------------------------------------------------

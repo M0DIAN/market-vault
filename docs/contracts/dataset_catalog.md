@@ -1051,23 +1051,23 @@ swallowed and never converted.
 - The Python Client is a v0.7 direction and is not part of v0.6.0;
   PR-8 integrated acceptance completed in PR #42.
 
-## 26. Post-v0.7 explicit selection extension (design only)
+## 26. Post-v0.7 explicit selection extension (current main)
 
 ```text
 POST_V0_7_CURRENT_MAIN_EXTENSION
 DESIGN_APPROVAL_REQUIRES_INDEPENDENT_REVIEW=true
 DESIGN_DOCUMENT_SELF_APPROVAL=false
 IMPLEMENTATION_REQUIRES_POST_MERGE_AUTHORIZATION=true
-RUNTIME_IMPLEMENTED=false
+RUNTIME_IMPLEMENTED=true
 ```
 
 The v0.6.0 Dataset Catalog contract and the formally released v0.7.0
 `ArtifactClient` did not contain a Python Catalog-entry selection API. The
-prospective V1 contract is defined in
+current-main V1 extension is defined in
 `docs/dataset_catalog_selection_api_v1.md` without changing those historical
 facts.
 
-The future single selection authority is
+The single selection authority is
 `market_vault.dataset.dataset_catalog_selection.select_verified_dataset_catalog_entry`.
 It accepts only an already verified `VerifiedDatasetCatalogSnapshot` and one
 strict lowercase 64-hex `dataset_id`, performs exact equality, requires
@@ -1079,10 +1079,10 @@ The verified reader remains the sole artifact-validation authority. The
 selector does not accept a snapshot path, read files, follow the historical
 `recorded_build_path`, load a Dataset, discover a latest snapshot, or use
 settings, current time, OpenD, or network access. Selection failures use the
-prospective `DatasetCatalogSelectionError(DatasetCatalogError)` and never
+`DatasetCatalogSelectionError(DatasetCatalogError)` and never
 return `None`.
 
-Future `dataset-catalog-show` implementation must delegate its exact lookup
+`dataset-catalog-show` delegates its exact lookup
 to this authority after verified loading while preserving the existing CLI
 arguments, JSON, exit-code, and stdout/stderr contracts. The design changes
 no Dataset Catalog schema, Dataset identity, Catalog content identity,

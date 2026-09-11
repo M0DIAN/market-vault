@@ -1,4 +1,4 @@
-"""MarketVault settings-independent Python artifact client (v0.7.0).
+"""MarketVault settings-independent Python artifact client.
 
 The :class:`ArtifactClient` is the v0.7.0 settings-independent public root
 for read-only verified artifact access. PR-2 shipped the strict
@@ -13,6 +13,12 @@ Catalog verified read:
 - :meth:`ArtifactClient.load_dataset_catalog` delegates verbatim to
   :func:`market_vault.dataset.dataset_catalog_reader.load_verified_dataset_catalog`.
 
+The post-v0.7 current-main extension adds one explicit in-memory selection
+method:
+
+- :meth:`ArtifactClient.select_dataset_catalog_entry` delegates verbatim to
+  :func:`market_vault.dataset.dataset_catalog_selection.select_verified_dataset_catalog_entry`.
+
 The client performs zero artifact validation of its own: the formal
 readers remain the only validation authority, their exceptions propagate
 unwrapped, and nothing is ever written, repaired, or discovered.
@@ -24,15 +30,15 @@ from __future__ import annotations
 
 
 class ArtifactClient:
-    """Settings-independent read-only artifact client (v0.7.0 PR-4).
+    """Settings-independent read-only artifact client.
 
     The constructor takes no arguments and performs no work: no settings,
     no filesystem access, no network, no OpenD, no current time. Instances
     are stateless (``__slots__ = ()``).
 
-    Verified reads are explicit-path only: ``load_canonical_build``,
-    ``load_dataset`` and ``load_dataset_catalog`` delegate directly to the
-    formal verified readers and return their verified objects unchanged.
+    The three released v0.7.0 verified reads remain explicit-path only.
+    The post-v0.7 current-main ``select_dataset_catalog_entry`` method
+    performs explicit exact-ID selection from an already verified Catalog.
     """
 
     __slots__ = ()
@@ -85,3 +91,19 @@ class ArtifactClient:
         from .dataset.dataset_catalog_reader import load_verified_dataset_catalog
 
         return load_verified_dataset_catalog(snapshot_dir)
+
+    def select_dataset_catalog_entry(self, catalog, dataset_id):
+        """Select one exact entry from an already verified Catalog.
+
+        Delegates verbatim to
+        :func:`market_vault.dataset.dataset_catalog_selection.select_verified_dataset_catalog_entry`
+        and returns the exact entry object unchanged. The selector is
+        imported only when this method is actually called, and its
+        :class:`~market_vault.dataset.DatasetCatalogSelectionError`
+        propagates unwrapped.
+        """
+        from .dataset.dataset_catalog_selection import (
+            select_verified_dataset_catalog_entry,
+        )
+
+        return select_verified_dataset_catalog_entry(catalog, dataset_id)

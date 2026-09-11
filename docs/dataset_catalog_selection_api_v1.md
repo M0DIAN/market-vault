@@ -7,15 +7,14 @@ DESIGN_ONLY=true
 DESIGN_APPROVAL_REQUIRES_INDEPENDENT_REVIEW=true
 DESIGN_DOCUMENT_SELF_APPROVAL=false
 IMPLEMENTATION_REQUIRES_POST_MERGE_AUTHORIZATION=true
-RUNTIME_IMPLEMENTED=false
+RUNTIME_IMPLEMENTED=true
 VERSION=0.7.0
 ```
 
-This document prospectively defines the smallest formal Python API for
-selecting exactly one entry from an already verified Dataset Catalog
-snapshot. It is design authority only. It does not implement the API and
-does not change any released artifact, runtime behavior, identity, schema,
-or command output.
+This document defines the smallest formal Python API for selecting exactly
+one entry from an already verified Dataset Catalog snapshot. The current
+main implementation follows this approved design without changing any
+released artifact, identity, schema, or command output.
 
 ## 1. Historical boundary
 
@@ -44,7 +43,7 @@ already verified Dataset Catalog snapshot
 -> one exact verified Catalog entry
 ```
 
-The future formal function is:
+The formal function is:
 
 ```python
 select_verified_dataset_catalog_entry(
@@ -53,19 +52,19 @@ select_verified_dataset_catalog_entry(
 )
 ```
 
-It will live in:
+It lives in:
 
 ```text
 market_vault.dataset.dataset_catalog_selection
 ```
 
-After implementation it will be exported as:
+It is exported as:
 
 ```text
 market_vault.dataset.select_verified_dataset_catalog_entry
 ```
 
-It will not be exported from top-level `market_vault`.
+It is not exported from top-level `market_vault`.
 
 ## 3. Input trust boundary
 
@@ -153,7 +152,7 @@ It does not load a Dataset.
 
 ## 8. Error contract
 
-The future public error is:
+The public error is:
 
 ```python
 class DatasetCatalogSelectionError(DatasetCatalogError):
@@ -203,7 +202,7 @@ by that caller. The recorded historical path is not such authority.
 
 ## 11. ArtifactClient extension
 
-The future fourth public business method is:
+The post-v0.7 current-main fourth public business method is:
 
 ```python
 ArtifactClient.select_dataset_catalog_entry(
@@ -224,7 +223,7 @@ their signatures remain unchanged.
 
 ## 12. One authority shared with the CLI
 
-The future implementation architecture is:
+The current-main implementation architecture is:
 
 ```text
 dataset-catalog-show
@@ -266,7 +265,7 @@ an API server, QML, or production mutation.
 
 ## 14. Identity and artifact compatibility
 
-The future implementation must preserve:
+The implementation preserves:
 
 ```text
 DATASET_CATALOG_SCHEMA_CHANGE_REQUIRED=false
@@ -279,9 +278,9 @@ ARTIFACTCLIENT_CONSTRUCTOR_CHANGE_REQUIRED=false
 No Catalog snapshot or Dataset is rewritten. No artifact migration is
 required.
 
-## 15. Deferred implementation surface
+## 15. Implementation surface
 
-The expected later implementation is limited to:
+The implementation is limited to:
 
 - `src/market_vault/dataset/dataset_catalog_selection.py`;
 - `src/market_vault/dataset/__init__.py`;
@@ -291,8 +290,8 @@ The expected later implementation is limited to:
 - focused selector, ArtifactClient, CLI, and release-checker tests;
 - the current user-facing guide and current-main usage documentation.
 
-The release checker must change atomically with the actual fourth public
-method. It is deliberately unchanged by this design-only PR:
+The design deferred the release-checker change to implementation, and the
+checker changes atomically with the actual fourth public method:
 
 ```text
 RELEASE_CHECKER_CHANGE_DEFERRED_TO_IMPLEMENTATION=true
@@ -304,7 +303,7 @@ v0.7.0 artifacts contained this extension.
 
 ## 16. Mandatory implementation tests
 
-Future implementation must prove:
+The current-main implementation must prove:
 
 - an exact valid `dataset_id` returns the same entry object by identity;
 - missing, uppercase, short, long, and non-hex IDs fail closed;
@@ -324,7 +323,7 @@ Future implementation must prove:
   continues to reject unauthorized convenience/query/discovery methods;
 - the historical v0.7.0 release contracts remain historically accurate.
 
-## 17. Design status
+## 17. Design and implementation status
 
 This design document alone does not authorize implementation or merge;
 design approval and later implementation authorization are established
@@ -336,7 +335,7 @@ DESIGN_ONLY=true
 DESIGN_APPROVAL_REQUIRES_INDEPENDENT_REVIEW=true
 DESIGN_DOCUMENT_SELF_APPROVAL=false
 IMPLEMENTATION_REQUIRES_POST_MERGE_AUTHORIZATION=true
-RUNTIME_IMPLEMENTED=false
+RUNTIME_IMPLEMENTED=true
 VERSION=0.7.0
 ```
 

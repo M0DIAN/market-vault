@@ -35,6 +35,7 @@ import pandas as pd
 import pytest
 
 from market_vault import cli as cli_module
+import market_vault.dataset.dataset_catalog_cli as dataset_catalog_cli_module
 from market_vault.canonical import (
     CanonicalRequestKey,
     load_verified_canonical_build,
@@ -1485,6 +1486,45 @@ def test_list_filters_json_echoes_exact_inputs(catalog_snapshot, capsys):
 # ---------------------------------------------------------------------------
 
 
+def test_show_delegates_once_to_reader_and_formal_selector(
+    catalog_snapshot, monkeypatch
+):
+    verified = catalog_snapshot.verified
+    entry = verified.entries[1]
+    reader_calls = []
+    selector_calls = []
+
+    def reader(snapshot_dir):
+        reader_calls.append(snapshot_dir)
+        return verified
+
+    def selector(catalog, dataset_id):
+        selector_calls.append((catalog, dataset_id))
+        return entry
+
+    monkeypatch.setattr(
+        dataset_catalog_cli_module,
+        "load_verified_dataset_catalog",
+        reader,
+    )
+    monkeypatch.setattr(
+        dataset_catalog_cli_module,
+        "select_verified_dataset_catalog_entry",
+        selector,
+    )
+    args = SimpleNamespace(
+        snapshot_dir=str(catalog_snapshot.snapshot_dir),
+        dataset_id=entry.dataset_id,
+    )
+
+    payload = dataset_catalog_cli_module._run_dataset_catalog_show(args)
+
+    assert reader_calls == [catalog_snapshot.snapshot_dir]
+    assert selector_calls == [(verified, entry.dataset_id)]
+    assert selector_calls[0][0] is verified
+    assert payload["dataset"]["dataset_facts"]["dataset_id"] == entry.dataset_id
+
+
 @pytest.mark.parametrize("index", [0, 1, 2])
 def test_show_first_middle_last_dataset(
     catalog_snapshot, capsys, index
@@ -1620,7 +1660,11 @@ def test_show_missing_dataset_id_exit_one(catalog_snapshot, capsys):
         ],
         capsys,
     )
-    assert_failure(code, out, err, "dataset-catalog-show")
+    payload = assert_failure(code, out, err, "dataset-catalog-show")
+    assert payload["error"] == (
+        "--dataset-id was not found in the verified Dataset Catalog "
+        f"snapshot: {missing}"
+    )
 
 
 def test_show_invalid_dataset_id_exit_two(capsys):

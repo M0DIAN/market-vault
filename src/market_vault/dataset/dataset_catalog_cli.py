@@ -67,8 +67,8 @@ network are never accessed; an empty Catalog or zero matches is a success
 
 ``dataset-catalog-show`` accepts an explicit ``--snapshot-dir`` and one
 strict ``--dataset-id <64-lowercase-hex>`` (``^[0-9a-f]{64}$``; any other
-shape fails at the argparse stage with exit code 2) and performs an exact
-lookup ``entry.dataset_id == requested`` in ``verified.entries`` — never
+shape fails at the argparse stage with exit code 2), then delegates its
+exact lookup to the formal verified-Catalog selection authority — never
 prefix, substring, case-insensitive, latest, or path lookup. A missing id
 fails with :class:`DatasetCatalogCLIError` (exit 1). The ``dataset``
 object carries the complete lossless verified entry: ``content_id``, the
@@ -116,6 +116,10 @@ from .dataset_catalog_reader import load_verified_dataset_catalog
 from .dataset_catalog_reader_models import (
     DatasetCatalogSnapshotEntryRecord,
     VerifiedDatasetCatalogSnapshot,
+)
+from .dataset_catalog_selection import (
+    DatasetCatalogSelectionError,
+    select_verified_dataset_catalog_entry,
 )
 
 __all__ = [
@@ -864,15 +868,19 @@ def _run_dataset_catalog_show(args: argparse.Namespace) -> dict:
         )
     except _DOCUMENTED_ERRORS as exc:
         _as_cli_error(exc, "dataset-catalog-show failed")
-    for entry in verified.entries:
-        if entry.dataset_id == args.dataset_id:
-            payload = _verify_summary("dataset-catalog-show", "SHOWN", verified)
-            payload["dataset"] = _dataset_record_json(entry)
-            return payload
-    raise DatasetCatalogCLIError(
-        f"--dataset-id was not found in the verified Dataset Catalog "
-        f"snapshot: {args.dataset_id}"
-    )
+    try:
+        entry = select_verified_dataset_catalog_entry(
+            verified,
+            args.dataset_id,
+        )
+    except DatasetCatalogSelectionError as exc:
+        raise DatasetCatalogCLIError(
+            f"--dataset-id was not found in the verified Dataset Catalog "
+            f"snapshot: {args.dataset_id}"
+        ) from exc
+    payload = _verify_summary("dataset-catalog-show", "SHOWN", verified)
+    payload["dataset"] = _dataset_record_json(entry)
+    return payload
 
 
 def dataset_catalog_show_main(args: argparse.Namespace) -> int:

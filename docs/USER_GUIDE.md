@@ -523,13 +523,16 @@ market-vault dataset-catalog-show `
 
 ## 14. Python ArtifactClient
 
-settings-independent、只读的 Python artifact 客户端。当前正式公开面（恰好这三个方法）：
+settings-independent、只读的 Python artifact 客户端。正式发布的 v0.7.0
+wheel/sdist 历史上恰好包含三个 load 方法；当前 main 在不改版本号的情况下增加了一个
+post-v0.7 精确 Catalog 条目选择方法：
 
 ```python
 ArtifactClient()
 ArtifactClient.load_canonical_build(build_dir)
 ArtifactClient.load_dataset(build_dir)
 ArtifactClient.load_dataset_catalog(snapshot_dir)
+ArtifactClient.select_dataset_catalog_entry(catalog, dataset_id)
 ```
 
 示例：
@@ -550,12 +553,19 @@ print(dataset.dataset_id, dataset.status, len(dataset.rows))
 
 catalog = client.load_dataset_catalog(Path(r"D:\data\catalog\<snapshot_id>"))
 print(catalog.snapshot_id, catalog.dataset_count)
+
+entry = client.select_dataset_catalog_entry(
+    catalog,
+    "<64-character-lowercase-dataset-id>",
+)
+print(entry.dataset_id, entry.content_id)
 ```
 
 要点：
 
 - **显式最终路径**：每个读取都传入确切的最终 artifact 目录（Canonical 最终构建目录 / `<output_root>/<dataset_id>` / `<output_root>/<snapshot_id>`），绝不传父目录或 `latest` 路径；没有自动发现、没有 settings / 环境变量 / cwd 推导。
 - **验证读取器委托**：`load_canonical_build` → `load_verified_canonical_build`、`load_dataset` → `load_verified_dataset`、`load_dataset_catalog` → `load_verified_dataset_catalog`，返回正式验证对象（`VerifiedCanonicalBuild` / `VerifiedDatasetBuild` / `VerifiedDatasetCatalogSnapshot`）；无客户端解析、无第二信任路径、无异常包装。
+- **精确 Catalog 选择**：`select_dataset_catalog_entry` → `select_verified_dataset_catalog_entry`，只接受已经验证的 `VerifiedDatasetCatalogSnapshot` 与精确 64 位小写 `dataset_id`，返回快照中原有的 `DatasetCatalogSnapshotEntryRecord` 对象；不读取文件、不访问 `recorded_build_path`、不执行 `latest`/过滤查询，也不自动加载 Dataset。
 - **只读**：无写入、无修复、无删除；artifact 不可变，消费代码也不得改写 artifact 文件。
 - **无 latest / settings / 网络 / 当前时间**：构造器零参数、无文件系统访问。
 - **轻量 import**：`import market_vault` 不导入 duckdb / pandas / moomoo / futu；读取器导入发生在实际方法调用边界。
