@@ -66,8 +66,8 @@ individual records.
 
 | Page | URL | Observed heading/version | Capture date |
 | --- | --- | --- | --- |
-| Quotation Definitions | https://openapi.moomoo.com/moomoo-api-doc/en/quote/quote.html | Quotation Definitions, Moomoo API Doc v10.10 | 2026-09-11 |
-| Stock Price Adjustment / Quote Related | https://openapi.moomoo.com/moomoo-api-doc/en/qa/quote.html | Quote Related, Moomoo API Doc v10.10 | 2026-09-11 |
+| Quotation Definitions | https://openapi.moomoo.com/moomoo-api-doc/en/quote/quote.html | Quotation Definitions, Moomoo API Doc v10.9 | 2026-09-11 |
+| Stock Price Adjustment / Quote Related | https://openapi.moomoo.com/moomoo-api-doc/en/qa/quote.html | Quote Related, Moomoo API Doc v10.9 | 2026-09-11 |
 | Get Adjustment Factor | https://openapi.moomoo.com/moomoo-api-doc/en/quote/get-rehab.html | Get Adjustment Factor, Moomoo API Doc v10.10 | 2026-09-11 |
 | Corporate Actions - Dividends | https://openapi.moomoo.com/moomoo-api-doc/en/quote/get-corporate-actions-dividends.html | Get Corporate Actions - Dividends, Moomoo API Doc v10.10 | 2026-09-11 |
 | Corporate Actions - Stock Splits | https://openapi.moomoo.com/moomoo-api-doc/en/quote/get-corporate-actions-stock-splits.html | Get Corporate Actions - Stock Splits, Moomoo API Doc v10.10 | 2026-09-11 |
