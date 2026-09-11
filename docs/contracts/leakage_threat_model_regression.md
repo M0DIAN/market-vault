@@ -249,3 +249,26 @@ its own minimal deterministic fixtures.
 - It does not exhaustively prove that every economically meaningful leak is
   covered.
 - It never accesses real markets or OpenD.
+
+## 17. Current-main adjusted-price as-of policy
+
+`docs/adjusted_price_pit_as_of_policy_v1.md` closes the current policy as
+`MODEL_C_NONE_ONLY`. The existing `PITSampleRequest` rejection of every
+`adjustment != NONE` is the required runtime defense and has no temporary
+override.
+
+The policy preserves `LEAKAGE_ADJUSTMENT_CORPORATE_ACTION` as an active
+threat. A QFQ snapshot fetched later can recalculate earlier prices using
+later adjustment factors; archive capture before `dataset_as_of` proves only
+reproducibility, not that those factors were known by the Feature or Label
+cutoff. The documented HFQ formula does not indicate that later post-bar
+actions rewrite earlier bars, but historical factor revision/as-of safety is
+unproven, so HFQ also remains forbidden for PIT.
+
+Future enablement must add independently authoritative, immutable, versioned,
+identity-bound corporate-action/factor evidence and a corporate-action
+knowledge clock. Feature evidence must be known no later than
+`feature_window_close`; Label evidence no later than `label_window_close`.
+Date-only authority cannot establish same-day intraday knowledge, and
+ambiguous, revised, cancelled, retracted, or conflicting authority must fail
+closed. Existing adjusted artifacts are not automatically qualified.

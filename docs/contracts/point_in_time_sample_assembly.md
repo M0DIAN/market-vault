@@ -339,3 +339,29 @@ without building the final DatasetManifest:
 - adjusted-price as-of policy (only `adjustment = NONE` is allowed);
 - Raw / Curated schema changes, package version bump, dependency changes,
   release preparation.
+
+## 11. Current-main adjusted-price policy closure
+
+The durable current-main policy is defined by
+`docs/adjusted_price_pit_as_of_policy_v1.md`:
+
+```text
+RECOMMENDED_POLICY_MODEL=MODEL_C_NONE_ONLY
+CURRENT_PIT_NONE_ONLY_GUARD=true
+CURRENT_RUNTIME_ALREADY_CONFORMS=true
+QFQ_PIT_ALLOWED=false
+HFQ_PIT_ALLOWED=false
+```
+
+Upstream collection support for QFQ/HFQ and identity binding of the
+`adjustment` mode do not prove historical corporate-action point-in-time
+legality. `market_available_at` proves bar-market availability;
+`archive_available_at` and `dataset_as_of` prove archive reproducibility.
+Neither proves when an adjustment factor or revision became public.
+
+Any future adjusted-price enablement requires an independently authoritative
+and identity-bound corporate-action/factor history, including a distinct
+knowledge clock constrained by `feature_window_close` for Feature rows and
+`label_window_close` for Label rows. `dataset_as_of` remains an independent
+archive cutoff; it must not be redefined as corporate-action knowledge time.
+The current policy requires no PIT, Canonical, Dataset, or version change.
