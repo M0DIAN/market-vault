@@ -644,7 +644,7 @@ def test_version_is_market_vault_070(capsys):
     with pytest.raises(SystemExit) as excinfo:
         cli_module.build_parser().parse_args(["--version"])
     assert excinfo.value.code == 0
-    assert "market-vault 0.7.0" in capsys.readouterr().out
+    assert "market-vault 0.8.0" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------

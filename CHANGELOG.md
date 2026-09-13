@@ -4,6 +4,77 @@ All notable changes to MarketVault are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-09-11
+
+### Added
+
+- Production PySide6/QML Windows desktop with live English/Simplified Chinese
+  localization, native chrome/icon handling, and audited onedir packaging,
+  launcher, and shortcut support.
+- Registered per-symbol market-bar Raw/Curated snapshot pairs with exact run,
+  manifest, and Catalog bindings.
+- Two-phase Safe Purge into same-volume quarantine, superseded-snapshot
+  cleanup, and cross-policy quarantine reconciliation.
+- Timestamp Semantics V2 in the isolated `10.9-mv-ts2` schema cohort,
+  requested-session-safe current-view selection, and sealed US RTH
+  early-close geometry qualification.
+- Exact in-memory Dataset Catalog entry selection through
+  `select_verified_dataset_catalog_entry(...)` and
+  `ArtifactClient.select_dataset_catalog_entry(...)`.
+
+### Changed
+
+- `ArtifactClient` now has four current public business methods while the
+  three v0.7.0 load methods retain their signatures and behavior.
+- CI now uses risk-tier classification, FULL evidence/reuse controls, Python
+  3.14 and PyArrow 24 compatibility surfaces, and stronger repository,
+  destructive-operation, and release governance.
+- DuckDB Catalog initialization performs additive, idempotent setup for
+  registered physical snapshot bindings.
+
+### Fixed
+
+- Declared the Windows Python 3.11 `GetFileAttributesW` ABI explicitly so
+  `INVALID_FILE_ATTRIBUTES` is handled as the unsigned 32-bit sentinel rather
+  than a signed `-1` value.
+- Distinguished confirmed absent paths from other Windows attribute-query
+  failures, preserving fail-closed behavior when reparse status cannot be
+  established.
+- Added explicit Windows Python 3.11 junction/reparse detection to Canonical
+  existing-build verification.
+- Rejected non-escaping Canonical junctions independently of the existing
+  build-root escape defense.
+- Corrected provider endpoint timestamps are mapped to canonical interval
+  starts in TS2 without rewriting legacy `10.9` data.
+- Current market-bar selection distinguishes requested trade date and session
+  and refuses ambiguous duplicate authority.
+- Historical Data UI status follows returned business status rather than only
+  transport completion.
+
+### Compatibility
+
+- Public Python API changes are backward-compatible and additive.
+- Existing Canonical, Dataset, and Dataset Catalog artifacts require no
+  migration; their identities and verified-reader authority remain unchanged.
+- Raw/Curated artifacts are not rewritten. Legacy physical market-bar files
+  remain readable alongside registered per-symbol pairs.
+- Catalog schema initialization is additive and idempotent; it is distinct
+  from immutable artifact migration.
+- TS2 is a new source-schema cohort. Legacy `10.9` files are never relabeled,
+  migrated, or rewritten automatically.
+
+### Known boundaries
+
+- Adjusted-Price PIT policy is `MODEL_C_NONE_ONLY`; QFQ and HFQ PIT remain
+  disabled pending separate corporate-action authority qualification.
+- Cross-day, `TRADING_DAYS`, and `MINUTES` Label execution remain fail closed
+  and are deferred until after v0.8.0.
+- Dataset Catalog Python list/filter convenience APIs, custom transforms,
+  REST, ML training, backtesting, signals, automatic trading, and live
+  microstructure capture are not part of v0.8.0.
+- The Windows production executable follows a separate deployment lifecycle
+  and is not a formal GitHub Release asset.
+
 ## [0.7.0] - 2026-08-09
 
 ### Added
@@ -450,6 +521,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Historical K-line collection for closed dates (`collect`), query layer
   (`query`), and option datasets.
 
+[0.8.0]: https://github.com/M0DIAN/market-vault/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/M0DIAN/market-vault/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/M0DIAN/market-vault/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/M0DIAN/market-vault/compare/v0.5.1...v0.6.0

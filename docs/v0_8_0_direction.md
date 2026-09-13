@@ -1,18 +1,20 @@
 # MarketVault v0.8.0 Release Direction
 
-Status: design-only release-direction and compatibility-scope freeze.
+Status: scope frozen on main; Stage 2 release-preparation candidate.
 
 ```text
 FORMAL_V070_RELEASE_SHA=f25a50481b5ee718881acf5cb5ea5aa05bd32d93
 V080_DIRECTION_BASE_SHA=1f4da9154cdbe4a9b48e025a4777562fed0ef305
 V080_DIRECTION_BASE_TREE=1914566269b84ac31b9bf2fe4fc210daaf1cd133
 COMMITS_SINCE_V070=93
-CURRENT_PACKAGE_VERSION=0.7.0
+DIRECTION_BASE_PACKAGE_VERSION=0.7.0
+CURRENT_PACKAGE_VERSION=0.8.0
 TARGET_VERSION=0.8.0
 SEMVER_CLASS=MINOR
 RELEASE_MODEL=MODEL_RELEASE_FIRST
 DIRECTION_DOCUMENT_SELF_AUTHORIZATION=false
 RELEASE_PREPARATION_REQUIRES_POST_MERGE_AUTHORIZATION=true
+RELEASE_PREPARATION_STAGE=STAGE_2_CANDIDATE
 FORMAL_RELEASE_REQUIRES_SEPARATE_EXPLICIT_GATE=true
 ```
 
@@ -42,10 +44,11 @@ in historical v0.7.0 direction, audit, usage, or release records.
 
 ### POST_V070_CURRENT_MAIN
 
-The direction base contains 93 commits after the formal v0.7.0 release. It is
-still package version `0.7.0`; this current-main increment has not yet been
-published as v0.8.0. It contains the reviewed capabilities listed in section
-3 and is the product baseline proposed for stabilization and formal release.
+The direction base contains 93 commits after the formal v0.7.0 release and
+was frozen while package version was still `0.7.0`. Stage 2 changes only the
+release-preparation surface and sets the candidate package version to `0.8.0`;
+it does not publish v0.8.0. The reviewed capabilities listed in section 3 are
+the product baseline proposed for formal release.
 
 ### V080_RELEASE_SCOPE
 
@@ -75,9 +78,9 @@ and governance capabilities. It is therefore broader than a `0.7.1` patch.
 No intentional incompatible public-contract reset has been approved, so
 `1.0.0` is not justified by this scope.
 
-The package remains `0.7.0` in this direction PR. The `0.7.0` to `0.8.0`
-version change belongs only to an explicitly authorized release-preparation
-PR.
+The `0.7.0` to `0.8.0` version change is confined to the explicitly
+authorized Stage 2 release-preparation PR. Tagging, GitHub Release publication,
+and distribution publication remain later explicit gates.
 
 ## 3. V0.8.0 included scope
 
@@ -314,5 +317,5 @@ TESTPYPI_PUBLICATION_DECISION=SEPARATE_EXPLICIT_GATE
 WINDOWS_PRODUCTION_DEPLOYMENT_IS_GITHUB_RELEASE_ASSET=false
 ```
 
-Until a later authorized release-preparation PR changes it, the source package
-version remains `0.7.0`.
+The Stage 2 source/package candidate version is `0.8.0`. This version identity
+does not assert that the tag or formal GitHub Release exists.
