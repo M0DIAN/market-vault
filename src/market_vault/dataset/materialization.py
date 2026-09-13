@@ -930,19 +930,38 @@ def _is_junction_or_reparse(path: Path) -> bool:
         return path.is_junction()
     if os.name != "nt":
         return False
+    file_attribute_reparse_point = 0x400
+    return bool(_windows_file_attributes(path) & file_attribute_reparse_point)
+
+
+def _windows_file_attributes(path: Path) -> int:
+    """Return Win32 file attributes, allowing only a confirmed missing path."""
     import ctypes as _ctypes
 
-    file_attribute_reparse_point = 0x400
+    invalid_file_attributes = 0xFFFFFFFF
+    absent_path_errors = frozenset({2, 3, 123})
     try:
-        attributes = _ctypes.windll.kernel32.GetFileAttributesW(str(path))
+        kernel32 = _ctypes.WinDLL("kernel32", use_last_error=True)
+        get_file_attributes = kernel32.GetFileAttributesW
+        get_file_attributes.argtypes = (_ctypes.c_wchar_p,)
+        get_file_attributes.restype = _ctypes.c_uint32
+        _ctypes.set_last_error(0)
+        attributes = int(get_file_attributes(str(path)))
+        error_code = int(_ctypes.get_last_error())
     except (AttributeError, OSError, TypeError) as exc:
         raise DatasetMaterializationError(
             f"cannot verify the Windows reparse-point status of {path}; "
             "failing closed"
         ) from exc
-    if attributes == 0xFFFFFFFF:  # INVALID_FILE_ATTRIBUTES: not present
-        return False
-    return bool(attributes & file_attribute_reparse_point)
+    if attributes == invalid_file_attributes:
+        if error_code in absent_path_errors and not os.path.lexists(path):
+            return 0
+        raise DatasetMaterializationError(
+            f"cannot verify the Windows reparse-point status of {path}: "
+            f"INVALID_FILE_ATTRIBUTES (Windows error {error_code}); "
+            "failing closed"
+        )
+    return attributes
 
 
 def _reject_symlink(path: Path, label: str) -> None:
