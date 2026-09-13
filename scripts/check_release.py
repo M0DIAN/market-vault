@@ -23,7 +23,7 @@ import sys
 import tomllib
 from pathlib import Path
 
-EXPECTED_VERSION = "0.7.0"
+EXPECTED_VERSION = "0.8.0"
 PEP440_RE = re.compile(
     r"^([1-9]\d*!)?(0|[1-9]\d*)(\.(0|[1-9]\d*))*((a|b|rc)(0|[1-9]\d*))?"
     r"(\.post(0|[1-9]\d*))?(\.dev(0|[1-9]\d*))?$"
@@ -56,6 +56,47 @@ CI_V070_CATALOG_CLIENT_IMPORT_LINES = (
     "cat = client.load_dataset_catalog",
     "assert callable(cb) and callable(ds) and callable(cat)",
     "print('V070_CATALOG_CLIENT_IMPORT_OK')",
+)
+CI_V080_RELEASE_PREP_MARKER = "V080_RELEASE_PREP_OK"
+CI_V080_PUBLIC_API_MARKER = "V080_CURRENT_PUBLIC_API_OK"
+CI_V080_PUBLIC_API_LINES = (
+    "'load_canonical_build'",
+    "'load_dataset'",
+    "'load_dataset_catalog'",
+    "'select_dataset_catalog_entry'",
+    "assert public == methods",
+)
+V080_DIRECTION_FACTS = (
+    "# MarketVault v0.8.0 Release Direction",
+    "Status: scope frozen on main; Stage 2 release-preparation candidate.",
+    "CURRENT_PACKAGE_VERSION=0.8.0",
+    "TARGET_VERSION=0.8.0",
+    "SEMVER_CLASS=MINOR",
+    "RELEASE_MODEL=MODEL_RELEASE_FIRST",
+    "FORMAL_RELEASE_REQUIRES_SEPARATE_EXPLICIT_GATE=true",
+)
+V080_RELEASE_NOTES_FACTS = (
+    "# MarketVault v0.8.0 Release Notes",
+    "Status: Stage 2 release-preparation candidate; formal release gate pending.",
+    "RELEASE_PREPARATION_BASE_SHA=1eb3dec68816b133bb97e05d7422184d3815e9dc",
+    "RELEASE_PREPARATION_BASE_TREE=9f3f811606b1329b4e5565d42065419d5377bb2b",
+    "RELEASE_BLOCKER_PR_153=CLOSED",
+    "WINDOWS_PY311_REPARSE_RELEASE_BLOCKER=CLOSED",
+    "FORMAL_V070_RELEASE_SHA=f25a50481b5ee718881acf5cb5ea5aa05bd32d93",
+    "CANDIDATE_VERSION=0.8.0",
+    "PUBLIC_PYTHON_API=BACKWARD_COMPATIBLE_ADDITIVE",
+    "ARTIFACTCLIENT_BUSINESS_METHOD_COUNT=4",
+    "CANONICAL_ARTIFACT_MIGRATION_REQUIRED=false",
+    "DATASET_ARTIFACT_MIGRATION_REQUIRED=false",
+    "DATASET_CATALOG_ARTIFACT_MIGRATION_REQUIRED=false",
+    "RAW_CURATED_ARTIFACT_REWRITE_REQUIRED=false",
+    "DUCKDB_CATALOG_SCHEMA_INITIALIZATION_REQUIRED=true",
+    "DUCKDB_CATALOG_SCHEMA_CHANGE_KIND=ADDITIVE_IDEMPOTENT",
+    "TS2_MODEL=NEW_SCHEMA_COHORT",
+    "LEGACY_10_9_REWRITTEN=false",
+    "QFQ_PIT_ALLOWED=false",
+    "HFQ_PIT_ALLOWED=false",
+    "WINDOWS_PRODUCTION_DEPLOYMENT_IS_GITHUB_RELEASE_ASSET=false",
 )
 # The exact NumPy timedelta warning-as-error guard that must stay in
 # pyproject.toml; an ignore-based substitute is never accepted.
@@ -1879,6 +1920,10 @@ def check_changelog(root: Path) -> list[str]:
         return ["CHANGELOG.md is missing"]
     text = path.read_text(encoding="utf-8")
     failures = []
+    if "## [0.8.0] - 2026-09-11" not in text:
+        failures.append("CHANGELOG.md is missing '## [0.8.0] - 2026-09-11'")
+    if "[0.8.0]: https://github.com/M0DIAN/market-vault/compare/v0.7.0...v0.8.0" not in text:
+        failures.append("CHANGELOG.md is missing the v0.8.0 compare link")
     if "## [0.7.0] - 2026-08-09" not in text:
         failures.append("CHANGELOG.md is missing '## [0.7.0] - 2026-08-09'")
     if "[0.7.0]: https://github.com/M0DIAN/market-vault/compare/v0.6.1...v0.7.0" not in text:
@@ -1933,7 +1978,14 @@ def check_readme_landing_page(root: Path) -> list[str]:
         return ["README.md is missing"]
     text = path.read_text(encoding="utf-8")
     failures = []
-    for marker in ("docs/USER_GUIDE.md", "CHANGELOG.md", "v0.7.0"):
+    for marker in (
+        "docs/USER_GUIDE.md",
+        "CHANGELOG.md",
+        "docs/v0_8_0_direction.md",
+        "docs/release_v0_8_0.md",
+        "Package candidate version: v0.8.0",
+        "Current formal release: v0.7.0",
+    ):
         if marker not in text:
             failures.append(f"README does not contain the landing-page marker {marker!r}")
     for phrase in (
@@ -4219,6 +4271,74 @@ def check_ci_v070_public_api_smoke(root: Path) -> list[str]:
     return failures
 
 
+def check_v080_release_preparation_docs(root: Path) -> list[str]:
+    """The Stage 2 candidate records scope, compatibility, and pending gates."""
+    failures: list[str] = []
+    direction = root / "docs" / "v0_8_0_direction.md"
+    notes = root / "docs" / "release_v0_8_0.md"
+    if not direction.exists():
+        failures.append("docs/v0_8_0_direction.md is missing")
+    else:
+        failures.extend(
+            _check_marker_facts(
+                "docs/v0_8_0_direction.md",
+                direction,
+                V080_DIRECTION_FACTS,
+                "v0.8.0 direction fact",
+            )
+        )
+    if not notes.exists():
+        failures.append("docs/release_v0_8_0.md is missing")
+    else:
+        failures.extend(
+            _check_marker_facts(
+                "docs/release_v0_8_0.md",
+                notes,
+                V080_RELEASE_NOTES_FACTS,
+                "v0.8.0 release-preparation fact",
+            )
+        )
+        text = notes.read_text(encoding="utf-8")
+        for forbidden in (
+            "V080_RELEASED_OK",
+            "FORMAL_V080_RELEASE_SHA=",
+            "V080_TAG_OBJECT_SHA=",
+            "GITHUB_RELEASE_ID=",
+            "PUBLISHED_AT=",
+        ):
+            if forbidden in text:
+                failures.append(
+                    "docs/release_v0_8_0.md contains premature formal-release "
+                    f"identity {forbidden!r}"
+                )
+    return failures
+
+
+def check_ci_v080_release_preparation(root: Path) -> list[str]:
+    """Fresh-wheel CI proves the current v0.8 candidate's four-method API."""
+    path = root / ".github" / "workflows" / "ci.yml"
+    if not path.exists():
+        return [".github/workflows/ci.yml is missing"]
+    text = path.read_text(encoding="utf-8")
+    failures: list[str] = []
+    if CI_V080_RELEASE_PREP_MARKER not in text:
+        failures.append(
+            f"CI package job must carry the {CI_V080_RELEASE_PREP_MARKER} marker"
+        )
+    if CI_V080_PUBLIC_API_MARKER not in text:
+        failures.append(
+            f"CI fresh-wheel smoke must carry the {CI_V080_PUBLIC_API_MARKER} marker"
+        )
+    for line in CI_V080_PUBLIC_API_LINES:
+        if line not in text:
+            failures.append(f"CI v0.8 public API smoke must run {line}")
+    if "V080_RELEASED_OK" in text:
+        failures.append(
+            "CI must not claim V080_RELEASED_OK during release preparation"
+        )
+    return failures
+
+
 def check_old_release_notes(root: Path) -> list[str]:
     failures = []
     if not (root / "docs" / "release_v0_5_0.md").exists():
@@ -5410,6 +5530,7 @@ CHECKS = (
     ("v0.7.0 ArtifactClient catalog", check_v070_artifact_client_catalog),
     ("v0.7.0 Python client usage doc", check_v070_python_client_usage_doc),
     ("v0.7.0 Python client examples", check_v070_python_client_examples),
+    ("v0.8.0 release preparation docs", check_v080_release_preparation_docs),
     ("CI auditability", check_ci_auditability),
     ("v0.6.1 CI package audit", check_v061_ci_package_audit),
     ("v0.6.0 ADR", check_v060_adr),
@@ -5429,6 +5550,7 @@ CHECKS = (
     ("CI Python 3.14 compatibility surface", check_ci_python314_surface),
     ("CI v0.7.0 released state", check_ci_v070_released_state),
     ("CI v0.7.0 public API smoke", check_ci_v070_public_api_smoke),
+    ("CI v0.8.0 release preparation", check_ci_v080_release_preparation),
     ("old release notes", check_old_release_notes),
     ("warning guard", check_warning_guard),
     ("examples", check_examples),

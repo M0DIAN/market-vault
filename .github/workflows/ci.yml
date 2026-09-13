@@ -559,8 +559,8 @@ jobs:
           .release-venv/bin/market-vault dataset-catalog-verify --help
           .release-venv/bin/market-vault dataset-catalog-list --help
           .release-venv/bin/market-vault dataset-catalog-show --help
-          .release-venv/bin/python -c "import market_vault; assert market_vault.__version__ == '0.7.0'"
-          .release-venv/bin/python -c "from importlib.metadata import version; assert version('market-vault') == '0.7.0'"
+          .release-venv/bin/python -c "import market_vault; assert market_vault.__version__ == '0.8.0'"
+          .release-venv/bin/python -c "from importlib.metadata import version; assert version('market-vault') == '0.8.0'"
 
       - name: Fresh-wheel public API smoke check
         if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
@@ -628,6 +628,22 @@ jobs:
           print('V070_CATALOG_CLIENT_IMPORT_OK')
           "
           .release-venv/bin/python -c "
+          from market_vault import ArtifactClient
+          client = ArtifactClient()
+          methods = (
+              'load_canonical_build',
+              'load_dataset',
+              'load_dataset_catalog',
+              'select_dataset_catalog_entry',
+          )
+          assert all(callable(getattr(client, name)) for name in methods)
+          public = tuple(
+              name for name in dir(ArtifactClient) if not name.startswith('_')
+          )
+          assert public == methods
+          print('V080_CURRENT_PUBLIC_API_OK')
+          "
+          .release-venv/bin/python -c "
           from market_vault.dataset.dataset_catalog_cli import (
               DATASET_CATALOG_COMMANDS,
           )
@@ -641,6 +657,7 @@ jobs:
           echo 'PR7_CATALOG_CLI_HELP_OK'
           echo 'PR8_INTEGRATED_ACCEPTANCE_OK'
           echo 'V070_RELEASED_OK'
+          echo 'V080_RELEASE_PREP_OK'
 
       - name: Check wheel contents exclude local data
         if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'

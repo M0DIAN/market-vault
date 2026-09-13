@@ -57,7 +57,7 @@ _check_release = _load_check_release()
 
 
 SRC = ROOT / "src"
-EXPECTED_VERSION = "0.7.0"
+EXPECTED_VERSION = "0.8.0"
 PUBLIC_API_IMPORT_CODE = "\n".join(
     [
         "from market_vault.canonical import load_verified_canonical_build",
@@ -598,20 +598,20 @@ def test_release_checker_passes_on_current_repo():
     assert f"RELEASE_CHECK_OK version={EXPECTED_VERSION}" in result.stdout
 
 
-def test_release_checker_output_is_exactly_release_check_ok_v070():
+def test_release_checker_output_is_exactly_release_check_ok_v080():
     result = run_check_release(ROOT)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert result.stdout.strip() == "RELEASE_CHECK_OK version=0.7.0"
+    assert result.stdout.strip() == "RELEASE_CHECK_OK version=0.8.0"
 
 
 def test_release_checker_fails_on_version_mismatch(tmp_path):
     repo = copy_repo(tmp_path)
     pyproject = repo / "pyproject.toml"
     text = pyproject.read_text(encoding="utf-8")
-    pyproject.write_text(text.replace('version = "0.7.0"', 'version = "9.9.9"'), encoding="utf-8")
+    pyproject.write_text(text.replace('version = "0.8.0"', 'version = "9.9.9"'), encoding="utf-8")
     version_file = repo / "src" / "market_vault" / "_version.py"
     version_file.write_text(
-        version_file.read_text(encoding="utf-8").replace('"0.7.0"', '"9.9.9"'),
+        version_file.read_text(encoding="utf-8").replace('"0.8.0"', '"9.9.9"'),
         encoding="utf-8",
     )
     result = run_check_release(repo)
@@ -624,7 +624,7 @@ def test_release_checker_fails_on_cli_version_mismatch(tmp_path):
     repo = copy_repo(tmp_path)
     version_file = repo / "src" / "market_vault" / "_version.py"
     version_file.write_text(
-        version_file.read_text(encoding="utf-8").replace('"0.7.0"', '"9.9.9"'),
+        version_file.read_text(encoding="utf-8").replace('"0.8.0"', '"9.9.9"'),
         encoding="utf-8",
     )
     assert_check_fails(_check_release.check_cli_version, repo, "CLI --version output")
@@ -691,7 +691,7 @@ def test_release_checker_fails_on_old_ci_version_assertion(tmp_path):
     repo = copy_repo(tmp_path)
     ci = repo / ".github" / "workflows" / "ci.yml"
     text = ci.read_text(encoding="utf-8")
-    ci.write_text(text.replace("'0.7.0'", "'0.3.0'"), encoding="utf-8")
+    ci.write_text(text.replace("'0.8.0'", "'0.3.0'"), encoding="utf-8")
     result = run_check_release(repo)
     assert result.returncode == 1
     assert "package module version assertion" in result.stdout
@@ -705,7 +705,7 @@ def test_release_checker_fails_on_wrong_package_assertion_only(tmp_path):
     text = ci.read_text(encoding="utf-8")
     ci.write_text(
         text.replace(
-            "assert market_vault.__version__ == '0.7.0'",
+            "assert market_vault.__version__ == '0.8.0'",
             "assert market_vault.__version__ == '9.9.9'",
         ),
         encoding="utf-8",
@@ -725,7 +725,7 @@ def test_release_checker_fails_on_wrong_metadata_assertion_only(tmp_path):
     text = ci.read_text(encoding="utf-8")
     ci.write_text(
         text.replace(
-            "assert version('market-vault') == '0.7.0'",
+            "assert version('market-vault') == '0.8.0'",
             "assert version('market-vault') == '9.9.9'",
         ),
         encoding="utf-8",
@@ -763,7 +763,7 @@ def test_release_checker_reports_all_failures_at_once(tmp_path):
     repo = copy_repo(tmp_path)
     pyproject = repo / "pyproject.toml"
     pyproject.write_text(
-        pyproject.read_text(encoding="utf-8").replace('version = "0.7.0"', 'version = "9.9.9"'),
+        pyproject.read_text(encoding="utf-8").replace('version = "0.8.0"', 'version = "9.9.9"'),
         encoding="utf-8",
     )
     (repo / "CHANGELOG.md").unlink()
@@ -2174,14 +2174,14 @@ def test_release_checker_fails_when_version_reverts_to_060(tmp_path):
     pyproject = repo / "pyproject.toml"
     pyproject.write_text(
         pyproject.read_text(encoding="utf-8").replace(
-            'version = "0.7.0"', 'version = "0.6.0"'
+            'version = "0.8.0"', 'version = "0.6.0"'
         ),
         encoding="utf-8",
     )
     version_file = repo / "src" / "market_vault" / "_version.py"
     version_file.write_text(
         version_file.read_text(encoding="utf-8").replace(
-            '"0.7.0"', '"0.6.0"'
+            '"0.8.0"', '"0.6.0"'
         ),
         encoding="utf-8",
     )
@@ -2324,7 +2324,7 @@ def test_release_checker_fails_when_ci_wheel_assertion_reverts_to_060(
     repo = copy_repo(tmp_path)
     ci = repo / ".github" / "workflows" / "ci.yml"
     ci.write_text(
-        ci.read_text(encoding="utf-8").replace("'0.7.0'", "'0.6.0'"),
+        ci.read_text(encoding="utf-8").replace("'0.8.0'", "'0.6.0'"),
         encoding="utf-8",
     )
     assert_check_fails(
@@ -2837,20 +2837,19 @@ def test_release_checker_fails_when_v070_sequence_tampered(tmp_path):
 
 
 def test_release_checker_fails_when_package_reverts_to_061(tmp_path):
-    # PR-6 guard: reverting the current package back to 0.6.1 must fail
-    # the checker: the package is 0.7.0 in the PR-6 release preparation.
+    # Current-release guard: reverting the package to 0.6.1 must fail.
     repo = copy_repo(tmp_path)
     pyproject = repo / "pyproject.toml"
     pyproject.write_text(
         pyproject.read_text(encoding="utf-8").replace(
-            'version = "0.7.0"', 'version = "0.6.1"'
+            'version = "0.8.0"', 'version = "0.6.1"'
         ),
         encoding="utf-8",
     )
     version_file = repo / "src" / "market_vault" / "_version.py"
     version_file.write_text(
         version_file.read_text(encoding="utf-8").replace(
-            '"0.7.0"', '"0.6.1"'
+            '"0.8.0"', '"0.6.1"'
         ),
         encoding="utf-8",
     )
@@ -5120,12 +5119,15 @@ def test_renderer_contains_hardening_markers():
     assert "render_plans: error:" in text
 
 
-def test_ci_contains_061_assertions_and_marker():
+def test_ci_contains_current_assertions_and_historical_markers():
     text = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    assert "assert market_vault.__version__ == '0.7.0'" in text
-    assert "assert version('market-vault') == '0.7.0'" in text
+    assert "assert market_vault.__version__ == '0.8.0'" in text
+    assert "assert version('market-vault') == '0.8.0'" in text
     assert "V061_PUBLIC_API_IMPORT_OK" in text
     assert "V070_RELEASED_OK" in text
+    assert "V080_RELEASE_PREP_OK" in text
+    assert "V080_CURRENT_PUBLIC_API_OK" in text
+    assert "'select_dataset_catalog_entry'" in text
     assert "V070_RELEASE_PREP_OK" not in text
     assert "V061_RELEASE_STATE_OK" not in text
     assert "V061_RELEASE_PREP_OK" not in text
@@ -5328,7 +5330,7 @@ def test_release_checker_fails_when_ci_reverts_to_v051(tmp_path):
     repo = copy_repo(tmp_path)
     ci = repo / ".github" / "workflows" / "ci.yml"
     text = ci.read_text(encoding="utf-8")
-    ci.write_text(text.replace("'0.7.0'", "'0.5.1'"), encoding="utf-8")
+    ci.write_text(text.replace("'0.8.0'", "'0.5.1'"), encoding="utf-8")
     assert_check_fails(
         _check_release.check_ci_version_assertions,
         repo,
@@ -9072,6 +9074,7 @@ EXPECTED_CHECKS = (
     ("v0.7.0 ArtifactClient catalog", "check_v070_artifact_client_catalog"),
     ("v0.7.0 Python client usage doc", "check_v070_python_client_usage_doc"),
     ("v0.7.0 Python client examples", "check_v070_python_client_examples"),
+    ("v0.8.0 release preparation docs", "check_v080_release_preparation_docs"),
     ("CI auditability", "check_ci_auditability"),
     ("v0.6.1 CI package audit", "check_v061_ci_package_audit"),
     ("v0.6.0 ADR", "check_v060_adr"),
@@ -9091,6 +9094,7 @@ EXPECTED_CHECKS = (
     ("CI Python 3.14 compatibility surface", "check_ci_python314_surface"),
     ("CI v0.7.0 released state", "check_ci_v070_released_state"),
     ("CI v0.7.0 public API smoke", "check_ci_v070_public_api_smoke"),
+    ("CI v0.8.0 release preparation", "check_ci_v080_release_preparation"),
     ("old release notes", "check_old_release_notes"),
     ("warning guard", "check_warning_guard"),
     ("examples", "check_examples"),
