@@ -1,6 +1,6 @@
 # MarketVault v0.8.0 Release Direction
 
-Status: scope frozen on main; Stage 2 release-preparation candidate.
+Status: v0.8.0 formally released; release direction closed.
 
 ```text
 FORMAL_V070_RELEASE_SHA=f25a50481b5ee718881acf5cb5ea5aa05bd32d93
@@ -14,14 +14,16 @@ SEMVER_CLASS=MINOR
 RELEASE_MODEL=MODEL_RELEASE_FIRST
 DIRECTION_DOCUMENT_SELF_AUTHORIZATION=false
 RELEASE_PREPARATION_REQUIRES_POST_MERGE_AUTHORIZATION=true
-RELEASE_PREPARATION_STAGE=STAGE_2_CANDIDATE
-FORMAL_RELEASE_REQUIRES_SEPARATE_EXPLICIT_GATE=true
+V080_SCOPE_FROZEN=true
+FORMAL_V080_RELEASE_COMMIT=90230ce1b55e63da0c583eaac8e94b64f6f4c2f9
+FORMAL_V080_RELEASED=true
+DIRECTION_WORKSTREAM=CLOSED
 ```
 
-This document freezes the intended next formal release boundary. The direction
-base is a reviewed product baseline, not a release commit, tag, package, or
-published v0.8.0 artifact. This document alone does not authorize release
-preparation, a version change, tagging, publication, or production work.
+This document froze the v0.8.0 release boundary. The direction base remains a
+reviewed historical product baseline, not the release commit. The formal
+v0.8.0 release was sealed at the commit recorded above. This document does not
+authorize mutation of the tag, GitHub Release, release assets, or production.
 
 ## 1. Historical boundary
 
@@ -45,10 +47,10 @@ in historical v0.7.0 direction, audit, usage, or release records.
 ### POST_V070_CURRENT_MAIN
 
 The direction base contains 93 commits after the formal v0.7.0 release and
-was frozen while package version was still `0.7.0`. Stage 2 changes only the
-release-preparation surface and sets the candidate package version to `0.8.0`;
-it does not publish v0.8.0. The reviewed capabilities listed in section 3 are
-the product baseline proposed for formal release.
+was frozen while package version was still `0.7.0`. Stage 2 changed only the
+release-preparation surface and set the candidate package version to `0.8.0`.
+The reviewed capabilities listed in section 3 became the formally released
+v0.8.0 product scope.
 
 ### V080_RELEASE_SCOPE
 
@@ -254,16 +256,18 @@ release-governance change.
 
 ## 8. Release sequence
 
+The following stages preserve the reviewed sequence used to reach the sealed
+formal release.
+
 ### STAGE_1: direction and compatibility scope freeze
 
-This docs-only PR records the intended v0.8.0 scope, compatibility effects,
-non-goals, and sequence. It does not change the package version or authorize
-later stages.
+The docs-only direction PR recorded the intended v0.8.0 scope, compatibility
+effects, non-goals, and sequence without changing the package version.
 
 ### STAGE_2: release preparation
 
 After Stage 1 independent review, merge, and separate post-merge
-authorization, a focused release-preparation PR may include:
+authorization, the focused release-preparation PR included:
 
 - package version `0.7.0` to `0.8.0`;
 - a v0.8.0 CHANGELOG section;
@@ -274,13 +278,14 @@ authorization, a focused release-preparation PR may include:
 
 ### STAGE_3: exact-main verification
 
-After the release-preparation PR merges, verify the exact formal main commit,
-its tree, single-parent identity as applicable, and natural main push CI. Any
-drift invalidates downstream release authorization.
+After the release-preparation PR merged, the exact formal main commit, tree,
+single-parent identity, and natural main push CI were verified before release
+authorization.
 
 ### STAGE_4: immutable formal release gate
 
-Only after a separate formal release authorization:
+After separate formal release authorization, Stage 4 performed this sealed
+sequence:
 
 1. create a clean detached checkout at the exact release commit;
 2. build and validate a fresh wheel and sdist;
@@ -289,8 +294,7 @@ Only after a separate formal release authorization:
 5. publish the GitHub Release with exactly those three assets; and
 6. download and re-hash the published assets to close identity.
 
-PyPI and TestPyPI remain separate explicit decisions after the formal release
-gate.
+PyPI and TestPyPI remain unpublished and require separate explicit decisions.
 
 ## 9. Blocker rule
 

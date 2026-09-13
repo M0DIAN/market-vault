@@ -5125,7 +5125,8 @@ def test_ci_contains_current_assertions_and_historical_markers():
     assert "assert version('market-vault') == '0.8.0'" in text
     assert "V061_PUBLIC_API_IMPORT_OK" in text
     assert "V070_RELEASED_OK" in text
-    assert "V080_RELEASE_PREP_OK" in text
+    assert "V080_RELEASED_OK" in text
+    assert "V080_RELEASE_PREP_OK" not in text
     assert "V080_CURRENT_PUBLIC_API_OK" in text
     assert "'select_dataset_catalog_entry'" in text
     assert "V070_RELEASE_PREP_OK" not in text
@@ -9074,7 +9075,7 @@ EXPECTED_CHECKS = (
     ("v0.7.0 ArtifactClient catalog", "check_v070_artifact_client_catalog"),
     ("v0.7.0 Python client usage doc", "check_v070_python_client_usage_doc"),
     ("v0.7.0 Python client examples", "check_v070_python_client_examples"),
-    ("v0.8.0 release preparation docs", "check_v080_release_preparation_docs"),
+    ("v0.8.0 released-state docs", "check_v080_released_state_docs"),
     ("CI auditability", "check_ci_auditability"),
     ("v0.6.1 CI package audit", "check_v061_ci_package_audit"),
     ("v0.6.0 ADR", "check_v060_adr"),
@@ -9094,7 +9095,7 @@ EXPECTED_CHECKS = (
     ("CI Python 3.14 compatibility surface", "check_ci_python314_surface"),
     ("CI v0.7.0 released state", "check_ci_v070_released_state"),
     ("CI v0.7.0 public API smoke", "check_ci_v070_public_api_smoke"),
-    ("CI v0.8.0 release preparation", "check_ci_v080_release_preparation"),
+    ("CI v0.8.0 released state", "check_ci_v080_released_state"),
     ("old release notes", "check_old_release_notes"),
     ("warning guard", "check_warning_guard"),
     ("examples", "check_examples"),
