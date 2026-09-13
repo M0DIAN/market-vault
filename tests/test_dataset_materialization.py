@@ -2975,8 +2975,10 @@ def test_windows_file_attributes_non_not_found_error_fails_closed(
         lambda name, *, use_last_error: kernel32,
         raising=False,
     )
-    monkeypatch.setattr(mat_mod.ctypes, "set_last_error", lambda value: None)
-    monkeypatch.setattr(mat_mod.ctypes, "get_last_error", lambda: 5)
+    monkeypatch.setattr(
+        mat_mod.ctypes, "set_last_error", lambda value: None, raising=False
+    )
+    monkeypatch.setattr(mat_mod.ctypes, "get_last_error", lambda: 5, raising=False)
 
     with pytest.raises(
         DatasetMaterializationError,
@@ -2999,8 +3001,12 @@ def test_windows_file_attributes_invalid_literal_name_is_absent(
         lambda name, *, use_last_error: kernel32,
         raising=False,
     )
-    monkeypatch.setattr(mat_mod.ctypes, "set_last_error", lambda value: None)
-    monkeypatch.setattr(mat_mod.ctypes, "get_last_error", lambda: 123)
+    monkeypatch.setattr(
+        mat_mod.ctypes, "set_last_error", lambda value: None, raising=False
+    )
+    monkeypatch.setattr(
+        mat_mod.ctypes, "get_last_error", lambda: 123, raising=False
+    )
 
     path = tmp_path / "*.yaml"
     assert os.path.lexists(path) is False
