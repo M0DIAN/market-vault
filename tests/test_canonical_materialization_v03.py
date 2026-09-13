@@ -1167,6 +1167,76 @@ def test_manifest_symlinked_partition_dir_fails(tmp_path):
         materialize(cfg)
 
 
+def test_canonical_windows_file_attributes_abi_and_errors(monkeypatch, tmp_path):
+    import ctypes
+    import market_vault.canonical.materialization as mat_mod
+
+    class FakeGetFileAttributes:
+        argtypes = None
+        restype = None
+
+        def __call__(self, path):
+            return 0xFFFFFFFF
+
+    get_file_attributes = FakeGetFileAttributes()
+    kernel32 = type("Kernel32", (), {"GetFileAttributesW": get_file_attributes})()
+    error_code = [3]
+    monkeypatch.setattr(
+        ctypes,
+        "WinDLL",
+        lambda name, *, use_last_error: kernel32,
+        raising=False,
+    )
+    monkeypatch.setattr(ctypes, "set_last_error", lambda value: None, raising=False)
+    monkeypatch.setattr(ctypes, "get_last_error", lambda: error_code[0], raising=False)
+
+    missing = tmp_path / "missing"
+    assert os.path.lexists(missing) is False
+    assert mat_mod._windows_file_attributes(missing) == 0
+    assert get_file_attributes.argtypes == (ctypes.c_wchar_p,)
+    assert get_file_attributes.restype is ctypes.c_uint32
+
+    error_code[0] = 5
+    with pytest.raises(
+        CanonicalMaterializationError,
+        match=r"INVALID_FILE_ATTRIBUTES \(Windows error 5\)",
+    ):
+        mat_mod._windows_file_attributes(missing)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows junctions only")
+def test_manifest_non_escaping_junction_partition_dir_fails(tmp_path):
+    import _winapi
+    import sys
+
+    cfg = settings(tmp_path)
+    calendar(cfg)
+    result = _build_with_gap(cfg)
+    build_root = result.build_path
+    junction = next(p for p in build_root.rglob("bars/**/code=*") if p.is_dir())
+    target = build_root / "non-escaping-junction-target"
+    junction.rename(target)
+    try:
+        _winapi.CreateJunction(str(target), str(junction))
+    except OSError:
+        pytest.skip("Windows junctions are not available in this environment")
+
+    assert junction.is_symlink() is False
+    if sys.version_info[:2] == (3, 11):
+        assert hasattr(junction, "is_junction") is False
+    else:
+        assert junction.is_junction() is True
+    assert target.resolve().is_relative_to(build_root.resolve())
+    assert junction.resolve().is_relative_to(build_root.resolve())
+
+    with pytest.raises(
+        CanonicalMaterializationError,
+        match="output file path contains a symlink or junction",
+    ) as excinfo:
+        materialize(cfg)
+    assert "escapes build root" not in str(excinfo.value)
+
+
 # --- Completeness patch: build result validation -----------------------------
 
 

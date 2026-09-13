@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import uuid
 from datetime import date, datetime, timezone
@@ -69,6 +70,46 @@ def _file_sha256(path: Path) -> str:
         for chunk in iter(lambda: fh.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _is_junction_or_reparse(path: Path) -> bool:
+    is_junction = getattr(path, "is_junction", None)
+    if is_junction is not None:
+        return is_junction()
+    if os.name != "nt":
+        return False
+    file_attribute_reparse_point = 0x400
+    return bool(_windows_file_attributes(path) & file_attribute_reparse_point)
+
+
+def _windows_file_attributes(path: Path) -> int:
+    """Return Win32 file attributes, allowing only a confirmed missing path."""
+    import ctypes as _ctypes
+
+    invalid_file_attributes = 0xFFFFFFFF
+    not_found_errors = frozenset({2, 3})
+    try:
+        kernel32 = _ctypes.WinDLL("kernel32", use_last_error=True)
+        get_file_attributes = kernel32.GetFileAttributesW
+        get_file_attributes.argtypes = (_ctypes.c_wchar_p,)
+        get_file_attributes.restype = _ctypes.c_uint32
+        _ctypes.set_last_error(0)
+        attributes = int(get_file_attributes(str(path)))
+        error_code = int(_ctypes.get_last_error())
+    except (AttributeError, OSError, TypeError) as exc:
+        raise CanonicalMaterializationError(
+            f"cannot verify the Windows reparse-point status of {path}; "
+            "failing closed"
+        ) from exc
+    if attributes == invalid_file_attributes:
+        if error_code in not_found_errors and not os.path.lexists(path):
+            return 0
+        raise CanonicalMaterializationError(
+            f"cannot verify the Windows reparse-point status of {path}: "
+            f"INVALID_FILE_ATTRIBUTES (Windows error {error_code}); "
+            "failing closed"
+        )
+    return attributes
 
 
 _CANONICAL_SEPARATORS = ("\x1e", "\x1f", "|")
@@ -876,11 +917,9 @@ def _validate_existing_output_files(build_root: Path, payload: dict) -> list[dic
         current = build_root
         for part in parts:
             current = current / part
-            if current.is_symlink() or (
-                hasattr(current, "is_junction") and current.is_junction()
-            ):
+            if current.is_symlink() or _is_junction_or_reparse(current):
                 raise CanonicalMaterializationError(
-                    f"output file path contains a symlink: {relative!r}"
+                    f"output file path contains a symlink or junction: {relative!r}"
                 )
         resolved = current.resolve()
         if not resolved.is_relative_to(build_root.resolve()):

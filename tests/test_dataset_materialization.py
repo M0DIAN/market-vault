@@ -28,6 +28,7 @@ from dataclasses import FrozenInstanceError, replace
 from datetime import date, datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pandas as pd
 import pyarrow as pa
@@ -2260,7 +2261,7 @@ def test_corruption_final_symlink(fixtures, tmp_path):
         materialize_dataset_artifacts(
             result, output_root=datasets_root(tmp_path), built_at=BUILT_AT
         )
-    assert build.is_symlink() or build.is_junction()
+    assert build.is_symlink() or mat_mod._is_junction_or_reparse(build)
 
 
 def test_existing_conflict_never_rewritten(built, tmp_path):
@@ -2948,6 +2949,70 @@ def _make_junction_or_skip(target: Path, link: Path) -> None:
     pytest.skip("Windows junctions are not available in this environment")
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows file attributes only")
+def test_windows_reparse_probe_accepts_missing_and_regular_paths(tmp_path):
+    missing = tmp_path / "not-created"
+    assert missing.exists() is False
+    assert mat_mod._is_junction_or_reparse(missing) is False
+    assert mat_mod._is_junction_or_reparse(tmp_path) is False
+
+
+def test_windows_file_attributes_non_not_found_error_fails_closed(
+    monkeypatch, tmp_path
+):
+    class FakeGetFileAttributes:
+        argtypes = None
+        restype = None
+
+        def __call__(self, path):
+            return 0xFFFFFFFF
+
+    get_file_attributes = FakeGetFileAttributes()
+    kernel32 = SimpleNamespace(GetFileAttributesW=get_file_attributes)
+    monkeypatch.setattr(
+        mat_mod.ctypes,
+        "WinDLL",
+        lambda name, *, use_last_error: kernel32,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        mat_mod.ctypes, "set_last_error", lambda value: None, raising=False
+    )
+    monkeypatch.setattr(mat_mod.ctypes, "get_last_error", lambda: 5, raising=False)
+
+    with pytest.raises(
+        DatasetMaterializationError,
+        match=r"INVALID_FILE_ATTRIBUTES \(Windows error 5\)",
+    ):
+        mat_mod._windows_file_attributes(tmp_path / "unqueryable")
+
+    assert get_file_attributes.argtypes == (mat_mod.ctypes.c_wchar_p,)
+    assert get_file_attributes.restype is mat_mod.ctypes.c_uint32
+
+
+def test_windows_file_attributes_invalid_literal_name_is_absent(
+    monkeypatch, tmp_path
+):
+    get_file_attributes = MagicMock(return_value=0xFFFFFFFF)
+    kernel32 = SimpleNamespace(GetFileAttributesW=get_file_attributes)
+    monkeypatch.setattr(
+        mat_mod.ctypes,
+        "WinDLL",
+        lambda name, *, use_last_error: kernel32,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        mat_mod.ctypes, "set_last_error", lambda value: None, raising=False
+    )
+    monkeypatch.setattr(
+        mat_mod.ctypes, "get_last_error", lambda: 123, raising=False
+    )
+
+    path = tmp_path / "*.yaml"
+    assert os.path.lexists(path) is False
+    assert mat_mod._windows_file_attributes(path) == 0
+
+
 def test_output_root_symlink_with_valid_existing_dataset_rejected(fixtures, tmp_path):
     """A symlink output_root whose target already contains a fully valid
     Dataset must fail closed: the existing-build path shares the same link
@@ -3002,6 +3067,7 @@ def test_output_root_junction_with_valid_existing_dataset_rejected(fixtures, tmp
     real_parent = datasets_root(tmp_path)
     junction = tmp_path / "junction_root"
     _make_junction_or_skip(real_parent, junction)
+    assert mat_mod._is_junction_or_reparse(junction) is True
     hashes_before = file_hashes(first.build_path)
     with pytest.raises(DatasetMaterializationError) as excinfo:
         materialize_dataset_artifacts(
