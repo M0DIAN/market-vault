@@ -1,5 +1,76 @@
 # MarketVault v0.8.0 Release Notes
 
+## Formal release status
+
+The v0.8.0 release is formally released and sealed.
+
+```text
+V080_RELEASE_STATUS=FORMALLY_RELEASED_AND_SEALED
+release commit: 90230ce1b55e63da0c583eaac8e94b64f6f4c2f9
+release tree: 2ed28297d03251da126460fa7084d6841c804cef
+main HEAD at release sealing: 90230ce1b55e63da0c583eaac8e94b64f6f4c2f9
+main CI: 34757019730
+tag: v0.8.0
+tag type: annotated
+tag object: e4ecb355fcde04be469de66313aa8974d248fad8
+peeled tag commit: 90230ce1b55e63da0c583eaac8e94b64f6f4c2f9
+GitHub Release: MarketVault v0.8.0
+release ID: 387904895
+publishedAt: 2026-09-13T13:15:02Z
+draft: false
+prerelease: false
+latest: true
+PyPI: NOT PUBLISHED
+TestPyPI: NOT PUBLISHED
+```
+
+The annotated `v0.8.0` tag points at the release commit above. The formal
+GitHub Release contains exactly the wheel, sdist, and `SHA256SUMS.txt` assets
+sealed below.
+
+```text
+market_vault-0.8.0-py3-none-any.whl
+SHA-256:
+6f24277a0e1d729e1723d0aa50d6d6a4969742a9666d741daa25b7a144e0358d
+
+market_vault-0.8.0.tar.gz
+SHA-256:
+9ab07826fa81372370132b16b71fb393a8d105ac78b2c60c75d3ea1e1677be5d
+
+SHA256SUMS.txt
+SHA-256:
+5a27736b9c73f35921fc69f42676caa47a46b8e0553b60db9e6934ef8307e1d3
+
+Contents:
+6f24277a0e1d729e1723d0aa50d6d6a4969742a9666d741daa25b7a144e0358d  market_vault-0.8.0-py3-none-any.whl
+9ab07826fa81372370132b16b71fb393a8d105ac78b2c60c75d3ea1e1677be5d  market_vault-0.8.0.tar.gz
+```
+
+### Main CI
+
+The authoritative post-merge main push CI was run `34757019730` at release
+commit `90230ce1b55e63da0c583eaac8e94b64f6f4c2f9`. It completed successfully
+with the Python 3.11, Python 3.14, PyArrow 24, and package jobs all passing.
+
+### Verification distinction
+
+- PR candidate artifacts were validation-only and are not formal identities.
+- Main CI package artifacts were post-merge audit evidence only.
+- Formal assets were rebuilt fresh from exact release commit
+  `90230ce1b55e63da0c583eaac8e94b64f6f4c2f9`.
+- The formal assets were uploaded, downloaded from the draft Release, and
+  hash-verified before publication.
+- The published assets were downloaded a second time; their SHA-256 values
+  matched the formal pre-upload bytes and `SHA256SUMS.txt` validation passed.
+
+## Historical release-preparation record
+
+The following status and preparation sections preserve the Stage 2 facts as
+recorded before formal publication. They are point-in-time evidence, not the
+current release state; the Formal release status section above is authoritative.
+
+### Release-preparation status at that time
+
 Status: Stage 2 release-preparation candidate; formal release gate pending.
 
 ```text
@@ -15,11 +86,12 @@ RELEASE_MODEL=MODEL_RELEASE_FIRST
 FORMAL_RELEASE_REQUIRES_SEPARATE_EXPLICIT_GATE=true
 ```
 
-This document records stable v0.8.0 scope and the release-preparation
-candidate contract. It deliberately contains no future merge commit, tag
-object, GitHub Release ID, publication timestamp, or formal asset hash. Those
-identities can exist only after this candidate merges, exact main is verified,
-and a separate formal-release authorization is granted.
+At Stage 2, this document recorded the stable v0.8.0 scope and the
+release-preparation candidate contract. The preparation record deliberately
+contained no future merge commit, tag object, GitHub Release ID, publication
+timestamp, or formal asset hash. Those identities could exist only after the
+candidate merged, exact main was verified, and separate formal-release
+authorization was granted.
 
 ## 1. Stable product scope
 
@@ -110,7 +182,7 @@ Production schema-cohort activation, collection, recollection, view refresh,
 and Safe Purge execution are separately governed operational actions and are
 not performed by installing the source package.
 
-## 3. Release-preparation candidate evidence
+## 3. Historical release-preparation candidate evidence
 
 The Stage 2 candidate must pass all of the following before independent
 review:
@@ -151,12 +223,13 @@ qualified early-close RTH geometry, or
 `ArtifactClient.select_dataset_catalog_entry(...)`. Historical v0.7.0
 direction, usage, contract, and release records retain that truth.
 
-## 5. Formal release gate remains pending
+## 5. Formal release gate pending at preparation time
 
-The formal release requires a future explicit gate after candidate merge and
-exact-main CI. That gate must build fresh artifacts from the exact release
-commit, create the annotated `v0.8.0` tag, publish exactly one wheel, one
-sdist, and `SHA256SUMS.txt`, then download and re-hash those assets.
+At preparation time, the formal release required a future explicit gate after
+candidate merge and exact-main CI. That gate had to build fresh artifacts from
+the exact release commit, create the annotated `v0.8.0` tag, publish exactly
+one wheel, one sdist, and `SHA256SUMS.txt`, then download and re-hash those
+assets. The Formal release status section records the completed gate.
 
 PyPI and TestPyPI publication remain separate explicit decisions. The Windows
 production executable remains outside the formal GitHub Release asset set:
