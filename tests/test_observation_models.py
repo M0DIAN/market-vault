@@ -244,8 +244,10 @@ def test_no_new_top_level_business_api():
     import market_vault.observation as api
 
     assert not hasattr(market_vault, "Observation")
-    assert not hasattr(api, "VerifiedObservationBuild")
-    assert not hasattr(api, "load_verified_observation_build")
+    # A2 authority is confined to the Observation package, not top-level API.
+    assert not hasattr(market_vault, "VerifiedObservationBuild")
+    assert not hasattr(market_vault, "load_verified_observation_build")
+    assert callable(api.load_verified_observation_build)
 
 
 @pytest.mark.parametrize("field", ["name", "unit", "representation"])

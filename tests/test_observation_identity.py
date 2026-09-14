@@ -319,15 +319,15 @@ def test_semantic_operations_are_in_memory(monkeypatch):
         assert observation_coverage_id(sample_coverage())
 
 
-def test_source_boundary_has_no_reader_provider_or_selection_engine():
+def test_a1_semantic_source_boundary_has_no_reader_provider_or_selection_engine():
     root = Path(api.__file__).parent
     allowed_imports = {"__future__", "dataclasses", "datetime", "math", "re", "unicodedata",
                        "dataset.encoding", "_validation", "models", "schema", "identity"}
     forbidden_calls = {"open", "now", "utcnow", "today", "stat", "resolve", "read_bytes",
                        "write_bytes", "getenv", "getcwd", "urlopen", "connect", "read_parquet",
                        "load_verified_observation_build", "assemble_point_in_time_samples"}
-    modules = list(root.glob("*.py"))
-    assert {m.name for m in modules} == {"__init__.py", "_validation.py", "models.py", "schema.py", "identity.py"}
+    # A2 adds physical authority and package exports, not I/O to A1 semantics.
+    modules = [root / name for name in ("_validation.py", "models.py", "schema.py", "identity.py")]
     for module in modules:
         tree = ast.parse(module.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
@@ -338,4 +338,4 @@ def test_source_boundary_has_no_reader_provider_or_selection_engine():
             if isinstance(node, ast.Call):
                 name = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
                 assert name not in forbidden_calls
-    assert not any("select" in name or "materializ" in name or "reader" in name for name in api.__all__)
+    assert not any("select" in name or "provider" in name for name in api.__all__)
