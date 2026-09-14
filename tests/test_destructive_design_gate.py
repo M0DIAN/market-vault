@@ -279,9 +279,22 @@ def test_existing_destructive_contracts_and_inventory_validate():
         "safe_purge_v01",
         "catalog_ingestion_run_recording_v1",
         "catalog_market_bars_view_refresh_v1",
+        "observation_artifact_atomic_publication_v1",
     }
     assert len(snapshot.exemptions) == 16
-    assert len(snapshot.findings) == 38
+    assert len(snapshot.findings) == 40
+    observation_contract = snapshot.contracts["observation_artifact_atomic_publication_v1"]
+    observation_findings = [
+        finding for finding in snapshot.findings
+        if finding.path == "src/market_vault/observation/materialization.py"
+    ]
+    assert len(observation_findings) == 2
+    assert all(observation_contract.covers(finding) for finding in observation_findings)
+    assert {(finding.symbol, finding.kind, finding.signal) for finding in observation_findings} == {
+        ("_rename_directory_no_replace_windows", "destructive_call", "os.rename"),
+        ("_remove_tree", "destructive_call", "shutil.rmtree"),
+    }
+    assert len(snapshot.findings) - len(observation_findings) == 38
     purge_contract = snapshot.contracts["safe_purge_v01"]
     purge_findings = [
         finding
