@@ -297,6 +297,12 @@ value. If only an older complete vintage was archived by A, the reconstruction
 may use it and must be labeled archive-limited, not an exhaustive statement of
 all public knowledge at T.
 
+A revision changes the historically visible version of the **same K**. Its
+later known_at is a visibility clock for that revision, not an ordering
+authority between distinct effective observations. Correcting an old event
+does not make it the newest effective observation; cross-K alignment uses
+event_time as specified in section 7.2.
+
 Repeated captures of one revision may have different observation versions.
 They must agree on values, schema, known_at authority and revision relation
 under the declared provider/normalizer contract. Disagreement fails before
@@ -355,14 +361,46 @@ coverage first. Reconcile revisions as in section 6, then apply the following:
 | Alignment | V1 meaning |
 | --- | --- |
 | EXACT_EVENT_TIME | Target is explicitly either T or the existing sample's Feature-window start, expressed as a UTC instant. Require `event_time == target` and exactly one logical key in the exact declared source scope after revision selection. No rounding to a day or nearest point. Period sources must match their declared effective-end convention exactly. |
-| LATEST_KNOWN_AT_OR_BEFORE | Among scoped revision-selected effective observations with event_time <= T, choose the unique greatest known_at <= T. If distinct logical keys tie for greatest known_at, FAIL BUILD; do not pick first/last or use a hidden event-time tiebreak. It means latest publication, not largest historical event date. |
+| LATEST_EFFECTIVE_AT_OR_BEFORE | Among scoped logical observations with an eligible revision and event_time <= T, choose the unique observation with greatest event_time. Distinct logical keys tied at that greatest event_time without authority proving uniqueness cause FAIL BUILD. known_at controls revision visibility, never cross-K ordering. |
+
+The exact latest-effective sequence is:
+
+1. Validate the source declaration and complete coverage for this sample and
+   Feature before selecting any value.
+2. Group versions by OBSERVATION_KEY within the exact declared source scope.
+3. Resolve the unique eligible revision per K under section 6, requiring
+   `known_at <= T` and, when `dataset_as_of = A`,
+   `archive_available_at <= A`. Keys without an eligible revision do not
+   enter cross-K alignment; malformed or ambiguous authority still fails.
+4. Restrict those logical observations to `event_time <= T`.
+5. Select the unique logical observation with greatest event_time. Revision
+   known_at, capture time, input order and lexicographic IDs never break a
+   cross-K tie. If two distinct keys share that greatest event_time and the
+   authority cannot prove a unique observation, FAIL BUILD.
+6. Apply staleness to that selected observation using
+   `age_us = T - selected.event_time`. Never search backward for another
+   observation merely because this latest-effective observation is stale.
 
 Unknown alignment fails preflight even for zero samples. These two modes are
 the complete V1 set; calendars, rolling observation windows and as-of joins
 with implicit tolerances are deferred. All selected rows must satisfy the
-independent archive predicate. A qualified old-event correction can be the
-latest publication; freshness may then exclude it. Never search for a different
-older publication merely to make freshness pass.
+independent archive predicate. A future Feature asking for the most recently
+published event may need a separately named and versioned
+`LATEST_PUBLICATION_AT_OR_BEFORE` contract. That mode is deferred, not supported
+in V1, and is not an alias for generic latest-value selection.
+
+Illustrative offline fixture (UTC instants, not provider time authority):
+
+| Key | event_time | Eligible revision known_at |
+| --- | --- | --- |
+| K_old | 2026-03-01T00:00:00Z | 2026-09-11T09:00:00Z (correction) |
+| K_new | 2026-09-10T00:00:00Z | 2026-09-10T18:00:00Z (initial revision) |
+
+At `T = 2026-09-11T10:00:00Z`, with complete revision/coverage proof and
+archive eligibility for both, LATEST_EFFECTIVE_AT_OR_BEFORE selects K_new.
+The correction is the authoritative visible version when using K_old, but
+its later publication does not displace K_new. Freshness is then evaluated
+for K_new under the declared limit.
 
 No candidate after filtering produces an explicit missing outcome. Multiple
 unresolved candidates produce a build error. Each Feature uses exactly one
@@ -380,11 +418,13 @@ fresh = 0 <= age_us <= max_age_us
 ```
 
 Effective time/period end is used so a correction to a six-month-old fact does
-not reset its economic age merely because it was republished today. max_age_us
-must be finite and positive in both modes. Equality is allowed. Durations are
-elapsed UTC microseconds, not business/trading days; DST/weekends do not stretch
-them. Source-specific calendars are not implicit V1 freshness policies. A
-future change of clock, limit or calendar semantics changes the spec identity.
+not reset its economic age merely because it was republished today. It updates
+that fact's revision but does not outrank a newer effective observation merely
+because its known_at is later. max_age_us must be finite and positive in both
+modes. Equality is allowed. Durations are elapsed UTC microseconds, not
+business/trading days; DST/weekends do not stretch them. Source-specific
+calendars are not implicit V1 freshness policies. A future change of clock,
+limit or calendar semantics changes the spec identity.
 
 | Situation | V1 outcome |
 | --- | --- |
@@ -532,6 +572,12 @@ possible. Do not add provider or capture timestamps to it.
 | freshness clock/limit/missing policy | spec hash changes | unchanged | decision binding changes, even if still fresh | same propagation | same propagation |
 | provider/normalizer version or fingerprint | rule/spec/pins/V change | unchanged | binding/version change | exact contracts/pins change ID | same propagation |
 | equivalent TZ notation, input/provider order, relocated sealed files | normalized meanings/pins identical | unchanged | unchanged | unchanged | logical identities unchanged; descriptive snapshot metadata may differ |
+
+Alignment mode is identity-bearing. Changing LATEST_EFFECTIVE_AT_OR_BEFORE to
+a future LATEST_PUBLICATION_AT_OR_BEFORE changes the Observation FeatureSpec
+identity and therefore Dataset identity, even if a particular sample happens
+to select the same value. This design correction changes no existing artifact
+identity and does not reinterpret any old cohort.
 
 Every declared considered observation build enters identity, not only those
 producing a value. This prevents an all-excluded/EMPTY Dataset from losing its
@@ -715,7 +761,9 @@ the examples in this design.
   archive/authority evidence. Historical vintage completeness must be proved.
 - Offline PIT canary: before publication excluded, equality included, after
   publication included only within max age, and A-before-capture excluded.
-  Include revision, stale, missing and tampered-snapshot cases.
+  A latest-value Feature selects the latest effective observation whose
+  revision is legally visible. Include the old-event late-revision canary,
+  plus stale, missing and tampered-snapshot cases.
 - Prove Dataset build/verification makes no provider call; activation remains
   blocked if any known-at or revision requirement cannot be proved.
 
@@ -734,7 +782,9 @@ the examples in this design.
   when freshness/archive permit. A before capture excludes Monday; no archive
   relaxation can make Wednesday see Friday knowledge.
 - Later correction must not enter a pre-correction sample; a visible withdrawal
-  must not restore the prior value. Unknown release times remain fail-closed.
+  must not restore the prior value. A later correction to an older report
+  updates that report's visible revision but does not replace a newer effective
+  report in a latest-effective Feature. Unknown release times remain fail-closed.
 
 Cross-Day / TRADING_DAYS Labels remain separate. Long-term composition is
 multi-source Feature authority plus separately qualified Label horizon authority
@@ -756,7 +806,7 @@ These are mandatory future tests, not tests implemented/run by this docs PR.
 | Publication | Exactly T included; T+1 microsecond excluded; event date alone never proves known_at; unknown method/version fails; date-only ambiguity fails; qualified capture fallback never appears before completed capture. |
 | Archive | Exactly A included; A+1 microsecond excluded; null A means explicit market-only reconstruction, not historic possession; no backdating imported files. |
 | Revisions | Pre/post revision cutoffs, superseded retention, withdrawals, missing predecessor, same-time conflicts and visible correction without payload; repeated equivalent captures deterministic, conflict never first/last-wins. |
-| Alignment | Exact event equality, explicit latest publication, no hidden nearest/rounding; distinct-key same-known_at tie fails; unknown modes fail even with zero samples. |
+| Alignment | Exact event equality; latest-effective selects greatest eligible event_time after per-K revision visibility; no hidden nearest/rounding; unresolved distinct-key greatest-event_time tie fails; unknown/deferred publication modes fail even with zero samples. |
 | Freshness | max_age equality passes; one microsecond beyond excludes/fails; finite positive limit required; old-event correction does not reset age; no retry with an older candidate. |
 | Missingness | Proved absence versus incomplete/missing evidence; EXCLUDE_SAMPLE versus FAIL; no emitted null Feature/zero, no source fallback, interpolation or synthetic backfill. |
 | Associations | Exact one decision per sample/spec, coverage of excluded samples, no extra/missing pins, no cycle in binding hashes; bar association v1 remains unchanged. |
@@ -765,6 +815,23 @@ These are mandatory future tests, not tests implemented/run by this docs PR.
 | New Dataset | All-excluded/EMPTY and equal-value cases still bind source/policy evidence; sidecar substitution fails verification; mixed catalog hashes bind richer facts without changing old snapshots. |
 | Offline/security | Reader only touches supplied local artifacts; PIT/executors touch no filesystem, network, OpenD, settings or current time; provider/code loading cannot be invoked from specs. |
 | Existing guards | BARS/Label/cross-day boundaries, QFQ/HFQ refusal and current ArtifactClient four-method surface unchanged. |
+
+Mandatory cross-K revision canary:
+
+```text
+OLD_EVENT_LATE_REVISION_DOES_NOT_DISPLACE_NEWER_EFFECTIVE_OBSERVATION
+```
+
+Construct complete immutable evidence for old K with event_time=t0, an initial
+revision known before t1, and a correction known at t3; new K has event_time=t2
+and an initial revision known at t2_publication. Require
+`t0 < t1 < t2 <= T` and `t2_publication < t3 <= T`, with both revisions archive
+eligible and the new observation within its declared max age.
+LATEST_EFFECTIVE_AT_OR_BEFORE must select new K. Independently verify that the
+visible correction remains the authoritative version of old K when old K is
+selected by an EXACT_EVENT_TIME query with Feature-window-start target=t0 and
+a finite max_age allowing old K, without winning the cross-K alignment.
+Repeat with reversed input/key/version order; the result must not change.
 
 ## 16. Inspiration, Non-Goals and Review Closure
 
