@@ -1,0 +1,278 @@
+{
+  "schema_version": "market-vault-destructive-operation-v1",
+  "operation_id": "observation_artifact_atomic_publication_v1",
+  "approval": {
+    "status": "APPROVED",
+    "rationale": "Candidate contract in the required approved-contract format; this document does not self-approve its PR or start A2 implementation. Independent design review and merge must precede separately authorized implementation against an exact base containing this unchanged contract. No exemption or same-implementation-PR contract redesign may substitute for that base authority."
+  },
+  "identity": {
+    "name": "Observation artifact atomic publication v1",
+    "purpose": "Bound future A2 publication of one completely prepared Observation build through true atomic no-replace directory publication, with cleanup limited to the current invocation's privately owned pre-commit staging directory. A1 semantic identities and existing Canonical, Dataset and PIT contracts remain unchanged."
+  },
+  "implementation_bindings": [
+    {
+      "path": "src/market_vault/observation/materialization.py",
+      "symbols": [
+        "_rename_directory_no_replace_windows"
+      ],
+      "role": "MUTATION_OWNER",
+      "surfaces": [
+        {
+          "kind": "destructive_call",
+          "signal": "os.rename",
+          "expected_count": 1
+        }
+      ],
+      "rationale": "This exact os.rename call is permitted only under Windows atomic no-replace semantics, publishing the current invocation's fully prepared and privately verified Observation staging directory to its exact previously absent immutable build_id destination. It does not authorize generic rename, replacement, movement of an existing final build, or overwriting any destination."
+    },
+    {
+      "path": "src/market_vault/observation/materialization.py",
+      "symbols": [
+        "_remove_tree"
+      ],
+      "role": "SUPPORTING",
+      "surfaces": [
+        {
+          "kind": "destructive_call",
+          "signal": "shutil.rmtree",
+          "expected_count": 1
+        }
+      ],
+      "rationale": "This exact shutil.rmtree call may remove only the private Observation staging directory created and still owned by the current materialization invocation before that invocation commits. It must never remove a final build, pre-existing staging, another invocation's staging, source evidence, repository content, production data, or arbitrary caller-selected paths."
+    }
+  ],
+  "authority_boundary": {
+    "initiators": [
+      "The future Observation materializer holding one exact validated Observation build identity, explicit safe output root, and explicit created_at metadata"
+    ],
+    "mutation_owner": "src/market_vault/observation/materialization.py owns only its current invocation's private staging and the absent-to-committed publication boundary of one exact content-addressed final Observation build directory.",
+    "forbidden_bypass_layers": [
+      "Neither callers nor supporting helpers may turn these bounded internal primitives into generic filesystem mutation APIs.",
+      "Do not use os.replace, path.replace, path.rename, shutil.move, os.remove, os.unlink, path.unlink, os.rmdir, path.rmdir, or delete-then-rename publication. Additional primitives require a separately reviewed contract change merged before implementation.",
+      "Do not use ordinary POSIX os.rename as a fallback: it can replace an existing empty destination directory.",
+      "No same-PR contract redesign, new exemption, checker weakening, or renamed/indirect call may broaden the two approved destructive AST surfaces.",
+      "This contract authorizes no provider acquisition, Catalog mutation, Canonical or Dataset mutation, PIT execution, production operation, or OpenD access."
+    ]
+  },
+  "persistent_scope": {
+    "mutated_assets": [
+      "One unique .<observation_build_id>.tmp-<random> sibling staging directory created exclusively by the current invocation under the explicitly supplied safe output root",
+      "Publication into the exact absent <output_root>/build_id=<observation_build_id> destination by one true atomic no-replace operation"
+    ],
+    "excluded_assets": [
+      "Every existing final build, including corrupt or logically conflicting builds",
+      "Pre-existing staging, orphan crash residue, and staging owned by another invocation",
+      "Arbitrary output-root children, caller-selected cleanup paths, and the output root itself",
+      "Source snapshot evidence, provider evidence, repository content, Canonical artifacts, Dataset artifacts, Catalog state, and production state"
+    ]
+  },
+  "state_machine": {
+    "states": [
+      "PRIVATE_STAGING",
+      "COMMITTED",
+      "EXISTING_EQUIVALENT",
+      "FAILED"
+    ],
+    "initial_state": "PRIVATE_STAGING",
+    "terminal_states": [
+      "COMMITTED",
+      "EXISTING_EQUIVALENT",
+      "FAILED"
+    ],
+    "allowed_transitions": [
+      {
+        "from": "PRIVATE_STAGING",
+        "to": "COMMITTED",
+        "rationale": "Only successful true atomic no-replace publication of the fully prepared, privately verified, invocation-owned staging directory crosses the commit boundary."
+      },
+      {
+        "from": "PRIVATE_STAGING",
+        "to": "EXISTING_EQUIVALENT",
+        "rationale": "The publication primitive reports destination-exists and strict verified-reader validation proves the existing final build is the exact same logical build; clean only this invocation's private staging."
+      },
+      {
+        "from": "PRIVATE_STAGING",
+        "to": "FAILED",
+        "rationale": "Staging or validation failure, unsupported no-replace platform/filesystem, path/ownership uncertainty, or a corrupt/conflicting destination fails closed; only owned pre-commit staging is eligible for ordinary handled cleanup."
+      }
+    ],
+    "forbidden_transitions": [
+      {
+        "from": "COMMITTED",
+        "to": "PRIVATE_STAGING",
+        "rationale": "A committed final build cannot be reopened, rolled back, or adopted as staging."
+      },
+      {
+        "from": "EXISTING_EQUIVALENT",
+        "to": "PRIVATE_STAGING",
+        "rationale": "An idempotent existing result is terminal and grants no new mutation authority."
+      },
+      {
+        "from": "FAILED",
+        "to": "PRIVATE_STAGING",
+        "rationale": "A retry is a new invocation with new private staging, never adoption or reuse of failed residue."
+      },
+      {
+        "from": "COMMITTED",
+        "to": "FAILED",
+        "rationale": "A later read or caller failure does not undo publication or authorize deleting the immutable final directory; report the failure without rollback mutation."
+      }
+    ]
+  },
+  "commit_point": {
+    "durable_authority": "Successful true same-filesystem atomic NO-REPLACE publication of the completely prepared and privately verified staging directory to the exact build_id final path. Writing _SUCCESS inside staging is not the durable commit.",
+    "before_state": "PRIVATE_STAGING",
+    "after_state": "COMMITTED",
+    "success_authoritative_when": "The complete final directory has been published without replacing any destination and the sole strict verified Observation reader validates its artifacts and exact logical build identity. Publication makes the final directory candidate authority, not permission to trust an unchecked marker."
+  },
+  "crash_semantics": {
+    "pre_commit": [
+      "Before commit, the final build remains absent unless another invocation independently committed it; this invocation's staging is not authoritative even if it contains _SUCCESS.",
+      "A process crash may leave private staging as non-authoritative residue. A future invocation must neither adopt nor automatically garbage-collect that residue.",
+      "During atomic publication the filesystem must expose either the complete final directory or no publication; a partially visible final build is forbidden."
+    ],
+    "post_commit": [
+      "The published final directory remains immutable after a crash, including a crash before the caller receives its result.",
+      "No rollback deletion, repair, replacement, rewrite, quarantine, or movement of that final directory is authorized. Recovery is strict read/verify only."
+    ]
+  },
+  "rollback_recovery": {
+    "restorable": [
+      "Before successful commit, ordinary handled failure may clean only the exact private staging directory created exclusively by this invocation, after retaining and revalidating its ownership and safe ancestry."
+    ],
+    "non_restorable": [
+      "Post-commit rollback is unsupported and unauthorized; a published final build must never be removed or changed under this contract.",
+      "If cleanup cannot establish ownership, path type, or safe ancestry, leave residue and report failure; do not broaden cleanup to recover convenience."
+    ],
+    "interruption_detection": [
+      "Any pre-existing staging name is residue or another invocation's state: fail closed without adopting or deleting it.",
+      "Distinguish successful publication, explicit destination-exists refusal, unsupported no-replace capability, and other failures. Do not infer ownership or successful commit solely from path existence or _SUCCESS."
+    ]
+  },
+  "idempotence": {
+    "same_request_retry": [
+      "A retry is a new invocation. Before creating any staging, strictly verify an already existing exact final build; if equivalent, return the existing result with created_new_build=false and do not create staging.",
+      "The logical build identity remains the frozen A1 identity; created_at and physical location do not select a winner or permit replacement."
+    ],
+    "completed_retry": [
+      "Return a strictly verified exact/equivalent existing final build without modifying its files, marker, metadata, or location."
+    ],
+    "conflicting_retry": [
+      "A corrupt or conflicting existing final build fails closed with no repair, deletion, replacement, quarantine, or timestamp/directory-order winner selection.",
+      "After destination-exists during publication, apply the same strict final verification rule and clean only this invocation's private staging; never delete the winner."
+    ]
+  },
+  "locking_concurrency": {
+    "lock_authority": [
+      "The true atomic no-replace filesystem primitive is the destination exclusion authority; an initial final.exists() check is only an optimization, not the safety guarantee.",
+      "Private staging must be acquired through exclusive creation with an invocation-scoped ownership record; a pre-existing path grants no ownership."
+    ],
+    "lock_scope": [
+      "Only one invocation-owned staging directory and one exact final build_id destination under one explicitly supplied safe output root; no global Catalog or production lock is introduced."
+    ],
+    "under_lock_revalidation": [
+      "Revalidate exact build identity, staging ownership, safe output-root/staging/final ancestry, and same-filesystem placement immediately before publication and before any authorized staging cleanup.",
+      "Retain ownership by construction and detect path substitution; a name alone or an existence check cannot authorize following a link or deleting a replacement object."
+    ],
+    "concurrent_behavior": [
+      "On Windows, _rename_directory_no_replace_windows uses its one os.rename(staging, final) only under Windows no-replace semantics; destination-exists is translated into an explicit internal destination-exists result.",
+      "On Linux, use a narrowly bounded native renameat2 call with RENAME_NOREPLACE. EEXIST or ENOTEMPTY is an explicit destination-exists result, never permission to overwrite.",
+      "Missing renameat2, EINVAL, ENOSYS, ENOTSUP, or EOPNOTSUPP means safe no-replace publication is unsupported and must fail closed. Other errors also fail closed, not an assumed destination-exists success.",
+      "Other platforms fail closed unless a later separately reviewed contract supplies a proven no-replace primitive. Never fall back to ordinary POSIX os.rename, os.replace, or delete-then-rename.",
+      "If another invocation wins, strictly verify its final build. Return idempotently only if exact/equivalent; otherwise fail closed. Either outcome permits cleanup only of this invocation's uncommitted private staging."
+    ]
+  },
+  "execution_revalidation": {
+    "identities": [
+      "The exact A1 observation_build_id and its validated semantic, snapshot, coverage, revision and evidence bindings",
+      "The exact explicitly supplied safe output root, exclusively created private staging object and retained invocation ownership, and exact sibling build_id final destination",
+      "The complete privately verified staging manifest, Parquet inventory, physical hashes and _SUCCESS marker before publication"
+    ],
+    "drift_behavior": [
+      "Fail closed on symlink targets, junctions, Windows reparse points, path escape, unsafe output-root/staging/final ancestry, cross-filesystem publication, or unverifiable path type.",
+      "Staging and final must be siblings on the same filesystem under the explicit safe output root. Inspect relevant path components before traversal; resolve-only containment is not sufficient.",
+      "No link may be followed to mutate another location. Ownership or ancestry drift prohibits publication and cleanup of the uncertain path; no broader cleanup or path-based retry is authorized.",
+      "A final directory appearing concurrently must be refused by the no-replace primitive itself and verified read-only; it never becomes owned cleanup state."
+    ]
+  },
+  "success_evidence": {
+    "authoritative_evidence": [
+      "Successful atomic no-replace publication followed by strict verified-reader validation of the complete exact final Observation build",
+      "An explicit pre-existing/destination-exists outcome followed by strict verification of the exact equivalent immutable final build, returned without mutation"
+    ],
+    "non_success_evidence": [
+      "An in-memory A1 declaration, staging path, partial file, or _SUCCESS marker without a complete verified final artifact",
+      "A preflight final.exists() result, cleanup completion, an unsupported native call, or a corrupt/conflicting destination"
+    ],
+    "integrity_binding": [
+      "The final directory name, reconstructed A1 build/content identities, pinned source/coverage evidence, exact manifest and Parquet inventory, and physical byte hashes must agree under the sole verified Observation reader.",
+      "Final publication alone is not a second validation path. Physical bytes may vary with the supported serializer while A1 logical identity remains unchanged; every committed physical file still requires its recorded exact hash."
+    ]
+  },
+  "path_safety": {
+    "mutates_paths": true,
+    "windows_reparse_policy": "FAIL_CLOSED_FILE_ATTRIBUTE_REPARSE_POINT",
+    "unverifiable_path_policy": "FAIL_CLOSED"
+  },
+  "stale_plan_ui": {
+    "invalidation_triggers": {
+      "applicable": false,
+      "rationale": "This internal materialization contract introduces no UI plan or preview; exact path, ownership, identity and concurrency revalidation remains mandatory at execution."
+    },
+    "confirmation_invalidation": {
+      "applicable": false,
+      "rationale": "No destructive confirmation UI or user-data deletion feature is exposed by A2."
+    },
+    "execution_policy": {
+      "applicable": false,
+      "rationale": "There is no UI execution route; only the future internal Observation materializer may invoke the two exactly bound primitives under this contract."
+    }
+  },
+  "physical_atomicity": {
+    "lifecycle_unit": [
+      "One exact immutable Observation build directory, including its complete observations Parquet, manifest and _SUCCESS marker"
+    ],
+    "partial_mutation": [
+      "Partial visible final publication is forbidden. Prepare and privately verify every staging artifact before the single true same-filesystem atomic no-replace directory publication.",
+      "Windows uses the one bound os.rename call with no-replace semantics; Linux uses narrowly bounded renameat2(RENAME_NOREPLACE). Unsupported capability/platform fails closed without an overwriting fallback."
+    ],
+    "rollback_expectation": [
+      "Before commit, ordinary handled failures may remove only current invocation-owned private staging when ownership and path safety remain provable.",
+      "After commit, rollback is unsupported and unauthorized; even a subsequent reader failure leaves the published final directory immutable for independent recovery review."
+    ]
+  },
+  "unsupported_cascade": {
+    "retained_dependents": [
+      "All source/provider evidence, existing Observation builds, other staging, unrelated output-root children, Canonical artifacts, Dataset artifacts, Catalog state and production state remain untouched."
+    ],
+    "refused_cases": [
+      "Pre-existing staging, unsafe or substituted paths, unverifiable ownership/types, cross-filesystem publication, unsupported no-replace capability, and corrupt/conflicting final builds",
+      "Any attempt to delete, replace, repair, rewrite, quarantine, or rename an existing final build, including after a post-commit verification failure"
+    ],
+    "unsupported_cases": [
+      "Catalog, Canonical, Dataset, or PIT mutation; provider acquisition or deletion; source-evidence mutation",
+      "Garbage collection, orphan staging scanning/adoption, broad staging sweeps, production cleanup, or recursive cleanup outside the current invocation's private staging",
+      "Permanent deletion, generic move/replace APIs, and all additional destructive primitives outside the two exact approved AST bindings"
+    ]
+  },
+  "permanent_deletion": {
+    "supported": false,
+    "rationale": "Private pre-commit staging cleanup is bounded internal failure cleanup, not a user-data permanent-deletion feature. No committed Observation artifact deletion is authorized."
+  },
+  "implementation_tests": [
+    "The later exact-base PR gate and inventory see src/market_vault/observation/materialization.py:_rename_directory_no_replace_windows destructive_call os.rename expected_count=1, owned only by this unchanged BASE contract.",
+    "The later exact-base PR gate and inventory see src/market_vault/observation/materialization.py:_remove_tree destructive_call shutil.rmtree expected_count=1, owned only by this unchanged BASE contract.",
+    "No additional destructive AST surface, prospective transition, or exemption appears in the Observation materialization implementation; changing a primitive or occurrence count requires a separate prior design review.",
+    "On actual Windows, destination-exists never replaces even an empty final directory and is translated to explicit destination-exists; the one os.rename call is never used on POSIX.",
+    "On Linux, renameat2 with RENAME_NOREPLACE refuses an existing final directory with EEXIST/ENOTEMPTY and preserves every byte of the winner.",
+    "Missing renameat2, EINVAL, ENOSYS, ENOTSUP, EOPNOTSUPP, other unsupported platforms/filesystems, and cross-filesystem publication fail closed without ordinary POSIX rename or replace fallback.",
+    "A final-build publication race never overwrites, deletes, repairs, or moves the winner; exact verified equivalence returns idempotently and corrupt/conflicting final content fails closed.",
+    "Inject failure before final rename: final remains absent unless another invocation published it; cleanup removes only the current invocation's exclusively created private staging and preserves source evidence and unrelated output-root children.",
+    "Pre-existing staging, another invocation's staging, and crash residue are never adopted, scanned for garbage collection, or removed; a staging-name collision fails closed.",
+    "An already existing final build is verified before creating staging: equivalent succeeds without staging; invalid/conflicting fails without any mutation. No final build is ever removed, repaired, replaced or rewritten.",
+    "Pre-commit crash residue and _SUCCESS inside staging are non-authoritative; publication exposes all-or-nothing final contents; post-commit crash or reader failure never triggers rollback deletion.",
+    "Reject symlinked components, junctions, Windows reparse points, path escape, unsafe ancestry, ownership/path substitution and unverifiable types; never follow a link for publication or cleanup, including links resolving inside the output root.",
+    "Verify source snapshot/provider evidence, repository content, Canonical/Dataset artifacts, Catalog and production state remain unchanged across success, failure, retry, race and cleanup refusal.",
+    "All A1 golden identities remain unchanged; final logical identity is reconstructed and compared rather than inferred from location, created_at, directory order, or _SUCCESS."
+  ]
+}
