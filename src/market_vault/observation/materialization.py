@@ -198,7 +198,8 @@ def materialize_observation_build(
             _remove_tree(owner)
             return result
         return ObservationMaterializationResult(load_verified_observation_build(final), True)
-    except (ObservationError, OSError, ValueError, TypeError, KeyError, AttributeError, OverflowError) as exc:
+    except (ObservationError, OSError, ValueError, TypeError, KeyError, AttributeError,
+            OverflowError, UnicodeError, pa.ArrowException) as exc:
         if owner is not None and not owner.committed and not owner.removed:
             try:
                 _remove_tree(owner)

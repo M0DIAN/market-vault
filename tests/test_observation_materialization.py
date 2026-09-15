@@ -10,6 +10,7 @@ import shutil
 import sys
 from types import SimpleNamespace
 
+import pyarrow as pa
 import pytest
 
 from market_vault.observation import (
@@ -206,6 +207,49 @@ def test_handled_failure_cleans_only_owned_staging(tmp_path, monkeypatch, phase)
     assert unrelated.read_bytes() == b"retain"
 
 
+@pytest.mark.parametrize("cleanup", ["safe", "refused", "failed"])
+def test_arrow_capacity_failure_obeys_owned_staging_cleanup(tmp_path, monkeypatch, cleanup):
+    unrelated = tmp_path / "unrelated"
+    unrelated.write_bytes(b"retain")
+    residue = tmp_path / ".old.tmp-residue"
+    residue.mkdir()
+    (residue / "evidence").write_bytes(b"not owned")
+    error = pa.ArrowCapacityError("injected Parquet capacity failure")
+    assert isinstance(error, pa.ArrowException)
+    assert not isinstance(error, (ValueError, TypeError, OSError))
+    owners = []
+    original_check = m._check_owner
+    def checked_owner(owner):
+        original_check(owner)
+        owners.append(owner)
+    def fail(*args, **kwargs):
+        assert owners and owners[-1].path.is_dir()
+        assert not owners[-1].committed
+        assert not owners[-1].final.exists()
+        raise error
+    monkeypatch.setattr(m, "_check_owner", checked_owner)
+    monkeypatch.setattr(m.pq, "write_table", fail)
+    if cleanup != "safe":
+        def refuse_cleanup(owner):
+            raise (ObservationMaterializationError("ownership unproven")
+                   if cleanup == "refused" else OSError("cleanup failed"))
+        monkeypatch.setattr(m, "_remove_tree", refuse_cleanup)
+    with pytest.raises(ObservationMaterializationError) as caught:
+        materialize(tmp_path)
+    assert caught.value.__cause__ is error
+    owner = owners[0]
+    assert not owner.final.exists()
+    if cleanup == "safe":
+        assert owner.removed and not owner.path.exists()
+        assert set(tmp_path.iterdir()) == {unrelated, residue}
+    else:
+        assert "cleanup refused/failed" in str(caught.value)
+        assert not owner.removed and owner.path.is_dir()
+        assert set(tmp_path.iterdir()) == {unrelated, residue, owner.path}
+    assert unrelated.read_bytes() == b"retain"
+    assert (residue / "evidence").read_bytes() == b"not owned"
+
+
 def test_preexisting_selected_staging_never_adopted_or_deleted(tmp_path, monkeypatch):
     class Fixed:
         hex = "chosen"
@@ -255,12 +299,15 @@ def test_owner_substitution_refuses_cleanup(tmp_path, monkeypatch):
         m._remove_tree(tmp_path)
 
 
-def test_post_commit_reader_failure_never_deletes_final(tmp_path, monkeypatch):
+@pytest.mark.parametrize("error_type", [ObservationArtifactError, pa.ArrowCapacityError])
+def test_post_commit_reader_failure_never_deletes_final(tmp_path, monkeypatch, error_type):
+    error = error_type("post-commit reader failure")
     def fail(*args):
-        raise ObservationArtifactError("post-commit reader failure")
+        raise error
     monkeypatch.setattr(m, "load_verified_observation_build", fail)
-    with pytest.raises(ObservationMaterializationError):
+    with pytest.raises(ObservationMaterializationError) as caught:
         materialize(tmp_path)
+    assert caught.value.__cause__ is error
     final = tmp_path / ("build_id=" + observation_build_id(sample_build()))
     assert load_verified_observation_build(final).rows == sample_build().rows
 

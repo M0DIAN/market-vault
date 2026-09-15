@@ -156,6 +156,15 @@ def _verify_directory(root, *, require_success, final_name):
         raise ObservationArtifactError("_SUCCESS must be an empty regular commit marker")
     if _identity(_safe_path(root, directory=True)) != root_identity or _inventory(root) != expected:
         raise ObservationArtifactError("artifact directory changed during verification")
+    # Semantic verification must close over the same physical bytes, not just names.
+    if _read_bytes(root / "manifest.json") != raw_manifest:
+        raise ObservationArtifactError("manifest.json changed during verification")
+    if _read_bytes(root / OBSERVATION_PARQUET_PATH) != parquet:
+        raise ObservationArtifactError("Observation Parquet changed during verification")
+    if require_success and _read_bytes(root / "_SUCCESS") != b"":
+        raise ObservationArtifactError("_SUCCESS must be an empty regular commit marker")
+    if _identity(_safe_path(root, directory=True)) != root_identity or _inventory(root) != expected:
+        raise ObservationArtifactError("artifact directory changed during verification")
     return build, snapshots, created_at, expected_manifest
 
 
@@ -177,5 +186,6 @@ def load_verified_observation_build(build_dir) -> VerifiedObservationBuild:
         return result
     except ObservationArtifactError:
         raise
-    except (ObservationError, OSError, ValueError, TypeError, KeyError, AttributeError, OverflowError) as exc:
+    except (ObservationError, OSError, ValueError, TypeError, KeyError, AttributeError,
+            OverflowError, UnicodeError, pa.ArrowException) as exc:
         raise ObservationArtifactError(f"invalid Observation artifact: {exc}") from exc

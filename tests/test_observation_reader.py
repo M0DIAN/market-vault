@@ -75,6 +75,63 @@ def test_manifest_claim_corruption(tmp_path, field):
         load_verified_observation_build(path)
 
 
+def test_invalid_utf8_manifest_has_artifact_error_boundary(tmp_path):
+    path = materialize(tmp_path).build_dir
+    (path / "manifest.json").write_bytes(b"\xff")
+    with pytest.raises(ObservationArtifactError) as caught:
+        load_verified_observation_build(path)
+    assert isinstance(caught.value.__cause__, UnicodeDecodeError)
+
+
+def test_arrow_capacity_error_has_artifact_error_boundary(tmp_path, monkeypatch):
+    path = materialize(tmp_path).build_dir
+    error = pa.ArrowCapacityError("injected Parquet capacity failure")
+    assert isinstance(error, pa.ArrowException)
+    assert not isinstance(error, (ValueError, TypeError, OSError))
+    def fail(*args, **kwargs):
+        raise error
+    monkeypatch.setattr(reader.pq, "read_table", fail)
+    with pytest.raises(ObservationArtifactError) as caught:
+        load_verified_observation_build(path)
+    assert caught.value.__cause__ is error
+
+
+def test_existing_artifact_error_remains_unwrapped(tmp_path, monkeypatch):
+    error = ObservationArtifactError("already classified")
+    def fail(*args, **kwargs):
+        raise error
+    monkeypatch.setattr(reader, "_verify_directory", fail)
+    with pytest.raises(ObservationArtifactError) as caught:
+        load_verified_observation_build(tmp_path)
+    assert caught.value is error
+    assert caught.value.__cause__ is None
+
+
+@pytest.mark.parametrize("member", ["manifest.json", OBSERVATION_PARQUET_PATH, "_SUCCESS"])
+def test_content_mutation_after_first_read_fails_with_unchanged_inventory(tmp_path, monkeypatch, member):
+    root = materialize(tmp_path).build_dir
+    target = root / member
+    initial = target.read_bytes()
+    changed = bytes([initial[0] ^ 1]) + initial[1:] if initial else b"not-empty"
+    inventory = reader._inventory(root)
+    original_read = reader._read_bytes
+    reads = []
+    def mutate_after_read(path):
+        data = original_read(path)
+        if path == target:
+            reads.append(data)
+            if len(reads) == 1:
+                target.write_bytes(changed)
+                assert reader._inventory(root) == inventory
+        return data
+    monkeypatch.setattr(reader, "_read_bytes", mutate_after_read)
+    with pytest.raises(ObservationArtifactError, match="changed during verification|empty regular commit marker"):
+        load_verified_observation_build(root)
+    assert reads == [initial, changed]
+    assert reader._inventory(root) == inventory
+    assert target.read_bytes() == changed
+
+
 @pytest.mark.parametrize("field", ["value_schema_id", "observation_key", "observation_version_id",
                                   "source_snapshot_id", "source_content_sha256", "known_at_authority_id",
                                   "provider_contract_content_id", "normalization_content_id"])
