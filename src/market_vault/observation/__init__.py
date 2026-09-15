@@ -1,4 +1,15 @@
-"""Observation A1: pure semantic models and identities, not verified artifacts."""
+"""Observation semantic identities and explicit immutable artifact authority."""
+
+from .artifact_models import (
+    ObservationArtifactError, ObservationMaterializationError,
+    ObservationMaterializationResult, VerifiedObservationBuild,
+)
+from .artifact_schema import (
+    OBSERVATION_ARTIFACT_MANIFEST_VERSION, OBSERVATION_ARTIFACT_FORMAT_VERSION,
+    OBSERVATION_MATERIALIZER_VERSION,
+)
+from .materialization import materialize_observation_build
+from .reader import load_verified_observation_build
 
 from ._validation import ObservationError
 from .identity import (
@@ -38,6 +49,11 @@ from .schema import (
 )
 
 __all__ = [
+    "ObservationArtifactError", "ObservationMaterializationError",
+    "ObservationMaterializationResult", "VerifiedObservationBuild",
+    "OBSERVATION_ARTIFACT_MANIFEST_VERSION", "OBSERVATION_ARTIFACT_FORMAT_VERSION",
+    "OBSERVATION_MATERIALIZER_VERSION", "materialize_observation_build",
+    "load_verified_observation_build",
     "OBSERVATION_BUILD_ID_VERSION", "OBSERVATION_CONTENT_ID_VERSION",
     "OBSERVATION_COVERAGE_ID_VERSION", "OBSERVATION_KEY_VERSION",
     "OBSERVATION_NUMERIC_TYPES", "OBSERVATION_SCHEMA_VERSION",
