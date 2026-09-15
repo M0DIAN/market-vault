@@ -295,7 +295,14 @@ def test_a2_public_scope_and_reader_read_only_ast():
     import market_vault
     import market_vault.observation as api
     assert not hasattr(market_vault, "load_verified_observation_build")
-    assert not any(token in name.lower() for name in api.__all__
+    # A3 adds only the reviewed parallel PIT sidecar, not Feature execution.
+    a3_exports = {
+        "assemble_observation_pit_sidecar", "ObservationPITError", "ObservationPITFeatureBinding",
+        "ObservationPITDecision", "ObservationPITAssemblyResult", "feature_spec_pin_id",
+        "OBSERVATION_FEATURE_SPEC_PIN_ID_VERSION", "MULTI_SOURCE_PIT_CONTRACT_VERSION",
+    }
+    assert a3_exports <= set(api.__all__)
+    assert not any(token in name.lower() for name in api.__all__ if name not in a3_exports
                    for token in ("provider", "pit", "feature", "latest", "catalog"))
     tree = ast.parse(Path(reader.__file__).read_text(encoding="utf-8"))
     for node in ast.walk(tree):
