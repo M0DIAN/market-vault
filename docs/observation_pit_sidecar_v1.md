@@ -76,7 +76,7 @@ loaded spec file. Its exact field set is:
 | Field | V1 type and constraint |
 | --- | --- |
 | provider_id, source_kind, observation_name | Exact A1 text tokens. |
-| dimensions | Unique named A1 text pairs, sorted by normalized name. |
+| dimensions | Tuple of exact A1 ObservationDimension coordinates: name, logical_type, value; unique normalized names, sorted by normalized name. |
 | entity_binding | Exactly EXACT_ENTITY or SAMPLE_CODE. |
 | entity_id | Exact A1 entity token for EXACT_ENTITY; typed null otherwise. |
 | code_entity_map | Complete finite nonempty map for SAMPLE_CODE; empty otherwise. |
@@ -97,6 +97,14 @@ microsecond rule, with no floating-point epoch conversion. Durations are
 elapsed UTC microseconds, not calendar/trading days. An unrepresentable
 `T - max_age_us` fails configuration; it is not clipped or rounded.
 
+Dimensions preserve the full normalized A1 ObservationDimension semantics,
+including the explicit logical_type and its typed value. Supported logical
+types and value validation remain exactly A1's: at this base, string, int64
+and float64 with their existing text, numeric, bool-rejection and finite-value
+rules. Do not infer logical_type from a Python value, coerce a numeric dimension
+to text, or otherwise change A1 normalization. Permuting dimension input order
+does not change the normalized tuple or SourceSpec identity.
+
 Code keys use exactly `PITSample.request.code` normalization: reject unsafe
 text before stripping, then NFC, strip and uppercase. Duplicate normalized
 keys fail even if the entities agree. Sort the complete mapping by normalized
@@ -107,8 +115,12 @@ inference, locale collation or lookup outside the supplied map is permitted.
 ### 3.2 Strict V1 Admission
 
 For a decision, scope is exactly `(provider_id, source_kind, resolved entity_id,
-observation_name, dimensions)`, not a partial match. Every considered build
-must have that coverage scope and the exact declared coverage provider
+observation_name, dimensions)`, not a partial match. Compare the exact normalized
+ObservationDimension tuple, including name, logical_type and typed value,
+against ObservationCoverage.scope and row scope. A dimension logical-type
+mismatch fails admission, even when values have the same printed form or
+compare numerically equal in Python; it also changes observation_source_spec_id.
+Every considered build must have that coverage scope and the exact declared coverage provider
 contract. Its provider pins must include that exact contract. Its normalizer
 pins must include the exact declared normalizer and cannot conflict at that
 version. Extra unused pins remain provenance, never alternate normalizers.
@@ -194,12 +206,18 @@ decision domain and revision completeness. Without that proof, fail even if
 some supplied row looks usable. An unavailable proof is not by itself a
 row-level ARCHIVE_FUTURE outcome.
 
-### 5.2 Required Domain
+### 5.2 Minimum Required Domain
 
-| Alignment | Required effective-time domain |
+| Alignment | Minimum required effective-time domain |
 | --- | --- |
 | EXACT_EVENT_TIME | Closed singleton [target, target]. |
 | LATEST_EFFECTIVE_AT_OR_BEFORE | Closed interval [T - max_age_us, T]. |
+
+For LATEST this is the fresh-usability domain. It proves whether a fresh usable
+observation can exist, not that an older supplied row is the latest effective
+observation. Selecting an older row requires the additional continuous domain
+in 5.3. The proof eligibility and interval-combination rules below apply to
+both the minimum domain and any required extension.
 
 Both A1 coverage flags must be true: `request_pages_complete` and
 `revision_inventory_complete`. Each used proof must have
@@ -231,16 +249,56 @@ missingness.
 
 ### 5.3 Older History and EMPTY Builds
 
-This is decision-relevant coverage, not all-history completeness. Supplied
-eligible observations older than `T - max_age_us` may participate: choose
-latest effective first, then classify STALE. Their contributing revision
-authority must still be proved. Do not require a continuous cover of all
-older history merely to prove the fresh domain.
+Distinguish **FRESH-USABILITY PROOF** from
+**EXACT STALE-CANDIDATE PROVENANCE PROOF**. Neither claims global all-history
+completeness. For LATEST_EFFECTIVE_AT_OR_BEFORE:
 
-If no older candidate is supplied, NO_ELIGIBLE_OBSERVATION means no usable
-eligible candidate was established by the exact proved selection domain. It
-does not mean the series never existed. Unproved older history cannot turn an
-unusable sample into a usable one: such observations would be stale.
+1. First prove the normal closed fresh domain `[T - max_age_us, T]`.
+2. After revision reconciliation and the existing visibility/effective gates,
+   identify the tentative unique greatest supplied eligible candidate. If its
+   event_time is `>= T - max_age_us`, no older-domain extension is required.
+3. If its event_time is `< T - max_age_us`, it is not yet a proved latest
+   selection. Before recording selected references, eligible coverage proofs
+   must establish continuous effective-time coverage over
+   `[tentative.event_time, T]`. Equivalently, extend the already proved fresh
+   domain with `[tentative.event_time, T - max_age_us]`, without a missing
+   microsecond. Use the same exact scope/provider contract, complete revision
+   inventory, knowledge-through-T and coverage-proof archive gates as in 5.2.
+4. Only after this extension proves the candidate is actually latest may it
+   become selected; then apply value status and freshness. For VALUE under
+   EXCLUDE_SAMPLE, emit EXCLUDED/STALE and preserve all eight selected fields
+   in section 9. FAIL still fails assembly. Existing NOT_REPORTED/WITHDRAWN
+   precedence remains unchanged; it cannot bypass proof of a latest selection.
+
+The proved stale-selection domain is therefore `[selected.event_time, T]`.
+If the tentative greatest supplied eligible candidate is older than the fresh
+domain but the extension cannot be proved, **FAIL AUTHORITY**: fail the entire assembly regardless of
+missing_policy. Do not silently select it, ignore it, emit STALE with unproved
+references, or relabel the result NO_ELIGIBLE_OBSERVATION. Proving only that
+row's own point/revision plus the fresh domain is insufficient. No backward
+search or alternate older-candidate substitution repairs the proof failure.
+
+All extension proofs must come from the explicitly considered verified builds.
+Their ObservationBuildPins remain in considered_observation_builds_digest,
+including coverage-only builds; there is no hidden proof input or
+input-order-dependent proof selection.
+
+Normative example: let integer microsecond coordinates denote offsets from
+one fixed aware UTC instant, with `T=100us` and `max_age_us=10us`. Complete
+coverage `[90,100]` contains no rows. A supplied eligible VALUE at event 50 has
+its own point/revision proved, but instants 51 through 89 are uncovered. The
+outcome is FAIL AUTHORITY, not event 50 / STALE: an unproved event at 80 could
+exist. In the paired positive case, continuous eligible coverage `[50,100]`
+and complete revision inventories establish no later eligible observation.
+Select event 50, then emit STALE under EXCLUDE_SAMPLE, retaining selected
+references with no backward search.
+
+If the fresh domain is fully proved, no eligible candidate exists there and
+no older candidate is supplied, NO_ELIGIBLE_OBSERVATION remains allowed under
+the existing no-candidate rules. It means no usable eligible candidate was
+established by the exact proved decision-relevant domain, not that the series
+never existed. Unproved older history cannot make that sample usable, but this
+limited usability fact cannot justify selecting any particular stale row.
 
 EMPTY is admissible only as a verified complete declaration with the same
 proof-clock gate. An EMPTY proof created after A cannot prove historical
@@ -304,6 +362,11 @@ LATEST_EFFECTIVE_AT_OR_BEFORE executes exactly:
 9. Select the unique key with greatest event_time.
 10. Apply value status.
 11. Apply freshness.
+
+At step 9, an older tentative candidate cannot become the selected latest
+observation until the extended coverage proof in 5.3 succeeds. This is a
+selection-authority check before status/freshness, not backward substitution
+or a change to revision-before-alignment or event-time ordering.
 
 Distinct keys tied at the greatest event_time fail assembly, even if values
 agree. No ID or input-order tie-break is allowed. A correction of K_old at a
@@ -440,7 +503,8 @@ containing build, even for STALE/NOT_REPORTED/WITHDRAWN. All other considered
 builds have empty selected sets. This supports exact bidirectional membership
 checking while the row carries only one representative build ID.
 
-Pin all selected, overlapping, EMPTY and coverage-only builds, and late-created
+Pin all selected, overlapping, EMPTY and coverage-only builds, including all
+proofs used by the extended stale-selection domain, and late-created
 builds considered for row facts. Do not deduplicate solely by logical build ID:
 same observation_build_id with different coverage_proof_available_at gives
 different A3 pins. Only identical complete pins collapse. Sort by the complete
@@ -534,7 +598,7 @@ that shape, replacing only the listed nested collections with their digests.
 
 | Identity | Domain and payload |
 | --- | --- |
-| Dimension item | H(observation-source-dimension-v1, {name, value}); dimension sequence S(observation-source-dimensions-v1, ordered item IDs). |
+| Dimension item | H(observation-source-dimension-v1, {name, logical_type, value}); dimension sequence S(observation-source-dimensions-v1, normalized-name-ordered item IDs). |
 | Code mapping item | H(observation-entity-map-entry-v1, {code, entity_id}); complete map S(observation-entity-map-v1, code-ordered item IDs). |
 | Input field item | H(observation-input-field-v1, {name}); field sequence S(observation-input-fields-v1, declaration-ordered item IDs). |
 | observation_source_spec_id | H(observation-source-spec-v1, all 3.1 scalar fields, replacing dimensions/code_entity_map/input_field_names by dimensions_digest/code_entity_map_content_id/input_field_names_digest respectively). |
@@ -549,8 +613,10 @@ that shape, replacing only the listed nested collections with their digests.
 | considered_observation_builds_digest | S(observation-considered-builds-v1, sorted distinct complete build-pin IDs). |
 
 These domains do not reuse observation_key, observation_version_id or any
-other A1 identity domain. SourceSpec's exact-target typed null and empty map
-for EXACT_ENTITY are included, not omitted. The complete map is bound, not
+other A1 identity domain. In particular, the separate A3
+observation-source-dimension-v1 binds the explicit logical_type and typed value;
+A1 observation-dimension-v1 remains unchanged. SourceSpec's exact-target typed
+null and empty map for EXACT_ENTITY are included, not omitted. The complete map is bound, not
 only the entity resolved for the current sample.
 
 ### 10.3 Decision and Table Content
@@ -631,7 +697,9 @@ never overwrites the old bar association_content_id or an existing artifact.
 These are design requirements, not claims that A3 tests or runtime exist.
 Unless a row says otherwise, fixtures provide exact authority/schema,
 complete decision-domain and revision-inventory proofs eligible at A, valid
-chains and missing_policy=EXCLUDE_SAMPLE. "Fail" means whole-assembly failure
+chains and missing_policy=EXCLUDE_SAMPLE. Any older selected LATEST candidate
+also has the continuous extension required by 5.3 unless the canary explicitly
+tests its absence. "Fail" means whole-assembly failure
 with no partial trusted result. Equality tests use exact UTC microseconds.
 
 | # | Canary | Required outcome |
@@ -644,7 +712,7 @@ with no partial trusted result. Equality tests use exact UTC microseconds.
 | 6 | Future-known successor correction. | Older eligible revision remains selected; no future revision consumption. |
 | 7 | Market-visible successor has archive_available_at > A. | Older archive-eligible revision remains selected; archive_limited=true. An independently eligible proof must cover completeness through T. |
 | 8 | Equivalent repeated captures. | Select ascending archive/snapshot/version representative among eligible captures, never between economic revisions. |
-| 9 | Latest selected VALUE is older than T - max_age_us. | Select then EXCLUDED/STALE; preserve references and never search backward. |
+| 9 | Latest supplied eligible VALUE is older than T - max_age_us; continuous eligible coverage [candidate.event_time, T] proves it is truly latest. | After extended proof, select then EXCLUDED/STALE; preserve references and never search backward. |
 | 10 | Latest newer key is NOT_REPORTED. | EXCLUDED/NOT_REPORTED; do not substitute older VALUE. |
 | 11 | Terminal eligible revision is WITHDRAWN. | EXCLUDED/WITHDRAWN; no predecessor resurrection, including if stale. |
 | 12 | Distinct eligible keys tie at greatest event_time. | Fail, with no lexical winner. |
@@ -673,6 +741,11 @@ with no partial trusted result. Equality tests use exact UTC microseconds.
 | 35 | Unavailable proof accompanies separately proved archive-eligible row facts. | Do not substitute build.created_at for row archive visibility; unavailable proof cannot fill coverage holes. |
 | 36 | archive-future correction of an older key while a newer effective key wins unchanged. | archive_limited=false unless the selected decision itself uses older evidence under 7.4. |
 | 37 | EMPTY proof has knowledge_start > T although knowledge_end >= T. | Fail: a future-only knowledge interval cannot establish completeness or absence at T. |
+| 38 | Same normalized dimension name with different explicit logical_type, e.g. int64 value 1 versus float64 value 1.0. | Different observation_source_spec_id; exact typed dimension scope mismatch fails admission. No Python numeric-equality shortcut. |
+| 39 | Typed numeric dimension, e.g. int64 value 1, versus string value "1". | Numeric value stays numeric with its declared logical_type; no conversion to text. Distinct SourceSpec identities and scopes. |
+| 40 | Permute dimension input order with unchanged exact typed coordinates. | Same normalized name-sorted tuple and observation_source_spec_id. |
+| 41 | T=100us, max_age_us=10us; no fresh rows; complete [90,100] plus only the supplied eligible event-50 point/revision proof, with 51..89 uncovered. | FAIL AUTHORITY regardless of missing_policy; not event 50 / STALE and not NO_ELIGIBLE_OBSERVATION. An event at 80 has not been excluded by proof. |
+| 42 | Paired case: T=100us, max_age_us=10us, eligible VALUE at 50, continuous eligible [50,100] proof with no later eligible observation. | Select event 50 only after extended proof, then EXCLUDED/STALE; preserve all selected references, pin every used proof, no backward search. |
 
 ## 12. Unchanged Contracts and Deferred Work
 
