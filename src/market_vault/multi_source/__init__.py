@@ -26,6 +26,16 @@ from .identity import (
 )
 from .orchestration_models import MultiSourceDatasetOrchestrationResult
 from .orchestration import orchestrate_multi_source_dataset_build
+from .artifact_models import (
+    MultiSourceDatasetArtifactError, MultiSourceDatasetMaterializationError,
+    MultiSourceDatasetOutputFile, VerifiedMultiSourceDatasetBuild, MultiSourceDatasetMaterializationResult,
+    MULTI_SOURCE_DATASET_MANIFEST_SCHEMA_VERSION, MULTI_SOURCE_DATASET_SERIALIZATION_FORMAT_VERSION,
+    MULTI_SOURCE_DATASET_MATERIALIZER_VERSION, MULTI_SOURCE_DATASET_READER_CONTRACT_VERSION,
+    MULTI_SOURCE_DATASET_BUILD_REPORT_VERSION,
+)
+from .manifest import MultiSourceDatasetManifest, serialize_multi_source_dataset_manifest
+from .materialization import materialize_multi_source_dataset_build
+from .reader import load_verified_multi_source_dataset
 
 __all__ = [
     "ObservationFeatureSpec", "OBSERVATION_FEATURE_SPEC_SCHEMA_VERSION",
@@ -41,4 +51,10 @@ __all__ = [
     "observation_evidence_content_id", "MultiSourceDatasetIdentityInput", "multi_source_dataset_id",
     "MULTI_SOURCE_DATASET_ID_VERSION", "MULTI_SOURCE_DATASET_ORCHESTRATION_CONTRACT_VERSION",
     "MultiSourceDatasetOrchestrationResult", "orchestrate_multi_source_dataset_build",
+    "MultiSourceDatasetArtifactError", "MultiSourceDatasetMaterializationError", "MultiSourceDatasetOutputFile",
+    "VerifiedMultiSourceDatasetBuild", "MultiSourceDatasetMaterializationResult", "MultiSourceDatasetManifest",
+    "serialize_multi_source_dataset_manifest", "materialize_multi_source_dataset_build", "load_verified_multi_source_dataset",
+    "MULTI_SOURCE_DATASET_MANIFEST_SCHEMA_VERSION", "MULTI_SOURCE_DATASET_SERIALIZATION_FORMAT_VERSION",
+    "MULTI_SOURCE_DATASET_MATERIALIZER_VERSION", "MULTI_SOURCE_DATASET_READER_CONTRACT_VERSION",
+    "MULTI_SOURCE_DATASET_BUILD_REPORT_VERSION",
 ]

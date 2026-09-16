@@ -388,4 +388,7 @@ def test_A42_owned_modules_have_no_io_or_deferred_surface():
         calls = {n.func.id if isinstance(n.func, ast.Name) else n.func.attr if isinstance(n.func, ast.Attribute) else ""
                  for n in ast.walk(tree) if isinstance(n, ast.Call)}
         assert not calls & forbidden, name
-    assert all(not (root / name).exists() for name in ("materialization.py", "reader.py", "manifest.py"))
+    for name in names:
+        tree = ast.parse((root / name).read_text(encoding="utf-8"))
+        assert not any(isinstance(n, ast.ImportFrom) and n.module in
+                       ("materialization", "reader", "manifest", "_artifact_paths") for n in ast.walk(tree))
