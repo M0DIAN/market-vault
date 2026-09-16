@@ -1,7 +1,7 @@
 """A4.3 publication ownership, race, crash and actual platform canaries."""
 
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import fields
+from dataclasses import FrozenInstanceError, fields
 import errno
 import os
 from pathlib import Path
@@ -10,6 +10,7 @@ import subprocess
 import sys
 from threading import Barrier
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pyarrow as pa
 import pytest
@@ -108,7 +109,7 @@ def test_preexisting_staging_not_adopted_or_deleted(candidate, tmp_path, monkeyp
 def test_substituted_staging_cleanup_refused(candidate, tmp_path, monkeypatch):
     root = tmp_path / "out"
     saved = []
-    def substitute(owner):
+    def substitute(owner, seal):
         original = owner.path.with_name(owner.path.name + "-saved")
         owner.path.rename(original)
         owner.path.mkdir()
@@ -125,9 +126,9 @@ def test_substituted_staging_cleanup_refused(candidate, tmp_path, monkeypatch):
 def test_actual_concurrent_publish_one_creator(candidate, tmp_path, monkeypatch):
     barrier = Barrier(2)
     original = writer._publish
-    def rendezvous(owner):
+    def rendezvous(owner, seal):
         barrier.wait(timeout=30)
-        original(owner)
+        original(owner, seal)
     monkeypatch.setattr(writer, "_publish", rendezvous)
     def run():
         return materialize_multi_source_dataset_build(candidate, output_root=tmp_path / "out", built_at=BUILT_AT)
@@ -140,10 +141,10 @@ def test_actual_concurrent_publish_one_creator(candidate, tmp_path, monkeypatch)
 
 def test_corrupt_race_winner_untouched(candidate, tmp_path, monkeypatch):
     original = writer._publish
-    def winner(owner):
+    def winner(owner, seal):
         owner.final.mkdir()
         (owner.final / "keep").write_bytes(b"foreign corrupt winner")
-        original(owner)
+        original(owner, seal)
     monkeypatch.setattr(writer, "_publish", winner)
     with pytest.raises(MultiSourceDatasetMaterializationError):
         materialize_multi_source_dataset_build(candidate, output_root=tmp_path / "out", built_at=BUILT_AT)
@@ -163,7 +164,7 @@ def test_postcommit_reader_failure_never_removes_final(candidate, tmp_path, monk
 
 def test_crash_residue_non_authoritative_not_swept(candidate, tmp_path, monkeypatch):
     original = writer._publish
-    def crash(owner):
+    def crash(owner, seal):
         raise KeyboardInterrupt("process crash simulation")
     monkeypatch.setattr(writer, "_publish", crash)
     with pytest.raises(KeyboardInterrupt):
@@ -240,7 +241,7 @@ def test_staging_link_refuses_cleanup(candidate, tmp_path, monkeypatch):
     outside.mkdir()
     (outside / "keep").write_bytes(b"source evidence")
     recorded = []
-    def linked(owner):
+    def linked(owner, seal):
         child = owner.path / "escape"
         if os.name == "nt":
             subprocess.run(["cmd", "/c", "mklink", "/J", str(child), str(outside)], check=True, capture_output=True)
@@ -259,3 +260,112 @@ def test_explicit_built_at_required(candidate, tmp_path, built_at):
     with pytest.raises(MultiSourceDatasetMaterializationError):
         materialize_multi_source_dataset_build(candidate, output_root=tmp_path / "out", built_at=built_at)
     assert not (tmp_path / "out").exists()
+
+
+SEALED_MEMBERS = (
+    "dataset.parquet", "manifest.json", "_SUCCESS", "associations/bar.parquet",
+    "associations/observation.parquet", "associations/sample_bindings.parquet",
+    "associations/observation_feature_values.parquet", "associations/observation_evidence.json",
+    "feature_specs/bar/*.yaml", "feature_specs/observation/*.yaml", "label_specs/*.yaml",
+    "split_spec.yaml", "build_report.json",
+)
+
+
+def assert_rejected_before_rename(candidate, tmp_path, monkeypatch, match="publication"):
+    root = tmp_path / "out"
+    unrelated = root / "unrelated"
+    unrelated.mkdir(parents=True)
+    (unrelated / "keep").write_bytes(b"untouched")
+    rename = Mock(side_effect=AssertionError("invalid staging reached no-replace primitive"))
+    monkeypatch.setattr(writer, "_rename_directory_no_replace_windows", rename)
+    monkeypatch.setattr(writer, "_rename_directory_no_replace_linux", rename)
+    with pytest.raises(MultiSourceDatasetMaterializationError, match=match):
+        materialize_multi_source_dataset_build(candidate, output_root=root, built_at=BUILT_AT)
+    assert rename.call_count == 0
+    assert not (root / candidate.dataset_id).exists()
+    assert tuple(root.iterdir()) == (unrelated,)
+    assert tree_bytes(unrelated) == {"keep": b"untouched"}
+
+
+@pytest.mark.parametrize("member", SEALED_MEMBERS)
+@pytest.mark.parametrize("mutation", ["bytes", "remove", "substitute"])
+def test_sealed_member_drift_rejected_before_rename(candidate, tmp_path, monkeypatch, member, mutation):
+    publish = writer._publish
+    def drift(owner, seal):
+        assert seal is owner.publication_seal
+        assert writer.inventory(owner.path) == seal.expected_inventory
+        path, = owner.path.glob(member)
+        before = path.read_bytes()
+        if mutation == "bytes":
+            path.write_bytes(bytes([before[0] ^ 1]) + before[1:] if before else b"not empty")
+        elif mutation == "remove":
+            path.unlink()
+        else:
+            path.rename(tmp_path / "original-file-object")
+            path.write_bytes(before)
+            assert path.read_bytes() == before, "same bytes must not hide object substitution"
+        publish(owner, seal)
+    monkeypatch.setattr(writer, "_publish", drift)
+    assert_rejected_before_rename(candidate, tmp_path, monkeypatch)
+
+
+@pytest.mark.parametrize("member", ["dataset.parquet", "manifest.json", "_SUCCESS", "build_report.json"])
+def test_seal_cannot_capture_new_bytes_after_private_verification(candidate, tmp_path, monkeypatch, member):
+    verify = writer._verify_directory
+    verified_final = []
+    def mutate_after_verified(root, *, require_success, final_name):
+        result = verify(root, require_success=require_success, final_name=final_name)
+        if require_success and not final_name:
+            verified_final.append(root)
+            path = root / member
+            path.write_bytes(path.read_bytes() + b"post-verification drift")
+        return result
+    monkeypatch.setattr(writer, "_verify_directory", mutate_after_verified)
+    assert_rejected_before_rename(candidate, tmp_path, monkeypatch)
+    assert len(verified_final) == 1
+
+
+def test_publication_seal_requires_reconstructed_owner_dataset_id(candidate, tmp_path, monkeypatch):
+    verify = writer._verify_directory
+    def wrong_binding(root, *, require_success, final_name):
+        result = verify(root, require_success=require_success, final_name=final_name)
+        if require_success and not final_name:
+            result["dataset_id"] = "0" * 64
+        return result
+    monkeypatch.setattr(writer, "_verify_directory", wrong_binding)
+    assert_rejected_before_rename(candidate, tmp_path, monkeypatch, "manifest Dataset identity")
+
+
+@pytest.mark.parametrize("supplied", [None, object()])
+def test_publish_rejects_unissued_seal(candidate, tmp_path, monkeypatch, supplied):
+    publish = writer._publish
+    def unissued(owner, seal):
+        publish(owner, supplied)
+    monkeypatch.setattr(writer, "_publish", unissued)
+    assert_rejected_before_rename(candidate, tmp_path, monkeypatch, "unissued publication seal")
+
+
+def test_publication_seal_is_immutable_and_not_caller_constructible(candidate, tmp_path, monkeypatch):
+    publish = writer._publish
+    def inspect(owner, seal):
+        with pytest.raises(TypeError, match="private verification"):
+            writer._PublicationSeal()
+        with pytest.raises(FrozenInstanceError):
+            seal.dataset_id = "0" * 64
+        assert seal.dataset_id == candidate.dataset_id
+        assert seal.expected_inventory == frozenset(writer.expected_inventory(owner.allowed))
+        assert tuple(f[0] for f in seal.file_facts) == tuple(sorted(owner.allowed))
+        publish(owner, seal)
+    monkeypatch.setattr(writer, "_publish", inspect)
+    assert materialize_multi_source_dataset_build(candidate, output_root=tmp_path / "out", built_at=BUILT_AT).created_new_build
+
+
+def test_partial_write_cleanup_does_not_require_publication_seal(candidate, tmp_path, monkeypatch):
+    write = writer._write_bytes
+    def fail_after_first_file(owner, name, data):
+        write(owner, name, data)
+        assert owner.publication_seal is None
+        assert writer.inventory(owner.path) < writer.expected_inventory(owner.allowed)
+        raise OSError("partial staging write failure")
+    monkeypatch.setattr(writer, "_write_bytes", fail_after_first_file)
+    assert_rejected_before_rename(candidate, tmp_path, monkeypatch, "partial staging write failure")

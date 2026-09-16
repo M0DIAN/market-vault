@@ -17,7 +17,7 @@ import yaml
 from ..dataset.artifact_serialization import feature_spec_artifact, label_spec_artifact, split_spec_artifact
 from ..dataset.encoding import normalize_utc_datetime
 from ..dataset.specs import feature_label_spec_pin
-from ._artifact_paths import absolute_path, inventory, object_identity, safe_path, expected_inventory
+from ._artifact_paths import absolute_path, inventory, object_identity, safe_path, expected_inventory, read_bytes
 from ._artifact_schema import output_contracts, parquet_bytes, physical_values, table_contracts
 from ._artifact_validation import build_report
 from ._serialization import canonical_json, evidence_payload, require
@@ -47,6 +47,22 @@ class _StagingOwnership:
     allowed: frozenset
     committed: bool = False
     removed: bool = False
+    publication_seal: object = None
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class _PublicationSeal:
+    path: Path
+    output_root: Path
+    final: Path
+    path_identity: tuple
+    root_identity: tuple
+    dataset_id: str
+    expected_inventory: frozenset
+    file_facts: tuple
+
+    def __init__(self, *args, **kwargs):
+        raise TypeError("publication seals are issued only by private verification")
 
 
 def _check_owner(owner):
@@ -96,9 +112,55 @@ def _rename_directory_no_replace_linux(staging, final):
     raise MultiSourceDatasetMaterializationError(f"atomic no-replace failed: errno {error}")
 
 
-def _publish(owner):
+def _revalidate_publication_seal(owner, seal):
+    require(type(seal) is _PublicationSeal and seal is owner.publication_seal, "unissued publication seal")
+    require((owner.path, owner.output_root, owner.final, owner.path_identity, owner.root_identity, owner.dataset_id) ==
+        (seal.path, seal.output_root, seal.final, seal.path_identity, seal.root_identity, seal.dataset_id),
+        "publication seal ownership mismatch")
     _check_owner(owner)
-    safe_path(owner.final, directory=True, allow_missing=True)
+    require(frozenset(expected_inventory(owner.allowed)) == seal.expected_inventory and
+            inventory(owner.path) == seal.expected_inventory, "publication inventory mismatch")
+    require({name for name, _, _, _ in seal.file_facts} == owner.allowed, "publication whitelist mismatch")
+    for name, file_identity, size, digest in seal.file_facts:
+        path = owner.path / name
+        require(object_identity(safe_path(path, directory=False)) == file_identity, "publication file substituted: " + name)
+        data = read_bytes(path)
+        require(len(data) == size and hashlib.sha256(data).hexdigest() == digest, "publication content changed: " + name)
+        require(name != "_SUCCESS" or data == b"", "publication marker must be empty")
+        require(object_identity(safe_path(path, directory=False)) == file_identity, "publication file substituted: " + name)
+    _check_owner(owner)
+    require(inventory(owner.path) == seal.expected_inventory, "publication inventory changed")
+    final = safe_path(owner.final, directory=True, allow_missing=True)
+    require(final is None or final.st_dev == seal.root_identity[0], "publication final filesystem mismatch")
+
+
+def _verify_and_seal_staging(owner):
+    _check_owner(owner)
+    expected = frozenset(expected_inventory(owner.allowed))
+    require(inventory(owner.path) == expected, "publication inventory mismatch")
+    identities = {name: object_identity(safe_path(owner.path / name, directory=False)) for name in sorted(owner.allowed)}
+    verified = _verify_directory(owner.path, require_success=True, final_name=False)
+    manifest = verified["manifest"]
+    require(verified["dataset_id"] == manifest.dataset_id == owner.dataset_id, "publication manifest Dataset identity mismatch")
+    # Anchor hashes to the verified manifest, never to new unchecked staging bytes.
+    raw_manifest = serialize_multi_source_dataset_manifest(manifest)
+    facts = {f.relative_path: (f.byte_size, f.sha256) for f in manifest.output_files}
+    facts["manifest.json"] = (len(raw_manifest), hashlib.sha256(raw_manifest).hexdigest())
+    facts["_SUCCESS"] = (0, hashlib.sha256(b"").hexdigest())
+    require(set(facts) == owner.allowed, "publication manifest whitelist mismatch")
+    seal = object.__new__(_PublicationSeal)
+    values = dict(path=owner.path, output_root=owner.output_root, final=owner.final,
+        path_identity=owner.path_identity, root_identity=owner.root_identity, dataset_id=owner.dataset_id,
+        expected_inventory=expected, file_facts=tuple((n, identities[n], *facts[n]) for n in sorted(facts)))
+    for name, value in values.items():
+        object.__setattr__(seal, name, value)
+    owner.publication_seal = seal
+    _revalidate_publication_seal(owner, seal)
+    return seal
+
+
+def _publish(owner, seal):
+    _revalidate_publication_seal(owner, seal)
     if os.name == "nt":
         _rename_directory_no_replace_windows(owner.path, owner.final)
     elif os.name == "posix" and sys.platform.startswith("linux"):
@@ -194,9 +256,9 @@ def materialize_multi_source_dataset_build(
             _write_bytes(owner, name, data)
         _verify_directory(staging, require_success=False, final_name=False)
         _write_bytes(owner, "_SUCCESS", b"")
-        _verify_directory(staging, require_success=True, final_name=False)
+        seal = _verify_and_seal_staging(owner)
         try:
-            _publish(owner)
+            _publish(owner, seal)
         except _DestinationExistsError:
             existing = _existing(final, result.dataset_id)
             _remove_tree(owner)
