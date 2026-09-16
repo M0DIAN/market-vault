@@ -374,7 +374,11 @@ Exact execution order, once each:
 17. Compute multi_source_dataset_id.
 
 Do not call the old orchestrator (which would execute upstream stages again).
-No filesystem/plan/settings/latest/current-time/provider access. A3 keeps
+A4.2-owned orchestration, identity, evidence, audit and result code performs
+no filesystem access. The complete pipeline may inherit only the frozen
+built-in bar Feature/Label registry implementation-source fingerprint reads
+defined in 6.2; this is not a general read-only filesystem allowance.
+No plan/settings/latest/current-time/provider access. A3 keeps
 T=feature_window_close and A=dataset_as_of; revision-before-alignment,
 event_time cross-key ordering, exact/latest-effective modes, freshness after
 selection and no backward search remain unchanged. Preserve A3's conservative
@@ -437,6 +441,64 @@ feature_window_close, sample_key); no duplicate sample key. Reuse
 dataset_schema_id and logical_dataset_content_id exactly on this derived
 DatasetSchema and exact rows, after stricter Observation scalar validation.
 Logical row multiplicity/order rules remain those frozen functions.
+
+### 6.2 Inherited Registry Source-Read Boundary
+
+At the clarification base `7aad267917c0e5fbbe7134aae1324cbcf813aa63`
+(tree `0ddd7d102db5639d78db64228a30b28b40ec82b2`), the existing Dataset
+Feature and Label executors construct their built-in registries internally.
+Those frozen registries derive implementation fingerprints through
+`dataset.transform_models._module_source_sha256(...)` calling
+`inspect.getsource(module)`. The sole allowed inherited read class is
+`INHERITED_REGISTRY_SOURCE_READ`: read-only access to the source of an
+already-loaded, statically registered built-in implementation module, only
+to derive its existing normalized source SHA/fingerprint for immutable
+`TransformRegistration` / `ImplementationPin` facts. No dynamic module
+discovery, caller-supplied precomputed registry or caller-authored pin bypass
+is authorized.
+
+This is a closed-world allowance for existing behavior, not permission for
+new filesystem access. It does not authorize A4.2-owned file reads or writes,
+nor direct or indirect new access to Canonical, Observation or Dataset
+artifact files; Feature, Observation Feature, Label or split spec files;
+sample-generation plans; manifests; Catalog files; settings files;
+environment-derived data authority; latest/current pointers; directory scans
+or filesystem inventory; mtime or cwd-derived authority. Network, providers,
+OpenD and current time remain forbidden. All Dataset inputs remain explicit,
+already-verified in-memory objects. Any filesystem access outside the exact
+inherited registry fingerprint behavior is a contract violation.
+
+~~~text
+INHERITED_REGISTRY_SOURCE_READ_ONLY=true
+INHERITED_REGISTRY_SOURCE_READ_MUTATION=false
+INHERITED_REGISTRY_SOURCE_READ_IS_DATA_AUTHORITY=false
+INHERITED_REGISTRY_SOURCE_READ_IS_PIT_AUTHORITY=false
+INHERITED_REGISTRY_SOURCE_READ_IS_PROVIDER_AUTHORITY=false
+INHERITED_REGISTRY_SOURCE_PATH_IDENTITY_BOUND=false
+INHERITED_REGISTRY_SOURCE_MTIME_IDENTITY_BOUND=false
+INHERITED_REGISTRY_SOURCE_CWD_IDENTITY_BOUND=false
+~~~
+
+Only normalized implementation source content affects the already-existing
+implementation fingerprint, exactly under the frozen old executor contract.
+Source location, path, mtime and cwd are not identity-bearing. Relocating
+byte-identical verified Canonical/Observation artifacts still cannot change
+`multi_source_dataset_id`.
+
+"Pure Multi-Source Orchestration" means no hidden market/data/provider
+authority, no filesystem-backed Dataset input, no mutable external state
+used as Dataset input or mutated by orchestration, and deterministic output
+from explicit verified inputs plus the frozen implementation fingerprints
+of statically registered transforms. The inherited source read is
+implementation attestation, not Dataset input or a PIT/provider authority.
+
+The exact once-per-layer execution order in section 6 remains unchanged.
+Do not replace or modify the existing Feature/Label executors, registries,
+implementation fingerprint/ImplementationPin semantics, Feature/Label value
+identities or old Dataset ID. A1, A2, A3 and A4.1 remain unchanged, including
+the already-reviewed A4.1 Observation registry fingerprint behavior. This
+clarification exists because A4.2 must compose the frozen legacy bar
+executors rather than replace them; it does not authorize implementation.
 
 ## 7. Complete Evidence And New Dataset Identity
 
@@ -1023,6 +1085,24 @@ without replacing it. All old A1/A2/A3 and old-cohort vectors remain.
 57. Reparse/symlink/junction, including non-escaping links, fails closed.
 58. Unrelated output-root children and all upstream artifacts stay untouched.
 
+### 11.1 Separate Implementation-Boundary Canary
+
+`A42_INHERITED_REGISTRY_SOURCE_READ_BOUNDARY` is an additional named
+implementation-boundary obligation for the later A4.2 tests, not a new
+product-semantic canary. The existing product canaries keep their numbering
+and `DESIGN_CANARY_COUNT=58`.
+
+Prove that an orchestration invocation introduces no filesystem access
+except the exact inherited built-in registry implementation-source
+fingerprint reads in 6.2. Distinguish the allowed frozen source-read call
+path and already-loaded static implementation targets from all forbidden
+A4.2-owned reads and all artifact/spec/plan/settings/directory access.
+Reject unrelated read targets or any broadened read authority; verify that
+no write or new data authority is introduced. Do not monkeypatch all file
+reads indiscriminately and then incorrectly expect the unchanged legacy
+executors to succeed. Preserve the exactly-once execution assertions and
+relocation/identity assertions alongside this boundary check.
+
 ## 12. Future Fixed-Vector Payloads
 
 This section fixes encoder inputs, not fabricated known-answer hashes or
@@ -1183,7 +1263,7 @@ offline runtime fixtures after all preceding phase vectors have been reviewed.
 
 ## 13. Submission Gates And Stop
 
-This design PR changes exactly this document and the new operation JSON.
+The original design PR changed exactly this document and the new operation JSON.
 Run diff --check, repository hygiene, release checker and destructive
 repository inventory with D:-bound environment/output roots. Future exact
 symbols may be absent; that is the checker's supported steady-binding model.
@@ -1194,3 +1274,31 @@ All required jobs and the actually executed destructive design gate must
 succeed. No runtime tests, source/CI/checker/exemption/version edits or package
 release builds are part of this design submission. Stop before merge for
 independent architecture and governance review.
+
+### 13.1 A4.2 Precondition Clarification History
+
+The initial A4.2 implementation attempt stopped before modifying repository
+files because its blanket no-filesystem statement conflicted with the
+required frozen bar executors' implementation-source fingerprint reads.
+Preserve that attempt's result without relabeling it:
+
+~~~text
+MULTI_SOURCE_CORE_A4_2_DATASET_ORCHESTRATION_IDENTITY=FAIL
+FAILURE_CLASS=CONTRACT_PRECONDITION_CONFLICT
+FAIL_REASON=FROZEN_BAR_EXECUTORS_REQUIRE_SOURCE_FILE_READS
+CHANGED_FILE_COUNT=0
+COMMIT_CREATED=false
+PUSH_PERFORMED=false
+PR_CREATED=false
+A4_2_C_DRIVE_DEVELOPMENT_USED=false
+~~~
+
+The selected resolution is a separate design-only correction, limited to
+this document, defining the narrow inherited registry source-read allowance
+in 6.2. It is not a source/test/registry/executor/CI/governance-contract or
+version change. Run D:-bound diff, repository hygiene, release checker and
+destructive repository gates, then natural exact-head PR CI (docs_fast is
+expected, never forced). Independent narrow contract review is required.
+`A4_2_IMPLEMENTATION_AUTHORIZED=false`,
+`A4_3_IMPLEMENTATION_AUTHORIZED=false`, and `MERGE_AUTHORIZED=false` remain
+in effect for this correction. No A4.2 implementation resumes here.
