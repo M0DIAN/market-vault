@@ -283,9 +283,15 @@ def test_existing_destructive_contracts_and_inventory_validate():
         "multi_source_dataset_atomic_publication_v1",
     }
     assert len(snapshot.exemptions) == 16
-    assert len(snapshot.findings) == 40
-    assert not any(f.path.startswith("src/market_vault/multi_source/") for f in snapshot.findings)
+    assert len(snapshot.findings) == 42
     multi_source_contract = snapshot.contracts["multi_source_dataset_atomic_publication_v1"]
+    multi_source_findings = [f for f in snapshot.findings if f.path.startswith("src/market_vault/multi_source/")]
+    assert len(multi_source_findings) == 2
+    assert all(multi_source_contract.covers(f) for f in multi_source_findings)
+    assert {(f.path, f.symbol, f.kind, f.signal) for f in multi_source_findings} == {
+        ("src/market_vault/multi_source/materialization.py", "_rename_directory_no_replace_windows", "destructive_call", "os.rename"),
+        ("src/market_vault/multi_source/materialization.py", "_remove_tree", "destructive_call", "shutil.rmtree"),
+    }
     assert {(binding.path, symbol, surface.kind, surface.signal, surface.expected_count)
             for binding in multi_source_contract.bindings
             for symbol in binding.symbols
@@ -306,7 +312,7 @@ def test_existing_destructive_contracts_and_inventory_validate():
         ("_rename_directory_no_replace_windows", "destructive_call", "os.rename"),
         ("_remove_tree", "destructive_call", "shutil.rmtree"),
     }
-    assert len(snapshot.findings) - len(observation_findings) == 38
+    assert len(snapshot.findings) - len(observation_findings) - len(multi_source_findings) == 38
     purge_contract = snapshot.contracts["safe_purge_v01"]
     purge_findings = [
         finding

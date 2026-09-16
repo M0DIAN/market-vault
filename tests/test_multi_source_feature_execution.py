@@ -253,7 +253,7 @@ def test_result_constructor_cross_references(artifacts):
 
 def test_package_boundary_no_deferred_api():
     import market_vault.multi_source as package
-    assert not any(word in name for name in package.__all__ for word in ("materializ", "reader", "provider", "catalog"))
+    assert not any(word in name for name in package.__all__ for word in ("provider", "catalog", "cli"))
     root = Path(package.__file__).parent
     for filename in ("feature_execution.py", "_feature_validation.py"):
         tree = ast.parse((root / filename).read_text(encoding="utf-8"))
