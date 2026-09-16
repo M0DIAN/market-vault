@@ -34,7 +34,6 @@ def normalize_evidence(evidence):
         pairs = sorted(zip(item.build_pins, item.coverages), key=lambda p: observation_build_pin_id(p[0]))
         pair_ids = tuple(observation_proof_pair_id(*pair) for pair in pairs)
         require(len(set(pair_ids)) == len(pair_ids), "duplicate Observation proof pair")
-        require(len({p.observation_build_id for p, _ in pairs}) == len(pairs), "conflicting Observation build proofs")
         result.append(replace(item, build_pins=tuple(p for p, _ in pairs), coverages=tuple(c for _, c in pairs)))
     return tuple(sorted(result, key=lambda e: (e.sample_key, e.feature_spec_pin_id)))
 

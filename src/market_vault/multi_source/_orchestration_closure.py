@@ -11,7 +11,8 @@ from ..dataset.spec_models import FeatureSpec, LabelSpec
 from ..dataset.specs import feature_label_spec_pin
 from ..dataset.split_models import ChronologicalSplitSample
 from ..observation._pit_validation import admit_bar, admit_build, admit_source
-from ..observation.pit_identity import feature_spec_pin_id, observation_decision_id
+from ..observation.pit import _pins
+from ..observation.pit_identity import feature_spec_pin_id, observation_build_pin_id, observation_decision_id
 from ._audit import build_audit
 from ._feature_validation import verify_execution_inputs
 from ._orchestration_validation import canonical_copy, items, require
@@ -65,7 +66,12 @@ def close_layers(bar_pit, observation_pit, builds, bar_specs, observation_specs,
             "Observation spec/result mismatch")
     decisions, bindings, _ = verify_execution_inputs(observation_pit, represented_builds(observation_pit, builds), observation_specs)
     admitted = tuple(admit_build(b) for b in builds)
-    require(len({b.build_id for b in admitted}) == len(admitted), "duplicate Observation build")
+    admitted_by_pin = {}
+    for build in admitted:
+        pins, _ = _pins((build,), None)
+        key = observation_build_pin_id(pins[0])
+        require(key not in admitted_by_pin, "duplicate Observation build proof")
+        admitted_by_pin[key] = build
     for build in admitted:
         matched = False
         for spec in observation_specs:
@@ -82,8 +88,9 @@ def close_layers(bar_pit, observation_pit, builds, bar_specs, observation_specs,
     for proof in observation_pit.evidence:
         source = sources[proof.feature_spec_pin_id]
         entity = source.entity_id if source.entity_binding == "EXACT_ENTITY" else dict(source.code_entity_map)[samples[proof.sample_key].request.code]
-        expected = {b.build_id for b in admitted if b.identity.coverage.scope == source.scope(entity)}
-        require({p.observation_build_id for p in proof.build_pins} == expected, "omitted or extra considered proof")
+        expected = {key for key, b in admitted_by_pin.items() if b.identity.coverage.scope == source.scope(entity)}
+        actual = {observation_build_pin_id(replace(p, selected_observation_version_ids=())) for p in proof.build_pins}
+        require(actual == expected, "omitted or extra considered proof")
     require(set(samples) == {s.sample_key for s in bindings} == {s.sample_key for s in observation_features.samples},
             "A3/Observation Feature sample set mismatch")
     for binding in bindings:

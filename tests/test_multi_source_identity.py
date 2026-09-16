@@ -1,7 +1,7 @@
 """Literal design 12.3/12.4 encodings, separate from verified admission."""
 
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -112,6 +112,26 @@ def test_evidence_order_and_pairing():
         observation_evidence_content_id((item, item))
     with pytest.raises(MultiSourceDatasetError, match="duplicate"):
         observation_evidence_content_id((replace(item, build_pins=item.build_pins*2, coverages=item.coverages*2),))
+
+
+def test_same_logical_build_distinct_physical_proof_identity():
+    item = evidence_vector()
+    one = item.build_pins[0]
+    two = replace(one, coverage_proof_available_at=U + timedelta(microseconds=1))
+    assert one.observation_build_id == two.observation_build_id
+    assert observation_build_pin_id(one) != observation_build_pin_id(two)
+    assert observation_proof_pair_id(one, item.coverages[0]) != observation_proof_pair_id(two, item.coverages[0])
+    pair = replace(item, build_pins=(one, two), coverages=item.coverages * 2)
+    content = observation_evidence_content_id((pair,))
+    assert content != observation_evidence_content_id((item,))
+    assert content != observation_evidence_content_id((replace(item, build_pins=(two,)),))
+    assert content == observation_evidence_content_id((replace(pair, build_pins=(two, one)),))
+    for index in (0, 1):
+        pins = list(pair.build_pins)
+        pins[index] = replace(pins[index], coverage_proof_available_at=U + timedelta(microseconds=2))
+        assert content != observation_evidence_content_id((replace(pair, build_pins=tuple(pins)),))
+    with pytest.raises(MultiSourceDatasetError, match="duplicate Observation proof pair"):
+        observation_evidence_content_id((replace(pair, build_pins=(one, two, two), coverages=item.coverages * 3),))
 
 
 def test_flatten_typed_and_empty_records():

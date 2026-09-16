@@ -126,6 +126,45 @@ def test_canaries_25_26_unused_proof_and_clock(fixtures, observation_factory):
     assert len(extra.observation_evidence[0].build_pins) == 2
 
 
+def test_A3_canary_26_same_logical_build_distinct_physical_proofs(fixtures, observation_factory):
+    from market_vault.observation.pit_identity import observation_build_pin_id
+
+    one, two = observation_factory(created_shift=300), observation_factory(created_shift=400)
+    assert one.observation_build_id == two.observation_build_id
+    data = inputs(fixtures, one)
+    result = orchestrate_multi_source_dataset_build(**(data | dict(observation_builds=(one, two))))
+    evidence, = result.observation_evidence
+    assert evidence == result.observation_pit_result.evidence[0]
+    assert len(evidence.build_pins) == len(evidence.coverages) == 2
+    assert {p.observation_build_id for p in evidence.build_pins} == {one.observation_build_id}
+    assert {p.coverage_proof_available_at for p in evidence.build_pins} == {one.created_at, two.created_at}
+    pin_ids = tuple(sorted(observation_build_pin_id(p) for p in evidence.build_pins))
+    assert len(set(pin_ids)) == 2
+    assert result.identity_input.observation_build_pin_ids == pin_ids
+    for build in (one, two):
+        single = orchestrate_multi_source_dataset_build(**(data | dict(observation_builds=(build,))))
+        assert result.observation_evidence_content_id != single.observation_evidence_content_id
+        assert result.dataset_id != single.dataset_id
+        assert result.observation_feature_result.samples[0].values[0].value == single.observation_feature_result.samples[0].values[0].value
+    reversed_result = orchestrate_multi_source_dataset_build(**(data | dict(observation_builds=(two, one))))
+    assert result.dataset_id == reversed_result.dataset_id
+    assert result.observation_evidence == reversed_result.observation_evidence
+    for index in (0, 1):
+        builds = [one, two]
+        builds[index] = observation_factory(created_shift=500)
+        changed = orchestrate_multi_source_dataset_build(**(data | dict(observation_builds=tuple(builds))))
+        assert result.observation_evidence_content_id != changed.observation_evidence_content_id
+        assert result.dataset_id != changed.dataset_id
+
+
+@pytest.mark.parametrize("empty", [False, True])
+def test_duplicate_complete_proof_rejected_even_without_samples(fixtures, observation_factory, empty):
+    one, duplicate = observation_factory(), observation_factory()
+    with pytest.raises(MultiSourceDatasetError, match="duplicate"):
+        orchestrate_multi_source_dataset_build(**inputs(fixtures, one, observation_builds=(one, duplicate),
+            requests=() if empty else (request(),)))
+
+
 def test_canaries_27_28_decision_and_spec_change(fixtures, observation_factory):
     build = observation_factory()
     first = orchestrate_multi_source_dataset_build(**inputs(fixtures, build))
