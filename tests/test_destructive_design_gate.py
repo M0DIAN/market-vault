@@ -280,9 +280,21 @@ def test_existing_destructive_contracts_and_inventory_validate():
         "catalog_ingestion_run_recording_v1",
         "catalog_market_bars_view_refresh_v1",
         "observation_artifact_atomic_publication_v1",
+        "multi_source_dataset_atomic_publication_v1",
     }
     assert len(snapshot.exemptions) == 16
     assert len(snapshot.findings) == 40
+    assert not any(f.path.startswith("src/market_vault/multi_source/") for f in snapshot.findings)
+    multi_source_contract = snapshot.contracts["multi_source_dataset_atomic_publication_v1"]
+    assert {(binding.path, symbol, surface.kind, surface.signal, surface.expected_count)
+            for binding in multi_source_contract.bindings
+            for symbol in binding.symbols
+            for surface in binding.surfaces} == {
+        ("src/market_vault/multi_source/materialization.py", "_rename_directory_no_replace_windows",
+         "destructive_call", "os.rename", 1),
+        ("src/market_vault/multi_source/materialization.py", "_remove_tree",
+         "destructive_call", "shutil.rmtree", 1),
+    }
     observation_contract = snapshot.contracts["observation_artifact_atomic_publication_v1"]
     observation_findings = [
         finding for finding in snapshot.findings
