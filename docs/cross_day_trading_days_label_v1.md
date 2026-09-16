@@ -58,7 +58,11 @@ No LabelSpec v2. Admit a nonempty spec set only when every spec satisfies:
 The exact existing four built-in transform refs are retained in LabelSpecs;
 section 7 declares their separate Cross-Day registrations. Validate the old
 spec's exact input fields, output type and requirements too: Canonical schema
-`market-bars-canonical-schema-v1`, source schema `10.9`; no wildcard.
+`market-bars-canonical-schema-v1`, source schema exactly `10.9-mv-ts2`; no
+wildcard or legacy `10.9` admission. Legacy `10.9` preserves the historically
+incorrect Moomoo RTH timestamp interpretation; the qualified normal and
+early-close same-session-slot geometry is TS2 authority. Every Cross-Day
+anchor, Label row and Canonical proof must belong to this exact TS2 cohort.
 Unknown transforms, duplicate semantic specs/names, unsupported requirements,
 mixed BARS/TRADING_DAYS or MINUTES/TRADING_DAYS, and MINUTES-only inputs fail
 preflight. No partial dispatch across executors. Zero samples still run all
@@ -70,6 +74,10 @@ V1 geometry is the currently qualified US market, `America/New_York`,
 RTH does not imply worldwide session support. `ADJUSTED_PRICE_PIT_POLICY=
 MODEL_C_NONE_ONLY` remains unchanged. QFQ/HFQ cannot be admitted without
 corporate-action authority. No new unit is added to the old registration enum.
+
+Old BARS Feature/Label registries, executors and ImplementationPins remain
+`10.9` authority. Their supported source-schema sets are not widened, their
+identities are not changed, and A4 is not modified by this parallel cohort.
 
 ## 3. Verified Trading-Day Schedule
 
@@ -154,6 +162,12 @@ Canonical closure, separately supplied Label Canonical builds, schedule,
 LabelSpecs and the same explicit A. It verifies the complete Feature closure
 without rerunning PIT selection. It never invokes the old Label executor.
 
+L2 uses verified TS2 Canonical builds, unchanged feature-only PIT v1,
+`LabelSpec(TRADING_DAYS)` and `VerifiedTradingDaySchedule` without running
+old bar Feature transforms. Feature-only PIT authority is not a claim that
+the old BARS Feature executor supports TS2. PIT v1 models and identities
+remain unchanged; the full Dataset's Feature-side precondition is section 11.
+
 For each sample, let `I` be the nominal interval duration, `T` the Feature
 window close, and `d0` the request's anchor market date. Resolve only the
 PIT-selected Feature row with `event_time=T-I`. It must match the request,
@@ -234,11 +248,22 @@ is FAIL AUTHORITY regardless of `missing_data_policy`. For a non-fitting
 qualified early-close slot, schedule geometry itself proves impossibility;
 no nonexistent out-of-session Canonical bar/gap is demanded.
 
-Label rows are future ground truth, not Feature information: do not apply
-`market_available_at <= T` to them. Use their frozen Canonical market clock,
-not a nominal horizon or schedule close as a replacement. With A, require
-`row.archive_available_at <= A` for consumption. If the exact row exists in
-supplied verified history but is archive-future, record ARCHIVE_FUTURE; never
+Label rows are future ground truth, not Feature information. Their exact
+market-clock admission rule is:
+
+- No `market_available_at <= feature_window_close` constraint applies to
+  Label rows (the Feature anchor's separate visibility rule still applies).
+- No nominal horizon or session-close market cutoff applies to Label rows.
+- `market_available_at` is verified Canonical provenance and determines
+  `actual_label_end_time` under section 6; it is never replaced or inferred
+  from the nominal horizon/session close.
+- With `dataset_as_of=A`, consumption requires `archive_available_at <= A`.
+  Without A there is no archive cutoff or current-time lookup.
+- All existing Canonical row invariants remain mandatory, as do the scope,
+  slot-fit and consumed-order invariants in this document.
+
+If the exact row exists in supplied verified history but is archive-future,
+record ARCHIVE_FUTURE; never
 select it or another version. Such rejected evidence is explicitly marked
 archive-limited diagnostic provenance only, not as-of usable/consumed input.
 All supplied considered build IDs remain visible in the association audit;
@@ -333,7 +358,7 @@ transform_ref, implementation_version="v1", implementation_source_sha256,
 execution_contract_version="cross-day-label-execution-v1",
 transform_call_contract_version="cross-day-label-transform-call-v1",
 canonical_schema_version="market-bars-canonical-schema-v1",
-source_schema_version="10.9", boundary_rule="SAME_REQUESTED_SESSION_BAR_SLOT",
+source_schema_version="10.9-mv-ts2", boundary_rule="SAME_REQUESTED_SESSION_BAR_SLOT",
 window_unit="TRADING_DAYS", offset_shape="TARGET_ONLY" or "ALIGNED_DAILY_POINTS",
 input_count, input_0000, [input_0001],
 output_logical_type, output_nullable=false, parameter_count=0
@@ -438,16 +463,23 @@ content and pin. No execution/physical path or nonsemantic display metadata.
 ```text
 label_spec_pin_id = H("dataset-spec", {kind:"LABEL", name, version, content_sha256})
   # content_sha256 is UNCHANGED feature_label_spec_content_id(LabelSpec).
-canonical_build_ids_digest = S("cross-day-canonical-builds-v1", sorted unique build IDs)
+backing_canonical_build_ids_digest = S(
+  "cross-day-backing-canonical-builds-v1",
+  sorted unique build IDs containing the exact admitted row/proof
+)
+considered_canonical_build_ids_digest = S(
+  "cross-day-considered-canonical-builds-v1",
+  sorted unique Feature-closure + supplied Label/proof/diagnostic build IDs
+)
 slot_id = H("cross-day-label-slot-v1", {
   offset, market_calendar_date, event_time, session_open, session_close, slot_fits
 })
 row_reference_id = H("cross-day-label-row-v1", {
-  offset, canonical_bar_key, canonical_row_version_id, canonical_build_ids_digest,
+  offset, canonical_bar_key, canonical_row_version_id, backing_canonical_build_ids_digest,
   event_time, market_available_at, archive_available_at
 })
 gap_proof_id = H("cross-day-label-gap-proof-v1", {
-  offset, gap_id, canonical_build_ids_digest,
+  offset, gap_id, backing_canonical_build_ids_digest,
   previous_canonical_row_version_id, next_canonical_row_version_id,
   missing_from_event_time, missing_to_event_time, proof_archive_available_at
 })
@@ -462,6 +494,23 @@ Rejected archive-future rows use the same row-reference shape but are kept
 only in the rejected digest, never consumed. Canonical build IDs seal the
 immutable complete build/gap content, not paths or scan order.
 
+These are two distinct sets and domains, never aliases. The per-reference
+`backing_canonical_build_ids_digest` is used ONLY in `row_reference_id` and
+`gap_proof_id`. The invocation-wide `considered_canonical_build_ids_digest`
+is used ONLY in decision/association and any invocation-wide audit identity.
+Even when the member IDs happen to coincide, the domain-separated digests
+are different; neither may be substituted for the other.
+
+For example, with considered builds A,B,C,D and a selected row backed only
+by B,D, the row reference binds `S("cross-day-backing-canonical-builds-v1",
+[B,D])`, while the decision binds `S("cross-day-considered-canonical-builds-v1",
+[A,B,C,D])`. Adding unrelated considered C to an invocation considering A,B,D
+changes decision/association identity but not that row reference. Adding an
+additional identical backing build E changes that row reference, and hence
+downstream decision/value identities; E also joins the considered set.
+The same per-proof rule applies to exact Canonical gap evidence. A build
+that does not back the exact admitted row/proof cannot enter its backing set.
+
 ### 9.4 Decision
 
 ```text
@@ -473,7 +522,7 @@ decision_id = H("cross-day-label-decision-v1", {
   anchor_canonical_row_version_id, anchor_market_calendar_date,
   anchor_event_time, anchor_slot, anchor_row_reference_id,
   required_slots_digest: S("cross-day-label-required-slots-v1", slot_ids by offset),
-  considered_canonical_build_ids_digest: canonical_build_ids_digest,
+  considered_canonical_build_ids_digest,
   selected_rows_digest: S("cross-day-label-selected-rows-v1", row_reference_ids by offset),
   rejected_archive_rows_digest: S("cross-day-label-archive-rejected-v1", row_reference_ids by offset),
   absence_proofs_digest: S("cross-day-label-gap-proofs-v1", gap_proof_ids by (offset,ID)),
@@ -500,7 +549,7 @@ association_content_id = H("cross-day-label-association-content-v1", {
   schema_version:"cross-day-label-association-v1",
   pit_contract_version:"cross-day-label-pit-v1", schedule_pin_id,
   label_spec_pins_digest: S("cross-day-label-spec-pins-v1", sorted label_spec_pin_ids),
-  considered_canonical_build_ids_digest: canonical_build_ids_digest,
+  considered_canonical_build_ids_digest,
   decisions_digest: S("cross-day-label-decisions-v1", decision_ids by (sample_key,label_spec_pin_id)),
   sample_bindings_digest: S("cross-day-label-bindings-v1", sample_binding_ids by sample_key)
 })
@@ -558,7 +607,8 @@ Common scalar constants (repeat means literal repetition, not H):
 ```text
 sample_key = "a" repeated 64
 bar_sample_version_id = "b" repeated 64
-considered/backing canonical_build_ids = ["c" repeated 64]
+considered_canonical_build_ids = ["c" repeated 64]
+each reference's backing_canonical_build_ids = ["c" repeated 64]
 anchor_canonical_bar_key = "d" repeated 64
 anchor_canonical_row_version_id = "e" repeated 64
 multi_source_sample_version_id = null
@@ -584,8 +634,10 @@ At each required offset k, selected row key is integer 100+k formatted as
 64-character lowercase hexadecimal with zero padding; row version uses
 integer 200+k the same way (offset 0: key ends `64`, version ends `c8`;
 offset 1: key ends `65`, version ends `c9`). All reference backing IDs use
-the single c*64 build. Selected row event is its slot event, market
-availability is event +5 minutes. Non-fitting slot has NO selected row.
+the single c*64 build. These fixture sets have equal members but MUST use
+their two distinct section 9.3 digest domains. Selected row event is its
+slot event, market availability is event +5 minutes. Non-fitting slot has
+NO selected row.
 
 All normal opens/closes are local 09:30/16:00. Early close is local 13:00.
 Session times in UTC are thus 14:30/21:00 (EST), 13:30/20:00 (EDT), or
@@ -607,7 +659,7 @@ this recipe are explicitly the empty collections above, not hidden fields.
 
 Two exact existing LabelSpec fixtures, with requirements
 `canonical_schema_versions=("market-bars-canonical-schema-v1",)` and
-`source_schema_versions=("10.9",)`, version `v1`, schema
+`source_schema_versions=("10.9-mv-ts2",)`, version `v1`, schema
 `market-vault-label-spec-v1`, kind derived LABEL, parameters empty,
 output.name=spec.name, float64/nonnullable, FEATURE_CLOSE_ALIGNED,
 missing policy INCOMPLETE, and allow=true/SAME_REQUESTED_SESSION_BAR_SLOT:
@@ -621,16 +673,16 @@ Literal supporting digests, using the base's frozen transform module source
 and exactly section 7's fingerprint record:
 
 ```text
-cd_return_1d.spec_content_id=1386d9ba1570ddd168fbd271cdd3e8c2784cba86b9b543f910f0876ec1c74d0a
-cd_return_1d.spec_pin_id=ab8fbf26e170be3ce25984465178b20bc87b5749b519ffeaa086a256bbfcc13a
+cd_return_1d.spec_content_id=24a51fc0571178f9ec9427f4efb9a11b94203224858c22685f9001472d1e3d3f
+cd_return_1d.spec_pin_id=e6aa62e8bc6eb55b982726a4705563fdf037f47e2ba764e603cf4121ace32d1b
 cd_return_1d.implementation_source_sha256=1c898213eedfbfa2055d1d8fe0b69174341d0741b616aa6409581fb012efb705
-cd_return_1d.implementation_fingerprint=39315a7f4f625da2d50ba405f2a0d580252a5b306e23a1ec6f7ed5d496324b0a
-cd_return_1d.implementation_pin_id=57534be33eaabde9615ddc0f457081234ba7c164da80e39d249ed13f6c7521ba
-cd_mfe_2d.spec_content_id=7fcbc4fe903c524454333dba4e163719d21fb53662355c570d540305f59c59c7
-cd_mfe_2d.spec_pin_id=7bdadd014d71fcd122eb294b19f2667c7d2040190d38da0c43d9e50bdfd1900d
+cd_return_1d.implementation_fingerprint=01baec853ca344d36c3dcdf6db3a7573cc0c2b7c382ea345cacb05e90345a6c1
+cd_return_1d.implementation_pin_id=0befd4a9a4d6a1a3b2c47bd13d88d98eedd252dcdc6c88e63035037a9a1aef94
+cd_mfe_2d.spec_content_id=01f5e037321de5658f5663ecb5b32f6dcf43e8a65990befd04974a7e6abe569b
+cd_mfe_2d.spec_pin_id=d3a2019e74a63eb831367b1de0899dcd3d651940127f0d09b211391cf4ad3394
 cd_mfe_2d.implementation_source_sha256=5dc08788468c032a842fb4c978f38f7d73672127e159c7002539b373076dcf93
-cd_mfe_2d.implementation_fingerprint=0f47ddc2a16da6009c02df53360d341eb268794ff1f39852d9320415656b0792
-cd_mfe_2d.implementation_pin_id=07e5b21791db08fac2c6c2c5408edad492c1bb3a962d271fbb0e78a5088379fe
+cd_mfe_2d.implementation_fingerprint=44427fafe75ab0e395f9a277c8b4ec2db42be7887d6e09b70c80495411c16354
+cd_mfe_2d.implementation_pin_id=8d0adca923e88533720d96cb4405c7b40a22f35206b7e1acdbc6970f62ea711c
 empty_values_content_id=09eaf5af35f95b39ceebc880cec24e1f9c15dfbf5176a9b5c18c4e43cb6b0c41
 ```
 
@@ -653,56 +705,56 @@ requires offsets 0,1. Exact literal expected digests:
 [normal_forward]
 schedule_content_id=67ea16fb43732c78e2788b3ffc110fc312adada93d947a9c3a8037502021db97
 schedule_pin_id=f30ca764e588ed71a8c566b5168372b96e9cfd299341153883001d90c9eebf59
-decision_id=babf7e5c534bfbc82c1bc278f7950d3637a2079d24a1c136752b1c02235bab96
-sample_binding_id=db59aab9c714f9722b64dbccd1c056ef61721fcc1b880d3f7fd8ad8b87e0893e
-association_content_id=0a2661cb5fb5134c4a4912e31837f88975adf36991fade4e5a71e08a9794e7eb
-value_id=b2ac42a142af6d02bd83d49337fee78b084119e9d8b89c8b26f56e5452e2568b
-values_content_id=77c26e2b47168df7b6478b531dc99ee49d599e94985fd4926904b426bd8a52ad
+decision_id=77803870ab9ea1421d52cc1048fbae5fa6a922e8effb6be6c112c1986d62e8f8
+sample_binding_id=a8713202ac7a91caef0271a20d3406d0a4b7a3a3a5478db61c79905a76dcf1b6
+association_content_id=e48ce76a7d50260d63b9523a3987e32100ccc197fe75b04bdadbee1f8d0e1496
+value_id=e99f98535617ab49d59837f3b3022127ec71ebf64d4cdae344fe875f4170042e
+values_content_id=f14a39c92faacf484959f01c787678c3153cc2f07b836973349944fd462ce375
 
 [weekend_forward]
 schedule_content_id=bd32dfce1e05f35cdd9640170e702b85935d73514e0e63f5e225dfec71a4746f
 schedule_pin_id=c6b7c28974a8782e739604351b14eec8d8c3417f75cccb88ceb75e7294ad4698
-decision_id=bfd7545bd33d2ca22f16da0dd92e03266564cde05275fd88990689046cb17b91
-sample_binding_id=f9629e862b42f501e2133074ad82ae8c51154344f8a911d822d918fd557cbb0f
-association_content_id=f5eabd556ce7a6542fdf1537accb082a1c50de54b765a6f41f0ecfbf0cb7b746
-value_id=6f6164534659db9f34e02e51df6530be18f93f71b759a658df4884c0796d9bb8
-values_content_id=3d0ef679ac6afdd1274baef1be257aafacfcda51a7cc3d7b788d42e3670595fb
+decision_id=a95200a8ac494e72d1f4682703b13900f055624eaadd9fdbc8cd0083681ea623
+sample_binding_id=83573d2409740e37e749de1d903efd790a61f83b201d19cfda008aa6e4431246
+association_content_id=1509cb6490291730fadd83a70203073ecd0f17585b7844074177fb0c552b7849
+value_id=821bac62ff8b8ada182957c37e9ac1be41d8a0dee42037c5970adb6713b47fb3
+values_content_id=21b017b87b76474b3df882ffc0d0ceb8dc74c285877d6cff7c247d12bee6bfee
 
 [dst_forward]
 schedule_content_id=454a7c2d7f5606a4d35ead2e910734ea747803852301a2dd2c4f71f0bf64760a
 schedule_pin_id=7396839cea714c5dd74fe78265cf0c3919b342ecd36e71a27210f26c9364d016
-decision_id=1a9e81a177538a6ae8899536d74b14c876e771957da401474eb188cf7373caeb
-sample_binding_id=3a7f9bb1ffdaf22c69c17a5528b2ae29edf59fbb659d65ea5e0d0a68de1a486c
-association_content_id=630003c61fcb0260d8d95b50be6e9fd5188e0f7e06c28931e2dcf093d6168854
-value_id=970bac52ee8c0d4d07239c4bbb809a1e897d891f77152fa8c1210d5559056878
-values_content_id=c5db7daa4fc4c0b235c2d3e4ff66c931cfc9aded7f3824bff2c44c525480febb
+decision_id=c38a66980cd52455a94f1826e96b7c1ff7179cb6b4f58f9ae8588f544580297f
+sample_binding_id=5c3cd0018fe9b863439621b8a8a8d379ac5c923165a94c6c7c74abcf4807a07b
+association_content_id=740167306227bf0bb550ac2ae3b5fa5ebed27cce155ca1a4eb7d74daf3ac27a8
+value_id=c22426a36bfe3e684ac8a80912bf4802e940a373af9047154c922744faed24f0
+values_content_id=f30a8c6c29ad2a367c79bfc1f136270e014da8ae66941439552e6346c6efba12
 
 [early_close_fit]
 schedule_content_id=f3abdf136b1eafb13dfde7c282b52b3f4864fc794b2788b520554cae7f45e55b
 schedule_pin_id=53083b15124ecafaaee848bbbb2c313be017789fd5869c69ad5281006ea741be
-decision_id=3d487c177fdf9bcb9e49751bbcbdbcbc034883348288797d85c15de342d4fb09
-sample_binding_id=7dcf3559a6fc3492f79c6a524a2d73a3260567e081544d4fb6f4c446bd461671
-association_content_id=99cf2331bf36c5a065bfa968593f3d3f4d7f3714c658b358ba7617cba357cc31
-value_id=f16053d77a21d82e3c39741856fc3996d57f27676f25f698829b38127e73e276
-values_content_id=9a62342598ee615687d0efdc4a9d851460b6376864518443bc5b672d91dbb776
+decision_id=dc563bfb2fa5d46ebd05528240b6b3d388a0e5cbeb0faabc0117c4f0c832223d
+sample_binding_id=e72b0974ae1a17d6675ce679659066950ec02920d659dbe2e409d494a3bd636d
+association_content_id=3b40666940ef6c946a021cca338d01f35f5c93b8b66764166bd8f7d241d987d5
+value_id=67236c30a5b8623c2d26c13c87983f52245defb6c73e5e5cd2abcb0cedf45f32
+values_content_id=042e5cbdfd936ddd2e12dcc6c1ce5aafdcfe71cc9f2221b08755acd0ef5ff2d6
 
 [early_close_outside]
 schedule_content_id=f3abdf136b1eafb13dfde7c282b52b3f4864fc794b2788b520554cae7f45e55b
 schedule_pin_id=53083b15124ecafaaee848bbbb2c313be017789fd5869c69ad5281006ea741be
-decision_id=45e0e51ff73a22c7eebd894cda416fd2660271fd93c78a0db0fd43b48aa56143
-sample_binding_id=79237ab95af70c8ae05a75f138feee08305b2d3780aba0a49ffcd83cfd86980a
-association_content_id=c7dcc302ef497fd8df964e1e7e3611649085ef37d34d97bd5404927f41c03388
-value_id=1f6f9505a37f8bc490a83a1ff94c68c143c0af132d9e8e3f29c6b18cbb5e13a9
-values_content_id=0ae3e2590ac478e491f54cf5896d592765ce5d8d1d5c1e1948c28b829011fd95
+decision_id=891b2a4cb2217413f19de0f0547d53cd92011eb2cd267c79e4597e612c3c9234
+sample_binding_id=23a6b95c65d3e235e9d0de8730cab7f6aa97d014c8855c826eb06a80858a5e77
+association_content_id=a16514868565d9292ff26259c9fe70d6419e02cd48960842991e89693a79478c
+value_id=a78300c94c2b96146e095a75541323861f180c68a5a2502286b03d8168735a78
+values_content_id=35bbaa011e49c573e0af9b4ab3b7b1736e623937b4a283d0d835f6a54e4989cc
 
 [two_day_excursion]
 schedule_content_id=8838e4b875dc645d00e5c5c5bce328e8a1d88445aac0edeaa244b56a280d3f9f
 schedule_pin_id=eef0dae7db5c40db169faf2b7efb6abc0e1bd32424e210061bbd9f7f67b6b220
-decision_id=2eba517bcb8b69489fa0a2ef4f8630011217210369d6875a1dcd7944b087b2af
-sample_binding_id=cfa54a80dc028a6cec939e0a5fef99f1be67fa91619ec5b61e5ee564ab92d3f4
-association_content_id=d432ffcce135e0330f1514787cc3deaa0d57f99039bd447bd3da4eeb608e2167
-value_id=52777c79d5e9a49a30851a2a37e1b61e452b40fc9fbf64c335bf5ee64d6f121c
-values_content_id=8dd20bdbfd70c8846591e3d92f9bf1f4d6450c646d2583d99072698d3d7f7900
+decision_id=e1b43ca21246a732277a17ae8c1b2d2b1871d028f26f5d119ae9fcea94c6d695
+sample_binding_id=d113ee779d336df4f57eeaa6de2a844bd873eb7514a9e2243d00e9539add04dc
+association_content_id=33f61b63bb6dae600e664aa910b01980417f832d6631237f7e609820762fef69
+value_id=35667712e0ebefe26c52bb7ce76a569019ac2837b220eb2a60e29529318c6cb2
+values_content_id=86f71d44839d550cbb7a8b451232183d51a8f06779c7bf2e94b68d89d642f42a
 ```
 
 Future tests copy these literal expected values, not generate expected hashes
@@ -712,14 +764,29 @@ or verified-artifact implementation.
 
 ## 11. Future Dataset and Generator Boundary
 
-L3 requires a NEW `multi-source-cross-day-dataset-id-v1` cohort and separate
-manifest/reader discriminator, never truncation into A4's Dataset ID. Its
-future exact payload must bind existing A4 Feature-side authority, unchanged
-multi_source_sample_version_id, schedule pin, Cross-Day association, values,
-implementation pins, sample audit and existing split facts. This design does
-not invent an A4 orchestration result with dummy BARS Labels to obtain it.
-Reuse the frozen Feature-side layers directly in a separately reviewed L3
-orchestration; leave old A4 builders/readers untouched.
+L3 requires a separately reviewed TS2-compatible Feature-side authority
+before a full bar + Observation + Cross-Day Dataset can be implemented.
+The sealed old A4 bar Feature executor/registry cannot directly consume TS2.
+The future authority must be parallel/additive, without modifying A4's old
+Feature registry, pins, identities, manifests or readers. Its exact design
+belongs to L3 design/preflight, not L1 implementation. Without that approved
+authority, L3 implementation fails its precondition; no fallback to legacy
+`10.9` or widening of the old registry is permitted.
+
+```text
+L3_TS2_FEATURE_AUTHORITY_PRECONDITION=true
+OLD_A4_FEATURE_REGISTRY_CHANGED=false
+```
+
+L3 also requires a NEW `multi-source-cross-day-dataset-id-v1` cohort and
+separate manifest/reader discriminator, never truncation into A4's Dataset
+ID. Its future exact payload must bind the separately reviewed TS2-compatible
+Feature-side authority, unchanged multi_source_sample_version_id semantics,
+schedule pin, Cross-Day association, values, implementation pins, sample
+audit and existing split facts. This design does not invent an A4
+orchestration result with dummy BARS Labels. Keep A3/A4.1 contracts and old
+A4 builders/readers untouched; L2's feature-only TS2 PIT remains valid
+without executing old bar Feature transforms.
 
 Existing `multi-source-dataset-manifest-v1`, `multi-source-dataset-id-v1` and
 `multi-source-dataset-parquet-v1` remain valid. Old readers reject the new
@@ -744,11 +811,13 @@ or output root participates.
 
 ## 12. Future Offline Canaries
 
-These are design obligations, NOT implemented tests in L1. Preserve all old
-literal vectors. The first 45 correspond to the requested minimum; additional
-canaries close payload, precedence and trust-boundary cases.
+These are design obligations, NOT implemented tests in L1. Preserve all
+unchanged legacy runtime literal vectors; the rejected L1 candidate's vector
+literals are historical only and are superseded by corrected section 10.
+The first 58 obligations are retained; additional canaries close the TS2
+cohort and distinct build-set identity roles.
 
-1. Old LabelSpec content IDs remain identical, including unchanged TRADING_DAYS representations.
+1. Old LabelSpec content IDs remain identical for identical old inputs, including old TRADING_DAYS representations; changing a new Cross-Day spec's source requirement to TS2 changes its content ID/pin.
 2. Old BARS execution and implementation pins remain unchanged.
 3. Old PIT sample keys/versions and association IDs remain unchanged.
 4. MINUTES fails before transforms, including zero samples.
@@ -806,16 +875,24 @@ canaries close payload, precedence and trust-boundary cases.
 56. Old BARS ImplementationPins cannot stand in for Cross-Day pins; source/call-contract change changes value identity.
 57. Missing/extra/duplicate bindings or forged IDs fail result validation; considered proof-only builds remain identity-bearing.
 58. Empty consumed subset has null end; missing anchor consumes none; sample end is max of non-null value ends.
+59. Cross-Day admission, spec requirements and implementation fingerprints admit exactly TS2 source schema `10.9-mv-ts2`, including feature-only L2.
+60. Legacy `10.9` fails Cross-Day admission before transforms, including zero samples.
+61. Old BARS `10.9` Feature/Label registries, executors, pins and identities remain unchanged; no widened supported source schemas.
+62. Qualified early-close geometry cannot authorize legacy `10.9` rows/proofs; only the TS2 cohort can use this Cross-Day geometry.
+63. L3 refuses implementation without separately reviewed parallel/additive TS2 Feature-side authority; the old A4 Feature registry is not a substitute.
+64. Adding unrelated considered C to A,B,D changes decision/association identity while a row backed only by B,D keeps its row_reference_id.
+65. Adding identical backing build E to that row changes its row_reference_id and downstream decision/value identities even if numeric value is unchanged.
+66. Per-row/per-gap backing sets and invocation considered sets cannot be substituted; equal member sets still yield different domain-separated digests.
 
-DESIGN_CANARY_COUNT=58.
+DESIGN_CANARY_COUNT=66.
 
 ## 13. Phases and Non-Goals
 
 | Phase | Scope | Authority |
 | --- | --- | --- |
 | L1 | this semantic design freeze only | design PR; no merge authorization |
-| L2 | verified logical schedule plus Label sidecar/executor | not authorized |
-| L3 | separate generator and new multi-source Cross-Day Dataset cohort/identity | not authorized |
+| L2 | TS2 feature-only PIT, verified logical schedule and Label sidecar/executor; no old bar Feature transforms | not authorized |
+| L3 | separately reviewed TS2 Feature authority precondition, separate generator and new Cross-Day Dataset cohort/identity | not authorized |
 | L4 | optional immutable schedule artifact/provider acquisition integration | not authorized |
 
 Each phase needs separate authorization after independent post-merge closure
@@ -828,6 +905,16 @@ The historical A1 C:-temp breach, initial A4.2 contract-precondition FAIL,
 first PR #165 review FAIL and first PR #166 review FAIL remain historical
 facts. They are not relabeled by this design PR. L1 development output is
 D:-bound; reading supplied instructions is not development output.
+
+PR #167's initial independent semantic review of
+`81b1f5d1ab346a3af063d441dc77a5be370a4a2f` (tree
+`b51f938f5699b398399bd5ab984ab19ef2a14ff1`) was FAIL, with blockers
+`LEGACY_10_9_SOURCE_SCHEMA_CONFLICTS_WITH_TS2_RTH_AND_EARLY_CLOSE_AUTHORITY`
+and `CANONICAL_BUILD_SET_DIGEST_ROLE_AMBIGUITY`. That rejected head's vector
+literals and CI run `35118471807` remain historical evidence for that head
+only. This narrow correction regenerates the affected vectors for TS2 and
+the distinct backing/considered domains; it does not relabel the old review
+PASS. New exact-head CI and independent semantic re-review are required.
 
 Validation: diff whitespace, repository hygiene, release checker, destructive
 repository inventory (unchanged 5 contracts / 16 exemptions / 42 surfaces).
