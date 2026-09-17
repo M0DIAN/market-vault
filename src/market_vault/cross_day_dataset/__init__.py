@@ -1,7 +1,11 @@
-"""Parallel pure Cross-Day Dataset join. No generator or artifact API."""
+"""Parallel pure Cross-Day Dataset join and explicit generator. No artifact API."""
 
 from ._validation import MultiSourceCrossDayDatasetError
 from .execution import join_multi_source_cross_day_dataset
+from .generator import (
+    CrossDayAnchor, generate_cross_day_feature_requests,
+    MULTI_SOURCE_CROSS_DAY_SAMPLE_GENERATOR_VERSION,
+)
 from .identity import (
     MULTI_SOURCE_CROSS_DAY_DATASET_ID_VERSION,
     MULTI_SOURCE_CROSS_DAY_DATASET_ORCHESTRATION_CONTRACT_VERSION,
@@ -19,6 +23,7 @@ from .models import (
 )
 
 __all__ = [
+    "CrossDayAnchor", "generate_cross_day_feature_requests", "MULTI_SOURCE_CROSS_DAY_SAMPLE_GENERATOR_VERSION",
     "MultiSourceCrossDayDatasetError", "join_multi_source_cross_day_dataset",
     "MultiSourceCrossDayDatasetIdentityInput", "MultiSourceCrossDayDatasetResult",
     "MultiSourceCrossDaySampleAudit", "MultiSourceCrossDayCompletionEntry", "MultiSourceCrossDayCompletionSummary",
