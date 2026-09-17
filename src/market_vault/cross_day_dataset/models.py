@@ -147,7 +147,7 @@ class MultiSourceCrossDayDatasetIdentityInput:
     completion: MultiSourceCrossDayCompletionSummary
 
 
-@dataclass(frozen=True, slots=True, init=False)
+@dataclass(frozen=True, slots=True, init=False, weakref_slot=True)
 class MultiSourceCrossDayDatasetResult:
     identity_input: MultiSourceCrossDayDatasetIdentityInput
     dataset_id: str

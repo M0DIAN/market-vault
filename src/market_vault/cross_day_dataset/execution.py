@@ -3,6 +3,9 @@
 from dataclasses import dataclass, fields, replace
 from datetime import datetime
 from types import MappingProxyType
+from threading import RLock
+import os
+import weakref
 
 from ..cross_day import identity as label_ids
 from ..cross_day.assembly import CrossDayLabelAssemblyResult
@@ -22,6 +25,7 @@ from ..observation.artifact_models import VerifiedObservationBuild
 from ..observation.pit_models import ObservationPITAssemblyResult, ObservationBuildPin
 from ..observation.pit_identity import feature_spec_pin_id, observation_build_pin_id
 from ..ts2_feature.models import TS2FeatureExecutionResult
+from . import _live_issuance as _live
 from .closure import admit_inputs, _logical_build
 from .identity import MULTI_SOURCE_CROSS_DAY_DATASET_ID_VERSION, _payload
 from .models import (
@@ -171,43 +175,162 @@ def _validate_identity_input(value):
                     "IDENTITY_AUTHORITY", "identity declaration mismatch: " + field.name)
 
 
-def join_multi_source_cross_day_dataset(
-    *, feature_pit: PITAssemblyResult, ts2_features: TS2FeatureExecutionResult,
-    observation_pit: ObservationPITAssemblyResult, observation_builds: tuple[VerifiedObservationBuild, ...],
-    observation_feature_specs: tuple[ObservationFeatureSpec, ...], observation_features: ObservationFeatureExecutionResult,
-    cross_day_association: CrossDayLabelAssemblyResult, cross_day_labels: CrossDayLabelExecutionResult,
-    schedule: VerifiedTradingDaySchedule, scope: DatasetScope, split_spec: ChronologicalSplitSpec,
-    dataset_as_of: datetime | None,
-) -> MultiSourceCrossDayDatasetResult:
-    """Join exact recorded facts; never execute a Feature/Label or choose PIT winners."""
-    admitted = admit_inputs(feature_pit=feature_pit, ts2_features=ts2_features, observation_pit=observation_pit,
-        observation_builds=observation_builds, observation_feature_specs=observation_feature_specs,
-        observation_features=observation_features, cross_day_association=cross_day_association,
-        cross_day_labels=cross_day_labels, schedule=schedule, scope=scope, split_spec=split_spec, dataset_as_of=dataset_as_of)
-    with stage("SPLIT_BINDING"):
-        split = _validated_split(admitted, assign_chronological_splits(_split_samples(admitted), admitted.split_spec))
-    with stage("IDENTITY_AUTHORITY"):
-        projection = _project(admitted, split)
-        declaration = _declaration(admitted, split, projection)
-        require_immutable(declaration)
-        payload = _payload(declaration)
-        require(len(payload) == 49, "IDENTITY_AUTHORITY", "closed Dataset payload mismatch")
-        dataset_id = encode_identity(MULTI_SOURCE_CROSS_DAY_DATASET_ID_VERSION, payload)
+# Reload invalidates saved join/verifier closures as well as existing results.
+_live._generation = object()
+
+
+def _make_live_boundary():
+    anchor = _live
+    generation = anchor._generation
+    process_id = os.getpid()
+    epoch = object()
+    ledger = {}
+    lock = RLock()
+    issuer_contract = "multi-source-cross-day-dataset-orchestration-v1"
 
     @dataclass(frozen=True, slots=True)
-    class _IssuanceContext:
-        authority: object
-        split: ChronologicalSplitResult
-        declaration: MultiSourceCrossDayDatasetIdentityInput
+    class _Record:
+        ref: object
+        declaration: object
         dataset_id: str
+        status: str
+        snapshot: tuple
+        references: tuple
+        process_id: int
+        generation: object
+        epoch: object
+        contract: str
 
-    context = _IssuanceContext(admitted, split, declaration, dataset_id)
-    result = object.__new__(MultiSourceCrossDayDatasetResult)
-    values = dict(identity_input=context.declaration, dataset_id=context.dataset_id,
-                  status="COMPLETE" if context.declaration.rows else "EMPTY")
-    for field in fields(MultiSourceCrossDayDatasetResult):
-        if field.name not in values:
-            values[field.name] = getattr(context.declaration, field.name)
-    for name, value in values.items():
-        object.__setattr__(result, name, value)
-    return result
+    def current_epoch():
+        # PID must be checked before touching any possibly inherited lock.
+        require(os.getpid() == process_id and anchor._generation is generation,
+                "RESULT_AUTHORITY", "stale process or module issuance generation")
+        return epoch
+
+    def after_fork():
+        nonlocal process_id, epoch, ledger, lock
+        process_id = os.getpid()
+        epoch = object()
+        ledger = {}
+        lock = RLock()
+
+    if hasattr(os, "register_at_fork"):
+        os.register_at_fork(after_in_child=after_fork)
+
+    def join_multi_source_cross_day_dataset(
+        *, feature_pit: PITAssemblyResult, ts2_features: TS2FeatureExecutionResult,
+        observation_pit: ObservationPITAssemblyResult, observation_builds: tuple[VerifiedObservationBuild, ...],
+        observation_feature_specs: tuple[ObservationFeatureSpec, ...], observation_features: ObservationFeatureExecutionResult,
+        cross_day_association: CrossDayLabelAssemblyResult, cross_day_labels: CrossDayLabelExecutionResult,
+        schedule: VerifiedTradingDaySchedule, scope: DatasetScope, split_spec: ChronologicalSplitSpec,
+        dataset_as_of: datetime | None,
+    ) -> MultiSourceCrossDayDatasetResult:
+        """Join exact recorded facts; never execute a Feature/Label or choose PIT winners."""
+        invocation_epoch = current_epoch()
+        admitted = admit_inputs(feature_pit=feature_pit, ts2_features=ts2_features, observation_pit=observation_pit,
+            observation_builds=observation_builds, observation_feature_specs=observation_feature_specs,
+            observation_features=observation_features, cross_day_association=cross_day_association,
+            cross_day_labels=cross_day_labels, schedule=schedule, scope=scope, split_spec=split_spec, dataset_as_of=dataset_as_of)
+        with stage("SPLIT_BINDING"):
+            split = _validated_split(admitted, assign_chronological_splits(_split_samples(admitted), admitted.split_spec))
+        with stage("IDENTITY_AUTHORITY"):
+            projection = _project(admitted, split)
+            declaration = _declaration(admitted, split, projection)
+            require_immutable(declaration)
+            payload = _payload(declaration)
+            require(len(payload) == 49, "IDENTITY_AUTHORITY", "closed Dataset payload mismatch")
+            dataset_id = encode_identity(MULTI_SOURCE_CROSS_DAY_DATASET_ID_VERSION, payload)
+
+        @dataclass(frozen=True, slots=True)
+        class _IssuanceContext:
+            authority: object
+            split: ChronologicalSplitResult
+            declaration: MultiSourceCrossDayDatasetIdentityInput
+            dataset_id: str
+
+        context = _IssuanceContext(admitted, split, declaration, dataset_id)
+        result = object.__new__(MultiSourceCrossDayDatasetResult)
+        values = dict(identity_input=context.declaration, dataset_id=context.dataset_id,
+                      status="COMPLETE" if context.declaration.rows else "EMPTY")
+        for field in fields(MultiSourceCrossDayDatasetResult):
+            if field.name not in values:
+                values[field.name] = getattr(context.declaration, field.name)
+        for name, value in values.items():
+            object.__setattr__(result, name, value)
+        with stage("RESULT_AUTHORITY"):
+            snapshot, references = anchor._capture(result)
+        require(result.identity_input is declaration, "RESULT_AUTHORITY", "issuance declaration mismatch")
+        key = id(result)
+
+        def collected(ref):
+            # No result capture; identity and epoch checks prevent stale-callback ABA removal.
+            if os.getpid() != process_id:
+                return
+            with lock:
+                entry = ledger.get(key)
+                if (entry is not None and entry.epoch is invocation_epoch
+                        and entry.generation is generation and entry.ref is ref):
+                    del ledger[key]
+
+        ref = weakref.ref(result, collected)
+        record = _Record(ref, declaration, dataset_id, result.status, snapshot, references,
+                         process_id, generation, invocation_epoch, issuer_contract)
+        current_epoch()
+        with lock:
+            require(current_epoch() is invocation_epoch, "RESULT_AUTHORITY", "issuance generation changed")
+            require(key not in ledger, "RESULT_AUTHORITY", "duplicate live object key")
+            ledger[key] = record
+        return result
+
+    def _require_live_issued_multi_source_cross_day_dataset_result(result):
+        require(type(result) is MultiSourceCrossDayDatasetResult,
+                "RESULT_AUTHORITY", "exact live result required")
+        invocation_epoch = current_epoch()
+        key = id(result)
+
+        def entry_check(expected=None):
+            current_epoch()
+            with lock:
+                require(current_epoch() is invocation_epoch,
+                        "RESULT_AUTHORITY", "verification generation changed")
+                record = ledger.get(key)
+                require(record is not None and (expected is None or record is expected)
+                        and record.ref() is result and record.epoch is invocation_epoch
+                        and record.generation is generation and record.process_id == process_id
+                        and record.contract == issuer_contract,
+                        "RESULT_AUTHORITY", "result has no current exact-object live issuance")
+                return record
+
+        def graph_check(record):
+            require(result.identity_input is record.declaration,
+                    "RESULT_AUTHORITY", "issued declaration replaced")
+            require(type(result.dataset_id) is str and result.dataset_id == record.dataset_id
+                    and type(result.status) is str and result.status == record.status,
+                    "RESULT_AUTHORITY", "issued Dataset ID or status changed")
+            with stage("RESULT_AUTHORITY"):
+                anchor._same_capture(result, record.snapshot, record.references)
+
+        record = entry_check()
+        graph_check(record)
+        # Logical validation remains ledger-independent and never runs under the lock.
+        with stage("RESULT_AUTHORITY"):
+            _validate_identity_input(result.identity_input)
+            computed = encode_identity(MULTI_SOURCE_CROSS_DAY_DATASET_ID_VERSION, _payload(result.identity_input))
+            require(computed == result.dataset_id == record.dataset_id,
+                    "RESULT_AUTHORITY", "issued logical identity mismatch")
+            require(result.status == ("COMPLETE" if result.identity_input.rows else "EMPTY"),
+                    "RESULT_AUTHORITY", "issued status mismatch")
+            for field in fields(MultiSourceCrossDayDatasetResult):
+                if field.name not in ("identity_input", "dataset_id", "status"):
+                    require(getattr(result, field.name) is getattr(record.declaration, field.name),
+                            "RESULT_AUTHORITY", "issued projection binding mismatch")
+        entry_check(record)
+        graph_check(record)
+        entry_check(record)
+
+    return join_multi_source_cross_day_dataset, _require_live_issued_multi_source_cross_day_dataset_result
+
+
+(join_multi_source_cross_day_dataset,
+ _require_live_issued_multi_source_cross_day_dataset_result) = _make_live_boundary()
+del _make_live_boundary
