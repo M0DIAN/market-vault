@@ -179,6 +179,8 @@ def test_package_is_pure_additive_and_has_no_future_api():
             if isinstance(node, ast.Call):
                 name = node.func.id if isinstance(node.func, ast.Name) else node.func.attr if isinstance(node.func, ast.Attribute) else ""
                 assert name not in forbidden, (path.name, name)
-    assert not {"manifest.py", "materialization.py", "reader.py", "generator.py"} & {p.name for p in root.iterdir()}
-    assert not any(any(word in name.lower() for word in ("generator", "manifest", "reader", "materializ", "catalog", "provider"))
+    assert {"CrossDayAnchor", "generate_cross_day_feature_requests",
+            "MULTI_SOURCE_CROSS_DAY_SAMPLE_GENERATOR_VERSION"} <= set(package.__all__)
+    assert not {"manifest.py", "materialization.py", "reader.py"} & {p.name for p in root.iterdir()}
+    assert not any(any(word in name.lower() for word in ("manifest", "reader", "materializ", "catalog", "provider"))
                    for name in package.__all__)
