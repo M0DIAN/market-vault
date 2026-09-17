@@ -23,6 +23,8 @@ from market_vault.cross_day import identity as ids
 from market_vault.dataset import LabelHorizon, LabelObservationWindow, CrossTradingDayPolicy
 from market_vault.dataset.encoding import DatasetError
 from cross_day_helpers import AS_OF, ARCHIVE, bar, build, local, pit, run, schedule, spec
+from test_observation_pit_models import artifacts
+from test_cross_day_execution import a3_sidecar
 
 
 @pytest.fixture
@@ -168,13 +170,17 @@ def test_exactly_once_and_never_incomplete(tmp_path, normal, monkeypatch):
     assert calls == []
 
 
-def test_only_static_fingerprint_reads(normal, monkeypatch):
+@pytest.mark.parametrize("with_a3", [False, True])
+def test_only_static_fingerprint_reads(normal, artifacts, monkeypatch, with_a3):
     import market_vault.cross_day.registry as registry
     original_hash = registry._module_source_sha256
     original_open, original_io_open = builtins.open, io.open
     original_open_code = _io.open_code
     original_tokenize_open = tokenize._builtin_open
     active, reads, fingerprints = [], [], []
+    features, labels = normal
+    feature_pit = pit(features)
+    upstream = a3_sidecar(feature_pit, artifacts) if with_a3 else None
     def fingerprint(fn, ref):
         path = os.path.normcase(os.path.abspath(fn.__code__.co_filename))
         fingerprints.append(ref)
@@ -207,9 +213,11 @@ def test_only_static_fingerprint_reads(normal, monkeypatch):
         for name in ("open", "listdir", "scandir", "getenv"):
             m.setattr(os, name, forbidden)
         m.setattr(socket, "socket", forbidden)
-        result = run(*normal)
+        result = execute_cross_day_labels(assemble_cross_day_labels(feature_pit, features, labels, schedule(), (spec(),),
+                                          dataset_as_of=AS_OF, observation_pit=upstream))
     assert result.values[0].status == "COMPLETE"
-    assert len(fingerprints) == 8 and len(set(fingerprints)) == 4
+    # Assembly, execution preflight and the authoritative result constructor.
+    assert len(fingerprints) == 12 and len(set(fingerprints)) == 4
     assert len(set(reads)) == 4
 
 

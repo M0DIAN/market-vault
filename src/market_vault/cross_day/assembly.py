@@ -7,7 +7,8 @@ from ..dataset.encoding import DatasetError
 from ..dataset.spec_models import LabelSpec
 from ..dataset.pit_models import PITAssemblyResult
 from ..canonical.reader import VerifiedCanonicalBuild
-from ._authority import INTERVAL_MINUTES, admit_builds, admit_feature_pit, gap_boundary_rows, reconcile
+from ..observation.pit_models import ObservationPITAssemblyResult
+from ._authority import INTERVAL_MINUTES, admit_builds, admit_feature_pit, admit_observation_pit, gap_boundary_rows, reconcile
 from ._validation import CrossDayLabelError, instant, require, typed_tuple
 from . import identity
 from .models import CrossDayLabelDecision, CrossDayLabelGapProof, CrossDayLabelRowReference, CrossDayLabelSlot, CrossDayLabelSampleBinding
@@ -45,12 +46,13 @@ def _proofs(offset, event, request, builds, cutoff):
     return tuple(sorted(result, key=identity.gap_proof_id))
 
 
-def _facts(pit, feature_builds, label_builds, schedule, specs, cutoff):
+def _facts(pit, feature_builds, label_builds, schedule, specs, cutoff, observation_pit=None):
     schedule = admit_schedule(schedule, cutoff)
     admitted_specs = admit_specs(specs)
     feature_builds = admit_builds(feature_builds)
     label_builds = admit_builds(label_builds)
     pit, feature_rows = admit_feature_pit(pit, feature_builds, cutoff)
+    a3_versions = admit_observation_pit(pit, observation_pit)
     combined = {b.canonical_build_id: b for b in feature_builds}
     for build in label_builds:
         previous = combined.get(build.canonical_build_id)
@@ -123,7 +125,7 @@ def _facts(pit, feature_builds, label_builds, schedule, specs, cutoff):
                 selected[-1].market_available_at if selected else None)
             decisions.append(decision)
             sample_decisions.append(decision.decision_id)
-        bindings.append(CrossDayLabelSampleBinding(sample.sample_key, sample.sample_version_id, None,
+        bindings.append(CrossDayLabelSampleBinding(sample.sample_key, sample.sample_version_id, a3_versions.get(sample.sample_key),
                                                  schedule_id, tuple(sample_decisions)))
     return (pit, feature_builds, label_builds, schedule, tuple(s for s, _ in admitted_specs),
             tuple(decisions), tuple(bindings), considered)
@@ -139,10 +141,12 @@ class CrossDayLabelAssemblyResult:
     dataset_as_of: object
     decisions: tuple[CrossDayLabelDecision, ...]
     sample_bindings: tuple[CrossDayLabelSampleBinding, ...]
+    observation_pit: ObservationPITAssemblyResult | None = None
 
     def __post_init__(self):
         cutoff = None if self.dataset_as_of is None else instant(self.dataset_as_of, "dataset_as_of")
-        facts = _facts(self.feature_pit, self.feature_builds, self.label_builds, self.schedule, self.label_specs, cutoff)
+        facts = _facts(self.feature_pit, self.feature_builds, self.label_builds, self.schedule, self.label_specs,
+                       cutoff, self.observation_pit)
         decisions = typed_tuple(self.decisions, CrossDayLabelDecision, "decisions")
         bindings = typed_tuple(self.sample_bindings, CrossDayLabelSampleBinding, "sample_bindings")
         require(decisions == facts[5] and bindings == facts[6], "association/evidence closure mismatch")
@@ -160,19 +164,20 @@ class CrossDayLabelAssemblyResult:
                                                self.decisions, self.sample_bindings)
 
 
-def _assemble(pit, feature_builds, label_builds, schedule, label_specs, dataset_as_of):
+def _assemble(pit, feature_builds, label_builds, schedule, label_specs, dataset_as_of, observation_pit):
     cutoff = None if dataset_as_of is None else instant(dataset_as_of, "dataset_as_of")
-    facts = _facts(pit, feature_builds, label_builds, schedule, label_specs, cutoff)
-    return CrossDayLabelAssemblyResult(*facts[:5], cutoff, facts[5], facts[6])
+    facts = _facts(pit, feature_builds, label_builds, schedule, label_specs, cutoff, observation_pit)
+    return CrossDayLabelAssemblyResult(*facts[:5], cutoff, facts[5], facts[6], observation_pit)
 
 
 def assemble_cross_day_labels(pit_result: PITAssemblyResult, feature_builds: tuple,
                              label_builds: tuple, schedule: VerifiedTradingDaySchedule,
-                             label_specs: tuple, *, dataset_as_of) -> CrossDayLabelAssemblyResult:
+                             label_specs: tuple, *, dataset_as_of,
+                             observation_pit: ObservationPITAssemblyResult | None = None) -> CrossDayLabelAssemblyResult:
     """Admit explicit Feature closure and separate future evidence into a sidecar."""
     try:
         admit_specs(label_specs, built_in_cross_day_label_registry())
-        return _assemble(pit_result, feature_builds, label_builds, schedule, label_specs, dataset_as_of)
+        return _assemble(pit_result, feature_builds, label_builds, schedule, label_specs, dataset_as_of, observation_pit)
     except CrossDayLabelError:
         raise
     except (DatasetError, ValueError, TypeError, OverflowError) as exc:

@@ -51,7 +51,7 @@ CANARIES = (
     (39, "IMPLEMENTED_L2_TEST", "test_cross_day_execution.py", "test_multi_spec_sample_end_and_order"),
     (40, "IMPLEMENTED_L2_TEST", "test_cross_day_execution.py", "test_backing_considered_and_relocation"),
     (41, "IMPLEMENTED_L2_TEST", "test_cross_day_admission.py", "test_exactly_once_and_never_incomplete"),
-    (42, "DEFERRED_L3", "Cross-Day multi-source Dataset and Feature-side TS2 authority; L2 proves Feature PIT independence.", None),
+    (42, "IMPLEMENTED_L2_TEST", "test_cross_day_execution.py", "test_canary_42_optional_a3_binding_is_feature_only"),
     (43, "PRESERVED_LEGACY_REGRESSION", "test_multi_source_feature_identity.py", None),
     (44, "DEFERRED_L3", "New Dataset cohort/old-reader rejection needs L3. Existing A4 reader regressions remain unchanged.", None),
     (45, "IMPLEMENTED_L2_TEST", "test_cross_day_admission.py", "test_only_static_fingerprint_reads"),
@@ -81,9 +81,9 @@ CANARIES = (
 
 def test_all_design_obligations_accounted():
     assert [row[0] for row in CANARIES] == list(range(1, 67))
-    assert sum(row[1] == "IMPLEMENTED_L2_TEST" for row in CANARIES) == 57
+    assert sum(row[1] == "IMPLEMENTED_L2_TEST" for row in CANARIES) == 58
     assert sum(row[1] == "PRESERVED_LEGACY_REGRESSION" for row in CANARIES) == 5
-    assert sum(row[1] == "DEFERRED_L3" for row in CANARIES) == 4
+    assert sum(row[1] == "DEFERRED_L3" for row in CANARIES) == 3
 
 
 @pytest.mark.parametrize("number,phase,target,test_name", CANARIES)

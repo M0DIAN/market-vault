@@ -14,7 +14,13 @@ from ..dataset.execution_provenance import normalize_verified_builds, reconcile_
 from ..dataset.pit import _association_rows, _build_gap_references, _row_comparator
 from ..dataset.pit_models import PITAssemblyResult
 from ..observation._pit_validation import admit_bar
-from ._validation import require, scalar, sha256, instant
+from ..observation import pit_identity as a3_identity
+from ..observation.identity import observation_coverage_id
+from ..observation.pit_models import (
+    ObservationPITAssemblyResult, ObservationPITFeatureBinding, ObservationPITDecision,
+    ObservationDecisionEvidence, ObservationSampleBinding,
+)
+from ._validation import require, scalar, sha256, instant, typed_tuple
 from .registry import CROSS_DAY_SOURCE_SCHEMA_VERSION
 
 INTERVAL_MINUTES = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "60m": 60}
@@ -157,3 +163,70 @@ def admit_feature_pit(pit, builds, dataset_as_of):
         gap_references=tuple(replace(g) for g in pit.gap_references),
         association_schema=replace(pit.association_schema), diagnostics=replace(pit.diagnostics),
         association_rows=tuple(MappingProxyType(dict(r)) for r in expected_rows)), rows
+
+
+def admit_observation_pit(feature_pit, result):
+    """Check a sealed A3 result's linkage and identities, without PIT selection."""
+    if result is None:
+        return {}
+    require(type(result) is ObservationPITAssemblyResult, "requires sealed A3 ObservationPITAssemblyResult")
+    require((result.bar_association_content_id, result.bar_association_schema_id) ==
+            (feature_pit.association_content_id, feature_pit.association_schema_id),
+            "A3/Feature PIT association mismatch")
+    copied = {}
+    for name, cls in (("bindings", ObservationPITFeatureBinding), ("decisions", ObservationPITDecision),
+                      ("evidence", ObservationDecisionEvidence), ("sample_bindings", ObservationSampleBinding)):
+        values = typed_tuple(getattr(result, name), cls, "A3 " + name)
+        require(values == getattr(result, name), "noncanonical or tampered A3 " + name)
+        copied[name] = values
+    bindings, decisions, evidence, samples = (copied[n] for n in
+                                             ("bindings", "decisions", "evidence", "sample_bindings"))
+    pin_ids = tuple(b.feature_spec_pin_id for b in bindings)
+    require(pin_ids == tuple(sorted(set(pin_ids))), "A3 binding cardinality/order mismatch")
+    bars = {s.sample_key: s for s in feature_pit.samples}
+    require(tuple(s.sample_key for s in samples) == tuple(sorted(bars)), "A3 sample cardinality/order mismatch")
+    expected = tuple((s.sample_key, pin) for s in samples for pin in pin_ids)
+    require(tuple((d.sample_key, d.feature_spec_pin_id) for d in decisions) == expected
+            and tuple((e.sample_key, e.feature_spec_pin_id) for e in evidence) == expected,
+            "A3 decision/evidence cardinality/order mismatch")
+    sources = {b.feature_spec_pin_id: b.source_spec for b in bindings}
+    for decision, proof in zip(decisions, evidence):
+        bar, source = bars[decision.sample_key], sources[decision.feature_spec_pin_id]
+        require((decision.bar_sample_version_id, decision.T, decision.A) ==
+                (bar.sample_version_id, bar.request.feature_window_close, bar.dataset_as_of),
+                "A3 decision/Feature sample linkage mismatch")
+        require(decision.observation_source_spec_id == a3_identity.observation_source_spec_id(source),
+                "A3 SourceSpec identity mismatch")
+        entity = source.entity_id if source.entity_binding == "EXACT_ENTITY" else dict(source.code_entity_map).get(bar.request.code)
+        require(entity is not None, "A3 source does not bind Feature code")
+        proof_ids = tuple(a3_identity.observation_build_pin_id(p) for p in proof.build_pins)
+        require(proof_ids == tuple(sorted(set(proof_ids))), "A3 complete proof cardinality/order mismatch")
+        for pin, coverage in zip(proof.build_pins, proof.coverages):
+            require(pin.coverage_id == observation_coverage_id(coverage) and coverage.scope == source.scope(entity),
+                    "A3 coverage/pin/source mismatch")
+            require(set(pin.selected_observation_version_ids) <= {decision.selected_observation_version_id},
+                    "A3 selected-version membership mismatch")
+        if decision.selected_observation_version_id is not None:
+            require(any(p.observation_build_id == decision.selected_observation_build_id and
+                        decision.selected_observation_version_id in p.selected_observation_version_ids
+                        for p in proof.build_pins), "A3 selected build membership mismatch")
+        require(decision.considered_observation_builds_digest ==
+                a3_identity.considered_observation_builds_digest(proof.build_pins), "A3 considered proof digest mismatch")
+    versions = {}
+    for sample in samples:
+        require(sample.bar_sample_version_id == bars[sample.sample_key].sample_version_id,
+                "A3/bar sample version mismatch")
+        digest = a3_identity.observation_binding_id(tuple(d for d in decisions if d.sample_key == sample.sample_key))
+        require(sample.observation_binding_id == digest and sample.multi_source_sample_version_id ==
+                a3_identity.multi_source_sample_version_id(sample.sample_key, sample.bar_sample_version_id, digest),
+                "A3 sample binding identity mismatch")
+        # Copy A3 authority; schedule and Label facts never enter this identity.
+        versions[sample.sample_key] = sample.multi_source_sample_version_id
+    content = a3_identity.observation_association_content_id(decisions)
+    sample_content = a3_identity.sample_binding_content_id(samples)
+    require((result.observation_association_content_id, result.sample_binding_content_id,
+             result.combined_association_content_id) ==
+            (content, sample_content, a3_identity.combined_association_content_id(
+                feature_pit.association_content_id, feature_pit.association_schema_id, content, sample_content)),
+            "A3 association identity closure mismatch")
+    return versions

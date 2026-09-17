@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, replace
 
-from ..dataset.encoding import DatasetError, encode_identity
+from ..dataset.encoding import DatasetError
 from ..dataset.label_models import LabelTransformInput
 from ..dataset.models import ImplementationPin
 from ..dataset.specs import feature_label_spec_pin
@@ -11,7 +11,7 @@ from ._validation import CrossDayLabelError, instant, require, scalar, sha256, t
 from .assembly import CrossDayLabelAssemblyResult
 from .identity import label_spec_pin_id, schedule_pin_id, values_content_id
 from .models import CrossDayLabelValueResult
-from .registry import admit_specs, built_in_cross_day_label_registry, implementation_payload
+from .registry import admit_specs, built_in_cross_day_label_registry
 
 
 @dataclass(frozen=True)
@@ -38,7 +38,7 @@ class CrossDayLabelExecutionResult:
     def __post_init__(self):
         require(type(self.association) is CrossDayLabelAssemblyResult, "typed association required")
         association = replace(self.association)
-        admitted = admit_specs(association.label_specs)
+        admitted = admit_specs(association.label_specs, built_in_cross_day_label_registry())
         pins = typed_tuple(self.implementation_pins, ImplementationPin, "implementation pins")
         require(type(self.implementation_source_hashes) is tuple
                 and all(type(p) is tuple and len(p) == 2 for p in self.implementation_source_hashes),
@@ -48,18 +48,20 @@ class CrossDayLabelExecutionResult:
         expected_refs = {r.transform_ref for _, r in admitted}
         require(set(sources) == expected_refs, "implementation source cardinality mismatch")
         expected_pins = {}
-        for _, contract in admitted:
-            ref = contract.transform_ref
+        for _, registration in admitted:
+            ref = registration.transform_ref
             source = sha256(sources[ref], "implementation source")
-            fingerprint = encode_identity("cross-day-label-implementation-v1", implementation_payload(
-                ref, source, contract.input_fields, contract.output_logical_type, contract.offset_shape))
-            expected_pins[ref] = ImplementationPin(ref, "v1", fingerprint)
+            require(source == registration.implementation_source_sha256, "fixed registry implementation source mismatch")
+            expected_pins[ref] = registration.implementation_pin
         require(pins == tuple(expected_pins[r] for r in sorted(expected_pins)), "Cross-Day implementation pin mismatch")
         values = typed_tuple(self.values, CrossDayLabelValueResult, "values")
         require(len(values) == len(association.decisions), "value cardinality mismatch")
         by_spec = {label_spec_pin_id(s): (s, r) for s, r in admitted}
+        versions = {b.sample_key: b.multi_source_sample_version_id for b in association.sample_bindings}
         for decision, value in zip(association.decisions, values):
             spec, contract = by_spec[decision.label_spec_pin_id]
+            require(value.multi_source_sample_version_id == versions[decision.sample_key],
+                    "A3 decision/value binding linkage mismatch")
             require((value.sample_key, value.bar_sample_version_id, value.spec_pin, value.implementation_pin,
                      value.schedule_pin_id, value.decision_id, value.anchor_canonical_row_version_id,
                      value.consumed_rows, value.status, value.reason_code, value.actual_label_end_time) ==
@@ -121,6 +123,7 @@ def execute_cross_day_labels(association: CrossDayLabelAssemblyResult) -> CrossD
         by_spec = {label_spec_pin_id(s): (s, r) for s, r in admitted}
         builds = {b.canonical_build_id: b for b in association.feature_builds + association.label_builds}
         rows = reconcile(tuple(builds[k] for k in sorted(builds)))
+        versions = {b.sample_key: b.multi_source_sample_version_id for b in association.sample_bindings}
         values = []
         for decision in association.decisions:
             spec, reg = by_spec[decision.label_spec_pin_id]
@@ -135,7 +138,7 @@ def execute_cross_day_labels(association: CrossDayLabelAssemblyResult) -> CrossD
                     parameters=(), alignment_rule="FEATURE_CLOSE_ALIGNED")
                 value = scalar(reg.implementation(numeric), reg.output_logical_type)
             values.append(CrossDayLabelValueResult(
-                decision.sample_key, decision.bar_sample_version_id, None, spec.name,
+                decision.sample_key, decision.bar_sample_version_id, versions[decision.sample_key], spec.name,
                 feature_label_spec_pin(spec), reg.implementation_pin, schedule_pin_id(association.schedule.pin),
                 decision.decision_id, None if decision.anchor is None else decision.anchor.canonical_row_version_id,
                 decision.selected_rows, decision.status, value, decision.reason_code, decision.actual_label_end_time))
@@ -152,9 +155,4 @@ def execute_cross_day_labels(association: CrossDayLabelAssemblyResult) -> CrossD
 def validate_cross_day_execution_result(result: CrossDayLabelExecutionResult) -> CrossDayLabelExecutionResult:
     """Reverify logical closure and current built-in fingerprints without arithmetic."""
     require(type(result) is CrossDayLabelExecutionResult, "requires exact Cross-Day result")
-    result = replace(result)
-    admitted = admit_specs(result.label_specs, built_in_cross_day_label_registry())
-    expected = {r.transform_ref: r.implementation_pin for _, r in admitted}
-    require(result.implementation_pins == tuple(expected[k] for k in sorted(expected)),
-            "result does not bind the current statically registered implementations")
-    return result
+    return replace(result)

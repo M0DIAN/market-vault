@@ -1,6 +1,7 @@
 """Real verified TS2 fixtures and L2 authority/geometry regression canaries."""
 
 from dataclasses import replace
+from copy import copy
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -13,6 +14,19 @@ from market_vault.cross_day import identity as ids
 from market_vault.cross_day.registry import built_in_cross_day_label_registry
 from cross_day_helpers import AS_OF, ARCHIVE, bar, build, local, pit, run, schedule, spec
 from test_cross_day_identity import SCENARIOS
+from test_observation_pit_models import artifacts, binding as observation_binding, clock, observation
+
+
+def a3_sidecar(feature_pit, artifacts):
+    from market_vault.observation import assemble_observation_pit_sidecar, observation_source_snapshot_id
+    from test_observation_pit_models import SNAPSHOT
+    close = (feature_pit.samples[0].request.feature_window_close - clock(0)) // timedelta(microseconds=1)
+    snapshot = replace(SNAPSHOT, completed_possession_at=clock(close - 20))
+    row = replace(observation(event=close - 5, known=close - 4, archive=close - 3),
+                  source_snapshot_id=observation_source_snapshot_id(snapshot))
+    verified = artifacts((row,), effective=(close - 10, close), knowledge=(close - 10, close + 10),
+                         created=close + 5, snapshots=(snapshot,))
+    return assemble_observation_pit_sidecar(feature_pit, (verified,), (observation_binding(),))
 
 
 @pytest.fixture
@@ -267,3 +281,129 @@ def test_split_uses_actual_consumption_only(tmp_path):
     incomplete = replace(fact, label_status="INCOMPLETE")
     excluded = assign_chronological_splits((incomplete,), split_spec)
     assert excluded.assignments[0].reason_code == "INCOMPLETE_LABEL"
+
+
+@pytest.mark.parametrize("change", ["schedule", "label", "both"])
+def test_canary_42_optional_a3_binding_is_feature_only(normal, artifacts, tmp_path, monkeypatch, change):
+    features, labels = normal
+    feature_pit = pit(features)
+    upstream = a3_sidecar(feature_pit, artifacts)
+    before = copy(upstream)
+    changed_labels = (build(tmp_path, (bar("2025-03-04", close=150.0),)),) if change != "schedule" else labels
+    sched = replace(schedule(), source_content_hash="0" * 64) if change != "label" else schedule()
+    import market_vault.observation.pit as a3
+    import market_vault.dataset.pit as bars
+    def forbidden(*args, **kwargs):
+        raise AssertionError("L2 must not rerun upstream PIT selection")
+    monkeypatch.setattr(a3, "_assemble", forbidden)
+    monkeypatch.setattr(bars, "assemble_point_in_time_samples", forbidden)
+    def execute(label_builds, schedule_value):
+        return execute_cross_day_labels(assemble_cross_day_labels(feature_pit, features, label_builds,
+            schedule_value, (spec(),), dataset_as_of=AS_OF, observation_pit=upstream))
+    one, two = execute(labels, schedule()), execute(changed_labels, sched)
+    expected = upstream.sample_bindings[0]
+    for result in (one, two):
+        assert result.sample_bindings[0].multi_source_sample_version_id == expected.multi_source_sample_version_id
+        assert result.values[0].multi_source_sample_version_id == expected.multi_source_sample_version_id
+        assert result.sample_bindings[0].sample_key == expected.sample_key
+        assert result.sample_bindings[0].bar_sample_version_id == expected.bar_sample_version_id
+        assert result.association.feature_pit == feature_pit
+        assert validate_cross_day_execution_result(result) == result
+    assert upstream == before
+    assert one.association_content_id != two.association_content_id
+    assert one.values_content_id != two.values_content_id
+    assert one.values[0].value == two.values[0].value if change == "schedule" else one.values[0].value != two.values[0].value
+
+
+@pytest.mark.parametrize("field", ["sample_key", "bar_sample_version_id", "multi_source_sample_version_id",
+    "observation_binding_id", "missing", "duplicate", "content", "combined", "bar_content", "decision", "proof"])
+def test_optional_a3_tampering_fails_before_transform(normal, artifacts, monkeypatch, field):
+    features, labels = normal
+    feature_pit = pit(features)
+    upstream = copy(a3_sidecar(feature_pit, artifacts))
+    if field in ("sample_key", "bar_sample_version_id", "multi_source_sample_version_id", "observation_binding_id"):
+        object.__setattr__(upstream, "sample_bindings", (replace(upstream.sample_bindings[0], **{field: "0" * 64}),))
+    elif field in ("missing", "duplicate"):
+        object.__setattr__(upstream, "sample_bindings", () if field == "missing" else upstream.sample_bindings * 2)
+    elif field in ("content", "combined", "bar_content"):
+        name = {"content": "observation_association_content_id", "combined": "combined_association_content_id",
+                "bar_content": "bar_association_content_id"}[field]
+        object.__setattr__(upstream, name, "0" * 64)
+    elif field == "decision":
+        object.__setattr__(upstream, "decisions", (replace(upstream.decisions[0], T=upstream.decisions[0].T + timedelta(microseconds=1)),))
+    else:
+        evidence = upstream.evidence[0]
+        pin = replace(evidence.build_pins[0], coverage_id="0" * 64)
+        object.__setattr__(upstream, "evidence", (replace(evidence, build_pins=(pin,)),))
+    import market_vault.cross_day.execution as execution
+    registrations = built_in_cross_day_label_registry()
+    def forbidden(*args):
+        raise AssertionError("transform must not run after failed A3 admission")
+    monkeypatch.setattr(execution, "built_in_cross_day_label_registry",
+                        lambda: tuple(replace(r, implementation=forbidden) for r in registrations))
+    with pytest.raises(CrossDayLabelError, match="A3"):
+        execute_cross_day_labels(assemble_cross_day_labels(feature_pit, features, labels, schedule(), (spec(),),
+                                  dataset_as_of=AS_OF, observation_pit=upstream))
+
+
+def test_optional_a3_requires_same_feature_pit(normal, artifacts, tmp_path):
+    features, labels = normal
+    other = (build(tmp_path, (bar(source="b"),)),)
+    upstream = a3_sidecar(pit(other), artifacts)
+    with pytest.raises(CrossDayLabelError, match="A3/Feature PIT"):
+        assemble_cross_day_labels(pit(features), features, labels, schedule(), (spec(),),
+                                  dataset_as_of=AS_OF, observation_pit=upstream)
+    with pytest.raises(CrossDayLabelError, match="sealed A3"):
+        assemble_cross_day_labels(pit(features), features, labels, schedule(), (spec(),),
+                                  dataset_as_of=AS_OF, observation_pit=upstream.sample_bindings[0])
+
+
+def test_bar_only_null_and_optional_a3_value_linkage(normal, artifacts):
+    features, labels = normal
+    bar_only = run(features, labels)
+    assert bar_only.sample_bindings[0].multi_source_sample_version_id is None
+    assert bar_only.values[0].multi_source_sample_version_id is None
+    with pytest.raises(CrossDayLabelError, match="closure"):
+        replace(bar_only.association, sample_bindings=(replace(bar_only.sample_bindings[0], multi_source_sample_version_id="0" * 64),))
+    with pytest.raises(CrossDayLabelError, match="linkage"):
+        replace(bar_only, values=(replace(bar_only.values[0], multi_source_sample_version_id="0" * 64),))
+    feature_pit = pit(features)
+    upstream = a3_sidecar(feature_pit, artifacts)
+    result = execute_cross_day_labels(assemble_cross_day_labels(feature_pit, features, labels, schedule(), (spec(),),
+                                      dataset_as_of=AS_OF, observation_pit=upstream))
+    with pytest.raises(CrossDayLabelError, match="linkage"):
+        replace(result, values=(replace(result.values[0], multi_source_sample_version_id=None),))
+
+
+def test_optional_a3_zero_samples_still_revalidates(normal):
+    from market_vault.observation import assemble_observation_pit_sidecar
+    features, labels = normal
+    feature_pit = pit(features, requests=())
+    upstream = assemble_observation_pit_sidecar(feature_pit, (), (observation_binding(),))
+    result = execute_cross_day_labels(assemble_cross_day_labels(feature_pit, features, labels, schedule(), (spec(),),
+                                      dataset_as_of=AS_OF, observation_pit=upstream))
+    assert result.values == () and result.sample_bindings == ()
+    object.__setattr__(upstream, "sample_binding_content_id", "0" * 64)
+    with pytest.raises(CrossDayLabelError, match="A3 association identity"):
+        replace(result.association)
+
+
+@pytest.mark.parametrize("empty", [False, True])
+def test_coordinated_fake_implementation_proof_rejected(normal, empty):
+    from market_vault.cross_day.execution import CrossDayLabelExecutionResult
+    from market_vault.cross_day.registry import implementation_payload
+    from market_vault.dataset.encoding import encode_identity
+    from market_vault.dataset.models import ImplementationPin
+    result = run(*normal, requests=() if empty else None)
+    real = next(r for r in built_in_cross_day_label_registry() if r.transform_ref == spec().transform_ref)
+    fake_source = "0" * 64
+    assert fake_source != real.implementation_source_sha256
+    fake_fingerprint = encode_identity("cross-day-label-implementation-v1", implementation_payload(
+        real.transform_ref, fake_source, real.input_fields, real.output_logical_type, real.offset_shape))
+    fake_pin = ImplementationPin(real.transform_ref, "v1", fake_fingerprint)
+    fake_values = tuple(replace(v, implementation_pin=fake_pin) for v in result.values)
+    with pytest.raises(CrossDayLabelError, match="fixed registry implementation source"):
+        CrossDayLabelExecutionResult(result.association, (fake_pin,), ((real.transform_ref, fake_source),), fake_values)
+    with pytest.raises(CrossDayLabelError, match="fixed registry implementation source"):
+        replace(result, implementation_pins=(fake_pin,), implementation_source_hashes=((real.transform_ref, fake_source),),
+                values=fake_values)

@@ -166,7 +166,8 @@ class CrossDayLabelSampleBinding:
 
     def __post_init__(self):
         _hashes(self, "sample_key", "bar_sample_version_id", "schedule_pin_id")
-        require(self.multi_source_sample_version_id is None, "L2 does not admit an unverified A3 binding")
+        if self.multi_source_sample_version_id is not None:
+            sha256(self.multi_source_sample_version_id, "multi-source sample version")
         require(type(self.decision_ids) is tuple and bool(self.decision_ids), "binding requires decisions")
         digest_set(self.decision_ids, "decision IDs")
 
@@ -194,7 +195,8 @@ class CrossDayLabelValueResult:
 
     def __post_init__(self):
         _hashes(self, "sample_key", "bar_sample_version_id", "schedule_pin_id", "decision_id")
-        require(self.multi_source_sample_version_id is None, "L2 A3 binding must be null")
+        if self.multi_source_sample_version_id is not None:
+            sha256(self.multi_source_sample_version_id, "multi-source sample version")
         require(type(self.spec_pin) is SpecPin and type(self.implementation_pin) is ImplementationPin, "typed pins required")
         object.__setattr__(self, "spec_pin", replace(self.spec_pin))
         object.__setattr__(self, "implementation_pin", replace(self.implementation_pin))
