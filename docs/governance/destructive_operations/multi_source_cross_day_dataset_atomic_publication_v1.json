@@ -1,0 +1,328 @@
+{
+  "schema_version": "market-vault-destructive-operation-v1",
+  "operation_id": "multi_source_cross_day_dataset_atomic_publication_v1",
+  "approval": {
+    "status": "APPROVED",
+    "rationale": "Design-only candidate in the existing approved-contract schema, not self-approval. Independent design/destructive review, authorized merge, exact-main closure and separate L3.3 runtime authorization are required. This unchanged contract and its normative companion docs/governance/cross_day_dataset_atomic_publication_v1.md must precede implementation in BASE. No runtime, platform qualification or same-PR implementation is approved here."
+  },
+  "identity": {
+    "name": "Multi-Source Cross-Day Dataset atomic publication v1",
+    "purpose": "Version multi-source-cross-day-dataset-atomic-publication-v1. Publish one fully privately verified Cross-Day Dataset through qualified same-filesystem atomic no-replace publication, with an invocation-private complete content/object seal. Cleanup covers only this invocation's proven uncommitted staging. Frozen Dataset layout, 49-field identity and reader semantics remain unchanged."
+  },
+  "implementation_bindings": [
+    {
+      "path": "src/market_vault/cross_day_dataset/materialization.py",
+      "symbols": [
+        "_rename_directory_no_replace_windows"
+      ],
+      "role": "MUTATION_OWNER",
+      "surfaces": [
+        {
+          "kind": "destructive_call",
+          "signal": "os.rename",
+          "expected_count": 1
+        }
+      ],
+      "rationale": "Exactly one Windows-only qualified non-replacing os.rename for the sealed invocation-owned sibling staging to its exact dataset_id=<ID> destination. Existing destination must be refused; no generic move, POSIX rename or replacement authority."
+    },
+    {
+      "path": "src/market_vault/cross_day_dataset/materialization.py",
+      "symbols": [
+        "_remove_tree"
+      ],
+      "role": "SUPPORTING",
+      "surfaces": [
+        {
+          "kind": "destructive_call",
+          "signal": "shutil.rmtree",
+          "expected_count": 1
+        }
+      ],
+      "rationale": "Exactly one internal shutil.rmtree for current-invocation-owned, still-safe, uncommitted staging. No caller-selected target, prior staging, final directory, permission-repair callback or sweep. Partial cleanup uses ownership, never publication seal authority."
+    }
+  ],
+  "authority_boundary": {
+    "initiators": [
+      "Future L3.3 materializer with explicit issued MultiSourceCrossDayDatasetResult, pre-existing safe absolute output_root and explicit built_at; no reader/CLI/Catalog/provider initiator."
+    ],
+    "mutation_owner": "src/market_vault/cross_day_dataset/materialization.py owns only exclusive current staging and the absent-to-published final boundary; publication seal and cleanup ownership are distinct authorities.",
+    "forbidden_bypass_layers": [
+      "No old A4 contract, old Dataset exemption, caller token/hash/seal, skip_validation, raw cleanup path, arbitrary callback or native dispatch can establish authority.",
+      "No os.replace, Path.replace, Path.rename, shutil.move, generic os.remove/os.unlink/os.rmdir, final deletion, copy-over, delete-then-rename, repair, quarantine, chmod retry or permission changes to allow overwrite.",
+      "No ordinary POSIX rename/renameat, copy+delete fallback, network/remote filesystem, dynamic primitive discovery or unsupported platform success.",
+      "Linux native boundary is exactly materialization.py::_rename_directory_no_replace_linux: one renameat2(root_fd, staging_name, root_fd, final_name, RENAME_NOREPLACE=1) call. Current AST inventory does not count native calls; independent source review, exact static wrapper tests and actual platform qualification are mandatory. This limit is not a generic native-mutation allowance.",
+      "No checker weakening, exemption change, prospective_transition, wildcard binding, extra occurrence or same-implementation-PR contract redesign."
+    ]
+  },
+  "persistent_scope": {
+    "mutated_assets": [
+      "Exclusively created <output_root>/.<dataset_id>.tmp-<nonce>/, with 64-lowercase-hex ID and independently generated 32-lowercase-hex nonce (16 random bytes), and only its expected newly created members.",
+      "One absent-to-committed <output_root>/dataset_id=<dataset_id>/ sibling, on the identical proved local filesystem/volume."
+    ],
+    "excluded_assets": [
+      "Pre-existing output_root and ancestors, existing or racing finals of any validity, all other siblings and crash residue.",
+      "Upstream Canonical/Observation/Dataset artifacts, source evidence, repository, Catalog, settings, providers and production data."
+    ]
+  },
+  "state_machine": {
+    "states": [
+      "PREFLIGHT",
+      "PRIVATE_STAGING",
+      "SEALED",
+      "COMMITTED_UNVERIFIED",
+      "VERIFIED_FINAL",
+      "EXISTING_EQUIVALENT",
+      "FAILED_PRECOMMIT",
+      "COMMITTED_INVALID",
+      "PUBLICATION_UNCERTAIN"
+    ],
+    "initial_state": "PREFLIGHT",
+    "terminal_states": [
+      "VERIFIED_FINAL",
+      "EXISTING_EQUIVALENT",
+      "FAILED_PRECOMMIT",
+      "COMMITTED_INVALID",
+      "PUBLICATION_UNCERTAIN"
+    ],
+    "allowed_transitions": [
+      {
+        "from": "PREFLIGHT",
+        "to": "PRIVATE_STAGING",
+        "rationale": "Exact input/safety/platform admission, absent final and exclusive staging creation with retained ownership."
+      },
+      {
+        "from": "PREFLIGHT",
+        "to": "EXISTING_EQUIVALENT",
+        "rationale": "Read-only full verification of equivalent existing final, without staging creation."
+      },
+      {
+        "from": "PREFLIGHT",
+        "to": "FAILED_PRECOMMIT",
+        "rationale": "Invalid input/root/platform or conflicting/corrupt final; no mutation."
+      },
+      {
+        "from": "PRIVATE_STAGING",
+        "to": "SEALED",
+        "rationale": "Data/specs, manifest, complete private verification, empty _SUCCESS, final verification, then private seal bound to exactly admitted bytes."
+      },
+      {
+        "from": "PRIVATE_STAGING",
+        "to": "FAILED_PRECOMMIT",
+        "rationale": "Preparation fails; cleanup only of proven owned partial staging."
+      },
+      {
+        "from": "SEALED",
+        "to": "COMMITTED_UNVERIFIED",
+        "rationale": "Immediate exact seal/safety revalidation then one successful no-replace primitive. Revoke cleanup authority before final reader."
+      },
+      {
+        "from": "SEALED",
+        "to": "EXISTING_EQUIVALENT",
+        "rationale": "Safe existing/racing equivalent final verified read-only; only owned loser staging may be removed."
+      },
+      {
+        "from": "SEALED",
+        "to": "FAILED_PRECOMMIT",
+        "rationale": "Any seal drift or primitive failure is fail closed; no final mutation."
+      },
+      {
+        "from": "COMMITTED_UNVERIFIED",
+        "to": "VERIFIED_FINAL",
+        "rationale": "Sole reader verifies exact final plus final physical pass, matching requested logical authority."
+      },
+      {
+        "from": "COMMITTED_UNVERIFIED",
+        "to": "COMMITTED_INVALID",
+        "rationale": "Postcommit verification fails; report FINAL_VERIFICATION_FAILED, leave final untouched."
+      },
+      {
+        "from": "SEALED",
+        "to": "PUBLICATION_UNCERTAIN",
+        "rationale": "Ambiguous interruption around primitive entry: commit outcome unproved. Revoke cleanup authority; read-only recovery only, no final or residue mutation."
+      }
+    ],
+    "forbidden_transitions": [
+      {
+        "from": "COMMITTED_UNVERIFIED",
+        "to": "PRIVATE_STAGING",
+        "rationale": "No rollback after publication."
+      },
+      {
+        "from": "COMMITTED_INVALID",
+        "to": "PRIVATE_STAGING",
+        "rationale": "No delete-and-retry or repair of committed final."
+      },
+      {
+        "from": "VERIFIED_FINAL",
+        "to": "PRIVATE_STAGING",
+        "rationale": "Verified final is immutable."
+      },
+      {
+        "from": "EXISTING_EQUIVALENT",
+        "to": "PRIVATE_STAGING",
+        "rationale": "Existing final never becomes owned staging."
+      },
+      {
+        "from": "FAILED_PRECOMMIT",
+        "to": "PRIVATE_STAGING",
+        "rationale": "Retry is a new invocation, not residue adoption."
+      },
+      {
+        "from": "PUBLICATION_UNCERTAIN",
+        "to": "PRIVATE_STAGING",
+        "rationale": "Uncertainty never grants cleanup or retry-overwrite authority; a new invocation begins read-only."
+      }
+    ]
+  },
+  "commit_point": {
+    "durable_authority": "Successful qualified same-filesystem atomic NO-REPLACE publication is the physical mutation commit; _SUCCESS or a seal alone is not commit. Ambiguous interruption never grants final cleanup. Atomic visibility is not a universal power-loss persistence guarantee.",
+    "before_state": "SEALED",
+    "after_state": "COMMITTED_UNVERIFIED",
+    "success_authoritative_when": "Only after strict read-only final verification, full recorded semantic closure and second physical pass, compared to externally requested Dataset authority. Existing equivalent success also requires that verification. No trusted result while COMMITTED_UNVERIFIED or COMMITTED_INVALID."
+  },
+  "crash_semantics": {
+    "pre_commit": [
+      "Crash before manifest, after manifest, after empty _SUCCESS, or immediately before publication leaves non-authoritative private residue. Future invocations never adopt, scan or delete it.",
+      "No partially prepared final may be exposed. On ambiguous primitive interruption inspect final read-only; never infer cleanup authority over final."
+    ],
+    "post_commit": [
+      "Crash immediately after rename does not authorize rollback. Retry checks final first and returns equivalent verified success or fails untouched.",
+      "A failed final verification is COMMITTED_INVALID, not a reason to delete/repair/quarantine. Platform qualification documents persistence limits; restart always verifies."
+    ]
+  },
+  "rollback_recovery": {
+    "restorable": [
+      "Ordinary precommit failure may remove only extant current-created objects under the exact current-owned staging with safe ancestry, same object identities and no unexpected entries. Partial inventory may be a subset; seal completeness is not required for cleanup."
+    ],
+    "non_restorable": [
+      "No postcommit rollback. No removal of output_root, final, arbitrary prior staging or unrelated objects.",
+      "Uncertain ownership, replaced root/member, link/reparse, unexpected child, denied traversal or ACL drift: refuse cleanup and preserve residue; no chmod fallback."
+    ],
+    "interruption_detection": [
+      "Track physical publication separately from verified success and revoke cleanup immediately on successful rename.",
+      "Retain original failure and secondary CLEANUP_REFUSED detail; ambiguous publication is PUBLICATION_FAILED with uncertain state, no destructive recovery."
+    ]
+  },
+  "idempotence": {
+    "same_request_retry": [
+      "New invocation checks exact final first; fully verified equivalent returns created_new_build=false without staging.",
+      "Exact equivalence binds dataset_id, all 49 identity assertions, recorded logical facts, schema/content and specs; physical serializer bytes/built_at may differ but existing artifact must match its own manifest."
+    ],
+    "completed_retry": [
+      "Read-only existing verification, no marker/manifest regeneration, rewriting, relocation or permission changes."
+    ],
+    "conflicting_retry": [
+      "Corrupt/conflicting/incomplete/unsafe final fails untouched, with no staging before existing-final admission.",
+      "Retry has no authority over previous residue even if its name, ID, marker or old process metadata matches."
+    ]
+  },
+  "locking_concurrency": {
+    "lock_authority": [
+      "True no-replace primitive is destination exclusion authority; exists() is not a lock.",
+      "Exclusive staging creation plus private current object ledger is cleanup authority; only genuine single-use _PublicationSeal is publication authority."
+    ],
+    "lock_scope": [
+      "Exact retained root, staging and intended final sibling; private owner-only staging and locally controlled ancestry/root. Cooperative writers access only their own staging."
+    ],
+    "under_lock_revalidation": [
+      "Before each mutation inspect relevant lstat/reparse-aware ancestry and retained object handles; before publication repeat full exact inventory/content seal and target checks.",
+      "Require access controls excluding untrusted mutation during check-to-primitive interval. Unverifiable control fails closed. Hostile administrator/kernel/equivalent owner credentials are outside this guarantee; a hash scan is not a lock."
+    ],
+    "concurrent_behavior": [
+      "Windows bound helper uses only qualified non-replacing os.rename. Actual existing empty and nonempty destinations must survive.",
+      "Linux exact root-fd-relative renameat2 flag 1 only. EEXIST is destination-exists; ENOTEMPTY needs fresh safe final existence proof. EXDEV fails; ENOSYS/EINVAL/ENOTSUP/EOPNOTSUPP/missing symbol fails unsupported; other errors fail without fallback.",
+      "Race loser verifies winner read-only; equivalent success or corrupt/conflicting failure, never overwrite/delete/repair. Only its proven uncommitted staging is cleanup-eligible."
+    ]
+  },
+  "execution_revalidation": {
+    "identities": [
+      "Dataset ID, exact requested logical result and frozen sections 19-21 artifact layout/manifest/recorded projections; no modification of upstream or Dataset identities.",
+      "Root/ancestor/staging/final binding and retained filesystem-object identities. Linux fstat st_dev/st_ino/type plus statx mount identity; Windows FileIdInfo volume serial/128-bit FileId plus volume GUID, exact types and reparse-aware paths. Retain handles; no path/mtime-only ownership.",
+      "_PublicationSeal binds invocation, dataset_id, exact sorted file/directory inventory, each relative_path/file_role/object identity/byte_size/SHA256, exact manifest bytes/hash, all specs/sidecars/report/matrix and empty _SUCCESS.",
+      "Seal issued only by _verify_and_seal_staging(owner) after final private verification including _SUCCESS; capture must equal the verifier's admitted physical facts. _publish(owner, seal) rejects caller-authored, foreign, reused or replacement-constructed seals."
+    ],
+    "drift_behavior": [
+      "Immediately before primitive: exact inventory EQUALITY, same roots/directories/file objects, unchanged sizes/hashes/manifest, reconstructed manifest.dataset_id == owner.dataset_id, _SUCCESS empty regular file, safe final sibling and same filesystem. Any mismatch reaches zero no-replace calls.",
+      "No callback/await/content write between final revalidation and primitive. Missing expected files fail publication even though safe cleanup can accept partial inventory.",
+      "Reject dot/dot-dot/root escape, symlink, junction, every reparse tag, ADS, extra streams, hard links, unexpected members, directory type mismatch, device files and unproved local ancestry. resolve() alone never suffices."
+    ]
+  },
+  "success_evidence": {
+    "authoritative_evidence": [
+      "Qualified atomic no-replace success followed by strict final reader verification and second-pass closure.",
+      "Strict read-only equivalent existing/race-final verification matched against the requested authority."
+    ],
+    "non_success_evidence": [
+      "Staging marker, manifest, caller hashes, partial inventory, seal without issued context, exists() precheck, cleanup completion or mocked primitive happy path.",
+      "Platform documentation or A4 qualification alone; no platform is qualified by this design candidate."
+    ],
+    "integrity_binding": [
+      "All expected output members plus manifest and _SUCCESS are in the seal, though manifest and marker are not manifest.output_files. Exact regular files, single links, object/size/SHA identity and canonical bytes required.",
+      "Logical identity remains the frozen five domains and 49-field payload. Physical file hashes, manifest hash, output path, cwd, mtime, built_at and seal do not enter Dataset ID."
+    ]
+  },
+  "path_safety": {
+    "mutates_paths": true,
+    "windows_reparse_policy": "FAIL_CLOSED_FILE_ATTRIBUTE_REPARSE_POINT",
+    "unverifiable_path_policy": "FAIL_CLOSED"
+  },
+  "stale_plan_ui": {
+    "invalidation_triggers": {
+      "applicable": false,
+      "rationale": "No UI or plan authority. Mandatory live identity/path/seal revalidation applies regardless of any earlier inspection."
+    },
+    "confirmation_invalidation": {
+      "applicable": false,
+      "rationale": "No user-data deletion UI. Future runtime needs separate owner authorization and already-approved exact BASE contract."
+    },
+    "execution_policy": {
+      "applicable": false,
+      "rationale": "Only private future materializer entrypoints; no reader, CLI, Catalog or provider dispatch."
+    }
+  },
+  "physical_atomicity": {
+    "lifecycle_unit": [
+      "One full frozen output_root/dataset_id=<ID>/ artifact including one Parquet, all recorded evidence/association/spec/report sidecars, canonical manifest and empty marker."
+    ],
+    "partial_mutation": [
+      "Exact ordering: input/root checks; exclusive staging; content/spec writes; manifest; complete private verification; empty _SUCCESS; final private verification; private seal; immediate full revalidation; one no-replace primitive; final verification; return.",
+      "SUPPORTED_AND_QUALIFIED requires actual exact-tuple tests on local NTFS Windows 11/Server 2022+ with CPython 3.11/3.14, or local ext4 Linux with CPython 3.11/3.14 and reliable renameat2/statx. These are candidate families, not already accepted tuples; everything else is UNSUPPORTED_FAIL_CLOSED."
+    ],
+    "rollback_expectation": [
+      "Cleanup only still-proven private uncommitted staging; failed ownership leaves residue.",
+      "Published final immutable even if return/reader fails; no rollback deletion. No copy+delete degradation."
+    ]
+  },
+  "unsupported_cascade": {
+    "retained_dependents": [
+      "All upstream/source artifacts, old Dataset cohorts, output root, other staging, existing finals, Catalog and production data remain untouched."
+    ],
+    "refused_cases": [
+      "Unsafe root/component, remote filesystem, unreliable object IDs, unqualified platform, unproved private access, cross-volume/mount, invalid seal, prior staging or corrupt final."
+    ],
+    "unsupported_cases": [
+      "Orphan adoption/sweep/GC, migration, permanent final deletion, quarantine, repair, permission escalation, arbitrary native mutation, new destructive finding or fallback primitive.",
+      "Provider/schedule acquisition, network/OpenD, Catalog/CLI, release/deployment; no runtime in this design PR."
+    ]
+  },
+  "permanent_deletion": {
+    "supported": false,
+    "rationale": "Removing owned precommit private staging is internal failure handling, not user-data deletion. No committed artifact or existing persistent asset may be deleted."
+  },
+  "implementation_tests": [
+    "Require the unchanged approved contract in exact implementation BASE; no HEAD-only contract authorization. Exactly the two Python path/symbol/signal/count bindings; no exemptions/checker/prospective transition changes. Linux native wrapper separately audited/tested.",
+    "Real Windows and Linux absent-target publication, existing empty/nonempty destination refusal, simultaneous equivalent/conflicting creators; preserve winner bytes and objects. Happy-path or mocked tests alone do not qualify.",
+    "Actual Linux renameat2(RENAME_NOREPLACE) and Windows non-replacing os.rename; unsupported primitive/kernel/filesystem/runtime, EXDEV and permissions fail without fallback.",
+    "Root/staging/object substitution, symlinks, junctions/reparse including inside-root links, ADS/streams, hard links, mount changes and unsafe ancestry fail before mutation; uncertain cleanup is refused.",
+    "After final private verification and before seal issuance or publication, mutate/remove/substitute matrix, each evidence/association/spec/report member, manifest and marker. Assert zero primitive calls, absent final and unchanged unrelated siblings.",
+    "Exact inventory rejects added hidden children and missing members. Hashes reject same-size mutation. File identities reject identical-byte substitution. Manifest reconstructs owner.dataset_id; _SUCCESS remains exact empty bytes.",
+    "Partial-write failure cleans only current-owned partial staging, not arbitrary prior residue. Permission/ownership uncertainty leaves residue and preserves original error. No chmod-on-error cleanup.",
+    "Existing equivalent before staging returns read-only; corrupt final creates no staging. Race equivalents return existing; corrupt winner remains untouched.",
+    "Fault/crash checkpoints before manifest, after manifest, after marker, just before/after primitive and during final verification; no postcommit deletion or repair.",
+    "Direct/forged/reused/foreign seal rejection; cleanup owner alone cannot reach primitive. No callbacks or writes after immediate revalidation.",
+    "New reader remains read-only and passes frozen second-pass TOCTOU, discriminator, relocation, zero-row schema and no-upstream-execution canaries.",
+    "Preserve nine existing L3.3 deferred canaries 2,3,38,39,40,61,75,76,77 until real runtime evidence. Design-only tests do not relabel them PASS or rewrite L3.1/L3.2 history.",
+    "All 98 Dataset, 49 TS2 and 53 L1/L2 fixed digest assertions and old sealed authorities unchanged. Physical-only mutations never change logical Dataset ID.",
+    "Record exact OS/kernel/libc/CPU/Python/filesystem/options/access-control tuple and actual platform logs; untested tuples fail closed. No platform qualification claimed in this design PR."
+  ]
+}

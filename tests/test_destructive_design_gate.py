@@ -281,6 +281,7 @@ def test_existing_destructive_contracts_and_inventory_validate():
         "catalog_market_bars_view_refresh_v1",
         "observation_artifact_atomic_publication_v1",
         "multi_source_dataset_atomic_publication_v1",
+        "multi_source_cross_day_dataset_atomic_publication_v1",
     }
     assert len(snapshot.exemptions) == 16
     assert len(snapshot.findings) == 42
