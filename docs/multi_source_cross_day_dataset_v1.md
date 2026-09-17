@@ -117,7 +117,9 @@ scope completion. No PARTIAL result escapes an authority failure.
 
 The join is the sole live-result issuer. Direct construction,
 dataclasses.replace, caller tokens, source hashes, callbacks, registries or
-ImplementationPins cannot issue a trusted result. Invocation-private context
+ImplementationPins cannot issue a trusted result. The private retained ledger
+in sections 4.1-4.7 remembers sole-join issuance; it is not a caller registry
+or a second issuer. Invocation-private context
 binds the admitted input records, real registries, structural comparisons,
 split output and derived matrix/audit/identity. Deserialized records are NOT
 live TS2/A3 issuance tokens. The future reader issues its own separate
@@ -137,6 +139,278 @@ grant runtime issuance authority or run any upstream computation.
 canonical_builds is the complete union of logical Canonical projections;
 observation_builds is the complete A2 logical projection sequence. The pin/proof
 fields are recomputed assertions of these records, not substitutes for them.
+
+### 4.1 Live-Issuance Remediation Status and Two Predicates
+
+This DESIGN-ONLY addendum is pinned to the following later base. It does not
+rewrite section 1's original design base or historical logical-runtime review.
+
+```text
+ISSUANCE_REMEDIATION_BASE_MAIN_SHA=bed7537203245d692df585fd6715a842b870d688
+ISSUANCE_REMEDIATION_BASE_MAIN_TREE=b02249ff62bb9ca832e4a6279010886d8d085b20
+PR173_L3_1_RUNTIME_REVIEW=PASS
+L3_1_IMPLEMENTATION_ATTEMPT_2=PASS
+L3_1_LOGICAL_JOIN_RUNTIME=CLOSED_ON_MAIN
+L3_1_LIVE_RESULT_ISSUANCE_PROOF=REMEDIATION_REQUIRED
+L3_3_IMPLEMENTATION_ATTEMPT_1=FAIL
+L3_3_IMPLEMENTATION_ATTEMPT_1_FAILURE_CLASS=CONTRACT_PRECONDITION_CONFLICT
+L3_3_IMPLEMENTATION_ATTEMPT_1_FAILURE_REASON=LIVE_JOIN_ISSUANCE_NOT_REVALIDATABLE_UNDER_UPSTREAM_FREEZE
+L3_3_IMPLEMENTATION_ATTEMPT_1_REPOSITORY_MUTATION=false
+```
+
+The newly discovered issuance precondition does NOT relabel PR173 or L3.1
+Attempt #2 FAIL. The stopped L3.3 attempt remains FAIL after this remediation.
+
+LOGICAL_VALIDITY means the complete recorded declaration is internally
+valid and recomputes to the claimed Dataset ID. The existing
+`multi_source_cross_day_dataset_id(...)` and `_validate_identity_input(...)`
+remain pure logical/recorded validators: no ledger lookup, registration,
+issuance side effect, or new identity input. They do not prove provenance of
+the enclosing Python result object.
+
+LIVE_ISSUANCE means this exact Python result object was created by the current
+process's sole `join_multi_source_cross_day_dataset(...)` issuer. Future
+materialization requires LOGICAL_VALIDITY AND LIVE_ISSUANCE, not either alone.
+A correct type, matching Dataset ID, fixed implementation pins and internally
+consistent recorded facts are necessary but insufficient for live issuance.
+
+### 4.2 Process-Private Retained Proof
+
+SELECTED_ISSUANCE_ARCHITECTURE=PROCESS_PRIVATE_ISSUANCE_LEDGER
+
+Future implementation retains an id(result) -> issuance-record mapping in
+process-private closure state shared only by the sole join and one private
+verifier. Do not use result hashing/equality or WeakKeyDictionary equality as
+exact-object authority. No module-exported mutable ledger or caller-write API.
+
+The ledger is NOT an issuer. It neither constructs nor admits an arbitrary
+object; it remembers one already completed join issuance. Only the join's
+final private issuance block may insert an entry, after all existing closure,
+split, projection and Dataset ID validation succeeds and before returning.
+No entry on failure and no partial result return. Capture failure fails the
+join; no unrecorded result escapes. This does not add an alternative issuer.
+
+Every private record binds:
+- the numeric id key and a weakref to the exact result;
+- the original Dataset ID value and exact original identity_input object;
+- original status and issuer contract
+  `multi-source-cross-day-dataset-orchestration-v1`;
+- original references for all non-scalar public projections;
+- an independent immutable snapshot of the complete declared public record
+  graph, including nested projections, plus their original object references;
+- private process ownership and ledger-generation state, never logical IDs.
+
+Original references alone are NOT a snapshot: object.__setattr__ can mutate
+a frozen record shared with the stored declaration. The snapshot must detach
+values at issuance, not recalculate its baseline from the current declaration
+later. Recursively copy the fixed declared record fields, tuple members and
+mapping entries as type-tagged immutable facts; retain immutable scalar
+values and exact float bits (including signed zero). No bool/int conflation,
+repr, pickle, caller hash, arbitrary equality method or user copy hook.
+Reject unexpected types, cycles and any reference back to the result.
+Only the frozen declared public graph is captured, not library-private caches.
+Original node references permit `is` comparison even for equal-content
+replacement of a nested node; detached values detect in-place node mutation.
+Do not hash this snapshot into a sixth logical domain or persist it anywhere.
+
+No public or importable registration/minting helper is exposed, including:
+`register_live_result(result)`, `mark_issued(result)`, `trust_result(result)`,
+`from_verified(...)`, `deserialize_and_register(...)`, caller nonce/hash,
+test-only production bypass, or public issuance-context constructor.
+Source hashes, ImplementationPins, callbacks and copied scalar tokens cannot
+insert an entry. Only the fixed weakref cleanup callback may remove dead
+entries; it never registers or trusts an object.
+
+This is an in-process API authority boundary, not a Python sandbox against
+code that rewrites trusted module/closure state, replaces verifier code,
+inspects frames to steal internals, or writes interpreter memory. Those are
+not caller APIs. Low-level object.__new__ fabrication and object.__setattr__
+mutation of result/declaration objects ARE explicitly inside the tested
+threat boundary; do not dismiss those attacks as unsupported construction.
+
+### 4.3 Weak Lifetime, Threads and Process Boundaries
+
+Propose `@dataclass(frozen=True, slots=True, init=False, weakref_slot=True)`
+for the future result class. __weakref__ is a slot, NOT a dataclass field.
+PUBLIC_RESULT_FIELD_COUNT=19
+The exact public logical field list in section 4 stays unchanged. Do not add
+_issuance, _token, _authority or context fields, even private dataclass fields.
+No issuance nonce, object ID, memory address, process ID, timestamp, ledger
+generation or snapshot enters the five domains, 49-field payload or artifacts.
+
+The ledger has no strong reference to the result, directly or through its
+record/snapshot/callback. It may retain original declarations/projection nodes
+only while that result lives; they must not lead back to it. The weakref
+callback captures the id key and private state, not the result or a bound
+result method. Remove only if the current entry's weakref IS the callback's
+weakref. This guards stale callbacks and id reuse (ABA); id equality alone
+must never authorize lookup or removal. Once a result dies, release its entry
+and original snapshots. Multiple results sharing declarations have separate
+entries/lifetimes. No unbounded strong global retention of Dataset results.
+
+Use a private reentrant lock for insertion, lookup and cleanup; the callback
+must be safe when collection occurs during those operations. Keep a strong
+local reference to the caller's result during verification. No user callback,
+I/O, logging or upstream execution in weakref cleanup. Do not hold the ledger
+lock over expensive logical validation or inherited source fingerprint reads.
+After validation, reacquire it and require the same entry/weakref/generation.
+
+Proof is process-local and module-instance-local. Spawn, deserialization,
+pickle reconstruction and restart do not register anything. Fork must not
+inherit usable proof: a fixed internal after-fork hook clears the child ledger
+and replaces its lock/process state before use; an independent process-ID
+mismatch check fails closed before touching an inherited lock if reset did
+not occur. The process ID is private bookkeeping only, not environment or
+Dataset authority. A fresh child-process join may issue into its empty ledger.
+Module reload starts empty; old objects are not automatically re-enrolled.
+
+Cross a process/restart boundary by materializing while live issuance exists,
+then use the separate verified artifact reader. There is no persisted live
+capability, remote ledger, serialized registration, timeout or current-time
+check. Garbage collection and process reset require no filesystem/network.
+
+### 4.4 Private Verification and Same-Object Drift
+
+Freeze one downstream private predicate:
+`_require_live_issued_multi_source_cross_day_dataset_result(result)`.
+
+It is read-only with respect to issuance: verification cannot insert, refresh
+or replace an entry. Require all of the following, fail closed otherwise:
+
+1. Exact MultiSourceCrossDayDatasetResult type, not a subclass/proxy.
+2. Entry for id(result), correct process/generation, and entry.weakref() IS
+   result; a same-content different object fails before logical validation.
+3. result.identity_input IS the recorded original declaration. Dataset ID,
+   status and issuer version equal their original captured values.
+4. Every non-scalar public projection IS its original referenced object;
+   every public field and nested declared value matches the independent typed
+   snapshot, including original nested object bindings. Projection aliases
+   must agree with the recorded declaration, not just with each other.
+5. Full current unchanged logical validation succeeds and recomputed Dataset
+   ID equals BOTH result.dataset_id and the captured original Dataset ID.
+   All 19 projections match the issuance declaration; COMPLETE/EMPTY remains
+   the frozen row-count rule.
+6. Repeat entry identity, projection bindings and independent snapshot checks
+   after logical validation. No concurrent detected drift may pass.
+
+Never update the issuance baseline after mutation or accept a replacement
+declaration because its recalculated Dataset ID is internally valid. Reject
+same-object changes to dataset_id, identity_input, rows, sample_audit, status,
+TS2/Observation/L2 projections or nested declarations, including coordinated
+updates of every dependent value/hash. Membership alone is not admission.
+
+The verifier does not rerun PIT, TS2, Observation Features, A3, L2, formulas or
+split assignment. Logical validators retain their existing recorded-only
+meaning and bounded inherited fingerprint behavior. Ledger bookkeeping adds
+zero filesystem reads/writes, network/provider/OpenD or current-time calls.
+
+A lock on the ledger is not a lock against arbitrary object.__setattr__.
+The proof establishes the observed unchanged issued state at the boundary,
+not an audit of transient mutations restored before observation. Future
+materialization must use detached private working facts matched to the
+issuance snapshot, never later reread a caller-mutated graph as write input.
+This working copy is private invocation data, not a new live result or
+transferable issuance token. Recheck the live gate before the first mutation;
+detected drift fails. Concurrent hostile rewriting of the trusted verifier
+itself is outside section 4.2's API threat boundary.
+
+### 4.5 Materializer and Reader Separation
+
+Future L3.3 materializer calls the private live verifier on every invocation,
+including an existing-final/idempotent path, BEFORE any artifact filesystem
+access or mutation: before root/staging creation or output-file opens.
+The publication contract still requires output_root to ALREADY EXIST;
+this addendum never grants permission to create it or any ancestor.
+A missing/invalid live proof maps to artifact INPUT_AUTHORITY with the original
+Dataset RESULT_AUTHORITY cause preserved, in PREFLIGHT; filesystem mutation
+count is zero. No caller-supplied verifier or cached bearer token bypasses it.
+No mutation before the issuance gate merely to discover whether it will pass.
+
+Reader LIVE_ISSUANCE dependency is false. Section 21 remains strict structural/
+integrity verification issuing VerifiedMultiSourceCrossDayDataset, not a live
+MultiSourceCrossDayDatasetResult. It neither consults nor populates the ledger
+and cannot upgrade artifact records into upstream issuance. Valid artifact
+identity is not proof of execution in this process. Physical serialization,
+reader/layout identities and the separately merged destructive authority are
+unchanged. This addendum authorizes no artifact implementation or publication.
+
+### 4.6 Reproduction and Supplemental Canary
+
+The external offline reproduction at the remediation base demonstrated:
+genuine Feature value 0.25; coordinated unissued Feature value 999.0, with
+unchanged actual fixed registry pins and coherently updated audit/matrix/ID.
+
+```text
+REPRODUCTION_GENUINE_DATASET_ID=2f5355e7cc30ab7a984f9ff959b10e8d8b949e89e453b0e43c0d88a6a36f06c8
+REPRODUCTION_FORGED_DATASET_ID=97ecb5d9951e6685475e73d273b44605dcd67fb60d3e724c6c8263d4711e5a9d
+```
+
+These two IDs are reproduction evidence, NOT new frozen known-answer vectors.
+Logical validation may accept the internally closed forged declaration as its
+defined job; the live boundary MUST reject its unissued enclosing object.
+
+Supplemental canary IR1, separate from the historical 80:
+`LOGICAL_IDENTITY_VALIDATION_NE_LIVE_RESULT_ISSUANCE_AUTHORITY`
+AND
+`COORDINATED_INTERNALLY_VALID_UNISSUED_RESULT_REJECTED_BY_LIVE_BOUNDARY`.
+
+IR1 is REQUIRED_FUTURE_RUNTIME_TEST, not implemented by this design/static PR.
+Future exact-head tests must prove:
+- genuine live result passes both predicates, including empty results, without
+  upstream execution, formula calls or new bookkeeping I/O;
+- direct construction and dataclasses.replace remain rejected;
+- same-content object.__new__, tamper(...) and copied-public-fields clones fail;
+- copied scalar public/private tokens cannot enroll a clone;
+- the exact 0.25 -> 999.0 reproduction fails LIVE_ISSUANCE, independently of
+  the unchanged logical validator's internally-consistent outcome;
+- genuine same-object field, nested-object and coordinated ID/projection
+  mutation fails, even if the original declaration was aliased;
+- equivalent replacement objects fail original reference bindings;
+- stale weakrefs/id reuse cannot authorize a different object or erase a new
+  entry; collection releases ledger entries without retaining results;
+- concurrent joins/verification/GC preserve exact entries and fail on drift;
+- spawned/forked/restarted processes and module reload cannot admit old proof;
+- invalid issuance reaches zero artifact reads/writes/mutations; future
+  reader verification neither requires nor creates a ledger entry.
+
+```text
+HISTORICAL_DATASET_DESIGN_CANARY_COUNT=80
+SUPPLEMENTAL_LIVE_ISSUANCE_CANARY_COUNT=1
+SUPPLEMENTAL_LIVE_ISSUANCE_RUNTIME_CANARIES_IMPLEMENTED=0
+SUPPLEMENTAL_LIVE_ISSUANCE_RUNTIME_CANARIES_DEFERRED=1
+L3_3_DEFERRED_CANARIES=9
+NEW_IDENTITY_DOMAIN_COUNT=5
+DATASET_ID_FIELD_COUNT=49
+KNOWN_ANSWER_VECTOR_COUNT=8
+KNOWN_ANSWER_DIGEST_ASSERTION_COUNT=98
+KNOWN_ANSWER_LITERALS_CHANGED=false
+```
+
+Do not renumber or rewrite historical L3.1/L3.2 tables or claim any of the nine
+L3.3 artifact canaries implemented. The supplementary design obligation does
+not change section 25's DESIGN_CANARY_COUNT=80 or the 98 literal assertions.
+
+### 4.7 Remediation Phase Locks
+
+Independent design review, authorized merge and exact-main closure must
+precede separately authorized narrow issuance implementation. L3.3 runtime
+needs its own later authorization after the issuance boundary is reviewed.
+This design changes no source file, publication contract, checker, exemption,
+CI, logical identity, matrix/audit/completion, PIT/TS2/A3/L2/split semantics,
+public logical fields, artifact identity or version.
+
+```text
+L3_1_LIVE_RESULT_ISSUANCE_REMEDIATION_DESIGN_STARTED=true
+L3_1_LIVE_RESULT_ISSUANCE_REMEDIATION_IMPLEMENTATION_STARTED=false
+L3_1_LIVE_RESULT_ISSUANCE_REMEDIATION_IMPLEMENTATION_AUTHORIZED=false
+L3_3_CROSS_DAY_ARTIFACT_IMPLEMENTATION_STARTED=false
+L3_3_CROSS_DAY_ARTIFACT_IMPLEMENTATION_AUTHORIZED=false
+L4_IMPLEMENTATION_STARTED=false
+L4_IMPLEMENTATION_AUTHORIZED=false
+MERGE_AUTHORIZED=false
+VERSION_CHANGED=false
+VERSION=0.8.0
+```
 
 ## 5. Exact Join Closure and Order
 
