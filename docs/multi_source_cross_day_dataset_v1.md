@@ -254,11 +254,37 @@ Only the actual issued TS2 result is accepted by the live join. Recompute its
 ten frozen identities and check real fixed registrations/source fingerprints,
 spec pins, all eight ImplementationPins, sample/value cardinality and status.
 Do not call execute_ts2_features or reconstruct via the sealed result constructor.
-Recorded candidate IDs equal the complete ordered PIT Feature selection.
-COMPLETE consumed IDs equal its exact trailing required contiguous N positions;
-EXCLUDED consumed IDs are empty. Insufficient/noncontiguous reason semantics,
+The Dataset join separately verifies the complete ordered PIT Feature selection
+as upstream PIT authority. For each TS2 Feature value, recorded candidate IDs
+must equal exactly the LAST min(N, selected_count) positions of that complete
+selection, preserving PIT order, under the owning frozen TS2 registration/spec
+window contract. Full selection and candidate rows are distinct facts: every
+selected row still requires complete validation; candidates are a spec-specific
+trailing projection, not a replacement for that full authority boundary.
+Never require candidate == full selection when selected_count > N. They may
+be equal only when selected_count <= N.
+
+If selected_count < N, candidates contain all selected positions and the value
+is EXCLUDED / INSUFFICIENT_ROWS with empty consumed IDs. Otherwise candidates
+contain exactly the trailing N positions: a contiguous tail is COMPLETE with
+consumed IDs equal to candidates; a noncontiguous tail is EXCLUDED /
+NON_CONTIGUOUS_ROWS with empty consumed IDs. The join performs no new window
+selection or TS2 execution; it checks the frozen result against the already
+verified full PIT selection, without searching for another window.
+Insufficient/noncontiguous reason semantics,
 bounded huge-N handling, finite actual float output and negative-zero rules
 remain TS2's. No formula is run to validate a supplied numeric result.
+
+Normative non-identity examples (R0/R1/R2 denote selected PIT positions, not
+new identity constants):
+
+- A: full PIT selection (R0, R1, R2), window_bars=2, with a valid contiguous
+  tail and otherwise admitted facts. Candidates and COMPLETE consumed IDs
+  are (R1, R2). Dataset verification must PASS; requiring candidates to equal
+  (R0, R1, R2) is forbidden.
+- B: full PIT selection (R0,), window_bars=2. Candidates are (R0,), status
+  EXCLUDED, reason INSUFFICIENT_ROWS, consumed IDs (). This valid excluded
+  result retains the full PIT selection separately.
 
 All selected Feature rows must be in the exact request window/date/scope,
 market_available_at <= Feature close and (A null or archive_available_at <= A).
@@ -1116,7 +1142,11 @@ All canaries are future obligations, not claims that Dataset runtime exists.
 38. Relocation of all upstream and output artifacts leaves logical identity unchanged.
 39. built_at mutation alone cannot change Dataset ID.
 40. output_root mutation alone cannot change Dataset ID.
-41. Dataset ID binds TS2 execution contract.
+41. Dataset ID binds the exact sealed TS2 execution contract. Validate the
+    complete ordered PIT Feature selection separately; each TS2 value's
+    candidate sequence is exactly its frozen trailing min(N, selected_count)
+    projection in PIT order, never widened to the full selection when
+    selected_count > N.
 42. Dataset ID binds all eight actual TS2 registry pins, not just used pins.
 43. Dataset ID binds complete A3 associations/proofs, not only selected rows.
 44. Dataset ID binds COMPLETE and EXCLUDED Observation values.
