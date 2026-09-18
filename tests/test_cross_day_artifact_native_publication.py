@@ -93,6 +93,14 @@ def test_native_capability_and_stable_object_evidence(native_scope, capsys):
             assert item.identity and item.filesystem == scope.filesystem
         assert objects[0].identity != objects[1].identity
         assert objects[1].read_bytes() == b"native identity evidence"
+        if os.name == "nt":
+            from market_vault.cross_day_dataset._artifact_windows import _native_volume_root
+            assert _native_volume_root(scope.handles[0].handle) is True
+            assert scope.handles[0].filesystem == scope.filesystem
+            assert all(not _native_volume_root(item.handle) for item in scope.handles[1:])
+            with capsys.disabled():
+                print("WINDOWS_ROOT_ADMISSION=PASS")
+                print("WINDOWS_NATIVE_VOLUME_ROOT_CLASSIFICATION=PASS")
         with capsys.disabled():
             print("L33_NATIVE_CANDIDATE_CAPABILITY=" + json.dumps(capability, separators=(",", ":")))
             print("L33_NATIVE_OBJECT_AND_VOLUME_PROBE=PASS")

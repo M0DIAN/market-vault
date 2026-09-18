@@ -132,7 +132,7 @@ def _security_facts(handle):
         _local_free(descriptor)
 
 
-def _access_boundary(facts, current_sid, *, ancestor):
+def _access_boundary(facts, current_sid, *, ancestor, held_handle=None):
     owner, control, entries, _ = facts
     trusted = {current_sid, "S-1-5-18", "S-1-5-32-544"}
     if ancestor:
@@ -141,6 +141,9 @@ def _access_boundary(facts, current_sid, *, ancestor):
     _require(ancestor or bool(control & 0x1000), "UNSAFE_PATH", "private root/member DACL must be protected")
     # Creating a sibling alone does not permit replacing a protected child.
     forbidden = 0x00010000 | 0x00040000 | 0x00080000 | 0x00000040 | 0x00000100 | 0x00000010
+    if ancestor and held_handle is not None and _native_volume_root(held_handle):
+        # Only a proven native volume root gets this protected-child policy.
+        forbidden &= ~(0x00010000 | 0x00000100 | 0x00000010)
     if not ancestor:
         forbidden |= 0x00000002 | 0x00000004
     for ace_type, flags, mask, sid in entries:
@@ -154,6 +157,29 @@ def _handle_path(handle, flags):
     _ok(length)
     _require(length < len(buffer), "UNSAFE_PATH", "native handle path overflow")
     return buffer.value
+
+
+def _native_volume_root(handle):
+    """Classify the retained native object, never a caller path or boolean."""
+    _require(type(handle) is int and handle > 0, "UNSAFE_PATH", "retained native handle required")
+    identity, tag, standard = _IdInfo(), _TagInfo(), _StandardInfo()
+    _require(_file_type(handle) == 1, "UNSAFE_PATH", "not a retained disk object")
+    for code, value in ((18, identity), (9, tag), (1, standard)):
+        _ok(_info(handle, code, c.byref(value), c.sizeof(value)))
+    _require(identity.serial != 0 and any(identity.identifier), "PLATFORM_UNQUALIFIED", "unstable FileIdInfo")
+    _require(standard.directory and tag.attributes & 0x10 and not standard.delete_pending,
+             "UNSAFE_PATH", "volume ancestor must be a live directory")
+    _require(not tag.attributes & 0x400 and tag.tag == 0, "UNSAFE_PATH", "reparse volume ancestor")
+    dos_path, guid_path = _handle_path(handle, 0), _handle_path(handle, 1)
+    _require(dos_path.startswith("\\\\?\\"), "UNSAFE_PATH", "native DOS handle path required")
+    mount, guid = c.create_unicode_buffer(32768), c.create_unicode_buffer(128)
+    _ok(_volume_path(dos_path[4:], mount, len(mount)))
+    _ok(_volume_name(mount, guid, len(guid)))
+    _require(_drive_type(mount) == 3 and guid.value.startswith("\\\\?\\Volume{")
+             and guid.value.endswith("}\\") and guid_path.startswith(guid.value),
+             "FILESYSTEM_MISMATCH", "nonlocal or mismatched volume-root evidence")
+    # Sharing the volume prefix proves membership, not root classification.
+    return guid_path == guid.value
 
 
 def _streams(handle):
@@ -250,7 +276,7 @@ class _WindowsObject:
         _ok(_volume_info(self.handle, name, len(name), c.byref(serial), c.byref(maximum), c.byref(flags), fs, len(fs)))
         _require(fs.value == "NTFS" and flags.value & 8, "PLATFORM_UNQUALIFIED", "local persistent-ACL NTFS required")
         security = _security_facts(self.handle)
-        _access_boundary(security, self.current_sid, ancestor=self.ancestor)
+        _access_boundary(security, self.current_sid, ancestor=self.ancestor, held_handle=self.handle)
         _require(self.ancestor or not tag.attributes & 0x2, "INVENTORY_MISMATCH", "hidden artifact object")
         _require(all(n == "::$DATA" for n in _streams(self.handle)), "INVENTORY_MISMATCH", "named stream outside inventory")
         # Archive/access-time changes from our own writes are not permission changes.
