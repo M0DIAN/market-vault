@@ -61,7 +61,11 @@ def test_public_abi_and_closed_type_table(issued):
     assert "__weakref__" not in PUBLIC_FIELDS
     assert weakref.ref(result)() is result
     assert str(inspect.signature(engine.join_multi_source_cross_day_dataset)) == SIGNATURE
-    assert package.__all__ == EXPORTS
+    assert package.__all__ == EXPORTS + [
+        "MultiSourceCrossDayArtifactError", "MultiSourceCrossDayDatasetMaterializationResult",
+        "VerifiedMultiSourceCrossDayDataset", "materialize_multi_source_cross_day_dataset_build",
+        "load_verified_multi_source_cross_day_dataset",
+    ]
     assert not hasattr(engine, "_make_live_boundary")
     for module in (package, engine, snapshots):
         assert not any(name in vars(module) for name in (
@@ -292,13 +296,16 @@ def test_logical_validation_does_not_consult_or_enroll_ledger(issued):
 def test_capture_failure_cannot_return_or_enroll_result(issued, monkeypatch):
     inputs, original = issued
     ledger = closure_state()["ledger"]
-    before = tuple(ledger)
+    before = dict(ledger)
     def fail(result):
         raise Error("RESULT_AUTHORITY", "snapshot capture failed")
     monkeypatch.setattr(snapshots, "_capture", fail)
     with pytest.raises(Error, match="capture failed"):
         engine.join_multi_source_cross_day_dataset(**inputs)
-    assert tuple(ledger) == before
+    # Unrelated weak entries may expire during validation; none may be added or replaced.
+    assert set(ledger) <= set(before)
+    assert all(record is before[key] for key, record in ledger.items())
+    assert ledger[id(original)] is before[id(original)]
     assert id(original) in ledger
 
 
@@ -402,8 +409,9 @@ def test_source_boundary_has_no_issuance_metadata_or_artifact_api():
     assert not any(isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
                    and node.func.attr in ("deepcopy", "dumps", "loads", "asdict", "now", "getenv")
                    for node in ast.walk(tree))
-    assert not {"manifest.py", "materialization.py", "reader.py"} & {
-        p.name for p in Path(package.__file__).parent.iterdir()}
+    # L3.3 may consume the private bridge; snapshot authority must not import I/O.
+    assert not any(isinstance(node, ast.ImportFrom) and any(word in (node.module or "")
+        for word in ("artifact", "materialization", "manifest", "reader")) for node in ast.walk(tree))
 
 
 def test_genuine_signed_zero_mutation_is_rejected(tmp_path, monkeypatch):

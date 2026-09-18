@@ -282,7 +282,7 @@ def _make_live_boundary():
             ledger[key] = record
         return result
 
-    def _require_live_issued_multi_source_cross_day_dataset_result(result):
+    def verified_record(result):
         require(type(result) is MultiSourceCrossDayDatasetResult,
                 "RESULT_AUTHORITY", "exact live result required")
         invocation_epoch = current_epoch()
@@ -327,10 +327,35 @@ def _make_live_boundary():
         entry_check(record)
         graph_check(record)
         entry_check(record)
+        return record
 
-    return join_multi_source_cross_day_dataset, _require_live_issued_multi_source_cross_day_dataset_result
+    @dataclass(frozen=True, slots=True)
+    class _ArtifactFacts:
+        dataset_id: str
+        status: str
+        snapshot: tuple
+        generation: object
+        epoch: object
+        process_id: int
+
+        def __reduce_ex__(self, protocol):
+            raise TypeError("artifact working facts are process-private")
+
+    def _require_live_issued_multi_source_cross_day_dataset_result(result):
+        verified_record(result)
+
+    def _require_live_issued_multi_source_cross_day_dataset_artifact_facts(result):
+        record = verified_record(result)
+        # Only the issuance-time detached values escape, never the retained references.
+        return _ArtifactFacts(record.dataset_id, record.status, record.snapshot,
+                              record.generation, record.epoch, record.process_id)
+
+    return (join_multi_source_cross_day_dataset,
+            _require_live_issued_multi_source_cross_day_dataset_result,
+            _require_live_issued_multi_source_cross_day_dataset_artifact_facts)
 
 
 (join_multi_source_cross_day_dataset,
- _require_live_issued_multi_source_cross_day_dataset_result) = _make_live_boundary()
+ _require_live_issued_multi_source_cross_day_dataset_result,
+ _require_live_issued_multi_source_cross_day_dataset_artifact_facts) = _make_live_boundary()
 del _make_live_boundary
