@@ -105,8 +105,13 @@ def _inventory(directory, scope):
                 finally:
                     held.close()
             else:
-                _require(stat.S_ISREG(data.st_mode) and data.st_nlink == 1, "UNSAFE_PATH", "nonregular or hard-linked member")
+                _require(stat.S_ISREG(data.st_mode), "UNSAFE_PATH", "nonregular member")
                 _require(name in _BASE_FILES or _SPEC_FILE.fullmatch(name), "INVENTORY_MISMATCH", "unexpected file")
+                held = scope.member(Path(child.path), directory=False)
+                try:
+                    held.recheck()
+                finally:
+                    held.close()
                 entries.append((name, "FILE"))
     visit(directory, "")
     _require(len({n.casefold() for n, _ in entries}) == len(entries), "INVENTORY_MISMATCH", "case alias")

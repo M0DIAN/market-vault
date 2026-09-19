@@ -11,7 +11,7 @@ from threading import Barrier
 import pytest
 
 from market_vault.cross_day_dataset import materialization as m
-from market_vault.cross_day_dataset._artifact_io import _NativeScope
+from market_vault.cross_day_dataset._artifact_io import _NativeScope, _inventory
 from market_vault.cross_day_dataset._artifact_platform import _capability, _QUALIFIED_CAPABILITIES
 from market_vault.cross_day_dataset._artifact_windows import _new_directory, _new_file_handle, _write_handle
 from market_vault.cross_day_dataset.artifact_models import MultiSourceCrossDayArtifactError as Error
@@ -81,7 +81,7 @@ def native_scope(tmp_path):
         shutil.rmtree(child)
 
 
-def test_native_capability_and_stable_object_evidence(native_scope, capsys):
+def test_native_capability_and_stable_object_evidence(native_scope, capsys, monkeypatch):
     scope, capability = native_scope
     directory, file = scope.root / "directory", scope.root / "file"
     mkdir(scope, directory)
@@ -93,6 +93,47 @@ def test_native_capability_and_stable_object_evidence(native_scope, capsys):
             assert item.identity and item.filesystem == scope.filesystem
         assert objects[0].identity != objects[1].identity
         assert objects[1].read_bytes() == b"native identity evidence"
+        inventory_file = directory / "dataset.parquet"
+        write(scope, inventory_file, b"single-link inventory evidence")
+        with os.scandir(directory) as stream:
+            entry = next(stream)
+            assert entry.name == inventory_file.name
+            direntry_links = entry.stat(follow_symlinks=False).st_nlink
+        assert _inventory(directory, scope) == (("dataset.parquet", "FILE"),)
+        if os.name == "nt":
+            assert direntry_links == 0
+            with capsys.disabled():
+                print("WINDOWS_DIRENTRY_NLINK_ZERO_REGULAR_FILE_ACCEPTED=true")
+
+        def rejected_member(path, *, directory):
+            assert path == inventory_file and directory is False
+            raise Error("UNSAFE_PATH", "PREFLIGHT", "injected native member refusal")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(scope, "member", rejected_member)
+            with pytest.raises(Error, match="injected native member refusal"):
+                _inventory(directory, scope)
+
+        held_file = scope.member(inventory_file, directory=False)
+        closed = []
+
+        class FailedRecheck:
+            def recheck(self):
+                held_file.recheck()
+                raise Error("UNSAFE_PATH", "PREFLIGHT", "injected native recheck refusal")
+
+            def close(self):
+                held_file.close()
+                closed.append(True)
+
+        try:
+            with monkeypatch.context() as patch:
+                patch.setattr(scope, "member", lambda path, *, directory: FailedRecheck())
+                with pytest.raises(Error, match="injected native recheck refusal"):
+                    _inventory(directory, scope)
+            assert closed == [True]
+        finally:
+            held_file.close()
         if os.name == "nt":
             from market_vault.cross_day_dataset._artifact_windows import _native_volume_root
             assert _native_volume_root(scope.handles[0].handle) is True
@@ -209,14 +250,19 @@ def test_native_symlink_or_reparse_rejected(native_scope):
         link.unlink()
 
 
-def test_native_hardlink_rejected(native_scope):
+def test_native_hardlink_rejected(native_scope, capsys):
     scope, _ = native_scope
-    first, second = scope.root / "first", scope.root / "second"
+    first, second = scope.root / "dataset.parquet", scope.root / "feature_pit.json"
     write(scope, first, b"linked")
     os.link(first, second)
     for path in (first, second):
         with pytest.raises(Error):
             scope.member(path, directory=False)
+    with pytest.raises(Error, match="hard.link"):
+        _inventory(scope.root, scope)
+    with capsys.disabled():
+        platform = "WINDOWS" if os.name == "nt" else "LINUX"
+        print(platform + "_REAL_HARDLINK_INVENTORY_REJECTED=true")
 
 
 def test_linux_cross_volume_member_rejected(native_scope):
