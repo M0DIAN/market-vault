@@ -171,8 +171,16 @@ def test_native_equivalent_concurrent_full_writers(tmp_path, qualified_scope, mo
     assert len(rebound) == (1 if os.name == "nt" else 0)
 
 
+def _assert_windows_diagnostic_path_budget(root, dataset_id):
+    staging = root / ("." + dataset_id + ".tmp-" + "0" * 32)
+    deepest = staging / "specs" / "observation" / ("0" * 64 + ".yaml")
+    assert root.is_absolute() and root.drive and not str(root).startswith("\\\\")
+    assert len(str(deepest)) < 260, str(deepest)
+
+
 def _windows_race_rebind_fault(scope, result, monkeypatch, drift):
-    child = scope.root / ("rebind-" + drift)
+    child = scope.root / {"none": "r0", "replacement": "r1", "security": "r2", "extra": "r3"}[drift]
+    _assert_windows_diagnostic_path_budget(child, result.dataset_id)
     mkdir(scope, child)
     with _NativeScope(child, output=True) as local:
         primitive = m._rename_directory_no_replace_windows
@@ -339,7 +347,8 @@ def test_native_partial_staging_cleanup_is_not_seal_authority(tmp_path, qualifie
     if os.name == "nt":
         monkeypatch.setattr(m, "_write_member", original)
         for replaced in (False, True):
-            child = scope.root / ("partial-close-" + str(replaced))
+            child = scope.root / ("p1" if replaced else "p0")
+            _assert_windows_diagnostic_path_budget(child, result.dataset_id)
             mkdir(scope, child)
             with _NativeScope(child, output=True) as local:
                 closed, owners, rebound = [], [], []
