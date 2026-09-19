@@ -135,6 +135,26 @@ def test_native_capability_and_stable_object_evidence(native_scope, capsys, monk
         finally:
             held_file.close()
         if os.name == "nt":
+            from market_vault.cross_day_dataset import _artifact_windows as windows
+            checked = scope.member(inventory_file, directory=False)
+            original_handle = checked.handle
+            try:
+                with monkeypatch.context() as patch:
+                    def failed_close(handle):
+                        assert handle == original_handle
+                        windows.c.set_last_error(5)
+                        return False
+                    patch.setattr(windows, "_close", failed_close)
+                    with pytest.raises(OSError) as rejected:
+                        checked.close_for_directory_rename()
+                    assert rejected.value.winerror == 5 and checked.handle == original_handle
+                checked.recheck()
+                checked.close_for_directory_rename()
+                assert checked.handle is None
+                with pytest.raises(Error):
+                    checked.close_for_directory_rename()
+            finally:
+                checked.close()
             from market_vault.cross_day_dataset._artifact_windows import _native_volume_root
             assert _native_volume_root(scope.handles[0].handle) is True
             assert scope.handles[0].filesystem == scope.filesystem

@@ -55,8 +55,10 @@ class MemoryFS:
                     filesystem = ("SIMULATED",)
                     security = ("SIMULATED_PRIVATE",)
                     fd = 37
+                    handle = 37
 
                     def recheck(self):
+                        _require(self.handle is not None, "UNSAFE_PATH", "simulated closed handle")
                         if model.recheck_hook:
                             model.recheck_hook(path)
                         current = model.nodes.get(path)
@@ -70,7 +72,11 @@ class MemoryFS:
                         return model.nodes[path][2]
 
                     def close(self):
-                        pass
+                        self.handle = None
+
+                    def close_for_directory_rename(self):
+                        self.recheck()
+                        self.close()
 
                 held = Object()
                 held.path, held.identity, held.directory = path, node[0], directory

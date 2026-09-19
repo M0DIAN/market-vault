@@ -59,6 +59,7 @@ class _Owner:
     seal: object = None
     seal_snapshot: tuple = ()
     cleanup_attempted: bool = False
+    windows_descendants_quiesced: bool = False
 
 
 def _binding(owner):
@@ -82,7 +83,54 @@ def _check_owner(owner):
     return inventory
 
 
+def _rebind_windows_cleanup_evidence(owner):
+    _require_owner(owner)
+    _require(os.name == "nt" and owner.windows_descendants_quiesced
+             and owner.state in ("SEALED", "FAILED_PRECOMMIT"),
+             "CLEANUP_REFUSED", "Windows precommit quiescence required")
+    replacements = {}
+    try:
+        seal = owner.seal
+        _require(type(seal) is _PublicationSeal and _seal_values(seal) == owner.seal_snapshot
+                 and _binding(owner) == seal.binding, "CLEANUP_REFUSED", "quiesced binding changed")
+        owner.scope.recheck()
+        owner.members[""].recheck()
+        for name, old in owner.members.items():
+            if not name:
+                continue
+            _require(old.path == owner.path / name, "CLEANUP_REFUSED", "member path changed")
+            if old.handle is None:
+                fresh = owner.scope.member(old.path, directory=old.directory)
+                replacements[name] = fresh
+                _require((fresh.identity, fresh.filesystem, fresh.security, fresh.directory) ==
+                         (old.identity, old.filesystem, old.security, old.directory),
+                         "CLEANUP_REFUSED", "quiesced member replaced or changed")
+                fresh.recheck()
+            else:
+                old.recheck()
+        _require(_inventory(owner.path, owner.scope) == seal.inventory == _expected_inventory(owner.expected),
+                 "CLEANUP_REFUSED", "quiesced inventory changed")
+        # Install only the complete, independently revalidated replacement set.
+        previous = owner.members
+        owner.members = {**previous, **replacements}
+        try:
+            _require(_binding(owner) == seal.binding, "CLEANUP_REFUSED", "rebound seal binding differs")
+            _check_owner(owner)
+        except BaseException:
+            owner.members = previous
+            raise
+        replacements = {}
+        owner.windows_descendants_quiesced = False
+    except (MultiSourceCrossDayArtifactError, OSError) as exc:
+        raise MultiSourceCrossDayArtifactError("CLEANUP_REFUSED", "FAILED_PRECOMMIT", exc) from exc
+    finally:
+        for item in replacements.values():
+            item.close()
+
+
 def _remove_tree(owner):
+    if os.name == "nt" and owner.windows_descendants_quiesced:
+        _rebind_windows_cleanup_evidence(owner)
     _check_owner(owner)
     _require(not owner.cleanup_attempted, "CLEANUP_REFUSED", "cleanup is not retried")
     owner.cleanup_attempted = True
@@ -211,15 +259,23 @@ def _publish(owner, seal):
     _revalidate_publication_seal(owner, seal)
     if _exists(owner.final):
         raise _DestinationExists()
+    if os.name == "nt":
+        # A failed close is precommit, but even a partial transition needs rebind.
+        owner.windows_descendants_quiesced = True
+        for name, item in owner.members.items():
+            if name:
+                item.close_for_directory_rename()
     try:
         if os.name == "nt":
             _rename_directory_no_replace_windows(owner.path, owner.final)
         else:
             _rename_directory_no_replace_linux(owner.scope.root_object.fd, os.fsencode(owner.path.name), os.fsencode(owner.final.name))
         owner.state = "COMMITTED_UNVERIFIED"
-    except (_DestinationExists, MultiSourceCrossDayArtifactError):
+    except _DestinationExists:
         raise
     except BaseException as exc:
+        if os.name != "nt" and isinstance(exc, MultiSourceCrossDayArtifactError):
+            raise
         owner.state = "PUBLICATION_UNCERTAIN"
         raise MultiSourceCrossDayArtifactError("PUBLICATION_FAILED", "PUBLICATION_UNCERTAIN", exc) from exc
 

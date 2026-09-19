@@ -297,6 +297,12 @@ class _WindowsObject:
             _close(self.handle)
             self.handle = None
 
+    def close_for_directory_rename(self):
+        _require(self.handle is not None and _file_type(self.handle) == 1,
+                 "UNSAFE_PATH", "valid retained descendant handle required")
+        _ok(_close(self.handle))
+        self.handle = None
+
     def read_bytes(self):
         _require(not self.directory and self.handle is not None, "UNSAFE_PATH", "regular held file required")
         _ok(_seek(self.handle, 0, None, 0))
