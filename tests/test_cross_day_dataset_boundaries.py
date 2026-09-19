@@ -167,20 +167,27 @@ def test_coordinated_l2_source_fingerprint_pin_forgery_rejected(tmp_path):
 
 
 def test_package_is_pure_additive_and_has_no_future_api():
+    """Preserve historical canary node ID; sealed logical modules remain I/O-free."""
     import market_vault.cross_day_dataset as package
     root = Path(package.__file__).parent
     forbidden = {"open", "read_text", "read_bytes", "write_text", "write_bytes", "stat", "getcwd", "getenv",
         "glob", "iterdir", "listdir", "scandir", "now", "utcnow", "today", "rename", "rmtree",
         "assemble_point_in_time_samples", "assemble_observation_pit_sidecar", "execute_ts2_features",
         "execute_observation_features", "assemble_cross_day_labels", "execute_cross_day_labels", "_facts"}
-    for path in root.glob("*.py"):
+    # The authorized L3.3 phase adds artifact modules; the sealed pure modules
+    # must still have no I/O or dependency back to that physical boundary.
+    logical_modules = ("models", "identity", "closure", "execution", "_live_issuance", "_validation",
+                       "_label_closure", "_observation_closure", "_ts2_closure", "generator")
+    for module in logical_modules:
+        path = root / (module + ".py")
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if isinstance(node, ast.Call):
                 name = node.func.id if isinstance(node.func, ast.Name) else node.func.attr if isinstance(node.func, ast.Attribute) else ""
                 assert name not in forbidden, (path.name, name)
+            if isinstance(node, ast.ImportFrom):
+                assert not any(word in (node.module or "") for word in ("artifact", "materialization", "manifest", "reader")) or node.level > 1
     assert {"CrossDayAnchor", "generate_cross_day_feature_requests",
             "MULTI_SOURCE_CROSS_DAY_SAMPLE_GENERATOR_VERSION"} <= set(package.__all__)
-    assert not {"manifest.py", "materialization.py", "reader.py"} & {p.name for p in root.iterdir()}
-    assert not any(any(word in name.lower() for word in ("manifest", "reader", "materializ", "catalog", "provider"))
+    assert not any(any(word in name.lower() for word in ("catalog", "provider"))
                    for name in package.__all__)
