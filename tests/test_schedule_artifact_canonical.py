@@ -145,18 +145,36 @@ def test_canonical_base64_encode_requires_exact_bytes(value):
 
 def test_pure_core_has_closed_imports_and_no_side_effect_apis():
     root = Path(__file__).resolve().parents[1] / "src/market_vault/schedule_artifact"
-    expected = {"__init__.py", "_canonical.py", "_crypto.py", "_identity.py"}
+    expected = {
+        "__init__.py", "_canonical.py", "_crypto.py", "_identity.py", "_errors.py",
+        "_models.py", "_schema.py", "_semantics.py", "_trust.py",
+    }
     assert {path.name for path in root.glob("*.py")} == expected
     allowed_imports = {
         (0, "base64"), (0, "json"), (0, "unicodedata"), (0, "hashlib"),
         (2, "dataset.encoding"), (1, "_canonical"),
         (0, "cryptography.hazmat.primitives.asymmetric.ed25519"),
+        (0, "dataclasses"), (0, "datetime"), (0, "types"), (0, "re"),
+        (1, "_errors"), (1, "_models"), (1, "_identity"), (1, "_schema"),
+        (2, "cross_day.schedule"), (2, "cross_day.identity"),
     }
     allowed_symbols = {
         (2, "dataset.encoding"): {"reject_unsafe_text", "encode_identity"},
-        (1, "_canonical"): {"_canonical_json"},
+        (1, "_canonical"): {"_canonical_json", "_decode_base64", "_parse_canonical_json"},
         (0, "cryptography.hazmat.primitives.asymmetric.ed25519"):
             {"Ed25519PublicKey"},
+        (0, "dataclasses"): {"dataclass"},
+        (0, "datetime"): {"date", "datetime"},
+        (0, "types"): {"MappingProxyType"},
+        (1, "_errors"): {"_ScheduleArtifactError", "_require"},
+        (1, "_models"): {
+            "_ParsedDocument", "_freeze", "_thaw", "_SemanticFacts",
+            "_MAX_CIVIL_DATES", "_MAX_SOURCE_RECORDS",
+        },
+        (1, "_identity"): {"_identity", "_sha256"},
+        (1, "_schema"): {"_OUTPUT_ROLES", "_date", "_instant", "_parse_document"},
+        (2, "cross_day.schedule"): {"TradingDayRecord", "verify_trading_day_schedule"},
+        (2, "cross_day.identity"): {"schedule_pin_id"},
     }
     forbidden = {
         "pathlib", "os", "shutil", "socket", "requests", "urllib", "moomoo",
