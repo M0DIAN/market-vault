@@ -312,6 +312,7 @@ def test_generator_has_no_artifact_or_discovery_api():
         if isinstance(node, ast.Call):
             name = getattr(node.func, "attr", getattr(node.func, "id", ""))
             assert name not in forbidden
-    assert not {"reader.py", "manifest.py", "materialization.py"} & {p.name for p in Path(module.__file__).parent.iterdir()}
+    assert not any(isinstance(node, ast.ImportFrom) and any(word in (node.module or "")
+        for word in ("artifact", "materialization", "manifest", "reader")) for node in ast.walk(tree))
     assert not any(any(word in name.lower() for word in ("manifest", "reader", "materializ", "catalog", "provider"))
-                   for name in package.__all__)
+                   for name in module.__dict__ if not name.startswith("_"))

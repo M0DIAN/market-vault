@@ -36,7 +36,7 @@ def design_text():
     return DESIGN_PATH.read_text(encoding="utf-8")
 
 
-def test_new_contract_exact_dormant_bindings_and_inventory():
+def test_new_contract_exact_realized_bindings_and_inventory():
     value = contract_data()
     contract = gate._validate_contract(value, CONTRACT_PATH.as_posix())
     assert contract.operation_id == OPERATION
@@ -48,9 +48,13 @@ def test_new_contract_exact_dormant_bindings_and_inventory():
     assert all(b.prospective_transition is None for b in contract.bindings)
     snapshot = gate.load_worktree_snapshot(ROOT)
     assert gate.validate_snapshot(snapshot) == []
-    assert (len(snapshot.contracts), len(snapshot.exemptions), len(snapshot.findings)) == (6, 16, 42)
-    assert not (ROOT / SOURCE_PATH).exists()
-    assert not any(f.path.startswith("src/market_vault/cross_day_dataset/") for f in snapshot.findings)
+    assert (len(snapshot.contracts), len(snapshot.exemptions), len(snapshot.findings)) == (6, 16, 44)
+    assert (ROOT / SOURCE_PATH).is_file()
+    assert {(f.path, f.symbol, f.signal) for f in snapshot.findings
+            if f.path.startswith("src/market_vault/cross_day_dataset/")} == {
+        (SOURCE_PATH, "_rename_directory_no_replace_windows", "os.rename"),
+        (SOURCE_PATH, "_remove_tree", "shutil.rmtree"),
+    }
 
 
 def test_existing_a4_permission_cannot_cover_new_path():
