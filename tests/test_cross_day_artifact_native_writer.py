@@ -1,4 +1,4 @@
-"""Pre-admission native writer/reader evidence; production admission stays empty."""
+"""Native writer/reader evidence through the exact production capability policy."""
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -20,57 +20,37 @@ from test_cross_day_artifact_native_publication import native_scope, mkdir, writ
 
 
 BUILT_AT = datetime(2026, 1, 2, tzinfo=timezone.utc)
-_PRE_ADMISSION_EVIDENCE_CAPABILITIES = frozenset({
-    ("Windows", (10, 0, 26100), 1, (34404, 0),
-     ("cpython", "3.14.7 (tags/v3.14.7:823f032, Aug  5 2026, 10:51:32) [MSC v.1944 64 bit (AMD64)]", 64),
-     "NTFS", 29830879, (3, 1, 512, 4096, 1024), "protected-DACL-FileIdInfo-v1"),
-    ("Linux", "6.17.0-1022-azure", "x86_64", "2.39",
-     ("cpython", "3.11.16 (main, Aug 13 2026, 02:46:14) [GCC 13.3.0]", 64),
-     61267, 4128, 4096, ("ext4", ("relatime", "rw"),
-                       ("commit=30", "discard", "errors=remount-ro", "rw")), "statx-protected-ext4-v1"),
-})
 
 
 @pytest.fixture(scope="session")
-def _pre_admission_evidence_seen():
+def _production_evidence_seen():
     return set()
 
 
 @pytest.fixture
-def qualified_scope(native_scope, monkeypatch, capsys, _pre_admission_evidence_seen):
+def qualified_scope(native_scope, capsys, _production_evidence_seen):
     scope, capability = native_scope
     assert type(platform._QUALIFIED_CAPABILITIES) is frozenset
-    assert platform._QUALIFIED_CAPABILITIES == frozenset()
-    assert len(_PRE_ADMISSION_EVIDENCE_CAPABILITIES) == 2
+    assert len(platform._QUALIFIED_CAPABILITIES) == 2
     assert platform._capability(scope) == capability
-    with pytest.raises(Error) as rejected:
-        platform._require_qualified(scope)
-    assert rejected.value.reason_code == "PLATFORM_UNQUALIFIED"
-    if capability not in _PRE_ADMISSION_EVIDENCE_CAPABILITIES:
-        if capability not in _pre_admission_evidence_seen:
-            with capsys.disabled():
-                print("PRE_ADMISSION_CAPABILITY_MATCH=false")
-                print("L33_UNMATCHED_NATIVE_CAPABILITY=" + json.dumps(capability, separators=(",", ":")))
-            _pre_admission_evidence_seen.add(capability)
-        pytest.skip("not an exact frozen pre-admission evidence tuple")
     try:
-        with monkeypatch.context() as admission:
-            admission.setattr(platform, "_QUALIFIED_CAPABILITIES", frozenset({capability}))
-            assert platform._require_qualified(scope) == capability
-            if capability not in _pre_admission_evidence_seen:
-                with capsys.disabled():
-                    print("PRE_ADMISSION_CAPABILITY_MATCH=true")
-                    print("L33_PRE_ADMISSION_FULL_WRITER_CAPABILITY=" + json.dumps(capability, separators=(",", ":")))
-                    print("L33_PRODUCTION_CAPABILITY_TABLE_EMPTY=true")
-                    print("L33_TEST_ONLY_EPHEMERAL_ADMISSION=true")
-                _pre_admission_evidence_seen.add(capability)
-            yield scope
-    finally:
-        assert type(platform._QUALIFIED_CAPABILITIES) is frozenset
-        assert platform._QUALIFIED_CAPABILITIES == frozenset()
-        with pytest.raises(Error) as rejected:
-            platform._require_qualified(scope)
-        assert rejected.value.reason_code == "PLATFORM_UNQUALIFIED"
+        admitted = platform._require_qualified(scope)
+    except Error as rejected:
+        if rejected.reason_code != "PLATFORM_UNQUALIFIED":
+            raise
+        if capability not in _production_evidence_seen:
+            with capsys.disabled():
+                print("L33_PRODUCTION_CAPABILITY_ADMITTED=false")
+                print("L33_UNMATCHED_NATIVE_CAPABILITY=" + json.dumps(capability, separators=(",", ":")))
+            _production_evidence_seen.add(capability)
+        pytest.skip("not an exact production-admitted native capability")
+    assert admitted == capability
+    if capability not in _production_evidence_seen:
+        with capsys.disabled():
+            print("L33_PRODUCTION_FULL_WRITER_CAPABILITY=" + json.dumps(capability, separators=(",", ":")))
+            print("L33_PRODUCTION_CAPABILITY_ADMITTED=true")
+        _production_evidence_seen.add(capability)
+    return scope
 
 
 def issued(tmp_path, case="A"):
