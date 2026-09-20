@@ -1,0 +1,667 @@
+{
+  "schema_version": "market-vault-destructive-operation-v1",
+  "operation_id": "trading_day_schedule_atomic_publication_v1",
+  "approval": {
+    "status": "APPROVED",
+    "rationale": "Design-only contract using the existing schema enum, not self-approval. Independent semantic/destructive review, authorized merge, exact-main closure and a separate implementation work order are required. This unchanged declaration and docs/governance/trading_day_schedule_atomic_publication_v1.md must exist on BASE before any implementation PR. No runtime is authorized by this PR; no platform tuple, source/provider profile, signing/custody/verifier key or clock service is qualified; no same-PR implementation is authorized."
+  },
+  "identity": {
+    "name": "Trading-Day Schedule artifact atomic publication v1",
+    "purpose": "Contract version trading-day-schedule-atomic-publication-v1. Independently govern one L4.1 six-file immutable schedule artifact, qualified same-filesystem atomic no-replace directory publication, and one cleanup attempt for proven current-invocation uncommitted staging. Physical integrity grants no provider/source/key/completion authority. Normative companion: docs/governance/trading_day_schedule_atomic_publication_v1.md."
+  },
+  "implementation_bindings": [
+    {
+      "path": "src/market_vault/schedule_artifact/materialization.py",
+      "symbols": [
+        "_rename_directory_no_replace_windows"
+      ],
+      "role": "MUTATION_OWNER",
+      "surfaces": [
+        {
+          "kind": "destructive_call",
+          "signal": "os.rename",
+          "expected_count": 1
+        }
+      ],
+      "rationale": "One exact Windows-only qualified no-replace directory publication call for this invocation's sealed sibling staging; no replacement, fallback, retry or L3 authority reuse."
+    },
+    {
+      "path": "src/market_vault/schedule_artifact/materialization.py",
+      "symbols": [
+        "_remove_tree"
+      ],
+      "role": "SUPPORTING",
+      "surfaces": [
+        {
+          "kind": "destructive_call",
+          "signal": "shutil.rmtree",
+          "expected_count": 1
+        }
+      ],
+      "rationale": "One recursive call site, at most one invocation attempt, only current-owned proven uncommitted staging. Exact Windows cleanup rebind precedes owner check when descendants were quiesced. No arbitrary path, final, prior residue, permission repair or ignored error."
+    }
+  ],
+  "authority_boundary": {
+    "initiators": [
+      "Only a separately authorized future L4 materializer with explicit fully verified L4.1 immutable schedule/source/evidence/receipt facts and a pre-existing safe absolute output_root; no reader/provider/Catalog/CLI initiator."
+    ],
+    "mutation_owner": "src/market_vault/schedule_artifact/materialization.py owns exclusive current staging and the absent-to-published final boundary. INPUT / ARTIFACT AUTHORITY, PRIVATE STAGING OWNERSHIP and PUBLICATION SEAL are distinct. A logical schedule alone is not provider evidence; ownership alone cannot publish; a seal cannot authorize arbitrary cleanup.",
+    "forbidden_bypass_layers": [
+      "No caller trust boolean/hash/token, supplied owner/seal, public enrollment path, callback, settings override, path-existence authority or unchecked caller-graph reread may create authority. Immutable working facts require full L4.1 validation before mutation.",
+      "No os.replace, Path.replace, Path.rename, shutil.move, copy+delete, delete+rename, final deletion, repair/quarantine, chmod/ACL repair, retry-overwrite or reboot-delayed move.",
+      "No L3 multi_source_cross_day_dataset_atomic_publication_v1 authority, L3 native capability admission or call-through reuse; no checker/exemption/CI/source/version change in this design PR.",
+      "Separate native boundary only: src/market_vault/schedule_artifact/materialization.py::_rename_directory_no_replace_linux has exactly one direct renameat2(root_fd, staging_name, root_fd, final_name, RENAME_NOREPLACE=1) call. Current AST detection does not count it; no fake binding. Independent source/native review must enforce exact arguments, flag, call count and no alternate dispatch.",
+      "No ordinary POSIX rename/renameat, RENAME_EXCHANGE/WHITEOUT, fallback primitive, wildcard, prospective transition or additional destructive site without separately approved prior design."
+    ]
+  },
+  "persistent_scope": {
+    "mutated_assets": [
+      "Exclusively created <output_root>/.<schedule_artifact_id>.tmp-<nonce>/, exact 64 lowercase hex artifact ID and independently random 16-byte/32 lowercase hex nonce; creation-time private access and only six exclusive new regular members.",
+      "One same-qualified-local-filesystem sibling absent-to-committed <output_root>/schedule_artifact_id=<schedule_artifact_id>/.",
+      "Exact final inventory, no subdirectories: schedule.json, source_snapshot.json, coverage_evidence.json, verification_receipt.json, manifest.json, _SUCCESS. Marker is exact empty bytes."
+    ],
+    "excluded_assets": [
+      "Pre-existing output_root and every ancestor; materializer cannot create, repair, chmod, take ownership of or delete them. Root must be a dedicated output directory, not volume root/repository/source directory/artifact or artifact descendant.",
+      "Existing/racing final of any validity, unrelated siblings, historical staging, raw/source evidence, L3 artifacts/runtime/capability table/contracts, Catalog, provider infrastructure, keys and production data."
+    ]
+  },
+  "state_machine": {
+    "states": [
+      "PREFLIGHT",
+      "PRIVATE_STAGING",
+      "SEALED",
+      "COMMITTED_UNVERIFIED",
+      "VERIFIED_FINAL",
+      "EXISTING_EQUIVALENT",
+      "FAILED_PRECOMMIT",
+      "COMMITTED_INVALID",
+      "PUBLICATION_UNCERTAIN"
+    ],
+    "initial_state": "PREFLIGHT",
+    "terminal_states": [
+      "VERIFIED_FINAL",
+      "EXISTING_EQUIVALENT",
+      "FAILED_PRECOMMIT",
+      "COMMITTED_INVALID",
+      "PUBLICATION_UNCERTAIN"
+    ],
+    "allowed_transitions": [
+      {
+        "from": "PREFLIGHT",
+        "to": "PRIVATE_STAGING",
+        "rationale": "Inputs, root, platform and ancestry validated; final absent; exclusive sibling staging created and ownership captured."
+      },
+      {
+        "from": "PREFLIGHT",
+        "to": "EXISTING_EQUIVALENT",
+        "rationale": "Strict read-only existing-final verification proves exact requested equivalence; no staging."
+      },
+      {
+        "from": "PREFLIGHT",
+        "to": "FAILED_PRECOMMIT",
+        "rationale": "Preflight or existing-final admission fails, or exclusive creation/ownership capture fails; no cleanup without proven new ownership."
+      },
+      {
+        "from": "PRIVATE_STAGING",
+        "to": "SEALED",
+        "rationale": "All six exact members fully privately verified under L4.1; private single-use seal captures the verifier's admitted facts."
+      },
+      {
+        "from": "PRIVATE_STAGING",
+        "to": "FAILED_PRECOMMIT",
+        "rationale": "Preparation fails; at most one cleanup of exact current-owned partial-creation inventory."
+      },
+      {
+        "from": "SEALED",
+        "to": "COMMITTED_UNVERIFIED",
+        "rationale": "One qualified atomic no-replace primitive positively succeeds after immediate full revalidation and Windows-only checked descendant quiescence if applicable; revoke cleanup immediately."
+      },
+      {
+        "from": "SEALED",
+        "to": "EXISTING_EQUIVALENT",
+        "rationale": "Late-existing or collision winner strictly verified equivalent AND own uncommitted staging cleanup succeeds, with exact Windows rebind when quiesced."
+      },
+      {
+        "from": "SEALED",
+        "to": "FAILED_PRECOMMIT",
+        "rationale": "Seal drift, quiescence failure, definite noncommit error or invalid winner; only proven cleanup is permitted, otherwise preserve and report residue."
+      },
+      {
+        "from": "SEALED",
+        "to": "PUBLICATION_UNCERTAIN",
+        "rationale": "Interrupted or unclassifiable primitive outcome, including success-return/state-recording ambiguity; revoke cleanup, no rebind/rmtree/destructive probe."
+      },
+      {
+        "from": "COMMITTED_UNVERIFIED",
+        "to": "VERIFIED_FINAL",
+        "rationale": "Strict final reader reacquires final evidence, completes second physical closure and matches exact requested authority."
+      },
+      {
+        "from": "COMMITTED_UNVERIFIED",
+        "to": "COMMITTED_INVALID",
+        "rationale": "Final verification or return preparation fails after known commit; preserve final without rollback."
+      }
+    ],
+    "forbidden_transitions": [
+      {
+        "from": "PREFLIGHT",
+        "to": "PREFLIGHT",
+        "rationale": "Remaining in a state during private bookkeeping is not an allowed state transition or a retry authority."
+      },
+      {
+        "from": "PREFLIGHT",
+        "to": "SEALED",
+        "rationale": "Forbidden jump: do not bypass input/ownership/seal/commit/final-verification predicates or roll state backwards."
+      },
+      {
+        "from": "PREFLIGHT",
+        "to": "COMMITTED_UNVERIFIED",
+        "rationale": "Forbidden jump: do not bypass input/ownership/seal/commit/final-verification predicates or roll state backwards."
+      },
+      {
+        "from": "PREFLIGHT",
+        "to": "VERIFIED_FINAL",
+        "rationale": "Forbidden jump: do not bypass input/ownership/seal/commit/final-verification predicates or roll state backwards."
+      },
+      {
+        "from": "PREFLIGHT",
+        "to": "COMMITTED_INVALID",
+        "rationale": "Forbidden jump: do not bypass input/ownership/seal/commit/final-verification predicates or roll state backwards."
+      },
+      {
+        "from": "PREFLIGHT",
+        "to": "PUBLICATION_UNCERTAIN",
+        "rationale": "Forbidden jump: do not bypass input/ownership/seal/commit/final-verification predicates or roll state backwards."
+      },
+      {
+        "from": "PRIVATE_STAGING",
+        "to": "PREFLIGHT",
+        "rationale": "Forbidden jump: do not bypass input/ownership/seal/commit/final-verification predicates or roll state backwards."
+      },
+      {
+        "from": "PRIVATE_STAGING",
+        "to": "PRIVATE_STAGING",
+        "rationale": "Remaining in a state during private bookkeeping is not an allowed state transition or a retry authority."
+      },
+      {
+        "from": "PRIVATE_STAGING",
+        "to": "COMMITTED_UNVERIFIED",
+        "rationale": "Forbidden jump: do not bypass input/ownership/seal/commit/final-verification predicates or roll state backwards."
+      },
+      {
+        "from": "PRIVATE_STAGING",
+        "to": "VERIFIED_FINAL",
+        "rationale": "Forbidden jump: do not bypass input/ownership/seal/commit/final-verification predicates or roll state backwards."
+      },
+      {
+        "from": "PRIVATE_STAGING",
+        "to": "EXISTING_EQUIVALENT",
+        "rationale": "Forbidden jump: do not bypass input/ownership/seal/commit/final-verification predicates or roll state backwards."
+      },
+      {
+        "from": "PRIVATE_STAGING",
+        "to": "COMMITTED_INVALID",
+        "rationale": "Forbidden jump: do not bypass input/ownership/seal/commit/final-verification predicates or roll state backwards."
+      },
+      {
+        "from": "PRIVATE_STAGING",
+        "to": "PUBLICATION_UNCERTAIN",
+        "rationale": "Forbidden jump: do not bypass input/ownership/seal/commit/final-verification predicates or roll state backwards."
+      },
+      {
+        "from": "SEALED",
+        "to": "PREFLIGHT",
+        "rationale": "Forbidden jump: do not bypass input/ownership/seal/commit/final-verification predicates or roll state backwards."
+      },
+      {
+        "from": "SEALED",
+        "to": "PRIVATE_STAGING",
+        "rationale": "Forbidden jump: do not bypass input/ownership/seal/commit/final-verification predicates or roll state backwards."
+      },
+      {
+        "from": "SEALED",
+        "to": "SEALED",
+        "rationale": "Remaining in a state during private bookkeeping is not an allowed state transition or a retry authority."
+      },
+      {
+        "from": "SEALED",
+        "to": "VERIFIED_FINAL",
+        "rationale": "Forbidden jump: do not bypass input/ownership/seal/commit/final-verification predicates or roll state backwards."
+      },
+      {
+        "from": "SEALED",
+        "to": "COMMITTED_INVALID",
+        "rationale": "Forbidden jump: do not bypass input/ownership/seal/commit/final-verification predicates or roll state backwards."
+      },
+      {
+        "from": "COMMITTED_UNVERIFIED",
+        "to": "PREFLIGHT",
+        "rationale": "Forbidden jump: do not bypass input/ownership/seal/commit/final-verification predicates or roll state backwards."
+      },
+      {
+        "from": "COMMITTED_UNVERIFIED",
+        "to": "PRIVATE_STAGING",
+        "rationale": "Forbidden jump: do not bypass input/ownership/seal/commit/final-verification predicates or roll state backwards."
+      },
+      {
+        "from": "COMMITTED_UNVERIFIED",
+        "to": "SEALED",
+        "rationale": "Forbidden jump: do not bypass input/ownership/seal/commit/final-verification predicates or roll state backwards."
+      },
+      {
+        "from": "COMMITTED_UNVERIFIED",
+        "to": "COMMITTED_UNVERIFIED",
+        "rationale": "Remaining in a state during private bookkeeping is not an allowed state transition or a retry authority."
+      },
+      {
+        "from": "COMMITTED_UNVERIFIED",
+        "to": "EXISTING_EQUIVALENT",
+        "rationale": "Forbidden jump: do not bypass input/ownership/seal/commit/final-verification predicates or roll state backwards."
+      },
+      {
+        "from": "COMMITTED_UNVERIFIED",
+        "to": "FAILED_PRECOMMIT",
+        "rationale": "Forbidden jump: do not bypass input/ownership/seal/commit/final-verification predicates or roll state backwards."
+      },
+      {
+        "from": "COMMITTED_UNVERIFIED",
+        "to": "PUBLICATION_UNCERTAIN",
+        "rationale": "Forbidden jump: do not bypass input/ownership/seal/commit/final-verification predicates or roll state backwards."
+      },
+      {
+        "from": "VERIFIED_FINAL",
+        "to": "PREFLIGHT",
+        "rationale": "Terminal states cannot reset, retry, reseal, rollback or transfer authority; a new invocation begins separately at PREFLIGHT."
+      },
+      {
+        "from": "VERIFIED_FINAL",
+        "to": "PRIVATE_STAGING",
+        "rationale": "Terminal states cannot reset, retry, reseal, rollback or transfer authority; a new invocation begins separately at PREFLIGHT."
+      },
+      {
+        "from": "VERIFIED_FINAL",
+        "to": "SEALED",
+        "rationale": "Terminal states cannot reset, retry, reseal, rollback or transfer authority; a new invocation begins separately at PREFLIGHT."
+      },
+      {
+        "from": "VERIFIED_FINAL",
+        "to": "COMMITTED_UNVERIFIED",
+        "rationale": "Terminal states cannot reset, retry, reseal, rollback or transfer authority; a new invocation begins separately at PREFLIGHT."
+      },
+      {
+        "from": "VERIFIED_FINAL",
+        "to": "VERIFIED_FINAL",
+        "rationale": "Terminal states cannot reset, retry, reseal, rollback or transfer authority; a new invocation begins separately at PREFLIGHT."
+      },
+      {
+        "from": "VERIFIED_FINAL",
+        "to": "EXISTING_EQUIVALENT",
+        "rationale": "Terminal states cannot reset, retry, reseal, rollback or transfer authority; a new invocation begins separately at PREFLIGHT."
+      },
+      {
+        "from": "VERIFIED_FINAL",
+        "to": "FAILED_PRECOMMIT",
+        "rationale": "Terminal states cannot reset, retry, reseal, rollback or transfer authority; a new invocation begins separately at PREFLIGHT."
+      },
+      {
+        "from": "VERIFIED_FINAL",
+        "to": "COMMITTED_INVALID",
+        "rationale": "Terminal states cannot reset, retry, reseal, rollback or transfer authority; a new invocation begins separately at PREFLIGHT."
+      },
+      {
+        "from": "VERIFIED_FINAL",
+        "to": "PUBLICATION_UNCERTAIN",
+        "rationale": "Terminal states cannot reset, retry, reseal, rollback or transfer authority; a new invocation begins separately at PREFLIGHT."
+      },
+      {
+        "from": "EXISTING_EQUIVALENT",
+        "to": "PREFLIGHT",
+        "rationale": "Terminal states cannot reset, retry, reseal, rollback or transfer authority; a new invocation begins separately at PREFLIGHT."
+      },
+      {
+        "from": "EXISTING_EQUIVALENT",
+        "to": "PRIVATE_STAGING",
+        "rationale": "Terminal states cannot reset, retry, reseal, rollback or transfer authority; a new invocation begins separately at PREFLIGHT."
+      },
+      {
+        "from": "EXISTING_EQUIVALENT",
+        "to": "SEALED",
+        "rationale": "Terminal states cannot reset, retry, reseal, rollback or transfer authority; a new invocation begins separately at PREFLIGHT."
+      },
+      {
+        "from": "EXISTING_EQUIVALENT",
+        "to": "COMMITTED_UNVERIFIED",
+        "rationale": "Terminal states cannot reset, retry, reseal, rollback or transfer authority; a new invocation begins separately at PREFLIGHT."
+      },
+      {
+        "from": "EXISTING_EQUIVALENT",
+        "to": "VERIFIED_FINAL",
+        "rationale": "Terminal states cannot reset, retry, reseal, rollback or transfer authority; a new invocation begins separately at PREFLIGHT."
+      },
+      {
+        "from": "EXISTING_EQUIVALENT",
+        "to": "EXISTING_EQUIVALENT",
+        "rationale": "Terminal states cannot reset, retry, reseal, rollback or transfer authority; a new invocation begins separately at PREFLIGHT."
+      },
+      {
+        "from": "EXISTING_EQUIVALENT",
+        "to": "FAILED_PRECOMMIT",
+        "rationale": "Terminal states cannot reset, retry, reseal, rollback or transfer authority; a new invocation begins separately at PREFLIGHT."
+      },
+      {
+        "from": "EXISTING_EQUIVALENT",
+        "to": "COMMITTED_INVALID",
+        "rationale": "Terminal states cannot reset, retry, reseal, rollback or transfer authority; a new invocation begins separately at PREFLIGHT."
+      },
+      {
+        "from": "EXISTING_EQUIVALENT",
+        "to": "PUBLICATION_UNCERTAIN",
+        "rationale": "Terminal states cannot reset, retry, reseal, rollback or transfer authority; a new invocation begins separately at PREFLIGHT."
+      },
+      {
+        "from": "FAILED_PRECOMMIT",
+        "to": "PREFLIGHT",
+        "rationale": "Terminal states cannot reset, retry, reseal, rollback or transfer authority; a new invocation begins separately at PREFLIGHT."
+      },
+      {
+        "from": "FAILED_PRECOMMIT",
+        "to": "PRIVATE_STAGING",
+        "rationale": "Terminal states cannot reset, retry, reseal, rollback or transfer authority; a new invocation begins separately at PREFLIGHT."
+      },
+      {
+        "from": "FAILED_PRECOMMIT",
+        "to": "SEALED",
+        "rationale": "Terminal states cannot reset, retry, reseal, rollback or transfer authority; a new invocation begins separately at PREFLIGHT."
+      },
+      {
+        "from": "FAILED_PRECOMMIT",
+        "to": "COMMITTED_UNVERIFIED",
+        "rationale": "Terminal states cannot reset, retry, reseal, rollback or transfer authority; a new invocation begins separately at PREFLIGHT."
+      },
+      {
+        "from": "FAILED_PRECOMMIT",
+        "to": "VERIFIED_FINAL",
+        "rationale": "Terminal states cannot reset, retry, reseal, rollback or transfer authority; a new invocation begins separately at PREFLIGHT."
+      },
+      {
+        "from": "FAILED_PRECOMMIT",
+        "to": "EXISTING_EQUIVALENT",
+        "rationale": "Terminal states cannot reset, retry, reseal, rollback or transfer authority; a new invocation begins separately at PREFLIGHT."
+      },
+      {
+        "from": "FAILED_PRECOMMIT",
+        "to": "FAILED_PRECOMMIT",
+        "rationale": "Terminal states cannot reset, retry, reseal, rollback or transfer authority; a new invocation begins separately at PREFLIGHT."
+      },
+      {
+        "from": "FAILED_PRECOMMIT",
+        "to": "COMMITTED_INVALID",
+        "rationale": "Terminal states cannot reset, retry, reseal, rollback or transfer authority; a new invocation begins separately at PREFLIGHT."
+      },
+      {
+        "from": "FAILED_PRECOMMIT",
+        "to": "PUBLICATION_UNCERTAIN",
+        "rationale": "Terminal states cannot reset, retry, reseal, rollback or transfer authority; a new invocation begins separately at PREFLIGHT."
+      },
+      {
+        "from": "COMMITTED_INVALID",
+        "to": "PREFLIGHT",
+        "rationale": "Terminal states cannot reset, retry, reseal, rollback or transfer authority; a new invocation begins separately at PREFLIGHT."
+      },
+      {
+        "from": "COMMITTED_INVALID",
+        "to": "PRIVATE_STAGING",
+        "rationale": "Terminal states cannot reset, retry, reseal, rollback or transfer authority; a new invocation begins separately at PREFLIGHT."
+      },
+      {
+        "from": "COMMITTED_INVALID",
+        "to": "SEALED",
+        "rationale": "Terminal states cannot reset, retry, reseal, rollback or transfer authority; a new invocation begins separately at PREFLIGHT."
+      },
+      {
+        "from": "COMMITTED_INVALID",
+        "to": "COMMITTED_UNVERIFIED",
+        "rationale": "Terminal states cannot reset, retry, reseal, rollback or transfer authority; a new invocation begins separately at PREFLIGHT."
+      },
+      {
+        "from": "COMMITTED_INVALID",
+        "to": "VERIFIED_FINAL",
+        "rationale": "Terminal states cannot reset, retry, reseal, rollback or transfer authority; a new invocation begins separately at PREFLIGHT."
+      },
+      {
+        "from": "COMMITTED_INVALID",
+        "to": "EXISTING_EQUIVALENT",
+        "rationale": "Terminal states cannot reset, retry, reseal, rollback or transfer authority; a new invocation begins separately at PREFLIGHT."
+      },
+      {
+        "from": "COMMITTED_INVALID",
+        "to": "FAILED_PRECOMMIT",
+        "rationale": "Terminal states cannot reset, retry, reseal, rollback or transfer authority; a new invocation begins separately at PREFLIGHT."
+      },
+      {
+        "from": "COMMITTED_INVALID",
+        "to": "COMMITTED_INVALID",
+        "rationale": "Terminal states cannot reset, retry, reseal, rollback or transfer authority; a new invocation begins separately at PREFLIGHT."
+      },
+      {
+        "from": "COMMITTED_INVALID",
+        "to": "PUBLICATION_UNCERTAIN",
+        "rationale": "Terminal states cannot reset, retry, reseal, rollback or transfer authority; a new invocation begins separately at PREFLIGHT."
+      },
+      {
+        "from": "PUBLICATION_UNCERTAIN",
+        "to": "PREFLIGHT",
+        "rationale": "Terminal states cannot reset, retry, reseal, rollback or transfer authority; a new invocation begins separately at PREFLIGHT."
+      },
+      {
+        "from": "PUBLICATION_UNCERTAIN",
+        "to": "PRIVATE_STAGING",
+        "rationale": "Terminal states cannot reset, retry, reseal, rollback or transfer authority; a new invocation begins separately at PREFLIGHT."
+      },
+      {
+        "from": "PUBLICATION_UNCERTAIN",
+        "to": "SEALED",
+        "rationale": "Terminal states cannot reset, retry, reseal, rollback or transfer authority; a new invocation begins separately at PREFLIGHT."
+      },
+      {
+        "from": "PUBLICATION_UNCERTAIN",
+        "to": "COMMITTED_UNVERIFIED",
+        "rationale": "Terminal states cannot reset, retry, reseal, rollback or transfer authority; a new invocation begins separately at PREFLIGHT."
+      },
+      {
+        "from": "PUBLICATION_UNCERTAIN",
+        "to": "VERIFIED_FINAL",
+        "rationale": "Terminal states cannot reset, retry, reseal, rollback or transfer authority; a new invocation begins separately at PREFLIGHT."
+      },
+      {
+        "from": "PUBLICATION_UNCERTAIN",
+        "to": "EXISTING_EQUIVALENT",
+        "rationale": "Terminal states cannot reset, retry, reseal, rollback or transfer authority; a new invocation begins separately at PREFLIGHT."
+      },
+      {
+        "from": "PUBLICATION_UNCERTAIN",
+        "to": "FAILED_PRECOMMIT",
+        "rationale": "Terminal states cannot reset, retry, reseal, rollback or transfer authority; a new invocation begins separately at PREFLIGHT."
+      },
+      {
+        "from": "PUBLICATION_UNCERTAIN",
+        "to": "COMMITTED_INVALID",
+        "rationale": "Terminal states cannot reset, retry, reseal, rollback or transfer authority; a new invocation begins separately at PREFLIGHT."
+      },
+      {
+        "from": "PUBLICATION_UNCERTAIN",
+        "to": "PUBLICATION_UNCERTAIN",
+        "rationale": "Terminal states cannot reset, retry, reseal, rollback or transfer authority; a new invocation begins separately at PREFLIGHT."
+      }
+    ]
+  },
+  "commit_point": {
+    "durable_authority": "Only successful qualified same-filesystem atomic NO-REPLACE directory publication is physical commit. Manifest, empty _SUCCESS and private seal are not commit. Revoke staging cleanup immediately. Atomic visibility is not a universal power-loss persistence guarantee; ambiguous primitive/state-recording interruption never grants cleanup.",
+    "before_state": "SEALED",
+    "after_state": "COMMITTED_UNVERIFIED",
+    "success_authoritative_when": "Only strict L4 final reader verification with newly acquired final-path evidence, second physical closure and exact requested-authority comparison produces VERIFIED_FINAL. Existing/racing equivalence must pass the same reader and own loser cleanup if staging exists. No trusted success while COMMITTED_UNVERIFIED, COMMITTED_INVALID or PUBLICATION_UNCERTAIN."
+  },
+  "crash_semantics": {
+    "pre_commit": [
+      "Before staging: no cleanup target. During writes, after four data/evidence files, after manifest, after _SUCCESS and after seal: only exact current exclusive-creation ledger can permit one cleanup; process loss leaves residue no later invocation may adopt.",
+      "Immediately before primitive, including partial checked-close failure: if primitive demonstrably not entered, Windows rebind and normal ownership proof are prerequisites to cleanup.",
+      "During primitive ambiguity or interruption across physical-success/state-recording: PUBLICATION_FAILED / PUBLICATION_UNCERTAIN, no rebind/rmtree/destructive probe. Read-only recovery only."
+    ],
+    "post_commit": [
+      "Immediately after successful primitive, cleanup is irrevocably revoked. Known success is COMMITTED_UNVERIFIED; lost certainty is PUBLICATION_UNCERTAIN, never a precommit deletion opportunity.",
+      "During final verification/return preparation, failure becomes COMMITTED_INVALID with FINAL_VERIFICATION_FAILED as applicable; preserve final. Crash returns no verified success. New invocation verifies final read-only before anything else.",
+      "No rollback, final deletion, repair, quarantine, marker/manifest regeneration or permission change. Independently qualified platform evidence must state persistence limits; restart always verifies."
+    ]
+  },
+  "rollback_recovery": {
+    "restorable": [
+      "One cleanup attempt may remove only current-invocation proven uncommitted staging; preparation may have fewer than six files only when actual inventory equals the current exclusive-creation ledger. Missing already-owned members or unknown additions refuse cleanup. Cleanup ownership is independent of publication completeness.",
+      "Windows deliberate full/partial quiescence requires private rebind before _remove_tree's normal owner check: genuine owner, SEALED or FAILED_PRECOMMIT, current seal, staging root open/unchanged, definite noncommit, no prior cleanup attempt.",
+      "Reopen each closed descendant via scope.member(old.path, directory=old.directory), require exact original identity/filesystem/security/type plus fresh link/reparse/stream checks. Recheck still-open descendants. Collect replacements locally; exact six-member inventory and binding must match before installing all replacements together, then require owner binding == original seal binding and run the full owner check again.",
+      "Immediately before the single shutil.rmtree(owner.path), revalidate ancestry, staging root, security/filesystem, each member and exact extant ledger inventory. Set cleanup_attempted=true before destructive attempt; never retry. Where handles must close, validate first, checked-close owned staging/member handles, retain scope protection and immediately remove without hooks or writes."
+    ],
+    "non_restorable": [
+      "Any missing/replaced member, identical-byte different object, changed filesystem/security/type, link/reparse/stream, extra child, ambiguous ancestry or unproved ownership means CLEANUP_REFUSED, retain residue and no rmtree. Close provisional rebind handles without rebaselining originals.",
+      "Successful or uncertain publication forbids cleanup/rebind, even if old staging path exists. No final or root deletion, prior-residue adoption/sweep, chmod/onerror repair, ignored cleanup failure or retry after partial removal.",
+      "Rebind restores only cleanup evidence, never seal reuse or another publication attempt. Permanent deletion of committed artifacts/existing user assets is unsupported."
+    ],
+    "interruption_detection": [
+      "Track exact owner state, publication outcome, single-use seal, private quiescence-started marker and cleanup_attempted. Quiescence stays SEALED and is not new serialized/public authority. Mark it before first descendant close.",
+      "Preserve reason/state/original cause plus secondary CLEANUP_REFUSED or CLEANUP_FAILED and residue. A one-shot pending cleanup may finish while reporting FAILED_PRECOMMIT without a terminal state transition.",
+      "All 81 ordered state pairs are explicit: 11 allowed, 70 forbidden, including all terminal outgoing pairs and self-transition attempts. Remaining in a state for private bookkeeping is not a state transition; retries require a fresh invocation."
+    ]
+  },
+  "idempotence": {
+    "same_request_retry": [
+      "Before staging creation check exact final: absent safe parent continues; present fully equivalent returns EXISTING_EQUIVALENT created_new_build=false without writes; invalid/unsafe/conflicting final fails untouched without staging.",
+      "Equivalence requires strict artifact ID/physical integrity/source/evidence/receipt binding, schedule_content_id, schedule_pin_id, scope/date range/archive clock and exact requested logical authority, with every canonical member matching requested immutable facts."
+    ],
+    "completed_retry": [
+      "Strict read-only final verification only; no marker/manifest regeneration, rewriting, relocation, permission change or timestamp/latest winner."
+    ],
+    "conflicting_retry": [
+      "Conflicting/corrupt race winner remains untouched. Verify it read-only before own loser cleanup/rebind; original failure remains reportable.",
+      "Equivalent race returns created_new_build=false only after winner verification AND successful proven own cleanup. Cleanup refusal/failure reports FAILED_PRECOMMIT with residue, never silent idempotent success.",
+      "Fresh invocation never adopts old staging, even if artifact ID/name/process metadata matches. No same-invocation second rename or cleanup retry."
+    ]
+  },
+  "locking_concurrency": {
+    "lock_authority": [
+      "Qualified native no-replace primitive is destination exclusion; an existence check is not a lock.",
+      "Exclusive creation with private native object ledger proves staging ownership; an exact issued single-use seal alone permits the one publication attempt for that owner.",
+      "Access controls must exclude untrusted mutation during check-to-primitive interval. Hostile kernel/administrator/equivalent-owner credentials are outside this boundary; hash scans are not locks."
+    ],
+    "lock_scope": [
+      "Same held output root/ancestry, exact private staging root and six files, final sibling name and qualified local filesystem/volume. Cooperating invocations never access each other's staging."
+    ],
+    "under_lock_revalidation": [
+      "Before each mutation recheck relevant native ancestry/root/object security; before publication revalidate every seal fact, complete inventory, identities, sizes/hashes, manifest bytes, marker and target.",
+      "After complete revalidation, if final appeared do not quiesce: verify it read-only. If absent, only Windows checked-closes ALL descendant handles while retaining staging root and scope/ancestor handles. Handle must be valid; CloseHandle success precedes marking it closed. Partial failure means zero rename calls and rebind before cleanup.",
+      "No callback, await, sleep, provider/network/current-time call, serialization, permission change, data write or arbitrary hook between final revalidation, Windows quiescence and primitive."
+    ],
+    "concurrent_behavior": [
+      "Windows: one os.rename only on independently qualified exact tuple; native empty and nonempty destination refusal mandatory. Only qualified exact ERROR_FILE_EXISTS=80 / ERROR_ALREADY_EXISTS=183 is known destination collision; WinError 5 or generic path errors cannot masquerade as collision.",
+      "Any ambiguous Windows primitive exception gives PUBLICATION_UNCERTAIN: no cleanup rebind/rmtree/rollback/final mutation. Success keeps staging root handle through rename, revokes cleanup and never reopens old staging descendants; final reader acquires new final evidence.",
+      "Linux: retained root fd and all source descriptors; one flag-1 renameat2. EEXIST collision; ENOTEMPTY collision only with fresh safe final-object proof; EXDEV filesystem mismatch; ENOSYS/EINVAL/ENOTSUP/EOPNOTSUPP/missing symbol unsupported. Definite other noncommit errno fails without fallback; cleanup still needs ownership. Interrupted/unclassifiable outcomes are uncertain with no cleanup.",
+      "Known race losers use read-only winner admission and independently proven own cleanup. No overwrite, delete-first, retry, repair or destructive probe of winner."
+    ]
+  },
+  "execution_revalidation": {
+    "identities": [
+      "Exact L4.1 immutable input authority and six-file canonical layout, including all source-contract/signature/coverage/session/archive/logical checks. Preserve existing schedule/source/evidence/artifact identity algorithms; no caller trust IDs.",
+      "Native root/ancestor/staging/member identities, security, expected types and same filesystem/volume/mount. Linux retained no-follow fstat device/inode/type/native links plus statx mount proof. Windows retained no-follow FileIdInfo volume serial/full128 FileId, FileAttributeTagInfo, FileStandardInfo single-link proof, stream checks, security descriptors and volume GUID/local evidence.",
+      "Private immutable single-use seal binds owner/invocation, schedule_artifact_id, exact root/staging/final binding, native root/ancestor/member and filesystem/security facts, sorted inventory/roles, sizes, SHA256, exact manifest bytes/hash, empty _SUCCESS, source_snapshot_id/hash, coverage_completion_evidence_id, schedule_content_id/pin_id and exact verified receipt bytes/hash/signature/contract/declaration.",
+      "Seal capture must equal complete private verifier-admitted physical facts. No unchecked reread, copy/replace/deserialization, direct/foreign/stale/replayed/caller seal or raw-path ownership is authority."
+    ],
+    "drift_behavior": [
+      "Immediately before primitive require same current owner/seal, root/ancestry/staging/members/filesystem/security, exact inventory equality, identities/sizes/SHA256, manifest, empty marker and safe absent final. Any drift before entry means zero primitive calls.",
+      "Reject relative/drive-relative, empty/dot/dot-dot, control/NUL, trailing aliases/device names, UNC/network/extended caller namespace, ADS/extra streams, root escape, all symlinks/junctions/reparse tags, hard-linked files, FIFO/device/socket, mount/volume transition and unknown objects. resolve() or path/mtime/size alone is insufficient.",
+      "Protected output/member objects reject all untrusted mutation grants. Ordinary ancestors do not inherit any volume-root exception and reject DELETE, FILE_DELETE_CHILD, WRITE_DAC, WRITE_OWNER or other protected-chain replacement authority.",
+      "Only a held directory proven the exact native local volume GUID root by GetVolumePathNameW, GetVolumeNameForVolumeMountPointW, GetFinalPathNameByHandleW and stable FileIdInfo may tolerate root DELETE/write/append/EA/attributes that cannot mutate the separately protected child. Still reject FILE_DELETE_CHILD, WRITE_DAC, WRITE_OWNER, GENERIC_ALL/raw GENERIC_WRITE and every reparse. Caller C:\\ text or boolean never establishes root status.",
+      "Private protected access is supplied at creation, never repaired later. Untrusted mutation control must be proved. Missing/zero/unreliable native identity or denied checks fail closed; no L3 qualification borrowing."
+    ]
+  },
+  "success_evidence": {
+    "authoritative_evidence": [
+      "One successful qualified no-replace commit followed by strict L4 FINAL reader, fresh identities, full semantic/integrity validation, second physical closure and requested-authority comparison.",
+      "Strict equivalent existing-final read-only verification; for race/late-final paths additionally proven own staging cleanup, including complete Windows rebind when quiesced."
+    ],
+    "non_success_evidence": [
+      "Marker, manifest, caller hashes, logical schedule alone, partial inventory, ownership without seal, seal without exact issued context, exists(), cleanup completion, mocked happy path or L3 native tuple admission.",
+      "Publication integrity does not prove provider truth, complete closure coverage, source/profile/key/clock admission. L4_MOOMOO_ONLY_AUTHORITY=REJECTED and L4_V1_PROVIDER_MODEL=PROVIDER_QUALIFICATION_DEFERRED remain frozen."
+    ],
+    "integrity_binding": [
+      "Final/complete staging exact six-file inventory, no subdirectories/extras/hidden files/case aliases/streams. All JSON and manifest meet L4.1 canonical/semantic/resource bounds before seal. Manifest and empty _SUCCESS remain in the seal, outside manifest.output_files.",
+      "Recompute source_snapshot_id/source_content_hash, coverage_completion_evidence_id, schedule_content_id/pin_id and physical artifact ID through unchanged L4.1 rules; no native object ID/path/ownership/seal field enters logical content identity.",
+      "Reader independently reacquires FINAL facts after commit; repeat native ancestry/inventory/identity/size/SHA/manifest/empty-marker closure immediately before return. Identical-byte object replacement still fails."
+    ]
+  },
+  "path_safety": {
+    "mutates_paths": true,
+    "windows_reparse_policy": "FAIL_CLOSED_FILE_ATTRIBUTE_REPARSE_POINT",
+    "unverifiable_path_policy": "FAIL_CLOSED"
+  },
+  "stale_plan_ui": {
+    "invalidation_triggers": {
+      "applicable": false,
+      "rationale": "No UI/plan authority; immediate input/owner/seal/native revalidation supersedes all earlier inspections."
+    },
+    "confirmation_invalidation": {
+      "applicable": false,
+      "rationale": "No deletion UI or caller confirmation capability. Independent design/base approval and separate runtime authorization are prerequisites, not mutable runtime trust flags."
+    },
+    "execution_policy": {
+      "applicable": false,
+      "rationale": "Only the future private L4 materializer operation; reader/provider/Catalog/CLI have no mutation dispatch authority."
+    }
+  },
+  "physical_atomicity": {
+    "lifecycle_unit": [
+      "One <output_root>/schedule_artifact_id=<64lowerhex>/ directory with exactly schedule.json, source_snapshot.json, coverage_evidence.json, verification_receipt.json, manifest.json and empty _SUCCESS. No subdirectories or other artifact cohort."
+    ],
+    "partial_mutation": [
+      "Exact order: immutable L4.1 input/root/platform/final admission; exclusive private staging with ownership; four data/evidence files; manifest; complete five-file private verification; exclusive empty marker; complete six-file private verification; seal; immediate full revalidation; late-final read-only path or Windows descendant quiescence then one no-replace primitive; revoke cleanup; strict final reader/second closure/comparison; success.",
+      "Initial five-file verification differs from final semantics only in staging name and marker absence. Complete verification before seal has all six files and no weakened source/evidence/receipt rules. Close content-write handles before verification.",
+      "No platform qualified here. Future exact-code/exact-tuple native reader/writer/cleanup qualification is independent of L3. Unknown tuples, mocks/family names/version ranges/env bypasses are unsupported. Record OS/build/kernel/CPU/Python/native API/libc/filesystem/options/volume/mount/security evidence and durability limits."
+    ],
+    "rollback_expectation": [
+      "Known precommit failure: only one current-owned cleanup, with Windows partial/full-quiescence rebind where needed. Failure/refusal preserves reported residue; no retries.",
+      "Committed or uncertain outcome: no rollback, final deletion/repair/quarantine, cleanup rebind or rmtree. Recovery/retry begins read-only in a new invocation."
+    ]
+  },
+  "unsupported_cascade": {
+    "retained_dependents": [
+      "Pre-existing root/ancestors, source/provider evidence, custody/verifier keys, L2/L3 schedules/identities/runtime/artifacts/capability table/publication contract, existing/racing final, unrelated siblings and all historical residue remain untouched."
+    ],
+    "refused_cases": [
+      "Unqualified source/provider/key/clock/completion or caller-supplied trust, invalid input, unsafe/unproved ancestry, remote/unqualified platform, unreliable object proof, cross-volume/mount, invalid/reused seal, missing/extra/replaced/security-drifted member or corrupt/conflicting final.",
+      "Error envelope retains reason, publication state, original cause and secondary cleanup/residue. Boundary reasons: INPUT_AUTHORITY, PLATFORM_UNQUALIFIED, UNSAFE_PATH, FILESYSTEM_MISMATCH, INVENTORY_MISMATCH, OWNERSHIP_MISMATCH, SEAL_INVALID, PREPUBLICATION_DRIFT, QUIESCENCE_FAILED, EXISTING_FINAL_INVALID, PUBLICATION_FAILED, FINAL_VERIFICATION_FAILED, CLEANUP_REFUSED, CLEANUP_FAILED. Preserve L4.1 reader reasons as causes; never translate into schedule/Label statuses or partial success."
+    ],
+    "unsupported_cases": [
+      "Permanent artifact/user-data deletion, repair/migration/quarantine, residue adoption/sweep, permission changes, unregistered primitive/site, native fallback, same-PR implementation/contract modification or checker/exemption weakening.",
+      "Source/provider production qualification, capture runtime, key registry, reader/writer implementation, OpenD/provider operation, Catalog/CLI, release/deployment and host reboot/shutdown/logoff/sleep/hibernate/feature/BIOS/UEFI/bcdedit/ACL/network/RDP/firewall changes are not authorized by this design."
+    ]
+  },
+  "permanent_deletion": {
+    "supported": false,
+    "rationale": "Only current-invocation uncommitted private staging may be internally removed after exact proof. No committed artifact, existing persistent/user asset, output root or ancestor can be deleted."
+  },
+  "implementation_tests": [
+    "SP-01: absent-target complete native publication, strict final reader and second physical closure.",
+    "SP-02/SP-03: existing equivalent no staging/writes; existing corrupt/conflicting/unsafe fails untouched with no staging.",
+    "SP-04/SP-05: simultaneous equivalent/conflicting full creators, winner immutability and reported/proven loser cleanup.",
+    "SP-06/SP-07: actual Windows empty/nonempty no-replace refusal; Linux EEXIST/ENOTEMPTY safe-proof, EXDEV and unsupported errno handling with no fallback.",
+    "SP-08/SP-09/SP-10/SP-11: real symlink/junction/reparse, hardlink, ADS/stream, aliases, mount/volume transition and unsafe-access rejection; Windows native links rather than DirEntry authority.",
+    "SP-12/SP-13/SP-14: staging substitution, identical-byte member replacement, security/filesystem drift refuse publication/rebind/cleanup without repair.",
+    "SP-15/SP-16: extra/hidden/case-aliased and missing members fail; cleanup partial creation must equal current ledger, not arbitrary subset.",
+    "SP-17/SP-18: manifest/source/evidence/receipt mutation, same-size drift and missing/nonempty/replaced marker fail; marker alone never commits.",
+    "SP-19/SP-20: checked-close failure after zero/some descendant closes gives zero rename calls; partial Windows quiescence rebind can safely clean only after all original records match.",
+    "SP-21/SP-22: rebind mismatch refuses without rmtree; atomic evidence installation; race loser cleanup proof and unchanged winner; idempotent success requires own cleanup.",
+    "SP-23/SP-24/SP-25: ambiguous committed interruption forbids rebind/rmtree; postcommit crash never rolls back; final reader failure preserves final and reports COMMITTED_INVALID.",
+    "SP-26/SP-27: relocation-independent artifact/source/evidence/logical IDs and zero provider/network/OpenD/current-time/mutable-Catalog fallback.",
+    "SP-28/SP-29: direct/forged/foreign/copied/reused seal/raw cleanup path rejected; exact approved unchanged BASE contract, one os.rename, one rmtree and one root-fd-relative flag-1 renameat2 site, no checker/exemption change.",
+    "SP-30/SP-31: cleanup-attempted no retry/ignore/chmod/sweep; all 81 state pairs (11 allowed,70 forbidden), no reseal/terminal reset/authority transfer.",
+    "SP-32/SP-33/SP-34/SP-35: independently qualified exact L4 native tuples only; seal/capture drift and caller mutation cannot enter bytes; unqualified source/keys/clock/completion fail; every section-13 crash checkpoint evidenced.",
+    "All canaries DESIGN-DEFINED / RUNTIME-DEFERRED in this PR. Distinguish mocks and skips from real exact-code native qualification. Preserve historical L3 and L4.1 results; current design inventory 7/16/44, conditional future Python surfaces 46, version 0.8.0 unchanged."
+  ]
+}
