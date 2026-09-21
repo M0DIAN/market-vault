@@ -680,25 +680,51 @@ class _Seam:
       recurse into a second lstat or re-arm itself;
     * it returns the original, real stat object unmodified, so production sees
       exactly what a real lstat produced.
+
+    FIRE ACCOUNTING. Raw intercepted lstat traffic and an actual seam fire are
+    deliberately different facts and are counted separately:
+
+    * `fire_count` / `fire_paths` are the FIRE evidence: how many times the
+      one-shot seam actually fired inside production's own lstat, and the exact
+      held path it fired for. `fire_count` starts at 0, and ONLY `fire()` may
+      mutate either field -- no test body and no wrapper branch writes them.
+    * `raw_lstat_paths` is DIAGNOSTIC traffic only: every path this wrapper
+      intercepted, whoever asked for it. It is never asserted to be one, because
+      legitimate verification work performed by the replacement (for example
+      `posixpath.realpath()`, which itself calls `os.lstat` on path prefixes)
+      travels through this same process-wide wrapper. Counting it as "the seam
+      fired once" would be a miscount, and asserting it equals one would forbid
+      real verification work.
     """
 
     def __init__(self, monkeypatch, held, replacement):
         self.held, self.replacement = held, replacement
-        self.armed, self.observation, self.calls = [], None, []
+        self.armed, self.observation = [], None
+        self.fire_count, self.fire_paths = 0, []
+        self.raw_lstat_paths = []
         real_lstat, target = os.lstat, str(held)
 
         def lstat(path, *args, **kwargs):
             observed = real_lstat(path, *args, **kwargs)
-            self.calls.append(str(path))
+            self.raw_lstat_paths.append(str(path))
             if self.armed and str(path) == target:
-                self.fire(observed)
+                self.fire(str(path), observed)
             return observed
 
         monkeypatch.setattr(os, "lstat", lstat)
 
-    def fire(self, observed):
-        """Disarm, then mutate, then hand the untouched real observation back."""
+    def fire(self, path, observed):
+        """Disarm first, count the fire once, record the path, then really replace.
+
+        The disarm is the first executable statement, so no mutation can recurse
+        into a second lstat or re-arm the seam. Only then is the one-shot fire
+        counted and its exact path recorded, the original production lstat
+        observation is retained, and the real replacement is performed. The
+        untouched real stat object is handed back to production.
+        """
         self.armed.pop()
+        self.fire_count += 1
+        self.fire_paths.append(path)
         self.observation = _Observation(observed.st_mode, observed.st_ino, observed.st_dev)
         self.replacement.replace(self.held)
         return observed
@@ -853,7 +879,7 @@ def _symlink_race(tmp_path, monkeypatch, *, directory, target_is_directory):
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux native mechanics only")
-def test_rqp_l21_real_no_follow_refuses_symlink_planted_after_lstat(tmp_path, monkeypatch):
+def test_rqp_l21_real_no_follow_refuses_symlink_planted_after_lstat(tmp_path, monkeypatch, capsys):
     """A pre-existing real file is lstat-ed by production, then replaced by a real symlink.
 
     Order proved here, and only production's own lstat may observe step 1:
@@ -863,6 +889,12 @@ def test_rqp_l21_real_no_follow_refuses_symlink_planted_after_lstat(tmp_path, mo
          observes a real regular file with the kernel's own mode bits;
       3. the seam disarms itself and only then plants a real symlink at `held`;
       4. production continues into its real os.open with the real O_NOFOLLOW bit.
+
+    The seam evidence asserted here is FIRE evidence -- it fired exactly once, for
+    exactly the held path -- never raw lstat traffic. The replacement really runs
+    `posixpath.realpath()`, which itself lstats path prefixes through this same
+    process-wide wrapper, so raw traffic legitimately exceeds one and is reported
+    as a diagnostic instead of being asserted.
     """
     held, target, seam = _symlink_race(tmp_path, monkeypatch, directory=False, target_is_directory=False)
     assert not held.is_symlink(), "the watched path must pre-exist as a real object"
@@ -876,7 +908,6 @@ def test_rqp_l21_real_no_follow_refuses_symlink_planted_after_lstat(tmp_path, mo
 
     # The wrapper was never re-armed, and nothing test-owned observed `held`.
     assert seam.armed == [], "the one-shot seam must be fully consumed"
-    assert seam.calls.count(str(held)) == 1, "the seam must fire for the held path exactly once"
 
     # 3: the real symlink now sits at the same path.
     assert held.is_symlink()
@@ -890,9 +921,29 @@ def test_rqp_l21_real_no_follow_refuses_symlink_planted_after_lstat(tmp_path, mo
     assert held.is_symlink()
     assert target.read_bytes() == b"ATTACKER\n"
 
+    # FIRE evidence, asserted semantically: the seam fired exactly once, for exactly
+    # the held path. An unconditioned arm is impossible here because `fire_count`
+    # starts at 0 and only `fire()` can move it, so `fire_count == 1` proves the
+    # seam really fired, and `fire_paths == [str(held)]` proves it fired for the
+    # exact watched path rather than for some other path the wrapper happened to see.
+    assert seam.fire_count == 1, "the seam must fire exactly once"
+    assert seam.fire_paths == [str(held)], "the seam must fire for the held path only"
+    assert len(seam.fire_paths) == seam.fire_count, "every counted fire must record its path"
+
+    # Raw lstat traffic is DIAGNOSTIC ONLY. The replacement's real realpath()
+    # verification lstats path prefixes, so the count is legitimately at least one
+    # and is not asserted to be exactly one.
+    assert seam.raw_lstat_paths.count(str(held)) >= 1, "production's lstat must traverse the wrapper"
+    with capsys.disabled():
+        print("RQP_L21_FILE_SYMLINK_RACE_RAW_LSTAT_TRAFFIC=%d" % len(seam.raw_lstat_paths))
+        print("RQP_L21_FILE_SYMLINK_RACE_RAW_LSTAT_HELD_TRAFFIC=%d"
+              % seam.raw_lstat_paths.count(str(held)))
+        print("RQP_L21_FILE_SYMLINK_RACE_FIRE_COUNT=%d" % seam.fire_count)
+        print("RQP_L21_FILE_SYMLINK_RACE=PASS")
+
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux native mechanics only")
-def test_rqp_l21_direct_kernel_control_on_the_identical_real_symlink(tmp_path, monkeypatch):
+def test_rqp_l21_direct_kernel_control_on_the_identical_real_symlink(tmp_path, monkeypatch, capsys):
     """Direct real-kernel control: normal open follows the link, O_NOFOLLOW refuses.
 
     The control runs on exactly the same real symlink object production refuses,
@@ -935,23 +986,39 @@ def test_rqp_l21_direct_kernel_control_on_the_identical_real_symlink(tmp_path, m
         assert race.raised.errno == direct.value.errno
     kernel_surface = (type(direct.value).__name__, direct.value.errno, None)
     production_surface = _rqp_l21_error_surface(race.raised)
-    print("RQP_L21_CURRENT_ERROR_SURFACE_TYPE=%s" % production_surface[0])
-    print("RQP_L21_CURRENT_ERROR_SURFACE_ERRNO=%s" % production_surface[1])
-    print("RQP_L21_CURRENT_ERROR_SURFACE_REASON_CODE=%s"
-          % ("NONE" if production_surface[2] is None else production_surface[2]))
-    print("RQP_L21_DIRECT_KERNEL_CONTROL_SURFACE_TYPE=%s" % kernel_surface[0])
-    print("RQP_L21_DIRECT_KERNEL_CONTROL_SURFACE_ERRNO=%s" % kernel_surface[1])
-    print("RQP_L21_PRODUCTION_SURFACE_IS_NOT_AN_ADMISSION_RULE=true")
-    print("RQP_L21_NOFOLLOW_REPLACEMENT_NOT_FOLLOWED=true")
-    print("RQP_L21_TARGET_BYTES_NOT_CONSUMED=true")
-    print("RQP_L21_ACQUISITION_FAILS_CLOSED=true")
 
-    # Nothing consumed the target bytes, under either control.
+    # Nothing consumed the target bytes, under either control. This is asserted
+    # BEFORE any PASS token is emitted, so no PASS can precede its own assertion.
     assert target.read_bytes() == b"ATTACKER\n"
+
+    # FIRE evidence for this control arm, asserted before the PASS tokens.
+    assert seam.fire_count == 1, "the seam must fire exactly once"
+    assert seam.fire_paths == [str(held)], "the seam must fire for the held path only"
+    assert len(seam.fire_paths) == seam.fire_count, "every counted fire must record its path"
+
+    # Authoritative evidence transport. The CI command is a bare `python -m pytest`
+    # with capture enabled, so a plain print() is never visible in the Linux job log.
+    # capsys.disabled() bypasses the test-local capture for the duration of the block,
+    # which is the only transport available to a tests-only change. Every token below
+    # is emitted only after the assertions it reports have completed.
+    with capsys.disabled():
+        print("RQP_L21_CURRENT_ERROR_SURFACE_TYPE=%s" % production_surface[0])
+        print("RQP_L21_CURRENT_ERROR_SURFACE_ERRNO=%s" % production_surface[1])
+        print("RQP_L21_CURRENT_ERROR_SURFACE_REASON_CODE=%s"
+              % ("NONE" if production_surface[2] is None else production_surface[2]))
+        print("RQP_L21_DIRECT_KERNEL_CONTROL_SURFACE_TYPE=%s" % kernel_surface[0])
+        print("RQP_L21_DIRECT_KERNEL_CONTROL_SURFACE_ERRNO=%s" % kernel_surface[1])
+        print("RQP_L21_PRODUCTION_SURFACE_IS_NOT_AN_ADMISSION_RULE=true")
+        print("RQP_L21_DIRECT_KERNEL_CONTROL_RAW_LSTAT_TRAFFIC=%d" % len(seam.raw_lstat_paths))
+        print("RQP_L21_DIRECT_KERNEL_CONTROL_FIRE_COUNT=%d" % seam.fire_count)
+        print("RQP_L21_NOFOLLOW_REPLACEMENT_NOT_FOLLOWED=true")
+        print("RQP_L21_TARGET_BYTES_NOT_CONSUMED=true")
+        print("RQP_L21_ACQUISITION_FAILS_CLOSED=true")
+        print("RQP_L21_DIRECT_KERNEL_CONTROL=PASS")
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux native mechanics only")
-def test_rqp_l21_real_no_follow_refuses_directory_symlink(tmp_path, monkeypatch):
+def test_rqp_l21_real_no_follow_refuses_directory_symlink(tmp_path, monkeypatch, capsys):
     """The directory acquisition path requests O_DIRECTORY and the same no-follow bit."""
     held, target, seam = _symlink_race(tmp_path, monkeypatch, directory=True, target_is_directory=True)
     assert held.is_dir() and not held.is_symlink(), "the watched directory must pre-exist"
@@ -962,7 +1029,6 @@ def test_rqp_l21_real_no_follow_refuses_directory_symlink(tmp_path, monkeypatch)
     assert stat.S_ISDIR(seam.observation.mode)
     assert not stat.S_ISLNK(seam.observation.mode)
     assert seam.armed == []
-    assert seam.calls.count(str(held)) == 1
 
     # The directory symlink is refused and its contents are untouched.
     assert race.returned is None
@@ -970,9 +1036,22 @@ def test_rqp_l21_real_no_follow_refuses_directory_symlink(tmp_path, monkeypatch)
     assert held.is_symlink()
     assert (target / "schedule.json").read_bytes() == b"ATTACKER\n"
 
+    # FIRE evidence for the O_DIRECTORY arm, asserted semantically and never as raw
+    # lstat traffic, which the replacement's real realpath() verification inflates.
+    assert seam.fire_count == 1, "the seam must fire exactly once"
+    assert seam.fire_paths == [str(held)], "the seam must fire for the held path only"
+    assert len(seam.fire_paths) == seam.fire_count, "every counted fire must record its path"
+    assert seam.raw_lstat_paths.count(str(held)) >= 1, "production's lstat must traverse the wrapper"
+    with capsys.disabled():
+        print("RQP_L21_DIRECTORY_SYMLINK_RACE_RAW_LSTAT_TRAFFIC=%d" % len(seam.raw_lstat_paths))
+        print("RQP_L21_DIRECTORY_SYMLINK_RACE_RAW_LSTAT_HELD_TRAFFIC=%d"
+              % seam.raw_lstat_paths.count(str(held)))
+        print("RQP_L21_DIRECTORY_SYMLINK_RACE_FIRE_COUNT=%d" % seam.fire_count)
+        print("RQP_L21_DIRECTORY_SYMLINK_RACE=PASS")
+
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux native mechanics only")
-def test_rqp_l21_swapped_regular_object_is_caught_by_identity_comparison(tmp_path, monkeypatch):
+def test_rqp_l21_swapped_regular_object_is_caught_by_identity_comparison(tmp_path, monkeypatch, capsys):
     """A permitted REAL open of a substituted regular file still fails on identity.
 
     This is the residual case O_NOFOLLOW cannot address: the replacement is itself
@@ -1003,6 +1082,16 @@ def test_rqp_l21_swapped_regular_object_is_caught_by_identity_comparison(tmp_pat
 
     # The substituted bytes are still on disk and were never read as the artifact.
     assert held.read_bytes() == b"ATTACKER\n"
+
+    # FIRE evidence: the seam fired exactly once, for the held path, and the real
+    # regular replacement it performed was itself rejected on identity.
+    assert seam.fire_count == 1, "the seam must fire exactly once"
+    assert seam.fire_paths == [str(held)], "the seam must fire for the held path only"
+    assert len(seam.fire_paths) == seam.fire_count, "every counted fire must record its path"
+    with capsys.disabled():
+        print("RQP_L21_REGULAR_REPLACEMENT_RAW_LSTAT_TRAFFIC=%d" % len(seam.raw_lstat_paths))
+        print("RQP_L21_REGULAR_REPLACEMENT_FIRE_COUNT=%d" % seam.fire_count)
+        print("RQP_L21_REGULAR_REPLACEMENT_IDENTITY_REJECTION=PASS")
 
 
 def test_rqp_l21_race_invariants_are_structural_not_error_surface():
@@ -1163,6 +1252,13 @@ RQP_L09_GAP_CASES = RQP_L09_CONDITIONAL_CASES
 
 _QUALIFICATION_LEDGER = {"pass": [], "gap": []}
 
+# The reason each GAP case was not constructed, keyed by case name. This is DETAIL
+# carried alongside the ledger for the aggregate snapshot; it is deliberately NOT a
+# third outcome row, so it can never widen PASS/GAP disjointness. It is written only
+# by _qualification_gap, which always raises xfail, so a case can never appear here
+# while being reported as a PASS.
+_QUALIFICATION_GAP_DETAILS = {}
+
 
 def _qualification_pass(case):
     """Record that real required behaviour was actually observed."""
@@ -1202,6 +1298,7 @@ def _qualification_gap(case, fixture, reason, **observations):
     """
     assert case in RQP_L09_GAP_CASES, "undeclared qualification gap case: %s" % case
     _record_outcome("gap", case)
+    _QUALIFICATION_GAP_DETAILS[case] = {"fixture": fixture, "reason": reason}
     print(_marker(case))
     print("RQP_L09_GAP_EVIDENCE_fixture=%s" % fixture)
     print("RQP_L09_GAP_EVIDENCE_reason=%s" % reason)
@@ -2776,3 +2873,74 @@ def test_rqp_l17_mountinfo_of_held_object_is_really_bound(capsys):
             print("RQP_L17_REAL_SUPER_OPTIONS=%r" % (scope.mount_description[2],))
     finally:
         scope.close()
+
+
+# ---------------------------------------------------------------------------
+# RQP-L09: authoritative, CI-visible aggregate accounting.
+#
+# The module-scoped accounting fixture above runs at module TEARDOWN, so its plain
+# print() is captured and can never reach the Linux job log of a bare
+# `python -m pytest` invocation. This test is therefore the AUTHORITATIVE
+# transport for the aggregate snapshot. It is defined last in the module, and
+# pytest executes tests within a module in definition order, so on Linux every
+# RQP-L09 qualification case above has already produced its final outcome before
+# this test runs and reads the ledger.
+#
+# The emitter manufactures nothing. It cannot record an outcome: it calls neither
+# _qualification_pass nor _qualification_gap nor _record_outcome, so it can only
+# read the ledger the real cases settled and assert that the settled ledger is
+# internally consistent. A GAP stays in the GAP row and is never absorbed into a
+# PASS row by this snapshot.
+# ---------------------------------------------------------------------------
+
+
+def test_rqp_l09_aggregate_accounting_is_authoritative_and_visible(capsys):
+    """Read the already-settled ledger and emit the aggregate machine snapshot.
+
+    The snapshot is emitted through capsys.disabled(), which bypasses the test-local
+    capture that a bare `python -m pytest` run enables, so the lines below are
+    visible in the Linux job log. Every count is derived from the same single audit
+    of the real ledger, so the emitted lists and their counts cannot disagree, and
+    the completeness token is the ledger's own settled verdict rather than a claim
+    made by this test.
+
+    This test asserts only properties of the SETTLED ledger: PASS and GAP stay
+    disjoint, no case is counted twice, every declared case is accounted for in
+    exactly one of PASS, GAP or NOT_EXECUTED, and the declared case registry itself
+    is duplicate-free. XFAIL is not a PASS and SKIP is not evidence; both are
+    reported as their own facts rather than being converted into qualification.
+    """
+    ledger = _audit_qualification_accounting()
+    passed, gapped = sorted(ledger["pass"]), sorted(ledger["gap"])
+    not_executed = list(ledger["not_executed"])
+    declared = sorted(RQP_L09_PASS_CASES)
+
+    # The settled ledger is internally consistent, and no case was double counted.
+    assert len(ledger["pass"]) == len(set(ledger["pass"])), "duplicate PASS registration"
+    assert len(ledger["gap"]) == len(set(ledger["gap"])), "duplicate GAP registration"
+    assert not set(passed) & set(gapped), "a case cannot be both PASS and GAP"
+    assert ledger["executed"] == len(passed) + len(gapped), "executed must be PASS plus GAP"
+    assert len(declared) == len(set(declared)), "the declared registry must be duplicate-free"
+    # Total accounting: every declared case settles in exactly one reported row.
+    assert set(passed) | set(gapped) | set(not_executed) == set(declared), \
+        "every declared case must be reported as PASS, GAP or NOT_EXECUTED"
+    assert set(ledger["pass"]) <= set(declared) and set(ledger["gap"]) <= set(RQP_L09_GAP_CASES), \
+        "a reported case must be declared, and a GAP must be a declared conditional case"
+
+    with capsys.disabled():
+        print("==== RQP-L09 AUTHORITATIVE LEDGER SNAPSHOT (SETTLED) ====")
+        print("RQP_L09_REAL_PASS_CASES=%s" % (",".join(passed) if passed else "NONE"))
+        print("RQP_L09_GAP_CASES=%s" % (",".join(gapped) if gapped else "NONE"))
+        print("RQP_L09_NOT_EXECUTED=%s" % (",".join(not_executed) if not_executed else "NONE"))
+        print("RQP_L09_REAL_PASS_CASE_COUNT=%d" % len(passed))
+        print("RQP_L09_GAP_CASE_COUNT=%d" % len(gapped))
+        print("RQP_L09_QUALIFICATION_COMPLETE=%s" % ("true" if ledger["complete"] else "false"))
+        print("RQP_L09_XFAIL_IS_NOT_PASS=true")
+        print("RQP_L09_SKIP_IS_NOT_EVIDENCE=true")
+        print("RQP_L09_DECLARED_CASE_COUNT=%d" % len(declared))
+        print("RQP_L09_DECLARED_CASES=%s" % ",".join(declared))
+        for case in gapped:
+            detail = _QUALIFICATION_GAP_DETAILS.get(case, {})
+            print("RQP_L09_GAP_DETAIL_case=%s" % case)
+            print("RQP_L09_GAP_DETAIL_fixture=%s" % detail.get("fixture", "UNRECORDED"))
+            print("RQP_L09_GAP_DETAIL_reason=%s" % detail.get("reason", "UNRECORDED"))
