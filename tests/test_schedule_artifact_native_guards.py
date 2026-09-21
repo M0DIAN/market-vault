@@ -659,13 +659,23 @@ def test_mountinfo_exact_ext4_record():
 # ERROR SURFACE. The durable invariant is the race OUTCOME, never the exception
 # class: the replacement is not followed, the target bytes are not consumed, and
 # acquisition fails closed. A production refusal may legitimately surface either
-# as the kernel's own OSError(ELOOP) -- what the current head does -- or as a
-# production _ScheduleArtifactError carrying reason_code UNSAFE_PATH if the
-# acquisition path normalizes the kernel error. Only those two surfaces are
-# accepted, and both are checked by _assert_production_nofollow_refusal.
+# as the kernel's own OSError -- what the current head does -- or as a production
+# _ScheduleArtifactError carrying reason_code UNSAFE_PATH if the acquisition path
+# normalizes the kernel error. Only those two surfaces are accepted, and both are
+# checked by _assert_production_nofollow_refusal.
 #
-# The DIRECT KERNEL CONTROL is deliberately not relaxed: it tests the syscall
-# itself, so it must observe the raw kernel OSError(ELOOP).
+# PAIRED DIRECT CONTROLS. The raw OSError arm carries no fixed errno, because file
+# and directory acquisitions do not share a flag set. Production issues
+#
+#     file:      O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK
+#     directory: the same flags | O_DIRECTORY
+#
+# and the authoritative Linux run observed the plain symlink refused with ELOOP but
+# the symlink-to-directory refused with ENOTDIR. Each arm is therefore compared only
+# against the errno its OWN direct kernel control measured on the IDENTICAL fixture,
+# which the caller passes in as expected_raw_errno. There is deliberately no global
+# "ELOOP or ENOTDIR is fine everywhere" rule in the shared helper; the FILE direct
+# kernel control remains strict ELOOP.
 # ---------------------------------------------------------------------------
 
 class _Seam:
@@ -814,28 +824,51 @@ def _call_production(held, *, directory):
 
 
 # The ONLY production fail-closed surfaces RQP-L21 admits. The current head
-# surfaces the real kernel OSError(ELOOP) unwrapped; a future production
-# normalization to a reader reason code must not invalidate the race evidence,
-# so both surfaces are accepted and nothing else is.
-_RQP_L21_ACCEPTED_SURFACES = "OSError(errno=ELOOP) or _ScheduleArtifactError(reason_code='UNSAFE_PATH')"
+# surfaces the real kernel OSError unwrapped; a future production normalization to
+# a reader reason code must not invalidate the race evidence, so both surfaces are
+# accepted and nothing else. The raw OSError arm carries NO fixed errno: it is
+# compared against the errno the arm's OWN paired direct kernel control observed on
+# the identical fixture, which is passed in by every caller.
+_RQP_L21_ACCEPTED_SURFACES = ("OSError(errno=<paired direct kernel control errno>) "
+                              "or _ScheduleArtifactError(reason_code='UNSAFE_PATH')")
+
+# The only raw no-follow errnos a DIRECTORY acquisition may legitimately fail
+# closed with on Linux. File and directory acquisitions do not share a flag set --
+# the directory open additionally requests os.O_DIRECTORY -- and the current Linux
+# kernel reports the O_DIRECTORY + O_NOFOLLOW refusal of a symlink-to-directory as
+# ENOTDIR, not as the plain file arm's ELOOP. Both are documented fail-closed
+# surfaces for exactly this shape, so the DIRECTORY arm's own direct control is
+# required to observe one of them. This is deliberately NOT a global rule: it
+# qualifies the directory arm's measurement, and the FILE arm keeps its strict
+# ELOOP control.
+_RQP_L21_DIRECTORY_CONTROL_ERRNOS = (errno.ENOTDIR, errno.ELOOP)
 
 
-def _assert_production_nofollow_refusal(error):
-    """Assert a production no-follow refusal failed closed, whatever its surface.
+def _assert_production_nofollow_refusal(error, *, expected_raw_errno):
+    """Assert a production no-follow refusal failed closed against its paired control.
 
     Accepted surfaces:
 
-      1. OSError with errno == ELOOP            -- the raw kernel refusal, which is
-                                                   what the current head surfaces;
+      1. OSError with errno == expected_raw_errno -- the raw kernel refusal, compared
+                                                   against the errno the arm's own
+                                                   direct kernel control observed on
+                                                   the IDENTICAL fixture;
       2. _ScheduleArtifactError with reason_code
          == "UNSAFE_PATH"                       -- a production normalization of
                                                    that same kernel refusal.
 
+    `expected_raw_errno` is REQUIRED and keyword-only, so every arm must hand over the
+    errno its own paired direct kernel control measured. There is deliberately no
+    default and no "ELOOP or ENOTDIR is acceptable everywhere" rule anywhere in this
+    file: the FILE arm is paired with its O_NOFOLLOW control (strict ELOOP) and the
+    DIRECTORY arm with its own O_DIRECTORY + O_NOFOLLOW control, and each raw surface
+    is compared only against its own measurement.
+
     Anything else fails, including an OSError with a different errno, a
     _ScheduleArtifactError with a different reason code, a non-exception value, or
-    None. The helper pins the durable property -- the acquisition failed closed --
-    and never a specific class, so a legitimately normalized surface is not frozen
-    out by this tests-only qualification work.
+    None. The helper pins the durable property -- the acquisition failed closed on
+    this fixture -- and never a specific class, so a legitimately normalized surface
+    is not frozen out by this tests-only qualification work.
     """
     assert error is not None, "production returned instead of failing closed"
     if isinstance(error, _ScheduleArtifactError):
@@ -845,9 +878,9 @@ def _assert_production_nofollow_refusal(error):
     assert isinstance(error, OSError), (
         "the only accepted production refusal surfaces are %s; observed %s"
         % (_RQP_L21_ACCEPTED_SURFACES, type(error).__name__))
-    assert error.errno == errno.ELOOP, (
-        "a raw OSError production refusal must be the kernel no-follow ELOOP, observed errno %r"
-        % (error.errno,))
+    assert error.errno == expected_raw_errno, (
+        "a raw OSError production refusal must carry the errno of its own paired direct "
+        "kernel control (%r), observed errno %r" % (expected_raw_errno, error.errno))
 
 
 def _rqp_l21_error_surface(error):
@@ -913,9 +946,11 @@ def test_rqp_l21_real_no_follow_refuses_symlink_planted_after_lstat(tmp_path, mo
     assert held.is_symlink()
     assert stat.S_ISREG(os.lstat(target).st_mode)
 
-    # 4: the real O_NOFOLLOW open is refused and the refusal fails closed.
+    # 4: the real O_NOFOLLOW open is refused and the refusal fails closed. The FILE
+    # arm is paired with the plain-file no-follow control, whose refusal is the
+    # kernel's ELOOP, so that is the only raw errno this arm admits.
     assert race.returned is None, "a real symlink must never be admitted"
-    _assert_production_nofollow_refusal(race.raised)
+    _assert_production_nofollow_refusal(race.raised, expected_raw_errno=errno.ELOOP)
 
     # The link was not followed and the attacker bytes were never reached.
     assert held.is_symlink()
@@ -976,14 +1011,14 @@ def test_rqp_l21_direct_kernel_control_on_the_identical_real_symlink(tmp_path, m
         os.open(held, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
     assert direct.value.errno == errno.ELOOP
 
-    # The production refusal is the same kernel effect as Control B, compared by
-    # errno rather than by exception class so that a future normalization of the
-    # error surface does not invalidate the race evidence. Both the raw direct
-    # control and the production call are recorded, and the production surface is
-    # reported as evidence only: it is NOT an admission rule.
-    _assert_production_nofollow_refusal(race.raised)
-    if isinstance(race.raised, OSError):
-        assert race.raised.errno == direct.value.errno
+    # The production refusal is the same kernel effect as Control B, compared against
+    # Control B's OWN measured errno rather than by exception class, so that a future
+    # normalization of the error surface does not invalidate the race evidence. The raw
+    # errno lives in Control B's strict assertion above and is handed to the shared
+    # helper, which compares a raw production OSError against exactly that value. Both
+    # the direct control and the production call are recorded, and the production
+    # surface is reported as evidence only: it is NOT an admission rule.
+    _assert_production_nofollow_refusal(race.raised, expected_raw_errno=direct.value.errno)
     kernel_surface = (type(direct.value).__name__, direct.value.errno, None)
     production_surface = _rqp_l21_error_surface(race.raised)
 
@@ -1019,7 +1054,32 @@ def test_rqp_l21_direct_kernel_control_on_the_identical_real_symlink(tmp_path, m
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux native mechanics only")
 def test_rqp_l21_real_no_follow_refuses_directory_symlink(tmp_path, monkeypatch, capsys):
-    """The directory acquisition path requests O_DIRECTORY and the same no-follow bit."""
+    """The O_DIRECTORY arm refuses the identical symlink-to-directory fixture.
+
+    File and directory acquisitions do NOT share a flag set: the production directory
+    open is `O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK | O_DIRECTORY`, so the
+    same symlink shape is refused through a DIFFERENT kernel surface than the file
+    arm. On the current Linux kernel the O_DIRECTORY + O_NOFOLLOW open of a
+    symlink-to-directory fails with ENOTDIR, while the plain file open of a symlink
+    fails with ELOOP. This arm is therefore qualified against its OWN measurement and
+    never against the file arm's errno or a global "either errno is fine" rule.
+
+    Two real controls run on the IDENTICAL symlink-to-directory fixture that
+    production just refused, after production has already failed closed and while the
+    symlink is still in place:
+
+      A. FOLLOWING CONTROL -- os.open(held, O_RDONLY | O_DIRECTORY) WITHOUT O_NOFOLLOW.
+         The real kernel follows the link and returns a real directory descriptor for
+         the link's target, which is closed again. Without this control a fixture that
+         merely failed to be a usable symlink-to-directory could masquerade as a
+         successful no-follow refusal.
+      B. NOFOLLOW CONTROL -- the real production directory flag set WITH O_NOFOLLOW.
+         The real kernel refuses, and the observed errno is required to be one of the
+         documented fail-closed directory/symlink surfaces, ENOTDIR or ELOOP.
+
+    Production is then compared against B's own errno through the shared helper, and
+    every token is emitted only after all of the above has completed.
+    """
     held, target, seam = _symlink_race(tmp_path, monkeypatch, directory=True, target_is_directory=True)
     assert held.is_dir() and not held.is_symlink(), "the watched directory must pre-exist"
     race = _call_production(held, directory=True)
@@ -1030,11 +1090,50 @@ def test_rqp_l21_real_no_follow_refuses_directory_symlink(tmp_path, monkeypatch,
     assert not stat.S_ISLNK(seam.observation.mode)
     assert seam.armed == []
 
-    # The directory symlink is refused and its contents are untouched.
+    # The directory symlink is refused and its contents are untouched. The symlink must
+    # still be in place, because both controls below run on exactly this fixture.
     assert race.returned is None
-    _assert_production_nofollow_refusal(race.raised)
-    assert held.is_symlink()
+    assert held.is_symlink(), "the refused symlink must still be in place for the controls"
     assert (target / "schedule.json").read_bytes() == b"ATTACKER\n"
+
+    # A. FOLLOWING CONTROL, on the identical fixture, WITHOUT O_NOFOLLOW: the real
+    #    kernel follows the link and hands back a real directory descriptor whose
+    #    identity is the link's TARGET directory, not the pre-replacement original.
+    followed = os.open(held, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        followed_stat = os.fstat(followed)
+        target_stat = os.lstat(target)
+        assert stat.S_ISDIR(followed_stat.st_mode), \
+            "the followed link must open a real directory"
+        assert (followed_stat.st_dev, followed_stat.st_ino) == (target_stat.st_dev, target_stat.st_ino), \
+            "the followed descriptor must be the symlink's target directory"
+        assert (followed_stat.st_dev, followed_stat.st_ino) \
+            != (seam.observation.device, seam.observation.inode), \
+            "the followed descriptor must not be the lstat-ed pre-replacement directory"
+    finally:
+        os.close(followed)
+
+    # B. NOFOLLOW CONTROL: the real production directory flag set, refused by the real
+    #    kernel. This assertion is intentionally strict about the SURFACE SET -- the
+    #    refusal must be one of the two documented fail-closed surfaces for this shape
+    #    -- and deliberately says nothing about which one, because the numeric value is
+    #    a property of the running kernel, not a durable qualification invariant.
+    with pytest.raises(OSError) as direct:
+        os.open(held,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
+    direct_errno = direct.value.errno
+    assert direct_errno in _RQP_L21_DIRECTORY_CONTROL_ERRNOS, (
+        "the O_DIRECTORY + O_NOFOLLOW control must fail closed with one of %r, observed errno %r"
+        % (_RQP_L21_DIRECTORY_CONTROL_ERRNOS, direct_errno))
+
+    # C. Production is compared against its OWN paired control errno -- the value
+    #    measured immediately above on the same fixture -- and nothing else.
+    _assert_production_nofollow_refusal(race.raised, expected_raw_errno=direct_errno)
+    directory_surface = _rqp_l21_error_surface(race.raised)
+
+    # Nothing consumed the target bytes, under production or under either control.
+    assert (target / "schedule.json").read_bytes() == b"ATTACKER\n"
+    assert held.is_symlink()
 
     # FIRE evidence for the O_DIRECTORY arm, asserted semantically and never as raw
     # lstat traffic, which the replacement's real realpath() verification inflates.
@@ -1042,12 +1141,28 @@ def test_rqp_l21_real_no_follow_refuses_directory_symlink(tmp_path, monkeypatch,
     assert seam.fire_paths == [str(held)], "the seam must fire for the held path only"
     assert len(seam.fire_paths) == seam.fire_count, "every counted fire must record its path"
     assert seam.raw_lstat_paths.count(str(held)) >= 1, "production's lstat must traverse the wrapper"
+
+    # Every assertion above has completed, so every token below reports a settled fact.
+    # capsys.disabled() is the same evidence transport the rest of this section uses:
+    # a bare `python -m pytest` captures a plain print() and it never reaches the log.
     with capsys.disabled():
         print("RQP_L21_DIRECTORY_SYMLINK_RACE_RAW_LSTAT_TRAFFIC=%d" % len(seam.raw_lstat_paths))
         print("RQP_L21_DIRECTORY_SYMLINK_RACE_RAW_LSTAT_HELD_TRAFFIC=%d"
               % seam.raw_lstat_paths.count(str(held)))
         print("RQP_L21_DIRECTORY_SYMLINK_RACE_FIRE_COUNT=%d" % seam.fire_count)
+        print("RQP_L21_DIRECTORY_FOLLOW_CONTROL=PASS")
+        print("RQP_L21_DIRECTORY_NOFOLLOW_CONTROL=PASS")
+        print("RQP_L21_DIRECTORY_DIRECT_KERNEL_CONTROL_TYPE=%s" % type(direct.value).__name__)
+        print("RQP_L21_DIRECTORY_DIRECT_KERNEL_CONTROL_ERRNO=%d" % direct_errno)
+        print("RQP_L21_DIRECTORY_PRODUCTION_ERROR_SURFACE_TYPE=%s" % directory_surface[0])
+        print("RQP_L21_DIRECTORY_PRODUCTION_ERROR_SURFACE_ERRNO=%s"
+              % ("NONE" if directory_surface[1] is None else directory_surface[1]))
+        print("RQP_L21_DIRECTORY_PRODUCTION_ERROR_SURFACE_REASON_CODE=%s"
+              % ("NONE" if directory_surface[2] is None else directory_surface[2]))
         print("RQP_L21_DIRECTORY_SYMLINK_RACE=PASS")
+        print("RQP_L21_NOFOLLOW_REPLACEMENT_NOT_FOLLOWED=true")
+        print("RQP_L21_TARGET_BYTES_NOT_CONSUMED=true")
+        print("RQP_L21_ACQUISITION_FAILS_CLOSED=true")
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux native mechanics only")
@@ -2719,9 +2834,10 @@ def test_rqp_l21_error_surface_is_recorded_but_never_frozen():
 
     # 2. The helper admits exactly the two accepted surfaces and no others: it compares
     #    isinstance against those two exception types and nothing else, it reads the reason
-    #    code and errno of the refusal, and its only surface literal is UNSAFE_PATH. Both arms
-    #    are compared to a fixed value, so a third accepted surface would have to widen the
-    #    rule visibly here rather than slipping in through a new name.
+    #    code and errno of the refusal, and its only surface literal is UNSAFE_PATH. The
+    #    normalized arm is compared to that fixed literal, and the raw arm to the paired
+    #    measurement its caller passes in, so a third accepted surface would have to widen
+    #    the rule visibly here rather than slipping in through a new name.
     helper = functions["_assert_production_nofollow_refusal"]
     compared = {getattr(node.args[1], "id", None) for node in ast.walk(helper)
                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
@@ -2731,16 +2847,21 @@ def test_rqp_l21_error_surface_is_recorded_but_never_frozen():
     surface_literals = _guard_str_literals(helper) & _RQP_L21_ACCEPTED_SURFACE_LITERALS
     assert surface_literals == {"UNSAFE_PATH"}, surface_literals
     assert _RQP_L21_ACCEPTED_SURFACE_LITERALS == {"OSError", "ELOOP", "UNSAFE_PATH"}
-    # The OSError arm compares the refusal's errno against the ELOOP constant, so the
-    # kernel's own no-follow errno is what the accepted raw surface means.
+    # The raw arm reads the refusal's own errno and compares it against the paired value, so
+    # what the accepted raw surface means is the kernel errno this arm's control measured.
     assert "errno" in _guard_attributes(helper)
 
-    # 3. No isinstance against OSError may pin a production race outcome: the removed
-    #    `assert isinstance(race.raised, OSError)` and `not isinstance(race.raised,
-    #    _ScheduleArtifactError)` shapes are gone. What may remain is a read-only type guard
-    #    that decides whether a raw-errno comparison is meaningful, and an assertion that the
-    #    identity-comparison arm raises the reader error -- that arm is a different contract
-    #    and its class is not the no-follow surface this case is about.
+    # 3. No isinstance against OSError may pin a production race outcome, and since the
+    #    raw no-follow errno is now compared inside _assert_production_nofollow_refusal
+    #    against the errno the arm's OWN paired direct kernel control measured, no test
+    #    body needs to narrow on the surface type to make that comparison meaningful
+    #    either. The removed `assert isinstance(race.raised, OSError)`,
+    #    `not isinstance(race.raised, _ScheduleArtifactError)` and the read-only
+    #    `if isinstance(race.raised, OSError)` guard shapes are all gone. The only
+    #    isinstance that may touch a race outcome is the identity-comparison arm's
+    #    assertion that the substituted regular object is rejected through the reader
+    #    error -- that arm is a different contract and its class is not the no-follow
+    #    surface this case is about.
     race_tests = [node for node in ast.walk(module) if isinstance(node, ast.FunctionDef)
                   and "race" in ast.dump(node)
                   and node.name not in _RQP_L21_SURFACE_RECORDERS]
@@ -2773,12 +2894,46 @@ def test_rqp_l21_error_surface_is_recorded_but_never_frozen():
                 kind = "|".join(sorted(getattr(element, "id", "?")
                                        for element in outer.args[1].elts))
             guards.add(kind or "?")
-    # Exactly one guard may touch a race outcome with OSError, and it narrows rather than
-    # pins: it decides whether the raw-errno comparison is meaningful and lets a normalized
-    # surface through. A guard on _ScheduleArtifactError is the identity-comparison arm of the
-    # swapped-regular-object case, which already accepts exactly the admitted normalized
-    # surface shape; no guard may exist on any OTHER class.
-    assert guards in ({"OSError"}, {"OSError", "_ScheduleArtifactError"}), guards
+    # Exactly one guard may touch a race outcome, and it is the identity-comparison arm of
+    # the swapped-regular-object case asserting the admitted normalized surface shape. No
+    # guard on OSError over a race outcome may exist, and no guard may exist on any OTHER
+    # class: a raw production OSError surface is now qualified only through the shared
+    # helper against its own paired control errno, which is where the comparison belongs.
+    assert guards == {"_ScheduleArtifactError"}, guards
+
+    # 3b. The shared helper itself carries NO fixed raw errno, and every caller supplies the
+    #     errno of its own paired direct kernel control. This is what forbids a global
+    #     "any ELOOP or ENOTDIR is fine everywhere" rule from reappearing in the helper.
+    assert not _guard_attributes(helper) & {"ENOTDIR", "ELOOP"}, \
+        "the shared refusal helper must not hardcode a raw no-follow errno"
+    assert [node.arg for node in helper.args.kwonlyargs] == ["expected_raw_errno"], \
+        "the paired direct control errno must be the helper's only keyword-only argument"
+    assert helper.args.kw_defaults == [None], \
+        "the paired direct control errno must be REQUIRED, never defaulted"
+    paired, refused_positionally = {}, {}
+    for definition in ast.walk(module):
+        if not isinstance(definition, ast.FunctionDef):
+            continue
+        for inner in ast.walk(definition):
+            if not (isinstance(inner, ast.Call) and isinstance(inner.func, ast.Name)
+                    and inner.func.id == "_assert_production_nofollow_refusal"):
+                continue
+            keywords = [word for word in inner.keywords if word.arg == "expected_raw_errno"]
+            paired[definition.name] = ast.unparse(keywords[0].value) if len(keywords) == 1 else "<ABSENT>"
+            refused_positionally[definition.name] = len(inner.args)
+    assert set(paired) == {"test_rqp_l21_real_no_follow_refuses_symlink_planted_after_lstat",
+                           "test_rqp_l21_direct_kernel_control_on_the_identical_real_symlink",
+                           "test_rqp_l21_real_no_follow_refuses_directory_symlink"}, paired
+    # The refusal is the only positional argument at every site, so the paired errno can
+    # never be supplied positionally and silently swapped with the error under test.
+    assert set(refused_positionally.values()) == {1}, refused_positionally
+    # The FILE arm pairs with its plain-file control's documented ELOOP; the DIRECT and
+    # DIRECTORY arms pair with the errno their own control call actually measured on the
+    # identical fixture. Two different kinds of measurement, never one shared rule.
+    assert paired["test_rqp_l21_real_no_follow_refuses_symlink_planted_after_lstat"] == "errno.ELOOP"
+    assert paired["test_rqp_l21_direct_kernel_control_on_the_identical_real_symlink"] \
+        == "direct.value.errno"
+    assert paired["test_rqp_l21_real_no_follow_refuses_directory_symlink"] == "direct_errno"
 
     # 4. The direct kernel control keeps its strict raw assertion, and the observed
     #    production surface is reported as evidence only.
