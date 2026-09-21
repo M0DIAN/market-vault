@@ -443,6 +443,32 @@ def stream_facts(monkeypatch):
     monkeypatch.setattr(native, "_volume_info", volume_info, raising=False)
     monkeypatch.setattr(native, "_security_facts", lambda handle: (CURRENT, 0x1000, (), b"sd"))
     monkeypatch.setattr(native, "_streams", lambda handle: tuple(state["streams"]))
+
+    def synthetic_init(self, path, *, directory, current_sid, ancestor=False):
+        """Constructor double for the production same-path second open in recheck().
+
+        recheck() re-opens the retained path through _WindowsObject(...) so that a
+        same-path replacement is re-observed rather than trusted. The only
+        host-specific requirement of that constructor is the platform gate; every
+        native primitive it consumes is already modelled deterministically above.
+        This double therefore mirrors the production field set and field order and
+        still obtains identity, filesystem, security, size and streams through the
+        real patched _facts() path. It is scoped to this fixture and replaces
+        neither recheck() nor _facts().
+        """
+        state["directory"] = 1 if directory else 0
+        # Path(str(...)) preserves the fixture's Windows spelling on a POSIX host,
+        # where an nt->posix flavour conversion would rewrite the separators.
+        self.path = Path(str(path))
+        self.directory, self.current_sid, self.ancestor = directory, current_sid, ancestor
+        self.handle = native._create(str(path), 0x00020081, 7, None, 3, 0x02200000, None)
+        try:
+            self.identity, self.filesystem, self.security, self.size, self.streams = self._facts()
+        except BaseException:
+            self.close()
+            raise
+
+    monkeypatch.setattr(native._WindowsObject, "__init__", synthetic_init)
     return state
 
 
