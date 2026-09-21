@@ -178,6 +178,17 @@ def _native_volume_root(handle):
     return guid_path == guid.value
 
 
+def _stream_set(handle):
+    """Canonical ancestor stream SET; enumeration order is not evidence."""
+    return canonical_streams(_streams(handle))
+
+
+def canonical_streams(names):
+    """Canonical stream-set form; equality means set equality, not API order."""
+    names = tuple(names)
+    return names if all(a <= b for a, b in zip(names, names[1:])) else tuple(sorted(names))
+
+
 def _streams(handle):
     buffer = c.create_string_buffer(65536)
     if not _info(handle, 7, buffer, len(buffer)):
@@ -245,7 +256,7 @@ class _WindowsObject:
             self.handle = None
             raise c.WinError(c.get_last_error())
         try:
-            self.identity, self.filesystem, self.security, self.size = self._facts()
+            self.identity, self.filesystem, self.security, self.size, self.streams = self._facts()
         except BaseException:
             self.close()
             raise
@@ -275,17 +286,31 @@ class _WindowsObject:
         security = _security_facts(self.handle)
         _access_boundary(security, self.current_sid, ancestor=self.ancestor, held_handle=self.handle)
         _require(self.ancestor or not tag.attributes & 0x2, "INVENTORY_MISMATCH", "hidden artifact object")
-        _require(all(n == "::$DATA" for n in _streams(self.handle)), "INVENTORY_MISMATCH", "named stream outside inventory")
+        # MEMBER_TREE_ZERO_STREAM: the artifact directory and all six fixed members
+        # must carry no named stream. Retained ancestry above the artifact directory
+        # is admitted with any named streams, but its exact observed set is returned
+        # as reader-owned physical evidence and rechecked as set drift below.
+        streams = _stream_set(self.handle)
+        if not self.ancestor:
+            _require(all(name == "::$DATA" for name in streams), "INVENTORY_MISMATCH", "named stream outside inventory")
         # Retain all object attributes; no writes or permission repair occur here.
         security = (*security, tag.attributes)
-        return (identity.serial, bytes(identity.identifier), self.directory), (guid.value, identity.serial, serial.value, fs.value, flags.value), security, (0 if self.directory else standard.size)
+        return (identity.serial, bytes(identity.identifier), self.directory), (guid.value, identity.serial, serial.value, fs.value, flags.value), security, (0 if self.directory else standard.size), streams
+
+    def evidence(self):
+        """Fresh native evidence read; a retained snapshot is not re-observed here."""
+        return self._facts()
 
     def recheck(self):
-        _require(self._facts() == (self.identity, self.filesystem, self.security, self.size), "UNSAFE_PATH", "held object/security drift")
+        current = self._facts()
+        _require(current[:4] == (self.identity, self.filesystem, self.security, self.size),
+                 "UNSAFE_PATH", "held object/security drift")
+        _require(current[4] == self.streams, "PHYSICAL_DRIFT", "held object stream set drift")
         other = _WindowsObject(self.path, directory=self.directory, current_sid=self.current_sid, ancestor=self.ancestor)
         try:
             _require((other.identity, other.filesystem, other.security, other.size) == (self.identity, self.filesystem, self.security, self.size),
                      "UNSAFE_PATH", "same-path replacement or security drift")
+            _require(other.streams == self.streams, "PHYSICAL_DRIFT", "same-path stream set drift")
         finally:
             other.close()
 
