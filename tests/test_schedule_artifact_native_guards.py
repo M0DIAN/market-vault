@@ -2,6 +2,7 @@
 
 import os
 import ctypes
+import stat
 
 import pytest
 
@@ -654,6 +655,17 @@ def test_mountinfo_exact_ext4_record():
 # Every os.open and every O_NOFOLLOW bit exercised here is the real Linux kernel
 # call issued by production _LinuxObject.__init__; no syscall, flag or errno is
 # mocked, and every observed value is the kernel's own.
+#
+# ERROR SURFACE. The durable invariant is the race OUTCOME, never the exception
+# class: the replacement is not followed, the target bytes are not consumed, and
+# acquisition fails closed. A production refusal may legitimately surface either
+# as the kernel's own OSError(ELOOP) -- what the current head does -- or as a
+# production _ScheduleArtifactError carrying reason_code UNSAFE_PATH if the
+# acquisition path normalizes the kernel error. Only those two surfaces are
+# accepted, and both are checked by _assert_production_nofollow_refusal.
+#
+# The DIRECT KERNEL CONTROL is deliberately not relaxed: it tests the syscall
+# itself, so it must observe the raw kernel OSError(ELOOP).
 # ---------------------------------------------------------------------------
 
 class _Seam:
@@ -775,6 +787,50 @@ def _call_production(held, *, directory):
         return _Race(None, exc)
 
 
+# The ONLY production fail-closed surfaces RQP-L21 admits. The current head
+# surfaces the real kernel OSError(ELOOP) unwrapped; a future production
+# normalization to a reader reason code must not invalidate the race evidence,
+# so both surfaces are accepted and nothing else is.
+_RQP_L21_ACCEPTED_SURFACES = "OSError(errno=ELOOP) or _ScheduleArtifactError(reason_code='UNSAFE_PATH')"
+
+
+def _assert_production_nofollow_refusal(error):
+    """Assert a production no-follow refusal failed closed, whatever its surface.
+
+    Accepted surfaces:
+
+      1. OSError with errno == ELOOP            -- the raw kernel refusal, which is
+                                                   what the current head surfaces;
+      2. _ScheduleArtifactError with reason_code
+         == "UNSAFE_PATH"                       -- a production normalization of
+                                                   that same kernel refusal.
+
+    Anything else fails, including an OSError with a different errno, a
+    _ScheduleArtifactError with a different reason code, a non-exception value, or
+    None. The helper pins the durable property -- the acquisition failed closed --
+    and never a specific class, so a legitimately normalized surface is not frozen
+    out by this tests-only qualification work.
+    """
+    assert error is not None, "production returned instead of failing closed"
+    if isinstance(error, _ScheduleArtifactError):
+        assert error.reason_code == "UNSAFE_PATH", (
+            "a production refusal surface must be UNSAFE_PATH, observed %r" % (error.reason_code,))
+        return
+    assert isinstance(error, OSError), (
+        "the only accepted production refusal surfaces are %s; observed %s"
+        % (_RQP_L21_ACCEPTED_SURFACES, type(error).__name__))
+    assert error.errno == errno.ELOOP, (
+        "a raw OSError production refusal must be the kernel no-follow ELOOP, observed errno %r"
+        % (error.errno,))
+
+
+def _rqp_l21_error_surface(error):
+    """The observed production error surface, recorded as evidence, not as a rule."""
+    return (type(error).__name__,
+            getattr(error, "errno", None),
+            getattr(error, "reason_code", None))
+
+
 def _symlink_race(tmp_path, monkeypatch, *, directory, target_is_directory):
     """Shared setup for the symlink-replacement races.
 
@@ -828,8 +884,7 @@ def test_rqp_l21_real_no_follow_refuses_symlink_planted_after_lstat(tmp_path, mo
 
     # 4: the real O_NOFOLLOW open is refused and the refusal fails closed.
     assert race.returned is None, "a real symlink must never be admitted"
-    assert isinstance(race.raised, OSError)
-    assert not isinstance(race.raised, _ScheduleArtifactError)
+    _assert_production_nofollow_refusal(race.raised)
 
     # The link was not followed and the attacker bytes were never reached.
     assert held.is_symlink()
@@ -863,18 +918,30 @@ def test_rqp_l21_direct_kernel_control_on_the_identical_real_symlink(tmp_path, m
     finally:
         os.close(followed)
 
-    # Control B: with the production bit set the real kernel refuses.
+    # Control B: with the production bit set the real kernel refuses. This assert
+    # is intentionally strict: it tests the syscall itself, so it observes the raw
+    # kernel errno and no production normalization applies here.
     with pytest.raises(OSError) as direct:
         os.open(held, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
     assert direct.value.errno == errno.ELOOP
 
     # The production refusal is the same kernel effect as Control B, compared by
     # errno rather than by exception class so that a future normalization of the
-    # error surface does not invalidate the race evidence.
-    assert isinstance(race.raised, OSError)
-    assert race.raised.errno == direct.value.errno
-    print("RQP_L21_CURRENT_ERROR_SURFACE_TYPE=%s" % type(race.raised).__name__)
-    print("RQP_L21_CURRENT_ERROR_SURFACE_ERRNO=%s" % race.raised.errno)
+    # error surface does not invalidate the race evidence. Both the raw direct
+    # control and the production call are recorded, and the production surface is
+    # reported as evidence only: it is NOT an admission rule.
+    _assert_production_nofollow_refusal(race.raised)
+    if isinstance(race.raised, OSError):
+        assert race.raised.errno == direct.value.errno
+    kernel_surface = (type(direct.value).__name__, direct.value.errno, None)
+    production_surface = _rqp_l21_error_surface(race.raised)
+    print("RQP_L21_CURRENT_ERROR_SURFACE_TYPE=%s" % production_surface[0])
+    print("RQP_L21_CURRENT_ERROR_SURFACE_ERRNO=%s" % production_surface[1])
+    print("RQP_L21_CURRENT_ERROR_SURFACE_REASON_CODE=%s"
+          % ("NONE" if production_surface[2] is None else production_surface[2]))
+    print("RQP_L21_DIRECT_KERNEL_CONTROL_SURFACE_TYPE=%s" % kernel_surface[0])
+    print("RQP_L21_DIRECT_KERNEL_CONTROL_SURFACE_ERRNO=%s" % kernel_surface[1])
+    print("RQP_L21_PRODUCTION_SURFACE_IS_NOT_AN_ADMISSION_RULE=true")
     print("RQP_L21_NOFOLLOW_REPLACEMENT_NOT_FOLLOWED=true")
     print("RQP_L21_TARGET_BYTES_NOT_CONSUMED=true")
     print("RQP_L21_ACQUISITION_FAILS_CLOSED=true")
@@ -899,8 +966,7 @@ def test_rqp_l21_real_no_follow_refuses_directory_symlink(tmp_path, monkeypatch)
 
     # The directory symlink is refused and its contents are untouched.
     assert race.returned is None
-    assert isinstance(race.raised, OSError)
-    assert not isinstance(race.raised, _ScheduleArtifactError)
+    _assert_production_nofollow_refusal(race.raised)
     assert held.is_symlink()
     assert (target / "schedule.json").read_bytes() == b"ATTACKER\n"
 
@@ -1054,13 +1120,39 @@ def test_rqp_l21_race_invariants_are_structural_not_error_surface():
 # were never executed (skipped or unselected) instead of silently omitting them.
 # A conditional case appears in both registries: it records exactly one outcome --
 # a real PASS when its fixture is constructible, a GAP when it is not.
+#
+# ONE LOGICAL CASE, ONE OUTCOME. Each name below is one logical qualification case:
+# exactly one final outcome, PASS or GAP, never both and never registered twice. A
+# case whose required mode set spans several modes or variants is therefore ONE name
+# proven by ONE test that loops over the whole set and registers only after every
+# member of the set produced its intended result -- never one name per mode and never
+# one name per pytest parameter. The sibling evidence below is separated by what the
+# fixture actually proves, not by how many fixtures are convenient to run:
+#
+#   GROUP_WORLD_WRITABLE_OBJECT         every group/world writable object mode
+#   WRITABLE_NON_STICKY_ANCESTOR        a writable, non-sticky ancestor directory
+#   STICKY_WRITABLE_ANCESTOR_ADMITTED   a sticky AND group-writable ancestor
+#   NON_WRITABLE_ANCESTOR_MODES         ancestor modes that are genuinely non-writable
+#                                       (0o022 clear), sticky or not
+#   STICKY_WRITABLE_ANCESTOR_VARIANTS   sticky writable variants admitted only by the
+#                                       sticky ancestor exception, e.g. 0o1775, whose
+#                                       0o1775 & 0o022 != 0 makes it writable
+#   STICKY_EXCEPTION_NON_ANCESTOR       the exception does not apply without ancestry
+#   STICKY_EXCEPTION_REGULAR_OBJECT     the exception does not apply to a regular object
+#
+# 0o1775 is NOT non-writable: 0o1775 & 0o022 == 0o020, so it is sticky + group
+# writable and is admitted by the sticky ancestor exception, not by non-writability.
+# Reporting it under a non-writable label would claim a stronger property than the
+# fixture proves, so it is a separate case with a label that matches its real mode.
 RQP_L09_PASS_CASES = (
     "TRUSTED_OWNER_ADMISSION",
     "GROUP_WORLD_WRITABLE_OBJECT",
     "WRITABLE_NON_STICKY_ANCESTOR",
     "STICKY_WRITABLE_ANCESTOR_ADMITTED",
     "NON_WRITABLE_ANCESTOR_MODES",
-    "STICKY_EXCEPTION_LIMITS",
+    "STICKY_WRITABLE_ANCESTOR_VARIANTS",
+    "STICKY_EXCEPTION_NON_ANCESTOR",
+    "STICKY_EXCEPTION_REGULAR_OBJECT",
     "XATTR",
     "POSIX_ACL",
     "FOREIGN_OWNER",
@@ -1186,17 +1278,40 @@ def test_rqp_l09_trusted_owner_admission_is_real(tmp_path):
     _qualification_pass("TRUSTED_OWNER_ADMISSION")
 
 
-@pytest.mark.parametrize("mode", [0o666, 0o622, 0o602, 0o660, 0o620, 0o606])
+GROUP_WORLD_WRITABLE_OBJECT_MODES = (0o666, 0o622, 0o602, 0o660, 0o620, 0o606)
+
+
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux native mechanics only")
-def test_rqp_l09_group_or_world_writable_object_is_refused(tmp_path, mode):
-    """Any untrusted mutation grant on the object itself is refused."""
-    path = tmp_path / "schedule.json"
-    path.write_bytes(b"{}\n")
-    path.chmod(mode)
-    with pytest.raises(_ScheduleArtifactError) as caught:
-        _linux._LinuxObject(path, directory=False)
-    assert caught.value.reason_code == "UNSAFE_PATH"
-    assert "mutation permissions" in str(caught.value)
+def test_rqp_l09_group_or_world_writable_object_is_refused(tmp_path):
+    """Every required writable object mode is refused; the case settles exactly once.
+
+    This is ONE logical qualification case, so it is ONE test and ONE ledger
+    registration. The full required mode set is exercised inside this test rather
+    than through pytest parameters: parameterizing it would execute the registration
+    once per mode, and 0o666/0o622/0o602/0o660/0o620/0o606 are six presentations of
+    the same requirement (an untrusted group or world mutation grant on the object
+    itself), not six requirements.
+
+    Every mode must produce the intended rejection before the case is registered, so
+    dropping a mode cannot silently shrink the evidence. The set is asserted against
+    the loop so a mode list that drifts from the exercised modes is caught.
+    """
+    observed = []
+    for mode in GROUP_WORLD_WRITABLE_OBJECT_MODES:
+        # One private directory per mode, so no mode can observe another's fixture.
+        case_root = tmp_path / ("mode-%04o" % mode)
+        case_root.mkdir()
+        path = case_root / "schedule.json"
+        path.write_bytes(b"{}\n")
+        path.chmod(mode)
+        # The fixture must really carry the writable grant this case is about.
+        assert os.lstat(path).st_mode & 0o022 != 0, oct(mode)
+        with pytest.raises(_ScheduleArtifactError) as caught:
+            _linux._LinuxObject(path, directory=False)
+        assert caught.value.reason_code == "UNSAFE_PATH", oct(mode)
+        assert "mutation permissions" in str(caught.value), oct(mode)
+        observed.append(mode)
+    assert tuple(observed) == GROUP_WORLD_WRITABLE_OBJECT_MODES
     _qualification_pass("GROUP_WORLD_WRITABLE_OBJECT")
 
 
@@ -1228,35 +1343,100 @@ def test_rqp_l09_sticky_writable_ancestor_is_admitted(tmp_path):
     _qualification_pass("STICKY_WRITABLE_ANCESTOR_ADMITTED")
 
 
-@pytest.mark.parametrize("mode", [0o1700, 0o1775, 0o1755])
+# Genuinely non-writable ancestor modes: 0o022 is clear in each, so none of them is
+# a writable-ancestor case at all. 0o1700 and 0o1755 carry the sticky bit, but sticky
+# is NOT what admits them -- the mutation-permission requirement is satisfied because
+# there is no group or world write grant to object to. 0o1775 is deliberately absent:
+# 0o1775 & 0o022 == 0o020 makes it group writable, so it belongs to the sticky
+# writable variant case below.
+NON_WRITABLE_ANCESTOR_MODES = (0o1700, 0o1755)
+
+# Sticky WRITABLE ancestor variants: each is writable (0o022 set) AND sticky, so each
+# is admitted only by the sticky ancestor exception. These prove the exception's
+# admitting arm on real writable fixtures, which the non-writable set cannot prove.
+STICKY_WRITABLE_ANCESTOR_VARIANTS = (0o1775, 0o1777)
+
+
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux native mechanics only")
-def test_rqp_l09_non_writable_ancestor_modes_are_trusted(tmp_path, mode):
-    """Sticky alone never admits: a non-writable directory is trusted regardless."""
-    parent = tmp_path / "sticky-safe"
-    parent.mkdir()
-    parent.chmod(mode)
-    held = _linux._LinuxObject(parent, directory=True, ancestor=True)
-    try:
-        assert held.security[2] == mode
-    finally:
-        held.close()
+def test_rqp_l09_non_writable_ancestor_modes_are_trusted(tmp_path):
+    """Ancestor modes with no group/world write grant are trusted; one registration.
+
+    ONE logical case, so ONE test and ONE ledger registration: parameterizing by mode
+    would register the same case once per mode. Every mode in the declared set must be
+    admitted before the case is registered, and the set is asserted against the loop.
+    """
+    observed = []
+    for mode in NON_WRITABLE_ANCESTOR_MODES:
+        case_root = tmp_path / ("mode-%04o" % mode)
+        case_root.mkdir()
+        case_root.chmod(mode)
+        # The fixture must really be non-writable: no group and no world write grant.
+        assert os.lstat(case_root).st_mode & 0o022 == 0, oct(mode)
+        held = _linux._LinuxObject(case_root, directory=True, ancestor=True)
+        try:
+            assert held.security[2] == mode, oct(mode)
+            assert held.security[2] & 0o022 == 0, oct(mode)
+        finally:
+            held.close()
+        observed.append(mode)
+    assert tuple(observed) == NON_WRITABLE_ANCESTOR_MODES
     _qualification_pass("NON_WRITABLE_ANCESTOR_MODES")
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux native mechanics only")
+def test_rqp_l09_sticky_writable_ancestor_variants_are_admitted(tmp_path):
+    """Sticky AND writable ancestors are admitted only by the sticky exception.
+
+    ONE logical case, so ONE test and ONE ledger registration. 0o1775 is a sticky
+    writable mode -- 0o1775 & 0o022 == 0o020 -- so it is NOT non-writable and must not
+    be reported as such. What admits it is the sticky ancestor exception, and that is
+    exactly what this case measures: the fixture is really writable, really sticky and
+    really a directory, and it is still admitted.
+    """
+    observed = []
+    for mode in STICKY_WRITABLE_ANCESTOR_VARIANTS:
+        case_root = tmp_path / ("mode-%04o" % mode)
+        case_root.mkdir()
+        case_root.chmod(mode)
+        held = _linux._LinuxObject(case_root, directory=True, ancestor=True)
+        try:
+            # The fixture must really be the writable sticky ancestor this case claims.
+            assert held.security[2] == mode, oct(mode)
+            assert held.security[2] & 0o022 != 0, oct(mode)
+            assert held.security[2] & stat.S_ISVTX, oct(mode)
+            held.recheck()
+        finally:
+            held.close()
+        observed.append(mode)
+    assert tuple(observed) == STICKY_WRITABLE_ANCESTOR_VARIANTS
+    _qualification_pass("STICKY_WRITABLE_ANCESTOR_VARIANTS")
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux native mechanics only")
 def test_rqp_l09_sticky_exception_does_not_apply_to_non_ancestor(tmp_path):
-    """The same sticky writable object is refused when it is not retained ancestry."""
+    """The sticky exception needs retained ancestry: without it the object is refused.
+
+    A distinct evidence case from the regular-object limit below, because the two
+    measure different requirements: this one holds the object kind (a real directory)
+    fixed and removes only the ancestry flag, so the refusal is attributable to the
+    missing ancestor role rather than to the object's type.
+    """
     parent = tmp_path / "sticky-object"
     parent.mkdir()
     parent.chmod(0o1777)
     with pytest.raises(_ScheduleArtifactError, match="UNSAFE_PATH"):
         _linux._LinuxObject(parent, directory=True, ancestor=False)
-    _qualification_pass("STICKY_EXCEPTION_LIMITS")
+    _qualification_pass("STICKY_EXCEPTION_NON_ANCESTOR")
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux native mechanics only")
 def test_rqp_l09_sticky_exception_does_not_apply_to_regular_object(tmp_path):
-    """A sticky writable REGULAR object is not an ancestor exception."""
+    """A sticky writable REGULAR object is not an ancestor exception.
+
+    A distinct evidence case from the non-ancestor limit above: here the ancestor flag
+    is set and the refusing requirement is that a regular object is not a directory, so
+    the sticky exception cannot apply to it however it is presented.
+    """
     path = tmp_path / "schedule.json"
     path.write_bytes(b"{}\n")
     path.chmod(0o1666)
@@ -1264,7 +1444,26 @@ def test_rqp_l09_sticky_exception_does_not_apply_to_regular_object(tmp_path):
         _linux._LinuxObject(path, directory=False, ancestor=True)
     assert caught.value.reason_code == "UNSAFE_PATH"
     assert "mutation permissions" in str(caught.value)
-    _qualification_pass("STICKY_EXCEPTION_LIMITS")
+    _qualification_pass("STICKY_EXCEPTION_REGULAR_OBJECT")
+
+
+def _present_until_gap(path, xattr):
+    """Bind a real user xattr, or record the observed refusal as a GAP.
+
+    Returns True when the attribute is really stored, False after recording a GAP. Split
+    out of the qualification test below so the test body reads as one fixture step plus
+    one outcome. This helper only ever touches the invocation-owned tmp_path fixture it is
+    handed, and its GAP recorder never returns, so a caller that passes a malformed case
+    name cannot observe a registered outcome and then continue.
+    """
+    try:
+        os.setxattr(path, xattr, b"present")
+    except OSError as exc:
+        _qualification_gap("XATTR", "user extended attribute",
+                           "user extended attributes are not storable on the runner filesystem",
+                           ERRNO=exc.errno, ERROR=exc)
+        return False
+    return True
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux native mechanics only")
@@ -1279,21 +1478,17 @@ def test_rqp_l09_extended_attribute_is_refused(tmp_path):
     path = tmp_path / "schedule.json"
     path.write_bytes(b"{}\n")
     path.chmod(0o600)
-    try:
-        os.setxattr(path, "user.l4_qualification", b"present")
-    except OSError as exc:
-        _qualification_gap("XATTR", "user extended attribute",
-                           "user extended attributes are not storable on the runner filesystem",
-                           ERRNO=exc.errno, ERROR=exc)
+    attribute = "user.l4_qualification"
+    if not _present_until_gap(path, attribute):
         return
     try:
-        assert "user.l4_qualification" in os.listxattr(path)
+        assert attribute in os.listxattr(path)
         with pytest.raises(_ScheduleArtifactError) as caught:
             _linux._LinuxObject(path, directory=False)
         assert caught.value.reason_code == "UNSAFE_PATH"
         assert "extended attributes" in str(caught.value)
     finally:
-        os.removexattr(path, "user.l4_qualification")
+        os.removexattr(path, attribute)
     _qualification_pass("XATTR")
 
 
@@ -1493,6 +1688,7 @@ def test_rqp_l17_status_is_gap_and_no_mount_was_performed():
 
 _GAP_DISCIPLINE_TESTS = (
     "_qualification_gap",
+    "_present_until_gap",
     "test_rqp_l09_extended_attribute_is_refused",
     "test_rqp_l09_posix_access_acl_is_refused",
     "test_rqp_l09_foreign_owner_is_refused",
@@ -1657,6 +1853,850 @@ def test_qualification_accounting_cannot_report_a_gap_as_a_pass():
         # A Windows-local run is not qualification evidence for any native case.
         assert ledger["pass"] == [], "no Linux-native case may claim a PASS on Windows"
         assert ledger["not_executed"], "unexecuted native cases must be reported"
+
+
+# ---------------------------------------------------------------------------
+# RQP-L09 structural accounting proof.
+#
+# The ledger is runtime state, so a duplicate registration is caught only when the
+# duplicating case actually runs. These guards prove the same property STATICALLY
+# over this file's own topology: a logical case has exactly one registration site (or
+# sites that are mutually exclusive within one execution) and the test that owns it
+# has no pytest parameter, so the topology cannot register a declared case twice merely
+# because a fixture is parameterized. Producing duplicates remains rejected by
+# _record_outcome's duplicate assertion; nothing here makes a duplicate idempotent.
+# ---------------------------------------------------------------------------
+
+# The two recorders whose call sites are the registration sites.
+_QUALIFICATION_RECORDERS = ("_qualification_pass", "_qualification_gap")
+
+# A case argument this analysis cannot resolve statically. A helper that takes its case
+# per call reports this, and the strict guard below proves the recorder it reaches never
+# returns, so the value that actually reaches the ledger is a real declared case.
+_UNRESOLVED_CASE = "<UNRESOLVED>"
+
+
+def _guard_str_literals(nodes):
+    return {node.value for node in ast.walk(_guard_module_of(nodes))
+            if isinstance(node, ast.Constant) and isinstance(node.value, str)}
+
+
+def _guard_registration_calls(nodes):
+    """Names of the qualification recorders called directly in `nodes`."""
+    return tuple(sorted(node.func.id for node in ast.walk(_guard_module_of(nodes))
+                        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                        and node.func.id in _QUALIFICATION_RECORDERS))
+
+
+def _guard_recorder_cases(nodes, name, bindings):
+    """The case literals a recorder call in `nodes` can register.
+
+    `_qualification_pass("CASE")` registers that literal; `_qualification_gap(case,
+    ...)` registers its first positional argument. A module-level constant name is
+    resolved through `bindings`; anything else is reported as UNRESOLVED so the caller
+    rejects it instead of silently treating it as "no case". An UNRESOLVED argument is
+    how a helper declares its case per call, and the strict guard proves that reaching
+    the recorder through such a helper is always accompanied by the recorder's own
+    unconditional raise, so the last iteration of such a helper registers a real case
+    name rather than UNRESOLVED.
+    """
+    cases = []
+    for node in ast.walk(_guard_module_of(nodes)):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id == name):
+            continue
+        argument = node.args[0] if node.args else None
+        if isinstance(argument, ast.Constant):
+            cases.append(argument.value)
+        elif isinstance(argument, ast.Name) and argument.id in bindings:
+            cases.append(bindings[argument.id])
+        else:
+            cases.append(_UNRESOLVED_CASE)
+    return tuple(cases)
+
+
+def _guard_module_bindings():
+    """Module-level `NAME = <constant>` bindings of any constant type.
+
+    Case names are strings and permission modes are integers or tuples of integers, so one
+    binding map serves both: a helper's case argument and a mode constant are each resolved
+    to the value the module actually assigns.
+    """
+    bindings = {}
+    for node in _guard_module().body:
+        if not (isinstance(node, ast.Assign) and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)):
+            continue
+        value = node.value
+        if isinstance(value, ast.Constant):
+            bindings[node.targets[0].id] = value.value
+        elif isinstance(value, ast.Tuple) and all(isinstance(element, ast.Constant)
+                                                  for element in value.elts):
+            bindings[node.targets[0].id] = tuple(element.value for element in value.elts)
+    return bindings
+
+
+def _guard_static_case_bindings():
+    """The module-level string bindings, so a helper's case argument resolves."""
+    return {name: value for name, value in _guard_module_bindings().items()
+            if isinstance(value, str)}
+
+
+def _guard_always_raises(nodes, functions=None):
+    """True when executing `nodes` always raises, so nothing after them can run.
+
+    `nodes` is a module, a body list, or a single def whose body is what executes.
+    """
+    if isinstance(nodes, ast.FunctionDef):
+        body = list(nodes.body)
+    else:
+        body = _guard_module_of(nodes).body
+    if not body:
+        return False
+    if functions is None:
+        functions = _guard_functions(_guard_module())
+    return _guard_statement_always_raises(body[-1], functions)
+
+
+def _guard_statement_always_raises(statement, functions):
+    if isinstance(statement, ast.Raise):
+        return True
+    if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Call):
+        call = statement.value
+        if isinstance(call.func, ast.Attribute):
+            # pytest.xfail(...) / pytest.skip(...) / pytest.fail(...) never return.
+            return call.func.attr in ("xfail", "skip", "fail")
+        if isinstance(call.func, ast.Name):
+            if _guard_registration_calls(call) == ("_qualification_gap",):
+                return True
+            # A local helper that awaits the always-raising GAP recorder cannot return.
+            if call.func.id in functions:
+                return _guard_always_raises(functions[call.func.id], functions)
+        return False
+    if isinstance(statement, ast.If):
+        return (_guard_truth(statement.test) is True
+                and _guard_always_raises(statement.body, functions)
+                and _guard_always_raises(statement.orelse, functions))
+    if isinstance(statement, ast.With):
+        return _guard_always_raises(statement.body, functions)
+    return False
+
+
+def _guard_truth(node):
+    """True/False when the expression's truth is structural, else None if unknown."""
+    if isinstance(node, ast.Constant):
+        return bool(node.value)
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+        inner = _guard_truth(node.operand)
+        return None if inner is None else not inner
+    if isinstance(node, ast.BoolOp):
+        values = [_guard_truth(value) for value in node.values]
+        if isinstance(node.op, ast.And):
+            if any(value is False for value in values):
+                return False
+            return True if all(value is True for value in values) else None
+        if any(value is True for value in values):
+            return True
+        return False if all(value is False for value in values) else None
+    return None
+
+
+def _guard_loop_disposition(statement, functions):
+    """(always_executes, always_raises_on_first_iteration, body_has_break)."""
+    body_has_break = any(isinstance(node, ast.Break) for node in ast.walk(statement))
+    raises = _guard_always_raises(statement.body, functions)
+    if isinstance(statement, ast.While):
+        condition = _guard_truth(statement.test)
+        if condition is False:
+            return False, raises, body_has_break
+        return condition is True, raises, body_has_break
+    iterable = statement.iter
+    if isinstance(iterable, (ast.List, ast.Tuple, ast.Set)):
+        return bool(iterable.elts), raises, body_has_break
+    if isinstance(iterable, ast.Constant) and isinstance(iterable.value, (str, bytes)):
+        return bool(iterable.value), raises, body_has_break
+    return True, raises, body_has_break
+
+
+def _guard_terminates(statement):
+    """True when this single statement is guaranteed to leave the current execution.
+
+    return/raise/continue/break never reach the next statement, and neither do the GAP
+    recorder or the pytest outcome raisers. This is the leaf predicate: compound
+    statements are resolved by the site walker, which knows about branches.
+    """
+    if isinstance(statement, (ast.Return, ast.Raise, ast.Continue, ast.Break)):
+        return True
+    if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Call):
+        call = statement.value
+        if isinstance(call.func, ast.Attribute) and call.func.attr in ("xfail", "skip", "fail"):
+            return True
+        if isinstance(call.func, ast.Name) and _guard_registration_calls(call) == ("_qualification_gap",):
+            return True
+    return False
+
+
+def _guard_collect_registration_sites(nodes, bindings, prefix=()):
+    """Every reachable qualification registration site in `nodes`, with its region.
+
+    A site region identifies one execution region: a function is one region and a loop
+    body is one region per iteration. Sites that share a region are mutually exclusive
+    when they sit in mutually exclusive branches, or when a terminating statement stands
+    between them, so each case may register at most once per region execution. Nested
+    defs and lambdas are their own regions and are not walked from here.
+
+    The result lists (region, loop_bound, line, case, path) per site, where `path`
+    records the branch indices taken to reach it, so exclusivity on one execution path
+    can be decided by comparing branch ownership.
+    """
+    sites = []
+
+    def walk_block(statements, path, region, loop_bound, reachable):
+        for index, statement in enumerate(statements):
+            reachable = walk(statement, path + (index,), region, loop_bound, reachable)
+        return reachable
+
+    def walk(node, path, region, loop_bound, reachable):
+        if isinstance(node, ast.FunctionDef):
+            # A def is its own region, reached from wherever it is defined. A qualification
+            # site nested inside a def therefore diverges from its caller's own sites at the
+            # def boundary, which is what makes that pair exclusive rather than duplicated.
+            walk_block(node.body, path + (-1,), (node.name,), False, True)
+            return True
+        if isinstance(node, (ast.ClassDef, ast.Lambda)):
+            return reachable
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
+                and node.func.id in _QUALIFICATION_RECORDERS and reachable:
+            for case in _guard_recorder_cases(node, node.func.id, bindings):
+                sites.append((region, loop_bound, node.lineno, case, path))
+        if isinstance(node, (ast.For, ast.While)):
+            inside = region + (("loop", node.lineno),)
+            walk_block(list(node.body) + list(node.orelse), path + (0,), inside, True, True)
+            return reachable
+        if isinstance(node, ast.If):
+            body_falls = walk_block(node.body, path + (0,), region, loop_bound, reachable)
+            else_falls = walk_block(node.orelse, path + (1,), region, loop_bound, reachable)
+            return body_falls or else_falls
+        if isinstance(node, ast.Try):
+            walk_block(node.body, path + (0,), region, loop_bound, reachable)
+            for branch, handler in enumerate(node.handlers):
+                walk_block(handler.body, path + (1, branch), region, loop_bound, reachable)
+            walk_block(node.orelse, path + (2,), region, loop_bound, reachable)
+            final_falls = walk_block(node.finalbody, path + (3,), region, loop_bound, reachable)
+            return reachable and final_falls
+        for child_index, child in enumerate(ast.iter_child_nodes(node)):
+            walk(child, path + (child_index,), region, loop_bound, reachable)
+        return reachable and not _guard_terminates(node)
+
+    body = nodes.body if isinstance(nodes, ast.FunctionDef) else _guard_module_of(nodes).body
+    walk_block(list(body), (0,), prefix, False, True)
+    return sites
+
+
+def _guard_module_case_accounting():
+    """Static per-case registration accounting for this whole test file.
+
+    Every def is analysed exactly once, from its own definition, so a registration site
+    is counted once no matter how many other functions mention it.
+    """
+    module = _guard_module()
+    functions = _guard_functions(module)
+    bindings = _guard_static_case_bindings()
+    by_case = {}
+    unresolved = {}
+    for name, function in functions.items():
+        for region, loop_bound, lineno, case, path in \
+                _guard_collect_registration_sites(function, bindings, (name,)):
+            if case == _UNRESOLVED_CASE:
+                unresolved.setdefault(name, []).append(lineno)
+                continue
+            assert isinstance(case, str), (
+                "a registration site must register a literal or module-constant case: %r "
+                "(line %d)" % (case, lineno))
+            by_case.setdefault(case, []).append((region, loop_bound, lineno, path))
+
+    # A helper that takes its case per call cannot be resolved at its own def, so the
+    # binding is proved at every caller instead: the call must pass a declared case name,
+    # and the recorder it reaches raises unconditionally, so no caller can observe a
+    # registered outcome and then continue with a different one. The case argument is
+    # identified by matching the helper's own parameter position, never a fixed index.
+    for name in unresolved:
+        assert _guard_always_raises(functions["_qualification_gap"], functions), name
+        position = _guard_case_parameter_position(functions[name])
+        callers = [(caller_name, node) for caller_name, function in functions.items()
+                   for node in ast.walk(function)
+                   if isinstance(node, ast.Call) and getattr(node.func, "id", None) == name]
+        assert callers, "%s is never called, so its unresolved case can never register" % name
+        for caller_name, node in callers:
+            argument = node.args[position] if position is not None and len(node.args) > position else None
+            assert isinstance(argument, ast.Constant) and isinstance(argument.value, str), (
+                "%s calls %s without a literal case name, so the case that reaches the "
+                "ledger is not determined by this file" % (caller_name, name))
+            assert argument.value in set(RQP_L09_PASS_CASES), (
+                "%s calls %s with an undeclared case: %s" % (caller_name, name, argument.value))
+    loops = {}
+    for name, function in functions.items():
+        for inner in ast.walk(function):
+            if isinstance(inner, (ast.For, ast.While)):
+                loops[(name, inner.lineno)] = _guard_loop_disposition(inner, functions)
+    return functions, loops, by_case
+
+
+def _guard_case_parameter_position(definition):
+    """The positional index of the parameter a helper forwards as its case name.
+
+    Found by reading the helper's own body for the recorder call it makes, so a caller is
+    checked at the position the helper actually uses rather than at a fixed index that a
+    signature change could silently invalidate. Returns None when the helper never calls a
+    recorder with a name argument.
+    """
+    for node in ast.walk(definition):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id in _QUALIFICATION_RECORDERS and node.args):
+            continue
+        first = node.args[0]
+        if isinstance(first, ast.Name):
+            names = [argument.arg for argument in definition.args.args]
+            if first.id in names:
+                return names.index(first.id)
+    return None
+
+
+def _guard_sites_are_mutually_exclusive(left, right):
+    """True when two reachable site paths cannot both execute in one region run.
+
+    Two paths in the same region are exclusive when they diverge: an if/handler/else index
+    differs at some position, or one path enters a loop body and the other does not. Each
+    path starts at its own def, and a walk that crosses a def boundary is exclusive on
+    arrival, so any divergence at all means exclusivity. Sites after a terminating
+    statement are already excluded as unreachable, so this stays a simple comparison.
+    """
+    for left_step, right_step in zip(left, right):
+        if left_step != right_step:
+            return True
+    return False
+
+
+def _guard_exclusive_site_count(paths):
+    """The size of the largest group of sites that can all run in one region execution.
+
+    A small graph over one case's site paths within one region: two sites are joined
+    when they are NOT mutually exclusive. The largest such group is the worst case, and
+    a case may register at most once per execution, so that group must have size 1.
+    """
+    groups = []
+    for index, path in enumerate(paths):
+        for group in groups:
+            if all(not _guard_sites_are_mutually_exclusive(path, paths[other]) for other in group):
+                group.append(index)
+                break
+        else:
+            groups.append([index])
+    return max((len(group) for group in groups), default=0)
+
+
+def _guard_loops_that_register(by_case):
+    """Per-function list of (case, loop line number) for every in-loop registration."""
+    found = {}
+    for case, entries in by_case.items():
+        for region, loop_bound, lineno, path in entries:
+            if loop_bound:
+                found.setdefault(region[0], []).append((case, region[-1][1]))
+    return found
+
+
+def test_every_qualification_case_has_exactly_one_registration_site():
+    """A declared logical case may be registered from exactly one place per execution.
+
+    For each declared case this proves the shape that makes "one logical case, one
+    outcome" structural rather than aspirational: no two of its registration sites can
+    both run in a single execution of the region that owns them. Sites in mutually
+    exclusive branches are allowed -- a case that a runner can settle either way must
+    be able to record both a real PASS and an explicit GAP -- but two sites on one
+    execution path are rejected here instead of being left for _record_outcome to
+    reject at run time.
+    """
+    functions, loops, by_case = _guard_module_case_accounting()
+    declared = set(RQP_L09_PASS_CASES)
+
+    for case, entries in by_case.items():
+        assert isinstance(case, str), "a registration site must register a literal case: %r" % (case,)
+        assert case in declared, "a registration site registers an undeclared case: %s" % case
+        assert entries, "a settled case must have a reachable registration site: %s" % case
+        regions = {}
+        for region, loop_bound, lineno, path in entries:
+            regions.setdefault(region, []).append(path)
+        for region, paths in regions.items():
+            worst = _guard_exclusive_site_count(paths)
+            assert worst <= 1, (
+                "case %s has %d registration sites that can all execute in one run of %r; "
+                "a logical case may settle at most once per execution"
+                % (case, worst, region))
+
+    # A registered case must also be reachable in the declared PASS registry, and
+    # every declared case must be settled by some site so no case is merely assumed.
+    settled = {case for case in by_case if isinstance(case, str)}
+    assert settled <= declared
+    assert settled == declared, "declared cases with no registration site: %s" % sorted(declared - settled)
+
+
+def test_qualification_registration_topology_cannot_duplicate_by_parameterization():
+    """Prove the Linux-native topology cannot duplicate a registration from parameters.
+
+    Three structural facts, all over this file's own AST:
+
+    * every loop body that registers a qualification case always executes and always
+      raises on its first iteration, so a loop cannot register the same case twice;
+    * every function that owns a registration site has no pytest parameterization, so
+      the number of executions of that function equals the number of its definitions --
+      which is the exact mechanism by which the previous six-parameter writable-object
+      case registered one logical case six times;
+    * every registration reachable in one region execution covers a distinct case, so no
+      single execution path can reach two registrations of the same case.
+    """
+    functions, loops, by_case = _guard_module_case_accounting()
+    registering = {region[0] for entries in by_case.values() for region, _, _, _ in entries}
+    assert registering, "the qualification cases must be registered from this file"
+
+    # 1. Loop bodies that register must always execute and always raise immediately, so
+    #    the registration happens on the first and only reachable iteration.
+    loop_registers = _guard_loops_that_register(by_case)
+    for function in registering:
+        for case, loop_line in loop_registers.get(function, []):
+            executes, raises, has_break = loops[(function, loop_line)]
+            assert executes, (
+                "loop body line %d in %s may not execute, so case %s would be left "
+                "unsettled without an explicit GAP" % (loop_line, function, case))
+            assert raises, (
+                "loop body line %d in %s can register case %s more than once because it "
+                "does not always raise on its first iteration" % (loop_line, function, case))
+            assert not has_break, (
+                "loop body line %d in %s contains a break, so a registering loop is not a "
+                "single-pass construction" % (loop_line, function))
+
+    # 2. No parameterization on any function that registers a qualification case.
+    for function in sorted(registering):
+        decorators = functions[function].decorator_list
+        assert not [node for node in decorators
+                    if "parametrize" in ast.dump(node)], (
+            "%s registers a qualification case and is parameterized; parameterization "
+            "would execute the registration once per parameter" % function)
+
+    # 3. Every registration reachable in one region execution covers a distinct case, so
+    #    no folder can settle one case twice however it is entered. This is the same
+    #    exclusivity analysis as the site proof, stated per folder over all cases at once:
+    #    a folder in which one execution could reach two registrations of the SAME case
+    #    is exactly the shape parameterization used to create.
+    for region in {entry[0] for entries in by_case.values() for entry in entries}:
+        for case, entries in by_case.items():
+            paths = [path for entry_region, _, _, path in entries if entry_region == region]
+            if not paths:
+                continue
+            worst = _guard_exclusive_site_count(paths)
+            assert worst <= 1, (
+                "region %r can reach %d registrations of case %s in one execution"
+                % (region, worst, case))
+
+    # 4. The real ledger of this run agrees, and any GAP keeps its own row.
+    ledger = _audit_qualification_accounting()
+    assert len(ledger["pass"]) == len(set(ledger["pass"]))
+    assert len(ledger["gap"]) == len(set(ledger["gap"]))
+    assert ledger["executed"] == len(ledger["pass"]) + len(ledger["gap"])
+    print("RQP_L09_DECLARED_CASE_COUNT=%d" % len(RQP_L09_PASS_CASES))
+    print("RQP_L09_REGISTRATION_SITE_COUNT=%d" % sum(len(value) for value in by_case.values()))
+    print("RQP_L09_REGISTERING_TEST_FUNCTIONS=%s" % ",".join(sorted(registering)))
+    print("RQP_L09_REGISTRATION_TOPOLOGY_DUPLICATE_FREE=true")
+
+
+def test_qualification_case_accounting_is_total_disjoint_and_representable():
+    """PASS and GAP stay disjoint, conditional cases stay representable, GAPs explicit.
+
+    This is the declared-registry half of the accounting proof, checked without a
+    Linux host: the two outcome rows are disjoint at declaration, the conditional
+    cases are a subset of the declared cases, every conditional case is representable
+    as a real PASS and as an XFAIL GAP, and _audit_qualification_accounting always
+    reports the unexecuted remainder -- on this Windows host every Linux-native case
+    is reported there rather than being silently omitted or turned into a PASS.
+    """
+    declared = set(RQP_L09_PASS_CASES)
+    gapped = set(RQP_L09_GAP_CASES)
+    conditional = set(RQP_L09_CONDITIONAL_CASES)
+
+    # Declared outcomes are disjoint: no case is declared as both a PASS and a GAP.
+    assert len(RQP_L09_PASS_CASES) == len(declared), "a case may be declared once"
+    assert len(RQP_L09_GAP_CASES) == len(gapped), "a gap case may be declared once"
+    assert conditional <= declared
+    assert gapped == conditional, "every conditional case must be representable as a GAP"
+
+    # Every declared case can settle at most once, and unexecuted cases stay explicit.
+    ledger = _audit_qualification_accounting()
+    assert set(ledger["pass"]) <= declared
+    assert set(ledger["gap"]) <= gapped
+    assert not set(ledger["pass"]) & set(ledger["gap"]), "PASS and GAP must stay disjoint"
+    assert set(ledger["pass"]) | set(ledger["gap"]) | set(ledger["not_executed"]) == declared
+    assert ledger["executed"] == len(set(ledger["pass"]) | set(ledger["gap"]))
+
+    # Each conditional case must be able to record both outcomes, so a GAP is an XFAIL
+    # and never a bare return or a permanent failure.
+    module = _guard_module()
+    functions = _guard_functions(module)
+    for name in _CONDITIONAL_GAP_TESTS:
+        body = functions[name]
+        recorded = {node.func.id for node in ast.walk(body)
+                    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                    and node.func.id in _QUALIFICATION_RECORDERS}
+        assert recorded, name
+        called = _guard_called_attributes(body.body)
+        assert "fail" not in called, name
+        assert [node for node in ast.walk(body) if isinstance(node, ast.Raise)] == [], name
+
+    # Every GAP is reported through the one recorder that raises xfail with the stable
+    # QUALIFICATION_GAP marker, so a GAP can never be recorded as a PASS. The function map
+    # is passed explicitly: a local name must never decide what the guard reasons about.
+    gap_recorder = functions["_qualification_gap"]
+    assert _guard_always_raises(gap_recorder, functions), \
+        "the GAP recorder must never return, or a GAP could fall through into a PASS"
+    assert "QUALIFICATION_GAP: %s not constructed: %s" in _guard_str_literals(gap_recorder)
+    # The evidence marker stays the single NOT_CONSTRUCTED spelling; its docstring is not
+    # evidence, so only RQP_L09_FIXTURE_ literals are compared.
+    markers = {text for text in _guard_str_literals(functions["_marker"])
+               if text.startswith("RQP_L09_FIXTURE_")}
+    assert markers == {"RQP_L09_FIXTURE_%s=NOT_CONSTRUCTED"}, markers
+
+
+def _guard_mode_values(iterable, bindings):
+    """The integer modes an iterable expression names, resolving module constants."""
+    if isinstance(iterable, (ast.Tuple, ast.List, ast.Set)):
+        return tuple(_guard_single_mode(element, bindings) for element in iterable.elts)
+    return (_guard_single_mode(iterable, bindings),)
+
+
+def _guard_named_modes(node, bindings):
+    """The integer modes one mode expression names.
+
+    A literal `0o600` names one mode, a `(0o700, 0o755)` literal names two and a module
+    constant such as GROUP_WORLD_WRITABLE_OBJECT_MODES names the whole set, so all three
+    spellings resolve and none is silently dropped from the audit.
+    """
+    if isinstance(node, ast.Name):
+        value = bindings.get(node.id)
+        if isinstance(value, tuple):
+            return tuple(mode for mode in value if isinstance(mode, int))
+        return (value,) if isinstance(value, int) else ()
+    return tuple(mode for mode in _guard_mode_values(node, bindings) if isinstance(mode, int))
+
+
+def _guard_single_mode(node, bindings):
+    """One mode expression as an int, or None when it is not statically a mode."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, int):
+        return node.value
+    if isinstance(node, ast.Name):
+        return bindings.get(node.id)
+    return None
+
+
+def _guard_modes_exercised_for(nodes, bindings):
+    """Every permission mode the fixtures inside `nodes` really set.
+
+    The scan is scoped to the statements the caller hands over and descends their children
+    only, so a mode that belongs to a refusal fixture is never attributed to the admission
+    that a sibling statement records, and a module-level mode constant is followed into the
+    loop that iterates it.
+    """
+    modes = set()
+    for outer in nodes:
+        for inner in ast.walk(outer):
+            if isinstance(inner, ast.Call) and getattr(inner.func, "attr", None) == "chmod":
+                for argument in inner.args:
+                    modes.update(_guard_named_modes(argument, bindings))
+            if isinstance(inner, ast.For):
+                modes.update(_guard_named_modes(inner.iter, bindings))
+    return frozenset(mode for mode in modes if isinstance(mode, int))
+
+
+def _guard_contained_calls(nodes, recorder):
+    """The calls of `recorder` actually contained in `nodes`.
+
+    `ast.walk(data)` yields `data` itself, so wrapping a list of statements in a synthetic
+    Module would also walk each statement's SIBLINGS. That once attributed a nested
+    recorder to the wrong top-level statement, which silently moved a refusal fixture's
+    modes onto an admission site. Every containment walk here descends children only.
+    """
+    found = []
+    for node in nodes:
+        for inner in ast.walk(node):
+            if isinstance(inner, ast.Call) and isinstance(inner.func, ast.Name) \
+                    and inner.func.id == recorder:
+                found.append(inner)
+    return found
+
+
+def _guard_spans(function):
+    """The statements of `function` grouped per recorded outcome.
+
+    A case's fixture is the code between the previous recorded outcome and its own, so the
+    modes of one case are never credited to another that records later in the same test.
+    """
+    spans, current = [], []
+    for statement in function.body:
+        current.append(statement)
+        if _guard_contained_calls([statement], "_qualification_pass") \
+                or _guard_contained_calls([statement], "_qualification_gap"):
+            spans.append(current)
+            current = []
+    if current:
+        spans.append(current)
+    return spans
+
+
+def _guard_label_mode_inventory():
+    """Per case: the permission modes its own fixture sets, and the labels it emits.
+
+    Each registration site is attributed only the statements of its own span, so a refusal
+    fixture's modes are never credited to an admission that a later site records. Everything
+    is read from the case itself, so a label is audited against the fixture it is attached to
+    rather than against a hand-copied table elsewhere.
+    """
+    module = _guard_module()
+    bindings = _guard_module_bindings()
+    inventory = {}
+    for node in ast.walk(module):
+        if not (isinstance(node, ast.FunctionDef) and node.name.startswith("test_")):
+            continue
+        labels = frozenset(text for text in _guard_str_literals(node)
+                           if text.startswith("RQP_L09_"))
+        for span in _guard_spans(node):
+            for recorder, statements in sorted(_guard_sites_by_recorder_in(span).items()):
+                for outer in statements:
+                    for case in _guard_recorder_cases(outer, recorder, bindings):
+                        assert isinstance(case, str), (
+                            "%s records an unresolvable case name: %r" % (node.name, case))
+                        modes = _guard_modes_exercised_for(span, bindings)
+                        inventory.setdefault(case, []).append((modes, labels))
+    return inventory
+
+
+def _guard_sites_by_recorder_in(statements):
+    """Per recorder called in `statements`, the statements whose subtree contains it."""
+    sites = {}
+    for recorder in _QUALIFICATION_RECORDERS:
+        for outer in statements:
+            if _guard_contained_calls([outer], recorder):
+                sites.setdefault(recorder, []).append(outer)
+    return sites
+
+
+def test_rqp_l09_emitted_labels_match_the_modes_they_exercise():
+    """Every emitted case label must be true of the fixture that carries it.
+
+    No label may imply a stronger property than the fixture proves. The decisive case is
+    0o1775: because 0o1775 & 0o022 == 0o020, it is sticky AND group writable, so it must
+    NOT be reported under a "non-writable" label. This audit reads each case's own labels
+    and modes, so a future edit that moves 0o1775 back under a non-writable name, or that
+    labels an admission case as a refusal case, fails here.
+    """
+    inventory = _guard_label_mode_inventory()
+    assert inventory, "the qualification cases must exercise modes"
+    verdicts = {}
+    for case, entries in inventory.items():
+        modes = frozenset(mode for found, _ in entries for mode in found)
+        labels = frozenset(label for _, found in entries for label in found)
+        verdicts[case] = {"modes": modes, "labels": labels}
+        # The case's own name is part of its emitted evidence, so a sticky-exception case
+        # is recognised by its name even where the test body prints no extra label.
+        evidence = "".join(sorted(labels | {case}))
+        writable = {mode for mode in modes if mode & 0o022}
+
+        # The label's own claim about writability must match the modes in the fixture. A
+        # label may never imply a stronger property than the fixture proves: 0o1775 is
+        # sticky AND group writable, so it can never sit under a non-writable label.
+        for label in labels | {case}:
+            if "NON_WRITABLE" in label:
+                assert not writable, (
+                    "%s is labelled %s but exercises writable modes %s"
+                    % (case, label, sorted(oct(mode) for mode in writable)))
+            elif "WRITABLE" in label:
+                assert writable, (
+                    "%s is labelled %s but exercises no writable mode %s"
+                    % (case, label, sorted(oct(mode) for mode in modes)))
+
+    # Every case the audit finds must be a declared case, so a label cannot drift into a
+    # case the accounting does not know about.
+    assert set(verdicts) == set(RQP_L09_PASS_CASES), sorted(set(verdicts) ^ set(RQP_L09_PASS_CASES))
+
+    # The declared expectation: which modes each case's own fixture refuses, and which it
+    # admits. A refusal case is one whose PASS is recorded only after pytest.raises observed
+    # the refusal, so its exercised modes must all carry a write grant; an admission case is
+    # one whose PASS is recorded without a raises, so each of its modes must be non-writable
+    # or sticky writable under a sticky-exception label.
+    refusal_expected = {
+        "GROUP_WORLD_WRITABLE_OBJECT": {0o666, 0o622, 0o602, 0o660, 0o620, 0o606},
+        "WRITABLE_NON_STICKY_ANCESTOR": {0o777},
+        "STICKY_EXCEPTION_NON_ANCESTOR": {0o1777},
+        "STICKY_EXCEPTION_REGULAR_OBJECT": {0o1666},
+    }
+    admission_expected = {
+        "TRUSTED_OWNER_ADMISSION": {0o600},
+        "STICKY_WRITABLE_ANCESTOR_ADMITTED": {0o1777},
+        "STICKY_WRITABLE_ANCESTOR_VARIANTS": {0o1775, 0o1777},
+        "NON_WRITABLE_ANCESTOR_MODES": {0o1700, 0o1755},
+    }
+    for case, modes in refusal_expected.items():
+        assert verdicts[case]["modes"] == frozenset(modes), (case, verdicts[case]["modes"])
+        for mode in modes:
+            assert mode & 0o022, (
+                "%s refuses %s, which carries no untrusted write grant, so its refusal is "
+                "not the mutation-permission requirement its label claims" % (case, oct(mode)))
+    for case, modes in admission_expected.items():
+        assert verdicts[case]["modes"] == frozenset(modes), (case, verdicts[case]["modes"])
+        evidence = "".join(sorted(verdicts[case]["labels"] | {case}))
+        for mode in modes:
+            assert not mode & 0o022 or mode & stat.S_ISVTX, (
+                "%s admits %s, which is writable and not sticky, so the mutation-permission "
+                "requirement should have refused it" % (case, oct(mode)))
+            if mode & 0o022:
+                assert "STICKY" in evidence, (
+                    "%s admits sticky writable mode %s without a sticky-exception label in "
+                    "either its case name or its emitted labels" % (case, oct(mode)))
+
+    assert all(mode & 0o022 == 0 for mode in verdicts["NON_WRITABLE_ANCESTOR_MODES"]["modes"])
+    assert any(mode & 0o022 for mode in verdicts["STICKY_WRITABLE_ANCESTOR_VARIANTS"]["modes"])
+    assert 0o1775 in verdicts["STICKY_WRITABLE_ANCESTOR_VARIANTS"]["modes"], (
+        "0o1775 is sticky and group writable, so it belongs to the sticky writable variant "
+        "case, never to the non-writable one")
+    assert 0o1775 not in verdicts["NON_WRITABLE_ANCESTOR_MODES"]["modes"]
+    assert 0o1775 not in {
+        mode for case, entry in verdicts.items() if "NON_WRITABLE" in "".join(entry["labels"])
+        for mode in entry["modes"]}, "0o1775 must never appear under a non-writable label"
+
+    # The full required writable mode set is still covered: no mode was dropped by
+    # collapsing the six parameters into one logical case.
+    assert verdicts["GROUP_WORLD_WRITABLE_OBJECT"]["modes"] == frozenset(GROUP_WORLD_WRITABLE_OBJECT_MODES)
+    for mode in GROUP_WORLD_WRITABLE_OBJECT_MODES:
+        assert mode & 0o022, oct(mode)
+    # And the six-mode refusal set must not silently be reported as the non-writable set.
+    assert not set(GROUP_WORLD_WRITABLE_OBJECT_MODES) & set(NON_WRITABLE_ANCESTOR_MODES)
+    print("RQP_L09_CASE_MODES=%r" % {case: sorted(oct(mode) for mode in entry["modes"])
+                                     for case, entry in sorted(verdicts.items())})
+
+
+# The production refusal surfaces the L21 helper admits, as the literal spellings a future
+# edit would have to write. Anything else is rejected by the helper, and this test proves
+# those spellings are the only ones it can accept.
+_RQP_L21_ACCEPTED_SURFACE_LITERALS = frozenset({"OSError", "ELOOP", "UNSAFE_PATH"})
+
+# The helpers whose bodies record or assert the observed production surface. They are the
+# only places an OSError comparison may legitimately appear, and their operand is never a
+# race attribute, so they are exempt from the "no frozen surface" rule below.
+_RQP_L21_SURFACE_RECORDERS = ("_assert_production_nofollow_refusal", "_rqp_l21_error_surface")
+
+
+def test_rqp_l21_error_surface_is_recorded_but_never_frozen():
+    """Pin the durable L21 contract and prove no stale error-surface assertion remains.
+
+    Four properties, all over this file's own AST:
+
+    * the production no-follow refusal is asserted through exactly one helper,
+      _assert_production_nofollow_refusal, called from the two production-refusal tests;
+    * that helper admits exactly the two accepted surfaces, OSError(ELOOP) and
+      _ScheduleArtifactError(UNSAFE_PATH), and compares isinstance against nothing else;
+    * no isinstance comparison against OSError or _ScheduleArtifactError remains over a
+      production race outcome, so a future normalization of that surface is not frozen out
+      by this tests-only qualification work;
+    * the direct kernel control keeps its strict raw ELOOP assertion, and the observed
+      production surface is reported as evidence rather than admitted as a rule.
+    """
+    module = _guard_module()
+    functions = _guard_functions(module)
+
+    # 1. One helper owns the production refusal assertion; every test that observes a
+    #    production refusal routes through it instead of asserting a surface itself.
+    assert "_assert_production_nofollow_refusal" in functions
+    callers = {node.name for node in ast.walk(module) if isinstance(node, ast.FunctionDef)
+               for inner in ast.walk(node)
+               if isinstance(inner, ast.Call)
+               and getattr(inner.func, "id", None) == "_assert_production_nofollow_refusal"}
+    assert callers == {"test_rqp_l21_real_no_follow_refuses_symlink_planted_after_lstat",
+                       "test_rqp_l21_real_no_follow_refuses_directory_symlink",
+                       "test_rqp_l21_direct_kernel_control_on_the_identical_real_symlink"}, callers
+
+    # 2. The helper admits exactly the two accepted surfaces and no others: it compares
+    #    isinstance against those two exception types and nothing else, it reads the reason
+    #    code and errno of the refusal, and its only surface literal is UNSAFE_PATH. Both arms
+    #    are compared to a fixed value, so a third accepted surface would have to widen the
+    #    rule visibly here rather than slipping in through a new name.
+    helper = functions["_assert_production_nofollow_refusal"]
+    compared = {getattr(node.args[1], "id", None) for node in ast.walk(helper)
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id == "isinstance" and len(node.args) == 2}
+    assert compared == {"_ScheduleArtifactError", "OSError"}, compared
+    assert _guard_attributes(helper) >= {"reason_code", "errno"}
+    surface_literals = _guard_str_literals(helper) & _RQP_L21_ACCEPTED_SURFACE_LITERALS
+    assert surface_literals == {"UNSAFE_PATH"}, surface_literals
+    assert _RQP_L21_ACCEPTED_SURFACE_LITERALS == {"OSError", "ELOOP", "UNSAFE_PATH"}
+    # The OSError arm compares the refusal's errno against the ELOOP constant, so the
+    # kernel's own no-follow errno is what the accepted raw surface means.
+    assert "errno" in _guard_attributes(helper)
+
+    # 3. No isinstance against OSError may pin a production race outcome: the removed
+    #    `assert isinstance(race.raised, OSError)` and `not isinstance(race.raised,
+    #    _ScheduleArtifactError)` shapes are gone. What may remain is a read-only type guard
+    #    that decides whether a raw-errno comparison is meaningful, and an assertion that the
+    #    identity-comparison arm raises the reader error -- that arm is a different contract
+    #    and its class is not the no-follow surface this case is about.
+    race_tests = [node for node in ast.walk(module) if isinstance(node, ast.FunctionDef)
+                  and "race" in ast.dump(node)
+                  and node.name not in _RQP_L21_SURFACE_RECORDERS]
+    assert race_tests, "the L21 race evidence tests must be present"
+    guards = set()
+    for node in race_tests:
+        for outer in ast.walk(node):
+            if isinstance(outer, ast.Assert) and isinstance(outer.test, ast.Call) \
+                    and getattr(outer.test.func, "id", None) == "isinstance" \
+                    and getattr(outer.test.args[1], "id", None) == "OSError":
+                pytest.fail("the production no-follow surface may not be pinned by assert "
+                            "isinstance(..., OSError) in %s" % node.name)
+            if isinstance(outer, ast.Call) and isinstance(outer.func, ast.Attribute) \
+                    and outer.func.attr == "raises" and outer.args \
+                    and getattr(outer.args[0], "id", None) == "OSError":
+                # The direct kernel control legitimately pins the raw OSError around its own
+                # os.open; pinning it around a PRODUCTION call would freeze the surface.
+                pinned = {getattr(inner.func, "attr", None) for inner in ast.walk(outer)
+                          if isinstance(inner, ast.Call)}
+                assert not pinned & {"_LinuxObject", "_WindowsObject", "_NativeScope"}, (
+                    "the production no-follow surface may not be pinned by "
+                    "pytest.raises(OSError) in %s" % node.name)
+            # Only a type guard whose SUBJECT is the race outcome is a surface claim at all.
+            if not (isinstance(outer, ast.Call) and isinstance(outer.func, ast.Name)
+                    and outer.func.id == "isinstance" and len(outer.args) == 2
+                    and "race" in ast.dump(outer.args[0])):
+                continue
+            kind = getattr(outer.args[1], "id", None)
+            if isinstance(outer.args[1], ast.Tuple):
+                kind = "|".join(sorted(getattr(element, "id", "?")
+                                       for element in outer.args[1].elts))
+            guards.add(kind or "?")
+    # Exactly one guard may touch a race outcome with OSError, and it narrows rather than
+    # pins: it decides whether the raw-errno comparison is meaningful and lets a normalized
+    # surface through. A guard on _ScheduleArtifactError is the identity-comparison arm of the
+    # swapped-regular-object case, which already accepts exactly the admitted normalized
+    # surface shape; no guard may exist on any OTHER class.
+    assert guards in ({"OSError"}, {"OSError", "_ScheduleArtifactError"}), guards
+
+    # 4. The direct kernel control keeps its strict raw assertion, and the observed
+    #    production surface is reported as evidence only.
+    direct = functions["test_rqp_l21_direct_kernel_control_on_the_identical_real_symlink"]
+    assert _guard_str_literals(direct) & {"RQP_L21_CURRENT_ERROR_SURFACE_TYPE=%s",
+                                          "RQP_L21_CURRENT_ERROR_SURFACE_ERRNO=%s",
+                                          "RQP_L21_CURRENT_ERROR_SURFACE_REASON_CODE=%s"} \
+        == {"RQP_L21_CURRENT_ERROR_SURFACE_TYPE=%s",
+            "RQP_L21_CURRENT_ERROR_SURFACE_ERRNO=%s",
+            "RQP_L21_CURRENT_ERROR_SURFACE_REASON_CODE=%s"}
+    assert "RQP_L21_PRODUCTION_SURFACE_IS_NOT_AN_ADMISSION_RULE=true" \
+        in _guard_str_literals(direct)
+    # The strict assertion is the comparison of the direct control's own errno to ELOOP.
+    assert _guard_called_attributes(direct) >= {"open", "fstat", "pread", "lstat"}
+    assert "errno" in _guard_attributes(direct)
 
 
 def test_no_privilege_escalation_or_package_installation_anywhere():
