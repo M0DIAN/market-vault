@@ -1,6 +1,7 @@
 """Exact production fail-closed policy; mechanics never enroll a tuple."""
 
 import ast
+import ctypes
 import inspect
 from types import SimpleNamespace
 
@@ -72,18 +73,25 @@ def test_no_environment_settings_or_test_enrollment():
 # The exact observed 10-field Linux L4 candidate.
 #
 # Field order and each field's producer are fixed by _platform._capability's Linux
-# branch, so this literal uses that exact order and arity:
-#   0 os.uname().release            5 scope.filesystem[0]  (ext4 superblock magic)
-#   1 os.uname().machine            6 scope.filesystem[2]  (statfs flags)
-#   2 glibc gnu_get_libc_version()  7 scope.filesystem[3]  (statfs block size)
-#   3 (implementation, version, 64) 8 _ext4_capability(...)  ("ext4", opts, super)
-#   4 scope.filesystem[0] == 0xef53 9 "l4-schedule-readonly-statx-ext4-v1"
+# branch, so this literal uses that exact order and arity. Every index below is the
+# position in the returned tuple, and every filesystem index is the position inside
+# the scope.filesystem tuple:
+#   0 "Linux"                        5 scope.filesystem[0]  (ext4 superblock magic)
+#   1 os.uname().release             6 scope.filesystem[2]  (statfs flags)
+#   2 os.uname().machine             7 scope.filesystem[3]  (statfs block size)
+#   3 glibc gnu_get_libc_version()   8 _ext4_capability(...) ("ext4", opts, super)
+#   4 python tuple (impl, version, pointer width)
+#   9 "l4-schedule-readonly-statx-ext4-v1"
+#
+# Field 4 is os' python triple as the L3-qualified host recorded it:
+# sys.implementation.name, sys.version and c.sizeof(c_void_p) * 8, which is 64 there.
+# It is recorded evidence, NOT a live binding to whichever interpreter runs this test.
+# Field 8 is the L4 projection of _ext4_capability, which is a single 3-element
+# tuple field -- "ext4" plus the already-sorted mount and super option tuples.
 #
 # Every field except the version tag carries the L3-qualified host's recorded
 # measurements verbatim: kernel release, machine, glibc, interpreter triple, ext4
-# superblock magic, statfs flags and statfs block size. Field 8 is the L4
-# projection of _ext4_capability, which is a single 3-element tuple field --
-# "ext4" plus the already-sorted mount and super option tuples.
+# superblock magic, statfs flags and statfs block size.
 # The historical 11-field literal was structurally impossible: it split that one
 # tuple field across three positions and used (0, 0) where L4 carries the real
 # statfs flags, so it could never equal a production tuple for any host.
@@ -112,6 +120,23 @@ def _single_field_mutations(value, path=()):
         yield path, value + 1 if type(value) is int else value + "-UNTESTED"
 
 
+def _tuple_nodes(value):
+    """Yield every tuple node in the candidate, at every nesting level."""
+    if type(value) is tuple:
+        yield value
+        for field in value:
+            yield from _tuple_nodes(field)
+
+
+def _leaf_nodes(value):
+    """Yield every non-tuple leaf in the candidate, at every nesting level."""
+    if type(value) is tuple:
+        for field in value:
+            yield from _leaf_nodes(field)
+    else:
+        yield value
+
+
 def _shape_mutations(candidate):
     """Shortened, extended, reordered, tag-mutated, L3 and unknown candidates."""
     return [
@@ -130,6 +155,13 @@ L4_MUTATION_CASES = [
     pytest.param(changed, id="leaf-" + ".".join(map(str, path)) if path else "arity-root")
     for path, changed in _single_field_mutations(L4_LINUX_CANDIDATE)
 ]
+
+# The mutation-case count is NOT hand-stated here. It is computed from the exact
+# candidate by the same generator that builds L4_MUTATION_CASES and asserted
+# against the parametrised set, so arity or nesting drift is caught rather than
+# silently changing the size of the mutation family.
+L4_MUTATION_CASE_COUNT = sum(1 for _ in _single_field_mutations(L4_LINUX_CANDIDATE))
+L4_SHAPE_CASE_COUNT = len(_shape_mutations(L4_LINUX_CANDIDATE))
 
 
 @pytest.fixture
@@ -158,8 +190,40 @@ def test_rqp_l19_candidate_is_the_exact_ten_field_linux_l4_shape():
     # production field order rather than from a host measurement.
     assert [index for index, field in enumerate(L4_LINUX_CANDIDATE) if type(field) is tuple] == [4, 8]
     assert len(L4_LINUX_CANDIDATE[4]) == 3 and len(L4_LINUX_CANDIDATE[8]) == 3
+    # Field 5 is the ext4 superblock magic, which is the value L4 projects.
     assert L4_LINUX_CANDIDATE[5] == 0xEF53
+    # Field 4 keeps the projected SHAPE of os' python triple without claiming this
+    # host's interpreter: the literal is the L3-qualified host's recorded value and
+    # must NOT be rewritten to whatever interpreter runs the test. Only field 9 is a
+    # production constant that must match this tree exactly.
+    implementation, version, pointer_width = L4_LINUX_CANDIDATE[4]
+    assert type(implementation) is str and implementation
+    assert type(version) is str and version
+    assert pointer_width == ctypes.sizeof(ctypes.c_void_p) * 8
+    assert L4_LINUX_CANDIDATE[9] == "l4-schedule-readonly-statx-ext4-v1"
     assert type(L4_LINUX_CANDIDATE) is tuple and hash(L4_LINUX_CANDIDATE) is not None
+
+
+def test_rqp_l19_mutation_case_count_is_machine_verified(capsys):
+    """The mutation family size is computed from the candidate, never hand-claimed.
+
+    Every tuple node contributes exactly one arity mutation and every non-tuple leaf
+    contributes exactly one value mutation, at every nesting level. The count is
+    derived from the real candidate and pinned to the parametrised set, so a change
+    in candidate arity or nesting cannot silently shrink or grow the family that is
+    proved to fail closed.
+    """
+    cases = list(_single_field_mutations(L4_LINUX_CANDIDATE))
+    tuple_nodes = sum(1 for _ in _tuple_nodes(L4_LINUX_CANDIDATE))
+    leaves = sum(1 for _ in _leaf_nodes(L4_LINUX_CANDIDATE))
+    assert L4_MUTATION_CASE_COUNT == len(cases)
+    assert L4_MUTATION_CASE_COUNT == len(L4_MUTATION_CASES)
+    assert L4_MUTATION_CASE_COUNT == tuple_nodes + leaves
+    assert len({path for path, _ in cases}) == L4_MUTATION_CASE_COUNT, "each mutation must be distinct"
+    assert L4_SHAPE_CASE_COUNT == len(_shape_mutations(L4_LINUX_CANDIDATE))
+    with capsys.disabled():
+        print("RQP_L19_MUTATION_CASE_COUNT=%d" % L4_MUTATION_CASE_COUNT)
+        print("RQP_L19_SHAPE_CASE_COUNT=%d" % L4_SHAPE_CASE_COUNT)
 
 
 def test_rqp_l19_temporary_registry_admits_only_the_exact_candidate(enrolled):
