@@ -149,7 +149,8 @@ def test_pure_core_has_closed_imports_and_no_side_effect_apis():
         "__init__.py", "_canonical.py", "_crypto.py", "_identity.py", "_errors.py",
         "_models.py", "_schema.py", "_semantics.py", "_trust.py",
     }
-    assert {path.name for path in root.glob("*.py")} == expected
+    physical = {"_paths.py", "_windows.py", "_linux.py", "_platform.py", "_physical.py"}
+    assert {path.name for path in root.glob("*.py")} == expected | physical
     allowed_imports = {
         (0, "base64"), (0, "json"), (0, "unicodedata"), (0, "hashlib"),
         (2, "dataset.encoding"), (1, "_canonical"),
@@ -168,7 +169,7 @@ def test_pure_core_has_closed_imports_and_no_side_effect_apis():
         (0, "types"): {"MappingProxyType"},
         (1, "_errors"): {"_ScheduleArtifactError", "_require"},
         (1, "_models"): {
-            "_ParsedDocument", "_freeze", "_thaw", "_SemanticFacts",
+            "_ParsedDocument", "_freeze", "_thaw", "_SemanticFacts", "_AdmittedManifest",
             "_MAX_CIVIL_DATES", "_MAX_SOURCE_RECORDS",
         },
         (1, "_identity"): {"_identity", "_sha256"},

@@ -176,12 +176,52 @@ def _bundle(start="2025-11-28", count=3):
     return bundle
 
 
-def _validate(bundle):
+def _artifact_dir_name(bundle):
+    """The admitted final directory name; exists here only because no path parser does."""
+    return "schedule_artifact_id=" + bundle["manifest.json"]["schedule_artifact_id"]
+
+
+def _reseal(bundle):
+    """Recompute manifest byte claims and identity the way a writer would.
+
+    The manifest-first invariant means a mutated document otherwise fails its
+    manifest claim before the layer under test is reached. Tests that intend to
+    exercise a specific downstream binding call this; tests of the claim check
+    itself deliberately do not.
+    """
+    manifest = bundle["manifest.json"]
+    for claim in manifest["content"]["output_files"]:
+        raw = _c(bundle[claim["path"]])
+        claim["byte_size"] = len(raw)
+        claim["sha256"] = _sha(raw)
+    manifest["schedule_artifact_id"] = _h("l4-trading-day-schedule-artifact-v1",
+                                          manifest["content"])
+    return bundle
+
+
+def _validate(bundle, *, reseal=True):
+    """Validate a bundle through both phases.
+
+    Re-sealing is the default because the manifest-first invariant verifies byte
+    claims and the recomputed identity before any logical document is parsed, so
+    an unsealed mutation would be reported at that earlier boundary instead of the
+    binding under test. Tests that assert the claim/identity boundary itself pass
+    reseal=False.
+    """
+    from market_vault.schedule_artifact._semantics import _admit_manifest
+    if reseal:
+        _reseal(bundle)
+    documents = {name: _c(bundle[name]) for name in (
+        "source_snapshot.json", "coverage_evidence.json",
+        "verification_receipt.json", "schedule.json", "manifest.json",
+    )}
     return _validate_artifact_structure(
-        source_snapshot_bytes=_c(bundle["source_snapshot.json"]),
-        coverage_evidence_bytes=_c(bundle["coverage_evidence.json"]),
-        verification_receipt_bytes=_c(bundle["verification_receipt.json"]),
-        schedule_bytes=_c(bundle["schedule.json"]), manifest_bytes=_c(bundle["manifest.json"]),
+        admitted=_admit_manifest(manifest_bytes=documents["manifest.json"], supplied=documents),
+        source_snapshot_bytes=documents["source_snapshot.json"],
+        coverage_evidence_bytes=documents["coverage_evidence.json"],
+        verification_receipt_bytes=documents["verification_receipt.json"],
+        schedule_bytes=documents["schedule.json"],
+        directory_name=_artifact_dir_name(bundle),
     )
 
 
