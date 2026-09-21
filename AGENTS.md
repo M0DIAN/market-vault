@@ -197,6 +197,21 @@ disclose which channel established remote truth. Local refs may corroborate but
 do not replace fresh remote truth when the work order requires freshness.
 Transport degradation alone is not a repository defect.
 
+This rule does not itself waive, relax, or replace the mandatory Exact Base
+procedure defined by `docs/governance/DEVELOPMENT_PLAYBOOK.md` section 1.1 and
+`docs/governance/AGENT_HANDOFF.md` rule 3:
+
+- another authenticated authoritative read channel may establish remote truth
+  only when the applicable authority permits that use;
+- alternate read transport does not by itself grant permission to bypass a
+  checked-in Git baseline procedure;
+- if the mandatory Exact Base procedure cannot be completed, STOP before
+  branching unless checked-in governance separately defines an equivalent
+  fallback.
+
+Do not treat an alternate read channel, including an API read path, as an
+implicit substitute for that procedure.
+
 ### Remote Write Verification
 
 A GitHub metadata write, including a PR body, an issue body or comment, release
@@ -269,11 +284,15 @@ read-only discovery -> adversarial self-review -> evidence convergence
 -> completion gates -> lifecycle / authority model when applicable
 -> contract implementability -> implementation preview when applicable
 -> minimal patch plan -> narrow implementation -> validation
--> commit / Draft PR -> independent review -> remediation if required
--> metadata synchronization -> exact-head review -> owner merge authorization
--> squash merge -> natural main CI -> post-merge closure
+-> commit / Draft PR -> exact-head PR CI -> independent review
+-> remediation / revalidation if required -> metadata synchronization
+-> final exact-head review -> owner merge authorization -> squash merge
+-> natural main CI -> post-merge closure
 -> Agent Improvement Retrospective when remediation occurred
 ```
+
+If remediation changes the head, independent review applies to the new exact
+head after the required revalidation and CI.
 
 Harness holds no automatic merge authority.
 
