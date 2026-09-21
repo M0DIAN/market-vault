@@ -13,6 +13,105 @@ reviewer provides architecture, merge, and release audit; the implementing
 agent's own report is not independent approval. See
 `docs/AGENT_GOVERNANCE.md` and `docs/governance/`.
 
+## DeepSeek Harness Review Protocol
+
+This section binds the DeepSeek Harness agent when it inspects, reviews, or
+implements work here. It supplements the authority rules above and in
+`docs/AGENT_GOVERNANCE.md`; it does not replace or weaken them. Codex remains
+the default primary implementation and development agent.
+
+### Work-Order Authority First
+
+Before implementation, inspect the active work order, phase locks, explicit
+authorizations, and non-goals. Technical usefulness does not override an
+explicit `IMPLEMENTATION_AUTHORIZED=false`. Implementation, production, and
+merge/release authorities are separate grants; holding one never implies
+another. Existing unauthorized work in progress inherits no approval merely
+because it exists.
+
+### Read-Only Discovery First
+
+For non-trivial work, begin read-only: relevant source, tests, contracts, ADRs
+under `docs/adr`, governance, current Git/worktree state, and active work-order
+authority. Do not modify existing dirty-worktree content during discovery; the
+clean-worktree gate before branching in the Required Development Flow below is
+unaffected.
+
+### Findings Are Hypotheses
+
+Findings are not an automatic repair list. Every material finding needs concrete
+evidence: source location, call graph, contract text, test behavior, or an
+executable probe. Before a finding becomes a repair item, actively attempt to
+disprove it and classify it `CONFIRMED`, `DOWNGRADED`, `RETRACTED`, or
+`NEEDS_DESIGN_DECISION`. Retraction is preferable to preserving a weak finding.
+
+Do not conflate an observed implementation fact, an unfinished implementation
+gap, a reachable production defect, a test coverage gap, intentional fail-closed
+behavior, contract ambiguity, and a design decision. Private-helper behavior is
+not automatically a public-API defect.
+
+### Complete Call Graph, Executable Probes
+
+Absence of a check from one layer does not prove absence from the system; trace
+the complete intended and implemented call graph before declaring an enforcement
+requirement missing.
+
+Do not reason by mental arithmetic about bitmasks and flags, hashes and
+identities, byte sizes, offsets, binary layouts, encoding lengths, timestamps
+and time windows, or numeric boundaries. Use an executable probe and record its
+input, computed result, and assertion. A correct conclusion does not excuse
+incorrect intermediate arithmetic.
+
+### Evidence Convergence and Completion Gates
+
+After adversarial self-review, stop broadening the search for findings and
+reduce what remains to concrete completion gates. For unfinished work,
+distinguish `IMPLEMENTED_AND_WIRED`, `IMPLEMENTED_NOT_WIRED`, and
+`NOT_IMPLEMENTED`, and do not describe unreachable unfinished implementation as
+a production vulnerability merely because it is incomplete.
+
+Before modifying code, define the exact files expected to change, the exact
+invariant being introduced or restored, the required tests, and explicit
+non-goals; prefer the smallest change that makes the invariant structural. Once
+implementation is authorized, stay inside the accepted gates: no opportunistic
+cleanup, unrelated refactor, silent taxonomy expansion, test weakening, or
+conversion of failures into skips.
+
+### Test Proof and Independent Review
+
+A green test is not sufficient evidence by itself. For security, filesystem,
+identity, parser, fail-closed, or governance invariants, verify that the test
+passes or fails for the intended reason rather than because an unrelated earlier
+guard fired.
+
+A Harness session that implemented a change must not approve its own work;
+independent review follows the rules above and
+`docs/governance/DEVELOPMENT_PLAYBOOK.md`. High-risk changes require independent
+read-only review before merge, including artifact identity, filesystem or native
+evidence, PIT semantics, destructive behavior, publication, cryptography,
+CI/control-plane behavior, and security boundaries.
+
+### Exact-Head PR Review
+
+Before merge authorization, verify the exact PR head SHA, exact tree, exact base
+SHA, exact changed-file set, exact-head CI run and attempt, and the independent
+review result. Green CI alone is not merge approval, and repository-owner merge
+authority is unchanged.
+
+### Standard Harness Flow
+
+This refines the Required Development Flow below; it does not replace it.
+
+```text
+read-only discovery -> adversarial self-review -> evidence convergence
+-> completion gates -> minimal patch plan -> narrow implementation
+-> focused validation -> independent implementation review -> commit / Draft PR
+-> exact-head PR review -> owner merge authorization -> squash merge
+-> natural main CI -> post-merge closure
+```
+
+Harness holds no automatic merge authority.
+
 ## Required Development Flow
 
 Use this normal path:
