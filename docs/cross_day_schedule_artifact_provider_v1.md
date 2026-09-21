@@ -489,7 +489,8 @@ partitions, latest/current pointer or L3 Dataset file. The zero-named-stream
 requirement of this sentence covers exactly the artifact directory and its six
 members; retained ancestry follows the STREAM_POLICY=MEMBER_TREE_ZERO_STREAM
 rule in section 10, which never extends that zero-stream requirement to
-retained ancestry.
+retained ancestry and never merges the writer's prepublication stream interval
+with the reader's separate postcommit interval.
 _SUCCESS is an empty regular file. Raw source bytes and receipts are embedded
 inside the fixed JSON files, not reopened from external paths or URLs.
 
@@ -605,9 +606,12 @@ Ordered fail-closed verification:
    final directory name, scope/count and all repeated bindings.
 8. Immediately before returning, recheck ancestry, root/member native object
    identities, exact inventory, bytes/hashes/sizes, manifest and empty _SUCCESS.
-   Recompare every retained ancestor named-stream set above the artifact
-   directory with the first-pass native evidence and fail PHYSICAL_DRIFT on any
-   addition, removal or change.
+   This recheck is the reader's second physical closure and the end of the
+   reader/postcommit interval opened by the step-1 first pass; it is not the
+   continuation of any writer or prepublication baseline. Recompare every
+   retained ancestor named-stream set above the artifact directory with that
+   first-pass native evidence and fail PHYSICAL_DRIFT on any addition, removal
+   or change made inside this reader interval.
    Same-path identical-byte replacement still fails. Return only the fully
    validated VerifiedTradingDaySchedule; partial results never escape.
 
@@ -626,7 +630,30 @@ narrowing them:
 | --- | --- |
 | Artifact directory (final, and the writer's staging directory under its own contract) | MUST have zero extra named data streams. Any extra named data stream is rejection. |
 | Six fixed artifact members | MUST have zero extra named data streams. Any extra named data stream on a member is rejection. |
-| Retained ancestry (every existing ancestor component above the artifact directory, including the native volume root when in scope, that the reader holds or validates) | Stream set MUST be enumerated with native evidence; the exact observed set MUST be retained as physical evidence; any change during the physical verification interval MUST fail second closure as physical drift. An ancestor carrying one or more named data streams is NOT by itself an admission failure. |
+| Retained ancestry (every existing ancestor component above the artifact directory, including the native volume root when in scope, that the reader holds or validates) | Stream set MUST be enumerated with native evidence; the exact observed set MUST be retained as physical evidence; any change between the reader's own checkpoints MUST fail second closure as PHYSICAL_DRIFT. An ancestor carrying one or more named data streams is NOT by itself an admission failure. |
+
+Ancestor stream evidence is collected in two separate, mutually independent
+intervals, and no single continuous baseline spans them:
+
+- Reader / postcommit interval (this document): after a known commit the reader
+  independently reacquires FINAL facts against the explicit final artifact path.
+  Its first-pass retained ancestor stream evidence is the reader baseline, and
+  the step-8 recheck is the second physical closure that ends the interval. A
+  stream-set change observed between those two reader checkpoints fails as
+  PHYSICAL_DRIFT.
+- Writer / prepublication interval (the publication contract, section 5): first
+  retained writer ancestry stream evidence through the immediate prepublication
+  revalidation, where a stream-set change fails as PREPUBLICATION_DRIFT.
+
+Neither interval is the other's baseline, and no evidence handoff carries a
+writer checkpoint across the commit. The reader's baseline MUST NOT be the
+writer's first ancestry stream evidence, and the reader MUST NOT receive the
+writer scope, the writer seal, a writer stream tuple or caller physical
+evidence; its sole input remains the explicit final artifact path. Drift
+observed inside either interval is never tolerated and never re-baselined. The
+reader's independent post-commit first-pass acquisition is NOT "re-baselining
+detected drift"; it is the beginning of a separate verification interval, and
+it cannot launder drift already rejected inside the writer interval.
 
 The artifact directory is the immediate ancestor of the six members, but it is
 never tolerated ancestry: it is an artifact-tree object and stays zero-stream.
@@ -639,18 +666,23 @@ artifact directory and on the six artifact members. It does NOT mean zero named
 data streams on every lexical or native ancestor.
 
 Stream evidence collection is not a zero-stream admission policy. Enumerating an
-ancestor's named data streams proves what the host actually presented and lets a
-later pass detect drift; that evidence MUST NOT be converted into an
-ancestry-wide zero-stream admission rule, and MUST NOT be replaced by a caller
-boolean, path string or cached listing. A missing or unreliable native stream
-fact fails closed exactly like any other unproved native fact, and a denied or
-unsupported stream result is never converted into an empty set; the native
-no-more-streams outcome is retained as the empty set it proves.
+ancestor's named data streams proves what the host actually presented and lets
+that interval's closing checkpoint detect drift against that interval's own
+baseline; that evidence MUST NOT be converted into an ancestry-wide zero-stream
+admission rule, MUST NOT be replaced by a caller boolean, path string or cached
+listing, and MUST NOT be carried across the commit into the reader interval as a
+shared baseline. A missing or unreliable native stream fact fails closed exactly
+like any other unproved native fact, and a denied or unsupported stream result
+is never converted into an empty set; the native no-more-streams outcome is
+retained as the empty set it proves.
 
 This exception applies ONLY to retained ancestry. It does not weaken
 artifact-directory stream exclusion, six-member stream exclusion, reparse
 rejection, path identity, FileIdInfo identity, security/access-boundary checks,
 filesystem/volume checks, exact inventory or same-path replacement detection.
+Retained ancestry stays subject to native identity, no-reparse, access-boundary,
+local filesystem/volume, retained-evidence and two-interval drift-detection
+requirements.
 
 Threat-model rationale from the completed G3 review: no demonstrated
 path-resolution bypass, replacement-authority bypass, security-descriptor
@@ -796,7 +828,7 @@ canaries, IR1, or closed L3 evidence. None is reported runtime PASS by this PR.
 | L4-26 | Explicit exact source selection is deterministic; reversing distinct input order does not create a timestamp winner |
 | L4-27 | Reader failures cause zero mutation and no source/provider/network/current-time fallback |
 | L4-28 | New publication contract precedes any writer implementation; no L3 contract, capability or exemption reuse |
-| L4-29 | Extra ADS/named data stream on the artifact directory or on a member fails admission in both physical passes, while an ancestor above the artifact directory carrying a named data stream is admitted only with its exact stream set retained as native evidence; an addition, removal or change of that ancestor stream set between the passes fails as PHYSICAL_DRIFT |
+| L4-29 | Extra ADS/named data stream on the artifact directory or on a member fails admission in both physical passes, while an ancestor above the artifact directory carrying a named data stream is admitted only with its exact stream set retained as native evidence; an addition, removal or change of that ancestor stream set inside the reader's own interval, between its first-pass baseline and its second physical closure, fails as PHYSICAL_DRIFT, while the writer's separate prepublication interval fails its own observed change as PREPUBLICATION_DRIFT |
 
 Publication collision/race/crash/quiescence/cleanup/platform canaries must also
 be specified by the separate destructive-design PR. Documentation here is not
