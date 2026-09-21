@@ -141,9 +141,75 @@ Every existing component of output_root, staging and final is checked using
 no-follow/reparse-aware native evidence. resolve() and lexical containment
 alone are insufficient. Ancestors/staging/final must be exact directories;
 members must be exact single-link regular files. Reject all symlinks,
-junctions, Windows reparse tags, device/FIFO/socket/unknown types, extra streams,
-hard links, mount/volume transitions and ambiguous or unsafe writable ancestry.
+junctions, Windows reparse tags, device/FIFO/socket/unknown types, hard links,
+mount/volume transitions and ambiguous or unsafe writable ancestry.
 An absent final is proved relative to its held parent, not by a cached exists().
+
+Named data streams (alternate data streams, ADS) are scoped by
+STREAM_POLICY=MEMBER_TREE_ZERO_STREAM, owned by L4.1 and never widened here.
+Exactly three scopes exist, and no pooled "extra streams" rejection in this
+contract or in L4.1 may be read as merging them:
+
+- Staging/final artifact tree: the artifact directory, staged or final, MUST
+  have zero extra named data streams, and each of the six fixed artifact
+  members MUST have zero extra named data streams. Any extra named data stream
+  on either is rejection. The writer's own staging and final objects are
+  therefore stream-free, and this is not weakened by the ancestry rule below.
+- Artifact descendants/members: the same zero-extra-stream requirement applies
+  to every member object, including manifest.json and the empty _SUCCESS.
+- Retained surrounding ancestry: every existing ancestor component above the
+  artifact directory, including the native volume root when in scope, MUST still
+  have its named-data-stream set enumerated using native evidence, and the exact
+  observed set MUST be retained as physical evidence. An ancestor carrying one
+  or more named data streams is NOT by itself an admission failure. A denied or
+  unsupported native stream result is never converted into an empty set; the
+  native no-more-streams outcome is retained as the empty set it proves.
+
+Evidence for that ancestry requirement is collected in two SEPARATE, mutually
+independent intervals with two separate baselines. Neither interval is the
+other's baseline, and one continuous baseline must never be required:
+
+- WRITER / PREPUBLICATION interval: first retained writer ancestry stream
+  evidence through the immediate prepublication revalidation. The writer
+  establishes its own baseline there and closes the interval with its own
+  prepublication re-enumeration. A stream-set change observed between those
+  writer checkpoints MUST fail as PREPUBLICATION_DRIFT before publication.
+- READER / POSTCOMMIT interval: after a known commit, the strict reader
+  independently reacquires FINAL facts against the explicit final artifact
+  path. Its first-pass retained ancestor stream evidence is the reader
+  baseline, and its second physical closure ends the interval. A stream-set
+  change observed between those reader checkpoints MUST fail as
+  PHYSICAL_DRIFT.
+
+The reader's baseline is not the writer's baseline. Drift observed inside
+either interval is never tolerated and never re-baselined. The reader's
+independent post-commit first-pass acquisition is NOT "re-baselining detected
+drift"; it is the beginning of a separate verification interval, and it cannot
+launder drift already rejected inside the writer interval. The reader's
+baseline MUST NOT be the writer's first ancestry stream evidence, and no
+evidence handoff carries a writer checkpoint across the commit. No such handoff
+mechanism is authorized here, and the reader MUST NOT receive the writer scope,
+the writer seal, a writer stream tuple or caller physical evidence. The sole
+reader input remains the explicit final artifact path.
+
+The artifact directory is the immediate ancestor of the six members, but it is
+never tolerated ancestry: it is an artifact-tree object and stays zero-stream.
+This ancestry tolerance applies ONLY above the artifact directory.
+
+This ancestry tolerance applies ONLY to retained ancestry. It does not weaken
+artifact-directory stream exclusion, six-member stream exclusion, reparse
+rejection, path identity, FileIdInfo identity, security/access-boundary checks,
+filesystem/volume checks, exact inventory or same-path replacement detection;
+retained ancestry stays subject to native identity, no-reparse, access-boundary,
+local filesystem/volume, retained-evidence and drift-detection requirements.
+
+Threat-model rationale from the completed G3 review: no demonstrated
+path-resolution bypass, replacement-authority bypass, security-descriptor
+bypass, inventory bypass, or second-closure bypass when retained ancestor stream
+tuples are retained; a zero-stream ancestry rule instead introduces a
+demonstrated mutable host dependence. Stream evidence collection is not a
+zero-stream admission policy. This clarification is DESIGN ONLY; it authorizes
+no runtime change and qualifies no platform.
 
 Linux evidence includes retained no-follow descriptors, fstat device/inode/type,
 native link count, access-control evidence and statx mount identity. Validate
@@ -154,8 +220,12 @@ renameat2; Windows handle-quiescence rules never apply to Linux.
 
 Windows evidence includes retained reparse-aware handles, FileIdInfo volume
 serial and full 128-bit FileId, FileAttributeTagInfo, FileStandardInfo link/type
-proof, named-stream checks, native security descriptors and volume GUID/local
-filesystem evidence. Cross-check held-handle paths and native volume APIs.
+proof, zero-extra-named-data-stream proof for the artifact directory and its six
+members, native enumeration and retained evidence of every ancestor stream set
+above the artifact directory across the writer/prepublication interval and,
+independently after commit, across the reader/postcommit interval, native
+security descriptors and volume GUID/local filesystem evidence.
+Cross-check held-handle paths and native volume APIs.
 DirEntry.stat().st_nlink is not Windows link authority. A missing or unreliable
 native fact fails closed. No mtime/size-only or drive-letter-only authority.
 
@@ -217,7 +287,9 @@ manifest.json
 _SUCCESS
 ```
 
-No extras, hidden children, streams, case aliases or subsets at publication.
+No extras, hidden children, extra named data streams, case aliases or subsets at
+publication for that artifact directory and its six members; retained ancestry
+follows section 5 and is not required to be stream-free.
 _SUCCESS is a single-link regular file of exactly zero bytes. All JSON and
 manifest rules, canonical bytes, source/evidence/signature/completion checks,
 resource bounds and logical schedule validation remain exactly L4.1. The seal
@@ -318,7 +390,7 @@ Remaining in a state during private bookkeeping is not a self-transition.
 | S -> E | Late-existing/race winner fully verified equivalent AND own staging cleanup succeeds |
 | S -> F | Seal drift, partial quiescence failure, known noncommit failure or invalid winner; only proven uncommitted cleanup, otherwise report residue |
 | S -> U | Primitive outcome ambiguous, including interruption across the success-return/state-recording boundary; revoke cleanup without probing destructively |
-| C -> V | Strict final reader plus second closure and requested-authority comparison succeed |
+| C -> V | Strict final reader plus its own second physical closure over its own postcommit stream baseline and requested-authority comparison succeed |
 | C -> I | Final verification/return preparation fails after known commit; preserve final |
 
 All other jumps, terminal retries, resets, resealing and rollback are forbidden.
@@ -372,7 +444,8 @@ never entered. Then:
 1. Recheck held scope/ancestors/staging root and their security/volume binding.
 2. For each closed descendant, reopen via native scope.member(old.path,
    directory=old.directory). Require exact original identity, filesystem,
-   security and type plus fresh recheck, single-link and no-reparse/stream proof.
+   security and type plus fresh recheck, single-link, no-reparse and
+   zero-extra-named-data-stream proof for those private staging objects.
    Still-open descendants are rechecked against the same original record.
 3. Build replacement handles in a temporary local collection. Do not replace
    owner ledger entries incrementally or rebaseline original facts.
@@ -489,8 +562,10 @@ not qualification. Record OS/build/kernel, CPU, Python, native API/libc,
 filesystem/options, volume/mount and security-policy evidence. Unknown or
 unprovable tuples are UNSUPPORTED_FAIL_CLOSED.
 
-Windows qualification must demonstrate FileIdInfo, native single-link/stream
-proof, protected ancestry/root classification, checked descendant quiescence
+Windows qualification must demonstrate FileIdInfo, native single-link proof,
+zero-extra-named-data-stream proof for artifact-directory/member objects plus
+retained-ancestor stream-set enumeration and drift evidence, protected
+ancestry/root classification, checked descendant quiescence
 with staging root retained, real no-replace collision/race behavior, exact
 cleanup rebind and final-reader closure. Linux independently needs retained-fd
 and statx evidence, actual flag-1 syscall/collision/errno behavior and the same
@@ -513,7 +588,7 @@ They supplement, not rewrite, L4.1 or historical L3 canaries/results.
 
 | ID | Required future evidence |
 | --- | --- |
-| SP-01 | Absent-target complete publication, strict final reader and second closure succeed |
+| SP-01 | Absent-target complete publication, strict final reader and the reader's own second physical closure succeed |
 | SP-02 | Existing equivalent returns without staging/writes; exact requested authority checked |
 | SP-03 | Existing corrupt/conflicting/unsafe final fails untouched without staging |
 | SP-04 | Simultaneous equivalent full creators: one winner, verified loser, proven loser cleanup |
@@ -522,7 +597,7 @@ They supplement, not rewrite, L4.1 or historical L3 canaries/results.
 | SP-07 | Linux EEXIST and ENOTEMPTY safe-proof classification, EXDEV and unsupported errnos have no fallback |
 | SP-08 | Symlink/junction/all reparse objects rejected throughout ancestry and membership |
 | SP-09 | Real native hard-link rejection; no Windows DirEntry link-count authority |
-| SP-10 | ADS/named stream and path alias rejection |
+| SP-10 | Extra ADS/named data stream on the artifact directory or a member and path alias rejection; ancestor stream sets above the artifact directory are enumerated and retained, never zero-stream admission, with a writer-interval change failing PREPUBLICATION_DRIFT and a reader-interval change failing PHYSICAL_DRIFT between the reader's own first pass and second closure |
 | SP-11 | Mount/bind-mount/volume transition and unsafe access rejected |
 | SP-12 | Staging-root substitution refuses publication and cleanup |
 | SP-13 | Identical-byte member replacement detected by native identity |
