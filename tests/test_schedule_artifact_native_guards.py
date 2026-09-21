@@ -149,9 +149,12 @@ def test_linux_native_adapter_refuses_windows():
 
 # The tests below never change a production registry or repair an unsafe host.
 import ast
+import errno
 import inspect
 from pathlib import Path, PureWindowsPath
+import shutil
 import socket
+import subprocess
 import sys
 
 from market_vault.schedule_artifact import _physical, _platform, _linux, _windows
@@ -623,3 +626,384 @@ def test_mountinfo_binding_refuses_bind_network_and_device_mismatch(table):
 
 def test_mountinfo_exact_ext4_record():
     assert _linux._mount_description(b"17 1 8:1 / / rw,relatime - ext4 /dev/sda1 rw\n", 17, b"8:1") == ("ext4", ("relatime", "rw"), ("rw",))
+
+
+# ---------------------------------------------------------------------------
+# RQP-L21: real Linux O_NOFOLLOW effectiveness under a pre-open replacement.
+#
+# The seam replaced below is only the TIMING of the replacement, which is the
+# work order's permitted monkeypatch. Every os.open and every O_NOFOLLOW bit
+# exercised here is the real Linux kernel call issued by production
+# _LinuxObject.__init__; no syscall, flag or errno is mocked, and the observed
+# values are the kernel's own bytes and errno.
+# ---------------------------------------------------------------------------
+
+
+def _swap_after_lstat(monkeypatch, swap):
+    """Run a one-shot path replacement between production lstat and os.open.
+
+    _LinuxObject.__init__ performs os.lstat (type check) and then os.open
+    (no-follow acquisition). Replacing os.lstat here lets that first, real
+    observation see a regular object while the subsequent real os.open sees a
+    symlink, which is the race the no-follow flag exists to defeat. The
+    replacement itself runs through real renames and real symlink creation,
+    never through the open under test.
+    """
+    real_lstat = os.lstat
+
+    def lstat(path, *args, **kwargs):
+        observed = real_lstat(path, *args, **kwargs)
+        if swap:
+            swap.pop()()
+        return observed
+
+    monkeypatch.setattr(os, "lstat", lstat)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux native mechanics only")
+def test_rqp_l21_real_no_follow_refuses_symlink_planted_after_lstat(tmp_path, monkeypatch):
+    """Path replaced by a symlink after pre-open lstat; real os.open must not follow."""
+    regular, target, held = tmp_path / "regular", tmp_path / "target", tmp_path / "held"
+    regular.write_bytes(b"{}\n")
+    target.write_bytes(b"ATTACKER\n")
+    _swap_after_lstat(monkeypatch, [lambda: (regular.rename(held), held.symlink_to(target))])
+
+    with pytest.raises(_ScheduleArtifactError) as caught:
+        _linux._LinuxObject(held, directory=False)
+    assert caught.value.reason_code == "UNSAFE_PATH"
+    assert "no-follow" in str(caught.value)
+
+    # The refused object is still the symlink: nothing was followed or removed.
+    assert held.is_symlink()
+    assert target.read_bytes() == b"ATTACKER\n"
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux native mechanics only")
+def test_rqp_l21_no_follow_is_the_flag_that_prevents_the_follow(tmp_path, monkeypatch):
+    """Qualify the flag itself: without O_NOFOLLOW the kernel follows the link.
+
+    Without this control a refusal could be attributed to any other guard. Here
+    the same real symlink is opened with and without the bit production
+    _linux.py sets, so the difference is attributable to O_NOFOLLOW alone.
+    """
+    regular, target, held = tmp_path / "regular", tmp_path / "target", tmp_path / "held"
+    regular.write_bytes(b"{}\n")
+    target.write_bytes(b"ATTACKER\n")
+    _swap_after_lstat(monkeypatch, [lambda: (regular.rename(held), held.symlink_to(target))])
+
+    followed = os.open(held, os.O_RDONLY)
+    try:
+        assert os.fstat(followed).st_ino == os.lstat(target).st_ino
+        assert os.pread(followed, 64, 0) == b"ATTACKER\n"
+    finally:
+        os.close(followed)
+
+    with pytest.raises(OSError) as caught:
+        os.open(held, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
+    assert caught.value.errno == errno.ELOOP
+
+    # And the real production acquisition refuses the same object.
+    with pytest.raises(_ScheduleArtifactError, match="UNSAFE_PATH"):
+        _linux._LinuxObject(held, directory=False)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux native mechanics only")
+def test_rqp_l21_real_no_follow_refuses_directory_symlink(tmp_path, monkeypatch):
+    """The directory acquisition path requests O_DIRECTORY and the same no-follow bit."""
+    real, elsewhere, held = tmp_path / "real", tmp_path / "elsewhere", tmp_path / "held"
+    real.mkdir()
+    elsewhere.mkdir()
+    (elsewhere / "schedule.json").write_bytes(b"{}\n")
+    _swap_after_lstat(monkeypatch,
+                      [lambda: (real.rename(held), held.symlink_to(elsewhere, target_is_directory=True))])
+
+    with pytest.raises(_ScheduleArtifactError) as caught:
+        _linux._LinuxObject(held, directory=True)
+    assert caught.value.reason_code == "UNSAFE_PATH"
+    assert held.is_symlink()
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux native mechanics only")
+def test_rqp_l21_swapped_regular_object_is_caught_by_identity_comparison(tmp_path, monkeypatch):
+    """A permitted REAL open of a substituted regular file still fails on identity.
+
+    This is the residual case O_NOFOLLOW cannot address: the replacement is
+    itself a regular file. The retained device/inode must not match the pre-open
+    lstat, so admission fails even though the kernel open succeeded.
+    """
+    regular, planted, held = tmp_path / "regular", tmp_path / "planted", tmp_path / "held"
+    regular.write_bytes(b"{}\n")
+    planted.write_bytes(b"ATTACKER\n")
+    _swap_after_lstat(monkeypatch,
+                      [lambda: (regular.rename(held), planted.rename(regular), held.rename(planted))])
+
+    with pytest.raises(_ScheduleArtifactError) as caught:
+        _linux._LinuxObject(planted, directory=False)
+    assert caught.value.reason_code == "UNSAFE_PATH"
+    assert "object changed during open" in str(caught.value)
+
+
+# ---------------------------------------------------------------------------
+# RQP-L09: real native Linux access-control cases.
+#
+# Every fixture below is created by this test invocation under pytest's own
+# tmp_path and is owned by the invoking user. No repository path, host path,
+# pre-existing temporary file, ACL or permission outside these fixtures is
+# chmod-ed, chown-ed, ACL-ed or repaired. Cases whose fixture cannot be produced
+# without privilege record an explicit GAP rather than a skip-based PASS.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux native mechanics only")
+def test_rqp_l09_trusted_owner_admission_is_real(tmp_path):
+    """Baseline: a real, safely-permissioned private fixture is admitted."""
+    path = tmp_path / "schedule.json"
+    path.write_bytes(b"{}\n")
+    path.chmod(0o600)
+    held = _linux._LinuxObject(path, directory=False)
+    try:
+        uid, gid, mode, attributes = held.security
+        assert uid == os.geteuid()
+        assert mode == 0o600
+        assert attributes == ()
+        assert held.size == 3
+        assert held.read_bytes(3) == b"{}\n"
+        held.recheck()
+    finally:
+        held.close()
+
+
+@pytest.mark.parametrize("mode", [0o666, 0o622, 0o602, 0o660, 0o620, 0o606])
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux native mechanics only")
+def test_rqp_l09_group_or_world_writable_object_is_refused(tmp_path, mode):
+    """Any untrusted mutation grant on the object itself is refused."""
+    path = tmp_path / "schedule.json"
+    path.write_bytes(b"{}\n")
+    path.chmod(mode)
+    with pytest.raises(_ScheduleArtifactError) as caught:
+        _linux._LinuxObject(path, directory=False)
+    assert caught.value.reason_code == "UNSAFE_PATH"
+    assert "mutation permissions" in str(caught.value)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux native mechanics only")
+def test_rqp_l09_group_or_world_writable_ancestor_is_refused_without_sticky(tmp_path):
+    """A real writable, non-sticky ancestor directory is refused."""
+    parent = tmp_path / "ancestor"
+    parent.mkdir()
+    parent.chmod(0o777)
+    with pytest.raises(_ScheduleArtifactError) as caught:
+        _linux._LinuxObject(parent, directory=True, ancestor=True)
+    assert caught.value.reason_code == "UNSAFE_PATH"
+    assert "mutation permissions" in str(caught.value)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux native mechanics only")
+def test_rqp_l09_sticky_writable_ancestor_is_admitted(tmp_path):
+    """The sticky-directory ancestor exception is real."""
+    parent = tmp_path / "sticky"
+    parent.mkdir()
+    parent.chmod(0o1777)
+    held = _linux._LinuxObject(parent, directory=True, ancestor=True)
+    try:
+        assert held.security[2] == 0o1777
+        held.recheck()
+    finally:
+        held.close()
+
+
+@pytest.mark.parametrize("mode", [0o1700, 0o1775, 0o1755])
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux native mechanics only")
+def test_rqp_l09_non_writable_ancestor_modes_are_trusted(tmp_path, mode):
+    """Sticky alone never admits: a non-writable directory is trusted regardless."""
+    parent = tmp_path / "sticky-safe"
+    parent.mkdir()
+    parent.chmod(mode)
+    held = _linux._LinuxObject(parent, directory=True, ancestor=True)
+    try:
+        assert held.security[2] == mode
+    finally:
+        held.close()
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux native mechanics only")
+def test_rqp_l09_sticky_exception_does_not_apply_to_non_ancestor(tmp_path):
+    """The same sticky writable object is refused when it is not retained ancestry."""
+    parent = tmp_path / "sticky-object"
+    parent.mkdir()
+    parent.chmod(0o1777)
+    with pytest.raises(_ScheduleArtifactError, match="UNSAFE_PATH"):
+        _linux._LinuxObject(parent, directory=True, ancestor=False)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux native mechanics only")
+def test_rqp_l09_sticky_exception_does_not_apply_to_regular_object(tmp_path):
+    """A sticky writable REGULAR object is not an ancestor exception."""
+    path = tmp_path / "schedule.json"
+    path.write_bytes(b"{}\n")
+    path.chmod(0o1666)
+    with pytest.raises(_ScheduleArtifactError) as caught:
+        _linux._LinuxObject(path, directory=False, ancestor=True)
+    assert caught.value.reason_code == "UNSAFE_PATH"
+    assert "mutation permissions" in str(caught.value)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux native mechanics only")
+def test_rqp_l09_extended_attribute_is_refused(tmp_path):
+    """A real user extended attribute on the object is refused."""
+    path = tmp_path / "schedule.json"
+    path.write_bytes(b"{}\n")
+    path.chmod(0o600)
+    try:
+        os.setxattr(path, "user.l4_qualification", b"present")
+    except OSError as exc:
+        pytest.fail("GAP RQP-L09_XATTR: fixture unavailable on this host: " + str(exc))
+    try:
+        with pytest.raises(_ScheduleArtifactError) as caught:
+            _linux._LinuxObject(path, directory=False)
+        assert caught.value.reason_code == "UNSAFE_PATH"
+        assert "extended attributes" in str(caught.value)
+    finally:
+        os.removexattr(path, "user.l4_qualification")
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux native mechanics only")
+def test_rqp_l09_posix_access_acl_is_refused(tmp_path):
+    """A real POSIX access ACL must be refused, or the gap must be recorded.
+
+    setfacl needs no privilege to run, but the kernel refuses to store
+    system.posix_acl_access without CAP_FOWNER, which an unprivileged CI runner
+    does not hold. The fixture is attempted for real and a genuine inability is
+    reported as a GAP rather than converted into a skip-based PASS.
+    """
+    path = tmp_path / "schedule.json"
+    path.write_bytes(b"{}\n")
+    path.chmod(0o600)
+    setfacl = shutil.which("setfacl")
+    if setfacl is None:
+        pytest.fail("GAP RQP-L09_POSIX_ACL: no setfacl binary on this host and no "
+                    "host package installation is authorized")
+    completed = subprocess.run([setfacl, "-m", "u:%d:r--" % os.geteuid(), str(path)],
+                               capture_output=True, text=True)
+    if completed.returncode != 0:
+        pytest.fail("GAP RQP-L09_POSIX_ACL: ACL fixture requires CAP_FOWNER, which an "
+                    "unprivileged qualification runner does not hold; rc=%d stderr=%s"
+                    % (completed.returncode, completed.stderr.strip()))
+    try:
+        assert "system.posix_acl_access" in os.listxattr(path)
+        with pytest.raises(_ScheduleArtifactError) as caught:
+            _linux._LinuxObject(path, directory=False)
+        assert caught.value.reason_code == "UNSAFE_PATH"
+        assert "POSIX ACL" in str(caught.value)
+    finally:
+        subprocess.run([setfacl, "-b", str(path)], capture_output=True, text=True)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux native mechanics only")
+def test_rqp_l09_foreign_owner_is_refused(tmp_path):
+    """A real foreign-owned regular object must be refused, or the gap recorded.
+
+    Producing the fixture requires chown to another uid, which needs CAP_CHOWN.
+    The attempt is real; without privilege the outcome is an explicit GAP.
+    """
+    path = tmp_path / "schedule.json"
+    path.write_bytes(b"{}\n")
+    path.chmod(0o600)
+    foreign = 65534 if os.geteuid() != 0 else 1
+    try:
+        os.chown(path, foreign, os.getegid())
+    except OSError as exc:
+        pytest.fail("GAP RQP-L09_UNTRUSTED_OWNER: foreign-owner fixture requires "
+                    "CAP_CHOWN, which an unprivileged qualification runner does not "
+                    "hold; euid=%d target_uid=%d error=%s" % (os.geteuid(), foreign, exc))
+    assert os.lstat(path).st_uid == foreign
+    try:
+        with pytest.raises(_ScheduleArtifactError) as caught:
+            _linux._LinuxObject(path, directory=False)
+        assert caught.value.reason_code == "UNSAFE_PATH"
+        assert "untrusted Linux object owner" in str(caught.value)
+    finally:
+        os.chown(path, os.geteuid(), os.getegid())
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux native mechanics only")
+def test_rqp_l09_root_owned_object_is_trusted(tmp_path):
+    """Root ownership is trusted by the contract; the observation is real st_uid."""
+    path = tmp_path / "schedule.json"
+    path.write_bytes(b"{}\n")
+    path.chmod(0o600)
+    if os.geteuid() != 0:
+        with pytest.raises(OSError) as caught:
+            os.chown(path, 0, os.getegid())
+        assert caught.value.errno in (errno.EPERM, errno.EACCES)
+        pytest.fail("GAP RQP-L09_ROOT_OWNED: root-owned fixture requires CAP_CHOWN; "
+                    "unprivileged euid=%d cannot produce it" % os.geteuid())
+    held = _linux._LinuxObject(path, directory=False)
+    try:
+        assert held.security[0] == 0
+    finally:
+        held.close()
+
+
+# ---------------------------------------------------------------------------
+# RQP-L17: read-only feasibility of a real mount-identity/options drift fixture.
+#
+# Nothing here mounts, unmounts, unshares, enters a namespace or escalates
+# privilege. The probe only READS whether this qualification host could ever
+# produce a real drift fixture, so the matrix records a factual GAP instead of
+# substituting a mock for real mount evidence.
+# ---------------------------------------------------------------------------
+
+_CAPABILITY_BITS = {"CAP_DAC_READ_SEARCH": 2, "CAP_SYS_CHROOT": 18, "CAP_SYS_ADMIN": 21}
+
+
+def _effective_capabilities():
+    """Decode the real CapEff mask; capability N is bit N."""
+    with open("/proc/self/status", "r") as stream:
+        for line in stream:
+            if line.startswith("CapEff:"):
+                return int(line.split()[1], 16)
+    raise AssertionError("CapEff absent from /proc/self/status")
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux native mechanics only")
+def test_rqp_l17_mount_drift_fixture_feasibility_is_recorded(capsys):
+    """Record, from real host state, whether a native mount-drift fixture is possible."""
+    effective = _effective_capabilities()
+    holds = {name: bool(effective >> bit & 1) for name, bit in _CAPABILITY_BITS.items()}
+    feasible = holds["CAP_SYS_ADMIN"]
+    with capsys.disabled():
+        print("RQP_L17_HOST_EUID=%d" % os.geteuid())
+        print("RQP_L17_CAP_EFF=0x%x" % effective)
+        print("RQP_L17_CAPABILITIES=%r" % (holds,))
+        print("RQP_L17_PRIVILEGED_FIXTURE_REQUIRED=%s" % ("false" if feasible else "true"))
+        print("RQP_L17_MOUNT_OPERATIONS_PERFORMED=false")
+    if feasible:
+        # A genuinely privileged host still needs its own reviewed fixture
+        # authorization before any mount/unshare is executed.
+        pytest.fail("RQP-L17: this host holds CAP_SYS_ADMIN, so a real drift fixture "
+                    "would be feasible, but no privileged qualification-fixture "
+                    "authorization exists for this invocation")
+    assert feasible is False
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux native mechanics only")
+def test_rqp_l17_mountinfo_of_held_object_is_really_bound(capsys):
+    """The held mount is bound to a real /proc mount record, not a synthetic table."""
+    scope = None
+    try:
+        scope = _physical._NativeScope(os.path.dirname(os.path.abspath(__file__)))
+    except (OSError, _ScheduleArtifactError) as exc:
+        pytest.skip("MECHANICS_TEST_ONLY unavailable native ancestry: " + str(exc))
+    try:
+        mount_id = _linux._mount_id(scope.root_object.fd)
+        device = "%d:%d" % (os.major(scope.root_object.identity[0]),
+                            os.minor(scope.root_object.identity[0]))
+        assert scope.mount_description[0] == "ext4"
+        with capsys.disabled():
+            print("RQP_L17_REAL_MOUNT_ID=%d" % mount_id)
+            print("RQP_L17_REAL_DEVICE=%s" % device)
+            print("RQP_L17_REAL_MOUNT_OPTIONS=%r" % (scope.mount_description[1],))
+            print("RQP_L17_REAL_SUPER_OPTIONS=%r" % (scope.mount_description[2],))
+    finally:
+        scope.close()
