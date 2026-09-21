@@ -150,7 +150,7 @@ def test_linux_native_adapter_refuses_windows():
 # The tests below never change a production registry or repair an unsafe host.
 import ast
 import inspect
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import socket
 import sys
 
@@ -379,6 +379,209 @@ def test_windows_retained_object_facts_fail_closed_at_native_evidence(native_evi
     held.path, held.directory, held.current_sid, held.ancestor, held.handle = PureWindowsPath("Z:\\"), False, CURRENT, False, 123
     with pytest.raises(_ScheduleArtifactError, match="INVENTORY_MISMATCH|UNSAFE_PATH"):
         held._facts()
+
+
+VOLUME = "\\\\?\\Volume{00000000-0000-0000-0000-000000000001}\\"
+ARTIFACT = PureWindowsPath("Z:\\sched\\schedule_artifact_id=" + "a" * 64)
+
+
+@pytest.fixture
+def stream_facts(monkeypatch):
+    """Deterministic native evidence for the MEMBER_TREE_ZERO_STREAM policy.
+
+    Only _streams() carries the stream surface; every other native fact is held
+    constant so a reason code can be attributed to stream handling alone.
+    """
+    from market_vault.schedule_artifact import _windows as native
+    state = dict(streams=("::$DATA",), directory=0)
+
+    def info(handle, code, pointer, size):
+        assert handle == 123
+        kind = {18: native._IdInfo, 9: native._TagInfo, 1: native._StandardInfo}[code]
+        assert size == ctypes.sizeof(kind)
+        record = ctypes.cast(pointer, ctypes.POINTER(kind)).contents
+        if code == 18:
+            record.serial, record.identifier[0] = 17, 1
+        elif code == 9:
+            record.attributes, record.tag = (0x10 if state["directory"] else 0), 0
+        else:
+            record.directory = state["directory"]
+            record.delete_pending, record.links, record.size = 0, 1, 0
+        return 1
+
+    def volume_path(path, buffer, size):
+        assert path in (str(ARTIFACT), str(ARTIFACT / "schedule.json"))
+        buffer.value = "Z:\\"
+        return 1
+
+    def volume_name(mount, buffer, size):
+        assert mount.value == "Z:\\"
+        buffer.value = VOLUME
+        return 1
+
+    def volume_info(handle, name, name_size, serial, maximum, flags, fs, fs_size):
+        ctypes.cast(serial, ctypes.POINTER(native.w.DWORD)).contents.value = 17
+        ctypes.cast(flags, ctypes.POINTER(native.w.DWORD)).contents.value = 8
+        fs.value = "NTFS"
+        return 1
+
+    def handle_path(handle, flags):
+        if flags:
+            return VOLUME
+        # _facts compares this native DOS spelling against the held object path.
+        return "\\\\?\\" + str(ARTIFACT if state["directory"] else ARTIFACT / "schedule.json")
+
+    monkeypatch.setattr(native, "_info", info, raising=False)
+    monkeypatch.setattr(native, "_file_type", lambda handle: 1, raising=False)
+    monkeypatch.setattr(native, "_create", lambda *args: 123, raising=False)
+    monkeypatch.setattr(native, "_close", lambda handle: None, raising=False)
+    monkeypatch.setattr(native, "_native_volume_root", lambda handle: True, raising=False)
+    monkeypatch.setattr(native, "_handle_path", handle_path, raising=False)
+    monkeypatch.setattr(native, "_volume_path", volume_path, raising=False)
+    monkeypatch.setattr(native, "_volume_name", volume_name, raising=False)
+    monkeypatch.setattr(native, "_drive_type", lambda mount: 3, raising=False)
+    monkeypatch.setattr(native, "_volume_info", volume_info, raising=False)
+    monkeypatch.setattr(native, "_security_facts", lambda handle: (CURRENT, 0x1000, (), b"sd"))
+    monkeypatch.setattr(native, "_streams", lambda handle: tuple(state["streams"]))
+    return state
+
+
+def _held_native(stream_facts, ancestor, *, directory=False):
+    """Construct a native object whose fakes describe the requested object kind."""
+    stream_facts["directory"] = 1 if directory else 0
+    held = _windows._WindowsObject.__new__(_windows._WindowsObject)
+    held.path = ARTIFACT if directory else ARTIFACT / "schedule.json"
+    held.directory, held.current_sid = directory, CURRENT
+    held.ancestor, held.handle = ancestor, 123
+    return held
+
+
+def _capture_native(held):
+    held.identity, held.filesystem, held.security, held.size, held.streams = held._facts()
+    return held
+
+
+# ---------------------------------------------------------------------------
+# Stream-set policy: member/tree zero named streams, retained ancestry tolerated.
+# These are reader mechanics probes only; they are not platform qualification.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("directory", [True, False], ids=["artifact_directory", "fixed_member"])
+@pytest.mark.parametrize("streams", [
+    ("::$DATA", ":extra:$DATA"),                 # one extra named data stream
+    ("::$DATA", ":a:$DATA", ":b:$DATA"),         # multiple extra named data streams
+    (":only:$DATA",),                            # named stream without the default
+])
+def test_extra_named_stream_rejected_for_tree_and_members(stream_facts, directory, streams):
+    """T1/T2: an extra named stream is rejected for the artifact object either way."""
+    stream_facts["streams"] = streams
+    with pytest.raises(_ScheduleArtifactError, match="INVENTORY_MISMATCH"):
+        _held_native(stream_facts, False, directory=directory)._facts()
+
+
+@pytest.mark.parametrize("directory", [True, False], ids=["artifact_directory", "fixed_member"])
+@pytest.mark.parametrize("streams", [
+    (),                                          # empty native no-more-streams result
+    ("::$DATA",),                                # default unnamed stream only
+])
+def test_zero_named_stream_states_admitted_for_tree_and_members(stream_facts, directory, streams):
+    """A proved empty set and a default-only stream are both admitted."""
+    stream_facts["streams"] = streams
+    held = _capture_native(_held_native(stream_facts, False, directory=directory))
+    assert held.streams == tuple(sorted(streams))
+    held.recheck()
+
+
+@pytest.mark.parametrize("streams", [
+    (),
+    ("::$DATA",),
+    ("::$DATA", ":extra:$DATA"),
+    ("::$DATA", ":a:$DATA", ":b:$DATA"),
+    (":only:$DATA",),
+])
+def test_retained_ancestor_admits_any_named_stream_set(stream_facts, streams):
+    """T3: named streams above the artifact directory are not an admission failure."""
+    stream_facts["streams"] = streams
+    held = _capture_native(_held_native(stream_facts, True, directory=True))
+    assert held.streams == tuple(sorted(streams))
+    held.recheck()
+
+
+def test_ancestor_tolerance_does_not_leak_onto_artifact_directory(stream_facts):
+    """T10: admission is decided by the ancestor flag, never lexical parenthood."""
+    stream_facts["streams"] = ("::$DATA", ":extra:$DATA")
+    accepted = _capture_native(_held_native(stream_facts, True, directory=True))
+    with pytest.raises(_ScheduleArtifactError, match="INVENTORY_MISMATCH"):
+        _held_native(stream_facts, False, directory=True)._facts()
+    # The tolerated object still carries the exact observed set as evidence.
+    assert accepted.streams == ("::$DATA", ":extra:$DATA")
+    assert accepted.ancestor is True
+
+
+def test_ancestor_stream_set_stability_and_enumeration_order(stream_facts):
+    """T4/T5: the same set is stable, and enumeration order is not evidence."""
+    baseline = ("::$DATA", ":extra:$DATA")
+    stream_facts["streams"] = baseline
+    held = _capture_native(_held_native(stream_facts, True, directory=True))
+    for enumeration in [baseline,
+                        (":extra:$DATA", "::$DATA"),
+                        tuple(reversed(baseline))]:
+        stream_facts["streams"] = enumeration
+        held.recheck()
+    assert held.streams == baseline
+
+
+@pytest.mark.parametrize("later,label", [
+    (("::$DATA", ":extra:$DATA", ":added:$DATA"), "addition"),
+    (("::$DATA",), "removal"),
+    (("::$DATA", ":other:$DATA"), "replacement"),
+])
+def test_ancestor_stream_set_change_is_physical_drift(stream_facts, later, label):
+    """T6/T7/T8: addition, removal and replacement are PHYSICAL_DRIFT."""
+    stream_facts["directory"] = 1
+    stream_facts["streams"] = ("::$DATA", ":extra:$DATA")
+    held = _capture_native(_held_native(stream_facts, True, directory=True))
+    baseline = held.streams
+    assert baseline == ("::$DATA", ":extra:$DATA"), label
+    stream_facts["streams"] = later
+    with pytest.raises(_ScheduleArtifactError, match="PHYSICAL_DRIFT"):
+        held.recheck()
+    assert held.streams == baseline  # never rebaselined by an observation
+
+
+def test_detected_ancestor_stream_drift_is_not_rebaselined(stream_facts):
+    """T9: a drifted set never becomes a new accepted baseline."""
+    stream_facts["directory"] = 1
+    stream_facts["streams"] = ("::$DATA", ":extra:$DATA")
+    held = _capture_native(_held_native(stream_facts, True, directory=True))
+    baseline = held.streams
+    stream_facts["streams"] = ("::$DATA", ":drift:$DATA")
+    for attempt in range(3):
+        with pytest.raises(_ScheduleArtifactError, match="PHYSICAL_DRIFT"):
+            held.recheck()
+        assert held.streams == baseline
+    # Returning to the original set is still compared against the original baseline.
+    stream_facts["streams"] = ("::$DATA", ":extra:$DATA")
+    held.recheck()
+
+
+def test_ancestor_stream_evidence_is_compared_in_second_closure(stream_facts):
+    """The capture carrier compares the exact stream set, not a count or boolean."""
+    stream_facts["directory"] = 1
+    stream_facts["streams"] = ("::$DATA", ":extra:$DATA")
+    native_held = _capture_native(_held_native(stream_facts, True, directory=True))
+    captured = tuple(_physical._evidence(item) for item in [native_held])
+    assert captured[0].streams == ("::$DATA", ":extra:$DATA")
+    stream_facts["streams"] = ("::$DATA", ":extra:$DATA", ":added:$DATA")
+    assert tuple(_physical._evidence(item) for item in [native_held]) != captured
+
+
+def test_qualified_capability_registry_remains_empty():
+    """T11: reader mechanics evidence is not platform qualification."""
+    from market_vault.schedule_artifact import _platform
+    assert _platform._QUALIFIED_CAPABILITIES == frozenset()
+    assert len(_platform._QUALIFIED_CAPABILITIES) == 0
 
 
 @pytest.mark.parametrize("table", [

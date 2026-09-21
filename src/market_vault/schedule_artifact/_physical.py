@@ -164,10 +164,28 @@ class _ObjectEvidence:
     filesystem: tuple
     security: tuple
     size: int
+    # Exact observed stream set; non-Windows objects have no named-stream surface.
+    streams: tuple = ()
+
+
+def _canonical_streams(names):
+    """Stream evidence means SET equality, never an enumeration order.
+
+    Canonicalisation is applied at the evidence carrier, not only by the native
+    observer, so no producer's enumeration order can manufacture drift. Kept
+    local because _physical imports _windows lazily by design.
+    """
+    names = tuple(names)
+    return names if all(a <= b for a, b in zip(names, names[1:])) else tuple(sorted(names))
 
 
 def _evidence(held):
-    return _ObjectEvidence(held.identity, held.filesystem, held.security, held.size)
+    # Windows objects are re-observed natively so a stream-set change reaches the
+    # second closure; other objects keep their retained attributes.
+    facts = getattr(held, "evidence", None)
+    identity, filesystem, security, size, streams = facts() if facts else (
+        held.identity, held.filesystem, held.security, held.size, getattr(held, "streams", ()))
+    return _ObjectEvidence(identity, filesystem, security, size, _canonical_streams(streams))
 
 
 @dataclass(frozen=True, slots=True)

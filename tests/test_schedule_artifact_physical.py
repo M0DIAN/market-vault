@@ -149,6 +149,28 @@ def test_scope_drift_fails_closure(tmp_path):
             capture.recheck()
 
 
+def test_ancestry_stream_set_drift_fails_second_closure(tmp_path):
+    """The retained ancestry carrier compares the exact stream set, as set semantics."""
+    scope = _FakeScope()
+    held = _FakeObject(tmp_path, True, scope)
+    held.streams = ("::$DATA", ":extra:$DATA")
+    scope.handles = [held]
+    with p._capture_members(scope, _tree(tmp_path)) as capture:
+        assert capture.ancestry[0].streams == ("::$DATA", ":extra:$DATA")
+        # Same set, different enumeration order is not drift.
+        held.streams = (":extra:$DATA", "::$DATA")
+        capture.recheck()
+        # Addition, removal and replacement are drift.
+        for later in (("::$DATA", ":extra:$DATA", ":added:$DATA"),
+                      ("::$DATA",),
+                      ("::$DATA", ":other:$DATA")):
+            held.streams = later
+            with pytest.raises(_ScheduleArtifactError, match="PHYSICAL_DRIFT"):
+                capture.recheck()
+        held.streams = ("::$DATA", ":extra:$DATA")
+        capture.recheck()
+
+
 @pytest.mark.parametrize("member", _MEMBERS)
 def test_every_member_byte_drift_rejected(tmp_path, member):
     root = _tree(tmp_path)
