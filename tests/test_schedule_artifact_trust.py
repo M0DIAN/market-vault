@@ -29,7 +29,7 @@ def test_reader_owned_registries_are_empty_immutable_without_registration(regist
     (_trust._resolve_verifier_key, ("authority", "v1", "key"), "EVIDENCE_AUTHORITY_UNQUALIFIED"),
 ])
 def test_production_resolution_remains_fail_closed_after_structural_success(resolver, args, reason):
-    assert _validate(_bundle()).schedule_artifact_id
+    assert _validate(_bundle(), reseal=True).schedule_artifact_id
     with pytest.raises(_ScheduleArtifactError) as caught:
         resolver(*args)
     assert caught.value.reason_code == reason

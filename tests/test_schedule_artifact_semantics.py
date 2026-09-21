@@ -67,8 +67,12 @@ def test_complete_structure_reuses_logical_normal_early_close_and_dst_geometry(s
 def test_each_identity_and_hash_tamper_fails_at_its_own_boundary(name, keys, bad, reason, detail):
     bundle = _bundle()
     _at(bundle[name], keys[:-1])[keys[-1]] = bad
+    # These two manifest cases assert the manifest-first claim/identity boundary
+    # itself; re-sealing would erase the tamper they exist to prove.
+    reseal = not (name == "manifest.json"
+                  and (keys[0] == "schedule_artifact_id" or keys[:2] == ("content", "output_files")))
     with pytest.raises(_ScheduleArtifactError, match=detail) as caught:
-        _validate(bundle)
+        _validate(bundle, reseal=reseal)
     assert caught.value.reason_code == reason
 
 
@@ -84,7 +88,7 @@ def test_custody_every_duplicated_variable_field_is_bound(field):
     body[field] = ("0" * 64 if field.endswith("_hash") else _stamp(8) if field == "acquired_at"
                    else "2025-01-01" if field.endswith("_date") else "different")
     with pytest.raises(_ScheduleArtifactError, match="mismatched " + field) as caught:
-        _validate(bundle)
+        _validate(bundle, reseal=True)
     assert caught.value.reason_code == "SOURCE_SCOPE_MISMATCH"
 
 
@@ -104,7 +108,7 @@ def test_duplicate_declared_acquisition_rejected_even_with_distinct_clock_or_byt
     source["content"]["records"].append(duplicate)
     _seal_source(source)
     with pytest.raises(_ScheduleArtifactError, match="duplicate acquisition"):
-        _validate(bundle)
+        _validate(bundle, reseal=True)
 
 
 @pytest.mark.parametrize("fault", ["empty", "over_limit", "order", "scope"])
@@ -122,7 +126,7 @@ def test_source_count_order_and_request_scope(fault):
     expected = {"empty": "source-record count", "over_limit": "source-record count",
                 "order": "ordered and unique", "scope": "request range"}
     with pytest.raises(_ScheduleArtifactError, match=expected[fault]):
-        _validate(bundle)
+        _validate(bundle, reseal=True)
 
 
 @pytest.mark.parametrize("fault", [
@@ -167,7 +171,7 @@ def test_coverage_range_order_refs_finalization_and_completeness(fault):
         content["coverage_end_date"] = "2025-11-29"
         expected = "SOURCE_SCOPE_MISMATCH"
     with pytest.raises(_ScheduleArtifactError) as caught:
-        _validate(bundle)
+        _validate(bundle, reseal=True)
     assert caught.value.reason_code == expected
 
 
@@ -191,7 +195,7 @@ def test_daily_status_basis_geometry_and_required_claims(index, field, value, re
     bundle = _bundle()
     bundle["coverage_evidence.json"]["content"]["daily_evidence"][index][field] = value
     with pytest.raises(_ScheduleArtifactError) as caught:
-        _validate(bundle)
+        _validate(bundle, reseal=True)
     assert caught.value.reason_code == reason
 
 
@@ -200,11 +204,11 @@ def test_closed_geometry_claims_and_normal_day_early_profile_rejected():
     days = bundle["coverage_evidence.json"]["content"]["daily_evidence"]
     days[1]["geometry_claims"] = deepcopy(days[1]["status_claims"])
     with pytest.raises(_ScheduleArtifactError, match="CLOSED geometry claims"):
-        _validate(bundle)
+        _validate(bundle, reseal=True)
     bundle = _bundle("2025-11-26", 1)
     bundle["coverage_evidence.json"]["content"]["daily_evidence"][0]["session_profile"] = "QUALIFIED_EARLY_CLOSE"
     with pytest.raises(_ScheduleArtifactError, match="SESSION_GEOMETRY_UNQUALIFIED"):
-        _validate(bundle)
+        _validate(bundle, reseal=True)
 
 
 @pytest.mark.parametrize("fault", [
@@ -236,7 +240,7 @@ def test_receipt_list_and_every_clock_relation(fault):
     else:
         bundle["schedule.json"]["archive_available_at"] = _stamp(14)
     with pytest.raises(_ScheduleArtifactError) as caught:
-        _validate(bundle)
+        _validate(bundle, reseal=True)
     assert caught.value.reason_code == "ARCHIVE_BOUND_INVALID"
 
 
@@ -255,7 +259,7 @@ def test_schedule_daily_projection_must_match_exactly(fault):
     else:
         days[1]["day_status"] = "TRADING"
     with pytest.raises(_ScheduleArtifactError, match="daily projection"):
-        _validate(bundle)
+        _validate(bundle, reseal=True)
 
 
 @pytest.mark.parametrize("name,prefix", [
@@ -269,7 +273,7 @@ def test_each_repeated_evidence_identity_is_bound(name, prefix, field):
     bundle = _bundle()
     _at(bundle[name], prefix)[field] = "0" * 64
     with pytest.raises(_ScheduleArtifactError, match="mismatched " + field) as caught:
-        _validate(bundle)
+        _validate(bundle, reseal=True)
     assert caught.value.reason_code == "IDENTITY_MISMATCH"
 
 
@@ -279,6 +283,10 @@ def test_manifest_closed_inventory_sizes_and_repeated_facts(fault):
     content = bundle["manifest.json"]["content"]
     outputs = content["output_files"]
     reason = "INTEGRITY_MISMATCH"
+    # Closed inventory, role, order and size faults are the manifest claim check and
+    # must fail before logical parsing, so they are not re-sealed. The content-field
+    # faults below reach the schedule-dependent phase-two manifest bindings.
+    reseal = fault in ("count", "archive", "scope")
     if fault == "role":
         outputs[0]["role"] = "SCHEDULE"
     elif fault == "order":
@@ -299,7 +307,7 @@ def test_manifest_closed_inventory_sizes_and_repeated_facts(fault):
         content["coverage_end_date"] = "2025-11-29"
         reason = "LOGICAL_SCHEDULE_MISMATCH"
     with pytest.raises(_ScheduleArtifactError) as caught:
-        _validate(bundle)
+        _validate(bundle, reseal=reseal)
     assert caught.value.reason_code == reason
 
 
@@ -308,7 +316,7 @@ def test_hashes_cover_custody_signature_bytes_but_do_not_authenticate_them():
     evidence = bundle["source_snapshot.json"]["content"]["records"][0]["evidence"]
     evidence["custody_receipt"]["signature_base64"] = _b64(b"X" * 64)
     with pytest.raises(_ScheduleArtifactError, match="source record"):
-        _validate(bundle)
+        _validate(bundle, reseal=True)
 
 
 def test_uninterpreted_claim_index_has_no_invented_upper_bound_or_authority():
@@ -327,7 +335,7 @@ def test_uninterpreted_claim_index_has_no_invented_upper_bound_or_authority():
     }))
     # Pure checks must reach the manifest rather than pretend to resolve source claims.
     with pytest.raises(_ScheduleArtifactError, match="mismatched coverage_completion_evidence_id"):
-        _validate(bundle)
+        _validate(bundle, reseal=True)
 
 
 def test_semantic_limits_present_preallocation_reader_limits_deferred():
@@ -340,6 +348,6 @@ def test_semantic_limits_present_preallocation_reader_limits_deferred():
     # This API accepts existing bytes; it makes no before-allocation reader claim.
     import inspect
     assert tuple(inspect.signature(_validate_artifact_structure).parameters) == (
-        "source_snapshot_bytes", "coverage_evidence_bytes", "verification_receipt_bytes",
-        "schedule_bytes", "manifest_bytes",
+        "admitted", "source_snapshot_bytes", "coverage_evidence_bytes",
+        "verification_receipt_bytes", "schedule_bytes", "directory_name",
     )

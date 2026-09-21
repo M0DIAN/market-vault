@@ -5,7 +5,8 @@ from ..cross_day.schedule import TradingDayRecord, verify_trading_day_schedule
 from ._canonical import _canonical_json, _decode_base64
 from ._errors import _ScheduleArtifactError, _require
 from ._identity import _identity, _sha256
-from ._models import _MAX_CIVIL_DATES, _MAX_SOURCE_RECORDS, _SemanticFacts, _thaw
+from ._models import (_AdmittedManifest, _MAX_CIVIL_DATES, _MAX_SOURCE_RECORDS,
+                      _SemanticFacts, _thaw)
 from ._schema import _OUTPUT_ROLES, _date, _instant, _parse_document
 
 
@@ -188,15 +189,10 @@ def _schedule(schedule, snapshot, coverage, receipt, evidence_ids, archive):
     return declaration_hash, content_id, pin_id
 
 
-def _manifest(manifest, supplied, schedule, evidence_ids, content_id, pin_id):
+# Manifest-only claims; the schedule-dependent manifest bindings remain phase two.
+def _verify_manifest_claims(manifest, supplied):
+    """Verify the closed inventory and byte claims against physically captured bytes."""
     content = manifest["content"]
-    _same_fields(content, schedule, _SCOPE_FIELDS + ("archive_available_at",),
-                 "LOGICAL_SCHEDULE_MISMATCH")
-    _same_fields(content, evidence_ids, _EVIDENCE_IDS, "IDENTITY_MISMATCH")
-    _require(content["schedule_content_id"] == content_id and content["schedule_pin_id"] == pin_id,
-             "IDENTITY_MISMATCH", "logical schedule IDs")
-    _require(content["daily_record_count"] == len(schedule["daily_records"]),
-             "LOGICAL_SCHEDULE_MISMATCH", "daily count")
     outputs = content["output_files"]
     _require(tuple((item["path"], item["role"]) for item in outputs) == _OUTPUT_ROLES,
              "INTEGRITY_MISMATCH", "closed output inventory/order/roles")
@@ -209,24 +205,69 @@ def _manifest(manifest, supplied, schedule, evidence_ids, content_id, pin_id):
     return artifact_id
 
 
-def _validate_artifact_structure(*, source_snapshot_bytes, coverage_evidence_bytes,
-                                 verification_receipt_bytes, schedule_bytes, manifest_bytes):
-    """Return detached consistency facts, NEVER authenticated schedule authority.
+def _manifest(manifest, schedule, evidence_ids, content_id, pin_id, artifact_id):
+    content = manifest["content"]
+    _same_fields(content, schedule, _SCOPE_FIELDS + ("archive_available_at",),
+                 "LOGICAL_SCHEDULE_MISMATCH")
+    _same_fields(content, evidence_ids, _EVIDENCE_IDS, "IDENTITY_MISMATCH")
+    _require(content["schedule_content_id"] == content_id and content["schedule_pin_id"] == pin_id,
+             "IDENTITY_MISMATCH", "logical schedule IDs")
+    _require(content["daily_record_count"] == len(schedule["daily_records"]),
+             "LOGICAL_SCHEDULE_MISMATCH", "daily count")
+    return artifact_id
 
+
+_DOCUMENT_ORDER = (
+    "source_snapshot.json", "coverage_evidence.json", "verification_receipt.json",
+    "schedule.json", "manifest.json",
+)
+_DOCUMENT_INVENTORY = frozenset(_DOCUMENT_ORDER)
+# The literal directory prefix already admitted by _paths._FINAL.
+_ARTIFACT_DIRECTORY_PREFIX = "schedule_artifact_id="
+
+
+def _ordered_documents(documents):
+    return tuple(documents[name] for name in _DOCUMENT_ORDER)
+
+
+def _admit_manifest(*, manifest_bytes, supplied):
+    """Phase one: the only document parsed before manifest claims are verified."""
+    _require(type(supplied) is dict and frozenset(supplied) == _DOCUMENT_INVENTORY,
+             "INVENTORY_MISMATCH", "inventory of captured document bytes")
+    document = _parse_document("manifest.json", manifest_bytes)
+    manifest = _thaw(document.value)
+    artifact_id = _verify_manifest_claims(manifest, supplied)
+    return _AdmittedManifest(document, artifact_id, (document,))
+
+
+def _validate_artifact_structure(*, admitted, source_snapshot_bytes, coverage_evidence_bytes,
+                                 verification_receipt_bytes, schedule_bytes, directory_name):
+    """Phase two: parse the logical documents, only after manifest admission.
+
+    Return detached consistency facts, NEVER authenticated schedule authority.
     Receipts are only shape/clock checked; source claims and claim-index upper
     bounds require unavailable qualified parsers. No trust resolver is bypassed
     to implement an admission API, and no logical schedule escapes this function.
     """
+    _require(type(admitted) is _AdmittedManifest and type(directory_name) is str,
+             "IDENTITY_MISMATCH", "admitted manifest and native directory name required")
+    manifest = dict(admitted.document.value)
     supplied = {
         "source_snapshot.json": source_snapshot_bytes,
         "coverage_evidence.json": coverage_evidence_bytes,
         "verification_receipt.json": verification_receipt_bytes,
-        "schedule.json": schedule_bytes, "manifest.json": manifest_bytes,
+        "schedule.json": schedule_bytes, "manifest.json": admitted.document.canonical_bytes,
     }
-    documents = tuple(_parse_document(name, data) for name, data in supplied.items())
-    source, coverage, receipt, schedule, manifest = (
-        _thaw(document.value) for document in documents
-    )
+    # The recomputed identity, never the manifest field, binds to the admitted directory.
+    _require(directory_name[len(_ARTIFACT_DIRECTORY_PREFIX):] == admitted.artifact_id
+             and directory_name.startswith(_ARTIFACT_DIRECTORY_PREFIX),
+             "IDENTITY_MISMATCH", "artifact directory name")
+    documents = {name: _parse_document(name, data)
+                 for name, data in supplied.items() if name != "manifest.json"}
+    source = _thaw(documents["source_snapshot.json"].value)
+    coverage = _thaw(documents["coverage_evidence.json"].value)
+    receipt = _thaw(documents["verification_receipt.json"].value)
+    schedule = _thaw(documents["schedule.json"].value)
     acquired = _source(source)
     _coverage(coverage, source, acquired)
     evidence_ids = {
@@ -239,9 +280,11 @@ def _validate_artifact_structure(*, source_snapshot_bytes, coverage_evidence_byt
     declaration_hash, content_id, pin_id = _schedule(
         schedule, source, coverage, receipt, evidence_ids, archive,
     )
-    artifact_id = _manifest(manifest, supplied, schedule, evidence_ids, content_id, pin_id)
+    artifact_id = _manifest(manifest, schedule, evidence_ids, content_id, pin_id,
+                            admitted.artifact_id)
     return _SemanticFacts(
-        documents, source["source_snapshot_id"], source["source_content_hash"],
+        _ordered_documents(dict(documents, **{"manifest.json": admitted.document})),
+        source["source_snapshot_id"], source["source_content_hash"],
         coverage["coverage_completion_evidence_id"], declaration_hash,
         content_id, pin_id, artifact_id, archive,
     )

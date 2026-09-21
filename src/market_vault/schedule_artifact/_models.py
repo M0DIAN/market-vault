@@ -38,6 +38,15 @@ class _ParsedDocument:
 
 
 @dataclass(frozen=True, slots=True)
+class _AdmittedManifest:
+    """Phase-one manifest admission; not an admitting capability, only a result."""
+
+    document: _ParsedDocument
+    artifact_id: str
+    documents: tuple[_ParsedDocument, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class _SemanticFacts:
     """Consistency only: signatures, source claims and clocks are NOT authenticated."""
 
