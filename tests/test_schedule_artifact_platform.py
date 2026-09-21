@@ -69,70 +69,144 @@ def test_no_environment_settings_or_test_enrollment():
 # qualified by this file.
 # ---------------------------------------------------------------------------
 
-# A structurally exact L4 candidate: ten fields, the real recorded tags, and a
-# filesystem tuple of the same arity _linux/_windows actually produce.
-CANDIDATE = ("Linux", "6.8.0-generic", "x86_64", "2.39", ("cpython", "3.11.9", 64),
-             0xEF53, 0x0, 4096, (0, 0), 17, "l4-schedule-readonly-statx-ext4-v1")
+# The exact observed 10-field Linux L4 candidate.
+#
+# Field order and each field's producer are fixed by _platform._capability's Linux
+# branch, so this literal uses that exact order and arity:
+#   0 os.uname().release            5 scope.filesystem[0]  (ext4 superblock magic)
+#   1 os.uname().machine            6 scope.filesystem[2]  (statfs flags)
+#   2 glibc gnu_get_libc_version()  7 scope.filesystem[3]  (statfs block size)
+#   3 (implementation, version, 64) 8 _ext4_capability(...)  ("ext4", opts, super)
+#   4 scope.filesystem[0] == 0xef53 9 "l4-schedule-readonly-statx-ext4-v1"
+#
+# Every field except the version tag carries the L3-qualified host's recorded
+# measurements verbatim: kernel release, machine, glibc, interpreter triple, ext4
+# superblock magic, statfs flags and statfs block size. Field 8 is the L4
+# projection of _ext4_capability, which is a single 3-element tuple field --
+# "ext4" plus the already-sorted mount and super option tuples.
+# The historical 11-field literal was structurally impossible: it split that one
+# tuple field across three positions and used (0, 0) where L4 carries the real
+# statfs flags, so it could never equal a production tuple for any host.
+L4_LINUX_CANDIDATE = (
+    "Linux", "6.17.0-1022-azure", "x86_64", "2.39",
+    ("cpython", "3.11.16 (main, Aug 13 2026, 02:46:14) [GCC 13.3.0]", 64),
+    61267, 4128, 4096, ("ext4", ("relatime", "rw"),
+                        ("commit=30", "discard", "errors=remount-ro", "rw")),
+    "l4-schedule-readonly-statx-ext4-v1",
+)
 
 
-def _mutate(field):
-    """One field changed by exactly one observable step, preserving its type."""
-    if type(field) is str:
-        return field + "-mutated"
-    if type(field) is int:
-        return field + 1
-    if type(field) is tuple:
-        return field + ("mutated",)
-    raise AssertionError("unexpected candidate field type: " + repr(field))
+def _single_field_mutations(value, path=()):
+    """Recursively mutate every leaf field, exactly as the L3 pattern does.
+
+    Each mutation is one observable step that preserves the field's own type, so a
+    rejection is attributable to that field and not to a type error. Tuples also
+    receive an arity mutation at every nesting level.
+    """
+    if type(value) is tuple:
+        yield path, value + ("UNTESTED",)
+        for index, field in enumerate(value):
+            for changed_path, changed in _single_field_mutations(field, path + (index,)):
+                yield changed_path, value[:index] + (changed,) + value[index + 1:]
+    else:
+        yield path, value + 1 if type(value) is int else value + "-UNTESTED"
 
 
-def _mutations(candidate):
-    """Every single-field mutation of an exact tuple, plus shape mutations."""
-    cases = [("changed_field_%d" % index,
-              candidate[:index] + (_mutate(candidate[index]),) + candidate[index + 1:])
-             for index in range(len(candidate))]
-    cases += [
+def _shape_mutations(candidate):
+    """Shortened, extended, reordered, tag-mutated, L3 and unknown candidates."""
+    return [
         ("shortened", candidate[:-1]),
         ("extended", candidate + ("extra",)),
-        ("truncated_registry_tag", candidate[:-1] + (candidate[-1][:-1],)),
         ("reordered", (candidate[1], candidate[0]) + candidate[2:]),
+        ("tag_mutation", candidate[:-1] + (candidate[-1][:-1],)),
         ("empty", ()),
+        ("unknown", ("unknown",)),
+        ("unknown_multi", ("unknown",) * len(candidate)),
+        ("l3_tuples", _L3),
     ]
-    return cases
+
+
+L4_MUTATION_CASES = [
+    pytest.param(changed, id="leaf-" + ".".join(map(str, path)) if path else "arity-root")
+    for path, changed in _single_field_mutations(L4_LINUX_CANDIDATE)
+]
 
 
 @pytest.fixture
 def enrolled(monkeypatch):
-    """Temporary enrollment of exactly CANDIDATE; never production authority."""
+    """Temporary enrollment of exactly L4_LINUX_CANDIDATE; never production authority."""
+    assert type(_platform._QUALIFIED_CAPABILITIES) is frozenset
     assert _platform._QUALIFIED_CAPABILITIES == frozenset()
-    monkeypatch.setattr(_platform, "_QUALIFIED_CAPABILITIES", frozenset({CANDIDATE}))
-    monkeypatch.setattr(_platform, "_capability", lambda scope: CANDIDATE)
-    assert _platform._QUALIFIED_CAPABILITIES == frozenset({CANDIDATE})
-    return CANDIDATE
+    monkeypatch.setattr(_platform, "_QUALIFIED_CAPABILITIES", frozenset({L4_LINUX_CANDIDATE}))
+    monkeypatch.setattr(_platform, "_capability", lambda scope: L4_LINUX_CANDIDATE)
+    assert _platform._QUALIFIED_CAPABILITIES == frozenset({L4_LINUX_CANDIDATE})
+    try:
+        yield L4_LINUX_CANDIDATE
+    finally:
+        # Scoped temporary enrollment only: the patched registry is still the
+        # temporary one here, and monkeypatch removes it after this fixture.
+        assert _platform._QUALIFIED_CAPABILITIES == frozenset({L4_LINUX_CANDIDATE})
+
+
+def test_rqp_l19_candidate_is_the_exact_ten_field_linux_l4_shape():
+    """Pin the candidate's arity and per-field types to the production assembly."""
+    assert len(L4_LINUX_CANDIDATE) == 10
+    assert [type(field) for field in L4_LINUX_CANDIDATE] == [
+        str, str, str, str, tuple, int, int, int, tuple, str]
+    # Exactly two nested fields carry tuples: the interpreter triple and the
+    # _ext4_capability triple. Anything else means the literal drifted from the
+    # production field order rather than from a host measurement.
+    assert [index for index, field in enumerate(L4_LINUX_CANDIDATE) if type(field) is tuple] == [4, 8]
+    assert len(L4_LINUX_CANDIDATE[4]) == 3 and len(L4_LINUX_CANDIDATE[8]) == 3
+    assert L4_LINUX_CANDIDATE[5] == 0xEF53
+    assert type(L4_LINUX_CANDIDATE) is tuple and hash(L4_LINUX_CANDIDATE) is not None
 
 
 def test_rqp_l19_temporary_registry_admits_only_the_exact_candidate(enrolled):
-    assert _platform._require_qualified(object()) == CANDIDATE
-    assert _platform._QUALIFIED_CAPABILITIES == frozenset({CANDIDATE})
+    assert _platform._require_qualified(object()) == L4_LINUX_CANDIDATE
+    assert _platform._QUALIFIED_CAPABILITIES == frozenset({L4_LINUX_CANDIDATE})
 
 
-@pytest.mark.parametrize("label,tuple_", list(_mutations(CANDIDATE)),
-                         ids=lambda value: value if isinstance(value, str) else "")
-def test_rqp_l19_every_single_field_mutation_fails_closed(enrolled, monkeypatch, label, tuple_):
-    assert tuple_ != CANDIDATE, label
+@pytest.mark.parametrize("tuple_", L4_MUTATION_CASES)
+def test_rqp_l19_every_recursive_leaf_field_mutation_fails_closed(enrolled, monkeypatch, tuple_):
+    assert tuple_ != L4_LINUX_CANDIDATE
     monkeypatch.setattr(_platform, "_capability", lambda scope: tuple_)
     with pytest.raises(_ScheduleArtifactError, match="PLATFORM_UNQUALIFIED"):
         _platform._require_qualified(object())
 
 
-@pytest.mark.parametrize("tuple_", [(), ("unknown",), *_L3])
-def test_rqp_l19_unknown_short_and_l3_tuples_fail_closed(enrolled, monkeypatch, tuple_):
+@pytest.mark.parametrize("label,tuple_", _shape_mutations(L4_LINUX_CANDIDATE),
+                         ids=[label for label, _ in _shape_mutations(L4_LINUX_CANDIDATE)])
+def test_rqp_l19_shape_reorder_tag_l3_and_unknown_candidates_fail_closed(enrolled, monkeypatch, label, tuple_):
+    assert tuple_ != L4_LINUX_CANDIDATE, label
     monkeypatch.setattr(_platform, "_capability", lambda scope: tuple_)
     with pytest.raises(_ScheduleArtifactError, match="PLATFORM_UNQUALIFIED"):
         _platform._require_qualified(object())
+
+
+def test_rqp_l19_l3_tuples_are_admitted_only_by_their_own_registry(enrolled, monkeypatch):
+    """The historical L3 tuples stay unqualified under L4 admission.
+
+    L3 and L4 tuples share a length and a field order for the first nine fields, so
+    this is the case a length or prefix check would wrongly admit. The observed L3
+    tuples are proved to differ from the observed L4 candidate, and are then
+    rejected by exact membership.
+    """
+    l3_linux = next(tuple_ for tuple_ in _L3 if tuple_[0] == "Linux")
+    assert len(l3_linux) == len(L4_LINUX_CANDIDATE) == 10
+    assert l3_linux != L4_LINUX_CANDIDATE
+    assert l3_linux[:-1] == L4_LINUX_CANDIDATE[:-1], (
+        "only the version tag separates the observed L3 and L4 Linux tuples")
+    assert l3_linux[-1] == "statx-protected-ext4-v1"
+    for tuple_ in _L3:
+        assert tuple_ not in _platform._QUALIFIED_CAPABILITIES
+        monkeypatch.setattr(_platform, "_capability", lambda scope, value=tuple_: value)
+        with pytest.raises(_ScheduleArtifactError, match="PLATFORM_UNQUALIFIED"):
+            _platform._require_qualified(object())
 
 
 def test_rqp_l19_temporary_enrollment_never_survives_into_production():
+    assert type(_platform._QUALIFIED_CAPABILITIES) is frozenset
     assert _platform._QUALIFIED_CAPABILITIES == frozenset()
     assert len(_platform._QUALIFIED_CAPABILITIES) == 0
     assert _L3 & _platform._QUALIFIED_CAPABILITIES == frozenset()
