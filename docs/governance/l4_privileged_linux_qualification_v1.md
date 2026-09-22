@@ -527,7 +527,7 @@ declared authority may be broader than the effect that needs it.
 | E11 | mount-fixture | post-format image identity and superblock verification: `fstat` on the pinned E9 descriptor, then a read of the ext4 superblock magic at image offset 1080 from that same descriptor, then confirmation that no loop device is associated with the image; no mutation | the image file created and pinned by E9 and formatted by E10 | the pinned E9 descriptor itself: the verification reads the descriptor the helper already holds, so no role pathname is re-resolved and no new object reference is created; the offset is a frozen literal of the on-disk ext4 layout | no capability and no access authority: the descriptor is already held and the read uses the image's own owner-read bit from `IMAGE_ROLE_S_IMODE=0600`; no pathname is resolved (1.6) | E10 completed and the formatter descriptor is closed; the image identity is still the identity E9 pinned Canonical predecessors for this effect: E10. | the image inode identity, mode, owner and link count are unchanged by the format, the two bytes at image offset 1080 are `0x53 0xEF` (the little-endian ext4 superblock magic `0xEF53`), and the image is not yet loop-bound; this is the verification E14 depends on and it is deliberately separate from the loop configuration of E12, which claims no read-back The recorded result is consumed by E12. | terminal for the verification: the recorded result is consumed by E12 and E14; a non-matching magic or a changed inode identity is a hard refusal before the loop is configured, classified by the 5.7 origin taxonomy and never a pass Canonical successors for this effect: E12. |
 | E12 | mount-fixture | loop backing acquisition and configuration, descriptor-mediated: `open("/dev/loop-control", O_RDWR)` then `ioctl(LOOP_CTL_GET_FREE)` to select the device number, then `open("/dev/loopN", O_RDWR)` and `ioctl(LOOP_CONFIGURE)` with the pinned `IMAGE_ROLE` descriptor passed as the backing file descriptor; no pathname-based tool may perform this effect | the loop device taken by the helper and its association with the pinned image inode | the backing file descriptor is the one the helper itself opened and pinned on `IMAGE_ROLE` in E9, and the ioctl takes that descriptor as an argument, so the association is descriptor-mediated and the role path is never re-resolved between the pin and the association; the device number, the device path and the recorded backing `st_dev`/`st_ino` are helper-internal state | `CAP_SYS_ADMIN` for the privileged block-device control and configuration ioctls (capabilities(7): CAP_SYS_ADMIN includes "perform various privileged block-device ioctl(2) operations"); no access authority, because the effect consumes the already-pinned `IMAGE_ROLE` descriptor from E9 and the recorded device node path and re-resolves no role pathname under the invocation root (1.8.8); no ownership capability | E7 and E8 completed, so the private namespace exists and the mountpoint the loop-backed mount will target exists and is pinned; E9's image exists and is pinned and E10's format completed, with E11's verification passed; the image identity is re-derived equal to the pinned creation identity; `/dev/loop-control` and the loop device nodes exist and are recorded by the preflight (7); the image is a single-link regular file owned by the reviewed helper identity with owner-write set Canonical predecessors for this effect: E11. | exactly one recorded loop device is **configured** with the pinned image inode as its backing file, with the device number, device path and backing identity recorded as helper-internal state; this row deliberately claims no read-back verification, which is E13's own postcondition and not this row's The recorded result is consumed by E13. | released by E17 in the 10.4 order; `LOOP_BACKING_RESIDUE=false` is the closing control; a failed acquisition is a non-pass fixture-construction failure classified by the 5.7 origin taxonomy Canonical successors for this effect: E13. |
 | E13 | mount-fixture | loop-device access and read-back verification: `open(recorded_loop_device_path, O_RDWR)` then `ioctl(LOOP_GET_STATUS64)` to re-read the device's real backing identity; no mutation | the loop device recorded by E12 and its real association with the pinned image inode | the device number and device path are helper-internal state recorded at acquisition by E12, never caller text and never a fresh scan; the read-back is bound to the recorded device and compared against the pinned image `st_dev`/`st_ino` from E9 | `CAP_SYS_ADMIN` for the privileged block-device ioctls (capabilities(7)); no access authority is required, because the effect resolves no path below the invocation root (1.6) | E12 completed and the device number and path were recorded; the pinned image identity was recorded at E9 and verified at E11; this effect is ordered strictly after E12, and the mount that consumes its result is ordered strictly after it Canonical predecessors for this effect: E12. | the device's real backing identity is observed equal to the pinned image identity, so the mount source E14 will consume is the helper's own image rather than a substituted object; the verification result is the precondition E14 depends on The recorded result is consumed by E14. | terminal for the access: the descriptor is closed before E17's release, because a loop device with an open reference is not releasable; a mismatch is a hard refusal before the mount and a non-pass fixture-construction failure classified by the 5.7 origin taxonomy Canonical successors for this effect: E14. |
-| E14 | mount-fixture | mount fixture: `mount(recorded_loop_device_path, /proc/self/fd/<mount_target_fd>, "ext4", 0, NULL)` inside the private namespace, where `mount_target_fd = openat(validated_root_fd, MOUNTPOINT_ROLE, O_PATH\|O_DIRECTORY\|O_NOFOLLOW\|O_CLOEXEC)` was opened by the supervisor immediately before the call and stays open through its return | the private namespace's mount table entry, and the ext4 filesystem instance carried by the loop device, covering the helper-created `MOUNTPOINT_ROLE` directory | `mount(2)` is a pathname operation with no descriptor form (5.9), so the target is bound by supervisor-exclusive creation plus a last-component **target object descriptor that the syscall itself consumes** (5.9, 1.12.4): the supervisor opens `mount_target_fd = openat(validated_root_fd, MOUNTPOINT_ROLE, O_PATH\|O_DIRECTORY\|O_NOFOLLOW\|O_CLOEXEC)` itself, which resolves the frozen derived role name exactly once against its own 5.3-validated root descriptor with no intermediate component and no caller text, `fstat`s that descriptor and requires its `st_dev`/`st_ino` to equal the identity E8 recorded, and passes `/proc/self/fd/<mount_target_fd>` — a string with no role-name component at all — as the target, so the object that was validated is literally the object the call reaches and there is no interval in which the trailing name can be re-pointed; the descriptor stays open through the mount call's return and is closed immediately after it; the source is exactly the loop device path recorded by E12 in supervisor memory and verified by E13, and no caller-created source or target is ever accepted; the binding window is the interval between that revalidation and the call, in the same process that holds both descriptors, inside the private namespace | `CAP_SYS_ADMIN` (capabilities(7) lists mount(2) in that set), plus `CAP_DAC_READ_SEARCH` for the single search (execute) check the supervisor's own `openat(validated_root_fd, MOUNTPOINT_ROLE, O_PATH\|O_DIRECTORY\|O_NOFOLLOW\|O_CLOEXEC)` performs on the owner-only invocation root — that `openat` is the only resolution this effect performs and `mount(2)` itself now resolves only the magic link of the supervisor's own descriptor plus the recorded loop device path, so the traversal-only capability is the minimal one and `CAP_DAC_OVERRIDE` is not declared (1.10.4, 1.12.4); no ownership capability | E7, E8, E9, E10, E11 and E12 completed; **E13 completed and its loop read-back verification passed**, so the device about to be mounted is known to be the helper's own image; target identity re-derived equal to the identity E8 pinned; the device appears in no other private-namespace record (section 9 exactly-once rule); private propagation confirmed private before the mount Canonical predecessors for this effect: E13. | exactly one private-namespace record carries the new mount, with root field `/` and filesystem type `ext4`; the evidence process shares the namespace and can reach the mount-case file; the host mount table is unchanged | leaves `ATTACHED` through E15 (requested over the frozen control channel as `DETACH_REQUEST`) or through E16 on the `ATTACHED`-failure branch; the terminal states are the 10.4 `RELEASED` and `CLEANUP_FAILED` Canonical successors for this effect: E15, E16. |
+| E14 | mount-fixture | mount fixture: `mount(recorded_loop_device_path, /proc/self/fd/<mount_target_fd>, "ext4", 0, NULL)` inside the private namespace, where `mount_target_fd = openat(validated_root_fd, MOUNTPOINT_ROLE, O_PATH\|O_DIRECTORY\|O_NOFOLLOW\|O_CLOEXEC)` was opened by the supervisor immediately before the call and stays open through its return | the private namespace's mount table entry, and the ext4 filesystem instance carried by the loop device, covering the helper-created `MOUNTPOINT_ROLE` directory | `mount(2)` is a pathname operation with no descriptor form (5.9), so the target is bound by supervisor-exclusive creation plus a last-component **target object descriptor that the syscall itself consumes** (5.9, 1.12.4): the supervisor opens `mount_target_fd = openat(validated_root_fd, MOUNTPOINT_ROLE, O_PATH\|O_DIRECTORY\|O_NOFOLLOW\|O_CLOEXEC)` itself, which resolves the frozen derived role name exactly once against its own 5.3-validated root descriptor with no intermediate component and no caller text, `fstat`s that descriptor and requires its `st_dev`/`st_ino` to equal the identity E8 recorded (`E14_CLOSURE_ROW_TARGET_IDENTITY_SOURCE=E8_original_identity`, `E14_CLOSURE_ROW_COMPARE_TO_E8=true`, `E14_CLOSURE_ROW_COMPARE_TO_E18=false`), and passes `/proc/self/fd/<mount_target_fd>` — a string with no role-name component at all — as the target, so the object that was validated is literally the object the call reaches and there is no interval in which the trailing name can be re-pointed; the descriptor stays open through the mount call's return and is closed immediately after it; the source is exactly the loop device path recorded by E12 in supervisor memory and verified by E13, and no caller-created source or target is ever accepted; the binding window is the interval between that revalidation and the call, in the same process that holds both descriptors, inside the private namespace | `CAP_SYS_ADMIN` (capabilities(7) lists mount(2) in that set), plus `CAP_DAC_READ_SEARCH` for the single search (execute) check the supervisor's own `openat(validated_root_fd, MOUNTPOINT_ROLE, O_PATH\|O_DIRECTORY\|O_NOFOLLOW\|O_CLOEXEC)` performs on the owner-only invocation root — that `openat` is the only resolution this effect performs and `mount(2)` itself now resolves only the magic link of the supervisor's own descriptor plus the recorded loop device path, so the traversal-only capability is the minimal one and `CAP_DAC_OVERRIDE` is not declared (1.10.4, 1.12.4); no ownership capability | E7, E8, E9, E10, E11 and E12 completed; **E13 completed and its loop read-back verification passed**, so the device about to be mounted is known to be the helper's own image; target identity re-derived equal to the identity E8 pinned; the device appears in no other private-namespace record (section 9 exactly-once rule); private propagation confirmed private before the mount Canonical predecessors for this effect: E13. | exactly one private-namespace record carries the new mount, with root field `/` and filesystem type `ext4`; the evidence process shares the namespace and can reach the mount-case file; the host mount table is unchanged | leaves `ATTACHED` through E15 (requested over the frozen control channel as `DETACH_REQUEST`) or through E16 on the `ATTACHED`-failure branch; the terminal states are the 10.4 `RELEASED` and `CLEANUP_FAILED` Canonical successors for this effect: E15, E16. |
 | E15 | mount-fixture | `MNT_DETACH` detach: `umount2(/proc/self/fd/<E15_umount_target_fd>, MNT_DETACH)` inside the private namespace, performed by the persistent supervisor after the live evidence process sends `DETACH_REQUEST`, where `E15_umount_target_fd = openat(validated_root_fd, MOUNTPOINT_ROLE, O_PATH\|O_NOFOLLOW\|O_CLOEXEC)` was opened by the supervisor while the observed state was `ATTACHED` and stays open through the call's return | the fixture mount in the private namespace's mount table | the supervisor opens its own `E15_umount_target_fd` on the frozen derived role against its own 5.3-validated root descriptor **after `E14` attached the mount and while the observed state is `ATTACHED`**, `fstat`s that same descriptor — the one the call will consume — and requires its `st_dev`/`st_ino` to equal the **original `E18` mounted-root identity**, the pair the supervisor recorded when it acquired and proved `mounted_root_fd` and retained in its own memory, and explicitly **not** the covered-mountpoint pair `E8` recorded (`E15_CLOSURE_ROW_TARGET_IDENTITY_SOURCE=E18_mounted_root_identity`, `E15_CLOSURE_ROW_COMPARE_TO_E8=false`, `E15_CLOSURE_ROW_COMPARE_TO_E18=true`; `E15_TARGET_IDENTITY_SOURCE=E18_mounted_root_identity`, `E15_TARGET_COMPARE_TO_E8=false`, `E15_TARGET_COMPARE_TO_E18=true`), because this descriptor is opened after the mount and the frozen role name therefore resolves to the mounted ext4 root rather than to the covered `E8` inode, whose pair is exactly the value a correct target must not match (5.9, 1.13.1), and passes `/proc/self/fd/<E15_umount_target_fd>` — a string with no role-name component — as the target, so the validated object and the unmounted object are one reference and the trailing name is resolved exactly once, at open time (5.9, 1.12.4); the descriptor is closed after the call returns and is never reused after a successful detach, because the detached object is no longer reachable by that pathname; no caller path text participates in the target | `CAP_SYS_ADMIN` (umount(2): "Appropriate privilege (Linux: the `CAP_SYS_ADMIN` capability) is required to unmount filesystems"), plus `CAP_DAC_READ_SEARCH` for the single search (execute) check the supervisor's own `openat(validated_root_fd, MOUNTPOINT_ROLE, O_PATH\|O_NOFOLLOW\|O_CLOEXEC)` performs while resolving the frozen role name against the owner-only invocation root; the `umount2` call itself resolves only the magic link of the supervisor's own descriptor, writes no directory entry there, so the traversal-only capability is the minimal one and `CAP_DAC_OVERRIDE` is not declared for this effect (1.10.4, 1.12.4) | the mount state is observed `ATTACHED`; E21 completed, so the non-root evidence process holds its own retained descriptor on the mount-case fixture file and observed the real positive pre-drift production admission of section 8 step 2, because the detach is requested by that same live process, over the frozen control channel of 5.11, after the positive case (10.1) Canonical predecessors for this effect: E14, E21. | mount state `DETACHED_HELD`: the mount is immediately disconnected from the private mount table while the unmount completes when the mount ceases to be busy (umount(2) `MNT_DETACH`), so the retained evidence descriptor keeps the detached mount alive and a second unmount has no object to act on; the supervisor records the successful detach and returns `DETACH_COMPLETED` on the same channel The recorded result is consumed by E22. | advances to `MOUNT_GONE_LOOP_BOUND` when E22 completes and E23 closes the retained descriptor, and reaches `RELEASED` only when E17 has released the recorded loop association and the private mount table shows zero records for the held mount id (10.4); never retried blindly, and `SECOND_UNMOUNT_AFTER_MNT_DETACH_REQUIRED=false` Canonical successors for this effect: E22. |
 | E16 | mount-fixture | `ATTACHED`-state ordinary cleanup unmount: `umount2(/proc/self/fd/<E16_umount_target_fd>, 0)`, performed by the persistent supervisor only in the observed `ATTACHED` state, where `E16_umount_target_fd = openat(validated_root_fd, MOUNTPOINT_ROLE, O_PATH\|O_NOFOLLOW\|O_CLOEXEC)` was opened by the supervisor while the observed state was `ATTACHED` and stays open through the call's return | the fixture mount in the private namespace, still attached because no successful `MNT_DETACH` occurred | the supervisor opens its own `E16_umount_target_fd` on the frozen derived role against its own 5.3-validated root descriptor **after `E14` attached the mount and while the observed state is `ATTACHED`**, `fstat`s that same descriptor — the one the call will consume — and requires its `st_dev`/`st_ino` to equal the **original `E18` mounted-root identity**, the pair the supervisor recorded when it acquired and proved `mounted_root_fd` and retained in its own memory, and explicitly **not** the covered-mountpoint pair `E8` recorded (`E16_CLOSURE_ROW_TARGET_IDENTITY_SOURCE=E18_mounted_root_identity`, `E16_CLOSURE_ROW_COMPARE_TO_E8=false`, `E16_CLOSURE_ROW_COMPARE_TO_E18=true`; `E16_TARGET_IDENTITY_SOURCE=E18_mounted_root_identity`, `E16_TARGET_COMPARE_TO_E8=false`, `E16_TARGET_COMPARE_TO_E18=true`), because this descriptor is opened after the mount and the frozen role name therefore resolves to the mounted ext4 root rather than to the covered `E8` inode, whose pair is exactly the value a correct target must not match (5.9, 1.13.1), and passes `/proc/self/fd/<E16_umount_target_fd>` — a string with no role-name component — as the target, so the validated object and the unmounted object are one reference (5.9, 1.12.4); the descriptor is closed after the call returns; the state is measured before the effect and in any other state this effect does not occur at all | `CAP_SYS_ADMIN` (umount(2)), plus `CAP_DAC_READ_SEARCH` for the single search (execute) check the supervisor's own `openat(validated_root_fd, MOUNTPOINT_ROLE, O_PATH\|O_NOFOLLOW\|O_CLOEXEC)` performs while resolving the frozen role name against the owner-only invocation root through the supervisor's own validated descriptor — the `umount2` call itself resolves only the magic link of that same descriptor and writes no directory entry there, so the traversal-only capability is the minimal one (1.10.4, 1.12.4); no ownership capability | cleanup entered with the observed state `ATTACHED` — failure before drift, or the detach not attempted — and no successful `MNT_DETACH` has occurred; a retained evidence descriptor opened by E21 must have been released by E23 first, because a mount with an open reference is busy and an ordinary unmount of it would fail Canonical predecessors for this effect: E14, and E23 when a retained evidence descriptor is still open. | the fixture mount is gone from the private mount table and the loop backing becomes releasable; the state advances to exactly `MOUNT_GONE_LOOP_BOUND`, which is the only state E17 may be entered from (`E16_SUCCESS_POST_STATE=MOUNT_GONE_LOOP_BOUND`) The recorded result is consumed by E17. | followed by E17, E24 and E26 in that order; `PRIVATE_MOUNT_RESIDUE=false` is the closing control; a failure is `CLEANUP_FAILED`, visible and never retried blindly Canonical successors for this effect: E17. |
 | E17 | mount-fixture | loop backing release: the loop device is detached from the image by exactly one explicit `ioctl(loop_device_fd, LOOP_CLR_FD)` issued by the persistent supervisor on exactly the device recorded by E12, followed by an independent observation that the backing association is absent; the release request is always E17's own and is never delegated to an external tool that would re-resolve a device pathname of its own choosing, while the kernel's own destruction mechanism after that one request may be immediate or lazy/autoclear (1.12.5) | the loop device acquired by E12 and its association with the pinned image inode | the device number and the device path recorded at acquisition by E12, held as supervisor-internal state and never taken from caller text and never from a fresh `/dev/loop*` scan; the release opens exactly the recorded device path once, and requires the association to the E9-pinned backing identity to be **present before the request**: an absent pre-request association is a failed release rather than a completed one (`E17_PRE_REQUEST_ASSOCIATION_REQUIRED=true`, `E17_PRE_REQUEST_ABSENCE_IS_PASS=false`, `E17_PRE_REQUEST_ABSENCE_OUTCOME=CLEANUP_FAILED`), it issues the one ioctl, and then re-reads the device's real state until the association is observed absent rather than inferring it | `CAP_SYS_ADMIN` for privileged block-device ioctls (capabilities(7)); no access authority is required, because the release acts on the recorded loop device and resolves no path below the invocation root (1.6); no ownership capability and no ownership call | the observed state is exactly `MOUNT_GONE_LOOP_BOUND`, reached either through E23 after E15 and E22 in the successful path or through E16 in the `ATTACHED`-failure branch (`E17_REQUIRED_PRE_STATE=MOUNT_GONE_LOOP_BOUND`), because the mount itself carries an open reference on the loop device for as long as the mount exists; the retained evidence descriptor has been closed by E23 and the supervisor's own loop descriptor was already closed after E13's read-back, so the supervisor holds exactly one descriptor on the recorded device, the one it opens here, and the contract claims no exact open-reference count it cannot observe (`E17_LOOP_CLR_FD_REQUEST_COUNT=1`, `E17_BLIND_RETRY=false`, 1.12.5) Canonical predecessors for this effect: E23, and E16 in the `ATTACHED` branch. | no backing association with the E9-pinned image identity remains on the recorded device, and that absence is **observed**: the single request is never blindly retried, the kernel may complete the destruction immediately or lazily, and `LOOP_BACKING_RESIDUE=false` is recorded only after the recorded device reports no such association, which is what allows the lazy device destruction losetup(8) documents instead of assuming immediate removal; the state advances to exactly `RELEASED` (`E17_SUCCESS_POST_STATE=RELEASED`) The recorded result is consumed by E24. | terminal for the effect; E24 and E26 follow; a failure is `CLEANUP_FAILED` with the residual device recorded as diagnostics Canonical successors for this effect: E24. |
@@ -3004,7 +3004,10 @@ ELEVENTH_A3D_REVIEW_FAILED_TREE=b333c641b442d9e2830dceeb3dd8d78cb7469a60
 ELEVENTH_A3D_REVIEW_RESULT=FAIL
 ELEVENTH_A3D_REVIEW_FAILURE_CLASS=CONTRACT_IMPLEMENTABILITY_FAILURE
 A3D_TWELFTH_REMEDIATION_ROUND=12
-A3D_CURRENT_REMEDIATION_ROUND=12
+A3D_CURRENT_REMEDIATION_ROUND_AT_THAT_HEAD=12
+ROUND12_CURRENT_ROUND_TOKEN_IS_A_ROUND12_RECORD=true
+ROUND12_CURRENT_ROUND_TOKEN_IS_CURRENT=false
+ROUND12_CURRENT_ROUND_TOKEN_SUPERSEDED_BY_ROUND=15
 ROUND12_SCOPE=boundary_protocol_and_syscall_binding_closure
 ROUND11_CASE_DAG_ORDER_AND_AUTHORITY_MATRIX_ARE_DIRECTIONALLY_ACCEPTED=true
 ```
@@ -3042,6 +3045,8 @@ CURRENT_EFFECT_SELF_PRECONDITION_COUNT=0
 CURRENT_NORMATIVE_STALE_EFFECT_ID_COUNT=0
 CURRENT_NORMATIVE_REGION=closure_table_1_5,registry_1_9_1,round11_record_1_11,sections_2_to_20
 HISTORICAL_REGION=round_qualified_records_1_1_to_1_10_and_the_1_8_5_records_renamed_here
+ROUND11_REGION_DEFINITION_HARD_CODES_ROUND11_AS_THE_LATEST_CURRENT_RECORD=true
+ROUND11_REGION_DEFINITION_IS_A_ROUND11_RECORD=true
 ROUND11_ID_REPAIRS_IN_SECTION_5_9=3
 ROUND11_ID_REPAIRS_IN_THE_CLOSURE_TABLE=1
 ROUND11_HISTORICAL_TOKENS_ROUND_QUALIFIED=3
@@ -3061,6 +3066,24 @@ FORMATTER_PARENT_CLOSES_FD_BEFORE_E11=true
 SECTION_5_9_CURRENT_MISMATCH_COUNT=0
 SECTION_5_9_SELF_PRECONDITION_COUNT=0
 SECTION_5_9_PROBED_EXPLICITLY=true
+```
+
+The two region tokens inside that block are the round-11 record of the region as it
+was defined at the round-11 head, and they are kept as the record they are.
+`CURRENT_NORMATIVE_REGION` there hard-coded `round11_record_1_11` as the latest
+current remediation record, which was true at that head and false at every head
+after round 12; the current region definition is the one the round-15 record in 20
+states, and it is derived from the current round pointer rather than from a literal
+round number. The round-11 pair is historical and is not a claim about this head:
+
+```text
+ROUND11_REGION_DEFINITION_IS_A_ROUND11_RECORD=true
+ROUND11_REGION_DEFINITION_IS_CURRENT=false
+ROUND11_REGION_DEFINITION_HARD_CODES_ROUND11_AS_THE_LATEST_CURRENT_RECORD=true
+CURRENT_NORMATIVE_REGION_IS_STATED_IN_THE_ROUND15_RECORD=true
+CURRENT_NORMATIVE_REGION_HARD_CODES_A_ROUND_NUMBER=false
+SUPERSEDED_REGION_DEFINITIONS_ARE_KEPT_AS_HISTORY=true
+SUPERSEDED_REGION_DEFINITIONS_ARE_DELETED=false
 ```
 
 #### 1.11.2 One persistent privileged supervisor
@@ -6111,8 +6134,34 @@ object the call reaches:
   at open time, in the supervisor's own descriptor table against the root descriptor
   it validated under 5.3, and never again;
 - the object is proved before the call by `fstat`ing **that descriptor** and
-  requiring its real `st_dev`/`st_ino` to equal the pair `E8` recorded, which is
-  the comparison the syscall's own target satisfies by construction;
+  requiring its real `st_dev`/`st_ino` to equal the identity that *that effect's*
+  target is required to match, which the syscall's own target then satisfies by
+  construction, because the descriptor the `fstat` reads is the descriptor the
+  `/proc/self/fd/<...>` path names;
+- the identity each effect compares against is **not** one identity for all three,
+  because the three descriptors are opened at different points in the mount's
+  lifetime and the frozen role name does not resolve to the same object at those
+  points (1.13.1):
+  - `E14`'s descriptor is opened **before** the mount, so it resolves to the
+    directory `E8` created and pinned; `E14`'s comparison basis is the
+    **`E8` original covered-mountpoint identity**, the pair `E8` recorded when it
+    created and pinned `MOUNTPOINT_ROLE`
+    (`E14_TARGET_IDENTITY_SOURCE=E8_original_identity`,
+    `E14_TARGET_COMPARE_TO_E8=true`, `E14_TARGET_COMPARE_TO_E18=false`);
+  - `E15`'s and `E16`'s descriptors are each opened **after `E14` has attached the
+    mount and while the observed state is `ATTACHED`**, so the frozen role name
+    resolves to the mounted ext4 filesystem's root inode — the object `E18`
+    acquired and proved — and their comparison basis is the **original `E18`
+    mounted-root identity** the supervisor recorded on `mounted_root_fd` and
+    retained in its own memory
+    (`E15_TARGET_IDENTITY_SOURCE=E18_mounted_root_identity`,
+    `E16_TARGET_IDENTITY_SOURCE=E18_mounted_root_identity`,
+    `E15_TARGET_COMPARE_TO_E18=true`, `E16_TARGET_COMPARE_TO_E18=true`);
+  - the covered-mountpoint pair `E8` recorded is **explicitly not** the comparison
+    identity for `E15` or `E16` (`E15_TARGET_COMPARE_TO_E8=false`,
+    `E16_TARGET_COMPARE_TO_E8=false`), because once the mount covers that name the
+    `E8` inode is no longer what the name resolves to, so requiring an `E15` or
+    `E16` target to equal the `E8` pair would reject a correct target;
 - each descriptor stays open through its call's return and is closed immediately
   afterwards; `E14`'s is closed before `E18` runs, and the `E15`/`E16` descriptors
   are never reused for a second call;
@@ -6129,11 +6178,15 @@ The magic link is not *assumed* to bind the target by itself, and after round 12
 no longer has to: what makes the target the helper's own object is that the
 `fstat`ed descriptor **is** the descriptor the path names, so the comparison and
 the call consume one object reference and there is no interval between them in
-which a name could be re-pointed. A contract that instead validated the old `E8`
-pin and then passed a string containing the role name would be proving that the
-`E8` inode still existed somewhere while assuming that the name still resolved to
-it — an assumption about kernel resolution behaviour that this contract does not
-make, and which the round-12 target descriptors remove rather than bound:
+which a name could be re-pointed. A contract that instead validated a retained pin
+and then passed a string containing the role name would be proving that some other
+inode still existed somewhere while assuming that the name still resolved to it —
+an assumption about kernel resolution behaviour that this contract does not make,
+and which the round-12 target descriptors remove rather than bound. That argument
+is about the *carrier*, and it is the same argument for all three effects; it says
+nothing about *which* identity each descriptor is compared against, which the
+per-effect rule above fixes separately and which differs between `E14` and
+`E15`/`E16` (1.13.1):
 
 ```text
 MOUNT_SYSCALL_TARGET_MAGIC_LINK_RESOLUTION_IS_TRUSTED_BY_CONSTRUCTION=false
@@ -6146,6 +6199,43 @@ MOUNT_SYSCALL_TARGET_REVALIDATION_MISMATCH_IS_PASS=false
 MOUNT_SYSCALL_TARGET_REVALIDATION_MISMATCH_IS_REPAIRED_WITH_PRIVILEGE=false
 MOUNT_TARGET_PRECALL_IDENTITY_REVALIDATION_USES_THE_TARGET_FD=true
 MOUNT_TARGET_PRECALL_IDENTITY_REVALIDATION_USES_THE_E8_PIN=false
+```
+
+The carrier rule and the identity rule are separate, and round 15 states the
+identity rule per effect rather than collectively, because a collective statement
+that all three target descriptors are compared against the pair `E8` recorded is
+false under this model: `E14` opens before the mount and `E15`/`E16` open after it,
+so the same frozen role name resolves to a different object at those two points
+(1.13.1):
+
+```text
+TARGET_IDENTITY_RULE_IS_PER_EFFECT=true
+TARGET_IDENTITY_RULE_IS_COLLECTIVE_FOR_ALL_THREE_EFFECTS=false
+E14_TARGET_IDENTITY_SOURCE=E8_original_identity
+E14_TARGET_COMPARE_TO_E8=true
+E14_TARGET_COMPARE_TO_E18=false
+E14_TARGET_IDENTITY_IS_THE_COVERED_MOUNTPOINT_PAIR_E8_RECORDED=true
+E14_TARGET_DESCRIPTOR_IS_OPENED_BEFORE_THE_MOUNT=true
+E15_TARGET_IDENTITY_SOURCE=E18_mounted_root_identity
+E15_TARGET_COMPARE_TO_E8=false
+E15_TARGET_COMPARE_TO_E18=true
+E15_TARGET_IDENTITY_IS_THE_ORIGINAL_E18_MOUNTED_ROOT_PAIR=true
+E15_TARGET_IDENTITY_IS_NOT_E8=true
+E15_TARGET_DESCRIPTOR_IS_OPENED_AFTER_E14_WHILE_ATTACHED=true
+E16_TARGET_IDENTITY_SOURCE=E18_mounted_root_identity
+E16_TARGET_COMPARE_TO_E8=false
+E16_TARGET_COMPARE_TO_E18=true
+E16_TARGET_IDENTITY_IS_THE_ORIGINAL_E18_MOUNTED_ROOT_PAIR=true
+E16_TARGET_IDENTITY_IS_NOT_E8=true
+E16_TARGET_DESCRIPTOR_IS_OPENED_AFTER_E14_WHILE_ATTACHED=true
+MOUNTED_OBJECT_TARGET_IDENTITY_IS_E18_NOT_E8=true
+E14_E15_E16_TARGET_IDENTITY_SOURCES_ARE_NOT_ALL_E8=true
+CURRENT_5_9_E14_TARGET_IDENTITY=E8
+CURRENT_5_9_E15_TARGET_IDENTITY=E18
+CURRENT_5_9_E16_TARGET_IDENTITY=E18
+CURRENT_5_9_COLLECTIVE_ALL_COMPARE_TO_E8_CLAIM=false
+CURRENT_5_9_STALE_E8_PROSE_COUNT=0
+CURRENT_NORMATIVE_TARGET_IDENTITY_MISMATCH_COUNT=0
 ```
 
 ```text
@@ -6227,14 +6317,21 @@ reports the mounted filesystem's root inode rather than the directory the helper
 created, while a descriptor opened on the target before the mount keeps reporting
 the covered directory. Round 12 makes that descriptor the syscall's target rather
 than an optional verification aid: `mount_target_fd` is opened before the call,
-its `st_dev`/`st_ino` are compared against the identity `E8` recorded, the path
-`/proc/self/fd/<mount_target_fd>` is what the call receives, and the descriptor is
-closed after the call returns. The invariant is that the object the helper created
-is the object its own mount covers, and after this round that is not merely
-verified — it is the object the kernel was handed. If the target's identity cannot
-be established to still be the helper's own object, the fixture is a failed
-construction: the outcome is `QUALIFICATION_GAP` plus a design finding, cleanup
-follows 10.4, and it is never a pass.
+its `st_dev`/`st_ino` are compared against the `E8` original covered-mountpoint
+identity, the path `/proc/self/fd/<mount_target_fd>` is what the call receives,
+and the descriptor is closed after the call returns. The two unmount effects are
+subject to the same carrier rule and to a different identity rule, because their
+descriptors are opened at a different point in the mount's lifetime: `E15`'s and
+`E16`'s descriptors are each opened after the mount is attached and while the
+observed state is `ATTACHED`, so each is compared against the **original `E18`
+mounted-root identity** and explicitly **not** against the `E8`
+covered-mountpoint pair, which is the pair such a target must not match (1.13.1).
+The invariant is that the object the helper created is the object its own mount
+covers, and after round 12 that is not merely verified — it is the object the
+kernel was handed. If a target's identity cannot be established to still be the
+object that effect is required to bind, the fixture is a failed construction: the
+outcome is `QUALIFICATION_GAP` plus a design finding, cleanup follows 10.4, and it
+is never a pass.
 
 For `mount-fixture`, `FIXTURE_FILE_ROLE` is created by the helper inside its own
 newly created ext4 filesystem after the mount, and it is then pinned by a
@@ -7287,7 +7384,7 @@ observed host state:
 | helper access authority | the privileged child's real `CapEff` contains the declared helper access authority, and the invocation root it must reach is observed as owner-only (`S_IMODE == 0o700`, group, world and sticky bits clear) and owned by the ordinary runner, so that the access authority is required by a measured fact rather than assumed (1.5). The root itself is opened with `O_PATH`, which "requires no permissions on the object itself" (open(2)), so the root open adds no capability requirement of its own |
 | parent directory DAC state | `RUNNER_TEMP`'s real owner, real mode, real sticky-bit state and the resulting write-and-search DAC relation to the helper identity are observed and recorded, because the invocation-root removal of `E26` acts on that directory and not on the root; the relation is required to withhold direct write from the helper identity so that `E26`'s single declared authority is unconditional and minimal rather than conditional, and a shared-writable or sticky parent is a `QUALIFICATION_GAP` rather than a second authority outcome or an undeclared `CAP_FOWNER` (1.10.4) |
 | control channel | the frozen channel of 5.11 exists after the `fork`, exactly one endpoint is reachable in the evidence process, its descriptor number is recorded, and no supervisor-retained descriptor is inherited by that process (`EVIDENCE_PROCESS_INHERITS_NO_SUPERVISOR_RETAINED_DESCRIPTOR=true`, `CHILD_DESCRIPTOR_CLOSURE_BEFORE_EXECVE=true`) |
-| mount/umount target binding | each call receives `/proc/self/fd/<target_fd>` naming a descriptor the supervisor itself opened on the frozen derived role and compared against the E8 original producer identity, and `validated_root_fd` is observed open through E26 and closed after E26 completes (5.9, 1.12.4, 1.12.6) |
+| mount/umount target binding | each call receives `/proc/self/fd/<target_fd>` naming a descriptor the supervisor itself opened on the frozen derived role, and each descriptor is compared before its call against the identity that *that* effect binds: `E14` against the `E8` original covered-mountpoint pair, and `E15`/`E16` against the original `E18` mounted-root pair rather than the `E8` pair (5.9, 1.12.4, 1.13.1); `validated_root_fd` is observed open through E26 and closed after E26 completes (1.12.6) |
 | loop configuration and release | the `LOOP_CONFIGURE` input is recorded field by field, `LO_FLAGS_AUTOCLEAR=false` is observed as the initial configuration, `E17` issues exactly one `LOOP_CLR_FD` request with no blind retry, and the recorded device is observed to carry no backing association with the E9-pinned image identity before `LOOP_BACKING_RESIDUE=false` is recorded (5.9, 1.11.6, 1.12.5) |
 | kernel and tools | the required kernel interfaces and utilities exist and their versions are recorded, including `/dev/loop-control` and the loop device nodes required by the descriptor-mediated loop binding of 5.9 |
 | fixture root | the `RUNNER_TEMP` invocation root is usable, invocation-specific, and not a shared or persistent runner path; its parent is not sticky, so removal of a directory owned by the ordinary identity needs no `CAP_FOWNER`; and the freshly formatted ext4 root directory is observed with the owner and search facts 5.8.3 requires |
@@ -8535,6 +8632,54 @@ ROUND13_PROBE_READS_SECTIONS_5_8_5_9_5_11_10_1_AND_10_4_EXPLICITLY=true
 ROUND13_PROBE_IGNORES_THE_REMEDIATION_RECORD_AS_EVIDENCE=true
 ```
 
+The round-13 and round-14 suites read the canonical tokens and the closure-table
+cells, so each passed a head whose **current prose** carried a withdrawn identity
+rule and whose **current bare pointers** described an earlier round. The round-15
+obligations are the ones this head is measured against, and they read the actual
+current 5.9 prose and the actual bare pointer values from the head tree rather than
+a round-15 token block:
+
+```text
+ROUND15_STRUCTURAL_PROBE_OBLIGATIONS=2
+ROUND15_PROBE_01=the_current_5_9_prose_states_the_target_identity_rule_per_effect_and_carries_no_stale_collective_claim_that_all_three_target_descriptors_compare_against_the_pair_E8_recorded
+ROUND15_PROBE_02=the_bare_current_pointers_read_from_the_document_describe_the_head_they_are_read_at_the_current_remediation_round_the_exact_commit_parent_and_the_authoritative_Git_object
+ROUND15_PROBE_01_READS_THE_CURRENT_5_9_PROSE=true
+ROUND15_PROBE_01_READS_THE_CLOSURE_TABLE_ROWS_FOR_E14_E15_AND_E16=true
+ROUND15_PROBE_01_FAILS_ON_A_COLLECTIVE_ALL_COMPARE_TO_E8_CLAIM=true
+ROUND15_PROBE_01_FAILS_ON_AN_E15_OR_E16_COMPARISON_AGAINST_THE_E8_PAIR=true
+ROUND15_PROBE_02_READS_THE_BARE_A3D_CURRENT_REMEDIATION_ROUND_TOKEN=true
+ROUND15_PROBE_02_READS_THE_BARE_A3D_REMEDIATION_COMMIT_PARENT_TOKEN=true
+ROUND15_PROBE_02_READS_GIT_CURRENT_PARENT_TOKEN_VALUE=true
+ROUND15_PROBE_02_COMPARES_THE_PARENT_AGAINST_THE_EXACT_HEAD_PARENT=true
+ROUND15_PROBE_02_COMPARES_THE_POINTER_AGAINST_THE_AUTHORITATIVE_GIT_OBJECT=true
+ROUND15_PROBE_02_FAILS_ON_A_STALE_CURRENT_ROUND_POINTER=true
+ROUND15_PROBE_02_FAILS_ON_A_STALE_BARE_PARENT_POINTER=true
+ROUND15_PROBE_02_FAILS_ON_A_REGION_DEFINITION_THAT_HARD_CODES_AN_EARLIER_ROUND=true
+ROUND15_PROBE_REQUIRED_CHECKS=158
+ROUND15_PROBE_FAIL_COUNT=0
+ROUND15_PROBE_LIST_IS_THE_COMPLETENESS_EVIDENCE=false
+ROUND15_PROBE_RESULT=PASS
+ROUND15_PROBE_CHECK_COUNT=158
+ROUND15_PROBE_SELF_TEST=the_same_suite_rejects_the_failed_round14_text
+ROUND15_PROBE_SELF_TEST_INPUT_TREE=ef0080557377ef7728e9f4a62cc77520ccfcfbe3
+ROUND15_PROBE_SELF_TEST_CHECK_COUNT=156
+ROUND15_PROBE_SELF_TEST_FAIL_COUNT=35
+ROUND15_PROBE_SELF_TEST_EXIT=REJECTED
+ROUND15_PROBE_SELF_TEST_EXIT_CODE=1
+ROUND15_PROBE_SELF_TEST_FAILS_ON_BOTH_BLOCKER_CLASSES=true
+ROUND15_PROBE_SELF_TEST_FAILS_ON_THE_STALE_5_9_PROSE_CLASS=2
+ROUND15_PROBE_SELF_TEST_FAILS_ON_THE_CURRENT_POINTER_CLASS=29
+ROUND15_PROBE_SELF_TEST_FAILS_ON_THE_STALE_E8_PROSE=true
+ROUND15_PROBE_SELF_TEST_FAILS_ON_THE_STALE_CURRENT_POINTERS=true
+ROUND15_PROBE_SELF_TEST_COVERS_EVERY_ROUND15_FINDING=true
+ROUND15_PROBE_IMPLEMENTATION_EXECUTED=true
+ROUND15_PROBE_IMPLEMENTATION_IS_NOT_A_PRODUCT_ARTIFACT=true
+ROUND15_PROBE_IMPLEMENTATION_LIVES_OUTSIDE_THE_REPOSITORY=true
+ROUND15_PROBE_READS_THE_CONTRACT_FROM_THE_HEAD_TREE=true
+ROUND15_PROBE_READS_THE_CURRENT_5_9_REGION_AND_THE_POINTER_BLOCK_OF_20=true
+ROUND15_PROBE_IGNORES_THE_REMEDIATION_RECORD_AS_EVIDENCE=true
+```
+
 The document-wide duplicate-value probe is the one 20 records: a `KEY=VALUE`
 token whose key is a current-pointer key — that is, a key that is not an
 enumeration over one attribute, not a historical round-qualified record, and not
@@ -9726,18 +9871,20 @@ A3D_HISTORY_REWRITTEN=false
 ```
 
 The single bare `A3D_REMEDIATION_COMMIT_PARENT` token carries the direct parent of
-the head under remediation, which is the failed eleventh-review head, and that is what
-makes the failed head auditable from the branch tip. Round 7 introduced the token
-with its own parent, round 9 left it pointing at round 7, round 10 re-pointed it
-at the failed ninth-review head, and round 11 re-pointed it at the failed
-tenth-review head; round 12 re-points it at the failed eleventh-review head and
-keeps every earlier round's value under its own round-qualified name: the
-round-3 value is `A3D_REMEDIATION_ROUND_3_COMMIT_PARENT`, the round-5 value is
+the head under remediation, which is the failed fourteenth-review head, and that is
+what makes the failed head auditable from the branch tip. Round 7 introduced the
+token with its own parent, round 9 left it pointing at round 7, round 10 re-pointed
+it at the failed ninth-review head, round 11 re-pointed it at the failed
+tenth-review head, round 12 re-pointed it at the failed eleventh-review head, and
+round 15 re-points it at the failed fourteenth-review head. Every earlier round's
+value stays in this document under its own round-qualified name: the round-3 value
+is `A3D_REMEDIATION_ROUND_3_COMMIT_PARENT`, the round-5 value is
 `A3D_REMEDIATION_ROUND_5_COMMIT_PARENT`, the round-6 value is
 `A3D_REMEDIATION_ROUND_6_COMMIT_PARENT`, the round-7 value is
 `A3D_REMEDIATION_ROUND_7_COMMIT_PARENT`, the round-10 value is
-`A3D_REMEDIATION_ROUND_10_PARENT`, and the round-11 value is
-`A3D_REMEDIATION_ROUND_11_COMMIT_PARENT`. Round 6 left two bare
+`A3D_REMEDIATION_ROUND_10_PARENT`, the round-11 value is
+`A3D_REMEDIATION_ROUND_11_COMMIT_PARENT`, and the superseded round-12 current-parent
+value is `A3D_REMEDIATION_ROUND_12_COMMIT_PARENT`. Round 6 left two bare
 `A3D_REMEDIATION_COMMIT_PARENT` tokens carrying two different values at one head,
 which is the defect round 7 corrects; preserving the history under round-qualified
 keys is what corrects it without deleting either earlier fact.
@@ -9745,14 +9892,18 @@ keys is what corrects it without deleting either earlier fact.
 ```text
 GIT_CURRENT_PARENT_TOKEN=A3D_REMEDIATION_COMMIT_PARENT
 GIT_CURRENT_PARENT_TOKEN_OCCURRENCE_COUNT=1
-GIT_CURRENT_PARENT_TOKEN_VALUE=c70cd367c7f70478b283d472e9e06a42420d04ad
+GIT_CURRENT_PARENT_TOKEN_VALUE=6a0eb2c00f87f90dad5851c8f23d2e541bf11d3b
 GIT_CURRENT_PARENT_TOKEN_UNIQUE=true
-GIT_CURRENT_PARENT_TOKEN_IS_THE_ROUND_12_DIRECT_PARENT=true
+GIT_CURRENT_PARENT_TOKEN_IS_THE_ROUND_15_DIRECT_PARENT=true
 GIT_HISTORICAL_PARENT_TOKEN_ROUND_7=A3D_REMEDIATION_ROUND_7_COMMIT_PARENT
 GIT_HISTORICAL_PARENT_TOKEN_ROUND_10=A3D_REMEDIATION_ROUND_10_PARENT
 GIT_HISTORICAL_PARENT_TOKEN_ROUND_11=A3D_REMEDIATION_ROUND_11_COMMIT_PARENT
-A3D_REMEDIATION_COMMIT_PARENT=c70cd367c7f70478b283d472e9e06a42420d04ad
+GIT_HISTORICAL_PARENT_TOKEN_ROUND_12=A3D_REMEDIATION_ROUND_12_COMMIT_PARENT
+GIT_HISTORICAL_PARENT_TOKEN_ROUND_13=A3D_REMEDIATION_ROUND_13_PARENT
+GIT_HISTORICAL_PARENT_TOKEN_ROUND_14=A3D_REMEDIATION_ROUND_14_PARENT
+A3D_REMEDIATION_COMMIT_PARENT=6a0eb2c00f87f90dad5851c8f23d2e541bf11d3b
 A3D_REMEDIATION_ROUND_11_COMMIT_PARENT=9ee489c63c2efe6c63ce677c12608f5549affeda
+A3D_REMEDIATION_ROUND_12_COMMIT_PARENT=c70cd367c7f70478b283d472e9e06a42420d04ad
 GIT_HISTORICAL_PARENT_TOKENS_ARE_ROUND_QUALIFIED=true
 GIT_HISTORICAL_PARENT_TOKEN_ROUND_3=A3D_REMEDIATION_ROUND_3_COMMIT_PARENT
 GIT_HISTORICAL_PARENT_TOKEN_ROUND_5=A3D_REMEDIATION_ROUND_5_COMMIT_PARENT
@@ -9765,6 +9916,9 @@ GIT_TOKEN_DUPLICATE_VALUE_PROBE_ENUM_KEY_FORMS=MOUNT_STATE,reason_code,A3D_CURRE
 CURRENT_POINTER_KEY_DUPLICATE_VALUE_COUNT=0
 SUPERSEDED_CURRENT_POINTER_KEYS_RENAMED_WITH_A_ROUND_QUALIFIER=true
 ROUND5_AND_ROUND6_SUPERSEDED_KEYS_KEPT_AS_HISTORY=true
+ROUND12_SUPERSEDED_CURRENT_PARENT_VALUE_KEPT_AS_HISTORY=true
+ROUND12_SUPERSEDED_CURRENT_PARENT_VALUE_KEY=A3D_REMEDIATION_ROUND_12_COMMIT_PARENT
+ROUND12_SUPERSEDED_CURRENT_PARENT_VALUE_DELETED=false
 ```
 
 The probe's three permitted multi-value forms are the ones 15.1 names: an
@@ -9906,3 +10060,315 @@ conclusion, this workstream stops again and returns for fresh independent
 exact-head review. The eight round-12 findings are closed by statements in the
 current normative sections, and no earlier review's failure is cleared by this
 document's own claim.
+
+Round 15 preserves history the same way, with the failed round-14 head as its
+direct parent, pushed as a normal fast-forward onto the same branch. It is one
+commit, changing exactly one file, and it amends, rebases and force-pushes
+nothing. Rounds 13 and 14 are not given lifecycle records of their own by this
+round, because their commits are already on this branch and their facts are
+carried by the records that do exist — the round-13 record in 1.13, the round-14
+closure-row synchronization in the 1.5 `E15`/`E16` rows — and this round adds no
+second account of either. What this round adds is the failed review that triggers
+it and the two blockers it corrects.
+
+```text
+FOURTEENTH_A3D_REVIEW_FAILED_HEAD=6a0eb2c00f87f90dad5851c8f23d2e541bf11d3b
+FOURTEENTH_A3D_REVIEW_FAILED_TREE=ef0080557377ef7728e9f4a62cc77520ccfcfbe3
+FOURTEENTH_A3D_REVIEW_RESULT=FAIL
+FOURTEENTH_A3D_REVIEW_FAILURE=CONTRACT_IMPLEMENTABILITY_FAILURE
+FOURTEENTH_A3D_REVIEW_FAILURE_CLASS=CONTRACT_IMPLEMENTABILITY_FAILURE
+A3D_FIFTEENTH_REMEDIATION_ROUND=15
+A3D_CURRENT_REMEDIATION_ROUND_AT_THAT_HEAD=15
+A3D_CURRENT_REMEDIATION_ROUND=15
+A3D_HISTORY_ADDITIVE=true
+PRODUCT_FAILURE=false
+PRIVILEGED_EXECUTION_PERFORMED=false
+ROUND15_CURRENT_ROUND_POINTER_KEY=A3D_CURRENT_REMEDIATION_ROUND
+ROUND15_CURRENT_ROUND_POINTER_VALUE=15
+ROUND12_RECORD_BARE_CURRENT_ROUND_TOKEN_IS_A_ROUND12_RECORD=true
+ROUND12_RECORD_BARE_CURRENT_ROUND_TOKEN_IS_CURRENT=false
+SUPERSEDED_CURRENT_ROUND_VALUE=12
+SUPERSEDED_CURRENT_ROUND_VALUE_RETAINED=true
+SUPERSEDED_CURRENT_ROUND_VALUE_DELETED=false
+ROUND15_SCOPE=current_normative_prose_and_current_ledger_synchronization
+ROUND15_BLOCKING_FINDINGS_CLOSED=2
+ROUND15_BLOCKING_FINDINGS_OPEN=0
+ROUND15_EFFECT_IDS_RENUMBERED=false
+ROUND15_DAGS_CHANGED=false
+ROUND15_AUTHORITY_MATRIX_CHANGED=false
+ROUND15_PERSISTENT_SUPERVISOR_ARCHITECTURE_REPLACED=false
+ROUND15_CONTROL_CHANNEL_MECHANISM_REPLACED=false
+ROUND15_E17_SEMANTICS_CHANGED=false
+ROUND15_E2_E4_TO_E25_CONTINUITY_CHANGED=false
+ROUND15_E15_E16_CLOSURE_ROWS_CHANGED=false
+ROUND15_IMPLEMENTATION_FILES_CHANGED=0
+ROUND15_WORKFLOW_FILES_CHANGED=0
+```
+
+The fourteenth review passed round 14's own executable obligations and failed the
+round-14 head on two blockers, neither of which round 14's own suite could detect
+because both are statements that the suite's region definition treated as
+out of scope. Both are corrected in this round:
+
+| # | Finding | Corrected in |
+| --- | --- | --- |
+| 1 | The **current** 5.9 target-binding prose still stated collectively that the `E14`, `E15` and `E16` target descriptors are compared against the pair `E8` recorded. Round 13 corrected the canonical tokens and round 14 corrected the closure rows that carry the rule, but the normative prose that states the carrier rule in 5.9 still asserted the withdrawn round-12 identity rule, so the document carried two contradictory identity rules at one head. | 5.9, 20 |
+| 2 | The **current bare pointers** were stale: `A3D_CURRENT_REMEDIATION_ROUND` still read `12`, the single bare `A3D_REMEDIATION_COMMIT_PARENT` and `GIT_CURRENT_PARENT_TOKEN_VALUE` still carried the round-12 parent, and the region definition still hard-coded round 11 as the latest current remediation record, so no current pointer described the head it was read at. | 20, 15.1 |
+
+#### 1.14.1 The current 5.9 identity rule is per effect, and the carrier rule does not imply it
+
+The round-12 carrier rule and the round-13 identity rule are two different rules,
+and round 12 stated them together. Its prose said that the object is proved by
+`fstat`ing the descriptor and requiring its `st_dev`/`st_ino` to equal the pair
+`E8` recorded. That sentence is a correct statement about `E14` and a false
+statement about `E15` and `E16`, whose descriptors are opened after `E14` attached
+the mount and therefore resolve to the mounted ext4 root `E18` acquired and proved.
+The corrected 5.9 prose states the two rules separately: the carrier rule — one
+descriptor per effect, opened by the supervisor on the frozen derived role, proved
+by `fstat`ing the descriptor the `/proc/self/fd/<...>` path names, so validation and
+call consume one object reference — and the identity rule, which is per effect:
+
+- `E14`'s descriptor is opened **before** the mount, so it resolves to the directory
+  `E8` created and pinned, and the comparison basis is the **`E8` original
+  covered-mountpoint identity**;
+- `E15`'s and `E16`'s descriptors are each opened **after `E14` attached the mount,
+  while the observed state is `ATTACHED`**, so the frozen role name resolves to the
+  mounted ext4 filesystem's root inode, and the comparison basis is the **original
+  `E18` mounted-root identity**; the `E8` covered-mountpoint pair is explicitly
+  **not** their comparison identity, because it is the value a correct target for
+  those two effects must not match.
+
+The carrier semantics round 12 froze are preserved exactly: one last-component
+descriptor per effect, opened with
+`openat(validated_root_fd, MOUNTPOINT_ROLE, O_PATH|O_NOFOLLOW|O_CLOEXEC)` — plus
+`O_DIRECTORY` for `E14` — held open through its call's return, closed immediately
+afterwards, `/proc/self/fd/<...>` as the target string, one call per descriptor, and
+no reuse of a descriptor after a successful detach. Only the identity each
+descriptor is compared against is stated per effect instead of collectively.
+
+```text
+CURRENT_5_9_CARRIER_SEMANTICS_CHANGED=false
+CURRENT_5_9_ONE_DESCRIPTOR_PER_EFFECT=true
+CURRENT_5_9_TARGET_STRING_IS_FD_MEDIATED=true
+CURRENT_5_9_TARGET_STRING_CONTAINS_NO_ROLE_NAME_COMPONENT=true
+CURRENT_5_9_COLLECTIVE_IDENTITY_STATEMENT_PRESENT=false
+CURRENT_5_9_E14_TARGET_IDENTITY=E8
+CURRENT_5_9_E15_TARGET_IDENTITY=E18
+CURRENT_5_9_E16_TARGET_IDENTITY=E18
+CURRENT_5_9_COLLECTIVE_ALL_COMPARE_TO_E8_CLAIM=false
+CURRENT_5_9_STALE_E8_PROSE_COUNT=0
+CURRENT_NORMATIVE_TARGET_IDENTITY_MISMATCH_COUNT=0
+E14_TARGET_IDENTITY_SOURCE=E8_original_identity
+E14_TARGET_COMPARE_TO_E8=true
+E14_TARGET_COMPARE_TO_E18=false
+E15_TARGET_IDENTITY_SOURCE=E18_mounted_root_identity
+E16_TARGET_IDENTITY_SOURCE=E18_mounted_root_identity
+E15_TARGET_COMPARE_TO_E8=false
+E16_TARGET_COMPARE_TO_E8=false
+E15_TARGET_COMPARE_TO_E18=true
+E16_TARGET_COMPARE_TO_E18=true
+E15_UMOUNT_TARGET_FD_FSTAT_COMPARED_AGAINST=E18_original_mounted_root_identity
+E16_UMOUNT_TARGET_FD_FSTAT_COMPARED_AGAINST=E18_original_mounted_root_identity
+MOUNTED_OBJECT_TARGET_IDENTITY_IS_E18_NOT_E8=true
+E15_UMOUNT_TARGET_OBJECT_BINDING_CLOSED=true
+E16_UMOUNT_TARGET_OBJECT_BINDING_CLOSED=true
+```
+
+#### 1.14.2 The current/historical region and the current bare pointers
+
+A pointer is a fact about the head it is read at, so it cannot be left carrying an
+earlier round's value. The region definition of 15.1 hard-coded `round11_record_1_11`
+as the latest current remediation record, which was true at the round-11 head and
+false at every head after round 12; it is replaced by a definition that is derived
+from the current round pointer rather than from a literal round number. The same
+defect appears in the pointer block of 20, where
+`A3D_CURRENT_REMEDIATION_ROUND` read `12` and the single bare
+`A3D_REMEDIATION_COMMIT_PARENT` and `GIT_CURRENT_PARENT_TOKEN_VALUE` still carried
+the round-12 parent.
+
+This round re-points the bare pointers at the head under remediation and keeps the
+superseded round-12 parent value under a round-qualified key rather than deleting
+it, exactly as the earlier supersessions were kept:
+
+```text
+CURRENT_REMEDIATION_ROUND_MATCHES_HEAD=true
+CURRENT_PARENT_POINTER_MATCHES_DIRECT_PARENT=true
+CURRENT_POINTER_VALUE_MATCHES_REMOTE_TRUTH=true
+GIT_CURRENT_PARENT_TOKEN_UNIQUE=true
+CURRENT_POINTER_KEY_DUPLICATE_VALUE_COUNT=0
+CURRENT_NORMATIVE_REGION_STATED_AT_THIS_HEAD=closure_table_1_5,registry_1_9_1,records_1_11_through_1_13,current_remediation_record_1_14,sections_2_to_20
+CURRENT_NORMATIVE_REGION_ROUND=15
+CURRENT_NORMATIVE_REGION_CURRENT_RECORD=current_remediation_record_1_14
+CURRENT_NORMATIVE_REGION_IS_DERIVED_FROM_A3D_CURRENT_REMEDIATION_ROUND=true
+CURRENT_NORMATIVE_REGION_LATEST_CURRENT_RECORD_IS_ROUND_11=false
+CURRENT_NORMATIVE_REGION_LATEST_CURRENT_RECORD_IS_THE_CURRENT_ROUND=true
+CURRENT_NORMATIVE_REGION_ROUND_11_DEFINITION_IS_A_HISTORICAL_RECORD=true
+SUPERSEDED_CURRENT_PARENT_VALUE_KEY=A3D_REMEDIATION_ROUND_12_COMMIT_PARENT
+SUPERSEDED_CURRENT_PARENT_VALUE_RETAINED=true
+SUPERSEDED_CURRENT_PARENT_VALUE_DELETED=false
+A3D_REMEDIATION_ROUND_12_COMMIT_PARENT=c70cd367c7f70478b283d472e9e06a42420d04ad
+ROUND15_BARE_PARENT_TOKEN_IS_STATED_IN_SECTION_20=true
+ROUND15_BARE_PARENT_TOKEN_KEY=A3D_REMEDIATION_COMMIT_PARENT
+ROUND15_BARE_PARENT_TOKEN_VALUE=6a0eb2c00f87f90dad5851c8f23d2e541bf11d3b
+ROUND15_BARE_PARENT_TOKEN_STATED_ONCE_DOCUMENT_WIDE=true
+```
+
+The document-wide duplicate-value probe of 20 applies to the keys above exactly as
+it does to every other current-pointer key: `CURRENT_NORMATIVE_REGION_STATED_AT_THIS_HEAD`,
+`CURRENT_NORMATIVE_REGION_ROUND`, `CURRENT_NORMATIVE_REGION_CURRENT_RECORD` and the
+round-15 record's own keys are each stated once in this document, and the single
+bare `A3D_REMEDIATION_COMMIT_PARENT` token is stated once, in 20, so that no
+current-pointer key carries two values. The round-11 and round-12 bare tokens are
+earlier rounds' records, kept as history under the rule that superseded
+current-pointer values are renamed with a round qualifier rather than deleted.
+
+#### 1.14.3 Semantic probes for this head
+
+The round-14 suite parsed the closure-table cells but read neither the current 5.9
+prose nor the bare current pointers, which is why it passed a head whose prose still
+carried the withdrawn collective identity rule and whose pointers still described
+round 12. The round-15 suite reads the current 5.9 region and the bare current
+pointers from the head tree, compares the pointers against the current round, the
+exact commit parent and the authoritative Git object, and is listed in 15.1:
+
+```text
+ROUND15_PROBE_REQUIRED_CHECKS=158
+ROUND15_PROBE_FAIL_COUNT=0
+ROUND15_PROBE_RESULT=PASS
+ROUND15_PROBE_INPUT=this_document_at_the_round15_head
+ROUND15_PROBE_SELF_TEST_INPUT=this_document_at_the_failed_round14_head
+ROUND15_PROBE_SELF_TEST_ON_THE_FAILED_ROUND14_TEXT=REJECTED
+ROUND15_PROBE_SELF_TEST_CHECK_COUNT=156
+ROUND15_PROBE_SELF_TEST_FAIL_COUNT=35
+ROUND15_PROBE_SELF_TEST_FAILS_ON_THE_STALE_5_9_PROSE_CLASS=2
+ROUND15_PROBE_SELF_TEST_FAILS_ON_THE_CURRENT_POINTER_CLASS=29
+ROUND15_PROBE_SELF_TEST_FAILS_ON_THE_UNCHANGED_CORE_CLASS=4
+ROUND15_PROBE_SELF_TEST_FAILS_ON_THE_5_9_STALE_E8_PROSE=true
+ROUND15_PROBE_SELF_TEST_FAILS_ON_THE_CURRENT_ROUND_POINTER=true
+ROUND15_PROBE_SELF_TEST_FAILS_ON_THE_BARE_PARENT_POINTER=true
+ROUND15_PROBE_IS_EXECUTED_NOT_ASSERTED=true
+ROUND15_PROBE_READS_THE_CONTRACT_FROM_THE_HEAD_TREE=true
+ROUND15_PROBE_READS_THE_CURRENT_5_9_PROSE=true
+ROUND15_PROBE_READS_THE_BARE_CURRENT_POINTERS=true
+ROUND15_PROBE_IGNORES_THE_REMEDIATION_RECORD_AS_EVIDENCE=true
+ROUND15_PROBE_IMPLEMENTATION_EXECUTED=true
+ROUND15_PROBE_IMPLEMENTATION_IS_NOT_A_PRODUCT_ARTIFACT=true
+ROUND15_PROBE_IMPLEMENTATION_LIVES_OUTSIDE_THE_REPOSITORY=true
+CURRENT_5_9_STALE_E8_PROSE_COUNT=0
+CURRENT_NORMATIVE_TARGET_IDENTITY_MISMATCH_COUNT=0
+CURRENT_REMEDIATION_ROUND_MATCHES_HEAD=true
+CURRENT_PARENT_POINTER_MATCHES_DIRECT_PARENT=true
+CURRENT_POINTER_VALUE_MATCHES_REMOTE_TRUTH=true
+AUTHORITY_TABLE_EQUALS_AUTHORITY_E_TOKENS=true
+CASE_TOTAL_AUTHORITY_SET_EQUALS_EFFECT_AUTHORITY_UNION=true
+E15_CLOSURE_ROW_COMPARE_TO_E8=false
+E16_CLOSURE_ROW_COMPARE_TO_E8=false
+E15_CLOSURE_ROW_COMPARE_TO_E18=true
+E16_CLOSURE_ROW_COMPARE_TO_E18=true
+E17_PRE_REQUEST_ABSENCE_IS_PASS=false
+SUCCESSFUL_E17_LOOP_CLR_FD_REQUEST_COUNT=1
+E2_TO_E25_IDENTITY_CONTINUITY_CLOSED=true
+E4_TO_E25_IDENTITY_CONTINUITY_CLOSED=true
+REAL_MATERIAL_EFFECT_COUNT=26
+PLACEHOLDER_EFFECT_ROW_COUNT=0
+```
+
+#### 1.14.4 Round-15 re-evaluated implementability results
+
+This round renumbers no effect, rebuilds no DAG, changes no authority, replaces
+neither the persistent supervisor nor the control channel, keeps `E17`'s semantics
+and the `E2`/`E4` to `E25` continuity unchanged, and adds no effect. The six
+implementability results are re-derived against this head:
+
+```text
+ROUND15_RE_EVALUATED_RESULTS=PRIVILEGED_EFFECT_AUTHORITY_CLOSURE,CROSS_BOUNDARY_CONTINUITY_IMPLEMENTABILITY,NAMESPACE_LIFECYCLE_IMPLEMENTABILITY,CLEANUP_STATE_MACHINE_IMPLEMENTABILITY,PRIVILEGED_CHILD_INODE_CONFINEMENT_IMPLEMENTABILITY,A3_CONTRACT_IMPLEMENTABILITY
+ROUND15_RESULT_KEYS_ARE_THE_CURRENT_IMPLEMENTABILITY_RESULTS=true
+ROUND13_RESULT_KEYS_ARE_CURRENT=false
+ROUND13_RESULT_KEYS_ARE_HISTORICAL_RECORDS=true
+ROUND15_RESULT_BASIS_KEYS_ARE_ROUND_QUALIFIED=true
+PRIVILEGED_EFFECT_AUTHORITY_CLOSURE=PASS
+ROUND15_PRIVILEGED_EFFECT_AUTHORITY_CLOSURE_BASIS=every_one_of_E1_to_E26_still_has_a_declared_actor_in_every_case_that_scopes_it_and_this_round_changes_no_authority_precondition_or_postcondition
+CROSS_BOUNDARY_CONTINUITY_IMPLEMENTABILITY=PASS
+ROUND15_CROSS_BOUNDARY_CONTINUITY_IMPLEMENTABILITY_BASIS=the_E18_mounted_root_identity_carrier_lifetime_consumer_and_closing_checkpoint_are_unchanged_and_the_corrected_prose_names_the_same_carrier_as_the_canonical_tokens
+NAMESPACE_LIFECYCLE_IMPLEMENTABILITY=PASS
+ROUND15_NAMESPACE_LIFECYCLE_IMPLEMENTABILITY_BASIS=the_private_namespace_lifecycle_is_untouched_by_this_round
+CLEANUP_STATE_MACHINE_IMPLEMENTABILITY=PASS
+ROUND15_CLEANUP_STATE_MACHINE_IMPLEMENTABILITY_BASIS=the_four_mount_states_the_E16_ATTACHED_only_rule_and_the_E17_pre_request_association_rule_are_unchanged
+PRIVILEGED_CHILD_INODE_CONFINEMENT_IMPLEMENTABILITY=PASS
+ROUND15_PRIVILEGED_CHILD_INODE_CONFINEMENT_IMPLEMENTABILITY_BASIS=the_evidence_process_still_inherits_no_supervisor_descriptor_and_no_descriptor_carrier_rule_is_changed_by_this_round
+A3_CONTRACT_IMPLEMENTABILITY=PASS
+ROUND15_A3_CONTRACT_IMPLEMENTABILITY_BASIS=both_blockers_are_closed_by_statements_in_the_current_normative_region_and_the_current_bare_pointers_now_describe_the_head_they_are_read_at
+ROUND15_BLOCKING_FINDINGS_CLOSED=2
+ROUND15_BLOCKING_FINDINGS_OPEN=0
+EFFECT_COUNT_UNCHANGED_BY_ROUND15=true
+EFFECT_IDS_UNCHANGED_BY_ROUND15=true
+REAL_MATERIAL_EFFECT_COUNT=26
+PLACEHOLDER_EFFECT_ROW_COUNT=0
+PRIVILEGED_EFFECT_CLOSURE_ROWS=26
+AUTHORITY_TABLE_EQUALS_AUTHORITY_E_TOKENS=true
+CASE_TOTAL_AUTHORITY_SET_EQUALS_EFFECT_AUTHORITY_UNION=true
+REQUIRED_CAPABILITY_INVENTORY=CAP_CHOWN,CAP_DAC_OVERRIDE,CAP_DAC_READ_SEARCH,CAP_SETGID,CAP_SETUID,CAP_SYS_ADMIN
+REQUIRED_CAPABILITY_COUNT=6
+CAPABILITY_INVENTORY_UNCHANGED_BY_ROUND15=true
+AUTHORITY_MATRIX_UNCHANGED_BY_ROUND15=true
+CASE_TOTAL_AUTHORITY_SETS_UNCHANGED_BY_ROUND15=true
+CASE_DAGS_UNCHANGED_BY_ROUND15=true
+SUPERVISOR_ARCHITECTURE_UNCHANGED_BY_ROUND15=true
+CONTROL_CHANNEL_MECHANISM_UNCHANGED_BY_ROUND15=true
+```
+
+Round 15 preserves history the same way, with the failed round-14 head as its
+direct parent, pushed as a normal fast-forward onto the same branch. It is one
+commit, changing exactly one file, and it amends, rebases and force-pushes
+nothing:
+
+```text
+A3D_REMEDIATION_ROUND_15=15
+A3D_REMEDIATION_ROUND_15_PARENT=6a0eb2c00f87f90dad5851c8f23d2e541bf11d3b
+A3D_REMEDIATION_ROUND_15_PARENT_IS_FAILED_FOURTEENTH_REVIEW_HEAD=true
+A3D_REMEDIATION_ROUND_15_PARENT_TREE=ef0080557377ef7728e9f4a62cc77520ccfcfbe3
+A3D_REMEDIATION_ROUND_15_BRANCH=design/a3d-round4-mount-owner-predicate
+A3D_REMEDIATION_ROUND_15_COMMIT_COUNT=1
+A3D_REMEDIATION_ROUND_15_COMMIT_PARENT=6a0eb2c00f87f90dad5851c8f23d2e541bf11d3b
+A3D_ROUND15_CONTAINS_FAILED_FOURTEENTH_REVIEW_HEAD=true
+A3D_ROUND15_PARENTS_FAILED_FOURTEENTH_REVIEW_HEAD=true
+A3D_ROUND15_REWRITES_FAILED_FOURTEENTH_REVIEW_HEAD=false
+A3D_ROUND15_CHANGED_FILE_COUNT=1
+A3D_ROUND15_CHANGED_FILE=docs/governance/l4_privileged_linux_qualification_v1.md
+A3D_ROUND15_ADDED_FILE=none
+A3D_ROUND15_PUSH_IS_FAST_FORWARD=true
+A3D_ROUND15_PUSH_IS_NEW_BRANCH=false
+A3D_ROUND15_PUSH_FORCE=false
+A3D_ROUND15_AMEND_USED=false
+A3D_ROUND15_REBASE_USED=false
+A3D_ROUND15_RESET_USED=false
+A3D_ROUND15_EFFECT_IDS_RENUMBERED=false
+A3D_ROUND15_EFFECT_ID_SET_IS_E1_TO_E26=true
+A3D_ROUND15_PRIVILEGED_EXECUTION_PERFORMED=false
+A3D_ROUND15_IMPLEMENTATION_FILES_CHANGED=0
+A3D_ROUND15_WORKFLOW_CHANGES=0
+A3D_ROUND15_MERGE_AUTHORIZED=false
+A3D_ROUND15_READY_FOR_REVIEW=false
+A3D_ROUND15_EXPECTED_CI_TIER=docs_fast
+A3D_ROUND15_EXPECTED_CI_REASON=all_changes_in_docs_scope
+A3D_ROUND15_EXPECTED_FULL_MATRIX_REQUIRED=false
+TRANSPORT_DEGRADED=true
+A3D_ROUND15_REMOTE_TRUTH_CHANNELS=reviewed_confined_ssh_and_authoritative_remote_api
+A3D_ROUND15_REMOTE_MAIN_REQUIRED=cca7805305b0e369b27d7d29ba3611fb9afd7679
+A3D_ROUND15_REMOTE_HEAD_BEFORE_PUSH_REQUIRED=6a0eb2c00f87f90dad5851c8f23d2e541bf11d3b
+A3D_ROUND15_PREPUSH_RECHECK_REQUIRED=true
+A3D_ROUND15_PREPUSH_ABORTS_ON_A_MOVED_REMOTE_HEAD=true
+A3D_ROUND15_AMENDS=false
+A3D_ROUND15_REBASES=false
+A3D_ROUND15_FORCE_PUSHES=false
+A3D_ROUND15_FORCE_PUSH_PERFORMED=false
+A3D_ROUND15_MERGE_PERFORMED=false
+A3D_ROUND15_READY_PERFORMED=false
+A3D_ROUND15_STOPS_FOR_FRESH_INDEPENDENT_EXACT_HEAD_REVIEW=true
+```
+
+After the exact-head pull-request CI for the round-15 head reaches a terminal
+conclusion, this workstream stops again and returns for fresh independent
+exact-head review. Both round-15 blockers are closed by statements in the current
+normative region — the 5.9 identity rule and the 20 pointer block — and no earlier
+review's failure is cleared by this document's own claim.
