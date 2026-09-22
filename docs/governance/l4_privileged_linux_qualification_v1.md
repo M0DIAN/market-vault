@@ -60,13 +60,21 @@ The corrections are normative here, not commentary:
 - The existing `ci.yml` formal topology is preserved exactly; privileged
   qualification is a separate workflow.
 
-Scope of this PR is exactly one new document:
+Scope of this PR is exactly one document, and at this head that document is
+modified rather than added, because the exact base already contains it:
 
 ```text
-ADDED_FILE=docs/governance/l4_privileged_linux_qualification_v1.md
+CHANGED_FILE=docs/governance/l4_privileged_linux_qualification_v1.md
+CHANGED_FILE_COUNT=1
+ADDED_FILE=none
 FORBIDDEN_CHANGES=src/**,tests/**,scripts/**,.github/**,ci/**,AGENTS.md
 EXECUTABLE_PRIVILEGED_CODE=0
 ```
+
+An earlier round introduced this document as
+`ADDED_FILE=docs/governance/l4_privileged_linux_qualification_v1.md`. That
+remains the history of how the file arrived, and it is not a claim about this
+head.
 
 The design is the predecessor authority for a later implementation PR. That
 implementation PR's base commit MUST already contain this document unchanged.
@@ -116,9 +124,17 @@ then `8d791a8...` (second failed head) then `80549a2...` (third failed head)
 then this head. No failed head is rewritten, amended, rebased or force-pushed,
 and every failure record stays in this document. Each round is recorded by its
 own token — `A3D_FIRST_REMEDIATION_ROUND=1` in 1.1,
-`A3D_SECOND_REMEDIATION_ROUND=2` here, `A3D_THIRD_REMEDIATION_ROUND=3` and
-`A3D_CURRENT_REMEDIATION_ROUND=3` in 1.3 — so no round fact is stated twice with
-two different values.
+`A3D_SECOND_REMEDIATION_ROUND=2` here, `A3D_THIRD_REMEDIATION_ROUND=3` in 1.3,
+and `A3D_FOURTH_REMEDIATION_ROUND=4` with the current-round pointer in 1.4 — so
+no round fact is stated twice with two different values. That rule is now
+mechanically checkable and checked: the current-round pointer
+`A3D_CURRENT_REMEDIATION_ROUND` is stated exactly once in this document, in 1.4,
+because a pointer is a fact about the head it describes. Round 3's own record in
+1.3 keeps the same information under a head-qualified name,
+`A3D_CURRENT_REMEDIATION_ROUND_AT_THAT_HEAD=3`, so the round-3 fact is preserved
+while the bare pointer keeps one unambiguous value, exactly as round 2's
+`SECOND_A3D_REVIEW_FAILED_TREE` is history rather than a claim about the current
+tree.
 
 The second review's three findings are corrected in this document:
 
@@ -143,7 +159,7 @@ THIRD_A3D_REVIEW_FAILED_HEAD=80549a22e2770dd6392771207a3d43af4f9a7d84
 THIRD_A3D_REVIEW_FAILED_TREE=f08ad03745cf09763fff6269bcde10bd50324cce
 THIRD_A3D_REVIEW_FAILURE=CONTRACT_IMPLEMENTABILITY_FAILURE
 A3D_THIRD_REMEDIATION_ROUND=3
-A3D_CURRENT_REMEDIATION_ROUND=3
+A3D_CURRENT_REMEDIATION_ROUND_AT_THAT_HEAD=3
 A3D_HISTORY_ADDITIVE=true
 ```
 
@@ -174,6 +190,132 @@ privileged capability for the ownership fixture is `CAP_CHOWN` alone, and 7 now
 freezes that instead of a capability set that the helper's real operations do
 not need.
 
+### 1.4 Remediation round 4
+
+Rounds 1 to 3 were design-review rounds: an independent review of an exact head
+failed this contract, and the next head corrected it. Round 4 is not one of
+those. Round 4 was triggered by the implementation-preview workstream that
+followed the round-3 design, and what that preview exposed is the contradiction
+this round corrects.
+
+The failed implementation attempt is preserved as historical evidence. It is not
+amended, rewritten, rebased, force-pushed or continued as if the contract had
+passed, and this remediation does not build on it:
+
+```text
+A3_IMPLEMENTATION_ATTEMPT_1=FAIL
+FAILED_IMPLEMENTATION_HEAD=c55000f1d823ee8eb0d093d80f5312fb75a90d50
+FAILED_IMPLEMENTATION_HEAD_TREE=d7bfdad9a4eba7362946619c3f1db94ae3332f91
+FAILED_IMPLEMENTATION_BASE=cca7805305b0e369b27d7d29ba3611fb9afd7679
+FAILURE_CLASS=CONTRACT_IMPLEMENTABILITY_FAILURE
+A3D_ROUND4_FAILURE_CLASS=CONTRACT_IMPLEMENTABILITY_FAILURE
+PRODUCT_FAILURE=false
+PRIVILEGED_EXECUTION_PERFORMED=false
+REMOTE_PUSH_PERFORMED=false
+PR_CREATED=false
+A3D_FOURTH_REMEDIATION_ROUND=4
+A3D_CURRENT_REMEDIATION_ROUND=4
+A3D_HISTORY_ADDITIVE=true
+```
+
+`PRODUCT_FAILURE=false` is a measured statement rather than a convenience: the
+failed attempt changed five implementation files and no production file, ran no
+privileged command, was never pushed and produced no pull request, so no
+production behavior was involved in the failure and none is changed by this
+remediation. `CONTRACT_IMPLEMENTABILITY_FAILURE` is therefore a failure of this
+contract's text, not of the production guards it qualifies.
+
+"Never pushed" was verified rather than transcribed, because it bounds what this
+remediation may rely on: every remote ref tip was read from the authoritative
+remote, and every one of them was tested for ancestry of the failed head:
+
+```text
+A3D_ROUND4_FAILED_HEAD_REMOTE_PROBE=ls_remote_all_refs_plus_ancestry_check
+A3D_ROUND4_FAILED_HEAD_REMOTE_TIPS_CHECKED=381
+A3D_ROUND4_FAILED_HEAD_REMOTE_TIPS_CONTAINING_HEAD=0
+A3D_ROUND4_FAILED_HEAD_REMOTE_TIPS_EQUAL_TO_HEAD=0
+A3D_ROUND4_FAILED_HEAD_BRANCH_ABSENT_FROM_ORIGIN=true
+```
+
+**The contradiction the preview exposed.** 5.8 froze one pinned-child rule set
+whose ownership requirement was that the pinned child's pre-mutation owner be
+exactly the ordinary runner uid, and 5.9 simultaneously froze that for
+`mount-fixture` the `FIXTURE_FILE_ROLE` child is created by the privileged helper
+inside its own newly mounted ext4 filesystem after the mount, and that the mount
+case performs no ownership mutation. Those facts cannot all hold at once:
+
+- the mount-case file is created by the reviewed privileged identity, so its
+  owner is that identity and not the ordinary runner uid;
+- satisfying the frozen ownership requirement at the mount site would require a
+  privileged ownership mutation (`chown`/`fchown`) that 5.9 forbids for this case
+  and that `FILE_CHOWN_ONLY=true` confines to the single ownership fixture;
+- satisfying it instead by creating the file as the ordinary runner would
+  require a credential mutation inside a process that 5.10 requires to be the
+  reviewed privileged identity, which no part of this contract authorizes.
+
+The preview exposed this at exactly the site where it bites: the pinned-child
+requirements could be applied to the mount child only by not applying the
+ownership requirement — silently narrowing the frozen rule set at the one call
+site where it did not fit. A frozen rule set that an implementation must narrow
+in order to be implementable is not implementable, and the earlier wording that
+the mount child is "validated by the same rule set" (5.8) and "under the 5.8 rule
+set" (5.9) is withdrawn by this round.
+
+**Round-4 finding.**
+
+| # | Finding | Corrected in |
+| --- | --- | --- |
+| 1 | 5.8 froze the ownership-case owner predicate (`pre-mutation owner == ordinary runner uid`) as a property of one undivided pinned-child rule set, while 5.9 froze that the mount case's `FIXTURE_FILE_ROLE` is created by the privileged helper after the mount and that the mount case performs no ownership mutation. These facts cannot all hold without introducing an unauthorized ownership or credential mutation. | 5.8, 5.9, 15, 16, 17 |
+
+The correction is a split, not a relaxation: the pinned-child requirements are
+now one COMMON STRUCTURAL set that applies to every pinned fixture child, plus a
+case-specific ownership predicate — the ordinary-runner predicate for the two
+ownership cases, and `st_uid == 0` for the mount case. No common structural
+requirement is withdrawn, `FILE_CHOWN_ONLY=true` keeps its meaning, and the mount
+case gains no ownership effect.
+
+**Design-level privileged-effect closure, re-run for round 4.** One row per
+material effect. "Required authority" names what the effect itself needs; it is
+not a claim about what the real `sudo` mask happens to carry, which 7 records
+separately from the real mask:
+
+| Effect | Target object | Target binding | Required authority / capability | Preconditions | Postconditions | Cleanup / terminal transition |
+| --- | --- | --- | --- | --- | --- | --- |
+| `own-foreign` `fchown` | the pinned `FIXTURE_FILE_ROLE` inode | the child descriptor the helper opened for itself relative to its own validated root descriptor (5.8.1) | the reviewed privileged identity, plus `CAP_CHOWN` | the common structural requirements of 5.8.1 hold and `st_uid == ORDINARY_UID` | `st_uid == 65534` and `S_IMODE == 0644`, both re-derived on the same pinned descriptor | ownership change only; objects removed by the 10.4 cleanup state machine |
+| `own-root` `fchown` | same | same | same | the common structural requirements of 5.8.1 hold and `st_uid == ORDINARY_UID` | `st_uid == 0` and `S_IMODE == 0644`, both re-derived on the same pinned descriptor | same |
+| mount-case fixture file creation | the new regular file at `FIXTURE_FILE_ROLE` inside the helper's own freshly mounted ext4 filesystem | helper-exclusive creation under the helper's own mounted target, then pinned by a descriptor the helper opened itself (5.9) | no `CAP_CHOWN` requirement: creation assigns the creating process's own effective uid to the new file and performs no ownership call | the mount is attached, and a pre-existing object at the role name refuses rather than being adopted | owner `0`, exactly `0644`, single link, no symlink | removed with the fixture objects by the 10.4 cleanup state machine |
+| mount-case fixture file ownership mutation | none: this case has no ownership target | not applicable: no ownership call exists in this case | none | not applicable | `st_uid` remains `0`; any ownership change is a fixture-construction failure, never a repair | not applicable: no repair and no retry |
+| RQP-L17 mount effects (image creation, `mkfs`, loop acquisition, `mount`, `MNT_DETACH`) | the helper's own `IMAGE_ROLE` and `MOUNTPOINT_ROLE`, the loop backing device, and the private namespace mount table | helper-created objects plus the private mount namespace; `mount(2)` is a pathname operation (5.9) | separately frozen and unchanged: bound to `CAP_SYS_ADMIN` and to the real operations the preflight records (7). This round neither restates nor narrows that set | the 5.9 preconditions and the 5.10 credential validation hold | the private namespace's mount state, with pinned identities revalidated before use | the 10.4 cleanup state machine |
+
+```text
+OWN_FOREIGN_FCHOWN_REQUIRED_CAPABILITY=CAP_CHOWN
+OWN_ROOT_FCHOWN_REQUIRED_CAPABILITY=CAP_CHOWN
+OWNERSHIP_MUTATION_REQUIRED_CAPABILITY=CAP_CHOWN
+MOUNT_FIXTURE_FILE_CREATION_REQUIRES_CAP_CHOWN=false
+MOUNT_FIXTURE_FILE_CREATION_REQUIRES_OWNERSHIP_MUTATION=false
+MOUNT_FIXTURE_FILE_OWNERSHIP_MUTATION=false
+MOUNT_FIXTURE_FILE_OWNERSHIP_MUTATION_EFFECT=NONE
+CAP_FOWNER_REQUIRED=false
+CAP_DAC_OVERRIDE_REQUIRED=false
+RQP_L17_MOUNT_EFFECTS_REMAIN_CAP_SYS_ADMIN_BOUND=true
+PRIVILEGED_EFFECT_CLOSURE_RERUN_FOR_ROUND=4
+```
+
+`CAP_FOWNER_REQUIRED=false` and `CAP_DAC_OVERRIDE_REQUIRED=false` are scoped
+statements, and the scope is part of them: they are claims about the ownership
+effect and about the mount-case fixture file. Nothing in this contract changes a
+mode, so no FOWNER-governed attribute is touched anywhere, and no required
+outcome may be produced by, attributed to, or proved by an access bypass. They
+are NOT claims about the separately frozen RQP-L17 mount prerequisite set of 7,
+which stays bound to `CAP_SYS_ADMIN` and to the capabilities the real mount
+setup records, and which this round does not restate, widen or narrow.
+
+The closure holds in both directions at this head: every effect above has a
+declared authority, and no declared authority is broader than its effect. The
+mount case's fixture file adds an effect — exclusive creation — with no ownership
+authority attached to it, and the ownership cases keep exactly the `CAP_CHOWN`
+authority that their single `fchown` justifies.
+
 ## 2. Exact Base Record
 
 The checked-in Exact Base procedure
@@ -182,12 +324,28 @@ The checked-in Exact Base procedure
 `main`, fresh fetch of `origin` with prune and tags, `pull --ff-only`, then
 verification of `HEAD`, `origin/main`, tree and tracked worktree state.
 
+It was executed for the round-4 head against exact formal main:
+
 ```text
-BASE_MAIN_SHA=7fc8c1395d01bc4f612291fcdf098703a3866dcd
-BASE_MAIN_TREE=bc9ac7c846b271eb48adce1a0343276983e1008c
+BASE_MAIN_SHA=cca7805305b0e369b27d7d29ba3611fb9afd7679
+BASE_MAIN_TREE=00b779f9b9a07e57380a30dd05c6da6342a4a9b3
 BASE_HEAD_EQUALS_ORIGIN_MAIN=true
 TRACKED_WORKTREE_CLEAN=true
+A3D_ROUND4_BASE_IS_EXACT_FORMAL_MAIN=true
+A3D_ROUND4_BRANCHES_FROM_FAILED_IMPLEMENTATION_HEAD=false
 ```
+
+The round-3 record of the same procedure is retained as history and is not a
+claim about this head:
+
+```text
+ROUND3_BASE_MAIN_SHA=7fc8c1395d01bc4f612291fcdf098703a3866dcd
+ROUND3_BASE_MAIN_TREE=bc9ac7c846b271eb48adce1a0343276983e1008c
+```
+
+The round-4 branch is built from `cca7805305b0e369b27d7d29ba3611fb9afd7679`
+alone. `c55000f1d823ee8eb0d093d80f5312fb75a90d50` is recorded in 1.4 as a failed
+implementation attempt and is never this branch's parent or base.
 
 Transport record. The HTTPS transport on this host fails with
 `schannel: AcquireCredentialsHandle failed: SEC_E_NO_CREDENTIALS
@@ -211,6 +369,17 @@ established through the reviewed confined SSH transport:
   modified;
 - no `GIT_SSH_COMMAND`, no `git remote set-url`, no persistent git
   configuration mutation, no host-key relaxation.
+
+The same reviewed transport was re-established for the round-4 head, because the
+HTTPS failure is a property of this host rather than of one round:
+
+```text
+A3D_ROUND4_TRANSPORT=reviewed_confined_ssh
+A3D_ROUND4_TRANSPORT_IS_HTTPS=false
+A3D_ROUND4_REMOTE_MAIN_READ_FROM_TRANSPORT=cca7805305b0e369b27d7d29ba3611fb9afd7679
+A3D_ROUND4_REMOTE_MAIN_MATCHES_COMMAND_LOCAL_FETCH=true
+A3D_ROUND4_REMOTE_WRITE_CHANNEL=reviewed_confined_ssh
+```
 
 Governance note. An earlier discovery invocation reached the same state with
 `fetch` plus `merge --ff-only` after transport recovery. That substitution is
@@ -887,42 +1056,96 @@ child_fd = openat(validated_root_fd, FIXTURE_FILE_ROLE, O_RDONLY | O_NOFOLLOW | 
 
 `O_NOFOLLOW` makes a symlink at the role name an open failure rather than a
 redirection, and opening relative to the helper's own descriptor means the
-caller's string is never re-resolved. The helper then performs its own `fstat`
-on `child_fd` and MUST require, before the privileged mutation:
+caller's string is never re-resolved.
+
+The pinned-child requirements are frozen in two layers, because this contract
+pins one role name in three cases and those cases do not share an ownership
+history. Round 4 froze the split; the earlier single undivided rule set is
+withdrawn, because its ownership requirement was not implementable for the mount
+case (1.4).
+
+#### 5.8.1 Common structural requirements
+
+The helper performs its own `fstat` on `child_fd` and MUST require every
+requirement in this subsection for every case that pins a `FIXTURE_FILE_ROLE`
+child — `own-foreign`, `own-root` and `mount-fixture` alike — before that child
+is used, mutated or reported on:
 
 | Required property of the pinned child | Frozen requirement |
 | --- | --- |
 | object type | regular file (`S_ISREG`): never a directory, device, socket, fifo or symlink |
-| link state | `st_nlink == 1` |
-| pre-mutation owner | exactly the ordinary runner uid |
-| pre-mutation mode | exactly the frozen initial mode `FIXTURE_FILE_INITIAL_MODE=0644`, hence `mode & 0o022 == 0`; established by the ordinary process before the helper was invoked (4.1) and never repaired by the helper |
+| link state | `st_nlink == 1`; a hardlinked child is a refusal, never something to adopt |
+| exact mode | exactly the frozen initial mode `FIXTURE_FILE_INITIAL_MODE=0644`, hence `mode & 0o022 == 0` |
+| group and world write | clear: `st_mode & 0o022 == 0`, so the mutation policy at L111-L113 cannot fire on this child |
 | permission bits | no setuid, setgid or sticky bit set: the helper asserts `S_ISUID`, `S_ISGID` and `S_ISVTX` all clear explicitly, instead of relying on the exact-mode equality alone |
-| identity | nonzero `st_dev` and nonzero `st_ino` |
-| role scope | the one fixed derived role for the selected case and nothing else; the helper acquires no other child for an ownership action |
+| device identity | `st_dev != 0` |
+| inode identity | `st_ino != 0` |
+| role scope | the one fixed derived role `FIXTURE_FILE_ROLE` for the selected case and nothing else |
+| symlink | none: a symlink at the role name cannot be opened at all under `O_NOFOLLOW` |
+| hardlink | none: `st_nlink != 1` is refused before the child is used |
+| acquisition | helper-local descriptor acquisition: the helper opens the descriptor itself, relative to its own validated root descriptor, after its own root validation (5.3) |
+| caller input | no caller-supplied child path participates: the role name is derived from the frozen case table of 5.2 and is never accepted from, or re-resolved from, caller text |
+
+```text
+COMMON_STRUCTURAL_REQUIREMENTS_SCOPE=own-foreign,own-root,mount-fixture
+COMMON_STRUCTURAL_REGULAR_FILE_REQUIRED=true
+COMMON_STRUCTURAL_NLINK_REQUIRED=1
+COMMON_STRUCTURAL_S_IMODE_REQUIRED=0644
+COMMON_STRUCTURAL_GROUP_WORLD_WRITE_CLEAR=true
+COMMON_STRUCTURAL_SETUID_SETGID_STICKY_CLEAR=true
+COMMON_STRUCTURAL_ST_DEV_NONZERO=true
+COMMON_STRUCTURAL_ST_INO_NONZERO=true
+COMMON_STRUCTURAL_ROLE=fixed_derived_FIXTURE_FILE_ROLE
+COMMON_STRUCTURAL_SYMLINK_ALLOWED=false
+COMMON_STRUCTURAL_HARDLINK_ALLOWED=false
+COMMON_STRUCTURAL_ACQUISITION=helper_local_descriptor
+COMMON_STRUCTURAL_CALLER_SUPPLIED_CHILD_PATH_ALLOWED=false
+```
 
 A hardlinked child (`st_nlink != 1`) is rejected BEFORE any privileged mutation,
 and a symlinked child cannot be opened at all under `O_NOFOLLOW`. Both are hard
 refusals with a non-pass outcome, and neither may be repaired by deleting,
 replacing or re-creating the object. If the role name does not exist, or exists
-as an unexpected object, the helper refuses as well: for the ownership cases the
-fixture file is created by the ordinary runner before the helper runs and the
-helper never creates it.
+as an unexpected object, the helper refuses as well. Those refusals are the
+common outcome for all three cases; the ownership predicate that follows is
+case-specific and is not part of them.
+
+#### 5.8.2 Ownership-mutation case requirements
+
+The ownership predicate is the case-specific half of the model, and it applies
+to exactly two cases:
+
+```text
+OWNERSHIP_PREDICATE_SCOPE=own-foreign,own-root
+FIXTURE_FILE_PREMUTATION_OWNER=ordinary_runner_uid
+FIXTURE_FILE_PREMUTATION_OWNER_SCOPE=own-foreign,own-root
+```
+
+For `own-foreign` and `own-root`, and only for those cases, the fixture file is
+created by the ordinary runner before the helper is invoked, and the helper MUST
+additionally require, before the privileged mutation:
+
+| Required property of the pinned ownership child | Frozen requirement |
+| --- | --- |
+| pre-mutation owner | exactly the ordinary runner uid: `st_uid == ORDINARY_UID` |
+| mode provenance | exactly `0644`, established by the ordinary non-root process before the helper was invoked (4.1) and never repaired by the helper |
 
 The privileged ownership mutation then operates on the pinned child descriptor,
-never on a pathname, and it is a single ownership call:
+never on a pathname, and it is exactly one ownership call:
 
 ```text
 fchown(child_fd, derived_target_uid, observed_gid)
 ```
 
-There is no `fchmod` in the helper, before or after the `fchown`. `0644` is
-established by the ordinary non-root process at creation (4.1), before the
-helper is invoked, so the helper has no reason to set a mode and no authority to
-impose one: `FILE_CHOWN_ONLY=true` in 4.2 means the helper's entire privileged
-effect is the ownership change. An earlier version of this contract froze a
-`fchmod(child_fd, 0o644)` after the `fchown`, on the reasoning that a filesystem
-may clear setuid/setgid bits during an ownership change. That requirement is
-withdrawn. It contradicted `FILE_CHOWN_ONLY=true`, it required a privileged
+In these two ownership cases there is no `fchmod` in the helper, before or after
+the `fchown`. `0644` is established by the ordinary non-root process at creation
+(4.1), before the helper is invoked, so the helper has no reason to set a mode
+and no authority to impose one: `FILE_CHOWN_ONLY=true` in 4.2 means the helper's
+entire privileged effect is the ownership change. An earlier version of this
+contract froze a `fchmod(child_fd, 0o644)` after the `fchown`, on the reasoning
+that a filesystem may clear setuid/setgid bits during an ownership change. That
+requirement is withdrawn. It contradicted `FILE_CHOWN_ONLY=true`, it required a
+privileged
 capability the fixture does not need, and it is unnecessary here: the ordinary
 process already established exactly `0644` with all setuid, setgid and sticky
 bits clear, and the helper asserts those bits explicitly.
@@ -932,9 +1155,9 @@ literal `65534` for `own-foreign`, and `0` for `own-root` — and `observed_gid`
 the `st_gid` the helper observed on the pinned descriptor; no caller value
 participates in either.
 
-**Required post-mutation verification by the helper.** After the `fchown`, the
-helper MUST re-derive the facts from the same pinned descriptor with its own
-`fstat(child_fd)` and MUST require:
+**Required post-mutation verification by the helper (ownership cases).** After
+the `fchown`, the helper MUST re-derive the facts from the same pinned descriptor
+with its own `fstat(child_fd)` and MUST require:
 
 ```text
 st_uid == derived_target_uid
@@ -960,6 +1183,98 @@ The helper's own post-mutation verification is not evidence for the case, and it
 does not replace the ordinary process's reacquisition below: the helper verifies
 what it produced, and the ordinary process independently reacquires what the
 object really is.
+
+#### 5.8.3 Mount-case requirements
+
+For `mount-fixture` the pinned child has a different provenance and therefore a
+different ownership predicate, frozen explicitly rather than inherited from
+5.8.2:
+
+```text
+MOUNT_FIXTURE_FILE_CREATED_BY_HELPER=true
+MOUNT_FIXTURE_FILE_OWNER_UID=0
+MOUNT_FIXTURE_FILE_MODE=0644
+MOUNT_FIXTURE_FILE_OWNERSHIP_MUTATION=false
+MOUNT_FIXTURE_FILE_OWNERSHIP_PREDICATE=st_uid_eq_0
+MOUNT_FIXTURE_FILE_OWNERSHIP_PREDICATE_IS_ORDINARY_UID=false
+MOUNT_FIXTURE_FILE_CREATION_IDENTITY=reviewed_privileged_identity
+MOUNT_FIXTURE_FILE_COMMON_STRUCTURAL_REQUIREMENTS_APPLIED=true
+```
+
+The helper creates the file inside the newly mounted ext4 filesystem while
+running as the reviewed privileged identity, exactly as 5.9 freezes. The created
+file therefore belongs to that identity, and creation performs no ownership
+call. The helper then pins the file with a descriptor it opened itself and
+applies the COMMON STRUCTURAL requirements of 5.8.1 to it.
+
+The creation MUST yield exactly `0644` without a `fchmod`: the helper sets its
+creation-time umask so that it cannot clear bits from the requested `0644`. That
+is a process setting applied at creation, not a mutation of the file, and it
+keeps both `FILE_CHOWN_ONLY=true` and
+`MOUNT_FIXTURE_FILE_OWNERSHIP_MUTATION=false` true. A mode that is not exactly
+`0644` is a failed fixture construction and is never repaired with privilege.
+
+The helper MUST NOT apply the ownership-case precondition
+`st_uid == ORDINARY_UID` to this child. Before use it MUST instead require:
+
+```text
+MOUNT_FIXTURE_FILE_ST_UID == 0
+```
+
+No `chown` and no `fchown` is permitted for the mount-case file, by any process
+and at any point: `MOUNT_FIXTURE_FILE_OWNERSHIP_MUTATION=false` is a prohibition
+rather than an observation. An owner other than `0` is a fixture-construction
+failure that MUST NOT be repaired with privilege and MUST NOT be reported as a
+pass; the correct outcome is `QUALIFICATION_GAP` plus a design finding.
+
+**Why the mount-case owner is `0`.** The production owner policy at L110 admits
+`st_uid in (0, os.geteuid())`. The mount-case file is root-owned, and `0` is a
+member of that admitted tuple, so the production primitive admits the owner
+predicate for a non-root evidence process with no ownership mutation and no
+credential mutation introduced to arrange it:
+
+```text
+MOUNT_FIXTURE_FILE_OWNER_PREDICATE_ADMITTED_BY_PRODUCTION=true
+MOUNT_FIXTURE_FILE_OWNER_PREDICATE_ADMISSION_LITERAL=0
+MOUNT_FIXTURE_ROOT_OWNER_IS_RQP_L09_EVIDENCE=false
+MOUNT_FIXTURE_ORDINARY_READ_IS_REAL_DAC_WITNESS=true
+```
+
+`MOUNT_FIXTURE_ROOT_OWNER_IS_RQP_L09_EVIDENCE=false` is a scope statement about
+the evidence this contract claims: the mount case qualifies the RQP-L17
+held-mount representation drift of 8 and 11, and no root-owned object in the
+mount fixture may be reported as an RQP-L09 ownership case, as ownership
+evidence, or as a substitute for the paired controls of 4.3. What the literal
+`0` supports is the mount case's admissibility, not an RQP-L09 result. This
+subsection does not widen section 11 either: A3 still claims no end-to-end
+`_NativeScope` proof for this mount, and the admission fact above is a property
+of the fixture's own object rather than a new production proof.
+
+That admission is real rather than assumed only if the ordinary evidence process
+really reads the file. The mount case MUST therefore require a real,
+unprivileged `O_RDONLY` open of the `0644` root-owned file to succeed before the
+positive pre-drift admission of 8 step 2:
+
+- the open is performed by `NONROOT_EVIDENCE_PROCESS`, whose `ACTUAL_EUID != 0`
+  and `ACTUAL_CAP_EFF == 0` are reacquired and required first (5.10.3), so a
+  privileged read cannot stand in for it and no capability can produce the
+  success;
+- the read succeeds through the real `0644` DAC bits of a root-owned file, which
+  is what `MOUNT_FIXTURE_ORDINARY_READ_IS_REAL_DAC_WITNESS=true` claims; the
+  helper's own open of the same file is not that witness (7);
+- a failed ordinary open is a fixture-construction and attribution failure —
+  `QUALIFICATION_GAP`, never a pass and never a product defect — because the
+  production owner policy has not been reached at that point;
+- the same requirement already governs the retained object of section 9, which
+  the ordinary non-root process must be able to open read-only without
+  privilege.
+
+```text
+MOUNT_FIXTURE_PRE_DRIFT_ORDINARY_OPEN_REQUIRED=true
+MOUNT_FIXTURE_PRE_DRIFT_ORDINARY_OPEN_BEFORE_POSITIVE_ADMISSION=true
+MOUNT_FIXTURE_PRE_DRIFT_ORDINARY_OPEN_IS_PRIVILEGED=false
+MOUNT_FIXTURE_PRE_DRIFT_ORDINARY_OPEN_FAILURE_OUTCOME=QUALIFICATION_GAP
+```
 
 ```text
 OWNERSHIP_MUTATION_TARGET_PINNED_BY_FD=true
@@ -991,24 +1306,36 @@ FIXTURE_FILE_INITIAL_MODE=0644
 FIXTURE_FILE_INITIAL_MODE_IS_EXACT=true
 FIXTURE_FILE_INITIAL_MODE_ESTABLISHED_BY=ordinary_nonroot_process
 FIXTURE_FILE_PREMUTATION_OWNER=ordinary_runner_uid
+FIXTURE_FILE_PREMUTATION_OWNER_SCOPE=own-foreign,own-root
+MOUNT_FIXTURE_FILE_PREMUTATION_OWNER=0
+MOUNT_FIXTURE_FILE_PREMUTATION_OWNER_SCOPE=mount-fixture
+HELPER_CHILD_REQUIREMENTS_LAYERS=common_structural_plus_case_specific_ownership_predicate
+OWNERSHIP_PREDICATE_SCOPE=own-foreign,own-root
+MOUNT_FIXTURE_FILE_OWNERSHIP_PREDICATE=st_uid_eq_0
 NO_FD_CROSSES_SUDO_BOUNDARY=true
 ```
 
 `FIXTURE_FILE_INITIAL_MODE=0644` is the approved pre-mutation mode, and it is the
 same literal as the frozen `FILE_MODE=0644` of 4.1: there is exactly one mode
-fact in these cases, established by the ordinary process and verified — never
-set — by the helper. `0644 & 0o022 == 0` holds for it, so the mutation policy at
-L111-L113 cannot fire in either the pre-mutation or the post-mutation state, and
-the case isolates the owner policy at L110 in both states. The prohibition on
-`0600` in 4.1 is therefore a requirement on that single mode, not a comparison
-between two different modes.
+fact in these cases, established by the ordinary process before the helper runs
+in `own-foreign` and `own-root` (4.1) and established by the helper itself at
+creation in `mount-fixture` (5.8.3), and in every case verified — never
+`chmod`-ed — by the helper. `0644 & 0o022 == 0` holds for it, so the mutation
+policy at L111-L113 cannot fire in either the pre-mutation or the post-mutation
+state, and the ownership cases isolate the owner policy at L110 in both states.
+The prohibition on `0600` in 4.1 is therefore a requirement on that single mode,
+not a comparison between two different modes.
 
 `FIXTURE_FILE_ROLE` resolution is case-dependent and frozen as such: for
 `own-foreign` and `own-root` the child is created by the ordinary runner before
 the helper is invoked, and the helper pins and validates it without creating it;
 for `mount-fixture` the child is created by the helper inside the helper's own
 freshly created ext4 filesystem after the mount (5.9), and it is then pinned and
-validated by the same rule set before any use.
+validated under the same COMMON STRUCTURAL pinning rules of 5.8.1, plus that
+case's own ownership predicate `st_uid == 0` (5.8.3). The mount child is never
+validated under the ownership-case owner predicate of 5.8.2, which does not apply
+to it, and this is the correction round 4 made: "same rule set" meant one
+undivided rule set whose ownership requirement the mount case cannot satisfy.
 
 Because no descriptor crosses the `sudo` boundary (5.4), the helper opens this
 descriptor itself, after its own root validation, and
@@ -1019,9 +1346,11 @@ descriptor it did not open itself.
 Python expresses the acquisition directly as
 `os.open(FIXTURE_FILE_ROLE, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=root_fd)`,
 whose underlying operation is `openat` relative to `root_fd`, with `os.fstat`
-and `os.fchown` acting on the returned descriptor; `os.fchmod` is not used by
-the helper at all, because the only mode fact is the one the ordinary process
-established. No step of this freeze requires a descriptor to cross the privilege
+acting on the returned descriptor and `os.fchown` acting on it in the two
+ownership cases only; `os.fchmod` is not used by the helper at all, because no
+mode is ever changed after creation: the ownership cases inherit the ordinary
+process's `0644` (4.1) and the mount case sets `0644` at creation (5.8.3). No
+step of this freeze requires a descriptor to cross the privilege
 boundary. This statement is scoped to the declared qualification platform:
 `dir_fd`-relative `os.open` and `os.fchown` are Linux facilities, the runner is
 `ubuntu-latest` (section 6), and `NO_WINDOWS_QUALIFICATION=true` (section 18)
@@ -1029,7 +1358,8 @@ means no other platform is claimed here. On the declared platform both descripto
 operations exist and need no dependency beyond the standard library.
 
 The ordinary evidence process does not accept the helper's report of the
-mutation. After the helper has exited and before the production call, that
+ownership mutation, and it does not accept the helper's report of the mount-case
+file either. After the helper has exited and before the production call, that
 process independently reacquires, from the real object and with no privilege:
 
 ```text
@@ -1042,19 +1372,24 @@ POST_HELPER_REACQUISITION_BEFORE_PRODUCTION_CALL=true
 ```
 
 Those five reacquisitions are the `CONTROL_*` rows and post-mutation control
-rows of 4.3. A missing, failing or unrecorded reacquisition is
-`QUALIFICATION_GAP`, never a pass. Their independence from the helper's own
-post-mutation `fstat` matters: the helper verifies what it produced, the ordinary
+rows of 4.3 for the two ownership cases. In the mount case the same discipline
+is what 5.8.3 requires: the ordinary process opens the `0644` root-owned
+mount-case file itself, with `ACTUAL_CAP_EFF == 0`, before the positive
+pre-drift admission of 8. A missing, failing or unrecorded reacquisition is
+`QUALIFICATION_GAP`, never a pass. Its independence from the helper's own
+`fstat` matters: the helper verifies what it produced or created, the ordinary
 process measures what the object is, and the case is evidence only when the
 second measurement is the one the contract requires.
 
 ### 5.9 Freeze: privileged mount child safety
 
 The mount fixture has the same confinement problem as the ownership fixture and
-the same answer: the helper creates the privileged mount's source and target
-itself, under its own validated root descriptor in the private namespace, and
-treats anything already present at a role name as a refusal rather than as
-something to adopt, repair or remove.
+the same confinement answer: the helper creates the privileged mount's source
+and target itself, under its own validated root descriptor in the private
+namespace, and treats anything already present at a role name as a refusal
+rather than as something to adopt, repair or remove. "The same answer" is about
+confinement of helper-created objects; it is not a claim that the two cases share
+an ownership predicate, which round 4 corrected (5.8.2, 5.8.3).
 
 `IMAGE_ROLE` and `MOUNTPOINT_ROLE` are fixed derived names from 5.2, never
 caller text, and no caller-created symlink or hardlink may become the privileged
@@ -1119,11 +1454,24 @@ fixture is a failed construction: the outcome is `QUALIFICATION_GAP` plus a
 design finding, cleanup follows 10.4, and it is never a pass.
 
 For `mount-fixture`, `FIXTURE_FILE_ROLE` is created by the helper inside its own
-newly created ext4 filesystem after the mount, and it is then pinned by
-descriptor and validated under the 5.8 rule set before any use. The ownership
-mutation of 5.8 applies only to the `own-foreign` and `own-root` cases; the
-mount case performs no ownership mutation, and the mounted file's ownership is
-never reported as RQP-L09 evidence.
+newly created ext4 filesystem after the mount, and it is then pinned by a
+descriptor the helper opened itself and validated under the same COMMON
+STRUCTURAL pinning rules that every pinned fixture child must satisfy (5.8.1),
+plus the mount case's own ownership predicate `st_uid == 0` (5.8.3). It is not
+validated under the ownership-case owner predicate of 5.8.2, and this case MUST
+NOT apply that predicate: round 4 corrected exactly this point (1.4). The
+ownership mutation of 5.8.2 applies only to the `own-foreign` and `own-root`
+cases; the mount case performs no ownership mutation, and the mounted file's
+ownership is never reported as RQP-L09 evidence.
+
+```text
+MOUNT_CASE_FIXTURE_CHILD_PINNED_BY_HELPER_DESCRIPTOR=true
+MOUNT_CASE_FIXTURE_CHILD_VALIDATED_BY_COMMON_STRUCTURAL_RULES=true
+MOUNT_CASE_FIXTURE_CHILD_VALIDATED_BY_ORDINARY_OWNER_PREDICATE=false
+MOUNT_CASE_FIXTURE_CHILD_OWNERSHIP_PREDICATE=st_uid_eq_0
+MOUNT_CASE_PERFORMS_NO_OWNERSHIP_MUTATION=true
+MOUNT_CASE_FIXTURE_FILE_OWNERSHIP_IS_L09_EVIDENCE=false
+```
 
 ### 5.10 Freeze: ordinary credential handoff and non-root identity reacquisition
 
@@ -1562,15 +1910,36 @@ OWNERSHIP_FIXTURE_REQUIRED_CAPABILITY_SET=CAP_CHOWN
 ```
 
 `CAP_CHOWN` is required because the helper performs `fchown` on the pinned child
-descriptor (5.8). `CAP_FOWNER` is NOT required, and could not be required by an
-honest contract, because the helper changes no mode, no ownership of a
-setuid/setgid object and no other FOWNER-governed attribute: the zero-argument
-`fchmod` of the earlier draft is gone (5.8), so nothing in the helper needs
-FOWNER. `CAP_DAC_OVERRIDE` MUST NOT be required either. `FILE_MODE=0644` exists
+descriptor in the two ownership cases (5.8.2). `CAP_FOWNER` is NOT required, and
+could not be required by an honest contract, because the helper changes no mode,
+no ownership of a setuid/setgid object and no other FOWNER-governed attribute:
+the zero-argument `fchmod` of the earlier draft is gone (5.8.2), so nothing in
+the helper needs FOWNER. `CAP_DAC_OVERRIDE` MUST NOT be required either for those
+cases or for the mount case's fixture file. `FILE_MODE=0644` exists
 precisely so the ordinary reader's access is a real permissions fact rather than
 a capability artifact: the ordinary non-root process's `os.open(O_RDONLY)`
 succeeds through the real `0644` DAC bits, and that success is the 4.3
 attribution guard.
+
+The mount case's fixture file adds no capability requirement of its own, and the
+closure of 1.4 is what makes that checkable rather than assumed:
+
+```text
+MOUNT_FIXTURE_FILE_CREATION_REQUIRES_CAP_CHOWN=false
+MOUNT_FIXTURE_FILE_CREATION_REQUIRES_OWNERSHIP_MUTATION=false
+MOUNT_FIXTURE_FILE_OWNERSHIP_MUTATION=false
+MOUNT_FIXTURE_FILE_OWNERSHIP_MUTATION_EFFECT=NONE
+MOUNT_FIXTURE_FILE_OWNERSHIP_REQUIRES_CAP_FOWNER=false
+MOUNT_FIXTURE_FILE_OWNERSHIP_REQUIRES_CAP_DAC_OVERRIDE=false
+```
+
+Creating a file assigns the creating process's own effective uid to it and
+performs no ownership call, so the mount case's `st_uid == 0` (5.8.3) is a
+property of who the helper already is rather than an authority it exercises; and
+because no mode is ever changed after creation, nothing in the mount case needs
+FOWNER. `MOUNT_FIXTURE_FILE_OWNERSHIP_MUTATION_EFFECT=NONE` is the effect-side
+half of the closure: there is no ownership effect in that case for any
+capability to authorize.
 
 The helper's own `O_RDONLY` acquisition of the pinned file is not the
 attribution guard and is not offered as one. The helper runs as the reviewed
@@ -2055,7 +2424,11 @@ contract.
 The implementation PR MUST also pin, in a checked-in test or checker, the
 findings these remediations froze: the closed helper argument vector and the
 derived constants of 5.1-5.2, the continuity classes and ledgers of 5.5-5.6, the
-child-inode confinement facts of 5.8, the privileged mount child-safety facts of
+child-inode confinement facts of 5.8, including the round-4 split into the common
+structural requirements of 5.8.1 and the case-specific ownership predicates of
+5.8.2 and 5.8.3 — `st_uid == ORDINARY_UID` for the two ownership cases and
+`st_uid == 0` with `MOUNT_FIXTURE_FILE_OWNERSHIP_MUTATION=false` for the mount
+case — the privileged mount child-safety facts of
 5.9, the three measured namespace identities and namespace classes of 10.1-10.2,
 the cleanup state machine and residue controls of 10.4, and the workflow trigger,
 permission, exact-head binding and provenance facts of 6.1-6.3, including the
@@ -2103,11 +2476,16 @@ namespace topology (10.1-10.2) and the cleanup state machine (10.4) are the
 corrected statements. Round 2 re-ran it against the round-2 head, in which the
 cross-boundary classification (5.5, 5.6, 10.2), the privileged child inode
 confinement (5.8), the privileged mount child safety (5.9) and the pull-request
-workflow provenance (6.2, 6.3) are the corrected statements. Round 3 re-runs it
-against this head, in which the ownership capability model (4.1, 4.2, 5.8, 7),
-the foreign uid authority (5.2), the ordinary credential handoff and the
-non-root evidence identity (5.5, 5.6, 5.10, 10.1, 10.2) are the corrected
-statements. Each result is claimed only because the document at that head has no
+workflow provenance (6.2, 6.3) are the corrected statements. Round 3 re-ran it
+against the round-3 head, in which the ownership capability model (4.1, 4.2,
+5.8, 7), the foreign uid authority (5.2), the ordinary credential handoff and
+the non-root evidence identity (5.5, 5.6, 5.10, 10.1, 10.2) are the corrected
+statements. Round 4 re-runs it against this head, in which the pinned-child
+model (5.8.1-5.8.3, 5.9, 7) is the corrected statement: the common structural
+requirements and the case-specific ownership predicates are now separate facts,
+and the mount case's `st_uid == 0` predicate replaces the ownership predicate
+that the helper-created mount child cannot satisfy. Each result is claimed only
+because the document at that head has no
 producer/carrier/lifecycle/consumer contradiction:
 
 ```text
@@ -2128,22 +2506,48 @@ RQP_L17_L105_MOUNT_ID_CHANGE_IMPLEMENTABILITY=NOT_CONSTRUCTIBLE_WITH_KNOWN_REAL_
 A3_CONTRACT_IMPLEMENTABILITY=PASS
 ```
 
+Round 4 re-evaluated the six results the corrected pinned-child model touches,
+and claims `PASS` for them only because the corrected owner predicates are
+mutually implementable: the ownership cases require `st_uid == ORDINARY_UID`
+before their `fchown`, while the mount case requires `st_uid == 0` and performs
+no ownership mutation, so neither predicate is applied to the other case's
+object, and no case needs an ownership or credential mutation in order to be
+constructed.
+
+```text
+ROUND4_RE_EVALUATED_RESULTS=RQP_L09_FOREIGN_OWNER_IMPLEMENTABILITY,RQP_L09_ROOT_OWNED_IMPLEMENTABILITY,RQP_L17_HELD_MOUNT_REPRESENTATION_DRIFT_IMPLEMENTABILITY,OWNERSHIP_CAPABILITY_MODEL_IMPLEMENTABILITY,PRIVILEGED_CHILD_INODE_CONFINEMENT_IMPLEMENTABILITY,A3_CONTRACT_IMPLEMENTABILITY
+OWNERSHIP_CASE_OWNER_PREDICATE=st_uid_eq_ORDINARY_UID
+MOUNT_CASE_OWNER_PREDICATE=st_uid_eq_0
+CASE_OWNER_PREDICATES_ARE_MUTUALLY_IMPLEMENTABLE=true
+CASE_OWNER_PREDICATES_ARE_INTERCHANGEABLE=false
+MOUNT_FIXTURE_FILE_CREATION_EFFECT_IMPLEMENTABILITY=PASS
+MOUNT_FIXTURE_FILE_OWNERSHIP_MUTATION_EFFECT=NONE
+MOUNT_FIXTURE_ORDINARY_READ_WITNESS_IMPLEMENTABILITY=PASS
+PRIVILEGED_CHILD_INODE_CONFINEMENT_IMPLEMENTABILITY_SCOPE=own-foreign,own-root,mount-fixture
+```
+
 `A3_CONTRACT_IMPLEMENTABILITY=PASS` is claimed only after the four round-3
-results and the three round-2 results above it are `PASS`, and each of those
-seven is claimed for a stated reason:
+results and the three round-2 results above it are `PASS`, and only after the
+round-4 re-evaluation confirms that the corrected owner predicates are mutually
+implementable. Each of those seven is claimed for a stated reason:
 
 - `OWNERSHIP_CAPABILITY_MODEL_IMPLEMENTABILITY=PASS` — the helper performs
-  exactly one privileged mutation, `fchown(child_fd, derived_target_uid,
-  observed_gid)` on a descriptor it opened itself, so `CAP_CHOWN` is the whole
-  ownership capability requirement; no mode is changed by the helper, so
-  `CAP_FOWNER` is not required, and no access check is bypassed, so
-  `CAP_DAC_OVERRIDE` is not required. `0644` is established by the ordinary
-  process before the helper runs (4.1), and the helper's post-`fchown` `fstat`
-  on the same pinned descriptor observes `st_uid == derived_target_uid` and
-  `S_IMODE == 0644` and fails the fixture construction rather than repairing the
-  mode. Every frozen requirement names an operation the standard library can
-  perform on the declared platform, and no requirement needs a capability the
-  helper's real operations do not use.
+  exactly one privileged mutation per ownership case, `fchown(child_fd,
+  derived_target_uid, observed_gid)` on a descriptor it opened itself, so
+  `CAP_CHOWN` is the whole ownership capability requirement; no mode is changed
+  by the helper, so `CAP_FOWNER` is not required, and no access check is bypassed
+  to obtain a required outcome, so `CAP_DAC_OVERRIDE` is not required for those
+  effects. `0644` is established by the ordinary process before the helper runs
+  in the ownership cases (4.1) and at creation in the mount case (5.8.3), and the
+  helper's post-`fchown` `fstat` on the same pinned descriptor observes `st_uid
+  == derived_target_uid` and `S_IMODE == 0644` and fails the fixture construction
+  rather than repairing the mode. Round 4 added the mount case to this model and
+  closed it from both sides (1.4): the mount-case fixture file is created with no
+  ownership call and no `CAP_CHOWN` requirement, its ownership mutation is `NONE`
+  rather than merely unused, and `st_uid == 0` follows from the creating identity
+  instead of being produced by privilege. Every frozen requirement names an
+  operation the standard library can perform on the declared platform, and no
+  requirement needs a capability the helper's real operations do not use.
 - `ORDINARY_CREDENTIAL_HANDOFF_IMPLEMENTABILITY=PASS` — the ordinary identity is
   measured by a running ordinary process, so the producer exists; it is carried
   by two fixed numeric launcher arguments, so the carrier exists; the launcher
@@ -2174,15 +2578,19 @@ seven is claimed for a stated reason:
   requested value is described as an observed one, and no row claims a class
   without the carrier that class requires. The round-2 and round-3 audit tables
   in 5.5 record each reclassification and addition.
-- `PRIVILEGED_CHILD_INODE_CONFINEMENT_IMPLEMENTABILITY=PASS` — the privileged
-  ownership mutation operates on a descriptor the helper opened for itself
-  relative to its own validated root descriptor, so the target object is
-  confined before the mutation; every required pre-mutation check is an `fstat`
-  fact on that descriptor, the mutation is expressible as `os.fchown` on it, the
-  post-mutation verification is expressible as a second `os.fstat` on the same
+- `PRIVILEGED_CHILD_INODE_CONFINEMENT_IMPLEMENTABILITY=PASS` — for every case
+  that pins a `FIXTURE_FILE_ROLE` child, the helper opens the descriptor itself
+  relative to its own validated root descriptor, so the target object is confined
+  before it is used or mutated; every required check is an `fstat` fact on that
   descriptor, the acquisition is expressible as `os.open(..., dir_fd=...)`, and
   no descriptor has to cross the `sudo` boundary, so no unprovable transport is
-  required.
+  required. In the two ownership cases the mutation is expressible as
+  `os.fchown` on that descriptor and the verification as a second `os.fstat` on
+  it; in the mount case the same pinned descriptor carries the `st_uid == 0`
+  predicate and no mutation at all is expressible on it, because none is
+  permitted. Round 4 split the requirements into the COMMON STRUCTURAL set
+  (5.8.1) and the case-specific ownership predicates (5.8.2, 5.8.3), so the rule
+  set is now implementable at all three call sites instead of only at two.
 - `PRIVILEGED_WORKFLOW_PROVENANCE_IMPLEMENTABILITY=PASS` — `GITHUB_REF` and
   `GITHUB_SHA` name the event-ref object; both workflow blob identities are
   resolvable from authoritative Git objects or from the repository contents API
@@ -2207,7 +2615,7 @@ The three round-2 remediation findings resolve as follows:
 | Finding | Corrected statement | Why it is now implementable |
 | --- | --- | --- |
 | inherited namespace state classified as an explicit handoff | 5.5, 5.6, 10.2 | the taxonomy now names the three classes with their carrier requirements, keeps `MOUNT_NAMESPACE_MEMBERSHIP_CONTINUITY=INHERITED` and `MOUNT_NAMESPACE_IDENTITY_OBSERVATION=INDEPENDENTLY_REACQUIRED` as separate facts, marks `MOUNT_NAMESPACE_FACT_EXPLICIT_HANDOFF=none`, and gives 5.6 and 10.2 an explicit class column so no row is left implicit |
-| privileged ownership mutation not confined to a pinned child inode | 5.8 | the helper opens the fixture child itself relative to its own validated root descriptor with `O_NOFOLLOW`, validates regular-file type, `st_nlink == 1`, ordinary-runner pre-mutation owner, exact initial mode `0644`, cleared setuid/setgid/sticky bits and nonzero `st_dev`/`st_ino`, then performs `fchown` on that descriptor and re-derives `st_uid` and `S_IMODE` from the same descriptor; a symlinked or hardlinked child is a hard refusal before any privileged mutation, and the ordinary process still reacquires the resulting state itself |
+| privileged ownership mutation not confined to a pinned child inode | 5.8 (the ownership cases; the mount case's own child is governed by the case-specific predicate of 5.8.3, added in round 4) | the helper opens the fixture child itself relative to its own validated root descriptor with `O_NOFOLLOW`, validates regular-file type, `st_nlink == 1`, ordinary-runner pre-mutation owner, exact initial mode `0644`, cleared setuid/setgid/sticky bits and nonzero `st_dev`/`st_ino`, then performs `fchown` on that descriptor and re-derives `st_uid` and `S_IMODE` from the same descriptor; a symlinked or hardlinked child is a hard refusal before any privileged mutation, and the ordinary process still reacquires the resulting state itself |
 | `pull_request` workflow definition described as "taken from the PR head" | 6.2, 6.3 | the event-ref object is frozen as `refs/pull/<PR_NUMBER>/merge` with the synthetic merge commit as `GITHUB_SHA`, the code under qualification is separately bound to `github.event.pull_request.head.sha`, the two workflow blob identities are recorded and required to be equal before any privileged mutation, and a mismatch stops privileged execution as `WORKFLOW_AUTHORITY_MISMATCH` |
 
 The four round-3 remediation findings resolve as follows:
@@ -2219,17 +2627,24 @@ The four round-3 remediation findings resolve as follows:
 | the ordinary runner's uid/gid crossed into the launcher with no producer, carrier, lifetime, consumer or closing checkpoint, and `SUDO_*` was the only implicit source | 5.5, 5.6, 10.1, 10.2, 5.10.1-5.10.2 | the ordinary process measures its own real `ORDINARY_UID`/`ORDINARY_GID` before `sudo`; the values cross as fixed numeric launcher arguments (`ORDINARY_REQUESTED_UID_GID_CONTINUITY=EXPLICITLY_HANDED_OFF`); the launcher validates `ORDINARY_UID != 0`, numeric validity and the invocation root's real `st_uid`/`st_gid` before the credential drop, refusing as `LAUNCHER_CREDENTIAL_REJECTED` with no namespace mutation; and `SUDO_UID`/`SUDO_GID` are corroboration only, never authority |
 | "non-root evidence process" defined only by `euid != 0`, so retained effective capabilities satisfied it | 5.5, 5.6, 10.1, 10.2, 5.10.3 | the evidence process independently reacquires `ACTUAL_EUID`, `ACTUAL_EGID` and `ACTUAL_CAP_EFF` from itself and MUST require `ACTUAL_EUID == ORDINARY_UID`, `ACTUAL_EGID == ORDINARY_GID`, `ACTUAL_EUID != 0` and `ACTUAL_CAP_EFF == 0` before the production primitive executes. A mismatch is a fixture-construction failure and `QUALIFICATION_GAP`, never evidence, and a nonzero effective capability mask is explicitly not a nonprivileged process |
 
+The round-4 finding resolves as follows:
+
+| Finding | Corrected statement | Why it is now implementable |
+| --- | --- | --- |
+| one undivided pinned-child rule set whose ownership requirement was `pre-mutation owner == ordinary runner uid`, applied also to a mount child that 5.9 freezes as helper-created and never ownership-mutated | 5.8.1-5.8.3, 5.9 | the requirements are now two layers with one owner each: the COMMON STRUCTURAL set (5.8.1) applies to `own-foreign`, `own-root` and `mount-fixture`, and the ownership predicate is explicit per case — `st_uid == ORDINARY_UID` before the `fchown` in 5.8.2, and `st_uid == 0` with `MOUNT_FIXTURE_FILE_OWNERSHIP_MUTATION=false` in 5.8.3. The helper-created mount child is therefore validated by rules it can satisfy, the ownership cases keep the predicate their case requires, and neither case acquires an ownership or credential mutation in order to satisfy the other's predicate |
+
 | Requirement | Authority owner | Required evidence | Producer | Carrier / holder | Lifetime | Consumer / verifier | Closing checkpoint | Failure outcome |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | Helper argument protocol | repository design authority (this contract) | the exact argument vector, the derived uid/mode/child constants, and the rejection of every non-enumerated argument | privileged fixture helper | helper command line (closed enum plus untrusted locator) and the frozen constant table | one helper invocation | independent reviewer; ordinary suite unchanged | argument rejection and root revalidation recorded before any mutation | `HELPER_ARGUMENT_REJECTED`, `HELPER_ROOT_REJECTED` or `QUALIFICATION_GAP` |
 | Process and namespace topology | same | the four roles with their real identities, the ordered lifecycle, and three measured mount namespace ids | privileged namespace launcher, evidence process and helper | real mount namespace identity of each running process | one run attempt, retained as CI evidence | independent reviewer | `PRIVATE_EVIDENCE_MNT_NS_ID == PRIVATE_HELPER_MNT_NS_ID` and `PRIVATE_EVIDENCE_MNT_NS_ID != HOST_MNT_NS_ID`, both measured | `QUALIFICATION_GAP` plus a design finding; no mount mutation is attempted |
 | Cross-boundary continuity classification | repository design authority (this contract) | every row of 5.5, 5.6 and 10.2 with exactly one class, and the carrier that class requires | this contract for the model; the fixture for the measured facts | the frozen tables of 5.5, 5.6 and 10.2, and the real objects the classified facts describe | this document for the model; one run attempt for the measured facts | independent reviewer | the round-2 audit table in 5.5 and the class columns of 5.6 and 10.2 contain no unclassified or doubly classified row | a class without its required carrier, or an inherited fact described as a handoff, is a design failure and blocks the implementation PR |
-| Privileged child inode confinement | same | pre-mutation `fstat` facts on the pinned child, the refusal outcomes, the helper's own post-`fchown` `fstat`, and the post-mutation reacquisitions by the ordinary process | privileged fixture helper for the mutation and its own verification; non-root evidence process for the reacquisitions | the helper's own child descriptor, and the real inode the ordinary process re-reads afterwards | one helper invocation, then one evidence measurement | independent reviewer; ordinary suite unchanged | child validation recorded before the `fchown`, and the 4.3 post-mutation controls recorded before the production call | `HELPER_ROOT_REJECTED` before mutation, or `QUALIFICATION_GAP` |
-| Ownership capability model | same | the exact privileged mutation performed, the capability set the helper really used, and the ordinary reader's real `O_RDONLY` success through `0644` | privileged fixture helper for the mutation and its capability record; non-root evidence process for the real open control | the helper's recorded `CapEff` and the ordinary process's own open result | one run attempt, retained as CI evidence | independent reviewer | `OWNERSHIP_MUTATION_REQUIRED_CAPABILITY=CAP_CHOWN`, no `CAP_FOWNER` and no `CAP_DAC_OVERRIDE` requirement, and `CONTROL_real_os_open_O_RDONLY_succeeds=true` recorded | `QUALIFICATION_GAP` or `ENVIRONMENT_FAILURE`; a capability-granted pass is not a pass |
+| Privileged child inode confinement | same | pre-mutation `fstat` facts on the pinned child for that child's own case requirement set, the refusal outcomes, the helper's own post-`fchown` `fstat` in the ownership cases, and the post-mutation reacquisitions by the ordinary process | privileged fixture helper for the mutation and its own verification; non-root evidence process for the reacquisitions | the helper's own child descriptor, and the real inode the ordinary process re-reads afterwards | one helper invocation, then one evidence measurement | independent reviewer; ordinary suite unchanged | child validation recorded before the `fchown` in the ownership cases and before use in the mount case, and the 4.3 post-mutation controls recorded before the production call | `HELPER_ROOT_REJECTED` before mutation, or `QUALIFICATION_GAP` |
+| Ownership capability model | same | the exact privileged mutation performed per case, the capability set the helper really used, and the ordinary reader's real `O_RDONLY` success through `0644` | privileged fixture helper for the mutation and its capability record; non-root evidence process for the real open control | the helper's recorded `CapEff` and the ordinary process's own open result | one run attempt, retained as CI evidence | independent reviewer | `OWNERSHIP_MUTATION_REQUIRED_CAPABILITY=CAP_CHOWN` for the two ownership cases, `MOUNT_FIXTURE_FILE_OWNERSHIP_MUTATION=false` with `MOUNT_FIXTURE_FILE_CREATION_REQUIRES_CAP_CHOWN=false` for the mount case (1.4), no `CAP_FOWNER` and no `CAP_DAC_OVERRIDE` requirement for these effects, and `CONTROL_real_os_open_O_RDONLY_succeeds=true` recorded | `QUALIFICATION_GAP` or `ENVIRONMENT_FAILURE`; a capability-granted pass is not a pass |
 | Ordinary credential handoff | same | the measured `ORDINARY_UID`/`ORDINARY_GID`, the launcher arguments that carried them, and the launcher's validation against the real invocation root | `HOST_OBSERVER` or the ordinary workflow process for the measurement; privileged namespace launcher for the validation | fixed numeric launcher arguments, plus the real invocation root's `st_uid`/`st_gid` | one launcher invocation | privileged namespace launcher; independent reviewer for the recorded values | `ORDINARY_UID != 0`, valid numeric ids, and invocation-root `st_uid`/`st_gid` equality recorded before any credential drop | `LAUNCHER_CREDENTIAL_REJECTED` or `QUALIFICATION_GAP`, with no namespace mutation |
 | Non-root evidence identity | same | `ACTUAL_EUID`, `ACTUAL_EGID` and the decoded `ACTUAL_CAP_EFF` of the running evidence process | non-root evidence process, from its own real process state | none: the facts are measured in the process that holds them and recorded as run output | the evidence process's lifetime, recorded in the run attempt | independent reviewer; the production primitive depends on the result | the four required equalities hold before the production primitive executes | `QUALIFICATION_GAP` and a fixture-construction failure; never evidence and never a product defect |
 | Foreign uid authority | same | the frozen literal, the ordinary runner's effective uid, and the host's representability of `65534` | this contract for the literal; the preflight for the host facts | the frozen constant table and the real preflight observations | this document for the literal; one run attempt for the observations | independent reviewer | `FOREIGN_OWNER_TARGET_UID=65534`, ordinary `euid != 65534`, and no runtime substitution recorded | `QUALIFICATION_GAP`; no alternate uid is selected |
 | Privileged mount child safety | same | exclusive creation of the image and mountpoint by the helper, the pinned identities, and the pre-use revalidation | privileged fixture helper | helper-created objects under the validated root, each pinned by a descriptor the helper holds | one run attempt | independent reviewer | pre-existing role objects refuse as `HELPER_ROOT_REJECTED`, and both objects match their pinned identity before use | `HELPER_ROOT_REJECTED`, or `QUALIFICATION_GAP` plus a design finding |
+| Mount-case child ownership predicate | same | the `fstat` facts on the helper-pinned mount-case child, the recorded `st_uid`, the absence of any ownership call, and the ordinary process's real `O_RDONLY` open of the `0644` root-owned file | privileged fixture helper for the creation, the pinning and the `st_uid == 0` check; non-root evidence process for the ordinary open | the helper's own child descriptor, and the real inode the ordinary process opens | one helper invocation, then one evidence measurement | independent reviewer; the RQP-L17 positive pre-drift admission depends on the ordinary open | `MOUNT_FIXTURE_FILE_ST_UID == 0` with no ownership mutation, and the ordinary `O_RDONLY` open recorded before the positive pre-drift admission | `QUALIFICATION_GAP` plus a design finding; never a pass and never RQP-L09 evidence |
 | Privileged workflow provenance | same | `GITHUB_WORKFLOW_REF`, `GITHUB_REF`, `GITHUB_SHA`, `PR_NUMBER`, `PR_HEAD_SHA`, `PR_HEAD_TREE` and both workflow blob identities, recorded and compared | privileged workflow, resolving real Git objects with its read-only token | workflow output bound to the run and to the exact objects it resolved | one run attempt, retained as CI evidence | independent reviewer | `PRIVILEGED_WORKFLOW_EVENT_REF_BLOB_SHA == PRIVILEGED_WORKFLOW_HEAD_BLOB_SHA` before any privileged mutation, plus checked-out `HEAD == PR_HEAD_SHA` and derived `PR_HEAD_TREE` | `WORKFLOW_AUTHORITY_MISMATCH`, with no privileged effect afterwards |
 | Cleanup state machine | same | the observed state at cleanup entry or failure, the release order, and the four residue controls | privileged fixture helper plus host observer | real private mount table, real loop state, real host mount table | one run attempt | independent reviewer | `PRIVATE_MOUNT_RESIDUE=false`, `LOOP_BACKING_RESIDUE=false`, `FIXTURE_ROOT_RESIDUE=false`, `HOST_NAMESPACE_RESIDUE=false` | `CLEANUP_FAILED`, always visible and never converted into a pass |
 | RQP-L09 FOREIGN_OWNER rejection | same | real foreign-owned file, all five paired controls, exact reason code and detail | privileged helper (setup) plus non-root evidence process (measurement) | captured privileged-workflow run output bound to the exact head and host identity | one run attempt, retained as CI evidence | independent reviewer; ordinary suite unchanged | all controls recorded and the production call observed failing for the owner policy | `QUALIFICATION_GAP` or `PRODUCT_FAILURE`, classified by origin |
@@ -2245,8 +2660,11 @@ exit status is never evidence (5.5), the caller's root string is validated
 rather than trusted (5.3), the shared namespace is measured rather than assumed
 (10.1), the release order is frozen rather than left to a blind retry (10.4),
 the privileged mutation target is pinned by a descriptor the helper opened
-rather than re-resolved by pathname (5.8), the privileged mount's source and
-target are created by the helper rather than adopted from the caller (5.9), the
+rather than re-resolved by pathname (5.8), the ownership predicate is stated per
+case rather than assumed shared across cases whose provenance differs
+(5.8.1-5.8.3), the mount case's root-owned child is admitted by production
+rather than chowned into admissibility (5.8.3), the privileged mount's source
+and target are created by the helper rather than adopted from the caller (5.9), the
 executed workflow definition is compared against the exact-head definition
 instead of being assumed identical to it (6.3), the ordinary identity is
 measured and handed off rather than read from the privilege tool's environment
@@ -2287,12 +2705,15 @@ artifact and neither is unavailable on the declared platform.
 | The helper and the evidence process share one measured private namespace | frozen, section 10.1 | none added | no production symbol changes | privileged case later; the three namespace identities are measured at run time |
 | Every crossing fact carries exactly one continuity class | frozen, sections 5.5-5.6 and 10.2 | none added | not applicable | privileged case later; the classes are pinned by the implementation PR |
 | Namespace membership is inherited and namespace identity is independently reacquired | frozen, sections 5.5 and 10.1 | none added | no production symbol changes | privileged case later; the two private identities and the host identity are measured |
-| The helper changes ownership only, never mode | frozen, sections 4.1-4.2 and 5.8 | none added | no production symbol changes | privileged case later; `fchmod` is absent from the helper and the post-`fchown` `fstat` is recorded |
-| The ownership fixture requires `CAP_CHOWN` alone | frozen, sections 5.8 and 7 | none added | no production symbol changes | privileged case later; the helper's real `CapEff` and the ordinary process's real `O_RDONLY` success are both recorded |
+| The helper changes ownership only in the ownership cases, never mode anywhere | frozen, sections 4.1-4.2 and 5.8.2-5.8.3 | none added | no production symbol changes | privileged case later; `fchmod` is absent from the helper, the mount case performs no ownership call, and the post-`fchown` `fstat` is recorded |
+| The ownership cases require `CAP_CHOWN` alone, and the mount case's fixture file requires no ownership capability at all | frozen, sections 5.8.2-5.8.3, 7 and 1.4 | none added | no production symbol changes | privileged case later; the helper's real `CapEff`, the absence of an ownership call in the mount case, and the ordinary process's real `O_RDONLY` success are all recorded |
+| The pinned child's ownership predicate is case-specific: `st_uid == ORDINARY_UID` for the ownership cases, `st_uid == 0` and no ownership mutation for the mount case | frozen, sections 5.8.1-5.8.3 and 5.9 | none added; the role name and the predicates are helper-internal | no production symbol changes | privileged case later; each case's own predicate is asserted on the helper-pinned descriptor, and the common structural requirements are shared, not the ownership predicate |
 | The foreign target uid is the design-frozen literal `65534` | frozen, sections 4.4 and 5.2 | none added; the literal is helper-internal | no production symbol changes | privileged case later; the literal, the ordinary `euid != 65534` precondition and the no-substitution rule are pinned |
 | The ordinary uid/gid is explicitly handed off and validated before any credential drop | frozen, sections 5.5-5.6, 5.10.1-5.10.2 and 10.1 | none added | no production symbol changes | privileged case later; the handoff arguments and the launcher's root-ownership validation are recorded |
 | The evidence process reacquires its own identity and requires `CapEff == 0` | frozen, sections 5.5-5.6, 5.10.3 and 10.1 | none added | no production symbol changes | privileged case later; `ACTUAL_EUID`, `ACTUAL_EGID` and the decoded `ACTUAL_CAP_EFF` are measured before the production call |
-| The privileged ownership mutation acts on a helper-pinned child descriptor | frozen, section 5.8 | none added | no production symbol changes | privileged case later; the pre-mutation `fstat` facts, the post-`fchown` `fstat` and the post-mutation reacquisitions are measured |
+| The privileged ownership mutation acts on a helper-pinned child descriptor, and the mount case's child is pinned the same way without a mutation | frozen, sections 5.8.1-5.8.3 | none added | no production symbol changes | privileged case later; the case-appropriate `fstat` facts, the post-`fchown` `fstat` in the ownership cases and the post-mutation reacquisitions are measured |
+| The mount-case fixture file is helper-created, root-owned and never ownership-mutated | frozen, sections 5.8.3 and 5.9 | none added | no production symbol changes | privileged case later; `st_uid == 0`, the absence of any ownership call, and the ordinary process's real `O_RDONLY` open before the positive pre-drift admission are measured |
+| Mount fixture file ownership is not RQP-L09 evidence and the ordinary read is the real DAC witness | frozen, sections 5.8.3, 9 and 11 | none added | no production symbol changes | privileged case later; `MOUNT_FIXTURE_ROOT_OWNER_IS_RQP_L09_EVIDENCE=false` and `MOUNT_FIXTURE_ORDINARY_READ_IS_REAL_DAC_WITNESS=true` are pinned, and the mount case reports no L09 result |
 | Privileged mount source and target are created by the helper and never adopted from the caller | frozen, section 5.9 | none added | no production symbol changes | privileged case later; exclusive creation and the refusal outcomes are pinned by the implementation PR |
 | The executed workflow definition equals the exact-head workflow definition | frozen, section 6.3 | the workflow does not exist yet; the equality is a run-time check, not a declaration | not applicable | workflow contract pinned by a checker in the implementation PR |
 | Cleanup follows the frozen state machine and ends residue-free | frozen, section 10.4 | none added | no production symbol changes | privileged case later; the four residue controls are measured, not asserted |
@@ -2315,13 +2736,21 @@ preview of the later runtime work.
   the existing private symbols `_linux._LinuxObject`, `_linux._ext4_capability`
   and `_linux._mount_id` exactly as the ordinary native-guard suite already
   does, and the case outcomes are expressed by the existing reason codes and
-  details. On the helper side, the descriptor-relative acquisition of 5.8 is
+  details. On the helper side, the descriptor-relative acquisition of 5.8.1 is
   directly expressible in Python: `os.open(name, flags, dir_fd=root_fd)` is
   `openat` against the helper's own validated root descriptor, with `os.fstat`
-  and `os.fchown` acting on the returned descriptor; `os.fchmod` is not used,
-  because the only mode fact is the one the ordinary process established, so the
-  pinned child model needs no new API, no new dependency, no descriptor
-  transport and no capability beyond `CAP_CHOWN`. The credential model is
+  acting on the returned descriptor and `os.fchown` acting on it in the two
+  ownership cases only; `os.fchmod` is not used, because no mode is changed after
+  creation, so the pinned child model needs no new API, no new dependency, no
+  descriptor transport and no capability beyond `CAP_CHOWN` for the ownership
+  effects. The mount case is expressible in the same standard library: the helper
+  creates the file inside its own freshly mounted filesystem with
+  `O_CREAT|O_EXCL` and mode `0644` under a creation-time umask that cannot clear
+  those bits, opens it again with `O_RDONLY|O_NOFOLLOW|O_CLOEXEC` to pin it, and
+  requires `st_uid == 0` from `os.fstat` on that pinned descriptor, while the
+  ordinary process's own `O_RDONLY` open of the same file is the read witness.
+  No ownership call and no mode call appears in that case at all. The credential
+  model is
   expressible with the standard library alone as well: the ordinary process
   measures itself with `os.geteuid`/`os.getegid`, the launcher passes on two
   integers, and the evidence process reads `os.geteuid`, `os.getegid` and the
@@ -2329,7 +2758,11 @@ preview of the later runtime work.
 - Can existing evidence and data structures carry all required facts? Yes: the
   retained security tuple, the mount description triple, the retained
   descriptor identity and the real mount table carry every fact the cases
-  assert. The workflow-provenance facts of 6.3 are plain strings and Git blob
+  assert. The mount case's facts are carried by the same structures: the pinned
+  mount-case descriptor's `fstat` facts for the structural requirements and the
+  `st_uid == 0` predicate, the ordinary process's own open result for the DAC
+  witness, and the retained descriptor of section 9 for the RQP-L17 admission.
+  The workflow-provenance facts of 6.3 are plain strings and Git blob
   identities, carried by the workflow output the manifest already binds to the
   exact head.
 - Is new persistent state required? No. The fixture root is invocation-local
@@ -2344,7 +2777,8 @@ preview of the later runtime work.
   or independently reacquired — including the evidence process's own `euid`,
   `egid` and effective capability mask (5.10.3) — and the privileged ownership
   mutation's target is acquired by the helper itself (5.8) rather than handed
-  off. A second, non-process authority boundary — executed workflow definition
+  off, as is the mount case's fixture child (5.8.1, 5.8.3). A second,
+  non-process authority boundary — executed workflow definition
   versus code under qualification — is modeled in 6.3 and closed by a
   blob-identity equality check.
 - Authority facts are separate and are never collapsed into one answer:
@@ -2367,6 +2801,29 @@ PRODUCTION_CHANGE_AUTHORITY_REQUIRED_IN_A3=false
   privileged cases use the same private seams plus real privilege, and their
   evidence is published as workflow output rather than claimed by the ordinary
   suite.
+
+The round-4 preview result is that the corrected pinned-child model maps to an
+implementation without an unauthorized effect:
+
+```text
+ROUND4_PREVIEW_PINNED_CHILD_MODEL_IMPLEMENTABLE=true
+ROUND4_PREVIEW_MOUNT_CASE_REQUIRES_OWNERSHIP_MUTATION=false
+ROUND4_PREVIEW_MOUNT_CASE_REQUIRES_CREDENTIAL_MUTATION=false
+ROUND4_PREVIEW_MOUNT_CASE_OWNERSHIP_PREDICATE_SOURCE=pinned_descriptor_fstat
+ROUND4_PREVIEW_NEW_AUTHORITY_REQUIRED=false
+ROUND4_PREVIEW_NEW_PERSISTENT_STATE_REQUIRED=false
+ROUND4_PREVIEW_STOPS_IMPLEMENTATION_CONTRACT=true
+```
+
+`ROUND4_PREVIEW_STOPS_IMPLEMENTATION_CONTRACT=true` records what the failed
+attempt demonstrated: a pinned-child model that an implementation must narrow at
+a call site is a contract that stops the implementation, rather than a contract
+the implementation may interpret. The corrected model needs neither an ownership
+mutation nor a credential mutation to place the mount-case child under a rule
+set it can satisfy, so the stop condition is not reachable through the case that
+produced it. A preview is feasibility evidence, not implementation
+authorization: `A3_IMPLEMENTATION_AUTHORIZED=false` in 1 is unchanged by this
+subsection.
 
 If any of these answers stops being true during implementation, the
 implementation PR MUST stop and return here rather than improvising authority.
@@ -2444,9 +2901,9 @@ One design document, one commit, one DRAFT pull request, no amend, no force
 push, no merge. The PR body states the design-only flags and this document is
 its authority.
 
-History is additive across all three remediation rounds. Each remediated head
-keeps the failed head it corrects as its direct parent, so every failure stays in
-the branch history rather than being rewritten:
+History is additive across all three design-review remediation rounds. Each of
+those remediated heads keeps the failed head it corrects as its direct parent, so
+every failure stays in the branch history rather than being rewritten:
 
 ```text
 A3D_REMEDIATION_ROUND_1_PARENT=777a509c5d144deaf4c06a432cddb992b86a28b6
@@ -2460,10 +2917,42 @@ A3D_REBASE_USED=false
 A3D_RESET_USED=false
 ```
 
-The push is fast-forward only, and it is performed only after a fresh read of
-the remote branch confirms that the remote head still equals
-`80549a22e2770dd6392771207a3d43af4f9a7d84`. If the remote authority no longer
-equals that SHA, the push does not happen and this workstream stops instead.
+Round 4 preserves history differently, and the difference is stated rather than
+smoothed over. Its trigger was not a failed design review, so there is no failed
+design head for it to parent; instead it corrects the failed implementation
+attempt recorded in 1.4, and that attempt was never pushed. Round 4 therefore
+uses a new one-commit branch built directly on exact formal main, and it does not
+parent, contain or continue the failed implementation head:
+
+```text
+A3D_REMEDIATION_ROUND_4=4
+A3D_REMEDIATION_ROUND_4_PARENT=cca7805305b0e369b27d7d29ba3611fb9afd7679
+A3D_REMEDIATION_ROUND_4_PARENT_IS_EXACT_FORMAL_MAIN=true
+A3D_REMEDIATION_ROUND_4_BRANCH=design/a3d-round4-mount-owner-predicate
+A3D_REMEDIATION_ROUND_4_COMMIT_COUNT=1
+A3D_ROUND4_CONTAINS_FAILED_IMPLEMENTATION_HEAD=false
+A3D_ROUND4_PARENTS_FAILED_IMPLEMENTATION_HEAD=false
+A3D_ROUND4_REWRITES_FAILED_IMPLEMENTATION_HEAD=false
+FAILED_IMPLEMENTATION_HEAD_REACHABLE_ON_ORIGIN=false
+A3D_HISTORY_PRESERVED_BY_RECORD=true
+A3D_HISTORY_REWRITTEN=false
+```
+
+The round-3 fast-forward precondition applies to the round-3 branch, not to this
+one, because this branch is new rather than a continuation of it. The round-4
+push creates the remote branch, and it happens only after a fresh read of the
+remote repository confirms both of:
+
+```text
+A3D_ROUND4_PREPUSH_ORIGIN_MAIN_REQUIRED=cca7805305b0e369b27d7d29ba3611fb9afd7679
+A3D_ROUND4_PREPUSH_BRANCH_ABSENT_ON_ORIGIN_REQUIRED=true
+A3D_ROUND4_PUSH_IS_NEW_BRANCH=true
+A3D_ROUND4_PUSH_FORCE=false
+```
+
+If `origin/main` no longer equals that SHA, or the round-4 branch already exists
+on `origin`, the push does not happen and this workstream stops instead of
+rewriting, rebasing or force-pushing anything.
 
 After the exact-head pull-request CI reaches a terminal conclusion, this
 workstream stops and returns for independent review:
