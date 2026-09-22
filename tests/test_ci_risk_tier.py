@@ -131,6 +131,87 @@ def test_multiple_policy_docs_docs_fast(tmp_path):
     assert "changed_files=3" in result.stdout
 
 
+# P1-3 (AGENTS.md docs_fast): AGENTS.md is the repository's top-level
+# agent/governance policy document. It joins the existing docs/policy
+# fast path as an exact-file rule; the frozen contract is that an
+# AGENTS.md-only change is eligible for docs_fast and nothing broader.
+AGENTS_ONLY_EXPECTED_TIER = "docs_fast"
+AGENTS_ONLY_FULL_MATRIX_REQUIRED = "false"
+AGENTS_PLUS_DOCS_EXPECTED_TIER = "docs_fast"
+AGENTS_PLUS_README_EXPECTED_TIER = "package_docs"
+AGENTS_PLUS_PRODUCT_EXPECTED_TIER = "full"
+
+
+def test_agents_md_only_docs_fast(tmp_path):
+    """An AGENTS.md-only change is eligible for the docs/policy fast path."""
+    repo = make_repo(tmp_path)
+    write_file(repo, "AGENTS.md")
+    base = commit_all(repo, "base")
+    write_file(repo, "AGENTS.md", "changed\n")
+    head = commit_all(repo, "head")
+
+    result = run_classifier(repo, base, head)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert tier_of(result) == AGENTS_ONLY_EXPECTED_TIER
+    assert "reason=all_changes_in_docs_scope" in result.stdout
+    assert (
+        f"full_matrix_required={AGENTS_ONLY_FULL_MATRIX_REQUIRED}"
+        in result.stdout
+    )
+
+
+def test_agents_md_plus_docs_docs_fast(tmp_path):
+    """AGENTS.md mixed with docs/** stays on the docs_fast path."""
+    repo = make_repo(tmp_path)
+    assert (
+        classify_changes(repo, ["AGENTS.md", "docs/guide.md"])
+        == AGENTS_PLUS_DOCS_EXPECTED_TIER
+    )
+
+
+def test_agents_md_plus_readme_package_docs(tmp_path):
+    """README.md keeps its own package_docs contract in an AGENTS.md
+    mixture: the README path still elevates the docs scope."""
+    repo = make_repo(tmp_path)
+    write_file(repo, "AGENTS.md")
+    write_file(repo, "README.md")
+    base = commit_all(repo, "base")
+    write_file(repo, "AGENTS.md", "changed\n")
+    write_file(repo, "README.md", "changed\n")
+    head = commit_all(repo, "head")
+
+    result = run_classifier(repo, base, head)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert tier_of(result) == AGENTS_PLUS_README_EXPECTED_TIER
+    assert "reason=readme_changed_in_docs_scope" in result.stdout
+
+
+def test_agents_md_plus_product_src_full(tmp_path):
+    """AGENTS.md never carries a product change onto the fast path."""
+    repo = make_repo(tmp_path)
+    assert (
+        classify_changes(repo, ["AGENTS.md", "src/market_vault/thing.py"])
+        == AGENTS_PLUS_PRODUCT_EXPECTED_TIER
+    )
+
+
+AGENTS_LOOKALIKE_PATHS = [
+    "CHANGELOG.md",   # unlisted top-level markdown stays outside the scope
+    "AGENTS.md.bak",  # exact-file rule, not a prefix rule
+    "src/AGENTS.md",  # no basename matching, no directory broadening
+]
+
+
+@pytest.mark.parametrize("path", AGENTS_LOOKALIKE_PATHS)
+def test_agents_lookalike_path_not_docs_fast(tmp_path, path):
+    """AGENTS.md is an exact-file rule: no *.md glob, no directory
+    broadening and no basename matching."""
+    repo = make_repo(tmp_path)
+    assert classify_change(repo, path) == "full"
+
+
 def test_readme_only_package_docs(tmp_path):
     repo = make_repo(tmp_path)
     assert classify_change(repo, "README.md") == "package_docs"

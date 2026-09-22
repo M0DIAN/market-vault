@@ -6,7 +6,7 @@ four conservative tiers:
 
 - docs_fast:    every changed path is inside the docs/policy scope
                 (docs/**, DEVELOPMENT_PLAYBOOK.md, RELEASE_PLAYBOOK.md,
-                AGENT_HANDOFF.md)
+                AGENT_HANDOFF.md, AGENTS.md)
 - package_docs: every changed path is in the docs scope OR README.md,
                 and README.md itself changed (README is package
                 metadata-sensitive: pyproject.toml ``readme``)
@@ -108,12 +108,20 @@ from audit_pr import (
 EXIT_OK = 0
 EXIT_USAGE = 2
 
-# DOCS_FAST scope: docs/ plus the three top-level policy playbooks.
+# DOCS_FAST scope: docs/ plus the four top-level policy documents
+# (DEVELOPMENT_PLAYBOOK.md, RELEASE_PLAYBOOK.md, AGENT_HANDOFF.md,
+# AGENTS.md). AGENTS.md is the repository's agent/governance policy
+# document and shares its peer policy documents' docs_fast contract.
+# This is an exact-file rule: it is NOT a *.md glob and it does not
+# broaden any directory, so an unlisted top-level markdown file stays
+# outside the docs_fast scope (README.md keeps its own separate
+# package_docs contract).
 DOCS_SCOPE_RULES = [
     "docs/",
     "DEVELOPMENT_PLAYBOOK.md",
     "RELEASE_PLAYBOOK.md",
     "AGENT_HANDOFF.md",
+    "AGENTS.md",
 ]
 README_FILE = "README.md"
 
