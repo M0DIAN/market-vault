@@ -54,7 +54,9 @@ The corrections are normative here, not commentary:
 - `L105` remains a defensive fail-closed invariant; its real trigger is not
   known constructible.
 - No file-descriptor-passing-via-sudo mechanism is frozen, because its
-  implementability is not proved.
+  implementability is not proved. The helper instead opens its own child
+  descriptor relative to its own validated root descriptor (5.8), so no
+  descriptor crosses the `sudo` boundary at all.
 - The existing `ci.yml` formal topology is preserved exactly; privileged
   qualification is a separate workflow.
 
@@ -80,7 +82,7 @@ here rather than rewritten:
 ```text
 FIRST_A3D_REVIEW_FAILED_HEAD=777a509c5d144deaf4c06a432cddb992b86a28b6
 FIRST_A3D_REVIEW_FAILURE=CONTRACT_IMPLEMENTABILITY_FAILURE
-A3D_REMEDIATION_ROUND=1
+A3D_FIRST_REMEDIATION_ROUND=1
 ```
 
 Its four findings are corrected in this document:
@@ -95,6 +97,41 @@ Its four findings are corrected in this document:
 `CONTRACT_IMPLEMENTABILITY_FAILURE` is recorded as a design-document failure of
 this contract, not as a production defect: no production code was involved, and
 none is changed by this remediation.
+
+### 1.2 Remediation round 2
+
+The second exact-head A3 design review failed the head that round 1 produced,
+and that failure is preserved here as well:
+
+```text
+SECOND_A3D_REVIEW_FAILED_HEAD=8d791a82b1e482c586a0c8c1f990d722c4b8464e
+SECOND_A3D_REVIEW_FAILED_TREE=4dc41e1c878468a04f90be96fcc3120c28f5c72b
+SECOND_A3D_REVIEW_FAILURE=CONTRACT_IMPLEMENTABILITY_FAILURE
+A3D_SECOND_REMEDIATION_ROUND=2
+A3D_CURRENT_REMEDIATION_ROUND=2
+A3D_HISTORY_ADDITIVE=true
+```
+
+History remains additive across both rounds: `777a509...` (first failed head)
+then `8d791a8...` (second failed head) then this head. Neither failed head is
+rewritten, amended, rebased or force-pushed, and both failure records stay in
+this document. Each round is recorded by its own token —
+`A3D_FIRST_REMEDIATION_ROUND=1` in 1.1, `A3D_SECOND_REMEDIATION_ROUND=2` and
+`A3D_CURRENT_REMEDIATION_ROUND=2` here — so no round fact is stated twice with
+two different values.
+
+The second review's three findings are corrected in this document:
+
+| # | Finding | Corrected in |
+| --- | --- | --- |
+| 1 | A fact with no explicit carrier was classified `EXPLICITLY_HANDED_OFF`: the mount namespace row described inherited kernel-carried process state as an explicit handoff, collapsing membership continuity and identity observation into one misclassified row. | 5.5, 5.6, 10.2 |
+| 2 | The privileged ownership mutation was not confined to an object the helper had itself acquired and pinned: the root descriptor and the child name were validated, but the mutation target was not pinned as an inode, leaving the privileged `chown` open to symlink substitution and to being applied to a hardlinked child. | 5.8 |
+| 3 | The `pull_request` workflow definition was described as "taken from the PR head". That is not the provenance model of the event, and it left the definition actually executed by GitHub unbound to the exact-head definition being independently reviewed. | 6.2, 6.3 |
+
+Finding 1 is a continuity-classification failure, finding 2 is an object-identity
+confinement failure, and finding 3 is a workflow-provenance failure. All three
+are design-document failures of this contract: no production code is involved in
+any of them and none is changed by this remediation.
 
 ## 2. Exact Base Record
 
@@ -279,6 +316,18 @@ FIXTURE_XATTR_AND_ACL_SET_EMPTY=true       # L114-L117 reject any attribute
 
 If either precondition cannot be established, the case outcome is
 `QUALIFICATION_GAP`, never a pass and never a product defect.
+
+Two further controls are reacquired by the ordinary evidence process after the
+privileged helper has exited and before the production call, per 5.8:
+
+```text
+CONTROL_post_mutation_st_nlink_eq_1=true
+CONTROL_post_mutation_xattr_and_acl_empty=true
+```
+
+They are separate measurements, taken after the ownership mutation, because the
+pre-mutation preconditions above are established before the privileged action
+and therefore cannot witness what the privileged action left behind.
 
 ### 4.4 Frozen case outcomes
 
@@ -545,24 +594,83 @@ fixed `RUNNER_TEMP` root safely inside the privileged helper and operate
 relative to its own validated descriptor. Either way, the helper revalidates the
 root itself; it never trusts inherited state.
 
+The child-object consequence of this rule is frozen in 5.8: the helper opens the
+fixed fixture child itself, relative to its own validated root descriptor, and
+performs the privileged ownership mutation on the descriptor it opened.
+
 ### 5.5 Privileged-boundary model
 
-The fixture spans a privilege boundary, so the boundary is modeled explicitly.
-Every fact that crosses it is exactly one of the following:
-`INHERITED`, `INDEPENDENTLY_REACQUIRED`, or `EXPLICITLY_HANDED_OFF`. No fourth
-classification exists, and no fact may be left unclassified.
+The fixture spans a privilege boundary and a namespace boundary, so both are
+modeled explicitly. Every fact that crosses either boundary is exactly one of
+the following three classes, and the classes are mutually exclusive:
+
+- `INHERITED` — the receiving phase holds the state as a kernel-carried property
+  of the very process that crossed the boundary. There is no separate carrier
+  and no message; the state is not transmitted, it is possessed.
+- `INDEPENDENTLY_REACQUIRED` — the receiving phase re-derives the fact from the
+  real object with its own observation instead of receiving a value.
+- `EXPLICITLY_HANDED_OFF` — the value is transmitted across the boundary by a
+  declared carrier, with a declared lifetime and a declared closing checkpoint.
+
+No fourth classification exists, and no fact may be left unclassified. A fact
+whose continuity is inheritance MUST NOT be described as an explicit handoff: an
+explicit handoff requires a carrier, and inherited process state has none.
+`INDEPENDENTLY_REACQUIRED` is therefore also the class for a fact that both
+phases must hold but that is never transmitted — for example a value both phases
+derive from the same frozen contract text, as 5.1 already states of the third
+element of its protocol. Such a fact is classified rather than left unclassified,
+and its class says explicitly that no continuity is claimed for it.
+
+Two namespace facts were previously collapsed into a single misclassified row
+and are now stated separately:
+
+```text
+MOUNT_NAMESPACE_MEMBERSHIP_CONTINUITY=INHERITED
+MOUNT_NAMESPACE_IDENTITY_OBSERVATION=INDEPENDENTLY_REACQUIRED
+MOUNT_NAMESPACE_FACT_EXPLICIT_HANDOFF=none
+```
+
+`MOUNT_NAMESPACE_MEMBERSHIP_CONTINUITY=INHERITED` means the evidence process and
+the helper inherit membership in the already-created private mount namespace
+across the declared `fork`/`exec`/`sudo` lifecycle, as a kernel-carried property
+of those processes: the `sudo` identity transition changes credentials and does
+not change mount namespace membership. `MOUNT_NAMESPACE_IDENTITY_OBSERVATION=
+INDEPENDENTLY_REACQUIRED` means each process independently reads its own real
+`/proc/self/ns/mnt` identity and reports that value; no process receives another
+process's identity, and no identity is inferred from the lifecycle, from a
+process name, or from the presence of a `sudo`.
 
 | Fact | Classification | Carrier and lifetime | Closing checkpoint |
 | --- | --- | --- | --- |
-| Invocation root path | `EXPLICITLY_HANDED_OFF` as an UNTRUSTED LOCATOR only | `--root` argument, valid for one helper invocation, carrying no authority | helper independently revalidates the root under 5.3 before any mutation |
+| Invocation root path | `EXPLICITLY_HANDED_OFF` as an untrusted locator only | `--root` argument, valid for one helper invocation, carrying no authority | helper independently revalidates the root under 5.3 before any mutation |
 | Case/action selection | `EXPLICITLY_HANDED_OFF` as a closed enum name only | `--case` argument, valid for one helper invocation | helper rejects any value outside the 5.2 table before any mutation |
-| Target uid, target mode, child names | `INHERITED` from frozen design constants, never handed off | compiled-in constants in the helper and in the frozen case table; no runtime carrier | 4.3 paired controls measure the resulting real state; a caller value can never reach them |
-| Fixture ownership and mode after the ownership action | `INDEPENDENTLY_REACQUIRED` | ordinary evidence process re-derives them with its own `lstat` and `os.open` | paired controls in 4.3 must all hold before the production call |
-| Helper exit status | `INDEPENDENTLY_REACQUIRED` | process status, informational only | never evidence; the ordinary process reacquires the state itself |
-| Mount namespace identity | `EXPLICITLY_HANDED_OFF` by inheritance through `fork`, `exec` and `sudo` within one private namespace | namespace id as carried by the namespace itself; valid until namespace exit | the three identity controls in 10.1 are compared before any drift |
-| Mounts created inside the private namespace | `INHERITED` within the private namespace only | shared by helper and evidence process; destroyed at namespace exit | explicit checked cleanup under 10.4 before exit; namespace exit is a second boundary, not a substitute |
+| Target uid, target mode, child names | `INDEPENDENTLY_REACQUIRED` | both phases derive them from the same frozen contract text (5.2, 5.8); no value is transmitted and no runtime carrier exists | 4.3 paired controls measure the resulting real state; a caller value can never reach them |
+| Helper exit status | `EXPLICITLY_HANDED_OFF` as a non-evidence completion signal only | process status of the helper process, valid for one invocation, carrying no authority | never accepted as evidence; the ordinary process reacquires the state itself |
+| Fixture child identity before the ownership mutation | `INDEPENDENTLY_REACQUIRED` by the helper | the descriptor the helper opens for itself relative to its own validated root descriptor (5.8) | pre-mutation child validation passes before the first `chown`/`chmod` |
+| Fixture ownership, mode and link state after the ownership action | `INDEPENDENTLY_REACQUIRED` by the ordinary evidence process | ordinary evidence process re-derives them with its own `lstat` and `os.open` | the paired controls of 4.3, including the post-mutation link and attribute reacquisitions, all hold before the production call |
+| Mount namespace membership continuity | `INHERITED` | the process's own mount-namespace membership, carried by the kernel across `fork`, `exec` and the `sudo` identity transition within one private namespace; valid until namespace exit | the membership statements of T5, N4 and N5 hold, and the identity equality below is measured |
+| Mount namespace identity observation | `INDEPENDENTLY_REACQUIRED` | each process reads its own real `/proc/self/ns/mnt` inode and reports that value | `PRIVATE_EVIDENCE_MNT_NS_ID == PRIVATE_HELPER_MNT_NS_ID` and `PRIVATE_EVIDENCE_MNT_NS_ID != HOST_MNT_NS_ID`, both measured in 10.1 |
+| Privileged mount source and target objects | `INDEPENDENTLY_REACQUIRED` by the helper | objects the helper creates exclusively for itself under its validated root in the private namespace (5.9); no caller-created object is ever used, and no object is handed off | a pre-existing object at a role name yields `HELPER_ROOT_REJECTED`, and each object is revalidated against its pinned identity before use |
+| Fixture mount state inside the private namespace | `INDEPENDENTLY_REACQUIRED` by each consumer | the real private mount table, read by whichever phase needs the fact; no mount fact is inherited and none is handed off | pre-drift positive admission plus the 10.4 state machine |
 | Loop backing device | `INDEPENDENTLY_REACQUIRED` | ordinary evidence process re-reads the real loop state rather than trusting helper output | `LOOP_BACKING_RESIDUE=false` at the end of 10.4 |
-| Host mount namespace | no fact crosses; the observer stays outside and the private namespace does not propagate to it | real host mount table read by the host observer | host-namespace absence control in 10.3, before and after the run |
+| Host mount namespace and host mount table | no fact crosses either boundary: the observer stays outside, the host identity is measured where it is produced, and the private namespace never propagates to the host | real host mount table read by the host observer | host-namespace absence control in 10.3, before and after the run |
+
+The last row declares the absence of a crossing fact and therefore carries no
+class; it is not an unclassified fact.
+
+**Round-2 classification audit.** Every row of 5.5, of the 5.6 transition ledger
+and of the 10.2 namespace table was re-checked against the three classes above.
+The audit changed four classifications and confirmed the rest:
+
+| Location | Previous statement | Audit result | Corrected statement |
+| --- | --- | --- | --- |
+| 5.5, mount namespace identity | `EXPLICITLY_HANDED_OFF` by inheritance through `fork`, `exec` and `sudo` within one private namespace | `MISCLASSIFIED`: inherited process state has no carrier, so it cannot be an explicit handoff, and the row also collapsed membership continuity with identity observation | split into `MOUNT_NAMESPACE_MEMBERSHIP_CONTINUITY=INHERITED` and `MOUNT_NAMESPACE_IDENTITY_OBSERVATION=INDEPENDENTLY_REACQUIRED` |
+| 5.5, target uid / target mode / child names | `INHERITED` from frozen design constants | `MISCLASSIFIED`: nothing is inherited across the boundary; each phase derives these from the same frozen contract text and no value is transmitted | `INDEPENDENTLY_REACQUIRED` |
+| 5.5, helper exit status | `INDEPENDENTLY_REACQUIRED` | `MISCLASSIFIED`: the parent does not re-derive the helper's status, it receives it; the status has a real carrier but is not evidence | `EXPLICITLY_HANDED_OFF` as a non-evidence completion signal |
+| 5.5, mounts created inside the private namespace | `INHERITED` within the private namespace only | `MISCLASSIFIED`: a mount is not inherited across a process boundary; each consumer reads the shared namespace's real mount table for itself | `INDEPENDENTLY_REACQUIRED`, with the sharing substrate supplied by the `INHERITED` membership row |
+| 5.5 remaining rows | already matched a single class | `CONFIRMED` | unchanged |
+| 5.6 T1-T8 | class implicit, transition ledger | `CONFIRMED` or corrected per row; an explicit class column is now frozen | see 5.6 |
+| 10.2 N1-N6 | class implicit, namespace table | `CONFIRMED` or corrected per row; an explicit class column is now frozen | see 10.2 |
 
 The helper's own report is not evidence. If the ordinary process cannot
 independently reacquire the state the helper claims to have produced, the case
@@ -571,24 +679,26 @@ is a `QUALIFICATION_GAP`.
 ### 5.6 Boundary transition ledger
 
 Each transition across the privilege or namespace boundary carries exactly one
-authority owner, producer, carrier, lifetime, consumer and closing checkpoint.
-A transition with no closing checkpoint is not frozen here and MUST NOT be
-implemented.
+continuity class per crossing fact, plus exactly one authority owner, producer,
+carrier, lifetime, consumer and closing checkpoint. A transition with no closing
+checkpoint is not frozen here and MUST NOT be implemented.
 
-| # | Transition | Authority owner | Producer | Carrier | Lifetime | Consumer | Closing checkpoint |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| T1 | evidence process -> fixture root creation | ordinary runner identity | non-root evidence process | real directory under the runner temporary area | one run attempt | privileged helper (validates) and evidence process (uses) | helper root validation under 5.3 passes before any mutation |
-| T2 | evidence process -> helper: case selection | this contract (frozen enum) | non-root evidence process | `--case` argument | one helper invocation | privileged helper | enum membership checked before any mutation |
-| T3 | evidence process -> helper: root locator | this contract (untrusted input) | non-root evidence process | `--root` argument | one helper invocation | privileged helper | independent revalidation under 5.3 |
-| T4 | helper -> filesystem: ownership and mode mutation | this contract (frozen constants) | privileged fixture helper | real inode metadata | until cleanup | non-root evidence process | 4.3 paired controls all recorded before the production call |
-| T5 | evidence process -> private namespace entry | ordinary runner identity | privileged namespace launcher | inherited mount namespace | until namespace exit | evidence process and helper | the three identity controls in 10.1 agree |
-| T6 | launcher -> private namespace: fixture mount | this contract | privileged fixture helper | real mount table entry inside the private namespace | until detach and release | non-root evidence process | pre-drift positive admission plus the 10.4 state machine |
-| T7 | private namespace -> observer: absence fact | this contract | privileged namespace launcher | real mount table read from the host namespace | one run attempt | independent reviewer | host-namespace absence control passes before and after the run |
-| T8 | run -> reviewer: evidence publication | repository design authority | privileged workflow | workflow output bound to head SHA and runner identity | retained as CI evidence | independent reviewer | exact-head binding and residue controls recorded |
+| # | Transition | Crossing fact and class | Authority owner | Producer | Carrier | Lifetime | Consumer | Closing checkpoint |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| T1 | evidence process -> fixture root creation | real root identity, owner and mode: `INDEPENDENTLY_REACQUIRED` by the helper | ordinary runner identity | non-root evidence process | real directory under the runner temporary area | one run attempt | privileged helper (validates) and evidence process (uses) | helper root validation under 5.3 passes before any mutation |
+| T2 | evidence process -> helper: case selection | case name: `EXPLICITLY_HANDED_OFF` as a closed enum name | this contract (frozen enum) | non-root evidence process | `--case` argument | one helper invocation | privileged helper | enum membership checked before any mutation |
+| T3 | evidence process -> helper: root locator | root path text: `EXPLICITLY_HANDED_OFF` as an untrusted locator | this contract (untrusted input) | non-root evidence process | `--root` argument | one helper invocation | privileged helper | independent revalidation under 5.3 |
+| T4 | helper -> filesystem: ownership and mode mutation | real inode metadata: `INDEPENDENTLY_REACQUIRED` by the non-root evidence process | this contract (frozen constants) | privileged fixture helper | real inode metadata, mutated through the helper-pinned child descriptor (5.8) | until cleanup | non-root evidence process | 4.3 paired controls, including the post-mutation reacquisitions, all recorded before the production call |
+| T5 | evidence process -> private namespace entry | namespace membership: `INHERITED`; namespace identity: `INDEPENDENTLY_REACQUIRED` by each process | ordinary runner identity | privileged namespace launcher | inherited mount namespace, plus each process's own `/proc/self/ns/mnt` reading | until namespace exit | evidence process and helper | the three identity controls in 10.1 agree |
+| T6 | launcher -> private namespace: fixture mount | mount objects and mount state: `INDEPENDENTLY_REACQUIRED` by each consumer; nothing is handed off | this contract | privileged fixture helper | real mount table entry inside the private namespace, and the helper-created source and target objects of 5.9 | until detach and release | non-root evidence process | pre-drift positive admission plus the 10.4 state machine |
+| T7 | private namespace -> observer: absence fact | host-table absence: `INDEPENDENTLY_REACQUIRED` by the host observer | this contract | host observer, recorded by the workflow | real mount table read from the host namespace | one run attempt | independent reviewer | host-namespace absence control passes before and after the run |
+| T8 | run -> reviewer: evidence publication | recorded run facts including the workflow-provenance facts of 6.3: `EXPLICITLY_HANDED_OFF` through the workflow output carrier | repository design authority | privileged workflow | workflow output bound to head SHA, tree, runner identity and workflow-definition identity | retained as CI evidence | independent reviewer | exact-head binding, workflow-authority equality and residue controls recorded |
 
 T4 is the only transition that changes privilege-owned state, and its authority
 owner is this contract rather than the caller. T3 is the only transition that
-carries caller-provided text, and it closes at validation, not at use.
+carries caller-provided text, and it closes at validation, not at use. T5 is the
+only transition whose continuity is inheritance, and nothing about it is
+handed off.
 
 ### 5.7 Failure-origin classification
 
@@ -603,6 +713,207 @@ Every non-pass outcome is classified by origin before it is reported:
 
 An `ENVIRONMENT_FAILURE` or `TOOLING_FAILURE` is never rewritten as a product
 defect, and a `PRODUCT_FAILURE` is never excused as an environment artifact.
+
+### 5.8 Freeze: privileged child inode confinement
+
+A validated root descriptor is not by itself sufficient authority to mutate a
+child of that root. Before the first privileged ownership mutation, and after
+5.3 has validated the root, the helper acquires the fixture child itself and
+validates that exact object. A child name is never validated and then mutated
+through a re-resolved pathname.
+
+Conceptual helper-local acquisition, relative to the helper's own validated root
+descriptor:
+
+```text
+child_fd = openat(validated_root_fd, FIXTURE_FILE_ROLE, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+```
+
+`O_NOFOLLOW` makes a symlink at the role name an open failure rather than a
+redirection, and opening relative to the helper's own descriptor means the
+caller's string is never re-resolved. The helper then performs its own `fstat`
+on `child_fd` and MUST require, before the first `chown` or `chmod`:
+
+| Required property of the pinned child | Frozen requirement |
+| --- | --- |
+| object type | regular file (`S_ISREG`): never a directory, device, socket, fifo or symlink |
+| link state | `st_nlink == 1` |
+| pre-mutation owner | exactly the ordinary runner uid |
+| pre-mutation mode | exactly the fixture's approved initial mode `FIXTURE_FILE_INITIAL_MODE=0640`, hence `mode & 0o022 == 0` |
+| permission bits | no setuid, setgid or sticky bit set: the helper asserts `S_ISUID`, `S_ISGID` and `S_ISVTX` all clear explicitly, instead of relying on the exact-mode equality alone |
+| identity | nonzero `st_dev` and nonzero `st_ino` |
+| role scope | the one fixed derived role for the selected case and nothing else; the helper acquires no other child for an ownership action |
+
+A hardlinked child (`st_nlink != 1`) is rejected BEFORE any privileged mutation,
+and a symlinked child cannot be opened at all under `O_NOFOLLOW`. Both are hard
+refusals with a non-pass outcome, and neither may be repaired by deleting,
+replacing or re-creating the object. If the role name does not exist, or exists
+as an unexpected object, the helper refuses as well: for the ownership cases the
+fixture file is created by the ordinary runner before the helper runs and the
+helper never creates it.
+
+The privileged ownership mutation then operates on the pinned child descriptor,
+never on a pathname:
+
+```text
+fchown(child_fd, derived_target_uid, observed_gid)
+fchmod(child_fd, 0o644)
+```
+
+The order is frozen: `fchown` first, `fchmod` second. Some filesystems clear
+setuid/setgid bits as part of an ownership change, so the frozen `0644` literal
+is applied after the ownership change and the resulting mode is exactly the
+frozen literal regardless of that kernel behavior. `derived_target_uid` is the
+5.2 derivation for the selected case, and `observed_gid` is the `st_gid` the
+helper observed on the pinned descriptor; no caller value participates in
+either.
+
+```text
+OWNERSHIP_MUTATION_TARGET_PINNED_BY_FD=true
+OWNERSHIP_MUTATION_FOLLOWS_SYMLINK=false
+OWNERSHIP_MUTATION_ACCEPTS_HARDLINK=false
+OWNERSHIP_PREMUTATION_NLINK_REQUIRED=1
+OWNERSHIP_MUTATION_SYSCALL_TARGET=pinned_child_descriptor
+OWNERSHIP_MUTATION_CHOWN_BEFORE_CHMOD=true
+HELPER_LOCAL_CHILD_ACQUISITION=true
+HELPER_CHILD_ACQUISITION_ORDER=after_root_validation_before_any_mutation
+HELPER_CHILD_ACQUISITION_TYPE=regular_file
+HELPER_CHILD_ACQUISITION_IDENTITY_NONZERO=true
+HELPER_CHILD_ACQUISITION_ROLE_SCOPE=fixed_derived_role_only
+HELPER_CHILD_SYMLINK_OUTCOME=HELPER_ROOT_REJECTED
+HELPER_CHILD_HARDLINK_OUTCOME=HELPER_ROOT_REJECTED
+HELPER_CHILD_UNEXPECTED_OBJECT_OUTCOME=HELPER_ROOT_REJECTED
+HELPER_CHILD_MISSING_OUTCOME=HELPER_ROOT_REJECTED
+FIXTURE_FILE_INITIAL_MODE=0640
+FIXTURE_FILE_INITIAL_MODE_IS_EXACT=true
+FIXTURE_FILE_PREMUTATION_OWNER=ordinary_runner_uid
+NO_FD_CROSSES_SUDO_BOUNDARY=true
+```
+
+`FIXTURE_FILE_INITIAL_MODE=0640` is the approved pre-mutation mode, and it is a
+different fact from the frozen post-mutation `FILE_MODE=0644` of 4.1. The
+prohibition on `0600` in 4.1 is a requirement on the post-mutation mode that the
+case observes, not a statement about the fixture's initial mode, and
+`0640 & 0o022 == 0` holds for the initial state exactly as `0644 & 0o022 == 0`
+holds for the final state.
+
+`FIXTURE_FILE_ROLE` resolution is case-dependent and frozen as such: for
+`own-foreign` and `own-root` the child is created by the ordinary runner before
+the helper is invoked, and the helper pins and validates it without creating it;
+for `mount-fixture` the child is created by the helper inside the helper's own
+freshly created ext4 filesystem after the mount (5.9), and it is then pinned and
+validated by the same rule set before any use.
+
+Because no descriptor crosses the `sudo` boundary (5.4), the helper opens this
+descriptor itself, after its own root validation, and
+`HELPER_ACCEPTS_INHERITED_DESCRIPTOR=false` continues to hold: a caller-supplied
+or inherited descriptor is never accepted, and the helper never mutates a
+descriptor it did not open itself.
+
+Python expresses the acquisition directly as
+`os.open(FIXTURE_FILE_ROLE, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=root_fd)`,
+whose underlying operation is `openat` relative to `root_fd`, with
+`os.fstat`, `os.fchown` and `os.fchmod` acting on the returned descriptor. No
+step of this freeze requires a descriptor to cross the privilege boundary. This
+statement is scoped to the declared qualification platform: `dir_fd`-relative
+`os.open` and `os.fchown` are Linux facilities, the runner is `ubuntu-latest`
+(section 6), and `NO_WINDOWS_QUALIFICATION=true` (section 18) means no other
+platform is claimed here. On the declared platform all three descriptor
+operations exist and need no dependency beyond the standard library.
+
+The ordinary evidence process does not accept the helper's report of the
+mutation. After the helper has exited and before the production call, that
+process independently reacquires, from the real object and with no privilege:
+
+```text
+POST_HELPER_ST_UID_REACQUIRED=true
+POST_HELPER_MODE_REACQUIRED=true
+POST_HELPER_REAL_ORDINARY_OPEN_REACQUIRED=true
+POST_HELPER_ST_NLINK_REACQUIRED=true
+POST_HELPER_XATTR_AND_ACL_REACQUIRED=true
+POST_HELPER_REACQUISITION_BEFORE_PRODUCTION_CALL=true
+```
+
+Those five reacquisitions are the `CONTROL_*` rows and post-mutation control
+rows of 4.3. A missing, failing or unrecorded reacquisition is
+`QUALIFICATION_GAP`, never a pass.
+
+### 5.9 Freeze: privileged mount child safety
+
+The mount fixture has the same confinement problem as the ownership fixture and
+the same answer: the helper creates the privileged mount's source and target
+itself, under its own validated root descriptor in the private namespace, and
+treats anything already present at a role name as a refusal rather than as
+something to adopt, repair or remove.
+
+`IMAGE_ROLE` and `MOUNTPOINT_ROLE` are fixed derived names from 5.2, never
+caller text, and no caller-created symlink or hardlink may become the privileged
+mount source or target. The creation semantics are frozen as invariants rather
+than as a single syscall list, because the two objects are different kinds of
+object and one primitive cannot express both:
+
+- the image object is a regular file the helper creates exclusively, so that any
+  pre-existing object at `IMAGE_ROLE` fails creation instead of being opened;
+- the mountpoint object is a directory the helper creates exclusively, so that
+  any pre-existing object at `MOUNTPOINT_ROLE` — file, symlink or directory —
+  fails creation instead of being used;
+- both creations are performed relative to the helper's own validated root
+  descriptor with no-follow semantics, and neither creation follows a symlink;
+- after creation each object is pinned by a descriptor the helper holds, and its
+  real `st_dev` and `st_ino` are recorded: the source must be a regular
+  single-link file, and the target must be a real directory;
+- the loop backing device is acquired by the helper itself and never supplied by
+  the caller;
+- immediately before the mount, both objects' real identity is re-derived and
+  MUST still equal the pinned identity, and the target must still be a directory
+  with no symlinked component in the resolution path.
+
+```text
+PRIVILEGED_MOUNT_SOURCE_AND_TARGET_CREATED_BY_HELPER=true
+PRIVILEGED_MOUNT_PREEXISTING_ROLE_OUTCOME=HELPER_ROOT_REJECTED
+PRIVILEGED_MOUNT_SOURCE_ROLE=IMAGE_ROLE
+PRIVILEGED_MOUNT_TARGET_ROLE=MOUNTPOINT_ROLE
+PRIVILEGED_MOUNT_ROLE_NAMES_DERIVED=true
+PRIVILEGED_MOUNT_ACCEPTS_CALLER_PATH=false
+PRIVILEGED_MOUNT_ACCEPTS_CALLER_NAME=false
+PRIVILEGED_MOUNT_ACCEPTS_CALLER_DEVICE=false
+PRIVILEGED_MOUNT_SOURCE_SYMLINK_ALLOWED=false
+PRIVILEGED_MOUNT_TARGET_SYMLINK_ALLOWED=false
+PRIVILEGED_MOUNT_SOURCE_EXCLUSIVE_CREATE=true
+PRIVILEGED_MOUNT_TARGET_EXCLUSIVE_CREATE=true
+PRIVILEGED_MOUNT_SOURCE_NLINK_REQUIRED=1
+PRIVILEGED_MOUNT_SOURCE_HARDLINK_OUTCOME=HELPER_ROOT_REJECTED
+PRIVILEGED_MOUNT_TARGET_IDENTITY_PINNED=true
+PRIVILEGED_MOUNT_PINNED_IDENTITY_RECHECKED_BEFORE_USE=true
+PRIVILEGED_LOOP_DEVICE_SELECTED_BY_HELPER=true
+```
+
+The mount operation itself is a pathname operation: `mount(2)` accepts paths
+rather than descriptors and has no descriptor-based form. This contract
+therefore freezes the invariant — helper-created objects, exclusive creation,
+no caller-created source or target, and identity revalidation — rather than
+claiming a descriptor pin for the mount syscall itself. A revalidation failure
+is a hard refusal before any privileged effect beyond the creation the helper
+already performed.
+
+One consequence is worth stating explicitly, because it constrains how the
+implementation may verify the target rather than what it must achieve: once a
+filesystem is mounted on the target path, a path-based `stat` of that path
+reports the mounted filesystem's root inode rather than the directory the helper
+created. The invariant is that the object the helper created is the object its
+own mount covers; the implementation may verify that in any way that really
+establishes it, for example with a descriptor opened on the target before the
+mount, whose identity is unaffected by the covering mount. If the target's
+identity cannot be established to still be the helper's own pinned object, the
+fixture is a failed construction: the outcome is `QUALIFICATION_GAP` plus a
+design finding, cleanup follows 10.4, and it is never a pass.
+
+For `mount-fixture`, `FIXTURE_FILE_ROLE` is created by the helper inside its own
+newly created ext4 filesystem after the mount, and it is then pinned by
+descriptor and validated under the 5.8 rule set before any use. The ownership
+mutation of 5.8 applies only to the `own-foreign` and `own-root` cases; the
+mount case performs no ownership mutation, and the mounted file's ownership is
+never reported as RQP-L09 evidence.
 
 ## 6. Freeze: Privileged CI Architecture
 
@@ -657,8 +968,9 @@ the following is a requirement on that workflow:
   fixture does not require is invalid;
 - its `permissions` are minimal and read-only, and a broader permission is
   permitted only where separately justified in the implementation PR;
-- its checkout MUST bind to the exact PR head SHA being qualified, never to a
-  base-SHA merge result and never to a moving branch tip;
+- its checkout MUST bind to the exact PR head SHA being qualified, never to the
+  `refs/pull/<PR_NUMBER>/merge` synthetic merge commit the event itself runs
+  against, and never to a moving branch tip;
 - it MUST print and bind, as its own output, all of:
 
 ```text
@@ -686,14 +998,31 @@ PRIVILEGED_WORKFLOW_PRINTS_RUN_ATTEMPT=true
 PRIVILEGED_WORKFLOW_PRINTS_RUNNER_IDENTITY=true
 ```
 
+- it MUST also record and check the workflow-provenance facts of 6.3, whose
+  equality requirement is a precondition of every privileged effect.
+
 ### 6.2 Frozen event model
 
 The selected event model is `pull_request`. This is the preferred model because
-it is the only one that gives exact-head authority without granting the run the
-base repository's write trust: the workflow definition itself is taken from the
-PR head, so a job that the PR intends to add is the job that runs, and
-`github.event.pull_request.head.sha` names the exact commit under qualification
-while the pull-request ref is only a merge-side view.
+it names the exact commit under qualification through
+`github.event.pull_request.head.sha` while the run holds no base-repository write
+trust, unlike `pull_request_target`.
+
+The event's own ref and the code under qualification are two different facts.
+On a `pull_request` event the run executes in the context of the synthetic merge
+commit rather than in the context of the head object, so `GITHUB_REF` is
+`refs/pull/<PR_NUMBER>/merge` and `GITHUB_SHA` names that merge commit. The
+workflow definition GitHub executes is therefore the copy of the workflow file
+resolved from the event-ref object, which contains the merge of the base and the
+head on that path and is not guaranteed to be byte-identical to the head's copy.
+An earlier version of this document stated that the workflow definition is
+simply "taken from the PR head"; that statement is withdrawn as factually wrong,
+and 6.3 replaces it with the actual provenance model plus the equality check
+that makes the executed definition provably identical to the exact-head
+definition being independently reviewed. The event model itself is unchanged by
+this correction: it is still `pull_request` on `base=main`, and no
+`pull_request_target`, `workflow_run` or other elevated-context event is
+introduced.
 
 ```text
 PRIVILEGED_WORKFLOW_EVENT=pull_request
@@ -731,6 +1060,95 @@ ORDINARY_CI_SEPARATE=true
 PRIVILEGED_RUN_SUBSTITUTES_ORDINARY_CI=false
 ORDINARY_CI_SUBSTITUTES_PRIVILEGED_RUN=false
 ```
+
+### 6.3 Frozen pull-request workflow provenance
+
+Two authorities are separated here because they are resolved from different Git
+objects and neither implies the other:
+
+- `WORKFLOW_DEFINITION_AUTHORITY` — the workflow file GitHub actually executes
+  for the privileged event, resolved from the event-ref object;
+- `CODE_UNDER_QUALIFICATION_AUTHORITY` — the repository content the fixture
+  qualifies, checked out explicitly at `github.event.pull_request.head.sha`.
+
+```text
+PULL_REQUEST_EVENT_REF=refs/pull/<PR_NUMBER>/merge
+PULL_REQUEST_EVENT_SHA=synthetic_merge_commit
+PRIVILEGED_WORKFLOW_DEFINITION_PATH=.github/workflows/l4_privileged_qualification.yml
+WORKFLOW_DEFINITION_AUTHORITY=event_ref_object
+CODE_UNDER_QUALIFICATION_AUTHORITY=exact_head_object
+PRIVILEGED_WORKFLOW_CHECKOUT_SOURCE=github.event.pull_request.head.sha
+WORKFLOW_DEFINITION_AUTHORITY_SEPARATE_FROM_CODE_AUTHORITY=true
+```
+
+The privileged run MUST record, from its own real environment and from real Git
+objects, every one of:
+
+```text
+GITHUB_WORKFLOW_REF
+GITHUB_REF
+GITHUB_SHA
+PR_NUMBER
+PR_HEAD_SHA
+PR_HEAD_TREE
+PRIVILEGED_WORKFLOW_EVENT_REF_BLOB_SHA
+PRIVILEGED_WORKFLOW_HEAD_BLOB_SHA
+```
+
+`PRIVILEGED_WORKFLOW_EVENT_REF_BLOB_SHA` is the blob identity of
+`.github/workflows/l4_privileged_qualification.yml` at the event-ref object named
+by `GITHUB_SHA`, and `PRIVILEGED_WORKFLOW_HEAD_BLOB_SHA` is the blob identity of
+the same path at `PR_HEAD_SHA`. Both are resolved from authoritative Git objects
+— for example `git rev-parse <object>:<path>` against an explicitly fetched
+`refs/pull/<PR_NUMBER>/merge` and against the fetched head object, or the
+equivalent blob identities read from the repository contents API at those two
+commits with the run's read-only token. The checked-out worktree copy is not a
+substitute for either, because the worktree holds only the head copy, and
+`GITHUB_WORKFLOW_REF` is recorded as corroboration rather than in place of the
+blob comparison.
+
+A Git blob identity is a content hash, so equality of those two values is
+byte-identity of the workflow definition. Before ANY privileged mutation the run
+MUST require:
+
+```text
+PRIVILEGED_WORKFLOW_EVENT_REF_BLOB_SHA == PRIVILEGED_WORKFLOW_HEAD_BLOB_SHA
+```
+
+If the workflow definition GitHub is executing is not byte-identical to the
+exact-head workflow being independently reviewed, the privileged run MUST STOP
+privileged fixture execution:
+
+```text
+PRIVILEGED_WORKFLOW_AUTHORITY_MISMATCH_OUTCOME=WORKFLOW_AUTHORITY_MISMATCH
+PRIVILEGED_WORKFLOW_AUTHORITY_CHECK_ORDER=before_any_privileged_mutation
+PRIVILEGED_WORKFLOW_AUTHORITY_CHECK_PRIVILEGE=none
+PRIVILEGED_WORKFLOW_MISMATCH_STOPS_PRIVILEGED_EFFECT=true
+```
+
+No `sudo`, `unshare`, `mount`, `umount`, `chown`, `chmod`, `mkfs` or `losetup`
+may occur after that mismatch. The check itself needs no privilege, so it is
+performed before the first privileged step and every privileged step depends on
+its result; a run in which any privileged step can execute without that
+predecessor does not satisfy this contract. A missing blob identity, an
+unresolvable ref, or a malformed value is itself a mismatch and is never treated
+as equality.
+
+The same run MUST also bind the code under qualification to the exact head:
+
+```text
+CHECKED_OUT_HEAD_EQUALS_PR_HEAD_SHA=true
+CHECKED_OUT_HEAD_TREE_EQUALS_PR_HEAD_TREE=true
+```
+
+`git rev-parse HEAD` on the checked-out repository MUST equal
+`github.event.pull_request.head.sha`. `PR_HEAD_TREE` is derived, never supplied:
+it is `git rev-parse HEAD^{tree}` on that proven checked-out head, published as
+the run's own output, and the independent reviewer compares the published value
+against the tree of the reviewed head SHA. Either failure is
+`WORKFLOW_AUTHORITY_MISMATCH` under the same stop rule, because a run that
+qualifies a different object than the head under review cannot produce evidence
+about that head.
 
 ## 7. Freeze: Future Privileged Preflight
 
@@ -957,6 +1375,13 @@ the private namespace; the evidence process and the helper report theirs from
 inside the private namespace. No identity may be inferred from a process name, a
 command line, or the presence of a `sudo` in the lifecycle.
 
+Membership continuity and identity observation are separate facts, frozen that
+way in 5.5: membership is `INHERITED` across this lifecycle, because the `sudo`
+identity transition changes credentials rather than mount namespace membership,
+while identity is `INDEPENDENTLY_REACQUIRED` by every process. The equality above
+is therefore measured rather than inferred from that inheritance, and a
+process that cannot read its own real identity cannot satisfy this contract.
+
 ```text
 NAMESPACE_IDENTITY_MEASURED=true
 NAMESPACE_IDENTITY_SOURCE=/proc/self/ns/mnt inode
@@ -973,14 +1398,22 @@ does not satisfy this contract.
 
 ### 10.2 Boundary table for namespace state transitions
 
-| # | Transition | Authority owner | Producer | Carrier | Lifetime | Consumer | Closing checkpoint |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| N1 | host baseline -> observer | this contract | host observer | observed host mount table | one run attempt | independent reviewer | pre-run absence baseline recorded |
-| N2 | host -> private namespace creation | reviewed privileged identity | privileged namespace launcher | real mount namespace | until namespace exit | evidence process and helper | private namespace identity differs from host identity |
-| N3 | propagation state | this contract | privileged namespace launcher | real propagation flags of the private namespace root | until namespace exit | evidence process and helper | propagation is private before any mount mutation |
-| N4 | launcher -> evidence process: namespace membership | ordinary runner identity | privileged namespace launcher | inherited mount namespace across `fork`/`exec` | until namespace exit | evidence process | `PRIVATE_EVIDENCE_MNT_NS_ID` measured and equal to the private identity |
-| N5 | evidence process -> helper: namespace membership | reviewed privileged identity | privileged fixture helper | inherited mount namespace across `sudo` | one helper invocation | helper | `PRIVATE_HELPER_MNT_NS_ID` measured and equal to `PRIVATE_EVIDENCE_MNT_NS_ID` |
-| N6 | private namespace -> host: absence | this contract | host observer | observed host mount table | one run attempt | independent reviewer | post-run absence control recorded |
+Each row names its crossing fact and its single continuity class, alongside the
+authority owner, producer, carrier, lifetime, consumer and closing checkpoint
+the 5.6 ledger requires.
+
+| # | Transition | Crossing fact and class | Authority owner | Producer | Carrier | Lifetime | Consumer | Closing checkpoint |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| N1 | host baseline -> observer | host mount table state: `INDEPENDENTLY_REACQUIRED` by the host observer | this contract | host observer | observed host mount table | one run attempt | independent reviewer | pre-run absence baseline recorded |
+| N2 | host -> private namespace creation | namespace membership: `INHERITED`; namespace identity: `INDEPENDENTLY_REACQUIRED` by each process | reviewed privileged identity | privileged namespace launcher | real mount namespace | until namespace exit | evidence process and helper | private namespace identity differs from host identity |
+| N3 | propagation state | real propagation flags: `INDEPENDENTLY_REACQUIRED` from the shared namespace object | this contract | privileged namespace launcher | real propagation flags of the private namespace root | until namespace exit | evidence process and helper | propagation is private before any mount mutation |
+| N4 | launcher -> evidence process: namespace membership | membership: `INHERITED` across `fork`/`exec`; identity: `INDEPENDENTLY_REACQUIRED` by the evidence process | ordinary runner identity | privileged namespace launcher | inherited mount namespace across `fork`/`exec` | until namespace exit | evidence process | `PRIVATE_EVIDENCE_MNT_NS_ID` measured and equal to the private identity |
+| N5 | evidence process -> helper: namespace membership | membership: `INHERITED` across the `sudo` identity transition, which changes credentials and not namespace membership; identity: `INDEPENDENTLY_REACQUIRED` by the helper | reviewed privileged identity | privileged fixture helper | inherited mount namespace across `sudo` | one helper invocation | helper | `PRIVATE_HELPER_MNT_NS_ID` measured and equal to `PRIVATE_EVIDENCE_MNT_NS_ID` |
+| N6 | private namespace -> host: absence | host-table absence: `INDEPENDENTLY_REACQUIRED` by the host observer | this contract | host observer | observed host mount table | one run attempt | independent reviewer | post-run absence control recorded |
+
+No row in this table is an explicit handoff. Namespace membership is inherited
+and namespace identity is independently reacquired; nothing about the namespace
+crosses as a transmitted value.
 
 ### 10.3 Host-namespace absence control
 
@@ -1157,10 +1590,14 @@ implementation PR where they are needed to pin the new privileged workflow
 contract.
 
 The implementation PR MUST also pin, in a checked-in test or checker, the
-findings this remediation froze: the closed helper argument vector and the
-derived constants of 5.1-5.2, the three measured namespace identities of 10.1,
-the cleanup state machine and residue controls of 10.4, and the workflow
-trigger, permission and exact-head binding facts of 6.1-6.2. A frozen token with
+findings these remediations froze: the closed helper argument vector and the
+derived constants of 5.1-5.2, the continuity classes and ledgers of 5.5-5.6, the
+child-inode confinement facts of 5.8, the privileged mount child-safety facts of
+5.9, the three measured namespace identities and namespace classes of 10.1-10.2,
+the cleanup state machine and residue controls of 10.4, and the workflow trigger,
+permission, exact-head binding and provenance facts of 6.1-6.3, including the
+`PRIVILEGED_WORKFLOW_EVENT_REF_BLOB_SHA == PRIVILEGED_WORKFLOW_HEAD_BLOB_SHA`
+requirement and the `WORKFLOW_AUTHORITY_MISMATCH` stop rule. A frozen token with
 no pinning check is a token that can silently drift in a later PR.
 
 ## 14. Stage Separation and Registry Discipline
@@ -1197,10 +1634,14 @@ These results are design implementability results, NOT qualification evidence.
 They state that each frozen requirement can be produced, carried, observed and
 consumed by the declared architecture.
 
-The check was re-run against the corrected document, in which the helper
-protocol (5.1-5.4), the boundary model (5.5-5.6), the process and namespace
-topology (10.1-10.2) and the cleanup state machine (10.4) are the corrected
-statements. The result is claimed only because the document now has no
+The round-1 check was re-run against the round-1 corrected document, in which
+the helper protocol (5.1-5.4), the boundary model (5.5-5.6), the process and
+namespace topology (10.1-10.2) and the cleanup state machine (10.4) are the
+corrected statements. Round 2 re-runs it against this head, in which the
+cross-boundary classification (5.5, 5.6, 10.2), the privileged child inode
+confinement (5.8), the privileged mount child safety (5.9) and the pull-request
+workflow provenance (6.2, 6.3) are the corrected statements. Each result is
+claimed only because the document at that head has no
 producer/carrier/lifecycle/consumer contradiction:
 
 ```text
@@ -1210,11 +1651,41 @@ RQP_L17_HELD_MOUNT_REPRESENTATION_DRIFT_IMPLEMENTABILITY=PASS
 HELPER_PROTOCOL_IMPLEMENTABILITY=PASS
 NAMESPACE_LIFECYCLE_IMPLEMENTABILITY=PASS
 CLEANUP_STATE_MACHINE_IMPLEMENTABILITY=PASS
+CROSS_BOUNDARY_CONTINUITY_IMPLEMENTABILITY=PASS
+PRIVILEGED_CHILD_INODE_CONFINEMENT_IMPLEMENTABILITY=PASS
+PRIVILEGED_WORKFLOW_PROVENANCE_IMPLEMENTABILITY=PASS
 RQP_L17_L105_MOUNT_ID_CHANGE_IMPLEMENTABILITY=NOT_CONSTRUCTIBLE_WITH_KNOWN_REAL_MECHANISM
 A3_CONTRACT_IMPLEMENTABILITY=PASS
 ```
 
-The three previously contradictory requirements and the four remediation
+`A3_CONTRACT_IMPLEMENTABILITY=PASS` is claimed only after the three round-2
+results above it are `PASS`, and each of those three is claimed for a stated
+reason:
+
+- `CROSS_BOUNDARY_CONTINUITY_IMPLEMENTABILITY=PASS` — every row of 5.5, 5.6 and
+  10.2 now carries exactly one of the three classes; the namespace facts are
+  split into an `INHERITED` membership fact and an `INDEPENDENTLY_REACQUIRED`
+  identity fact, so no inherited state is described as an explicit handoff, and
+  no row claims a class without the carrier that class requires. The round-2
+  audit table in 5.5 records each reclassification.
+- `PRIVILEGED_CHILD_INODE_CONFINEMENT_IMPLEMENTABILITY=PASS` — the privileged
+  ownership mutation operates on a descriptor the helper opened for itself
+  relative to its own validated root descriptor, so the target object is
+  confined before the mutation; every required pre-mutation check is an `fstat`
+  fact on that descriptor, the mutation is expressible as `os.fchown` and
+  `os.fchmod` on it, the acquisition is expressible as
+  `os.open(..., dir_fd=...)`, and no descriptor has to cross the `sudo`
+  boundary, so no unprovable transport is required.
+- `PRIVILEGED_WORKFLOW_PROVENANCE_IMPLEMENTABILITY=PASS` — `GITHUB_REF` and
+  `GITHUB_SHA` name the event-ref object; both workflow blob identities are
+  resolvable from authoritative Git objects or from the repository contents API
+  with the run's read-only token; blob identity equality is byte-identity; and
+  the check needs no privilege, so it can precede every privileged step. The
+  head binding is expressible as `git rev-parse HEAD` against
+  `github.event.pull_request.head.sha`, with `PR_HEAD_TREE` derived from the
+  proven checked-out head rather than read from an input the run cannot possess.
+
+The three previously contradictory requirements and the four round-1 remediation
 findings resolve as follows:
 
 | Finding | Corrected statement | Why it is now implementable |
@@ -1224,10 +1695,22 @@ findings resolve as follows:
 | unconditional second unmount required after successful `MNT_DETACH` | 10.4 | explicit `ATTACHED` / `DETACHED_BUSY` / `RELEASED` states; the `ATTACHED` failure path keeps the checked ordinary unmount, and the `DETACHED_BUSY` path closes retained descriptors, verifies absence from the private mount table, then releases the loop backing; no unmount is required of a mount point that no longer exists |
 | authority preview collapsed "no new authority" into one answer | 1 and 17 | five separate authority facts; privileged execution and CI control-plane change authorities are required by the later implementation phase and granted only there, while public API, registry admission and production change remain not required |
 
+The three round-2 remediation findings resolve as follows:
+
+| Finding | Corrected statement | Why it is now implementable |
+| --- | --- | --- |
+| inherited namespace state classified as an explicit handoff | 5.5, 5.6, 10.2 | the taxonomy now names the three classes with their carrier requirements, keeps `MOUNT_NAMESPACE_MEMBERSHIP_CONTINUITY=INHERITED` and `MOUNT_NAMESPACE_IDENTITY_OBSERVATION=INDEPENDENTLY_REACQUIRED` as separate facts, marks `MOUNT_NAMESPACE_FACT_EXPLICIT_HANDOFF=none`, and gives 5.6 and 10.2 an explicit class column so no row is left implicit |
+| privileged ownership mutation not confined to a pinned child inode | 5.8 | the helper opens the fixture child itself relative to its own validated root descriptor with `O_NOFOLLOW`, validates regular-file type, `st_nlink == 1`, ordinary-runner pre-mutation owner, exact initial mode `0640`, cleared setuid/setgid/sticky bits and nonzero `st_dev`/`st_ino`, then performs `fchown` and `fchmod` on that descriptor; a symlinked or hardlinked child is a hard refusal before any privileged mutation, and the ordinary process still reacquires the resulting state itself |
+| `pull_request` workflow definition described as "taken from the PR head" | 6.2, 6.3 | the event-ref object is frozen as `refs/pull/<PR_NUMBER>/merge` with the synthetic merge commit as `GITHUB_SHA`, the code under qualification is separately bound to `github.event.pull_request.head.sha`, the two workflow blob identities are recorded and required to be equal before any privileged mutation, and a mismatch stops privileged execution as `WORKFLOW_AUTHORITY_MISMATCH` |
+
 | Requirement | Authority owner | Required evidence | Producer | Carrier / holder | Lifetime | Consumer / verifier | Closing checkpoint | Failure outcome |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | Helper argument protocol | repository design authority (this contract) | the exact argument vector, the derived uid/mode/child constants, and the rejection of every non-enumerated argument | privileged fixture helper | helper command line (closed enum plus untrusted locator) and the frozen constant table | one helper invocation | independent reviewer; ordinary suite unchanged | argument rejection and root revalidation recorded before any mutation | `HELPER_ARGUMENT_REJECTED`, `HELPER_ROOT_REJECTED` or `QUALIFICATION_GAP` |
 | Process and namespace topology | same | the four roles with their real identities, the ordered lifecycle, and three measured mount namespace ids | privileged namespace launcher, evidence process and helper | real mount namespace identity of each running process | one run attempt, retained as CI evidence | independent reviewer | `PRIVATE_EVIDENCE_MNT_NS_ID == PRIVATE_HELPER_MNT_NS_ID` and `PRIVATE_EVIDENCE_MNT_NS_ID != HOST_MNT_NS_ID`, both measured | `QUALIFICATION_GAP` plus a design finding; no mount mutation is attempted |
+| Cross-boundary continuity classification | repository design authority (this contract) | every row of 5.5, 5.6 and 10.2 with exactly one class, and the carrier that class requires | this contract for the model; the fixture for the measured facts | the frozen tables of 5.5, 5.6 and 10.2, and the real objects the classified facts describe | this document for the model; one run attempt for the measured facts | independent reviewer | the round-2 audit table in 5.5 and the class columns of 5.6 and 10.2 contain no unclassified or doubly classified row | a class without its required carrier, or an inherited fact described as a handoff, is a design failure and blocks the implementation PR |
+| Privileged child inode confinement | same | pre-mutation `fstat` facts on the pinned child, the refusal outcomes, and the post-mutation reacquisitions by the ordinary process | privileged fixture helper for the mutation; non-root evidence process for the reacquisitions | the helper's own child descriptor, and the real inode the ordinary process re-reads afterwards | one helper invocation, then one evidence measurement | independent reviewer; ordinary suite unchanged | child validation recorded before the first `chown`/`chmod`, and the 4.3 post-mutation controls recorded before the production call | `HELPER_ROOT_REJECTED` before mutation, or `QUALIFICATION_GAP` |
+| Privileged mount child safety | same | exclusive creation of the image and mountpoint by the helper, the pinned identities, and the pre-use revalidation | privileged fixture helper | helper-created objects under the validated root, each pinned by a descriptor the helper holds | one run attempt | independent reviewer | pre-existing role objects refuse as `HELPER_ROOT_REJECTED`, and both objects match their pinned identity before use | `HELPER_ROOT_REJECTED`, or `QUALIFICATION_GAP` plus a design finding |
+| Privileged workflow provenance | same | `GITHUB_WORKFLOW_REF`, `GITHUB_REF`, `GITHUB_SHA`, `PR_NUMBER`, `PR_HEAD_SHA`, `PR_HEAD_TREE` and both workflow blob identities, recorded and compared | privileged workflow, resolving real Git objects with its read-only token | workflow output bound to the run and to the exact objects it resolved | one run attempt, retained as CI evidence | independent reviewer | `PRIVILEGED_WORKFLOW_EVENT_REF_BLOB_SHA == PRIVILEGED_WORKFLOW_HEAD_BLOB_SHA` before any privileged mutation, plus checked-out `HEAD == PR_HEAD_SHA` and derived `PR_HEAD_TREE` | `WORKFLOW_AUTHORITY_MISMATCH`, with no privileged effect afterwards |
 | Cleanup state machine | same | the observed state at cleanup entry or failure, the release order, and the four residue controls | privileged fixture helper plus host observer | real private mount table, real loop state, real host mount table | one run attempt | independent reviewer | `PRIVATE_MOUNT_RESIDUE=false`, `LOOP_BACKING_RESIDUE=false`, `FIXTURE_ROOT_RESIDUE=false`, `HOST_NAMESPACE_RESIDUE=false` | `CLEANUP_FAILED`, always visible and never converted into a pass |
 | RQP-L09 FOREIGN_OWNER rejection | same | real foreign-owned file, all five paired controls, exact reason code and detail | privileged helper (setup) plus non-root evidence process (measurement) | captured privileged-workflow run output bound to the exact head and host identity | one run attempt, retained as CI evidence | independent reviewer; ordinary suite unchanged | all controls recorded and the production call observed failing for the owner policy | `QUALIFICATION_GAP` or `PRODUCT_FAILURE`, classified by origin |
 | RQP-L09 ROOT_OWNED admission | same | real root-owned file, ordinary `euid != 0`, real open, `held.security[0] == 0` | same | same | same | same | positive admission plus literal `st_uid` observation | `QUALIFICATION_GAP` or `PRODUCT_FAILURE` |
@@ -1241,7 +1724,21 @@ continuity could have been assumed are handled explicitly instead: the helper's
 exit status is never evidence (5.5), the caller's root string is validated
 rather than trusted (5.3), the shared namespace is measured rather than assumed
 (10.1), the release order is frozen rather than left to a blind retry (10.4),
-and no writer/reader evidence handoff exists or is invented.
+the privileged mutation target is pinned by a descriptor the helper opened
+rather than re-resolved by pathname (5.8), the privileged mount's source and
+target are created by the helper rather than adopted from the caller (5.9), the
+executed workflow definition is compared against the exact-head definition
+instead of being assumed identical to it (6.3), and no writer/reader evidence
+handoff exists or is invented.
+
+Two limits are named rather than papered over, and both are named deliberately.
+`mount(2)` accepts pathnames and has no descriptor form, so the mount target is
+confined by helper-exclusive creation plus pinned-identity revalidation instead
+of by a descriptor argument (5.9). The privileged run cannot read the reviewer's
+expected tree, so `PR_HEAD_TREE` is derived from the proven checked-out head and
+published for the reviewer to compare rather than read from an input (6.3).
+Neither is an assumed continuity, and neither is frozen as a requirement the
+declared architecture cannot express.
 
 ## 16. Three-Layer Consistency
 
@@ -1256,8 +1753,13 @@ and no writer/reader evidence handoff exists or is invented.
 | Formal CI topology is unchanged | frozen, section 6 | `.github/workflows/ci.yml` unchanged | not applicable | unchanged |
 | The helper accepts only an enum case and an untrusted root locator | frozen, sections 5.1-5.2 | none added; the enum and the derived constants are helper-internal | no production symbol changes | privileged case later; argument and derivation behavior is pinned by the implementation PR |
 | The helper and the evidence process share one measured private namespace | frozen, section 10.1 | none added | no production symbol changes | privileged case later; the three namespace identities are measured at run time |
+| Every crossing fact carries exactly one continuity class | frozen, sections 5.5-5.6 and 10.2 | none added | not applicable | privileged case later; the classes are pinned by the implementation PR |
+| Namespace membership is inherited and namespace identity is independently reacquired | frozen, sections 5.5 and 10.1 | none added | no production symbol changes | privileged case later; the two private identities and the host identity are measured |
+| The privileged ownership mutation acts on a helper-pinned child descriptor | frozen, section 5.8 | none added | no production symbol changes | privileged case later; the pre-mutation `fstat` facts and the post-mutation reacquisitions are measured |
+| Privileged mount source and target are created by the helper and never adopted from the caller | frozen, section 5.9 | none added | no production symbol changes | privileged case later; exclusive creation and the refusal outcomes are pinned by the implementation PR |
+| The executed workflow definition equals the exact-head workflow definition | frozen, section 6.3 | the workflow does not exist yet; the equality is a run-time check, not a declaration | not applicable | workflow contract pinned by a checker in the implementation PR |
 | Cleanup follows the frozen state machine and ends residue-free | frozen, section 10.4 | none added | no production symbol changes | privileged case later; the four residue controls are measured, not asserted |
-| The privileged workflow authority is frozen | frozen, sections 6.1-6.2 | none added; the workflow does not exist yet | not applicable | workflow contract pinned by a checker in the implementation PR |
+| The privileged workflow authority is frozen | frozen, sections 6.1-6.3 | none added; the workflow does not exist yet | not applicable | workflow contract pinned by a checker in the implementation PR |
 
 This design does not claim that any layer is complete. The machine-declaration
 layer is deliberately unchanged and empty, the runtime layer is deliberately
@@ -1276,17 +1778,29 @@ preview of the later runtime work.
   the existing private symbols `_linux._LinuxObject`, `_linux._ext4_capability`
   and `_linux._mount_id` exactly as the ordinary native-guard suite already
   does, and the case outcomes are expressed by the existing reason codes and
-  details. No new public API is required.
+  details. On the helper side, the descriptor-relative acquisition of 5.8 is
+  directly expressible in Python: `os.open(name, flags, dir_fd=root_fd)` is
+  `openat` against the helper's own validated root descriptor, with `os.fstat`,
+  `os.fchown` and `os.fchmod` acting on the returned descriptor, so the pinned
+  child model needs no new API, no new dependency and no descriptor transport.
+  No new public API is required.
 - Can existing evidence and data structures carry all required facts? Yes: the
   retained security tuple, the mount description triple, the retained
   descriptor identity and the real mount table carry every fact the cases
-  assert.
+  assert. The workflow-provenance facts of 6.3 are plain strings and Git blob
+  identities, carried by the workflow output the manifest already binds to the
+  exact head.
 - Is new persistent state required? No. The fixture root is invocation-local
   under `RUNNER_TEMP` and is removed by checked cleanup.
 - Is a cross-boundary handoff required? Yes, exactly one privilege boundary,
   modeled in 5.5 and 5.6. It is explicit, bounded, revalidated by the ordinary
   process, and carries no authority: only an untrusted root locator and a closed
-  case enum cross it.
+  case enum are handed off. Every other crossing fact is inherited (namespace
+  membership) or independently reacquired, and the privileged ownership
+  mutation's target is acquired by the helper itself (5.8) rather than handed
+  off. A second, non-process authority boundary — executed workflow definition
+  versus code under qualification — is modeled in 6.3 and closed by a
+  blob-identity equality check.
 - Authority facts are separate and are never collapsed into one answer:
 
 ```text
@@ -1349,7 +1863,7 @@ Validation is docs-governance scoped only:
   --repo . --mode repository` (and the pull-request mode in CI);
 - release checker: `python scripts/check_release.py`.
 
-This remediation round adds no further validation class. It changes one
+Neither remediation round adds a further validation class. Each changes one
 document, so the same four checks apply to the remediated head, and the
 prohibitions are unchanged:
 
@@ -1379,15 +1893,25 @@ One design document, one commit, one DRAFT pull request, no amend, no force
 push, no merge. The PR body states the design-only flags and this document is
 its authority.
 
-Remediation round 1 is additive on the failed first head. The remediated head
-keeps the failed head as its direct parent and preserves it in history rather
-than rewriting it:
+History is additive across both remediation rounds. Each remediated head keeps
+the failed head it corrects as its direct parent, so both failures stay in the
+branch history rather than being rewritten:
 
 ```text
-A3D_REMEDIATION_COMMIT_PARENT=777a509c5d144deaf4c06a432cddb992b86a28b6
+A3D_REMEDIATION_ROUND_1_PARENT=777a509c5d144deaf4c06a432cddb992b86a28b6
+A3D_REMEDIATION_ROUND_2_PARENT=8d791a82b1e482c586a0c8c1f990d722c4b8464e
+A3D_REMEDIATION_COMMIT_PARENT=8d791a82b1e482c586a0c8c1f990d722c4b8464e
 A3D_HISTORY_REWRITTEN=false
 A3D_FORCE_PUSH=false
+A3D_AMEND_USED=false
+A3D_REBASE_USED=false
+A3D_RESET_USED=false
 ```
+
+The push is fast-forward only, and it is performed only after a fresh read of
+the remote branch confirms that the remote head still equals
+`8d791a82b1e482c586a0c8c1f990d722c4b8464e`. If the remote authority no longer
+equals that SHA, the push does not happen and this workstream stops instead.
 
 After the exact-head pull-request CI reaches a terminal conclusion, this
 workstream stops and returns for independent review:
@@ -1398,8 +1922,8 @@ workstream stops and returns for independent review:
 - any terminal non-success -> report the actual workflow conclusion, the
   affected job or jobs, and the failing step when available, then stop.
 
-The remediated head requires a fresh independent exact-head review; the first
-review's failure is not cleared by this document's own claim.
+The remediated head requires a fresh independent exact-head review; neither
+earlier review's failure is cleared by this document's own claim.
 
 Merge remains unauthorized. Implementation, privileged execution, CI workflow
 change, production change and registry admission each remain separately
