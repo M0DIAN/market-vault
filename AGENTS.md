@@ -95,6 +95,29 @@ producer, carrier, or consumer path, the result is
 `CONTRACT_IMPLEMENTABILITY=FAIL`; do not paper over the absence with assumed
 continuity.
 
+### Privileged Effect and Authority Closure
+
+For any design or implementation involving privileged or destructive effects,
+enumerate each material effect before approval, one row per effect: operation or
+effect; target object; target-binding mechanism; required authority, privilege,
+or capability; preconditions; postconditions; and cleanup or terminal
+transition. Target binding is part of the effect row: name the mechanism that
+binds the effect to that exact target and the window in which the binding is
+valid, without requiring one fixed mechanism where a platform or operation has
+no descriptor-targeted API.
+
+Require closure in both directions: every privileged or destructive effect has
+an explicitly declared authority, and every declared authority or capability
+corresponds to an actual required effect. An undeclared effect, or an unused or
+broader required authority than the effects justify, is a failure.
+
+Values that determine the scope of a privileged effect — target uid or gid,
+privilege or capability, target role, authority source — must be frozen by the
+reviewed design or explicitly produced through a reviewed boundary mechanism.
+They must not be left as "implementation selects ...", unless the design makes
+that selection algorithm itself the reviewed authority and can prove its bounded
+result.
+
 ### Cross-Boundary State Continuity
 
 When an invariant spans a lifecycle or authority boundary, require an explicit
@@ -111,6 +134,22 @@ checkpoint, the boundary, and the relationship to the next phase.
 If continuity is required but neither inheritance nor an explicit handoff
 exists, the design is invalid. Do not use "rebaseline" wording to hide a
 genuinely independent new interval.
+
+Publication-time carrier audit. Every material boundary-crossing fact must
+appear in the same audit row as its class, so that class and evidence semantics
+are checkable together:
+
+- `INHERITED`: the state is carried by lifecycle, process, or object continuity;
+  the row MUST NOT claim an explicit handoff carrier.
+- `EXPLICITLY_HANDED_OFF`: the row MUST name exactly one explicit carrier and
+  that carrier's lifetime.
+- `INDEPENDENTLY_REACQUIRED`: the row MUST name the independent observation or
+  re-read that produces the fact.
+
+A fact that does not cross the boundary must be stated as not crossing rather
+than forced into a crossing class; no fourth crossing class is added. If a row's
+prose or declared carrier contradicts its class, the result is
+`CONTRACT_IMPLEMENTABILITY=FAIL`.
 
 ### Contract-to-Implementation Preview
 
@@ -167,6 +206,18 @@ data, or addresses the wrong object, the block must not retain PASS conclusions
 from sibling commands unless those claims are explicitly independent and
 re-established. Avoid mixed output where an HTTP or API failure is printed
 beside unrelated PASS-looking fields.
+
+For a material claim about an external control plane — CI provider or event
+semantics, workflow execution provenance, OS or kernel privilege behavior,
+external registry or service authority — require, before freezing the claim,
+either `DOCUMENTED` provenance (authoritative documentation plus the exact
+applicability, version, and context it was read for) or `PROBED` provenance (an
+executable or object-level probe with its input and observed result). Where
+authorities differ, model them separately; for CI or control-plane work do not
+collapse event authority, workflow-definition authority, and code-under-test
+authority when they resolve from different objects. A material
+external-control-plane claim with neither documented nor probed provenance fails
+evidence convergence.
 
 ### Lossless Structured Verification
 
@@ -282,6 +333,7 @@ This refines the Required Development Flow below; it does not replace it.
 ```text
 read-only discovery -> adversarial self-review -> evidence convergence
 -> completion gates -> lifecycle / authority model when applicable
+-> privileged-effect / carrier audit when applicable
 -> contract implementability -> implementation preview when applicable
 -> minimal patch plan -> narrow implementation -> validation
 -> commit / Draft PR -> exact-head PR CI -> independent review
