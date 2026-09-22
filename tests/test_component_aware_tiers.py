@@ -145,6 +145,27 @@ def test_docs_only_stays_docs_fast_with_registry(tmp_path):
     assert line_value(result, "full_matrix_required") == "false"
 
 
+def test_agents_md_only_stays_docs_fast_with_registry(tmp_path):
+    """AGENTS.md alone is docs_fast with zero component impact.
+
+    The top-level agent/governance policy document joins the existing
+    docs/policy fast path: it matches no registered component, so every
+    impact flag stays false and full_matrix_required stays false.
+    """
+    repo = make_repo(tmp_path)
+    result = classify_change(repo, "AGENTS.md")
+
+    assert tier(result) == "docs_fast"
+    assert line_value(result, "reason") == "all_changes_in_docs_scope"
+    assert line_value(result, "components") == "none"
+    assert line_value(result, "core_changed") == "false"
+    assert line_value(result, "package_changed") == "false"
+    assert line_value(result, "unknown_changed") == "false"
+    assert line_value(result, "shared_changed") == "false"
+    assert line_value(result, "independent_only") == "false"
+    assert line_value(result, "full_matrix_required") == "false"
+
+
 def test_package_sensitive_docs_stays_package_docs_with_registry(tmp_path):
     repo = make_repo(tmp_path)
     write_registry(repo, REAL_REGISTRY)
@@ -418,6 +439,7 @@ def test_full_matrix_required_matches_active_policy(tmp_path):
     """
     scenarios = [
         (REAL_REGISTRY, ["docs/guide.md"], "docs_fast"),
+        (REAL_REGISTRY, ["AGENTS.md"], "docs_fast"),
         (REAL_REGISTRY, ["README.md", "docs/guide.md"], "package_docs"),
         (REAL_REGISTRY, ["src/market_vault/thing.py"], "full"),
         (REAL_REGISTRY, ["notes.txt"], "full"),
