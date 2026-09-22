@@ -315,7 +315,7 @@ ROUND4_CAP_DAC_OVERRIDE_REQUIRED=false
 ROUND4_CAP_DAC_OVERRIDE_REQUIRED_IS_A_ROUND4_RECORD=true
 ROUND4_CAP_DAC_OVERRIDE_REQUIRED_WITHDRAWN_BY_ROUND6=true
 ROUND4_CAP_DAC_OVERRIDE_REQUIRED_WITHDRAWAL_REASON=an_authority_does_not_cease_to_be_required_because_it_produces_no_evidence_or_product_outcome
-CURRENT_CAPABILITY_AND_ACCESS_AUTHORITY_STATEMENTS=section_1_6
+CURRENT_CAPABILITY_AND_ACCESS_AUTHORITY_STATEMENTS=section_1_7
 RQP_L17_MOUNT_EFFECTS_REMAIN_CAP_SYS_ADMIN_BOUND=true
 RQP_L17_MOUNT_EFFECTS_REMAIN_CAP_SYS_ADMIN_BOUND_IS_A_ROUND4_RECORD=true
 RQP_L17_MOUNT_EFFECTS_REMAIN_CAP_SYS_ADMIN_BOUND_SUPERSEDED_BY_ROUND5=true
@@ -323,7 +323,7 @@ PRIVILEGED_EFFECT_CLOSURE_RERUN_FOR_ROUND=4
 ROUND4_EFFECT_TABLE_IS_A_ROUND4_RECORD_NOT_THE_CURRENT_CLOSURE=true
 ROUND4_AGGREGATE_MOUNT_ROW_WITHDRAWN_BY_ROUND5=true
 CURRENT_PRIVILEGED_EFFECT_CLOSURE=section_1_5
-CURRENT_PRIVILEGED_EFFECT_CLOSURE_ROWS=16
+CURRENT_PRIVILEGED_EFFECT_CLOSURE_ROWS=21
 CURRENT_PRIVILEGED_EFFECT_CLOSURE_ONE_EFFECT_PER_ROW=true
 ```
 
@@ -514,22 +514,28 @@ declared authority may be broader than the effect that needs it.
 
 | # | Case scope | Operation or effect | Target object | Target binding mechanism | Required authority or capability | Preconditions | Postconditions | Cleanup or terminal transition |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| E1 | own-foreign | `own-foreign` `fchown(pinned_child_fd, 65534, observed_gid)`; one ownership call and no mode call | the pinned `FIXTURE_FILE_ROLE` inode created by the ordinary runner inside the invocation root | the child descriptor the helper opened for itself through its own validated root descriptor with `O_RDONLY\|O_NOFOLLOW\|O_CLOEXEC` (5.8.1); the call takes the descriptor, so no pathname is re-resolved and the binding is valid from that open until the descriptor is closed | the reviewed privileged identity, plus `CAP_CHOWN` for the mutation call and `CAP_DAC_READ_SEARCH` for reaching the pinned child (capabilities(7): "make arbitrary changes to file UIDs and GIDs"); no `CAP_FOWNER` is required by the mutation call, which acts on an already-open descriptor; obtaining that descriptor is this row's access step and uses the traversal authority named above | 5.3 root validation passed; the 5.8.1 common structural facts hold on the pinned descriptor; the 5.8.2 predicate `st_uid == ORDINARY_UID` holds; the ordinary runner's effective uid is not `65534` (5.2); the helper holds the pinned child descriptor, opened through this case's `CAP_DAC_READ_SEARCH` traversal authority (1.6) | `st_uid == 65534`, `S_IMODE == 0o644`, `st_nlink == 1` and an empty attribute set, re-derived by the helper on the same descriptor and independently reacquired by the ordinary process before the production call (4.3) | terminal: there is no reverse ownership call and no mode restoration, because no mode was changed; the object is removed by the 10.4 state machine |
-| E2 | own-root | `own-root` `fchown(pinned_child_fd, 0, observed_gid)`; one ownership call and no mode call | same | same | same as E1: the reviewed privileged identity, `CAP_CHOWN` for the mutation call and `CAP_DAC_READ_SEARCH` for reaching the pinned child through the owner-only root (1.6); no `CAP_FOWNER` | same, with the 5.2 `ROOT_OWNED` precondition that the ordinary runner's effective uid is not `0` | `st_uid == 0`, `S_IMODE == 0o644`, `st_nlink == 1` and an empty attribute set, re-derived and reacquired the same way | same |
-| E3 | all cases (run-scoped) | private mount namespace creation: `unshare(CLONE_NEWNS)` performed by the launcher | the calling process's mount-namespace membership; the kernel creates a new mount-namespace object whose identity is the inode reported at `/proc/self/ns/mnt` | the call acts on the calling process itself and takes no pathname and no caller-supplied target, so the binding is the process identity that performs it, valid for that process and its descendants until namespace exit (10.1) | `CAP_SYS_ADMIN` in the user namespace that owns the current mount namespace (capabilities(7): "employ `CLONE_*` flags that create new namespaces with `clone(2)` and `unshare(2)`"); no access authority is required, because the effect resolves no pathname and touches no object below the invocation root (1.6) | the launcher runs as the reviewed privileged identity via `sudo -n`; the 5.10.2 credential validation is closed before this effect; the preflight recorded `CAP_SYS_ADMIN` from the real `CapEff` (7) | the launcher is in a new mount namespace whose identity is later measured different from `HOST_MNT_NS_ID`; no host mount-table entry changes | the namespace object is destroyed by the kernel when its last member process exits; no explicit teardown exists and the closing control is the host-namespace absence control (10.3) |
-| E4 | all cases (run-scoped) | mount propagation brought to private inside the new namespace: `mount(NULL, "/", NULL, MS_REC\|MS_PRIVATE, NULL)` | the propagation type of the mounts in the private namespace's mount tree, rooted at that namespace's `/` | the path `/`, resolved by the launcher inside the namespace created by E3 and never in the host namespace; the binding is valid for the launcher's stay in that namespace and the effect is ordered strictly after E3 and before every fixture mount | `CAP_SYS_ADMIN` (mount(2) is in the `CAP_SYS_ADMIN` set of capabilities(7)); umount(2) states the same requirement for the `MS_REC\|MS_PRIVATE` preparation it prescribes; no access authority is required for below-root access, because the path `/` is the private namespace's own root, which the reviewed privileged identity may search without a bypass (1.6) | E3 completed and the private namespace identity differs from the host identity; no mount mutation has occurred yet | the real propagation flags of the private namespace are private (10.2 N3), so no later mount or unmount event in it can propagate to the host namespace | propagation is a property of the namespace object and dies with it; no host propagation state is written, and the closing control is the 10.3 absence control |
-| E5 | mount-fixture | exclusive creation of the fixture image as a regular file at `IMAGE_ROLE` (`O_CREAT\|O_EXCL`, helper-exclusive) | the new regular file at the frozen role `IMAGE_ROLE` under the invocation root | the frozen role name resolved relative to the helper's own validated root descriptor with no-follow semantics; `O_EXCL` makes a pre-existing object a refusal rather than an adoption; the created file is then pinned by the helper's own descriptor and its `st_dev`/`st_ino` recorded (5.9) | no `CAP_SYS_ADMIN`, no `CAP_CHOWN` and no ownership call: creation assigns the creating identity's own uid. The create needs write and search permission on the containing directory, which is owner-only and owned by the ordinary runner, so the reviewed privileged identity performs it through `CAP_DAC_OVERRIDE`, the directory-write access authority this effect requires (1.6), rather than through a widened root mode | 5.3 root validation passed; no object exists at `IMAGE_ROLE`; the helper access authority is present in the real `CapEff` recorded by the preflight (7) | exactly one regular single-link file exists at `IMAGE_ROLE`, owned by the creating identity, with recorded `st_dev`/`st_ino`; no pre-existing object was adopted, removed or repaired | removed by E13 under the 10.4 state machine; a refused or failed creation is a non-pass fixture-construction failure classified by the 5.7 origin taxonomy, never a pass |
-| E6 | mount-fixture | ext4 formatting effect: `mke2fs`/`mkfs.ext4` writes a filesystem into the image | the contents of the image file created by E5 | the image path resolved relative to the validated root descriptor, with the image inode identity re-derived equal to the pinned creation identity immediately before formatting, so the format writes the object the helper created and nothing else | no `CAP_SYS_ADMIN`, no mount, no loop device and no ownership call: this is an ordinary userspace write into a file the helper owns, so the image owner's write permission is the whole file-level requirement, and `CAP_DAC_READ_SEARCH` is required for traversing the owner-only root to reach the image (1.6); the tool's presence and version are preflight facts (7) | E5 completed; image identity re-derived equal to the pinned identity; `mke2fs` present and recorded; the image is neither mounted nor loop-bound at formatting time | the image contains an ext4 filesystem; the image inode identity is unchanged by the format; the freshly created filesystem root directory satisfies the E9 preconditions | the formatted image is removed by E13; a formatting failure is a non-pass fixture-construction failure classified by the 5.7 origin taxonomy, never a pass |
-| E7 | mount-fixture | loop backing acquisition: a free loop device is taken and associated with the image (`LOOP_CTL_GET_FREE` with `LOOP_CONFIGURE`, or `LOOP_SET_FD`/`LOOP_SET_STATUS64`; `losetup --find --show`) | the loop device taken by the helper and its association with the image inode | the device is selected by the helper itself and never supplied by the caller (`PRIVILEGED_LOOP_DEVICE_SELECTED_BY_HELPER=true`); the backing file is bound by the descriptor the helper opens on the image, because the loop configuration ioctls take a file descriptor, so the association is descriptor-mediated and is not re-resolved from the role path; the device name and the backing inode are recorded | `CAP_SYS_ADMIN` for privileged block-device ioctls (capabilities(7)), plus `CAP_DAC_READ_SEARCH` for traversing the owner-only root to open the image (1.6) and the image owner's own write permission; no ownership capability | E5 and E6 completed; the image identity re-derived equal to the pinned identity; `/dev/loop-control` and the loop device nodes exist and are recorded by the preflight (7); the image is a single-link regular file | exactly one recorded loop device is associated with the image inode, and no second loop device is associated with the same backing file, because losetup(8) documents that a shared backing file can corrupt or overwrite data | released by E12 in the 10.4 order; `LOOP_BACKING_RESIDUE=false` is the closing control; a failed acquisition is a non-pass fixture-construction failure classified by the 5.7 origin taxonomy |
-| E8 | mount-fixture | mount fixture: `mount(loop_device, MOUNTPOINT_ROLE, "ext4", flags, options)` inside the private namespace | the private namespace's mount table entry, and the ext4 filesystem instance carried by the loop device, covering the helper-created `MOUNTPOINT_ROLE` directory | `mount(2)` is a pathname operation with no descriptor form (5.9), so the target is bound by helper-exclusive creation plus pre-mount identity revalidation: the frozen `MOUNTPOINT_ROLE` resolved relative to the helper's own validated root descriptor, its pinned `st_dev`/`st_ino` re-derived immediately before the call, still a real directory with no symlinked component in its resolution path, with the helper's own loop device as the source and no caller-created source or target ever accepted; the binding window is the interval between that revalidation and the call, inside the private namespace | `CAP_SYS_ADMIN` (capabilities(7) lists mount(2) in that set), plus `CAP_DAC_READ_SEARCH` for resolving the frozen target path through the owner-only root (1.6); no ownership capability | E3 and E4 completed; E5, E6 and E7 completed; target identity re-derived equal to the pinned identity; the device appears in no other private-namespace record (section 9 exactly-once rule); private propagation confirmed private before the mount | exactly one private-namespace record carries the new mount, with root field `/` and filesystem type `ext4`; the evidence process shares the namespace and can reach the mount-case file; the host mount table is unchanged | leaves `ATTACHED` through E10 (`detach-fixture`) or through E11 (failure before drift); the terminal states are the 10.4 `RELEASED` and `CLEANUP_FAILED` |
-| E9 | mount-fixture | exclusive creation of the mount-case fixture file at the frozen role path `MOUNTPOINT_ROLE/FIXTURE_FILE_ROLE` inside the helper's own freshly mounted ext4 filesystem, then pinning it | the new regular file inside the mounted ext4 filesystem: the mount case's `FIXTURE_FILE_ROLE`, which is also the retained object of section 9 | the frozen role path is resolved by the helper itself inside the private namespace after the mount is attached: the mounted target is opened relative to the helper's own validated root descriptor with `O_DIRECTORY\|O_NOFOLLOW\|O_CLOEXEC`, and `FIXTURE_FILE_ROLE` is then created relative to that descriptor with `O_CREAT\|O_EXCL` and no-follow semantics. Both components are frozen derived names, no caller text participates, and a pre-existing object at the name fails the creation instead of being adopted; the created file is pinned by the helper's own descriptor and every later check is an `fstat` on that descriptor | no `CAP_CHOWN`, no `CAP_SYS_ADMIN` and no ownership or mode call: creation assigns the creating identity's own uid, which is the frozen `st_uid == 0` of 5.8.3, and the create itself is authorized by the owner write and search bits of the freshly formatted filesystem's root directory, which the reviewed privileged identity owns; reaching that directory through the invocation root uses `CAP_DAC_READ_SEARCH` (1.6) | E8 completed and the mount attached; the mounted root directory's owner is the reviewed privileged identity with owner write and search set, and its mode grants search to the ordinary identity so that the 5.8.3 ordinary `O_RDONLY` witness can reach the file; the creation-time `umask` cannot clear bits from the requested `0644`; no object exists at the role name | exactly one regular single-link file exists at the frozen role path, owned by uid 0, with `S_IMODE == 0o644`, and the helper's `fstat` facts satisfy the 5.8.1 common structural requirements plus the 5.8.3 `st_uid == 0` predicate | removed with the mounted filesystem's contents when the image is removed by E13; a missing or non-conforming child after creation is a non-pass failure classified by the 5.7 origin taxonomy (5.8.3), never `HELPER_ROOT_REJECTED`, never a pass and never repaired with privilege |
-| E10 | mount-fixture | `MNT_DETACH` detach: `umount2(MOUNTPOINT_ROLE, MNT_DETACH)` inside the private namespace | the fixture mount in the private namespace's mount table | the frozen `MOUNTPOINT_ROLE` resolved relative to the helper's validated root descriptor inside the private namespace, valid only while that mount is still attached and reachable at that path — the same object the pre-drift positive admission and the section 8 step 5-6 controls reference; no caller path participates | `CAP_SYS_ADMIN` (umount(2): "Appropriate privilege (Linux: the `CAP_SYS_ADMIN` capability) is required to unmount filesystems"), plus `CAP_DAC_READ_SEARCH` for resolving the frozen path through the owner-only root (1.6) | the mount state is observed `ATTACHED`; the retained evidence descriptor and the pre-drift positive admission of section 8 step 2 already exist, because the detach is the `detach-fixture` action of 5.2 performed after the positive case | mount state `DETACHED_BUSY`: the mount is immediately disconnected from the private mount table while the unmount completes when the mount ceases to be busy (umount(2) `MNT_DETACH`), so the retained descriptor keeps it alive and a second unmount has no object to act on | advances to `RELEASED` only through E12 to E15 after every retained fixture descriptor is closed and the private mount table shows zero records for the held mount id (10.4); never retried blindly, and `SECOND_UNMOUNT_AFTER_MNT_DETACH_REQUIRED=false` |
-| E11 | mount-fixture | `ATTACHED`-state ordinary cleanup unmount: `umount2(MOUNTPOINT_ROLE, 0)`, performed only in the observed `ATTACHED` state | the fixture mount in the private namespace, still attached because no successful `MNT_DETACH` occurred | the frozen `MOUNTPOINT_ROLE` resolved relative to the helper's validated root descriptor, valid only while the observed state is `ATTACHED`; the state is measured before the effect and in any other state this effect does not occur at all | `CAP_SYS_ADMIN` (umount(2)), plus `CAP_DAC_READ_SEARCH` for resolving the frozen path through the owner-only root (1.6); no ownership capability | cleanup entered with the observed state `ATTACHED` — failure before drift, or the detach not attempted — and no successful `MNT_DETACH` has occurred | the fixture mount is gone from the private mount table and the loop backing becomes releasable; the state machine advances to release and removal | followed by E12, E13, E14 and E15 in that order; `PRIVATE_MOUNT_RESIDUE=false` is the closing control; a failure is `CLEANUP_FAILED`, visible and never retried blindly |
-| E12 | mount-fixture | loop backing release: the loop device is detached from the image (`LOOP_CLR_FD`, equivalently `losetup -d`) | the loop device acquired by E7 and its association with the image inode | the device recorded at acquisition, held as helper-internal state and never taken from caller text; the release acts on the recorded device and its real state is re-read afterwards rather than inferred | `CAP_SYS_ADMIN` for privileged block-device ioctls (capabilities(7)); no access authority is required, because the release acts on the recorded loop device and resolves no path below the invocation root (1.6); no ownership capability and no ownership call | the observed state is `DETACHED_BUSY`, or the `ATTACHED` path has completed through E11; every retained fixture descriptor is closed, because a loop device with an open reference is not releasable and an early attempt would report a false failure and invite a blind retry (10.4) | no loop device is associated with the image; `LOOP_BACKING_RESIDUE=false`, measured rather than asserted, which also allows for the lazy device destruction losetup(8) documents instead of assuming immediate removal | terminal for the effect; E13 to E15 follow; a failure is `CLEANUP_FAILED` with the residual device recorded as diagnostics |
-| E13 | mount-fixture | fixture image removal: `unlink(IMAGE_ROLE)` | the image file created by E5 and formatted by E6 | the frozen role name resolved relative to the helper's validated root descriptor with no-follow semantics, with the observed object's `st_dev`/`st_ino` re-derived equal to the pinned creation identity immediately before the removal, so a substituted object is never the removal target | write and search DAC permission on the containing directory — the invocation root — exercised through `CAP_DAC_OVERRIDE` (1.6); no `CAP_SYS_ADMIN`, no ownership capability and no ownership call, because removing an object never depends on the removed object's owner | E12 completed and the observed state is `RELEASED`, so no mount and no loop association remains; the observed object is the pinned image inode | the image no longer exists, and the mount case's fixture file, which lives inside the image's filesystem, is removed with it | terminal; `FIXTURE_ROOT_RESIDUE` can become false only after the case's remaining objects and the root are removed, that is E14 then E15 for `mount-fixture` and E16 then E15 for the ownership cases; a failure is `CLEANUP_FAILED` with the residual path recorded as diagnostics |
-| E14 | mount-fixture | mountpoint removal: `rmdir(MOUNTPOINT_ROLE)`, with no recursive and no forced removal | the mountpoint directory the helper created exclusively during the E8 setup | the frozen role name resolved relative to the validated root descriptor with no-follow semantics, with the observed object re-derived before removal as the helper's own pinned directory identity and still a directory | write and search DAC permission on the invocation root, exercised through `CAP_DAC_OVERRIDE` (1.6); no capability beyond it and no ownership call | nothing is mounted at that path — the state is `RELEASED`, or the `ATTACHED` path completed through E11 — and the directory is empty, because the mount case's fixture file lives inside the mounted ext4 filesystem and not in this directory | the mountpoint directory no longer exists and no object outside it was touched | terminal; a failure is `CLEANUP_FAILED` |
-| E15 | all cases (run-scoped) | invocation-root removal: `rmdir` of the invocation-specific root after every fixture object inside it is gone | the invocation root directory created by the ordinary process, owned by it, with group and world bits clear and the sticky bit clear | the same real path the helper validated under 5.3, re-derived; the removal requires the observed directory to be that validated root and to be empty, and it never targets a repository, worktree, cache, runtime-data or pre-existing host path | write and search DAC permission on the root's parent directory (`RUNNER_TEMP`), and read permission on the root itself so that its emptiness can be observed, exercised through `CAP_DAC_OVERRIDE` (1.6); no `CAP_SYS_ADMIN` and no ownership capability. `CAP_FOWNER` is neither declared nor needed because the parent is required not to be sticky: removing a directory owned by another identity from a sticky directory would need `CAP_FOWNER` (capabilities(7): "ignore directory sticky bit on file deletion"), so a sticky parent is a preflight failure yielding `QUALIFICATION_GAP` rather than an undeclared authority | case-aware: for `mount-fixture`, E13 and E14 completed and every other fixture object under the root removed; for `own-foreign` and `own-root`, E16 completed and every other fixture object under the root removed. In both cases the root is empty, the observed directory is the validated root identity, and the parent directory is not sticky, as a preflight fact (7). No mount-case effect is required in the ownership cases and no ownership-case effect is required in the mount case (1.6) | `FIXTURE_ROOT_RESIDUE=false`, measured; the fixture leaves no persistent state (17) | terminal; a failure is `CLEANUP_FAILED` with the residual path recorded, never retried blindly and never a pass |
-| E16 | own-foreign,own-root | ownership-case `FIXTURE_FILE_ROLE` removal: `unlinkat(validated_root_fd, FIXTURE_FILE_ROLE, 0)`, one removal and no ownership call | the ownership fixture child that E1 or E2 mutated, created by the ordinary runner before the helper ran | the frozen derived role name resolved relative to the helper's own validated root descriptor, with the observed object's `st_dev`/`st_ino` re-derived by a no-follow `fstatat` and required to equal the identity pinned before the mutation; `unlinkat` removes the name itself and never a symlink target, and the binding window is that revalidation plus the single removal call | write and search DAC permission on the containing directory — the invocation root — exercised through `CAP_DAC_OVERRIDE`, this case's directory-write access authority (1.6); no `CAP_CHOWN`, no ownership restoration and no reverse `fchown` | the production observation of 4.3 has finished, so no evidence depends on the object; the child identity still matches the fixture object E1 or E2 mutated; no repair, re-ownership or mode change has been performed on it, and the ordinary runner's ownership is not restored first because restoration is not required and is not performed | the ownership case's `FIXTURE_FILE_ROLE` is absent from the invocation root, and the ownership the setup produced was never changed back | terminal for the effect: the invocation-root removal E15 may now occur for this case and is its next removal step; a failure is `CLEANUP_FAILED` with the residual path recorded and never retried blindly |
+| E1 | all cases (run-scoped) | credential transition: the privileged namespace launcher's forked child becomes the ordinary identity before `execve` of `NONROOT_EVIDENCE_PROCESS` — `setgroups(0, NULL)`, then `setgid(ORDINARY_GID)`, then `setuid(ORDINARY_UID)`; no external privilege tool performs it | the forked child process's own real, effective and saved uid, gid and supplementary group list | the call acts on the caller's own credentials and takes no pathname and no target object, so the binding is the process identity of the child that performs it; the child performs the sequence on itself after the parent has validated the handoff, and the binding is valid from the completed transition until that process exits (5.10, 10.1) | `CAP_SETGID` for the empty supplementary group list and the GID transition, and `CAP_SETUID` for the UID transition (capabilities(7): `CAP_SETGID` — "make arbitrary manipulations of process GIDs and supplementary GID list"; `CAP_SETUID` — "make arbitrary manipulations of process UIDs"); no `CAP_SETPCAP`, because this effect never edits a capability set — the kernel clears the permitted, effective and ambient sets itself when the UID transition completes (capabilities(7), "Effect of user ID changes on capabilities"); no access authority, because no pathname is resolved and no object below the root is touched (1.6) | the launcher validated `ORDINARY_UID != 0` and `ORDINARY_GID` against the real invocation root under 5.10.2; the child created by `fork` has not yet changed identity; the operation order is the frozen `setgroups` then `setgid` then `setuid`, which is mandatory because `setgroups(2)` is itself a `CAP_SETGID` operation and the GID transition removes that capability from the child | `UID_REAL == UID_EFFECTIVE == UID_SAVED == ORDINARY_UID`, `GID_REAL == GID_EFFECTIVE == GID_SAVED == ORDINARY_GID`, the supplementary group list is empty, and the kernel has cleared permitted, effective and ambient capabilities, so the child cannot regain the privileged identity; the receiving process independently reacquires the resulting identity and capability mask in 5.10.3 | terminal for the effect: there is no reverse transition and no setuid-root helper on the path, because the child cannot regain privilege after the UID transition; the transition is performed a second time only as a separate child for a separate case, never as a restoration |
+| E2 | own-foreign | `own-foreign` `openat` acquisition of the pinned `FIXTURE_FILE_ROLE` child through the helper's own validated root descriptor (`O_RDONLY\|O_NOFOLLOW\|O_CLOEXEC`), then the required pre-mutation `fstat`; no mutation (5.8.1) | the fixture file the ordinary runner created inside the invocation root at the frozen `FIXTURE_FILE_ROLE` | the child descriptor the helper opened for itself relative to its own validated root descriptor with `O_NOFOLLOW`; the helper never re-resolves the caller's string or the role name after this open, and every later check and mutation in this case is an `fstat` or a call on that descriptor (5.8.1) | no capability for the mutation, because this row does not mutate; the access authority is the directory read and search bypass that the owner-only invocation root requires, `CAP_DAC_READ_SEARCH` (1.6, capabilities(7): "bypass file read permission checks and directory read and execute permission checks") | 5.3 root validation passed; the 5.8.1 common structural facts hold on the pinned descriptor; the 5.8.2 predicate `st_uid == ORDINARY_UID` holds; the ordinary runner's effective uid is not `65534` (5.2) | the pinned child descriptor exists, the object is a regular single-link `0644` file owned by the ordinary runner, and the helper holds the only reference it will mutate through | terminal for the access: the descriptor is closed by the helper's exit; the object itself is removed by E21 |
+| E3 | own-foreign | `own-foreign` `fchown(pinned_child_fd, 65534, observed_gid)`; one ownership call and no mode call | the pinned `FIXTURE_FILE_ROLE` inode the ordinary runner created inside the invocation root | the child descriptor E2 opened; the call takes the descriptor, so no pathname is re-resolved and the binding is valid from that open until the descriptor is closed | the reviewed privileged identity, plus `CAP_CHOWN` for the mutation call (capabilities(7): "make arbitrary changes to file UIDs and GIDs"); no `CAP_FOWNER` is required by the mutation call, which acts on an already-open descriptor, and no access authority beyond E2's, because the descriptor is already held | E2 completed and the pinned child descriptor is the object this call mutates; the 5.8.2 predicate `st_uid == ORDINARY_UID` holds on that descriptor | `st_uid == 65534`, `S_IMODE == 0o644`, `st_nlink == 1` and an empty attribute set, re-derived by the helper on the same descriptor and independently reacquired by the ordinary process before the production call (4.3) | terminal: there is no reverse ownership call and no mode restoration, because no mode was changed; the object is removed by the 10.4 state machine through E21 |
+| E4 | own-root | `own-root` `openat` acquisition of the pinned `FIXTURE_FILE_ROLE` child through the helper's own validated root descriptor (`O_RDONLY\|O_NOFOLLOW\|O_CLOEXEC`), then the required pre-mutation `fstat`; no mutation (5.8.1) | the fixture file the ordinary runner created inside the invocation root at the frozen `FIXTURE_FILE_ROLE` | the child descriptor the helper opened for itself relative to its own validated root descriptor with `O_NOFOLLOW`; the same never-re-resolved binding as E2 | no capability for the mutation, because this row does not mutate; the access authority is `CAP_DAC_READ_SEARCH` for reaching the pinned child through the owner-only root (1.6) | 5.3 root validation passed; the 5.8.1 common structural facts hold on the pinned descriptor; the 5.8.2 predicate `st_uid == ORDINARY_UID` holds; the 5.2 `ROOT_OWNED` precondition that the ordinary runner's effective uid is not `0` | the pinned child descriptor exists, the object is a regular single-link `0644` file owned by the ordinary runner, and the helper holds the only reference it will mutate through | terminal for the access: the descriptor is closed by the helper's exit; the object itself is removed by E21 |
+| E5 | own-root | `own-root` `fchown(pinned_child_fd, 0, observed_gid)`; one ownership call and no mode call | the pinned `FIXTURE_FILE_ROLE` inode the ordinary runner created inside the invocation root | the child descriptor E4 opened; the call takes the descriptor, so no pathname is re-resolved | the reviewed privileged identity, plus `CAP_CHOWN` for the mutation call; no `CAP_FOWNER`; no access authority beyond E4's, because the descriptor is already held | E4 completed and the pinned child descriptor is the object this call mutates; the 5.8.2 predicate `st_uid == ORDINARY_UID` holds on that descriptor | `st_uid == 0`, `S_IMODE == 0o644`, `st_nlink == 1` and an empty attribute set, re-derived and reacquired the same way as E3 | terminal: no reverse ownership call and no mode restoration; the object is removed by the 10.4 state machine through E21 |
+| E6 | mount-fixture | exclusive creation of the mountpoint directory at the frozen role `MOUNTPOINT_ROLE`: `mkdirat(validated_root_fd, MOUNTPOINT_ROLE, 0755)` with no-follow semantics, then pinning it by the helper's own descriptor with its real `st_dev`/`st_ino` recorded (5.9) | the new directory at the frozen role `MOUNTPOINT_ROLE` under the invocation root | the frozen role name resolved relative to the helper's own validated root descriptor; a pre-existing object at the role name — file, symlink or directory — fails the exclusive creation instead of being adopted, and the created directory is then pinned by a helper-held descriptor whose `st_dev`/`st_ino` are recorded and re-derived immediately before the mount | no `CAP_SYS_ADMIN`, no `CAP_CHOWN` and no ownership call: the create needs write and search permission on the containing directory, which is owner-only and owned by the ordinary runner, so the reviewed privileged identity performs it through the directory-write access authority `CAP_DAC_OVERRIDE`; reaching the containing directory through the owner-only root uses the traversal authority `CAP_DAC_READ_SEARCH` (1.6) | 5.3 root validation passed; no object exists at `MOUNTPOINT_ROLE`; the helper access authorities are present in the real `CapEff` recorded by the preflight (7); the creation-time `umask` cannot clear bits from the requested `0755` | exactly one real directory exists at `MOUNTPOINT_ROLE`, owned by the creating identity, with `S_IMODE == 0o755` exactly, group and world write clear, and recorded `st_dev`/`st_ino`; the ordinary identity can search it, which is what makes the 5.8.3 ordinary `O_RDONLY` witness reachable through it; no pre-existing object was adopted, removed or repaired | removed by E20 in the 10.4 order after the mount is released; a refused or failed creation is a non-pass fixture-construction failure classified by the 5.7 origin taxonomy, never a pass |
+| E7 | mount-fixture | loop backing acquisition, descriptor-mediated: `open("/dev/loop-control", O_RDWR)` then `ioctl(LOOP_CTL_GET_FREE)` to select the device number, then `open("/dev/loopN", O_RDWR)` and `ioctl(LOOP_CONFIGURE)` with the pinned IMAGE_ROLE descriptor passed as the backing file descriptor; no pathname-based tool may perform this effect | the loop device taken by the helper and its association with the pinned image inode | the backing file descriptor is the one the helper itself opened and pinned on `IMAGE_ROLE` in E8, and the ioctl takes that descriptor as an argument, so the association is descriptor-mediated and the role path is never re-resolved between the pin and the association; the device number, the device path and the recorded backing `st_dev`/`st_ino` are helper-internal state | `CAP_SYS_ADMIN` for the privileged block-device control and configuration ioctls (capabilities(7): CAP_SYS_ADMIN includes "perform various privileged block-device ioctl(2) operations"), plus `CAP_DAC_READ_SEARCH` for resolving and opening the frozen `IMAGE_ROLE` path through the owner-only invocation root, plus the image's own owner-write DAC bit, frozen in E8 as `IMAGE_ROLE_S_IMODE=0600`; no ownership capability | E8's image exists and is pinned, and E19's format completed; the image identity is re-derived equal to the pinned creation identity; `/dev/loop-control` and the loop device nodes exist and are recorded by the preflight (7); the image is a single-link regular file owned by the reviewed helper identity with owner-write set | exactly one recorded loop device is associated with the pinned image inode; the recorded device's real backing identity is read back after configuration by `LOOP_GET_STATUS64` and required to equal the pinned image `st_dev`/`st_ino`, so the descriptor-mediated binding is verified rather than assumed; no second loop device is associated with the same backing file, because losetup(8) documents that a shared backing file can corrupt or overwrite data | released by E13 in the 10.4 order; `LOOP_BACKING_RESIDUE=false` is the closing control; a failed acquisition is a non-pass fixture-construction failure classified by the 5.7 origin taxonomy |
+| E8 | mount-fixture | exclusive creation of the fixture image as a regular file at `IMAGE_ROLE` (`openat(validated_root_fd, IMAGE_ROLE, O_CREAT\|O_EXCL\|O_RDWR\|O_NOFOLLOW\|O_CLOEXEC, 0600)`), then the frozen size set with `ftruncate` on the pinned descriptor; no mode-changing call after creation | the new regular file at the frozen role `IMAGE_ROLE` under the invocation root | the frozen role name resolved relative to the helper's own validated root descriptor with no-follow semantics; `O_EXCL` makes a pre-existing object a refusal rather than an adoption; the created file is then pinned by the helper's own descriptor and its `st_dev`/`st_ino` recorded (5.9) | no `CAP_SYS_ADMIN`, no `CAP_CHOWN` and no ownership call: creation assigns the creating identity's own uid, and `ftruncate` acts on the descriptor the helper holds. The create needs write and search permission on the containing directory, which is owner-only and owned by the ordinary runner, so the reviewed privileged identity performs it through `CAP_DAC_OVERRIDE`; reaching the containing directory uses `CAP_DAC_READ_SEARCH` (1.6) | 5.3 root validation passed; no object exists at `IMAGE_ROLE`; the helper access authorities are present in the real `CapEff` recorded by the preflight (7); the helper's effective uid is the reviewed privileged identity | exactly one regular single-link file exists at `IMAGE_ROLE`, owned by the reviewed helper identity, with `S_IMODE == 0o600` exactly and owner-write set, size exactly `IMAGE_ROLE_SIZE_BYTES`, and recorded `st_dev`/`st_ino`; the mode was established by creation and never by a `chmod` or `fchmod`; no pre-existing object was adopted, removed or repaired | removed by E21 under the 10.4 state machine; a refused or failed creation is a non-pass fixture-construction failure classified by the 5.7 origin taxonomy, never a pass |
+| E9 | mount-fixture | private mount namespace creation: `unshare(CLONE_NEWNS)` performed by the privileged namespace launcher | the calling process's mount-namespace membership; the kernel creates a new mount-namespace object whose identity is the inode reported at `/proc/self/ns/mnt` | the call acts on the calling process itself and takes no pathname and no caller-supplied target, so the binding is the process identity that performs it, valid for that process and its descendants until namespace exit (10.1) | `CAP_SYS_ADMIN` in the user namespace that owns the current mount namespace (capabilities(7): "employ `CLONE_*` flags that create new namespaces with `clone(2)` and `unshare(2)`"); no access authority is required, because the effect resolves no pathname and touches no object below the invocation root (1.6) | the launcher runs as the reviewed privileged identity via `sudo -n`; the 5.10.2 credential validation is closed before this effect; the preflight recorded `CAP_SYS_ADMIN` from the real `CapEff` (7); this effect occurs only in the `mount-fixture` case, because only that case mounts a filesystem | the launcher is in a new mount namespace whose identity is later measured different from `HOST_MNT_NS_ID`; the launcher's later forked children inherit that membership; no host mount-table entry changes | the namespace object is destroyed by the kernel when its last member process exits; no explicit teardown exists and the closing control is the host-namespace absence control (10.3) |
+| E10 | mount-fixture | mount propagation brought to private inside the new namespace: `mount(NULL, "/", NULL, MS_REC\|MS_PRIVATE, NULL)` | the propagation type of the mounts in the private namespace's mount tree, rooted at that namespace's `/` | the path `/`, resolved by the launcher inside the namespace created by E9 and never in the host namespace; the binding is valid for the launcher's stay in that namespace and the effect is ordered strictly after E9 and before every fixture mount | `CAP_SYS_ADMIN` (mount(2) is in the `CAP_SYS_ADMIN` set of capabilities(7)); umount(2) states the same requirement for the `MS_REC\|MS_PRIVATE` preparation it prescribes; no access authority is required, because the path `/` is the private namespace's own root, which the reviewed privileged identity may search without a bypass (1.6) | E9 completed and the private namespace identity differs from the host identity; no mount mutation has occurred yet; like E9 this effect occurs only in the `mount-fixture` case | the real propagation flags of the private namespace are private (10.2 N3), so no later mount or unmount event in it can propagate to the host namespace | propagation is a property of the namespace object and dies with it; no host propagation state is written, and the closing control is the 10.3 absence control |
+| E11 | mount-fixture | ext4 formatting effect: `mke2fs`/`mkfs.ext4` writes a filesystem into the image | the contents of the image file created by E8 | the image descriptor the helper pinned in E8 is passed to the formatter and the image inode identity is re-derived equal to the pinned identity immediately before formatting, so the format writes the object the helper created and nothing else; the formatter never receives the role name as a path to re-resolve | no `CAP_SYS_ADMIN`, no mount, no loop device and no ownership call: this is an ordinary userspace write into a file the helper owns, so the image's own owner-write DAC bit is the whole file-level requirement, and that bit is a frozen measured postcondition of E8 rather than an assumption about a default mode (`IMAGE_ROLE_S_IMODE=0600`, owner-write set); `CAP_DAC_READ_SEARCH` is required for traversing the owner-only root to reach the image (1.6); the tool's presence and version are preflight facts (7) | E8 completed; image identity re-derived equal to the pinned identity; the image is a single-link regular file owned by the reviewed helper identity with owner-write set; `mke2fs` present and recorded; the image is neither mounted nor loop-bound at formatting time | the image contains an ext4 filesystem whose own root directory satisfies the E17 preconditions; the image inode identity, mode and owner are unchanged by the format; no `chmod` or `fchmod` follows it | the formatted image is removed by E21; a formatting failure is a non-pass fixture-construction failure classified by the 5.7 origin taxonomy, never a pass |
+| E12 | mount-fixture | `MNT_DETACH` detach: `umount2(MOUNTPOINT_ROLE, MNT_DETACH)` inside the private namespace | the fixture mount in the private namespace's mount table | the frozen `MOUNTPOINT_ROLE` resolved relative to the helper's validated root descriptor inside the private namespace, valid only while that mount is still attached and reachable at that path — the same object the pre-drift positive admission and the section 8 step 5-6 controls reference, and the same object E6 created and pinned; no caller path participates | `CAP_SYS_ADMIN` (umount(2): "Appropriate privilege (Linux: the `CAP_SYS_ADMIN` capability) is required to unmount filesystems"), plus `CAP_DAC_READ_SEARCH` for resolving the frozen path through the owner-only root (1.6) | the mount state is observed `ATTACHED`; the retained evidence descriptor and the pre-drift positive admission of section 8 step 2 already exist, because the detach is the `detach-fixture` action of 5.2 performed after the positive case | mount state `DETACHED_BUSY`: the mount is immediately disconnected from the private mount table while the unmount completes when the mount ceases to be busy (umount(2) `MNT_DETACH`), so the retained descriptor keeps it alive and a second unmount has no object to act on | advances to `RELEASED` only through E13 to E22 after every retained fixture descriptor is closed and the private mount table shows zero records for the held mount id (10.4); never retried blindly, and `SECOND_UNMOUNT_AFTER_MNT_DETACH_REQUIRED=false` |
+| E13 | mount-fixture | loop backing release: the loop device is detached from the image (`LOOP_CLR_FD`, equivalently `losetup -d` acting on the recorded device) | the loop device acquired by E7 and its association with the pinned image inode | the device number recorded at acquisition, held as helper-internal state and never taken from caller text or from a fresh pathname scan; the release acts on the recorded device and the device's real state is re-read afterwards rather than inferred | `CAP_SYS_ADMIN` for privileged block-device ioctls (capabilities(7)); no access authority is required, because the release acts on the recorded loop device and resolves no path below the invocation root (1.6); no ownership capability and no ownership call | the observed state is `DETACHED_BUSY`, or the `ATTACHED` path has completed through E20; every retained fixture descriptor is closed **and the helper's own image and loop descriptors are closed in this same invocation**, because a loop device with an open reference is not releasable and an early attempt would report a false failure and invite a blind retry (10.4) | no loop device is associated with the image; `LOOP_BACKING_RESIDUE=false`, measured rather than asserted, which also allows for the lazy device destruction losetup(8) documents instead of assuming immediate removal | terminal for the effect; E21 and E22 follow; a failure is `CLEANUP_FAILED` with the residual device recorded as diagnostics |
+| E14 | mount-fixture | `ATTACHED`-state ordinary cleanup unmount: `umount2(MOUNTPOINT_ROLE, 0)`, performed only in the observed `ATTACHED` state | the fixture mount in the private namespace, still attached because no successful `MNT_DETACH` occurred | the frozen `MOUNTPOINT_ROLE` resolved relative to the helper's validated root descriptor, valid only while the observed state is `ATTACHED`; the state is measured before the effect and in any other state this effect does not occur at all | `CAP_SYS_ADMIN` (umount(2)), plus `CAP_DAC_READ_SEARCH` for resolving the frozen path through the owner-only root (1.6); no ownership capability | cleanup entered with the observed state `ATTACHED` — failure before drift, or the detach not attempted — and no successful `MNT_DETACH` has occurred | the fixture mount is gone from the private mount table and the loop backing becomes releasable; the state machine advances to release and removal | followed by E13, E21 and E22 in that order; `PRIVATE_MOUNT_RESIDUE=false` is the closing control; a failure is `CLEANUP_FAILED`, visible and never retried blindly |
+| E15 | mount-fixture | exclusive creation of the mount-case fixture file at the frozen role path `MOUNTPOINT_ROLE/FIXTURE_FILE_ROLE` inside the helper's own freshly mounted ext4 filesystem, then pinning it | the new regular file inside the mounted ext4 filesystem: the mount case's `FIXTURE_FILE_ROLE`, which is also the retained object of section 9 | the frozen role path is resolved by the helper itself inside the private namespace after the mount is attached: the mounted target is opened relative to the helper's own validated root descriptor with `O_DIRECTORY\|O_NOFOLLOW\|O_CLOEXEC`, and `FIXTURE_FILE_ROLE` is then created relative to that descriptor with `O_CREAT\|O_EXCL` and no-follow semantics. Both components are frozen derived names, no caller text participates, and a pre-existing object at the name fails the creation instead of being adopted; the created file is pinned by the helper's own descriptor and every later check is an `fstat` on that descriptor | no `CAP_CHOWN`, no `CAP_SYS_ADMIN` and no ownership or mode call: creation assigns the creating identity's own uid, which is the frozen `st_uid == 0` of 5.8.3, and the create itself is authorized by the owner write and search bits of the freshly formatted filesystem's root directory, which the reviewed privileged identity owns; reaching that directory through the invocation root uses `CAP_DAC_READ_SEARCH` (1.6) | E18 completed and the mount attached; the mounted root directory's owner is the reviewed privileged identity with owner write and search set, and its mode grants search to the ordinary identity so that the 5.8.3 ordinary `O_RDONLY` witness can reach the file through `MOUNTPOINT_ROLE`, whose own `0755` (E6) grants that search; the creation-time `umask` cannot clear bits from the requested `0644`; no object exists at the role name | exactly one regular single-link file exists at the frozen role path, owned by uid 0, with `S_IMODE == 0o644`, and the helper's `fstat` facts satisfy the 5.8.1 common structural requirements plus the 5.8.3 `st_uid == 0` predicate | removed with the image by E21, because the file lives inside the image's filesystem; the mount-case `FIXTURE_FILE_ROLE` has no separate removal effect and needs none, and the 5.8.3 after-creation failure contract governs a child that is absent or non-conforming |
+| E16 | mount-fixture | mount fixture: `mount(loop_device, MOUNTPOINT_ROLE, "ext4", flags, options)` inside the private namespace | the private namespace's mount table entry, and the ext4 filesystem instance carried by the loop device, covering the helper-created `MOUNTPOINT_ROLE` directory | `mount(2)` is a pathname operation with no descriptor form (5.9), so the target is bound by helper-exclusive creation plus pre-mount identity revalidation: the frozen `MOUNTPOINT_ROLE` created and pinned by E6, resolved relative to the helper's own validated root descriptor, its pinned `st_dev`/`st_ino` re-derived immediately before the call, still a real directory with no symlinked component in its resolution path, with the helper's own recorded loop device as the source and no caller-created source or target ever accepted; the binding window is the interval between that revalidation and the call, inside the private namespace | `CAP_SYS_ADMIN` (capabilities(7) lists mount(2) in that set), plus `CAP_DAC_READ_SEARCH` for resolving the frozen target path through the owner-only root (1.6); no ownership capability | E9 and E10 completed; E6, E8, E11 and E7 completed; target identity re-derived equal to the identity E6 pinned; the device appears in no other private-namespace record (section 9 exactly-once rule); private propagation confirmed private before the mount | exactly one private-namespace record carries the new mount, with root field `/` and filesystem type `ext4`; the evidence process shares the namespace and can reach the mount-case file; the host mount table is unchanged | leaves `ATTACHED` through E12 (`detach-fixture`) or through E14 (failure before drift); the terminal states are the 10.4 `RELEASED` and `CLEANUP_FAILED` |
+| E17 | mount-fixture | mounted-directory access and pre-state authorisation for the mount-case child: `openat(mountpoint_fd_from_E6, ".", O_DIRECTORY\|O_NOFOLLOW\|O_CLOEXEC)` on the mounted ext4 root, then the ordinary-identity search authorisation and owner-write/search observations the 5.8.3 preconditions require; no mutation | the mounted ext4 filesystem's root directory, reached through the `MOUNTPOINT_ROLE` directory E6 created and pinned | the descriptor chain `validated_root_fd` -> `MOUNTPOINT_ROLE` descriptor pinned by E6 -> the mounted root, each component a frozen derived name or a held descriptor, so no caller text participates and no component is re-resolved after it is pinned | no capability for the effect itself, because it mutates nothing; the access authority is `CAP_DAC_READ_SEARCH` for traversing the owner-only invocation root to reach the pinned mountpoint descriptor (1.6) | E16 completed and the mount attached; the mounted root directory's owner is the reviewed privileged identity with owner write and search set; the mount's real identity equals the recorded loop-backed ext4 filesystem of E7 and E16 | the mounted root directory is observed, its owner and mode are recorded, and the preconditions E15 depends on are established as measured facts: owner write and search set for the helper, and search granted to the ordinary identity; a failure here is `QUALIFICATION_GAP` plus a design finding, never a pass and never a privilege repair | terminal for the access: the descriptor is closed by the helper's exit; the mounted root itself is destroyed with the image by E21 |
+| E18 | mount-fixture | mount-case fixture file creation: `openat(mounted_root_fd, FIXTURE_FILE_ROLE, O_CREAT\|O_EXCL\|O_RDONLY\|O_NOFOLLOW\|O_CLOEXEC, 0644)` inside the helper's own freshly mounted ext4 filesystem, then pinning it by the helper's own descriptor | the new regular file at the frozen role path `MOUNTPOINT_ROLE/FIXTURE_FILE_ROLE` inside the mounted ext4 filesystem, which is also the retained object of section 9 | the frozen role name created relative to the mounted-root descriptor E17 opened; a pre-existing object at the name fails the exclusive creation instead of being adopted; the created file is pinned by the helper's own descriptor with its real `st_dev`/`st_ino` recorded, and every later check is an `fstat` on that descriptor (5.8.1, 5.8.3) | no `CAP_CHOWN`, no `CAP_SYS_ADMIN` and no ownership or mode call: creation assigns the creating identity's own uid, which is the frozen `st_uid == 0` of 5.8.3, and the create is authorized by the owner write and search bits of the mounted root directory the reviewed privileged identity owns, which E17 observed; no access authority beyond E17's, because the mounted-root descriptor is already held | E17 completed and the mounted root's owner, mode and ordinary search authorisation are observed facts; the creation-time `umask` cannot clear bits from the requested `0644`; no object exists at the role name | exactly one regular single-link file exists at the frozen role path, owned by uid 0, with `S_IMODE == 0o644`, and the helper's `fstat` facts satisfy the 5.8.1 common structural requirements plus the 5.8.3 `st_uid == 0` predicate; the ordinary evidence process can open it `O_RDONLY` with no capability | removed with the image by E21, because the file lives inside the image's filesystem; the mount-case `FIXTURE_FILE_ROLE` has no separate removal effect and needs none, and the 5.8.3 after-creation failure contract governs a child that is absent or non-conforming |
+| E19 | mount-fixture | loop-device access and read-back verification: `openat(recorded_loop_device_path, O_RDWR)` then `ioctl(LOOP_GET_STATUS64)` to re-read the device's real backing identity; no mutation | the loop device recorded by E7 and its real association with the pinned image inode | the device number and device path are helper-internal state recorded at acquisition, never caller text and never a fresh scan; the read-back is bound to the recorded device and compared against the pinned image `st_dev`/`st_ino` | `CAP_SYS_ADMIN` for the privileged block-device ioctls (capabilities(7)); no access authority is required, because the effect resolves no path below the invocation root (1.6) | E7 completed and the device number was recorded; the pinned image identity was recorded at E8 | the device's real backing identity is observed equal to the pinned image identity, so E16's mount source is the helper's own image rather than a substituted object; a mismatch is a hard refusal before the mount and is a non-pass fixture-construction failure classified by the 5.7 origin taxonomy | terminal for the access: the descriptor is closed before E13's release, because a loop device with an open reference is not releasable |
+| E20 | mount-fixture | mountpoint removal: `unlinkat(validated_root_fd, MOUNTPOINT_ROLE, AT_REMOVEDIR)`, with no recursive and no forced removal | the mountpoint directory the helper created exclusively in E6 | the frozen role name resolved relative to the helper's own validated root descriptor with no-follow semantics, with the observed object re-derived before removal as the identity E6 pinned and still a directory | no capability is needed for the target itself, because the containing directory is the invocation root, which the ordinary runner owns; the directory-write authority `CAP_DAC_OVERRIDE` is required to remove an entry there, together with the traversal authority `CAP_DAC_READ_SEARCH` for reaching the pinned root descriptor (1.6); no ownership call and no `CAP_FOWNER`: the invocation root's sticky bit is clear by 4.2, so removing the helper-owned directory from it never needs the sticky-bit bypass | nothing is mounted at that path and the state is `RELEASED`; the directory is empty, because the mount case's fixture file lives inside the mounted ext4 filesystem and not in this directory; the observed object is the identity E6 pinned | the mountpoint directory no longer exists and no object outside it was touched; `MOUNTPOINT_ROLE_CLEANUP_EFFECT=E20` is satisfied | terminal; a failure is `CLEANUP_FAILED` with the residual path recorded and never retried blindly |
+| E21 | all cases (case-scoped object set) | fixture-object removal, one removal per remaining helper-created or mutated object under the invocation root: `unlinkat(validated_root_fd, IMAGE_ROLE, 0)` and, for the mount case, the file inside the image's filesystem with it; for `own-foreign` and `own-root`, `unlinkat(validated_root_fd, FIXTURE_FILE_ROLE, 0)`; one removal per object and no ownership call | for `mount-fixture`: the image file E8 created and E11 formatted, together with the `FIXTURE_FILE_ROLE` inside its filesystem; for `own-foreign` and `own-root`: the `FIXTURE_FILE_ROLE` child the setup mutated | each frozen derived role name resolved relative to the helper's own validated root descriptor with no-follow semantics, with the observed object's `st_dev`/`st_ino` re-derived immediately before the removal and required to equal the identity pinned at creation or before the mutation, so a substituted object is never a removal target; `unlinkat` removes the name itself and never a symlink target, and the binding window is that revalidation plus the single removal call | no `CAP_SYS_ADMIN`, no ownership capability and no ownership call, because removing an object never depends on the removed object's owner; the directory-write authority `CAP_DAC_OVERRIDE` and the traversal authority `CAP_DAC_READ_SEARCH` are required, since the containing directory is the invocation root owned by the ordinary runner and reached through its owner-only mode (1.6); the invocation root's sticky bit is clear by 4.2, so no `CAP_FOWNER` is required or declared | for `mount-fixture`: E13 completed and the observed state is `RELEASED`, so no mount and no loop association remains; for `own-foreign` and `own-root`: the production observation of 4.3 has finished, so no evidence depends on the object, and no repair, re-ownership or mode change has been performed on it; in every case the observed object is the pinned fixture object | every fixture object at a frozen role name is absent from the invocation root, and `FIXTURE_ROOT_RESIDUE` can become false only after E22; the ownership the setup produced was never changed back, and an ownership-case removal that had to restore ownership first would be an undeclared second `fchown` | terminal for the effect: E22 may now occur and is the next removal step in every case; a failure is `CLEANUP_FAILED` with the residual path recorded and never retried blindly |
+| E22 | all cases (run-scoped) | invocation-root removal: `unlinkat(RUNNER_TEMP_fd, invocation_root_name, AT_REMOVEDIR)` — the removal of a directory entry from the invocation root's **parent**, after every fixture object inside the root is gone | the invocation root directory created by the ordinary process, owned by it, with group and world bits clear and the sticky bit clear — **not** an object below that root | the same real path the helper validated under 5.3, re-derived; the removal requires the observed directory to be that validated root and to be empty, it acts on the parent directory's entry, and it never targets a repository, worktree, cache, runtime-data or pre-existing host path; the parent is reached through a descriptor the helper opened on `RUNNER_TEMP` and validated as the real parent of the validated root, so the root's own name is not re-resolved from caller text | the below-root half of this effect — the read of the root to observe its emptiness — uses the traversal authority `CAP_DAC_READ_SEARCH` (1.6); the parent-removal half uses `CAP_DAC_OVERRIDE` **exactly when the observed `RUNNER_TEMP` DAC relation denies the helper identity write and search**, which is the outcome 7 freezes as measured on the declared runner; if the observed relation already authorizes the removal through direct DAC, no capability is required and none is claimed. `CAP_FOWNER` is neither declared nor needed because the parent is required not to be sticky: removing a directory owned by another identity from a sticky directory would need `CAP_FOWNER` (capabilities(7): "ignore directory sticky bit on file deletion"), so a sticky parent is a preflight failure yielding `QUALIFICATION_GAP` rather than an undeclared authority | every other fixture object under the root has been removed, so the root is empty; the observed directory is the validated root identity; the parent directory is the validated real parent and is not sticky, as a preflight fact (7); the `RUNNER_TEMP` owner, mode, write-and-search DAC relation and sticky-bit state are the four observed facts of 1.7.7 and 7 | `FIXTURE_ROOT_RESIDUE=false`, measured; the fixture leaves no persistent state (17); the invocation root's parent is unchanged by the removal apart from the removed entry | terminal; a failure is `CLEANUP_FAILED` with the residual path recorded, never retried blindly and never a pass |
 
 Authority is derived from each effect's own operation rather than from one
 blanket grant, and the documented provenance for every privilege used above is
@@ -575,17 +581,35 @@ ROUND5_CAP_DAC_OVERRIDE_NOT_REQUIRED_CLAIMS_WITHDRAWN_BY_ROUND6=true
 PRIVILEGED_HELPER_ACCESS_AUTHORITIES=CAP_DAC_READ_SEARCH,CAP_DAC_OVERRIDE
 PRIVILEGED_HELPER_ACCESS_AUTHORITY_REQUIRED=true
 PRIVILEGED_HELPER_ACCESS_AUTHORITY_SCOPE=helper_pathname_and_object_access_below_the_validated_invocation_root
+BELOW_ROOT_ACCESS_AUTHORITY_SCOPE=every_object_at_a_frozen_role_name_under_the_validated_invocation_root
+ROOT_PARENT_REMOVAL_ACCESS_AUTHORITY_SCOPE=RUNNER_TEMP_the_validated_invocation_roots_parent_directory
 PRIVILEGED_HELPER_ACCESS_AUTHORITY_SOURCE=reviewed_privileged_identity_capability_set_recorded_by_preflight
 ACCESS_AUTHORITY_IS_NOT_AN_EVIDENCE_PRODUCER=true
 ACCESS_AUTHORITY_AVAILABLE_TO_EVIDENCE_PROCESS=false
 ACCESS_AUTHORITY_TRAVERSAL_AUTHORITY=CAP_DAC_READ_SEARCH
-ACCESS_AUTHORITY_TRAVERSAL_EFFECTS=E1,E2,E6,E7,E8,E9,E10,E11
+ACCESS_AUTHORITY_TRAVERSAL_EFFECTS=E2,E4,E6,E7,E8,E11,E12,E14,E15,E16,E17,E20,E21,E22
 ACCESS_AUTHORITY_DIRECTORY_WRITE_AUTHORITY=CAP_DAC_OVERRIDE
-ACCESS_AUTHORITY_DIRECTORY_WRITE_EFFECTS=E5,E13,E14,E15,E16
-ACCESS_AUTHORITY_NONE_REQUIRED_EFFECTS=E3,E4,E12
-ACCESS_AUTHORITY_EFFECT_SET=E1,E2,E5,E6,E7,E8,E9,E10,E11,E13,E14,E15,E16
+ACCESS_AUTHORITY_DIRECTORY_WRITE_EFFECTS=E6,E8,E20,E21,E22
+ACCESS_AUTHORITY_TRAVERSAL_AND_DIRECTORY_WRITE_EFFECTS=E6,E8,E20,E21
+ACCESS_AUTHORITY_NONE_REQUIRED_EFFECTS=E9,E10,E13,E17,E18,E19
+ACCESS_AUTHORITY_EFFECT_SET=E2,E4,E6,E7,E8,E11,E12,E14,E15,E16,E17,E20,E21,E22
 ACCESS_AUTHORITY_EFFECT_TABLE_TOKEN_EQUIVALENT=true
 INVOCATION_ROOT_MODE_WIDENED_TO_AVOID_THE_BYPASS=false
+```
+
+E1's credential transition and E3/E5's descriptor-local `fchown` calls need no
+access authority at all, because none of them resolves a pathname or reaches an
+object through the root: E1 acts on the caller's own credentials, and E3/E5 act
+on a descriptor E2/E4 already opened. E9, E10, E13, E17, E18 and E19 are the
+effects that require none, and each of those rows says so explicitly. E22 is the
+only effect whose target lies outside the invocation root, and its authority is
+the DAC-conditional fact of 1.7.7 rather than an assumed grant.
+
+```text
+ACCESS_AUTHORITY_NOT_REQUIRED_REASON=effect_resolves_no_pathname_below_the_root_or_acts_on_an_already_pinned_descriptor
+EFFECTS_ACTING_ON_AN_ALREADY_PINNED_DESCRIPTOR=E3,E5
+EFFECTS_ON_THE_CALLERS_OWN_CREDENTIALS=E1
+EFFECTS_WITHOUT_ANY_ACCESS_AUTHORITY=E9,E10,E13,E17,E18,E19
 ```
 
 The second consequence is that the `CAP_SYS_ADMIN` attribution narrows to the
@@ -593,20 +617,42 @@ operations that really are mount, namespace, loop or unmount operations, and tha
 no other `CAP_SYS_ADMIN` use exists anywhere in the fixture:
 
 ```text
-CAP_SYS_ADMIN_BOUND_EFFECTS=E3,E4,E7,E8,E10,E11,E12
-EFFECTS_WITHOUT_CAP_SYS_ADMIN=E1,E2,E5,E6,E9,E13,E14,E15,E16
-CAP_SYS_ADMIN_BOUND_TO_OPERATIONS=mount_namespace_creation,mount_propagation_private,loop_configuration,mount_umount
+CAP_SYS_ADMIN_BOUND_EFFECTS=E7,E9,E10,E12,E14,E16,E19
+EFFECTS_WITHOUT_CAP_SYS_ADMIN=E1,E2,E3,E4,E5,E6,E8,E11,E13,E15,E17,E18,E20,E21,E22
+CAP_SYS_ADMIN_BOUND_TO_OPERATIONS=mount_namespace_creation,mount_propagation_private,loop_control_and_configuration,loop_readback,mount_umount
 CAP_SYS_ADMIN_USED_FOR_ANY_OTHER_OPERATION=false
-CAP_CHOWN_BOUND_EFFECTS=E1,E2
+CAP_CHOWN_BOUND_EFFECTS=E3,E5
 CAP_CHOWN_BOUND_TO_OPERATION=ownership_mutation_call_only
-CAP_DAC_READ_SEARCH_BOUND_EFFECTS=E1,E2,E6,E7,E8,E9,E10,E11
-CAP_DAC_READ_SEARCH_BOUND_TO_OPERATION=traversal_of_the_owner_only_invocation_root
-CAP_DAC_OVERRIDE_BOUND_EFFECTS=E5,E13,E14,E15,E16
+CAP_SETGID_BOUND_EFFECTS=E1
+CAP_SETGID_BOUND_TO_OPERATION=empty_supplementary_group_list_and_gid_transition_only
+CAP_SETUID_BOUND_EFFECTS=E1
+CAP_SETUID_BOUND_TO_OPERATION=uid_transition_only
+CAP_DAC_READ_SEARCH_BOUND_EFFECTS=E2,E4,E6,E7,E8,E11,E12,E14,E15,E16,E17,E20,E21,E22
+CAP_DAC_READ_SEARCH_BOUND_TO_OPERATION=traversal_of_the_owner_only_invocation_root_and_of_the_run_temp_parent
+CAP_DAC_OVERRIDE_BOUND_EFFECTS=E6,E8,E20,E21,E22
 CAP_DAC_OVERRIDE_BOUND_TO_OPERATION=directory_entry_creation_or_removal_in_a_directory_the_helper_does_not_own
 CAP_FOWNER_BOUND_EFFECTS=none
-REQUIRED_CAPABILITY_INVENTORY=CAP_CHOWN,CAP_DAC_READ_SEARCH,CAP_DAC_OVERRIDE,CAP_SYS_ADMIN
-REQUIRED_CAPABILITY_COUNT=4
+REQUIRED_CAPABILITY_INVENTORY=CAP_CHOWN,CAP_DAC_OVERRIDE,CAP_DAC_READ_SEARCH,CAP_SETGID,CAP_SETUID,CAP_SYS_ADMIN
+REQUIRED_CAPABILITY_COUNT=6
 OTHER_CAPABILITY_REQUIRED_BY_ANY_EFFECT=false
+REQUIRED_CAPABILITY_INVENTORY_IS_UNION_OF_REQUIRED_CAPABILITY_AUTHORITIES=true
+NO_DECLARED_CAPABILITY_IS_UNUSED=true
+CAP_SETPCAP_BOUND_EFFECTS=none
+CAP_SETPCAP_REQUIRED_BY_CREDENTIAL_TRANSITION=false
+CREDENTIAL_TRANSITION_CAPABILITY_CLEARING_IS_KERNEL_PERFORMED=true
+```
+
+The `CAP_SYS_ADMIN` set is mount-case-only by construction: E9 and E10 are the
+private namespace and its private propagation, and they are scoped to
+`mount-fixture` because that case alone mounts a filesystem (1.7.4). The
+ownership cases reach no `CAP_SYS_ADMIN` effect at all, which is what makes
+`OWNERSHIP_CASE_REQUIRES_CAP_SYS_ADMIN=false` a derived fact rather than an
+assertion:
+
+```text
+CAP_SYS_ADMIN_BOUND_EFFECT_SET_SCOPE=mount-fixture
+OWNERSHIP_CASE_EFFECTS_INTERSECT_CAP_SYS_ADMIN_EFFECTS=none
+OWNERSHIP_CASE_EFFECTS_INTERSECT_CAP_SYS_ADMIN_EFFECTS_IS_EMPTY=true
 ```
 
 ```text
@@ -615,15 +661,45 @@ EVERY_DECLARED_AUTHORITY_HAS_REQUIRED_EFFECT=true
 NO_BROADER_AUTHORITY_THAN_EFFECT_REQUIRES=true
 UNDECLARED_PRIVILEGED_EFFECT_COUNT=0
 UNUSED_DECLARED_AUTHORITY_COUNT=0
-REAL_MATERIAL_EFFECT_COUNT=16
-PRIVILEGED_EFFECT_CLOSURE_ROWS=16
+REAL_MATERIAL_EFFECT_COUNT=22
+PRIVILEGED_EFFECT_CLOSURE_ROWS=22
 REAL_MATERIAL_EFFECT_COUNT_EQ_CLOSURE_ROWS=true
-ROUND6_EFFECT_ROWS_ALL_REAL_EFFECTS=true
+ROUND7_EFFECT_ROWS_ALL_REAL_EFFECTS=true
+ROUND7_PLACEHOLDER_EFFECT_ROWS=0
+ROUND7_PLACEHOLDER_EFFECT_ROW_ACCEPTED=false
+PRIVILEGED_EFFECT_AUTHORITY_CLOSURE=PASS
+PRIVILEGED_EFFECT_CLOSURE_ROUND=7
+PRIVILEGED_EFFECT_CLOSURE_MAINTAINED_IN_PLACE=true
+ROUND6_EFFECT_ROWS_ALL_REAL_EFFECTS_IS_A_ROUND6_RECORD=true
 ROUND6_PLACEHOLDER_EFFECT_ROWS=0
 ROUND6_PLACEHOLDER_EFFECT_ROW_ACCEPTED=false
-PRIVILEGED_EFFECT_AUTHORITY_CLOSURE=PASS
-PRIVILEGED_EFFECT_CLOSURE_ROUND=6
-PRIVILEGED_EFFECT_CLOSURE_MAINTAINED_IN_PLACE=true
+```
+
+**Case effect sets and total authority sets.** The case scoping above is
+mechanical: each effect belongs either to exactly one case or to all three, and
+each case's total required authority is the union of its own effects' required
+authority and nothing more. The sets are stated here so that the closure is
+checkable in both directions rather than inferred from the row text:
+
+```text
+OWN_FOREIGN_EFFECT_SET=E1,E2,E3,E21,E22
+OWN_ROOT_EFFECT_SET=E1,E4,E5,E21,E22
+MOUNT_FIXTURE_EFFECT_SET=E1,E6,E7,E8,E9,E10,E11,E12,E13,E14,E15,E16,E17,E18,E19,E20,E21,E22
+OWN_FOREIGN_EFFECT_COUNT=5
+OWN_ROOT_EFFECT_COUNT=5
+MOUNT_FIXTURE_EFFECT_COUNT=19
+UNION_OF_CASE_EFFECT_SETS=E1,E2,E3,E4,E5,E6,E7,E8,E9,E10,E11,E12,E13,E14,E15,E16,E17,E18,E19,E20,E21,E22
+REAL_MATERIAL_EFFECT_COUNT_IS_UNION_OF_CASE_EFFECT_SETS=true
+EFFECT_CASE_SCOPE_EXCLUSIVITY=each_effect_belongs_to_exactly_one_case_or_to_all_cases
+EFFECT_APPEARS_IN_EXACTLY_ITS_INTENDED_CASE_SET=true
+OWN_FOREIGN_TOTAL_REQUIRED_AUTHORITY_SET=CAP_CHOWN,CAP_DAC_OVERRIDE,CAP_DAC_READ_SEARCH,CAP_SETGID,CAP_SETUID
+OWN_ROOT_TOTAL_REQUIRED_AUTHORITY_SET=CAP_CHOWN,CAP_DAC_OVERRIDE,CAP_DAC_READ_SEARCH,CAP_SETGID,CAP_SETUID
+MOUNT_FIXTURE_TOTAL_REQUIRED_AUTHORITY_SET=CAP_DAC_OVERRIDE,CAP_DAC_READ_SEARCH,CAP_SETGID,CAP_SETUID,CAP_SYS_ADMIN
+CASE_TOTAL_AUTHORITY_SET_EQUALS_EFFECT_AUTHORITY_UNION=true
+CASE_TOTAL_AUTHORITY_SET_IS_MINIMAL=true
+OWNERSHIP_CASE_REQUIRES_PRIVATE_MOUNT_NAMESPACE=false
+OWNERSHIP_CASE_REQUIRES_CAP_SYS_ADMIN=false
+RQP_L17_TOTAL_AUTHORITY_SET_EQUALS_MOUNT_FIXTURE_TOTAL_AUTHORITY_SET=true
 ```
 
 **Cleanup ownership restoration is resolved by removal, not by implementation.**
@@ -663,24 +739,27 @@ CLEANUP_OWNERSHIP_RESTORATION_IS_AN_EFFECT_ROW=false
 CLEANUP_OWNERSHIP_RESTORATION_COUNTS_AS_MATERIAL_EFFECT=false
 CLEANUP_OWNERSHIP_RESTORATION_HAS_AUTHORITY_ROW=none
 ROUND5_OWNERSHIP_RESTORATION_PLACEHOLDER_ROW_WITHDRAWN_BY_ROUND6=true
-OWNERSHIP_FIXTURE_FILE_REMOVAL_EFFECT=E16
+OWNERSHIP_FIXTURE_FILE_REMOVAL_EFFECT=E21
 OWNERSHIP_FIXTURE_FILE_REMOVAL_EFFECT_DECLARED=true
 OWNERSHIP_FIXTURE_FILE_REMOVAL_SCOPE=own-foreign,own-root
 OWNERSHIP_FIXTURE_FILE_REMOVAL_BEFORE_ROOT_REMOVAL=true
-OWNERSHIP_FIXTURE_FILE_REMOVAL_AUTHORITY=CAP_DAC_OVERRIDE
+OWNERSHIP_FIXTURE_FILE_REMOVAL_AUTHORITY=CAP_DAC_OVERRIDE,CAP_DAC_READ_SEARCH
 OWNERSHIP_FIXTURE_FILE_REMOVAL_REQUIRES_CAP_CHOWN=false
 OWNERSHIP_FIXTURE_FILE_REMOVAL_PERFORMS_REVERSE_FCHOWN=false
+OWNERSHIP_FIXTURE_FILE_REMOVAL_EFFECT_IS_SHARED_WITH_THE_MOUNT_CASES_OBJECTS=true
 ```
 
 That resolution is what keeps the closure honest rather than merely complete:
 section 5 no longer declares an operation that no effect row, no authority and no
-cleanup step implements. Round 5 recorded the withdrawal in a row `E16` that
-declared no effect at all, and round 6 corrects that too: a no-effect placeholder
-is not a material effect and must not be counted as one, so the withdrawal is
-recorded here as tokens rather than as a row, and `E16` now carries the real
-ownership-case `FIXTURE_FILE_ROLE` removal effect that the round-6 review found
-missing (1.6). The closure therefore has sixteen real effect rows and no
-placeholder row, and `REAL_MATERIAL_EFFECT_COUNT == PRIVILEGED_EFFECT_CLOSURE_ROWS`.
+cleanup step implements. Round 5 recorded the withdrawal in a row that declared
+no effect at all, and round 6 corrected the counting: a no-effect placeholder is
+not a material effect and must not be counted as one, so the withdrawal is
+recorded here as tokens rather than as a row. Round 6 then gave `E16` the real
+ownership-case `FIXTURE_FILE_ROLE` removal effect, and round 7 renumbers it
+`E21` when the table is rebuilt in lifecycle order and widens its scope to the
+one removal effect every case shares (1.7.6). The closure has twenty-two real
+effect rows and no placeholder row, and
+`REAL_MATERIAL_EFFECT_COUNT == PRIVILEGED_EFFECT_CLOSURE_ROWS == 22`.
 
 ### 1.6 Remediation round 6
 
@@ -694,7 +773,7 @@ FIFTH_A3D_REVIEW_FAILURE=CONTRACT_IMPLEMENTABILITY_FAILURE
 FIFTH_A3D_REVIEW_FAILURE_CLASS=CONTRACT_IMPLEMENTABILITY_FAILURE
 FIFTH_A3D_REVIEW_BLOCKING_FINDINGS=3
 A3D_SIXTH_REMEDIATION_ROUND=6
-A3D_CURRENT_REMEDIATION_ROUND=6
+A3D_CURRENT_REMEDIATION_ROUND_AT_THAT_HEAD=6
 A3D_HISTORY_ADDITIVE=true
 PRODUCT_FAILURE=false
 PRIVILEGED_EXECUTION_PERFORMED=false
@@ -737,19 +816,24 @@ OWNERSHIP_MUTATION_AUTHORITY_EXACT=true
 OWNERSHIP_MUTATION_REQUIRES_CAP_FOWNER=false
 OWNERSHIP_CASE_ACCESS_AUTHORITY=CAP_DAC_READ_SEARCH,CAP_DAC_OVERRIDE
 OWNERSHIP_CASE_ACCESS_AUTHORITY_EXACT=true
-OWNERSHIP_CASE_ACCESS_AUTHORITY_EFFECTS=E1,E2,E16
+OWNERSHIP_CASE_ACCESS_AUTHORITY_EFFECTS=E2,E4,E21,E22
 OWNERSHIP_CASE_ACCESS_AUTHORITY_REQUIRED=true
-OWNERSHIP_CASE_TOTAL_REQUIRED_AUTHORITY_SET=CAP_CHOWN,CAP_DAC_READ_SEARCH,CAP_DAC_OVERRIDE
+OWNERSHIP_CASE_TOTAL_REQUIRED_AUTHORITY_SET=CAP_CHOWN,CAP_DAC_OVERRIDE,CAP_DAC_READ_SEARCH,CAP_SETGID,CAP_SETUID
 OWNERSHIP_CASE_TOTAL_REQUIRED_AUTHORITY_SET_TRUTHFUL=true
-OWNERSHIP_CASE_REQUIRED_AUTHORITY_COUNT=3
-OWNERSHIP_CASE_FIXTURE_EFFECTS=E1,E2,E16
-OWNERSHIP_CASE_SHARED_RUN_SCOPED_EFFECTS=E15
-OWNERSHIP_CASE_TOTAL_REQUIRED_AUTHORITY_SET_DERIVATION=CAP_CHOWN_from_E1_and_E2;CAP_DAC_READ_SEARCH_from_E1_and_E2;CAP_DAC_OVERRIDE_from_E16_and_E15
-OWNERSHIP_CASE_AUTHORITY_DECOMPOSITION=mutation_authority_plus_access_authority
+OWNERSHIP_CASE_REQUIRED_AUTHORITY_COUNT=5
+OWNERSHIP_CASE_FIXTURE_EFFECTS=E2,E3,E4,E5,E21
+OWNERSHIP_CASE_SHARED_ALL_CASE_EFFECTS=E1,E22
+OWNERSHIP_CASE_TOTAL_REQUIRED_AUTHORITY_SET_DERIVATION=union_of_the_ownership_case_effect_set_required_authority
+OWNERSHIP_CASE_TOTAL_REQUIRED_AUTHORITY_SET_DERIVATION_DETAIL=CAP_CHOWN_from_E3_and_E5;CAP_DAC_READ_SEARCH_from_E2_and_E4_and_E21_and_E22;CAP_DAC_OVERRIDE_from_E21_and_E22;CAP_SETGID_from_E1;CAP_SETUID_from_E1
+OWNERSHIP_CASE_AUTHORITY_DECOMPOSITION=mutation_authority_plus_access_authority_plus_credential_transition_authority
 OWNERSHIP_FIXTURE_REQUIRED_CAPABILITY_SET_RETIRED=true
 OWNERSHIP_FIXTURE_REQUIRED_CAPABILITY_SET_RETIRED_REASON=it_named_only_the_mutation_capability_while_claiming_to_name_the_fixtures_required_set
 OWNERSHIP_CASE_AUTHORITY_INCLUDES_CAP_DAC_OVERRIDE=true
 NO_AUTHORITY_DECLARED_UNNECESSARY_BECAUSE_IT_PRODUCES_NO_EVIDENCE=true
+ROUND6_OWNERSHIP_CASE_SET_IS_A_ROUND6_RECORD=true
+ROUND6_OWNERSHIP_CASE_SET_SUPERSEDED_BY_ROUND7=true
+ROUND6_OWNERSHIP_CASE_SET_OMITTED_THE_CREDENTIAL_TRANSITION_AUTHORITY=true
+ROUND6_OWNERSHIP_CASE_TOKEN_VALUES_ARE_CURRENT_CLAIMS=false
 ```
 
 **Finding 2: the access authority derived per effect.** Every effect from E1 to
@@ -757,7 +841,28 @@ E16 was re-examined on its own, instead of inheriting one capability from E1/E2,
 and each row now states the access authority its own access operation needs. The
 derivation, one row per effect, is:
 
-| Effect | Access operation | Whose permission the access check uses | Required access | Authority |
+The table below is round 6's derivation against round 6's numbering, and its
+effect numbers are **round-6 numbers**, not this head's: round 7 rebuilt the
+effect table in lifecycle order, so round 6's `E3`/`E4` are this head's `E9`/`E10`
+and round 6's `E5`/`E6`/`E7`/`E8`/`E9`/`E10`/`E11`/`E12`/`E13`/`E14`/`E15`/`E16`
+are this head's `E8`/`E11`/`E7`/`E16`/`E18`/`E12`/`E14`/`E13`/`E21`/`E20`/`E22`/`E21`.
+The current derivation is the token block in 1.5 above, and the current numbers
+are the ones the closure table uses. The round-6 table is kept because the
+per-effect *reasoning* it records is still this contract's reasoning, and the
+round-6 numbering is retired rather than reused so that no reader has to guess
+which numbering a number is in:
+
+```text
+ROUND6_EFFECT_NUMBERING_IS_NOT_THIS_HEADS_NUMBERING=true
+ROUND6_EFFECT_NUMBERING_RETIRED=true
+ROUND7_EFFECT_NUMBERS_ARE_LIFECYCLE_ORDERED=true
+ROUND6_TO_ROUND7_EFFECT_NUMBER_MAP=E3_to_E9,E4_to_E10,E5_to_E8,E6_to_E11,E7_to_E7,E8_to_E16,E9_to_E18,E10_to_E12,E11_to_E14,E12_to_E13,E13_to_E21,E14_to_E20,E15_to_E22,E16_to_E21
+ROUND6_TO_ROUND7_MAP_IS_HISTORICAL_ONLY=true
+ROUND7_EFFECT_NUMBERS_ADDED_BY_ROUND7=E1,E2,E4,E6,E17,E19
+CURRENT_ACCESS_AUTHORITY_DERIVATION=the_token_block_of_1_5
+```
+
+| Round-6 `E` # (historical numbering, not this head's) | Access operation | Whose permission the access check uses | Required access | Authority |
 | --- | --- | --- | --- | --- |
 | E1 | `openat` of the pinned child relative to the validated root descriptor (`O_RDONLY\|O_NOFOLLOW\|O_CLOEXEC`); the child itself is `0644` | the invocation root directory, `S_IMODE == 0o700` and owned by the ordinary runner, so search is denied to the helper | search (execute) on the containing directory | `CAP_DAC_READ_SEARCH` |
 | E2 | same as E1 | same | same | `CAP_DAC_READ_SEARCH` |
@@ -786,11 +891,11 @@ those three rows says so explicitly. The rows in 1.5 and the machine-like scope
 tokens now state the same sets, which is what makes the equivalence checkable:
 
 ```text
-ACCESS_AUTHORITY_EFFECT_SET=E1,E2,E5,E6,E7,E8,E9,E10,E11,E13,E14,E15,E16
+ROUND6_ACCESS_AUTHORITY_EFFECT_SET=E1,E2,E5,E6,E7,E8,E9,E10,E11,E13,E14,E15,E16
 ACCESS_AUTHORITY_EFFECT_TABLE_TOKEN_EQUIVALENT=true
-ACCESS_AUTHORITY_TRAVERSAL_EFFECTS=E1,E2,E6,E7,E8,E9,E10,E11
-ACCESS_AUTHORITY_DIRECTORY_WRITE_EFFECTS=E5,E13,E14,E15,E16
-ACCESS_AUTHORITY_NONE_REQUIRED_EFFECTS=E3,E4,E12
+ROUND6_ACCESS_AUTHORITY_TRAVERSAL_EFFECTS=E1,E2,E6,E7,E8,E9,E10,E11
+ROUND6_ACCESS_AUTHORITY_DIRECTORY_WRITE_EFFECTS=E5,E13,E14,E15,E16
+ROUND6_ACCESS_AUTHORITY_NONE_REQUIRED_EFFECTS=E3,E4,E12
 ACCESS_AUTHORITY_DERIVED_PER_EFFECT=true
 ACCESS_AUTHORITY_INHERITED_FROM_ANOTHER_EFFECT=false
 ACCESS_AUTHORITY_NARROWEST_JUSTIFIED_CAPABILITY=true
@@ -807,12 +912,12 @@ call, authorized by the containing directory's write and search access through
 and ordered before the root removal:
 
 ```text
-OWNERSHIP_FIXTURE_FILE_REMOVAL_EFFECT=E16
+ROUND6_OWNERSHIP_FIXTURE_FILE_REMOVAL_EFFECT=E16
 OWNERSHIP_FIXTURE_FILE_REMOVAL_EFFECT_DECLARED=true
 OWNERSHIP_FIXTURE_FILE_REMOVAL_SCOPE=own-foreign,own-root
 OWNERSHIP_FIXTURE_FILE_REMOVAL_TARGET=the_ownership_fixture_child_E1_or_E2_mutated
 OWNERSHIP_FIXTURE_FILE_REMOVAL_TARGET_BINDING=validated_root_descriptor_plus_frozen_child_role_plus_identity_revalidation
-OWNERSHIP_FIXTURE_FILE_REMOVAL_AUTHORITY=CAP_DAC_OVERRIDE
+ROUND6_OWNERSHIP_FIXTURE_FILE_REMOVAL_AUTHORITY=CAP_DAC_OVERRIDE
 OWNERSHIP_FIXTURE_FILE_REMOVAL_REQUIRES_CAP_CHOWN=false
 OWNERSHIP_FIXTURE_FILE_REMOVAL_PERFORMS_REVERSE_FCHOWN=false
 OWNERSHIP_FIXTURE_FILE_REMOVAL_PRECONDITION_PRODUCTION_OBSERVATION_FINISHED=true
@@ -834,8 +939,8 @@ CLEANUP_OWNERSHIP_RESTORATION_COUNTS_AS_MATERIAL_EFFECT=false
 ROUND6_EFFECT_ROWS_ALL_REAL_EFFECTS=true
 ROUND6_PLACEHOLDER_EFFECT_ROWS=0
 ROUND6_PLACEHOLDER_EFFECT_ROW_ACCEPTED=false
-REAL_MATERIAL_EFFECT_COUNT=16
-PRIVILEGED_EFFECT_CLOSURE_ROWS=16
+ROUND6_REAL_MATERIAL_EFFECT_COUNT=16
+ROUND6_PRIVILEGED_EFFECT_CLOSURE_ROWS=16
 REAL_MATERIAL_EFFECT_COUNT_EQ_CLOSURE_ROWS=true
 ```
 
@@ -846,9 +951,9 @@ are therefore case-aware: `mount-fixture` requires E13 and E14 completed,
 root:
 
 ```text
-ROOT_REMOVAL_CASE_AWARE_PRECONDITIONS=true
-ROOT_REMOVAL_MOUNT_FIXTURE_PRECONDITIONS=E13,E14_completed_and_root_empty
-ROOT_REMOVAL_OWNERSHIP_CASE_PRECONDITIONS=E16_completed_and_root_empty
+ROUND6_ROOT_REMOVAL_CASE_AWARE_PRECONDITIONS=true
+ROUND6_ROOT_REMOVAL_MOUNT_FIXTURE_PRECONDITIONS=E13,E14_completed_and_root_empty
+ROUND6_ROOT_REMOVAL_OWNERSHIP_CASE_PRECONDITIONS=E16_completed_and_root_empty
 ROOT_REMOVAL_REQUIRES_MOUNT_CASE_EFFECTS_IN_OWNERSHIP_CASES=false
 ROOT_REMOVAL_REQUIRES_OWNERSHIP_CASE_EFFECT_IN_MOUNT_CASE=false
 ROOT_REMOVAL_NONEXISTENT_EFFECT_REQUIRED_ANYWHERE=false
@@ -869,10 +974,410 @@ PRIVILEGED_EFFECT_AUTHORITY_CLOSURE=PASS
 OWNERSHIP_TOTAL_AUTHORITY_SET_CLOSED=true
 ACCESS_AUTHORITY_SCOPE_CLOSED=true
 ROOT_REMOVAL_CASE_LIFECYCLE_CLOSED=true
-REAL_EFFECT_ROW_COUNT=16
+ROUND6_REAL_EFFECT_ROW_COUNT=16
 PLACEHOLDER_EFFECT_ROW_COUNT=0
-BLOCKING_FINDINGS_CLOSED=3
+ROUND6_BLOCKING_FINDINGS_CLOSED=3
 BLOCKING_FINDINGS_OPEN=0
+```
+
+### 1.7 Remediation round 7
+
+Round 6's head was independently reviewed and failed with the same failure
+class. That failure is preserved here rather than rewritten:
+
+```text
+SIXTH_A3D_REVIEW_FAILED_HEAD=c2a88fa02f62b1332a6f8cabd779d89bd260adfb
+SIXTH_A3D_REVIEW_FAILED_TREE=e7da9a0da884156217d72dd7772c3389422ff6b9
+SIXTH_A3D_REVIEW_FAILURE=CONTRACT_IMPLEMENTABILITY_FAILURE
+SIXTH_A3D_REVIEW_FAILURE_CLASS=CONTRACT_IMPLEMENTABILITY_FAILURE
+SIXTH_A3D_REVIEW_RESULT=FAIL
+A3D_SEVENTH_REMEDIATION_ROUND=7
+A3D_CURRENT_REMEDIATION_ROUND=7
+A3D_HISTORY_ADDITIVE=true
+PRODUCT_FAILURE=false
+PRIVILEGED_EXECUTION_PERFORMED=false
+```
+
+Round 7 changes the same single design document, runs no privileged command, and
+touches no production code, so `PRODUCT_FAILURE=false` is a measured statement
+here for the same reason round 6 gave.
+
+The independent review named nine blocking findings. All nine are corrected in
+this document, and the correction is stated where the finding lives rather than
+collected in one place:
+
+| # | Finding | Corrected in |
+| --- | --- | --- |
+| 1 | The effect set was derived from the existing `E1..E16` table rather than from the real lifecycle, so the table validated itself. | 1.7, 1.5 |
+| 2 | `E3`/`E4` were run-scoped (`all cases`) while section 10 is RQP-L17-specific, and the RQP-L17 total authority set omitted `CAP_SYS_ADMIN` as an authority on the ownership cases' path. | 1.5, 1.7, 7, 10 |
+| 3 | The launcher's credential transition was not a declared effect: no row, no mechanism, no authority, and no supplementary-group semantics. | 1.5, 1.7, 5.10, 7 |
+| 4 | Section 5.9 required helper-exclusive creation of `MOUNTPOINT_ROLE`, but no effect row created it. | 1.5, 1.7, 5.9 |
+| 5 | One "mount-related capability set" was used in place of each case's whole authority set, and `RQP_L17_REQUIRED_CAPABILITY_SET` claimed a total while naming only the mount subset. | 1.7, 7 |
+| 6 | `E15` acts on the invocation root's **parent**, `RUNNER_TEMP`, while its declared authority scope was only "below the validated invocation root". | 1.5, 1.7, 7 |
+| 7 | `E6`/`E7` relied on "the image owner's write permission", which `E5` never froze. | 1.5, 1.7, 5.9 |
+| 8 | The contract simultaneously described a pathname-based `losetup` setup and claimed a descriptor-mediated loop binding. | 1.5, 1.7, 5.9 |
+| 9 | Two different bare values of `A3D_REMEDIATION_COMMIT_PARENT` existed at one head. | 1.7, 20 |
+
+#### 1.7.1 Effect sets derived from the real lifecycle
+
+The round-7 method is the reverse of the round-6 method, and the reversal is the
+correction for finding 1. Round 6 verified that the table had one row per real
+effect; that check cannot detect an effect the table never had. Round 7 therefore
+enumerated the real operations per case first, from the frozen lifecycle of 10.1
+and the object lifecycle of 14, and derived the closure table of 1.5 from those
+sets afterwards. Row count is not offered as completeness evidence anywhere in
+this round.
+
+```text
+EFFECT_SET_DERIVATION_ORDER=real_lifecycle_then_closure_table
+EFFECT_SET_DERIVED_FROM_EXISTING_TABLE=false
+EFFECT_ROW_COUNT_IS_COMPLETENESS_EVIDENCE=false
+```
+
+One ordering constraint was found while doing this and is now frozen, because
+without it the mount case cannot be constructed at all: the mount-case fixture
+file does not exist until the helper has mounted the image, so the credential
+transition of 5.10 necessarily occurs **after** the mount-case setup, not before
+it. The evidence process therefore reacquires its identity after the fixture
+exists, which is what the RQP-L17 case needs:
+
+```text
+MOUNT_CASE_SETUP_PRECEDES_CREDENTIAL_TRANSITION=true
+CREDENTIAL_TRANSITION_PRECEDES_EVIDENCE_PROCESS_EXEC=true
+PRODUCTION_PRIMITIVE_EXECUTES_AFTER_CREDENTIAL_TRANSITION=true
+LAUNCHER_PROCESS_ITSELF_NEVER_CHANGES_IDENTITY=false
+LAUNCHER_DROPS_CREDENTIALS_IN_A_FORKED_CHILD=true
+CREDENTIAL_TRANSITION_IS_CHILD_LOCAL=true
+```
+
+#### 1.7.2 The credential transition declared
+
+Finding 3 is corrected by declaring the transition as its own real effect, with a
+frozen mechanism and frozen authorities. It is `E1` in the closure table of 1.5,
+and 5.10 is its normative description. The mechanism is direct Linux credential
+syscalls, never an external privilege tool, because the whole point of the
+transition is that the contract can prove which identity the evidence process
+really has rather than infer it from a tool's behaviour:
+
+```text
+CREDENTIAL_TRANSITION_EFFECT=E1
+CREDENTIAL_TRANSITION_EFFECT_DECLARED=true
+CREDENTIAL_TRANSITION_MECHANISM=direct_linux_credential_syscalls
+CREDENTIAL_TRANSITION_EXTERNAL_PRIVILEGE_TOOL_USED=false
+CREDENTIAL_TRANSITION_OPERATION_ORDER=setgroups_then_setgid_then_setuid
+CREDENTIAL_TRANSITION_OPERATION_ORDER_IS_MANDATORY=true
+CREDENTIAL_TRANSITION_REQUIRED_AUTHORITY=CAP_SETGID,CAP_SETUID
+CREDENTIAL_TRANSITION_SUPPLEMENTARY_GROUP_TRANSITION=setgroups_empty_list
+CREDENTIAL_TRANSITION_TARGET_SUPPLEMENTARY_GROUP_LIST=empty
+CREDENTIAL_TRANSITION_SUPPLEMENTARY_GROUPS_LEFT_IMPLICIT=false
+CREDENTIAL_TRANSITION_IDENTITY_REGAIED_AFTER_DROP=false
+CREDENTIAL_TRANSITION_POSTCONDITION_UID_TRIPLE_ALL_ORDINARY=true
+```
+
+The operation order is mandatory rather than stylistic: `setgroups(2)` is a
+`CAP_SETGID` operation, and once `setgid(2)` has changed the effective GID away
+from the privileged identity the child no longer holds `CAP_SETGID`, so an
+attempt to clear the supplementary group list after the GID transition would fail
+with `EPERM`. The supplementary group list is therefore emptied first, and the
+declared authority for the effect is exactly `CAP_SETGID` and `CAP_SETUID` —
+nothing else, and no `CAP_SETPCAP`: this transition empties a group list and
+changes a GID and a UID; it never edits a capability set, because the kernel
+clears the permitted, effective and ambient sets by itself when the UID
+transition completes.
+
+#### 1.7.3 The mountpoint-creation effect declared
+
+Finding 4 is corrected by declaring the missing creation. It is `E6` in the
+closure table, and 5.9 freezes its target object, its descriptor-relative
+binding, its exclusive/preexisting-object behaviour, its exact mode, its DAC
+authority, its preconditions, its postconditions and its cleanup transition into
+the existing mountpoint-removal effect:
+
+```text
+MOUNTPOINT_CREATION_EFFECT=E6
+MOUNTPOINT_CREATION_EFFECT_DECLARED=true
+MOUNTPOINT_CREATION_OPERATION=mkdirat_helper_validated_root_fd_MOUNTPOINT_ROLE
+MOUNTPOINT_ROLE_CREATED_BY=reviewed_privileged_helper
+MOUNTPOINT_ROLE_EXCLUSIVE_CREATE=true
+MOUNTPOINT_ROLE_PREEXISTING_OBJECT_OUTCOME=HELPER_ROOT_REJECTED
+MOUNTPOINT_ROLE_S_IMODE=0755
+MOUNTPOINT_ROLE_S_IMODE_IS_EXACT=true
+MOUNTPOINT_ROLE_OWNER_IS_REVIEWED_PRIVILEGED_IDENTITY=true
+MOUNTPOINT_ROLE_ORDINARY_SEARCH_ALLOWED_REQUIRED=true
+MOUNTPOINT_ROLE_CREATION_AUTHORITY=CAP_DAC_OVERRIDE,CAP_DAC_READ_SEARCH
+MOUNTPOINT_ROLE_CLEANUP_EFFECT=E20
+MOUNTPOINT_ROLE_CLEANUP_TRANSITION=remove_mountpoint_role_in_10_4_order
+```
+
+`MOUNTPOINT_ROLE_S_IMODE=0755` is not a convenience default. The ordinary
+evidence process must reach the mount-case fixture file through this directory to
+perform the unprivileged `O_RDONLY` witness that 5.8.3 and 8 step 2 require, and
+an owner-only mountpoint would deny that search to the very identity whose
+unprivileged read is the attribution guard. `0755` is therefore the mode that
+makes the frozen witness reachable while keeping group and world write clear, so
+no other identity may create or remove an entry in the mountpoint.
+
+#### 1.7.4 Namespace scope corrected
+
+Findings 2 and 5 are corrected together, because they are the same defect seen
+from two directions: the run-scoped label of `E3`/`E4` was what made the
+ownership cases appear to need `CAP_SYS_ADMIN`, and the RQP-L17 "required
+capability set" named the mount subset while reading as a total.
+
+```text
+NAMESPACE_SCOPE_CORRECTED_BY_ROUND7=true
+E3_SCOPE=mount-fixture
+E4_SCOPE=mount-fixture
+NAMESPACE_EFFECTS_ARE_MOUNT_FIXTURE_SCOPED=true
+OWNERSHIP_CASE_REQUIRES_PRIVATE_MOUNT_NAMESPACE=false
+OWNERSHIP_CASE_REQUIRES_CAP_SYS_ADMIN=false
+OWNERSHIP_CASE_PROCESSES_JOIN_A_PRIVATE_MOUNT_NAMESPACE=false
+OWNERSHIP_CASE_MOUNT_NAMESPACE_IS_THE_HOST_NAMESPACE=true
+RQP_L17_NAMESPACE_ISOLATION_REQUIRED=true
+RQP_L17_NAMESPACE_ISOLATION_JUSTIFICATION=mount_events_must_not_reach_the_host_mount_table_and_the_mounted_fixture_must_be_invisible_to_the_host
+E3_E4_REQUIRED_BECAUSE_RQP_L17_REQUIRES_THEM=true
+OWNERSHIP_CASES_ACQUIRE_CAP_SYS_ADMIN_INCIDENTALLY=false
+```
+
+The private mount namespace and the private propagation are required by RQP-L17
+and by nothing else. RQP-L17 mounts, detaches and unmounts a real filesystem
+inside the run, and 10.3 requires that no such event reach the host mount table.
+That requirement is a property of the mount case, so the two namespace effects
+belong to the mount case alone. The ownership cases neither mount nor unmount
+anything, so they are not wrapped in a namespace they do not need and they do not
+acquire `CAP_SYS_ADMIN` merely because the mount fixture needs it. The two
+requirements are now stated as separate facts rather than as one shared set.
+
+#### 1.7.5 Case total authority sets derived from the effect table
+
+Finding 5 is closed by deriving each case's total authority set mechanically from
+the union of its own effects' required authority, and by replacing the token that
+claimed a total while naming a subset:
+
+```text
+OWN_FOREIGN_TOTAL_REQUIRED_AUTHORITY_SET=CAP_CHOWN,CAP_DAC_OVERRIDE,CAP_DAC_READ_SEARCH,CAP_SETGID,CAP_SETUID
+OWN_ROOT_TOTAL_REQUIRED_AUTHORITY_SET=CAP_CHOWN,CAP_DAC_OVERRIDE,CAP_DAC_READ_SEARCH,CAP_SETGID,CAP_SETUID
+MOUNT_FIXTURE_TOTAL_REQUIRED_AUTHORITY_SET=CAP_DAC_OVERRIDE,CAP_DAC_READ_SEARCH,CAP_SETGID,CAP_SETUID,CAP_SYS_ADMIN
+OWN_FOREIGN_TOTAL_REQUIRED_AUTHORITY_COUNT=5
+OWN_ROOT_TOTAL_REQUIRED_AUTHORITY_COUNT=5
+MOUNT_FIXTURE_TOTAL_REQUIRED_AUTHORITY_COUNT=5
+CASE_TOTAL_AUTHORITY_SET_EQUALS_EFFECT_AUTHORITY_UNION=true
+CASE_TOTAL_AUTHORITY_SET_DERIVATION=union_of_that_cases_effect_rows_required_authority
+CASE_TOTAL_AUTHORITY_SET_TABLE_TOKEN_EQUIVALENT=true
+RQP_L17_TOTAL_REQUIRED_AUTHORITY_SET=CAP_DAC_OVERRIDE,CAP_DAC_READ_SEARCH,CAP_SETGID,CAP_SETUID,CAP_SYS_ADMIN
+RQP_L17_MOUNT_OPERATION_CAPABILITY_SET=CAP_SYS_ADMIN
+RQP_L17_MOUNT_OPERATION_CAPABILITY_SET_SCOPE=mount-namespace-creation,mount-propagation-private,loop-control-and-configuration,loop-readback,mount-and-unmount
+RQP_L17_REQUIRED_CAPABILITY_SET_RETIRED=true
+RQP_L17_REQUIRED_CAPABILITY_SET_RETIRED_REASON=it_named_only_the_mount_operation_subset_while_claiming_to_name_the_cases_required_capability_set
+NAME_ONLY_THE_MOUNT_SUBSET_IF_SCOPE_IS_MOUNT_SUBSET=true
+NAMESPACE_SCOPE_TOKEN_SET_EQUALS_CASE_SCOPE=true
+```
+
+The retired `RQP_L17_REQUIRED_CAPABILITY_SET=CAP_SYS_ADMIN` survives only inside
+this round's record of what it claimed and why it is withdrawn, exactly as
+`OWNERSHIP_FIXTURE_REQUIRED_CAPABILITY_SET` does in 1.6. It is not an active
+current-pointer token anywhere in this document.
+
+The mount case's total set excludes `CAP_CHOWN`, and the exclusion is derived
+rather than assumed: no mount-case effect performs an ownership call, so no
+mount-case effect is bound to `CAP_CHOWN`, so the union of that case's effects
+cannot contain it. That is what `MOUNT_FIXTURE_FILE_OWNERSHIP_MUTATION=false` and
+`MOUNT_FIXTURE_FILE_OWNERSHIP_MUTATION_EFFECT=NONE` mean on the authority side,
+and it is why the mount case's total is five capabilities rather than the
+ownership cases' five — the two sets are the same size by coincidence and differ
+in content by exactly one member:
+
+```text
+MOUNT_FIXTURE_TOTAL_AUTHORITY_SET_EXCLUDES_CAP_CHOWN=true
+MOUNT_FIXTURE_REQUIRES_CAP_CHOWN=false
+MOUNT_FIXTURE_FIXTURE_FILE_REQUIRES_CAP_CHOWN=false
+MOUNT_FIXTURE_PERFORMS_NO_OWNERSHIP_MUTATION=true
+MOUNT_FIXTURE_EFFECTS_INTERSECT_CAP_CHOWN_EFFECTS=none
+MOUNT_FIXTURE_EFFECTS_INTERSECT_CAP_CHOWN_EFFECTS_IS_EMPTY=true
+OWNERSHIP_TOTAL_SET_DIFFERS_FROM_MOUNT_TOTAL_SET_BY=CAP_CHOWN_versus_CAP_SYS_ADMIN
+CASE_TOTAL_SETS_ARE_COMPUTED_NOT_COPIED=true
+```
+
+`RQP_L17_TOTAL_REQUIRED_AUTHORITY_SET` equals
+`MOUNT_FIXTURE_TOTAL_REQUIRED_AUTHORITY_SET` because they are the same case under
+two names, and that equality is stated rather than left to a reader to notice:
+
+```text
+RQP_L17_TOTAL_AUTHORITY_SET_EQUALS_MOUNT_FIXTURE_TOTAL_AUTHORITY_SET=true
+GLOBAL_CAPABILITY_INVENTORY_EQUALS_UNION_OF_CASE_TOTAL_AUTHORITY_SETS=true
+```
+
+#### 1.7.6 Non-mount effects are common to every case
+
+Two effects that round 6 scoped to one case or labelled run-scoped without
+saying so are now stated as what they really are. `E21` is the fixture-object
+removal that every case needs — the image and mountpoint for `mount-fixture`, the
+mutated fixture file for the ownership cases — and `E22` is the invocation-root
+removal that every case needs. Both are performed by the reviewed privileged
+identity in every case:
+
+```text
+E21_SCOPE=all_cases
+E22_SCOPE=all_cases
+FIXTURE_OBJECT_REMOVAL_APPLIES_TO_EVERY_CASE=true
+INVOCATION_ROOT_REMOVAL_APPLIES_TO_EVERY_CASE=true
+OWNERSHIP_CASE_REQUIRES_MOUNT_CASE_EFFECTS=false
+MOUNT_FIXTURE_CASE_REQUIRES_OWNERSHIP_ONLY_EFFECTS=false
+ROOT_REMOVAL_CASE_AWARE_PRECONDITIONS=false
+ROOT_REMOVAL_CASE_AWARE_PRECONDITIONS_WITHDRAWN_BY_ROUND7=true
+ROOT_REMOVAL_PRECONDITION_PRIOR_REMOVAL_EFFECTS_COMPLETE=true
+ROOT_REMOVAL_CASE_LIFECYCLE_CLOSED=true
+```
+
+Round 6 froze `ROOT_REMOVAL_CASE_AWARE_PRECONDITIONS=true` with a different
+cleanup step per case. Round 7 withdraws that conditional rather than restoring
+it, because the conditionality came from the cleanup sequence having been scoped
+to the mount case. With `E21` and `E22` correctly scoped, the root-removal
+precondition is the same in all three cases: the case's own removal effect has
+completed and the root is empty. A precondition that names an effect the case
+really has is simpler than one that branches, and it removes the hazard of a
+case-aware precondition silently requiring a mount effect in a case that never
+mounts.
+
+#### 1.7.7 Parent-directory access authority
+
+Finding 6 is corrected by splitting the scope explicitly and by observing the
+facts that decide the authority instead of asserting the capability:
+
+```text
+BELOW_ROOT_ACCESS_AUTHORITY_SCOPE=every_object_at_a_frozen_role_name_under_the_validated_invocation_root
+ROOT_PARENT_REMOVAL_ACCESS_AUTHORITY_SCOPE=RUNNER_TEMP_the_validated_invocation_roots_parent_directory
+E15_PARENT_ACCESS_CLOSED=true
+E15_PARENT_ACCESS_IS_A_ROUND6_TOKEN_WITHDRAWN_BY_ROUND7=true
+```
+
+`E22` is the only effect whose target lies outside the invocation root, and its
+authority is decided by four observed facts rather than by assumption:
+`RUNNER_TEMP`'s owner, its mode, the write-and-search DAC relation between it and
+the helper's identity, and its sticky-bit state. 7 freezes those observations as
+preflight facts, and the outcome is fail-closed:
+
+```text
+RUNNER_TEMP_OWNER_OBSERVED_REQUIRED=true
+RUNNER_TEMP_MODE_OBSERVED_REQUIRED=true
+RUNNER_TEMP_WRITE_SEARCH_DAC_RELATION_OBSERVED_REQUIRED=true
+RUNNER_TEMP_STICKY_BIT_STATE_OBSERVED_REQUIRED=true
+RUNNER_TEMP_OBSERVATIONS_ARE_PREFLIGHT_FACTS=true
+ROOT_REMOVAL_REQUIRES_CAP_DAC_OVERRIDE_CONDITIONAL_ON_OBSERVED_DAC=true
+ROOT_REMOVAL_DAC_SUFFICIENT_OUTCOME=no_capability_required_for_the_removal
+ROOT_REMOVAL_DAC_INSUFFICIENT_OUTCOME=CAP_DAC_OVERRIDE_required_for_the_removal
+ROOT_REMOVAL_STICKY_PARENT_OUTCOME=QUALIFICATION_GAP_because_CAP_FOWNER_is_not_declared
+ROOT_REMOVAL_CAP_DAC_OVERRIDE_CLAIMED_WITHOUT_OBSERVATION=false
+```
+
+On the declared runner, `RUNNER_TEMP` is a runner-owned directory in which the
+helper identity is an "other"-class user, so its own DAC bits do not authorize
+creating or removing an entry there and the observed relation selects the
+`CAP_DAC_OVERRIDE` outcome. The contract states it that way — as the result of
+the observation — rather than as an unconditional grant, so a host whose
+`RUNNER_TEMP` really does authorize the helper directly does not have a
+capability invented for it, and a sticky `RUNNER_TEMP` is a `QUALIFICATION_GAP`
+rather than an undeclared `CAP_FOWNER`.
+
+The alternative architecture is recorded and not adopted: the ordinary owner that
+created the invocation root could remove the final empty root without any
+capability at all. Round 7 does not adopt it, because the root removal is ordered
+after the privileged fixtures are removed and the launcher owns the private mount
+namespace whose lifetime the cleanup sequence closes; splitting the last step out
+to an ordinary process would put the namespace's last member process and the
+residue controls in two different lifetimes for no authority saving, since the
+removal is already authorized by the observed fact rather than by a broader
+grant.
+
+```text
+ROOT_REMOVAL_BY_ORDINARY_OWNER_ALTERNATIVE_RECORDED=true
+ROOT_REMOVAL_BY_ORDINARY_OWNER_ALTERNATIVE_ADOPTED=false
+ROOT_REMOVAL_BY_ORDINARY_OWNER_ALTERNATIVE_REASON=privileged_removal_is_dac_conditional_and_already_narrow_and_the_namespace_lifetime_is_closed_by_one_process
+ROOT_REMOVAL_UNNECESSARY_PRIVILEGED_EFFECT_REMAINS=false
+```
+
+#### 1.7.8 Image access preconditions and loop target binding
+
+Findings 7 and 8 are corrected in 5.9, and the two are connected: the image
+identity the loop device is bound to is the same identity whose mode the format
+and the loop configuration rely on.
+
+```text
+IMAGE_ACCESS_PRECONDITION_CLOSED=true
+IMAGE_ROLE_S_IMODE=0600
+IMAGE_ROLE_S_IMODE_IS_EXACT=true
+IMAGE_ROLE_OWNER_IS_REVIEWED_HELPER_IDENTITY=true
+IMAGE_ROLE_OWNER_WRITE_REQUIRED=true
+IMAGE_ROLE_REGULAR_SINGLE_LINK_REQUIRED=true
+IMAGE_ROLE_MODE_ESTABLISHED_BY_CREATION_ONLY=true
+IMAGE_ROLE_CHMOD_USED=false
+IMAGE_ROLE_FCHMOD_USED=false
+IMAGE_ROLE_SIZE_BYTES=16777216
+IMAGE_ROLE_SIZE_IS_DESIGN_FROZEN=true
+IMAGE_ROLE_SIZE_ESTABLISHED_BY=ftruncate_on_the_pinned_image_descriptor
+IMAGE_ACCESS_WITNESS_APPLIES_TO_EFFECTS=E7,E19,E7_loop_binding
+LOOP_TARGET_BINDING_CLOSED=true
+LOOP_TARGET_BINDING_MECHANISM=descriptor_mediated_direct_loop_ioctl
+LOOP_TARGET_BINDING_ACCEPTS_PATHNAME=false
+LOOP_TARGET_BINDING_RERESOLVES_IMAGE_ROLE_PATH=false
+LOOP_TARGET_BINDING_USES_FD_PRESERVING_EXTERNAL_TOOL=false
+LOOP_TARGET_BINDING_VERIFIED_AFTER_SETUP=true
+LOSETUP_FIND_SHOW_IS_SUFFICIENT_EVIDENCE=false
+LOSETUP_PATHNAME_FORM_USED=false
+```
+
+`IMAGE_ROLE_S_IMODE=0600` is the exact mode, not a widened one: the image is a
+private fixture object, only the reviewed privileged identity ever reads or
+writes it, and the ordinary evidence process never opens it. Owner-write is
+therefore established by creation, and both the format of `E19` and the loop
+binding of `E7` rely on that measured postcondition rather than on an unstated
+assumption about a default mode.
+
+#### 1.7.9 Round-7 closure results
+
+```text
+ROUND7_RE_EVALUATED_RESULTS=PRIVILEGED_EFFECT_AUTHORITY_CLOSURE,CROSS_BOUNDARY_CONTINUITY_IMPLEMENTABILITY,NAMESPACE_LIFECYCLE_IMPLEMENTABILITY,CLEANUP_STATE_MACHINE_IMPLEMENTABILITY,PRIVILEGED_CHILD_INODE_CONFINEMENT_IMPLEMENTABILITY,A3_CONTRACT_IMPLEMENTABILITY
+EVERY_EFFECT_HAS_DECLARED_AUTHORITY=true
+EVERY_DECLARED_AUTHORITY_HAS_REQUIRED_EFFECT=true
+NO_BROADER_AUTHORITY_THAN_EFFECT_REQUIRES=true
+UNDECLARED_PRIVILEGED_EFFECT_COUNT=0
+UNUSED_DECLARED_AUTHORITY_COUNT=0
+PRIVILEGED_EFFECT_AUTHORITY_CLOSURE=PASS
+REAL_MATERIAL_EFFECT_COUNT=22
+PRIVILEGED_EFFECT_CLOSURE_ROWS=22
+REAL_MATERIAL_EFFECT_COUNT_EQ_CLOSURE_ROWS=true
+REAL_EFFECT_ROW_COUNT=22
+PLACEHOLDER_EFFECT_ROW_COUNT=0
+PLACEHOLDER_EFFECT_ROW_ACCEPTED=false
+IF_EFFECT_ROW_DECLARES_NO_EFFECT_OUTCOME=NOT_A_MATERIAL_EFFECT
+CASE_EFFECT_SCOPE_CLOSED=true
+CASE_TOTAL_AUTHORITY_SETS_CLOSED=true
+CREDENTIAL_TRANSITION_EFFECT_DECLARED=true
+SUPPLEMENTARY_GROUP_SEMANTICS_CLOSED=true
+MOUNTPOINT_CREATION_EFFECT_DECLARED=true
+E15_PARENT_ACCESS_CLOSED=true
+IMAGE_ACCESS_PRECONDITION_CLOSED=true
+LOOP_TARGET_BINDING_CLOSED=true
+NAMESPACE_SCOPE_CLOSED=true
+CASE_TOTAL_AUTHORITY_SET_EQUALS_EFFECT_AUTHORITY_UNION=true
+GLOBAL_CAPABILITY_INVENTORY_EQUALS_UNION_OF_REQUIRED_CAPABILITY_AUTHORITIES=true
+EVERY_CREATED_OR_MUTATED_OBJECT_HAS_TERMINAL_LIFECYCLE=true
+GIT_CURRENT_PARENT_TOKEN_UNIQUE=true
+BLOCKING_FINDINGS_CLOSED=9
+BLOCKING_FINDINGS_OPEN=0
+```
+
+`ROUND6_PLACEHOLDER_EFFECT_ROWS=0` and the round-6 counts inside 1.5 and 1.6
+remain as round-6 records of that head and are not current claims about this one.
+The current-round effect count and row count are the ones above, and 1.5's table
+now has exactly twenty-two rows because the real lifecycle has twenty-one
+material effects after the round-7 additions.
+
+```text
+ROUND6_COUNTS_ARE_ROUND6_RECORDS=true
+ROUND6_COUNTS_ARE_CURRENT_CLAIMS=false
+ROUND7_EFFECT_COUNT_SUPERSEDES_ROUND6_COUNT=true
+SUPERSEDED_EFFECT_COUNT_TOKENS_KEPT_AS_HISTORY=true
 ```
 
 ## 2. Exact Base Record
@@ -1268,10 +1773,21 @@ alternate uid.
 ## 5. Freeze: Privilege Boundary
 
 The ordinary pytest/evidence process remains non-root. Privilege is used only
-by a separately invoked fixed helper, and only for:
+by a separately invoked fixed helper — or, for the credential transition alone,
+by the privileged namespace launcher — and only for:
 
+- the ordinary credential transition that makes the evidence process the ordinary
+  identity: the launcher's forked child empties its supplementary group list,
+  changes its GID and changes its UID before `execve` of the evidence process
+  (1.7.2, 5.10). This is the one privileged effect that does not act on a
+  filesystem object, and it is declared as `E1`;
 - setup ownership mutation (`fchown` of the single fixture file, and nothing
   else: no privileged `chmod` is performed anywhere in the fixture);
+- creation of the helper's own fixture objects under the invocation root, for the
+  mount case only: the `IMAGE_ROLE` image and the `MOUNTPOINT_ROLE` mountpoint,
+  each created exclusively and pinned by a descriptor the helper holds;
+- the RQP-L17 mount operations that cannot be performed without
+  `CAP_SYS_ADMIN`, and only in the `mount-fixture` case;
 - removal of the invocation-specific fixture root and of the fixture objects it
   contains, by the `cleanup` action of 5.2 and the 10.4 state machine. Cleanup
   performs no ownership change at all: the earlier phrase "cleanup ownership
@@ -1279,8 +1795,10 @@ by a separately invoked fixed helper, and only for:
   architecture does not have (1.5, 10.4), because removing an object depends on
   the containing directory's permissions and never on the removed object's
   owner;
-- the RQP-L17 mount operations that cannot be performed without
-  `CAP_SYS_ADMIN`.
+- the below-root and parent-directory access the removal operations require,
+  which is a set of two scopes rather than one: everything at a frozen role name
+  **under** the validated root is below-root access, while the removal of the
+  root itself acts on `RUNNER_TEMP`, the root's **parent** (1.7.6).
 
 No privilege is granted to ordinary pytest, and no fixture case may run its
 production call in a privileged process. The production primitive under
@@ -1584,7 +2102,7 @@ process name, or from the presence of a `sudo`.
 | Invocation root path | `EXPLICITLY_HANDED_OFF` as an untrusted locator only | `--root` argument, valid for one helper invocation, carrying no authority | helper independently revalidates the root under 5.3 before any mutation |
 | Case/action selection | `EXPLICITLY_HANDED_OFF` as a closed enum name only | `--case` argument, valid for one helper invocation | helper rejects any value outside the 5.2 table before any mutation |
 | Ordinary requested uid and gid (identity handoff to the launcher) | `EXPLICITLY_HANDED_OFF` | fixed numeric launcher arguments `--ordinary-uid` / `--ordinary-gid`, produced by a real measurement of the ordinary process and valid for one launcher invocation; `SUDO_UID`/`SUDO_GID` are corroboration only and never the carrier | launcher validates both values against real filesystem state under 5.10.2 before any credential drop; a failure is `LAUNCHER_CREDENTIAL_REJECTED` with no namespace mutation |
-| Actual process identity and effective capabilities inside the evidence process | `INDEPENDENTLY_REACQUIRED` | the evidence process reads its own real `euid`, `egid` and `CapEff` from itself (5.10.3); nothing is received from the launcher and no value is inherited | `ACTUAL_EUID == ORDINARY_UID`, `ACTUAL_EGID == ORDINARY_GID`, `ACTUAL_EUID != 0` and `ACTUAL_CAP_EFF == 0` all hold before the production primitive executes |
+| Actual process identity, supplementary group list and effective capabilities inside the evidence process | `INDEPENDENTLY_REACQUIRED` | the evidence process reads its own real `euid`, `egid`, supplementary group list and `CapEff` from itself (5.10.3, 5.10.4); nothing is received from the launcher and no value is inherited | `ACTUAL_EUID == ORDINARY_UID`, `ACTUAL_EGID == ORDINARY_GID`, `ACTUAL_SUPPLEMENTARY_GROUPS == []`, `ACTUAL_EUID != 0` and `ACTUAL_CAP_EFF == 0` all hold before the production primitive executes |
 | Target uid, target mode, child names | `INDEPENDENTLY_REACQUIRED` | both phases derive them from the same frozen contract text (5.2, 5.8); no value is transmitted and no runtime carrier exists | 4.3 paired controls measure the resulting real state; a caller value can never reach them |
 | Helper exit status | `EXPLICITLY_HANDED_OFF` as a non-evidence completion signal only | process status of the helper process, valid for one invocation, carrying no authority | never accepted as evidence; the ordinary process reacquires the state itself |
 | Fixture child identity before the ownership mutation | `INDEPENDENTLY_REACQUIRED` by the helper | the descriptor the helper opens for itself relative to its own validated root descriptor (5.8) | pre-mutation child validation passes before the privileged `fchown` |
@@ -1621,7 +2139,7 @@ row's checkpoint was tightened:
 | Location | Previous statement | Audit result | Corrected statement |
 | --- | --- | --- | --- |
 | 5.5 and 5.6, ordinary runner uid/gid across the launcher boundary | absent: the ordinary identity crossed into the launcher with no class, no producer, no carrier, no consumer and no closing checkpoint | `MISSING`: a crossing fact with no classification and no carrier, which 5.5 forbids | `ORDINARY_REQUESTED_UID_GID_CONTINUITY=EXPLICITLY_HANDED_OFF` with fixed numeric launcher arguments as the carrier and launcher validation (5.10.2) as the closing checkpoint |
-| 5.5 and 5.6, evidence-process identity and capabilities | absent: "non-root" was asserted from the launch request rather than classified as a fact | `MISSING`: the observed identity is not the requested identity and needs its own class | `NONROOT_EVIDENCE_IDENTITY_OBSERVATION=INDEPENDENTLY_REACQUIRED`, with `ACTUAL_CAP_EFF == 0` required before the production call (5.10.3) |
+| 5.5 and 5.6, evidence-process identity and capabilities | absent: "non-root" was asserted from the launch request rather than classified as a fact | `MISSING`: the observed identity is not the requested identity and needs its own class | `NONROOT_EVIDENCE_IDENTITY_OBSERVATION=INDEPENDENTLY_REACQUIRED`, with `ACTUAL_CAP_EFF == 0` required before the production call (5.10.4) |
 | 5.5, fixture ownership/mode/link state after the ownership action | single consumer: the ordinary evidence process | `NARROWED`: the helper now also takes a required post-mutation `fstat` of its own, and the row named only the ordinary process as consumer | both reacquire the fact independently; the helper's verification is explicitly not case evidence, and only the ordinary process's reacquisition is a control |
 | 5.5 and 5.6 remaining rows, 10.2 N1-N6 | already matched a single class | `CONFIRMED` | unchanged |
 
@@ -1646,8 +2164,8 @@ checkpoint is not frozen here and MUST NOT be implemented.
 | T6 | launcher -> private namespace: fixture mount | mount objects and mount state: `INDEPENDENTLY_REACQUIRED` by each consumer; nothing is handed off | this contract | privileged fixture helper | real mount table entry inside the private namespace, and the helper-created source and target objects of 5.9 | until detach and release | non-root evidence process | pre-drift positive admission plus the 10.4 state machine |
 | T7 | private namespace -> observer: absence fact | host-table absence: `INDEPENDENTLY_REACQUIRED` by the host observer | this contract | host observer, recorded by the workflow | real mount table read from the host namespace | one run attempt | independent reviewer | host-namespace absence control passes before and after the run |
 | T8 | run -> reviewer: evidence publication | recorded run facts including the workflow-provenance facts of 6.3: `EXPLICITLY_HANDED_OFF` through the workflow output carrier | repository design authority | privileged workflow | workflow output bound to head SHA, tree, runner identity and workflow-definition identity | retained as CI evidence | independent reviewer | exact-head binding, workflow-authority equality and residue controls recorded |
-| T9 | ordinary runner -> launcher: requested identity | requested ordinary uid and gid: `EXPLICITLY_HANDED_OFF` | ordinary runner identity (the measured source) | `HOST_OBSERVER` or the ordinary workflow process, measuring its own real `euid`/`egid` | fixed numeric launcher arguments `--ordinary-uid` / `--ordinary-gid` | one launcher invocation | privileged namespace launcher, which validates them under 5.10.2 | `ORDINARY_UID != 0`, valid numeric ids, and invocation-root `st_uid`/`st_gid` equality all recorded before any credential drop |
-| T10 | launcher -> evidence process: actual identity | observed `euid`, `egid` and effective capability mask: `INDEPENDENTLY_REACQUIRED` by the evidence process | ordinary runner identity | non-root evidence process, reading its own real process state | none: the value is not transmitted, it is measured in the process that holds it | the evidence process's lifetime | non-root evidence process itself, recorded as the run's own evidence | `ACTUAL_EUID == ORDINARY_UID`, `ACTUAL_EGID == ORDINARY_GID`, `ACTUAL_EUID != 0` and `ACTUAL_CAP_EFF == 0` all hold before the production primitive executes |
+| T9 | ordinary runner -> launcher: requested identity | requested ordinary uid and gid: `EXPLICITLY_HANDED_OFF`; the intended supplementary group list does not cross this boundary at all, because it is produced in the child by `setgroups` and never transported (5.10.3) | ordinary runner identity (the measured source) | `HOST_OBSERVER` or the ordinary workflow process, measuring its own real `euid`/`egid` | fixed numeric launcher arguments `--ordinary-uid` / `--ordinary-gid` | one launcher invocation | privileged namespace launcher, which validates them under 5.10.2 | `ORDINARY_UID != 0`, valid numeric ids, and invocation-root `st_uid`/`st_gid` equality all recorded before any credential drop |
+| T10 | launcher -> evidence process: actual identity | observed `euid`, `egid`, supplementary group list and effective capability mask: `INDEPENDENTLY_REACQUIRED` by the evidence process | ordinary runner identity | non-root evidence process, reading its own real process state | none: the value is not transmitted, it is measured in the process that holds it; the emptied supplementary group list is the one exception in form only — it is `INHERITED` as kernel-carried process state across `fork`/`execve`, and it is still measured, not received (5.10.3) | the evidence process's lifetime | non-root evidence process itself, recorded as the run's own evidence | `ACTUAL_EUID == ORDINARY_UID`, `ACTUAL_EGID == ORDINARY_GID`, `ACTUAL_SUPPLEMENTARY_GROUPS == []`, `ACTUAL_EUID != 0` and `ACTUAL_CAP_EFF == 0` all hold before the production primitive executes |
 
 T4 is the only transition that changes privilege-owned state, and its authority
 owner is this contract rather than the caller. T3 is the only transition that
@@ -2173,6 +2691,88 @@ object and one primitive cannot express both:
   MUST still equal the pinned identity, and the target must still be a directory
   with no symlinked component in the resolution path.
 
+**Image access preconditions (round 7).** The image's access facts are frozen as
+measured postconditions of its creation rather than left as an assumption about
+a default mode, because the format and the loop binding both depend on them and
+neither may rely on "the image owner's write permission" without the contract
+saying what that permission is:
+
+```text
+IMAGE_ACCESS_PRECONDITION_CLOSED=true
+IMAGE_ROLE_REGULAR_FILE_REQUIRED=true
+IMAGE_ROLE_SINGLE_LINK_REQUIRED=true
+IMAGE_ROLE_OWNER_EQUALS_REVIEWED_HELPER_IDENTITY=true
+IMAGE_ROLE_OWNER_WRITE_REQUIRED=true
+IMAGE_ROLE_S_IMODE=0600
+IMAGE_ROLE_S_IMODE_IS_EXACT=true
+IMAGE_ROLE_MODE_ESTABLISHED_BY_CREATION_ONLY=true
+IMAGE_ROLE_CHMOD_USED=false
+IMAGE_ROLE_FCHMOD_USED=false
+IMAGE_ROLE_MODE_REPAIR_WITH_PRIVILEGE=false
+IMAGE_ROLE_SIZE_BYTES=16777216
+IMAGE_ROLE_SIZE_IS_DESIGN_FROZEN=true
+IMAGE_ROLE_SIZE_ESTABLISHED_BY=ftruncate_on_the_pinned_image_descriptor
+IMAGE_ROLE_SIZE_IS_MKFS_MINIMUM_OR_LARGER=true
+IMAGE_ACCESS_WITNESS_CONSUMED_BY_EFFECTS=E11,E7
+IMAGE_ACCESS_WITNESS_IS_MEASURED_NOT_ASSUMED=true
+```
+
+`0600` is exact and is not widened: the image is a private fixture object that
+only the reviewed privileged identity ever reads or writes, and the ordinary
+evidence process never opens it. Creation establishes both the owner and the
+owner-write bit, so E11's format and E7's loop binding are authorized by a
+measured postcondition. A mode that is not exactly `0600`, an owner that is not
+the helper identity, or a link count other than one is a failed fixture
+construction: it is `QUALIFICATION_GAP` with a `TEST_FAILURE` or
+`TOOLING_FAILURE` origin as 5.7 requires, and it is never repaired with a
+`chmod`, an `fchmod` or a re-creation.
+
+The frozen size exists for the same reason the mode does. `mkfs.ext4` requires a
+minimum image size, and a fixture that lets the implementation pick the size
+would defer an E11 precondition to implementation time; `IMAGE_ROLE_SIZE_BYTES`
+is therefore a design literal, established by `ftruncate` on the descriptor the
+helper already holds, which is a file-content operation and not a mode or
+ownership change.
+
+**Mountpoint-creation effect (round 7).** Round 6 required helper-exclusive
+creation of `MOUNTPOINT_ROLE` while no effect row created it, so the requirement
+had no operation, no binding, no authority and no postcondition. `E6` is that
+missing effect, and its semantics are frozen here:
+
+```text
+MOUNTPOINT_CREATION_EFFECT=E6
+MOUNTPOINT_CREATION_EFFECT_DECLARED=true
+MOUNTPOINT_CREATION_SYSCALL=mkdirat
+MOUNTPOINT_CREATION_TARGET_BINDING=validated_root_descriptor_plus_frozen_role_name
+MOUNTPOINT_ROLE_CREATED_BY=reviewed_privileged_helper
+MOUNTPOINT_ROLE_EXCLUSIVE_CREATE=true
+MOUNTPOINT_ROLE_PREEXISTING_OBJECT_OUTCOME=HELPER_ROOT_REJECTED
+MOUNTPOINT_ROLE_PREEXISTING_OBJECT_IS_ADOPTED=false
+MOUNTPOINT_ROLE_S_IMODE=0755
+MOUNTPOINT_ROLE_S_IMODE_IS_EXACT=true
+MOUNTPOINT_ROLE_OWNER_IS_REVIEWED_PRIVILEGED_IDENTITY=true
+MOUNTPOINT_ROLE_GROUP_AND_WORLD_WRITE_CLEAR=true
+MOUNTPOINT_ROLE_ORDINARY_SEARCH_ALLOWED_REQUIRED=true
+MOUNTPOINT_ROLE_ORDINARY_WRITE_DENIED=true
+MOUNTPOINT_ROLE_CREATION_AUTHORITY=CAP_DAC_OVERRIDE,CAP_DAC_READ_SEARCH
+MOUNTPOINT_ROLE_PINNED_IDENTITY_RECHECKED_BEFORE_MOUNT=true
+MOUNTPOINT_ROLE_CLEANUP_EFFECT=E20
+MOUNTPOINT_ROLE_CLEANUP_TRANSITION=remove_mountpoint_role_in_10_4_order
+MOUNTPOINT_ROLE_CREATION_PRECONDITION_NO_PREEXISTING_OBJECT=true
+MOUNTPOINT_ROLE_CREATION_POSTCONDITION_DIRECTORY_AT_FROZEN_ROLE=true
+```
+
+The exclusive-create requirement is the directory form of the image rule: a
+pre-existing object at the role name — a file, a symlink or even a directory the
+helper did not create — is `HELPER_ROOT_REJECTED` rather than something to adopt,
+repair or remove, and the refusal precedes any mutation of the refused object.
+`0755` is the mode that makes the mount case reachable at all: the ordinary
+evidence process must traverse the mountpoint to perform the unprivileged
+`O_RDONLY` witness of 5.8.3 and 8 step 2, so a mode without "other" search and
+execute would deny that witness to the only identity whose read is admissible.
+The mountpoint's own cleanup is the existing mountpoint-removal effect `E20`, in
+the 10.4 order, after the mount is released.
+
 ```text
 PRIVILEGED_MOUNT_SOURCE_AND_TARGET_CREATED_BY_HELPER=true
 PRIVILEGED_MOUNT_PREEXISTING_ROLE_OUTCOME=HELPER_ROOT_REJECTED
@@ -2197,13 +2797,67 @@ PRIVILEGED_MOUNT_PINNED_IDENTITY_RECHECKED_BEFORE_USE=true
 PRIVILEGED_LOOP_DEVICE_SELECTED_BY_HELPER=true
 ```
 
+**Loop target binding frozen (round 7).** The loop association is frozen as one
+implementable descriptor-mediated mechanism, and the pathname-based form is
+withdrawn rather than offered as an equivalent. The earlier text named both
+`losetup --find --show <IMAGE_ROLE pathname>` and a descriptor-mediated binding
+in the same row, which is not one implementable mechanism: `losetup --find
+--show <path>` re-resolves `IMAGE_ROLE` by pathname inside the tool and offers no
+guarantee that the object it bound is the inode the helper pinned, so it cannot
+support a descriptor-mediated claim:
+
+```text
+LOOP_TARGET_BINDING_CLOSED=true
+LOOP_TARGET_BINDING_MECHANISM=descriptor_mediated_direct_loop_ioctl
+LOOP_TARGET_BINDING_STEPS=open_loop_control;LOOP_CTL_GET_FREE;open_recorded_loop_device;LOOP_CONFIGURE_with_pinned_image_fd
+LOOP_TARGET_BINDING_ACCEPTS_PATHNAME=false
+LOOP_TARGET_BINDING_RERESOLVES_IMAGE_ROLE_PATH=false
+LOOP_TARGET_BINDING_USES_EXTERNAL_TOOL=false
+LOOP_TARGET_BINDING_USES_FD_PRESERVING_EXTERNAL_TOOL=false
+LOOP_TARGET_BINDING_BACKING_FD=pinned_IMAGE_ROLE_descriptor_from_E8
+LOOP_TARGET_BINDING_DEVICE_SELECTED_BY_HELPER=true
+LOOP_TARGET_BINDING_DEVICE_FROM_CALLER=false
+LOOP_TARGET_BINDING_VERIFIED_AFTER_SETUP=true
+LOOP_TARGET_BINDING_VERIFICATION=LOOP_GET_STATUS64_backing_identity_equals_pinned_image_st_dev_and_st_ino
+LOSETUP_FIND_SHOW_IS_SUFFICIENT_EVIDENCE=false
+LOSETUP_PATHNAME_FORM_USED=false
+LOSETUP_IS_THE_LOOP_BINDING_MECHANISM=false
+LOOP_CONFIGURE_PREFERRED_OVER_LOOP_SET_FD=true
+LOOP_SET_FD_FALLBACK_ALLOWED=false
+LOOP_SET_FD_FALLBACK_REASON=a_fallback_would_be_a_second_unfrozen_mechanism_and_the_contract_freezes_one
+```
+
+The helper opens `/dev/loop-control` and takes a free device number with
+`LOOP_CTL_GET_FREE`, then opens the corresponding `/dev/loopN` node and
+configures it with `LOOP_CONFIGURE`, passing the descriptor it already holds on
+`IMAGE_ROLE` as the backing file descriptor. Because the ioctl takes that
+descriptor, the association is bound to the very inode the helper created and
+pinned, and `IMAGE_ROLE` is not re-resolved between the pin and the association.
+The device number, the device path and the pinned backing identity are
+helper-internal state. After configuration the helper re-reads the device's real
+backing identity with `LOOP_GET_STATUS64` and requires it to equal the pinned
+`st_dev`/`st_ino`, so the descriptor-mediated binding is verified rather than
+asserted; a mismatch is a hard refusal before the mount and a non-pass
+fixture-construction failure classified by 5.7.
+
 The mount operation itself is a pathname operation: `mount(2)` accepts paths
-rather than descriptors and has no descriptor-based form. This contract
-therefore freezes the invariant — helper-created objects, exclusive creation,
-no caller-created source or target, and identity revalidation — rather than
-claiming a descriptor pin for the mount syscall itself. A revalidation failure
-is a hard refusal before any privileged effect beyond the creation the helper
-already performed.
+rather than descriptors and has no descriptor-based form (mount(2): its
+`source` and `target` arguments are pathnames). This contract therefore freezes
+the invariant — helper-created objects, exclusive creation, no caller-created
+source or target, and identity revalidation — rather than claiming a descriptor
+pin for the mount syscall itself. A revalidation failure is a hard refusal
+before any privileged effect beyond the creation the helper already performed.
+The loop *binding* is descriptor-mediated, and the mount that consumes it is
+pathname-based: the two are separate facts, and only the mount is exempt from
+the descriptor rule because only the mount has no descriptor form.
+
+```text
+MOUNT_SYSCALL_HAS_DESCRIPTOR_FORM=false
+MOUNT_SYSCALL_TARGET_BINDING=helper_exclusive_creation_plus_pre_mount_identity_revalidation
+MOUNT_SYSCALL_TARGET_BINDING_WINDOW=revalidation_to_call
+LOOP_BINDING_HAS_DESCRIPTOR_FORM=true
+LOOP_BINDING_AND_MOUNT_BINDING_ARE_SEPARATE_FACTS=true
+```
 
 One consequence is worth stating explicitly, because it constrains how the
 implementation may verify the target rather than what it must achieve: once a
@@ -2363,23 +3017,120 @@ A credential rejection is a fixture-construction failure, never a product
 defect; no mount mutation may follow it, and cleanup under 10.4 applies to
 whatever the launcher had already created.
 
-The launcher then launches `NONROOT_EVIDENCE_PROCESS` using those validated
-credentials. That is a request, not a fact about the process that results.
+#### 5.10.3 Frozen credential-transition mechanism and supplementary groups
 
-#### 5.10.3 Actual identity and capabilities reacquired inside the evidence process
+The launcher then launches `NONROOT_EVIDENCE_PROCESS` with those validated
+credentials, and round 7 freezes *how*. The transition is a real privileged
+effect — `E1` in the closure table of 1.5 — and it is performed by the launcher's
+own forked child with direct Linux credential syscalls, in a frozen order:
 
-Inside `NONROOT_EVIDENCE_PROCESS`, the process reacquires its own real identity
-and its own real effective capability set, and MUST require all of:
+```text
+CREDENTIAL_TRANSITION_EFFECT=E1
+CREDENTIAL_TRANSITION_MECHANISM=direct_linux_credential_syscalls
+CREDENTIAL_TRANSITION_EXTERNAL_PRIVILEGE_TOOL_USED=false
+CREDENTIAL_TRANSITION_PERFORMED_BY=the_launchers_forked_child_after_the_parent_validated_the_handoff
+CREDENTIAL_TRANSITION_OPERATION_ORDER=setgroups_then_setgid_then_setuid
+CREDENTIAL_TRANSITION_OPERATION_ORDER_IS_MANDATORY=true
+CREDENTIAL_TRANSITION_STEP_1=setgroups(0, NULL)
+CREDENTIAL_TRANSITION_STEP_2=setgid(ORDINARY_GID)
+CREDENTIAL_TRANSITION_STEP_3=setuid(ORDINARY_UID)
+CREDENTIAL_TRANSITION_STEP_4=execve(NONROOT_EVIDENCE_PROCESS)
+CREDENTIAL_TRANSITION_FOLLOWED_BY_EXECVE=true
+CREDENTIAL_TRANSITION_REQUIRED_AUTHORITY=CAP_SETGID,CAP_SETUID
+CREDENTIAL_TRANSITION_SUPPLEMENTARY_GROUP_TRANSITION=setgroups_empty_list
+CREDENTIAL_TRANSITION_TARGET_SUPPLEMENTARY_GROUP_LIST=empty
+CREDENTIAL_TRANSITION_SUPPLEMENTARY_GROUPS_LEFT_IMPLICIT=false
+CREDENTIAL_TRANSITION_IDENTITY_REGAIED_AFTER_DROP=false
+CREDENTIAL_TRANSITION_POSTCONDITION_UID_TRIPLE_ALL_ORDINARY=true
+CREDENTIAL_TRANSITION_POSTCONDITION_GID_TRIPLE_ALL_ORDINARY=true
+CREDENTIAL_TRANSITION_POSTCONDITION_SUPPLEMENTARY_GROUPS_EMPTY=true
+CREDENTIAL_TRANSITION_CAPABILITY_CLEARING=performed_by_the_kernel_on_the_uid_transition
+CREDENTIAL_TRANSITION_CAPABILITY_CLEARING_IS_EXPLICIT=false
+CREDENTIAL_TRANSITION_REQUIRES_CAP_SETPCAP=false
+CREDENTIAL_TRANSITION_REQUIRES_CAP_SETFCAP=false
+CREDENTIAL_TRANSITION_SECUREBITS_KEEP_CAPS_SET=false
+CREDENTIAL_TRANSITION_AMBIENT_CAPABILITIES_RAISED=false
+CREDENTIAL_TRANSITION_PR_SET_KEEPCAPS_USED=false
+CREDENTIAL_TRANSITION_FAILURE_OUTCOME=LAUNCHER_CREDENTIAL_REJECTED
+CREDENTIAL_TRANSITION_FAILURE_IS_PASS=false
+CREDENTIAL_TRANSITION_PERFORMED_IN_THE_PARENT_INSTEAD=false
+```
+
+`CAP_SETGID` governs both the supplementary group list and the GID change, and
+`CAP_SETUID` governs the UID change (capabilities(7): `CAP_SETGID` — "make
+arbitrary manipulations of process GIDs and supplementary GID list";
+`CAP_SETUID` — "make arbitrary manipulations of process UIDs"). The order is a
+requirement rather than a style choice: `setgroups(2)` is itself a `CAP_SETGID`
+operation, and `setgid(2)` changes the effective GID away from the privileged
+identity, so a child that changed its GID first would no longer hold
+`CAP_SETGID` and its attempt to empty the supplementary group list would fail
+with `EPERM`. The child therefore empties the group list first. No `CAP_SETPCAP`
+is required, because the transition never edits a capability set: the kernel
+clears the permitted, effective and ambient sets itself once the UID change
+completes, and the fixture sets no securebits flag and raises no ambient
+capability that could defeat that clearing.
+
+**Supplementary group semantics, closed.** The supplementary group list is a
+fact with a producer, a carrier, an independent reacquisition, a comparison and a
+recorded closing point, and none of those is implicit:
+
+| Aspect | Frozen statement |
+| --- | --- |
+| intended list | empty: the evidence process is a member of `ORDINARY_GID` as its primary group and of no supplementary group |
+| produced by | the launcher's forked child, with `setgroups(0, NULL)` before the GID and UID transitions; the value is a frozen constant of the design and no caller value, environment value or host group database participates |
+| carried or reconstructed | `INHERITED`: the emptied list is a kernel-carried property of the very process whose credentials changed, so there is no separate carrier, no message and nothing to reconstruct across the `fork`/`execve` that follows |
+| independently reacquired | the evidence process reads its own real supplementary group list from itself — `getgroups(2)` and the real `Groups` field of `/proc/self/status` — before the production primitive, and requires it to be empty |
+| compared | the reacquired list must equal the frozen intended list exactly: `ACTUAL_SUPPLEMENTARY_GROUPS == []`. A nonempty list is a fixture-construction failure in the same class as an identity mismatch |
+| recorded | the measured list is recorded in the run's evidence before the production primitive executes, so a reviewer can see the value the process really had rather than the value the design intended |
+| closing point | `ACTUAL_SUPPLEMENTARY_GROUPS == []` holds together with `ACTUAL_EUID == ORDINARY_UID`, `ACTUAL_EGID == ORDINARY_GID`, `ACTUAL_EUID != 0` and `ACTUAL_CAP_EFF == 0`, all before the production call |
+| failure outcome | `QUALIFICATION_GAP` with a fixture-construction failure origin; never evidence, never a pass and never a `PRODUCT_FAILURE` |
+
+```text
+SUPPLEMENTARY_GROUP_SEMANTICS_CLOSED=true
+SUPPLEMENTARY_GROUP_INTENDED_LIST=empty
+SUPPLEMENTARY_GROUP_PRODUCER=launcher_forked_child_setgroups_empty_list
+SUPPLEMENTARY_GROUP_PRODUCER_ACCEPTS_CALLER_VALUE=false
+SUPPLEMENTARY_GROUP_CONTINUITY=INHERITED
+SUPPLEMENTARY_GROUP_CONTINUITY_HAS_NO_CARRIER=true
+SUPPLEMENTARY_GROUP_INDEPENDENT_REACQUISITION=evidence_process_reads_its_own_real_list
+SUPPLEMENTARY_GROUP_REACQUISITION_SOURCE=getgroups_and_the_real_Groups_field_of_proc_self_status
+SUPPLEMENTARY_GROUP_COMPARISON_REQUIRED=true
+SUPPLEMENTARY_GROUP_COMPARISON_TARGET=empty
+SUPPLEMENTARY_GROUP_RECORDED_BEFORE_PRODUCTION_PRIMITIVE=true
+SUPPLEMENTARY_GROUP_MISMATCH_OUTCOME=QUALIFICATION_GAP_OR_FIXTURE_CONSTRUCTION_FAILURE
+SUPPLEMENTARY_GROUP_MISMATCH_IS_EVIDENCE=false
+SUPPLEMENTARY_GROUP_WIDENING_PERFORMED=false
+EVIDENCE_PROCESS_IS_MEMBER_OF_ORDINARY_GID_AS_PRIMARY_GROUP=true
+```
+
+The evidence process MUST record the actual group list before the production
+primitive, exactly as it records its identity and capability mask:
+
+```text
+ACTUAL_SUPPLEMENTARY_GROUPS=
+```
+
+```text
+ACTUAL_SUPPLEMENTARY_GROUPS == []
+```
+
+#### 5.10.4 Actual identity and capabilities reacquired inside the evidence process
+
+Inside `NONROOT_EVIDENCE_PROCESS`, the process reacquires its own real identity,
+its own real supplementary group list and its own real effective capability set,
+and MUST require all of:
 
 ```text
 ACTUAL_EUID=
 ACTUAL_EGID=
+ACTUAL_SUPPLEMENTARY_GROUPS=
 ACTUAL_CAP_EFF=
 ```
 
 ```text
 ACTUAL_EUID == ORDINARY_UID
 ACTUAL_EGID == ORDINARY_GID
+ACTUAL_SUPPLEMENTARY_GROUPS == []
 ACTUAL_EUID != 0
 ACTUAL_CAP_EFF == 0
 ```
@@ -2666,14 +3417,17 @@ observed host state:
 | Proof | Required observation |
 | --- | --- |
 | standard runner | the runner is the standard `ubuntu-latest` VM image, with image identity recorded |
-| ordinary privilege | the ordinary evidence process has `euid != 0`, and its real `ORDINARY_UID` and `ORDINARY_GID` are measured before `sudo` or namespace creation |
+| ordinary privilege | the ordinary evidence process has `euid != 0`, its real `ORDINARY_UID` and `ORDINARY_GID` are measured before any privileged transition, and its real supplementary group list is recorded |
 | ordinary capabilities | the evidence process's real `CapEff` is `0`, so "non-root" means unprivileged rather than merely nonzero `euid` |
 | passwordless sudo | `sudo -n` succeeds without a prompt or terminal |
 | helper privilege | the privileged child really reports `euid == 0` |
-| capabilities | the privileged child's `CapEff` contains every capability in `REQUIRED_CAPABILITY_INVENTORY=CAP_CHOWN,CAP_DAC_READ_SEARCH,CAP_DAC_OVERRIDE,CAP_SYS_ADMIN`, each decoded from the real mask and each bound to at least one effect of 1.5: `CAP_CHOWN` to the ownership mutation, `CAP_DAC_READ_SEARCH` to traversal of the owner-only invocation root, `CAP_DAC_OVERRIDE` to creating or removing a directory entry there, and `CAP_SYS_ADMIN` to the namespace, propagation, loop, mount and unmount effects. No capability is required that the fixture's own operations do not need, and none is declared unnecessary because it produces no evidence |
+| launcher transition authority | the launcher's real `CapEff` contains `CAP_SETGID` and `CAP_SETUID`, so the credential transition of 5.10.3 is authorized by a measured fact; and the transition child's post-transition `CapEff` is observed `0`, so the kernel clearing the capability sets on the UID change is observed rather than assumed |
+| capabilities | each case's privileged child's `CapEff` contains every capability in that case's total required authority set: `OWN_FOREIGN_TOTAL_REQUIRED_AUTHORITY_SET`, `OWN_ROOT_TOTAL_REQUIRED_AUTHORITY_SET` or `MOUNT_FIXTURE_TOTAL_REQUIRED_AUTHORITY_SET`, each decoded from the real mask and each bound to at least one effect of that case in 1.5. `CAP_CHOWN` is bound to the ownership mutation, `CAP_DAC_READ_SEARCH` to traversal of the owner-only invocation root and of `RUNNER_TEMP`, `CAP_DAC_OVERRIDE` to creating or removing a directory entry in a directory the helper does not own, `CAP_SETGID` and `CAP_SETUID` to the credential transition of `E1`, and `CAP_SYS_ADMIN` to the namespace, propagation, loop, mount and unmount effects of the mount case. The global inventory is the union of the case sets — `REQUIRED_CAPABILITY_INVENTORY=CAP_CHOWN,CAP_DAC_OVERRIDE,CAP_DAC_READ_SEARCH,CAP_SETGID,CAP_SETUID,CAP_SYS_ADMIN` — and no capability is required that the fixture's own operations do not need, and none is declared unnecessary because it produces no evidence |
 | helper access authority | the privileged child's real `CapEff` contains the declared helper access authority, and the invocation root it must reach is observed as owner-only (`S_IMODE == 0o700`, group, world and sticky bits clear) and owned by the ordinary runner, so that the access authority is required by a measured fact rather than assumed (1.5) |
-| kernel and tools | the required kernel interfaces and utilities exist and their versions are recorded |
+| parent directory DAC state | `RUNNER_TEMP`'s real owner, real mode, real sticky-bit state and the resulting write-and-search DAC relation to the helper identity are observed and recorded, because the invocation-root removal of `E22` acts on that directory and not on the root; the recorded relation and sticky-bit state are what select the removal's authority, and a sticky parent is a `QUALIFICATION_GAP` rather than an undeclared `CAP_FOWNER` |
+| kernel and tools | the required kernel interfaces and utilities exist and their versions are recorded, including `/dev/loop-control` and the loop device nodes required by the descriptor-mediated loop binding of 5.9 |
 | fixture root | the `RUNNER_TEMP` invocation root is usable, invocation-specific, and not a shared or persistent runner path; its parent is not sticky, so removal of a directory owned by the ordinary identity needs no `CAP_FOWNER`; and the freshly formatted ext4 root directory is observed with the owner and search facts 5.8.3 requires |
+| mount object preconditions | the image's real mode, owner and link count are observed equal to the frozen `IMAGE_ROLE_S_IMODE=0600`, the reviewed helper identity and one link; and the mountpoint's real mode is observed `0755` with group and world write clear, so the ordinary identity's search through it — the precondition of the 5.8.3 DAC witness — is a measured fact (5.9) |
 | foreign uid | the design-frozen `FOREIGN_OWNER_TARGET_UID=65534` is representable on the host and the ordinary runner's effective uid is not `65534`, so the 5.2 literal is usable; if it is not, the `FOREIGN_OWNER` outcome is `QUALIFICATION_GAP` and no alternate uid is selected |
 | isolation | no persistent or shared runner state is targeted by any step |
 
@@ -2681,9 +3435,10 @@ The fixture's capability requirement is derived from the operations it really
 performs, and it is frozen as an exact set per case rather than as one blanket
 grant.
 
-For the RQP-L09 ownership fixture the required privileged-helper authority is
-frozen as two independent exact facts — the mutation authority and the case's
-filesystem-access authority — whose union is the case's complete required set:
+For the RQP-L09 ownership fixture the required authority is frozen as three
+independent exact facts — the mutation authority, the case's filesystem-access
+authority and the credential transition's authority — whose union is the case's
+complete required set:
 
 ```text
 OWNERSHIP_MUTATION_REQUIRED_CAPABILITY=CAP_CHOWN
@@ -2692,9 +3447,11 @@ OWNERSHIP_MUTATION_REQUIRED_CAPABILITY_SET=CAP_CHOWN
 OWNERSHIP_MUTATION_AUTHORITY_EXACT=true
 OWNERSHIP_CASE_ACCESS_AUTHORITY=CAP_DAC_READ_SEARCH,CAP_DAC_OVERRIDE
 OWNERSHIP_CASE_ACCESS_AUTHORITY_EXACT=true
-OWNERSHIP_CASE_TOTAL_REQUIRED_AUTHORITY_SET=CAP_CHOWN,CAP_DAC_READ_SEARCH,CAP_DAC_OVERRIDE
+OWNERSHIP_CASE_CREDENTIAL_TRANSITION_AUTHORITY=CAP_SETGID,CAP_SETUID
+OWNERSHIP_CASE_CREDENTIAL_TRANSITION_AUTHORITY_EXACT=true
+OWNERSHIP_CASE_TOTAL_REQUIRED_AUTHORITY_SET=CAP_CHOWN,CAP_DAC_OVERRIDE,CAP_DAC_READ_SEARCH,CAP_SETGID,CAP_SETUID
 OWNERSHIP_CASE_TOTAL_REQUIRED_AUTHORITY_SET_TRUTHFUL=true
-OWNERSHIP_CASE_REQUIRED_AUTHORITY_COUNT=3
+OWNERSHIP_CASE_REQUIRED_AUTHORITY_COUNT=5
 ```
 
 `CAP_CHOWN` is required because the helper performs `fchown` on the pinned child
@@ -2713,17 +3470,32 @@ pinned child needs directory search and unlinking that child during cleanup need
 directory write and search. The narrowest authorities that cover exactly those
 checks are `CAP_DAC_READ_SEARCH` for the traversal and `CAP_DAC_OVERRIDE` for the
 unlink, and both are recorded by the preflight from the real `CapEff` mask (1.6).
-The ownership cases' total required authority is therefore
-`CAP_CHOWN,CAP_DAC_READ_SEARCH,CAP_DAC_OVERRIDE`; the retired
-`OWNERSHIP_FIXTURE_REQUIRED_CAPABILITY_SET` token named only the mutation half
-while claiming to name the fixture's whole set. Neither authority is itself
-evidence, and neither is available to the ordinary evidence process, whose
-`ACTUAL_CAP_EFF == 0` requirement is unchanged; that is an attribution fact, not
-a reason to call either one unnecessary. `FILE_MODE=0644` exists
-precisely so the ordinary reader's access is a real permissions fact rather than
-a capability artifact: the ordinary non-root process's `os.open(O_RDONLY)`
-succeeds through the real `0644` DAC bits, and that success is the 4.3
-attribution guard.
+
+The ownership case's total authority is not those two alone, and round 7 corrects
+the set rather than restating it: the two ownership cases also perform the
+credential-transition effect `E1`, whose authority is `CAP_SETGID` and
+`CAP_SETUID`. The complete set is therefore derived from the case's own effects
+and is the same for both ownership cases:
+
+```text
+OWNERSHIP_CASE_TOTAL_REQUIRED_AUTHORITY_SET_DERIVATION=union_of_the_ownership_case_effect_set_required_authority
+OWNERSHIP_CASE_TOTAL_REQUIRED_AUTHORITY_SET_EQUALS_EFFECT_AUTHORITY_UNION=true
+OWNERSHIP_CASE_TOTAL_REQUIRED_AUTHORITY_SET_DERIVED_NOT_ASSERTED=true
+OWNERSHIP_CASE_REQUIRES_PRIVATE_MOUNT_NAMESPACE=false
+OWNERSHIP_CASE_REQUIRES_CAP_SYS_ADMIN=false
+OWNERSHIP_CASE_EFFECT_SET_IS_CAP_SYS_ADMIN_FREE=true
+```
+
+The retired `OWNERSHIP_FIXTURE_REQUIRED_CAPABILITY_SET` token named only the
+mutation half while claiming to name the fixture's whole set, and round 6's
+replacement named the mutation and access halves while omitting the credential
+transition. None of these authorities is itself evidence, and none of them is
+available to the ordinary evidence process, whose `ACTUAL_CAP_EFF == 0`
+requirement is unchanged; that is an attribution fact, not a reason to call any
+of them unnecessary. `FILE_MODE=0644` exists precisely so the ordinary reader's
+access is a real permissions fact rather than a capability artifact: the ordinary
+non-root process's `os.open(O_RDONLY)` succeeds through the real `0644` DAC bits,
+and that success is the 4.3 attribution guard.
 
 The mount case's fixture file adds no ownership capability requirement of its
 own, and the closure of 1.5 is what makes that checkable rather than assumed:
@@ -2736,9 +3508,13 @@ MOUNT_FIXTURE_FILE_OWNERSHIP_MUTATION=false
 MOUNT_FIXTURE_FILE_OWNERSHIP_MUTATION_EFFECT=NONE
 MOUNT_FIXTURE_FILE_OWNERSHIP_REQUIRES_CAP_FOWNER=false
 MOUNT_FIXTURE_FILE_OWNERSHIP_REQUIRES_CAP_DAC_OVERRIDE=false
+MOUNT_FIXTURE_FILE_CREATION_EFFECT=E18
 MOUNT_FIXTURE_FILE_CREATION_ACCESS_AUTHORITY=CAP_DAC_READ_SEARCH
-MOUNT_FIXTURE_FILE_CREATION_ACCESS_AUTHORITY_SCOPE=traversal_of_the_owner_only_invocation_root_by_E9
+MOUNT_FIXTURE_FILE_CREATION_ACCESS_AUTHORITY_SCOPE=traversal_of_the_owner_only_invocation_root_by_E17
 MOUNT_FIXTURE_FILE_CREATION_ACCESS_AUTHORITY_PRODUCES_EVIDENCE=false
+MOUNT_CASE_TOTAL_REQUIRED_AUTHORITY_SET=CAP_DAC_OVERRIDE,CAP_DAC_READ_SEARCH,CAP_SETGID,CAP_SETUID,CAP_SYS_ADMIN
+MOUNT_CASE_TOTAL_REQUIRED_AUTHORITY_SET_DERIVATION=union_of_the_mount_fixture_effect_set_required_authority
+MOUNT_CASE_TOTAL_REQUIRED_AUTHORITY_SET_EQUALS_EFFECT_AUTHORITY_UNION=true
 ```
 
 Creating a file assigns the creating process's own effective uid to it and
@@ -2768,30 +3544,98 @@ PRIVILEGED_HELPER_CAPABILITY_REQUIREMENT_IS_EXACT_SET=true
 CAPABILITY_PREFLIGHT_INVALID_IF_CAPABILITY_ASSUMED=true
 ```
 
-RQP-L17 separately requires its own exact mount-related capability set, and round
-5 derives that set per effect rather than as one blanket grant (1.5):
-`CAP_SYS_ADMIN` is required for the private mount namespace creation, the private
-propagation, the loop device configuration, the mount, the `MNT_DETACH` detach,
-the `ATTACHED`-state ordinary unmount and the loop backing release, and for
-nothing else. Image creation, `mkfs`, and the image, mountpoint and
-invocation-root removals are not `CAP_SYS_ADMIN` operations at all; they are
-file-level operations whose authority is the declared helper access authority
-plus the object's own DAC permissions. The two cases' capability sets are
-separate facts and neither widens the other.
+RQP-L17 requires a mount-operation capability subset *and* a total authority
+set, and round 7 separates the two because round 6's single token claimed the
+total while naming only the subset. The mount-operation subset is `CAP_SYS_ADMIN`
+bound to the namespace, propagation, loop, mount and unmount effects and to
+nothing else; the total set is what the whole `mount-fixture` case needs:
 
 ```text
-RQP_L17_REQUIRED_CAPABILITY_SET=CAP_SYS_ADMIN
-RQP_L17_CAP_SYS_ADMIN_BOUND_EFFECTS=E3,E4,E7,E8,E10,E11,E12
-RQP_L17_EFFECTS_WITHOUT_CAP_SYS_ADMIN=E5,E6,E13,E14,E15
+RQP_L17_MOUNT_OPERATION_CAPABILITY_SET=CAP_SYS_ADMIN
+RQP_L17_MOUNT_OPERATION_CAPABILITY_SET_SCOPE=mount-namespace-creation,mount-propagation-private,loop-control-and-configuration,loop-readback,mount-and-unmount
+RQP_L17_MOUNT_OPERATION_CAPABILITY_SET_IS_A_SUBSET_ONLY=true
+RQP_L17_CAP_SYS_ADMIN_BOUND_EFFECTS=E7,E9,E10,E12,E14,E16,E19
+RQP_L17_EFFECTS_WITHOUT_CAP_SYS_ADMIN=E6,E8,E11,E13,E15,E17,E18,E20,E21
 RQP_L17_CAP_SYS_ADMIN_BROADER_THAN_ITS_EFFECTS=false
+RQP_L17_MOUNT_EFFECTS_REQUIRE_CAP_SYS_ADMIN=true
+RQP_L17_TOTAL_REQUIRED_AUTHORITY_SET=CAP_DAC_OVERRIDE,CAP_DAC_READ_SEARCH,CAP_SETGID,CAP_SETUID,CAP_SYS_ADMIN
+RQP_L17_TOTAL_AUTHORITY_SET_EQUALS_MOUNT_FIXTURE_TOTAL_AUTHORITY_SET=true
+RQP_L17_TOTAL_REQUIRED_AUTHORITY_COUNT=5
+RQP_L17_TOTAL_AUTHORITY_SET_DERIVATION=union_of_the_mount_fixture_effect_set_required_authority
+RQP_L17_TOTAL_AUTHORITY_SET_IS_NOT_ONE_MOUNT_RELATED_SET=true
+RQP_L17_REQUIRED_CAPABILITY_SET_RETIRED=true
+RQP_L17_REQUIRED_CAPABILITY_SET_RETIRED_REASON=it_named_only_the_mount_operation_subset_while_claiming_to_name_the_cases_required_capability_set
+NAME_ONLY_THE_MOUNT_SUBSET_IF_SCOPE_IS_MOUNT_SUBSET=true
 RQP_L17_PREFLIGHT_RECORDS_ACCESS_AUTHORITY_FROM_REAL_CAP_EFF=true
 RQP_L17_PREFLIGHT_ASSERTS_NO_CAPABILITY_THE_OPERATIONS_DO_NOT_NEED=true
+RQP_L17_PREFLIGHT_RECORDS_THE_TOTAL_SET_AND_THE_MOUNT_SUBSET_SEPARATELY=true
+```
+
+Image creation, `mkfs`, and the image, mountpoint and invocation-root removals
+are not `CAP_SYS_ADMIN` operations at all; they are file-level operations whose
+authority is the declared helper access authority plus the object's own DAC
+permissions. The three cases' authority sets are separate facts and none widens
+another: `CAP_SYS_ADMIN` appears in the mount case's total set because that case
+really creates a namespace, binds a loop device, mounts and unmounts, and it
+appears in neither ownership case's total set because those cases perform no such
+operation.
+
+**Parent-directory access authority observed, not assumed.** `E22` is the one
+effect whose target is outside the invocation root: the root's removal is an
+entry operation on `RUNNER_TEMP`, so the authority question is a question about
+`RUNNER_TEMP`'s own DAC state and cannot be answered by the root's mode. The
+preflight therefore observes four facts and records them, and the authority is
+derived from the observation rather than granted unconditionally (1.7.7):
+
+```text
+RUNNER_TEMP_OWNER_OBSERVED_REQUIRED=true
+RUNNER_TEMP_MODE_OBSERVED_REQUIRED=true
+RUNNER_TEMP_WRITE_SEARCH_DAC_RELATION_OBSERVED_REQUIRED=true
+RUNNER_TEMP_STICKY_BIT_STATE_OBSERVED_REQUIRED=true
+RUNNER_TEMP_OBSERVATIONS_ARE_PREFLIGHT_FACTS=true
+RUNNER_TEMP_OBSERVED_OWNER_UID=
+RUNNER_TEMP_OBSERVED_S_IMODE=
+RUNNER_TEMP_OBSERVED_STICKY_BIT=
+RUNNER_TEMP_HELPER_IDENTITY_WRITE_AND_SEARCH_VIA_DAC=
+ROOT_REMOVAL_REQUIRES_CAP_DAC_OVERRIDE_CONDITIONAL_ON_OBSERVED_DAC=true
+ROOT_REMOVAL_AUTHORITY_SOURCE=the_observed_RUNNER_TEMP_DAC_relation_and_sticky_bit_state
+ROOT_REMOVAL_DAC_SUFFICIENT_OUTCOME=no_capability_required_for_the_removal
+ROOT_REMOVAL_DAC_INSUFFICIENT_OUTCOME=CAP_DAC_OVERRIDE_required_for_the_removal
+ROOT_REMOVAL_STICKY_PARENT_OUTCOME=QUALIFICATION_GAP_because_CAP_FOWNER_is_not_declared
+ROOT_REMOVAL_CAP_DAC_OVERRIDE_CLAIMED_WITHOUT_OBSERVATION=false
+ROOT_REMOVAL_CAP_FOWNER_REQUIRED=false
+ROOT_REMOVAL_CAP_FOWNER_CLAIMED_WITHOUT_OBSERVATION=false
+BELOW_ROOT_ACCESS_AUTHORITY_SCOPE=every_object_at_a_frozen_role_name_under_the_validated_invocation_root
+ROOT_PARENT_REMOVAL_ACCESS_AUTHORITY_SCOPE=RUNNER_TEMP_the_validated_invocation_roots_parent_directory
+E15_PARENT_ACCESS_CLOSED=true
+```
+
+On the declared runner the observation selects the `CAP_DAC_OVERRIDE` outcome,
+because `RUNNER_TEMP` is owned by the runner identity and the helper identity
+falls in the "other" class of its mode, so its own DAC bits grant the helper
+neither write nor search on that directory. The contract states that as the
+result of the observation rather than as an unconditional grant, so a host whose
+`RUNNER_TEMP` really does authorize the helper directly does not acquire a
+capability invented for it, and a sticky `RUNNER_TEMP` — which would make the
+removal of another identity's directory a `CAP_FOWNER` operation — is a
+`QUALIFICATION_GAP` rather than an undeclared authority.
+
+```text
+CURRENT_ROUND_PREFLIGHT_TOKEN_DUPLICATION_CHECKED=true
+```
+
+```text
+RQP_L17_PREFLIGHT_RECORDS_ACCESS_AUTHORITY_FROM_REAL_CAP_EFF=true
+RQP_L17_PREFLIGHT_ASSERTS_NO_CAPABILITY_THE_OPERATIONS_DO_NOT_NEED=true
+RQP_L17_PREFLIGHT_READS_THE_TOTAL_SET_FROM_THE_EFFECT_TABLE=true
+RQP_L17_PREFLIGHT_TOKEN_DUPLICATION_CHECKED=true
 ```
 
 A failed preflight is classified by origin:
 
 - `QUALIFICATION_GAP` when the required real fixture cannot be constructed in
-  this environment;
+  this environment, including an observed `RUNNER_TEMP` whose sticky bit makes
+  the root removal a `CAP_FOWNER` operation this contract does not declare;
 - `LAUNCHER_CREDENTIAL_REJECTED` when the ordinary credential handoff of 5.10
   cannot be validated, which is also a fixture-construction failure and occurs
   before any namespace mutation;
@@ -2928,14 +3772,33 @@ Four roles exist, and no other process may perform a privileged or mount
 operation. The topology is frozen as a set of roles plus an explicit lifecycle,
 not as a set of independent commands that happen to share an environment.
 
+```text
+PRIVATE_MOUNT_NAMESPACE_SCOPE=mount-fixture
+OWNERSHIP_CASE_PRIVATE_MOUNT_NAMESPACE=NONE
+OWNERSHIP_CASE_PROCESSES_USE_THE_HOST_MOUNT_NAMESPACE=true
+```
+
+The private mount namespace is created only in the `mount-fixture` case, because
+it exists to confine a real mount to the run. The two ownership cases mount
+nothing and detach nothing, so they are not wrapped in a namespace they do not
+need: their processes stay in the host mount namespace, they acquire no
+`CAP_SYS_ADMIN` and they take no E9 or E10 effect (1.7.4). `PRIVATE_EVIDENCE_MNT_NS_ID`
+and `PRIVATE_HELPER_MNT_NS_ID` are therefore `mount-fixture` facts, and the
+host-absence control of 10.3 is trivially satisfied for the ownership cases
+because no mount namespace or mount event exists in them at all.
+
 | Role | Runs in | Identity | Permitted operations |
 | --- | --- | --- | --- |
 | `HOST_OBSERVER` | host mount namespace, outside the private namespace | ordinary runner identity | read the host mount table; record the fixture device and mountpoint absence baseline before and after the run; measure and hand off its own real `ORDINARY_UID`/`ORDINARY_GID` (5.10.1) |
-| `PRIVILEGED_NAMESPACE_LAUNCHER` | starts in the host mount namespace, then enters a new private mount namespace | reviewed privileged identity via `sudo -n` | validate the handed-off ordinary uid/gid against real filesystem state (5.10.2); create the private mount namespace; make propagation private; establish and report the private namespace identity; launch the evidence process with the validated ordinary credentials |
-| `NONROOT_EVIDENCE_PROCESS` | inside the private namespace, launched by the launcher | ordinary runner identity, `euid != 0`, `egid` unchanged, and `CapEff == 0`; all three independently reacquired by the process itself (5.10.3) | reacquire its own identity and capability mask before anything else; execute the production primitive under qualification; retain descriptors; measure and record evidence |
-| `PRIVILEGED_FIXTURE_HELPER` | inside the same private namespace, invoked from it | the reviewed privileged identity again, via `sudo -n` | the 5.2 case actions only: fixture ownership mutation by `fchown`, fixture mount setup, `MNT_DETACH` detach, checked cleanup |
+| `PRIVILEGED_NAMESPACE_LAUNCHER` | starts in the host mount namespace; in the `mount-fixture` case enters a new private mount namespace, and in the ownership cases stays where it is | reviewed privileged identity via `sudo -n`; the launcher itself never changes identity | validate the handed-off ordinary uid/gid against real filesystem state (5.10.2); create the private mount namespace and make propagation private in the `mount-fixture` case only; establish and report the namespace identity; fork the child that performs the credential transition (5.10.3) and `execve` the evidence process in it |
+| `NONROOT_EVIDENCE_PROCESS` | in the private namespace for `mount-fixture`, in the host namespace for the ownership cases; never launched by an external privilege tool | ordinary runner identity, `euid != 0`, `egid == ORDINARY_GID`, empty supplementary group list, and `CapEff == 0`; all four independently reacquired by the process itself (5.10.4) | reacquire its own identity, group list and capability mask before anything else; execute the production primitive under qualification; retain descriptors; measure and record evidence |
+| `PRIVILEGED_FIXTURE_HELPER` | the reviewed privileged identity again, via `sudo -n`; inside the private namespace in the `mount-fixture` case, whose setup invocation precedes the credential transition, and whose cleanup invocation follows the evidence process | the reviewed privileged identity | the 5.2 case actions only: fixture ownership mutation by `fchown`, fixture mount setup, `MNT_DETACH` detach, checked cleanup |
 
-Frozen lifecycle, in order:
+Frozen lifecycle, in order. The mount-case setup invocation is placed where the
+real lifecycle requires it: the mount-case fixture file cannot exist before the
+image is mounted, so the setup helper runs **before** the credential transition,
+and the evidence process reacquires its identity after the fixture exists
+(1.7.1):
 
 ```text
 HOST_OBSERVER                records host mount namespace identity / absence baseline
@@ -2946,20 +3809,35 @@ HOST_OBSERVER                records host mount namespace identity / absence bas
          st_uid == ORDINARY_UID / st_gid == ORDINARY_GID against real state
        refuses as LAUNCHER_CREDENTIAL_REJECTED before any namespace mutation
          if any credential check fails
-       creates a private mount namespace
-       makes propagation private
-       establishes namespace identity
-  -> NONROOT_EVIDENCE_PROCESS
-       launched INSIDE that private namespace
-       with the validated ordinary credentials
-       reacquires ACTUAL_EUID / ACTUAL_EGID / ACTUAL_CAP_EFF from itself
-       requires ACTUAL_EUID == ORDINARY_UID, ACTUAL_EGID == ORDINARY_GID,
-         ACTUAL_EUID != 0, ACTUAL_CAP_EFF == 0
-       executes the production primitive only after those controls pass
-  -> PRIVILEGED_FIXTURE_HELPER
+       mount-fixture only: creates a private mount namespace, makes propagation
+         private, establishes namespace identity
+  -> PRIVILEGED_FIXTURE_HELPER   (mount-fixture only, setup invocation)
        invoked from INSIDE the same private namespace
        may regain reviewed privilege via sudo
-       performs only reviewed setup / detach / cleanup actions
+       creates IMAGE_ROLE and MOUNTPOINT_ROLE exclusively, formats the image,
+         binds the loop device by descriptor, mounts ext4, creates and pins
+         MOUNTPOINT_ROLE/FIXTURE_FILE_ROLE
+       closes its own image and loop descriptors before it exits
+     (the ownership cases have no setup invocation: their fixture file was
+      created by the ordinary runner before the launcher was invoked)
+  -> PRIVILEGED_NAMESPACE_LAUNCHER forks
+       the PARENT keeps the reviewed privileged identity and the namespace
+       the CHILD performs the credential transition of 5.10.3:
+         setgroups(0, NULL), setgid(ORDINARY_GID), setuid(ORDINARY_UID)
+         then execve(NONROOT_EVIDENCE_PROCESS)
+  -> NONROOT_EVIDENCE_PROCESS
+       running inside the private namespace (mount-fixture) or the host
+         namespace (own-foreign, own-root)
+       reacquires ACTUAL_EUID / ACTUAL_EGID / ACTUAL_SUPPLEMENTARY_GROUPS /
+         ACTUAL_CAP_EFF from itself
+       requires ACTUAL_EUID == ORDINARY_UID, ACTUAL_EGID == ORDINARY_GID,
+         ACTUAL_SUPPLEMENTARY_GROUPS == [], ACTUAL_EUID != 0,
+         ACTUAL_CAP_EFF == 0
+       executes the production primitive only after those controls pass
+  -> PRIVILEGED_FIXTURE_HELPER   (cleanup invocation)
+       invoked from INSIDE the same private namespace in the mount-fixture case
+       may regain reviewed privilege via sudo
+       performs only the reviewed detach / release / removal actions of 10.4
 ```
 
 ```text
@@ -2967,12 +3845,23 @@ HOST_OBSERVER_IN_PRIVATE_NAMESPACE=false
 PRIVILEGED_NAMESPACE_LAUNCHER_AUTHORITY=sudo -n only
 PRIVILEGED_NAMESPACE_LAUNCHER_ORDINARY_IDENTITY_INPUT=validated_explicit_handoff
 PRIVILEGED_NAMESPACE_LAUNCHER_CREDENTIAL_VALIDATION_BEFORE_DROP=true
+PRIVILEGED_NAMESPACE_LAUNCHER_NEVER_CHANGES_ITS_OWN_IDENTITY=true
+PRIVILEGED_NAMESPACE_LAUNCHER_FORKS_THE_TRANSITION_CHILD=true
+CREDENTIAL_TRANSITION_CHILD_IS_THE_EVIDENCE_PROCESS=true
+LAUNCHER_PARENT_RETAINS_PRIVILEGE_FOR_CLEANUP=true
 NONROOT_EVIDENCE_PROCESS_EUID=ordinary_runner_identity
 NONROOT_EVIDENCE_PROCESS_IDENTITY_IS_REACQUIRED=true
 NONROOT_EVIDENCE_PROCESS_CAP_EFF_REQUIRED=0
+NONROOT_EVIDENCE_PROCESS_SUPPLEMENTARY_GROUPS_REQUIRED=empty
+NONROOT_EVIDENCE_PROCESS_LAUNCHED_BY_EXTERNAL_PRIVILEGE_TOOL=false
 FIXTURE_HELPER_INVOCATION_ORIGIN=inside_the_same_private_namespace
 FIXTURE_HELPER_REGAINS_PRIVILEGE=sudo -n only
 FIXTURE_HELPER_ACTION_SCOPE=reviewed_setup_detach_cleanup_only
+FIXTURE_HELPER_SETUP_INVOCATION_PRECEDES_CREDENTIAL_TRANSITION=true
+FIXTURE_HELPER_SETUP_INVOCATION_SCOPE=mount-fixture
+FIXTURE_HELPER_SETUP_INVOCATION_OWNS_THE_FIXTURE_DESCRIPTORS=true
+FIXTURE_HELPER_CLOSES_IMAGE_AND_LOOP_DESCRIPTORS_BEFORE_EXIT=true
+FIXTURE_HELPER_CLEANUP_INVOCATION_HOLDS_ITS_OWN_DESCRIPTORS=true
 NONROOT_EVIDENCE_PROCESS_LAUNCH_IS_A_REQUEST_NOT_A_FACT=true
 ```
 
@@ -3013,31 +3902,53 @@ the private namespace; the evidence process and the helper report theirs from
 inside the private namespace. No identity may be inferred from a process name, a
 command line, or the presence of a `sudo` in the lifecycle.
 
+The three identities and the two equalities above are `mount-fixture` controls
+(1.7.4): they exist to prove that the mount fixture and its consumer share one
+private namespace that is not the host's. The ownership cases create no private
+namespace, so for them `PRIVATE_EVIDENCE_MNT_NS_ID` and
+`PRIVATE_HELPER_MNT_NS_ID` are the host identity and the two equalities are
+satisfied trivially while proving nothing; the contract MUST NOT report them as
+namespace-isolation evidence for an ownership case, and no ownership case may be
+reported as having passed a namespace control:
+
+```text
+NAMESPACE_IDENTITY_CONTROLS_SCOPE=mount-fixture
+OWNERSHIP_CASE_NAMESPACE_IDENTITY_IS_HOST_IDENTITY=true
+OWNERSHIP_CASE_NAMESPACE_CONTROL_IS_NOT_EVIDENCE=true
+OWNERSHIP_CASE_PRIVATE_NAMESPACE_CREATED=false
+```
+
 Membership continuity and identity observation are separate facts, frozen that
-way in 5.5: membership is `INHERITED` across this lifecycle, because the `sudo`
-identity transition changes credentials rather than mount namespace membership,
-while identity is `INDEPENDENTLY_REACQUIRED` by every process. The equality above
-is therefore measured rather than inferred from that inheritance, and a
-process that cannot read its own real identity cannot satisfy this contract.
+way in 5.5: membership is `INHERITED` across this lifecycle — the credential
+transition changes credentials rather than mount namespace membership, and in the
+`mount-fixture` case the transition child inherits the namespace the launcher
+created before the `fork` — while identity is `INDEPENDENTLY_REACQUIRED` by every
+process. The equality above is therefore measured rather than inferred from that
+inheritance, and a process that cannot read its own real identity cannot satisfy
+this contract.
 
 ```text
 NAMESPACE_IDENTITY_MEASURED=true
 NAMESPACE_IDENTITY_SOURCE=/proc/self/ns/mnt inode
 NAMESPACE_IDENTITY_ASSUMED_FROM_SUDO=false
+NAMESPACE_IDENTITY_ASSUMED_FROM_THE_CREDENTIAL_TRANSITION=false
 PRIVATE_EVIDENCE_HELPER_SAME_NAMESPACE_REQUIRED=true
 PRIVATE_NAMESPACE_DIFFERS_FROM_HOST_REQUIRED=true
 ```
 
-The evidence process's identity and capabilities are measured with the same
-discipline, and are required before the production primitive executes:
+The evidence process's identity, supplementary group list and capabilities are
+measured with the same discipline, and are required before the production
+primitive executes:
 
 ```text
 NONROOT_EVIDENCE_PROCESS_IDENTITY_MEASURED=true
 NONROOT_EVIDENCE_PROCESS_IDENTITY_SOURCE=own real process state
 NONROOT_EVIDENCE_PROCESS_CAP_EFF_SOURCE=/proc/self/status CapEff decoded from the real mask
+NONROOT_EVIDENCE_PROCESS_SUPPLEMENTARY_GROUPS_SOURCE=getgroups_and_the_real_Groups_field_of_proc_self_status
 NONROOT_EVIDENCE_IDENTITY_ASSUMED_FROM_LAUNCH_REQUEST=false
 NONROOT_EVIDENCE_IDENTITY_ASSUMED_FROM_SUDO=false
 NONROOT_EVIDENCE_PROCESS_EUID_NONZERO_IS_NOT_SUFFICIENT=true
+NONROOT_EVIDENCE_PROCESS_EMPTY_SUPPLEMENTARY_GROUPS_IS_REQUIRED=true
 ```
 
 If the two private identities differ, or the private identity equals the host
@@ -3057,7 +3968,7 @@ the 5.6 ledger requires.
 | N1 | host baseline -> observer | host mount table state: `INDEPENDENTLY_REACQUIRED` by the host observer | this contract | host observer | observed host mount table | one run attempt | independent reviewer | pre-run absence baseline recorded |
 | N2 | host -> private namespace creation | namespace membership: `INHERITED`; namespace identity: `INDEPENDENTLY_REACQUIRED` by each process | reviewed privileged identity | privileged namespace launcher | real mount namespace | until namespace exit | evidence process and helper | private namespace identity differs from host identity |
 | N3 | propagation state | real propagation flags: `INDEPENDENTLY_REACQUIRED` from the shared namespace object | this contract | privileged namespace launcher | real propagation flags of the private namespace root | until namespace exit | evidence process and helper | propagation is private before any mount mutation |
-| N4 | launcher -> evidence process: namespace membership, requested credentials, actual identity | namespace membership: `INHERITED` across `fork`/`exec`; requested ordinary uid/gid: `EXPLICITLY_HANDED_OFF` to the launcher and validated before the drop; actual identity and capabilities: `INDEPENDENTLY_REACQUIRED` by the evidence process | ordinary runner identity | privileged namespace launcher | inherited mount namespace across `fork`/`exec`, fixed numeric credential arguments, and the evidence process's own real process state | until namespace exit | evidence process | `PRIVATE_EVIDENCE_MNT_NS_ID` measured and equal to the private identity, and `ACTUAL_EUID == ORDINARY_UID`, `ACTUAL_EGID == ORDINARY_GID`, `ACTUAL_EUID != 0`, `ACTUAL_CAP_EFF == 0` all recorded before the production call |
+| N4 | launcher -> evidence process: namespace membership, requested credentials, actual identity | namespace membership: `INHERITED` across `fork` and the credential transition's `execve`; requested ordinary uid/gid: `EXPLICITLY_HANDED_OFF` to the launcher and validated before the transition; the intended empty supplementary group list: not transported at all, produced in the transition child (5.10.3); actual identity, group list and capabilities: `INDEPENDENTLY_REACQUIRED` by the evidence process | ordinary runner identity | privileged namespace launcher | inherited mount namespace across `fork`/`execve`, fixed numeric credential arguments, and the evidence process's own real process state | until namespace exit | evidence process | `PRIVATE_EVIDENCE_MNT_NS_ID` measured and equal to the private identity, and `ACTUAL_EUID == ORDINARY_UID`, `ACTUAL_EGID == ORDINARY_GID`, `ACTUAL_SUPPLEMENTARY_GROUPS == []`, `ACTUAL_EUID != 0`, `ACTUAL_CAP_EFF == 0` all recorded before the production call |
 | N5 | evidence process -> helper: namespace membership | membership: `INHERITED` across the `sudo` identity transition, which changes credentials and not namespace membership; identity: `INDEPENDENTLY_REACQUIRED` by the helper | reviewed privileged identity | privileged fixture helper | inherited mount namespace across `sudo` | one helper invocation | helper | `PRIVATE_HELPER_MNT_NS_ID` measured and equal to `PRIVATE_EVIDENCE_MNT_NS_ID` |
 | N6 | private namespace -> host: absence | host-table absence: `INDEPENDENTLY_REACQUIRED` by the host observer | this contract | host observer | observed host mount table | one run attempt | independent reviewer | post-run absence control recorded |
 
@@ -3127,26 +4038,34 @@ because no detach has happened yet.
 
 1. do NOT require another mountpoint unmount;
 2. close every retained fixture descriptor, including the evidence process's
-   retained mount descriptor and any helper-held descriptor;
+   retained mount descriptor and any descriptor a helper invocation holds; the
+   cleanup invocation holds its own descriptors and closes them before the
+   release, and the setup invocation already closed its image and loop
+   descriptors when it exited (10.1);
 3. verify the held mount no longer appears in the private mount table, that is,
    zero records carry the held mount id;
 4. allow the kernel to release the detached mount;
 5. release the loop backing;
 6. verify the loop backing is gone;
-7. remove the image, the mountpoint and the invocation-specific root.
+7. remove the case's fixture objects and then the invocation-specific root.
 
 ```text
 CLEANUP_FROM_ATTACHED=checked_unmount_then_release_loop
 CLEANUP_FROM_DETACHED_BUSY=close_descriptors_then_verify_then_release_loop
 SECOND_UNMOUNT_AFTER_MNT_DETACH_REQUIRED=false
 CLEANUP_REQUIRES_ORDER=true
+CLEANUP_INVOCATION_IS_THE_PRIVILEGED_FIXTURE_HELPER=true
+CLEANUP_INVOCATION_IS_NOT_THE_EVIDENCE_PROCESS=true
+CLEANUP_INVOCATION_HOLDS_ITS_OWN_DESCRIPTORS=true
+CLEANUP_DESCRIPTORS_CLOSED_BEFORE_LOOP_RELEASE=true
 CLEANUP_REMOVAL_ORDER_IS_CASE_AWARE=true
-CLEANUP_MOUNT_CASE_REMOVAL_ORDER=E13_image_then_E14_mountpoint_then_E15_root
-CLEANUP_OWNERSHIP_CASE_REMOVAL_ORDER=E16_fixture_file_then_E15_root
+CLEANUP_MOUNT_CASE_REMOVAL_ORDER=E20_mountpoint_then_E21_image_then_E22_root
+CLEANUP_OWNERSHIP_CASE_REMOVAL_ORDER=E21_fixture_file_then_E22_root
+CLEANUP_MOUNT_CASE_REMOVAL_ORDER_DERIVATION=mountpoint_is_removed_after_the_mount_is_released_and_before_the_image_that_carries_the_mount_case_file
 CLEANUP_OWNERSHIP_FIXTURE_UNLINK_REQUIRED=true
 CLEANUP_OWNERSHIP_FIXTURE_UNLINK_BEFORE_ROOT_REMOVAL=true
-CLEANUP_OWNERSHIP_FIXTURE_UNLINK_IS_EFFECT=E16
-CLEANUP_OWNERSHIP_FIXTURE_UNLINK_AUTHORITY=CAP_DAC_OVERRIDE
+CLEANUP_OWNERSHIP_FIXTURE_UNLINK_IS_EFFECT=E21
+CLEANUP_OWNERSHIP_FIXTURE_UNLINK_AUTHORITY=CAP_DAC_OVERRIDE,CAP_DAC_READ_SEARCH
 CLEANUP_OWNERSHIP_FIXTURE_UNLINK_REQUIRES_CAP_CHOWN=false
 CLEANUP_OWNERSHIP_CASE_ROOT_REMOVAL_WITHOUT_UNLINK_IS_INVALID=true
 ```
@@ -3173,6 +4092,8 @@ CLEANUP_REMOVED_OBJECT_KEEPS_SETUP_OWNERSHIP_UNTIL_REMOVAL=true
 The loop backing release is ordered after the retained descriptors are closed,
 because a loop device with an open reference is not releasable, and a release
 attempt before the close would report a false failure and invite a blind retry.
+The release precedes the removal of the image it was bound to, so no removal step
+ever unlinks a backing file that a loop device still carries.
 
 The final controls are mandatory and are recorded as observed values:
 
@@ -3183,9 +4104,22 @@ FIXTURE_ROOT_RESIDUE=false
 HOST_NAMESPACE_RESIDUE=false
 ```
 
-`PRIVATE_MOUNT_RESIDUE` is measured inside the private namespace, and
+`PRIVATE_MOUNT_RESIDUE` is measured inside the private namespace in the
+`mount-fixture` case, where a private namespace exists to measure; the ownership
+cases create none, so for them the equivalent control is
+`HOST_NAMESPACE_RESIDUE=false` measured by the host observer, and no ownership
+case may report a private-namespace residue control it did not measure (1.7.4).
 `HOST_NAMESPACE_RESIDUE` is measured by the host observer under 10.3. A residue
 control that is asserted rather than measured is not a control.
+
+```text
+PRIVATE_MOUNT_RESIDUE_CONTROL_SCOPE=mount-fixture
+OWNERSHIP_CASE_PRIVATE_MOUNT_RESIDUE_CONTROL=NOT_APPLICABLE_NO_PRIVATE_NAMESPACE
+OWNERSHIP_CASE_RESIDUE_CONTROL=HOST_NAMESPACE_RESIDUE_and_FIXTURE_ROOT_RESIDUE
+CLEANUP_STATE_MACHINE_SCOPE=mount-fixture
+OWNERSHIP_CASE_CLEANUP_STATE=NONE
+OWNERSHIP_CASE_CLEANUP_IS_E21_then_E22=true
+```
 
 Cleanup failure remains a visible, distinct, non-pass outcome. It is never
 suppressed, never retried blindly, and never converted into a pass:
@@ -3327,6 +4261,61 @@ These results are design implementability results, NOT qualification evidence.
 They state that each frozen requirement can be produced, carried, observed and
 consumed by the declared architecture.
 
+### 15.1 Structural probe obligations for this head
+
+Round 7 requires the closure to be proved mechanically rather than by row count,
+so the invariants below are the probe obligations for this head. Each is a
+comparison between two machine-like sets or between a set and the table, and each
+is falsifiable without reading prose. The row count alone is explicitly not
+completeness evidence:
+
+```text
+STRUCTURAL_PROBE_ROW_COUNT_IS_COMPLETENESS_EVIDENCE=false
+STRUCTURAL_PROBE_01=real_effect_set_equals_closure_table_rows
+STRUCTURAL_PROBE_02=no_placeholder_or_no_effect_row_counted
+STRUCTURAL_PROBE_03=each_effect_appears_in_exactly_its_intended_case_set
+STRUCTURAL_PROBE_04=each_cases_total_authority_set_equals_the_union_of_its_effects
+STRUCTURAL_PROBE_05=global_capability_inventory_equals_union_of_required_capability_authorities
+STRUCTURAL_PROBE_06=every_effect_row_carries_all_required_fields
+STRUCTURAL_PROBE_07=every_created_or_mutated_object_has_a_terminal_lifecycle
+STRUCTURAL_PROBE_08=machine_like_access_authority_sets_equal_the_table
+STRUCTURAL_PROBE_09=exactly_one_bare_current_round_parent_pointer
+STRUCTURAL_PROBE_10=no_unresolved_retired_token_remains_active
+STRUCTURAL_PROBE_11=exactly_one_value_per_current_pointer_key_document_wide
+STRUCTURAL_PROBE_COUNT=11
+EFFECT_ROW_REQUIRED_FIELDS=effect_number,case_scope,operation_or_effect,target_object,target_binding_mechanism,required_authority,preconditions,postconditions,cleanup_or_terminal_transition
+EFFECT_ROW_REQUIRED_FIELD_COUNT=9
+EVERY_EFFECT_ROW_HAS_ALL_REQUIRED_FIELDS=true
+PROBE_09_SCOPE=the_document_wide_KEY_VALUE_duplicate_value_probe_of_1_7_and_20
+PROBE_10_RETIRED_TOKEN_NAMES=OWNERSHIP_FIXTURE_REQUIRED_CAPABILITY_SET,RQP_L17_REQUIRED_CAPABILITY_SET
+PROBE_10_RETIRED_TOKENS_APPEAR_ONLY_INSIDE_RETIREMENT_RECORDS=true
+CURRENT_DOCUMENT_TOKEN_DUPLICATION_PROBE=PASS
+```
+
+The document-wide duplicate-value probe is the one 20 records: a `KEY=VALUE`
+token whose key is a current-pointer key — that is, a key that is not an
+enumeration over one attribute, not a historical round-qualified record, and not
+a per-case variant such as `reason_code` — must carry exactly one value in the
+whole document. The three legitimate multi-value forms are named explicitly so
+the probe has no silent exclusions:
+
+```text
+MULTI_VALUE_KEY_FORM_1=enumeration_over_one_attribute_such_as_MOUNT_STATE
+MULTI_VALUE_KEY_FORM_2=historical_round_qualified_record_such_as_A3D_CURRENT_REMEDIATION_ROUND_AT_THAT_HEAD
+MULTI_VALUE_KEY_FORM_3=per_case_or_per_object_variant_such_as_reason_code
+MULTI_VALUE_KEY_FORM_4=none_other_exists=true
+SUPERSEDED_ROUND_TOKENS_ARE_RENAMED_WITH_A_ROUND_QUALIFIER=true
+SUPERSEDED_ROUND_TOKENS_ARE_DELETED=false
+SUPERSEDED_ROUND_TOKENS_ARE_LEFT_COLLIDING=false
+```
+
+The round-6 and round-5 tokens that a later round superseded are therefore kept
+under a `ROUND6_` or round-qualified name rather than left colliding with the
+current key, so the history stays readable and the current-pointer key keeps
+exactly one value. That is the mechanism that closes finding 9 and the
+duplicate-value half of finding 1, and it is the reason the round-6 effect
+numbers are labelled as round-6 numbers everywhere they still appear.
+
 The round-1 check was re-run against the round-1 corrected document, in which
 the helper protocol (5.1-5.4), the boundary model (5.5-5.6), the process and
 namespace topology (10.1-10.2) and the cleanup state machine (10.4) are the
@@ -3345,9 +4334,17 @@ that the helper-created mount child cannot satisfy. Round 5 re-ran it against th
 round-5 head, in which the mode-provenance scope (5.8, 5.8.3), the child-object
 outcome scope (5.8.1, 5.8.3, 5.9), the per-effect privileged closure (1.5, 7) and
 the cleanup ownership-resolution (5, 10.4) are the corrected statements. Round 6
-re-runs it against this head, in which the ownership capability set (1.6, 7), the
-per-effect access authority (1.5, 1.6), the ownership-case removal effect and the
-case-aware root-removal lifecycle (1.5, 1.6, 10.4) are the corrected statements.
+re-ran it against the round-6 head, in which the ownership capability set (1.6,
+7), the per-effect access authority (1.5, 1.6), the ownership-case removal effect
+and the case-aware root-removal lifecycle (1.5, 1.6, 10.4) were the corrected
+statements. Round 7 re-runs it against this head, in which the effect sets are
+derived from the real lifecycle (1.7.1), the credential transition is a declared
+effect with frozen authorities (1.7.2, 5.10.3), the mountpoint-creation effect is
+declared (1.7.3, 5.9), the namespace scope and the case total authority sets are
+corrected (1.7.4, 1.7.5), the non-mount cleanup effects are common to every case
+(1.7.6), the parent-directory access authority is observed rather than assumed
+(1.7.7, 7), and the image access precondition and the loop target binding are
+frozen (1.7.8, 5.9) are the corrected statements.
 Each result is claimed only
 because the document at that head has no
 producer/carrier/lifecycle/consumer contradiction:
@@ -3397,7 +4394,7 @@ or authority gap left open, and each is claimed for its own stated reason:
 ```text
 ROUND5_RE_EVALUATED_RESULTS=PRIVILEGED_EFFECT_AUTHORITY_CLOSURE,PRIVILEGED_CHILD_INODE_CONFINEMENT_IMPLEMENTABILITY,OWNERSHIP_CAPABILITY_MODEL_IMPLEMENTABILITY,CLEANUP_STATE_MACHINE_IMPLEMENTABILITY,A3_CONTRACT_IMPLEMENTABILITY
 PRIVILEGED_EFFECT_AUTHORITY_CLOSURE=PASS
-PRIVILEGED_EFFECT_AUTHORITY_CLOSURE_ROWS=16
+ROUND5_PRIVILEGED_EFFECT_AUTHORITY_CLOSURE_ROWS=16
 EVERY_EFFECT_HAS_DECLARED_AUTHORITY=true
 EVERY_DECLARED_AUTHORITY_HAS_REQUIRED_EFFECT=true
 NO_BROADER_AUTHORITY_THAN_EFFECT_REQUIRES=true
@@ -3410,13 +4407,13 @@ A3_CONTRACT_IMPLEMENTABILITY=PASS
 MODE_PROVENANCE_SCOPE_CLOSED=true
 MOUNT_CHILD_MISSING_OUTCOME_CLOSED=true
 CLEANUP_OWNERSHIP_RESTORATION_RESOLVED=true
-BLOCKING_FINDINGS_CLOSED=3
+ROUND6_BLOCKING_FINDINGS_CLOSED=3
 BLOCKING_FINDINGS_OPEN=0
 ```
 
 - `PRIVILEGED_EFFECT_AUTHORITY_CLOSURE=PASS` (round-5 statement, corrected in
-  round 6) — all sixteen material effects have
-  one row each in 1.5, with a target object, a target-binding mechanism, an
+  round 6 and again in round 7) — at this head all twenty-two material effects
+  have one row each in 1.5, with a target object, a target-binding mechanism, an
   authority derived from that effect's own operation, preconditions,
   postconditions and a cleanup or terminal transition. The closure holds in both
   directions: every effect has a declared authority, and every declared authority
@@ -3426,14 +4423,15 @@ BLOCKING_FINDINGS_OPEN=0
   E3, E4, E7, E8, E10, E11 and E12, one declared access authority to the nine
   effects that touch objects under the invocation root, and `CAP_FOWNER`,
   `CAP_DAC_READ_SEARCH` and every other capability to none. That last clause was
-  wrong for the traversal effects and is corrected by round 6: the access
-  authority is now derived per effect, with `CAP_DAC_READ_SEARCH` bound to
-  E1, E2, E6, E7, E8, E9, E10 and E11 and `CAP_DAC_OVERRIDE` bound to
-  E5, E13, E14, E15 and E16, and `CAP_FOWNER` remains bound to none because no
-  effect needs it (1.6). The `mkfs` and image-creation effects are the clearest case of the
-  derivation mattering: they are ordinary file writes and creates, and grouping
-  them under `CAP_SYS_ADMIN` would have declared an authority no operation of
-  theirs exercises.
+  wrong for the traversal effects and round 6 corrected it by deriving the access
+  authority per effect; round 6's own numbers were then retired when round 7
+  rebuilt the table in lifecycle order (1.6). Round 7 corrects the two facts the
+  round-6 derivation still lacked: the credential transition's `CAP_SETGID` and
+  `CAP_SETUID`, which no round-6 row named, and the mountpoint-creation effect,
+  which no round-6 row had. The `mkfs` and image-creation effects remain the
+  clearest case of the derivation mattering: they are ordinary file writes and
+  creates, and grouping them under `CAP_SYS_ADMIN` would have declared an
+  authority no operation of theirs exercises.
 - `PRIVILEGED_CHILD_INODE_CONFINEMENT_IMPLEMENTABILITY=PASS` (re-evaluated) — for
   every case that pins a `FIXTURE_FILE_ROLE` child the helper opens the
   descriptor itself, and the round-5 scoping keeps that true at all three call
@@ -3485,38 +4483,44 @@ PRIVILEGED_EFFECT_AUTHORITY_CLOSURE=PASS
 CLEANUP_STATE_MACHINE_IMPLEMENTABILITY=PASS
 PRIVILEGED_CHILD_INODE_CONFINEMENT_IMPLEMENTABILITY=PASS
 A3_CONTRACT_IMPLEMENTABILITY=PASS
-OWNERSHIP_TOTAL_AUTHORITY_SET_CLOSED=true
-ACCESS_AUTHORITY_SCOPE_CLOSED=true
-OWNERSHIP_FIXTURE_FILE_REMOVAL_EFFECT_DECLARED=true
-ROOT_REMOVAL_CASE_LIFECYCLE_CLOSED=true
-REAL_EFFECT_ROW_COUNT=16
-PLACEHOLDER_EFFECT_ROW_COUNT=0
-ACCESS_AUTHORITY_EFFECT_TABLE_TOKEN_EQUIVALENT=true
-BLOCKING_FINDINGS_CLOSED=3
+ROUND6_OWNERSHIP_TOTAL_AUTHORITY_SET_CLOSED=true
+ROUND6_ACCESS_AUTHORITY_SCOPE_CLOSED=true
+ROUND6_OWNERSHIP_FIXTURE_FILE_REMOVAL_EFFECT_DECLARED=true
+ROUND6_ROOT_REMOVAL_CASE_LIFECYCLE_CLOSED=true
+ROUND6_REAL_EFFECT_ROW_COUNT=16
+ROUND6_PLACEHOLDER_EFFECT_ROW_COUNT=0
+ROUND6_ACCESS_AUTHORITY_EFFECT_TABLE_TOKEN_EQUIVALENT=true
+ROUND6_BLOCKING_FINDINGS_CLOSED=3
 BLOCKING_FINDINGS_OPEN=0
+ROUND6_RESULTS_ARE_ROUND6_RECORDS=true
+ROUND6_RESULTS_ARE_CURRENT_CLAIMS=false
 ```
 
-- `OWNERSHIP_CAPABILITY_MODEL_IMPLEMENTABILITY=PASS` (re-evaluated) — the
-  ownership case's authority is now decomposed and recomputed rather than
-  under-stated: `CAP_CHOWN` is exactly the mutation authority for the single
-  `fchown`, `CAP_DAC_READ_SEARCH` is exactly the traversal authority needed to
-  open the pinned child under the owner-only root, and `CAP_DAC_OVERRIDE` is
-  exactly the directory-write authority needed to unlink that child in cleanup.
-  All three are real required capabilities, each is bound to a specific
-  operation, and the case's total set is their union and nothing more.
-- `PRIVILEGED_EFFECT_AUTHORITY_CLOSURE=PASS` (re-evaluated) — E8, E10 and E11 now
-  appear in the access-authority sets their own rows already required, every
-  effect's access authority was derived independently for that effect, and the
-  row sets and the machine-like scope tokens were checked to be identical
-  (`ACCESS_AUTHORITY_EFFECT_TABLE_TOKEN_EQUIVALENT=true`). `E16` is a real
-  destructive effect instead of a placeholder, so the sixteen rows are sixteen
-  real material effects.
-- `CLEANUP_STATE_MACHINE_IMPLEMENTABILITY=PASS` (re-evaluated) — the ownership
-  cases now have a removal step for the object the setup mutated, ordered before
-  the root removal, with its own binding, authority and postcondition; the
-  root-removal precondition is case-aware, so no case requires an effect that its
-  own lifecycle never performs; and the state machine's mount-case transitions
-  are unchanged.
+- `OWNERSHIP_CAPABILITY_MODEL_IMPLEMENTABILITY=PASS` (round-6 statement,
+  corrected in round 7) — the ownership case's authority is decomposed and
+  recomputed rather than under-stated: `CAP_CHOWN` is exactly the mutation
+  authority for the single `fchown`, `CAP_DAC_READ_SEARCH` is exactly the
+  traversal authority needed to open the pinned child under the owner-only root
+  and to reach the root's parent, `CAP_DAC_OVERRIDE` is exactly the
+  directory-write authority needed to unlink that child and to remove the root
+  entry, and `CAP_SETGID` with `CAP_SETUID` are exactly the credential
+  transition's authorities. All five are real required capabilities, each is
+  bound to a specific operation, and the case's total set is their union and
+  nothing more.
+- `PRIVILEGED_EFFECT_AUTHORITY_CLOSURE=PASS` (round-6 statement, corrected in
+  round 7) — round 6 closed the access-authority scope disagreement by deriving
+  each effect's access authority for that effect and by checking the row sets
+  against the machine-like tokens
+  (`ROUND6_ACCESS_AUTHORITY_EFFECT_TABLE_TOKEN_EQUIVALENT=true`). Round 7 keeps
+  that method and re-derives the sets over the rebuilt table, so the equivalence
+  is now stated once, in 1.5, against the current effect numbers.
+- `CLEANUP_STATE_MACHINE_IMPLEMENTABILITY=PASS` (round-6 statement, corrected in
+  round 7) — the ownership cases now have a removal step for the object the setup
+  mutated, ordered before the root removal, with its own binding, authority and
+  postcondition. Round 6 made the root-removal precondition case-aware; round 7
+  withdraws that conditionality (1.7.6), because the removal effect it branched
+  on is common to every case and a case-aware precondition is the shape that
+  would let a case require an effect its own lifecycle never performs.
 - `PRIVILEGED_CHILD_INODE_CONFINEMENT_IMPLEMENTABILITY=PASS` (re-evaluated) — the
   confinement model is unchanged at all three call sites, and the cleanup unlink
   of the ownership child revalidates the pinned identity by a no-follow `fstatat`
@@ -3524,11 +4528,97 @@ BLOCKING_FINDINGS_OPEN=0
   step instead of ending at the mutation.
 - `A3_CONTRACT_IMPLEMENTABILITY=PASS` is claimed only after the round-6
   re-evaluation above and every earlier result it depends on are `PASS`, and only
-  because each of the three new blocking findings is closed at this head by a
-  statement that names its owner, producer, carrier, consumer and closing point:
+  because each of the three new blocking findings is closed at the round-6 head by
+  a statement that names its owner, producer, carrier, consumer and closing point:
   the ownership capability set split (1.6, 7), the per-effect access authority
   with its row/token equivalence (1.5, 1.6), and the ownership-case removal effect
-  with the case-aware root-removal lifecycle (1.5, 1.6, 10.4).
+  with the case-aware root-removal lifecycle (1.5, 1.6, 10.4). This is a round-6
+  statement; the round-7 result below is the one that governs this head.
+
+Round 7 re-evaluated the six results the nine new blocking findings touch. Each is
+`PASS` only because the corrected statements close the gap its finding named:
+
+```text
+ROUND7_RE_EVALUATED_RESULTS=PRIVILEGED_EFFECT_AUTHORITY_CLOSURE,CROSS_BOUNDARY_CONTINUITY_IMPLEMENTABILITY,NAMESPACE_LIFECYCLE_IMPLEMENTABILITY,CLEANUP_STATE_MACHINE_IMPLEMENTABILITY,PRIVILEGED_CHILD_INODE_CONFINEMENT_IMPLEMENTABILITY,A3_CONTRACT_IMPLEMENTABILITY
+PRIVILEGED_EFFECT_AUTHORITY_CLOSURE=PASS
+CROSS_BOUNDARY_CONTINUITY_IMPLEMENTABILITY=PASS
+NAMESPACE_LIFECYCLE_IMPLEMENTABILITY=PASS
+CLEANUP_STATE_MACHINE_IMPLEMENTABILITY=PASS
+PRIVILEGED_CHILD_INODE_CONFINEMENT_IMPLEMENTABILITY=PASS
+A3_CONTRACT_IMPLEMENTABILITY=PASS
+EFFECT_SET_DERIVED_FROM_REAL_LIFECYCLE=true
+CASE_EFFECT_SCOPE_CLOSED=true
+CASE_TOTAL_AUTHORITY_SETS_CLOSED=true
+CREDENTIAL_TRANSITION_EFFECT_DECLARED=true
+SUPPLEMENTARY_GROUP_SEMANTICS_CLOSED=true
+MOUNTPOINT_CREATION_EFFECT_DECLARED=true
+NAMESPACE_SCOPE_CLOSED=true
+E15_PARENT_ACCESS_CLOSED=true
+IMAGE_ACCESS_PRECONDITION_CLOSED=true
+LOOP_TARGET_BINDING_CLOSED=true
+GIT_CURRENT_PARENT_TOKEN_UNIQUE=true
+REAL_EFFECT_ROW_COUNT=22
+PLACEHOLDER_EFFECT_ROW_COUNT=0
+CASE_TOTAL_AUTHORITY_SET_EQUALS_EFFECT_AUTHORITY_UNION=true
+GLOBAL_CAPABILITY_INVENTORY_EQUALS_UNION_OF_REQUIRED_CAPABILITY_AUTHORITIES=true
+EVERY_CREATED_OR_MUTATED_OBJECT_HAS_TERMINAL_LIFECYCLE=true
+CURRENT_DOCUMENT_TOKEN_DUPLICATION_PROBE=PASS
+BLOCKING_FINDINGS_CLOSED=9
+BLOCKING_FINDINGS_OPEN=0
+```
+
+- `PRIVILEGED_EFFECT_AUTHORITY_CLOSURE=PASS` (round-7 statement) — the effect set
+  is derived from the real lifecycle, each case's effect set and total authority
+  set are stated separately and equal by construction, and the closure holds in
+  both directions over all twenty-two rows: every effect has a declared authority,
+  every declared authority has a required effect, and no declared authority is
+  broader than the effects that need it. `CAP_SETGID` and `CAP_SETUID` are bound
+  to exactly one effect, the credential transition, and `CAP_SYS_ADMIN` is bound
+  to exactly the mount case's seven mount and loop effects.
+- `CROSS_BOUNDARY_CONTINUITY_IMPLEMENTABILITY=PASS` (re-evaluated) — the
+  supplementary group list is the one new crossing fact, and it is classified
+  rather than left unclassified: `INHERITED` with no carrier, independently
+  reacquired by the evidence process from itself, compared against the frozen
+  empty list, recorded before the production primitive, and closed at the same
+  checkpoint as the identity and capability controls (5.10.3, 5.6 T10, 10.2 N4).
+  No row in 5.5, 5.6 or 10.2 claims a carrier for an inherited fact.
+- `NAMESPACE_LIFECYCLE_IMPLEMENTABILITY=PASS` (re-evaluated) — the private mount
+  namespace is a `mount-fixture` effect, created by the launcher before the
+  credential transition, inherited by the transition child across `fork` and
+  `execve`, and destroyed with the last member process; the ownership cases create
+  no namespace and claim no namespace control. The lifecycle is therefore
+  implementable for every case, and no case is required to hold state it never
+  creates.
+- `CLEANUP_STATE_MACHINE_IMPLEMENTABILITY=PASS` (re-evaluated) — the cleanup
+  order is `E20` then `E21` then `E22` for `mount-fixture` and `E21` then `E22`
+  for the ownership cases; the cleanup invocation holds its own descriptors, the
+  setup invocation closes the image and loop descriptors before it exits, and the
+  loop release precedes the image removal it would otherwise block.
+- `PRIVILEGED_CHILD_INODE_CONFINEMENT_IMPLEMENTABILITY=PASS` (re-evaluated) — the
+  confinement model is unchanged at all three call sites; the mount case's
+  `MOUNTPOINT_ROLE` creation is now an effect row of its own with
+  `HELPER_ROOT_REJECTED` for a pre-existing object, so the object E16 mounts on is
+  the object E6 created and pinned, and the ownership cases still bind a child
+  that must preexist.
+- `A3_CONTRACT_IMPLEMENTABILITY=PASS` is claimed only after the round-7
+  re-evaluation above and every earlier result it depends on are `PASS`, and only
+  because each of the nine blocking findings is closed at this head by a statement
+  that names its owner, its producer, its carrier, its consumer and its closing
+  point.
+
+The nine round-7 blocking findings are closed as follows:
+
+| Blocking finding | Corrected statement at this head | Why it is now implementable |
+| --- | --- | --- |
+| the effect set was derived from the existing table, so the table validated itself | the case effect sets and the closure table are derived from the real lifecycle and the object lifecycle, and `EFFECT_SET_DERIVED_FROM_EXISTING_TABLE=false` with `EFFECT_ROW_COUNT_IS_COMPLETENESS_EVIDENCE=false` (1.7.1, 1.5) | the twenty-two rows are the union of three independently enumerated case sets, so a missing effect shows up as an effect absent from every case's set rather than as a row count that still matches |
+| `E3`/`E4` were run-scoped while section 10 is RQP-L17-specific, and the RQP-L17 set omitted the namespace authority | the private namespace and its private propagation are `mount-fixture` effects `E9` and `E10`, and `OWNERSHIP_CASE_REQUIRES_PRIVATE_MOUNT_NAMESPACE=false` with `OWNERSHIP_CASE_REQUIRES_CAP_SYS_ADMIN=false` (1.7.4, 1.5, 10.1) | the ownership cases never mount, so they need no namespace and acquire no `CAP_SYS_ADMIN`; RQP-L17 still gets both effects because it does mount, and its total authority set now names them |
+| the credential transition was not a declared effect | `E1` declares the transition with the frozen `setgroups`/`setgid`/`setuid` order, the `CAP_SETGID` and `CAP_SETUID` authority, and the frozen empty supplementary group list with its producer, continuity class, independent reacquisition, comparison and closing point (1.7.2, 5.10.3, 10.1) | every step of the transition is a real operation the launcher's child can perform with a declared authority, the order is forced by which capability each step needs, and the value the evidence process must have is measured from the process itself rather than assumed |
+| section 5.9 required helper-exclusive creation of `MOUNTPOINT_ROLE` but no row created it | `E6` is the mountpoint-creation effect: `mkdirat` relative to the validated root descriptor, exclusive create with `HELPER_ROOT_REJECTED` for a pre-existing object, exact `0755`, `CAP_DAC_OVERRIDE` plus `CAP_DAC_READ_SEARCH`, and cleanup through the existing mountpoint-removal effect `E20` (1.7.3, 5.9) | the requirement now has an operation, a binding, an authority, preconditions, postconditions and a terminal transition, and the `0755` mode is what makes the ordinary identity's DAC witness reachable through the mountpoint |
+| one "mount-related capability set" stood in for each case's whole authority set | `RQP_L17_REQUIRED_CAPABILITY_SET` is retired and replaced by `RQP_L17_TOTAL_REQUIRED_AUTHORITY_SET` with `RQP_L17_MOUNT_OPERATION_CAPABILITY_SET=CAP_SYS_ADMIN` kept as a clearly scoped subset, and each case's total set is derived from its own effects (1.7.5, 7) | a total set and a subset can no longer be confused, because both are named and the total is defined as the union of the case's effect rows |
+| `E15`'s authority scope named only below-root access while its target is the root's parent | `BELOW_ROOT_ACCESS_AUTHORITY_SCOPE` and `ROOT_PARENT_REMOVAL_ACCESS_AUTHORITY_SCOPE` are separate tokens, and `E22`'s parent-removal authority is selected by four observed `RUNNER_TEMP` facts (1.7.7, 7, 1.5) | the capability claim now follows an observation: if the parent's DAC already authorizes the removal, no capability is claimed, and a sticky parent is a `QUALIFICATION_GAP` rather than an undeclared `CAP_FOWNER` |
+| `E6`/`E7` relied on an image write permission `E5` never froze | image access is frozen as measured postconditions: regular single-link file, owner is the reviewed helper identity, `IMAGE_ROLE_S_IMODE=0600` exact with owner-write set, established by creation with no `chmod`/`fchmod`, and a design-frozen size set by `ftruncate` (1.7.8, 5.9) | the format and the loop binding both consume a fact the creation actually establishes and the preflight actually observes, instead of assuming a default mode |
+| the contract allowed a pathname-based `losetup` setup while claiming a descriptor-mediated binding | one mechanism is frozen: `LOOP_CTL_GET_FREE` plus `LOOP_CONFIGURE` with the pinned image descriptor, `LOOP_GET_STATUS64` read-back verification, `LOSETUP_FIND_SHOW_IS_SUFFICIENT_EVIDENCE=false` and `LOSETUP_PATHNAME_FORM_USED=false` (1.7.8, 5.9) | the association is bound to the exact inode the helper pinned because the ioctl takes that descriptor, and the binding is verified after setup rather than inferred from a tool's success |
+| two different bare `A3D_REMEDIATION_COMMIT_PARENT` values existed at one head | the historical values are preserved under round-qualified keys, and this head carries exactly one bare current-round pointer (1.7, 20) | the failed head stays auditable from the branch tip, and the current pointer can be read without disambiguating which round it belongs to |
 
 The three round-6 blocking findings are closed as follows:
 
@@ -3549,12 +4639,15 @@ The three round-5 blocking findings remain closed as follows:
 `A3_CONTRACT_IMPLEMENTABILITY=PASS` is claimed only after the four round-3
 results and the three round-2 results above it are `PASS`, and only after the
 round-4 re-evaluation confirms that the corrected owner predicates are mutually
-implementable, the round-5 re-evaluation confirms that all sixteen tested
-effects had a declared authority, and the round-6 re-evaluation (below) confirms
-that the ownership case's total authority set is truthful, that every effect's
-access authority is derived for that effect, and that the sixteen closure rows
-are sixteen real material effects with no placeholder. Each of those seven is
-claimed for a stated reason:
+implementable, the round-5 re-evaluation confirms that every effect at that head
+had a declared authority, the round-6 re-evaluation confirms that the ownership
+case's total authority set is truthful and that every effect's access authority
+is derived for that effect, and the round-7 re-evaluation confirms that the effect
+set is derived from the real lifecycle, that each case's total authority set
+equals the union of its own effects, and that the credential transition, the
+mountpoint creation, the namespace scope, the parent-directory access authority,
+the image access preconditions and the loop target binding are all closed. Each
+of those results is claimed for a stated reason:
 
 - `OWNERSHIP_CAPABILITY_MODEL_IMPLEMENTABILITY=PASS` — the helper performs
   exactly one privileged mutation per ownership case, `fchown(child_fd,
@@ -3562,10 +4655,12 @@ claimed for a stated reason:
   `CAP_CHOWN` is exactly the mutation authority; no mode is changed by the
   helper, so `CAP_FOWNER` is not required. The case's access authority is a
   separate and genuinely required fact, not an unnecessary one: the pinned child
-  is opened through the owner-only root with `CAP_DAC_READ_SEARCH`, and it is
-  unlinked during cleanup with `CAP_DAC_OVERRIDE`, so the ownership cases' total
-  required authority set is `CAP_CHOWN,CAP_DAC_READ_SEARCH,CAP_DAC_OVERRIDE` and
-  nothing more (1.6, 7). `0644` is established by the ordinary process before the helper runs
+  is opened through the owner-only root with `CAP_DAC_READ_SEARCH`, it is
+  unlinked during cleanup with `CAP_DAC_OVERRIDE`, and the case's credential
+  transition uses `CAP_SETGID` and `CAP_SETUID`, so the ownership cases' total
+  required authority set is
+  `CAP_CHOWN,CAP_DAC_OVERRIDE,CAP_DAC_READ_SEARCH,CAP_SETGID,CAP_SETUID` and
+  nothing more (1.7.5, 7). `0644` is established by the ordinary process before the helper runs
   in the ownership cases (4.1) and at creation in the mount case (5.8.3), and the
   helper's post-`fchown` `fstat` on the same pinned descriptor observes `st_uid
   == derived_target_uid` and `S_IMODE == 0644` and fails the fixture construction
@@ -3583,13 +4678,20 @@ claimed for a stated reason:
   `st_uid`/`st_gid` before any credential drop, so the consumer and the closing
   checkpoint exist; and `SUDO_UID`/`SUDO_GID` are demoted to corroboration, so
   no requirement rests on a value the fixture cannot authoritatively obtain.
-- `NONROOT_EVIDENCE_IDENTITY_IMPLEMENTABILITY=PASS` — `euid`, `egid` and
-  `CapEff` are all readable by a process from itself (`os.geteuid`, `os.getegid`
-  and the real `/proc/self/status` mask on the declared Linux platform), so the
-  evidence process can produce and consume the fact with no carrier and no
-  privileged help; the required comparisons are exact equalities and a zero mask,
-  so the check is decidable; and a mismatch is classified as a fixture failure
-  before the production call rather than as evidence.
+- `NONROOT_EVIDENCE_IDENTITY_IMPLEMENTABILITY=PASS` — `euid`, `egid`, the
+  supplementary group list and `CapEff` are all readable by a process from itself
+  (`os.geteuid`, `os.getegid`, `os.getgroups` and the real `/proc/self/status`
+  `Groups` and `CapEff` fields on the declared Linux platform), so the evidence
+  process can produce and consume every fact with no carrier and no privileged
+  help; the required comparisons are exact equalities and a zero mask, so each
+  check is decidable; and a mismatch of any of them is classified as a fixture
+  failure before the production call rather than as evidence.
+- `NAMESPACE_LIFECYCLE_IMPLEMENTABILITY=PASS` — the private namespace is created
+  by the already-privileged launcher, inherited by the transition child across
+  `fork` and `execve`, and reported by each process from its own
+  `/proc/self/ns/mnt`; nothing about it requires a carrier, an identity
+  preservation across the credential transition, or a helper invocation the
+  mount case cannot construct, and the ownership cases do not enter it at all.
 - `FOREIGN_UID_AUTHORITY_IMPLEMENTABILITY=PASS` — a single design-frozen literal
   (`65534`) is available to both the contract reviewer and the implementation, so
   the target identity is reviewable and preflightable without an
@@ -3730,17 +4832,21 @@ artifact and neither is unavailable on the declared platform.
 | Ordinary pytest never runs privileged fixtures | frozen, section 12 | `pyproject.toml` collection scope unchanged | not applicable | privileged file not auto-discovered |
 | Formal CI topology is unchanged | frozen, section 6 | `.github/workflows/ci.yml` unchanged | not applicable | unchanged |
 | The helper accepts only an enum case and an untrusted root locator | frozen, sections 5.1-5.2 | none added; the enum and the derived constants are helper-internal | no production symbol changes | privileged case later; argument and derivation behavior is pinned by the implementation PR |
-| The helper and the evidence process share one measured private namespace | frozen, section 10.1 | none added | no production symbol changes | privileged case later; the three namespace identities are measured at run time |
+| The helper and the evidence process share one measured private namespace in the mount case, and neither runs in one in the ownership cases | frozen, sections 10.1 and 1.7.4 | none added | no production symbol changes | privileged case later; the three namespace identities are measured for `mount-fixture`, and the ownership cases report no namespace control as evidence |
 | Every crossing fact carries exactly one continuity class | frozen, sections 5.5-5.6 and 10.2 | none added | not applicable | privileged case later; the classes are pinned by the implementation PR |
 | Namespace membership is inherited and namespace identity is independently reacquired | frozen, sections 5.5 and 10.1 | none added | no production symbol changes | privileged case later; the two private identities and the host identity are measured |
 | The helper changes ownership only in the ownership cases, never mode anywhere | frozen, sections 4.1-4.2 and 5.8.2-5.8.3 | none added | no production symbol changes | privileged case later; `fchmod` is absent from the helper, the mount case performs no ownership call, and the post-`fchown` `fstat` is recorded |
-| The ownership cases require `CAP_CHOWN` for the mutation plus `CAP_DAC_READ_SEARCH` and `CAP_DAC_OVERRIDE` for access, and the mount case's fixture file requires no ownership capability at all | frozen, sections 5.8.2-5.8.3, 7, 1.5 and 1.6 | none added | no production symbol changes | privileged case later; the helper's real `CapEff` is compared against `OWNERSHIP_CASE_TOTAL_REQUIRED_AUTHORITY_SET`, the absence of an ownership call in the mount case is recorded, and the ordinary process's real `O_RDONLY` success is recorded |
-| Every effect's pathname or object access authority is derived for that effect, and the effect rows and scope tokens are identical | frozen, sections 1.5 and 1.6 | none added; the per-effect access sets are design facts | no production symbol changes | privileged case later; `ACCESS_AUTHORITY_EFFECT_SET` is compared against the access each effect really performs, and E3/E4/E12 are checked to need none |
-| The ownership fixture file is removed before the invocation root, with no ownership restoration | frozen, sections 1.5, 1.6 and 10.4 | none added | no production symbol changes | privileged case later; the `E16` unlink is recorded with its identity revalidation, and the root removal is recorded as case-aware |
+| The ownership cases require `CAP_CHOWN` for the mutation, `CAP_DAC_READ_SEARCH` and `CAP_DAC_OVERRIDE` for access and `CAP_SETGID`/`CAP_SETUID` for the credential transition, and the mount case's fixture file requires no ownership capability at all | frozen, sections 5.8.2-5.8.3, 5.10.3, 7, 1.5 and 1.7.5 | none added | no production symbol changes | privileged case later; the helper's and the launcher's real `CapEff` are compared against `OWNERSHIP_CASE_TOTAL_REQUIRED_AUTHORITY_SET` and `MOUNT_FIXTURE_TOTAL_REQUIRED_AUTHORITY_SET`, the absence of an ownership call in the mount case is recorded, and the ordinary process's real `O_RDONLY` success is recorded |
+| Every effect's pathname or object access authority is derived for that effect, and the effect rows and scope tokens are identical | frozen, sections 1.5 and 1.7.5 | none added; the per-effect access sets are design facts | no production symbol changes | privileged case later; `ACCESS_AUTHORITY_EFFECT_SET` is compared against the access each effect really performs, and the six no-access effects are checked to need none |
+| The fixture-object removal and the invocation-root removal are the same two effects in every case | frozen, sections 1.5, 1.7.6 and 10.4 | none added | no production symbol changes | privileged case later; the `E21` removal is recorded with its identity revalidation in each case, and the `E22` root removal is recorded with its observed `RUNNER_TEMP` DAC facts |
+| The launcher's forked child becomes the ordinary identity by direct syscalls in the frozen order, and the supplementary group list is empty | frozen, sections 1.7.2, 5.10.3 and 10.1 | none added | no production symbol changes | privileged case later; the post-transition uid triple, gid triple, empty `ACTUAL_SUPPLEMENTARY_GROUPS` and zero `ACTUAL_CAP_EFF` are all measured from the evidence process before the production call |
+| The private mount namespace and its private propagation exist only in the mount case | frozen, sections 1.7.4, 10.1 and 10.2 | none added | no production symbol changes | privileged case later; the three namespace identities are measured in `mount-fixture`, and the ownership cases assert that they ran in the host namespace rather than reporting a namespace control |
+| The mountpoint is helper-created exclusively at an exact `0755`, and the image at an exact `0600` with owner-write | frozen, sections 1.7.3, 1.7.8 and 5.9 | none added | no production symbol changes | privileged case later; the preflight observes both modes, the owners and the link counts, and a pre-existing object at either role is refused |
+| The loop backing is bound by descriptor to the pinned image, and the binding is verified after setup | frozen, sections 1.7.8 and 5.9 | none added | no production symbol changes | privileged case later; the `LOOP_CONFIGURE` call takes the pinned image descriptor, `LOOP_GET_STATUS64` read-back equality is recorded, and no pathname-based tool performs the binding |
 | The pinned child's ownership predicate is case-specific: `st_uid == ORDINARY_UID` for the ownership cases, `st_uid == 0` and no ownership mutation for the mount case | frozen, sections 5.8.1-5.8.3 and 5.9 | none added; the role name and the predicates are helper-internal | no production symbol changes | privileged case later; each case's own predicate is asserted on the helper-pinned descriptor, and the common structural requirements are shared, not the ownership predicate |
 | The foreign target uid is the design-frozen literal `65534` | frozen, sections 4.4 and 5.2 | none added; the literal is helper-internal | no production symbol changes | privileged case later; the literal, the ordinary `euid != 65534` precondition and the no-substitution rule are pinned |
 | The ordinary uid/gid is explicitly handed off and validated before any credential drop | frozen, sections 5.5-5.6, 5.10.1-5.10.2 and 10.1 | none added | no production symbol changes | privileged case later; the handoff arguments and the launcher's root-ownership validation are recorded |
-| The evidence process reacquires its own identity and requires `CapEff == 0` | frozen, sections 5.5-5.6, 5.10.3 and 10.1 | none added | no production symbol changes | privileged case later; `ACTUAL_EUID`, `ACTUAL_EGID` and the decoded `ACTUAL_CAP_EFF` are measured before the production call |
+| The evidence process reacquires its own identity, supplementary group list and `CapEff == 0` | frozen, sections 5.5-5.6, 5.10.3, 5.10.4 and 10.1 | none added | no production symbol changes | privileged case later; `ACTUAL_EUID`, `ACTUAL_EGID`, `ACTUAL_SUPPLEMENTARY_GROUPS` and the decoded `ACTUAL_CAP_EFF` are measured before the production call |
 | The privileged ownership mutation acts on a helper-pinned child descriptor, and the mount case's child is pinned the same way without a mutation | frozen, sections 5.8.1-5.8.3 | none added | no production symbol changes | privileged case later; the case-appropriate `fstat` facts, the post-`fchown` `fstat` in the ownership cases and the post-mutation reacquisitions are measured |
 | The mount-case fixture file is helper-created, root-owned and never ownership-mutated | frozen, sections 5.8.3 and 5.9 | none added | no production symbol changes | privileged case later; `st_uid == 0`, the absence of any ownership call, and the ordinary process's real `O_RDONLY` open before the positive pre-drift admission are measured |
 | Mount fixture file ownership is not RQP-L09 evidence and the ordinary read is the real DAC witness | frozen, sections 5.8.3, 9 and 11 | none added | no production symbol changes | privileged case later; `MOUNT_FIXTURE_ROOT_OWNER_IS_RQP_L09_EVIDENCE=false` and `MOUNT_FIXTURE_ORDINARY_READ_IS_REAL_DAC_WITNESS=true` are pinned, and the mount case reports no L09 result |
@@ -3777,7 +4883,8 @@ preview of the later runtime work.
   ownership cases only; `os.fchmod` is not used, because no mode is changed after
   creation, so the pinned child model needs no new API, no new dependency, no
   descriptor transport and no capability beyond `CAP_CHOWN` for the ownership
-  effects. The mount case is expressible in the same standard library: the helper
+  mutation itself; the case's other authorities are access and credential
+  authorities, not mutation authorities. The mount case is expressible in the same standard library: the helper
   creates the file inside its own freshly mounted filesystem with
   `O_CREAT|O_EXCL` and mode `0644` under a creation-time umask that cannot clear
   those bits, opens it again with `O_RDONLY|O_NOFOLLOW|O_CLOEXEC` to pin it, and
@@ -3787,8 +4894,9 @@ preview of the later runtime work.
   model is
   expressible with the standard library alone as well: the ordinary process
   measures itself with `os.geteuid`/`os.getegid`, the launcher passes on two
-  integers, and the evidence process reads `os.geteuid`, `os.getegid` and the
-  real `CapEff` mask from `/proc/self/status`. No new public API is required.
+  integers, and the evidence process reads `os.geteuid`, `os.getegid`,
+  `os.getgroups` and the real `CapEff` and `Groups` fields from
+  `/proc/self/status`. No new public API is required.
 - Can existing evidence and data structures carry all required facts? Yes: the
   retained security tuple, the mount description triple, the retained
   descriptor identity and the real mount table carry every fact the cases
@@ -3806,12 +4914,13 @@ preview of the later runtime work.
   carries no authority. Three facts cross it. An untrusted root locator and a
   closed case enum are handed off to the helper (5.1-5.3). The ordinary runner's
   uid and gid are handed off to the launcher as fixed numeric arguments and
-  validated there against the real invocation root before the credential drop
-  (5.10.1-5.10.2). Every other crossing fact is inherited (namespace membership)
-  or independently reacquired — including the evidence process's own `euid`,
-  `egid` and effective capability mask (5.10.3) — and the privileged ownership
-  mutation's target is acquired by the helper itself (5.8) rather than handed
-  off, as is the mount case's fixture child (5.8.1, 5.8.3). A second,
+  validated there against the real invocation root before the credential
+  transition (5.10.1-5.10.2). Every other crossing fact is inherited (namespace
+  membership and the emptied supplementary group list) or independently
+  reacquired — including the evidence process's own `euid`, `egid`, supplementary
+  group list and effective capability mask (5.10.3, 5.10.4) — and the privileged
+  ownership mutation's target is acquired by the helper itself (5.8) rather than
+  handed off, as is the mount case's fixture child (5.8.1, 5.8.3). A second,
   non-process authority boundary — executed workflow definition
   versus code under qualification — is modeled in 6.3 and closed by a
   blob-identity equality check.
@@ -3920,12 +5029,58 @@ ROUND6_PREVIEW_OWNERSHIP_OPERATION_ADDED=false
 `ROUND6_PREVIEW_ADDED_DECLARED_AUTHORITY=CAP_DAC_READ_SEARCH` is stated rather
 than hidden: round 5 declared traversal access as `CAP_DAC_OVERRIDE` and round 6
 names the narrower `CAP_DAC_READ_SEARCH` for the traversal-only effects, so the
-declared inventory grows from three capabilities to four while each individual
-attribution narrows. `CAP_DAC_OVERRIDE` remains required, but only for the
+declared inventory grew from three capabilities to four while each individual
+attribution narrowed. `CAP_DAC_OVERRIDE` remains required, but only for the
 effects that really write a directory entry. Neither capability is a broader
 grant than the fixture's operations justify, both are present in the capability
 set `sudo -n` already provides on the declared runner, and neither adds a public
 API, a dependency or an ownership operation.
+
+Round 7's preview question is whether the three added effects and the corrected
+authority sets map onto operations the architecture can perform. They do:
+
+```text
+ROUND7_PREVIEW_CREDENTIAL_TRANSITION_IMPLEMENTABLE=true
+ROUND7_PREVIEW_CREDENTIAL_TRANSITION_API=os.setgroups_os.setgid_os.setuid_os.execv
+ROUND7_PREVIEW_CREDENTIAL_TRANSITION_API_IS_STANDARD_LIBRARY=true
+ROUND7_PREVIEW_MOUNTPOINT_CREATION_IMPLEMENTABLE=true
+ROUND7_PREVIEW_MOUNTPOINT_CREATION_API=os.mkdir_with_dir_fd_and_mode_0755
+ROUND7_PREVIEW_IMAGE_CREATION_IMPLEMENTABLE=true
+ROUND7_PREVIEW_IMAGE_CREATION_API=os.open_O_CREAT_O_EXCL_MODE_0600_then_os.ftruncate
+ROUND7_PREVIEW_LOOP_BINDING_IMPLEMENTABLE=true
+ROUND7_PREVIEW_LOOP_BINDING_API=fcntl.ioctl_on_dev_loop_control_and_dev_loopN
+ROUND7_PREVIEW_LOOP_BINDING_API_IS_STANDARD_LIBRARY=true
+ROUND7_PREVIEW_IMAGE_ACCESS_PRECONDITION_IMPLEMENTABLE=true
+ROUND7_PREVIEW_SUPPLEMENTARY_GROUP_SEMANTICS_IMPLEMENTABLE=true
+ROUND7_PREVIEW_SUPPLEMENTARY_GROUP_API=os.setgroups_os.getgroups
+ROUND7_PREVIEW_PARENT_DAC_OBSERVATION_IMPLEMENTABLE=true
+ROUND7_PREVIEW_PARENT_DAC_OBSERVATION_API=os.stat_of_RUNNER_TEMP_compared_against_the_helper_identity
+ROUND7_PREVIEW_CASE_TOTAL_AUTHORITY_SETS_IMPLEMENTABLE=true
+ROUND7_PREVIEW_DECLARED_AUTHORITY_COUNT_BEFORE_ROUND7=4
+ROUND7_PREVIEW_DECLARED_AUTHORITY_COUNT_AFTER_ROUND7=6
+ROUND7_PREVIEW_ADDED_DECLARED_AUTHORITIES=CAP_SETGID,CAP_SETUID
+ROUND7_PREVIEW_NEW_PUBLIC_API_REQUIRED=false
+ROUND7_PREVIEW_NEW_DEPENDENCY_REQUIRED=false
+ROUND7_PREVIEW_NEW_PERSISTENT_STATE_REQUIRED=false
+ROUND7_PREVIEW_OWNERSHIP_OPERATION_ADDED=false
+ROUND7_PREVIEW_MODE_CHANGE_CALL_ADDED=false
+ROUND7_PREVIEW_AUTHORITY_GRANT_WIDENED=false
+ROUND7_PREVIEW_CAP_SYS_ADMIN_SCOPE_NARROWED=true
+ROUND7_PREVIEW_EXTERNAL_PRIVILEGE_TOOL_ADDED=false
+ROUND7_PREVIEW_STOPS_IMPLEMENTATION_CONTRACT=false
+```
+
+The two added capabilities are not a widened grant but a newly *named* one:
+`CAP_SETGID` and `CAP_SETUID` were always inherent in a `sudo -n` root launcher
+changing a child's identity, and round 7 declares them because the transition is
+now a declared effect rather than an implicit consequence of launching a
+process. At the same time the `CAP_SYS_ADMIN` scope narrows, because the private
+namespace and its propagation move out of the ownership cases' path entirely.
+Every added operation is expressible in the Python standard library
+(`os.setgroups`, `os.setgid`, `os.setuid`, `os.execv`, `os.mkdir` with `dir_fd`,
+`os.open` with `dir_fd` and `O_CREAT|O_EXCL`, `os.ftruncate`, and `fcntl.ioctl`
+for the loop control and configuration requests), so no new dependency and no new
+public API is introduced.
 
 If any of these answers stops being true during implementation, the
 implementation PR MUST stop and return here rather than improvising authority.
@@ -4025,6 +5180,52 @@ ROUND6_CHANGED_FILE_COUNT=1
 ROUND6_VALIDATION_INCLUDES_EFFECT_TABLE_PROBE=true
 ```
 
+Round 7 adds no validation class either, and the round-7 additions add no
+executable surface: the credential transition, the mountpoint creation and the
+rebuilt effect table are design facts about operations the implementation PR will
+perform, not operations this PR performs. The same five checks apply, and no
+privileged command is executed. Round 7 does add one class of *local* check that
+is not a repository command: the structural probes of 15.1 and the
+document-wide duplicate-value probe of 20 are run over this document before the
+commit, because a token-level invariant that no probe reads is a token that can
+drift.
+
+```text
+ROUND7_VALIDATION_SCOPE=docs_governance_only
+ROUND7_VALIDATION_CLASSES=git_diff_check,repo_hygiene,destructive_design_gate,release_check,ci_risk_tier
+ROUND7_PRIVILEGED_EXECUTION_PERFORMED=false
+ROUND7_IMPLEMENTATION_FILES_CHANGED=0
+ROUND7_CHANGED_FILE_COUNT=1
+ROUND7_VALIDATION_INCLUDES_STRUCTURAL_PROBES=true
+ROUND7_VALIDATION_INCLUDES_TOKEN_DUPLICATE_VALUE_PROBE=true
+ROUND7_STRUCTURAL_PROBE_COUNT=11
+ROUND7_STRUCTURAL_PROBE_RESULT=PASS
+ROUND7_TOKEN_DUPLICATE_VALUE_PROBE_RESULT=PASS
+ROUND7_KERNEL_CLAIM_PROVENANCE=DOCUMENTED
+ROUND7_KERNEL_CLAIM_PROVENANCE_SOURCES=capabilities(7)_and_mount(2)_and_umount(2)_and_losetup(8)
+ROUND7_KERNEL_CLAIM_PROVENANCE_VERSION=man-pages_6.19
+ROUND7_KERNEL_CLAIM_PROVENANCE_PROBED=false
+ROUND7_KERNEL_CLAIM_PROBED_REASON_NO_LINUX_HOST_IS_AVAILABLE_IN_THIS_DEVELOPMENT_ENVIRONMENT
+ROUND7_KERNEL_CLAIM_PROBE_IS_AN_IMPLEMENTATION_PHASE_OBLIGATION=true
+```
+
+One provenance fact is stated rather than implied, because AGENTS.md requires
+either documentation or a probe for a material claim about OS privilege
+behaviour. The capability, mount and loop claims in this round are
+`DOCUMENTED`-provenance claims taken from the Linux `man-pages` 6.19 text this
+contract already cites: `capabilities(7)` (page dated 2026-02-08) for the
+`CAP_SETGID`, `CAP_SETUID`, `CAP_DAC_OVERRIDE`, `CAP_DAC_READ_SEARCH`,
+`CAP_CHOWN`, `CAP_FOWNER` and `CAP_SYS_ADMIN` entries and for the "Effect of user
+ID changes on capabilities" rules the credential transition relies on;
+`mount(2)` (page dated 2026-02-11) for the `CAP_SYS_ADMIN` mount requirement and
+for `source`/`target` being pathnames; and `umount(2)` and `losetup(8)` for the
+unmount requirement and the loop lifecycle. They are NOT `PROBED` in this
+environment, because this development host has no Linux runtime — WSL is not
+installed and no container runtime is available — and running the fixture here
+would in any case be the privileged execution this PR is forbidden to perform.
+The probe obligation therefore moves to the implementation phase, where the real
+host makes it executable, and it is frozen as such rather than dropped:
+
 ## 20. Lifecycle and Stop
 
 One design document, one commit, one DRAFT pull request, no amend, no force
@@ -4095,7 +5296,7 @@ A3D_REMEDIATION_ROUND_5_PARENT=3bc6862c869590ee128636e2a9ca5b4ddf9603b2
 A3D_REMEDIATION_ROUND_5_PARENT_IS_FAILED_FOURTH_REVIEW_HEAD=true
 A3D_REMEDIATION_ROUND_5_BRANCH=design/a3d-round4-mount-owner-predicate
 A3D_REMEDIATION_ROUND_5_COMMIT_COUNT=1
-A3D_REMEDIATION_COMMIT_PARENT=3bc6862c869590ee128636e2a9ca5b4ddf9603b2
+A3D_REMEDIATION_ROUND_5_COMMIT_PARENT=3bc6862c869590ee128636e2a9ca5b4ddf9603b2
 A3D_ROUND5_CONTAINS_FAILED_FOURTH_REVIEW_HEAD=true
 A3D_ROUND5_PARENTS_FAILED_FOURTH_REVIEW_HEAD=true
 A3D_ROUND5_REWRITES_FAILED_FOURTH_REVIEW_HEAD=false
@@ -4115,7 +5316,7 @@ A3D_REMEDIATION_ROUND_6_PARENT=65061f1e005c7595afd4c84d049a4e025eea9d70
 A3D_REMEDIATION_ROUND_6_PARENT_IS_FAILED_FIFTH_REVIEW_HEAD=true
 A3D_REMEDIATION_ROUND_6_BRANCH=design/a3d-round4-mount-owner-predicate
 A3D_REMEDIATION_ROUND_6_COMMIT_COUNT=1
-A3D_REMEDIATION_COMMIT_PARENT=65061f1e005c7595afd4c84d049a4e025eea9d70
+A3D_REMEDIATION_ROUND_6_COMMIT_PARENT=65061f1e005c7595afd4c84d049a4e025eea9d70
 A3D_ROUND6_CONTAINS_FAILED_FIFTH_REVIEW_HEAD=true
 A3D_ROUND6_PARENTS_FAILED_FIFTH_REVIEW_HEAD=true
 A3D_ROUND6_REWRITES_FAILED_FIFTH_REVIEW_HEAD=false
@@ -4126,13 +5327,65 @@ A3D_HISTORY_PRESERVED_BY_RECORD=true
 A3D_HISTORY_REWRITTEN=false
 ```
 
-The unscoped `A3D_REMEDIATION_COMMIT_PARENT` above is round 6's own commit parent
-and names the failed fifth-review head, which is what makes that failed head
-auditable from the branch tip. Each earlier round keeps its own parent under its
-own name; the round-5 value that this token held before round 6 is preserved
-above as `A3D_REMEDIATION_ROUND_5_PARENT`, and the round-3 value is preserved as
-`A3D_REMEDIATION_ROUND_3_COMMIT_PARENT`, so correcting the bare pointer does not
-erase either earlier fact.
+Round 7 preserves history the same way again, with the failed round-6 head as its
+direct parent, pushed as a normal fast-forward onto the same branch:
+
+```text
+A3D_REMEDIATION_ROUND_7=7
+A3D_REMEDIATION_ROUND_7_PARENT=c2a88fa02f62b1332a6f8cabd779d89bd260adfb
+A3D_REMEDIATION_ROUND_7_PARENT_IS_FAILED_SIXTH_REVIEW_HEAD=true
+A3D_REMEDIATION_ROUND_7_BRANCH=design/a3d-round4-mount-owner-predicate
+A3D_REMEDIATION_ROUND_7_COMMIT_COUNT=1
+A3D_REMEDIATION_COMMIT_PARENT=c2a88fa02f62b1332a6f8cabd779d89bd260adfb
+A3D_ROUND7_CONTAINS_FAILED_SIXTH_REVIEW_HEAD=true
+A3D_ROUND7_PARENTS_FAILED_SIXTH_REVIEW_HEAD=true
+A3D_ROUND7_REWRITES_FAILED_SIXTH_REVIEW_HEAD=false
+A3D_ROUND7_PUSH_IS_FAST_FORWARD=true
+A3D_ROUND7_PUSH_IS_NEW_BRANCH=false
+A3D_ROUND7_PUSH_FORCE=false
+A3D_ROUND7_AMEND_USED=false
+A3D_ROUND7_REBASE_USED=false
+A3D_HISTORY_PRESERVED_BY_RECORD=true
+A3D_HISTORY_REWRITTEN=false
+```
+
+The unscoped `A3D_REMEDIATION_COMMIT_PARENT` above is round 7's own commit parent
+and names the failed sixth-review head, which is what makes that failed head
+auditable from the branch tip. That token exists exactly once in this document
+and carries exactly one value, and every earlier round keeps its own parent under
+its own round-qualified name: the round-5 value is
+`A3D_REMEDIATION_ROUND_5_COMMIT_PARENT`, the round-6 value is
+`A3D_REMEDIATION_ROUND_6_COMMIT_PARENT`, and the round-3 value is
+`A3D_REMEDIATION_ROUND_3_COMMIT_PARENT`. Round 6 left two bare
+`A3D_REMEDIATION_COMMIT_PARENT` tokens carrying two different values at one head,
+which is the defect round 7 corrects; preserving the history under round-qualified
+keys is what corrects it without deleting either earlier fact.
+
+```text
+GIT_CURRENT_PARENT_TOKEN=A3D_REMEDIATION_COMMIT_PARENT
+GIT_CURRENT_PARENT_TOKEN_OCCURRENCE_COUNT=1
+GIT_CURRENT_PARENT_TOKEN_VALUE=c2a88fa02f62b1332a6f8cabd779d89bd260adfb
+GIT_CURRENT_PARENT_TOKEN_UNIQUE=true
+GIT_CURRENT_PARENT_TOKEN_IS_THE_ROUND_7_DIRECT_PARENT=true
+GIT_HISTORICAL_PARENT_TOKENS_ARE_ROUND_QUALIFIED=true
+GIT_HISTORICAL_PARENT_TOKEN_ROUND_3=A3D_REMEDIATION_ROUND_3_COMMIT_PARENT
+GIT_HISTORICAL_PARENT_TOKEN_ROUND_5=A3D_REMEDIATION_ROUND_5_COMMIT_PARENT
+GIT_HISTORICAL_PARENT_TOKEN_ROUND_6=A3D_REMEDIATION_ROUND_6_COMMIT_PARENT
+GIT_TWO_BARE_VALUES_AT_ONE_HEAD=false
+GIT_TOKEN_DUPLICATE_VALUE_PROBE_RULE=no_current_pointer_key_carries_two_different_values
+GIT_TOKEN_DUPLICATE_VALUE_PROBE_RESULT=PASS
+GIT_TOKEN_DUPLICATE_VALUE_PROBE_SCOPE=whole_document
+GIT_TOKEN_DUPLICATE_VALUE_PROBE_ENUM_KEY_FORMS=MOUNT_STATE,reason_code,A3D_CURRENT_REMEDIATION_ROUND_AT_THAT_HEAD
+CURRENT_POINTER_KEY_DUPLICATE_VALUE_COUNT=0
+SUPERSEDED_CURRENT_POINTER_KEYS_RENAMED_WITH_A_ROUND_QUALIFIER=true
+ROUND5_AND_ROUND6_SUPERSEDED_KEYS_KEPT_AS_HISTORY=true
+```
+
+The probe's three permitted multi-value forms are the ones 15.1 names: an
+enumeration over one attribute, a historical round-qualified record, and a
+per-case or per-object variant. Every other `KEY=VALUE` token in this document
+carries one value, and the only tokens that could not satisfy that were renamed
+with a round qualifier rather than left colliding.
 
 After the exact-head pull-request CI reaches a terminal conclusion, this
 workstream stops and returns for independent review:
