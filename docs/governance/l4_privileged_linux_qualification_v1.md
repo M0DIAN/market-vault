@@ -527,10 +527,10 @@ declared authority may be broader than the effect that needs it.
 | E11 | mount-fixture | post-format image identity and superblock verification: `fstat` on the pinned E9 descriptor, then a read of the ext4 superblock magic at image offset 1080 from that same descriptor, then confirmation that no loop device is associated with the image; no mutation | the image file created and pinned by E9 and formatted by E10 | the pinned E9 descriptor itself: the verification reads the descriptor the helper already holds, so no role pathname is re-resolved and no new object reference is created; the offset is a frozen literal of the on-disk ext4 layout | no capability and no access authority: the descriptor is already held and the read uses the image's own owner-read bit from `IMAGE_ROLE_S_IMODE=0600`; no pathname is resolved (1.6) | E10 completed and the formatter descriptor is closed; the image identity is still the identity E9 pinned Canonical predecessors for this effect: E10. | the image inode identity, mode, owner and link count are unchanged by the format, the two bytes at image offset 1080 are `0x53 0xEF` (the little-endian ext4 superblock magic `0xEF53`), and the image is not yet loop-bound; this is the verification E14 depends on and it is deliberately separate from the loop configuration of E12, which claims no read-back The recorded result is consumed by E12. | terminal for the verification: the recorded result is consumed by E12 and E14; a non-matching magic or a changed inode identity is a hard refusal before the loop is configured, classified by the 5.7 origin taxonomy and never a pass Canonical successors for this effect: E12. |
 | E12 | mount-fixture | loop backing acquisition and configuration, descriptor-mediated: `open("/dev/loop-control", O_RDWR)` then `ioctl(LOOP_CTL_GET_FREE)` to select the device number, then `open("/dev/loopN", O_RDWR)` and `ioctl(LOOP_CONFIGURE)` with the pinned `IMAGE_ROLE` descriptor passed as the backing file descriptor; no pathname-based tool may perform this effect | the loop device taken by the helper and its association with the pinned image inode | the backing file descriptor is the one the helper itself opened and pinned on `IMAGE_ROLE` in E9, and the ioctl takes that descriptor as an argument, so the association is descriptor-mediated and the role path is never re-resolved between the pin and the association; the device number, the device path and the recorded backing `st_dev`/`st_ino` are helper-internal state | `CAP_SYS_ADMIN` for the privileged block-device control and configuration ioctls (capabilities(7): CAP_SYS_ADMIN includes "perform various privileged block-device ioctl(2) operations"); no access authority, because the effect consumes the already-pinned `IMAGE_ROLE` descriptor from E9 and the recorded device node path and re-resolves no role pathname under the invocation root (1.8.8); no ownership capability | E7 and E8 completed, so the private namespace exists and the mountpoint the loop-backed mount will target exists and is pinned; E9's image exists and is pinned and E10's format completed, with E11's verification passed; the image identity is re-derived equal to the pinned creation identity; `/dev/loop-control` and the loop device nodes exist and are recorded by the preflight (7); the image is a single-link regular file owned by the reviewed helper identity with owner-write set Canonical predecessors for this effect: E11. | exactly one recorded loop device is **configured** with the pinned image inode as its backing file, with the device number, device path and backing identity recorded as helper-internal state; this row deliberately claims no read-back verification, which is E13's own postcondition and not this row's The recorded result is consumed by E13. | released by E17 in the 10.4 order; `LOOP_BACKING_RESIDUE=false` is the closing control; a failed acquisition is a non-pass fixture-construction failure classified by the 5.7 origin taxonomy Canonical successors for this effect: E13. |
 | E13 | mount-fixture | loop-device access and read-back verification: `open(recorded_loop_device_path, O_RDWR)` then `ioctl(LOOP_GET_STATUS64)` to re-read the device's real backing identity; no mutation | the loop device recorded by E12 and its real association with the pinned image inode | the device number and device path are helper-internal state recorded at acquisition by E12, never caller text and never a fresh scan; the read-back is bound to the recorded device and compared against the pinned image `st_dev`/`st_ino` from E9 | `CAP_SYS_ADMIN` for the privileged block-device ioctls (capabilities(7)); no access authority is required, because the effect resolves no path below the invocation root (1.6) | E12 completed and the device number and path were recorded; the pinned image identity was recorded at E9 and verified at E11; this effect is ordered strictly after E12, and the mount that consumes its result is ordered strictly after it Canonical predecessors for this effect: E12. | the device's real backing identity is observed equal to the pinned image identity, so the mount source E14 will consume is the helper's own image rather than a substituted object; the verification result is the precondition E14 depends on The recorded result is consumed by E14. | terminal for the access: the descriptor is closed before E17's release, because a loop device with an open reference is not releasable; a mismatch is a hard refusal before the mount and a non-pass fixture-construction failure classified by the 5.7 origin taxonomy Canonical successors for this effect: E14. |
-| E14 | mount-fixture | mount fixture: `mount(recorded_loop_device_path, /proc/self/fd/<validated_root_fd>/MOUNTPOINT_ROLE, "ext4", 0, NULL)` inside the private namespace | the private namespace's mount table entry, and the ext4 filesystem instance carried by the loop device, covering the helper-created `MOUNTPOINT_ROLE` directory | `mount(2)` is a pathname operation with no descriptor form (5.9), so the target is bound by supervisor-exclusive creation plus pre-mount identity revalidation **through the frozen fd-mediated pathname carrier of 5.9**: the exact target string passed to the call is `/proc/self/fd/<validated_root_fd>/MOUNTPOINT_ROLE`, so the trailing component is the frozen derived role and the resolution base is the supervisor's own descriptor 5.3 validated and retained, and the caller's root string is never re-resolved for this target; the directory reached is the one E8 created and pinned, its pinned `st_dev`/`st_ino` are re-derived immediately before the call and MUST still equal that pinned pair, and it must still be a real directory with no symlinked component in its resolution path; the source is exactly the loop device path recorded by E12 in supervisor memory and verified by E13, and no caller-created source or target is ever accepted; the binding window is the interval between that revalidation and the call, in the same process that holds the descriptor, inside the private namespace | `CAP_SYS_ADMIN` (capabilities(7) lists mount(2) in that set), plus `CAP_DAC_READ_SEARCH` for the single search (execute) check the resolution of `MOUNTPOINT_ROLE` performs on the owner-only invocation root — the mount target is a pathname and `mount(2)` performs no write check on the containing directory, so the traversal-only capability is the minimal one and `CAP_DAC_OVERRIDE` is not declared (1.10.4); no ownership capability | E7, E8, E9, E10, E11 and E12 completed; **E13 completed and its loop read-back verification passed**, so the device about to be mounted is known to be the helper's own image; target identity re-derived equal to the identity E8 pinned; the device appears in no other private-namespace record (section 9 exactly-once rule); private propagation confirmed private before the mount Canonical predecessors for this effect: E13. | exactly one private-namespace record carries the new mount, with root field `/` and filesystem type `ext4`; the evidence process shares the namespace and can reach the mount-case file; the host mount table is unchanged | leaves `ATTACHED` through E15 (requested over the frozen control channel as `DETACH_REQUEST`) or through E16 on the `ATTACHED`-failure branch; the terminal states are the 10.4 `RELEASED` and `CLEANUP_FAILED` Canonical successors for this effect: E15, E16. |
-| E15 | mount-fixture | `MNT_DETACH` detach: `umount2(/proc/self/fd/<validated_root_fd>/MOUNTPOINT_ROLE, MNT_DETACH)` inside the private namespace, performed by the persistent supervisor after the live evidence process sends `DETACH_REQUEST` | the fixture mount in the private namespace's mount table | the exact detach target string is `/proc/self/fd/<validated_root_fd>/MOUNTPOINT_ROLE`, resolved in the supervisor's own descriptor table against the descriptor 5.3 validated, valid only while that mount is still attached and reachable at that path — the same object the pre-drift positive admission and the section 8 steps 5-7 controls reference, and the same object E8 created and pinned; no caller path text participates in the target | `CAP_SYS_ADMIN` (umount(2): "Appropriate privilege (Linux: the `CAP_SYS_ADMIN` capability) is required to unmount filesystems"), plus `CAP_DAC_READ_SEARCH` for the single search (execute) check `umount2(2)` performs while resolving `MOUNTPOINT_ROLE` against the owner-only invocation root; `umount2(2)` writes no directory entry there, so the traversal-only capability is the minimal one and `CAP_DAC_OVERRIDE` is not declared for this effect (1.10.4) | the mount state is observed `ATTACHED`; E21 completed, so the non-root evidence process holds its own retained descriptor on the mount-case fixture file and observed the real positive pre-drift production admission of section 8 step 2, because the detach is requested by that same live process, over the frozen control channel of 5.11, after the positive case (10.1) Canonical predecessors for this effect: E14, E21. | mount state `DETACHED_HELD`: the mount is immediately disconnected from the private mount table while the unmount completes when the mount ceases to be busy (umount(2) `MNT_DETACH`), so the retained evidence descriptor keeps the detached mount alive and a second unmount has no object to act on; the supervisor records the successful detach and returns `DETACH_COMPLETED` on the same channel The recorded result is consumed by E22. | advances to `MOUNT_GONE_LOOP_BOUND` when E22 completes and E23 closes the retained descriptor, and reaches `RELEASED` only when E17 has released the recorded loop association and the private mount table shows zero records for the held mount id (10.4); never retried blindly, and `SECOND_UNMOUNT_AFTER_MNT_DETACH_REQUIRED=false` Canonical successors for this effect: E22. |
-| E16 | mount-fixture | `ATTACHED`-state ordinary cleanup unmount: `umount2(/proc/self/fd/<validated_root_fd>/MOUNTPOINT_ROLE, 0)`, performed by the persistent supervisor only in the observed `ATTACHED` state | the fixture mount in the private namespace, still attached because no successful `MNT_DETACH` occurred | the frozen fd-mediated target string `/proc/self/fd/<validated_root_fd>/MOUNTPOINT_ROLE`, resolved in the supervisor's own descriptor table against the descriptor 5.3 validated and retained, valid only while the observed state is `ATTACHED`; the state is measured before the effect and in any other state this effect does not occur at all | `CAP_SYS_ADMIN` (umount(2)), plus `CAP_DAC_READ_SEARCH` for the single search (execute) check the `umount2(/proc/self/fd/<validated_root_fd>/MOUNTPOINT_ROLE, 0)` call performs while resolving the frozen role name against the owner-only invocation root through the supervisor's own validated descriptor — no directory entry is written there, so the traversal-only capability is the minimal one (1.10.4); no ownership capability | cleanup entered with the observed state `ATTACHED` — failure before drift, or the detach not attempted — and no successful `MNT_DETACH` has occurred; a retained evidence descriptor opened by E21 must have been released by E23 first, because a mount with an open reference is busy and an ordinary unmount of it would fail Canonical predecessors for this effect: E14, and E23 when a retained evidence descriptor is still open. | the fixture mount is gone from the private mount table and the loop backing becomes releasable; the state advances to exactly `MOUNT_GONE_LOOP_BOUND`, which is the only state E17 may be entered from (`E16_SUCCESS_POST_STATE=MOUNT_GONE_LOOP_BOUND`) The recorded result is consumed by E17. | followed by E17, E24 and E26 in that order; `PRIVATE_MOUNT_RESIDUE=false` is the closing control; a failure is `CLEANUP_FAILED`, visible and never retried blindly Canonical successors for this effect: E17. |
-| E17 | mount-fixture | loop backing release: the loop device is detached from the image by an explicit `ioctl(loop_device_fd, LOOP_CLR_FD)` issued by the persistent supervisor on exactly the device recorded by E12; the release is never driven by `LO_FLAGS_AUTOCLEAR` and never delegated to an external tool that would re-resolve a device pathname of its own choosing | the loop device acquired by E12 and its association with the pinned image inode | the device number and the device path recorded at acquisition by E12, held as supervisor-internal state and never taken from caller text and never from a fresh `/dev/loop*` scan; the release opens exactly the recorded device path once, acts on that descriptor, and the device's real state is re-read afterwards rather than inferred | `CAP_SYS_ADMIN` for privileged block-device ioctls (capabilities(7)); no access authority is required, because the release acts on the recorded loop device and resolves no path below the invocation root (1.6); no ownership capability and no ownership call | the observed state is exactly `MOUNT_GONE_LOOP_BOUND`, reached either through E23 after E15 and E22 in the successful path or through E16 in the `ATTACHED`-failure branch (`E17_REQUIRED_PRE_STATE=MOUNT_GONE_LOOP_BOUND`), because the mount itself carries an open reference on the loop device for as long as the mount exists; the retained evidence descriptor has been closed by E23 and the supervisor holds at most one open descriptor on the recorded loop device at the moment of the release (`LOOP_DEVICE_OPEN_REFERENCE_COUNT_AT_E17=1`), so the release is never attempted with a second reference outstanding and never reports a false failure that would invite a blind retry (10.4) Canonical predecessors for this effect: E23, and E16 in the `ATTACHED` branch. | no loop device is associated with the image — the association configured by E12 always exists at that point, because `LO_FLAGS_AUTOCLEAR` is false, so E17 always has the association it was frozen to release — and `LOOP_BACKING_RESIDUE=false` is measured rather than asserted, which also allows for the lazy device destruction losetup(8) documents instead of assuming immediate removal; the state advances to exactly `RELEASED` (`E17_SUCCESS_POST_STATE=RELEASED`) The recorded result is consumed by E24. | terminal for the effect; E24 and E26 follow; a failure is `CLEANUP_FAILED` with the residual device recorded as diagnostics Canonical successors for this effect: E24. |
+| E14 | mount-fixture | mount fixture: `mount(recorded_loop_device_path, /proc/self/fd/<mount_target_fd>, "ext4", 0, NULL)` inside the private namespace, where `mount_target_fd = openat(validated_root_fd, MOUNTPOINT_ROLE, O_PATH\|O_DIRECTORY\|O_NOFOLLOW\|O_CLOEXEC)` was opened by the supervisor immediately before the call and stays open through its return | the private namespace's mount table entry, and the ext4 filesystem instance carried by the loop device, covering the helper-created `MOUNTPOINT_ROLE` directory | `mount(2)` is a pathname operation with no descriptor form (5.9), so the target is bound by supervisor-exclusive creation plus a last-component **target object descriptor that the syscall itself consumes** (5.9, 1.12.4): the supervisor opens `mount_target_fd = openat(validated_root_fd, MOUNTPOINT_ROLE, O_PATH\|O_DIRECTORY\|O_NOFOLLOW\|O_CLOEXEC)` itself, which resolves the frozen derived role name exactly once against its own 5.3-validated root descriptor with no intermediate component and no caller text, `fstat`s that descriptor and requires its `st_dev`/`st_ino` to equal the identity E8 recorded, and passes `/proc/self/fd/<mount_target_fd>` — a string with no role-name component at all — as the target, so the object that was validated is literally the object the call reaches and there is no interval in which the trailing name can be re-pointed; the descriptor stays open through the mount call's return and is closed immediately after it; the source is exactly the loop device path recorded by E12 in supervisor memory and verified by E13, and no caller-created source or target is ever accepted; the binding window is the interval between that revalidation and the call, in the same process that holds both descriptors, inside the private namespace | `CAP_SYS_ADMIN` (capabilities(7) lists mount(2) in that set), plus `CAP_DAC_READ_SEARCH` for the single search (execute) check the supervisor's own `openat(validated_root_fd, MOUNTPOINT_ROLE, O_PATH\|O_DIRECTORY\|O_NOFOLLOW\|O_CLOEXEC)` performs on the owner-only invocation root — that `openat` is the only resolution this effect performs and `mount(2)` itself now resolves only the magic link of the supervisor's own descriptor plus the recorded loop device path, so the traversal-only capability is the minimal one and `CAP_DAC_OVERRIDE` is not declared (1.10.4, 1.12.4); no ownership capability | E7, E8, E9, E10, E11 and E12 completed; **E13 completed and its loop read-back verification passed**, so the device about to be mounted is known to be the helper's own image; target identity re-derived equal to the identity E8 pinned; the device appears in no other private-namespace record (section 9 exactly-once rule); private propagation confirmed private before the mount Canonical predecessors for this effect: E13. | exactly one private-namespace record carries the new mount, with root field `/` and filesystem type `ext4`; the evidence process shares the namespace and can reach the mount-case file; the host mount table is unchanged | leaves `ATTACHED` through E15 (requested over the frozen control channel as `DETACH_REQUEST`) or through E16 on the `ATTACHED`-failure branch; the terminal states are the 10.4 `RELEASED` and `CLEANUP_FAILED` Canonical successors for this effect: E15, E16. |
+| E15 | mount-fixture | `MNT_DETACH` detach: `umount2(/proc/self/fd/<E15_umount_target_fd>, MNT_DETACH)` inside the private namespace, performed by the persistent supervisor after the live evidence process sends `DETACH_REQUEST`, where `E15_umount_target_fd = openat(validated_root_fd, MOUNTPOINT_ROLE, O_PATH\|O_NOFOLLOW\|O_CLOEXEC)` was opened by the supervisor while the observed state was `ATTACHED` and stays open through the call's return | the fixture mount in the private namespace's mount table | the supervisor opens its own `E15_umount_target_fd` on the frozen derived role against its own 5.3-validated root descriptor, `fstat`s the descriptor the call will consume and requires its `st_dev`/`st_ino` to equal the identity E8 recorded, and passes `/proc/self/fd/<E15_umount_target_fd>` — a string with no role-name component — as the target, so the validated object and the unmounted object are one reference and the trailing name is resolved exactly once, at open time (5.9, 1.12.4); the descriptor is closed after the call returns and is never reused after a successful detach, because the detached object is no longer reachable by that pathname; no caller path text participates in the target | `CAP_SYS_ADMIN` (umount(2): "Appropriate privilege (Linux: the `CAP_SYS_ADMIN` capability) is required to unmount filesystems"), plus `CAP_DAC_READ_SEARCH` for the single search (execute) check the supervisor's own `openat(validated_root_fd, MOUNTPOINT_ROLE, O_PATH\|O_NOFOLLOW\|O_CLOEXEC)` performs while resolving the frozen role name against the owner-only invocation root; the `umount2` call itself resolves only the magic link of the supervisor's own descriptor, writes no directory entry there, so the traversal-only capability is the minimal one and `CAP_DAC_OVERRIDE` is not declared for this effect (1.10.4, 1.12.4) | the mount state is observed `ATTACHED`; E21 completed, so the non-root evidence process holds its own retained descriptor on the mount-case fixture file and observed the real positive pre-drift production admission of section 8 step 2, because the detach is requested by that same live process, over the frozen control channel of 5.11, after the positive case (10.1) Canonical predecessors for this effect: E14, E21. | mount state `DETACHED_HELD`: the mount is immediately disconnected from the private mount table while the unmount completes when the mount ceases to be busy (umount(2) `MNT_DETACH`), so the retained evidence descriptor keeps the detached mount alive and a second unmount has no object to act on; the supervisor records the successful detach and returns `DETACH_COMPLETED` on the same channel The recorded result is consumed by E22. | advances to `MOUNT_GONE_LOOP_BOUND` when E22 completes and E23 closes the retained descriptor, and reaches `RELEASED` only when E17 has released the recorded loop association and the private mount table shows zero records for the held mount id (10.4); never retried blindly, and `SECOND_UNMOUNT_AFTER_MNT_DETACH_REQUIRED=false` Canonical successors for this effect: E22. |
+| E16 | mount-fixture | `ATTACHED`-state ordinary cleanup unmount: `umount2(/proc/self/fd/<E16_umount_target_fd>, 0)`, performed by the persistent supervisor only in the observed `ATTACHED` state, where `E16_umount_target_fd = openat(validated_root_fd, MOUNTPOINT_ROLE, O_PATH\|O_NOFOLLOW\|O_CLOEXEC)` was opened by the supervisor while the observed state was `ATTACHED` and stays open through the call's return | the fixture mount in the private namespace, still attached because no successful `MNT_DETACH` occurred | the supervisor opens its own `E16_umount_target_fd` on the frozen derived role against its own 5.3-validated root descriptor, `fstat`s the descriptor the call will consume and requires its `st_dev`/`st_ino` to equal the identity E8 recorded, and passes `/proc/self/fd/<E16_umount_target_fd>` — a string with no role-name component — as the target, so the validated object and the unmounted object are one reference (5.9, 1.12.4); the descriptor is closed after the call returns; the state is measured before the effect and in any other state this effect does not occur at all | `CAP_SYS_ADMIN` (umount(2)), plus `CAP_DAC_READ_SEARCH` for the single search (execute) check the supervisor's own `openat(validated_root_fd, MOUNTPOINT_ROLE, O_PATH\|O_NOFOLLOW\|O_CLOEXEC)` performs while resolving the frozen role name against the owner-only invocation root through the supervisor's own validated descriptor — the `umount2` call itself resolves only the magic link of that same descriptor and writes no directory entry there, so the traversal-only capability is the minimal one (1.10.4, 1.12.4); no ownership capability | cleanup entered with the observed state `ATTACHED` — failure before drift, or the detach not attempted — and no successful `MNT_DETACH` has occurred; a retained evidence descriptor opened by E21 must have been released by E23 first, because a mount with an open reference is busy and an ordinary unmount of it would fail Canonical predecessors for this effect: E14, and E23 when a retained evidence descriptor is still open. | the fixture mount is gone from the private mount table and the loop backing becomes releasable; the state advances to exactly `MOUNT_GONE_LOOP_BOUND`, which is the only state E17 may be entered from (`E16_SUCCESS_POST_STATE=MOUNT_GONE_LOOP_BOUND`) The recorded result is consumed by E17. | followed by E17, E24 and E26 in that order; `PRIVATE_MOUNT_RESIDUE=false` is the closing control; a failure is `CLEANUP_FAILED`, visible and never retried blindly Canonical successors for this effect: E17. |
+| E17 | mount-fixture | loop backing release: the loop device is detached from the image by exactly one explicit `ioctl(loop_device_fd, LOOP_CLR_FD)` issued by the persistent supervisor on exactly the device recorded by E12, followed by an independent observation that the backing association is absent; the release request is always E17's own and is never delegated to an external tool that would re-resolve a device pathname of its own choosing, while the kernel's own destruction mechanism after that one request may be immediate or lazy/autoclear (1.12.5) | the loop device acquired by E12 and its association with the pinned image inode | the device number and the device path recorded at acquisition by E12, held as supervisor-internal state and never taken from caller text and never from a fresh `/dev/loop*` scan; the release opens exactly the recorded device path once, verifies against the E9-pinned backing identity that the association it is about to release is still the recorded one, issues the one ioctl, and then re-reads the device's real state until the association is observed absent rather than inferring it | `CAP_SYS_ADMIN` for privileged block-device ioctls (capabilities(7)); no access authority is required, because the release acts on the recorded loop device and resolves no path below the invocation root (1.6); no ownership capability and no ownership call | the observed state is exactly `MOUNT_GONE_LOOP_BOUND`, reached either through E23 after E15 and E22 in the successful path or through E16 in the `ATTACHED`-failure branch (`E17_REQUIRED_PRE_STATE=MOUNT_GONE_LOOP_BOUND`), because the mount itself carries an open reference on the loop device for as long as the mount exists; the retained evidence descriptor has been closed by E23 and the supervisor's own loop descriptor was already closed after E13's read-back, so the supervisor holds exactly one descriptor on the recorded device, the one it opens here, and the contract claims no exact open-reference count it cannot observe (`E17_LOOP_CLR_FD_REQUEST_COUNT=1`, `E17_BLIND_RETRY=false`, 1.12.5) Canonical predecessors for this effect: E23, and E16 in the `ATTACHED` branch. | no backing association with the E9-pinned image identity remains on the recorded device, and that absence is **observed**: the single request is never blindly retried, the kernel may complete the destruction immediately or lazily, and `LOOP_BACKING_RESIDUE=false` is recorded only after the recorded device reports no such association, which is what allows the lazy device destruction losetup(8) documents instead of assuming immediate removal; the state advances to exactly `RELEASED` (`E17_SUCCESS_POST_STATE=RELEASED`) The recorded result is consumed by E24. | terminal for the effect; E24 and E26 follow; a failure is `CLEANUP_FAILED` with the residual device recorded as diagnostics Canonical successors for this effect: E24. |
 | E18 | mount-fixture | post-mount mounted-root acquisition and representation proof: `openat(validated_root_fd, MOUNTPOINT_ROLE, O_RDONLY\|O_DIRECTORY\|O_NOFOLLOW\|O_CLOEXEC)` performed **after** E14 attached the mount, then immediate proof that the opened object represents the expected mounted ext4 filesystem (5.9, 1.8.4) | the mounted ext4 filesystem's root directory, reached through the `MOUNTPOINT_ROLE` name as it resolves **after** the mount | the frozen role name resolved post-mount against the supervisor's validated root descriptor, because the covered `MOUNTPOINT_ROLE` inode E8 pinned is no longer reachable at that name once the mount covers it; the acquired descriptor is bound to the filesystem by three measured equalities — `fstatfs(2)` reports the ext4 superblock magic `0xEF53` on the descriptor, `fstat(2)` reports a different `st_dev` from the invocation root's filesystem, and the descriptor's `st_dev`/`st_ino` are recorded as the mounted-root identity. The binding window is the interval between the open and those three measurements, and the descriptor becomes `mounted_root_fd` only when all three hold | no `CAP_SYS_ADMIN` and no `CAP_CHOWN`: this effect neither mounts nor mutates. The lookup is a single trailing-component resolution against the already-held validated root descriptor, so it performs exactly one search (execute) check on the owner-only invocation root and one read check on the `MOUNTPOINT_ROLE` directory the helper itself created `0755`, which its own owner bits already satisfy; the minimal capability for the search check it fails is `CAP_DAC_READ_SEARCH`, and only that — `CAP_DAC_OVERRIDE` is not declared, because the effect writes and removes no directory entry (1.10.4) | E14 completed and the mount attached; the `MOUNTPOINT_ROLE` descriptor E8 pinned is still held, and the implementation MUST also observe that its `st_dev`/`st_ino` no longer equal what a fresh resolution of the same name reports, which is the positive evidence that a mount now covers it Canonical predecessors for this effect: E14. | `mounted_root_fd` exists, `fstatfs` on it reports the ext4 superblock magic, its `st_dev` differs from the invocation root's filesystem, and its `st_dev`/`st_ino` are recorded as the mounted-root identity that E19's preconditions and E21's evidence depend on; the pre-mount `MOUNTPOINT_ROLE` descriptor is retained only as the covered mountpoint's identity The recorded result is consumed by E19. | terminal for the acquisition: the descriptor is held until the mount-case file is created and pinned, and is closed before the mount is released; a mismatch — not a directory, wrong filesystem magic, same `st_dev` as the invocation root, or a resolution that does not differ from the pinned covered inode — is a hard refusal before any mount-case child is created, classified as `QUALIFICATION_GAP` with a design finding and never as `HELPER_ROOT_REJECTED`, never a pass, and never repaired with privilege Canonical successors for this effect: E19. |
 | E19 | mount-fixture | mounted-directory pre-state authorisation for the mount-case child: the owner, mode and ordinary-identity search facts of `mounted_root_fd` are observed and recorded, and the preconditions the mount-case file creation depends on are established as measured facts; no mutation | the mounted ext4 filesystem's root directory, as acquired and proved by E18 | The descriptor E18 acquired and bound by the three measured equalities; no pathname is resolved by this effect at all, and no component is re-resolved after E18's proof | no capability and no access authority: the effect mutates nothing and resolves no pathname, because it consumes the `mounted_root_fd` E18 already holds (1.6) | E18 completed and `mounted_root_fd` is bound to the expected mounted ext4 filesystem Canonical predecessors for this effect: E18. | the mounted root's owner is the reviewed privileged identity with owner write and search set, its real mode is recorded, and the ordinary identity's search through `MOUNTPOINT_ROLE` and the mounted root is established as a measured fact, which is the precondition of the 5.8.3 ordinary `O_RDONLY` witness; a failure here is `QUALIFICATION_GAP` plus a design finding, never a pass and never a privilege repair The recorded result is consumed by E20. | terminal for the observation: the recorded facts are consumed by E20; the descriptor itself is closed before the mount is released Canonical successors for this effect: E20. |
 | E20 | mount-fixture | mount-case fixture file creation, the single helper-side exclusive creation at the frozen role path `MOUNTPOINT_ROLE/FIXTURE_FILE_ROLE`: `openat(mounted_root_fd, FIXTURE_FILE_ROLE, O_CREAT\|O_EXCL\|O_RDONLY\|O_NOFOLLOW\|O_CLOEXEC, 0644)` inside the mounted ext4 filesystem, then pinning it by the helper's own descriptor | the new regular file at the frozen role path inside the mounted ext4 filesystem, which is also the retained object of section 9 | the frozen role name created relative to the `mounted_root_fd` descriptor E18 acquired and E19 measured — never relative to the pre-mount `MOUNTPOINT_ROLE` descriptor and never at a re-resolved role path; a pre-existing object at the name fails the exclusive creation instead of being adopted; the created file is pinned by the helper's own descriptor with its real `st_dev`/`st_ino` recorded, and every later check is an `fstat` on that descriptor (5.8.1, 5.8.3) | no `CAP_CHOWN`, no `CAP_SYS_ADMIN` and no ownership or mode call: creation assigns the creating identity's own uid, which is the frozen `st_uid == 0` of 5.8.3, and the create is authorized by the owner write and search bits of the mounted root directory the reviewed privileged identity owns, which E19 observed; **none**: this effect writes one entry inside a directory the helper owns, so its own owner bits authorize both the write and the search check, and the mounted-root descriptor is already held, so no capability and no access authority are required (1.10.4) | E19 completed and the mounted root's owner, mode and ordinary search authorisation are observed facts; the creation-time `umask` cannot clear bits from the requested `0644`; no object exists at the role name; this is the only creation effect for this object (1.8.2) Canonical predecessors for this effect: E19. | exactly one regular single-link file exists at the frozen role path, owned by uid 0, with `S_IMODE == 0o644`, and the helper's `fstat` facts satisfy the 5.8.1 common structural requirements plus the 5.8.3 `st_uid == 0` predicate; the ordinary evidence process can open it `O_RDONLY` with no capability The recorded result is consumed by E21. | removed with the image by E24, because the file lives inside the image's filesystem; the mount-case `FIXTURE_FILE_ROLE` has no separate removal effect and needs none, and the 5.8.3 after-creation failure contract governs a child that is absent or non-conforming; a failed creation is a non-pass fixture-construction failure classified by the 5.7 origin taxonomy Canonical successors for this effect: E21. |
@@ -538,8 +538,8 @@ declared authority may be broader than the effect that needs it.
 | E22 | mount-fixture (successful drift path) | post-detach production observation, the material evidence operation of the successful RQP-L17 path: with the retained descriptor still open and after `E15` detached the mount, `NONROOT_EVIDENCE_PROCESS` confirms the descriptor is still live (`fstat(2)` succeeds and the device, inode and retained bytes are unchanged), re-reads `_mount_id(fd)` under `statx` and requires the same nonzero mount id as the pre-detach admission, confirms from real `/proc/self/mountinfo` that zero records carry the held mount id, and then calls the production primitive a **second** time, requiring exactly `reason_code=PLATFORM_UNQUALIFIED` with detail `held mount missing or ambiguous` | the retained descriptor E21 acquired, the held mount id, and the real private-namespace mount table | the descriptor is the one the non-root evidence process opened and retained itself — it is never closed, never reopened by path, and never re-resolved; the mount table is read from the helper-free private namespace the evidence process shares; the second primitive call consumes that same real mount table | **none**: the effect is performed by the non-root evidence process, whose `CapPrm`, `CapEff` and `CapAmb` are all required `0`, so this row declares no capability and no access authority — it is in the table because it is the material evidence operation the RQP-L17 case turns on, not because it is privileged | `E15` completed and the mount state is `DETACHED_HELD`; the retained descriptor is open and was admitted once by the production primitive before the detach (the section 8 step 2 positive admission); the held mount id is recorded from that admission Canonical predecessors for this effect: E15, E21. | the descriptor is observed still valid, the `statx` mount id is unchanged, the private mount table shows zero records for the held mount id, and the second primitive call is observed failing with exactly `PLATFORM_UNQUALIFIED: held mount missing or ambiguous`; an observed L105 `UNSAFE_PATH` failure instead is a `QUALIFICATION_GAP` plus a design finding against this document, never a pass The recorded result is consumed by E23. | terminal for the observation: it hands the still-open descriptor to E23, which is the effect that owns its release; the descriptor is the detach evidence of section 8 step 5, and it MUST still be open during this whole probe Canonical successors for this effect: E23. |
 | E23 | all cases (run-scoped, evidence side) | non-root evidence-side descriptor release: `NONROOT_EVIDENCE_PROCESS` closes the descriptor the acquisition opened and retained — for `mount-fixture` only after E22's post-detach observation has completed; no privilege and no mutation of any object | the retained descriptor from the evidence acquisition, and for `mount-fixture` the held mount it keeps alive | the descriptor the evidence process opened and retained; no pathname is resolved, and the release is bound to that descriptor rather than to a name | **none**: the effect is performed by the non-root evidence process with `CapPrm`, `CapEff` and `CapAmb` all `0`, and a close is not a privileged operation | the case's evidence work has finished: for `mount-fixture` that is E22's completed post-detach observation with its exact `PLATFORM_UNQUALIFIED` result, and for the ownership cases it is the completed production observation; no further measurement depends on the retained descriptor Canonical predecessors for this effect: E21, and E22 in the `mount-fixture` successful path. | the descriptor is closed, so for `mount-fixture` the mount it kept alive is no longer busy and the state advances to exactly `MOUNT_GONE_LOOP_BOUND` (`E23_SUCCESS_POST_STATE=MOUNT_GONE_LOOP_BOUND`), which makes `PRIVATE_MOUNT_RESIDUE=false` reachable; the loop backing is now releasable and `LOOP_BACKING_RESIDUE` can be driven to false The recorded result is consumed by the branch's next effect: E16 when the mount is still `ATTACHED` (where the release of the descriptor leaves the state `ATTACHED`, not `MOUNT_GONE_LOOP_BOUND`, because no detach occurred), E17 in the `DETACHED_HELD` path, and E25 in the ownership cases. | terminal: E17 may now release the loop backing, E16 performs the `ATTACHED`-branch unmount when the mount is still attached, and E24, E25 and E26 then remove the fixture objects and the invocation root; a failure is `CLEANUP_FAILED` with the residual state recorded and never retried blindly Canonical successors for this effect: E16, E17, E25. |
 | E24 | mount-fixture | mount-object removal: `unlinkat(validated_root_fd, MOUNTPOINT_ROLE, AT_REMOVEDIR)` followed by `unlinkat(validated_root_fd, IMAGE_ROLE, 0)`, with no recursive and no forced removal | the mountpoint directory E8 created and pinned, and the image file E9 created and E10 formatted | each frozen role name resolved relative to the helper's own validated root descriptor with no-follow semantics, with the observed object re-derived before removal as the identity that was pinned — E8's directory identity for the mountpoint and E9's file identity for the image — so a substituted object is never a removal target; both comparisons are made against the **original producer values** E8 and E9 recorded, still held in the same still-running supervisor's own memory and never re-derived by a fresh scan (`E8_TO_E24_MOUNTPOINT_IDENTITY_CONTINUITY_CLOSED=true`, `E9_TO_E24_IMAGE_IDENTITY_CONTINUITY_CLOSED=true`, `RUNTIME_STATE_CONSUMER_HAS_ORIGINAL_PRODUCER_VALUE=true`, 5.11) | no `CAP_SYS_ADMIN`, no ownership capability and no ownership call; the directory-write authority `CAP_DAC_OVERRIDE` is required, because both entries are removed from the invocation root the ordinary runner owns and the same capability also bypasses the search check on it (1.6); the invocation root's sticky bit is clear by 4.2, so no `CAP_FOWNER` is required or declared; no `CAP_DAC_READ_SEARCH`, because the effect removes names and reads no directory contents | E17 completed and the observed state is `RELEASED`, so no mount and no loop association remains; the evidence-side descriptor opened by E21 has been closed by E23, which is the effect that owns its release; the mountpoint is empty, because the mount-case fixture file lives inside the mounted ext4 filesystem and not in this directory; both observed objects are the identities E8 and E9 pinned Canonical predecessors for this effect: E17. | neither the mountpoint directory nor the image file exists, and no object outside them was touched; `MOUNTPOINT_ROLE_CLEANUP_EFFECT=E24` and the image-removal half of `FIXTURE_ROOT_RESIDUE` are satisfied The recorded result is consumed by E26. | terminal for the effect: E26 may now occur and is its next removal step; a failure is `CLEANUP_FAILED` with the residual path recorded and never retried blindly Canonical successors for this effect: E26. |
-| E25 | own-foreign, own-root | fixture-object removal, exactly one removal per ownership case: `unlinkat(validated_root_fd, FIXTURE_FILE_ROLE, 0)`. The `mount-fixture` case has **no** effect under this id and performs no removal here at all, because both of its fixture objects are removed by E24, which is the only owner of those two names | the `FIXTURE_FILE_ROLE` child the ownership setup mutated | the frozen derived role name resolved relative to the helper's own validated root descriptor with no-follow semantics, with the observed object's `st_dev`/`st_ino` re-derived immediately before the removal and required to equal the identity pinned before the mutation, so a substituted object is never a removal target; `unlinkat` removes the name itself and never a symlink target, and the binding window is that revalidation plus the single removal call | no `CAP_SYS_ADMIN`, no ownership capability and no ownership call, because removing an object never depends on the removed object's owner; resolving the frozen role name performs one search (execute) check on the invocation root and the removal performs one write check on the same directory, and the single directory capability that bypasses both is `CAP_DAC_OVERRIDE` (capabilities(7): "bypass file read, write, and execute permission checks"), so `CAP_DAC_READ_SEARCH` is deliberately not declared for the same traversal check (1.10.4); the invocation root's sticky bit is clear by 4.2, so no `CAP_FOWNER` is required or declared | the production observation of the evidence process has finished and E23 has released the retained descriptor, so no evidence depends on the object, and no repair, re-ownership or mode change has been performed on it Canonical predecessors for this effect: E23. | the `FIXTURE_FILE_ROLE` child is absent from the invocation root, so the ownership case's root is empty and E26's removal precondition is reachable; the ownership the setup produced was never changed back, and a removal that had to restore ownership first would be an undeclared second `fchown` The recorded result is consumed by E26. | terminal for the effect: E26 may now occur and is the last removal step in the ownership cases; a failure is `CLEANUP_FAILED` with the residual path recorded and never retried blindly Canonical successors for this effect: E26. |
-| E26 | all cases (run-scoped) | invocation-root removal: `unlinkat(RUNNER_TEMP_fd, invocation_root_name, AT_REMOVEDIR)` — the removal of a directory entry from the invocation root's **parent**, after every fixture object inside the root is gone | the invocation root directory the ordinary process created under `RUNNER_TEMP` — **not** an object below that root | the same real path the helper validated under 5.3, re-derived; the removal acts on the parent directory's entry, requires the observed directory to be that validated root and to be empty, and never targets a repository, worktree, cache, runtime-data or pre-existing host path; the parent is reached through a descriptor the helper opened on `RUNNER_TEMP` and validated as the real parent of the validated root, so the root's own name is not re-resolved from caller text | no `CAP_SYS_ADMIN` and no ownership capability; exactly one directory capability is required and it is unconditional. The below-root half — the `O_RDONLY\|O_DIRECTORY` open and read of the root used to observe its emptiness — performs a read and a search (execute) check on a directory that is frozen `S_IMODE == 0o700` and owned by the ordinary runner (4.2), so the helper's direct DAC check on it fails by construction; the parent-removal half — `unlinkat(RUNNER_TEMP_fd, invocation_root_name, AT_REMOVEDIR)` — performs a search check and a write check on `RUNNER_TEMP`, which the helper identity does not own, and 7 requires the preflight to observe that the parent withholds write from it, so an entry removal there always needs the bypass too. `CAP_DAC_OVERRIDE` is the single capability that bypasses the read, write and execute checks of a directory (capabilities(7): "bypass file read, write, and execute permission checks"; generic_permission's directory branch in Linux `fs/namei.c` returns success for `CAP_DAC_OVERRIDE` on any directory mask), so it covers both halves of this one row and is the minimal single capability for it; `CAP_DAC_READ_SEARCH` is therefore not declared as well, and this row is canonical without splitting the observation from the removal (1.10.4). `CAP_FOWNER` is neither declared nor needed because the parent is required not to be sticky: removing a directory owned by another identity from a sticky directory would need `CAP_FOWNER` (capabilities(7): "ignore directory sticky bit on file deletion"), so a sticky parent is a preflight failure yielding `QUALIFICATION_GAP` rather than an undeclared authority | every other fixture object under the root has been removed, so the root is empty; the observed directory is the validated root identity; the parent directory is the validated real parent and is not sticky, as a preflight fact (7); the `RUNNER_TEMP` owner, mode, write-and-search DAC relation and sticky-bit state are the four observed facts of 1.7.7 and 7, and the observed relation is required to deny the helper identity direct write so that this row's authority is unconditional Canonical predecessors for this effect: E24 for `mount-fixture`, E25 for `own-foreign` and `own-root`. | `FIXTURE_ROOT_RESIDUE=false`, measured; the invocation root no longer exists and its parent is unchanged apart from the removed entry; this is the case's last removal step and the closing effect of the fixture-root residue control | terminal; a failure is `CLEANUP_FAILED` with the residual path recorded, never retried blindly and never a pass |
+| E25 | own-foreign, own-root | fixture-object removal, exactly one removal per ownership case: `unlinkat(validated_root_fd, FIXTURE_FILE_ROLE, 0)`. The `mount-fixture` case has **no** effect under this id and performs no removal here at all, because both of its fixture objects are removed by E24, which is the only owner of those two names | the `FIXTURE_FILE_ROLE` child the ownership setup mutated | the frozen derived role name resolved relative to the helper's own validated root descriptor with no-follow semantics, with the observed object's `st_dev`/`st_ino` re-derived immediately before the removal and required to equal the identity pinned before the mutation, so a substituted object is never a removal target; `unlinkat` removes the name itself and never a symlink target, and the binding window is that revalidation plus the single removal call | no `CAP_SYS_ADMIN`, no ownership capability and no ownership call, because removing an object never depends on the removed object's owner; resolving the frozen role name performs one search (execute) check on the invocation root and the removal performs one write check on the same directory, and the single directory capability that bypasses both is `CAP_DAC_OVERRIDE` (capabilities(7): "bypass file read, write, and execute permission checks"), so `CAP_DAC_READ_SEARCH` is deliberately not declared for the same traversal check (1.10.4); the invocation root's sticky bit is clear by 4.2, so no `CAP_FOWNER` is required or declared | the production observation of the evidence process has finished and E23 has released the retained descriptor, so no evidence depends on the object, and no repair, re-ownership or mode change has been performed on it; the effect is performed by the **persistent privileged supervisor** — the same process that performed the case's setup — after the live evidence process sends `FINAL_CLEANUP_REQUEST` on the frozen control channel, and after the supervisor has independently validated the ownership-case state against its own retained values, because ownership cases have no mount state to observe and no `DETACH_REQUEST` to send (1.12.1, 10.4) Canonical predecessors for this effect: E23. | the `FIXTURE_FILE_ROLE` child is absent from the invocation root, so the ownership case's root is empty and E26's removal precondition is reachable; the ownership the setup produced was never changed back, and a removal that had to restore ownership first would be an undeclared second `fchown` The recorded result is consumed by E26. | terminal for the effect: E26 may now occur and is the last removal step in the ownership cases; a failure is `CLEANUP_FAILED` with the residual path recorded and never retried blindly Canonical successors for this effect: E26. |
+| E26 | all cases (run-scoped) | invocation-root removal: `unlinkat(RUNNER_TEMP_fd, invocation_root_name, AT_REMOVEDIR)` — the removal of a directory entry from the invocation root's **parent**, after every fixture object inside the root is gone; performed by the persistent privileged supervisor, in the mount case after the `FINAL_CLEANUP_REQUEST` exchange that also carries E17 and E24 and in the ownership cases after the ownership-case `FINAL_CLEANUP_REQUEST` exchange that also carries E25 (1.12.1) | the invocation root directory the ordinary process created under `RUNNER_TEMP` — **not** an object below that root | the same real path the helper validated under 5.3, re-derived; the removal acts on the parent directory's entry, requires the observed directory to be that validated root and to be empty, and never targets a repository, worktree, cache, runtime-data or pre-existing host path; the parent is reached through a descriptor the helper opened on `RUNNER_TEMP` and validated as the real parent of the validated root, so the root's own name is not re-resolved from caller text, and the observed directory is compared against the root identity the supervisor validated itself under 5.3 (`E26_ROOT_IDENTITY_CONTINUITY_CLOSED=true`, `E26_ROOT_OBSERVATION_MECHANISM_DECLARED=true`, 1.12.6) | no `CAP_SYS_ADMIN` and no ownership capability; exactly one directory capability is required and it is unconditional. The below-root half — the `O_RDONLY\|O_DIRECTORY` open and read of the root used to observe its emptiness — performs a read and a search (execute) check on a directory that is frozen `S_IMODE == 0o700` and owned by the ordinary runner (4.2), so the helper's direct DAC check on it fails by construction; the parent-removal half — `unlinkat(RUNNER_TEMP_fd, invocation_root_name, AT_REMOVEDIR)` — performs a search check and a write check on `RUNNER_TEMP`, which the helper identity does not own, and 7 requires the preflight to observe that the parent withholds write from it, so an entry removal there always needs the bypass too. `CAP_DAC_OVERRIDE` is the single capability that bypasses the read, write and execute checks of a directory (capabilities(7): "bypass file read, write, and execute permission checks"; generic_permission's directory branch in Linux `fs/namei.c` returns success for `CAP_DAC_OVERRIDE` on any directory mask), so it covers both halves of this one row and is the minimal single capability for it; `CAP_DAC_READ_SEARCH` is therefore not declared as well, and this row is canonical without splitting the observation from the removal (1.10.4). `CAP_FOWNER` is neither declared nor needed because the parent is required not to be sticky: removing a directory owned by another identity from a sticky directory would need `CAP_FOWNER` (capabilities(7): "ignore directory sticky bit on file deletion"), so a sticky parent is a preflight failure yielding `QUALIFICATION_GAP` rather than an undeclared authority | every other fixture object under the root has been removed, so the root is empty; the observed directory is the validated root identity; the parent directory is the validated real parent and is not sticky, as a preflight fact (7); the `RUNNER_TEMP` owner, mode, write-and-search DAC relation and sticky-bit state are the four observed facts of 1.7.7 and 7, and the observed relation is required to deny the helper identity direct write so that this row's authority is unconditional Canonical predecessors for this effect: E24 for `mount-fixture`, E25 for `own-foreign` and `own-root`. | `FIXTURE_ROOT_RESIDUE=false`, measured; the invocation root no longer exists and its parent is unchanged apart from the removed entry; this is the case's last removal step and the closing effect of the fixture-root residue control | terminal; a failure is `CLEANUP_FAILED` with the residual path recorded, never retried blindly and never a pass |
 
 Authority is derived from each effect's own operation rather than from one
 blanket grant, and the documented provenance for every privilege used above is
@@ -1907,8 +1907,34 @@ POST_MOUNT_ROOT_ACQUISITION_NAME=frozen_MOUNTPOINT_ROLE
 POST_MOUNT_ROOT_ACQUISITION_FLAGS=O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC
 POST_MOUNT_ROOT_ACQUISITION_USES_PRE_MOUNT_DESCRIPTOR_AS_ROOT=false
 PRE_MOUNT_MOUNTPOINT_DESCRIPTOR_ROLE=covered_mountpoint_identity_only
-PRE_MOUNT_MOUNTPOINT_DESCRIPTOR_USED_FOR_MOUNT_TARGET_REVALIDATION=true
+ROUND11_PRE_MOUNT_MOUNTPOINT_DESCRIPTOR_USED_FOR_MOUNT_TARGET_REVALIDATION=false
+ROUND11_E8_PIN_AS_MOUNT_TARGET_REVALIDATION_OBJECT_IS_WITHDRAWN=true
+MOUNT_TARGET_FD_ROLE=mount_target_object_reference_for_the_syscall
+MOUNT_TARGET_FD_IS_OPENED_BY_E14=true
+MOUNT_TARGET_FD_IS_DISTINCT_FROM_THE_E8_PIN=true
+MOUNT_TARGET_FD_IS_THE_OBJECT_THE_SYSCALL_CONSUMES=true
+UMOUNT_TARGET_FD_IS_THE_OBJECT_THE_SYSCALL_CONSUMES=true
+UMOUNT_TARGET_FD_IS_CLOSED_AFTER_THE_CALL_RETURNS=true
+MOUNT_TARGET_TRAILING_NAME_TOCTOU_WINDOW_CLOSED=true
+ROUND11_E8_PIN_AS_MOUNT_TARGET_REVALIDATION_OBJECT_IS_WITHDRAWN=true
 PRE_MOUNT_MOUNTPOINT_DESCRIPTOR_USED_AS_MOUNTED_ROOT=false
+MOUNT_TARGET_FD_ROLE=mount_target_object_reference_for_the_syscall
+MOUNT_TARGET_FD_IS_OPENED_BY_E14=true
+MOUNT_TARGET_FD_OPEN_SYSCALL=openat
+MOUNT_TARGET_FD_OPEN_BASE=validated_root_descriptor
+MOUNT_TARGET_FD_OPEN_NAME=frozen_MOUNTPOINT_ROLE
+MOUNT_TARGET_FD_OPEN_FLAGS=O_PATH|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC
+MOUNT_TARGET_FD_IS_DISTINCT_FROM_THE_E8_PIN=true
+MOUNT_TARGET_FD_IS_DISTINCT_FROM_THE_POST_MOUNT_ROOT_FD=true
+MOUNT_TARGET_FD_REVALIDATION_OBJECT_IS_THE_FD_ITSELF=true
+MOUNT_TARGET_FD_IS_THE_OBJECT_THE_SYSCALL_CONSUMES=true
+UMOUNT_TARGET_FD_ROLE=umount_target_object_reference_for_the_syscall
+UMOUNT_TARGET_FD_IS_OPENED_PER_CALL=true
+UMOUNT_TARGET_FD_OPEN_FLAGS=O_PATH|O_NOFOLLOW|O_CLOEXEC
+UMOUNT_TARGET_FD_IS_THE_OBJECT_THE_SYSCALL_CONSUMES=true
+UMOUNT_TARGET_FD_IS_CLOSED_AFTER_THE_CALL_RETURNS=true
+E14_E15_E16_TARGET_FDS_ARE_DISTINCT_OBJECT_REFERENCES=true
+MOUNT_TARGET_TRAILING_NAME_TOCTOU_WINDOW_CLOSED=true
 ```
 
 The acquired descriptor is bound to the expected mounted filesystem by three
@@ -2599,7 +2625,7 @@ NINTH_A3D_REVIEW_FAILURE=CONTRACT_IMPLEMENTABILITY_FAILURE
 NINTH_A3D_REVIEW_FAILURE_CLASS=CONTRACT_IMPLEMENTABILITY_FAILURE
 NINTH_A3D_REVIEW_RESULT=FAIL
 A3D_TENTH_REMEDIATION_ROUND=10
-A3D_CURRENT_REMEDIATION_ROUND=10
+A3D_CURRENT_REMEDIATION_ROUND_AT_THAT_HEAD=10
 A3D_HISTORY_ADDITIVE=true
 PRODUCT_FAILURE=false
 PRIVILEGED_EXECUTION_PERFORMED=false
@@ -2968,12 +2994,19 @@ TENTH_A3D_REVIEW_FAILURE=CONTRACT_IMPLEMENTABILITY_FAILURE
 TENTH_A3D_REVIEW_FAILURE_CLASS=CONTRACT_IMPLEMENTABILITY_FAILURE
 TENTH_A3D_REVIEW_RESULT=FAIL
 A3D_ELEVENTH_REMEDIATION_ROUND=11
-A3D_CURRENT_REMEDIATION_ROUND=11
 A3D_HISTORY_ADDITIVE=true
 PRODUCT_FAILURE=false
 PRIVILEGED_EXECUTION_PERFORMED=false
 ROUND10_CASE_DAG_ORDER_AND_AUTHORITY_MATRIX_ARE_DIRECTIONALLY_ACCEPTED=true
 ROUND11_SCOPE=runtime_continuity_closure
+ELEVENTH_A3D_REVIEW_FAILED_HEAD=c70cd367c7f70478b283d472e9e06a42420d04ad
+ELEVENTH_A3D_REVIEW_FAILED_TREE=b333c641b442d9e2830dceeb3dd8d78cb7469a60
+ELEVENTH_A3D_REVIEW_RESULT=FAIL
+ELEVENTH_A3D_REVIEW_FAILURE_CLASS=CONTRACT_IMPLEMENTABILITY_FAILURE
+A3D_TWELFTH_REMEDIATION_ROUND=12
+A3D_CURRENT_REMEDIATION_ROUND=12
+ROUND12_SCOPE=boundary_protocol_and_syscall_binding_closure
+ROUND11_CASE_DAG_ORDER_AND_AUTHORITY_MATRIX_ARE_DIRECTIONALLY_ACCEPTED=true
 ```
 
 Round 10 claimed `CURRENT_EFFECT_REFERENCE_MISMATCH_COUNT=0` and it was not true:
@@ -3135,11 +3168,27 @@ LOOP_CONFIGURE_INFO_LO_OFFSET=0
 LOOP_CONFIGURE_INFO_LO_SIZELIMIT=0
 LOOP_CONFIGURE_BLOCK_SIZE=0
 LOOP_RELEASE_IS_NOT_AUTOCLEAR_DRIVEN=true
-E17_ALWAYS_HAS_THE_CONFIGURED_LOOP_ASSOCIATION_TO_RELEASE=true
+ROUND11_E17_ALWAYS_HAS_THE_CONFIGURED_LOOP_ASSOCIATION_TO_RELEASE=true
 LOOP_RELEASE_IS_THE_ONLY_LOOP_RELEASE=true
 LOOP_CONFIGURE_INPUT_PROVENANCE=DOCUMENTED
 LOOP_CONFIGURE_INPUT_PROVENANCE_SOURCE=linux_include_uapi_linux_loop_h_read_for_this_round
 ROUND10_UNFROZEN_LOOP_CONFIGURE_INPUT_WITHDRAWN=true
+ROUND11_LOOP_RELEASE_IS_NOT_AUTOCLEAR_DRIVEN_AT_CONFIGURE_TIME=true
+ROUND11_E17_ALWAYS_HAS_THE_CONFIGURED_LOOP_ASSOCIATION_TO_RELEASE_CLAIM=NOT_CLAIMED
+INITIAL_AUTOCLEAR_FALSE_DOES_NOT_IMPLY_FINAL_TEARDOWN_NON_AUTOCLEAR=true
+E17_ALLOWS_KERNEL_LAZY_TEARDOWN=true
+E17_ACTUAL_DESTRUCTION_MECHANISM_IS_OBSERVED_NOT_ASSUMED=true
+E17_LOOP_CLR_FD_REQUEST_COUNT=1
+E17_BLIND_RETRY=false
+E17_SUCCESS_REQUIRES_OBSERVED_BACKING_ABSENCE=true
+E17_SUPERVISOR_POLLS_THE_RECORDED_DEVICE=true
+E17_POLL_TERMINATES_ON_OBSERVED_ABSENCE=true
+E17_POLL_BOUNDED=true
+E17_POLL_TIMEOUT_OUTCOME=CLEANUP_FAILED
+E17_LAZY_DESTRUCTION_IS_E17_COMPLETION_NOT_A_SECOND_RELEASE=true
+LOOP_RELEASE_REQUEST_OWNER=E17
+LOOP_RELEASE_REQUEST_OWNER_COUNT=1
+LOOP_RELEASE_EFFECT_COUNT=1
 ```
 
 #### 1.11.7 The frozen `mount()`/`umount2()` pathname carrier
@@ -3151,12 +3200,17 @@ implementation (5.9):
 ```text
 MOUNT_SYSCALL_PATHNAME_CARRIER_DECLARED=true
 UMOUNT_SYSCALL_PATHNAME_CARRIER_DECLARED=true
-MOUNT_SYSCALL_TARGET=/proc/self/fd/<validated_root_fd>/<MOUNTPOINT_ROLE>
-UMOUNT_SYSCALL_TARGET=/proc/self/fd/<validated_root_fd>/<MOUNTPOINT_ROLE>
+ROUND11_MOUNT_SYSCALL_TARGET=/proc/self/fd/<validated_root_fd>/<MOUNTPOINT_ROLE>
+ROUND11_UMOUNT_SYSCALL_TARGET=/proc/self/fd/<validated_root_fd>/<MOUNTPOINT_ROLE>
+ROUND11_MOUNT_TARGET_CARRIER_IS_BOUND_TO_VALIDATED_ROOT_FD=true
+ROUND11_MOUNT_TARGET_CARRIER_ROLE_NAME_COMPONENT_PRESENT=true
+ROUND11_MOUNT_TARGET_CARRIER_WITHDRAWN_BY_ROUND12=true
 MOUNT_TARGET_CARRIER_IS_BOUND_TO_VALIDATED_ROOT_FD=true
 CALLER_ROOT_STRING_NOT_RE_RESOLVED_FOR_MOUNT_TARGET=true
 VALIDATED_ROOT_FD_REMAINS_OPEN_THROUGH_THE_LAST_MOUNT_OR_UNMOUNT=true
-VALIDATED_ROOT_FD_CLOSE_CHECKPOINT=after_E24_and_before_E26
+ROUND11_VALIDATED_ROOT_FD_CLOSE_CHECKPOINT=after_E24_and_before_E26
+ROUND11_VALIDATED_ROOT_FD_CLOSE_CHECKPOINT_WITHDRAWN_BY_ROUND12=true
+VALIDATED_ROOT_FD_CLOSE_CHECKPOINT=after_E26_completes
 ROUND10_PROSE_ONLY_MOUNT_TARGET_BINDING_WITHDRAWN=true
 ```
 
@@ -3325,17 +3379,17 @@ CURRENT_POINTER_KEY_DUPLICATE_VALUE_COUNT=0
 ```text
 ROUND11_RE_EVALUATED_RESULTS=PRIVILEGED_EFFECT_AUTHORITY_CLOSURE,CROSS_BOUNDARY_CONTINUITY_IMPLEMENTABILITY,NAMESPACE_LIFECYCLE_IMPLEMENTABILITY,CLEANUP_STATE_MACHINE_IMPLEMENTABILITY,PRIVILEGED_CHILD_INODE_CONFINEMENT_IMPLEMENTABILITY,A3_CONTRACT_IMPLEMENTABILITY
 PRIVILEGED_EFFECT_AUTHORITY_CLOSURE=PASS
-PRIVILEGED_EFFECT_AUTHORITY_CLOSURE_BASIS=every_row_re_derived_against_the_registry_and_every_post_E1_privileged_effect_is_served_by_the_one_process_that_holds_its_state
+ROUND11_PRIVILEGED_EFFECT_AUTHORITY_CLOSURE_BASIS=every_row_re_derived_against_the_registry_and_every_post_E1_privileged_effect_is_served_by_the_one_process_that_holds_its_state
 CROSS_BOUNDARY_CONTINUITY_IMPLEMENTABILITY=PASS
-CROSS_BOUNDARY_CONTINUITY_IMPLEMENTABILITY_BASIS=the_detach_and_cleanup_crossings_are_declared_channel_messages_and_the_setup_runtime_state_never_crosses_a_process_boundary_because_its_producer_does_not_exit
+ROUND11_CROSS_BOUNDARY_CONTINUITY_IMPLEMENTABILITY_BASIS=the_detach_and_cleanup_crossings_are_declared_channel_messages_and_the_setup_runtime_state_never_crosses_a_process_boundary_because_its_producer_does_not_exit
 NAMESPACE_LIFECYCLE_IMPLEMENTABILITY=PASS
-NAMESPACE_LIFECYCLE_IMPLEMENTABILITY_BASIS=one_privileged_process_creates_the_private_namespace_keeps_its_membership_for_the_whole_case_and_forks_the_only_child_that_enters_it
+ROUND11_NAMESPACE_LIFECYCLE_IMPLEMENTABILITY_BASIS=one_privileged_process_creates_the_private_namespace_keeps_its_membership_for_the_whole_case_and_forks_the_only_child_that_enters_it
 CLEANUP_STATE_MACHINE_IMPLEMENTABILITY=PASS
-CLEANUP_STATE_MACHINE_IMPLEMENTABILITY_BASIS=the_four_states_cover_every_checkpoint_and_E17_is_entered_only_from_MOUNT_GONE_LOOP_BOUND_which_both_E16_and_E23_after_E15_produce
+ROUND11_CLEANUP_STATE_MACHINE_IMPLEMENTABILITY_BASIS=the_four_states_cover_every_checkpoint_and_E17_is_entered_only_from_MOUNT_GONE_LOOP_BOUND_which_both_E16_and_E23_after_E15_produce
 PRIVILEGED_CHILD_INODE_CONFINEMENT_IMPLEMENTABILITY=PASS
-PRIVILEGED_CHILD_INODE_CONFINEMENT_IMPLEMENTABILITY_BASIS=the_evidence_process_inherits_no_supervisor_descriptor_and_opens_every_object_it_uses_itself
+ROUND11_PRIVILEGED_CHILD_INODE_CONFINEMENT_IMPLEMENTABILITY_BASIS=the_evidence_process_inherits_no_supervisor_descriptor_and_opens_every_object_it_uses_itself
 A3_CONTRACT_IMPLEMENTABILITY=PASS
-A3_CONTRACT_IMPLEMENTABILITY_BASIS=each_of_the_eight_blocking_findings_is_closed_by_a_statement_that_names_its_authority_owner_producer_carrier_lifetime_consumer_and_closing_point
+ROUND11_A3_CONTRACT_IMPLEMENTABILITY_BASIS=each_of_the_eight_blocking_findings_is_closed_by_a_statement_that_names_its_authority_owner_producer_carrier_lifetime_consumer_and_closing_point
 NO_LATER_EFFECT_CONSUMES_STATE_OWNED_SOLELY_BY_AN_EXITED_PROCESS=true
 BLOCKING_FINDINGS_CLOSED=8
 BLOCKING_FINDINGS_OPEN=0
@@ -3353,12 +3407,607 @@ FORMATTER_FD_PRESENT_IN_CHILD_ALLOWLIST=true
 FORMATTER_EXECUTION_NONINTERACTIVE=true
 ```
 
+### 1.12 Remediation round 12
+
+The eleventh review of this design failed the round-11 head with the same failure
+class, and that failure is preserved here rather than rewritten. Round 11 closed
+the *runtime-continuity* defects of round 10, but it left the post-`E1` control
+path of the ownership cases undefined, it froze a control channel that cannot
+preserve message boundaries, it made channel-failure cleanup unconditional and
+therefore state-blind, it bound `E14` to the *old pin* rather than to the object
+the syscall consumes, it asserted loop-teardown facts that no frozen user-space
+observation can establish, and its runtime-state table contained a close
+checkpoint that no case can execute:
+
+```text
+ELEVENTH_A3D_REVIEW_FAILED_HEAD=c70cd367c7f70478b283d472e9e06a42420d04ad
+ELEVENTH_A3D_REVIEW_FAILED_TREE=b333c641b442d9e2830dceeb3dd8d78cb7469a60
+ELEVENTH_A3D_REVIEW_FAILURE=CONTRACT_IMPLEMENTABILITY_FAILURE
+ELEVENTH_A3D_REVIEW_FAILURE_CLASS=CONTRACT_IMPLEMENTABILITY_FAILURE
+ELEVENTH_A3D_REVIEW_RESULT=FAIL
+A3D_TWELFTH_REMEDIATION_ROUND=12
+A3D_HISTORY_ADDITIVE=true
+PRODUCT_FAILURE=false
+PRIVILEGED_EXECUTION_PERFORMED=false
+ROUND12_SCOPE=boundary_protocol_and_syscall_binding_closure
+ROUND12_EFFECT_IDS_RENUMBERED=false
+ROUND12_ROUND11_CASE_DAGS_REBUILT=false
+ROUND12_AUTHORITY_MATRIX_WIDENED=false
+ROUND12_PERSISTENT_SUPERVISOR_ARCHITECTURE_REPLACED=false
+```
+
+| # | Finding | Corrected in |
+| --- | --- | --- |
+| 1 | The ownership case DAGs `E2,E3,E1,E21,E23,E25,E26` and `E4,E5,E1,E21,E23,E25,E26` were frozen as orders with no actor protocol: no statement said which actor performs `E25`, how the privileged supervisor is asked to perform it, or that the ownership cases never send `DETACH_REQUEST` and never execute `E15`, `E22`, `E17` or `E24`. The supervisor's post-`E1` privileged-effect scope enumerated `E15, E16, E17, E24, E26` and omitted `E25`, so no privileged actor was declared for the last removal in two of the three cases. | 1.12.1, 5.11, 10.1, 5.2, 5.6 |
+| 2 | The control channel was frozen as `socketpair(AF_UNIX, SOCK_STREAM, 0)`, which preserves no message boundaries, and the contract left the framing (length prefix, maximum frame size, read/write loop, partial read, coalesced frames, EOF, malformed frame) to the implementation. | 1.12.2, 5.11 |
+| 3 | The wire grammar contradicted itself: `EVIDENCE_CONTROL_CHANNEL_MESSAGE_ENUM_IS_THE_ONLY_ACCEPTED_INPUT=true` while `FINAL_CLEANUP_REQUEST` was declared to carry one state token from the 10.4 enum, a token that is not an enum member. | 1.12.2, 5.11, 5.6 |
+| 4 | Channel closure was an unconditional rule: "child exits without `FINAL_CLEANUP_REQUEST`" was mapped to the `ATTACHED` cleanup branch regardless of the supervisor's own authoritative state, which would re-run `E16` after a successful `E15`. The failure block also claimed `CONTROL_CHANNEL_FAILURE_LEAVES_NO_PRIVILEGED_OBJECT=true` without requiring the cleanup result to be observed successful. | 1.12.3, 5.11, 10.4 |
+| 5 | `E14`'s target was the pathname `/proc/self/fd/<validated_root_fd>/MOUNTPOINT_ROLE`, which still resolves the trailing name `MOUNTPOINT_ROLE` at `mount(2)` time, and the pre-call `fstat` was taken on the *old* `E8` pin rather than on the object the syscall consumes. `mount_target_fd`, `E15_UMOUNT_TARGET_OBJECT_BINDING_CLOSED` and `E16_UMOUNT_TARGET_OBJECT_BINDING_CLOSED` were undeclared, and the token `MOUNT_TARGET_REVALIDATION_AND_CALL_BIND_THE_SAME_DESCRIPTOR=true` was not literally true. | 1.12.4, 5.9 |
+| 6 | `LOOP_DEVICE_OPEN_REFERENCE_COUNT_AT_E17=1` was an exact user-space claim with no frozen observation mechanism behind it, and the contract read `LO_FLAGS_AUTOCLEAR=false` as proof that teardown can never become autoclear-driven, although `LOOP_CLR_FD` on an actively opened loop device may succeed by enabling lazy autoclear destruction. | 1.12.5, 5.9, 1.11.6 |
+| 7 | The 5.11 runtime-state table listed `E26` as a `validated_root_fd` consumer while the same row's closing checkpoint was "closed after `E24` and before `E26`", which no case can execute: in the ownership cases there is no `E24` at all, and in the mount case the close would precede a declared consumer. | 1.12.6, 5.11, 5.9, 10.1 |
+| 8 | The round-11 probe suite did not read the ownership control lifecycle, the channel framing, the state-aware closure rule, the `E14`/`E15`/`E16` target binding, the loop-teardown observation or the runtime-state close checkpoint, so none of the seven defects above was mechanically detectable at that head. | 1.12.7, 15.1, 19 |
+
+#### 1.12.1 The ownership-case post-`E1` control flow
+
+The ownership DAGs of 1.11.9 are **accepted unchanged and are not rebuilt here**;
+what this round adds is the actor protocol they were missing. In `own-foreign`
+and `own-root` the privileged setup effects (`E2`/`E3` and `E4`/`E5`) occur before
+the credential transition, the transition child becomes
+`NONROOT_EVIDENCE_PROCESS` (1.10.2), and everything after `E1` that needs
+privilege is performed by the *same* persistent supervisor over the *same* frozen
+control channel of 10.1. There is no mount and no loop device in these cases, so
+there is nothing to detach and nothing to unmount:
+
+```text
+OWNERSHIP_CASE_SENDS_DETACH_REQUEST=false
+OWNERSHIP_CASE_EXECUTES_E15=false
+OWNERSHIP_CASE_EXECUTES_E22=false
+OWNERSHIP_CASE_EXECUTES_E17=false
+OWNERSHIP_CASE_EXECUTES_E24=false
+OWNERSHIP_CASE_PRIVATE_MOUNT_NAMESPACE=NONE
+OWNERSHIP_CASE_LOOP_DEVICE=NONE
+OWNERSHIP_CASE_MOUNT_STATE=NONE
+OWNERSHIP_CASE_POST_E1_PRIVILEGED_EFFECTS=E25,E26
+OWNERSHIP_CASE_POST_E1_CLEANUP=E25,E26
+OWNERSHIP_CASE_POST_E1_CLEANUP_IS_SERVED_BY_THE_PERSISTENT_SUPERVISOR=true
+SUPERVISOR_POST_E1_EFFECT_SET=E15,E16,E17,E24,E25,E26
+SUPERVISOR_POST_E1_EFFECT_SET_INCLUDES_E25=true
+SUPERVISOR_PERFORMS_E25_AND_E26_FOR_OWNERSHIP_CASES=true
+OWNERSHIP_CASE_E23_PRODUCER=NONROOT_EVIDENCE_PROCESS
+OWNERSHIP_CASE_E23_IS_THE_EVIDENCE_SIDE_DESCRIPTOR_RELEASE=true
+OWNERSHIP_CASE_E23_BEFORE_FINAL_CLEANUP_REQUEST=true
+OWNERSHIP_CONTROL_LIFECYCLE_CLOSED=true
+```
+
+The ownership exchange is the same two halves as the mount case's final cleanup —
+a request token and a completion token on the frozen channel — and it requires no
+new message: the ownership cases send `FINAL_CLEANUP_REQUEST` and receive
+`FINAL_CLEANUP_COMPLETED`. The supervisor does **not** accept a state token from
+the caller for these cases; it owns the authoritative runtime state and validates
+the ownership-case state itself before it acts (1.12.2, 10.4):
+
+```text
+OWNERSHIP_EXCHANGE=E21;E23;FINAL_CLEANUP_REQUEST;supervisor_independent_ownership_state_validation;E25;E26;FINAL_CLEANUP_COMPLETED
+OWNERSHIP_FINAL_CLEANUP_REQUEST_MESSAGE=FINAL_CLEANUP_REQUEST
+OWNERSHIP_FINAL_CLEANUP_COMPLETION_MESSAGE=FINAL_CLEANUP_COMPLETED
+OWNERSHIP_FINAL_CLEANUP_REQUEST_AFTER_E23=true
+OWNERSHIP_FINAL_CLEANUP_REQUEST_CARRIES_NO_STATE_TOKEN=true
+OWNERSHIP_SUPERVISOR_VALIDATES_THE_OWNERSHIP_CASE_STATE=true
+OWNERSHIP_SUPERVISOR_VALIDATION_INPUTS=current_root_validation_current_namespace_identity_the_pinned_fixture_child_identity_and_the_recorded_case_identity
+OWNERSHIP_SUPERVISOR_VALIDATION_FAILURE_OUTCOME=FINAL_CLEANUP_REQUEST_REJECTED
+OWNERSHIP_CASE_CLEANUP_ORDER=E25_then_E26
+OWNERSHIP_CASE_LAST_REMOVAL_EFFECT=E26
+OWNERSHIP_EFFECT_ACTOR_E25=PRIVILEGED_FIXTURE_SUPERVISOR
+OWNERSHIP_EFFECT_ACTOR_E26=PRIVILEGED_FIXTURE_SUPERVISOR
+OWNERSHIP_AWAITS_FINAL_CLEANUP_COMPLETED_BEFORE_EXIT=true
+OWNERSHIP_CASE_COMPLETION_CARRIER=one_fixed_ascii_token_on_the_frozen_control_channel
+OWNERSHIP_COMPLETION_IS_NOT_EVIDENCE=true
+```
+
+Every action token that previously listed only `E15,E16,E17,E24,E26` as the
+supervisor's post-`E1` privileged effects is regenerated. The role/action scope is
+now per case, and the historical round-11 tuple is retained under a round-qualified
+name rather than left colliding with the current one (20):
+
+```text
+SUPERVISOR_POST_E1_EFFECT_SCOPE_IS_PER_CASE=true
+SUPERVISOR_MOUNT_CASE_POST_E1_EFFECT_SET=E15,E16,E17,E24,E26
+SUPERVISOR_OWNERSHIP_CASE_POST_E1_EFFECT_SET=E25,E26
+SUPERVISOR_POST_E1_EFFECT_SET_IS_THE_UNION_OF_THE_CASE_SCOPES=true
+HELPER_CLEANUP_ACTION_PERFORMS_CASES=E16_or_E17,E24,E26_in_mount-fixture;E25,E26_in_the_ownership_cases
+HELPER_CLEANUP_ACTION_IS_CASE_AWARE=true
+ROUND11_POST_E1_EFFECT_TUPLE=E15,E16,E17,E24,E26
+ROUND11_POST_E1_EFFECT_TUPLE_IS_MISSING_E25=true
+ROUND11_POST_E1_EFFECT_TUPLE_IS_HISTORICAL_ONLY=true
+ROUND11_EFFECT_NOT_PERFORMED_BY_ANY_DECLARED_ACTOR_COUNT=1
+ROUND12_EFFECT_NOT_PERFORMED_BY_ANY_DECLARED_ACTOR_COUNT=0
+```
+
+#### 1.12.2 A real message-boundary protocol, and one wire grammar
+
+`SOCK_STREAM` does not preserve message boundaries, so a reader on it cannot
+distinguish two coalesced messages from one message, and the round-11 contract
+never froze a framing rule to compensate. This round removes the ambiguity at the
+mechanism instead of describing framing that the implementation would have had to
+invent:
+
+```text
+CONTROL_CHANNEL_SOCKET_TYPE=SOCK_SEQPACKET
+CONTROL_CHANNEL_SOCKET_FAMILY=AF_UNIX
+CONTROL_CHANNEL_SOCKET_PROTOCOL=0
+CONTROL_CHANNEL_SOCKET_FLAGS=SOCK_CLOEXEC
+EVIDENCE_CONTROL_CHANNEL_MECHANISM=socketpair(AF_UNIX, SOCK_SEQPACKET|SOCK_CLOEXEC, 0)
+EVIDENCE_CONTROL_CHANNEL_MECHANISM_COUNT=1
+CONTROL_CHANNEL_MECHANISM_PRESERVES_MESSAGE_BOUNDARIES=true
+CONTROL_CHANNEL_RECORD_BOUNDARIES_DEFINED=true
+CONTROL_CHANNEL_RECORDS_PER_MESSAGE=1
+CONTROL_CHANNEL_ONE_RECORD_PER_MESSAGE=true
+CONTROL_CHANNEL_MESSAGE_IS_ONE_SEQPACKET_RECORD=true
+CONTROL_CHANNEL_BOUNDARIES_ARE_KERNEL_PRESERVED=true
+CONTROL_CHANNEL_COALESCED_FRAMES_POSSIBLE=false
+CONTROL_CHANNEL_COALESCING_HANDLING=not_possible_by_construction_because_each_send_is_one_record
+CONTROL_CHANNEL_MAX_FRAME_SIZE_BYTES=64
+CONTROL_CHANNEL_MAX_FRAME_SIZE_IS_ENFORCED_BY_THE_SUPERVISOR=true
+CONTROL_CHANNEL_FRAME_LARGER_THAN_MAX_OUTCOME=CONTROL_CHANNEL_REJECTED
+CONTROL_CHANNEL_EXACT_FRAME_GRAMMAR=one_ascii_record_of_one_closed_enum_token_with_no_terminator_and_no_leading_or_trailing_whitespace
+CONTROL_CHANNEL_FRAME_IS_CLOSED_ENUM_TOKEN_ONLY=true
+CONTROL_CHANNEL_SEQPACKET_TRUNCATION_BEHAVIOUR=the_receive_buffer_is_larger_than_the_maximum_frame_so_a_truncated_record_cannot_be_parsed_as_a_short_valid_token
+CONTROL_CHANNEL_RECEIVE_BUFFER_BYTES=128
+CONTROL_CHANNEL_PARTIAL_READ_BEHAVIOUR_DEFINED=true
+CONTROL_CHANNEL_PARTIAL_READ_HANDLING=a_received_record_shorter_than_the_frozen_token_is_not_a_message_and_yields_CONTROL_CHANNEL_REJECTED
+CONTROL_CHANNEL_READ_LOOP=one_blocking_receive_per_expected_message_with_the_frozen_enum_token_compared_whole
+CONTROL_CHANNEL_READ_LOOP_ITERATION_COUNT_PER_MESSAGE=1
+CONTROL_CHANNEL_WRITE_LOOP=one_send_of_one_complete_record;the_send_never_writes_a_partial_record
+CONTROL_CHANNEL_PARTIAL_WRITE_HANDLING=a_send_that_reports_a_short_record_is_CONTROL_CHANNEL_REJECTED_and_never_a_completion
+CONTROL_CHANNEL_EOF_HANDLING=a_zero_length_receive_is_channel_closure_and_enters_the_state_aware_cleanup_of_10_4
+CONTROL_CHANNEL_MALFORMED_FRAME_OUTCOME=CONTROL_CHANNEL_REJECTED
+CONTROL_CHANNEL_MALFORMED_FRAME_IS_PASS=false
+CONTROL_CHANNEL_MALFORMED_FRAME_IS_RETRIED=false
+CONTROL_CHANNEL_FRAMING_IS_NOT_LEFT_TO_THE_IMPLEMENTATION=true
+```
+
+The grammar contradiction is resolved by choosing one grammar, and the chosen one
+is the simpler of the two the round-11 text gestured at: the request carries no
+state payload at all. The supervisor already owns the authoritative runtime state
+of 5.11, and it MUST independently reacquire and validate that state before
+cleanup; a caller-supplied state token would be a second, weaker source of the same
+fact:
+
+```text
+CONTROL_CHANNEL_WIRE_GRAMMAR=one_closed_enum_message_token_per_record
+CONTROL_CHANNEL_WIRE_GRAMMAR_COUNT=1
+CONTROL_CHANNEL_WIRE_GRAMMAR_UNIQUE=true
+CONTROL_CHANNEL_GRAMMAR_CONTRADICTION_COUNT=0
+CONTROL_CHANNEL_ACCEPTS_STATE_TOKEN=false
+CONTROL_CHANNEL_ACCEPTS_PAYLOAD=false
+CONTROL_CHANNEL_MESSAGE_ENUM=DETACH_REQUEST,DETACH_COMPLETED,FINAL_CLEANUP_REQUEST,FINAL_CLEANUP_COMPLETED
+CONTROL_CHANNEL_MESSAGE_ENUM_IS_CLOSED=true
+CONTROL_CHANNEL_MESSAGE_ENUM_IS_THE_ONLY_ACCEPTED_INPUT=true
+CONTROL_CHANNEL_MESSAGE_ENUM_COUNT=4
+CONTROL_CHANNEL_MOUNT_CASE_MESSAGES=DETACH_REQUEST,DETACH_COMPLETED,FINAL_CLEANUP_REQUEST,FINAL_CLEANUP_COMPLETED
+CONTROL_CHANNEL_OWNERSHIP_CASE_MESSAGES=FINAL_CLEANUP_REQUEST,FINAL_CLEANUP_COMPLETED
+FINAL_CLEANUP_REQUEST_CARRIES_NO_STATE_PAYLOAD=true
+FINAL_CLEANUP_REQUEST_PAYLOAD=NONE
+FINAL_CLEANUP_REQUEST_IS_CONTENT_FREE=true
+SUPERVISOR_STATE_IS_THE_AUTHORITATIVE_RUNTIME_STATE=true
+SUPERVISOR_INDEPENDENTLY_REACQUIRES_THE_STATE_BEFORE_CLEANUP=true
+REQUEST_TOKEN_IS_NOT_AUTHORITATIVE_STATE=true
+ROUND11_STATE_TOKEN_PAYLOAD_WITHDRAWN=true
+ROUND11_CHANNEL_MECHANISM=SOCK_STREAM
+ROUND11_CHANNEL_MECHANISM_IS_WITHDRAWN=true
+```
+
+A mismatch between the supervisor's own reacquired state and the state it needs
+for a requested effect is not repaired from the request and is not inferred from
+it: the effect is refused under 10.4's refusal rule, and the outcome is
+`FINAL_CLEANUP_REQUEST_REJECTED` or `CONTROL_CHANNEL_REJECTED` respectively, never
+a pass and never a blind retry.
+
+#### 1.12.3 `EOF` and child-crash cleanup are state-aware
+
+Round 11 froze an unconditional rule — child exits without
+`FINAL_CLEANUP_REQUEST` implies the `ATTACHED` cleanup branch — which the
+supervisor's own state can contradict, and which after a successful `E15` would
+perform an unmount (`E16`) of a mount that no longer exists. The rule is withdrawn
+and replaced by a case-and-state dispatch on the supervisor's reacquired state:
+
+```text
+CHANNEL_EOF_CLEANUP_IS_STATE_AWARE=true
+ROUND11_UNCONDITIONAL_EOF_RULE_WITHDRAWN=true
+CONTROL_CHANNEL_CHILD_EXITS_WITHOUT_FINAL_CLEANUP_REQUEST=supervisor_reacquires_its_own_state_and_performs_the_cleanup_branch_of_that_state
+CONTROL_CHANNEL_CHILD_EXITS_WITHOUT_DETACH_REQUEST=supervisor_reacquires_its_own_state_and_performs_the_cleanup_branch_of_that_state
+CONTROL_CHANNEL_SUPERVISOR_EXITS_BEFORE_FINAL_CLEANUP_COMPLETED=child_reports_CLEANUP_FAILED
+CONTROL_CHANNEL_EOF_IS_NOT_A_COMPLETION=true
+CONTROL_CHANNEL_UNEXPECTED_CLOSURE_OUTCOME=CLEANUP_FAILED
+CONTROL_CHANNEL_DESCRIPTOR_CLOSED_BY_PROCESS_EXIT_IS_NOT_E23=true
+CONTROL_CHANNEL_FAILURE_IS_PASS=false
+CONTROL_CHANNEL_FAILURE_IS_PRODUCT_FAILURE=false
+CONTROL_CHANNEL_FAILURE_NEVER_RETRIED_BLINDLY=true
+CHANNEL_EOF_AFTER_E15_NEVER_RUNS_E16=true
+CHANNEL_EOF_AFTER_E15_REACHES_E17=true
+CONTROL_CHANNEL_FAILURE_CLEANUP_REACHABLE_FROM_EVERY_LIVE_STATE=true
+CONTROL_CHANNEL_FAILURE_CLEANUP_STATE_SET=ATTACHED,DETACHED_HELD,MOUNT_GONE_LOOP_BOUND,RELEASED,OWNERSHIP_OBJECT_PRESENT
+```
+
+The branches are the 10.4 transitions applied to a failure entry rather than to a
+request, and each is stated as what the supervisor does, not as what the child was
+expected to have done:
+
+| Supervisor's reacquired state at channel `EOF` | Why that state holds after a child exit | Cleanup branch |
+| --- | --- | --- |
+| `ATTACHED` | no successful `MNT_DETACH` occurred; if the child held an evidence descriptor, its process exit closed it | `E16` -> `MOUNT_GONE_LOOP_BOUND` -> `E17` -> `E24` -> `E26` |
+| `DETACHED_HELD` | `E15` succeeded; the child's exit closed the retained descriptor, so the supervisor observes or waits for the held mount to become unreferenced | observe `MOUNT_GONE_LOOP_BOUND`, then `E17` -> `E24` -> `E26` |
+| `MOUNT_GONE_LOOP_BOUND` | the mount is already gone and only the loop association remains | `E17` -> `E24` -> `E26` |
+| `RELEASED` | `E17` already completed; only the object and root removals remain | `E24` -> `E26` |
+| ownership case, fixture object still present | the ownership cases mount nothing and detach nothing; `E23` has or has not happened, and in either case the only removals are the fixture object and the root | `E25` -> `E26` as applicable |
+
+```text
+CHANNEL_EOF_STATE_DISPATCH_IS_TOTAL=true
+CHANNEL_EOF_STATE_DISPATCH_STATE_COUNT=5
+CHANNEL_EOF_DETACHED_HELD_BRANCH_ACTION=observe_MOUNT_GONE_LOOP_BOUND_then_E17_then_E24_then_E26
+CHANNEL_EOF_DETACHED_HELD_REQUIRES_E16=false
+CHANNEL_EOF_ATTACHED_BRANCH_ACTION=E16_then_E17_then_E24_then_E26
+CHANNEL_EOF_MOUNT_GONE_LOOP_BOUND_BRANCH_ACTION=E17_then_E24_then_E26
+CHANNEL_EOF_RELEASED_BRANCH_ACTION=E24_then_E26
+CHANNEL_EOF_OWNERSHIP_BRANCH_ACTION=E25_then_E26_as_applicable
+CHANNEL_EOF_BRANCH_PERFORMS_NO_UNDECLARED_EFFECT=true
+CHANNEL_EOF_ON_A_DETACHED_HELD_MOUNT_DOES_NOT_UNMOUNT=true
+CONTROL_CHANNEL_FAILURE_LEAVES_NO_PRIVILEGED_OBJECT=only_reported_when_the_cleanup_result_is_observed_successful
+CONTROL_CHANNEL_FAILURE_CLEANUP_RESULT_IS_OBSERVED=true
+CONTROL_CHANNEL_FAILURE_CLEANUP_SUCCESS_CRITERION=LOOP_BACKING_RESIDUE_false_and_PRIVATE_MOUNT_RESIDUE_false_and_FIXTURE_ROOT_RESIDUE_false_all_measured
+CONTROL_CHANNEL_FAILURE_CLEANUP_FAILURE_REPORTS_THE_RESIDUE=true
+CONTROL_CHANNEL_FAILURE_RESIDUE_IS_RECORDED_AS_OBSERVED=true
+ROUND11_UNOBSERVED_NO_RESIDUE_CLAIM_WITHDRAWN=true
+```
+
+If the cleanup itself fails, the run reports `CLEANUP_FAILED` together with the
+residue it actually observed — the residual mount id, the residual loop device,
+the residual path, or the still-open privileged object — and reports no
+no-residue claim at all. A cleanup result that was never observed cannot be
+reported as a success, and this contract states that as a rule rather than as a
+preference:
+
+```text
+CLEANUP_SUCCESS_REQUIRES_OBSERVED_RESIDUE_CONTROLS=true
+UNOBSERVED_CLEANUP_RESULT_IS_PASS=false
+CONTROL_CHANNEL_FAILURE_RESIDUE_REPORTED_ON_FAILURE=true
+```
+
+#### 1.12.4 `E14`/`E15`/`E16` are bound to the object the syscall consumes
+
+`mount(2)` and `umount2(2)` take pathnames, so the round-11 carrier
+`/proc/self/fd/<validated_root_fd>/MOUNTPOINT_ROLE` still resolves the trailing
+component `MOUNTPOINT_ROLE` *at syscall time*, against a directory the ordinary
+runner owns and can write. A pre-call `fstat` of the **`E8` pin** proves that the
+inode `E8` created still exists somewhere; it does not prove that the role name
+still resolves to that inode. This round freezes a last-component descriptor that
+the syscall itself consumes, so that the validation object and the syscall target
+are literally the same object reference:
+
+```text
+E14_MOUNT_TARGET_FD_OPENED_BEFORE_THE_MOUNT_CALL=true
+E14_MOUNT_TARGET_FD_OPEN_FLAGS=O_PATH|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC
+E14_MOUNT_TARGET_FD_OPENAT_DIRFD=validated_root_fd
+E14_MOUNT_TARGET_FD_OPENAT_PATH=MOUNTPOINT_ROLE
+MOUNT_TARGET_FD_IS_THE_LAST_COMPONENT_DESCRIPTOR=true
+MOUNT_TARGET_FD_TRAILING_NAME_RESOLVED_ONCE=true
+MOUNT_TARGET_FD_TRAILING_NAME_RESOLVED_AT_OPEN_TIME_ONLY=true
+E14_CURRENT_ROLE_NAME_EQUALS_E8_IDENTITY=true
+E14_TARGET_FD_FSTAT_COMPARED_AGAINST=E8_original_producer_identity
+E14_TARGET_FD_FSTAT_COMPARES=st_dev_and_st_ino
+E14_TARGET_FD_FSTAT_IS_ON_THE_DESCRIPTOR_THE_CALL_CONSUMES=true
+MOUNT_TARGET_IS=/proc/self/fd/<mount_target_fd>
+MOUNT_TARGET_CONTAINS_NO_ROLE_NAME_COMPONENT=true
+MOUNT_TARGET_TRAILING_NAME_TOCTOU_WINDOW_CLOSED=true
+MOUNT_TARGET_FD_REMAINS_OPEN_THROUGH_THE_MOUNT_CALL_RETURN=true
+MOUNT_TARGET_FD_CLOSED_AFTER_THE_MOUNT_CALL_RETURN=true
+MOUNT_TARGET_FD_CLOSED_BEFORE_E18=true
+E14_VALIDATION_AND_SYSCALL_CONSUME_SAME_TARGET_FD=true
+MOUNT_TARGET_REVALIDATION_AND_CALL_BIND_THE_SAME_DESCRIPTOR=true
+MOUNT_TARGET_REVALIDATION_AND_CALL_BIND_THE_SAME_DESCRIPTOR_BASIS=the_revalidated_descriptor_is_the_one_named_in_the_path_the_syscall_resolves
+E14_TARGET_FD_IS_DISTINCT_FROM_THE_E8_PIN=true
+E14_TARGET_FD_OPEN_IS_NOT_A_SECOND_E8_EFFECT=true
+E14_TARGET_FD_OPEN_IS_A_DESCRIPTOR_ACQUISITION_ON_AN_OBJECT_E8_ALREADY_CREATED=true
+MOUNT_TARGET_FD_MISMATCH_OUTCOME=QUALIFICATION_GAP_WITH_DESIGN_FINDING
+MOUNT_TARGET_FD_MISMATCH_IS_PASS=false
+MOUNT_TARGET_FD_MISMATCH_IS_REPAIRED_WITH_PRIVILEGE=false
+ROUND11_PATHNAME_ONLY_MOUNT_TARGET_WITHDRAWN=true
+```
+
+`E15` and `E16` receive the analogous real binding, each on its own object
+descriptor, because an unmount must act on the object it is supposed to unmount
+rather than on a name that resolves at call time:
+
+```text
+E15_UMOUNT_TARGET_FD_OPENED_BEFORE_THE_UMOUNT_CALL=true
+E15_UMOUNT_TARGET_FD_OPEN_FLAGS=O_PATH|O_NOFOLLOW|O_CLOEXEC
+E15_UMOUNT_TARGET_FD_OPENAT_DIRFD=validated_root_fd
+E15_UMOUNT_TARGET_FD_OPENAT_PATH=MOUNTPOINT_ROLE
+E15_UMOUNT_TARGET_FD_IS_OPENED_WHILE_THE_OBSERVED_STATE_IS_ATTACHED=true
+E15_UMOUNT_TARGET_FD_FSTAT_COMPARED_AGAINST=E8_original_producer_identity
+E15_UMOUNT_TARGET_FD_FSTAT_IS_ON_THE_DESCRIPTOR_THE_CALL_CONSUMES=true
+E15_UMOUNT_TARGET_IS=/proc/self/fd/<E15_umount_target_fd>
+E15_UMOUNT_TARGET_CONTAINS_NO_ROLE_NAME_COMPONENT=true
+E15_UMOUNT_TARGET_FD_REMAINS_OPEN_THROUGH_THE_UMOUNT_CALL_RETURN=true
+E15_UMOUNT_TARGET_FD_CLOSED_AFTER_THE_UMOUNT_CALL_RETURN=true
+E15_UMOUNT_TARGET_FD_IS_NOT_REUSED_AFTER_A_SUCCESSFUL_DETACH=true
+E15_UMOUNT_TARGET_OBJECT_BINDING_CLOSED=true
+E15_UMOUNT_TARGET_NAME_TOCTOU_WINDOW_CLOSED=true
+E15_UMOUNT_TARGET_FD_MISMATCH_OUTCOME=QUALIFICATION_GAP_WITH_DESIGN_FINDING
+E15_UMOUNT_RETRY_COUNT=0
+E16_UMOUNT_TARGET_FD_OPENED_BEFORE_THE_UMOUNT_CALL=true
+E16_UMOUNT_TARGET_FD_OPEN_FLAGS=O_PATH|O_NOFOLLOW|O_CLOEXEC
+E16_UMOUNT_TARGET_FD_OPENAT_DIRFD=validated_root_fd
+E16_UMOUNT_TARGET_FD_OPENAT_PATH=MOUNTPOINT_ROLE
+E16_UMOUNT_TARGET_FD_IS_OPENED_WHILE_THE_OBSERVED_STATE_IS_ATTACHED=true
+E16_UMOUNT_TARGET_FD_FSTAT_COMPARED_AGAINST=E8_original_producer_identity
+E16_UMOUNT_TARGET_FD_FSTAT_IS_ON_THE_DESCRIPTOR_THE_CALL_CONSUMES=true
+E16_UMOUNT_TARGET_IS=/proc/self/fd/<E16_umount_target_fd>
+E16_UMOUNT_TARGET_CONTAINS_NO_ROLE_NAME_COMPONENT=true
+E16_UMOUNT_TARGET_FD_REMAINS_OPEN_THROUGH_THE_UMOUNT_CALL_RETURN=true
+E16_UMOUNT_TARGET_FD_CLOSED_AFTER_THE_UMOUNT_CALL_RETURN=true
+E16_UMOUNT_TARGET_OBJECT_BINDING_CLOSED=true
+E16_UMOUNT_TARGET_NAME_TOCTOU_WINDOW_CLOSED=true
+E16_UMOUNT_TARGET_FD_MISMATCH_OUTCOME=QUALIFICATION_GAP_WITH_DESIGN_FINDING
+E16_UMOUNT_RETRY_COUNT=0
+UMOUNT_TARGET_DESCRIPTOR_COUNT_PER_CALL=1
+UMOUNT_TARGET_DESCRIPTOR_IS_CONSUMED_BY_EXACTLY_ONE_CALL=true
+E16_IS_NEVER_PERFORMED_IN_A_STATE_OTHER_THAN_ATTACHED=true
+ROUND11_SHARED_ROOT_FD_ONLY_UMOUNT_TARGET_WITHDRAWN=true
+```
+
+`E18`, which runs after the mount covers `MOUNTPOINT_ROLE`, is a different
+acquisition and is not affected: its `openat` is expected to reach the mounted
+ext4 root rather than the covered `E8` inode, and its own three measured
+equalities are what bind it (5.9). The `E8` pin keeps its own role as the covered
+mountpoint's identity reference and is never the mount target.
+
+#### 1.12.5 `LOOP_CLR_FD`, autoclear and observed teardown
+
+The initial configuration is kept exactly as round 11 froze it — `lo_flags = 0`
+and `LO_FLAGS_AUTOCLEAR=false` — and the *inference* drawn from it is withdrawn.
+`LOOP_CLR_FD` on a loop device that still has open references may complete by
+enabling lazy autoclear destruction rather than by destroying the device
+immediately, so `LO_FLAGS_AUTOCLEAR=false` at configure time does not prove that
+the actual teardown mechanism cannot become autoclear-driven. What this contract
+freezes instead is the request owner, the observation that establishes success,
+and the distinction between the two:
+
+```text
+INITIAL_LO_FLAGS_AUTOCLEAR=false
+INITIAL_AUTOCLEAR_FALSE_DOES_NOT_IMPLY_FINAL_TEARDOWN_NON_AUTOCLEAR=true
+LOOP_RELEASE_REQUEST_OWNER=E17
+LOOP_RELEASE_EFFECT=E17
+E17_LOOP_CLR_FD_REQUEST_COUNT=1
+E17_LOOP_CLR_FD_ISSUED_ONCE=true
+E17_BLIND_RETRY=false
+E17_RETRY_COUNT=0
+E17_ALLOWS_KERNEL_LAZY_TEARDOWN=true
+E17_KERNEL_TEARDOWN_MECHANISM=immediate_or_lazy_autoclear
+E17_ACTUAL_DESTRUCTION_MECHANISM_IS_OBSERVED_NOT_ASSUMED=true
+E17_SUCCESS_REQUIRES_OBSERVED_BACKING_ABSENCE=true
+E17_SUCCESS_CRITERION=the_recorded_loop_device_reports_no_backing_association_with_the_E9_pinned_identity
+E17_SUPERVISOR_POLLS_THE_RECORDED_DEVICE=true
+E17_POLL_OBSERVATION_SOURCE=LOOP_GET_STATUS64_on_the_recorded_device_and_the_recorded_devices_own_sysfs_backing_state
+E17_POLL_TERMINATES_ON_OBSERVED_ABSENCE=true
+E17_POLL_BOUNDED=true
+E17_POLL_BOUND_IS_DECLARED_IN_THE_IMPLEMENTATION_PREFLIGHT=true
+E17_POLL_TIMEOUT_OUTCOME=CLEANUP_FAILED
+E17_ONLY_THEN_RECORDS_LOOP_BACKING_RESIDUE_false=true
+E17_ONLY_THEN_ENTERS_RELEASED=true
+E17_LAZY_DESTRUCTION_IS_E17_COMPLETION_NOT_A_SECOND_RELEASE=true
+LOOP_RELEASE_EFFECT_COUNT=1
+LOOP_RELEASE_REQUEST_OWNER_COUNT=1
+ROUND11_AUTOCLEAR_INFERENCE_WITHDRAWN=true
+```
+
+The unobservable exact-reference-count claims are withdrawn rather than
+reinterpreted, because no frozen user-space mechanism in this contract can
+establish them:
+
+```text
+LOOP_DEVICE_OPEN_REFERENCE_COUNT_AT_E17=NOT_OBSERVABLE_WITHDRAWN
+LOOP_DEVICE_OPEN_REFERENCE_COUNT_AT_E17_IS_A_CURRENT_CLAIM=false
+LOOP_CLR_FD_REQUIRES_NO_SECOND_OPEN_REFERENCE_ON_THE_LOOP_DEVICE=NOT_CLAIMED
+LOOP_DEVICE_SURVIVES_EVERY_DESCRIPTOR_CLOSE_IN_THE_RUN=NOT_CLAIMED
+LOOP_DEVICE_SURVIVES_E23=NOT_CLAIMED
+ROUND11_E17_ALWAYS_HAS_THE_CONFIGURED_LOOP_ASSOCIATION_TO_RELEASE_IS_A_CURRENT_CLAIM=false
+E17_ASSOCIATION_PRESENCE_IS_MEASURED_BEFORE_THE_ONE_REQUEST=true
+E17_ASSOCIATION_PRESENT_BEFORE_THE_REQUEST_OUTCOME_CONTINUE_WITH_THE_ONE_REQUEST
+E17_ASSOCIATION_ABSENT_BEFORE_THE_REQUEST_OUTCOME=nothing_to_release_and_LOOP_BACKING_RESIDUE_false_measured
+E17_SUPERVISOR_HOLDS_NO_OPEN_LOOP_DESCRIPTOR_AT_ENTRY=true
+E17_DESCRIPTOR_HELD_BY_E17_IS_THE_ONLY_SUPERVISOR_OWNED_LOOP_DESCRIPTOR=true
+ROUND11_EXACT_REFERENCE_COUNT_CLAIM_WITHDRAWN=true
+```
+
+The step contract of `E17` is therefore: open exactly the recorded `E12` device;
+verify with its own read-back that it is still associated with the original `E9`
+backing identity; issue `LOOP_CLR_FD` exactly once and never blindly retry the
+ioctl; independently observe or poll the recorded device until the backing
+association is absent; and only then record `LOOP_BACKING_RESIDUE=false` and enter
+`RELEASED`. If the kernel performs lazy or autoclear destruction as a consequence
+of that single request, that is the kernel completing `E17`, not a second release
+effect.
+
+#### 1.12.6 `validated_root_fd` lifetime and consumer closure
+
+The round-11 runtime-state table could not be executed: it listed `E26` as a
+consumer of `validated_root_fd` while its closing checkpoint was "closed after
+`E24` and before `E26`", and the ownership cases perform no `E24` at all, so the
+checkpoint had no reachable position in two of the three cases. Two designs could
+close this; this round freezes the simpler one, because it adds no second root
+observation mechanism and no new name resolution:
+
+```text
+VALIDATED_ROOT_FD_LIFETIME_DESIGN=option_A
+VALIDATED_ROOT_FD_REMAINS_OPEN_THROUGH_E26=true
+VALIDATED_ROOT_FD_CLOSE_CHECKPOINT=after_E26_completes
+VALIDATED_ROOT_FD_CLOSED_BY_THE_SUPERVISOR=true
+VALIDATED_ROOT_FD_IS_CLOSED_BEFORE_THE_SUPERVISOR_EXITS=true
+VALIDATED_ROOT_FD_CONSUMER_AFTER_CLOSE_COUNT=0
+VALIDATED_ROOT_FD_CLOSE_CHECKPOINT_IS_CASE_EXECUTABLE=true
+VALIDATED_ROOT_FD_CLOSE_CHECKPOINT_IS_REACHABLE_IN_EVERY_CASE=true
+VALIDATED_ROOT_FD_LAST_CONSUMER_MOUNT_FIXTURE=E26
+VALIDATED_ROOT_FD_LAST_CONSUMER_OWNERSHIP=E26
+MOUNT_CASE_VALIDATED_ROOT_FD_CONSUMERS=E8,E9,E14,E15,E16,E18,E20,E24,E26
+OWNERSHIP_CASE_VALIDATED_ROOT_FD_CONSUMERS=E2,E4,E25,E26
+VALIDATED_ROOT_FD_CONSUMER_SET_IS_THE_CASE_UNION=true
+VALIDATED_ROOT_FD_IS_NEVER_RE_RESOLVED_FROM_CALLER_TEXT=true
+VALIDATED_ROOT_FD_IS_NOT_RECONSTRUCTED_AFTER_CLOSE=true
+E26_ROOT_OBSERVATION_MECHANISM=validated_RUNNER_TEMP_parent_fd_plus_the_frozen_invocation_root_name
+E26_ROOT_OBSERVATION_MECHANISM_DECLARED=true
+E26_ROOT_IDENTITY_CONTINUITY_CLOSED=true
+E26_ROOT_IDENTITY_CONTINUITY_BASIS=the_observed_directory_is_compared_against_the_root_identity_the_supervisor_validated_itself_under_5_3
+E26_ROOT_IDENTITY_SOURCE=the_supervisors_own_5_3_validation
+E26_ROOT_NAME_SOURCE=frozen_derived_invocation_root_name
+E26_ROOT_NAME_FROM_CALLER_TEXT=false
+E26_OBSERVES_THE_ROOT_THROUGH_THE_PARENT_DESCRIPTOR=true
+E26_ROOT_OBSERVATION_IS_NOT_A_RE_RESOLUTION_OF_CALLER_TEXT=true
+E26_ROOT_EMPTINESS_IS_OBSERVED_BEFORE_THE_REMOVAL=true
+E26_ROOT_MISMATCH_OUTCOME=QUALIFICATION_GAP_WITH_DESIGN_FINDING
+E26_ROOT_MISMATCH_IS_PASS=false
+E26_ROOT_REMOVAL_RETRY_COUNT=0
+ROUND11_ROOT_FD_CLOSE_CHECKPOINT_WITHDRAWN=true
+```
+
+The `E26` mechanism is the one round 11 already froze in its own closure row —
+`unlinkat(RUNNER_TEMP_fd, invocation_root_name, AT_REMOVEDIR)` against the parent
+descriptor the supervisor validated as the real parent of the validated root — and
+this round states the observation half of it explicitly, because an identity check
+that was never declared is an identity check an implementation could omit.
+
+#### 1.12.7 Semantic probes for this head
+
+The round-11 suite could not detect any of this round's eight findings, because it
+never read the ownership control lifecycle, the channel mechanism or framing, the
+closure dispatch, the `E14`/`E15`/`E16` target binding, the loop-teardown
+observation or the runtime-state close checkpoint. The round-12 obligations are
+therefore stated over the *current normative sections themselves* — 5.2, 5.6, 5.8,
+5.9, 5.11, 10.1 and 10.4 — and not over section 1.12 or over a remediation record.
+The suite is listed in 15.1, is executable, is run over this document before the
+commit, and is self-tested against the failed round-11 head:
+
+```text
+ROUND12_PROBE_REQUIRED_CHECKS=648
+ROUND12_PROBE_READS_THE_CURRENT_NORMATIVE_REGIONS=true
+ROUND12_PROBE_READS_SECTION_5_11_EXPLICITLY=true
+ROUND12_PROBE_READS_SECTIONS_10_1_AND_10_4_EXPLICITLY=true
+ROUND12_PROBE_IGNORES_THE_REMEDIATION_RECORD_AS_EVIDENCE=true
+ROUND12_PROBE_IS_EXECUTED_NOT_ASSERTED=true
+ROUND12_PROBE_INPUT=this_document_at_the_round12_head
+ROUND12_PROBE_SELF_TEST_INPUT=this_document_at_the_failed_round11_head
+ROUND12_PROBE_SELF_TEST_ON_THE_FAILED_ROUND11_TEXT=REJECTED
+ROUND12_PROBE_SELF_TEST_FAIL_COUNT=384
+ROUND12_PROBE_SEMANTIC_PROBE_RESULT=PASS
+ROUND12_PROBE_FAIL_COUNT=0
+OWNERSHIP_CONTROL_LIFECYCLE_CLOSED=true
+OWNERSHIP_CASE_SENDS_DETACH_REQUEST=false
+SUPERVISOR_POST_E1_EFFECT_SET_INCLUDES_E25=true
+CONTROL_CHANNEL_RECORD_BOUNDARIES_DEFINED=true
+CONTROL_CHANNEL_PARTIAL_READ_BEHAVIOUR_DEFINED=true
+CONTROL_CHANNEL_WIRE_GRAMMAR_UNIQUE=true
+CONTROL_CHANNEL_GRAMMAR_CONTRADICTION_COUNT=0
+CHANNEL_EOF_CLEANUP_IS_STATE_AWARE=true
+CHANNEL_EOF_AFTER_E15_NEVER_RUNS_E16=true
+CHANNEL_EOF_AFTER_E15_REACHES_E17=true
+CONTROL_CHANNEL_FAILURE_CLEANUP_REACHABLE_FROM_EVERY_LIVE_STATE=true
+E14_CURRENT_ROLE_NAME_EQUALS_E8_IDENTITY=true
+E14_VALIDATION_AND_SYSCALL_CONSUME_SAME_TARGET_FD=true
+MOUNT_TARGET_TRAILING_NAME_TOCTOU_WINDOW_CLOSED=true
+E15_UMOUNT_TARGET_OBJECT_BINDING_CLOSED=true
+E16_UMOUNT_TARGET_OBJECT_BINDING_CLOSED=true
+E17_LOOP_CLR_FD_REQUEST_COUNT=1
+E17_BLIND_RETRY=false
+E17_ALLOWS_KERNEL_LAZY_TEARDOWN=true
+E17_SUCCESS_REQUIRES_OBSERVED_BACKING_ABSENCE=true
+INITIAL_AUTOCLEAR_FALSE_DOES_NOT_IMPLY_FINAL_TEARDOWN_NON_AUTOCLEAR=true
+VALIDATED_ROOT_FD_CONSUMER_AFTER_CLOSE_COUNT=0
+VALIDATED_ROOT_FD_CLOSE_CHECKPOINT_IS_CASE_EXECUTABLE=true
+E26_ROOT_OBSERVATION_MECHANISM_DECLARED=true
+E26_ROOT_IDENTITY_CONTINUITY_CLOSED=true
+CURRENT_EFFECT_REFERENCE_MISMATCH_COUNT=0
+CURRENT_NORMATIVE_STALE_EFFECT_ID_COUNT=0
+AUTHORITY_TABLE_EQUALS_AUTHORITY_E_TOKENS=true
+CASE_TOTAL_AUTHORITY_SET_EQUALS_EFFECT_AUTHORITY_UNION=true
+```
+
+#### 1.12.8 Round-12 re-evaluated implementability results
+
+The round-11 DAGs and the authority matrix need no redesign, and none was made:
+this round changes actors, wire protocol, failure dispatch, target binding,
+teardown observation and one descriptor's lifetime, and it adds, removes and
+renumbers no effect. The six implementability results are re-derived against this
+head:
+
+```text
+ROUND12_RE_EVALUATED_RESULTS=PRIVILEGED_EFFECT_AUTHORITY_CLOSURE,CROSS_BOUNDARY_CONTINUITY_IMPLEMENTABILITY,NAMESPACE_LIFECYCLE_IMPLEMENTABILITY,CLEANUP_STATE_MACHINE_IMPLEMENTABILITY,PRIVILEGED_CHILD_INODE_CONFINEMENT_IMPLEMENTABILITY,A3_CONTRACT_IMPLEMENTABILITY
+ROUND12_RESULT_KEYS_ARE_THE_CURRENT_IMPLEMENTABILITY_RESULTS=true
+ROUND11_RESULT_BASIS_LINES_RECORD_THE_ROUND11_DERIVATION=true
+ROUND12_RESULT_BASIS_KEYS_ARE_ROUND_QUALIFIED=true
+PRIVILEGED_EFFECT_AUTHORITY_CLOSURE=PASS
+ROUND12_PRIVILEGED_EFFECT_AUTHORITY_CLOSURE_BASIS=every_one_of_E1_to_E26_has_a_declared_actor_in_every_case_that_scopes_it_and_E25_now_has_the_persistent_supervisor_that_E15_E16_E17_E24_and_E26_already_had
+CROSS_BOUNDARY_CONTINUITY_IMPLEMENTABILITY=PASS
+ROUND12_CROSS_BOUNDARY_CONTINUITY_IMPLEMENTABILITY_BASIS=the_ownership_and_mount_cleanup_requests_and_completions_are_declared_records_on_a_boundary_preserving_channel_and_every_runtime_value_a_post_E1_effect_consumes_is_produced_and_consumed_inside_the_one_supervisor_process
+NAMESPACE_LIFECYCLE_IMPLEMENTABILITY=PASS
+ROUND12_NAMESPACE_LIFECYCLE_IMPLEMENTABILITY_BASIS=the_private_namespace_is_created_only_in_the_mount_case_by_the_one_persistent_supervisor_which_keeps_its_membership_and_performs_every_post_E1_effect_inside_it
+CLEANUP_STATE_MACHINE_IMPLEMENTABILITY=PASS
+ROUND12_CLEANUP_STATE_MACHINE_IMPLEMENTABILITY_BASIS=the_four_mount_states_plus_the_ownership_state_cover_every_request_path_and_every_channel_failure_path_and_E16_is_reachable_only_from_ATTACHED
+PRIVILEGED_CHILD_INODE_CONFINEMENT_IMPLEMENTABILITY=PASS
+ROUND12_PRIVILEGED_CHILD_INODE_CONFINEMENT_IMPLEMENTABILITY_BASIS=the_evidence_process_still_inherits_no_supervisor_descriptor_and_every_new_descriptor_this_round_adds_is_opened_inside_the_supervisor
+A3_CONTRACT_IMPLEMENTABILITY=PASS
+ROUND12_A3_CONTRACT_IMPLEMENTABILITY_BASIS=each_of_the_eight_blocking_findings_is_closed_by_a_statement_that_names_its_authority_owner_producer_carrier_lifetime_consumer_and_closing_point
+ROUND12_BLOCKING_FINDINGS_CLOSED=8
+ROUND12_BLOCKING_FINDINGS_OPEN=0
+EFFECT_COUNT_UNCHANGED_BY_ROUND12=true
+EFFECT_IDS_UNCHANGED_BY_ROUND12=true
+REAL_MATERIAL_EFFECT_COUNT=26
+PLACEHOLDER_EFFECT_ROW_COUNT=0
+MOUNT_FIXTURE_EFFECT_COUNT=21
+OWN_FOREIGN_EFFECT_COUNT=7
+OWN_ROOT_EFFECT_COUNT=7
+PRIVILEGED_EFFECT_CLOSURE_ROWS=26
+AUTHORITY_TABLE_EQUALS_AUTHORITY_E_TOKENS=true
+CASE_TOTAL_AUTHORITY_SET_EQUALS_EFFECT_AUTHORITY_UNION=true
+REQUIRED_CAPABILITY_INVENTORY=CAP_CHOWN,CAP_DAC_OVERRIDE,CAP_DAC_READ_SEARCH,CAP_SETGID,CAP_SETUID,CAP_SYS_ADMIN
+REQUIRED_CAPABILITY_COUNT=6
+CAPABILITY_INVENTORY_UNCHANGED_BY_ROUND12=true
+AUTHORITY_MATRIX_UNCHANGED_BY_ROUND12=true
+CASE_TOTAL_AUTHORITY_SETS_UNCHANGED_BY_ROUND12=true
+```
+
 ## 2. Exact Base Record
 The checked-in Exact Base procedure
 ([DEVELOPMENT_PLAYBOOK.md](DEVELOPMENT_PLAYBOOK.md) section 1.1,
 [AGENT_HANDOFF.md](AGENT_HANDOFF.md) rule 3) was executed for this PR: switch
 `main`, fresh fetch of `origin` with prune and tags, `pull --ff-only`, then
 verification of `HEAD`, `origin/main`, tree and tracked worktree state.
+
+Round 12 does not re-run the base procedure and does not create a new base: it is
+a remediation commit whose parent is the failed round-11 head, on the same branch,
+against the same exact formal main. The base facts it depends on are therefore the
+round-4 base facts, restated for this head rather than re-derived:
+
+```text
+ROUND12_BASE_MAIN_SHA=cca7805305b0e369b27d7d29ba3611fb9afd7679
+ROUND12_BASE_HEAD_EQUALS_ORIGIN_MAIN=true
+ROUND12_BASE_IS_THE_ROUND4_BASE=true
+ROUND12_BASE_PROCEDURE_RERUN=false
+ROUND12_BASE_PROCEDURE_RERUN_REASON=the_parent_of_this_commit_is_the_failed_round11_head_on_the_same_branch_and_origin_main_is_unchanged
+ROUND12_HEAD_PARENT_IS_THE_FAILED_ELEVENTH_REVIEW_HEAD=true
+ROUND12_BRANCH_IS_THE_ROUND4_BRANCH=true
+ROUND12_PUSH_IS_FAST_FORWARD=true
+ROUND12_PUSH_IS_FORCE=false
+ROUND12_REMOTE_HEAD_BEFORE_PUSH=c70cd367c7f70478b283d472e9e06a42420d04ad
+TRANSPORT_DEGRADED=true
+ROUND12_REMOTE_TRUTH_CHANNELS=authoritative_remote_api
+ROUND12_LOCAL_REFS_CORROBORATE_ONLY=true
+```
+
+The `git` transport over HTTPS is degraded on this host and cannot establish fresh
+remote truth by itself; the remote head and the remote `main` for this round were
+read through the authenticated GitHub API, and the local refs were used only to
+corroborate those values. The push in 20 is a normal fast-forward against the
+remote value recorded above.
 
 It was executed for the round-4 head against exact formal main:
 
@@ -3882,8 +4531,8 @@ still validates the resulting path itself under 5.3.
 | `own-foreign` | `fchown` the single fixture file to the frozen foreign uid `65534`; no mode change | the fixed fixture file under the root (`FIXTURE_FILE_ROLE`) | `FOREIGN_OWNER_TARGET_UID` = `65534` | none: the helper verifies `0644`, it does not set it |
 | `own-root` | `fchown` the single fixture file to uid 0; no mode change | the fixed fixture file under the root (`FIXTURE_FILE_ROLE`) | `0` | none: the helper verifies `0644`, it does not set it |
 | `mount-fixture` | create the loop-backed ext4 mount inside the private namespace | the fixed `IMAGE_ROLE`, `MOUNTPOINT_ROLE` and `FIXTURE_FILE_ROLE` under the root | not applicable | not applicable |
-| `DETACH_REQUEST` | `MNT_DETACH` the fixed fixture mount inside the private namespace; requested on the frozen control channel of 5.11 by the live evidence process, not by a new `sudo` invocation | the fixed `MOUNTPOINT_ROLE` under the root, reached through the fd-mediated carrier of 5.9 | not applicable | not applicable |
-| `FINAL_CLEANUP_REQUEST` | release the loop backing and remove the fixed fixture objects under the root, following the state machine in 10.4; an ordinary unmount of a still-attached fixture mount is performed only when the observed state is `ATTACHED`; requested on the frozen control channel of 5.11 after E23 | the fixed roles under the root | not applicable | not applicable |
+| `DETACH_REQUEST` | `MNT_DETACH` the fixed fixture mount inside the private namespace; requested on the frozen control channel of 5.11 by the live evidence process, not by a new `sudo` invocation | the fixed `MOUNTPOINT_ROLE` under the root, reached through the object descriptor the syscall consumes (5.9); this action exists in `mount-fixture` only, and neither ownership case sends it (1.12.1) | not applicable | not applicable |
+| `FINAL_CLEANUP_REQUEST` | release the loop backing and remove the fixed fixture objects under the root, following the state machine in 10.4; an ordinary unmount of a still-attached fixture mount is performed only when the observed state is `ATTACHED`; requested on the frozen control channel of 5.11 after E23, and in the ownership cases the same token requests `E25` then `E26` with no mount effect at all. In the two ownership cases this same request is the **only** post-`E1` privileged action: it removes the fixture object (`E25`) and then the invocation root (`E26`), and those cases send no `DETACH_REQUEST` and perform no `E15`, `E22`, `E17` or `E24` (1.12.1) | the fixed roles under the root | not applicable | not applicable |
 
 ```text
 FOREIGN_OWNER_TARGET_UID          = 65534
@@ -3902,32 +4551,52 @@ MOUNTPOINT_ROLE                   = fixed child name under the invocation root
 ```
 
 Two of the five actions are the cross-process detach and final cleanup of 10.1, and
-both are served by the one persistent privileged supervisor that performed the
-setup action, over the frozen control channel of 5.11 rather than by a second
-process. Neither accepts an inherited descriptor — the supervisor receives no
-descriptor from the evidence process, and the evidence process inherits none of the
+their scope is per case: `DETACH_REQUEST` exists only for `mount-fixture`, while
+`FINAL_CLEANUP_REQUEST` exists for every case and performs a different, frozen
+effect set in each (`E17,E24,E26` in the mount case; `E25,E26` in the two
+ownership cases). The two ownership cases therefore send no detach request at all
+and perform no `E15`, `E22`, `E17` or `E24` (1.12.1). Both of those actions are
+served by the one persistent privileged supervisor that performed the setup
+action, over the frozen control channel of 5.11 rather than by a second process.
+Neither accepts an inherited descriptor — the supervisor receives no descriptor
+from the evidence process, and the evidence process inherits none of the
 supervisor's — so neither can receive, hold or close the evidence process's
 retained descriptor (`HELPER_ACCEPTS_INHERITED_DESCRIPTOR=false`,
-`EVIDENCE_DESCRIPTOR_REMAINS_CHILD_LOCAL=true`):
+`EVIDENCE_DESCRIPTOR_REMAINS_CHILD_LOCAL=true):
 
 ```text
 HELPER_DETACH_ACTION=DETACH_REQUEST_on_the_frozen_control_channel
 HELPER_DETACH_ACTION_VALIDATES_ROOT=true
 HELPER_DETACH_ACTION_VALIDATES_NAMESPACE_IDENTITY=true
 HELPER_DETACH_ACTION_VALIDATES_THE_FIXTURE_MOUNT_TARGET=true
+HELPER_DETACH_ACTION_VALIDATES_THE_TARGET_DESCRIPTOR_IT_CONSUMES=true
+HELPER_DETACH_ACTION_SCOPE=mount-fixture
+HELPER_DETACH_ACTION_IS_NOT_SENT_BY_AN_OWNERSHIP_CASE=true
 HELPER_DETACH_ACTION_IS_REQUESTED_BY_THE_LIVE_EVIDENCE_PROCESS=true
 HELPER_DETACH_ACTION_OBSERVES_THE_ATTACHED_STATE_BEFORE_ACTING=true
 HELPER_DETACH_ACTION_IS_NOT_EVIDENCE=true
+HELPER_DETACH_ACTION_SCOPE=mount-fixture
+HELPER_DETACH_ACTION_IS_NOT_SENT_BY_AN_OWNERSHIP_CASE=true
 HELPER_CLEANUP_ACTION=FINAL_CLEANUP_REQUEST_on_the_frozen_control_channel
 HELPER_CLEANUP_ACTION_VALIDATES_ROOT=true
 HELPER_CLEANUP_ACTION_VALIDATES_NAMESPACE_IDENTITY=true
 HELPER_CLEANUP_ACTION_OBSERVES_THE_MOUNT_STATE=true
+HELPER_CLEANUP_ACTION_VALIDATES_THE_OWNERSHIP_CASE_STATE=true
 HELPER_CLEANUP_ACTION_IS_REQUESTED_BY_THE_LIVE_EVIDENCE_PROCESS=true
-HELPER_CLEANUP_ACTION_PERFORMS=E16_or_E17,E24,E26
+HELPER_CLEANUP_ACTION_SCOPE=all_cases
+HELPER_CLEANUP_ACTION_PERFORMS_E25_then_E26_IN_THE_OWNERSHIP_CASES=true
+HELPER_CLEANUP_ACTION_IS_CASE_AWARE=true
+HELPER_CLEANUP_ACTION_PERFORMS_NO_E25_IN_THE_MOUNT_CASE=true
+HELPER_CLEANUP_ACTION_PERFORMS_NO_MOUNT_EFFECT_IN_AN_OWNERSHIP_CASE=true
+SUPERVISOR_POST_E1_EFFECT_SET_INCLUDES_E25=true
+HELPER_CLEANUP_ACTION_PERFORMS=E16_or_E17,E24,E26_in_mount-fixture;E25,E26_in_the_ownership_cases
 HELPER_CLEANUP_ACTION_PERFORMS_NO_UNMOUNT_WHEN_THE_STATE_IS_MOUNT_GONE_LOOP_BOUND=true
+HELPER_CLEANUP_ACTION_PERFORMS_NO_MOUNT_EFFECT_IN_AN_OWNERSHIP_CASE=true
+HELPER_CLEANUP_ACTION_PERFORMS_NO_E25_IN_THE_MOUNT_CASE=true
 HELPER_ACTIONS_ARE_SERVED_BY_THE_SAME_PERSISTENT_PROCESS=true
 HELPER_ACTIONS_ARE_REQUESTED_OVER_ONE_FROZEN_CONTROL_CHANNEL=true
 HELPER_ACTIONS_ARE_NOT_SEPARATE_PRIVILEGED_INVOCATIONS=true
+HELPER_ACTIONS_ARE_CASE_AWARE=true
 ```
 
 `FOREIGN_OWNER_TARGET_UID` is a design-frozen literal: the value `65534` is
@@ -4976,16 +5645,50 @@ lifecycle of E17 requires a deterministic non-autoclear configuration, so the
 exact ioctl input is a frozen literal rather than an implementation choice. The
 `loop_config` structure carries the backing descriptor `fd`, a `block_size` and an
 embedded `loop_info64` named `info`; every field that could change the device's
-observable behaviour is frozen here, and `LO_FLAGS_AUTOCLEAR` is false so that no
-descriptor close anywhere in the run can silently detach the device. The frozen
-flag word is a subset of the kernel's own `LOOP_CONFIGURE_SETTABLE_FLAGS`, which
-the uapi header defines as exactly `LO_FLAGS_READ_ONLY | LO_FLAGS_AUTOCLEAR |
-LO_FLAGS_PARTSCAN | LO_FLAGS_DIRECT_IO`; setting `lo_flags` to `0` clears all four,
-and no fifth flag exists to set. `LOOP_CONFIGURE` itself exists from Linux 5.8.
-The provenance of these facts is `DOCUMENTED` and is
-`include/uapi/linux/loop.h`, read for this round rather than recalled. E17 is
-therefore the single explicit loop-release effect and always has the association
-it was frozen to release:
+observable behaviour is frozen here, and `LO_FLAGS_AUTOCLEAR` is false so that no descriptor close anywhere in the run can
+silently detach the device. The frozen flag word is a subset of the kernel's own
+`LOOP_CONFIGURE_SETTABLE_FLAGS`, which the uapi header defines as exactly
+`LO_FLAGS_READ_ONLY | LO_FLAGS_AUTOCLEAR | LO_FLAGS_PARTSCAN |
+LO_FLAGS_DIRECT_IO`; setting `lo_flags` to `0` clears all four, and no fifth flag
+exists to set. `LOOP_CONFIGURE` itself exists from Linux 5.8. The provenance of
+these facts is `DOCUMENTED` and is `include/uapi/linux/loop.h`, read for this round
+rather than recalled.
+
+Round 12 withdraws one inference that round 11 drew from this literal. The initial
+configuration being non-autoclear is a fact about the *configuration*; it is not
+proof that the *final* teardown can never become autoclear-driven, because
+`LOOP_CLR_FD` on a loop device that still has open references may complete by
+enabling lazy autoclear destruction rather than by destroying the device
+immediately. What the contract freezes instead is the release request owner and the
+observation that establishes success: `E17` issues exactly one `LOOP_CLR_FD` and
+never blindly retries it, and the kernel may complete the destruction immediately
+or lazily — either way that is the kernel finishing `E17`, not a second release
+effect (1.12.5):
+
+```text
+INITIAL_AUTOCLEAR_FALSE_DOES_NOT_IMPLY_FINAL_TEARDOWN_NON_AUTOCLEAR=true
+E17_ALLOWS_KERNEL_LAZY_TEARDOWN=true
+E17_KERNEL_TEARDOWN_MECHANISM=immediate_or_lazy_autoclear
+E17_LOOP_CLR_FD_REQUEST_COUNT=1
+E17_BLIND_RETRY=false
+E17_RETRY_COUNT=0
+E17_SUCCESS_REQUIRES_OBSERVED_BACKING_ABSENCE=true
+E17_SUCCESS_CRITERION=the_recorded_loop_device_reports_no_backing_association_with_the_E9_pinned_identity
+E17_SUPERVISOR_POLLS_THE_RECORDED_DEVICE=true
+E17_POLL_TERMINATES_ON_OBSERVED_ABSENCE=true
+E17_POLL_BOUNDED=true
+E17_POLL_TIMEOUT_OUTCOME=CLEANUP_FAILED
+E17_LAZY_DESTRUCTION_IS_E17_COMPLETION_NOT_A_SECOND_RELEASE=true
+LOOP_RELEASE_REQUEST_OWNER=E17
+LOOP_RELEASE_REQUEST_OWNER_COUNT=1
+LOOP_RELEASE_EFFECT_COUNT=1
+E17_STEP_CONTRACT=open_exactly_the_recorded_E12_device;verify_it_is_still_associated_with_the_original_E9_backing_identity;issue_LOOP_CLR_FD_exactly_once;never_blindly_retry_the_ioctl;independently_observe_or_poll_the_recorded_device_until_the_backing_association_is_absent;only_then_record_LOOP_BACKING_RESIDUE_false_and_enter_RELEASED
+ROUND11_E17_ALWAYS_HAS_THE_CONFIGURED_LOOP_ASSOCIATION_TO_RELEASE_IS_A_CURRENT_CLAIM=false
+E17_ASSOCIATION_PRESENCE_IS_MEASURED_BEFORE_THE_ONE_REQUEST=true
+E17_ASSOCIATION_ABSENT_BEFORE_THE_REQUEST_OUTCOME=nothing_to_release_and_LOOP_BACKING_RESIDUE_false_measured
+ROUND11_AUTOCLEAR_INFERENCE_WITHDRAWN=true
+ROUND11_EXACT_REFERENCE_COUNT_CLAIM_WITHDRAWN=true
+```
 
 ```text
 LOOP_CONFIGURE_INPUT_CLOSED=true
@@ -5025,13 +5728,31 @@ LOOP_DEVICE_ASSOCIATION_IS_CONFIGURED_NOT_AUTOCLEARED=true
 LOOP_RELEASE_IS_EXPLICIT=true
 LOOP_RELEASE_EFFECT=E17
 LOOP_RELEASE_IS_THE_ONLY_LOOP_RELEASE=true
-LOOP_RELEASE_IS_NOT_AUTOCLEAR_DRIVEN=true
-E17_ALWAYS_HAS_THE_CONFIGURED_LOOP_ASSOCIATION_TO_RELEASE=true
-LOOP_DEVICE_SURVIVES_EVERY_DESCRIPTOR_CLOSE_IN_THE_RUN=true
-LOOP_DEVICE_SURVIVES_E23=true
-LOOP_DEVICE_OPEN_REFERENCE_COUNT_AT_E17=1
-LOOP_CLR_FD_ISSUED_ON_THE_RECORDED_DEVICE_DESCRIPTOR=true
-LOOP_CLR_FD_REQUIRES_NO_SECOND_OPEN_REFERENCE_ON_THE_LOOP_DEVICE=true
+ROUND11_LOOP_RELEASE_IS_NOT_AUTOCLEAR_DRIVEN_AT_CONFIGURE_TIME=true
+INITIAL_AUTOCLEAR_FALSE_DOES_NOT_IMPLY_FINAL_TEARDOWN_NON_AUTOCLEAR=true
+E17_ALLOWS_KERNEL_LAZY_TEARDOWN=true
+ROUND11_E17_ALWAYS_HAS_THE_CONFIGURED_LOOP_ASSOCIATION_TO_RELEASE_CLAIM=NOT_CLAIMED
+LOOP_DEVICE_SURVIVES_EVERY_DESCRIPTOR_CLOSE_IN_THE_RUN=NOT_CLAIMED
+LOOP_DEVICE_SURVIVES_E23=NOT_CLAIMED
+ROUND11_LOOP_DEVICE_OPEN_REFERENCE_COUNT_AT_E17=1
+ROUND11_LOOP_DEVICE_OPEN_REFERENCE_COUNT_AT_E17_IS_A_CURRENT_CLAIM=false
+E17_SUPERVISOR_HOLDS_NO_OPEN_LOOP_DESCRIPTOR_AT_ENTRY=true
+E17_LOOP_CLR_FD_REQUEST_COUNT=1
+E17_LOOP_CLR_FD_ISSUED_ONCE=true
+E17_BLIND_RETRY=false
+E17_RETRY_COUNT=0
+E17_SUPERVISOR_POLLS_THE_RECORDED_DEVICE=true
+E17_POLL_OBSERVATION_SOURCE=LOOP_GET_STATUS64_on_the_recorded_device_and_the_recorded_devices_own_sysfs_backing_state
+E17_POLL_TERMINATES_ON_OBSERVED_ABSENCE=true
+E17_POLL_BOUNDED=true
+E17_POLL_TIMEOUT_OUTCOME=CLEANUP_FAILED
+E17_ONLY_THEN_RECORDS_LOOP_BACKING_RESIDUE_false=true
+E17_ONLY_THEN_ENTERS_RELEASED=true
+E17_LAZY_DESTRUCTION_IS_E17_COMPLETION_NOT_A_SECOND_RELEASE=true
+LOOP_RELEASE_REQUEST_OWNER=E17
+LOOP_RELEASE_REQUEST_OWNER_COUNT=1
+LOOP_RELEASE_EFFECT_COUNT=1
+ROUND11_LOOP_CLR_FD_REQUIRES_NO_SECOND_OPEN_REFERENCE_ON_THE_LOOP_DEVICE_CLAIM=NOT_CLAIMED
 LOOP_DEVICE_DESCRIPTOR_CLOSED_AFTER_E13_READBACK=true
 LOOP_DEVICE_DESCRIPTOR_REOPENED_ONCE_BY_E17=true
 LOOP_DEVICE_REOPEN_SOURCE=recorded_loop_device_path_from_E12_supervisor_memory
@@ -5071,65 +5792,76 @@ LOOP_BINDING_HAS_DESCRIPTOR_FORM=true
 LOOP_BINDING_AND_MOUNT_BINDING_ARE_SEPARATE_FACTS=true
 ```
 
-**The real `mount()`/`umount2()` pathname carrier (round 11).** "Resolved
-relative to the validated root descriptor" is not by itself an implementable
-target: the legacy `mount(2)` and `umount2(2)` calls take no `dirfd` argument, so
-a contract that names only a descriptor and a role name leaves the actual
-pathname to the implementation. Round 10 stated the carrier that way and is
-corrected here. The carrier is frozen as the `/proc/self/fd` magic link of the
-supervisor's *own* retained root descriptor plus the frozen role name, which is a
-real descriptor-mediated resolution available to these syscalls:
+**The real `mount()`/`umount2()` target binding (round 11, corrected by round
+12).** "Resolved relative to the validated root descriptor" is not by itself an
+implementable target: the legacy `mount(2)` and `umount2(2)` calls take no `dirfd`
+argument, so a contract that names only a descriptor and a role name leaves the
+actual pathname to the implementation. Round 10 stated the carrier that way and
+round 11 replaced it with the `/proc/self/fd` magic link of the supervisor's *own*
+retained root descriptor plus the frozen role name. That replacement closed the
+caller-text and cross-process gaps and left one open: the string
+`/proc/self/fd/<validated_root_fd>/MOUNTPOINT_ROLE` still contains the role name as
+a **trailing component**, and the kernel resolves that component at `mount(2)` time,
+against a directory the ordinary runner owns and can write. Round 12 therefore adds
+one descriptor to each of `E14`, `E15` and `E16` — a last-component descriptor that
+the syscall itself consumes — so that the object that was validated is literally the
+object the call reaches:
 
-- the exact target string passed to E14, E15 and E16 is
-  `/proc/self/fd/<validated_root_fd>/MOUNTPOINT_ROLE`, where
-  `validated_root_fd` is the decimal descriptor number the supervisor itself
-  holds on the root it validated under 5.3;
-- the magic link is resolved in the supervisor's own descriptor table — the same
-  process that performs the syscall and holds the descriptor — so no other
-  process's descriptor table and no re-resolution of the caller's `--root` string
-  participates;
-- the trailing component is exactly the frozen derived `MOUNTPOINT_ROLE` from
-  5.2; no caller text is ever a component of the target, and the trailing name is
-  never concatenated from any caller-supplied value;
+- the exact target string passed to `E14` is `/proc/self/fd/<mount_target_fd>` and
+  the target strings passed to `E15` and `E16` are `/proc/self/fd/<E15_umount_target_fd>`
+  and `/proc/self/fd/<E16_umount_target_fd>`; none of them contains a role-name
+  component at all;
+- each descriptor is opened by the supervisor itself with
+  `openat(validated_root_fd, MOUNTPOINT_ROLE, O_PATH|O_NOFOLLOW|O_CLOEXEC)` — and
+  for `E14` additionally `O_DIRECTORY` — so the role name is resolved exactly once,
+  at open time, in the supervisor's own descriptor table against the root descriptor
+  it validated under 5.3, and never again;
+- the object is proved before the call by `fstat`ing **that descriptor** and
+  requiring its real `st_dev`/`st_ino` to equal the pair `E8` recorded, which is
+  the comparison the syscall's own target satisfies by construction;
+- each descriptor stays open through its call's return and is closed immediately
+  afterwards; `E14`'s is closed before `E18` runs, and the `E15`/`E16` descriptors
+  are never reused for a second call;
 - the source of the mount is exactly the loop device path recorded by E12 in
   supervisor memory and verified by E13, so no caller value and no fresh
   `/dev/loop*` scan participates either;
-- `validated_root_fd` stays open through the last mount and unmount operation
-  that uses it. It is closed by the supervisor after E24 has used it for the two
-  removals and before the E26 invocation-root removal, which uses
-  `validated_RUNNER_TEMP_parent_fd` instead; the close checkpoint is therefore
-  *after E24 and before E26*, and no later effect re-resolves the caller string
-  to compensate.
+- `validated_root_fd` stays open through every operation that uses it, which now
+  includes `E26`; it is closed by the supervisor after `E26` completes and before
+  the supervisor exits. Round 11's close checkpoint — after `E24` and before `E26` —
+  is withdrawn, because the ownership cases perform no `E24` and the checkpoint
+  therefore had no reachable position in two of the three cases (1.12.6).
 
-The carrier is not *assumed* to bind the target by itself. What makes the target
-the helper's own object is the pre-call identity revalidation: the descriptor E8
-pinned is `fstat`ed immediately before the call and its real `st_dev`/`st_ino` must
-still equal the pair E8 recorded, and that comparison happens in the same process
-that then issues the syscall while the root descriptor is still open. The carrier
-is what removes caller text and cross-process ambiguity from the target string; the
-revalidation is what proves the object. A contract that claimed only the carrier,
-and not the revalidation, would be assuming kernel resolution behaviour it had not
-bounded, and this one does not:
+The magic link is not *assumed* to bind the target by itself, and after round 12 it
+no longer has to: what makes the target the helper's own object is that the
+`fstat`ed descriptor **is** the descriptor the path names, so the comparison and
+the call consume one object reference and there is no interval between them in
+which a name could be re-pointed. A contract that instead validated the old `E8`
+pin and then passed a string containing the role name would be proving that the
+`E8` inode still existed somewhere while assuming that the name still resolved to
+it — an assumption about kernel resolution behaviour that this contract does not
+make, and which the round-12 target descriptors remove rather than bound:
 
 ```text
 MOUNT_SYSCALL_TARGET_MAGIC_LINK_RESOLUTION_IS_TRUSTED_BY_CONSTRUCTION=false
-MOUNT_SYSCALL_TARGET_BINDING_IS_PROVED_BY_THE_PRECALL_REVALIDATION=true
+MOUNT_SYSCALL_TARGET_BINDING_IS_PROVED_BY_THE_TARGET_FD_REVALIDATION=true
 MOUNT_SYSCALL_TARGET_CARRIER_REMOVES_CALLER_TEXT=true
 MOUNT_SYSCALL_TARGET_CARRIER_REMOVES_CROSS_PROCESS_AMBIGUITY=true
 MOUNT_SYSCALL_TARGET_PRECALL_REVALIDATION_IS_MEASURED=true
 MOUNT_SYSCALL_TARGET_REVALIDATION_OUTCOME_ON_MISMATCH=QUALIFICATION_GAP_WITH_DESIGN_FINDING
 MOUNT_SYSCALL_TARGET_REVALIDATION_MISMATCH_IS_PASS=false
 MOUNT_SYSCALL_TARGET_REVALIDATION_MISMATCH_IS_REPAIRED_WITH_PRIVILEGE=false
+MOUNT_TARGET_PRECALL_IDENTITY_REVALIDATION_USES_THE_TARGET_FD=true
+MOUNT_TARGET_PRECALL_IDENTITY_REVALIDATION_USES_THE_E8_PIN=false
 ```
 
 ```text
 MOUNT_SYSCALL_PATHNAME_CARRIER_DECLARED=true
-MOUNT_SYSCALL_TARGET=/proc/self/fd/<validated_root_fd>/<MOUNTPOINT_ROLE>
+MOUNT_SYSCALL_TARGET=/proc/self/fd/<mount_target_fd>
 MOUNT_SYSCALL_TARGET_IS_FD_MEDIATED=true
-MOUNT_SYSCALL_TARGET_CARRIER=proc_self_fd_magic_link_of_the_supervisors_own_validated_root_descriptor
+MOUNT_SYSCALL_TARGET_CARRIER=proc_self_fd_magic_link_of_the_supervisors_own_mount_target_descriptor
 MOUNT_SYSCALL_TARGET_RESOLVES_IN_THE_SUPERVISORS_OWN_DESCRIPTOR_TABLE=true
-MOUNT_SYSCALL_TARGET_TRAILING_COMPONENT=MOUNTPOINT_ROLE
-MOUNT_SYSCALL_TARGET_TRAILING_COMPONENT_IS_A_FROZEN_DERIVED_ROLE=true
+MOUNT_SYSCALL_TARGET_TRAILING_COMPONENT=NOT_APPLICABLE_NO_ROLE_NAME_COMPONENT
+MOUNT_SYSCALL_TARGET_CONTAINS_ROLE_NAME_COMPONENT=false
 MOUNT_SYSCALL_TARGET_CONTAINS_CALLER_TEXT=false
 MOUNT_SYSCALL_TARGET_CONTAINS_INTERMEDIATE_COMPONENT=false
 MOUNT_SYSCALL_SOURCE=recorded_loop_device_path_from_E12_supervisor_memory
@@ -5139,39 +5871,60 @@ MOUNT_SYSCALL_FLAGS=0
 MOUNT_SYSCALL_DATA=empty
 MOUNT_SYSCALL_FLAGS_ARE_EXACT=true
 MOUNT_TARGET_CARRIER_IS_BOUND_TO_VALIDATED_ROOT_FD=true
+MOUNT_TARGET_FD_OPENAT_DIRFD=validated_root_fd
+MOUNT_TARGET_FD_OPENAT_PATH=MOUNTPOINT_ROLE
 CALLER_ROOT_STRING_NOT_RE_RESOLVED_FOR_MOUNT_TARGET=true
 MOUNT_TARGET_PRECALL_IDENTITY_REVALIDATION_REQUIRED=true
-MOUNT_TARGET_PRECALL_IDENTITY_REVALIDATION_COMPARES=E8_pinned_st_dev_and_st_ino
-MOUNT_TARGET_REVALIDATION_TO_SYSCALL_WINDOW=the_interval_between_the_revalidation_and_the_mount_call
+MOUNT_TARGET_PRECALL_IDENTITY_REVALIDATION_COMPARES=E8_original_producer_st_dev_and_st_ino
+MOUNT_TARGET_REVALIDATION_TO_SYSCALL_WINDOW=zero_the_validated_descriptor_is_the_one_the_path_names
 MOUNT_TARGET_REVALIDATION_AND_CALL_ARE_IN_THE_SAME_PROCESS=true
 MOUNT_TARGET_REVALIDATION_AND_CALL_BIND_THE_SAME_DESCRIPTOR=true
-MOUNT_TARGET_REVALIDATION_USES_THE_PINNED_E8_DESCRIPTOR=true
+MOUNT_TARGET_REVALIDATION_USES_THE_PINNED_E8_DESCRIPTOR=false
+MOUNT_TARGET_FD_REVALIDATION_USES_THE_TARGET_FD_ITSELF=true
+MOUNT_TARGET_TRAILING_NAME_TOCTOU_WINDOW_CLOSED=true
+E14_VALIDATION_AND_SYSCALL_CONSUME_SAME_TARGET_FD=true
+E15_UMOUNT_TARGET_OBJECT_BINDING_CLOSED=true
+E16_UMOUNT_TARGET_OBJECT_BINDING_CLOSED=true
 UMOUNT_SYSCALL_PATHNAME_CARRIER_DECLARED=true
-UMOUNT_SYSCALL_TARGET=/proc/self/fd/<validated_root_fd>/<MOUNTPOINT_ROLE>
+UMOUNT_SYSCALL_TARGET=/proc/self/fd/<umount_target_fd>
 UMOUNT_SYSCALL_TARGET_IS_FD_MEDIATED=true
-UMOUNT_SYSCALL_TARGET_TRAILING_COMPONENT_IS_A_FROZEN_DERIVED_ROLE=true
+UMOUNT_SYSCALL_TARGET_TRAILING_COMPONENT=NOT_APPLICABLE_NO_ROLE_NAME_COMPONENT
+UMOUNT_SYSCALL_TARGET_CONTAINS_ROLE_NAME_COMPONENT=false
 UMOUNT_SYSCALL_TARGET_CONTAINS_CALLER_TEXT=false
-MOUNT_AND_UMOUNT_USE_THE_SAME_PATHNAME_CARRIER=true
-VALIDATED_ROOT_FD_LIFETIME=from_the_5_3_validation_until_the_last_mount_or_unmount_operation_that_uses_it
-VALIDATED_ROOT_FD_LIFETIME_SPANS_E14_E15_E16_AND_E24=true
+UMOUNT_TARGET_FD_IS_OPENED_PER_CALL=true
+UMOUNT_TARGET_FD_OPENAT_DIRFD=validated_root_fd
+UMOUNT_TARGET_FD_OPENAT_PATH=MOUNTPOINT_ROLE
+UMOUNT_TARGET_FD_IS_THE_OBJECT_THE_SYSCALL_CONSUMES=true
+UMOUNT_TARGET_FD_REMAINS_OPEN_THROUGH_THE_CALL_RETURN=true
+UMOUNT_TARGET_FD_IS_CLOSED_AFTER_THE_CALL_RETURNS=true
+MOUNT_AND_UMOUNT_USE_THE_SAME_FD_MEDIATED_CARRIER_FORM=true
+VALIDATED_ROOT_FD_IS_NOT_THE_UMOUNT_TARGET_OBJECT=true
+VALIDATED_ROOT_FD_LIFETIME=from_the_5_3_validation_until_after_E26_completes
+VALIDATED_ROOT_FD_LIFETIME_SPANS_E14_E15_E16_E18_E20_E24_AND_E26=true
 VALIDATED_ROOT_FD_REMAINS_OPEN_THROUGH_THE_LAST_MOUNT_OR_UNMOUNT=true
-VALIDATED_ROOT_FD_CLOSE_CHECKPOINT=after_E24_and_before_E26
+VALIDATED_ROOT_FD_REMAINS_OPEN_THROUGH_E26=true
+VALIDATED_ROOT_FD_CLOSE_CHECKPOINT=after_E26_completes
 VALIDATED_ROOT_FD_CLOSED_BY_THE_SUPERVISOR=true
 VALIDATED_ROOT_FD_IS_NEVER_RE_RESOLVED_FROM_CALLER_TEXT=true
 VALIDATED_ROOT_FD_IS_NOT_RECONSTRUCTED_AFTER_CLOSE=true
+VALIDATED_ROOT_FD_CONSUMER_AFTER_CLOSE_COUNT=0
 ```
 
 One consequence is worth stating explicitly, because it constrains how the
 implementation may verify the target rather than what it must achieve: once a
 filesystem is mounted on the target path, a path-based `stat` of that path
 reports the mounted filesystem's root inode rather than the directory the helper
-created. The invariant is that the object the helper created is the object its
-own mount covers; the implementation may verify that in any way that really
-establishes it, for example with a descriptor opened on the target before the
-mount, whose identity is unaffected by the covering mount. If the target's
-identity cannot be established to still be the helper's own pinned object, the
-fixture is a failed construction: the outcome is `QUALIFICATION_GAP` plus a
-design finding, cleanup follows 10.4, and it is never a pass.
+created, while a descriptor opened on the target before the mount keeps reporting
+the covered directory. Round 12 makes that descriptor the syscall's target rather
+than an optional verification aid: `mount_target_fd` is opened before the call,
+its `st_dev`/`st_ino` are compared against the identity `E8` recorded, the path
+`/proc/self/fd/<mount_target_fd>` is what the call receives, and the descriptor is
+closed after the call returns. The invariant is that the object the helper created
+is the object its own mount covers, and after this round that is not merely
+verified — it is the object the kernel was handed. If the target's identity cannot
+be established to still be the helper's own object, the fixture is a failed
+construction: the outcome is `QUALIFICATION_GAP` plus a design finding, cleanup
+follows 10.4, and it is never a pass.
 
 For `mount-fixture`, `FIXTURE_FILE_ROLE` is created by the helper inside its own
 newly created ext4 filesystem after the mount, and it is then pinned by a
@@ -5614,9 +6367,16 @@ separate processes — and it performs, in order:
                                 mount-fixture: E8, E9, E10, E11, E12, E13, E14, E18, E19, E20
 6. control-channel creation, then fork
 7. parent stays privileged and serves the channel for the rest of the case
-8. privileged post-E1 effects on request: E15, E16, E17, E24, E26
+8. privileged post-E1 effects on request: mount-fixture: E15, E16, E17, E24, E26
+                                   ownership:     E25, E26
 9. supervisor exit, which is the end of the privileged process
 ```
+
+The post-`E1` effect set is therefore per case rather than one blanket tuple, and
+`E25` — the ownership fixture-object removal — is a privileged effect of the
+supervisor in exactly the two cases that scope it (1.12.1). The supervisor serves
+it on the same frozen channel, after the same kind of independent state validation
+that gates every other post-`E1` request:
 
 The setup state therefore does not disappear when setup completes, because the
 process that produced it does not exit. The forked transition child does exit
@@ -5654,26 +6414,39 @@ and its closing checkpoint, and none of them is re-derived by a fresh scan:
 
 | Runtime value | Producer | Carrier and lifetime | Consumer | Closing checkpoint |
 | --- | --- | --- | --- | --- |
-| `validated_root_fd` | the supervisor's own 5.3 root validation | the supervisor's own descriptor table, until the last mount or unmount operation that uses it | E2/E4, E8, E9, E14, E15, E16, E18, E20, E24, E25, E26 | closed after E24 and before E26, and never reconstructed from caller text |
+| `validated_root_fd` | the supervisor's own 5.3 root validation | the supervisor's own descriptor table, for the whole case | mount-fixture: E8, E9, E14, E15, E16, E18, E20, E24, E26; ownership: E2/E4, E25, E26 | closed by the supervisor after E26 completes and before the supervisor exits, and never reconstructed from caller text |
+| `mount_target_fd` | E14's own `openat(validated_root_fd, MOUNTPOINT_ROLE, O_PATH\|O_DIRECTORY\|O_NOFOLLOW\|O_CLOEXEC)` | the supervisor's own descriptor table, from that `openat` until the `mount(2)` call returns | the E14 pre-call `fstat` comparison against the E8 identity, and the `mount(2)` call itself through its `/proc/self/fd/<mount_target_fd>` target | closed immediately after the `mount(2)` call returns and before E18 runs |
+| `E15_umount_target_fd` | E15's own `openat(validated_root_fd, MOUNTPOINT_ROLE, O_PATH\|O_NOFOLLOW\|O_CLOEXEC)`, taken while the observed state is `ATTACHED` | the supervisor's own descriptor table, from that `openat` until the `umount2(..., MNT_DETACH)` call returns | the E15 pre-call `fstat` comparison against the E8 identity, and the `umount2` call itself through its `/proc/self/fd/<E15_umount_target_fd>` target | closed immediately after the `umount2` call returns; never reused after a successful detach |
+| `E16_umount_target_fd` | E16's own `openat(validated_root_fd, MOUNTPOINT_ROLE, O_PATH\|O_NOFOLLOW\|O_CLOEXEC)`, taken while the observed state is `ATTACHED` | the supervisor's own descriptor table, from that `openat` until the `umount2(..., 0)` call returns | the E16 pre-call `fstat` comparison against the E8 identity, and the `umount2` call itself through its `/proc/self/fd/<E16_umount_target_fd>` target | closed immediately after the `umount2` call returns |
 | `validated_RUNNER_TEMP_parent_fd` | the supervisor's own parent-resolution during 5.3 validation, revalidated against `RUNNER_TEMP` under 5.3 and 7 | the supervisor's own descriptor table, until the root is removed | E26 | closed by the supervisor after E26 records `FIXTURE_ROOT_RESIDUE=false` |
-| `E8_MOUNTPOINT_ST_DEV`, `E8_MOUNTPOINT_ST_INO` | E8, measured on the `O_PATH` descriptor E8 pinned | supervisor memory, until E24 completes | E14 pre-call revalidation, E18's covered-mountpoint comparison, E24 removal-target comparison | E24 records that the observed object equals the E8-pinned pair before it removes the name |
-| `E9_IMAGE_ST_DEV`, `E9_IMAGE_ST_INO` | E9, measured on the `O_RDWR` descriptor E9 pinned | supervisor memory, until E24 completes | E10, E11, E12's backing descriptor, E13's comparison, E24 removal-target comparison | E24 records that the observed object equals the E9-pinned pair before it removes the name |
-| `LOOP_DEVICE_NUMBER` | E12, from `LOOP_CTL_GET_FREE` | supervisor memory, until E17 completes | E13 and E17 | E17 acts on exactly this device and records `LOOP_BACKING_RESIDUE=false` |
+| `E8_MOUNTPOINT_ST_DEV`, `E8_MOUNTPOINT_ST_INO` | E8, measured on the `O_PATH` descriptor E8 pinned | supervisor memory, until E24 completes | E14's target-descriptor comparison, E15's and E16's target-descriptor comparisons, E18's covered-mountpoint comparison, E24 removal-target comparison | E24 records that the observed object equals the E8-pinned pair before it removes the name |
+| `E9_IMAGE_ST_DEV`, `E9_IMAGE_ST_INO` | E9, measured on the `O_RDWR` descriptor E9 pinned | supervisor memory, until E24 completes | E10, E11, E12's backing descriptor, E13's comparison, E17's pre-release association check and post-release absence observation, E24 removal-target comparison | E24 records that the observed object equals the E9-pinned pair before it removes the name |
+| `LOOP_DEVICE_NUMBER` | E12, from `LOOP_CTL_GET_FREE` | supervisor memory, until E17 completes | E13 and E17 | E17 acts on exactly this device, observes the backing association absent, and records `LOOP_BACKING_RESIDUE=false` |
 | `LOOP_DEVICE_PATH` | E12, derived from the device number | supervisor memory, until E17 completes | E13's `open` and E17's `open` | closed by the E17 result and `LOOP_BACKING_RESIDUE=false` |
-| `LOOP_BACKING_ST_DEV`, `LOOP_BACKING_ST_INO` | E9's pinned image identity, bound by E12 and verified by E13 | supervisor memory, until E17 completes | E13's read-back comparison, E17's post-release read-back | E17 records that no association with that identity remains |
+| `LOOP_BACKING_ST_DEV`, `LOOP_BACKING_ST_INO` | E9's pinned image identity, bound by E12 and verified by E13 | supervisor memory, until E17 completes | E13's read-back comparison, E17's pre-release association check and its post-release absence observation | E17 records that no association with that identity remains, as an observed fact rather than an inferred one |
 | `PRIVATE_MOUNT_NAMESPACE_IDENTITY` | the supervisor's own `/proc/self/ns/mnt` read after E6 | supervisor memory, until the supervisor exits | the 10.1 identity equality, the 10.3 absence control | the private identity is recorded with the residue controls at the end of 10.4 |
 
 ```text
 RUNTIME_STATE_TABLE_IS_CLOSED=true
+RUNTIME_STATE_TABLE_COLUMNS=producer,carrier_and_lifetime,consumer,closing_checkpoint
+RUNTIME_STATE_TABLE_HAS_PRODUCER_CARRIER_LIFETIME_CONSUMER_AND_CLOSING_CHECKPOINT=true
 RUNTIME_STATE_CONSUMER_HAS_ORIGINAL_PRODUCER_VALUE=true
 RUNTIME_STATE_IS_NOT_RE_DERIVED_BY_A_FRESH_SCAN=true
+RUNTIME_STATE_CLOSING_CHECKPOINT_IS_CASE_EXECUTABLE=true
+RUNTIME_STATE_CLOSING_CHECKPOINT_PRECEDES_NO_DECLARED_CONSUMER=true
+VALIDATED_ROOT_FD_CONSUMER_AFTER_CLOSE_COUNT=0
 E12_TO_E17_LOOP_IDENTITY_CONTINUITY_CLOSED=true
 E8_TO_E24_MOUNTPOINT_IDENTITY_CONTINUITY_CLOSED=true
 E9_TO_E24_IMAGE_IDENTITY_CONTINUITY_CLOSED=true
+E14_TARGET_DESCRIPTOR_LIFETIME_CLOSED=true
+E15_TARGET_DESCRIPTOR_LIFETIME_CLOSED=true
+E16_TARGET_DESCRIPTOR_LIFETIME_CLOSED=true
 E17_ACTS_ON_THE_RECORDED_LOOP_DEVICE=true
 E17_NEVER_RESCANS_FOR_A_FREE_OR_ASSOCIATED_LOOP_DEVICE=true
 E17_LOOP_DEVICE_NUMBER_SOURCE=E12_supervisor_memory
 E17_LOOP_DEVICE_PATH_SOURCE=E12_supervisor_memory
+E17_ASSOCIATION_PRESENCE_IS_MEASURED_BEFORE_THE_ONE_REQUEST=true
+E17_SUCCESS_REQUIRES_OBSERVED_BACKING_ABSENCE=true
 E24_MOUNTPOINT_TARGET_COMPARED_AGAINST=E8_original_producer_value
 E24_IMAGE_TARGET_COMPARED_AGAINST=E9_original_producer_value
 E13_BACKING_COMPARISON_AGAINST=E9_original_producer_value
@@ -5688,6 +6461,9 @@ SUPERVISOR_OWNS_LOOP_BACKING_IDENTITY=true
 SUPERVISOR_OWNS_PRIVATE_MOUNT_NAMESPACE_IDENTITY=true
 SUPERVISOR_OWNS_E18_MOUNTED_ROOT_FD=true
 SUPERVISOR_OWNS_E8_COVERED_MOUNTPOINT_PINNED_DESCRIPTOR=true
+SUPERVISOR_OWNS_E14_MOUNT_TARGET_FD=true
+SUPERVISOR_OWNS_E15_UMOUNT_TARGET_FD=true
+SUPERVISOR_OWNS_E16_UMOUNT_TARGET_FD=true
 ```
 
 **The supervisor/evidence control channel, frozen.** Before the `fork` that
@@ -5695,12 +6471,55 @@ creates the transition child, the supervisor creates exactly one fixed control
 channel and gives one endpoint to the child. The channel is the only mechanism
 by which the evidence process can cause a privileged effect after E1, and it is
 frozen as producer, carrier, lifetime, consumer, message enum, closing checkpoint
-and failure behaviour, none of which is implicit.
+and failure behaviour, none of which is implicit. Round 12 corrects the mechanism
+and the grammar: the round-11 mechanism was `SOCK_STREAM`, which preserves no
+message boundaries, and the round-11 grammar simultaneously claimed that the
+message enum was the only accepted input and that one message carried a state
+token that is not an enum member. The mechanism is now `SOCK_SEQPACKET`, so each
+message is exactly one kernel-delimited record, and the grammar is now exactly one
+closed enum token per record with no payload at all (1.12.2):
 
 ```text
 EVIDENCE_CONTROL_CHANNEL_FROZEN=true
-EVIDENCE_CONTROL_CHANNEL_MECHANISM=socketpair(AF_UNIX, SOCK_STREAM, 0)
+ROUND11_EVIDENCE_CONTROL_CHANNEL_MECHANISM=socketpair(AF_UNIX, SOCK_STREAM, 0)
+ROUND11_EVIDENCE_CONTROL_CHANNEL_MECHANISM_IS_WITHDRAWN=true
+EVIDENCE_CONTROL_CHANNEL_MECHANISM=socketpair(AF_UNIX, SOCK_SEQPACKET|SOCK_CLOEXEC, 0)
 EVIDENCE_CONTROL_CHANNEL_MECHANISM_COUNT=1
+CONTROL_CHANNEL_SOCKET_TYPE=SOCK_SEQPACKET
+CONTROL_CHANNEL_SOCKET_FAMILY=AF_UNIX
+CONTROL_CHANNEL_SOCKET_PROTOCOL=0
+CONTROL_CHANNEL_SOCKET_FLAGS=SOCK_CLOEXEC
+CONTROL_CHANNEL_MECHANISM_PRESERVES_MESSAGE_BOUNDARIES=true
+CONTROL_CHANNEL_RECORD_BOUNDARIES_DEFINED=true
+CONTROL_CHANNEL_ONE_RECORD_PER_MESSAGE=true
+CONTROL_CHANNEL_MESSAGE_IS_ONE_SEQPACKET_RECORD=true
+CONTROL_CHANNEL_BOUNDARIES_ARE_KERNEL_PRESERVED=true
+CONTROL_CHANNEL_COALESCED_FRAMES_POSSIBLE=false
+CONTROL_CHANNEL_COALESCING_HANDLING=not_possible_by_construction_because_each_send_is_one_record
+CONTROL_CHANNEL_MAX_FRAME_SIZE_BYTES=64
+CONTROL_CHANNEL_MAX_FRAME_SIZE_IS_ENFORCED_BY_THE_SUPERVISOR=true
+CONTROL_CHANNEL_FRAME_LARGER_THAN_MAX_OUTCOME=CONTROL_CHANNEL_REJECTED
+CONTROL_CHANNEL_EXACT_FRAME_GRAMMAR=one_ascii_record_of_one_closed_enum_token_with_no_terminator_and_no_leading_or_trailing_whitespace
+CONTROL_CHANNEL_FRAME_IS_CLOSED_ENUM_TOKEN_ONLY=true
+CONTROL_CHANNEL_SEQPACKET_TRUNCATION_BEHAVIOUR=the_receive_buffer_is_larger_than_the_maximum_frame_so_a_truncated_record_cannot_be_parsed_as_a_short_valid_token
+CONTROL_CHANNEL_RECEIVE_BUFFER_BYTES=128
+CONTROL_CHANNEL_PARTIAL_READ_BEHAVIOUR_DEFINED=true
+CONTROL_CHANNEL_PARTIAL_READ_HANDLING=a_received_record_shorter_than_the_frozen_token_is_not_a_message_and_yields_CONTROL_CHANNEL_REJECTED
+CONTROL_CHANNEL_READ_LOOP=one_blocking_receive_per_expected_message_with_the_frozen_enum_token_compared_whole
+CONTROL_CHANNEL_READ_LOOP_ITERATION_COUNT_PER_MESSAGE=1
+CONTROL_CHANNEL_WRITE_LOOP=one_send_of_one_complete_record;the_send_never_writes_a_partial_record
+CONTROL_CHANNEL_PARTIAL_WRITE_HANDLING=a_send_that_reports_a_short_record_is_CONTROL_CHANNEL_REJECTED_and_never_a_completion
+CONTROL_CHANNEL_EOF_HANDLING=a_zero_length_receive_is_channel_closure_and_enters_the_state_aware_cleanup_of_10_4
+CONTROL_CHANNEL_MALFORMED_FRAME_OUTCOME=CONTROL_CHANNEL_REJECTED
+CONTROL_CHANNEL_MALFORMED_FRAME_IS_PASS=false
+CONTROL_CHANNEL_MALFORMED_FRAME_IS_RETRIED=false
+CONTROL_CHANNEL_FRAMING_IS_NOT_LEFT_TO_THE_IMPLEMENTATION=true
+CONTROL_CHANNEL_WIRE_GRAMMAR=one_closed_enum_message_token_per_record
+CONTROL_CHANNEL_WIRE_GRAMMAR_COUNT=1
+CONTROL_CHANNEL_WIRE_GRAMMAR_UNIQUE=true
+CONTROL_CHANNEL_GRAMMAR_CONTRADICTION_COUNT=0
+CONTROL_CHANNEL_ACCEPTS_STATE_TOKEN=false
+CONTROL_CHANNEL_ACCEPTS_PAYLOAD=false
 EVIDENCE_CONTROL_CHANNEL_CREATED_BEFORE_THE_FORK=true
 EVIDENCE_CONTROL_CHANNEL_CREATED_BY=privileged_fixture_supervisor
 EVIDENCE_CONTROL_CHANNEL_ENDPOINT_OWNER_SUPERVISOR=the_supervisors_endpoint
@@ -5711,12 +6530,17 @@ EVIDENCE_CONTROL_CHANNEL_SUPERVISOR_ENDPOINT_CLOEXEC_SET=true
 EVIDENCE_CONTROL_CHANNEL_SUPERVISOR_ENDPOINT_CLOSED_IN_THE_CHILD=true
 EVIDENCE_CONTROL_CHANNEL_EVIDENCE_ENDPOINT_CLOSED_IN_THE_SUPERVISOR=true
 EVIDENCE_CONTROL_CHANNEL_IS_SYNCHRONOUS_REQUEST_RESPONSE=true
+EVIDENCE_CONTROL_CHANNEL_REQUEST_RESPONSE_PAIRS=1
 EVIDENCE_CONTROL_CHANNEL_LIFETIME=from_the_fork_until_the_supervisor_exit
 EVIDENCE_CONTROL_CHANNEL_CLOSING_CHECKPOINT=the_child_observes_FINAL_CLEANUP_COMPLETED_and_the_supervisor_observes_channel_closure
 EVIDENCE_CONTROL_CHANNEL_MESSAGE_ENUM=DETACH_REQUEST,DETACH_COMPLETED,FINAL_CLEANUP_REQUEST,FINAL_CLEANUP_COMPLETED
 EVIDENCE_CONTROL_CHANNEL_MESSAGE_ENUM_IS_CLOSED=true
+EVIDENCE_CONTROL_CHANNEL_MESSAGE_ENUM_COUNT=4
 EVIDENCE_CONTROL_CHANNEL_MESSAGE_ENUM_IS_THE_ONLY_ACCEPTED_INPUT=true
 EVIDENCE_CONTROL_CHANNEL_PAYLOAD_GRAMMAR=one_fixed_ascii_token_from_a_closed_enum
+EVIDENCE_CONTROL_CHANNEL_MOUNT_CASE_MESSAGES=DETACH_REQUEST,DETACH_COMPLETED,FINAL_CLEANUP_REQUEST,FINAL_CLEANUP_COMPLETED
+EVIDENCE_CONTROL_CHANNEL_OWNERSHIP_CASE_MESSAGES=FINAL_CLEANUP_REQUEST,FINAL_CLEANUP_COMPLETED
+EVIDENCE_CONTROL_CHANNEL_IS_THE_ONLY_POST_E1_PRIVILEGE_PATH=true
 EVIDENCE_CONTROL_CHANNEL_ACCEPTS_FREE_TEXT=false
 EVIDENCE_CONTROL_CHANNEL_ACCEPTS_PATH=false
 EVIDENCE_CONTROL_CHANNEL_ACCEPTS_PATHNAME=false
@@ -5741,17 +6565,34 @@ SUPERVISOR_CLOSES_THE_OWNERSHIP_PINNED_CHILD_DESCRIPTOR_BEFORE_THE_FORK=true
 SUPERVISOR_CLOSES_E8_E9_E18_AND_E20_OWNED_DESCRIPTORS_AT_THEIR_STATED_CHECKPOINTS=true
 SUPERVISOR_LOOP_DEVICE_DESCRIPTOR_IS_CLOSED_BETWEEN_E13_AND_E17=true
 CHILD_DESCRIPTOR_CLOSURE_REASON=an_inherited_loop_device_descriptor_would_keep_a_second_open_reference_and_an_inherited_image_or_root_descriptor_would_hand_the_unprivileged_process_a_privileged_handle
+CONTROL_CHANNEL_SUCCESS_SEQUENCE_IS_CASE_AWARE=true
 ```
 
 The successful-path exchange is fixed and is the only way the privileged effects
-after E1 occur:
+after E1 occur. It is per case: the mount case has two exchanges, and the two
+ownership cases have exactly one, because they mount nothing and therefore have
+nothing to detach (1.12.1):
 
 ```text
 CHANNEL_SUCCESS_SEQUENCE=child_opens_and_admits_E21;child_sends_DETACH_REQUEST;supervisor_validates_then_E15_then_DETACH_COMPLETED;child_reacquires_E22_then_E23_then_sends_FINAL_CLEANUP_REQUEST;supervisor_E17_then_E24_then_E26_then_FINAL_CLEANUP_COMPLETED
+MOUNT_FIXTURE_CHANNEL_SUCCESS_SEQUENCE=child_opens_and_admits_E21;child_sends_DETACH_REQUEST;supervisor_validates_then_E15_then_DETACH_COMPLETED;child_reacquires_E22_then_E23_then_sends_FINAL_CLEANUP_REQUEST;supervisor_E17_then_E24_then_E26_then_FINAL_CLEANUP_COMPLETED
+OWNERSHIP_CHANNEL_SUCCESS_SEQUENCE=child_opens_and_admits_E21;child_releases_its_own_descriptor_E23;child_sends_FINAL_CLEANUP_REQUEST;supervisor_independently_validates_the_ownership_case_state;supervisor_E25_then_E26_then_FINAL_CLEANUP_COMPLETED
+OWNERSHIP_CHANNEL_EXCHANGE_COUNT=1
+MOUNT_FIXTURE_CHANNEL_EXCHANGE_COUNT=2
+OWNERSHIP_CHANNEL_SENDS_DETACH_REQUEST=false
+OWNERSHIP_CHANNEL_PERFORMS_E15=false
+OWNERSHIP_CHANNEL_PERFORMS_E22=false
+OWNERSHIP_CHANNEL_PERFORMS_E17=false
+OWNERSHIP_CHANNEL_PERFORMS_E24=false
+OWNERSHIP_CHANNEL_REQUEST_TOKEN=FINAL_CLEANUP_REQUEST
+OWNERSHIP_CHANNEL_COMPLETION_TOKEN=FINAL_CLEANUP_COMPLETED
+OWNERSHIP_CHANNEL_COMPLETION_IS_FROM_THE_SAME_PERSISTENT_SUPERVISOR=true
+OWNERSHIP_CONTROL_LIFECYCLE_CLOSED=true
 DETACH_REQUEST_PRODUCER=NONROOT_EVIDENCE_PROCESS
 DETACH_REQUEST_CONSUMER=PRIVILEGED_FIXTURE_SUPERVISOR
+DETACH_REQUEST_SCOPE=mount-fixture
 DETACH_REQUEST_PRECONDITION=E21_completed_and_the_retained_descriptor_is_open
-DETACH_REQUEST_SUPERVISOR_VALIDATION=current_namespace_identity_current_mount_state_ATTACHED_and_the_E8_pinned_target_identity
+DETACH_REQUEST_SUPERVISOR_VALIDATION=current_namespace_identity_current_mount_state_ATTACHED_and_the_E8_original_producer_target_identity
 DETACH_REQUEST_UNVALIDATED_OUTCOME=DETACH_REQUEST_REJECTED
 DETACH_COMPLETED_PRODUCER=PRIVILEGED_FIXTURE_SUPERVISOR
 DETACH_COMPLETED_CONSUMER=NONROOT_EVIDENCE_PROCESS
@@ -5763,14 +6604,33 @@ DETACH_COMPLETION_CARRIER_LIFETIME=one_exchange
 DETACH_COMPLETION_DOES_NOT_REPLACE_INDEPENDENT_REACQUISITION=true
 FINAL_CLEANUP_REQUEST_PRODUCER=NONROOT_EVIDENCE_PROCESS
 FINAL_CLEANUP_REQUEST_CONSUMER=PRIVILEGED_FIXTURE_SUPERVISOR
+FINAL_CLEANUP_REQUEST_SCOPE=all_cases
 FINAL_CLEANUP_REQUEST_PRECONDITION=E23_completed
-FINAL_CLEANUP_REQUEST_PAYLOAD=the_observed_mount_state_from_the_closed_10_4_enum
+FINAL_CLEANUP_REQUEST_PAYLOAD=NONE
+FINAL_CLEANUP_REQUEST_CARRIES_NO_STATE_PAYLOAD=true
+FINAL_CLEANUP_REQUEST_CARRIES_NO_STATE_TOKEN=true
 FINAL_CLEANUP_REQUEST_ACCEPTS_NO_PATH=true
 FINAL_CLEANUP_REQUEST_CARRIER_DECLARED=true
-FINAL_CLEANUP_REQUEST_CARRIER=one_fixed_ascii_token_plus_one_state_token_on_the_frozen_control_channel
+FINAL_CLEANUP_REQUEST_CARRIER=one_fixed_ascii_token_on_the_frozen_control_channel
 FINAL_CLEANUP_REQUEST_LIFETIME=one_exchange
+FINAL_CLEANUP_REQUEST_PRIVILEGED_EFFECTS_BY_CASE=mount-fixture:E17,E24,E26;own-foreign:E25,E26;own-root:E25,E26
+FINAL_CLEANUP_REQUEST_MAY_NOT_SELECT_AN_EFFECT_OUTSIDE_ITS_CASE_SCOPE=true
+SUPERVISOR_STATE_IS_THE_AUTHORITATIVE_RUNTIME_STATE=true
+SUPERVISOR_INDEPENDENTLY_REACQUIRES_THE_STATE_BEFORE_CLEANUP=true
+REQUEST_TOKEN_IS_NOT_AUTHORITATIVE_STATE=true
 SUPERVISOR_PERFORMS_E15_AND_E16_AND_E17_AND_E24_AND_E26=true
+SUPERVISOR_PERFORMS_E25_AND_E26_FOR_THE_OWNERSHIP_CASES=true
+SUPERVISOR_POST_E1_EFFECT_SET=E15,E16,E17,E24,E25,E26
+SUPERVISOR_POST_E1_EFFECT_SET_INCLUDES_E25=true
+SUPERVISOR_POST_E1_EFFECT_SCOPE_IS_PER_CASE=true
+SUPERVISOR_MOUNT_CASE_POST_E1_EFFECT_SET=E15,E16,E17,E24,E26
+SUPERVISOR_OWNERSHIP_CASE_POST_E1_EFFECT_SET=E25,E26
+SUPERVISOR_POST_E1_EFFECT_SET_IS_THE_UNION_OF_THE_CASE_SCOPES=true
 SUPERVISOR_PERFORMS_NO_EFFECT_ON_A_MESSAGE_IT_DID_NOT_VALIDATE=true
+SUPERVISOR_VALIDATES_THE_OWNERSHIP_CASE_STATE_BEFORE_E25=true
+ROUND11_POST_E1_EFFECT_TUPLE=E15,E16,E17,E24,E26
+ROUND11_POST_E1_EFFECT_TUPLE_IS_MISSING_E25=true
+ROUND11_POST_E1_EFFECT_TUPLE_IS_HISTORICAL_ONLY=true
 EVIDENCE_PROCESS_NEVER_EXECUTES_A_PRIVILEGE_TOOL_IN_SOURCE_AFTER_E1=true
 EVIDENCE_PROCESS_AFTER_E1_EXECVE_COUNT=0
 EVIDENCE_PROCESS_AFTER_E1_SUDO_COUNT=0
@@ -5786,11 +6646,19 @@ EVIDENCE_PROCESS_PRODUCTION_PRIMITIVE_IS_AN_IN_PROCESS_CALL=true
 ```
 
 **Failure behaviour of the channel, frozen.** A channel that fails must produce a
-classified non-pass outcome and must never leave a privileged object behind:
+classified non-pass outcome, must dispatch its cleanup on the supervisor's own
+reacquired state rather than on an assumption about what the child did, and must
+report the residue it actually observed. Round 11 made this rule unconditional —
+any child exit without `FINAL_CLEANUP_REQUEST` mapped to the `ATTACHED` branch —
+which would run `E16` after a successful `E15` on a mount that no longer exists.
+Round 12 withdraws that rule and replaces it with the total state dispatch of
+1.12.3 and 10.4:
 
 ```text
-CONTROL_CHANNEL_CHILD_EXITS_WITHOUT_FINAL_CLEANUP_REQUEST=supervisor_detects_channel_closure_and_performs_the_ATTACHED_state_cleanup_branch
-CONTROL_CHANNEL_CHILD_EXITS_WITHOUT_DETACH_REQUEST=supervisor_performs_E16_E17_E24_E26
+ROUND11_UNCONDITIONAL_EOF_RULE_WITHDRAWN=true
+CHANNEL_EOF_CLEANUP_IS_STATE_AWARE=true
+CONTROL_CHANNEL_CHILD_EXITS_WITHOUT_FINAL_CLEANUP_REQUEST=supervisor_reacquires_its_own_state_and_performs_the_cleanup_branch_of_that_state
+CONTROL_CHANNEL_CHILD_EXITS_WITHOUT_DETACH_REQUEST=supervisor_reacquires_its_own_state_and_performs_the_cleanup_branch_of_that_state
 CONTROL_CHANNEL_SUPERVISOR_EXITS_BEFORE_FINAL_CLEANUP_COMPLETED=child_reports_CLEANUP_FAILED
 CONTROL_CHANNEL_EOF_IS_NOT_A_COMPLETION=true
 CONTROL_CHANNEL_UNEXPECTED_CLOSURE_OUTCOME=CLEANUP_FAILED
@@ -5798,7 +6666,22 @@ CONTROL_CHANNEL_DESCRIPTOR_CLOSED_BY_PROCESS_EXIT_IS_NOT_E23=true
 CONTROL_CHANNEL_FAILURE_IS_PASS=false
 CONTROL_CHANNEL_FAILURE_IS_PRODUCT_FAILURE=false
 CONTROL_CHANNEL_FAILURE_NEVER_RETRIED_BLINDLY=true
-CONTROL_CHANNEL_FAILURE_LEAVES_NO_PRIVILEGED_OBJECT=true
+CHANNEL_EOF_AFTER_E15_NEVER_RUNS_E16=true
+CHANNEL_EOF_AFTER_E15_REACHES_E17=true
+CONTROL_CHANNEL_FAILURE_CLEANUP_REACHABLE_FROM_EVERY_LIVE_STATE=true
+CONTROL_CHANNEL_FAILURE_CLEANUP_STATE_SET=ATTACHED,DETACHED_HELD,MOUNT_GONE_LOOP_BOUND,RELEASED,OWNERSHIP_OBJECT_PRESENT
+CHANNEL_EOF_DETACHED_HELD_BRANCH_ACTION=observe_MOUNT_GONE_LOOP_BOUND_then_E17_then_E24_then_E26
+CHANNEL_EOF_ATTACHED_BRANCH_ACTION=E16_then_E17_then_E24_then_E26
+CHANNEL_EOF_MOUNT_GONE_LOOP_BOUND_BRANCH_ACTION=E17_then_E24_then_E26
+CHANNEL_EOF_RELEASED_BRANCH_ACTION=E24_then_E26
+CHANNEL_EOF_OWNERSHIP_BRANCH_ACTION=E25_then_E26_as_applicable
+CONTROL_CHANNEL_FAILURE_LEAVES_NO_PRIVILEGED_OBJECT=only_reported_when_the_cleanup_result_is_observed_successful
+CONTROL_CHANNEL_FAILURE_CLEANUP_RESULT_IS_OBSERVED=true
+CONTROL_CHANNEL_FAILURE_CLEANUP_SUCCESS_CRITERION=LOOP_BACKING_RESIDUE_false_and_PRIVATE_MOUNT_RESIDUE_false_and_FIXTURE_ROOT_RESIDUE_false_all_measured
+CONTROL_CHANNEL_FAILURE_CLEANUP_FAILURE_REPORTS_THE_RESIDUE=true
+CONTROL_CHANNEL_FAILURE_RESIDUE_IS_RECORDED_AS_OBSERVED=true
+ROUND11_UNOBSERVED_NO_RESIDUE_CLAIM_WITHDRAWN=true
+UNOBSERVED_CLEANUP_RESULT_IS_PASS=false
 ```
 
 **The E1 postcondition is scoped to the evidence process.** Round 10 stated the
@@ -6073,8 +6956,8 @@ observed host state:
 | helper access authority | the privileged child's real `CapEff` contains the declared helper access authority, and the invocation root it must reach is observed as owner-only (`S_IMODE == 0o700`, group, world and sticky bits clear) and owned by the ordinary runner, so that the access authority is required by a measured fact rather than assumed (1.5). The root itself is opened with `O_PATH`, which "requires no permissions on the object itself" (open(2)), so the root open adds no capability requirement of its own |
 | parent directory DAC state | `RUNNER_TEMP`'s real owner, real mode, real sticky-bit state and the resulting write-and-search DAC relation to the helper identity are observed and recorded, because the invocation-root removal of `E26` acts on that directory and not on the root; the relation is required to withhold direct write from the helper identity so that `E26`'s single declared authority is unconditional and minimal rather than conditional, and a shared-writable or sticky parent is a `QUALIFICATION_GAP` rather than a second authority outcome or an undeclared `CAP_FOWNER` (1.10.4) |
 | control channel | the frozen channel of 5.11 exists after the `fork`, exactly one endpoint is reachable in the evidence process, its descriptor number is recorded, and no supervisor-retained descriptor is inherited by that process (`EVIDENCE_PROCESS_INHERITS_NO_SUPERVISOR_RETAINED_DESCRIPTOR=true`, `CHILD_DESCRIPTOR_CLOSURE_BEFORE_EXECVE=true`) |
-| mount target carrier | the target string the supervisor passes to `mount(2)`/`umount2(2)` is recorded verbatim as `/proc/self/fd/<validated_root_fd>/MOUNTPOINT_ROLE` with the supervisor's own descriptor number, and `validated_root_fd` is observed open through the last of those calls and closed after E24 and before E26 (5.9) |
-| loop configuration | the `LOOP_CONFIGURE` input is recorded field by field, `LO_FLAGS_AUTOCLEAR=false` is observed, and the loop device records exactly one open reference at the moment `E17` releases it (5.9, 1.11.6) |
+| mount/umount target binding | each call receives `/proc/self/fd/<target_fd>` naming a descriptor the supervisor itself opened on the frozen derived role and compared against the E8 original producer identity, and `validated_root_fd` is observed open through E26 and closed after E26 completes (5.9, 1.12.4, 1.12.6) |
+| loop configuration and release | the `LOOP_CONFIGURE` input is recorded field by field, `LO_FLAGS_AUTOCLEAR=false` is observed as the initial configuration, `E17` issues exactly one `LOOP_CLR_FD` request with no blind retry, and the recorded device is observed to carry no backing association with the E9-pinned image identity before `LOOP_BACKING_RESIDUE=false` is recorded (5.9, 1.11.6, 1.12.5) |
 | kernel and tools | the required kernel interfaces and utilities exist and their versions are recorded, including `/dev/loop-control` and the loop device nodes required by the descriptor-mediated loop binding of 5.9 |
 | fixture root | the `RUNNER_TEMP` invocation root is usable, invocation-specific, and not a shared or persistent runner path; its parent is not sticky, so removal of a directory owned by the ordinary identity needs no `CAP_FOWNER`; and the freshly formatted ext4 root directory is observed with the owner and search facts 5.8.3 requires |
 | mount object preconditions | the image's real mode, owner and link count are observed equal to the frozen `IMAGE_ROLE_S_IMODE=0600`, the reviewed helper identity and one link; and the mountpoint's real mode is observed `0755` with group and world write clear, so the ordinary identity's search through it — the precondition of the 5.8.3 DAC witness — is a measured fact (5.9) |
@@ -6509,18 +7392,28 @@ HOST_OBSERVER                records host mount namespace identity / absence bas
          ACTUAL_SUPPLEMENTARY_GROUPS == [], ACTUAL_EUID != 0,
          ACTUAL_CAP_EFF == 0
        executes the production primitive only after those controls pass
-       performs E21, retains its own descriptor, sends DETACH_REQUEST
+       performs E21, retains its own descriptor
+       mount-fixture:       sends DETACH_REQUEST
+       own-foreign, own-root: sends nothing here; there is no mount to detach
   -> PRIVILEGED_FIXTURE_SUPERVISOR      (same process, still privileged)
-       validates the current namespace identity, the observed mount state and
-         the E8-pinned target identity, performs E15, observes the result, and
-         sends DETACH_COMPLETED
+       mount-fixture:       validates the current namespace identity, the
+         observed mount state and the E8-original target identity, performs
+         E15, observes the result, and sends DETACH_COMPLETED
+       own-foreign, own-root: expects and accepts no message at this point
   -> NONROOT_EVIDENCE_PROCESS
-       independently reacquires the mount state, performs E22, releases its own
-         descriptor with E23, then sends FINAL_CLEANUP_REQUEST
+       mount-fixture:       independently reacquires the mount state, performs
+         E22, releases its own descriptor with E23, then sends
+         FINAL_CLEANUP_REQUEST
+       own-foreign, own-root: releases its own descriptor with E23, then sends
+         FINAL_CLEANUP_REQUEST
   -> PRIVILEGED_FIXTURE_SUPERVISOR      (same process, still privileged)
-       performs E17, E24 and E26 in the 10.4 order — and E16 first only when the
-         observed state is still ATTACHED — then sends FINAL_CLEANUP_COMPLETED
-       closes validated_root_fd after E24 and before E26, and exits
+       mount-fixture:       performs E17, E24 and E26 in the 10.4 order — and
+         E16 first only when the observed state is still ATTACHED — then sends
+         FINAL_CLEANUP_COMPLETED
+       own-foreign, own-root: independently validates the ownership-case state
+         it owns, then performs E25 and E26, then sends
+         FINAL_CLEANUP_COMPLETED
+       closes validated_root_fd after E26 has completed, and exits
 ```
 
 ```text
@@ -6854,6 +7747,9 @@ E17_SUCCESS_POST_STATE=RELEASED
 E15_SUCCESS_POST_STATE=DETACHED_HELD
 E17_NEVER_REQUIRES_DETACHED_HELD=true
 E16_IS_THE_ONLY_EFFECT_ALLOWED_TO_ENTER_FROM_ATTACHED_WITH_A_RETAINED_DESCRIPTOR_AFTER_E23=true
+E16_ENTRY_STATE_IS_ALWAYS_ATTACHED=true
+E16_ENTRY_STATE_IS_MEASURED_BEFORE_THE_EFFECT=true
+E16_IS_NEVER_PERFORMED_IN_A_STATE_OTHER_THAN_ATTACHED=true
 E23_FROM_ATTACHED_LEAVES_THE_STATE_ATTACHED=true
 CLEANUP_REMOVAL_ORDER_IS_CASE_AWARE=true
 CLEANUP_MOUNT_CASE_REMOVAL_ORDER=E24_then_E26
@@ -6952,6 +7848,40 @@ OWNERSHIP_CASE_PRIVATE_MOUNT_RESIDUE_CONTROL=NOT_APPLICABLE_NO_PRIVATE_NAMESPACE
 OWNERSHIP_CASE_RESIDUE_CONTROL=HOST_NAMESPACE_RESIDUE_and_FIXTURE_ROOT_RESIDUE
 CLEANUP_STATE_MACHINE_SCOPE=mount-fixture
 OWNERSHIP_CASE_CLEANUP_STATE=NONE
+OWNERSHIP_CASE_CLEANUP_STATE_IS_NOT_A_MOUNT_STATE=true
+OWNERSHIP_CASE_CLEANUP_STATE_DOMAIN=ownership_object_state
+OWNERSHIP_CASE_OBJECT_STATE_SET=OBJECT_PRESENT,OBJECT_REMOVED
+OWNERSHIP_CASE_OBJECT_STATE_AT_CLEANUP_ENTRY=OBJECT_PRESENT
+OWNERSHIP_CASE_E23_DOES_NOT_CHANGE_THE_OWNERSHIP_OBJECT_STATE=true
+OWNERSHIP_CASE_E25_SUCCESS_POST_STATE=OBJECT_REMOVED
+OWNERSHIP_CASE_E26_REQUIRES_OBJECT_REMOVED=true
+OWNERSHIP_CASE_CLEANUP_REQUEST_IS_VALIDATED_AGAINST_THE_SUPERVISORS_OWN_RECORD=true
+OWNERSHIP_CASE_CLEANUP_DOES_NOT_REQUIRE_A_MOUNT_STATE=true
+OWNERSHIP_CASE_CLEANUP_BRANCH_IS_THE_SAME_ON_CHANNEL_EOF=true
+CHANNEL_EOF_OWNERSHIP_BRANCH_ACTION=E25_then_E26_as_applicable
+CHANNEL_EOF_STATE_DISPATCH_IS_TOTAL=true
+CHANNEL_EOF_STATE_DISPATCH_STATE_COUNT=5
+CHANNEL_EOF_ATTACHED_BRANCH_ACTION=E16_then_E17_then_E24_then_E26
+CHANNEL_EOF_DETACHED_HELD_BRANCH_ACTION=observe_MOUNT_GONE_LOOP_BOUND_then_E17_then_E24_then_E26
+CHANNEL_EOF_DETACHED_HELD_REQUIRES_E16=false
+CHANNEL_EOF_MOUNT_GONE_LOOP_BOUND_BRANCH_ACTION=E17_then_E24_then_E26
+CHANNEL_EOF_RELEASED_BRANCH_ACTION=E24_then_E26
+CHANNEL_EOF_BRANCH_PERFORMS_NO_UNDECLARED_EFFECT=true
+CHANNEL_EOF_ON_A_DETACHED_HELD_MOUNT_DOES_NOT_UNMOUNT=true
+CHANNEL_EOF_AFTER_E15_NEVER_RUNS_E16=true
+CHANNEL_EOF_AFTER_E15_REACHES_E17=true
+CONTROL_CHANNEL_FAILURE_CLEANUP_REACHABLE_FROM_EVERY_LIVE_STATE=true
+CONTROL_CHANNEL_FAILURE_LEAVES_NO_PRIVILEGED_OBJECT=only_reported_when_the_cleanup_result_is_observed_successful
+CONTROL_CHANNEL_FAILURE_CLEANUP_RESULT_IS_OBSERVED=true
+CONTROL_CHANNEL_FAILURE_CLEANUP_SUCCESS_CRITERION=LOOP_BACKING_RESIDUE_false_and_PRIVATE_MOUNT_RESIDUE_false_and_FIXTURE_ROOT_RESIDUE_false_all_measured
+CONTROL_CHANNEL_FAILURE_CLEANUP_FAILURE_REPORTS_THE_RESIDUE=true
+ROUND11_UNOBSERVED_NO_RESIDUE_CLAIM_WITHDRAWN=true
+UNOBSERVED_CLEANUP_RESULT_IS_PASS=false
+E16_REQUIRES_THE_OBSERVED_STATE_ATTACHED=true
+E16_IS_NEVER_PERFORMED_AFTER_A_SUCCESSFUL_E15_UNLESS_E23_RESTORED_THE_STATE_ATTACHED=true
+E16_AFTER_E15_WITHOUT_E23_IS_FORBIDDEN=true
+E15_RETRY_COUNT=0
+E16_RETRY_COUNT=0
 OWNERSHIP_CASE_CLEANUP_IS_E23_then_E25_then_E26=true
 MOUNT_CASE_CLEANUP_IS_E23_then_E17_then_E24_then_E26=true
 MOUNT_CASE_E25_NOOP_COUNT=0
@@ -7207,6 +8137,50 @@ ROUND11_PROBE_IMPLEMENTATION_EXECUTED=true
 ROUND11_PROBE_IMPLEMENTATION_IS_NOT_A_PRODUCT_ARTIFACT=true
 ROUND11_PROBE_IMPLEMENTATION_LIVES_OUTSIDE_THE_REPOSITORY=true
 ROUND11_PROBE_READS_THE_CONTRACT_FROM_THE_HEAD_TREE=true
+ROUND12_STRUCTURAL_PROBE_OBLIGATIONS=28
+ROUND12_PROBE_01=the_ownership_case_post_E1_control_flow_of_10_1_names_the_supervisor_as_the_actor_of_E25_and_E26_and_never_as_the_actor_of_E15_E17_E22_or_E24_in_an_ownership_case
+ROUND12_PROBE_02=the_ownership_case_DAGs_of_1_11_9_are_unchanged_and_are_the_orders_the_ownership_exchange_records
+ROUND12_PROBE_03=no_ownership_case_message_in_the_current_normative_region_is_DETACH_REQUEST
+ROUND12_PROBE_04=the_supervisor_post_E1_effect_set_reaches_E25_and_the_round11_missing_E25_tuple_is_retained_only_as_a_round_qualified_historical_record
+ROUND12_PROBE_05=the_control_channel_mechanism_is_one_socketpair_whose_type_preserves_message_boundaries
+ROUND12_PROBE_06=the_control_channel_freezes_a_maximum_frame_size_a_read_loop_a_partial_read_outcome_a_coalesced_frame_statement_an_EOF_outcome_and_a_malformed_frame_outcome
+ROUND12_PROBE_07=exactly_one_wire_grammar_is_current_and_it_is_one_closed_enum_token_per_record_with_no_payload
+ROUND12_PROBE_08=no_current_normative_statement_makes_a_state_token_part_of_FINAL_CLEANUP_REQUEST
+ROUND12_PROBE_09=the_channel_failure_dispatch_is_total_over_the_five_live_states_and_its_actions_are_the_10_4_actions
+ROUND12_PROBE_10=no_channel_failure_branch_places_E16_after_a_successful_E15
+ROUND12_PROBE_11=the_DETACHED_HELD_branch_waits_for_MOUNT_GONE_LOOP_BOUND_and_does_not_unmount
+ROUND12_PROBE_12=a_no_residue_claim_is_conditioned_on_observed_residue_controls
+ROUND12_PROBE_13=E14_opens_a_target_descriptor_fstat_compares_it_against_the_E8_original_identity_and_passes_it_to_the_call
+ROUND12_PROBE_14=the_mount_target_string_in_the_current_normative_region_contains_no_role_name_component
+ROUND12_PROBE_15=E15_and_E16_each_open_a_target_descriptor_compare_it_against_the_E8_original_identity_and_close_it_after_the_call
+ROUND12_PROBE_16=the_round11_claim_that_the_revalidation_and_the_call_bind_the_same_descriptor_is_literally_true_under_the_round12_design
+ROUND12_PROBE_17=E17_issues_exactly_one_LOOP_CLR_FD_request_and_has_no_blind_retry
+ROUND12_PROBE_18=E17_success_is_defined_by_an_observed_backing_absence_and_the_kernel_lazy_teardown_is_declared_allowed
+ROUND12_PROBE_19=no_current_normative_claim_asserts_an_exact_loop_device_open_reference_count
+ROUND12_PROBE_20=the_initial_autoclear_literal_is_kept_and_the_non_autoclear_teardown_inference_is_withdrawn
+ROUND12_PROBE_21=validated_root_fd_has_one_closing_checkpoint_that_every_case_can_execute_and_no_consumer_after_it
+ROUND12_PROBE_22=the_runtime_state_table_rows_each_carry_a_producer_a_carrier_and_lifetime_a_consumer_and_a_closing_checkpoint
+ROUND12_PROBE_23=E26_root_observation_mechanism_and_root_identity_continuity_are_declared
+ROUND12_PROBE_24=every_effect_id_used_in_a_current_normative_region_resolves_to_the_1_9_1_registry_meaning
+ROUND12_PROBE_25=the_authority_column_still_equals_the_AUTHORITY_E_tokens_and_every_case_total_authority_set_equals_the_union_of_its_effects
+ROUND12_PROBE_26=the_closure_table_still_has_exactly_26_rows_and_the_registry_still_covers_exactly_E1_to_E26
+ROUND12_PROBE_27=every_current_pointer_key_carries_exactly_one_value_document_wide
+ROUND12_PROBE_28=the_suite_reads_sections_5_2_5_6_5_9_5_11_10_1_and_10_4_rather_than_the_remediation_record
+ROUND12_PROBE_LIST_IS_THE_COMPLETENESS_EVIDENCE=false
+ROUND12_PROBE_RESULT=PASS
+ROUND12_PROBE_FAIL_COUNT=0
+ROUND12_PROBE_CHECK_COUNT=648
+ROUND12_PROBE_SELF_TEST=the_same_suite_rejects_the_failed_round11_text
+ROUND12_PROBE_SELF_TEST_FAIL_COUNT=384
+ROUND12_PROBE_SELF_TEST_CHECK_COUNT=648
+ROUND12_PROBE_SELF_TEST_EXIT=REJECTED
+ROUND12_PROBE_SELF_TEST_COVERS_EVERY_ROUND12_FINDING=true
+ROUND12_PROBE_IMPLEMENTATION_EXECUTED=true
+ROUND12_PROBE_IMPLEMENTATION_IS_NOT_A_PRODUCT_ARTIFACT=true
+ROUND12_PROBE_IMPLEMENTATION_LIVES_OUTSIDE_THE_REPOSITORY=true
+ROUND12_PROBE_READS_THE_CONTRACT_FROM_THE_HEAD_TREE=true
+ROUND12_PROBE_READS_SECTIONS_5_11_10_1_AND_10_4_EXPLICITLY=true
+ROUND12_PROBE_IGNORES_THE_REMEDIATION_RECORD_AS_EVIDENCE=true
 ```
 
 The document-wide duplicate-value probe is the one 20 records: a `KEY=VALUE`
@@ -7756,12 +8730,12 @@ already exited:
 ```text
 ROUND11_RE_EVALUATED_RESULTS=PRIVILEGED_EFFECT_AUTHORITY_CLOSURE,CROSS_BOUNDARY_CONTINUITY_IMPLEMENTABILITY,NAMESPACE_LIFECYCLE_IMPLEMENTABILITY,CLEANUP_STATE_MACHINE_IMPLEMENTABILITY,PRIVILEGED_CHILD_INODE_CONFINEMENT_IMPLEMENTABILITY,A3_CONTRACT_IMPLEMENTABILITY
 ROUND11_NO_LATER_EFFECT_CONSUMES_STATE_OWNED_SOLELY_BY_AN_EXITED_PROCESS=true
-PRIVILEGED_EFFECT_AUTHORITY_CLOSURE=PASS
-CROSS_BOUNDARY_CONTINUITY_IMPLEMENTABILITY=PASS
-NAMESPACE_LIFECYCLE_IMPLEMENTABILITY=PASS
-CLEANUP_STATE_MACHINE_IMPLEMENTABILITY=PASS
-PRIVILEGED_CHILD_INODE_CONFINEMENT_IMPLEMENTABILITY=PASS
-A3_CONTRACT_IMPLEMENTABILITY=PASS
+ROUND11_PRIVILEGED_EFFECT_AUTHORITY_CLOSURE=PASS
+ROUND11_CROSS_BOUNDARY_CONTINUITY_IMPLEMENTABILITY=PASS
+ROUND11_NAMESPACE_LIFECYCLE_IMPLEMENTABILITY=PASS
+ROUND11_CLEANUP_STATE_MACHINE_IMPLEMENTABILITY=PASS
+ROUND11_PRIVILEGED_CHILD_INODE_CONFINEMENT_IMPLEMENTABILITY=PASS
+ROUND11_A3_CONTRACT_IMPLEMENTABILITY=PASS
 A3_CONTRACT_IMPLEMENTABILITY_SCOPE=the_whole_current_normative_region_of_this_head
 A3_CONTRACT_IMPLEMENTABILITY_EVIDENCE=the_round11_probe_suite_of_15_1_run_over_this_document
 ROUND11_CONTRACT_TO_IMPLEMENTATION_PREVIEW=NO_NEW_PUBLIC_API_NO_NEW_RUNTIME_STATE_STORE_AND_NO_NEW_AUTHORITY_CLASS_IS_REQUIRED
@@ -8121,6 +9095,50 @@ so its existing results remain the ordinary baseline.
 FULL_LOCAL_PYTEST_FOR_THIS_PR=false
 PRIVILEGED_EXECUTION_FOR_THIS_PR=false
 EXPECTED_CI_TIER=docs_fast
+
+Round 12 adds no validation class either. It changes the same one document, its
+eight corrections are design statements about the fixture's future privileged
+operations, the control protocol those operations are requested over, and one
+descriptor's lifetime, and no privileged command is executed by this PR. The same
+five checks apply to the remediated head, and the round-12 probe suite of 1.12.7
+and 15.1 is run over this document — over its current normative sections, not over
+the remediation record — before the commit:
+
+```text
+ROUND12_VALIDATION_SCOPE=docs_governance_only
+ROUND12_VALIDATION_CLASSES=git_diff_check,repo_hygiene,destructive_design_gate,release_check,ci_risk_tier
+ROUND12_PRIVILEGED_EXECUTION_PERFORMED=false
+ROUND12_IMPLEMENTATION_FILES_CHANGED=0
+ROUND12_WORKFLOW_CHANGES=0
+ROUND12_CHANGED_FILE_COUNT=1
+ROUND12_CHANGED_FILE=docs/governance/l4_privileged_linux_qualification_v1.md
+ROUND12_VALIDATION_INCLUDES_STRUCTURAL_PROBES=true
+ROUND12_VALIDATION_INCLUDES_TOKEN_DUPLICATE_VALUE_PROBE=true
+ROUND12_STRUCTURAL_PROBE_COUNT=28
+ROUND12_STRUCTURAL_PROBE_RESULT=PASS
+ROUND12_TOKEN_DUPLICATE_VALUE_PROBE_RESULT=PASS
+ROUND12_CURRENT_POINTER_KEY_DUPLICATE_VALUE_COUNT=0
+ROUND12_PROBE_REQUIRED_CHECKS=648
+ROUND12_PROBE_FAIL_COUNT=0
+ROUND12_PROBE_SELF_TEST_ON_THE_FAILED_ROUND11_TEXT=REJECTED
+ROUND12_KERNEL_CLAIM_PROVENANCE=DOCUMENTED
+ROUND12_KERNEL_CLAIM_PROVENANCE_SOURCES=unix7_and_socket2_and_loop4_and_linux_include_uapi_linux_loop_h_read_for_this_round
+ROUND12_KERNEL_CLAIM_PROVENANCE_VERSION=man-pages_6.19_and_linux_uapi_headers_read_for_this_round
+ROUND12_KERNEL_CLAIM_PROBED=false
+ROUND12_KERNEL_CLAIM_PROBED_REASON_NO_LINUX_HOST_IS_AVAILABLE_IN_THIS_DEVELOPMENT_ENVIRONMENT
+ROUND12_KERNEL_CLAIM_PROBE_IS_AN_IMPLEMENTATION_PHASE_OBLIGATION=true
+```
+
+The two claims this round adds about kernel behaviour are `DOCUMENTED` claims:
+that `socketpair(2)` with `SOCK_SEQPACKET` preserves message boundaries, read for
+this round from `unix(7)` ("SOCK_SEQPACKET ... connection-oriented socket that
+preserves message boundaries") and `socket(2)`; and that `LOOP_CLR_FD` may be
+completed by the kernel through lazy autoclear destruction when the device is
+still open, read for this round from `loop(4)` and `include/uapi/linux/loop.h`.
+They are not `PROBED`: this development host has no Linux runtime, and running the
+fixture here would be the privileged execution this PR is forbidden to perform.
+The probe obligation therefore moves to the implementation phase, where the real
+host makes it executable, and it is frozen as such rather than dropped.
 ```
 
 Round 5 adds no validation class either. It changes the same one document, so the
@@ -8356,17 +9374,18 @@ A3D_HISTORY_REWRITTEN=false
 ```
 
 The single bare `A3D_REMEDIATION_COMMIT_PARENT` token carries the direct parent of
-the head under remediation, which is the failed tenth-review head, and that is what
+the head under remediation, which is the failed eleventh-review head, and that is what
 makes the failed head auditable from the branch tip. Round 7 introduced the token
-with its own parent, round 9 left it pointing at round 7, and round 10 re-pointed
-it at the failed ninth-review head; round 11 re-points it at the failed
-tenth-review head and keeps every earlier round's value under its own
-round-qualified name: the
+with its own parent, round 9 left it pointing at round 7, round 10 re-pointed it
+at the failed ninth-review head, and round 11 re-pointed it at the failed
+tenth-review head; round 12 re-points it at the failed eleventh-review head and
+keeps every earlier round's value under its own round-qualified name: the
 round-3 value is `A3D_REMEDIATION_ROUND_3_COMMIT_PARENT`, the round-5 value is
 `A3D_REMEDIATION_ROUND_5_COMMIT_PARENT`, the round-6 value is
 `A3D_REMEDIATION_ROUND_6_COMMIT_PARENT`, the round-7 value is
-`A3D_REMEDIATION_ROUND_7_COMMIT_PARENT`, and the round-10 value is
-`A3D_REMEDIATION_ROUND_10_PARENT`. Round 6 left two bare
+`A3D_REMEDIATION_ROUND_7_COMMIT_PARENT`, the round-10 value is
+`A3D_REMEDIATION_ROUND_10_PARENT`, and the round-11 value is
+`A3D_REMEDIATION_ROUND_11_COMMIT_PARENT`. Round 6 left two bare
 `A3D_REMEDIATION_COMMIT_PARENT` tokens carrying two different values at one head,
 which is the defect round 7 corrects; preserving the history under round-qualified
 keys is what corrects it without deleting either earlier fact.
@@ -8374,12 +9393,14 @@ keys is what corrects it without deleting either earlier fact.
 ```text
 GIT_CURRENT_PARENT_TOKEN=A3D_REMEDIATION_COMMIT_PARENT
 GIT_CURRENT_PARENT_TOKEN_OCCURRENCE_COUNT=1
-GIT_CURRENT_PARENT_TOKEN_VALUE=9ee489c63c2efe6c63ce677c12608f5549affeda
+GIT_CURRENT_PARENT_TOKEN_VALUE=c70cd367c7f70478b283d472e9e06a42420d04ad
 GIT_CURRENT_PARENT_TOKEN_UNIQUE=true
-GIT_CURRENT_PARENT_TOKEN_IS_THE_ROUND_11_DIRECT_PARENT=true
+GIT_CURRENT_PARENT_TOKEN_IS_THE_ROUND_12_DIRECT_PARENT=true
 GIT_HISTORICAL_PARENT_TOKEN_ROUND_7=A3D_REMEDIATION_ROUND_7_COMMIT_PARENT
 GIT_HISTORICAL_PARENT_TOKEN_ROUND_10=A3D_REMEDIATION_ROUND_10_PARENT
-A3D_REMEDIATION_COMMIT_PARENT=9ee489c63c2efe6c63ce677c12608f5549affeda
+GIT_HISTORICAL_PARENT_TOKEN_ROUND_11=A3D_REMEDIATION_ROUND_11_COMMIT_PARENT
+A3D_REMEDIATION_COMMIT_PARENT=c70cd367c7f70478b283d472e9e06a42420d04ad
+A3D_REMEDIATION_ROUND_11_COMMIT_PARENT=9ee489c63c2efe6c63ce677c12608f5549affeda
 GIT_HISTORICAL_PARENT_TOKENS_ARE_ROUND_QUALIFIED=true
 GIT_HISTORICAL_PARENT_TOKEN_ROUND_3=A3D_REMEDIATION_ROUND_3_COMMIT_PARENT
 GIT_HISTORICAL_PARENT_TOKEN_ROUND_5=A3D_REMEDIATION_ROUND_5_COMMIT_PARENT
@@ -8473,3 +9494,63 @@ review's failure is cleared by this document's own claim.
 Merge remains unauthorized. Implementation, privileged execution, CI workflow
 change, production change and registry admission each remain separately
 unauthorized by this document.
+
+
+Round 12 preserves history the same way, with the failed round-11 head as its
+direct parent, pushed as a normal fast-forward onto the same branch. It is one
+commit, changing exactly one file, and it amends, rebases and force-pushes
+nothing:
+
+```text
+A3D_REMEDIATION_ROUND_12=12
+A3D_REMEDIATION_ROUND_12_PARENT=c70cd367c7f70478b283d472e9e06a42420d04ad
+A3D_REMEDIATION_ROUND_12_PARENT_IS_FAILED_ELEVENTH_REVIEW_HEAD=true
+A3D_REMEDIATION_ROUND_12_BRANCH=design/a3d-round4-mount-owner-predicate
+A3D_REMEDIATION_ROUND_12_COMMIT_COUNT=1
+A3D_ROUND12_CONTAINS_FAILED_ELEVENTH_REVIEW_HEAD=true
+A3D_ROUND12_PARENTS_FAILED_ELEVENTH_REVIEW_HEAD=true
+A3D_ROUND12_REWRITES_FAILED_ELEVENTH_REVIEW_HEAD=false
+A3D_ROUND12_CHANGED_FILE_COUNT=1
+A3D_ROUND12_CHANGED_FILE=docs/governance/l4_privileged_linux_qualification_v1.md
+A3D_ROUND12_ADDED_FILE=none
+A3D_ROUND12_PUSH_IS_FAST_FORWARD=true
+A3D_ROUND12_PUSH_IS_NEW_BRANCH=false
+A3D_ROUND12_PUSH_FORCE=false
+A3D_ROUND12_AMEND_USED=false
+A3D_ROUND12_REBASE_USED=false
+A3D_ROUND12_RESET_USED=false
+A3D_ROUND12_EFFECT_IDS_RENUMBERED=false
+A3D_ROUND12_EFFECT_ID_SET_IS_E1_TO_E26=true
+A3D_ROUND12_PRIVILEGED_EXECUTION_PERFORMED=false
+A3D_ROUND12_IMPLEMENTATION_FILES_CHANGED=0
+A3D_ROUND12_WORKFLOW_CHANGES=0
+A3D_ROUND12_MERGE_AUTHORIZED=false
+A3D_ROUND12_READY_FOR_REVIEW=false
+A3D_ROUND12_EFFECT_COUNT=26
+A3D_ROUND12_PLACEHOLDER_EFFECT_ROW_COUNT=0
+A3D_ROUND12_AUTHORITY_MATRIX_WIDENED=false
+A3D_ROUND12_ROUND11_CASE_DAGS_REBUILT=false
+A3D_ROUND12_PERSISTENT_SUPERVISOR_ARCHITECTURE_REPLACED=false
+A3D_ROUND12_EXPECTED_CI_TIER=docs_fast
+A3D_ROUND12_EXPECTED_CI_REASON=all_changes_in_docs_scope
+A3D_ROUND12_EXPECTED_FULL_MATRIX_REQUIRED=false
+TRANSPORT_DEGRADED=true
+A3D_ROUND12_REMOTE_TRUTH_CHANNELS=authoritative_remote_api
+A3D_ROUND12_REMOTE_MAIN_REQUIRED=cca7805305b0e369b27d7d29ba3611fb9afd7679
+A3D_ROUND12_REMOTE_HEAD_BEFORE_PUSH_REQUIRED=c70cd367c7f70478b283d472e9e06a42420d04ad
+A3D_ROUND12_PREPUSH_RECHECK_REQUIRED=true
+A3D_ROUND12_PREPUSH_ABORTS_ON_A_MOVED_REMOTE_HEAD=true
+A3D_ROUND12_AMENDS=false
+A3D_ROUND12_REBASES=false
+A3D_ROUND12_FORCE_PUSHES=false
+A3D_ROUND12_FORCE_PUSH_PERFORMED=false
+A3D_ROUND12_MERGE_PERFORMED=false
+A3D_ROUND12_READY_PERFORMED=false
+A3D_ROUND12_STOPS_FOR_FRESH_INDEPENDENT_EXACT_HEAD_REVIEW=true
+```
+
+After the exact-head pull-request CI for the round-12 head reaches a terminal
+conclusion, this workstream stops again and returns for fresh independent
+exact-head review. The eight round-12 findings are closed by statements in the
+current normative sections, and no earlier review's failure is cleared by this
+document's own claim.
