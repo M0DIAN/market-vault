@@ -3078,8 +3078,8 @@ bare they are current-pointer keys, and a current-pointer key must carry exactly
 value in this document — the value of the head it is read at. The round-11 value
 hard-coded `round11_record_1_11` as the latest current remediation record, which was
 true at that head and false at every head after round 12; the current region
-definition is stated once, in the round-16 record of 20, and it names the record that
-carries the current round's record rather than a literal latest round. The round-11
+definition is stated once, in the current remediation record 1.14, and it names the
+record that carries the current round's record rather than a literal latest round. The round-11
 pair is historical and is not a claim about this head:
 
 ```text
@@ -4267,6 +4267,872 @@ CASE_TOTAL_AUTHORITY_SETS_UNCHANGED_BY_ROUND13=true
 CASE_DAGS_UNCHANGED_BY_ROUND13=true
 SUPERVISOR_ARCHITECTURE_UNCHANGED_BY_ROUND13=true
 CONTROL_CHANNEL_MECHANISM_UNCHANGED_BY_ROUND13=true
+```
+
+### 1.14 Remediation record for the E15/E16 identity rule, the current-ledger
+synchronization and the current-record hierarchy
+
+This record is the current remediation record of Section 1. It carries the round-14,
+round-15 and round-16 remediation records below, and round 17 extends it. The
+heading is a real `###` record heading inside Section 1, before `## 2`, so the
+current remediation record and its `#### 1.14.x` subordinates stand in the real
+document hierarchy and not, as at head `4bb2f8b5…`, as a block of `####`
+headings that the Markdown hierarchy made children of `## 20`.
+
+Round 17 preserves history the same way, with the failed round-16 head as its
+direct parent, pushed as a normal fast-forward onto the same branch. It is one
+commit, changing exactly one file, and it amends, rebases and force-pushes nothing.
+The round-17 record of this section states the correction its review requires, and
+the record it corrects is 1.14.
+
+Round 15 preserves history the same way, with the failed round-14 head as its
+direct parent, pushed as a normal fast-forward onto the same branch. It is one
+commit, changing exactly one file, and it amends, rebases and force-pushes
+nothing. Rounds 13 and 14 are not given lifecycle records of their own by this
+round, because their commits are already on this branch and their facts are
+carried by the records that do exist — the round-13 record in 1.13, the round-14
+closure-row synchronization in the 1.5 `E15`/`E16` rows — and this round adds no
+second account of either. What this round adds is the failed review that triggers
+it and the two blockers it corrects.
+
+```text
+FOURTEENTH_A3D_REVIEW_FAILED_HEAD=6a0eb2c00f87f90dad5851c8f23d2e541bf11d3b
+FOURTEENTH_A3D_REVIEW_FAILED_TREE=ef0080557377ef7728e9f4a62cc77520ccfcfbe3
+FOURTEENTH_A3D_REVIEW_RESULT=FAIL
+FOURTEENTH_A3D_REVIEW_FAILURE=CONTRACT_IMPLEMENTABILITY_FAILURE
+FOURTEENTH_A3D_REVIEW_FAILURE_CLASS=CONTRACT_IMPLEMENTABILITY_FAILURE
+A3D_FIFTEENTH_REMEDIATION_ROUND=15
+A3D_CURRENT_REMEDIATION_ROUND_AT_THAT_HEAD=15
+ROUND15_CURRENT_ROUND_TOKEN_IS_A_ROUND15_RECORD=true
+ROUND15_CURRENT_ROUND_TOKEN_IS_CURRENT=false
+ROUND15_CURRENT_ROUND_TOKEN_SUPERSEDED_BY_ROUND=16
+A3D_HISTORY_ADDITIVE=true
+PRODUCT_FAILURE=false
+PRIVILEGED_EXECUTION_PERFORMED=false
+ROUND15_CURRENT_ROUND_POINTER_KEY=A3D_CURRENT_REMEDIATION_ROUND
+ROUND15_CURRENT_ROUND_POINTER_VALUE=15
+ROUND12_RECORD_BARE_CURRENT_ROUND_TOKEN_IS_A_ROUND12_RECORD=true
+ROUND12_RECORD_BARE_CURRENT_ROUND_TOKEN_IS_CURRENT=false
+SUPERSEDED_CURRENT_ROUND_VALUE=12
+SUPERSEDED_CURRENT_ROUND_VALUE_RETAINED=true
+SUPERSEDED_CURRENT_ROUND_VALUE_DELETED=false
+ROUND15_SCOPE=current_normative_prose_and_current_ledger_synchronization
+ROUND15_BLOCKING_FINDINGS_CLOSED=2
+ROUND15_BLOCKING_FINDINGS_OPEN=0
+ROUND15_EFFECT_IDS_RENUMBERED=false
+ROUND15_DAGS_CHANGED=false
+ROUND15_AUTHORITY_MATRIX_CHANGED=false
+ROUND15_PERSISTENT_SUPERVISOR_ARCHITECTURE_REPLACED=false
+ROUND15_CONTROL_CHANNEL_MECHANISM_REPLACED=false
+ROUND15_E17_SEMANTICS_CHANGED=false
+ROUND15_E2_E4_TO_E25_CONTINUITY_CHANGED=false
+ROUND15_E15_E16_CLOSURE_ROWS_CHANGED=false
+ROUND15_IMPLEMENTATION_FILES_CHANGED=0
+ROUND15_WORKFLOW_FILES_CHANGED=0
+```
+
+The fourteenth review passed round 14's own executable obligations and failed the
+round-14 head on two blockers, neither of which round 14's own suite could detect
+because both are statements that the suite's region definition treated as
+out of scope. Both are corrected in this round:
+
+| # | Finding | Corrected in |
+| --- | --- | --- |
+| 1 | The **current** 5.9 target-binding prose still stated collectively that the `E14`, `E15` and `E16` target descriptors are compared against the pair `E8` recorded. Round 13 corrected the canonical tokens and round 14 corrected the closure rows that carry the rule, but the normative prose that states the carrier rule in 5.9 still asserted the withdrawn round-12 identity rule, so the document carried two contradictory identity rules at one head. | 5.9, 20 |
+| 2 | The **current bare pointers** were stale: `A3D_CURRENT_REMEDIATION_ROUND` still read `12`, the single bare `A3D_REMEDIATION_COMMIT_PARENT` and `GIT_CURRENT_PARENT_TOKEN_VALUE` still carried the round-12 parent, and the region definition still hard-coded round 11 as the latest current remediation record, so no current pointer described the head it was read at. | 20, 15.1 |
+
+#### 1.14.1 The current 5.9 identity rule is per effect, and the carrier rule does not imply it
+
+The round-12 carrier rule and the round-13 identity rule are two different rules,
+and round 12 stated them together. Its prose said that the object is proved by
+`fstat`ing the descriptor and requiring its `st_dev`/`st_ino` to equal the pair
+`E8` recorded. That sentence is a correct statement about `E14` and a false
+statement about `E15` and `E16`, whose descriptors are opened after `E14` attached
+the mount and therefore resolve to the mounted ext4 root `E18` acquired and proved.
+The corrected 5.9 prose states the two rules separately: the carrier rule — one
+descriptor per effect, opened by the supervisor on the frozen derived role, proved
+by `fstat`ing the descriptor the `/proc/self/fd/<...>` path names, so validation and
+call consume one object reference — and the identity rule, which is per effect:
+
+- `E14`'s descriptor is opened **before** the mount, so it resolves to the directory
+  `E8` created and pinned, and the comparison basis is the **`E8` original
+  covered-mountpoint identity**;
+- `E15`'s and `E16`'s descriptors are each opened **after `E14` attached the mount,
+  while the observed state is `ATTACHED`**, so the frozen role name resolves to the
+  mounted ext4 filesystem's root inode, and the comparison basis is the **original
+  `E18` mounted-root identity**; the `E8` covered-mountpoint pair is explicitly
+  **not** their comparison identity, because it is the value a correct target for
+  those two effects must not match.
+
+The carrier semantics round 12 froze are preserved exactly: one last-component
+descriptor per effect, opened with
+`openat(validated_root_fd, MOUNTPOINT_ROLE, O_PATH|O_NOFOLLOW|O_CLOEXEC)` — plus
+`O_DIRECTORY` for `E14` — held open through its call's return, closed immediately
+afterwards, `/proc/self/fd/<...>` as the target string, one call per descriptor, and
+no reuse of a descriptor after a successful detach. Only the identity each
+descriptor is compared against is stated per effect instead of collectively.
+
+```text
+CURRENT_5_9_CARRIER_SEMANTICS_CHANGED=false
+CURRENT_5_9_ONE_DESCRIPTOR_PER_EFFECT=true
+CURRENT_5_9_TARGET_STRING_IS_FD_MEDIATED=true
+CURRENT_5_9_TARGET_STRING_CONTAINS_NO_ROLE_NAME_COMPONENT=true
+CURRENT_5_9_COLLECTIVE_IDENTITY_STATEMENT_PRESENT=false
+CURRENT_5_9_E14_TARGET_IDENTITY=E8
+CURRENT_5_9_E15_TARGET_IDENTITY=E18
+CURRENT_5_9_E16_TARGET_IDENTITY=E18
+CURRENT_5_9_COLLECTIVE_ALL_COMPARE_TO_E8_CLAIM=false
+CURRENT_5_9_STALE_E8_PROSE_COUNT=0
+CURRENT_NORMATIVE_TARGET_IDENTITY_MISMATCH_COUNT=0
+E14_TARGET_IDENTITY_SOURCE=E8_original_identity
+E14_TARGET_COMPARE_TO_E8=true
+E14_TARGET_COMPARE_TO_E18=false
+E15_TARGET_IDENTITY_SOURCE=E18_mounted_root_identity
+E16_TARGET_IDENTITY_SOURCE=E18_mounted_root_identity
+E15_TARGET_COMPARE_TO_E8=false
+E16_TARGET_COMPARE_TO_E8=false
+E15_TARGET_COMPARE_TO_E18=true
+E16_TARGET_COMPARE_TO_E18=true
+E15_UMOUNT_TARGET_FD_FSTAT_COMPARED_AGAINST=E18_original_mounted_root_identity
+E16_UMOUNT_TARGET_FD_FSTAT_COMPARED_AGAINST=E18_original_mounted_root_identity
+MOUNTED_OBJECT_TARGET_IDENTITY_IS_E18_NOT_E8=true
+E15_UMOUNT_TARGET_OBJECT_BINDING_CLOSED=true
+E16_UMOUNT_TARGET_OBJECT_BINDING_CLOSED=true
+```
+
+#### 1.14.2 The current/historical region and the current bare pointers
+
+A pointer is a fact about the head it is read at, so it cannot be left carrying an
+earlier round's value. The region definition of 15.1 hard-coded `round11_record_1_11`
+as the latest current remediation record, which was true at the round-11 head and
+false at every head after round 12; it is replaced by a definition that is derived
+from the current round pointer rather than from a literal round number. The same
+defect appears in the pointer block of 20, where
+`A3D_CURRENT_REMEDIATION_ROUND` read `12` and the single bare
+`A3D_REMEDIATION_COMMIT_PARENT` and `GIT_CURRENT_PARENT_TOKEN_VALUE` still carried
+the round-12 parent.
+
+This round re-points the bare pointers at the head under remediation and keeps the
+superseded round-12 parent value under a round-qualified key rather than deleting
+it, exactly as the earlier supersessions were kept:
+
+```text
+CURRENT_REMEDIATION_ROUND_MATCHES_HEAD=true
+CURRENT_PARENT_POINTER_MATCHES_DIRECT_PARENT=true
+CURRENT_POINTER_VALUE_MATCHES_REMOTE_TRUTH=true
+GIT_CURRENT_PARENT_TOKEN_UNIQUE=true
+CURRENT_POINTER_KEY_DUPLICATE_VALUE_COUNT=0
+ROUND15_CURRENT_NORMATIVE_REGION_AT_THAT_HEAD=closure_table_1_5,registry_1_9_1,records_1_11_through_1_13,current_remediation_record_1_14,sections_2_to_20
+ROUND15_CURRENT_NORMATIVE_REGION_AT_THAT_HEAD_IS_CURRENT=false
+ROUND15_CURRENT_NORMATIVE_REGION_AT_THAT_HEAD_EQUALS_THE_CURRENT_BARE_KEY=true
+CURRENT_NORMATIVE_REGION_ROUND=16
+CURRENT_NORMATIVE_REGION_CURRENT_RECORD=current_remediation_record_1_14
+CURRENT_NORMATIVE_REGION_IS_DERIVED_FROM_A3D_CURRENT_REMEDIATION_ROUND=true
+CURRENT_NORMATIVE_REGION_LATEST_CURRENT_RECORD_IS_ROUND_11=false
+CURRENT_NORMATIVE_REGION_LATEST_CURRENT_RECORD_IS_THE_CURRENT_ROUND=true
+CURRENT_NORMATIVE_REGION_ROUND_11_DEFINITION_IS_A_HISTORICAL_RECORD=true
+SUPERSEDED_CURRENT_PARENT_VALUE_KEY=A3D_REMEDIATION_ROUND_12_COMMIT_PARENT
+SUPERSEDED_CURRENT_PARENT_VALUE_RETAINED=true
+SUPERSEDED_CURRENT_PARENT_VALUE_DELETED=false
+SUPERSEDED_CURRENT_PARENT_VALUE_IS_STATED_ONCE_IN_SECTION_20=true
+ROUND15_BARE_PARENT_TOKEN_IS_STATED_IN_SECTION_20=true
+ROUND15_BARE_PARENT_TOKEN_KEY=A3D_REMEDIATION_COMMIT_PARENT
+ROUND15_BARE_PARENT_TOKEN_VALUE=6a0eb2c00f87f90dad5851c8f23d2e541bf11d3b
+ROUND15_BARE_PARENT_TOKEN_STATED_ONCE_DOCUMENT_WIDE=true
+```
+
+The document-wide duplicate-value probe of 20 applies to the keys above exactly as
+it does to every other current-pointer key: the round-15 region statement is kept
+under the round-qualified key `ROUND15_CURRENT_NORMATIVE_REGION_AT_THAT_HEAD`, so
+that no differently-named key competes with the bare `CURRENT_NORMATIVE_REGION` key
+for the current value, and `CURRENT_NORMATIVE_REGION_ROUND`,
+`CURRENT_NORMATIVE_REGION_CURRENT_RECORD` and the round-15 record's own keys are each
+stated once in this document. The single bare `A3D_REMEDIATION_COMMIT_PARENT` token
+is stated once, in 20, and every round-qualified historical parent value —
+including `A3D_REMEDIATION_ROUND_12_COMMIT_PARENT`, which this record originally
+also restated — is stated once as well, so that no current-pointer key carries two
+values and no alias resolves to two tokens. The round-11 and round-12 bare tokens are
+earlier rounds' records, kept as history under the rule that superseded
+current-pointer values are renamed with a round qualifier rather than deleted.
+
+#### 1.14.3 Semantic probes for this head
+
+The round-14 suite parsed the closure-table cells but read neither the current 5.9
+prose nor the bare current pointers, which is why it passed a head whose prose still
+carried the withdrawn collective identity rule and whose pointers still described
+round 12. The round-15 suite reads the current 5.9 region and the bare current
+pointers from the head tree, compares the pointers against the current round, the
+exact commit parent and the authoritative Git object, and is listed in 15.1:
+
+```text
+ROUND15_PROBE_REQUIRED_CHECKS=158
+ROUND15_PROBE_FAIL_COUNT=0
+ROUND15_PROBE_RESULT=PASS
+ROUND15_PROBE_INPUT=this_document_at_the_round15_head
+ROUND15_PROBE_SELF_TEST_INPUT=this_document_at_the_failed_round14_head
+ROUND15_PROBE_SELF_TEST_ON_THE_FAILED_ROUND14_TEXT=REJECTED
+ROUND15_PROBE_SELF_TEST_CHECK_COUNT=156
+ROUND15_PROBE_SELF_TEST_FAIL_COUNT=35
+ROUND15_PROBE_SELF_TEST_FAILS_ON_THE_STALE_5_9_PROSE_CLASS=2
+ROUND15_PROBE_SELF_TEST_FAILS_ON_THE_CURRENT_POINTER_CLASS=29
+ROUND15_PROBE_SELF_TEST_FAILS_ON_THE_UNCHANGED_CORE_CLASS=4
+ROUND15_PROBE_SELF_TEST_FAILS_ON_THE_5_9_STALE_E8_PROSE=true
+ROUND15_PROBE_SELF_TEST_FAILS_ON_THE_CURRENT_ROUND_POINTER=true
+ROUND15_PROBE_SELF_TEST_FAILS_ON_THE_BARE_PARENT_POINTER=true
+ROUND15_PROBE_IS_EXECUTED_NOT_ASSERTED=true
+ROUND15_PROBE_READS_THE_CONTRACT_FROM_THE_HEAD_TREE=true
+ROUND15_PROBE_READS_THE_CURRENT_5_9_PROSE=true
+ROUND15_PROBE_READS_THE_BARE_CURRENT_POINTERS=true
+ROUND15_PROBE_IGNORES_THE_REMEDIATION_RECORD_AS_EVIDENCE=true
+ROUND15_PROBE_IMPLEMENTATION_EXECUTED=true
+ROUND15_PROBE_IMPLEMENTATION_IS_NOT_A_PRODUCT_ARTIFACT=true
+ROUND15_PROBE_IMPLEMENTATION_LIVES_OUTSIDE_THE_REPOSITORY=true
+CURRENT_5_9_STALE_E8_PROSE_COUNT=0
+CURRENT_NORMATIVE_TARGET_IDENTITY_MISMATCH_COUNT=0
+CURRENT_REMEDIATION_ROUND_MATCHES_HEAD=true
+CURRENT_PARENT_POINTER_MATCHES_DIRECT_PARENT=true
+CURRENT_POINTER_VALUE_MATCHES_REMOTE_TRUTH=true
+AUTHORITY_TABLE_EQUALS_AUTHORITY_E_TOKENS=true
+CASE_TOTAL_AUTHORITY_SET_EQUALS_EFFECT_AUTHORITY_UNION=true
+E15_CLOSURE_ROW_COMPARE_TO_E8=false
+E16_CLOSURE_ROW_COMPARE_TO_E8=false
+E15_CLOSURE_ROW_COMPARE_TO_E18=true
+E16_CLOSURE_ROW_COMPARE_TO_E18=true
+E17_PRE_REQUEST_ABSENCE_IS_PASS=false
+SUCCESSFUL_E17_LOOP_CLR_FD_REQUEST_COUNT=1
+E2_TO_E25_IDENTITY_CONTINUITY_CLOSED=true
+E4_TO_E25_IDENTITY_CONTINUITY_CLOSED=true
+REAL_MATERIAL_EFFECT_COUNT=26
+PLACEHOLDER_EFFECT_ROW_COUNT=0
+```
+
+#### 1.14.4 Round-15 re-evaluated implementability results
+
+This round renumbers no effect, rebuilds no DAG, changes no authority, replaces
+neither the persistent supervisor nor the control channel, keeps `E17`'s semantics
+and the `E2`/`E4` to `E25` continuity unchanged, and adds no effect. The six
+implementability results are re-derived against this head:
+
+```text
+ROUND15_RE_EVALUATED_RESULTS=PRIVILEGED_EFFECT_AUTHORITY_CLOSURE,CROSS_BOUNDARY_CONTINUITY_IMPLEMENTABILITY,NAMESPACE_LIFECYCLE_IMPLEMENTABILITY,CLEANUP_STATE_MACHINE_IMPLEMENTABILITY,PRIVILEGED_CHILD_INODE_CONFINEMENT_IMPLEMENTABILITY,A3_CONTRACT_IMPLEMENTABILITY
+ROUND15_RESULT_KEYS_ARE_THE_CURRENT_IMPLEMENTABILITY_RESULTS_AT_THAT_HEAD=true
+ROUND15_RESULT_KEYS_ARE_CURRENT=false
+ROUND13_RESULT_KEYS_ARE_CURRENT=false
+ROUND13_RESULT_KEYS_ARE_HISTORICAL_RECORDS=true
+ROUND15_RESULT_BASIS_KEYS_ARE_ROUND_QUALIFIED=true
+PRIVILEGED_EFFECT_AUTHORITY_CLOSURE=PASS
+ROUND15_PRIVILEGED_EFFECT_AUTHORITY_CLOSURE_BASIS=every_one_of_E1_to_E26_still_has_a_declared_actor_in_every_case_that_scopes_it_and_this_round_changes_no_authority_precondition_or_postcondition
+CROSS_BOUNDARY_CONTINUITY_IMPLEMENTABILITY=PASS
+ROUND15_CROSS_BOUNDARY_CONTINUITY_IMPLEMENTABILITY_BASIS=the_E18_mounted_root_identity_carrier_lifetime_consumer_and_closing_checkpoint_are_unchanged_and_the_corrected_prose_names_the_same_carrier_as_the_canonical_tokens
+NAMESPACE_LIFECYCLE_IMPLEMENTABILITY=PASS
+ROUND15_NAMESPACE_LIFECYCLE_IMPLEMENTABILITY_BASIS=the_private_namespace_lifecycle_is_untouched_by_this_round
+CLEANUP_STATE_MACHINE_IMPLEMENTABILITY=PASS
+ROUND15_CLEANUP_STATE_MACHINE_IMPLEMENTABILITY_BASIS=the_four_mount_states_the_E16_ATTACHED_only_rule_and_the_E17_pre_request_association_rule_are_unchanged
+PRIVILEGED_CHILD_INODE_CONFINEMENT_IMPLEMENTABILITY=PASS
+ROUND15_PRIVILEGED_CHILD_INODE_CONFINEMENT_IMPLEMENTABILITY_BASIS=the_evidence_process_still_inherits_no_supervisor_descriptor_and_no_descriptor_carrier_rule_is_changed_by_this_round
+A3_CONTRACT_IMPLEMENTABILITY=PASS
+ROUND15_A3_CONTRACT_IMPLEMENTABILITY_BASIS=both_blockers_are_closed_by_statements_in_the_current_normative_region_and_the_current_bare_pointers_now_describe_the_head_they_are_read_at
+ROUND15_BLOCKING_FINDINGS_CLOSED=2
+ROUND15_BLOCKING_FINDINGS_OPEN=0
+EFFECT_COUNT_UNCHANGED_BY_ROUND15=true
+EFFECT_IDS_UNCHANGED_BY_ROUND15=true
+REAL_MATERIAL_EFFECT_COUNT=26
+PLACEHOLDER_EFFECT_ROW_COUNT=0
+PRIVILEGED_EFFECT_CLOSURE_ROWS=26
+AUTHORITY_TABLE_EQUALS_AUTHORITY_E_TOKENS=true
+CASE_TOTAL_AUTHORITY_SET_EQUALS_EFFECT_AUTHORITY_UNION=true
+REQUIRED_CAPABILITY_INVENTORY=CAP_CHOWN,CAP_DAC_OVERRIDE,CAP_DAC_READ_SEARCH,CAP_SETGID,CAP_SETUID,CAP_SYS_ADMIN
+REQUIRED_CAPABILITY_COUNT=6
+CAPABILITY_INVENTORY_UNCHANGED_BY_ROUND15=true
+AUTHORITY_MATRIX_UNCHANGED_BY_ROUND15=true
+CASE_TOTAL_AUTHORITY_SETS_UNCHANGED_BY_ROUND15=true
+CASE_DAGS_UNCHANGED_BY_ROUND15=true
+SUPERVISOR_ARCHITECTURE_UNCHANGED_BY_ROUND15=true
+CONTROL_CHANNEL_MECHANISM_UNCHANGED_BY_ROUND15=true
+```
+
+Round 15 preserves history the same way, with the failed round-14 head as its
+direct parent, pushed as a normal fast-forward onto the same branch. It is one
+commit, changing exactly one file, and it amends, rebases and force-pushes
+nothing:
+
+```text
+A3D_REMEDIATION_ROUND_15=15
+A3D_REMEDIATION_ROUND_15_PARENT=6a0eb2c00f87f90dad5851c8f23d2e541bf11d3b
+A3D_REMEDIATION_ROUND_15_PARENT_IS_FAILED_FOURTEENTH_REVIEW_HEAD=true
+A3D_REMEDIATION_ROUND_15_PARENT_TREE=ef0080557377ef7728e9f4a62cc77520ccfcfbe3
+A3D_REMEDIATION_ROUND_15_BRANCH=design/a3d-round4-mount-owner-predicate
+A3D_REMEDIATION_ROUND_15_COMMIT_COUNT=1
+A3D_REMEDIATION_ROUND_15_COMMIT_PARENT=6a0eb2c00f87f90dad5851c8f23d2e541bf11d3b
+A3D_ROUND15_CONTAINS_FAILED_FOURTEENTH_REVIEW_HEAD=true
+A3D_ROUND15_PARENTS_FAILED_FOURTEENTH_REVIEW_HEAD=true
+A3D_ROUND15_REWRITES_FAILED_FOURTEENTH_REVIEW_HEAD=false
+A3D_ROUND15_CHANGED_FILE_COUNT=1
+A3D_ROUND15_CHANGED_FILE=docs/governance/l4_privileged_linux_qualification_v1.md
+A3D_ROUND15_ADDED_FILE=none
+A3D_ROUND15_PUSH_IS_FAST_FORWARD=true
+A3D_ROUND15_PUSH_IS_NEW_BRANCH=false
+A3D_ROUND15_PUSH_FORCE=false
+A3D_ROUND15_AMEND_USED=false
+A3D_ROUND15_REBASE_USED=false
+A3D_ROUND15_RESET_USED=false
+A3D_ROUND15_EFFECT_IDS_RENUMBERED=false
+A3D_ROUND15_EFFECT_ID_SET_IS_E1_TO_E26=true
+A3D_ROUND15_PRIVILEGED_EXECUTION_PERFORMED=false
+A3D_ROUND15_IMPLEMENTATION_FILES_CHANGED=0
+A3D_ROUND15_WORKFLOW_CHANGES=0
+A3D_ROUND15_MERGE_AUTHORIZED=false
+A3D_ROUND15_READY_FOR_REVIEW=false
+A3D_ROUND15_EXPECTED_CI_TIER=docs_fast
+A3D_ROUND15_EXPECTED_CI_REASON=all_changes_in_docs_scope
+A3D_ROUND15_EXPECTED_FULL_MATRIX_REQUIRED=false
+TRANSPORT_DEGRADED=true
+A3D_ROUND15_REMOTE_TRUTH_CHANNELS=reviewed_confined_ssh_and_authoritative_remote_api
+A3D_ROUND15_REMOTE_MAIN_REQUIRED=cca7805305b0e369b27d7d29ba3611fb9afd7679
+A3D_ROUND15_REMOTE_HEAD_BEFORE_PUSH_REQUIRED=6a0eb2c00f87f90dad5851c8f23d2e541bf11d3b
+A3D_ROUND15_PREPUSH_RECHECK_REQUIRED=true
+A3D_ROUND15_PREPUSH_ABORTS_ON_A_MOVED_REMOTE_HEAD=true
+A3D_ROUND15_AMENDS=false
+A3D_ROUND15_REBASES=false
+A3D_ROUND15_FORCE_PUSHES=false
+A3D_ROUND15_FORCE_PUSH_PERFORMED=false
+A3D_ROUND15_MERGE_PERFORMED=false
+A3D_ROUND15_READY_PERFORMED=false
+A3D_ROUND15_STOPS_FOR_FRESH_INDEPENDENT_EXACT_HEAD_REVIEW=true
+```
+
+After the exact-head pull-request CI for the round-15 head reaches a terminal
+conclusion, this workstream stops again and returns for fresh independent
+exact-head review. Both round-15 blockers are closed by statements in the current
+normative region — the 5.9 identity rule and the 20 pointer block — and no earlier
+review's failure is cleared by this document's own claim.
+
+#### 1.14.5 Round-16 canonicalization of the two bare region keys
+
+The fifteenth exact-head review passed round 15's own executable obligations and
+failed the round-15 head `058cecad5511d6b9b0036cc4822c5e458ccc4bc8` with
+`FAILURE_CLASS=GOVERNANCE_LEDGER_CANONICALITY_FAILURE` and two blocking findings.
+Round 15's suite could not see either of them, because its region obligation
+compared the bare region keys with this document's own round-15 token block instead
+of with the ledger the keys are supposed to describe:
+
+| # | Finding | Corrected in |
+| --- | --- | --- |
+| 1 | The **bare region keys** were still the round-11 record. `CURRENT_NORMATIVE_REGION` carried `closure_table_1_5,registry_1_9_1,round11_record_1_11,sections_2_to_20` and `HISTORICAL_REGION` carried the round-11 historical value, while the current region definition was stated only under the differently-named `CURRENT_NORMATIVE_REGION_STATED_AT_THIS_HEAD` key. Under 15.1's own key-classification rule the two bare keys are current-pointer keys — they are neither an enumeration over one attribute, nor a per-case variant, nor a historical round-qualified record — so they may carry only the current head's value, and the document simultaneously carried a stale current-pointer key and a substitute for it. | 1.11.1, 1.14.2, 1.14.5, 15.1 |
+| 2 | The **historical parent aliases** of 20 dangled. `GIT_HISTORICAL_PARENT_TOKEN_ROUND_13` named `A3D_REMEDIATION_ROUND_13_PARENT` and `GIT_HISTORICAL_PARENT_TOKEN_ROUND_14` named `A3D_REMEDIATION_ROUND_14_PARENT`, and neither key existed anywhere in the document, so two aliases named no parent at all. The round-7 alias dangled in the same way (`A3D_REMEDIATION_ROUND_7_COMMIT_PARENT` did not exist), and the round-12 target was stated twice, so "every `GIT_HISTORICAL_PARENT_TOKEN_ROUND_*` alias resolves to exactly one real `KEY=<sha>` token" was false for four of the nine aliases. | 20, 1.14.5, 15.1 |
+
+Finding 1 is a stale-current-pointer failure and finding 2 is a dangling-alias
+failure. Both are failures of this document's own ledger, not of the frozen design:
+no effect id, no DAG, no authority row, no supervisor, no control channel, no
+`E14`/`E15`/`E16` binding, no `E17` rule and no `E2`/`E4` to `E25` continuity is
+touched by this round.
+
+The canonicalization is the same mechanism the document already uses for superseded
+current-pointer values, applied to the pair of keys that had escaped it: the round-11
+values are renamed with a `ROUND11_` qualifier rather than deleted, the round-15
+record's region statement is renamed with a `ROUND15_` qualifier so that no
+differently-named key competes with the bare key for the current value, and the bare
+keys themselves carry the current value exactly once each. At head `4bb2f8b5…` the
+bare key named `current_remediation_record_1_14` while the document carried no `###`
+or `##` heading for `1.14` at all: its only `1.14` headings were the `#### 1.14.x`
+subordinates, and they sat after `## 20` and were therefore children of Section 20
+in the real Markdown hierarchy, so the bare key named a record the document did not
+have. Round 17 answers that finding structurally rather than by wording: the record
+becomes a real `### 1.14` heading in Section 1 and the whole `1.14.x` block moves
+beneath it, before `## 2`. The current value names the record that carries the
+current round's record rather than a literal latest round number, so the key cannot
+go stale while the record stays where the ledger puts it:
+
+```text
+ROUND16_SCOPE=ledger_canonicality_of_the_bare_region_keys_and_the_historical_parent_aliases
+BARE_CURRENT_NORMATIVE_REGION_OCCURRENCE_COUNT=1
+BARE_HISTORICAL_REGION_OCCURRENCE_COUNT=1
+CURRENT_NORMATIVE_REGION=closure_table_1_5,registry_1_9_1,records_1_11_through_1_13,current_remediation_record_1_14,sections_2_to_20
+HISTORICAL_REGION=round_qualified_records_1_1_to_1_10_and_the_1_8_5_records_renamed_here
+CURRENT_REGION_RECORD_RANGE=1_11_through_1_13
+HISTORICAL_REGION_RECORD_RANGE=1_1_through_1_10
+REGION_RECORD_RANGES_ARE_COMPLEMENTARY_AND_CONTIGUOUS=true
+CURRENT_REGION_RECORD_RANGE_ENDS_AT_THE_RECORD_BEFORE_THE_CURRENT_RECORD=true
+CURRENT_REGION_RECORD_RANGE_LABELS_ARE_PRESENT_AS_RECORD_HEADINGS=true
+CURRENT_NORMATIVE_REGION_CURRENT_RECORD_RESOLUTION_RULE=the_current_remediation_record_is_the_record_section_that_carries_the_current_rounds_record
+CURRENT_NORMATIVE_REGION_CURRENT_RECORD_CARRIES_THE_CURRENT_ROUNDS_RECORD=true
+CURRENT_NORMATIVE_REGION_CURRENT_RECORD_LABEL=1_14
+CURRENT_NORMATIVE_REGION_HAS_NO_HARDCODED_STALE_LATEST_ROUND=true
+CURRENT_NORMATIVE_REGION_HARD_CODES_A_ROUND_NUMBER=false
+CURRENT_NORMATIVE_REGION_IS_CARRIED_BY_THE_BARE_KEY=true
+CURRENT_NORMATIVE_REGION_SUBSTITUTE_KEY_COUNT=0
+CURRENT_NORMATIVE_REGION_ROUND_11_DEFINITION_IS_A_HISTORICAL_RECORD=true
+HISTORICAL_REGION_MATCHES_CURRENT_LEDGER=true
+SUPERSEDED_ROUND11_REGION_KEYS_ARE_ROUND_QUALIFIED=true
+SUPERSEDED_ROUND11_REGION_KEY_NAMES=ROUND11_CURRENT_NORMATIVE_REGION,ROUND11_HISTORICAL_REGION
+SUPERSEDED_ROUND11_REGION_KEY_VALUES_ARE_RETAINED=true
+SUPERSEDED_ROUND11_REGION_KEY_VALUES_ARE_DELETED=false
+SUPERSEDED_ROUND15_REGION_KEY_NAMES=ROUND15_CURRENT_NORMATIVE_REGION_AT_THAT_HEAD
+SUPERSEDED_ROUND15_REGION_KEY_VALUES_ARE_RETAINED=true
+GIT_HISTORICAL_PARENT_ALIAS_COUNT_IS_RECORDED_IN_SECTION_20=true
+ROUND13_HISTORICAL_PARENT_ALIAS=A3D_REMEDIATION_ROUND_13_PARENT
+ROUND13_HISTORICAL_PARENT_ALIAS_RESOLVES=true
+ROUND14_HISTORICAL_PARENT_ALIAS=A3D_REMEDIATION_ROUND_14_PARENT
+ROUND14_HISTORICAL_PARENT_ALIAS_RESOLVES=true
+ROUND7_HISTORICAL_PARENT_ALIAS=A3D_REMEDIATION_ROUND_7_COMMIT_PARENT
+ROUND7_HISTORICAL_PARENT_ALIAS_RESOLVES=true
+ROUND15_HISTORICAL_PARENT_ALIAS=A3D_REMEDIATION_ROUND_15_COMMIT_PARENT
+ROUND15_HISTORICAL_PARENT_ALIAS_RESOLVES=true
+HISTORICAL_PARENT_ALIAS_DANGLING_COUNT=0
+ROUND13_HISTORICAL_PARENT_VERIFIED_AGAINST=the_GIT_parent_of_the_round_13_commit_and_the_authoritative_remote_commit_object
+ROUND14_HISTORICAL_PARENT_VERIFIED_AGAINST=the_GIT_parent_of_the_round_14_commit_and_the_authoritative_remote_commit_object
+HISTORICAL_PARENT_ALIASES_ARE_FROZEN_VALUES_NOT_DERIVED_AT_READ_TIME=true
+```
+
+The three resolved values are the parents authoritative Git history records for
+those rounds, verified twice — once from the commit objects in this repository and
+once from the authoritative remote commit objects — and the round-16 probe
+re-derives them from Git history at every run instead of trusting this block.
+
+One limit is stated rather than papered over: which record boundary separates the
+historical region from the current region (records 1.1 to 1.10 against 1.11 to 1.13)
+is a ledger decision of this contract, not something derivable from headings alone.
+The probe therefore checks that decision structurally — both ranges exist as record
+headings, they are complementary and contiguous over records 1.1 to the record before
+the current one, the cited current record is the highest record label present, and it
+is the record that physically carries the current round's record — and the ledger
+would fail the probe if any of those stopped holding.
+
+#### 1.14.6 Round-16 semantic probes for this head
+
+The round-15 suite read the round-15 token block, so it passed a head whose bare
+region keys still described round 11 and whose parent aliases named keys that do not
+exist. The round-16 suite reads the bare region keys and the bare current pointers
+from the head tree, derives the expected region from the document's real record and
+section structure, derives the round-to-commit mapping from Git history itself, and
+is listed in 15.1. It is executed, not asserted, and it does not accept this
+document's own probe claims as evidence:
+
+```text
+ROUND16_PROBE_REQUIRED_CHECKS=90
+ROUND16_PROBE_CHECK_COUNT=90
+ROUND16_PROBE_FAIL_COUNT=0
+ROUND16_PROBE_RESULT=PASS
+ROUND16_PROBE_INPUT=this_document_at_the_round16_head
+ROUND16_PROBE_SELF_TEST_INPUT=this_document_at_the_failed_round15_head
+ROUND16_PROBE_SELF_TEST_ON_THE_FAILED_ROUND15_TEXT=REJECTED
+ROUND16_PROBE_SELF_TEST_CHECK_COUNT=87
+ROUND16_PROBE_SELF_TEST_FAIL_COUNT=29
+ROUND16_PROBE_SELF_TEST_FAILS_ON_BOTH_BLOCKER_CLASSES=true
+ROUND16_PROBE_SELF_TEST_FAILS_ON_THE_REGION_KEY_CLASS=13
+ROUND16_PROBE_SELF_TEST_FAILS_ON_THE_DANGLING_PARENT_ALIAS_CLASS=10
+ROUND16_PROBE_SELF_TEST_FAILS_ON_THE_HISTORICAL_PARENT_SHA_CLASS=5
+ROUND16_PROBE_SELF_TEST_FAILS_ON_THE_BARE_CURRENT_POINTER_CLASS=1
+ROUND16_PROBE_SELF_TEST_FAILS_ON_THE_UNCHANGED_CORE_CLASS=0
+ROUND16_PROBE_SELF_TEST_FAILS_ON_THE_DUPLICATE_VALUE_CLASS=0
+ROUND16_PROBE_SELF_TEST_FAILS_ON_A_SUPERSEDED_REGION_DEFINITION_UNDER_A_BARE_KEY=true
+ROUND16_PROBE_SELF_TEST_FAILS_ON_A_REGION_DEFINITION_THAT_NAMES_AN_EARLIER_ROUNDS_RECORD=true
+ROUND16_PROBE_SELF_TEST_FAILS_ON_A_DANGLING_PARENT_ALIAS=true
+ROUND16_PROBE_SELF_TEST_FAILS_ON_A_DUPLICATED_ALIAS_TARGET_TOKEN=true
+ROUND16_PROBE_SELF_TEST_COVERS_EVERY_ROUND16_FINDING=true
+ROUND16_PROBE_IS_EXECUTED_NOT_ASSERTED=true
+ROUND16_PROBE_READS_THE_CONTRACT_FROM_THE_HEAD_TREE=true
+ROUND16_PROBE_READS_THE_BARE_REGION_KEYS_AND_THE_BARE_CURRENT_POINTERS=true
+ROUND16_PROBE_DERIVES_THE_EXPECTED_REGION_FROM_THE_RECORD_HEADINGS_AND_THE_CURRENT_ROUNDS_RECORD=true
+ROUND16_PROBE_DERIVES_THE_ROUND_TO_COMMIT_MAPPING_FROM_GIT_HISTORY=true
+ROUND16_PROBE_DOES_NOT_ACCEPT_THIS_DOCUMENTS_OWN_PROBE_CLAIMS_AS_EVIDENCE=true
+ROUND16_PROBE_IMPLEMENTATION_EXECUTED=true
+ROUND16_PROBE_IMPLEMENTATION_IS_NOT_A_PRODUCT_ARTIFACT=true
+ROUND16_PROBE_IMPLEMENTATION_LIVES_OUTSIDE_THE_REPOSITORY=true
+CURRENT_5_9_STALE_E8_PROSE_COUNT=0
+CURRENT_NORMATIVE_TARGET_IDENTITY_MISMATCH_COUNT=0
+CURRENT_REMEDIATION_ROUND_MATCHES_HEAD=true
+CURRENT_PARENT_POINTER_MATCHES_DIRECT_PARENT=true
+CURRENT_POINTER_VALUE_MATCHES_REMOTE_TRUTH=true
+AUTHORITY_TABLE_EQUALS_AUTHORITY_E_TOKENS=true
+CASE_TOTAL_AUTHORITY_SET_EQUALS_EFFECT_AUTHORITY_UNION=true
+E14_TARGET_IDENTITY_SOURCE=E8_original_identity
+E15_TARGET_IDENTITY_SOURCE=E18_mounted_root_identity
+E16_TARGET_IDENTITY_SOURCE=E18_mounted_root_identity
+E15_TARGET_COMPARE_TO_E8=false
+E16_TARGET_COMPARE_TO_E8=false
+E15_TARGET_COMPARE_TO_E18=true
+E16_TARGET_COMPARE_TO_E18=true
+E17_PRE_REQUEST_ABSENCE_IS_PASS=false
+SUCCESSFUL_E17_LOOP_CLR_FD_REQUEST_COUNT=1
+E2_TO_E25_IDENTITY_CONTINUITY_CLOSED=true
+E4_TO_E25_IDENTITY_CONTINUITY_CLOSED=true
+REAL_MATERIAL_EFFECT_COUNT=26
+PLACEHOLDER_EFFECT_ROW_COUNT=0
+```
+
+#### 1.14.7 Round-16 re-evaluated implementability results
+
+This round renumbers no effect, rebuilds no DAG, changes no authority, replaces
+neither the persistent supervisor nor the control channel, keeps `E17`'s semantics,
+the `E15`/`E16` closure rows and the `E2`/`E4` to `E25` continuity unchanged, and adds
+no effect. The six implementability results are re-derived against this head:
+
+```text
+ROUND16_RE_EVALUATED_RESULTS=PRIVILEGED_EFFECT_AUTHORITY_CLOSURE,CROSS_BOUNDARY_CONTINUITY_IMPLEMENTABILITY,NAMESPACE_LIFECYCLE_IMPLEMENTABILITY,CLEANUP_STATE_MACHINE_IMPLEMENTABILITY,PRIVILEGED_CHILD_INODE_CONFINEMENT_IMPLEMENTABILITY,A3_CONTRACT_IMPLEMENTABILITY
+ROUND16_RESULT_KEYS_ARE_THE_CURRENT_IMPLEMENTABILITY_RESULTS=true
+ROUND16_RESULT_BASIS_KEYS_ARE_ROUND_QUALIFIED=true
+ROUND15_RESULT_KEYS_ARE_THE_CURRENT_IMPLEMENTABILITY_RESULTS_AT_THAT_HEAD=true
+ROUND15_RESULT_KEYS_ARE_CURRENT=false
+PRIVILEGED_EFFECT_AUTHORITY_CLOSURE=PASS
+ROUND16_PRIVILEGED_EFFECT_AUTHORITY_CLOSURE_BASIS=every_one_of_E1_to_E26_still_has_a_declared_actor_in_every_case_that_scopes_it_and_this_round_changes_no_effect_row_no_case_scope_and_no_authority_precondition_or_postcondition
+CROSS_BOUNDARY_CONTINUITY_IMPLEMENTABILITY=PASS
+ROUND16_CROSS_BOUNDARY_CONTINUITY_IMPLEMENTABILITY_BASIS=the_E18_mounted_root_identity_and_the_ownership_fixture_identity_carriers_their_lifetimes_consumers_and_closing_checkpoints_are_unchanged_and_this_round_adds_no_crossing_fact
+NAMESPACE_LIFECYCLE_IMPLEMENTABILITY=PASS
+ROUND16_NAMESPACE_LIFECYCLE_IMPLEMENTABILITY_BASIS=the_private_namespace_lifecycle_is_untouched_by_this_round
+CLEANUP_STATE_MACHINE_IMPLEMENTABILITY=PASS
+ROUND16_CLEANUP_STATE_MACHINE_IMPLEMENTABILITY_BASIS=the_four_mount_states_the_E16_ATTACHED_only_rule_and_the_E17_pre_request_association_rule_are_unchanged
+PRIVILEGED_CHILD_INODE_CONFINEMENT_IMPLEMENTABILITY=PASS
+ROUND16_PRIVILEGED_CHILD_INODE_CONFINEMENT_IMPLEMENTABILITY_BASIS=no_evidence_process_descriptor_rule_and_no_confinement_rule_is_changed_by_this_round
+A3_CONTRACT_IMPLEMENTABILITY=PASS
+ROUND16_A3_CONTRACT_IMPLEMENTABILITY_BASIS=both_ledger_canonicality_blockers_are_closed_by_the_canonical_bare_region_keys_and_by_the_resolved_historical_parent_aliases_and_the_round_16_suite_proves_both_classes_over_the_head_tree
+ROUND16_BLOCKING_FINDINGS_CLOSED=2
+ROUND16_BLOCKING_FINDINGS_OPEN=0
+EFFECT_COUNT_UNCHANGED_BY_ROUND16=true
+EFFECT_IDS_UNCHANGED_BY_ROUND16=true
+REAL_MATERIAL_EFFECT_COUNT=26
+PLACEHOLDER_EFFECT_ROW_COUNT=0
+PRIVILEGED_EFFECT_CLOSURE_ROWS=26
+REQUIRED_CAPABILITY_COUNT=6
+CAPABILITY_INVENTORY_UNCHANGED_BY_ROUND16=true
+AUTHORITY_MATRIX_UNCHANGED_BY_ROUND16=true
+CASE_TOTAL_AUTHORITY_SETS_UNCHANGED_BY_ROUND16=true
+CASE_DAGS_UNCHANGED_BY_ROUND16=true
+SUPERVISOR_ARCHITECTURE_UNCHANGED_BY_ROUND16=true
+CONTROL_CHANNEL_MECHANISM_UNCHANGED_BY_ROUND16=true
+E15_E16_CLOSURE_ROWS_UNCHANGED_BY_ROUND16=true
+E14_E15_E16_IDENTITY_BINDING_UNCHANGED_BY_ROUND16=true
+E17_SEMANTICS_UNCHANGED_BY_ROUND16=true
+E2_E4_TO_E25_CONTINUITY_UNCHANGED_BY_ROUND16=true
+ROUND16_IMPLEMENTATION_FILES_CHANGED=0
+ROUND16_WORKFLOW_FILES_CHANGED=0
+```
+
+#### 1.14.8 Round-16 lifecycle and stop
+
+The fifteenth review failed the round-15 head on the two ledger findings above, and
+that head is this commit's direct parent. Round 16 preserves history the same way the
+earlier remediation rounds do: one commit, one document, a normal fast-forward onto
+the same branch, no amend, no rebase, no force, no history rewrite, and no earlier
+round's record deleted or rewritten:
+
+```text
+A3D_REMEDIATION_ROUND_16=16
+A3D_REMEDIATION_ROUND_16_PARENT=058cecad5511d6b9b0036cc4822c5e458ccc4bc8
+A3D_REMEDIATION_ROUND_16_PARENT_IS_FAILED_FIFTEENTH_REVIEW_HEAD=true
+A3D_REMEDIATION_ROUND_16_PARENT_TREE=604f646a6d9441501ece9630895f4bb0400fd8f2
+A3D_REMEDIATION_ROUND_16_BRANCH=design/a3d-round4-mount-owner-predicate
+A3D_REMEDIATION_ROUND_16_COMMIT_COUNT=1
+A3D_REMEDIATION_ROUND_16_COMMIT_PARENT=058cecad5511d6b9b0036cc4822c5e458ccc4bc8
+A3D_ROUND16_CONTAINS_FAILED_FIFTEENTH_REVIEW_HEAD=true
+A3D_ROUND16_PARENTS_FAILED_FIFTEENTH_REVIEW_HEAD=true
+A3D_ROUND16_REWRITES_FAILED_FIFTEENTH_REVIEW_HEAD=false
+A3D_ROUND16_CHANGED_FILE_COUNT=1
+A3D_ROUND16_CHANGED_FILE=docs/governance/l4_privileged_linux_qualification_v1.md
+A3D_ROUND16_ADDED_FILE=none
+A3D_ROUND16_PUSH_IS_FAST_FORWARD=true
+A3D_ROUND16_PUSH_IS_NEW_BRANCH=false
+A3D_ROUND16_PUSH_FORCE=false
+A3D_ROUND16_AMEND_USED=false
+A3D_ROUND16_REBASE_USED=false
+A3D_ROUND16_RESET_USED=false
+A3D_ROUND16_EFFECT_IDS_RENUMBERED=false
+A3D_ROUND16_EFFECT_ID_SET_IS_E1_TO_E26=true
+A3D_ROUND16_PRIVILEGED_EXECUTION_PERFORMED=false
+A3D_ROUND16_IMPLEMENTATION_FILES_CHANGED=0
+A3D_ROUND16_WORKFLOW_CHANGES=0
+A3D_ROUND16_MERGE_AUTHORIZED=false
+A3D_ROUND16_READY_FOR_REVIEW=false
+A3D_ROUND16_EXPECTED_CI_TIER=docs_fast
+A3D_ROUND16_EXPECTED_CI_REASON=all_changes_in_docs_scope
+A3D_ROUND16_EXPECTED_FULL_MATRIX_REQUIRED=false
+TRANSPORT_DEGRADED=true
+A3D_ROUND16_REMOTE_TRUTH_CHANNELS=authoritative_remote_api
+A3D_ROUND16_LOCAL_GIT_TRANSPORT_DEGRADED=true
+A3D_ROUND16_LOCAL_HTTPS_TRANSPORT_ERROR=schannel_AcquireCredentialsHandle_failed_SEC_E_NO_CREDENTIALS_0x8009030e
+A3D_ROUND16_LOCAL_SSH_TRANSPORT_ERROR=could_not_create_signal_pipe_win32_error_5
+A3D_ROUND16_LOCAL_REFS_CORROBORATE_ONLY=true
+A3D_ROUND16_PUBLISH_CHANNEL_IS_RECORDED_IN_THE_PR_BODY=true
+A3D_ROUND16_REMOTE_OBJECTS_ARE_READ_BACK_FROM_THE_AUTHORITATIVE_API=true
+A3D_ROUND16_PUBLISH_IS_FAST_FORWARD_ONLY=true
+A3D_ROUND16_REMOTE_MAIN_REQUIRED=cca7805305b0e369b27d7d29ba3611fb9afd7679
+A3D_ROUND16_REMOTE_HEAD_BEFORE_PUSH_REQUIRED=058cecad5511d6b9b0036cc4822c5e458ccc4bc8
+A3D_ROUND16_PREPUSH_RECHECK_REQUIRED=true
+A3D_ROUND16_PREPUSH_ABORTS_ON_A_MOVED_REMOTE_HEAD=true
+A3D_ROUND16_AMENDS=false
+A3D_ROUND16_REBASES=false
+A3D_ROUND16_FORCE_PUSHES=false
+A3D_ROUND16_FORCE_PUSH_PERFORMED=false
+A3D_ROUND16_MERGE_PERFORMED=false
+A3D_ROUND16_READY_PERFORMED=false
+A3D_ROUND16_STOPS_FOR_FRESH_INDEPENDENT_EXACT_HEAD_REVIEW=true
+A3D_CURRENT_REMEDIATION_ROUND=17
+CURRENT_REMEDIATION_ROUND_MATCHES_HEAD=true
+CURRENT_PARENT_POINTER_MATCHES_DIRECT_PARENT=true
+CURRENT_POINTER_VALUE_MATCHES_REMOTE_TRUTH=true
+```
+
+The fifteenth review failed head `058cecad…` (tree `604f646a…`) with
+`GOVERNANCE_LEDGER_CANONICALITY_FAILURE` and two blocking findings, and that head and
+tree are preserved here as the round-15 record. After the exact-head pull-request CI
+for the round-16 head reaches a terminal conclusion, this workstream stops again and
+returns for fresh independent exact-head review. Both round-16 blockers are closed by
+statements in the ledger itself — the two bare region keys of 1.14.5 and the resolved
+parent aliases of 20 — and no earlier review's failure is cleared by this document's
+own claim.
+
+#### 1.14.9 Round-17 canonicalization of the current-record hierarchy
+
+The sixteenth exact-head review passed round 16's own executable obligations and
+failed the round-16 head `4bb2f8b581baf7c6d5ad2638cb410395d951ca39` (tree
+`f47f32729b8764221ad95146db13ee1ff9a93ee5`) with
+`FAILURE_CLASS=GOVERNANCE_LEDGER_CANONICALITY_FAILURE` and one blocking finding:
+
+| # | Finding | Corrected in |
+| --- | --- | --- |
+| 1 | **The current remediation record was structurally absent.** The round-16 bare region key and its `CURRENT_NORMATIVE_REGION_CURRENT_RECORD_LABEL` both named `1_14`, but the document carried no `###` or `##` heading for `1.14`; its only `1.14` headings were `#### 1.14.1` to `#### 1.14.8`, and they sat after `## 20. Lifecycle and Stop`, so the real Markdown hierarchy made every one of them a child of Section 20. The ledger therefore named a record the committed document did not have, and the material it declared to be the current remediation record of Section 1 was in fact an orphan block inside Section 20. | 1.14, 1.14.5, 15.1 |
+
+The finding is a hierarchy failure, not a value failure: no token in the round-16
+block carried a wrong value, and no effect id, no DAG, no authority row, no
+supervisor, no control channel, no `E14`/`E15`/`E16` binding, no `E17` rule and no
+`E2`/`E4` to `E25` continuity is touched by this round. Two coherent representations
+would make the ledger and the Markdown agree — give the record a real Section-1
+parent and move its subordinates beneath it, or rename the record and its headings
+so the ledger described their position inside Section 20. This round takes the first,
+because the record's own content states that it is a remediation record of the
+current round and because rounds 1 to 13 already carry their records as Section-1
+record headings:
+
+```text
+ROUND17_SCOPE=current_remediation_record_hierarchy_canonicalization
+ROUND17_FINDING_COUNT_AT_THE_ROUND16_HEAD=1
+ROUND17_FINDING_CLASS=CURRENT_REMEDIATION_RECORD_1_14_STRUCTURALLY_ABSENT
+ROUND17_CHOSEN_REPRESENTATION=a_real_section_1_record_heading_with_its_subrecords_structurally_beneath_it
+ROUND17_REJECTED_REPRESENTATION=renaming_the_record_to_describe_an_orphan_block_inside_section_20
+ROUND17_RECORD_HEADING_LEVEL=3
+ROUND17_RECORD_HEADING_IS_A_REAL_ATX_HEADING=true
+ROUND17_RECORD_HEADING_LABEL=1_14
+ROUND17_RECORD_HEADING_PARENT_LABEL=1
+ROUND17_RECORD_HEADING_PRECEDES_SECTION_2=true
+ROUND17_RECORD_HEADING_FOLLOWS_RECORD_1_13=true
+ROUND17_SUBRECORDS_UNDER_THE_RECORD=12
+ROUND17_SUBRECORD_HEADING_LEVEL=4
+ROUND17_BLOCK_REMOVED_FROM_SECTION_20=true
+ROUND17_SECTION_20_REMEDIATION_SUBRECORD_COUNT=0
+ROUND17_HEADING_BESIDE_AN_ORPHAN_BLOCK_WAS_NOT_USED=true
+ROUND17_RECORD_LABEL_CHANGED=false
+ROUND17_RECORD_TOKEN_VALUES_CHANGED=false
+ROUND17_MARKDOWN_HIERARCHY_AND_LEDGER_AGREE=true
+CURRENT_REMEDIATION_RECORD_PARENT_HEADING_EXISTS=true
+CURRENT_REMEDIATION_RECORD_IS_STRUCTURALLY_IN_DECLARED_REGION=true
+CURRENT_REMEDIATION_SUBRECORDS_HAVE_REAL_PARENT=true
+ORPHAN_CURRENT_REMEDIATION_SUBRECORD_COUNT=0
+CURRENT_REMEDIATION_SUBRECORD_COUNT=12
+ROUND17_SUBRECORD_PARENTHOOD_IS_DERIVED_FROM_THE_ATX_HEADING_HIERARCHY=true
+ROUND17_SUBRECORD_PARENTHOOD_IS_NOT_INFERRED_FROM_HEADING_TEXT=true
+ROUND17_SUBRECORD_PARENTHOOD_DERIVED_FROM_HEADING_TEXT_COUNT=0
+ROUND17_THE_RECORD_IS_THE_LATEST_RECORD_LABEL_IN_SECTION_1=true
+ROUND17_BARE_CURRENT_NORMATIVE_REGION_OCCURRENCE_COUNT=1
+ROUND17_BARE_HISTORICAL_REGION_OCCURRENCE_COUNT=1
+ROUND17_BARE_CURRENT_NORMATIVE_REGION_NAMES_A_REAL_RECORD=true
+ROUND17_BARE_CURRENT_NORMATIVE_REGION_NAMES_A_PHANTOM_RECORD=false
+ROUND17_HISTORICAL_RECORD_RANGE_UNCHANGED=true
+ROUND17_CURRENT_RECORD_RANGE_UNCHANGED=true
+```
+
+The moved span is not only the `1.14.x` subordinates. Round 16 had appended the
+round-15 and round-16 lifecycle material and a trailing run of round-qualified
+lifecycle tokens after `## 20`, so those lines move with the record and Section 20
+keeps its own pointer block and its closing statement. No line in that span is a
+record heading, so the move changes no effect id, no authority row and no `KEY=VALUE`
+token value; it changes where those lines sit in the heading hierarchy.
+
+The boundary between the historical region (records 1.1 to 1.10) and the current
+region (records 1.11 to 1.13, plus the current record 1.14) remains the ledger
+decision 1.14.5 states; what round 17 changes is that the record the current region
+names now exists as a record heading, so the region statement is checkable against
+the document instead of against the ledger alone.
+
+#### 1.14.10 Round-17 semantic probes for this head
+
+The round-16 suite derived the expected region from the record headings, but it
+accepted a block of `#### 1.14.x` headings as the current remediation subrecords
+without requiring a real parent record heading, so it passed a head whose declared
+current record did not exist and whose subrecords were children of Section 20. The
+round-17 suite parses the real Markdown ATX heading hierarchy, resolves every
+heading's nearest ancestor record heading and nearest ancestor section from the
+heading levels themselves, and is listed in 15.1. It is executed, not asserted, and
+it does not accept this document's own probe claims as evidence:
+
+```text
+ROUND17_PROBE_REQUIRED_CHECKS=144
+ROUND17_PROBE_CHECK_COUNT=144
+ROUND17_PROBE_FAIL_COUNT=0
+ROUND17_PROBE_RESULT=PASS
+ROUND17_PROBE_INPUT=this_document_at_the_round17_head
+ROUND17_PROBE_SELF_TEST_INPUT=this_document_at_the_round16_head
+ROUND17_PROBE_SELF_TEST_ON_THE_ROUND16_TEXT=REJECTED
+ROUND17_PROBE_SELF_TEST_CHECK_COUNT=100
+ROUND17_PROBE_SELF_TEST_FAIL_COUNT=15
+ROUND17_PROBE_SELF_TEST_FAILS_ON_THE_STRUCTURALLY_ABSENT_CURRENT_RECORD=true
+ROUND17_PROBE_SELF_TEST_FAILS_ON_THE_ABSENT_PARENT_HEADING_CLASS=3
+ROUND17_PROBE_SELF_TEST_FAILS_ON_THE_ORPHAN_SUBRECORD_CLASS=10
+ROUND17_PROBE_SELF_TEST_FAILS_ON_A_PHANTOM_RECORD_NAME_CLASS=2
+ROUND17_PROBE_SELF_TEST_REJECTION_CODE=CURRENT_REMEDIATION_RECORD_1_14_STRUCTURALLY_ABSENT
+ROUND17_PROBE_SELF_TEST_FAILS_ON_THE_UNCHANGED_CORE_CLASS=0
+ROUND17_PROBE_SELF_TEST_FAILS_ON_THE_REGION_KEY_VALUE_CLASS=0
+ROUND17_PROBE_SELF_TEST_FAILS_ON_THE_DANGLING_PARENT_ALIAS_CLASS=0
+ROUND17_PROBE_SELF_TEST_ADMITS_NO_UNRELATED_CLASS=true
+ROUND17_PROBE_SELF_TEST_COVERS_EVERY_ROUND17_FINDING=true
+ROUND17_PROBE_IS_EXECUTED_NOT_ASSERTED=true
+ROUND17_PROBE_READS_THE_CONTRACT_FROM_THE_HEAD_TREE=true
+ROUND17_PROBE_PARSES_THE_REAL_MARKDOWN_ATX_HEADING_HIERARCHY=true
+ROUND17_PROBE_DERIVES_SUBRECORD_PARENTHOOD_FROM_HEADING_LEVELS=true
+ROUND17_PROBE_DOES_NOT_INFER_A_PARENT_FROM_SUBORDINATE_HEADING_TEXT=true
+ROUND17_PROBE_FAILS_WHEN_A_DECLARED_CURRENT_RECORD_HAS_NO_REAL_PARENT_RECORD=true
+ROUND17_PROBE_FAILS_WHEN_A_SUBRECORD_IS_STRUCTURALLY_UNDER_SECTION_20=true
+ROUND17_PROBE_FAILS_WHEN_THE_DECLARED_RECORD_AND_THE_HIERARCHY_DISAGREE=true
+ROUND17_PROBE_FAILS_WHEN_A_SUBORDINATE_HEADING_IS_ORPHANED=true
+ROUND17_PROBE_FAILS_WHEN_A_BARE_REGION_TOKEN_NAMES_A_PHANTOM_RECORD=true
+ROUND17_PROBE_DOES_NOT_ACCEPT_THIS_DOCUMENTS_OWN_PROBE_CLAIMS_AS_EVIDENCE=true
+ROUND17_PROBE_IMPLEMENTATION_EXECUTED=true
+ROUND17_PROBE_IMPLEMENTATION_IS_NOT_A_PRODUCT_ARTIFACT=true
+ROUND17_PROBE_IMPLEMENTATION_LIVES_OUTSIDE_THE_REPOSITORY=true
+ROUND16_PROBE_STRUCTURAL_COVERAGE_SUPERSEDED_BY_ROUND17=true
+ROUND17_PROBE_READS_THE_PARENT_HEADING_EXISTS_TOKEN=true
+ROUND17_PROBE_READS_THE_STRUCTURALLY_IN_REGION_TOKEN=true
+ROUND17_PROBE_READS_THE_SUBRECORDS_HAVE_REAL_PARENT_TOKEN=true
+ROUND17_PROBE_READS_THE_ORPHAN_SUBRECORD_COUNT_TOKEN=true
+ROUND17_PROBE_READS_THE_BARE_REGION_OCCURRENCE_COUNT_TOKENS=true
+ROUND17_PROBE_READS_THE_ROUND11_QUALIFIED_REGION_TOKENS=true
+ROUND17_PROBE_READS_THE_HISTORICAL_PARENT_ALIASES=true
+CURRENT_5_9_STALE_E8_PROSE_COUNT=0
+CURRENT_NORMATIVE_TARGET_IDENTITY_MISMATCH_COUNT=0
+CURRENT_REMEDIATION_ROUND_MATCHES_HEAD=true
+CURRENT_PARENT_POINTER_MATCHES_DIRECT_PARENT=true
+CURRENT_POINTER_VALUE_MATCHES_REMOTE_TRUTH=true
+AUTHORITY_TABLE_EQUALS_AUTHORITY_E_TOKENS=true
+CASE_TOTAL_AUTHORITY_SET_EQUALS_EFFECT_AUTHORITY_UNION=true
+E14_TARGET_IDENTITY_SOURCE=E8_original_identity
+E15_TARGET_IDENTITY_SOURCE=E18_mounted_root_identity
+E16_TARGET_IDENTITY_SOURCE=E18_mounted_root_identity
+E15_TARGET_COMPARE_TO_E8=false
+E16_TARGET_COMPARE_TO_E8=false
+E15_TARGET_COMPARE_TO_E18=true
+E16_TARGET_COMPARE_TO_E18=true
+E17_PRE_REQUEST_ABSENCE_IS_PASS=false
+SUCCESSFUL_E17_LOOP_CLR_FD_REQUEST_COUNT=1
+E2_TO_E25_IDENTITY_CONTINUITY_CLOSED=true
+E4_TO_E25_IDENTITY_CONTINUITY_CLOSED=true
+REAL_MATERIAL_EFFECT_COUNT=26
+PLACEHOLDER_EFFECT_ROW_COUNT=0
+```
+
+#### 1.14.11 Round-17 re-evaluated implementability results
+
+This round renumbers no effect, rebuilds no DAG, changes no authority, replaces
+neither the persistent supervisor nor the control channel, keeps `E17`'s semantics,
+the `E15`/`E16` closure rows and the `E2`/`E4` to `E25` continuity unchanged, and
+adds no effect. It moves headings and lines inside the document and changes no
+declared value. The six implementability results are re-derived against this head:
+
+```text
+ROUND17_RE_EVALUATED_RESULTS=PRIVILEGED_EFFECT_AUTHORITY_CLOSURE,CROSS_BOUNDARY_CONTINUITY_IMPLEMENTABILITY,NAMESPACE_LIFECYCLE_IMPLEMENTABILITY,CLEANUP_STATE_MACHINE_IMPLEMENTABILITY,PRIVILEGED_CHILD_INODE_CONFINEMENT_IMPLEMENTABILITY,A3_CONTRACT_IMPLEMENTABILITY
+ROUND17_RESULT_KEYS_ARE_THE_CURRENT_IMPLEMENTABILITY_RESULTS=true
+ROUND17_RESULT_BASIS_KEYS_ARE_ROUND_QUALIFIED=true
+ROUND16_RESULT_KEYS_ARE_THE_CURRENT_IMPLEMENTABILITY_RESULTS_AT_THAT_HEAD=true
+ROUND16_RESULT_KEYS_ARE_CURRENT=false
+PRIVILEGED_EFFECT_AUTHORITY_CLOSURE=PASS
+ROUND17_PRIVILEGED_EFFECT_AUTHORITY_CLOSURE_BASIS=every_one_of_E1_to_E26_still_has_a_declared_actor_in_every_case_that_scopes_it_and_this_round_moves_headings_without_changing_an_effect_row_a_case_scope_or_an_authority_precondition_or_postcondition
+CROSS_BOUNDARY_CONTINUITY_IMPLEMENTABILITY=PASS
+ROUND17_CROSS_BOUNDARY_CONTINUITY_IMPLEMENTABILITY_BASIS=the_E18_mounted_root_identity_and_the_ownership_fixture_identity_carriers_their_lifetimes_consumers_and_closing_checkpoints_are_unchanged_and_this_round_adds_no_crossing_fact
+NAMESPACE_LIFECYCLE_IMPLEMENTABILITY=PASS
+ROUND17_NAMESPACE_LIFECYCLE_IMPLEMENTABILITY_BASIS=the_private_namespace_lifecycle_is_untouched_by_this_round
+CLEANUP_STATE_MACHINE_IMPLEMENTABILITY=PASS
+ROUND17_CLEANUP_STATE_MACHINE_IMPLEMENTABILITY_BASIS=the_four_mount_states_the_E16_ATTACHED_only_rule_and_the_E17_pre_request_association_rule_are_unchanged
+PRIVILEGED_CHILD_INODE_CONFINEMENT_IMPLEMENTABILITY=PASS
+ROUND17_PRIVILEGED_CHILD_INODE_CONFINEMENT_IMPLEMENTABILITY_BASIS=no_evidence_process_descriptor_rule_and_no_confinement_rule_is_changed_by_this_round
+A3_CONTRACT_IMPLEMENTABILITY=PASS
+ROUND17_A3_CONTRACT_IMPLEMENTABILITY_BASIS=the_declared_current_remediation_record_now_exists_as_a_real_record_heading_in_the_declared_region_with_every_subordinate_heading_beneath_it_and_the_round_17_suite_proves_that_over_the_head_tree_by_parsing_the_ATX_hierarchy
+ROUND17_BLOCKING_FINDINGS_CLOSED=1
+ROUND17_BLOCKING_FINDINGS_OPEN=0
+EFFECT_COUNT_UNCHANGED_BY_ROUND17=true
+EFFECT_IDS_UNCHANGED_BY_ROUND17=true
+REAL_MATERIAL_EFFECT_COUNT=26
+PLACEHOLDER_EFFECT_ROW_COUNT=0
+PRIVILEGED_EFFECT_CLOSURE_ROWS=26
+REQUIRED_CAPABILITY_COUNT=6
+CAPABILITY_INVENTORY_UNCHANGED_BY_ROUND17=true
+AUTHORITY_MATRIX_UNCHANGED_BY_ROUND17=true
+CASE_TOTAL_AUTHORITY_SETS_UNCHANGED_BY_ROUND17=true
+CASE_DAGS_UNCHANGED_BY_ROUND17=true
+SUPERVISOR_ARCHITECTURE_UNCHANGED_BY_ROUND17=true
+CONTROL_CHANNEL_MECHANISM_UNCHANGED_BY_ROUND17=true
+E15_E16_CLOSURE_ROWS_UNCHANGED_BY_ROUND17=true
+E14_E15_E16_IDENTITY_BINDING_UNCHANGED_BY_ROUND17=true
+E17_SEMANTICS_UNCHANGED_BY_ROUND17=true
+E2_E4_TO_E25_CONTINUITY_UNCHANGED_BY_ROUND17=true
+ROUND17_IMPLEMENTATION_FILES_CHANGED=0
+ROUND17_WORKFLOW_FILES_CHANGED=0
+```
+
+#### 1.14.12 Round-17 lifecycle and stop
+
+The sixteenth review failed the round-16 head on the hierarchy finding above, and
+that head is this commit's direct parent. Round 17 preserves history the same way
+the earlier remediation rounds do: one commit, one document, a normal fast-forward
+onto the same branch, no amend, no rebase, no force, no history rewrite, and no
+earlier round's record deleted or rewritten:
+
+```text
+A3D_REMEDIATION_ROUND_17=17
+A3D_REMEDIATION_ROUND_17_PARENT=4bb2f8b581baf7c6d5ad2638cb410395d951ca39
+A3D_REMEDIATION_ROUND_17_PARENT_IS_FAILED_SIXTEENTH_REVIEW_HEAD=true
+A3D_REMEDIATION_ROUND_17_PARENT_TREE=f47f32729b8764221ad95146db13ee1ff9a93ee5
+A3D_REMEDIATION_ROUND_17_BRANCH=design/a3d-round4-mount-owner-predicate
+A3D_REMEDIATION_ROUND_17_COMMIT_COUNT=1
+A3D_REMEDIATION_ROUND_17_COMMIT_PARENT=4bb2f8b581baf7c6d5ad2638cb410395d951ca39
+A3D_ROUND17_CONTAINS_FAILED_SIXTEENTH_REVIEW_HEAD=true
+A3D_ROUND17_PARENTS_FAILED_SIXTEENTH_REVIEW_HEAD=true
+A3D_ROUND17_REWRITES_FAILED_SIXTEENTH_REVIEW_HEAD=false
+A3D_ROUND17_CHANGED_FILE_COUNT=1
+A3D_ROUND17_CHANGED_FILE=docs/governance/l4_privileged_linux_qualification_v1.md
+A3D_ROUND17_ADDED_FILE=none
+A3D_ROUND17_PUSH_IS_FAST_FORWARD=true
+A3D_ROUND17_PUSH_IS_NEW_BRANCH=false
+A3D_ROUND17_PUSH_FORCE=false
+A3D_ROUND17_AMEND_USED=false
+A3D_ROUND17_REBASE_USED=false
+A3D_ROUND17_RESET_USED=false
+A3D_ROUND17_EFFECT_IDS_RENUMBERED=false
+A3D_ROUND17_EFFECT_ID_SET_IS_E1_TO_E26=true
+A3D_ROUND17_PRIVILEGED_EXECUTION_PERFORMED=false
+A3D_ROUND17_IMPLEMENTATION_FILES_CHANGED=0
+A3D_ROUND17_WORKFLOW_CHANGES=0
+A3D_ROUND17_MERGE_AUTHORIZED=false
+A3D_ROUND17_READY_FOR_REVIEW=false
+A3D_ROUND17_EXPECTED_CI_TIER=docs_fast
+A3D_ROUND17_EXPECTED_CI_REASON=all_changes_in_docs_scope
+A3D_ROUND17_EXPECTED_FULL_MATRIX_REQUIRED=false
+TRANSPORT_DEGRADED=true
+A3D_ROUND17_REMOTE_TRUTH_CHANNELS=authoritative_remote_read_channel
+A3D_ROUND17_LOCAL_GIT_TRANSPORT_DEGRADED=true
+A3D_ROUND17_LOCAL_HTTPS_TRANSPORT_ERROR=schannel_AcquireCredentialsHandle_failed_SEC_E_NO_CREDENTIALS_0x8009030e
+A3D_ROUND17_LOCAL_SSH_TRANSPORT_ERROR=stdio_capture_of_the_ssh_client_is_denied_by_this_hosts_confined_sandbox
+A3D_ROUND17_LOCAL_REFS_CORROBORATE_ONLY=true
+A3D_ROUND17_REMOTE_OBJECTS_ARE_READ_BACK_FROM_THE_AUTHORITATIVE_READ_CHANNEL=true
+A3D_ROUND17_PUBLISH_IS_FAST_FORWARD_ONLY=true
+A3D_ROUND17_REMOTE_MAIN_REQUIRED=cca7805305b0e369b27d7d29ba3611fb9afd7679
+A3D_ROUND17_REMOTE_HEAD_BEFORE_PUSH_REQUIRED=4bb2f8b581baf7c6d5ad2638cb410395d951ca39
+A3D_ROUND17_PREPUSH_RECHECK_REQUIRED=true
+A3D_ROUND17_PREPUSH_ABORTS_ON_A_MOVED_REMOTE_HEAD=true
+A3D_ROUND17_AMENDS=false
+A3D_ROUND17_REBASES=false
+A3D_ROUND17_FORCE_PUSHES=false
+A3D_ROUND17_FORCE_PUSH_PERFORMED=false
+A3D_ROUND17_MERGE_PERFORMED=false
+A3D_ROUND17_READY_PERFORMED=false
+A3D_ROUND17_STOPS_FOR_FRESH_INDEPENDENT_EXACT_HEAD_REVIEW=true
 ```
 
 ## 2. Exact Base Record
@@ -8750,6 +9616,67 @@ ROUND16_PROBE_READS_THE_CONTRACT_FROM_THE_HEAD_TREE=true
 ROUND16_PROBE_READS_THE_BARE_REGION_KEYS_AND_THE_BARE_CURRENT_POINTERS=true
 ROUND16_PROBE_DOES_NOT_ACCEPT_THIS_DOCUMENTS_OWN_PROBE_CLAIMS_AS_EVIDENCE=true
 ```
+The round-16 suite derived the expected region from the record headings, but it
+classified a block of `#### 1.14.x` headings as the current remediation subrecords
+without requiring a real parent record heading, so it passed a head whose declared
+current record did not exist as a heading and whose subordinates were structurally
+children of `## 20`. The round-17 obligations below are the ones this head is
+measured against. They parse the real Markdown ATX heading hierarchy, resolve each
+heading's nearest ancestor record heading and nearest ancestor section from the
+heading levels alone, and never infer a parent record from the text of a subordinate
+heading:
+
+```text
+ROUND17_STRUCTURAL_PROBE_OBLIGATIONS=6
+ROUND17_PROBE_01=the_declared_current_remediation_record_exists_as_a_real_ATX_record_heading_inside_the_declared_region
+ROUND17_PROBE_02=every_subordinate_current_remediation_heading_has_the_declared_record_as_its_nearest_ancestor_record_heading
+ROUND17_PROBE_03=no_subordinate_current_remediation_heading_is_structurally_under_section_20_or_outside_section_1
+ROUND17_PROBE_04=no_bare_current_region_token_names_a_record_that_the_document_hierarchy_does_not_carry
+ROUND17_PROBE_05=the_two_bare_region_keys_are_stated_once_each_and_the_round11_qualified_values_are_unchanged
+ROUND17_PROBE_06=every_GIT_HISTORICAL_PARENT_TOKEN_ROUND_alias_still_resolves_to_exactly_one_real_KEY_SHA_token_and_the_core_tokens_keep_their_frozen_values
+ROUND17_PROBE_01_READS_THE_DECLARED_CURRENT_RECORD_LABEL_TOKEN=true
+ROUND17_PROBE_01_READS_THE_REAL_ATX_HEADING_LEVELS=true
+ROUND17_PROBE_01_FAILS_IF_THE_DECLARED_RECORD_HAS_NO_PARENT_RECORD_HEADING=true
+ROUND17_PROBE_01_FAILS_IF_THE_DECLARED_RECORD_IS_NOT_INSIDE_SECTION_1=true
+ROUND17_PROBE_01_FAILS_IF_THE_DECLARED_RECORD_IS_A_CHILD_OF_SECTION_20=true
+ROUND17_PROBE_02_DERIVES_PARENTHOOD_FROM_HEADING_LEVELS_NOT_FROM_HEADING_TEXT=true
+ROUND17_PROBE_02_FAILS_ON_AN_ORPHANED_SUBORDINATE_HEADING=true
+ROUND17_PROBE_02_FAILS_IF_THE_NEAREST_ANCESTOR_RECORD_IS_NOT_THE_DECLARED_RECORD=true
+ROUND17_PROBE_03_READS_THE_NEAREST_ANCESTOR_SECTION_OF_EVERY_SUBORDINATE_HEADING=true
+ROUND17_PROBE_03_FAILS_ON_A_SUBORDINATE_HEADING_WHOSE_ANCESTOR_SECTION_IS_NOT_SECTION_1=true
+ROUND17_PROBE_04_FAILS_ON_A_BARE_REGION_TOKEN_THAT_NAMES_A_PHANTOM_RECORD=true
+ROUND17_PROBE_04_FAILS_ON_A_CITED_RECORD_RANGE_THAT_NAMES_A_PHANTOM_RECORD=true
+ROUND17_PROBE_05_READS_THE_BARE_CURRENT_NORMATIVE_REGION_OCCURRENCE_COUNT=true
+ROUND17_PROBE_05_READS_THE_BARE_HISTORICAL_REGION_OCCURRENCE_COUNT=true
+ROUND17_PROBE_05_FAILS_ON_A_ROUND11_QUALIFIED_VALUE_THAT_IS_NOT_THE_ROUND11_RECORD=true
+ROUND17_PROBE_06_FAILS_ON_A_DANGLING_OR_DUPLICATED_PARENT_ALIAS=true
+ROUND17_PROBE_06_FAILS_ON_ANY_CORE_TOKEN_THAT_IS_NOT_ITS_FROZEN_VALUE=true
+ROUND17_PROBE_REQUIRED_CHECKS=144
+ROUND17_PROBE_FAIL_COUNT=0
+ROUND17_PROBE_LIST_IS_THE_COMPLETENESS_EVIDENCE=false
+ROUND17_PROBE_RESULT=PASS
+ROUND17_PROBE_CHECK_COUNT=144
+ROUND17_PROBE_SELF_TEST=the_same_suite_rejects_the_failed_round16_text
+ROUND17_PROBE_SELF_TEST_INPUT_TREE=f47f32729b8764221ad95146db13ee1ff9a93ee5
+ROUND17_PROBE_SELF_TEST_CHECK_COUNT=100
+ROUND17_PROBE_SELF_TEST_FAIL_COUNT=15
+ROUND17_PROBE_SELF_TEST_EXIT=REJECTED
+ROUND17_PROBE_SELF_TEST_EXIT_CODE=1
+ROUND17_PROBE_SELF_TEST_REJECTION_CODE=CURRENT_REMEDIATION_RECORD_1_14_STRUCTURALLY_ABSENT
+ROUND17_PROBE_SELF_TEST_FAILS_ON_THE_ABSENT_PARENT_HEADING_CLASS=3
+ROUND17_PROBE_SELF_TEST_FAILS_ON_THE_ORPHAN_SUBRECORD_CLASS=10
+ROUND17_PROBE_SELF_TEST_FAILS_ON_A_PHANTOM_RECORD_NAME_CLASS=2
+ROUND17_PROBE_SELF_TEST_FAILS_ON_THE_UNCHANGED_CORE_CLASS=0
+ROUND17_PROBE_SELF_TEST_ADMITS_NO_UNRELATED_CLASS=true
+ROUND17_PROBE_SELF_TEST_COVERS_EVERY_ROUND17_FINDING=true
+ROUND17_PROBE_IMPLEMENTATION_EXECUTED=true
+ROUND17_PROBE_IMPLEMENTATION_IS_NOT_A_PRODUCT_ARTIFACT=true
+ROUND17_PROBE_IMPLEMENTATION_LIVES_OUTSIDE_THE_REPOSITORY=true
+ROUND17_PROBE_READS_THE_CONTRACT_FROM_THE_HEAD_TREE=true
+ROUND17_PROBE_READS_THE_BARE_REGION_KEYS_AND_THE_BARE_CURRENT_POINTERS=true
+ROUND17_PROBE_DOES_NOT_ACCEPT_THIS_DOCUMENTS_OWN_PROBE_CLAIMS_AS_EVIDENCE=true
+```
+
 
 The document-wide duplicate-value probe is the one 20 records: a `KEY=VALUE`
 token whose key is a current-pointer key — that is, a key that is not an
@@ -9976,9 +10903,9 @@ round-qualified key, and its alias is stated here with the others.
 ```text
 GIT_CURRENT_PARENT_TOKEN=A3D_REMEDIATION_COMMIT_PARENT
 GIT_CURRENT_PARENT_TOKEN_OCCURRENCE_COUNT=1
-GIT_CURRENT_PARENT_TOKEN_VALUE=058cecad5511d6b9b0036cc4822c5e458ccc4bc8
+GIT_CURRENT_PARENT_TOKEN_VALUE=4bb2f8b581baf7c6d5ad2638cb410395d951ca39
 GIT_CURRENT_PARENT_TOKEN_UNIQUE=true
-GIT_CURRENT_PARENT_TOKEN_IS_THE_ROUND_16_DIRECT_PARENT=true
+GIT_CURRENT_PARENT_TOKEN_IS_THE_ROUND_17_DIRECT_PARENT=true
 GIT_HISTORICAL_PARENT_TOKEN_ROUND_7=A3D_REMEDIATION_ROUND_7_COMMIT_PARENT
 GIT_HISTORICAL_PARENT_TOKEN_ROUND_10=A3D_REMEDIATION_ROUND_10_PARENT
 GIT_HISTORICAL_PARENT_TOKEN_ROUND_11=A3D_REMEDIATION_ROUND_11_COMMIT_PARENT
@@ -9986,7 +10913,8 @@ GIT_HISTORICAL_PARENT_TOKEN_ROUND_12=A3D_REMEDIATION_ROUND_12_COMMIT_PARENT
 GIT_HISTORICAL_PARENT_TOKEN_ROUND_13=A3D_REMEDIATION_ROUND_13_PARENT
 GIT_HISTORICAL_PARENT_TOKEN_ROUND_14=A3D_REMEDIATION_ROUND_14_PARENT
 GIT_HISTORICAL_PARENT_TOKEN_ROUND_15=A3D_REMEDIATION_ROUND_15_COMMIT_PARENT
-A3D_REMEDIATION_COMMIT_PARENT=058cecad5511d6b9b0036cc4822c5e458ccc4bc8
+A3D_REMEDIATION_ROUND_16_COMMIT_PARENT=058cecad5511d6b9b0036cc4822c5e458ccc4bc8
+A3D_REMEDIATION_COMMIT_PARENT=4bb2f8b581baf7c6d5ad2638cb410395d951ca39
 A3D_REMEDIATION_ROUND_7_COMMIT_PARENT=c2a88fa02f62b1332a6f8cabd779d89bd260adfb
 A3D_REMEDIATION_ROUND_11_COMMIT_PARENT=9ee489c63c2efe6c63ce677c12608f5549affeda
 A3D_REMEDIATION_ROUND_12_COMMIT_PARENT=c70cd367c7f70478b283d472e9e06a42420d04ad
@@ -10154,592 +11082,15 @@ exact-head review. The eight round-12 findings are closed by statements in the
 current normative sections, and no earlier review's failure is cleared by this
 document's own claim.
 
-Round 15 preserves history the same way, with the failed round-14 head as its
-direct parent, pushed as a normal fast-forward onto the same branch. It is one
-commit, changing exactly one file, and it amends, rebases and force-pushes
-nothing. Rounds 13 and 14 are not given lifecycle records of their own by this
-round, because their commits are already on this branch and their facts are
-carried by the records that do exist — the round-13 record in 1.13, the round-14
-closure-row synchronization in the 1.5 `E15`/`E16` rows — and this round adds no
-second account of either. What this round adds is the failed review that triggers
-it and the two blockers it corrects.
-
-```text
-FOURTEENTH_A3D_REVIEW_FAILED_HEAD=6a0eb2c00f87f90dad5851c8f23d2e541bf11d3b
-FOURTEENTH_A3D_REVIEW_FAILED_TREE=ef0080557377ef7728e9f4a62cc77520ccfcfbe3
-FOURTEENTH_A3D_REVIEW_RESULT=FAIL
-FOURTEENTH_A3D_REVIEW_FAILURE=CONTRACT_IMPLEMENTABILITY_FAILURE
-FOURTEENTH_A3D_REVIEW_FAILURE_CLASS=CONTRACT_IMPLEMENTABILITY_FAILURE
-A3D_FIFTEENTH_REMEDIATION_ROUND=15
-A3D_CURRENT_REMEDIATION_ROUND_AT_THAT_HEAD=15
-ROUND15_CURRENT_ROUND_TOKEN_IS_A_ROUND15_RECORD=true
-ROUND15_CURRENT_ROUND_TOKEN_IS_CURRENT=false
-ROUND15_CURRENT_ROUND_TOKEN_SUPERSEDED_BY_ROUND=16
-A3D_HISTORY_ADDITIVE=true
-PRODUCT_FAILURE=false
-PRIVILEGED_EXECUTION_PERFORMED=false
-ROUND15_CURRENT_ROUND_POINTER_KEY=A3D_CURRENT_REMEDIATION_ROUND
-ROUND15_CURRENT_ROUND_POINTER_VALUE=15
-ROUND12_RECORD_BARE_CURRENT_ROUND_TOKEN_IS_A_ROUND12_RECORD=true
-ROUND12_RECORD_BARE_CURRENT_ROUND_TOKEN_IS_CURRENT=false
-SUPERSEDED_CURRENT_ROUND_VALUE=12
-SUPERSEDED_CURRENT_ROUND_VALUE_RETAINED=true
-SUPERSEDED_CURRENT_ROUND_VALUE_DELETED=false
-ROUND15_SCOPE=current_normative_prose_and_current_ledger_synchronization
-ROUND15_BLOCKING_FINDINGS_CLOSED=2
-ROUND15_BLOCKING_FINDINGS_OPEN=0
-ROUND15_EFFECT_IDS_RENUMBERED=false
-ROUND15_DAGS_CHANGED=false
-ROUND15_AUTHORITY_MATRIX_CHANGED=false
-ROUND15_PERSISTENT_SUPERVISOR_ARCHITECTURE_REPLACED=false
-ROUND15_CONTROL_CHANNEL_MECHANISM_REPLACED=false
-ROUND15_E17_SEMANTICS_CHANGED=false
-ROUND15_E2_E4_TO_E25_CONTINUITY_CHANGED=false
-ROUND15_E15_E16_CLOSURE_ROWS_CHANGED=false
-ROUND15_IMPLEMENTATION_FILES_CHANGED=0
-ROUND15_WORKFLOW_FILES_CHANGED=0
-```
-
-The fourteenth review passed round 14's own executable obligations and failed the
-round-14 head on two blockers, neither of which round 14's own suite could detect
-because both are statements that the suite's region definition treated as
-out of scope. Both are corrected in this round:
-
-| # | Finding | Corrected in |
-| --- | --- | --- |
-| 1 | The **current** 5.9 target-binding prose still stated collectively that the `E14`, `E15` and `E16` target descriptors are compared against the pair `E8` recorded. Round 13 corrected the canonical tokens and round 14 corrected the closure rows that carry the rule, but the normative prose that states the carrier rule in 5.9 still asserted the withdrawn round-12 identity rule, so the document carried two contradictory identity rules at one head. | 5.9, 20 |
-| 2 | The **current bare pointers** were stale: `A3D_CURRENT_REMEDIATION_ROUND` still read `12`, the single bare `A3D_REMEDIATION_COMMIT_PARENT` and `GIT_CURRENT_PARENT_TOKEN_VALUE` still carried the round-12 parent, and the region definition still hard-coded round 11 as the latest current remediation record, so no current pointer described the head it was read at. | 20, 15.1 |
-
-#### 1.14.1 The current 5.9 identity rule is per effect, and the carrier rule does not imply it
-
-The round-12 carrier rule and the round-13 identity rule are two different rules,
-and round 12 stated them together. Its prose said that the object is proved by
-`fstat`ing the descriptor and requiring its `st_dev`/`st_ino` to equal the pair
-`E8` recorded. That sentence is a correct statement about `E14` and a false
-statement about `E15` and `E16`, whose descriptors are opened after `E14` attached
-the mount and therefore resolve to the mounted ext4 root `E18` acquired and proved.
-The corrected 5.9 prose states the two rules separately: the carrier rule — one
-descriptor per effect, opened by the supervisor on the frozen derived role, proved
-by `fstat`ing the descriptor the `/proc/self/fd/<...>` path names, so validation and
-call consume one object reference — and the identity rule, which is per effect:
-
-- `E14`'s descriptor is opened **before** the mount, so it resolves to the directory
-  `E8` created and pinned, and the comparison basis is the **`E8` original
-  covered-mountpoint identity**;
-- `E15`'s and `E16`'s descriptors are each opened **after `E14` attached the mount,
-  while the observed state is `ATTACHED`**, so the frozen role name resolves to the
-  mounted ext4 filesystem's root inode, and the comparison basis is the **original
-  `E18` mounted-root identity**; the `E8` covered-mountpoint pair is explicitly
-  **not** their comparison identity, because it is the value a correct target for
-  those two effects must not match.
-
-The carrier semantics round 12 froze are preserved exactly: one last-component
-descriptor per effect, opened with
-`openat(validated_root_fd, MOUNTPOINT_ROLE, O_PATH|O_NOFOLLOW|O_CLOEXEC)` — plus
-`O_DIRECTORY` for `E14` — held open through its call's return, closed immediately
-afterwards, `/proc/self/fd/<...>` as the target string, one call per descriptor, and
-no reuse of a descriptor after a successful detach. Only the identity each
-descriptor is compared against is stated per effect instead of collectively.
-
-```text
-CURRENT_5_9_CARRIER_SEMANTICS_CHANGED=false
-CURRENT_5_9_ONE_DESCRIPTOR_PER_EFFECT=true
-CURRENT_5_9_TARGET_STRING_IS_FD_MEDIATED=true
-CURRENT_5_9_TARGET_STRING_CONTAINS_NO_ROLE_NAME_COMPONENT=true
-CURRENT_5_9_COLLECTIVE_IDENTITY_STATEMENT_PRESENT=false
-CURRENT_5_9_E14_TARGET_IDENTITY=E8
-CURRENT_5_9_E15_TARGET_IDENTITY=E18
-CURRENT_5_9_E16_TARGET_IDENTITY=E18
-CURRENT_5_9_COLLECTIVE_ALL_COMPARE_TO_E8_CLAIM=false
-CURRENT_5_9_STALE_E8_PROSE_COUNT=0
-CURRENT_NORMATIVE_TARGET_IDENTITY_MISMATCH_COUNT=0
-E14_TARGET_IDENTITY_SOURCE=E8_original_identity
-E14_TARGET_COMPARE_TO_E8=true
-E14_TARGET_COMPARE_TO_E18=false
-E15_TARGET_IDENTITY_SOURCE=E18_mounted_root_identity
-E16_TARGET_IDENTITY_SOURCE=E18_mounted_root_identity
-E15_TARGET_COMPARE_TO_E8=false
-E16_TARGET_COMPARE_TO_E8=false
-E15_TARGET_COMPARE_TO_E18=true
-E16_TARGET_COMPARE_TO_E18=true
-E15_UMOUNT_TARGET_FD_FSTAT_COMPARED_AGAINST=E18_original_mounted_root_identity
-E16_UMOUNT_TARGET_FD_FSTAT_COMPARED_AGAINST=E18_original_mounted_root_identity
-MOUNTED_OBJECT_TARGET_IDENTITY_IS_E18_NOT_E8=true
-E15_UMOUNT_TARGET_OBJECT_BINDING_CLOSED=true
-E16_UMOUNT_TARGET_OBJECT_BINDING_CLOSED=true
-```
-
-#### 1.14.2 The current/historical region and the current bare pointers
-
-A pointer is a fact about the head it is read at, so it cannot be left carrying an
-earlier round's value. The region definition of 15.1 hard-coded `round11_record_1_11`
-as the latest current remediation record, which was true at the round-11 head and
-false at every head after round 12; it is replaced by a definition that is derived
-from the current round pointer rather than from a literal round number. The same
-defect appears in the pointer block of 20, where
-`A3D_CURRENT_REMEDIATION_ROUND` read `12` and the single bare
-`A3D_REMEDIATION_COMMIT_PARENT` and `GIT_CURRENT_PARENT_TOKEN_VALUE` still carried
-the round-12 parent.
-
-This round re-points the bare pointers at the head under remediation and keeps the
-superseded round-12 parent value under a round-qualified key rather than deleting
-it, exactly as the earlier supersessions were kept:
-
-```text
-CURRENT_REMEDIATION_ROUND_MATCHES_HEAD=true
-CURRENT_PARENT_POINTER_MATCHES_DIRECT_PARENT=true
-CURRENT_POINTER_VALUE_MATCHES_REMOTE_TRUTH=true
-GIT_CURRENT_PARENT_TOKEN_UNIQUE=true
-CURRENT_POINTER_KEY_DUPLICATE_VALUE_COUNT=0
-ROUND15_CURRENT_NORMATIVE_REGION_AT_THAT_HEAD=closure_table_1_5,registry_1_9_1,records_1_11_through_1_13,current_remediation_record_1_14,sections_2_to_20
-ROUND15_CURRENT_NORMATIVE_REGION_AT_THAT_HEAD_IS_CURRENT=false
-ROUND15_CURRENT_NORMATIVE_REGION_AT_THAT_HEAD_EQUALS_THE_CURRENT_BARE_KEY=true
-CURRENT_NORMATIVE_REGION_ROUND=16
-CURRENT_NORMATIVE_REGION_CURRENT_RECORD=current_remediation_record_1_14
-CURRENT_NORMATIVE_REGION_IS_DERIVED_FROM_A3D_CURRENT_REMEDIATION_ROUND=true
-CURRENT_NORMATIVE_REGION_LATEST_CURRENT_RECORD_IS_ROUND_11=false
-CURRENT_NORMATIVE_REGION_LATEST_CURRENT_RECORD_IS_THE_CURRENT_ROUND=true
-CURRENT_NORMATIVE_REGION_ROUND_11_DEFINITION_IS_A_HISTORICAL_RECORD=true
-SUPERSEDED_CURRENT_PARENT_VALUE_KEY=A3D_REMEDIATION_ROUND_12_COMMIT_PARENT
-SUPERSEDED_CURRENT_PARENT_VALUE_RETAINED=true
-SUPERSEDED_CURRENT_PARENT_VALUE_DELETED=false
-SUPERSEDED_CURRENT_PARENT_VALUE_IS_STATED_ONCE_IN_SECTION_20=true
-ROUND15_BARE_PARENT_TOKEN_IS_STATED_IN_SECTION_20=true
-ROUND15_BARE_PARENT_TOKEN_KEY=A3D_REMEDIATION_COMMIT_PARENT
-ROUND15_BARE_PARENT_TOKEN_VALUE=6a0eb2c00f87f90dad5851c8f23d2e541bf11d3b
-ROUND15_BARE_PARENT_TOKEN_STATED_ONCE_DOCUMENT_WIDE=true
-```
-
-The document-wide duplicate-value probe of 20 applies to the keys above exactly as
-it does to every other current-pointer key: the round-15 region statement is kept
-under the round-qualified key `ROUND15_CURRENT_NORMATIVE_REGION_AT_THAT_HEAD`, so
-that no differently-named key competes with the bare `CURRENT_NORMATIVE_REGION` key
-for the current value, and `CURRENT_NORMATIVE_REGION_ROUND`,
-`CURRENT_NORMATIVE_REGION_CURRENT_RECORD` and the round-15 record's own keys are each
-stated once in this document. The single bare `A3D_REMEDIATION_COMMIT_PARENT` token
-is stated once, in 20, and every round-qualified historical parent value —
-including `A3D_REMEDIATION_ROUND_12_COMMIT_PARENT`, which this record originally
-also restated — is stated once as well, so that no current-pointer key carries two
-values and no alias resolves to two tokens. The round-11 and round-12 bare tokens are
-earlier rounds' records, kept as history under the rule that superseded
-current-pointer values are renamed with a round qualifier rather than deleted.
-
-#### 1.14.3 Semantic probes for this head
-
-The round-14 suite parsed the closure-table cells but read neither the current 5.9
-prose nor the bare current pointers, which is why it passed a head whose prose still
-carried the withdrawn collective identity rule and whose pointers still described
-round 12. The round-15 suite reads the current 5.9 region and the bare current
-pointers from the head tree, compares the pointers against the current round, the
-exact commit parent and the authoritative Git object, and is listed in 15.1:
-
-```text
-ROUND15_PROBE_REQUIRED_CHECKS=158
-ROUND15_PROBE_FAIL_COUNT=0
-ROUND15_PROBE_RESULT=PASS
-ROUND15_PROBE_INPUT=this_document_at_the_round15_head
-ROUND15_PROBE_SELF_TEST_INPUT=this_document_at_the_failed_round14_head
-ROUND15_PROBE_SELF_TEST_ON_THE_FAILED_ROUND14_TEXT=REJECTED
-ROUND15_PROBE_SELF_TEST_CHECK_COUNT=156
-ROUND15_PROBE_SELF_TEST_FAIL_COUNT=35
-ROUND15_PROBE_SELF_TEST_FAILS_ON_THE_STALE_5_9_PROSE_CLASS=2
-ROUND15_PROBE_SELF_TEST_FAILS_ON_THE_CURRENT_POINTER_CLASS=29
-ROUND15_PROBE_SELF_TEST_FAILS_ON_THE_UNCHANGED_CORE_CLASS=4
-ROUND15_PROBE_SELF_TEST_FAILS_ON_THE_5_9_STALE_E8_PROSE=true
-ROUND15_PROBE_SELF_TEST_FAILS_ON_THE_CURRENT_ROUND_POINTER=true
-ROUND15_PROBE_SELF_TEST_FAILS_ON_THE_BARE_PARENT_POINTER=true
-ROUND15_PROBE_IS_EXECUTED_NOT_ASSERTED=true
-ROUND15_PROBE_READS_THE_CONTRACT_FROM_THE_HEAD_TREE=true
-ROUND15_PROBE_READS_THE_CURRENT_5_9_PROSE=true
-ROUND15_PROBE_READS_THE_BARE_CURRENT_POINTERS=true
-ROUND15_PROBE_IGNORES_THE_REMEDIATION_RECORD_AS_EVIDENCE=true
-ROUND15_PROBE_IMPLEMENTATION_EXECUTED=true
-ROUND15_PROBE_IMPLEMENTATION_IS_NOT_A_PRODUCT_ARTIFACT=true
-ROUND15_PROBE_IMPLEMENTATION_LIVES_OUTSIDE_THE_REPOSITORY=true
-CURRENT_5_9_STALE_E8_PROSE_COUNT=0
-CURRENT_NORMATIVE_TARGET_IDENTITY_MISMATCH_COUNT=0
-CURRENT_REMEDIATION_ROUND_MATCHES_HEAD=true
-CURRENT_PARENT_POINTER_MATCHES_DIRECT_PARENT=true
-CURRENT_POINTER_VALUE_MATCHES_REMOTE_TRUTH=true
-AUTHORITY_TABLE_EQUALS_AUTHORITY_E_TOKENS=true
-CASE_TOTAL_AUTHORITY_SET_EQUALS_EFFECT_AUTHORITY_UNION=true
-E15_CLOSURE_ROW_COMPARE_TO_E8=false
-E16_CLOSURE_ROW_COMPARE_TO_E8=false
-E15_CLOSURE_ROW_COMPARE_TO_E18=true
-E16_CLOSURE_ROW_COMPARE_TO_E18=true
-E17_PRE_REQUEST_ABSENCE_IS_PASS=false
-SUCCESSFUL_E17_LOOP_CLR_FD_REQUEST_COUNT=1
-E2_TO_E25_IDENTITY_CONTINUITY_CLOSED=true
-E4_TO_E25_IDENTITY_CONTINUITY_CLOSED=true
-REAL_MATERIAL_EFFECT_COUNT=26
-PLACEHOLDER_EFFECT_ROW_COUNT=0
-```
-
-#### 1.14.4 Round-15 re-evaluated implementability results
-
-This round renumbers no effect, rebuilds no DAG, changes no authority, replaces
-neither the persistent supervisor nor the control channel, keeps `E17`'s semantics
-and the `E2`/`E4` to `E25` continuity unchanged, and adds no effect. The six
-implementability results are re-derived against this head:
-
-```text
-ROUND15_RE_EVALUATED_RESULTS=PRIVILEGED_EFFECT_AUTHORITY_CLOSURE,CROSS_BOUNDARY_CONTINUITY_IMPLEMENTABILITY,NAMESPACE_LIFECYCLE_IMPLEMENTABILITY,CLEANUP_STATE_MACHINE_IMPLEMENTABILITY,PRIVILEGED_CHILD_INODE_CONFINEMENT_IMPLEMENTABILITY,A3_CONTRACT_IMPLEMENTABILITY
-ROUND15_RESULT_KEYS_ARE_THE_CURRENT_IMPLEMENTABILITY_RESULTS_AT_THAT_HEAD=true
-ROUND15_RESULT_KEYS_ARE_CURRENT=false
-ROUND13_RESULT_KEYS_ARE_CURRENT=false
-ROUND13_RESULT_KEYS_ARE_HISTORICAL_RECORDS=true
-ROUND15_RESULT_BASIS_KEYS_ARE_ROUND_QUALIFIED=true
-PRIVILEGED_EFFECT_AUTHORITY_CLOSURE=PASS
-ROUND15_PRIVILEGED_EFFECT_AUTHORITY_CLOSURE_BASIS=every_one_of_E1_to_E26_still_has_a_declared_actor_in_every_case_that_scopes_it_and_this_round_changes_no_authority_precondition_or_postcondition
-CROSS_BOUNDARY_CONTINUITY_IMPLEMENTABILITY=PASS
-ROUND15_CROSS_BOUNDARY_CONTINUITY_IMPLEMENTABILITY_BASIS=the_E18_mounted_root_identity_carrier_lifetime_consumer_and_closing_checkpoint_are_unchanged_and_the_corrected_prose_names_the_same_carrier_as_the_canonical_tokens
-NAMESPACE_LIFECYCLE_IMPLEMENTABILITY=PASS
-ROUND15_NAMESPACE_LIFECYCLE_IMPLEMENTABILITY_BASIS=the_private_namespace_lifecycle_is_untouched_by_this_round
-CLEANUP_STATE_MACHINE_IMPLEMENTABILITY=PASS
-ROUND15_CLEANUP_STATE_MACHINE_IMPLEMENTABILITY_BASIS=the_four_mount_states_the_E16_ATTACHED_only_rule_and_the_E17_pre_request_association_rule_are_unchanged
-PRIVILEGED_CHILD_INODE_CONFINEMENT_IMPLEMENTABILITY=PASS
-ROUND15_PRIVILEGED_CHILD_INODE_CONFINEMENT_IMPLEMENTABILITY_BASIS=the_evidence_process_still_inherits_no_supervisor_descriptor_and_no_descriptor_carrier_rule_is_changed_by_this_round
-A3_CONTRACT_IMPLEMENTABILITY=PASS
-ROUND15_A3_CONTRACT_IMPLEMENTABILITY_BASIS=both_blockers_are_closed_by_statements_in_the_current_normative_region_and_the_current_bare_pointers_now_describe_the_head_they_are_read_at
-ROUND15_BLOCKING_FINDINGS_CLOSED=2
-ROUND15_BLOCKING_FINDINGS_OPEN=0
-EFFECT_COUNT_UNCHANGED_BY_ROUND15=true
-EFFECT_IDS_UNCHANGED_BY_ROUND15=true
-REAL_MATERIAL_EFFECT_COUNT=26
-PLACEHOLDER_EFFECT_ROW_COUNT=0
-PRIVILEGED_EFFECT_CLOSURE_ROWS=26
-AUTHORITY_TABLE_EQUALS_AUTHORITY_E_TOKENS=true
-CASE_TOTAL_AUTHORITY_SET_EQUALS_EFFECT_AUTHORITY_UNION=true
-REQUIRED_CAPABILITY_INVENTORY=CAP_CHOWN,CAP_DAC_OVERRIDE,CAP_DAC_READ_SEARCH,CAP_SETGID,CAP_SETUID,CAP_SYS_ADMIN
-REQUIRED_CAPABILITY_COUNT=6
-CAPABILITY_INVENTORY_UNCHANGED_BY_ROUND15=true
-AUTHORITY_MATRIX_UNCHANGED_BY_ROUND15=true
-CASE_TOTAL_AUTHORITY_SETS_UNCHANGED_BY_ROUND15=true
-CASE_DAGS_UNCHANGED_BY_ROUND15=true
-SUPERVISOR_ARCHITECTURE_UNCHANGED_BY_ROUND15=true
-CONTROL_CHANNEL_MECHANISM_UNCHANGED_BY_ROUND15=true
-```
-
-Round 15 preserves history the same way, with the failed round-14 head as its
-direct parent, pushed as a normal fast-forward onto the same branch. It is one
-commit, changing exactly one file, and it amends, rebases and force-pushes
-nothing:
-
-```text
-A3D_REMEDIATION_ROUND_15=15
-A3D_REMEDIATION_ROUND_15_PARENT=6a0eb2c00f87f90dad5851c8f23d2e541bf11d3b
-A3D_REMEDIATION_ROUND_15_PARENT_IS_FAILED_FOURTEENTH_REVIEW_HEAD=true
-A3D_REMEDIATION_ROUND_15_PARENT_TREE=ef0080557377ef7728e9f4a62cc77520ccfcfbe3
-A3D_REMEDIATION_ROUND_15_BRANCH=design/a3d-round4-mount-owner-predicate
-A3D_REMEDIATION_ROUND_15_COMMIT_COUNT=1
-A3D_REMEDIATION_ROUND_15_COMMIT_PARENT=6a0eb2c00f87f90dad5851c8f23d2e541bf11d3b
-A3D_ROUND15_CONTAINS_FAILED_FOURTEENTH_REVIEW_HEAD=true
-A3D_ROUND15_PARENTS_FAILED_FOURTEENTH_REVIEW_HEAD=true
-A3D_ROUND15_REWRITES_FAILED_FOURTEENTH_REVIEW_HEAD=false
-A3D_ROUND15_CHANGED_FILE_COUNT=1
-A3D_ROUND15_CHANGED_FILE=docs/governance/l4_privileged_linux_qualification_v1.md
-A3D_ROUND15_ADDED_FILE=none
-A3D_ROUND15_PUSH_IS_FAST_FORWARD=true
-A3D_ROUND15_PUSH_IS_NEW_BRANCH=false
-A3D_ROUND15_PUSH_FORCE=false
-A3D_ROUND15_AMEND_USED=false
-A3D_ROUND15_REBASE_USED=false
-A3D_ROUND15_RESET_USED=false
-A3D_ROUND15_EFFECT_IDS_RENUMBERED=false
-A3D_ROUND15_EFFECT_ID_SET_IS_E1_TO_E26=true
-A3D_ROUND15_PRIVILEGED_EXECUTION_PERFORMED=false
-A3D_ROUND15_IMPLEMENTATION_FILES_CHANGED=0
-A3D_ROUND15_WORKFLOW_CHANGES=0
-A3D_ROUND15_MERGE_AUTHORIZED=false
-A3D_ROUND15_READY_FOR_REVIEW=false
-A3D_ROUND15_EXPECTED_CI_TIER=docs_fast
-A3D_ROUND15_EXPECTED_CI_REASON=all_changes_in_docs_scope
-A3D_ROUND15_EXPECTED_FULL_MATRIX_REQUIRED=false
-TRANSPORT_DEGRADED=true
-A3D_ROUND15_REMOTE_TRUTH_CHANNELS=reviewed_confined_ssh_and_authoritative_remote_api
-A3D_ROUND15_REMOTE_MAIN_REQUIRED=cca7805305b0e369b27d7d29ba3611fb9afd7679
-A3D_ROUND15_REMOTE_HEAD_BEFORE_PUSH_REQUIRED=6a0eb2c00f87f90dad5851c8f23d2e541bf11d3b
-A3D_ROUND15_PREPUSH_RECHECK_REQUIRED=true
-A3D_ROUND15_PREPUSH_ABORTS_ON_A_MOVED_REMOTE_HEAD=true
-A3D_ROUND15_AMENDS=false
-A3D_ROUND15_REBASES=false
-A3D_ROUND15_FORCE_PUSHES=false
-A3D_ROUND15_FORCE_PUSH_PERFORMED=false
-A3D_ROUND15_MERGE_PERFORMED=false
-A3D_ROUND15_READY_PERFORMED=false
-A3D_ROUND15_STOPS_FOR_FRESH_INDEPENDENT_EXACT_HEAD_REVIEW=true
-```
-
-After the exact-head pull-request CI for the round-15 head reaches a terminal
-conclusion, this workstream stops again and returns for fresh independent
-exact-head review. Both round-15 blockers are closed by statements in the current
-normative region — the 5.9 identity rule and the 20 pointer block — and no earlier
-review's failure is cleared by this document's own claim.
-
-#### 1.14.5 Round-16 canonicalization of the two bare region keys
-
-The fifteenth exact-head review passed round 15's own executable obligations and
-failed the round-15 head `058cecad5511d6b9b0036cc4822c5e458ccc4bc8` with
-`FAILURE_CLASS=GOVERNANCE_LEDGER_CANONICALITY_FAILURE` and two blocking findings.
-Round 15's suite could not see either of them, because its region obligation
-compared the bare region keys with this document's own round-15 token block instead
-of with the ledger the keys are supposed to describe:
-
-| # | Finding | Corrected in |
-| --- | --- | --- |
-| 1 | The **bare region keys** were still the round-11 record. `CURRENT_NORMATIVE_REGION` carried `closure_table_1_5,registry_1_9_1,round11_record_1_11,sections_2_to_20` and `HISTORICAL_REGION` carried the round-11 historical value, while the current region definition was stated only under the differently-named `CURRENT_NORMATIVE_REGION_STATED_AT_THIS_HEAD` key. Under 15.1's own key-classification rule the two bare keys are current-pointer keys — they are neither an enumeration over one attribute, nor a per-case variant, nor a historical round-qualified record — so they may carry only the current head's value, and the document simultaneously carried a stale current-pointer key and a substitute for it. | 1.11.1, 1.14.2, 1.14.5, 15.1 |
-| 2 | The **historical parent aliases** of 20 dangled. `GIT_HISTORICAL_PARENT_TOKEN_ROUND_13` named `A3D_REMEDIATION_ROUND_13_PARENT` and `GIT_HISTORICAL_PARENT_TOKEN_ROUND_14` named `A3D_REMEDIATION_ROUND_14_PARENT`, and neither key existed anywhere in the document, so two aliases named no parent at all. The round-7 alias dangled in the same way (`A3D_REMEDIATION_ROUND_7_COMMIT_PARENT` did not exist), and the round-12 target was stated twice, so "every `GIT_HISTORICAL_PARENT_TOKEN_ROUND_*` alias resolves to exactly one real `KEY=<sha>` token" was false for four of the nine aliases. | 20, 1.14.5, 15.1 |
-
-Finding 1 is a stale-current-pointer failure and finding 2 is a dangling-alias
-failure. Both are failures of this document's own ledger, not of the frozen design:
-no effect id, no DAG, no authority row, no supervisor, no control channel, no
-`E14`/`E15`/`E16` binding, no `E17` rule and no `E2`/`E4` to `E25` continuity is
-touched by this round.
-
-The canonicalization is the same mechanism the document already uses for superseded
-current-pointer values, applied to the pair of keys that had escaped it: the round-11
-values are renamed with a `ROUND11_` qualifier rather than deleted, the round-15
-record's region statement is renamed with a `ROUND15_` qualifier so that no
-differently-named key competes with the bare key for the current value, and the bare
-keys themselves carry the current value exactly once each. The current value names
-the record that carries the current round's record rather than a literal latest
-round number, so the key cannot go stale while the record stays where the ledger
-puts it:
-
-```text
-ROUND16_SCOPE=ledger_canonicality_of_the_bare_region_keys_and_the_historical_parent_aliases
-BARE_CURRENT_NORMATIVE_REGION_OCCURRENCE_COUNT=1
-BARE_HISTORICAL_REGION_OCCURRENCE_COUNT=1
-CURRENT_NORMATIVE_REGION=closure_table_1_5,registry_1_9_1,records_1_11_through_1_13,current_remediation_record_1_14,sections_2_to_20
-HISTORICAL_REGION=round_qualified_records_1_1_to_1_10_and_the_1_8_5_records_renamed_here
-CURRENT_REGION_RECORD_RANGE=1_11_through_1_13
-HISTORICAL_REGION_RECORD_RANGE=1_1_through_1_10
-REGION_RECORD_RANGES_ARE_COMPLEMENTARY_AND_CONTIGUOUS=true
-CURRENT_REGION_RECORD_RANGE_ENDS_AT_THE_RECORD_BEFORE_THE_CURRENT_RECORD=true
-CURRENT_REGION_RECORD_RANGE_LABELS_ARE_PRESENT_AS_RECORD_HEADINGS=true
-CURRENT_NORMATIVE_REGION_CURRENT_RECORD_RESOLUTION_RULE=the_current_remediation_record_is_the_record_section_that_carries_the_current_rounds_record
-CURRENT_NORMATIVE_REGION_CURRENT_RECORD_CARRIES_THE_CURRENT_ROUNDS_RECORD=true
-CURRENT_NORMATIVE_REGION_CURRENT_RECORD_LABEL=1_14
-CURRENT_NORMATIVE_REGION_HAS_NO_HARDCODED_STALE_LATEST_ROUND=true
-CURRENT_NORMATIVE_REGION_HARD_CODES_A_ROUND_NUMBER=false
-CURRENT_NORMATIVE_REGION_IS_CARRIED_BY_THE_BARE_KEY=true
-CURRENT_NORMATIVE_REGION_SUBSTITUTE_KEY_COUNT=0
-CURRENT_NORMATIVE_REGION_ROUND_11_DEFINITION_IS_A_HISTORICAL_RECORD=true
-HISTORICAL_REGION_MATCHES_CURRENT_LEDGER=true
-SUPERSEDED_ROUND11_REGION_KEYS_ARE_ROUND_QUALIFIED=true
-SUPERSEDED_ROUND11_REGION_KEY_NAMES=ROUND11_CURRENT_NORMATIVE_REGION,ROUND11_HISTORICAL_REGION
-SUPERSEDED_ROUND11_REGION_KEY_VALUES_ARE_RETAINED=true
-SUPERSEDED_ROUND11_REGION_KEY_VALUES_ARE_DELETED=false
-SUPERSEDED_ROUND15_REGION_KEY_NAMES=ROUND15_CURRENT_NORMATIVE_REGION_AT_THAT_HEAD
-SUPERSEDED_ROUND15_REGION_KEY_VALUES_ARE_RETAINED=true
-GIT_HISTORICAL_PARENT_ALIAS_COUNT_IS_RECORDED_IN_SECTION_20=true
-ROUND13_HISTORICAL_PARENT_ALIAS=A3D_REMEDIATION_ROUND_13_PARENT
-ROUND13_HISTORICAL_PARENT_ALIAS_RESOLVES=true
-ROUND14_HISTORICAL_PARENT_ALIAS=A3D_REMEDIATION_ROUND_14_PARENT
-ROUND14_HISTORICAL_PARENT_ALIAS_RESOLVES=true
-ROUND7_HISTORICAL_PARENT_ALIAS=A3D_REMEDIATION_ROUND_7_COMMIT_PARENT
-ROUND7_HISTORICAL_PARENT_ALIAS_RESOLVES=true
-ROUND15_HISTORICAL_PARENT_ALIAS=A3D_REMEDIATION_ROUND_15_COMMIT_PARENT
-ROUND15_HISTORICAL_PARENT_ALIAS_RESOLVES=true
-HISTORICAL_PARENT_ALIAS_DANGLING_COUNT=0
-ROUND13_HISTORICAL_PARENT_VERIFIED_AGAINST=the_GIT_parent_of_the_round_13_commit_and_the_authoritative_remote_commit_object
-ROUND14_HISTORICAL_PARENT_VERIFIED_AGAINST=the_GIT_parent_of_the_round_14_commit_and_the_authoritative_remote_commit_object
-HISTORICAL_PARENT_ALIASES_ARE_FROZEN_VALUES_NOT_DERIVED_AT_READ_TIME=true
-```
-
-The three resolved values are the parents authoritative Git history records for
-those rounds, verified twice — once from the commit objects in this repository and
-once from the authoritative remote commit objects — and the round-16 probe
-re-derives them from Git history at every run instead of trusting this block.
-
-One limit is stated rather than papered over: which record boundary separates the
-historical region from the current region (records 1.1 to 1.10 against 1.11 to 1.13)
-is a ledger decision of this contract, not something derivable from headings alone.
-The probe therefore checks that decision structurally — both ranges exist as record
-headings, they are complementary and contiguous over records 1.1 to the record before
-the current one, the cited current record is the highest record label present, and it
-is the record that physically carries the current round's record — and the ledger
-would fail the probe if any of those stopped holding.
-
-#### 1.14.6 Round-16 semantic probes for this head
-
-The round-15 suite read the round-15 token block, so it passed a head whose bare
-region keys still described round 11 and whose parent aliases named keys that do not
-exist. The round-16 suite reads the bare region keys and the bare current pointers
-from the head tree, derives the expected region from the document's real record and
-section structure, derives the round-to-commit mapping from Git history itself, and
-is listed in 15.1. It is executed, not asserted, and it does not accept this
-document's own probe claims as evidence:
-
-```text
-ROUND16_PROBE_REQUIRED_CHECKS=90
-ROUND16_PROBE_CHECK_COUNT=90
-ROUND16_PROBE_FAIL_COUNT=0
-ROUND16_PROBE_RESULT=PASS
-ROUND16_PROBE_INPUT=this_document_at_the_round16_head
-ROUND16_PROBE_SELF_TEST_INPUT=this_document_at_the_failed_round15_head
-ROUND16_PROBE_SELF_TEST_ON_THE_FAILED_ROUND15_TEXT=REJECTED
-ROUND16_PROBE_SELF_TEST_CHECK_COUNT=87
-ROUND16_PROBE_SELF_TEST_FAIL_COUNT=29
-ROUND16_PROBE_SELF_TEST_FAILS_ON_BOTH_BLOCKER_CLASSES=true
-ROUND16_PROBE_SELF_TEST_FAILS_ON_THE_REGION_KEY_CLASS=13
-ROUND16_PROBE_SELF_TEST_FAILS_ON_THE_DANGLING_PARENT_ALIAS_CLASS=10
-ROUND16_PROBE_SELF_TEST_FAILS_ON_THE_HISTORICAL_PARENT_SHA_CLASS=5
-ROUND16_PROBE_SELF_TEST_FAILS_ON_THE_BARE_CURRENT_POINTER_CLASS=1
-ROUND16_PROBE_SELF_TEST_FAILS_ON_THE_UNCHANGED_CORE_CLASS=0
-ROUND16_PROBE_SELF_TEST_FAILS_ON_THE_DUPLICATE_VALUE_CLASS=0
-ROUND16_PROBE_SELF_TEST_FAILS_ON_A_SUPERSEDED_REGION_DEFINITION_UNDER_A_BARE_KEY=true
-ROUND16_PROBE_SELF_TEST_FAILS_ON_A_REGION_DEFINITION_THAT_NAMES_AN_EARLIER_ROUNDS_RECORD=true
-ROUND16_PROBE_SELF_TEST_FAILS_ON_A_DANGLING_PARENT_ALIAS=true
-ROUND16_PROBE_SELF_TEST_FAILS_ON_A_DUPLICATED_ALIAS_TARGET_TOKEN=true
-ROUND16_PROBE_SELF_TEST_COVERS_EVERY_ROUND16_FINDING=true
-ROUND16_PROBE_IS_EXECUTED_NOT_ASSERTED=true
-ROUND16_PROBE_READS_THE_CONTRACT_FROM_THE_HEAD_TREE=true
-ROUND16_PROBE_READS_THE_BARE_REGION_KEYS_AND_THE_BARE_CURRENT_POINTERS=true
-ROUND16_PROBE_DERIVES_THE_EXPECTED_REGION_FROM_THE_RECORD_HEADINGS_AND_THE_CURRENT_ROUNDS_RECORD=true
-ROUND16_PROBE_DERIVES_THE_ROUND_TO_COMMIT_MAPPING_FROM_GIT_HISTORY=true
-ROUND16_PROBE_DOES_NOT_ACCEPT_THIS_DOCUMENTS_OWN_PROBE_CLAIMS_AS_EVIDENCE=true
-ROUND16_PROBE_IMPLEMENTATION_EXECUTED=true
-ROUND16_PROBE_IMPLEMENTATION_IS_NOT_A_PRODUCT_ARTIFACT=true
-ROUND16_PROBE_IMPLEMENTATION_LIVES_OUTSIDE_THE_REPOSITORY=true
-CURRENT_5_9_STALE_E8_PROSE_COUNT=0
-CURRENT_NORMATIVE_TARGET_IDENTITY_MISMATCH_COUNT=0
-CURRENT_REMEDIATION_ROUND_MATCHES_HEAD=true
-CURRENT_PARENT_POINTER_MATCHES_DIRECT_PARENT=true
-CURRENT_POINTER_VALUE_MATCHES_REMOTE_TRUTH=true
-AUTHORITY_TABLE_EQUALS_AUTHORITY_E_TOKENS=true
-CASE_TOTAL_AUTHORITY_SET_EQUALS_EFFECT_AUTHORITY_UNION=true
-E14_TARGET_IDENTITY_SOURCE=E8_original_identity
-E15_TARGET_IDENTITY_SOURCE=E18_mounted_root_identity
-E16_TARGET_IDENTITY_SOURCE=E18_mounted_root_identity
-E15_TARGET_COMPARE_TO_E8=false
-E16_TARGET_COMPARE_TO_E8=false
-E15_TARGET_COMPARE_TO_E18=true
-E16_TARGET_COMPARE_TO_E18=true
-E17_PRE_REQUEST_ABSENCE_IS_PASS=false
-SUCCESSFUL_E17_LOOP_CLR_FD_REQUEST_COUNT=1
-E2_TO_E25_IDENTITY_CONTINUITY_CLOSED=true
-E4_TO_E25_IDENTITY_CONTINUITY_CLOSED=true
-REAL_MATERIAL_EFFECT_COUNT=26
-PLACEHOLDER_EFFECT_ROW_COUNT=0
-```
-
-#### 1.14.7 Round-16 re-evaluated implementability results
-
-This round renumbers no effect, rebuilds no DAG, changes no authority, replaces
-neither the persistent supervisor nor the control channel, keeps `E17`'s semantics,
-the `E15`/`E16` closure rows and the `E2`/`E4` to `E25` continuity unchanged, and adds
-no effect. The six implementability results are re-derived against this head:
-
-```text
-ROUND16_RE_EVALUATED_RESULTS=PRIVILEGED_EFFECT_AUTHORITY_CLOSURE,CROSS_BOUNDARY_CONTINUITY_IMPLEMENTABILITY,NAMESPACE_LIFECYCLE_IMPLEMENTABILITY,CLEANUP_STATE_MACHINE_IMPLEMENTABILITY,PRIVILEGED_CHILD_INODE_CONFINEMENT_IMPLEMENTABILITY,A3_CONTRACT_IMPLEMENTABILITY
-ROUND16_RESULT_KEYS_ARE_THE_CURRENT_IMPLEMENTABILITY_RESULTS=true
-ROUND16_RESULT_BASIS_KEYS_ARE_ROUND_QUALIFIED=true
-ROUND15_RESULT_KEYS_ARE_THE_CURRENT_IMPLEMENTABILITY_RESULTS_AT_THAT_HEAD=true
-ROUND15_RESULT_KEYS_ARE_CURRENT=false
-PRIVILEGED_EFFECT_AUTHORITY_CLOSURE=PASS
-ROUND16_PRIVILEGED_EFFECT_AUTHORITY_CLOSURE_BASIS=every_one_of_E1_to_E26_still_has_a_declared_actor_in_every_case_that_scopes_it_and_this_round_changes_no_effect_row_no_case_scope_and_no_authority_precondition_or_postcondition
-CROSS_BOUNDARY_CONTINUITY_IMPLEMENTABILITY=PASS
-ROUND16_CROSS_BOUNDARY_CONTINUITY_IMPLEMENTABILITY_BASIS=the_E18_mounted_root_identity_and_the_ownership_fixture_identity_carriers_their_lifetimes_consumers_and_closing_checkpoints_are_unchanged_and_this_round_adds_no_crossing_fact
-NAMESPACE_LIFECYCLE_IMPLEMENTABILITY=PASS
-ROUND16_NAMESPACE_LIFECYCLE_IMPLEMENTABILITY_BASIS=the_private_namespace_lifecycle_is_untouched_by_this_round
-CLEANUP_STATE_MACHINE_IMPLEMENTABILITY=PASS
-ROUND16_CLEANUP_STATE_MACHINE_IMPLEMENTABILITY_BASIS=the_four_mount_states_the_E16_ATTACHED_only_rule_and_the_E17_pre_request_association_rule_are_unchanged
-PRIVILEGED_CHILD_INODE_CONFINEMENT_IMPLEMENTABILITY=PASS
-ROUND16_PRIVILEGED_CHILD_INODE_CONFINEMENT_IMPLEMENTABILITY_BASIS=no_evidence_process_descriptor_rule_and_no_confinement_rule_is_changed_by_this_round
-A3_CONTRACT_IMPLEMENTABILITY=PASS
-ROUND16_A3_CONTRACT_IMPLEMENTABILITY_BASIS=both_ledger_canonicality_blockers_are_closed_by_the_canonical_bare_region_keys_and_by_the_resolved_historical_parent_aliases_and_the_round_16_suite_proves_both_classes_over_the_head_tree
-ROUND16_BLOCKING_FINDINGS_CLOSED=2
-ROUND16_BLOCKING_FINDINGS_OPEN=0
-EFFECT_COUNT_UNCHANGED_BY_ROUND16=true
-EFFECT_IDS_UNCHANGED_BY_ROUND16=true
-REAL_MATERIAL_EFFECT_COUNT=26
-PLACEHOLDER_EFFECT_ROW_COUNT=0
-PRIVILEGED_EFFECT_CLOSURE_ROWS=26
-REQUIRED_CAPABILITY_COUNT=6
-CAPABILITY_INVENTORY_UNCHANGED_BY_ROUND16=true
-AUTHORITY_MATRIX_UNCHANGED_BY_ROUND16=true
-CASE_TOTAL_AUTHORITY_SETS_UNCHANGED_BY_ROUND16=true
-CASE_DAGS_UNCHANGED_BY_ROUND16=true
-SUPERVISOR_ARCHITECTURE_UNCHANGED_BY_ROUND16=true
-CONTROL_CHANNEL_MECHANISM_UNCHANGED_BY_ROUND16=true
-E15_E16_CLOSURE_ROWS_UNCHANGED_BY_ROUND16=true
-E14_E15_E16_IDENTITY_BINDING_UNCHANGED_BY_ROUND16=true
-E17_SEMANTICS_UNCHANGED_BY_ROUND16=true
-E2_E4_TO_E25_CONTINUITY_UNCHANGED_BY_ROUND16=true
-ROUND16_IMPLEMENTATION_FILES_CHANGED=0
-ROUND16_WORKFLOW_FILES_CHANGED=0
-```
-
-#### 1.14.8 Round-16 lifecycle and stop
-
-The fifteenth review failed the round-15 head on the two ledger findings above, and
-that head is this commit's direct parent. Round 16 preserves history the same way the
-earlier remediation rounds do: one commit, one document, a normal fast-forward onto
-the same branch, no amend, no rebase, no force, no history rewrite, and no earlier
-round's record deleted or rewritten:
-
-```text
-A3D_REMEDIATION_ROUND_16=16
-A3D_REMEDIATION_ROUND_16_PARENT=058cecad5511d6b9b0036cc4822c5e458ccc4bc8
-A3D_REMEDIATION_ROUND_16_PARENT_IS_FAILED_FIFTEENTH_REVIEW_HEAD=true
-A3D_REMEDIATION_ROUND_16_PARENT_TREE=604f646a6d9441501ece9630895f4bb0400fd8f2
-A3D_REMEDIATION_ROUND_16_BRANCH=design/a3d-round4-mount-owner-predicate
-A3D_REMEDIATION_ROUND_16_COMMIT_COUNT=1
-A3D_REMEDIATION_ROUND_16_COMMIT_PARENT=058cecad5511d6b9b0036cc4822c5e458ccc4bc8
-A3D_ROUND16_CONTAINS_FAILED_FIFTEENTH_REVIEW_HEAD=true
-A3D_ROUND16_PARENTS_FAILED_FIFTEENTH_REVIEW_HEAD=true
-A3D_ROUND16_REWRITES_FAILED_FIFTEENTH_REVIEW_HEAD=false
-A3D_ROUND16_CHANGED_FILE_COUNT=1
-A3D_ROUND16_CHANGED_FILE=docs/governance/l4_privileged_linux_qualification_v1.md
-A3D_ROUND16_ADDED_FILE=none
-A3D_ROUND16_PUSH_IS_FAST_FORWARD=true
-A3D_ROUND16_PUSH_IS_NEW_BRANCH=false
-A3D_ROUND16_PUSH_FORCE=false
-A3D_ROUND16_AMEND_USED=false
-A3D_ROUND16_REBASE_USED=false
-A3D_ROUND16_RESET_USED=false
-A3D_ROUND16_EFFECT_IDS_RENUMBERED=false
-A3D_ROUND16_EFFECT_ID_SET_IS_E1_TO_E26=true
-A3D_ROUND16_PRIVILEGED_EXECUTION_PERFORMED=false
-A3D_ROUND16_IMPLEMENTATION_FILES_CHANGED=0
-A3D_ROUND16_WORKFLOW_CHANGES=0
-A3D_ROUND16_MERGE_AUTHORIZED=false
-A3D_ROUND16_READY_FOR_REVIEW=false
-A3D_ROUND16_EXPECTED_CI_TIER=docs_fast
-A3D_ROUND16_EXPECTED_CI_REASON=all_changes_in_docs_scope
-A3D_ROUND16_EXPECTED_FULL_MATRIX_REQUIRED=false
-TRANSPORT_DEGRADED=true
-A3D_ROUND16_REMOTE_TRUTH_CHANNELS=authoritative_remote_api
-A3D_ROUND16_LOCAL_GIT_TRANSPORT_DEGRADED=true
-A3D_ROUND16_LOCAL_HTTPS_TRANSPORT_ERROR=schannel_AcquireCredentialsHandle_failed_SEC_E_NO_CREDENTIALS_0x8009030e
-A3D_ROUND16_LOCAL_SSH_TRANSPORT_ERROR=could_not_create_signal_pipe_win32_error_5
-A3D_ROUND16_LOCAL_REFS_CORROBORATE_ONLY=true
-A3D_ROUND16_PUBLISH_CHANNEL_IS_RECORDED_IN_THE_PR_BODY=true
-A3D_ROUND16_REMOTE_OBJECTS_ARE_READ_BACK_FROM_THE_AUTHORITATIVE_API=true
-A3D_ROUND16_PUBLISH_IS_FAST_FORWARD_ONLY=true
-A3D_ROUND16_REMOTE_MAIN_REQUIRED=cca7805305b0e369b27d7d29ba3611fb9afd7679
-A3D_ROUND16_REMOTE_HEAD_BEFORE_PUSH_REQUIRED=058cecad5511d6b9b0036cc4822c5e458ccc4bc8
-A3D_ROUND16_PREPUSH_RECHECK_REQUIRED=true
-A3D_ROUND16_PREPUSH_ABORTS_ON_A_MOVED_REMOTE_HEAD=true
-A3D_ROUND16_AMENDS=false
-A3D_ROUND16_REBASES=false
-A3D_ROUND16_FORCE_PUSHES=false
-A3D_ROUND16_FORCE_PUSH_PERFORMED=false
-A3D_ROUND16_MERGE_PERFORMED=false
-A3D_ROUND16_READY_PERFORMED=false
-A3D_ROUND16_STOPS_FOR_FRESH_INDEPENDENT_EXACT_HEAD_REVIEW=true
-A3D_CURRENT_REMEDIATION_ROUND=16
-CURRENT_REMEDIATION_ROUND_MATCHES_HEAD=true
-CURRENT_PARENT_POINTER_MATCHES_DIRECT_PARENT=true
-CURRENT_POINTER_VALUE_MATCHES_REMOTE_TRUTH=true
-```
-
-The fifteenth review failed head `058cecad…` (tree `604f646a…`) with
-`GOVERNANCE_LEDGER_CANONICALITY_FAILURE` and two blocking findings, and that head and
-tree are preserved here as the round-15 record. After the exact-head pull-request CI
-for the round-16 head reaches a terminal conclusion, this workstream stops again and
-returns for fresh independent exact-head review. Both round-16 blockers are closed by
-statements in the ledger itself — the two bare region keys of 1.14.5 and the resolved
-parent aliases of 20 — and no earlier review's failure is cleared by this document's
-own claim.
+The sixteenth exact-head review passed round 16's own executable obligations and
+failed the round-16 head `4bb2f8b581baf7c6d5ad2638cb410395d951ca39` with
+`FAILURE_CLASS=GOVERNANCE_LEDGER_CANONICALITY_FAILURE` and one blocking finding:
+the bare `CURRENT_NORMATIVE_REGION` named `current_remediation_record_1_14`, while
+the document carried no `1.14` record heading at all, and its only `1.14` headings
+were the `#### 1.14.x` subordinates sitting after `## 20`, which the real Markdown
+hierarchy makes children of Section 20. Round 17 closes that finding in the
+document structure rather than in the ledger wording, and re-reads the closure with
+a probe that parses the real ATX hierarchy; 1.14.9 to 1.14.12 state the correction,
+the probe and this round's lifecycle. After the exact-head pull-request CI for the
+round-17 head reaches a terminal conclusion, this workstream stops again and returns
+for fresh independent exact-head review.
