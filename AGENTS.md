@@ -435,3 +435,54 @@ databases, Parquet output, caches, virtual environments, or runtime data
 directories. Never move, delete, or recreate formal tags, and never create or
 mutate GitHub Releases or their assets without explicit repository-owner
 authorization.
+
+## Codex Phase/Risk Model Routing
+
+This optional workflow requires local verification and refines the development flow and
+authority boundaries. It does not replace them. See
+`docs/governance/codex_model_routing_v1.md`.
+
+After capability and activation checks pass, keep the primary coordinator on the
+verified Sol default and use `scripts/codex_model_router.py` for material phase
+routing. First derive a structured task from the work order and real evidence;
+do not classify by file extension or command length alone. Invoke the helper with
+`--task <outside-repository-json>` and optional `--state <prior-phase-state>`.
+Treat exit 2/INVALID_INPUT or exit 3/HOLD as a stop, not permission to guess a role.
+A DISPATCH_REQUEST is a selection, not proof that the requested model ran.
+Model/effort routing is automatic; permission escalation is NOT automatic.
+Before each dispatch supply `effective_parent_sandbox` and a current
+`permission_evidence_reference` bound to the parent session/turn. Native children
+inherit/reapply the parent turn's live permission mode: role-local `sandbox_mode`
+is a desired/default setting, not sufficient enforcement proof. Read-only roles
+require a read-only parent; mv_builder requires a workspace-write parent plus the
+existing scoped authorization. A mismatch, danger-full-access, unknown mode or
+missing evidence returns HOLD. Treat `required_parent_sandbox` as the prerequisite;
+the input claim and role default do not verify the effective runtime boundary.
+Switching the parent permission mode is a separate explicit workflow action under
+existing authorization, never a router action or implicit response to HOLD.
+Reacquire current permission evidence after any session/turn or permission change;
+verify the child's effective runtime policy before task effects and stop on drift.
+
+Dispatch the named custom agent in `.codex/agents/`, wait for its result, close its
+thread, and verify the checkpoint before dispatching another. Do not create
+parallel writers or recursively delegate. Keep the same role inside an open phase;
+if escalation is required, stop the old child and hand off explicitly. Model, role,
+reasoning effort and effective sandbox must be recorded from runtime evidence,
+not from a model's self-description. Unknown observations remain unknown.
+
+Only mv_builder may carry out the owner's scoped implementation grant, and the
+coordinator must not write while that builder is active. Running tests that write
+files uses existing separately approved test/scratch rules, not mv_inventory's
+read-only log-reading role. Mechanical checks and CI waits should use approved
+existing scripts rather than repeated model turns.
+
+Authentication, sandbox, environment and quota failures do not trigger blind
+model escalation. Do not change account, provider, origin, project trust, network
+or permission settings to bypass failures. Final audit assistance does not grant
+merge authority, and merely changing models or forking the implementation thread
+does not satisfy independent review. Retain the existing external exact-head gate.
+
+For this routing feature's own implementation/review, do not bootstrap approval
+from its unreviewed instructions. Use the previously approved workflow and stop
+for external independent review. Before live activation, inspect actual local
+client capability/configuration; the presence of these files alone is not activation.

@@ -1,0 +1,14 @@
+# Project coordinator defaults; activation requires the documented live gates.
+# Preserve unrelated settings when extending this project configuration.
+# Manual selection / CLI flags can override the coordinator default.
+model = "gpt-6-sol"
+model_reasoning_effort = "medium"
+
+[agents]
+enabled = true
+# Primary coordinator is excluded; keep only one spawned child open at a time in v1.
+max_concurrent_threads_per_session = 1
+
+# No approval_policy, provider, auth, network, trust or sandbox overrides here.
+# Standalone roles live in .codex/agents/*.toml (current documented client schema).
+# Do not also register a second duplicate legacy [agents.<name>] definition.
