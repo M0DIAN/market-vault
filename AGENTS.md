@@ -486,3 +486,44 @@ For this routing feature's own implementation/review, do not bootstrap approval
 from its unreviewed instructions. Use the previously approved workflow and stop
 for external independent review. Before live activation, inspect actual local
 client capability/configuration; the presence of these files alone is not activation.
+
+## Codex Route Visibility V1.1
+
+For the activated MarketVault routing workflow, show the user one concise status
+notice only at a real native-child dispatch, its return, or a material router
+HOLD. See `docs/governance/codex_route_visibility_v1_1.md`. These notices do
+not alter V1 routing decisions, permissions, checkpoints, or authority.
+
+After obtaining a valid `DISPATCH_REQUEST` and confirming the selected native
+child is about to be spawned, emit exactly one visible progress message:
+`◆ ROUTE  <phase> → <role> | <friendly-model> · <effort> | <required-parent-sandbox>`.
+Take phase, role, requested_model, requested_effort, and
+required_parent_sandbox only from that router output. Map `gpt-6-luna` to
+`GPT-6 Luna`, `gpt-6-sol` to `GPT-6 Sol`, and `gpt-6-astra` to `GPT-6 Astra`.
+If a required value is missing or unmapped, stop rather than invent a notice or
+spawn. This is a requested route, never runtime-model verification or authority.
+For `stop_child_then_escalate_at_checkpoint`, wait until the old child has
+actually stopped and its checkpoint is processed before showing the new ROUTE
+notice immediately ahead of the new spawn. Contemplating a model, deterministic
+commands, and repeated tool calls do not produce ROUTE notices.
+
+After the child completes and its checkpoint is processed, emit exactly one
+visible return notice for that dispatch: `↩ RETURN <role> | completed |
+checkpoint passed`, or `↩ RETURN <role> | completed | checkpoint unresolved`
+when the checkpoint is not established. A child execution failure uses
+`↩ RETURN <role> | failed | <short stable failure-class>`. For mv_reviewer,
+use `↩ RETURN mv_reviewer | completed | advisory only` unless a separately
+valid external-review checkpoint exists. Its own output never grants formal
+independent approval. An observed runtime model/effort may be appended only
+when independently evidenced by runtime telemetry, not role defaults,
+requested values, model self-description, or the notice itself.
+
+For router `HOLD` on a material routed phase, show exactly one visible
+`■ HOLD <phase> | <short stable human-readable reason>` and spawn no child.
+Translate the decisive router reason using the V1.1 governance mapping;
+`remote_write` reads `separate authorized executor required`. Do not silently
+escalate permission, retry with broader sandbox, or treat HOLD as a route.
+Notices never include task JSON, permission-evidence references, prompts,
+credentials, hidden reasoning, full reason-code arrays, or long error logs.
+Do not show these notices for shell commands, search, hashes, tests, CI waits,
+or every tool call.
