@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-POLICY_VERSION = "1.0.0"
+POLICY_VERSION = "1.1.0"
 ROLE_SPECS = {
     "mv_inventory": ("gpt-6-luna", "low", "read-only", 0),
     "mv_analyst": ("gpt-6-sol", "medium", "read-only", 1),
@@ -39,7 +39,9 @@ REQUIRED = {
     "scope_clear", "risk_signals", "changed_paths", "write_authorized",
     "authorization_reference", "approved_paths", "risk_review_reference",
     "failure_kind", "phase_attempt", "available_models",
+    "effective_parent_sandbox", "permission_evidence_reference",
 }
+PARENT_SANDBOXES = {"read-only", "workspace-write", "danger-full-access", "unknown"}
 STATE_KEYS = {"task_id", "phase", "role", "checkpoint_closed"}
 LEVELS = {"low", "medium", "high"}
 MAX_INPUT_BYTES = 131_072
@@ -118,7 +120,9 @@ def validate_task(task: Any) -> dict[str, Any]:
     t["available_models"] = _list(t["available_models"], "available_models")
     t["changed_paths"] = _paths(t["changed_paths"], "changed_paths")
     t["approved_paths"] = _paths(t["approved_paths"], "approved_paths")
-    for key in ("authorization_reference", "risk_review_reference"):
+    if _string(t["effective_parent_sandbox"], "effective_parent_sandbox") not in PARENT_SANDBOXES:
+        raise InputError("unknown effective_parent_sandbox")
+    for key in ("authorization_reference", "risk_review_reference", "permission_evidence_reference"):
         t[key] = _string(t[key], key, empty=True)
     if _string(t["failure_kind"], "failure_kind") not in FAILURE_KINDS:
         raise InputError("unknown failure_kind")
@@ -152,6 +156,11 @@ def choose_route(task: Any, state: Any = None) -> dict[str, Any]:
         "task_id": t["task_id"], "phase": t["phase"],
         "decision": "HOLD", "role": None, "requested_model": None,
         "requested_effort": None, "requested_sandbox": None,
+        # Supplied evidence claims are not independently verified by this helper.
+        "required_parent_sandbox": None,
+        "effective_parent_sandbox": t["effective_parent_sandbox"],
+        "permission_evidence_reference": t["permission_evidence_reference"],
+        "runtime_permissions_verified": False,
         "observed_model": None, "runtime_dispatch_verified": False,
         "authority_granted": False, "automatic_remote_write": False,
         "reason_codes": [], "transition": "none", "next_state": None,
@@ -216,9 +225,18 @@ def choose_route(task: Any, state: Any = None) -> dict[str, Any]:
         transition = "keep_role" if role == old else "stop_child_then_escalate_at_checkpoint"
 
     model, effort, sandbox, _ = ROLE_SPECS[role]
-    out.update(role=role, requested_model=model, requested_effort=effort, requested_sandbox=sandbox)
+    required_parent = "workspace-write" if role == "mv_builder" else "read-only"
+    out.update(role=role, requested_model=model, requested_effort=effort,
+               requested_sandbox=sandbox, required_parent_sandbox=required_parent)
     if model not in t["available_models"]:
         return hold("REQUIRED_MODEL_UNAVAILABLE_NO_SILENT_FALLBACK")
+    # Gate the final (including sticky) role using current parent evidence, never
+    # the role-local sandbox default. Neither a stronger mode nor unknown qualifies.
+    if t["effective_parent_sandbox"] != required_parent:
+        return hold("BUILDER_REQUIRES_WORKSPACE_WRITE_PARENT" if role == "mv_builder"
+                    else "READONLY_ROLE_REQUIRES_READONLY_PARENT")
+    if not t["permission_evidence_reference"].strip():
+        return hold("CURRENT_PARENT_PERMISSION_EVIDENCE_REQUIRED")
     out.update(
         decision="DISPATCH_REQUEST", transition=transition,
         next_state={"task_id": t["task_id"], "phase": t["phase"], "role": role, "checkpoint_closed": False},

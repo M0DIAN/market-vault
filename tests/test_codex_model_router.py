@@ -22,6 +22,8 @@ def task(**updates):
         "risk_signals": [], "changed_paths": [], "write_authorized": False,
         "authorization_reference": "", "approved_paths": [], "risk_review_reference": "",
         "failure_kind": "none", "phase_attempt": 1, "available_models": MODELS.copy(),
+        "effective_parent_sandbox": "read-only",
+        "permission_evidence_reference": "offline-fixture:parent-turn-1",
     }
     value.update(updates)
     return value
@@ -79,23 +81,24 @@ class RoutingTests(unittest.TestCase):
         self.assertIn("EXPLICIT_SCOPED_WRITE_AUTHORIZATION_REQUIRED", r["reason_codes"])
 
     def test_approved_plan_builder(self):
-        r = choose_route(task(phase="implementation", write_authorized=True,
+        r = choose_route(task(phase="implementation", effective_parent_sandbox="workspace-write", write_authorized=True,
                              authorization_reference="work-order-1", changed_paths=["src/ui.py"], approved_paths=["src/ui.py"]))
         self.assertEqual(r["role"], "mv_builder")
+        self.assertEqual(r["decision"], "DISPATCH_REQUEST")
         self.assertFalse(r["authority_granted"])
 
     def test_out_of_scope_write_holds(self):
-        r = choose_route(task(phase="implementation", write_authorized=True,
+        r = choose_route(task(phase="implementation", effective_parent_sandbox="workspace-write", write_authorized=True,
                              authorization_reference="work-order-1", changed_paths=["src/data.py"], approved_paths=["src/ui.py"]))
         self.assertIn("PATH_OUTSIDE_APPROVED_SCOPE", r["reason_codes"])
 
     def test_sensitive_write_needs_review(self):
-        r = choose_route(task(phase="implementation", write_authorized=True,
+        r = choose_route(task(phase="implementation", effective_parent_sandbox="workspace-write", write_authorized=True,
                              authorization_reference="work-order-1", changed_paths=["AGENTS.md"], approved_paths=["AGENTS.md"]))
         self.assertIn("ASTRA_READONLY_PLAN_REVIEW_REQUIRED_BEFORE_WRITING", r["reason_codes"])
 
     def test_sensitive_write_after_review(self):
-        r = choose_route(task(phase="implementation", write_authorized=True,
+        r = choose_route(task(phase="implementation", effective_parent_sandbox="workspace-write", write_authorized=True,
                              authorization_reference="work-order-1", risk_review_reference="review-record-1",
                              changed_paths=["AGENTS.md"], approved_paths=["AGENTS.md"]))
         self.assertEqual(r["decision"], "DISPATCH_REQUEST")
@@ -203,6 +206,135 @@ class RoutingTests(unittest.TestCase):
         for phase in PHASES:
             self.assertFalse(choose_route(task(phase=phase))["authority_granted"])
 
+    def test_all_readonly_phases_require_exact_readonly_parent(self):
+        phases = {
+            "mechanical": ("mv_inventory", "gpt-6-luna", "low"),
+            "discovery": ("mv_analyst", "gpt-6-sol", "medium"),
+            "adversarial_review": ("mv_reasoner", "gpt-6-astra", "medium"),
+            "evidence_convergence": ("mv_reasoner", "gpt-6-astra", "medium"),
+            "patch_planning": ("mv_analyst", "gpt-6-sol", "medium"),
+            "validation_readback": ("mv_inventory", "gpt-6-luna", "low"),
+            "exact_head_review": ("mv_reviewer", "gpt-6-astra", "high"),
+            "publish_gate": ("mv_reviewer", "gpt-6-astra", "high"),
+        }
+        for phase, expected in phases.items():
+            for parent in ("read-only", "workspace-write", "danger-full-access", "unknown"):
+                with self.subTest(phase=phase, parent=parent):
+                    r = choose_route(task(phase=phase, complexity="low", effective_parent_sandbox=parent))
+                    self.assertEqual((r["role"], r["requested_model"], r["requested_effort"]), expected)
+                    self.assertEqual(r["required_parent_sandbox"], "read-only")
+                    self.assertEqual(r["effective_parent_sandbox"], parent)
+                    self.assertEqual(r["decision"], "DISPATCH_REQUEST" if parent == "read-only" else "HOLD")
+                    self.assertFalse(r["authority_granted"])
+                    self.assertFalse(r["automatic_remote_write"])
+                    self.assertFalse(r["runtime_permissions_verified"])
+                    if parent != "read-only":
+                        self.assertEqual(r["reason_codes"][-1], "READONLY_ROLE_REQUIRES_READONLY_PARENT")
+                        self.assertIsNone(r["next_state"])
+                        self.assertEqual(r["transition"], "none")
+
+    def test_builder_requires_exact_workspace_write_parent_and_authority(self):
+        for parent in ("read-only", "workspace-write", "danger-full-access", "unknown"):
+            with self.subTest(parent=parent):
+                r = choose_route(task(
+                    phase="implementation", effective_parent_sandbox=parent,
+                    write_authorized=True, authorization_reference="work-order-1",
+                    changed_paths=["fixture.txt"], approved_paths=["fixture.txt"]))
+                self.assertEqual((r["role"], r["requested_model"], r["requested_effort"]),
+                                 ("mv_builder", "gpt-6-sol", "medium"))
+                self.assertEqual(r["required_parent_sandbox"], "workspace-write")
+                self.assertEqual(r["decision"], "DISPATCH_REQUEST" if parent == "workspace-write" else "HOLD")
+                self.assertFalse(r["authority_granted"])
+                self.assertFalse(r["automatic_remote_write"])
+                if parent != "workspace-write":
+                    self.assertEqual(r["reason_codes"][-1], "BUILDER_REQUIRES_WORKSPACE_WRITE_PARENT")
+                    self.assertIsNone(r["next_state"])
+        r = choose_route(task(phase="implementation", effective_parent_sandbox="workspace-write"))
+        self.assertEqual(r["decision"], "HOLD")
+        self.assertIn("EXPLICIT_SCOPED_WRITE_AUTHORIZATION_REQUIRED", r["reason_codes"])
+
+    def test_remote_write_holds_for_every_parent_even_without_permission_evidence(self):
+        for parent in ("read-only", "workspace-write", "danger-full-access", "unknown"):
+            for reference in ("parent-turn-evidence-1", ""):
+                with self.subTest(parent=parent, reference=reference):
+                    r = choose_route(task(phase="remote_write", effective_parent_sandbox=parent,
+                                          permission_evidence_reference=reference, write_authorized=True,
+                                          authorization_reference="owner-message"))
+                    self.assertEqual(r["decision"], "HOLD")
+                    self.assertEqual(r["reason_codes"],
+                                     ["USE_SEPARATELY_AUTHORIZED_EXECUTOR_AND_EXACT_OBJECT_RECHECK"])
+                    self.assertIsNone(r["next_state"])
+                    self.assertFalse(r["authority_granted"])
+                    self.assertFalse(r["automatic_remote_write"])
+
+    def test_matching_parent_without_evidence_reference_holds(self):
+        for phase, parent in (("discovery", "read-only"), ("implementation", "workspace-write")):
+            for reference in ("", "   "):
+                with self.subTest(phase=phase, reference=reference):
+                    r = choose_route(task(phase=phase, effective_parent_sandbox=parent,
+                                          permission_evidence_reference=reference, write_authorized=True,
+                                          authorization_reference="work-order-1", changed_paths=["fixture.txt"],
+                                          approved_paths=["fixture.txt"]))
+                    self.assertEqual(r["decision"], "HOLD")
+                    self.assertEqual(r["reason_codes"][-1], "CURRENT_PARENT_PERMISSION_EVIDENCE_REQUIRED")
+                    self.assertIsNone(r["next_state"])
+
+    def test_parent_permission_fields_are_required_not_inferred_from_role(self):
+        for field in ("effective_parent_sandbox", "permission_evidence_reference"):
+            value = task(); del value[field]
+            with self.subTest(field=field), self.assertRaises(InputError):
+                choose_route(value)
+
+    def test_parent_permission_schema_is_closed_and_typed(self):
+        for parent in (None, True, [], {}, "", "READ-ONLY", "workspace_write", "external-sandbox"):
+            with self.subTest(parent=parent), self.assertRaises(InputError):
+                choose_route(task(effective_parent_sandbox=parent))
+        for reference in (None, True, [], {}, "line\nbreak", "x" * 1025):
+            with self.subTest(reference=reference), self.assertRaises(InputError):
+                choose_route(task(permission_evidence_reference=reference))
+
+    def test_permission_claims_are_distinct_from_role_defaults_and_runtime_proof(self):
+        r = choose_route(task(effective_parent_sandbox="workspace-write",
+                              permission_evidence_reference="runtime-record:parent-7/turn-3"))
+        self.assertEqual(r["requested_sandbox"], "read-only")
+        self.assertEqual(r["required_parent_sandbox"], "read-only")
+        self.assertEqual(r["effective_parent_sandbox"], "workspace-write")
+        self.assertEqual(r["permission_evidence_reference"], "runtime-record:parent-7/turn-3")
+        self.assertFalse(r["runtime_permissions_verified"])
+        self.assertFalse(r["runtime_dispatch_verified"])
+        self.assertEqual(r["decision"], "HOLD")
+
+    def test_sticky_role_cannot_bypass_current_parent_permission_gate(self):
+        old = {"task_id": "routing-smoke-1", "phase": "discovery", "role": "mv_reasoner", "checkpoint_closed": False}
+        before = copy.deepcopy(old)
+        r = choose_route(task(effective_parent_sandbox="workspace-write"), old)
+        self.assertEqual(r["role"], "mv_reasoner")
+        self.assertIn("STICKY_NO_DOWNGRADE_BEFORE_CHECKPOINT", r["reason_codes"])
+        self.assertEqual(r["decision"], "HOLD")
+        self.assertEqual(r["reason_codes"][-1], "READONLY_ROLE_REQUIRES_READONLY_PARENT")
+        self.assertIsNone(r["next_state"])
+        self.assertEqual(old, before)
+
+    def test_matching_parent_cannot_bypass_model_availability(self):
+        for phase, parent in (("discovery", "read-only"), ("implementation", "workspace-write")):
+            r = choose_route(task(phase=phase, effective_parent_sandbox=parent,
+                                  available_models=[], write_authorized=True,
+                                  authorization_reference="work-order-1", changed_paths=["fixture.txt"],
+                                  approved_paths=["fixture.txt"]))
+            self.assertEqual(r["decision"], "HOLD")
+            self.assertIn("REQUIRED_MODEL_UNAVAILABLE_NO_SILENT_FALLBACK", r["reason_codes"])
+
+    def test_cli_permission_mismatch_is_nonzero_without_next_state(self):
+        proc = subprocess.run([sys.executable, str(ROOT / "scripts/codex_model_router.py"), "--task", "-"],
+                              input=json.dumps(task(phase="mechanical", complexity="low",
+                                                    effective_parent_sandbox="workspace-write")),
+                              text=True, capture_output=True, check=False)
+        self.assertEqual(proc.returncode, 3, proc.stderr)
+        r = json.loads(proc.stdout)
+        self.assertEqual(r["decision"], "HOLD")
+        self.assertEqual(r["reason_codes"][-1], "READONLY_ROLE_REQUIRES_READONLY_PARENT")
+        self.assertIsNone(r["next_state"])
+
     def test_agent_toml_matches_policy(self):
         for name, (model, effort, sandbox, _) in ROLE_SPECS.items():
             p = ROOT / ".codex" / "agents" / f"{name}.toml"
@@ -237,7 +369,7 @@ class RoutingTests(unittest.TestCase):
 
     def test_repeated_writer_failure_holds_after_all_authority_checks(self):
         result = choose_route(task(
-            phase="implementation", phase_attempt=3, failure_kind="test",
+            phase="implementation", effective_parent_sandbox="workspace-write", phase_attempt=3, failure_kind="test",
             write_authorized=True, authorization_reference="work-order-1",
             risk_review_reference="independent-plan-reference",
             changed_paths=["fixture.txt"], approved_paths=["fixture.txt"]))

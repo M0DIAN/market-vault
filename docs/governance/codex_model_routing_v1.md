@@ -1,14 +1,17 @@
 # Codex phase/risk model routing v1
 
 Status: repository integration for independent review; automatic routing is inactive.
-Runtime integration is IMPLEMENTED_NOT_WIRED on the probed Windows installation.
+Activation remains blocked by runtime permission evidence and strict-config compatibility.
+The router permission gate below remediates the accepted Phase-C workflow failure;
+offline PASS is not proof of a live read-only boundary.
 This is a development-agent workflow, not MarketVault runtime functionality.
 It refines existing gates; it does not replace AGENTS.md or grant new authority.
 
 ## Mechanism and limits
 
 The primary Codex session normally stays on GPT-6 Sol / medium. At a phase boundary
-it supplies a structured task to `scripts/codex_model_router.py`, reads the JSON
+it supplies a structured task, including current effective parent permissions and
+an evidence reference, to `scripts/codex_model_router.py`, reads the JSON
 routing decision, dispatches a named project custom agent, waits for completion,
 and independently verifies the checkpoint before advancing. It does not need to
 change the primary session's UI model on every command.
@@ -29,7 +32,7 @@ review remain the enforcement mechanisms.
 
 ## Role allocation (policy choices, not benchmark claims)
 
-| Role | Model / effort | Intended use | Expected default sandbox |
+| Role | Model / effort | Intended use | Desired role sandbox default |
 | --- | --- | --- | --- |
 | mv_inventory | gpt-6-luna / low | Bounded extraction and validation-log readback | read-only |
 | mv_analyst | gpt-6-sol / medium | Normal discovery and narrow patch planning | read-only |
@@ -58,7 +61,12 @@ is unavailable. Fix access/configuration or obtain an explicit revised work orde
    a writer's privileges. A reviewed hard plan can be implemented by Sol.
 6. Only explicitly bounded, low-risk mechanical work qualifies for Luna. Broader
    discovery is not mechanical merely because its first command is a search.
-7. Keep the role inside an open phase; no downgrade until its checkpoint closes.
+7. After final role selection (including sticky state), require the parent sandbox
+   to be exactly read-only for inventory/analyst/reasoner/reviewer, or exactly
+   workspace-write for builder. A mismatch returns HOLD; danger-full-access and
+   unknown never satisfy either gate. Matching permissions also require a nonblank
+   evidence reference. No dispatch state is emitted on HOLD.
+8. Keep the role inside an open phase; no downgrade until its checkpoint closes.
    New evidence may require stopping the child and starting an upgraded role with
    an explicit handoff. Never change a model mid-tool-call or retry hidden writes.
 
@@ -68,6 +76,51 @@ wait for CI. Run approved deterministic checks with the existing runner, and pas
 only terminal results or relevant failure excerpts to a model. Test execution may
 write caches and fixtures; `validation_readback` is log reading, not authorization
 to run tests in a supposedly read-only sandbox.
+
+## Parent permission input/output contract
+
+Policy version 1.1.0 keeps the strict `schema_version=1` task envelope and adds two
+mandatory fields. Older task JSON without them is INVALID_INPUT (exit 2); there is
+no inferred permission mode or compatibility default. All existing fields remain
+required. Add these fields to the coordinator's task object, for example:
+
+```json
+{
+  "effective_parent_sandbox": "read-only",
+  "permission_evidence_reference": "runtime-evidence:parent-session-7/turn-3"
+}
+```
+
+This fragment is not a complete CLI input. `effective_parent_sandbox` is a closed
+enum: `read-only`, `workspace-write`, `danger-full-access`, `unknown`. The reference
+is a bounded string pointing to evidence, not credentials or raw configuration.
+A blank reference is accepted as missing evidence and returns HOLD before dispatch.
+
+The coordinator produces the current effective parent observation from runtime
+metadata and applicable permission-boundary evidence, and carries it with the
+parent session/turn identity in the referenced record. The router consumes the
+claim before every dispatch; it cannot authenticate that record or establish an
+OS security boundary. The record is valid only for the observed session/turn and
+permission configuration. Reacquire it after any change; do not use cached role
+defaults, requested permissions, AGENTS prose or model self-report as its source.
+Before task effects, the coordinator verifies the child's actual runtime policy
+against the required mode and stops on unknown or mismatched observations.
+
+Outputs keep these distinct:
+
+- `requested_sandbox`: the desired role-local default, retained for compatibility.
+- `required_parent_sandbox`: the policy prerequisite for the selected role.
+- `effective_parent_sandbox` / `permission_evidence_reference`: echoed coordinator
+  claims, not independently verified observations from this Python helper.
+- `runtime_permissions_verified=false`: the helper never attests live enforcement.
+
+Mismatches return `READONLY_ROLE_REQUIRES_READONLY_PARENT` or
+`BUILDER_REQUIRES_WORKSPACE_WRITE_PARENT`. Missing evidence with a matching mode
+returns `CURRENT_PARENT_PERMISSION_EVIDENCE_REQUIRED`. HOLD uses exit 3 and has no
+`next_state`; the coordinator must stop instead of launching the selected role.
+Other guards may HOLD earlier (including missing authority/models and exhausted
+attempts). `remote_write` always holds regardless of sandbox. Selection grants
+neither authority nor automatic remote writes.
 
 ## Handoff and observable evidence
 
@@ -92,21 +145,30 @@ D-drive scratch outside every repository/worktree.
 
 ## Permission and review boundaries
 
-Custom-agent sandbox entries are DEFAULTS, not hard caps. Local Codex can reapply
-parent-turn live permission overrides to children. Before execution check the
-actual effective permission policy. An Astra selection grants no extra write or
-network permission. Do not set danger-full-access, never-approval, global trust,
-new writable roots, credentials or policy bypass flags to make routing work.
+Model/effort routing is automatic when the coordinator consumes the policy;
+permission escalation is NOT automatic. Native child agents inherit/reapply the
+parent turn's live permission mode. Role-local `sandbox_mode` values are desired
+defaults, non-authoritative when a live parent override exists, and insufficient
+enforcement proof. The coordinator must supply current effective parent sandbox
+evidence before dispatch. A mismatch returns HOLD even when the role TOML says
+read-only. The accepted Phase-C own-TEMP write success under workspace-write is a
+permission-boundary failure, not a read-only success.
+
+Switching the parent permission mode is a separate explicit workflow action under
+existing authorization. The router neither changes that mode nor requests broader
+permissions to clear HOLD. An Astra selection grants no extra write or network
+permission. Do not set danger-full-access, never-approval, global trust, new
+writable roots, credentials or policy bypass flags to make routing work.
 
 One spawned child at a time is the v1 concurrency setting. The coordinator must
 not edit while a builder is active. The setting alone does not prevent the primary
 session or other processes from writing: verify the operational single-writer rule.
 
 The mv_reviewer role is review ASSISTANCE. A different model or name alone is not
-independence. For formal review use a distinct process/session that did not author
-the change, does not inherit the implementation transcript and reacquires exact
-objects. If the UI/client cannot prove clean review context, use the existing
-external reviewer; never label an inherited implementation thread independent.
+independence. Formal independent review still uses the existing external reviewer
+in a distinct process/session that did not author the change, does not inherit the
+implementation transcript and reacquires exact objects. Never label an inherited
+implementation thread independent.
 The new routing implementation/configuration must itself be reviewed under the
 existing workflow, not self-approved by its newly written reviewer instructions.
 
@@ -128,8 +190,9 @@ ENVIRONMENT failure and leaves activation blocked.
 Offline gate: focused tests, TOML parsing and role/model consistency, negative
 cases, Python syntax, repository hygiene and existing CI tier classifier. Do not
 assume docs_fast: this change includes scripts/tests/agent config. Never broaden the
-CI whitelist to reduce validation effort. Use existing D-only Windows FULL entry
-points when the actual classifier requires them.
+CI whitelist to reduce validation effort. Follow the Development Playbook's local
+validation levels and natural exact-head CI requirement. If local FULL is run,
+use the existing D-only Windows FULL entry point.
 
 Live gate: at most five bounded smoke-role calls for initial activation, one per
 role. Use normal account credentials and a disposable D-drive fixture for the
@@ -144,33 +207,34 @@ LIVE_ROLE_DISPATCH, EFFECTIVE_PERMISSIONS, REVIEW_CONTEXT_ISOLATION and ACTIVATI
 An unknown live field blocks automatic activation but does not turn an offline test
 into FAIL or PASS for an unrelated claim.
 
-## Local integration observation (2026-09-23)
+## Local integration evidence and remediation (2026-09-23)
 
-The installed client reports `codex-cli 0.155.0-alpha.9.2`. Its normal app-server
-`model/list` returns `gpt-6-luna`, `gpt-6-sol`, and `gpt-6-astra` with the required
-low/medium/high effort choices. This proves catalog availability, not inference.
+The accepted failed head is `ba2b6226d470e8f2b4e11087e424087765169200`, tree
+`a873663bd050b340a9976f5d5c24e9e315eb6f86`. Earlier initial-integration observations
+of an untrusted project were superseded by owner-authorized Phase B: normal
+`config/read` loaded the exact trusted project and resolved Sol/medium. The client
+was `codex-cli 0.155.0-alpha.9.2`; its catalog exposed Luna/low, Sol/medium and
+Astra/medium/high. Catalog availability and configuration loading are distinct
+from completed inference.
 
-`config/read` with the source repository as cwd recognizes the project layer but
-returns a `disabledReason`: the project is not trusted. The merged effective
-configuration therefore retains the existing user Astra/xhigh default and has no
-active project agents settings. A no-turn ephemeral `thread/start` confirms
-Astra/xhigh, on-request approvals, the user reviewer, and a read-only permission
-profile with network disabled. No model turn or role smoke was submitted.
+Phase C established that mv_inventory requested `gpt-6-luna / low / read-only`
+but actually ran `gpt-6-luna / low / workspace-write`. Its harmless own-TEMP write
+succeeded with no approval escalation. This is the accepted
+`AGENT_WORKFLOW_IMPLEMENTABILITY_FAILURE`, blocker
+`PARENT_RUNTIME_SANDBOX_OVERRIDES_ROLE_READONLY_DEFAULT_WITHOUT_ROUTER_GATE`.
+The evidence is retained; declaring read-only in TOML did not enforce it.
 
-Strict startup separately fails on a pre-existing user configuration field,
-`computer_use.windows.always_allowed_app_ids`. Normal startup reports that field
-as ignored. Neither observation authorizes editing the user's global settings.
-Project trust, permissions, provider and authentication were not changed.
+The remediation adds the missing pre-dispatch parent permission gate and offline
+phase-matrix tests. It changes no role model/default, trust, client or global
+configuration. It does not rerun live role smokes or retroactively validate role
+boundaries. Post-remediation live permissions and dispatch enforcement remain
+NOT_VERIFIED until separately authorized runtime validation and external review.
 
-Consequently PROJECT_CONFIG_LOADED=false; LIVE_ROLE_DISPATCH_VERIFIED,
-EFFECTIVE_PERMISSIONS_VERIFIED (role boundaries), and
-REVIEW_CONTEXT_ISOLATION_VERIFIED remain NOT_VERIFIED. Reading AGENTS.md in the
-ephemeral session is not evidence of role/config activation. The initial role
-smoke budget remains unused (0/5); its builder fixture must stay outside all
-repositories on the approved D drive. When the owner separately resolves the
-environment, rerun these gates in a new coordinator before any activation claim.
-Keep ordinary manually selected Sol available as the fallback workflow; this
-probe did not change the active session or user default to Sol.
+Strict startup still has the known incompatibility with the existing user field
+`computer_use.windows.always_allowed_app_ids`; this remediation does not edit it.
+`STRICT_CONFIG_COMPATIBLE=false`, `AUTOMATIC_ROUTING_ACTIVATED=false`, and
+`MERGE_AUTHORIZED=false` remain in force. Ordinary manually selected coordination
+and the existing independent-review workflow remain available.
 
 ## Rollback and evaluation
 

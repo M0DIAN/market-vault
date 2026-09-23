@@ -449,6 +449,19 @@ do not classify by file extension or command length alone. Invoke the helper wit
 `--task <outside-repository-json>` and optional `--state <prior-phase-state>`.
 Treat exit 2/INVALID_INPUT or exit 3/HOLD as a stop, not permission to guess a role.
 A DISPATCH_REQUEST is a selection, not proof that the requested model ran.
+Model/effort routing is automatic; permission escalation is NOT automatic.
+Before each dispatch supply `effective_parent_sandbox` and a current
+`permission_evidence_reference` bound to the parent session/turn. Native children
+inherit/reapply the parent turn's live permission mode: role-local `sandbox_mode`
+is a desired/default setting, not sufficient enforcement proof. Read-only roles
+require a read-only parent; mv_builder requires a workspace-write parent plus the
+existing scoped authorization. A mismatch, danger-full-access, unknown mode or
+missing evidence returns HOLD. Treat `required_parent_sandbox` as the prerequisite;
+the input claim and role default do not verify the effective runtime boundary.
+Switching the parent permission mode is a separate explicit workflow action under
+existing authorization, never a router action or implicit response to HOLD.
+Reacquire current permission evidence after any session/turn or permission change;
+verify the child's effective runtime policy before task effects and stop on drift.
 
 Dispatch the named custom agent in `.codex/agents/`, wait for its result, close its
 thread, and verify the checkpoint before dispatching another. Do not create
