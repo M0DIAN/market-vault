@@ -4426,7 +4426,8 @@ ROUND15_CURRENT_NORMATIVE_REGION_AT_THAT_HEAD=closure_table_1_5,registry_1_9_1,r
 ROUND15_CURRENT_NORMATIVE_REGION_AT_THAT_HEAD_IS_CURRENT=false
 ROUND15_CURRENT_NORMATIVE_REGION_AT_THAT_HEAD_EQUALS_THE_CURRENT_BARE_KEY=true
 ROUND16_CURRENT_NORMATIVE_REGION_ROUND=16
-CURRENT_NORMATIVE_REGION_ROUND=17
+ROUND17_CURRENT_NORMATIVE_REGION_ROUND=17
+CURRENT_NORMATIVE_REGION_ROUND=18
 CURRENT_NORMATIVE_REGION_CURRENT_RECORD=current_remediation_record_1_14
 CURRENT_NORMATIVE_REGION_IS_DERIVED_FROM_A3D_CURRENT_REMEDIATION_ROUND=true
 CURRENT_NORMATIVE_REGION_LATEST_CURRENT_RECORD_IS_ROUND_11=false
@@ -4867,7 +4868,7 @@ A3D_ROUND16_FORCE_PUSH_PERFORMED=false
 A3D_ROUND16_MERGE_PERFORMED=false
 A3D_ROUND16_READY_PERFORMED=false
 A3D_ROUND16_STOPS_FOR_FRESH_INDEPENDENT_EXACT_HEAD_REVIEW=true
-A3D_CURRENT_REMEDIATION_ROUND=17
+ROUND17_A3D_CURRENT_REMEDIATION_ROUND=17
 CURRENT_REMEDIATION_ROUND_MATCHES_HEAD=true
 CURRENT_PARENT_POINTER_MATCHES_DIRECT_PARENT=true
 CURRENT_POINTER_VALUE_MATCHES_REMOTE_TRUTH=true
@@ -5134,6 +5135,32 @@ A3D_ROUND17_FORCE_PUSH_PERFORMED=false
 A3D_ROUND17_MERGE_PERFORMED=false
 A3D_ROUND17_READY_PERFORMED=false
 A3D_ROUND17_STOPS_FOR_FRESH_INDEPENDENT_EXACT_HEAD_REVIEW=true
+```
+
+#### 1.14.13 Round-18 exact-head ledger identity closure
+
+The seventeenth exact-head review rejected the correction head
+`db613af64131fdde10d5c4a05da49bfddc663d23` (tree
+`2fa0d9bcf0a7823761e77bda6b502eb34765e131`) for two
+`GOVERNANCE_LEDGER_CANONICALITY_FAILURE` findings: its bare current-parent
+pointer did not equal its actual Git parent, and its current remediation round
+still identified round 17 even though it followed the round-17 commit. The
+failed head remains an immutable historical commit and is the direct parent of
+this single round-18 correction commit. The preceding round-17 values remain
+under their round-qualified keys; only the bare current values advance.
+
+```text
+A3D_REMEDIATION_ROUND_18=18
+A3D_REMEDIATION_ROUND_18_PARENT=db613af64131fdde10d5c4a05da49bfddc663d23
+A3D_REMEDIATION_ROUND_18_COMMIT_PARENT=db613af64131fdde10d5c4a05da49bfddc663d23
+A3D_REMEDIATION_ROUND_18_COMMIT_COUNT=1
+A3D_CURRENT_REMEDIATION_ROUND=18
+A3D_ROUND18_FAILED_EXACT_HEAD=db613af64131fdde10d5c4a05da49bfddc663d23
+A3D_ROUND18_FAILED_EXACT_HEAD_TREE=2fa0d9bcf0a7823761e77bda6b502eb34765e131
+A3D_ROUND18_CHANGED_FILE=docs/governance/l4_privileged_linux_qualification_v1.md
+A3D_ROUND18_FROZEN_LINUX_RUNTIME_CORE_UNCHANGED=true
+A3D_ROUND18_AMEND_REBASE_RESET_FORCE_PUSH=false
+A3D_ROUND18_MERGE_AUTHORIZED=false
 ```
 
 ## 2. Exact Base Record
@@ -10870,14 +10897,17 @@ A3D_HISTORY_REWRITTEN=false
 ```
 
 The single bare `A3D_REMEDIATION_COMMIT_PARENT` token carries the direct parent of
-the head under remediation, which is the failed sixteenth-review head, and that is
+the head under remediation, which is the failed seventeenth-review/correction
+head, and that is
 what makes the failed head auditable from the branch tip. Round 7 introduced the
 token with its own parent, round 9 left it pointing at round 7, round 10 re-pointed
 it at the failed ninth-review head, round 11 re-pointed it at the failed
 tenth-review head, round 12 re-pointed it at the failed eleventh-review head, round
 15 re-pointed it at the failed fourteenth-review head, round 16 re-pointed it at
-the failed fifteenth-review head, and round 17 re-points it at the failed
-sixteenth-review head. Every earlier round's value stays in this document
+the failed fifteenth-review head, round 17 re-pointed it at the failed
+sixteenth-review head, and round 18 re-points it at the failed
+seventeenth-review/correction head `db613af64131fdde10d5c4a05da49bfddc663d23`.
+Every earlier round's value stays in this document
 under its own round-qualified name: the round-3 value is
 `A3D_REMEDIATION_ROUND_3_COMMIT_PARENT`, the round-5 value is
 `A3D_REMEDIATION_ROUND_5_COMMIT_PARENT`, the round-6 value is
@@ -10905,9 +10935,11 @@ round-qualified key, and its alias is stated here with the others.
 ```text
 GIT_CURRENT_PARENT_TOKEN=A3D_REMEDIATION_COMMIT_PARENT
 GIT_CURRENT_PARENT_TOKEN_OCCURRENCE_COUNT=1
-GIT_CURRENT_PARENT_TOKEN_VALUE=4bb2f8b581baf7c6d5ad2638cb410395d951ca39
+ROUND17_GIT_CURRENT_PARENT_TOKEN_VALUE=4bb2f8b581baf7c6d5ad2638cb410395d951ca39
+GIT_CURRENT_PARENT_TOKEN_VALUE=db613af64131fdde10d5c4a05da49bfddc663d23
 GIT_CURRENT_PARENT_TOKEN_UNIQUE=true
-GIT_CURRENT_PARENT_TOKEN_IS_THE_ROUND_17_DIRECT_PARENT=true
+ROUND17_GIT_CURRENT_PARENT_TOKEN_IS_THE_ROUND_17_DIRECT_PARENT=true
+GIT_CURRENT_PARENT_TOKEN_IS_THE_ROUND_18_DIRECT_PARENT=true
 GIT_HISTORICAL_PARENT_TOKEN_ROUND_7=A3D_REMEDIATION_ROUND_7_COMMIT_PARENT
 GIT_HISTORICAL_PARENT_TOKEN_ROUND_10=A3D_REMEDIATION_ROUND_10_PARENT
 GIT_HISTORICAL_PARENT_TOKEN_ROUND_11=A3D_REMEDIATION_ROUND_11_COMMIT_PARENT
@@ -10915,7 +10947,7 @@ GIT_HISTORICAL_PARENT_TOKEN_ROUND_12=A3D_REMEDIATION_ROUND_12_COMMIT_PARENT
 GIT_HISTORICAL_PARENT_TOKEN_ROUND_13=A3D_REMEDIATION_ROUND_13_PARENT
 GIT_HISTORICAL_PARENT_TOKEN_ROUND_14=A3D_REMEDIATION_ROUND_14_PARENT
 GIT_HISTORICAL_PARENT_TOKEN_ROUND_15=A3D_REMEDIATION_ROUND_15_COMMIT_PARENT
-A3D_REMEDIATION_COMMIT_PARENT=4bb2f8b581baf7c6d5ad2638cb410395d951ca39
+A3D_REMEDIATION_COMMIT_PARENT=db613af64131fdde10d5c4a05da49bfddc663d23
 A3D_REMEDIATION_ROUND_7_COMMIT_PARENT=c2a88fa02f62b1332a6f8cabd779d89bd260adfb
 A3D_REMEDIATION_ROUND_11_COMMIT_PARENT=9ee489c63c2efe6c63ce677c12608f5549affeda
 A3D_REMEDIATION_ROUND_12_COMMIT_PARENT=c70cd367c7f70478b283d472e9e06a42420d04ad
