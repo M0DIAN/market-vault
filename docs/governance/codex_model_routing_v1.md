@@ -1,9 +1,12 @@
 # Codex phase/risk model routing v1
 
-Status: repository integration for independent review; automatic routing is inactive.
-Activation remains blocked by runtime permission evidence and strict-config compatibility.
-The router permission gate below remediates the accepted Phase-C workflow failure;
-offline PASS is not proof of a live read-only boundary.
+Status: routing V1 technical gate PASS; activation-ready only for the pinned,
+normal-mode client/environment validated by the externally accepted Phase D2.
+Automatic routing remains inactive until the reviewed tree is merged and the
+formal-main activation checks below pass. Strict parsing remains incompatible;
+the bounded external-tooling exception below is not a strict-parsing PASS.
+The accepted Phase-C permission failure is retained; its remediation and the
+subsequent live boundary evidence are separate checkpoints.
 This is a development-agent workflow, not MarketVault runtime functionality.
 It refines existing gates; it does not replace AGENTS.md or grant new authority.
 
@@ -184,8 +187,12 @@ Use the current documented standalone custom-agent TOML schema only when the
 installed client actually supports it. Do not load both standalone roles and legacy
 role declarations for the same name. Project settings must really load for the
 trusted project; do not silently change project trust. Check strict config parsing
-when supported by the installed version. A client incompatibility is a TOOLING or
-ENVIRONMENT failure and leaves activation blocked.
+when supported by the installed version and report its result separately. A
+compatibility failure that prevents project loading, native dispatch, model/effort
+observation or required permission enforcement blocks activation. The specific
+pre-existing strict-parser failure documented below is a known non-routing tooling
+limitation only for the pinned, actually tested normal-mode environment. No other
+client/configuration incompatibility inherits that exception.
 
 Offline gate: focused tests, TOML parsing and role/model consistency, negative
 cases, Python syntax, repository hygiene and existing CI tier classifier. Do not
@@ -204,7 +211,7 @@ files. Do not claim enforcement without an actual observation.
 
 Report separately: OFFLINE_POLICY_TESTS, CLIENT_CONFIG_LOAD, MODEL_CATALOG,
 LIVE_ROLE_DISPATCH, EFFECTIVE_PERMISSIONS, REVIEW_CONTEXT_ISOLATION and ACTIVATION.
-An unknown live field blocks automatic activation but does not turn an offline test
+An unknown required live field blocks automatic activation but does not turn an offline test
 into FAIL or PASS for an unrelated claim.
 
 ## Local integration evidence and remediation (2026-09-23)
@@ -224,17 +231,105 @@ succeeded with no approval escalation. This is the accepted
 `PARENT_RUNTIME_SANDBOX_OVERRIDES_ROLE_READONLY_DEFAULT_WITHOUT_ROUTER_GATE`.
 The evidence is retained; declaring read-only in TOML did not enforce it.
 
-The remediation adds the missing pre-dispatch parent permission gate and offline
-phase-matrix tests. It changes no role model/default, trust, client or global
-configuration. It does not rerun live role smokes or retroactively validate role
-boundaries. Post-remediation live permissions and dispatch enforcement remain
-NOT_VERIFIED until separately authorized runtime validation and external review.
+The permission remediation added the missing pre-dispatch parent permission gate
+and offline phase-matrix tests without changing role models/defaults, trust, the
+client or global configuration. That commit did not run live smokes. Its then-open
+live-validation checkpoint was subsequently closed by separately authorized Phase
+D2 and the owner's reported external final review: PASS. This does not erase the
+Phase-C failure or use the new mv_reviewer role to approve its own feature.
 
-Strict startup still has the known incompatibility with the existing user field
-`computer_use.windows.always_allowed_app_ids`; this remediation does not edit it.
-`STRICT_CONFIG_COMPATIBLE=false`, `AUTOMATIC_ROUTING_ACTIVATED=false`, and
-`MERGE_AUTHORIZED=false` remain in force. Ordinary manually selected coordination
-and the existing independent-review workflow remain available.
+## Accepted Phase-D2 closure and bounded activation policy
+
+The accepted repository exact-head review and Phase-D2 live evidence bind to head
+`364237ef09c81652290b31a2a3d3279b90178e7a`, tree
+`ebfabf711e1d209a2c015afe99ef880fcf9b3506`, with main
+`4279e53df361080f3271e30f8346fb7d80e7a834`. The final policy-only commit changes
+this document alone; it does not relabel those historical measurements or their
+review as observations of a new head. Recheck the unchanged router/configuration
+blobs and exact-head CI, then obtain the final external exact-head review before
+owner merge authorization. No merge authorization has been granted.
+
+Pinned tested environment (not a compatibility claim for other installations):
+
+- Windows Desktop-bundled client `0.155.0-alpha.9.2`, executable
+  `C:\Users\Administrator\AppData\Local\OpenAI\Codex\bin\247581e40ee272fb\codex.exe`;
+  binary SHA256 `bc45017e8239dc150258f69309ced9df6bbcdf5b8e4f346decf780ac0999e226`.
+- Exact trusted project root `D:\GitHub\market-vault`; normal-mode `config/read`
+  enabled its project layer and resolved `gpt-6-sol / medium`. Project config
+  file SHA256 `ae134422850c3375e0a7ac588e4bba6e7786a2db03e86b58ee24a26831e8324b`.
+- Unmodified user configuration SHA256
+  `e8b1ec88a037e9b85fc3936b662b22a1249bb748d70e7de696a9051bbd9f4ebf`. No full
+  configuration, credentials or Computer Use application list is included here.
+- Retained external D-drive evidence bundle `PHASE_D2_SANITIZED_EVIDENCE.zip`,
+  SHA256 `d41ebc3ca6da87ebdff79154b8ceb186b4bd82c7a47b9d59c2949d4da9f43aff`. Its manifest
+  includes native protocol carriers, completed-response telemetry, per-role
+  permission probes, negative gates and pre/post frozen-state checks.
+
+Accepted observations:
+
+- The normal-mode project configuration actually loaded; all five native roles
+  were dispatched once, serially, with no model/effort override or retry.
+- Each `subAgentActivity` explicitly carried both native `agentPath` and runtime
+  `agentThreadId`, bound to the exact parent thread/turn and spawn call. The unique
+  mapped child completed a tool-free READY turn before its probe was released.
+- Completed-response/runtime telemetry verified the model/effort matrix below;
+  config metadata, AGENTS instructions and model self-report were not substitutes.
+- Actual child runtime sandbox observations preceded task effects. Four own-TEMP
+  writes were denied with the sentinel absent. The builder's disposable D-drive
+  own-TEMP fixture had collision=false, one CreateNew success, exact readback,
+  successful cleanup and final absence. No repository/production writes occurred.
+- The wrong-parent read-only-role and builder gates returned HOLD. `remote_write`
+  returned HOLD in every supported parent mode; `authority_granted=false` and
+  `automatic_remote_write=false`. No real remote write or approval escalation
+  occurred; approval requests were zero.
+- Fresh-context smoke construction was verified with `fork_turns=none` and a
+  distinct native reviewer child. Hidden assembled prompt contents remain
+  NOT_VERIFIED. This smoke is not formal independent review or PR approval; the
+  existing external reviewer supplied the accepted review independently.
+
+| Native role | Observed runtime model / effort | Observed child sandbox | Own-TEMP result |
+| --- | --- | --- | --- |
+| mv_inventory | gpt-6-luna / low | read-only | DENIED; absent |
+| mv_analyst | gpt-6-sol / medium | read-only | DENIED; absent |
+| mv_reasoner | gpt-6-astra / medium | read-only | DENIED; absent |
+| mv_reviewer | gpt-6-astra / high | read-only | DENIED; absent |
+| mv_builder | gpt-6-sol / medium | workspace-write | SUCCESS; exact readback; cleaned; absent |
+
+Strict startup still fails on the pre-existing Desktop Computer Use
+serialization/parser incompatibility involving
+`computer_use.windows.always_allowed_app_ids`. That field, Computer Use settings,
+client version, trust, provider/auth and permission settings were not modified to
+manufacture PASS. Normal-mode loading and the accepted live matrix establish that
+this strict-only incompatibility is a KNOWN_EXTERNAL_TOOLING_LIMITATION, not an
+automatic-routing activation blocker for this pinned tested environment. Strict
+parsing has not passed and remains explicitly false:
+
+```text
+STRICT_CONFIG_COMPATIBLE=false
+STRICT_CONFIG_REQUIRED_FOR_ROUTING_ACTIVATION=false
+STRICT_CONFIG_LIMITATION_CLASS=KNOWN_EXTERNAL_TOOLING_LIMITATION
+ROUTING_V1_TECHNICAL_GATE=PASS
+AUTOMATIC_ROUTING_ACTIVATION_READY=true
+AUTOMATIC_ROUTING_ACTIVATED=false
+MERGE_AUTHORIZED=false
+```
+
+This is readiness, not activation on formal main. Activation requires the reviewed
+tree to be merged under explicit owner authorization, post-merge exact-main
+verification under the existing Development Playbook, and a new normal-mode
+`config/read` proving the project configuration loaded from that formal main.
+The coordinator must reacquire the exact main/tree and loaded-config evidence
+before dispatch; record activation only after all those checks pass. A mismatch
+or missing required evidence keeps routing inactive. The runtime parent-permission
+gate and separate authorization for changing permission mode remain mandatory.
+
+This exception must be revalidated after a material client/configuration or
+environment change, including binary/version, project or user configuration,
+role assignments, account/provider/model availability, trust, sandbox/approval
+policy, or OS sandbox behavior. Do not transfer the D2 PASS or strict exception to
+another client, checkout or permission domain. Use a separately authorized bounded
+revalidation; until it passes, keep automatic routing inactive. Existing manual
+coordination and external independent-review requirements remain available.
 
 ## Rollback and evaluation
 
