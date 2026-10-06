@@ -25,6 +25,8 @@ from market_vault.research import (
     forward_return_label,
     label_preset,
     label_preset_names,
+    maximum_adverse_excursion_label,
+    maximum_favorable_excursion_label,
 )
 
 from market_vault.dataset import (
@@ -1368,6 +1370,14 @@ def test_research_label_library_version_and_exact_standard_presets():
         "forward_direction_3d",
         "forward_direction_5d",
         "forward_direction_10d",
+        "maximum_favorable_excursion_1d",
+        "maximum_favorable_excursion_3d",
+        "maximum_favorable_excursion_5d",
+        "maximum_favorable_excursion_10d",
+        "maximum_adverse_excursion_1d",
+        "maximum_adverse_excursion_3d",
+        "maximum_adverse_excursion_5d",
+        "maximum_adverse_excursion_10d",
     )
 
 
@@ -1389,7 +1399,7 @@ def test_research_label_library_version_and_exact_standard_presets():
         ),
     ],
 )
-def test_research_label_specs_match_cross_day_contract(
+def test_research_target_label_specs_match_cross_day_contract(
     horizon, factory, prefix, logical_type, transform
 ):
     spec = factory(horizon)
@@ -1419,6 +1429,55 @@ def test_research_label_specs_match_cross_day_contract(
     assert admitted[0][0] == spec
 
 
+@pytest.mark.parametrize("horizon", STANDARD_LABEL_HORIZONS)
+@pytest.mark.parametrize(
+    "factory,prefix,fields,transform",
+    [
+        (
+            maximum_favorable_excursion_label,
+            "maximum_favorable_excursion",
+            ("close", "high"),
+            "market_vault.dataset.label_transforms.maximum_favorable_excursion:"
+            "maximum_favorable_excursion",
+        ),
+        (
+            maximum_adverse_excursion_label,
+            "maximum_adverse_excursion",
+            ("close", "low"),
+            "market_vault.dataset.label_transforms.maximum_adverse_excursion:"
+            "maximum_adverse_excursion",
+        ),
+    ],
+)
+def test_research_excursion_label_specs_match_cross_day_contract(
+    horizon, factory, prefix, fields, transform
+):
+    spec = factory(horizon)
+    assert spec.name == f"{prefix}_{horizon}d"
+    assert spec.output == DatasetField(spec.name, "float64", False)
+    assert spec.input_canonical_fields == fields
+    assert spec.transform_ref == transform
+    assert spec.parameters == ()
+    assert spec.requirements == SpecVersionRequirements(
+        ("market-bars-canonical-schema-v1",),
+        ("10.9-mv-ts2",),
+    )
+    assert spec.observation_window == LabelObservationWindow(
+        "TRADING_DAYS",
+        0,
+        horizon - 1,
+    )
+    assert spec.horizon == LabelHorizon("TRADING_DAYS", horizon)
+    assert spec.alignment_rule == "FEATURE_CLOSE_ALIGNED"
+    assert spec.missing_data_policy == "INCOMPLETE"
+    assert spec.cross_trading_day == CrossTradingDayPolicy(
+        True,
+        "SAME_REQUESTED_SESSION_BAR_SLOT",
+    )
+    admitted = admit_specs((spec,))
+    assert admitted[0][0] == spec
+
+
 def test_research_label_preset_resolver_is_exact_and_identity_stable():
     specs = tuple(label_preset(name) for name in label_preset_names())
     assert tuple(spec.name for spec in specs) == label_preset_names()
@@ -1426,17 +1485,36 @@ def test_research_label_preset_resolver_is_exact_and_identity_stable():
     assert len({pin.content_sha256 for pin in pins}) == len(pins)
     assert label_preset("forward_return_5d") == forward_return_label(5)
     assert label_preset("forward_direction_10d") == forward_direction_label(10)
+    assert label_preset(
+        "maximum_favorable_excursion_3d"
+    ) == maximum_favorable_excursion_label(3)
+    assert label_preset(
+        "maximum_adverse_excursion_10d"
+    ) == maximum_adverse_excursion_label(10)
 
 
 @pytest.mark.parametrize("bad", [True, 0, -1, 1.0, "5"])
 def test_research_label_factory_rejects_invalid_horizon(bad):
-    with pytest.raises(ValueError, match="positive integer"):
-        forward_return_label(bad)
-    with pytest.raises(ValueError, match="positive integer"):
-        forward_direction_label(bad)
+    for factory in (
+        forward_return_label,
+        forward_direction_label,
+        maximum_favorable_excursion_label,
+        maximum_adverse_excursion_label,
+    ):
+        with pytest.raises(ValueError, match="positive integer"):
+            factory(bad)
 
 
-@pytest.mark.parametrize("bad", [None, 1, "forward_return_2d", "FORWARD_RETURN_1D"])
+@pytest.mark.parametrize(
+    "bad",
+    [
+        None,
+        1,
+        "forward_return_2d",
+        "maximum_favorable_excursion_2d",
+        "FORWARD_RETURN_1D",
+    ],
+)
 def test_research_label_preset_rejects_unknown_or_noncanonical_names(bad):
     with pytest.raises(ValueError):
         label_preset(bad)
