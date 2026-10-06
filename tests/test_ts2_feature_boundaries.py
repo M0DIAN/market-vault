@@ -28,13 +28,14 @@ from market_vault.dataset.models import ImplementationPin
 from market_vault.dataset.encoding import encode_identity
 
 
-def test_fixed_registry_is_sixteen_immutable_static_functions():
+def test_fixed_registry_is_nineteen_immutable_static_functions():
     entries = registry._registry()
-    assert len(entries) == 16
+    assert len(entries) == 19
     assert tuple(r.contract.name for r in entries) == (
-        "atr", "candle_body", "candle_range", "ema", "log_return", "macd",
-        "macd_histogram", "macd_signal", "obv", "rolling_mean", "rolling_std",
-        "rolling_volume_mean", "rsi", "simple_return", "sma", "volume_ratio")
+        "atr", "candle_body", "candle_range", "ema", "kdj_d", "kdj_j",
+        "kdj_k", "log_return", "macd", "macd_histogram", "macd_signal", "obv",
+        "rolling_mean", "rolling_std", "rolling_volume_mean", "rsi",
+        "simple_return", "sma", "volume_ratio")
     for entry in entries:
         assert entry.contract.implementation is getattr(sys.modules[entry.contract.implementation.__module__], entry.contract.name)
         with pytest.raises(FrozenInstanceError):
