@@ -52,15 +52,20 @@ def _non_negative_int(value, label: str) -> int:
 
 @dataclass(frozen=True, slots=True)
 class WalkForwardSpec:
-    minimum_train_samples: int
+    initial_train_samples: int
+    minimum_retained_train_samples: int
     validation_samples: int
     step_samples: int
     embargo_seconds: int = 0
 
     def __post_init__(self) -> None:
-        minimum = _positive_int(
-            self.minimum_train_samples,
-            "minimum_train_samples",
+        initial = _positive_int(
+            self.initial_train_samples,
+            "initial_train_samples",
+        )
+        retained = _positive_int(
+            self.minimum_retained_train_samples,
+            "minimum_retained_train_samples",
         )
         validation = _positive_int(
             self.validation_samples,
@@ -71,12 +76,22 @@ class WalkForwardSpec:
             self.embargo_seconds,
             "embargo_seconds",
         )
+        if retained > initial:
+            raise WalkForwardError(
+                "minimum_retained_train_samples must be <= "
+                "initial_train_samples"
+            )
         if step < validation:
             raise WalkForwardError(
                 "step_samples must be >= validation_samples "
                 "to keep validation windows non-overlapping"
             )
-        object.__setattr__(self, "minimum_train_samples", minimum)
+        object.__setattr__(self, "initial_train_samples", initial)
+        object.__setattr__(
+            self,
+            "minimum_retained_train_samples",
+            retained,
+        )
         object.__setattr__(self, "validation_samples", validation)
         object.__setattr__(self, "step_samples", step)
         object.__setattr__(self, "embargo_seconds", embargo)
@@ -234,6 +249,75 @@ class WalkForwardPlan:
                 "Walk-Forward fold indices must be contiguous from zero"
             )
 
+        previous_validation_end = None
+        for fold in self.folds:
+            expected_start = (
+                self.spec.initial_train_samples
+                + fold.fold_index * self.spec.step_samples
+            )
+            expected_validation = tuple(
+                range(
+                    expected_start,
+                    expected_start + self.spec.validation_samples,
+                )
+            )
+            if fold.validation_indices != expected_validation:
+                raise WalkForwardError(
+                    "Walk-Forward validation indices differ from spec"
+                )
+            if any(
+                index >= self.source_row_count
+                for index in (
+                    fold.train_indices
+                    + fold.validation_indices
+                    + fold.purged_indices
+                    + fold.embargoed_indices
+                )
+            ):
+                raise WalkForwardError(
+                    "Walk-Forward fold index exceeds source_row_count"
+                )
+            prior_partition = tuple(sorted(
+                fold.train_indices
+                + fold.purged_indices
+                + fold.embargoed_indices
+            ))
+            if prior_partition != tuple(range(expected_start)):
+                raise WalkForwardError(
+                    "Walk-Forward pre-validation candidates are not "
+                    "partitioned exactly once"
+                )
+            if (
+                fold.train_count
+                < self.spec.minimum_retained_train_samples
+            ):
+                raise WalkForwardError(
+                    "Walk-Forward fold retains fewer than "
+                    "minimum_retained_train_samples"
+                )
+            if fold.validation_count != self.spec.validation_samples:
+                raise WalkForwardError(
+                    "Walk-Forward validation count differs from spec"
+                )
+            if (
+                previous_validation_end is not None
+                and fold.validation_start_time
+                <= previous_validation_end
+            ):
+                raise WalkForwardError(
+                    "Walk-Forward validation time windows overlap"
+                )
+            previous_validation_end = fold.validation_end_time
+
+        expected_unused_tail = (
+            self.source_row_count
+            - (self.folds[-1].validation_indices[-1] + 1)
+        )
+        if self.unused_tail_count != expected_unused_tail:
+            raise WalkForwardError(
+                "unused_tail_count differs from final validation boundary"
+            )
+
     @property
     def fold_count(self) -> int:
         return len(self.folds)
@@ -249,6 +333,7 @@ def _fold(
     fold_index: int,
     validation_start_index: int,
     validation_samples: int,
+    minimum_retained_train_samples: int,
     embargo_seconds: int,
 ) -> WalkForwardFold:
     validation_indices = tuple(
@@ -283,9 +368,10 @@ def _fold(
     train_indices = tuple(retained)
     purged_indices = tuple(purged)
     embargoed_indices = tuple(embargoed)
-    if not train_indices:
+    if len(train_indices) < minimum_retained_train_samples:
         raise WalkForwardError(
-            f"fold {fold_index} has no training rows after purge/embargo"
+            f"fold {fold_index} retains fewer than "
+            "minimum_retained_train_samples after purge/embargo"
         )
 
     return WalkForwardFold(
@@ -332,7 +418,7 @@ def generate_walk_forward_folds(
             "Walk-Forward V1 requires strictly increasing TRAIN times"
         )
     row_count = source.row_count
-    required = spec.minimum_train_samples + spec.validation_samples
+    required = spec.initial_train_samples + spec.validation_samples
     if row_count < required:
         raise WalkForwardError(
             "TRAIN split is too small for the requested first fold"
@@ -340,7 +426,7 @@ def generate_walk_forward_folds(
 
     starts = tuple(
         range(
-            spec.minimum_train_samples,
+            spec.initial_train_samples,
             row_count - spec.validation_samples + 1,
             spec.step_samples,
         )
@@ -354,6 +440,9 @@ def generate_walk_forward_folds(
             fold_index=index,
             validation_start_index=start,
             validation_samples=spec.validation_samples,
+            minimum_retained_train_samples=(
+                spec.minimum_retained_train_samples
+            ),
             embargo_seconds=spec.embargo_seconds,
         )
         for index, start in enumerate(starts)
