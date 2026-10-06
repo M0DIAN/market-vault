@@ -188,7 +188,7 @@ def test_test_targets_change_economic_result_not_frozen_model_or_signals():
 def test_public_wrapper_reloads_dataset_rebuilds_experiment_and_checks_label(
     tmp_path, monkeypatch
 ):
-    from market_vault.research import ridge_final_trading as module
+    from market_vault.research import trading_authority as authority
 
     bundle = _execution_bundle()
     final = _final(bundle)
@@ -216,12 +216,12 @@ def test_public_wrapper_reloads_dataset_rebuilds_experiment_and_checks_label(
         return bundle
 
     monkeypatch.setattr(
-        module,
+        authority,
         "load_verified_multi_source_cross_day_dataset",
         load,
     )
     monkeypatch.setattr(
-        module,
+        authority,
         "build_experiment_dataset",
         rebuild,
     )
@@ -248,7 +248,7 @@ def test_public_wrapper_reloads_dataset_rebuilds_experiment_and_checks_label(
 def test_public_wrapper_rejects_non_execution_safe_label_semantics(
     tmp_path, monkeypatch
 ):
-    from market_vault.research import ridge_final_trading as module
+    from market_vault.research import trading_authority as authority
 
     bundle = _execution_bundle()
     final = _final(bundle)
@@ -264,7 +264,7 @@ def test_public_wrapper_rejects_non_execution_safe_label_semantics(
         cross_day_labels=SimpleNamespace(label_specs=(wrong,)),
     )
     monkeypatch.setattr(
-        module,
+        authority,
         "load_verified_multi_source_cross_day_dataset",
         lambda path: fresh,
     )
@@ -283,7 +283,7 @@ def test_public_wrapper_rejects_non_execution_safe_label_semantics(
 def test_public_wrapper_rejects_rebuilt_experiment_mismatch(
     tmp_path, monkeypatch
 ):
-    from market_vault.research import ridge_final_trading as module
+    from market_vault.research import trading_authority as authority
 
     bundle = _execution_bundle()
     final = _final(bundle)
@@ -294,12 +294,12 @@ def test_public_wrapper_rejects_rebuilt_experiment_mismatch(
         cross_day_labels=SimpleNamespace(label_specs=(spec,)),
     )
     monkeypatch.setattr(
-        module,
+        authority,
         "load_verified_multi_source_cross_day_dataset",
         lambda path: fresh,
     )
     monkeypatch.setattr(
-        module,
+        authority,
         "build_experiment_dataset",
         lambda *args, **kwargs: _execution_bundle(dataset_id="b" * 64),
     )
@@ -345,7 +345,7 @@ def test_result_and_trade_identity_tampering_fail_closed():
 def test_public_cost_configuration_fails_closed(
     tmp_path, monkeypatch, kwargs
 ):
-    from market_vault.research import ridge_final_trading as module
+    from market_vault.research import trading_authority as authority
 
     bundle = _execution_bundle()
     final = _final(bundle)
@@ -356,12 +356,12 @@ def test_public_cost_configuration_fails_closed(
         cross_day_labels=SimpleNamespace(label_specs=(spec,)),
     )
     monkeypatch.setattr(
-        module,
+        authority,
         "load_verified_multi_source_cross_day_dataset",
         lambda path: fresh,
     )
     monkeypatch.setattr(
-        module,
+        authority,
         "build_experiment_dataset",
         lambda *args, **kwargs: bundle,
     )
