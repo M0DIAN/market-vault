@@ -1,4 +1,4 @@
-"""Six frozen design vector groups, with 67 literal expected digests."""
+"""Six frozen design vector groups, with 73 literal expected digests."""
 
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -11,6 +11,9 @@ from market_vault.ts2_feature.registry import _registry, _registry_for_specs
 from ts2_feature_helpers import spec
 
 EXPECTED = {
+    "atr.source_sha256": "f0d0540a6d173bcf8e5be36c35fd3ff85a37263e9b872ba33850ab854600988f",
+    "atr.fingerprint": "33df32f2a6149bea5000e6558d2b7fb33e2695bc304cb385ba3a37819fccace6",
+    "atr.implementation_pin_id": "698228b992aaf59bc278ef514da8d832caa95f328c38ca6b6cb2fad3712dc69c",
     "candle_body.source_sha256": "818beb25bcae1773e64d27ddc9d53d4e7926d43ffc5a6477191602e02aea22ca",
     "candle_body.fingerprint": "f7052b2e5cb8b2698e95e0a7fc3535635c39a2f292423122ea3ad9d1fde565f8",
     "candle_body.implementation_pin_id": "4a9b5e89687fcac6edbbd02e87912c85c64799836af3010ad9297332012217dd",
@@ -32,6 +35,9 @@ EXPECTED = {
     "macd_signal.source_sha256": "18df94e6bbd226dff3e4376820a35dd62a4ee5414d437574a2e416971fb4542c",
     "macd_signal.fingerprint": "087470ac56390b1a793e384c9a749f221b3f61be488e7c663c1262d6b13d6322",
     "macd_signal.implementation_pin_id": "978e807fffe1a40d38e5c6f6e09409f6fdf112975636889c1ebd4e3618e59145",
+    "obv.source_sha256": "f512a36262d5a84801d2b7cf0e374f4f360c0b2739a073f88dd0d805d005e26f",
+    "obv.fingerprint": "46df95e539d332f67cc6d660f2bc808e431c713bbcc21878173a40a276a4af0c",
+    "obv.implementation_pin_id": "65459c768046c747a26b0869823e4a97da41a487539017432f0aeeb881a84b48",
     "rolling_mean.source_sha256": "97ee08de1d84e66bf362cd85c6f21aa15b09e5a2289fb5918476eb90bae8633f",
     "rolling_mean.fingerprint": "b1eafd9fd110ab5307bec4d6940a0c16a1eb21c108c38c5eb10c718b61bfafbc",
     "rolling_mean.implementation_pin_id": "f14cef9547f49b28a0b66b7ed41e82454cb7bfb43ad433681f641e02c0d4fb08",
@@ -136,7 +142,7 @@ def actual():
     execution.update(status="COMPLETE", sample_count=1, feature_count=0,
         feature_spec_pins_digest=result["empty.ts2-feature-spec-pins-v1"], samples_content_id=result["zero_specs.samples_content_id"])
     result["zero_specs.execution_id"] = ids.execution_id(execution)
-    assert len(result) == len(EXPECTED) == 67
+    assert len(result) == len(EXPECTED) == 73
     return result
 
 
