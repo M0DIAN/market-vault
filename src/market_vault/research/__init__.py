@@ -228,3 +228,22 @@ __all__ += [
     "RidgeValidationTradingPrediction",
     "select_ridge_trading_threshold",
 ]
+
+
+from .ridge_selected_final_trading import (
+    RIDGE_SELECTED_FINAL_TRADING_SIGNAL_RULE,
+    RIDGE_SELECTED_FINAL_TRADING_VERSION,
+    RidgeSelectedFinalTradingError,
+    RidgeSelectedFinalTradingResult,
+    RidgeSelectedFinalTradingTrade,
+    evaluate_ridge_selected_final_trading,
+)
+
+__all__ += [
+    "RIDGE_SELECTED_FINAL_TRADING_SIGNAL_RULE",
+    "RIDGE_SELECTED_FINAL_TRADING_VERSION",
+    "RidgeSelectedFinalTradingError",
+    "RidgeSelectedFinalTradingResult",
+    "RidgeSelectedFinalTradingTrade",
+    "evaluate_ridge_selected_final_trading",
+]
