@@ -153,6 +153,7 @@ class RidgeFinalTestResult:
     development_candidate_count: int
     development_purged_count: int
     development_count: int
+    development_keys_digest: str
     test_count: int
     intercept: float
     coefficients: tuple[float, ...]
@@ -212,6 +213,7 @@ class RidgeFinalTestResult:
             )
         if self.development_count <= 0:
             raise RidgeFinalTestError("development_count must be positive")
+        _identity(self.development_keys_digest, "development_keys_digest")
         if self.test_count <= 0:
             raise RidgeFinalTestError("test_count must be positive")
         if (
@@ -286,19 +288,16 @@ class RidgeFinalTestResult:
             development_candidate_count=self.development_candidate_count,
             development_purged_count=self.development_purged_count,
             development_count=self.development_count,
-            development_keys=tuple(),
+            development_keys_digest=self.development_keys_digest,
             intercept=self.intercept,
             coefficients=self.coefficients,
             feature_means=self.feature_means,
             feature_scales=self.feature_scales,
-            precomputed_key_digest=None,
         )
-        # The public result does not expose development sample keys.  The
-        # exact model_id is therefore rechecked in the constructor through
-        # the hidden digest encoded in final_test_id below rather than by
-        # recreating an incomplete model identity here.
-        if type(expected_model_id) is not str or len(expected_model_id) != 64:
-            raise RidgeFinalTestError("internal model identity construction failed")
+        if self.model_id != expected_model_id:
+            raise RidgeFinalTestError(
+                "model_id differs from final Ridge model content"
+            )
 
         expected_final = _final_test_id(
             model_id=self.model_id,
@@ -400,19 +399,13 @@ def _model_id(
     development_candidate_count: int,
     development_purged_count: int,
     development_count: int,
-    development_keys: tuple[str, ...],
+    development_keys_digest: str,
     intercept: float,
     coefficients: tuple[float, ...],
     feature_means: tuple[float, ...],
     feature_scales: tuple[float, ...],
-    precomputed_key_digest: str | None = None,
 ) -> str:
-    key_digest = precomputed_key_digest
-    if key_digest is None:
-        key_digest = _members_digest(
-            "market-vault-ridge-final-development-keys-v1",
-            development_keys,
-        )
+    _identity(development_keys_digest, "development_keys_digest")
     return encode_identity(
         "market-vault-ridge-final-model-v1",
         {
@@ -429,7 +422,7 @@ def _model_id(
             "development_candidate_count": development_candidate_count,
             "development_purged_count": development_purged_count,
             "development_count": development_count,
-            "development_keys_digest": key_digest,
+            "development_keys_digest": development_keys_digest,
             "intercept": intercept,
             "coefficients_digest": _scalar_digest(
                 "market-vault-ridge-final-coefficients-v1",
@@ -583,6 +576,10 @@ def evaluate_ridge_final_test(
     development_keys = tuple(
         row.metadata.sample_key for row in retained
     )
+    development_keys_digest = _members_digest(
+        "market-vault-ridge-final-development-keys-v1",
+        development_keys,
+    )
     model_id = _model_id(
         selection_id=selection.selection_id,
         walk_forward_id=plan.walk_forward_id,
@@ -594,7 +591,7 @@ def evaluate_ridge_final_test(
         development_candidate_count=len(development),
         development_purged_count=purged_count,
         development_count=len(retained),
-        development_keys=development_keys,
+        development_keys_digest=development_keys_digest,
         intercept=intercept,
         coefficients=coefficients,
         feature_means=means,
@@ -621,6 +618,7 @@ def evaluate_ridge_final_test(
         len(development),
         purged_count,
         len(retained),
+        development_keys_digest,
         len(test_rows),
         intercept,
         coefficients,
