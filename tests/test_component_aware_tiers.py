@@ -50,7 +50,7 @@ paths = [
   "src/market_vault/dataset/feature_execution.py",
   "src/market_vault/dataset/feature_models.py",
   "src/market_vault/dataset/feature_registry.py",
-  "src/market_vault/dataset/feature_transforms.py",
+  "src/market_vault/dataset/feature_transforms",
   "src/market_vault/multi_source/feature_execution.py",
   "src/market_vault/multi_source/feature_identity.py",
   "src/market_vault/multi_source/feature_models.py",
@@ -216,7 +216,7 @@ def test_core_path_full_and_core_changed(tmp_path):
 def test_research_component_uses_validated_fast_tier(tmp_path):
     repo = make_repo(tmp_path)
     result = classify_change(
-        repo, "src/market_vault/dataset/feature_transforms.py"
+        repo, "src/market_vault/dataset/feature_transforms"
     )
 
     assert tier(result) == "research_fast"
@@ -477,7 +477,7 @@ def test_full_matrix_required_matches_active_policy(tmp_path):
         (REAL_REGISTRY, ["src/market_vault/thing.py"], "full"),
         (
             REAL_REGISTRY,
-            ["src/market_vault/dataset/feature_transforms.py"],
+            ["src/market_vault/dataset/feature_transforms"],
             "research_fast",
         ),
         (REAL_REGISTRY, ["notes.txt"], "full"),

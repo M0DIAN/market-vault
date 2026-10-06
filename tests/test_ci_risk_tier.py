@@ -165,7 +165,7 @@ def test_tests_change_full(tmp_path):
 def test_research_feature_source_is_research_fast_on_pr(tmp_path):
     repo = make_repo(tmp_path)
     assert (
-        classify_change(repo, "src/market_vault/dataset/feature_transforms.py")
+        classify_change(repo, "src/market_vault/dataset/feature_transforms")
         == "research_fast"
     )
 
@@ -210,7 +210,7 @@ def test_research_plus_shared_cli_fails_closed_to_full(tmp_path):
 
 def test_research_fast_is_pull_request_only_push_goes_full(tmp_path):
     repo = make_repo(tmp_path)
-    path = "src/market_vault/dataset/feature_transforms.py"
+    path = "src/market_vault/dataset/feature_transforms"
     write_file(repo, path)
     base = commit_all(repo, "base")
     write_file(repo, path, "changed\n")
