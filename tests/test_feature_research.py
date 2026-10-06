@@ -135,6 +135,20 @@ def test_explicit_feature_subset_preserves_requested_order():
     assert all(metric.sample_count == 5 for metric in report.metrics)
 
 
+def test_two_quantile_tails_never_overlap_on_odd_sample_count():
+    metric = analyze_features(
+        _bundle(),
+        feature_names=("good",),
+        quantile_count=2,
+    ).metrics[0]
+    assert metric.bottom_count == 2
+    assert metric.top_count == 3
+    assert metric.bottom_count + metric.top_count == metric.sample_count
+    assert metric.bottom_label_mean == pytest.approx(1.5)
+    assert metric.top_label_mean == pytest.approx(4.0)
+    assert metric.top_bottom_spread == pytest.approx(2.5)
+
+
 def test_empty_split_reports_no_fabricated_statistics():
     report = analyze_features(_bundle(), split="VALIDATION")
     assert tuple(metric.feature_name for metric in report.metrics) == FEATURES
