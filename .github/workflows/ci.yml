@@ -246,6 +246,9 @@ jobs:
             tests/test_cross_day_generator.py \
             tests/test_cross_day_dataset_execution.py \
             tests/test_cross_day_dataset_semantics.py \
+            tests/test_cross_day_dataset_boundaries.py \
+            tests/test_cross_day_dataset_identity.py \
+            tests/test_cross_day_artifact_ts2.py \
             tests/test_dataset_end_to_end_regression.py \
             -q --durations=50
 
