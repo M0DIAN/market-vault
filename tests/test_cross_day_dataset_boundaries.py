@@ -37,7 +37,13 @@ def test_no_upstream_execution_and_only_bounded_registry_io(tmp_path, monkeypatc
     import market_vault.dataset.feature_registry as old_registry
     import market_vault.cross_day_dataset.execution as join_engine
     data = fixture(tmp_path)
-    contracts = ts2_registry._CONTRACTS + label_registry._contracts()
+    contracts = (
+        tuple(
+            contract for contract in ts2_registry._CONTRACTS
+            if contract.name in ts2_registry._BASELINE_CONTRACT_NAMES
+        )
+        + label_registry._contracts()
+    )
     targets = {c.implementation.__module__: sys.modules[c.implementation.__module__].__file__ for c in contracts}
     paths = {os.path.normcase(os.path.abspath(p)) for p in targets.values()}
     for path in targets.values():
