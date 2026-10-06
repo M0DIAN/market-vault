@@ -78,6 +78,37 @@ def test_macd_family_real_formulas(tmp_path):
     assert len(result.registry_implementation_pins) == 11
 
 
+def test_kdj_family_real_formulas(tmp_path):
+    bars = tuple(
+        bar(
+            slot=i,
+            close=float(100 + i),
+            high=float(102 + i),
+            low=float(98 + i),
+        )
+        for i in range(17)
+    )
+    one = build(tmp_path / "kdj", bars)
+    selected = pit((one,), slot=16)
+    result = execute(
+        one,
+        selected,
+        (
+            spec("kdj_k", n=17),
+            spec("kdj_d", n=17),
+            spec("kdj_j", n=17),
+        ),
+    )
+    values = {
+        value.feature_name: value.value
+        for value in result.samples[0].values
+    }
+    assert values["ts2_kdj_k"] == pytest.approx(82.46625683754169)
+    assert values["ts2_kdj_d"] == pytest.approx(79.8650273501668)
+    assert values["ts2_kdj_j"] == pytest.approx(87.66871581229148)
+    assert len(result.registry_implementation_pins) == 11
+
+
 @pytest.mark.parametrize("schema", ["10.9", "unknown"])
 def test_legacy_and_unknown_rejected_even_empty(tmp_path, schema):
     one, selected = fixture(tmp_path)
