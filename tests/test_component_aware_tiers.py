@@ -242,6 +242,17 @@ def test_research_package_uses_validated_fast_tier(tmp_path):
     assert line_value(result, "full_matrix_required") == "false"
 
 
+def test_feature_research_test_path_is_known_and_fast(tmp_path):
+    repo = make_repo(tmp_path)
+    result = classify_change(repo, "tests/test_feature_research.py")
+
+    assert tier(result) == "research_fast"
+    assert line_value(result, "components") == "research"
+    assert line_value(result, "core_changed") == "false"
+    assert line_value(result, "unknown_changed") == "false"
+    assert line_value(result, "full_matrix_required") == "false"
+
+
 def test_research_component_test_path_is_known_and_fast(tmp_path):
     repo = make_repo(tmp_path)
     result = classify_change(repo, "tests/test_ts2_feature_execution.py")
