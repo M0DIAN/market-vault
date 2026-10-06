@@ -5,11 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 import math
+import re
 
 
 BACKTEST_ENGINE_VERSION = "market-vault-backtest-v1"
 BACKTEST_COMPARATORS = ("GT", "GE", "LT", "LE")
 BACKTEST_SPLITS = ("TRAIN", "VALIDATION", "TEST")
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 class BacktestError(ValueError):
@@ -85,8 +87,8 @@ class BacktestTrade:
     equity_after: float
 
     def __post_init__(self) -> None:
-        if type(self.sample_key) is not str or len(self.sample_key) != 64:
-            raise BacktestError("sample_key must be a 64-character identity")
+        if type(self.sample_key) is not str or _SHA256_RE.fullmatch(self.sample_key) is None:
+            raise BacktestError("sample_key must be a 64-character lowercase hex identity")
         if type(self.code) is not str or not self.code:
             raise BacktestError("trade code must be a non-empty string")
         signal = _instant(self.signal_time, "signal_time")
