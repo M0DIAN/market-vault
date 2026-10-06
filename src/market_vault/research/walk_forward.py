@@ -4,7 +4,8 @@ V1 is deliberately narrow and deterministic:
 
 - source samples are TRAIN + VALIDATION only; TEST is never admitted;
 - training is expanding and always strictly earlier than validation;
-- validation windows are contiguous and non-overlapping;
+- each validation window is contiguous and validation windows never overlap;
+  gaps are allowed when step_samples is larger than validation_samples;
 - purge uses the selected Label's exact actual_label_end_time from
   Experiment Metadata, never a nominal horizon and never the Dataset-wide
   latest Label end;
