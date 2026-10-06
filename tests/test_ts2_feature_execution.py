@@ -94,9 +94,9 @@ def test_kdj_family_real_formulas(tmp_path):
         one,
         selected,
         (
-            spec("kdj_k", n=17),
-            spec("kdj_d", n=17),
-            spec("kdj_j", n=17),
+            spec("kdj_k"),
+            spec("kdj_d"),
+            spec("kdj_j"),
         ),
     )
     values = {
@@ -107,6 +107,20 @@ def test_kdj_family_real_formulas(tmp_path):
     assert values["ts2_kdj_d"] == pytest.approx(79.8650273501668)
     assert values["ts2_kdj_j"] == pytest.approx(87.66871581229148)
     assert len(result.registry_implementation_pins) == 11
+
+
+def test_kdj_fixed_window_short_history_is_excluded(tmp_path):
+    bars = tuple(
+        bar(slot=i, close=float(100 + i), high=float(102 + i), low=float(98 + i))
+        for i in range(16)
+    )
+    one = build(tmp_path / "kdj-short", bars)
+    selected = pit((one,), slot=15)
+    result = execute(one, selected, (spec("kdj_k"),))
+    value = result.samples[0].values[0]
+    assert value.status == "EXCLUDED"
+    assert value.reason_code == "INSUFFICIENT_ROWS"
+    assert len(result.registry_implementation_pins) == 9
 
 
 @pytest.mark.parametrize("schema", ["10.9", "unknown"])
