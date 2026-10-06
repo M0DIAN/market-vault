@@ -436,9 +436,24 @@ def build_purged_walk_forward(
     fold_index = 0
     last_validation_end = 0
     while start + spec.validation_samples <= len(pool):
-        validation_rows = pool[
-            start : start + spec.validation_samples
-        ]
+        end = start + spec.validation_samples
+        if (
+            start > 0
+            and pool[start - 1].metadata.feature_window_close
+            == pool[start].metadata.feature_window_close
+        ):
+            raise PurgedWalkForwardError(
+                "walk-forward boundary splits a feature_window_close cohort"
+            )
+        if (
+            end < len(pool)
+            and pool[end - 1].metadata.feature_window_close
+            == pool[end].metadata.feature_window_close
+        ):
+            raise PurgedWalkForwardError(
+                "walk-forward boundary splits a feature_window_close cohort"
+            )
+        validation_rows = pool[start:end]
         validation_start = (
             validation_rows[0].metadata.feature_window_close
         )
