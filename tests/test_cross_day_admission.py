@@ -216,9 +216,12 @@ def test_only_static_fingerprint_reads(normal, artifacts, monkeypatch, with_a3):
         result = execute_cross_day_labels(assemble_cross_day_labels(feature_pit, features, labels, schedule(), (spec(),),
                                           dataset_as_of=AS_OF, observation_pit=upstream))
     assert result.values[0].status == "COMPLETE"
-    # Assembly, execution preflight and the authoritative result constructor.
-    assert len(fingerprints) == 12 and len(set(fingerprints)) == 4
-    assert len(set(reads)) == 4
+    # Assembly, execution preflight and the authoritative result constructor:
+    # exactly three complete passes over the fixed static Label catalog.
+    catalog_size = len(registry._contracts())
+    assert len(fingerprints) == 3 * catalog_size
+    assert len(set(fingerprints)) == catalog_size
+    assert len(set(reads)) == catalog_size
 
 
 def test_old_authorities_not_widened():
