@@ -48,3 +48,19 @@ __all__ += [
     "MLSampleMetadata",
     "build_ml_dataset",
 ]
+
+from .feature_research import (
+    FEATURE_RESEARCH_VERSION,
+    FeatureResearchError,
+    FeatureResearchMetric,
+    FeatureResearchReport,
+    analyze_features,
+)
+
+__all__ += [
+    "FEATURE_RESEARCH_VERSION",
+    "FeatureResearchError",
+    "FeatureResearchMetric",
+    "FeatureResearchReport",
+    "analyze_features",
+]
