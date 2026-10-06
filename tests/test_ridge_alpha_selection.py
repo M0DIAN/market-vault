@@ -83,6 +83,29 @@ def test_exact_rmse_tie_selects_smaller_alpha(monkeypatch):
     assert result.selected_report.rmse == 2.0
 
 
+def test_candidate_identity_binds_fold_parameters_not_only_aggregate_metrics():
+    report = evaluate_ridge_baseline(_plan(), alpha=1.0)
+    fold = report.folds[0]
+    changed_coefficients = (
+        fold.coefficients[0] + 0.125,
+        *fold.coefficients[1:],
+    )
+    changed_fold = replace(
+        fold,
+        coefficients=tuple(changed_coefficients),
+    )
+    changed_report = replace(
+        report,
+        folds=(changed_fold,) + report.folds[1:],
+    )
+
+    assert report.rmse == changed_report.rmse
+    assert report.mae == changed_report.mae
+    assert ridge_selection._candidate_id(report) != (
+        ridge_selection._candidate_id(changed_report)
+    )
+
+
 def test_held_out_test_count_cannot_change_selection():
     plan = _plan(held_out_test_count=7)
     changed_test = replace(plan, held_out_test_count=999)
