@@ -163,7 +163,7 @@ def test_feature_report_plan_rejects_duplicate_json_key():
         ("quantile_count", 1, "quantile_count"),
         ("quantile_count", 11, "quantile_count"),
         ("feature_fields", [], "feature_fields"),
-        ("feature_fields", ["x", "x"], "must be unique"),
+        ("feature_fields", ["x", "x"], "duplicates"),
     ],
 )
 def test_feature_report_plan_rejects_invalid_values(field, value, match):
