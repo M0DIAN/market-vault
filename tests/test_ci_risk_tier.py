@@ -162,6 +162,67 @@ def test_tests_change_full(tmp_path):
     assert classify_change(repo, "tests/test_thing.py") == "full"
 
 
+def test_research_feature_source_is_research_fast_on_pr(tmp_path):
+    repo = make_repo(tmp_path)
+    assert (
+        classify_change(repo, "src/market_vault/dataset/feature_transforms.py")
+        == "research_fast"
+    )
+
+
+def test_research_ts2_source_is_research_fast_on_pr(tmp_path):
+    repo = make_repo(tmp_path)
+    assert (
+        classify_change(repo, "src/market_vault/ts2_feature/execution.py")
+        == "research_fast"
+    )
+
+
+def test_research_test_is_research_fast_on_pr(tmp_path):
+    repo = make_repo(tmp_path)
+    assert (
+        classify_change(repo, "tests/test_ts2_feature_execution.py")
+        == "research_fast"
+    )
+
+
+def test_research_plus_docs_stays_research_fast(tmp_path):
+    repo = make_repo(tmp_path)
+    assert classify_changes(
+        repo,
+        [
+            "src/market_vault/research_dataset.py",
+            "docs/research.md",
+        ],
+    ) == "research_fast"
+
+
+def test_research_plus_shared_cli_fails_closed_to_full(tmp_path):
+    repo = make_repo(tmp_path)
+    assert classify_changes(
+        repo,
+        [
+            "src/market_vault/research_dataset.py",
+            "src/market_vault/cli.py",
+        ],
+    ) == "full"
+
+
+def test_research_fast_is_pull_request_only_push_goes_full(tmp_path):
+    repo = make_repo(tmp_path)
+    path = "src/market_vault/dataset/feature_transforms.py"
+    write_file(repo, path)
+    base = commit_all(repo, "base")
+    write_file(repo, path, "changed\n")
+    head = commit_all(repo, "head")
+    result = run_classifier(repo, base, head, mode="push")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert tier_of(result) == "full"
+    assert "reason=research_fast_is_pull_request_only" in result.stdout
+    assert "full_matrix_required=true" in result.stdout
+
+
 def test_scripts_change_full(tmp_path):
     repo = make_repo(tmp_path)
     assert classify_change(repo, "scripts/foo.py") == "full"
