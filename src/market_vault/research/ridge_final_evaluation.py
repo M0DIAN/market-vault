@@ -7,8 +7,17 @@ the same final Ridge model:
 - the validation-selected trading threshold
 
 It performs no model fitting, alpha selection, threshold search, trade
-re-evaluation, Dataset access, or winner selection.  It only revalidates the
+re-evaluation, Dataset access, or winner selection. It only revalidates the
 identity-bearing inputs and reports deterministic metric deltas.
+
+Every delta is defined as:
+
+    validation-selected-threshold TEST metric - fixed-zero-threshold TEST metric
+
+Therefore a positive total_return delta means higher selected-threshold return,
+while a negative realized_max_drawdown delta means lower selected-threshold
+realized drawdown. The report deliberately does not collapse those dimensions
+into a winner or recommendation.
 
 The validation threshold-selection result is required explicitly so the report
 does not merely trust threshold identifiers copied into the selected TEST
@@ -98,6 +107,8 @@ def _metrics_id(prefix: str, metrics: RidgeFinalTradingMetrics) -> str:
 
 @dataclass(frozen=True, slots=True)
 class RidgeFinalEvaluationDelta:
+    """Selected-threshold metric minus fixed-zero-threshold metric."""
+
     signal_count: int
     overlap_skipped_count: int
     trade_count: int
