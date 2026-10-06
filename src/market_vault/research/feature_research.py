@@ -288,6 +288,8 @@ def analyze_features(
         raise FeatureResearchError("Feature Research V1 requires MLDatasetBundle")
     if type(quantile_count) is not int or not 2 <= quantile_count <= 10:
         raise FeatureResearchError("quantile_count must be an integer within [2, 10]")
+    if split not in ("TRAIN", "VALIDATION", "TEST"):
+        raise FeatureResearchError("split must be TRAIN, VALIDATION, or TEST")
     selected = _feature_selection(bundle, feature_names)
     ml_split = bundle.split(split)
     metrics = tuple(
