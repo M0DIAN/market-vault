@@ -98,3 +98,21 @@ __all__ += [
     "FeatureSelectionReport",
     "select_features",
 ]
+
+from .experiment import (
+    EXPERIMENT_METADATA_VERSION,
+    ExperimentDatasetBundle,
+    ExperimentMetadataError,
+    ExperimentSampleMetadata,
+    ExperimentSplit,
+    build_experiment_dataset,
+)
+
+__all__ += [
+    "EXPERIMENT_METADATA_VERSION",
+    "ExperimentDatasetBundle",
+    "ExperimentMetadataError",
+    "ExperimentSampleMetadata",
+    "ExperimentSplit",
+    "build_experiment_dataset",
+]
