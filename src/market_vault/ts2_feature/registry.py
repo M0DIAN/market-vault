@@ -1,4 +1,4 @@
-"""Ten fixed TS2 registrations; only static implementation source is read."""
+"""Eleven fixed TS2 registrations; only static implementation source is read."""
 
 from dataclasses import dataclass
 import inspect
@@ -7,7 +7,7 @@ import types
 
 from ..dataset.feature_transforms import (
     candle_body, candle_range, ema, log_return, rolling_mean, rolling_std,
-    rolling_volume_mean, simple_return, sma, volume_ratio,
+    rolling_volume_mean, rsi, simple_return, sma, volume_ratio,
 )
 from ..dataset.models import ImplementationPin
 from ..dataset.transform_models import _module_source_sha256
@@ -42,6 +42,7 @@ _CONTRACTS = (
     _Contract("rolling_mean", rolling_mean, ("close",), 1),
     _Contract("rolling_std", rolling_std, ("close",), 2),
     _Contract("rolling_volume_mean", rolling_volume_mean, ("volume",), 1),
+    _Contract("rsi", rsi, ("close",), 2),
     _Contract("simple_return", simple_return, ("close",), 2),
     _Contract("sma", sma, ("close",), 1),
     _Contract("volume_ratio", volume_ratio, ("volume",), 2),
