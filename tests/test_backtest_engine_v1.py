@@ -17,6 +17,7 @@ from market_vault.backtest import (
 )
 from market_vault.backtest.engine import _Candidate, _run_candidates
 from market_vault.cross_day_dataset import join_multi_source_cross_day_dataset
+from market_vault.dataset.split_models import ChronologicalSplitSpec
 
 
 UTC = timezone.utc
@@ -169,6 +170,77 @@ def test_live_research_dataset_end_to_end_execution_safe_backtest(tmp_path):
         slippage_bps=5,
     )
     assert again == result
+
+
+def test_selected_return_label_controls_exit_time_in_multi_label_dataset(tmp_path):
+    label_specs = (
+        cd.spec(
+            1,
+            "forward_open_to_close_return",
+            name="forward_open_to_close_return_1d",
+        ),
+        cd.spec(
+            2,
+            "maximum_favorable_excursion",
+            name="maximum_favorable_excursion_2d",
+        ),
+    )
+    label_bars = (
+        cd.bar(
+            "2025-03-04",
+            slot=1,
+            open=120.0,
+            close=150.0,
+            high=160.0,
+        ),
+        cd.bar(
+            "2025-03-05",
+            slot=1,
+            open=130.0,
+            close=140.0,
+            high=170.0,
+        ),
+    )
+    schedule = cd.schedule((
+        ("2025-03-03", "N"),
+        ("2025-03-04", "N"),
+        ("2025-03-05", "N"),
+    ))
+    inputs = fixture(
+        tmp_path,
+        label_specs=label_specs,
+        label_bars=label_bars,
+        schedule=schedule,
+    )
+    inputs["split_spec"] = ChronologicalSplitSpec(
+        "market-vault-chronological-split-spec-v1",
+        "backtest_multi_label",
+        "v1",
+        "America/New_York",
+        cd.date(2025, 3, 6),
+        cd.date(2025, 3, 7),
+        cd.date(2025, 3, 8),
+        "FEATURE_WINDOW_CLOSE_DATE",
+        "ACTUAL_LABEL_END",
+        "EXCLUDE",
+        "EXCLUDE",
+    )
+    dataset = join_multi_source_cross_day_dataset(**inputs)
+    fields = tuple(field.name for field in dataset.schema.fields)
+    row = dict(zip(fields, dataset.rows[0]))
+    assert row["actual_label_end_time"] == cd.local("2025-03-05", 9, 40)
+
+    result = run_backtest(
+        dataset,
+        signal_field="ts2_return",
+        comparator="GT",
+        threshold=0.0,
+        return_label="forward_open_to_close_return_1d",
+        split="TRAIN",
+    )
+    assert len(result.trades) == 1
+    assert result.trades[0].exit_time == cd.local("2025-03-04", 9, 40)
+    assert result.trades[0].exit_time < row["actual_label_end_time"]
 
 
 def test_backtest_refuses_anchor_close_forward_return_as_pnl(tmp_path):
