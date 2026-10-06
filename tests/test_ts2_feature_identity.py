@@ -17,6 +17,9 @@ EXPECTED = {
     "candle_range.source_sha256": "dd9811e764ca4a8b5a2d82335dbcaa88ed6c7a9f4a498544ba63104f49dbf4b0",
     "candle_range.fingerprint": "fd85a80f628d7ecec2f396644c29d48094f3e3cec2375afc1706b94371f466a8",
     "candle_range.implementation_pin_id": "5b85ed91231955b7f0b5ecaa9f3d584210c9e28cd36d2dff0ae19ef3d0a0b687",
+    "ema.source_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "ema.fingerprint": "0000000000000000000000000000000000000000000000000000000000000000",
+    "ema.implementation_pin_id": "0000000000000000000000000000000000000000000000000000000000000000",
     "log_return.source_sha256": "4a1d6e4295ad33824020259c4653b74b087176ee5f40d2097f2a1aae7532e3fa",
     "log_return.fingerprint": "3fbdad819ee7d51a995474c94aba16e2333e611778b794c5246885fed66b69f2",
     "log_return.implementation_pin_id": "f938e63f485766459c6b378da97615fdbe5913b8f59cfe5ab734b39b55b0b60f",
@@ -32,6 +35,9 @@ EXPECTED = {
     "simple_return.source_sha256": "41345d65d910b01012a909b136dfb8681e33feb55d6b663628e301d3f0bcce32",
     "simple_return.fingerprint": "984589ae4cfe3471d72e1cf0438105dcd29360979ef89eb062a3d5c177c1c70e",
     "simple_return.implementation_pin_id": "55d3885db5b6eccdea45f2ad0baa41d170884c63bcb1bdf2f5bdd9f24f763782",
+    "sma.source_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "sma.fingerprint": "0000000000000000000000000000000000000000000000000000000000000000",
+    "sma.implementation_pin_id": "0000000000000000000000000000000000000000000000000000000000000000",
     "volume_ratio.source_sha256": "3a10650c63f2acf64912ad6bd2959ec0ba14f84f09cbfaa40f023f84e74ac919",
     "volume_ratio.fingerprint": "9dbad62831815638ba82d51608c9efc99b6131332c1b1c03d3670c2108c0da46",
     "volume_ratio.implementation_pin_id": "435f28696559ca2204997e76260403228a65cf6c150109bcf04afab6d5281d3b",
@@ -115,7 +121,7 @@ def actual():
     execution.update(status="COMPLETE", sample_count=1, feature_count=0,
         feature_spec_pins_digest=result["empty.ts2-feature-spec-pins-v1"], samples_content_id=result["zero_specs.samples_content_id"])
     result["zero_specs.execution_id"] = ids.execution_id(execution)
-    assert len(result) == len(EXPECTED) == 49
+    assert len(result) == len(EXPECTED) == 55
     return result
 
 
