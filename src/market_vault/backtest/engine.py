@@ -26,6 +26,7 @@ from ..cross_day_dataset import execution as dataset_execution
 from ..cross_day_dataset._validation import MultiSourceCrossDayDatasetError
 from ..cross_day_dataset.artifact_models import MultiSourceCrossDayArtifactError
 from ..dataset.encoding import DatasetError, encode_identity
+from ..dataset.specs import feature_label_spec_pin
 from .models import (
     BACKTEST_ENGINE_VERSION,
     BACKTEST_SPLITS,
@@ -222,7 +223,7 @@ def _candidates(dataset, rule: BacktestRule, return_label: str, split: str):
             or not decision.selected_rows
             or label_value is None
             or label_value.status != "COMPLETE"
-            or label_value.spec_pin.content_sha256 != spec.content_sha256
+            or label_value.spec_pin != feature_label_spec_pin(spec)
         ):
             raise BacktestError("execution-safe Label decision/value evidence is missing")
         signal_time = values["feature_window_close"]
