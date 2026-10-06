@@ -18,7 +18,8 @@ def verify_ts2(result, pit, builds, rows, resolved, registrations, cutoff):
     pins = tuple(feature_label_spec_pin(s) for s in specs)
     registry_pins = tuple(sorted((r.pin for r in registrations), key=ids.implementation_pin_id))
     require(result.registry_implementation_pins == registry_pins,
-            "IMPLEMENTATION_BINDING", "all eight real TS2 pins required")
+            "IMPLEMENTATION_BINDING",
+            "TS2 baseline/used implementation closure differs")
     build_ids = tuple(b.canonical_build_id for b in builds)
     require((result.execution_contract_version, result.registry_contract_version,
              result.feature_association_schema_id, result.feature_association_content_id,
