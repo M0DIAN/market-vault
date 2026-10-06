@@ -216,6 +216,7 @@ REASON_README = "readme_changed_in_docs_scope"
 REASON_DOCS = "all_changes_in_docs_scope"
 REASON_CONTROL_PLANE = "all_changes_in_control_plane_scope"
 REASON_RESEARCH_FAST = "all_changes_in_research_fast_scope"
+REASON_RESEARCH_FAST_PUSH_FULL = "research_fast_is_pull_request_only"
 REASON_SHARED = "workflow_or_registry_mutation_requires_full"
 REASON_UNKNOWN = "unknown_path_requires_full"
 REASON_CORE = "core_component_requires_full"
@@ -543,6 +544,14 @@ def main(argv: list[str]) -> int:
         return EXIT_USAGE
 
     tier, reason, impact = classify(paths, components)
+    # CI Acceleration V1 keeps final integration conservative: research_fast
+    # is a PR-development tier only.  The workflow no longer runs feature
+    # branch push CI, so a push classification corresponds to main and must
+    # receive the normal FULL matrix for Research code.
+    if args.mode == "push" and tier == TIER_RESEARCH_FAST:
+        tier = TIER_FULL
+        reason = REASON_RESEARCH_FAST_PUSH_FULL
+        impact.full_matrix_required = True
     print(f"tier={tier}")
     print(f"reason={reason}")
     print(f"components={','.join(impact.components) if impact.components else 'none'}")
