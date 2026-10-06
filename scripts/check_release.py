@@ -3213,7 +3213,8 @@ CI_PYARROW24_OLD_FULL_STEP = "Run full offline suite under PyArrow 24.0.0"
 # surface).
 CI_PYARROW24_C_GUARD = (
     "if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' "
-    "&& env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'"
+    "&& env.CI_TIER != 'control_plane' && env.CI_TIER != 'research_fast' "
+    "&& env.POST_MERGE_REUSE != 'true'"
 )
 CI_REUSE_MARKER_STEP = "FULL tests reused from verified PR"
 CI_REUSE_MARKER_GUARD = "if: env.POST_MERGE_REUSE == 'true'"
@@ -3267,8 +3268,8 @@ CI_CONTROL_PLANE_MARKER_GUARD = "if: env.CI_TIER == 'control_plane'"
 CI_OFFLINE_TESTS_STEP = "Run offline tests"
 CI_OFFLINE_TESTS_GUARD = (
     "if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' "
-    "&& env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true' "
-    "&& matrix.python-version == '3.11'"
+    "&& env.CI_TIER != 'control_plane' && env.CI_TIER != 'research_fast' "
+    "&& env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.11'"
 )
 # P1-1 (PR #75): the Python 3.14 compatibility surface activation. The
 # 3.14 leg runs exactly the audited 294-node surface sealed in PR #74
@@ -3286,8 +3287,8 @@ CI_PY314_VALIDATOR_RUN = "python scripts/ci_python314_surface.py --repo ."
 CI_PY314_MANIFEST_REL = "ci/python314_compatibility_surface.txt"
 CI_PY314_GUARD = (
     "if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' "
-    "&& env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true' "
-    "&& matrix.python-version == '3.14'"
+    "&& env.CI_TIER != 'control_plane' && env.CI_TIER != 'research_fast' "
+    "&& env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.14'"
 )
 # Sealed PR #74 contract pins for the permanent manifest (the validator
 # re-derives them from the manifest itself; this check pins them
@@ -3313,11 +3314,12 @@ _PY314_FLAG_RE = re.compile(r"(\s-k\b|\s-m\b)")
 # the control_plane condition fails closed here.
 CI_HEAVY_GUARD_PYARROW24 = (
     "if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' "
-    "&& env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'"
+    "&& env.CI_TIER != 'control_plane' && env.CI_TIER != 'research_fast' "
+    "&& env.POST_MERGE_REUSE != 'true'"
 )
 CI_HEAVY_GUARD_PACKAGE = (
     "if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'control_plane' "
-    "&& env.POST_MERGE_REUSE != 'true'"
+    "&& env.CI_TIER != 'research_fast' && env.POST_MERGE_REUSE != 'true'"
 )
 CI_PYARROW24_HEAVY_STEPS = (
     "Install dependencies",
@@ -3344,7 +3346,7 @@ CI_PACKAGE_HEAVY_STEPS = (
 CI_PREPARE_RELEASE_CHECKER_STEP = "Prepare release-checker runtime"
 CI_PREPARE_RELEASE_CHECKER_GUARD = (
     "if: env.CI_TIER == 'docs_fast' || env.CI_TIER == 'control_plane' "
-    "|| env.POST_MERGE_REUSE == 'true'"
+    "|| env.CI_TIER == 'research_fast' || env.POST_MERGE_REUSE == 'true'"
 )
 CI_RELEASE_CHECKER_STEP = "Run release checker"
 # control_plane must NEVER produce V1 FULL evidence: attestation and
@@ -3362,7 +3364,7 @@ CI_REUSE_PROOF_GUARD = (
 )
 # Classifier contract pins (scripts/ci_risk_tier.py, verified with ast).
 CI_CLASSIFIER_REL = Path("scripts") / "ci_risk_tier.py"
-CI_TIER_UNIVERSE_LINE = "tier=docs_fast|package_docs|control_plane|full"
+CI_TIER_UNIVERSE_LINE = "tier=docs_fast|package_docs|control_plane|research_fast|full"
 CI_FMR_LINE = "impact.full_matrix_required = tier == TIER_FULL"
 
 _CI_JOB_HEADER_RE = re.compile(r"(?m)^  ([A-Za-z0-9_-]+):\s*$")
