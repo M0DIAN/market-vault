@@ -36,6 +36,10 @@ from .ridge_final_cli import (
     add_ridge_final_subparser,
     research_ridge_final_main,
 )
+from .ridge_trading_selection_cli import (
+    add_ridge_trading_selection_subparser,
+    research_ridge_trading_select_main,
+)
 from .ridge_final_trading_cli import (
     add_ridge_final_trading_subparser,
     research_ridge_final_trading_main,
