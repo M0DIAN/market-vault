@@ -64,3 +64,19 @@ __all__ += [
     "FeatureResearchReport",
     "analyze_features",
 ]
+
+from .feature_stability import (
+    FEATURE_STABILITY_VERSION,
+    FeatureStabilityError,
+    FeatureStabilityMetric,
+    FeatureStabilityReport,
+    compare_feature_stability,
+)
+
+__all__ += [
+    "FEATURE_STABILITY_VERSION",
+    "FeatureStabilityError",
+    "FeatureStabilityMetric",
+    "FeatureStabilityReport",
+    "compare_feature_stability",
+]
