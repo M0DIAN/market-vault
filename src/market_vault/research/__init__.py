@@ -116,3 +116,21 @@ __all__ += [
     "ExperimentSplit",
     "build_experiment_dataset",
 ]
+
+from .walk_forward import (
+    WALK_FORWARD_VERSION,
+    WalkForwardError,
+    WalkForwardFold,
+    WalkForwardPlan,
+    WalkForwardSlice,
+    build_walk_forward_plan,
+)
+
+__all__ += [
+    "WALK_FORWARD_VERSION",
+    "WalkForwardError",
+    "WalkForwardFold",
+    "WalkForwardPlan",
+    "WalkForwardSlice",
+    "build_walk_forward_plan",
+]
