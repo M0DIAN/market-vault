@@ -45,11 +45,12 @@
 #   5. the classifier can determine its full impact scope.
 # "Not under src/market_vault/" alone is never sufficient.
 #
-# No component registered in this file satisfies condition 2 yet, so
-# every registered-component change still classifies FULL. A future UI
-# component will NOT enter any fast path until it is registered here
-# AND declares its own CI validation. This PR deliberately registers no
-# non-existent component.
+# CI Acceleration V1 activates one explicit exception to the historical
+# foundation rule: the Research component below is paired with the exact
+# RESEARCH_FAST_SCOPE_RULES and fixed validation portfolio in ci.yml.
+# The classifier authorizes research_fast only when every changed path is
+# inside that exact Research allowlist (or docs). The broad core registration
+# remains conservative for every other src/market_vault/** change.
 
 [components.core]
 paths = ["src/market_vault/"]
@@ -58,3 +59,33 @@ requires_core_full = true
 [components.package]
 paths = ["pyproject.toml", "README.md"]
 requires_package = true
+
+[components.research]
+paths = [
+  "src/market_vault/research_dataset.py",
+  "src/market_vault/ts2_feature",
+  "src/market_vault/dataset/feature_execution.py",
+  "src/market_vault/dataset/feature_models.py",
+  "src/market_vault/dataset/feature_registry.py",
+  "src/market_vault/dataset/feature_transforms.py",
+  "src/market_vault/multi_source/feature_execution.py",
+  "src/market_vault/multi_source/feature_identity.py",
+  "src/market_vault/multi_source/feature_models.py",
+  "src/market_vault/multi_source/feature_registry.py",
+  "src/market_vault/multi_source/feature_spec_models.py",
+  "src/market_vault/multi_source/feature_specs.py",
+  "src/market_vault/multi_source/feature_transforms.py",
+  "tests/test_research_dataset_builder.py",
+  "tests/test_dataset_feature_execution.py",
+  "tests/test_feature_label_specs.py",
+  "tests/test_multi_source_feature_execution.py",
+  "tests/test_multi_source_feature_identity.py",
+  "tests/test_multi_source_feature_specs.py",
+  "tests/test_ts2_feature_boundaries.py",
+  "tests/test_ts2_feature_canary_coverage.py",
+  "tests/test_ts2_feature_execution.py",
+  "tests/test_ts2_feature_identity.py",
+  "tests/ts2_feature_helpers.py",
+]
+requires_core_full = false
+requires_package = false

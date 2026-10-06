@@ -2,7 +2,7 @@
 """MarketVault CI risk-tier classifier (Phase 1 + Component-Aware + CP).
 
 Deterministic, read-only classification of a change range into one of
-four conservative tiers:
+five conservative tiers:
 
 - docs_fast:    every changed path is inside the docs/policy scope
                 (docs/**, DEVELOPMENT_PLAYBOOK.md, RELEASE_PLAYBOOK.md,
@@ -17,6 +17,12 @@ four conservative tiers:
                 six-file control-plane pytest surface on Python 3.11
                 plus the package release-checker tail — never the V1
                 FULL matrix.
+- research_fast: every changed path is in the exact validated
+                RESEARCH_FAST_SCOPE_RULES allowlist (or the docs scope),
+                with at least one Research path. This runs the fixed
+                Research/Feature regression portfolio on Python 3.11
+                and 3.14, skips unrelated PyArrow/package heavy work,
+                and never mints FULL evidence.
 - full:         anything else, including empty diffs and any condition
                 that prevents reliable classification
 
@@ -33,7 +39,7 @@ isolated to registered non-core / non-package / non-shared components);
 it does NOT authorize skipping the core full matrix.
 ``full_matrix_required`` reflects the currently ACTIVE validation
 policy: it is false only for the validated subset tiers docs_fast /
-package_docs / control_plane, and true for every other classification —
+package_docs / control_plane / research_fast, and true for every other classification —
 including any registered independent component without an explicit
 validation contract. Only a future PR that registers an explicit,
 validated component-validation contract may allow independent_only=true
@@ -69,7 +75,7 @@ Usage (run from the repository root, or pass --repo):
 
 Output:
 
-    tier=docs_fast|package_docs|control_plane|full
+    tier=docs_fast|package_docs|control_plane|research_fast|full
     reason=<short stable explanation>
     components=<comma-separated component names|none>
     core_changed=<true|false>
@@ -168,9 +174,41 @@ CONTROL_PLANE_SCOPE_RULES = [
     "tests/test_v061_ci_auditability.py",
 ]
 
+# CI Acceleration V1: exact Research/Feature fast surface.  This is
+# intentionally narrower than src/market_vault/**.  Shared CLI/public API,
+# artifact reader/materializer, storage, schema, packaging and unknown paths
+# remain FULL.  Docs may accompany a Research change without widening it.
+RESEARCH_FAST_SCOPE_RULES = [
+    "src/market_vault/research_dataset.py",
+    "src/market_vault/ts2_feature",
+    "src/market_vault/dataset/feature_execution.py",
+    "src/market_vault/dataset/feature_models.py",
+    "src/market_vault/dataset/feature_registry.py",
+    "src/market_vault/dataset/feature_transforms.py",
+    "src/market_vault/multi_source/feature_execution.py",
+    "src/market_vault/multi_source/feature_identity.py",
+    "src/market_vault/multi_source/feature_models.py",
+    "src/market_vault/multi_source/feature_registry.py",
+    "src/market_vault/multi_source/feature_spec_models.py",
+    "src/market_vault/multi_source/feature_specs.py",
+    "src/market_vault/multi_source/feature_transforms.py",
+    "tests/test_research_dataset_builder.py",
+    "tests/test_dataset_feature_execution.py",
+    "tests/test_feature_label_specs.py",
+    "tests/test_multi_source_feature_execution.py",
+    "tests/test_multi_source_feature_identity.py",
+    "tests/test_multi_source_feature_specs.py",
+    "tests/test_ts2_feature_boundaries.py",
+    "tests/test_ts2_feature_canary_coverage.py",
+    "tests/test_ts2_feature_execution.py",
+    "tests/test_ts2_feature_identity.py",
+    "tests/ts2_feature_helpers.py",
+]
+
 TIER_DOCS_FAST = "docs_fast"
 TIER_PACKAGE_DOCS = "package_docs"
 TIER_CONTROL_PLANE = "control_plane"
+TIER_RESEARCH_FAST = "research_fast"
 TIER_FULL = "full"
 
 _COMPONENT_NAME_RE = r"^[a-z0-9_-]+$"
@@ -180,6 +218,8 @@ REASON_NOT_IN_SCOPE = "changed_path_not_in_docs_scope"
 REASON_README = "readme_changed_in_docs_scope"
 REASON_DOCS = "all_changes_in_docs_scope"
 REASON_CONTROL_PLANE = "all_changes_in_control_plane_scope"
+REASON_RESEARCH_FAST = "all_changes_in_research_fast_scope"
+REASON_RESEARCH_FAST_PUSH_FULL = "research_fast_is_pull_request_only"
 REASON_SHARED = "workflow_or_registry_mutation_requires_full"
 REASON_UNKNOWN = "unknown_path_requires_full"
 REASON_CORE = "core_component_requires_full"
@@ -355,6 +395,24 @@ def _is_control_plane_change(paths: list[str]) -> bool:
     )
 
 
+def _is_research_fast_change(paths: list[str]) -> bool:
+    """Exact Research-fast mixture: >= 1 Research path and every path is
+    either in RESEARCH_FAST_SCOPE_RULES or the existing docs scope.
+
+    Shared CLI/public API, workflow/classifier, package/schema, artifact
+    physical boundaries and unknown paths are deliberately absent, so they
+    fall through to FULL (or control_plane for its separately validated
+    subset). Renames classify by both old and new paths.
+    """
+    return bool(paths) and any(
+        any(rule_matches(r, p) for r in RESEARCH_FAST_SCOPE_RULES) for p in paths
+    ) and all(
+        any(rule_matches(r, p) for r in RESEARCH_FAST_SCOPE_RULES)
+        or any(rule_matches(r, p) for r in DOCS_SCOPE_RULES)
+        for p in paths
+    )
+
+
 def classify(
     paths: list[str], components: list[Component]
 ) -> tuple[str, str, Impact]:
@@ -372,7 +430,9 @@ def classify(
       4. README + docs only -> package_docs
       5. exact control-plane / docs-only mixture with >= 1 control-plane
          path -> control_plane (validated SUBSET tier)
-      6. core / package / schema / shared / unknown / other -> FULL
+      6. exact Research / docs-only mixture with >= 1 Research path
+         -> research_fast (validated SUBSET tier)
+      7. core / package / schema / shared / unknown / other -> FULL
 
     The control-plane check runs BEFORE the generic shared_changed FULL
     check, so the old shared rule can never make control_plane
@@ -399,6 +459,7 @@ def classify(
             README_FILE,
             *CONTROL_RULES,
             *CONTROL_PLANE_SCOPE_RULES,
+            *RESEARCH_FAST_SCOPE_RULES,
             *(rule for c in components for rule in c.paths),
         ],
     ):
@@ -416,6 +477,11 @@ def classify(
         # Python 3.11 plus the package release-checker tail; it MUST
         # NEVER produce V1 FULL evidence (full_matrix_required=false).
         tier, reason = TIER_CONTROL_PLANE, REASON_CONTROL_PLANE
+    elif _is_research_fast_change(paths):
+        # CI Acceleration V1: the exact Research/Feature subset is validated
+        # by a fixed targeted portfolio in ci.yml on Python 3.11 and 3.14.
+        # It never mints FULL evidence; main still receives final FULL CI.
+        tier, reason = TIER_RESEARCH_FAST, REASON_RESEARCH_FAST
     elif impact.shared_changed:
         # Control-plane mutation outside the validated allowlist
         # (workflow / classifier / registry / package schema) forces
@@ -481,6 +547,14 @@ def main(argv: list[str]) -> int:
         return EXIT_USAGE
 
     tier, reason, impact = classify(paths, components)
+    # CI Acceleration V1 keeps final integration conservative: research_fast
+    # is a PR-development tier only.  The workflow no longer runs feature
+    # branch push CI, so a push classification corresponds to main and must
+    # receive the normal FULL matrix for Research code.
+    if args.mode == "push" and tier == TIER_RESEARCH_FAST:
+        tier = TIER_FULL
+        reason = REASON_RESEARCH_FAST_PUSH_FULL
+        impact.full_matrix_required = True
     print(f"tier={tier}")
     print(f"reason={reason}")
     print(f"components={','.join(impact.components) if impact.components else 'none'}")

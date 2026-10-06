@@ -42,6 +42,36 @@ requires_core_full = true
 [components.package]
 paths = ["pyproject.toml", "README.md"]
 requires_package = true
+
+[components.research]
+paths = [
+  "src/market_vault/research_dataset.py",
+  "src/market_vault/ts2_feature",
+  "src/market_vault/dataset/feature_execution.py",
+  "src/market_vault/dataset/feature_models.py",
+  "src/market_vault/dataset/feature_registry.py",
+  "src/market_vault/dataset/feature_transforms.py",
+  "src/market_vault/multi_source/feature_execution.py",
+  "src/market_vault/multi_source/feature_identity.py",
+  "src/market_vault/multi_source/feature_models.py",
+  "src/market_vault/multi_source/feature_registry.py",
+  "src/market_vault/multi_source/feature_spec_models.py",
+  "src/market_vault/multi_source/feature_specs.py",
+  "src/market_vault/multi_source/feature_transforms.py",
+  "tests/test_research_dataset_builder.py",
+  "tests/test_dataset_feature_execution.py",
+  "tests/test_feature_label_specs.py",
+  "tests/test_multi_source_feature_execution.py",
+  "tests/test_multi_source_feature_identity.py",
+  "tests/test_multi_source_feature_specs.py",
+  "tests/test_ts2_feature_boundaries.py",
+  "tests/test_ts2_feature_canary_coverage.py",
+  "tests/test_ts2_feature_execution.py",
+  "tests/test_ts2_feature_identity.py",
+  "tests/ts2_feature_helpers.py",
+]
+requires_core_full = false
+requires_package = false
 """
 
 # A hypothetical independent component, used to prove the mechanism can
@@ -181,6 +211,31 @@ def test_core_path_full_and_core_changed(tmp_path):
     assert line_value(result, "unknown_changed") == "false"
     assert line_value(result, "independent_only") == "false"
     assert line_value(result, "full_matrix_required") == "true"
+
+
+def test_research_component_uses_validated_fast_tier(tmp_path):
+    repo = make_repo(tmp_path)
+    result = classify_change(
+        repo, "src/market_vault/dataset/feature_transforms.py"
+    )
+
+    assert tier(result) == "research_fast"
+    assert line_value(result, "reason") == "all_changes_in_research_fast_scope"
+    assert line_value(result, "components") == "core,research"
+    assert line_value(result, "core_changed") == "true"
+    assert line_value(result, "unknown_changed") == "false"
+    assert line_value(result, "full_matrix_required") == "false"
+
+
+def test_research_component_test_path_is_known_and_fast(tmp_path):
+    repo = make_repo(tmp_path)
+    result = classify_change(repo, "tests/test_ts2_feature_execution.py")
+
+    assert tier(result) == "research_fast"
+    assert line_value(result, "components") == "research"
+    assert line_value(result, "core_changed") == "false"
+    assert line_value(result, "unknown_changed") == "false"
+    assert line_value(result, "full_matrix_required") == "false"
 
 
 def test_unknown_path_full_and_unknown_changed(tmp_path):
@@ -420,6 +475,11 @@ def test_full_matrix_required_matches_active_policy(tmp_path):
         (REAL_REGISTRY, ["docs/guide.md"], "docs_fast"),
         (REAL_REGISTRY, ["README.md", "docs/guide.md"], "package_docs"),
         (REAL_REGISTRY, ["src/market_vault/thing.py"], "full"),
+        (
+            REAL_REGISTRY,
+            ["src/market_vault/dataset/feature_transforms.py"],
+            "research_fast",
+        ),
         (REAL_REGISTRY, ["notes.txt"], "full"),
         (REAL_REGISTRY, [".github/workflows/ci.yml"], "control_plane"),
         (REAL_REGISTRY, ["pyproject.toml"], "full"),

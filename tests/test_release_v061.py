@@ -7695,6 +7695,7 @@ def test_release_checker_fails_when_portability_job_restores_blanket_full_step(
         "- name: Run audited PyArrow 24 sensitive regression surface\n"
         "        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != "
         "'package_docs' && env.CI_TIER != 'control_plane' "
+        "&& env.CI_TIER != 'research_fast' "
         "&& env.POST_MERGE_REUSE != 'true'\n"
         "        run: |\n"
         "          python -m pytest \\\n"

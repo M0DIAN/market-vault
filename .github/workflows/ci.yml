@@ -12,10 +12,13 @@ on:
   push:
     branches:
       - main
-      - "feature/**"
   pull_request:
     branches:
       - main
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -173,7 +176,7 @@ jobs:
       # steps; a blanket unqualified FULL pytest on 3.14 is a contract
       # violation.
       - name: Run offline tests
-        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.11'
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.CI_TIER != 'research_fast' && env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.11'
         run: python -m pytest
         # FULL CI performance profiling (measurement only, no behavior
         # change): emit the slowest-durations report for the Python 3.11
@@ -192,7 +195,7 @@ jobs:
       # exact guard. Unknown/unset tier keeps both steps running
       # (fail-closed to FULL).
       - name: Validate Python 3.14 compatibility surface
-        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.14'
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.CI_TIER != 'research_fast' && env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.14'
         run: python scripts/ci_python314_surface.py --repo .
 
       # P1-1 (PR #75): execute exactly the validated surface, fail-closed.
@@ -204,7 +207,7 @@ jobs:
       # must have passed, otherwise this step never runs and the job
       # fails.
       - name: Run Python 3.14 compatibility surface
-        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.14'
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.CI_TIER != 'research_fast' && env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.14'
         run: |
           set -euo pipefail
 
@@ -221,6 +224,37 @@ jobs:
           python -m pytest \
             "${PY314_SELECTORS[@]}" \
             -q --durations=200
+
+      # CI Acceleration V1: bounded Research/Feature portfolio.  It runs
+      # on both supported Python versions and is the complete PR validation
+      # contract for tier=research_fast.  The path classifier is narrower than
+      # this portfolio: integration tests deliberately cover adjacent Dataset
+      # and Cross-Day boundaries without making those source paths fast-eligible.
+      - name: Run Research fast tests
+        if: env.CI_TIER == 'research_fast' && env.POST_MERGE_REUSE != 'true'
+        run: |
+          python -m pytest \
+            tests/test_research_dataset_builder.py \
+            tests/test_dataset_feature_execution.py \
+            tests/test_feature_label_specs.py \
+            tests/test_multi_source_feature_execution.py \
+            tests/test_multi_source_feature_identity.py \
+            tests/test_multi_source_feature_specs.py \
+            tests/test_ts2_feature_boundaries.py \
+            tests/test_ts2_feature_execution.py \
+            tests/test_ts2_feature_identity.py \
+            tests/test_cross_day_generator.py \
+            tests/test_cross_day_dataset_execution.py \
+            tests/test_cross_day_dataset_semantics.py \
+            tests/test_dataset_end_to_end_regression.py \
+            -q --durations=50
+
+      - name: Research fast tier marker
+        if: env.CI_TIER == 'research_fast'
+        run: |
+          echo "CI_TIER=research_fast"
+          echo "RESEARCH_FAST_PORTFOLIO_PASSED"
+          echo "matrix_python_version=${{ matrix.python-version }}"
 
       # P1-2 control-plane tier (PR #71): the conservative six-file
       # control-plane pytest surface, executed only on Python 3.11 for
@@ -345,25 +379,25 @@ jobs:
       # control-plane changes. Existing FULL behavior (and unknown/unset
       # tier fail-closed to FULL) is unchanged.
       - name: Install dependencies
-        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.CI_TIER != 'research_fast' && env.POST_MERGE_REUSE != 'true'
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
 
       - name: Pin the audited PyArrow 24.0.0 compatibility runtime
-        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.CI_TIER != 'research_fast' && env.POST_MERGE_REUSE != 'true'
         run: python -m pip install "pyarrow==24.0.0"
 
       - name: Assert the audited PyArrow compatibility version
-        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.CI_TIER != 'research_fast' && env.POST_MERGE_REUSE != 'true'
         run: python -c "import pyarrow; assert pyarrow.__version__ == '24.0.0'"
 
       - name: Run audited PyArrow 24 compatibility tests
-        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.CI_TIER != 'research_fast' && env.POST_MERGE_REUSE != 'true'
         run: python -m pytest tests/test_v060_portability.py -q
 
       - name: Run the canonical reader and frozen regression surface
-        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.CI_TIER != 'research_fast' && env.POST_MERGE_REUSE != 'true'
         run: |
           python -m pytest tests/test_canonical_reader.py -q
           python -m pytest \
@@ -376,7 +410,7 @@ jobs:
       # scripts/check_release.py and its regression tests pin it. FULL
       # pytest remains in the normal test matrix (3.11 / 3.14).
       - name: Run audited PyArrow 24 sensitive regression surface
-        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.CI_TIER != 'research_fast' && env.POST_MERGE_REUSE != 'true'
         run: |
           python -m pytest \
             tests/test_canonical_materialization_v03.py \
@@ -404,6 +438,12 @@ jobs:
           echo "CI_TIER=control_plane"
           echo "CONTROL_PLANE_SUBSET_POLICY_ACTIVE"
           echo "PYARROW24_SUITE_SKIPPED_BY_CONTROL_PLANE_POLICY"
+
+      - name: Research fast portability marker
+        if: env.CI_TIER == 'research_fast'
+        run: |
+          echo "CI_TIER=research_fast"
+          echo "PYARROW24_SUITE_SKIPPED_BY_RESEARCH_FAST_POLICY"
 
       - name: Fast-path tier marker
         if: env.CI_TIER == 'docs_fast' || env.CI_TIER == 'package_docs'
@@ -488,7 +528,7 @@ jobs:
           echo "POST_MERGE_REUSE_REASON=${reason:-verifier_output_missing}" >> "$GITHUB_ENV"
 
       - name: Install build tooling
-        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'control_plane' && env.CI_TIER != 'research_fast' && env.POST_MERGE_REUSE != 'true'
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e .
@@ -505,7 +545,7 @@ jobs:
       # unnecessary when verified PR FULL evidence is reused, so they are
       # not installed here.
       - name: Prepare release-checker runtime
-        if: env.CI_TIER == 'docs_fast' || env.CI_TIER == 'control_plane' || env.POST_MERGE_REUSE == 'true'
+        if: env.CI_TIER == 'docs_fast' || env.CI_TIER == 'control_plane' || env.CI_TIER == 'research_fast' || env.POST_MERGE_REUSE == 'true'
         run: |
           python -m pip install -e .
 
@@ -523,29 +563,29 @@ jobs:
         run: python scripts/check_release.py
 
       - name: Example renderer help smoke
-        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'control_plane' && env.CI_TIER != 'research_fast' && env.POST_MERGE_REUSE != 'true'
         run: python examples/dataset_cli/render_plans.py --help
 
       - name: PR-5 verified client example help smoke
-        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'control_plane' && env.CI_TIER != 'research_fast' && env.POST_MERGE_REUSE != 'true'
         run: |
           python examples/python_client/read_verified_artifacts.py --help
           echo 'V070_INTEGRATED_ACCEPTANCE_OK'
 
       - name: Build wheel and sdist
-        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'control_plane' && env.CI_TIER != 'research_fast' && env.POST_MERGE_REUSE != 'true'
         run: |
           python -m build
           python -m twine check dist/*
 
       - name: Confirm exactly one wheel and one sdist
-        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'control_plane' && env.CI_TIER != 'research_fast' && env.POST_MERGE_REUSE != 'true'
         run: |
           test "$(ls dist/*.whl | wc -l)" -eq 1
           test "$(ls dist/*.tar.gz | wc -l)" -eq 1
 
       - name: Install wheel in a fresh virtual environment
-        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'control_plane' && env.CI_TIER != 'research_fast' && env.POST_MERGE_REUSE != 'true'
         run: |
           python -m venv .release-venv
           .release-venv/bin/python -m pip install dist/*.whl
@@ -563,7 +603,7 @@ jobs:
           .release-venv/bin/python -c "from importlib.metadata import version; assert version('market-vault') == '0.8.0'"
 
       - name: Fresh-wheel public API smoke check
-        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'control_plane' && env.CI_TIER != 'research_fast' && env.POST_MERGE_REUSE != 'true'
         run: |
           .release-venv/bin/python -c "
           from market_vault.canonical import load_verified_canonical_build
@@ -660,7 +700,7 @@ jobs:
           echo 'V080_RELEASED_OK'
 
       - name: Check wheel contents exclude local data
-        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'control_plane' && env.CI_TIER != 'research_fast' && env.POST_MERGE_REUSE != 'true'
         run: |
           python - <<'EOF'
           import glob, zipfile
@@ -673,7 +713,7 @@ jobs:
           EOF
 
       - name: Build package SHA256 manifest
-        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'control_plane' && env.CI_TIER != 'research_fast' && env.POST_MERGE_REUSE != 'true'
         run: |
           python - <<'EOF'
           import hashlib
@@ -696,7 +736,7 @@ jobs:
           EOF
 
       - name: Verify package SHA256 manifest
-        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'control_plane' && env.CI_TIER != 'research_fast' && env.POST_MERGE_REUSE != 'true'
         run: |
           python - <<'EOF'
           import re
@@ -730,7 +770,7 @@ jobs:
 
       - name: Upload package audit artifact
         id: package-artifact
-        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'control_plane' && env.CI_TIER != 'research_fast' && env.POST_MERGE_REUSE != 'true'
         uses: actions/upload-artifact@v7
         with:
           name: market-vault-package-${{ github.event.pull_request.head.sha || github.sha }}-attempt-${{ github.run_attempt }}
@@ -743,7 +783,7 @@ jobs:
           overwrite: false
 
       - name: Confirm package audit artifact metadata
-        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true'
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'control_plane' && env.CI_TIER != 'research_fast' && env.POST_MERGE_REUSE != 'true'
         env:
           PACKAGE_ARTIFACT_ID: ${{ steps.package-artifact.outputs.artifact-id }}
           PACKAGE_ARTIFACT_URL: ${{ steps.package-artifact.outputs.artifact-url }}
@@ -804,6 +844,13 @@ jobs:
           echo "CI_TIER=control_plane"
           echo "CONTROL_PLANE_SUBSET_POLICY_ACTIVE"
           echo "PACKAGE_BUILD_SKIPPED_BY_CONTROL_PLANE_POLICY"
+
+      - name: Research fast package marker
+        if: env.CI_TIER == 'research_fast'
+        run: |
+          echo "CI_TIER=research_fast"
+          echo "PACKAGE_BUILD_SKIPPED_BY_RESEARCH_FAST_POLICY"
+          echo "RELEASE_CHECKER_STILL_EXECUTED"
 
       - name: Fast-path tier marker
         if: env.CI_TIER == 'docs_fast'
