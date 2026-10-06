@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -15,8 +17,12 @@ from market_vault.backtest import (
     BacktestRule,
     run_backtest,
 )
+from market_vault.backtest import engine as backtest_engine
 from market_vault.backtest.engine import _Candidate, _run_candidates
-from market_vault.cross_day_dataset import join_multi_source_cross_day_dataset
+from market_vault.cross_day_dataset import (
+    VerifiedMultiSourceCrossDayDataset,
+    join_multi_source_cross_day_dataset,
+)
 from market_vault.dataset.split_models import ChronologicalSplitSpec
 
 
@@ -121,6 +127,46 @@ def _research_result(tmp_path, *, execution_safe=True):
         label_bars=label_bars,
     )
     return join_multi_source_cross_day_dataset(**inputs)
+
+
+def _forged_verified(path: Path, dataset_id: str):
+    value = object.__new__(VerifiedMultiSourceCrossDayDataset)
+    object.__setattr__(value, "build_path", path)
+    object.__setattr__(value, "dataset_id", dataset_id)
+    return value
+
+
+def test_verified_input_is_reloaded_from_build_path(monkeypatch, tmp_path):
+    dataset_id = "a" * 64
+    claimed = _forged_verified(tmp_path / ("dataset_id=" + dataset_id), dataset_id)
+    fresh = SimpleNamespace(dataset_id=dataset_id)
+    calls = []
+
+    def load(path):
+        calls.append(path)
+        return fresh
+
+    monkeypatch.setattr(
+        backtest_engine,
+        "load_verified_multi_source_cross_day_dataset",
+        load,
+    )
+    assert backtest_engine._admit_dataset(claimed) is fresh
+    assert calls == [claimed.build_path]
+
+
+def test_verified_input_rejects_identity_change_after_reload(monkeypatch, tmp_path):
+    claimed = _forged_verified(
+        tmp_path / ("dataset_id=" + "a" * 64),
+        "a" * 64,
+    )
+    monkeypatch.setattr(
+        backtest_engine,
+        "load_verified_multi_source_cross_day_dataset",
+        lambda path: SimpleNamespace(dataset_id="b" * 64),
+    )
+    with pytest.raises(BacktestError, match="identity changed"):
+        backtest_engine._admit_dataset(claimed)
 
 
 def test_live_research_dataset_end_to_end_execution_safe_backtest(tmp_path):
