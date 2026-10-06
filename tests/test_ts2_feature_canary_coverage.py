@@ -58,8 +58,8 @@ CANARIES = (
     (42, RUNTIME, BOUNDARIES, "test_schedule_label_and_a3_independence"),
     (43, DEFERRED, "Future Dataset join is not implemented or authorized.", None),
     (44, RUNTIME, BOUNDARIES, "test_source_normalization_and_real_content_change"),
-    (45, RUNTIME, BOUNDARIES, "test_only_fourteen_static_source_reads_no_other_io"),
-    (46, RUNTIME, BOUNDARIES, "test_only_fourteen_static_source_reads_no_other_io"),
+    (45, RUNTIME, BOUNDARIES, "test_only_baseline_static_source_reads_no_other_io"),
+    (46, RUNTIME, BOUNDARIES, "test_only_baseline_static_source_reads_no_other_io"),
     (47, LEGACY, "test_cross_day_canary_coverage.py", None),
     (48, BOUNDARY, BOUNDARIES, "test_no_dataset_or_provider_exports_and_no_temporal_authority"),
 )
