@@ -30,6 +30,7 @@ from __future__ import annotations
 from ..canonical.schema import CANONICAL_SCHEMA_VERSION
 from .label_transforms import (
     forward_direction,
+    forward_open_to_close_return,
     forward_return,
     maximum_adverse_excursion,
     maximum_favorable_excursion,
@@ -141,6 +142,17 @@ def built_in_label_registrations() -> tuple[TransformRegistration, ...]:
             output_logical_type="float64",
             lookforward=_HORIZON_LOOKFORWARD,
             display_name="Forward close-to-close return to the horizon target",
+        ),
+        _registration(
+            transform_ref=(
+                "market_vault.dataset.label_transforms.forward_open_to_close_return:"
+                "forward_open_to_close_return"
+            ),
+            implementation=forward_open_to_close_return,
+            input_canonical_fields=("open", "close"),
+            output_logical_type="float64",
+            lookforward=_OBSERVATION_WINDOW_LOOKFORWARD,
+            display_name="Execution-safe future-open to horizon-close return",
         ),
         _registration(
             transform_ref="market_vault.dataset.label_transforms.forward_direction:forward_direction",
