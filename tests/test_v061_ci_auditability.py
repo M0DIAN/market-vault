@@ -542,7 +542,10 @@ RESEARCH_FAST_STEP = "Run Research fast tests"
 RESEARCH_FAST_SURFACE = (
     "tests/test_research_dataset_builder.py",
     "tests/test_dataset_feature_execution.py",
+    "tests/test_feature_label_specs.py",
     "tests/test_multi_source_feature_execution.py",
+    "tests/test_multi_source_feature_identity.py",
+    "tests/test_multi_source_feature_specs.py",
     "tests/test_ts2_feature_boundaries.py",
     "tests/test_ts2_feature_execution.py",
     "tests/test_ts2_feature_identity.py",
