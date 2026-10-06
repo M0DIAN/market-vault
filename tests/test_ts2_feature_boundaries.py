@@ -51,8 +51,15 @@ def test_source_failure_and_wrong_module_binding(tmp_path, monkeypatch):
     with monkeypatch.context() as patch:
         patch.setattr(inspect, "getsource", unavailable)
         fails("SOURCE_FINGERPRINT", lambda: execute(one, empty, ()))
-    contract = registry._CONTRACTS[0]
-    monkeypatch.setattr(sys.modules[contract.implementation.__module__], contract.name, lambda x: 1.0)
+    contract = next(
+        contract for contract in registry._CONTRACTS
+        if contract.name in registry._BASELINE_CONTRACT_NAMES
+    )
+    monkeypatch.setattr(
+        sys.modules[contract.implementation.__module__],
+        contract.name,
+        lambda x: 1.0,
+    )
     fails("REGISTRY_AUTHORITY", lambda: execute(one, selected))
 
 
