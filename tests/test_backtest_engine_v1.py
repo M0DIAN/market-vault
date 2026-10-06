@@ -54,6 +54,24 @@ def test_non_overlapping_long_flat_metrics_and_drawdown():
     assert metrics.exposure == pytest.approx(0.75)
 
 
+def test_trade_identity_requires_lowercase_hex_sample_key():
+    from market_vault.backtest import BacktestTrade
+
+    with pytest.raises(BacktestError, match="lowercase hex"):
+        BacktestTrade(
+            "Z" * 64,
+            "US.AAPL",
+            _instant(1),
+            _instant(2),
+            _instant(3),
+            1.0,
+            0.1,
+            0.1,
+            1.0,
+            1.1,
+        )
+
+
 def test_costs_are_applied_on_entry_and_exit():
     candidate = _Candidate(
         "a" * 64,
@@ -123,7 +141,9 @@ def test_live_research_dataset_end_to_end_execution_safe_backtest(tmp_path):
     assert result.split == "TRAIN"
     assert len(result.trades) == 1
     trade = result.trades[0]
-    assert trade.signal_time == dataset.rows[0][3]
+    field_names = tuple(field.name for field in dataset.schema.fields)
+    feature_window_close_index = field_names.index("feature_window_close")
+    assert trade.signal_time == dataset.rows[0][feature_window_close_index]
     assert trade.signal_time < trade.entry_time < trade.exit_time
     assert trade.gross_return == pytest.approx(0.25)
     assert trade.net_return == pytest.approx(
