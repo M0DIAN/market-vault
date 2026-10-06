@@ -17,6 +17,16 @@ from datetime import date, datetime, timezone
 import numpy as np
 import pytest
 
+from market_vault.cross_day.registry import admit_specs
+from market_vault.research import (
+    RESEARCH_LABEL_LIBRARY_VERSION,
+    STANDARD_LABEL_HORIZONS,
+    forward_direction_label,
+    forward_return_label,
+    label_preset,
+    label_preset_names,
+)
+
 from market_vault.dataset import (
     FEATURE_LABEL_SPEC_CONTENT_ID_VERSION,
     FEATURE_SPEC_SCHEMA_VERSION,
@@ -1340,3 +1350,93 @@ def test_public_all_stable_and_no_internal_leaks():
         assert name in namespace
     assert "FeatureSpec" in namespace
     assert "SpecValidationError" in namespace
+
+
+# ---------------------------------------------------------------------------
+# v0.9.0 Research Label Library V1.
+# ---------------------------------------------------------------------------
+
+def test_research_label_library_version_and_exact_standard_presets():
+    assert RESEARCH_LABEL_LIBRARY_VERSION == "market-vault-research-label-library-v1"
+    assert STANDARD_LABEL_HORIZONS == (1, 3, 5, 10)
+    assert label_preset_names() == (
+        "forward_return_1d",
+        "forward_return_3d",
+        "forward_return_5d",
+        "forward_return_10d",
+        "forward_direction_1d",
+        "forward_direction_3d",
+        "forward_direction_5d",
+        "forward_direction_10d",
+    )
+
+
+@pytest.mark.parametrize("horizon", STANDARD_LABEL_HORIZONS)
+@pytest.mark.parametrize(
+    "factory,prefix,logical_type,transform",
+    [
+        (
+            forward_return_label,
+            "forward_return",
+            "float64",
+            "market_vault.dataset.label_transforms.forward_return:forward_return",
+        ),
+        (
+            forward_direction_label,
+            "forward_direction",
+            "int64",
+            "market_vault.dataset.label_transforms.forward_direction:forward_direction",
+        ),
+    ],
+)
+def test_research_label_specs_match_cross_day_contract(
+    horizon, factory, prefix, logical_type, transform
+):
+    spec = factory(horizon)
+    assert spec.name == f"{prefix}_{horizon}d"
+    assert spec.version == "v1"
+    assert spec.output == DatasetField(spec.name, logical_type, False)
+    assert spec.input_canonical_fields == ("close",)
+    assert spec.transform_ref == transform
+    assert spec.parameters == ()
+    assert spec.requirements == SpecVersionRequirements(
+        ("market-bars-canonical-schema-v1",),
+        ("10.9-mv-ts2",),
+    )
+    assert spec.observation_window == LabelObservationWindow(
+        "TRADING_DAYS",
+        horizon - 1,
+        horizon - 1,
+    )
+    assert spec.horizon == LabelHorizon("TRADING_DAYS", horizon)
+    assert spec.alignment_rule == "FEATURE_CLOSE_ALIGNED"
+    assert spec.missing_data_policy == "INCOMPLETE"
+    assert spec.cross_trading_day == CrossTradingDayPolicy(
+        True,
+        "SAME_REQUESTED_SESSION_BAR_SLOT",
+    )
+    admitted = admit_specs((spec,))
+    assert admitted[0][0] == spec
+
+
+def test_research_label_preset_resolver_is_exact_and_identity_stable():
+    specs = tuple(label_preset(name) for name in label_preset_names())
+    assert tuple(spec.name for spec in specs) == label_preset_names()
+    pins = tuple(feature_label_spec_pin(spec) for spec in specs)
+    assert len({pin.content_sha256 for pin in pins}) == len(pins)
+    assert label_preset("forward_return_5d") == forward_return_label(5)
+    assert label_preset("forward_direction_10d") == forward_direction_label(10)
+
+
+@pytest.mark.parametrize("bad", [True, 0, -1, 1.0, "5"])
+def test_research_label_factory_rejects_invalid_horizon(bad):
+    with pytest.raises(ValueError, match="positive integer"):
+        forward_return_label(bad)
+    with pytest.raises(ValueError, match="positive integer"):
+        forward_direction_label(bad)
+
+
+@pytest.mark.parametrize("bad", [None, 1, "forward_return_2d", "FORWARD_RETURN_1D"])
+def test_research_label_preset_rejects_unknown_or_noncanonical_names(bad):
+    with pytest.raises(ValueError):
+        label_preset(bad)
