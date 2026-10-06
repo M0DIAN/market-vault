@@ -63,6 +63,7 @@ paths = [
   "tests/test_ml_dataset_adapter.py",
   "tests/test_feature_research.py",
   "tests/test_feature_stability.py",
+  "tests/test_feature_selection.py",
   "tests/test_dataset_feature_execution.py",
   "tests/test_feature_label_specs.py",
   "tests/test_multi_source_feature_execution.py",
@@ -257,6 +258,17 @@ def test_feature_research_test_path_is_known_and_fast(tmp_path):
 def test_feature_stability_test_path_is_known_and_fast(tmp_path):
     repo = make_repo(tmp_path)
     result = classify_change(repo, "tests/test_feature_stability.py")
+
+    assert tier(result) == "research_fast"
+    assert line_value(result, "components") == "research"
+    assert line_value(result, "core_changed") == "false"
+    assert line_value(result, "unknown_changed") == "false"
+    assert line_value(result, "full_matrix_required") == "false"
+
+
+def test_feature_selection_test_path_is_known_and_fast(tmp_path):
+    repo = make_repo(tmp_path)
+    result = classify_change(repo, "tests/test_feature_selection.py")
 
     assert tier(result) == "research_fast"
     assert line_value(result, "components") == "research"
