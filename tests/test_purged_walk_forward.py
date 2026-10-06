@@ -67,11 +67,11 @@ def _experiment_split(ml_split, label_end_days):
             ml_meta.code,
             ml_meta.feature_window_close,
             _dt(end_day),
-            f"{1000 + index:064x}",
+            f"{1000 + int(ml_meta.sample_key, 16):064x}",
         )
-        for index, (ml_meta, end_day) in enumerate(
-            zip(ml_split.metadata, label_end_days),
-            start=1,
+        for ml_meta, end_day in zip(
+            ml_split.metadata,
+            label_end_days,
         )
     )
     return ExperimentSplit(ml_split.split, ml_split, metadata)
