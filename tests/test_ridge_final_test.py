@@ -78,6 +78,11 @@ def test_final_test_fits_development_and_scores_test_once():
     assert tuple(
         item.feature_window_close for item in report.predictions
     ) == (_time(8), _time(9))
+    assert tuple(
+        item.label_value_id for item in report.predictions
+    ) == tuple(
+        item.label_value_id for item in bundle.test.metadata
+    )
     assert all(
         item.residual == item.actual - item.predicted
         for item in report.predictions
