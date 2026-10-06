@@ -17,7 +17,7 @@ from ..multi_source.feature_registry import _preflight_registry, _resolve as res
 from ..observation.pit_models import ObservationPITAssemblyResult
 from ..ts2_feature.models import TS2FeatureExecutionResult
 from ..ts2_feature.execution import _specs, _resolve, _builds, _pit
-from ..ts2_feature.registry import _registry
+from ..ts2_feature.registry import _registry_for_specs
 from ..ts2_feature._validation import TS2FeatureError
 from ._label_closure import verify_labels
 from ._observation_closure import admit_observation, verify_observation_features
@@ -103,7 +103,7 @@ def admit_inputs(*, feature_pit, ts2_features, observation_pit, observation_buil
         require(len(set(names)) == len(names), "DUPLICATE_INPUT", "cross-family output collision")
         require(not set(names) & RESERVED_NAMES, "SPEC_CONTRACT", "reserved output name")
     with stage("IMPLEMENTATION_BINDING"):
-        registrations = _registry()
+        registrations = _registry_for_specs(specs)
         _preflight_registry()
         observation_regs = tuple(resolve_observation(s) for s in observation_specs)
         label_registry = built_in_cross_day_label_registry()
