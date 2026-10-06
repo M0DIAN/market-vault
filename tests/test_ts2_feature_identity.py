@@ -1,4 +1,4 @@
-"""Six frozen design vector groups, with 73 literal expected digests."""
+"""Six frozen design vector groups, with 82 literal expected digests."""
 
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -23,6 +23,15 @@ EXPECTED = {
     "ema.source_sha256": "c40affba9a8186174733eb5496cd3cea0cc58e4593988ce3ec81308fdb735b84",
     "ema.fingerprint": "329b4c265cde6a050d770c4a422574740eef2f4b3f0e2a697134f66f7e598033",
     "ema.implementation_pin_id": "562071902ed8890dbc2b154cfa12e9be2e81deb74507eaf8860fa7adb7c93690",
+    "kdj_d.source_sha256": "0455e343ea6489f9455c14dadc5cb48eec61d522ea045c18d6f0509df7c82747",
+    "kdj_d.fingerprint": "d806dfdcc41f042f755e9e0e3c1899be3a406e3f85a2fd5fa21576ed40a43a5c",
+    "kdj_d.implementation_pin_id": "c7de867c5d97deac2f029ebeaa31a8251af2ea46fc6a9feb976409400b9ec6cf",
+    "kdj_j.source_sha256": "15e09862f547266cbdd77337e9aa892895e069db95ac6c336367cd0786d107c9",
+    "kdj_j.fingerprint": "b53f72fd8b753c74aeb03bf32267ca9e38eaaf255449063f1446c1c036390a6d",
+    "kdj_j.implementation_pin_id": "7633f6ba4e6e373d585db914e1d46fddc2d65da981dfd7844a8d6efec5e503e6",
+    "kdj_k.source_sha256": "656ebec95fdce23e152ff3fbabb0897db6c76c938412ab339a18385c4e958314",
+    "kdj_k.fingerprint": "791cc1c2cd003f12d718e080a6e63d672cf83cd8ce5d77b4a75cfd9f89bcb77d",
+    "kdj_k.implementation_pin_id": "45a7f50c9fa647aa79b310a1b47231fd744b5e77e764ac73a834c2ac7c3e8032",
     "log_return.source_sha256": "4a1d6e4295ad33824020259c4653b74b087176ee5f40d2097f2a1aae7532e3fa",
     "log_return.fingerprint": "3fbdad819ee7d51a995474c94aba16e2333e611778b794c5246885fed66b69f2",
     "log_return.implementation_pin_id": "f938e63f485766459c6b378da97615fdbe5913b8f59cfe5ab734b39b55b0b60f",
@@ -142,7 +151,7 @@ def actual():
     execution.update(status="COMPLETE", sample_count=1, feature_count=0,
         feature_spec_pins_digest=result["empty.ts2-feature-spec-pins-v1"], samples_content_id=result["zero_specs.samples_content_id"])
     result["zero_specs.execution_id"] = ids.execution_id(execution)
-    assert len(result) == len(EXPECTED) == 73
+    assert len(result) == len(EXPECTED) == 82
     return result
 
 

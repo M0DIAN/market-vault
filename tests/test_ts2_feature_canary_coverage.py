@@ -30,7 +30,7 @@ CANARIES = (
     (14, RUNTIME, EXECUTION, "test_sample_identity_tamper"),
     (15, RUNTIME, EXECUTION, "test_identical_backing_rows_order_and_context"),
     (16, RUNTIME, BOUNDARIES, "test_relocation_is_in_memory_only"),
-    (17, RUNTIME, BOUNDARIES, "test_fixed_registry_is_sixteen_immutable_static_functions"),
+    (17, RUNTIME, BOUNDARIES, "test_fixed_registry_is_nineteen_immutable_static_functions"),
     (18, RUNTIME, BOUNDARIES, "test_source_failure_and_wrong_module_binding"),
     (19, RUNTIME, BOUNDARIES, "test_source_normalization_and_real_content_change"),
     (20, RUNTIME, BOUNDARIES, "test_source_path_mtime_cwd_are_not_identity"),

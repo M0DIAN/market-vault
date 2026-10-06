@@ -9,6 +9,8 @@ from market_vault.ts2_feature import execute_ts2_features
 
 FIELDS = {
     "atr": ("high", "low", "close"), "obv": ("close", "volume"),
+    "kdj_k": ("high", "low", "close"), "kdj_d": ("high", "low", "close"),
+    "kdj_j": ("high", "low", "close"),
     "candle_body": ("open", "close"), "candle_range": ("high", "low"),
     "rolling_volume_mean": ("volume",), "volume_ratio": ("volume",),
 }
@@ -19,7 +21,8 @@ def spec(transform="simple_return", *, n=2, name=None, schema="10.9-mv-ts2"):
     return FeatureSpec("market-vault-feature-spec-v1", name, "v1", DatasetField(name, "float64", False),
         FIELDS.get(transform, ("close",)), f"market_vault.dataset.feature_transforms.{transform}:{transform}",
         () if transform in (
-            "candle_body", "candle_range", "macd", "macd_signal", "macd_histogram"
+            "candle_body", "candle_range", "macd", "macd_signal", "macd_histogram",
+            "kdj_k", "kdj_d", "kdj_j",
         ) else (SpecParameter("window_bars", n),),
         SpecVersionRequirements(("market-bars-canonical-schema-v1",), (schema,)))
 

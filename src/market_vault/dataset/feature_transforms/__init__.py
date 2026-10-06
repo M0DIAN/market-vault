@@ -16,6 +16,9 @@ from .candle_body import candle_body
 from .candle_range import candle_range
 from .ema import ema
 from .log_return import log_return
+from .kdj_d import kdj_d
+from .kdj_j import kdj_j
+from .kdj_k import kdj_k
 from .macd import macd
 from .macd_histogram import macd_histogram
 from .macd_signal import macd_signal
@@ -34,6 +37,9 @@ __all__ = [
     "candle_range",
     "ema",
     "log_return",
+    "kdj_d",
+    "kdj_j",
+    "kdj_k",
     "macd",
     "macd_histogram",
     "macd_signal",

@@ -1,7 +1,7 @@
 """Offline deterministic tests for the built-in Feature execution core
 (v0.5.0 PR-3).
 
-Covers the built-in registrations, the sixteen basic OHLCV/indicator transforms and
+Covers the built-in registrations, the nineteen basic OHLCV/indicator transforms and
 their exact formulas, domain failures, PIT row binding and clock checks,
 trailing-window and contiguity validation, explicit COMPLETE / EXCLUDED
 results, the frozen result models, execution determinism, and the
@@ -95,6 +95,9 @@ from market_vault.dataset.feature_transforms import (
     candle_body,
     candle_range,
     ema,
+    kdj_d,
+    kdj_j,
+    kdj_k,
     log_return,
     macd,
     macd_histogram,
@@ -118,6 +121,9 @@ NY = "America/New_York"
 REF_ATR = "market_vault.dataset.feature_transforms.atr:atr"
 REF_OBV = "market_vault.dataset.feature_transforms.obv:obv"
 REF_SIMPLE = "market_vault.dataset.feature_transforms.simple_return:simple_return"
+REF_KDJ_K = "market_vault.dataset.feature_transforms.kdj_k:kdj_k"
+REF_KDJ_D = "market_vault.dataset.feature_transforms.kdj_d:kdj_d"
+REF_KDJ_J = "market_vault.dataset.feature_transforms.kdj_j:kdj_j"
 REF_LOG = "market_vault.dataset.feature_transforms.log_return:log_return"
 REF_EMA = "market_vault.dataset.feature_transforms.ema:ema"
 REF_SMA = "market_vault.dataset.feature_transforms.sma:sma"
@@ -136,6 +142,9 @@ ALL_REFS = (
     REF_ATR,
     REF_OBV,
     REF_SIMPLE,
+    REF_KDJ_K,
+    REF_KDJ_D,
+    REF_KDJ_J,
     REF_LOG,
     REF_EMA,
     REF_SMA,
@@ -588,7 +597,7 @@ def executed_value(result: FeatureExecutionResult, sample_key: str, feature_name
 
 def test_builtin_registrations_all_present():
     registrations = built_in_feature_registrations()
-    assert len(registrations) == 16
+    assert len(registrations) == 19
     assert tuple(reg.transform_ref for reg in registrations) == tuple(sorted(ALL_REFS))
     assert set(reg.transform_ref for reg in registrations) == set(ALL_REFS)
 
@@ -640,6 +649,9 @@ def test_builtin_registration_input_fields_and_windows():
         REF_ATR: (("high", "low", "close"), "PARAMETER", "window_bars", 2),
         REF_OBV: (("close", "volume"), "PARAMETER", "window_bars", 2),
         REF_SIMPLE: (("close",), "PARAMETER", "window_bars", 2),
+        REF_KDJ_K: (("high", "low", "close"), "FIXED", None, 17),
+        REF_KDJ_D: (("high", "low", "close"), "FIXED", None, 17),
+        REF_KDJ_J: (("high", "low", "close"), "FIXED", None, 17),
         REF_LOG: (("close",), "PARAMETER", "window_bars", 2),
         REF_EMA: (("close",), "PARAMETER", "window_bars", 1),
         REF_SMA: (("close",), "PARAMETER", "window_bars", 1),
@@ -678,7 +690,7 @@ def test_builtin_registration_input_fields_and_windows():
 
 def test_builtin_registry_immutable_and_exact():
     registry = built_in_feature_registry()
-    assert len(registry.registrations) == 16
+    assert len(registry.registrations) == 19
     with pytest.raises(FrozenInstanceError):
         registry.registrations = ()
     with pytest.raises(AttributeError):
@@ -840,6 +852,40 @@ def test_macd_executor_excludes_when_fixed_window_is_short(fixtures):
     value = executed_value(result, pit_sample_key(request()), "macd")
     assert value.status == FEATURE_VALUE_STATUS_EXCLUDED
     assert value.reason_code == FEATURE_EXCLUSION_INSUFFICIENT_ROWS
+
+
+def test_kdj_window_local_standard_rsv9():
+    rows = tuple(
+        (float(102 + i), float(98 + i), float(100 + i))
+        for i in range(17)
+    )
+    input_ = FeatureTransformInput(
+        field_names=("high", "low", "close"),
+        rows=rows,
+        parameters=(),
+    )
+    assert kdj_k(input_) == pytest.approx(82.46625683754169)
+    assert kdj_d(input_) == pytest.approx(79.8650273501668)
+    assert kdj_j(input_) == pytest.approx(87.66871581229148)
+
+
+def test_kdj_rejects_parameter_and_wrong_fixed_window():
+    rows = tuple(
+        (float(102 + i), float(98 + i), float(100 + i))
+        for i in range(17)
+    )
+    with pytest.raises(ValueError, match="accepts no parameters"):
+        kdj_k(FeatureTransformInput(
+            field_names=("high", "low", "close"),
+            rows=rows,
+            parameters=(wb(17),),
+        ))
+    with pytest.raises(ValueError, match="exactly 17 rows"):
+        kdj_k(FeatureTransformInput(
+            field_names=("high", "low", "close"),
+            rows=rows[:-1],
+            parameters=(),
+        ))
 
 
 def test_atr_wilder_seed_formula():
@@ -1881,7 +1927,7 @@ def test_execution_never_writes_to_repo(fixtures):
 
 def test_transforms_are_pure_module_level_functions():
     for fn in (
-        atr, obv, simple_return, log_return, sma, ema, rsi, macd,
+        atr, obv, kdj_k, kdj_d, kdj_j, simple_return, log_return, sma, ema, rsi, macd,
         macd_signal, macd_histogram, rolling_mean, rolling_std,
         rolling_volume_mean, volume_ratio, candle_range, candle_body,
     ):
