@@ -228,6 +228,39 @@ def test_wrong_input_type_fails_locally():
         compare_feature_stability(object())
 
 
+def test_result_models_reject_non_boolean_consistency_and_non_hex_dataset_id():
+    from market_vault.research.feature_stability import (
+        FEATURE_STABILITY_VERSION,
+        FeatureStabilityMetric,
+        FeatureStabilityReport,
+    )
+
+    with pytest.raises(FeatureStabilityError, match="bool or None"):
+        FeatureStabilityMetric(
+            "x",
+            2, 2, 0,
+            0.1, 0.2, None, 2, 1, 0.1,
+            0.1, 0.2, None, 2, True, 0.1,
+            0.1, 0.2, None, 2, True, 0.1,
+        )
+
+    metric = FeatureStabilityMetric(
+        "x",
+        2, 2, 0,
+        0.1, 0.2, None, 2, True, 0.1,
+        0.1, 0.2, None, 2, True, 0.1,
+        0.1, 0.2, None, 2, True, 0.1,
+    )
+    with pytest.raises(FeatureStabilityError, match="lowercase hex"):
+        FeatureStabilityReport(
+            FEATURE_STABILITY_VERSION,
+            "Z" * 64,
+            LABEL,
+            5,
+            (metric,),
+        )
+
+
 def test_zero_is_neutral_but_opposite_nonzero_signs_are_not_consistent():
     from market_vault.research.feature_stability import _sign_consistent
 
