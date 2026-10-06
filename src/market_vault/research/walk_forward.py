@@ -321,6 +321,16 @@ def generate_walk_forward_folds(
         raise WalkForwardError(
             "Walk-Forward V1 requires exactly one TRAIN symbol"
         )
+    closes = tuple(
+        item.feature_window_close for item in source.metadata
+    )
+    if any(
+        current <= previous
+        for previous, current in zip(closes, closes[1:])
+    ):
+        raise WalkForwardError(
+            "Walk-Forward V1 requires strictly increasing TRAIN times"
+        )
     row_count = source.row_count
     required = spec.minimum_train_samples + spec.validation_samples
     if row_count < required:
