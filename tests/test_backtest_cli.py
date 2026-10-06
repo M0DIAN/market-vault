@@ -27,6 +27,7 @@ def _plan():
 
 def _result():
     return SimpleNamespace(
+        engine_version="market-vault-backtest-v1",
         backtest_id="b" * 64,
         dataset_id="a" * 64,
         split="TEST",
