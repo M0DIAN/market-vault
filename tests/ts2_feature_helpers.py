@@ -9,6 +9,8 @@ from market_vault.ts2_feature import execute_ts2_features
 
 FIELDS = {
     "atr": ("high", "low", "close"), "obv": ("close", "volume"),
+    "kdj_k": ("high", "low", "close"), "kdj_d": ("high", "low", "close"),
+    "kdj_j": ("high", "low", "close"),
     "candle_body": ("open", "close"), "candle_range": ("high", "low"),
     "rolling_volume_mean": ("volume",), "volume_ratio": ("volume",),
 }
