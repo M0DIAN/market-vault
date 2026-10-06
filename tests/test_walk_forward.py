@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -135,7 +136,8 @@ def test_expanding_folds_purge_and_embargo_by_selected_label_end():
     plan = generate_walk_forward_folds(
         _experiment(),
         WalkForwardSpec(
-            minimum_train_samples=4,
+            initial_train_samples=4,
+            minimum_retained_train_samples=2,
             validation_samples=2,
             step_samples=2,
             embargo_seconds=86400,
@@ -173,7 +175,8 @@ def test_zero_embargo_keeps_recent_nonoverlapping_training_sample():
     plan = generate_walk_forward_folds(
         _experiment(),
         WalkForwardSpec(
-            minimum_train_samples=4,
+            initial_train_samples=4,
+            minimum_retained_train_samples=2,
             validation_samples=2,
             step_samples=2,
             embargo_seconds=0,
@@ -188,7 +191,7 @@ def test_zero_embargo_keeps_recent_nonoverlapping_training_sample():
 def test_label_end_equal_to_validation_start_is_purged():
     first = generate_walk_forward_folds(
         _experiment(),
-        WalkForwardSpec(4, 2, 2, 0),
+        WalkForwardSpec(4, 2, 2, 2, 0),
     ).folds[0]
     assert 2 in first.purged_indices
     assert 2 not in first.train_indices
@@ -197,7 +200,7 @@ def test_label_end_equal_to_validation_start_is_purged():
 def test_purge_takes_precedence_over_embargo():
     first = generate_walk_forward_folds(
         _experiment(),
-        WalkForwardSpec(4, 2, 2, 3 * 86400),
+        WalkForwardSpec(4, 2, 2, 2, 3 * 86400),
     ).folds[0]
     assert 2 in first.purged_indices
     assert 2 not in first.embargoed_indices
@@ -207,7 +210,7 @@ def test_final_validation_and_test_holdouts_are_not_fold_sources():
     experiment = _experiment(validation_count=2, test_count=2)
     plan = generate_walk_forward_folds(
         experiment,
-        WalkForwardSpec(4, 2, 2, 0),
+        WalkForwardSpec(4, 2, 2, 2, 0),
     )
     assert plan.source_row_count == experiment.train.row_count == 8
     assert all(
@@ -220,17 +223,37 @@ def test_final_validation_and_test_holdouts_are_not_fold_sources():
 @pytest.mark.parametrize(
     "args,match",
     [
-        ((0, 2, 2, 0), "minimum_train_samples"),
-        ((4, 0, 2, 0), "validation_samples"),
-        ((4, 2, 0, 0), "step_samples"),
-        ((4, 3, 2, 0), "non-overlapping"),
-        ((4, 2, 2, -1), "embargo_seconds"),
-        ((True, 2, 2, 0), "minimum_train_samples"),
+        ((0, 1, 2, 2, 0), "initial_train_samples"),
+        ((4, 0, 2, 2, 0), "minimum_retained_train_samples"),
+        ((4, 5, 2, 2, 0), "<= initial_train_samples"),
+        ((4, 2, 0, 2, 0), "validation_samples"),
+        ((4, 2, 2, 0, 0), "step_samples"),
+        ((4, 2, 3, 2, 0), "non-overlapping"),
+        ((4, 2, 2, 2, -1), "embargo_seconds"),
+        ((True, 2, 2, 2, 0), "initial_train_samples"),
+        ((4, True, 2, 2, 0), "minimum_retained_train_samples"),
     ],
 )
 def test_invalid_walk_forward_spec_fails_closed(args, match):
     with pytest.raises(WalkForwardError, match=match):
         WalkForwardSpec(*args)
+
+
+def test_retained_minimum_applies_after_purge_and_embargo():
+    with pytest.raises(
+        WalkForwardError,
+        match="minimum_retained_train_samples",
+    ):
+        generate_walk_forward_folds(
+            _experiment(),
+            WalkForwardSpec(
+                initial_train_samples=4,
+                minimum_retained_train_samples=3,
+                validation_samples=2,
+                step_samples=2,
+                embargo_seconds=86400,
+            ),
+        )
 
 
 def test_too_small_train_split_fails_closed():
@@ -258,7 +281,7 @@ def test_too_small_train_split_fails_closed():
     with pytest.raises(WalkForwardError, match="too small"):
         generate_walk_forward_folds(
             small,
-            WalkForwardSpec(7, 2, 2, 0),
+            WalkForwardSpec(7, 1, 2, 2, 0),
         )
 
 
@@ -267,7 +290,7 @@ def test_fold_with_no_retained_training_rows_fails_closed():
     with pytest.raises(WalkForwardError, match="no training rows"):
         generate_walk_forward_folds(
             _experiment(ends),
-            WalkForwardSpec(4, 2, 2, 0),
+            WalkForwardSpec(4, 2, 2, 2, 0),
         )
 
 
@@ -323,7 +346,7 @@ def test_duplicate_train_timestamp_fails_closed():
     with pytest.raises(WalkForwardError, match="strictly increasing"):
         generate_walk_forward_folds(
             experiment,
-            WalkForwardSpec(4, 2, 2, 0),
+            WalkForwardSpec(4, 2, 2, 2, 0),
         )
 
 
@@ -377,13 +400,37 @@ def test_multi_symbol_train_split_fails_closed():
     with pytest.raises(WalkForwardError, match="exactly one TRAIN symbol"):
         generate_walk_forward_folds(
             experiment,
-            WalkForwardSpec(4, 2, 2, 0),
+            WalkForwardSpec(4, 2, 2, 2, 0),
         )
+
+
+def test_plan_rejects_incomplete_prevalidation_partition():
+    plan = generate_walk_forward_folds(
+        _experiment(),
+        WalkForwardSpec(4, 2, 2, 2, 0),
+    )
+    first = plan.folds[0]
+    bad_first = replace(
+        first,
+        train_indices=(0,),
+        train_sample_keys=(first.train_sample_keys[0],),
+    )
+    with pytest.raises(WalkForwardError, match="partitioned exactly once"):
+        replace(plan, folds=(bad_first,) + plan.folds[1:])
+
+
+def test_plan_rejects_wrong_unused_tail_count():
+    plan = generate_walk_forward_folds(
+        _experiment(),
+        WalkForwardSpec(4, 2, 2, 2, 0),
+    )
+    with pytest.raises(WalkForwardError, match="unused_tail_count"):
+        replace(plan, unused_tail_count=plan.unused_tail_count + 1)
 
 
 def test_wrong_input_type_fails_locally():
     with pytest.raises(WalkForwardError, match="ExperimentDatasetBundle"):
         generate_walk_forward_folds(
             object(),
-            WalkForwardSpec(4, 2, 2, 0),
+            WalkForwardSpec(4, 2, 2, 2, 0),
         )
