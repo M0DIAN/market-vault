@@ -18,6 +18,7 @@ from .log_return import log_return
 from .rolling_mean import rolling_mean
 from .rolling_std import rolling_std
 from .rolling_volume_mean import rolling_volume_mean
+from .rsi import rsi
 from .simple_return import simple_return
 from .sma import sma
 from .volume_ratio import volume_ratio
@@ -30,6 +31,7 @@ __all__ = [
     "rolling_mean",
     "rolling_std",
     "rolling_volume_mean",
+    "rsi",
     "simple_return",
     "sma",
     "volume_ratio",
