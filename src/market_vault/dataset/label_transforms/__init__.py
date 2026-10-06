@@ -14,12 +14,14 @@ Feature-close anchor row and the proven future Label rows.
 from __future__ import annotations
 
 from .forward_direction import forward_direction
+from .forward_open_to_close_return import forward_open_to_close_return
 from .forward_return import forward_return
 from .maximum_adverse_excursion import maximum_adverse_excursion
 from .maximum_favorable_excursion import maximum_favorable_excursion
 
 __all__ = [
     "forward_direction",
+    "forward_open_to_close_return",
     "forward_return",
     "maximum_adverse_excursion",
     "maximum_favorable_excursion",
