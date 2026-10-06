@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import pytest
 
@@ -217,9 +217,9 @@ def test_selected_return_label_controls_exit_time_in_multi_label_dataset(tmp_pat
         "backtest_multi_label",
         "v1",
         "America/New_York",
-        cd.date(2025, 3, 6),
-        cd.date(2025, 3, 7),
-        cd.date(2025, 3, 8),
+        date(2025, 3, 6),
+        date(2025, 3, 7),
+        date(2025, 3, 8),
         "FEATURE_WINDOW_CLOSE_DATE",
         "ACTUAL_LABEL_END",
         "EXCLUDE",
