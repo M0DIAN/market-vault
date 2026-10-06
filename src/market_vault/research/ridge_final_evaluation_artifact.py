@@ -495,11 +495,10 @@ def write_ridge_final_evaluation_artifact(
             False,
         )
     except OSError as exc:
-        if created:
-            try:
-                file_path.unlink(missing_ok=True)
-            except OSError:
-                pass
+        # Fail closed without deletion.  The writer owns no destructive
+        # operation: a partial file, if the filesystem exposed one, remains
+        # visible for diagnosis and will be rejected by the strict reader on
+        # the next attempt rather than being silently removed or overwritten.
         raise RidgeFinalEvaluationArtifactError(
             f"cannot write artifact: {file_path}"
         ) from exc
