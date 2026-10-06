@@ -15,6 +15,9 @@ from .candle_body import candle_body
 from .candle_range import candle_range
 from .ema import ema
 from .log_return import log_return
+from .macd import macd
+from .macd_histogram import macd_histogram
+from .macd_signal import macd_signal
 from .rolling_mean import rolling_mean
 from .rolling_std import rolling_std
 from .rolling_volume_mean import rolling_volume_mean
@@ -28,6 +31,9 @@ __all__ = [
     "candle_range",
     "ema",
     "log_return",
+    "macd",
+    "macd_histogram",
+    "macd_signal",
     "rolling_mean",
     "rolling_std",
     "rolling_volume_mean",
