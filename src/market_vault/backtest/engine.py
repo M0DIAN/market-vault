@@ -20,12 +20,12 @@ from ..cross_day.identity import label_spec_pin_id
 from ..cross_day_dataset import (
     MultiSourceCrossDayDatasetResult,
     VerifiedMultiSourceCrossDayDataset,
-    multi_source_cross_day_dataset_id,
+    load_verified_multi_source_cross_day_dataset,
 )
 from ..cross_day_dataset import execution as dataset_execution
 from ..cross_day_dataset._validation import MultiSourceCrossDayDatasetError
 from ..cross_day_dataset.artifact_models import MultiSourceCrossDayArtifactError
-from ..dataset.encoding import DatasetError, encode_identity
+from ..dataset.encoding import encode_identity
 from ..dataset.specs import feature_label_spec_pin
 from .models import (
     BACKTEST_ENGINE_VERSION,
@@ -76,38 +76,12 @@ def _admit_dataset(dataset):
         return dataset
     if type(dataset) is VerifiedMultiSourceCrossDayDataset:
         try:
-            dataset_id = multi_source_cross_day_dataset_id(dataset.identity_input)
-        except (
-            MultiSourceCrossDayDatasetError,
-            MultiSourceCrossDayArtifactError,
-            DatasetError,
-            TypeError,
-            ValueError,
-        ) as exc:
-            raise BacktestError("verified Research Dataset logical closure failed") from exc
-        if dataset_id != dataset.dataset_id:
-            raise BacktestError("verified Research Dataset ID mismatch")
-        for name in (
-            "scope",
-            "dataset_as_of",
-            "schema",
-            "rows",
-            "sample_audit",
-            "completion",
-            "split_result",
-            "feature_pit",
-            "ts2_features",
-            "observation_pit",
-            "observation_features",
-            "cross_day_association",
-            "cross_day_labels",
-            "schedule",
-        ):
-            if getattr(dataset, name) != getattr(dataset.identity_input, name):
-                raise BacktestError(
-                    f"verified Research Dataset projection mismatch: {name}"
-                )
-        return dataset
+            fresh = load_verified_multi_source_cross_day_dataset(dataset.build_path)
+        except (MultiSourceCrossDayArtifactError, OSError, TypeError, ValueError) as exc:
+            raise BacktestError("verified Research Dataset revalidation failed") from exc
+        if fresh.dataset_id != dataset.dataset_id:
+            raise BacktestError("verified Research Dataset identity changed since load")
+        return fresh
     raise BacktestError(
         "Backtest V1 requires a live-issued or verified Cross-Day Research Dataset"
     )
