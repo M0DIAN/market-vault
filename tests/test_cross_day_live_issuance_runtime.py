@@ -483,11 +483,11 @@ def test_bookkeeping_and_verifier_do_no_io_or_upstream_execution(issued, monkeyp
         assert verify(result) is None
         assert verify(fresh) is None
         reject(tamper(result))
-    assert len(acquisitions) == 36
+    assert len(acquisitions) == 3 * len(modules)
     assert set(acquisitions) == set(modules)
     record_property("OWN_FILESYSTEM_READ_COUNT", 0)
     record_property("OWN_FILESYSTEM_WRITE_COUNT", 0)
-    record_property("INHERITED_STATIC_SOURCE_ACQUISITIONS", 36)
+    record_property("INHERITED_STATIC_SOURCE_ACQUISITIONS", len(acquisitions))
 
 
 def test_reference_graph_covers_descriptive_non_identity_facts(issued):

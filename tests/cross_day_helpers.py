@@ -48,18 +48,34 @@ def schedule(daily=(("2025-03-03", "N"), ("2025-03-04", "N")), *, archive=ARCHIV
 
 def spec(n=1, transform="forward_return", name=None, schema="10.9-mv-ts2"):
     excursion = transform.startswith("maximum_")
-    fields = ("close", "high") if transform == "maximum_favorable_excursion" else (
-        ("close", "low") if excursion else ("close",))
-    name = name or ("cd_mfe_2d" if excursion else "cd_return_1d")
+    execution_safe = transform == "forward_open_to_close_return"
+    fields = (
+        ("open", "close") if execution_safe
+        else ("close", "high") if transform == "maximum_favorable_excursion"
+        else ("close", "low") if excursion
+        else ("close",)
+    )
+    default_name = (
+        "cd_execution_return_1d" if execution_safe
+        else "cd_mfe_2d" if excursion
+        else "cd_return_1d"
+    )
+    name = name or default_name
     return LabelSpec("market-vault-label-spec-v1", name, "v1",
         DatasetField(name, "int64" if transform == "forward_direction" else "float64", False),
         fields, f"market_vault.dataset.label_transforms.{transform}:{transform}", (),
         SpecVersionRequirements(("market-bars-canonical-schema-v1",), (schema,)),
-        LabelObservationWindow("TRADING_DAYS", 0 if excursion else n - 1, n - 1), LabelHorizon("TRADING_DAYS", n),
-        "FEATURE_CLOSE_ALIGNED", "INCOMPLETE", CrossTradingDayPolicy(True, "SAME_REQUESTED_SESSION_BAR_SLOT"))
+        LabelObservationWindow(
+            "TRADING_DAYS",
+            0 if excursion or execution_safe else n - 1,
+            n - 1,
+        ),
+        LabelHorizon("TRADING_DAYS", n),
+        "FEATURE_CLOSE_ALIGNED", "INCOMPLETE",
+        CrossTradingDayPolicy(True, "SAME_REQUESTED_SESSION_BAR_SLOT"))
 
 
-def bar(day="2025-03-03", slot=1, *, close=100.0, high=150.0, low=75.0, interval="5m",
+def bar(day="2025-03-03", slot=1, *, open=100.0, close=100.0, high=150.0, low=75.0, interval="5m",
         schema="10.9-mv-ts2", archive=ARCHIVE, market=None, source="a", code="US.AAPL"):
     day = date.fromisoformat(day) if type(day) is str else day
     event = pd.Timestamp(local(day) + timedelta(minutes=int(interval[:-1]) * slot))
@@ -68,7 +84,7 @@ def bar(day="2025-03-03", slot=1, *, close=100.0, high=150.0, low=75.0, interval
         source_snapshot_content_hash=source * 64, source_schema_version=schema, canonical_builder_version=CANONICAL_BUILDER_VERSION)
     return CanonicalBar(key, version, DEFAULT_DATASET_KIND, code, interval, "NONE", event,
         pd.Timestamp(market or event + timedelta(minutes=int(interval[:-1]))), pd.Timestamp(archive),
-        100.0, high, low, close, 100.0, (), "run-" + source, source * 64, "f" * 64,
+        open, high, low, close, 100.0, (), "run-" + source, source * 64, "f" * 64,
         schema, CANONICAL_BUILDER_VERSION, day, "RTH", day, "RTH", "offline/" + source + ".parquet")
 
 

@@ -105,7 +105,8 @@ def test_no_upstream_execution_and_only_bounded_registry_io(tmp_path, monkeypatc
         result = join_multi_source_cross_day_dataset(**data)
     assert result.rows and calls == ["split"]
     assert sorted(acquisitions) == sorted(targets)
-    assert len(acquisitions) == 12 and set(reads) == paths and violations == []
+    assert len(acquisitions) == len(contracts)
+    assert set(reads) == paths and violations == []
     record_property("OWN_FILESYSTEM_READ_COUNT", 0)
     record_property("OWN_FILESYSTEM_WRITE_COUNT", 0)
     record_property("UNAUTHORIZED_FILESYSTEM_ACCESS_COUNT", 0)

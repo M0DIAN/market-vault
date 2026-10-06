@@ -63,6 +63,51 @@ def test_forward_uses_endpoint_only(tmp_path):
     assert tuple(r.offset for r in result.values[0].consumed_rows) == (1,)
 
 
+def test_execution_safe_return_uses_future_open_and_horizon_close(tmp_path):
+    features = (build(tmp_path / "features", (bar(close=999.0),)),)
+    labels = (
+        build(tmp_path / "day1", (bar("2025-03-04", open=120.0, close=125.0),)),
+        build(tmp_path / "day2", (bar("2025-03-05", open=140.0, close=150.0),)),
+    )
+    sched = schedule((("2025-03-03", "N"), ("2025-03-04", "N"), ("2025-03-05", "N")))
+    result = run(
+        features,
+        labels,
+        sched=sched,
+        specs=(spec(
+            2,
+            "forward_open_to_close_return",
+            name="execution_return_2d",
+        ),),
+    )
+    value = result.values[0]
+    assert value.value == pytest.approx(0.25)
+    assert tuple(row.offset for row in value.consumed_rows) == (0, 1)
+    assert value.actual_label_end_time == value.consumed_rows[-1].market_available_at
+    assert result.decisions[0].anchor.canonical_row_version_id != (
+        value.consumed_rows[0].canonical_row_version_id
+    )
+
+
+def test_execution_safe_return_one_day_is_next_bar_open_to_close(tmp_path):
+    features = (build(tmp_path / "features", (bar(close=10_000.0),)),)
+    labels = (build(
+        tmp_path / "labels",
+        (bar("2025-03-04", open=80.0, close=100.0),),
+    ),)
+    result = run(
+        features,
+        labels,
+        specs=(spec(
+            1,
+            "forward_open_to_close_return",
+            name="execution_return_1d",
+        ),),
+    )
+    assert result.values[0].value == pytest.approx(0.25)
+    assert tuple(row.offset for row in result.values[0].consumed_rows) == (0,)
+
+
 @pytest.mark.parametrize("missing,reason", [(0, "INSUFFICIENT_ROWS"), (1, "NON_CONTIGUOUS_TRADING_DAY_ROWS"), (2, "MISSING_TARGET_ROW")])
 def test_gap_proofs_and_incomplete_subsets(tmp_path, missing, reason):
     features = (build(tmp_path, (bar(),)),)

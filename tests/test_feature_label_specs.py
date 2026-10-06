@@ -22,6 +22,7 @@ from market_vault.research import (
     RESEARCH_LABEL_LIBRARY_VERSION,
     STANDARD_LABEL_HORIZONS,
     forward_direction_label,
+    forward_open_to_close_return_label,
     forward_return_label,
     label_preset,
     label_preset_names,
@@ -1366,6 +1367,10 @@ def test_research_label_library_version_and_exact_standard_presets():
         "forward_return_3d",
         "forward_return_5d",
         "forward_return_10d",
+        "forward_open_to_close_return_1d",
+        "forward_open_to_close_return_3d",
+        "forward_open_to_close_return_5d",
+        "forward_open_to_close_return_10d",
         "forward_direction_1d",
         "forward_direction_3d",
         "forward_direction_5d",
@@ -1430,6 +1435,27 @@ def test_research_target_label_specs_match_cross_day_contract(
 
 
 @pytest.mark.parametrize("horizon", STANDARD_LABEL_HORIZONS)
+def test_execution_safe_research_label_matches_cross_day_contract(horizon):
+    spec = forward_open_to_close_return_label(horizon)
+    assert spec.name == f"forward_open_to_close_return_{horizon}d"
+    assert spec.output == DatasetField(spec.name, "float64", False)
+    assert spec.input_canonical_fields == ("open", "close")
+    assert spec.transform_ref == (
+        "market_vault.dataset.label_transforms.forward_open_to_close_return:"
+        "forward_open_to_close_return"
+    )
+    assert spec.parameters == ()
+    assert spec.observation_window == LabelObservationWindow(
+        "TRADING_DAYS",
+        0,
+        horizon - 1,
+    )
+    assert spec.horizon == LabelHorizon("TRADING_DAYS", horizon)
+    admitted = admit_specs((spec,))
+    assert admitted[0][0] == spec
+
+
+@pytest.mark.parametrize("horizon", STANDARD_LABEL_HORIZONS)
 @pytest.mark.parametrize(
     "factory,prefix,fields,transform",
     [
@@ -1484,6 +1510,9 @@ def test_research_label_preset_resolver_is_exact_and_identity_stable():
     pins = tuple(feature_label_spec_pin(spec) for spec in specs)
     assert len({pin.content_sha256 for pin in pins}) == len(pins)
     assert label_preset("forward_return_5d") == forward_return_label(5)
+    assert label_preset(
+        "forward_open_to_close_return_5d"
+    ) == forward_open_to_close_return_label(5)
     assert label_preset("forward_direction_10d") == forward_direction_label(10)
     assert label_preset(
         "maximum_favorable_excursion_3d"
@@ -1497,6 +1526,7 @@ def test_research_label_preset_resolver_is_exact_and_identity_stable():
 def test_research_label_factory_rejects_invalid_horizon(bad):
     for factory in (
         forward_return_label,
+        forward_open_to_close_return_label,
         forward_direction_label,
         maximum_favorable_excursion_label,
         maximum_adverse_excursion_label,
@@ -1511,6 +1541,7 @@ def test_research_label_factory_rejects_invalid_horizon(bad):
         None,
         1,
         "forward_return_2d",
+        "forward_open_to_close_return_2d",
         "maximum_favorable_excursion_2d",
         "FORWARD_RETURN_1D",
     ],
