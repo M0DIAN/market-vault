@@ -194,6 +194,7 @@ RESEARCH_FAST_SCOPE_RULES = [
     "src/market_vault/multi_source/feature_specs.py",
     "src/market_vault/multi_source/feature_transforms.py",
     "tests/test_research_dataset_builder.py",
+    "tests/test_ml_dataset_adapter.py",
     "tests/test_dataset_feature_execution.py",
     "tests/test_feature_label_specs.py",
     "tests/test_multi_source_feature_execution.py",

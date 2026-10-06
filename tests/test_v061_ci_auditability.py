@@ -541,6 +541,7 @@ def test_audit_doc_describes_source_sha_resolution():
 RESEARCH_FAST_STEP = "Run Research fast tests"
 RESEARCH_FAST_SURFACE = (
     "tests/test_research_dataset_builder.py",
+    "tests/test_ml_dataset_adapter.py",
     "tests/test_dataset_feature_execution.py",
     "tests/test_feature_label_specs.py",
     "tests/test_multi_source_feature_execution.py",
