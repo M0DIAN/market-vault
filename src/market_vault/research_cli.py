@@ -18,6 +18,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+from .backtest_cli import add_backtest_subparser, research_backtest_main
 from .canonical.reader import load_verified_canonical_build
 from .cross_day import TradingDayRecord, verify_trading_day_schedule
 from .cross_day_dataset import CrossDayAnchor
@@ -49,7 +50,7 @@ from .observation.reader import load_verified_observation_build
 from .research_dataset import build_research_dataset
 
 
-RESEARCH_COMMANDS = frozenset({"research-build"})
+RESEARCH_COMMANDS = frozenset({"research-build", "research-backtest"})
 RESEARCH_BUILD_PLAN_SCHEMA_VERSION = "market-vault-research-build-plan-v1"
 RESEARCH_CLI_RESULT_SCHEMA_VERSION = "market-vault-research-cli-result-v1"
 
@@ -123,11 +124,14 @@ def add_research_subparsers(subparsers) -> None:
         metavar="PATH",
         help="Path to market-vault-research-build-plan-v1 JSON",
     )
+    add_backtest_subparser(subparsers)
 
 
 def run_research_command(command: str, args: argparse.Namespace) -> int:
     if command == "research-build":
         return research_build_main(args)
+    if command == "research-backtest":
+        return research_backtest_main(args)
     raise AssertionError(f"unknown Research command {command!r}")
 
 
