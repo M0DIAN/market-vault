@@ -1,4 +1,4 @@
-"""Closed Cross-Day registrations over the four unchanged pure Label formulas."""
+"""Closed Cross-Day registrations over the built-in pure Label formulas."""
 
 from dataclasses import dataclass, replace
 
