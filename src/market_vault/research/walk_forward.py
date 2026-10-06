@@ -316,6 +316,11 @@ def generate_walk_forward_folds(
         raise WalkForwardError("exact WalkForwardSpec required")
 
     source = experiment.train
+    codes = {item.code for item in source.metadata}
+    if len(codes) != 1:
+        raise WalkForwardError(
+            "Walk-Forward V1 requires exactly one TRAIN symbol"
+        )
     row_count = source.row_count
     required = spec.minimum_train_samples + spec.validation_samples
     if row_count < required:
