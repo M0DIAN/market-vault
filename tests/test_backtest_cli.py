@@ -15,7 +15,7 @@ def _plan():
     return {
         "plan_schema_version": backtest_cli.BACKTEST_PLAN_SCHEMA_VERSION,
         "dataset_build_dir": "dataset_id=" + "a" * 64,
-        "signal_field": "ts2_return",
+        "signal_field": "ts2_simple_return",
         "comparator": "GT",
         "threshold": 0.0,
         "return_label": "forward_open_to_close_return_1d",
@@ -31,7 +31,7 @@ def _result():
         dataset_id="a" * 64,
         split="TEST",
         rule=SimpleNamespace(
-            signal_field="ts2_return",
+            signal_field="ts2_simple_return",
             comparator="GT",
             threshold=0.0,
         ),
@@ -101,7 +101,7 @@ def test_research_backtest_cli_is_settings_independent_and_explicit(
         "dataset_id": "a" * 64,
         "split": "TEST",
         "rule": {
-            "signal_field": "ts2_return",
+            "signal_field": "ts2_simple_return",
             "comparator": "GT",
             "threshold": 0.0,
         },
@@ -128,7 +128,7 @@ def test_research_backtest_cli_is_settings_independent_and_explicit(
     assert captured["path"] == tmp_path / payload["dataset_build_dir"]
     assert captured["dataset"] is loaded
     assert captured["kwargs"] == {
-        "signal_field": "ts2_return",
+        "signal_field": "ts2_simple_return",
         "comparator": "GT",
         "threshold": 0.0,
         "return_label": "forward_open_to_close_return_1d",
