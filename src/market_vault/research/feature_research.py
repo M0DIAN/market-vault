@@ -193,16 +193,14 @@ def _tail_statistics(
         return 0, 0, None, None, None
     ranks = _average_ranks(feature_values)
     n = len(ranks)
-    lower = 1.0 / quantile_count
-    upper = 1.0 - lower
-    percentiles = tuple((rank - 0.5) / n for rank in ranks)
+    tail_size = n / quantile_count
     bottom = tuple(
-        label for label, percentile in zip(label_values, percentiles)
-        if percentile <= lower
+        label for label, rank in zip(label_values, ranks)
+        if rank <= tail_size
     )
     top = tuple(
-        label for label, percentile in zip(label_values, percentiles)
-        if percentile >= upper
+        label for label, rank in zip(label_values, ranks)
+        if rank > n - tail_size
     )
     bottom_mean = _mean(bottom)
     top_mean = _mean(top)
