@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
+import re
 
 from .feature_research import (
     FeatureResearchError,
@@ -31,6 +32,7 @@ from .ml import MLDatasetBundle
 
 FEATURE_STABILITY_VERSION = "market-vault-feature-stability-v1"
 _SPLITS = ("TRAIN", "VALIDATION", "TEST")
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 class FeatureStabilityError(ValueError):
@@ -155,6 +157,10 @@ class FeatureStabilityMetric:
         )
 
         for prefix, values, available_count, sign_consistent, value_range in metric_groups:
+            if sign_consistent is not None and type(sign_consistent) is not bool:
+                raise FeatureStabilityError(
+                    f"{prefix}_sign_consistent must be bool or None"
+                )
             normalized = tuple(
                 _optional_finite(value, f"{prefix} split value")
                 for value in values
@@ -219,8 +225,13 @@ class FeatureStabilityReport:
     def __post_init__(self) -> None:
         if self.version != FEATURE_STABILITY_VERSION:
             raise FeatureStabilityError("unsupported Feature Stability version")
-        if type(self.dataset_id) is not str or len(self.dataset_id) != 64:
-            raise FeatureStabilityError("dataset_id must be a 64-character identity")
+        if (
+            type(self.dataset_id) is not str
+            or _SHA256_RE.fullmatch(self.dataset_id) is None
+        ):
+            raise FeatureStabilityError(
+                "dataset_id must be a 64-character lowercase hex identity"
+            )
         if type(self.label_name) is not str or not self.label_name:
             raise FeatureStabilityError("label_name must be non-empty")
         if type(self.quantile_count) is not int or not 2 <= self.quantile_count <= 10:
