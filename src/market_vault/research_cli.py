@@ -88,6 +88,7 @@ RESEARCH_COMMANDS = frozenset({
     "research-ridge",
     "research-ridge-final",
     "research-ridge-final-trading",
+    "research-ridge-trading-select",
     "research-walk-forward",
 })
 RESEARCH_BUILD_PLAN_SCHEMA_VERSION = "market-vault-research-build-plan-v1"
@@ -170,6 +171,7 @@ def add_research_subparsers(subparsers) -> None:
     add_ridge_subparser(subparsers)
     add_ridge_final_subparser(subparsers)
     add_ridge_final_trading_subparser(subparsers)
+    add_ridge_trading_selection_subparser(subparsers)
     add_walk_forward_subparser(subparsers)
 
 
@@ -190,6 +192,8 @@ def run_research_command(command: str, args: argparse.Namespace) -> int:
         return research_ridge_final_main(args)
     if command == "research-ridge-final-trading":
         return research_ridge_final_trading_main(args)
+    if command == "research-ridge-trading-select":
+        return research_ridge_trading_select_main(args)
     if command == "research-walk-forward":
         return research_walk_forward_main(args)
     raise AssertionError(f"unknown Research command {command!r}")
