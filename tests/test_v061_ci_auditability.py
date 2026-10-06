@@ -599,9 +599,17 @@ def test_research_fast_excludes_full_python_surfaces():
 
 
 def test_research_fast_skips_pyarrow_and_package_heavy_chains():
-    for name, region in _steps(ci_text()):
-        if name in PYARROW24_HEAVY_STEPS or name in PACKAGE_HEAVY_STEPS:
-            assert "env.CI_TIER != 'research_fast'" in region, name
+    for job, heavy_steps in (
+        ("portability-pyarrow24", PYARROW24_HEAVY_STEPS),
+        ("package", PACKAGE_HEAVY_STEPS),
+    ):
+        block = _job_block(ci_text(), job)
+        names = _step_names(block)
+        for name in heavy_steps:
+            idx = names.index(name)
+            end = f"- name: {names[idx + 1]}" if idx + 1 < len(names) else None
+            region = _region(block, f"- name: {name}", end)
+            assert "env.CI_TIER != 'research_fast'" in region, (job, name)
 
 
 # ---------------------------------------------------------------------------
