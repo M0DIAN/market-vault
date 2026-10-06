@@ -202,6 +202,14 @@ def test_feature_research_test_is_research_fast_on_pr(tmp_path):
     )
 
 
+def test_feature_stability_test_is_research_fast_on_pr(tmp_path):
+    repo = make_repo(tmp_path)
+    assert (
+        classify_change(repo, "tests/test_feature_stability.py")
+        == "research_fast"
+    )
+
+
 def test_research_test_is_research_fast_on_pr(tmp_path):
     repo = make_repo(tmp_path)
     assert (
