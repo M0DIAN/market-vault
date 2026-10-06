@@ -23,6 +23,7 @@ from __future__ import annotations
 from ..canonical.schema import CANONICAL_SCHEMA_VERSION
 from .models import SPEC_KIND_FEATURE
 from .feature_transforms import (
+    atr,
     candle_body,
     candle_range,
     ema,
@@ -30,6 +31,7 @@ from .feature_transforms import (
     macd,
     macd_histogram,
     macd_signal,
+    obv,
     rolling_mean,
     rolling_std,
     rolling_volume_mean,
@@ -153,6 +155,14 @@ def built_in_feature_registrations() -> tuple[TransformRegistration, ...]:
     global mutable registry is created."""
     registrations = (
         _registration(
+            transform_ref="market_vault.dataset.feature_transforms.atr:atr",
+            implementation=atr,
+            input_canonical_fields=("high", "low", "close"),
+            parameters=(_window_bars_contract(2),),
+            lookback=_parameter_window("window_bars"),
+            display_name="Window-local Wilder-seed average true range",
+        ),
+        _registration(
             transform_ref="market_vault.dataset.feature_transforms.simple_return:simple_return",
             implementation=simple_return,
             input_canonical_fields=("close",),
@@ -207,6 +217,14 @@ def built_in_feature_registrations() -> tuple[TransformRegistration, ...]:
             parameters=(),
             lookback=_fixed_window(34),
             display_name="Window-local MACD histogram (12,26,9)",
+        ),
+        _registration(
+            transform_ref="market_vault.dataset.feature_transforms.obv:obv",
+            implementation=obv,
+            input_canonical_fields=("close", "volume"),
+            parameters=(_window_bars_contract(2),),
+            lookback=_parameter_window("window_bars"),
+            display_name="Window-local on-balance volume",
         ),
         _registration(
             transform_ref="market_vault.dataset.feature_transforms.rolling_mean:rolling_mean",
