@@ -24,9 +24,11 @@ from market_vault.research.experiment import (
 def _materialized(tmp_path, *, case="F", **fixture_kwargs):
     inputs = fixture(tmp_path / "upstream", case=case, **fixture_kwargs)
     logical = join_multi_source_cross_day_dataset(**inputs)
+    output_root = tmp_path / "artifacts"
+    output_root.mkdir()
     result = materialize_multi_source_cross_day_dataset_build(
         logical,
-        output_root=tmp_path / "artifacts",
+        output_root=output_root,
         built_at=cd.AS_OF + timedelta(days=30),
     )
     return logical, result.verified
@@ -126,9 +128,11 @@ def test_selected_label_end_not_sample_wide_latest_end(tmp_path):
     )
     inputs["split_spec"] = split_spec
     logical = join_multi_source_cross_day_dataset(**inputs)
+    output_root = tmp_path / "artifacts"
+    output_root.mkdir()
     materialized = materialize_multi_source_cross_day_dataset_build(
         logical,
-        output_root=tmp_path / "artifacts",
+        output_root=output_root,
         built_at=cd.AS_OF + timedelta(days=30),
     )
     verified = materialized.verified
