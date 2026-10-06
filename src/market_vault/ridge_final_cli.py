@@ -226,7 +226,8 @@ def parse_ridge_final_plan_bytes(payload: bytes):
         raise RidgeFinalCLIError(str(exc)) from exc
 
 
-def _run_plan(plan, plan_parent: Path):
+def _pipeline(plan, plan_parent: Path):
+    """Build the exact Ridge final pipeline once for CLI composition layers."""
     build_dir = _resolve_plan_path(
         plan.dataset_build_dir,
         base=plan_parent,
@@ -253,6 +254,11 @@ def _run_plan(plan, plan_parent: Path):
         walk_forward,
         selection,
     )
+    return verified, experiment, walk_forward, selection, final
+
+
+def _run_plan(plan, plan_parent: Path):
+    _, _, _, selection, final = _pipeline(plan, plan_parent)
     return selection, final
 
 
