@@ -19,6 +19,7 @@ def fails(code, call):
 
 
 @pytest.mark.parametrize("name,expected", [
+    ("atr", 75.0), ("obv", 100.0),
     ("simple_return", .25), ("log_return", math.log(1.25)),
     ("sma", 112.5), ("ema", 100.0 + (2.0 / 3.0) * 25.0),
     ("rsi", 100.0),
@@ -26,7 +27,7 @@ def fails(code, call):
     ("rolling_volume_mean", 100.0), ("volume_ratio", 1.0),
     ("candle_range", 75.0), ("candle_body", 25.0),
 ])
-def test_existing_eleven_real_formulas(tmp_path, monkeypatch, name, expected):
+def test_parameterized_real_formulas(tmp_path, monkeypatch, name, expected):
     one, selected = fixture(tmp_path)
     calls = []
     real = engine._invoke
@@ -43,7 +44,7 @@ def test_existing_eleven_real_formulas(tmp_path, monkeypatch, name, expected):
     assert len(calls[0].rows) == (1 if name.startswith("candle_") else 2)
     assert value.candidate_canonical_row_version_ids == value.consumed_canonical_row_version_ids
     assert result.samples[0].bar_sample_version_id == selected.samples[0].sample_version_id
-    assert len(result.registry_implementation_pins) == 14
+    assert len(result.registry_implementation_pins) == 16
     assert len(result.execution_id) == 64
 
 
@@ -291,7 +292,7 @@ def test_zero_samples_specs_and_both(tmp_path, monkeypatch):
     zero_specs = execute(one, selected, ())
     assert zero_specs.status == "COMPLETE" and zero_specs.samples[0].values == ()
     both = execute_ts2_features((), pit((), requests=()), (), dataset_as_of=AS_OF)
-    assert both.status == "EMPTY" and len(both.registry_implementation_pins) == 14
+    assert both.status == "EMPTY" and len(both.registry_implementation_pins) == 16
     assert len({r.execution_id for r in (zero_samples, zero_specs, both)}) == 3
     unknown = tamper(spec(), transform_ref="unknown.module:callback")
     fails("REGISTRY_AUTHORITY", lambda: execute(one, empty, (unknown,)))
