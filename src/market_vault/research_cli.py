@@ -31,6 +31,10 @@ from .feature_stability_cli import (
     add_feature_stability_subparser,
     research_feature_stability_main,
 )
+from .walk_forward_cli import (
+    add_walk_forward_subparser,
+    research_walk_forward_main,
+)
 from .canonical.reader import load_verified_canonical_build
 from .cross_day import TradingDayRecord, verify_trading_day_schedule
 from .cross_day_dataset import CrossDayAnchor
@@ -68,6 +72,7 @@ RESEARCH_COMMANDS = frozenset({
     "research-feature-report",
     "research-feature-select",
     "research-feature-stability",
+    "research-walk-forward",
 })
 RESEARCH_BUILD_PLAN_SCHEMA_VERSION = "market-vault-research-build-plan-v1"
 RESEARCH_CLI_RESULT_SCHEMA_VERSION = "market-vault-research-cli-result-v1"
@@ -146,6 +151,7 @@ def add_research_subparsers(subparsers) -> None:
     add_feature_research_subparser(subparsers)
     add_feature_selection_subparser(subparsers)
     add_feature_stability_subparser(subparsers)
+    add_walk_forward_subparser(subparsers)
 
 
 def run_research_command(command: str, args: argparse.Namespace) -> int:
@@ -159,6 +165,8 @@ def run_research_command(command: str, args: argparse.Namespace) -> int:
         return research_feature_select_main(args)
     if command == "research-feature-stability":
         return research_feature_stability_main(args)
+    if command == "research-walk-forward":
+        return research_walk_forward_main(args)
     raise AssertionError(f"unknown Research command {command!r}")
 
 
