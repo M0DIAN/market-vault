@@ -19,6 +19,7 @@ def fails(code, call):
 
 
 @pytest.mark.parametrize("name,expected", [
+    ("atr", 75.0), ("obv", 100.0),
     ("simple_return", .25), ("log_return", math.log(1.25)),
     ("sma", 112.5), ("ema", 100.0 + (2.0 / 3.0) * 25.0),
     ("rsi", 100.0),
@@ -26,7 +27,7 @@ def fails(code, call):
     ("rolling_volume_mean", 100.0), ("volume_ratio", 1.0),
     ("candle_range", 75.0), ("candle_body", 25.0),
 ])
-def test_existing_eleven_real_formulas(tmp_path, monkeypatch, name, expected):
+def test_parameterized_real_formulas(tmp_path, monkeypatch, name, expected):
     one, selected = fixture(tmp_path)
     calls = []
     real = engine._invoke

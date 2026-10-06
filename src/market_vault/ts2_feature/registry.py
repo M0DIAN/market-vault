@@ -1,4 +1,4 @@
-"""Fourteen fixed TS2 registrations; only static implementation source is read."""
+"""Sixteen fixed TS2 registrations; only static implementation source is read."""
 
 from dataclasses import dataclass
 import inspect
@@ -6,8 +6,8 @@ import sys
 import types
 
 from ..dataset.feature_transforms import (
-    candle_body, candle_range, ema, log_return, macd, macd_histogram,
-    macd_signal, rolling_mean, rolling_std, rolling_volume_mean, rsi,
+    atr, candle_body, candle_range, ema, log_return, macd, macd_histogram,
+    macd_signal, obv, rolling_mean, rolling_std, rolling_volume_mean, rsi,
     simple_return, sma, volume_ratio,
 )
 from ..dataset.models import ImplementationPin
@@ -37,6 +37,7 @@ class _Contract:
 
 
 _CONTRACTS = (
+    _Contract("atr", atr, ("high", "low", "close"), 2),
     _Contract("candle_body", candle_body, ("open", "close"), None),
     _Contract("candle_range", candle_range, ("high", "low"), None),
     _Contract("ema", ema, ("close",), 1),
@@ -44,6 +45,7 @@ _CONTRACTS = (
     _Contract("macd", macd, ("close",), None, 26),
     _Contract("macd_histogram", macd_histogram, ("close",), None, 34),
     _Contract("macd_signal", macd_signal, ("close",), None, 34),
+    _Contract("obv", obv, ("close", "volume"), 2),
     _Contract("rolling_mean", rolling_mean, ("close",), 1),
     _Contract("rolling_std", rolling_std, ("close",), 2),
     _Contract("rolling_volume_mean", rolling_volume_mean, ("volume",), 1),

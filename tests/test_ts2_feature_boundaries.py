@@ -28,13 +28,13 @@ from market_vault.dataset.models import ImplementationPin
 from market_vault.dataset.encoding import encode_identity
 
 
-def test_fixed_registry_is_fourteen_immutable_static_functions():
+def test_fixed_registry_is_sixteen_immutable_static_functions():
     entries = registry._registry()
-    assert len(entries) == 14
+    assert len(entries) == 16
     assert tuple(r.contract.name for r in entries) == (
-        "candle_body", "candle_range", "ema", "log_return", "macd", "macd_histogram",
-        "macd_signal", "rolling_mean", "rolling_std", "rolling_volume_mean", "rsi",
-        "simple_return", "sma", "volume_ratio")
+        "atr", "candle_body", "candle_range", "ema", "log_return", "macd",
+        "macd_histogram", "macd_signal", "obv", "rolling_mean", "rolling_std",
+        "rolling_volume_mean", "rsi", "simple_return", "sma", "volume_ratio")
     for entry in entries:
         assert entry.contract.implementation is getattr(sys.modules[entry.contract.implementation.__module__], entry.contract.name)
         with pytest.raises(FrozenInstanceError):
@@ -51,8 +51,15 @@ def test_source_failure_and_wrong_module_binding(tmp_path, monkeypatch):
     with monkeypatch.context() as patch:
         patch.setattr(inspect, "getsource", unavailable)
         fails("SOURCE_FINGERPRINT", lambda: execute(one, empty, ()))
-    contract = registry._CONTRACTS[0]
-    monkeypatch.setattr(sys.modules[contract.implementation.__module__], contract.name, lambda x: 1.0)
+    contract = next(
+        contract for contract in registry._CONTRACTS
+        if contract.name in registry._BASELINE_CONTRACT_NAMES
+    )
+    monkeypatch.setattr(
+        sys.modules[contract.implementation.__module__],
+        contract.name,
+        lambda x: 1.0,
+    )
     fails("REGISTRY_AUTHORITY", lambda: execute(one, selected))
 
 
