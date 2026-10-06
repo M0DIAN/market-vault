@@ -43,7 +43,11 @@ def test_existing_eleven_real_formulas(tmp_path, monkeypatch, name, expected):
     assert len(calls[0].rows) == (1 if name.startswith("candle_") else 2)
     assert value.candidate_canonical_row_version_ids == value.consumed_canonical_row_version_ids
     assert result.samples[0].bar_sample_version_id == selected.samples[0].sample_version_id
-    assert len(result.registry_implementation_pins) == 14
+    expected_pin_count = 8 if name in {
+        "simple_return", "log_return", "rolling_mean", "rolling_std",
+        "rolling_volume_mean", "volume_ratio", "candle_range", "candle_body",
+    } else 9
+    assert len(result.registry_implementation_pins) == expected_pin_count
     assert len(result.execution_id) == 64
 
 
@@ -70,6 +74,7 @@ def test_macd_family_real_formulas(tmp_path):
     assert values["ts2_macd"] == pytest.approx(232.10848624079927)
     assert values["ts2_macd_signal"] == pytest.approx(197.09349534929908)
     assert values["ts2_macd_histogram"] == pytest.approx(35.01499089150019)
+    assert len(result.registry_implementation_pins) == 11
 
 
 @pytest.mark.parametrize("schema", ["10.9", "unknown"])
@@ -291,11 +296,22 @@ def test_zero_samples_specs_and_both(tmp_path, monkeypatch):
     zero_specs = execute(one, selected, ())
     assert zero_specs.status == "COMPLETE" and zero_specs.samples[0].values == ()
     both = execute_ts2_features((), pit((), requests=()), (), dataset_as_of=AS_OF)
-    assert both.status == "EMPTY" and len(both.registry_implementation_pins) == 14
+    assert both.status == "EMPTY" and len(both.registry_implementation_pins) == 8
     assert len({r.execution_id for r in (zero_samples, zero_specs, both)}) == 3
     unknown = tamper(spec(), transform_ref="unknown.module:callback")
     fails("REGISTRY_AUTHORITY", lambda: execute(one, empty, (unknown,)))
     fails("CLOCK_AUTHORITY", lambda: execute(one, empty, (), cutoff=datetime(2026, 1, 1)))
+
+
+def test_unused_extensions_do_not_churn_legacy_execution_identity(tmp_path):
+    one, selected = fixture(tmp_path)
+    result = execute(one, selected, (spec("simple_return"),))
+    names = tuple(pin.name for pin in result.registry_implementation_pins)
+    assert len(names) == 8
+    assert all(
+        not name.endswith((":ema", ":sma", ":rsi", ":macd", ":macd_signal", ":macd_histogram"))
+        for name in names
+    )
 
 
 def test_mixed_values_participate_in_identity(tmp_path):
