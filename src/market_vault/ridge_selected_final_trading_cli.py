@@ -49,6 +49,7 @@ from .research.ridge_trading_selection import (
 from .ridge_trading_selection_cli import (
     RIDGE_TRADING_SELECTION_PLAN_SCHEMA_VERSION,
     RidgeTradingSelectionCLIError,
+    _DOCUMENTED_ERRORS as RIDGE_TRADING_SELECTION_DOCUMENTED_ERRORS,
     _pipeline as _threshold_pipeline,
     parse_ridge_trading_selection_plan_bytes,
 )
@@ -85,6 +86,7 @@ _DOCUMENTED_ERRORS = (
     RidgeTradingSelectionCLIError,
     RidgeFinalTestError,
     RidgeSelectedFinalTradingError,
+    *RIDGE_TRADING_SELECTION_DOCUMENTED_ERRORS,
     DatasetCLIError,
     OSError,
     UnicodeError,
