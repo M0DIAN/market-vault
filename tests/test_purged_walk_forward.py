@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timezone
 
 import pytest
@@ -236,6 +237,75 @@ def test_fold_partitions_preserve_exact_X_y_alignment():
 def test_walk_forward_spec_and_capacity_fail_closed(kwargs, match):
     with pytest.raises(PurgedWalkForwardError, match=match):
         build_purged_walk_forward(_bundle(), **kwargs)
+
+
+def test_walk_forward_refuses_boundary_that_splits_same_time_cohort():
+    bundle = _bundle()
+
+    train_ml = bundle.ml_bundle.train
+    ml_metadata = list(train_ml.metadata)
+    original = ml_metadata[2]
+    ml_metadata[2] = MLSampleMetadata(
+        original.sample_key,
+        original.code,
+        _dt(4),
+    )
+    changed_train_ml = MLDatasetSplit(
+        "TRAIN",
+        train_ml.feature_names,
+        train_ml.label_name,
+        train_ml.label_logical_type,
+        train_ml.X,
+        train_ml.y,
+        tuple(ml_metadata),
+    )
+    changed_ml_bundle = MLDatasetBundle(
+        ML_DATASET_ADAPTER_VERSION,
+        bundle.dataset_id,
+        bundle.feature_names,
+        bundle.label_name,
+        bundle.label_logical_type,
+        changed_train_ml,
+        bundle.ml_bundle.validation,
+        bundle.ml_bundle.test,
+    )
+
+    exp_metadata = list(bundle.train.metadata)
+    exp_original = exp_metadata[2]
+    exp_metadata[2] = ExperimentSampleMetadata(
+        exp_original.sample_key,
+        exp_original.code,
+        _dt(4),
+        _dt(5),
+        exp_original.label_value_id,
+    )
+    changed_train = ExperimentSplit(
+        "TRAIN",
+        changed_train_ml,
+        tuple(exp_metadata),
+    )
+    changed_bundle = ExperimentDatasetBundle(
+        EXPERIMENT_METADATA_VERSION,
+        bundle.dataset_id,
+        bundle.feature_names,
+        bundle.label_name,
+        bundle.label_logical_type,
+        changed_ml_bundle,
+        changed_train,
+        bundle.validation,
+        bundle.test,
+    )
+
+    with pytest.raises(
+        PurgedWalkForwardError,
+        match="splits a feature_window_close cohort",
+    ):
+        build_purged_walk_forward(
+            changed_bundle,
+            initial_train_samples=3,
+            validation_samples=2,
+            step_samples=2,
+        )
 
 
 def test_fold_fails_when_purge_removes_every_training_sample():
