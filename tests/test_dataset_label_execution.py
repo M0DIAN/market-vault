@@ -91,6 +91,7 @@ from market_vault.dataset.feature_registry import built_in_feature_registry
 from market_vault.dataset.label_execution import _validate_output_value
 from market_vault.dataset.label_transforms import (
     forward_direction,
+    forward_open_to_close_return,
     forward_return,
     maximum_adverse_excursion,
     maximum_favorable_excursion,
@@ -104,6 +105,10 @@ NY = "America/New_York"
 
 REF_FORWARD_RETURN = (
     "market_vault.dataset.label_transforms.forward_return:forward_return"
+)
+REF_FORWARD_OPEN_TO_CLOSE = (
+    "market_vault.dataset.label_transforms.forward_open_to_close_return:"
+    "forward_open_to_close_return"
 )
 REF_FORWARD_DIRECTION = (
     "market_vault.dataset.label_transforms.forward_direction:forward_direction"
@@ -119,6 +124,7 @@ REF_MAE = (
 
 ALL_REFS = (
     REF_FORWARD_RETURN,
+    REF_FORWARD_OPEN_TO_CLOSE,
     REF_FORWARD_DIRECTION,
     REF_MFE,
     REF_MAE,
@@ -680,6 +686,9 @@ def test_contract_version_constants():
 def test_builtin_registration_input_fields_output_types_and_lookforward():
     expected = {
         REF_FORWARD_RETURN: (("close",), "float64", WINDOW_SOURCE_LABEL_HORIZON),
+        REF_FORWARD_OPEN_TO_CLOSE: (
+            ("open", "close"), "float64", WINDOW_SOURCE_LABEL_OBSERVATION_WINDOW
+        ),
         REF_FORWARD_DIRECTION: (("close",), "int64", WINDOW_SOURCE_LABEL_HORIZON),
         REF_MFE: (("close", "high"), "float64", WINDOW_SOURCE_LABEL_OBSERVATION_WINDOW),
         REF_MAE: (("close", "low"), "float64", WINDOW_SOURCE_LABEL_OBSERVATION_WINDOW),
@@ -698,7 +707,7 @@ def test_builtin_registration_input_fields_output_types_and_lookforward():
 
 def test_builtin_registry_immutable_and_exact():
     registry = built_in_label_registry()
-    assert len(registry.registrations) == 4
+    assert len(registry.registrations) == 5
     with pytest.raises(FrozenInstanceError):
         registry.registrations = ()
     with pytest.raises(AttributeError):
@@ -769,6 +778,38 @@ def test_forward_return_formula():
     assert forward_return(
         transform_input(fields=("close",), anchor=(110.0,), rows=((110.0,),))
     ) == 0.0
+
+
+def test_forward_open_to_close_return_formula():
+    assert forward_open_to_close_return(
+        transform_input(
+            fields=("open", "close"),
+            anchor=(999.0, 999.0),
+            rows=((120.0, 125.0), (140.0, 150.0)),
+        )
+    ) == pytest.approx(0.25)
+    assert forward_open_to_close_return(
+        transform_input(
+            fields=("open", "close"),
+            anchor=(1.0, 1.0),
+            rows=((100.0, 100.0),),
+        )
+    ) == 0.0
+
+
+def test_forward_open_to_close_return_domain_errors():
+    with pytest.raises(ValueError, match="at least one future row"):
+        forward_open_to_close_return(
+            transform_input(fields=("open", "close"), anchor=(1.0, 1.0), rows=())
+        )
+    with pytest.raises(ValueError, match="positive entry open"):
+        forward_open_to_close_return(
+            transform_input(fields=("open", "close"), anchor=(1.0, 1.0), rows=((0.0, 1.0),))
+        )
+    with pytest.raises(ValueError, match="positive exit close"):
+        forward_open_to_close_return(
+            transform_input(fields=("open", "close"), anchor=(1.0, 1.0), rows=((1.0, 0.0),))
+        )
 
 
 def test_forward_direction_formula():
