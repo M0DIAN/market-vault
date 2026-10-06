@@ -203,7 +203,7 @@ def _success_payload(result) -> dict:
     return {
         "result_schema_version": BACKTEST_CLI_RESULT_SCHEMA_VERSION,
         "status": "SUCCESS",
-        "engine_version": BACKTEST_ENGINE_VERSION,
+        "engine_version": result.engine_version,
         "backtest_id": result.backtest_id,
         "dataset_id": result.dataset_id,
         "split": result.split,
