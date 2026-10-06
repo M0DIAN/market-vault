@@ -119,7 +119,7 @@ class BacktestMetrics:
     trade_count: int
     gross_total_return: float
     total_return: float
-    max_drawdown: float
+    realized_max_drawdown: float
     win_rate: float
     average_trade_return: float
     profit_factor: float | None
@@ -143,7 +143,7 @@ class BacktestMetrics:
         for name in (
             "gross_total_return",
             "total_return",
-            "max_drawdown",
+            "realized_max_drawdown",
             "win_rate",
             "average_trade_return",
             "average_holding_seconds",
@@ -154,8 +154,8 @@ class BacktestMetrics:
                 name,
                 _finite_number(getattr(self, name), name),
             )
-        if self.max_drawdown < 0.0:
-            raise BacktestError("max_drawdown must be non-negative")
+        if self.realized_max_drawdown < 0.0:
+            raise BacktestError("realized_max_drawdown must be non-negative")
         if not 0.0 <= self.win_rate <= 1.0:
             raise BacktestError("win_rate must be within [0, 1]")
         if self.average_holding_seconds < 0.0:
