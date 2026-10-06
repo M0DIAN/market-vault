@@ -21,7 +21,8 @@ def _plan():
         "dataset_build_dir": "dataset_id=" + "a" * 64,
         "label_field": "forward_return_5d",
         "feature_fields": ["rsi14", "macd"],
-        "minimum_train_samples": 100,
+        "initial_train_samples": 100,
+        "minimum_retained_train_samples": 90,
         "validation_samples": 20,
         "step_samples": 20,
         "embargo_seconds": 86400,
@@ -30,7 +31,8 @@ def _plan():
 
 def _result():
     spec = SimpleNamespace(
-        minimum_train_samples=100,
+        initial_train_samples=100,
+        minimum_retained_train_samples=90,
         validation_samples=20,
         step_samples=20,
         embargo_seconds=86400,
@@ -144,7 +146,8 @@ def test_walk_forward_cli_is_settings_independent_and_explicit(
         "feature_fields": ("rsi14", "macd"),
     }
     assert captured["experiment"] is experiment
-    assert captured["spec"].minimum_train_samples == 100
+    assert captured["spec"].initial_train_samples == 100
+    assert captured["spec"].minimum_retained_train_samples == 90
     assert captured["spec"].validation_samples == 20
     assert captured["spec"].step_samples == 20
     assert captured["spec"].embargo_seconds == 86400
@@ -174,12 +177,22 @@ def test_walk_forward_plan_rejects_duplicate_json_key():
 @pytest.mark.parametrize(
     "field,value,match",
     [
-        ("minimum_train_samples", 0, "minimum_train_samples"),
+        ("initial_train_samples", 0, "initial_train_samples"),
+        (
+            "minimum_retained_train_samples",
+            0,
+            "minimum_retained_train_samples",
+        ),
         ("validation_samples", 0, "validation_samples"),
         ("step_samples", 0, "step_samples"),
         ("step_samples", 10, ">= validation_samples"),
         ("embargo_seconds", -1, "embargo_seconds"),
-        ("minimum_train_samples", True, "positive integer"),
+        ("initial_train_samples", True, "positive integer"),
+        (
+            "minimum_retained_train_samples",
+            True,
+            "positive integer",
+        ),
         ("feature_fields", [], "feature_fields"),
         ("feature_fields", ["x", "x"], "duplicates"),
     ],
@@ -190,6 +203,18 @@ def test_walk_forward_plan_rejects_invalid_values(field, value, match):
     with pytest.raises(
         walk_forward_cli.WalkForwardCLIError,
         match=match,
+    ):
+        walk_forward_cli.parse_walk_forward_plan_bytes(
+            json.dumps(payload).encode("utf-8")
+        )
+
+
+def test_walk_forward_plan_rejects_retained_minimum_above_initial():
+    payload = _plan()
+    payload["minimum_retained_train_samples"] = 101
+    with pytest.raises(
+        walk_forward_cli.WalkForwardCLIError,
+        match="<= initial_train_samples",
     ):
         walk_forward_cli.parse_walk_forward_plan_bytes(
             json.dumps(payload).encode("utf-8")
