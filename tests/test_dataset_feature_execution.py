@@ -1,7 +1,7 @@
 """Offline deterministic tests for the built-in Feature execution core
 (v0.5.0 PR-3).
 
-Covers the built-in registrations, the ten basic OHLCV/MA transforms and
+Covers the built-in registrations, the eleven basic OHLCV/indicator transforms and
 their exact formulas, domain failures, PIT row binding and clock checks,
 trailing-window and contiguity validation, explicit COMPLETE / EXCLUDED
 results, the frozen result models, execution determinism, and the
@@ -98,6 +98,7 @@ from market_vault.dataset.feature_transforms import (
     rolling_mean,
     rolling_std,
     rolling_volume_mean,
+    rsi,
     simple_return,
     sma,
     volume_ratio,
@@ -113,6 +114,7 @@ REF_SIMPLE = "market_vault.dataset.feature_transforms.simple_return:simple_retur
 REF_LOG = "market_vault.dataset.feature_transforms.log_return:log_return"
 REF_EMA = "market_vault.dataset.feature_transforms.ema:ema"
 REF_SMA = "market_vault.dataset.feature_transforms.sma:sma"
+REF_RSI = "market_vault.dataset.feature_transforms.rsi:rsi"
 REF_MEAN = "market_vault.dataset.feature_transforms.rolling_mean:rolling_mean"
 REF_STD = "market_vault.dataset.feature_transforms.rolling_std:rolling_std"
 REF_VMEAN = "market_vault.dataset.feature_transforms.rolling_volume_mean:rolling_volume_mean"
@@ -125,6 +127,7 @@ ALL_REFS = (
     REF_LOG,
     REF_EMA,
     REF_SMA,
+    REF_RSI,
     REF_MEAN,
     REF_STD,
     REF_VMEAN,
@@ -570,7 +573,7 @@ def executed_value(result: FeatureExecutionResult, sample_key: str, feature_name
 
 def test_builtin_registrations_all_present():
     registrations = built_in_feature_registrations()
-    assert len(registrations) == 10
+    assert len(registrations) == 11
     assert tuple(reg.transform_ref for reg in registrations) == tuple(sorted(ALL_REFS))
     assert set(reg.transform_ref for reg in registrations) == set(ALL_REFS)
 
@@ -623,6 +626,7 @@ def test_builtin_registration_input_fields_and_windows():
         REF_LOG: (("close",), "PARAMETER", "window_bars", 2),
         REF_EMA: (("close",), "PARAMETER", "window_bars", 1),
         REF_SMA: (("close",), "PARAMETER", "window_bars", 1),
+        REF_RSI: (("close",), "PARAMETER", "window_bars", 2),
         REF_MEAN: (("close",), "PARAMETER", "window_bars", 1),
         REF_STD: (("close",), "PARAMETER", "window_bars", 2),
         REF_VMEAN: (("volume",), "PARAMETER", "window_bars", 1),
@@ -654,7 +658,7 @@ def test_builtin_registration_input_fields_and_windows():
 
 def test_builtin_registry_immutable_and_exact():
     registry = built_in_feature_registry()
-    assert len(registry.registrations) == 10
+    assert len(registry.registrations) == 11
     with pytest.raises(FrozenInstanceError):
         registry.registrations = ()
     with pytest.raises(AttributeError):
@@ -749,6 +753,32 @@ def test_formula_ema_window_local_seed(fixtures):
     value = executed_value(result, pit_sample_key(request()), "ema3")
     # N=3 => alpha=0.5; seed 118 -> 119 after 120 -> 114.5 after 110.
     assert value.value == 114.5
+
+
+def test_formula_rsi_window_local_wilder_seed(fixtures):
+    result = execute_builtin_features(
+        [fixtures.a],
+        assemble([fixtures.a], [request()]),
+        [feature_spec("rsi3", REF_RSI, ("close",), parameters=(wb(3),))],
+    )
+    value = executed_value(result, pit_sample_key(request()), "rsi3")
+    # 118 -> 120 (+2), 120 -> 110 (-10): avg gain=1, avg loss=5.
+    assert value.value == pytest.approx(100.0 - 100.0 / 1.2)
+
+
+def test_rsi_edge_cases_are_deterministic():
+    def calculate(closes):
+        return rsi(
+            FeatureTransformInput(
+                field_names=("close",),
+                rows=tuple((float(value),) for value in closes),
+                parameters=(wb(len(closes)),),
+            )
+        )
+
+    assert calculate([1, 2, 3]) == 100.0
+    assert calculate([3, 2, 1]) == 0.0
+    assert calculate([2, 2, 2]) == 50.0
 
 
 def test_formula_rolling_std_ddof_zero(fixtures):
@@ -1763,7 +1793,7 @@ def test_execution_never_writes_to_repo(fixtures):
 
 
 def test_transforms_are_pure_module_level_functions():
-    for fn in (simple_return, log_return, sma, ema, rolling_mean, rolling_std,
+    for fn in (simple_return, log_return, sma, ema, rsi, rolling_mean, rolling_std,
                rolling_volume_mean, volume_ratio, candle_range, candle_body):
         assert isinstance(fn, types.FunctionType)
         assert fn.__module__.startswith("market_vault.dataset.feature_transforms")

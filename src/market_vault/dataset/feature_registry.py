@@ -30,6 +30,7 @@ from .feature_transforms import (
     rolling_mean,
     rolling_std,
     rolling_volume_mean,
+    rsi,
     simple_return,
     sma,
     volume_ratio,
@@ -195,6 +196,14 @@ def built_in_feature_registrations() -> tuple[TransformRegistration, ...]:
             parameters=(_window_bars_contract(2),),
             lookback=_parameter_window("window_bars"),
             display_name="Rolling population standard deviation of closes",
+        ),
+        _registration(
+            transform_ref="market_vault.dataset.feature_transforms.rsi:rsi",
+            implementation=rsi,
+            input_canonical_fields=("close",),
+            parameters=(_window_bars_contract(2),),
+            lookback=_parameter_window("window_bars"),
+            display_name="Window-local Wilder-seed relative strength index",
         ),
         _registration(
             transform_ref="market_vault.dataset.feature_transforms.rolling_volume_mean:rolling_volume_mean",
