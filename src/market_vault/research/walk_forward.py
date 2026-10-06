@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import math
 import re
 
 from .experiment import (
@@ -112,6 +113,23 @@ class WalkForwardPartition:
                 raise PurgedWalkForwardError(
                     "partition Feature matrix width differs"
                 )
+            if not all(
+                type(value) is float and math.isfinite(value)
+                for value in row
+            ):
+                raise PurgedWalkForwardError(
+                    "partition Feature values must be finite floats"
+                )
+        for value in self.y:
+            if self.label_logical_type == "int64":
+                if type(value) is not int:
+                    raise PurgedWalkForwardError(
+                        "int64 partition Labels must remain ints"
+                    )
+            elif type(value) is not float or not math.isfinite(value):
+                raise PurgedWalkForwardError(
+                    "float64 partition Labels must remain finite floats"
+                )
         if not all(
             type(item) is ExperimentSampleMetadata
             for item in self.metadata
@@ -201,6 +219,14 @@ class PurgedWalkForwardFold:
         ):
             raise PurgedWalkForwardError(
                 "purged_metadata must be an immutable metadata tuple"
+            )
+        purged_order = tuple(
+            (item.feature_window_close, item.code, item.sample_key)
+            for item in self.purged_metadata
+        )
+        if purged_order != tuple(sorted(purged_order)):
+            raise PurgedWalkForwardError(
+                "purged_metadata must remain chronologically ordered"
             )
         if self.train_candidate_count != (
             self.train.row_count + len(self.purged_metadata)
