@@ -1,4 +1,4 @@
-"""Eleven fixed TS2 registrations; only static implementation source is read."""
+"""Fourteen fixed TS2 registrations; only static implementation source is read."""
 
 from dataclasses import dataclass
 import inspect
@@ -6,8 +6,9 @@ import sys
 import types
 
 from ..dataset.feature_transforms import (
-    candle_body, candle_range, ema, log_return, rolling_mean, rolling_std,
-    rolling_volume_mean, rsi, simple_return, sma, volume_ratio,
+    candle_body, candle_range, ema, log_return, macd, macd_histogram,
+    macd_signal, rolling_mean, rolling_std, rolling_volume_mean, rsi,
+    simple_return, sma, volume_ratio,
 )
 from ..dataset.models import ImplementationPin
 from ..dataset.transform_models import _module_source_sha256
@@ -28,6 +29,7 @@ class _Contract:
     implementation: object
     fields: tuple[str, ...]
     minimum: int | None
+    fixed_lookback: int = 1
 
     @property
     def transform_ref(self):
@@ -39,6 +41,9 @@ _CONTRACTS = (
     _Contract("candle_range", candle_range, ("high", "low"), None),
     _Contract("ema", ema, ("close",), 1),
     _Contract("log_return", log_return, ("close",), 2),
+    _Contract("macd", macd, ("close",), None, 26),
+    _Contract("macd_histogram", macd_histogram, ("close",), None, 34),
+    _Contract("macd_signal", macd_signal, ("close",), None, 34),
     _Contract("rolling_mean", rolling_mean, ("close",), 1),
     _Contract("rolling_std", rolling_std, ("close",), 2),
     _Contract("rolling_volume_mean", rolling_volume_mean, ("volume",), 1),
@@ -69,7 +74,7 @@ def implementation_payload(contract, source_sha256):
         source_schema_version=SOURCE_SCHEMA_VERSION, requested_session="RTH", adjustment="NONE", market="US",
         input_count=len(contract.fields), output_arity=1, output_logical_type="float64", output_nullable=False,
         parameter_count=int(parameterized), lookback_source="PARAMETER" if parameterized else "FIXED",
-        lookback_unit="BARS", lookback_value=None if parameterized else 1,
+        lookback_unit="BARS", lookback_value=None if parameterized else contract.fixed_lookback,
         lookback_parameter_name="window_bars" if parameterized else None,
         lookforward_source="NONE", boundary_policy="SAME_MARKET_CALENDAR_DATE", missing_policy="EXCLUDE_SAMPLE",
         **{f"input_{i:04d}": name for i, name in enumerate(contract.fields)},
@@ -84,6 +89,10 @@ def implementation_payload(contract, source_sha256):
 def _registry():
     registrations = []
     for contract in _CONTRACTS:
+        require(type(contract.fixed_lookback) is int and contract.fixed_lookback >= 1,
+                "REGISTRY_AUTHORITY", "fixed lookback must be a positive integer")
+        require(contract.minimum is None or contract.fixed_lookback == 1,
+                "REGISTRY_AUTHORITY", "parameterized transform cannot declare fixed lookback")
         fn = contract.implementation
         module_name, name = contract.transform_ref.split(":")
         module = sys.modules.get(module_name)

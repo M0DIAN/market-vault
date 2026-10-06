@@ -17,7 +17,9 @@ def spec(transform="simple_return", *, n=2, name=None, schema="10.9-mv-ts2"):
     name = name or "ts2_" + transform
     return FeatureSpec("market-vault-feature-spec-v1", name, "v1", DatasetField(name, "float64", False),
         FIELDS.get(transform, ("close",)), f"market_vault.dataset.feature_transforms.{transform}:{transform}",
-        () if transform in ("candle_body", "candle_range") else (SpecParameter("window_bars", n),),
+        () if transform in (
+            "candle_body", "candle_range", "macd", "macd_signal", "macd_histogram"
+        ) else (SpecParameter("window_bars", n),),
         SpecVersionRequirements(("market-bars-canonical-schema-v1",), (schema,)))
 
 
