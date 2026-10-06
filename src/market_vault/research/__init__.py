@@ -169,3 +169,20 @@ __all__ += [
     "RidgeAlphaSelectionResult",
     "select_ridge_alpha",
 ]
+
+
+from .ridge_final_test import (
+    RIDGE_FINAL_TEST_VERSION,
+    RidgeFinalTestError,
+    RidgeFinalTestReport,
+    RidgeTestPrediction,
+    evaluate_ridge_final_test,
+)
+
+__all__ += [
+    "RIDGE_FINAL_TEST_VERSION",
+    "RidgeFinalTestError",
+    "RidgeFinalTestReport",
+    "RidgeTestPrediction",
+    "evaluate_ridge_final_test",
+]
