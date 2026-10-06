@@ -52,8 +52,8 @@ def _resolve(specs, registrations):
                 and spec.output.logical_type == "float64" and spec.output.nullable is False,
                 "SPEC_CONTRACT", "input/output contract mismatch")
         if contract.minimum is None:
-            require(spec.parameters == (), "SPEC_CONTRACT", "fixed N=1 transform has no parameters")
-            count = 1
+            require(spec.parameters == (), "SPEC_CONTRACT", "fixed-lookback transform has no parameters")
+            count = contract.fixed_lookback
         else:
             require(len(spec.parameters) == 1 and spec.parameters[0].name == "window_bars",
                     "SPEC_CONTRACT", "exact window_bars parameter required")
