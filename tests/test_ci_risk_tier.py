@@ -170,6 +170,14 @@ def test_research_feature_source_is_research_fast_on_pr(tmp_path):
     )
 
 
+def test_research_package_is_research_fast_on_pr(tmp_path):
+    repo = make_repo(tmp_path)
+    assert (
+        classify_change(repo, "src/market_vault/research/labels.py")
+        == "research_fast"
+    )
+
+
 def test_research_ts2_source_is_research_fast_on_pr(tmp_path):
     repo = make_repo(tmp_path)
     assert (
