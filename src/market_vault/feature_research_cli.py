@@ -104,8 +104,6 @@ def _feature_fields(value):
         )
     except DatasetCLIError as exc:
         raise FeatureResearchCLIError(str(exc)) from exc
-    if len(set(fields)) != len(fields):
-        raise FeatureResearchCLIError("feature_fields must be unique")
     return fields
 
 
