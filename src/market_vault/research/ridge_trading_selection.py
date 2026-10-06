@@ -20,7 +20,7 @@ making the tie-break deterministic and conservative.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 import math
 import re
@@ -31,6 +31,7 @@ from ..dataset.encoding import encode_identity
 from .experiment import ExperimentDatasetBundle
 from .ridge_baseline import RidgeBaselineError, _predict
 from .ridge_selection import (
+    RidgeAlphaSelectionError,
     RidgeAlphaSelectionResult,
 )
 from .trading_authority import (
@@ -758,6 +759,12 @@ def select_ridge_trading_threshold(
         raise RidgeTradingThresholdSelectionError(
             "threshold selection requires RidgeAlphaSelectionResult"
         )
+    try:
+        ridge_selection = replace(ridge_selection)
+    except RidgeAlphaSelectionError as exc:
+        raise RidgeTradingThresholdSelectionError(
+            "Ridge alpha selection identity validation failed"
+        ) from exc
     if rebuilt.label_logical_type != "float64":
         raise RidgeTradingThresholdSelectionError(
             "threshold selection supports float64 return Labels only"
