@@ -1728,7 +1728,9 @@ def test_spec_parameter_change_affects_pin_and_result(fixtures):
 def test_no_arbitrary_registration_execution(fixtures):
     pit = assemble([fixtures.a], [request()])
     unknown = feature_spec(
-        "ema", "market_vault.dataset.feature_transforms.ema:ema", ("close",),
+        "future_indicator",
+        "market_vault.dataset.feature_transforms.future_indicator:future_indicator",
+        ("close",),
         parameters=(wb(2),),
     )
     with pytest.raises(FeatureExecutionError):
@@ -1761,7 +1763,7 @@ def test_execution_never_writes_to_repo(fixtures):
 
 
 def test_transforms_are_pure_module_level_functions():
-    for fn in (simple_return, log_return, rolling_mean, rolling_std,
+    for fn in (simple_return, log_return, sma, ema, rolling_mean, rolling_std,
                rolling_volume_mean, volume_ratio, candle_range, candle_body):
         assert isinstance(fn, types.FunctionType)
         assert fn.__module__.startswith("market_vault.dataset.feature_transforms")
