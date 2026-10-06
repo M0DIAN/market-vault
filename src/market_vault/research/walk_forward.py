@@ -28,6 +28,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import math
 import re
 
 from ..dataset.encoding import encode_identity
@@ -53,11 +54,14 @@ def _positive_int(value, label: str) -> int:
 
 
 def _digest_members(prefix: str, members: tuple[str, ...]) -> str:
+    if type(members) is not tuple or not all(type(item) is str for item in members):
+        raise WalkForwardError("identity members must be an immutable string tuple")
+    framed = "".join(f"{len(item)}:{item}" for item in members)
     return encode_identity(
         prefix,
         {
             "count": len(members),
-            "members": "".join(members),
+            "members": framed,
         },
     )
 
@@ -83,6 +87,19 @@ class WalkForwardSlice:
             raise WalkForwardError("WalkForwardSlice Label type must be numeric")
         if not len(self.X) == len(self.y) == len(self.metadata):
             raise WalkForwardError("WalkForwardSlice row counts differ")
+        width = len(self.feature_names)
+        for row in self.X:
+            if type(row) is not tuple or len(row) != width:
+                raise WalkForwardError("WalkForwardSlice Feature matrix width mismatch")
+            if not all(type(value) is float and math.isfinite(value) for value in row):
+                raise WalkForwardError("WalkForwardSlice Features must be finite floats")
+        for value in self.y:
+            if self.label_logical_type == "int64":
+                if type(value) is not int:
+                    raise WalkForwardError("WalkForwardSlice int64 Label must remain int")
+            else:
+                if type(value) is not float or not math.isfinite(value):
+                    raise WalkForwardError("WalkForwardSlice float64 Label must be finite")
         if not all(type(item) is ExperimentSampleMetadata for item in self.metadata):
             raise WalkForwardError(
                 "WalkForwardSlice metadata must contain ExperimentSampleMetadata"
