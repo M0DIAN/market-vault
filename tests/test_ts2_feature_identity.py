@@ -7,7 +7,7 @@ import pytest
 
 from market_vault.dataset.specs import feature_label_spec_content_id, feature_label_spec_pin
 from market_vault.ts2_feature import identity as ids
-from market_vault.ts2_feature.registry import _registry
+from market_vault.ts2_feature.registry import _registry, _registry_for_specs
 from ts2_feature_helpers import spec
 
 EXPECTED = {
@@ -56,7 +56,7 @@ EXPECTED = {
     "spec_content_id": "73dc26da80653a4959ff8a8f733cda416235f19e404fc6f995327d94fa387a40",
     "spec_pin_id": "908e88052dabd17e6efd045a1e8af5ebe4f5b97560fb7bbb193918ac3c0ee600",
     "spec_pins_digest": "b57a6f8a51d1e65780d44a980bfb7f86262a85b6dae6cbff9895cc80af95356c",
-    "registry_pins_digest": "e249ca9eb4835d8cf9fb338197c866326947b971897394de8a6788af3d859591",
+    "registry_pins_digest": "2f59d9a2d8b01316f46d97ad084b924ae6b97fbee40506c114c31b982f2fbd5f",
     "considered_builds_digest": "ee9387846c20f93cb412b1ad8a6bf586f15dbe721eac2847407581a180d501ec",
     "input_rows_digest": "e74426c75d468d6b851c6099950e4f284b09397b7bab9af11b80f284e63f4965",
     "empty.ts2-feature-considered-builds-v1": "a208644d37cfbf0cfd3afd066ea2cbe6a2c93b4be8167bdbd725a2e3ed3a4340",
@@ -68,16 +68,16 @@ EXPECTED = {
     "complete.values_content_id": "5fd7745f3d1699d2313753d26b8de05f4fee82f85ca4d090aa875bafb7713f43",
     "complete.sample_id": "b869236fbc5bae51803d1a6d6210d3c620e6b448d5536e0b15ea5abcfd06d9f2",
     "complete.samples_content_id": "3c0060e325ebf0cbfe4edb7f3d95b206838c0cc946ef5fed66019259a430809b",
-    "complete.execution_id": "5e0654222d04688abecf4894fbe8a8e57d0266d839f358b593cd731e61d40935",
+    "complete.execution_id": "b29d49174d4ebcac5ead385dc94e98c3400066b90f24928889a3d7d8b3af798e",
     "excluded.value_id": "070b2c1665a469a2c454d8fac2e837246fb543c1e32df9c9c60ff76df4de9823",
     "excluded.values_content_id": "a8207e7a3eb557a17c7ea0103b47dee7f2715e808e17d13a3a9625a3edaf01d5",
     "excluded.sample_id": "c868cae29df9b5c94e013475ef93cabf15ab878c8d61eeace9dc4d45f19288db",
     "excluded.samples_content_id": "04cd1c4a69a663781c23db5925d3c5e397e31192e073340a78e2594d252310ae",
-    "excluded.execution_id": "f9f7f59110d90f8308036039306fafad30806bf513a424eb52e683c7f1c8ac8c",
-    "zero_samples.execution_id": "36a139705f2b0d17618c6e34a954a5691363e19b01b951af9a081512c88a629d",
+    "excluded.execution_id": "afb4da567c49a0ff073b8901952c8e4d8ec33efcd87b828886c636fb57333ef9",
+    "zero_samples.execution_id": "eedfdac0687b129851023361fad9fdc8e8add3d0851fe25df6f98f9b78f4077c",
     "zero_specs.sample_id": "fa873cbb61d1ac0d277dc84a325aa67547bae4d74e758a379613c15239963d9a",
     "zero_specs.samples_content_id": "5d2595b6454d0e2f228b999c4229c0827934fafefcf5247d7a43a9928ea893e2",
-    "zero_specs.execution_id": "cc0bb41a4e7483dd5015d7bbaebf7cad375dd349473601b30071db62b88e295f",
+    "zero_specs.execution_id": "437f0a8f954bc13bee9f756ea960dc6e2c3654b315f16c72b0586eae2698ec2e",
 }
 
 
@@ -93,7 +93,10 @@ def actual():
     feature = spec(name="ts2_return")
     pin = feature_label_spec_pin(feature)
     result.update(spec_content_id=feature_label_spec_content_id(feature), spec_pin_id=ids.spec_pin_id(pin),
-        spec_pins_digest=ids.spec_pins_digest((pin,)), registry_pins_digest=ids.registry_pins_digest(tuple(r.pin for r in regs)),
+        spec_pins_digest=ids.spec_pins_digest((pin,)),
+        registry_pins_digest=ids.registry_pins_digest(
+            tuple(r.pin for r in _registry_for_specs((feature,)))
+        ),
         considered_builds_digest=ids.considered_builds_digest(("1" * 64, "2" * 64)),
         input_rows_digest=ids.input_rows_digest(("3" * 64, "4" * 64)))
     for domain in ("ts2-feature-considered-builds-v1", "ts2-feature-input-rows-v1", "ts2-feature-spec-pins-v1",
