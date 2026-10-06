@@ -634,7 +634,7 @@ def transform_input(
 
 def test_builtin_registrations_all_present():
     registrations = built_in_label_registrations()
-    assert len(registrations) == 4
+    assert len(registrations) == 5
     assert tuple(reg.transform_ref for reg in registrations) == tuple(sorted(ALL_REFS))
     assert set(reg.transform_ref for reg in registrations) == set(ALL_REFS)
 
@@ -798,9 +798,9 @@ def test_forward_open_to_close_return_formula():
 
 
 def test_forward_open_to_close_return_domain_errors():
-    with pytest.raises(ValueError, match="at least one future row"):
+    with pytest.raises(ValueError, match="requires the open input field"):
         forward_open_to_close_return(
-            transform_input(fields=("open", "close"), anchor=(1.0, 1.0), rows=())
+            transform_input(fields=("close",), anchor=(1.0,), rows=((1.0,),))
         )
     with pytest.raises(ValueError, match="positive entry open"):
         forward_open_to_close_return(
