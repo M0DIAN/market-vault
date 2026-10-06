@@ -387,6 +387,32 @@ class RidgeTradingThresholdSelectionResult:
             raise RidgeTradingThresholdSelectionError(
                 "candidate validation sample counts differ from predictions"
             )
+        for item in self.candidates:
+            metrics = {
+                "validation_sample_count": item.validation_sample_count,
+                "signal_count": item.signal_count,
+                "overlap_skipped_count": item.overlap_skipped_count,
+                "trade_count": item.trade_count,
+                "gross_total_return": item.gross_total_return,
+                "total_return": item.total_return,
+                "realized_max_drawdown": item.realized_max_drawdown,
+                "win_rate": item.win_rate,
+                "average_trade_return": item.average_trade_return,
+                "profit_factor": item.profit_factor,
+                "average_signal_to_exit_seconds": (
+                    item.average_signal_to_exit_seconds
+                ),
+            }
+            expected_candidate_id = _candidate_id(
+                threshold=item.threshold,
+                costs=self.costs,
+                predictions_digest=self.validation_prediction_ids_digest,
+                metrics=metrics,
+            )
+            if item.candidate_id != expected_candidate_id:
+                raise RidgeTradingThresholdSelectionError(
+                    "candidate_id differs from threshold candidate content"
+                )
 
         selected = max(
             self.candidates,
