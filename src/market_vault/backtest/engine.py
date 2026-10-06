@@ -23,7 +23,9 @@ from ..cross_day_dataset import (
     multi_source_cross_day_dataset_id,
 )
 from ..cross_day_dataset import execution as dataset_execution
-from ..dataset.encoding import encode_identity
+from ..cross_day_dataset._validation import MultiSourceCrossDayDatasetError
+from ..cross_day_dataset.artifact_models import MultiSourceCrossDayArtifactError
+from ..dataset.encoding import DatasetError, encode_identity
 from .models import (
     BACKTEST_ENGINE_VERSION,
     BACKTEST_SPLITS,
@@ -68,13 +70,19 @@ def _admit_dataset(dataset):
             dataset_execution._require_live_issued_multi_source_cross_day_dataset_result(
                 dataset
             )
-        except Exception as exc:
+        except (MultiSourceCrossDayDatasetError, TypeError, ValueError) as exc:
             raise BacktestError("unissued or changed logical Research Dataset") from exc
         return dataset
     if type(dataset) is VerifiedMultiSourceCrossDayDataset:
         try:
             dataset_id = multi_source_cross_day_dataset_id(dataset.identity_input)
-        except Exception as exc:
+        except (
+            MultiSourceCrossDayDatasetError,
+            MultiSourceCrossDayArtifactError,
+            DatasetError,
+            TypeError,
+            ValueError,
+        ) as exc:
             raise BacktestError("verified Research Dataset logical closure failed") from exc
         if dataset_id != dataset.dataset_id:
             raise BacktestError("verified Research Dataset ID mismatch")
@@ -198,6 +206,8 @@ def _candidates(dataset, rule: BacktestRule, return_label: str, split: str):
             or values["label_status"] != "COMPLETE"
         ):
             continue
+        if values["code"] != dataset.scope.symbols[0]:
+            raise BacktestError("Dataset row code differs from the sole Dataset symbol")
         sample_key = values["sample_key"]
         decision = decisions.get((sample_key, target_pin))
         if decision is None or decision.status != "COMPLETE" or not decision.selected_rows:
