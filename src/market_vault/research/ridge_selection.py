@@ -79,12 +79,71 @@ def _members_digest(prefix: str, members: tuple[str, ...]) -> str:
     )
 
 
+def _scalar_vector_digest(
+    prefix: str,
+    values: tuple[float, ...],
+) -> str:
+    member_ids = tuple(
+        encode_identity(
+            prefix + "-member-v1",
+            {
+                "index": index,
+                "value": value,
+            },
+        )
+        for index, value in enumerate(values)
+    )
+    return _members_digest(prefix + "-members-v1", member_ids)
+
+
+def _fold_result_id(fold) -> str:
+    return encode_identity(
+        "market-vault-ridge-alpha-fold-result-v1",
+        {
+            "fold_index": fold.fold_index,
+            "fold_id": fold.fold_id,
+            "train_count": fold.train_count,
+            "validation_count": fold.validation_count,
+            "alpha": fold.alpha,
+            "intercept": fold.intercept,
+            "coefficients_digest": _scalar_vector_digest(
+                "market-vault-ridge-alpha-fold-coefficients",
+                fold.coefficients,
+            ),
+            "feature_means_digest": _scalar_vector_digest(
+                "market-vault-ridge-alpha-fold-means",
+                fold.feature_means,
+            ),
+            "feature_scales_digest": _scalar_vector_digest(
+                "market-vault-ridge-alpha-fold-scales",
+                fold.feature_scales,
+            ),
+            "mae": fold.mae,
+            "rmse": fold.rmse,
+            "r2": fold.r2,
+        },
+    )
+
+
 def _candidate_id(report: RidgeBaselineReport) -> str:
+    fold_ids = tuple(_fold_result_id(fold) for fold in report.folds)
     return encode_identity(
         "market-vault-ridge-alpha-candidate-v1",
         {
+            "ridge_version": report.version,
             "walk_forward_id": report.walk_forward_id,
+            "dataset_id": report.dataset_id,
+            "label_name": report.label_name,
+            "feature_names_digest": _members_digest(
+                "market-vault-ridge-alpha-feature-names-v1",
+                report.feature_names,
+            ),
             "alpha": report.alpha,
+            "fold_count": len(report.folds),
+            "fold_ids_digest": _members_digest(
+                "market-vault-ridge-alpha-fold-ids-v1",
+                fold_ids,
+            ),
             "validation_sample_count": report.validation_sample_count,
             "mae": report.mae,
             "rmse": report.rmse,
