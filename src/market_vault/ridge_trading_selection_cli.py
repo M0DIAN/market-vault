@@ -237,7 +237,7 @@ def parse_ridge_trading_selection_plan_bytes(payload: bytes):
         raise RidgeTradingSelectionCLIError(str(exc)) from exc
 
 
-def _run_plan(plan, plan_parent: Path):
+def _pipeline(plan, plan_parent: Path):
     base = plan.ridge_plan
     build_dir = _resolve_plan_path(
         base.dataset_build_dir,
@@ -269,6 +269,23 @@ def _run_plan(plan, plan_parent: Path):
         commission_bps=plan.commission_bps,
         slippage_bps=plan.slippage_bps,
     )
+    return (
+        verified,
+        experiment,
+        walk_forward,
+        ridge_selection,
+        threshold_selection,
+    )
+
+
+def _run_plan(plan, plan_parent: Path):
+    (
+        _verified,
+        _experiment,
+        _walk_forward,
+        ridge_selection,
+        threshold_selection,
+    ) = _pipeline(plan, plan_parent)
     return ridge_selection, threshold_selection
 
 
