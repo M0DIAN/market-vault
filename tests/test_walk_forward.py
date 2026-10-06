@@ -287,7 +287,10 @@ def test_too_small_train_split_fails_closed():
 
 def test_fold_with_no_retained_training_rows_fails_closed():
     ends = tuple(_close(4) + timedelta(days=10) for _ in range(8))
-    with pytest.raises(WalkForwardError, match="no training rows"):
+    with pytest.raises(
+        WalkForwardError,
+        match="minimum_retained_train_samples",
+    ):
         generate_walk_forward_folds(
             _experiment(ends),
             WalkForwardSpec(4, 2, 2, 2, 0),
