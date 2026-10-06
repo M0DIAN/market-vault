@@ -4,6 +4,7 @@ The library adds no new Label arithmetic. It generates exact versioned
 LabelSpec objects for the already-validated Cross-Day transforms:
 
 - forward_return
+- forward_open_to_close_return
 - forward_direction
 - maximum_favorable_excursion
 - maximum_adverse_excursion
@@ -31,6 +32,10 @@ STANDARD_LABEL_HORIZONS = (1, 3, 5, 10)
 
 _FORWARD_RETURN_REF = (
     "market_vault.dataset.label_transforms.forward_return:forward_return"
+)
+_FORWARD_OPEN_TO_CLOSE_REF = (
+    "market_vault.dataset.label_transforms.forward_open_to_close_return:"
+    "forward_open_to_close_return"
 )
 _FORWARD_DIRECTION_REF = (
     "market_vault.dataset.label_transforms.forward_direction:forward_direction"
@@ -103,6 +108,19 @@ def forward_return_label(horizon_days: int) -> LabelSpec:
     )
 
 
+def forward_open_to_close_return_label(horizon_days: int) -> LabelSpec:
+    """Return an execution-safe future-open to horizon-close LabelSpec."""
+    horizon_days = _horizon_days(horizon_days)
+    return _label(
+        name=f"forward_open_to_close_return_{horizon_days}d",
+        horizon_days=horizon_days,
+        transform_ref=_FORWARD_OPEN_TO_CLOSE_REF,
+        logical_type="float64",
+        input_fields=("open", "close"),
+        observation_start=0,
+    )
+
+
 def forward_direction_label(horizon_days: int) -> LabelSpec:
     """Return a signed -1/0/1 forward-direction LabelSpec for N trading days."""
     horizon_days = _horizon_days(horizon_days)
@@ -146,6 +164,7 @@ def label_preset_names() -> tuple[str, ...]:
     """Canonical names of the bounded v1 standard research Label presets."""
     return tuple(
         [f"forward_return_{n}d" for n in STANDARD_LABEL_HORIZONS]
+        + [f"forward_open_to_close_return_{n}d" for n in STANDARD_LABEL_HORIZONS]
         + [f"forward_direction_{n}d" for n in STANDARD_LABEL_HORIZONS]
         + [f"maximum_favorable_excursion_{n}d" for n in STANDARD_LABEL_HORIZONS]
         + [f"maximum_adverse_excursion_{n}d" for n in STANDARD_LABEL_HORIZONS]
@@ -159,6 +178,8 @@ def label_preset(name: str) -> LabelSpec:
     for horizon_days in STANDARD_LABEL_HORIZONS:
         if name == f"forward_return_{horizon_days}d":
             return forward_return_label(horizon_days)
+        if name == f"forward_open_to_close_return_{horizon_days}d":
+            return forward_open_to_close_return_label(horizon_days)
         if name == f"forward_direction_{horizon_days}d":
             return forward_direction_label(horizon_days)
         if name == f"maximum_favorable_excursion_{horizon_days}d":
