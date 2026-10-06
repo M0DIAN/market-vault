@@ -5,7 +5,8 @@ from dataclasses import dataclass, replace
 from ..canonical.schema import CANONICAL_SCHEMA_VERSION
 from ..dataset.encoding import encode_identity
 from ..dataset.label_transforms import (
-    forward_return, forward_direction, maximum_favorable_excursion, maximum_adverse_excursion,
+    forward_return, forward_direction, forward_open_to_close_return,
+    maximum_favorable_excursion, maximum_adverse_excursion,
 )
 from ..dataset.models import ImplementationPin
 from ..dataset.spec_models import LabelSpec
@@ -39,6 +40,7 @@ def _contracts():
                  for fn, fields, output, shape in (
         (forward_return, ("close",), "float64", "TARGET_ONLY"),
         (forward_direction, ("close",), "int64", "TARGET_ONLY"),
+        (forward_open_to_close_return, ("open", "close"), "float64", "ALIGNED_DAILY_POINTS"),
         (maximum_favorable_excursion, ("close", "high"), "float64", "ALIGNED_DAILY_POINTS"),
         (maximum_adverse_excursion, ("close", "low"), "float64", "ALIGNED_DAILY_POINTS")))
 
