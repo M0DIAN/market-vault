@@ -8,8 +8,12 @@ from market_vault.dataset.spec_models import FeatureSpec, SpecParameter, SpecVer
 from market_vault.ts2_feature import execute_ts2_features
 
 FIELDS = {
-    "candle_body": ("open", "close"), "candle_range": ("high", "low"),
-    "rolling_volume_mean": ("volume",), "volume_ratio": ("volume",),
+    "atr": ("high", "low", "close"),
+    "candle_body": ("open", "close"),
+    "candle_range": ("high", "low"),
+    "obv": ("close", "volume"),
+    "rolling_volume_mean": ("volume",),
+    "volume_ratio": ("volume",),
 }
 
 
