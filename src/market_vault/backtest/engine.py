@@ -344,7 +344,7 @@ def _run_candidates(
         trade_count=trade_count,
         gross_total_return=gross_equity - 1.0,
         total_return=equity - 1.0,
-        max_drawdown=max_drawdown,
+        realized_max_drawdown=max_drawdown,
         win_rate=win_rate,
         average_trade_return=average_return,
         profit_factor=profit_factor,
