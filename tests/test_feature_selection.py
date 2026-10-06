@@ -102,7 +102,6 @@ def test_train_validation_gate_selects_stable_and_rejects_flip_constant():
     report = select_features(
         _bundle(),
         policy=_policy(),
-        quantile_count=2,
     )
     assert report.version == FEATURE_SELECTION_VERSION
     assert report.dataset_id == "a" * 64
@@ -173,7 +172,6 @@ def test_explicit_feature_subset_preserves_requested_order():
         _bundle(),
         policy=_policy(maximum_rank_ic_drift=2.0, require_same_sign=False),
         feature_names=("flip", "stable"),
-        quantile_count=2,
     )
     assert tuple(item.feature_name for item in report.decisions) == (
         "flip",
@@ -213,16 +211,6 @@ def test_sample_thresholds_are_explicit_policy_rejections():
 def test_invalid_policy_fails_closed(changes, match):
     with pytest.raises(FeatureSelectionError, match=match):
         _policy(**changes)
-
-
-@pytest.mark.parametrize("quantiles", [True, 1, 11, 5.0])
-def test_invalid_quantile_count_fails_closed(quantiles):
-    with pytest.raises(FeatureSelectionError, match="quantile_count"):
-        select_features(
-            _bundle(),
-            policy=_policy(),
-            quantile_count=quantiles,
-        )
 
 
 @pytest.mark.parametrize(
