@@ -1,4 +1,4 @@
-"""Sixteen fixed TS2 registrations; only static implementation source is read."""
+"""Nineteen fixed TS2 registrations; only static implementation source is read."""
 
 from dataclasses import dataclass
 import inspect
@@ -6,7 +6,8 @@ import sys
 import types
 
 from ..dataset.feature_transforms import (
-    atr, candle_body, candle_range, ema, log_return, macd, macd_histogram,
+    atr, candle_body, candle_range, ema, kdj_d, kdj_j, kdj_k, log_return,
+    macd, macd_histogram,
     macd_signal, obv, rolling_mean, rolling_std, rolling_volume_mean, rsi,
     simple_return, sma, volume_ratio,
 )
@@ -41,6 +42,9 @@ _CONTRACTS = (
     _Contract("candle_body", candle_body, ("open", "close"), None),
     _Contract("candle_range", candle_range, ("high", "low"), None),
     _Contract("ema", ema, ("close",), 1),
+    _Contract("kdj_d", kdj_d, ("high", "low", "close"), 9),
+    _Contract("kdj_j", kdj_j, ("high", "low", "close"), 9),
+    _Contract("kdj_k", kdj_k, ("high", "low", "close"), 9),
     _Contract("log_return", log_return, ("close",), 2),
     _Contract("macd", macd, ("close",), None, 26),
     _Contract("macd_histogram", macd_histogram, ("close",), None, 34),
