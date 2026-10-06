@@ -1,4 +1,4 @@
-"""Six frozen design vector groups, with 67 literal expected digests."""
+"""Six frozen design vector groups, with 73 literal expected digests."""
 
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -11,6 +11,9 @@ from market_vault.ts2_feature.registry import _registry
 from ts2_feature_helpers import spec
 
 EXPECTED = {
+    "atr.source_sha256": "f0d0540a6d173bcf8e5be36c35fd3ff85a37263e9b872ba33850ab854600988f",
+    "atr.fingerprint": "33df32f2a6149bea5000e6558d2b7fb33e2695bc304cb385ba3a37819fccace6",
+    "atr.implementation_pin_id": "698228b992aaf59bc278ef514da8d832caa95f328c38ca6b6cb2fad3712dc69c",
     "candle_body.source_sha256": "818beb25bcae1773e64d27ddc9d53d4e7926d43ffc5a6477191602e02aea22ca",
     "candle_body.fingerprint": "f7052b2e5cb8b2698e95e0a7fc3535635c39a2f292423122ea3ad9d1fde565f8",
     "candle_body.implementation_pin_id": "4a9b5e89687fcac6edbbd02e87912c85c64799836af3010ad9297332012217dd",
@@ -32,6 +35,9 @@ EXPECTED = {
     "macd_signal.source_sha256": "18df94e6bbd226dff3e4376820a35dd62a4ee5414d437574a2e416971fb4542c",
     "macd_signal.fingerprint": "087470ac56390b1a793e384c9a749f221b3f61be488e7c663c1262d6b13d6322",
     "macd_signal.implementation_pin_id": "978e807fffe1a40d38e5c6f6e09409f6fdf112975636889c1ebd4e3618e59145",
+    "obv.source_sha256": "f512a36262d5a84801d2b7cf0e374f4f360c0b2739a073f88dd0d805d005e26f",
+    "obv.fingerprint": "46df95e539d332f67cc6d660f2bc808e431c713bbcc21878173a40a276a4af0c",
+    "obv.implementation_pin_id": "65459c768046c747a26b0869823e4a97da41a487539017432f0aeeb881a84b48",
     "rolling_mean.source_sha256": "97ee08de1d84e66bf362cd85c6f21aa15b09e5a2289fb5918476eb90bae8633f",
     "rolling_mean.fingerprint": "b1eafd9fd110ab5307bec4d6940a0c16a1eb21c108c38c5eb10c718b61bfafbc",
     "rolling_mean.implementation_pin_id": "f14cef9547f49b28a0b66b7ed41e82454cb7bfb43ad433681f641e02c0d4fb08",
@@ -56,7 +62,7 @@ EXPECTED = {
     "spec_content_id": "73dc26da80653a4959ff8a8f733cda416235f19e404fc6f995327d94fa387a40",
     "spec_pin_id": "908e88052dabd17e6efd045a1e8af5ebe4f5b97560fb7bbb193918ac3c0ee600",
     "spec_pins_digest": "b57a6f8a51d1e65780d44a980bfb7f86262a85b6dae6cbff9895cc80af95356c",
-    "registry_pins_digest": "e249ca9eb4835d8cf9fb338197c866326947b971897394de8a6788af3d859591",
+    "registry_pins_digest": "1dfdfeae2ea8a1e42b415bf972d00f33014521a69e08588bed115ca32fe59827",
     "considered_builds_digest": "ee9387846c20f93cb412b1ad8a6bf586f15dbe721eac2847407581a180d501ec",
     "input_rows_digest": "e74426c75d468d6b851c6099950e4f284b09397b7bab9af11b80f284e63f4965",
     "empty.ts2-feature-considered-builds-v1": "a208644d37cfbf0cfd3afd066ea2cbe6a2c93b4be8167bdbd725a2e3ed3a4340",
@@ -68,16 +74,16 @@ EXPECTED = {
     "complete.values_content_id": "5fd7745f3d1699d2313753d26b8de05f4fee82f85ca4d090aa875bafb7713f43",
     "complete.sample_id": "b869236fbc5bae51803d1a6d6210d3c620e6b448d5536e0b15ea5abcfd06d9f2",
     "complete.samples_content_id": "3c0060e325ebf0cbfe4edb7f3d95b206838c0cc946ef5fed66019259a430809b",
-    "complete.execution_id": "5e0654222d04688abecf4894fbe8a8e57d0266d839f358b593cd731e61d40935",
+    "complete.execution_id": "224b917251b04938e8a98ae33f8d5bd502490373249de9c3f3b0f6e98b946cef",
     "excluded.value_id": "070b2c1665a469a2c454d8fac2e837246fb543c1e32df9c9c60ff76df4de9823",
     "excluded.values_content_id": "a8207e7a3eb557a17c7ea0103b47dee7f2715e808e17d13a3a9625a3edaf01d5",
     "excluded.sample_id": "c868cae29df9b5c94e013475ef93cabf15ab878c8d61eeace9dc4d45f19288db",
     "excluded.samples_content_id": "04cd1c4a69a663781c23db5925d3c5e397e31192e073340a78e2594d252310ae",
-    "excluded.execution_id": "f9f7f59110d90f8308036039306fafad30806bf513a424eb52e683c7f1c8ac8c",
-    "zero_samples.execution_id": "36a139705f2b0d17618c6e34a954a5691363e19b01b951af9a081512c88a629d",
+    "excluded.execution_id": "ab97f791d7be40be78fd3809205e0700fcf8354c7c68ab0dd7488262826bdf33",
+    "zero_samples.execution_id": "d7caeb47dab82af8d7932524110f3912e906cb7183d090fd4cdd39220c106cb8",
     "zero_specs.sample_id": "fa873cbb61d1ac0d277dc84a325aa67547bae4d74e758a379613c15239963d9a",
     "zero_specs.samples_content_id": "5d2595b6454d0e2f228b999c4229c0827934fafefcf5247d7a43a9928ea893e2",
-    "zero_specs.execution_id": "cc0bb41a4e7483dd5015d7bbaebf7cad375dd349473601b30071db62b88e295f",
+    "zero_specs.execution_id": "0994e28d1f8f81f623714693a69e24e46ddc8b24f707fb4a1656a294226866bb",
 }
 
 
@@ -133,7 +139,7 @@ def actual():
     execution.update(status="COMPLETE", sample_count=1, feature_count=0,
         feature_spec_pins_digest=result["empty.ts2-feature-spec-pins-v1"], samples_content_id=result["zero_specs.samples_content_id"])
     result["zero_specs.execution_id"] = ids.execution_id(execution)
-    assert len(result) == len(EXPECTED) == 67
+    assert len(result) == len(EXPECTED) == 73
     return result
 
 
