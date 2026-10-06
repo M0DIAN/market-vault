@@ -186,3 +186,24 @@ __all__ += [
     "RidgeFinalTestResult",
     "evaluate_ridge_final_test",
 ]
+
+
+from .ridge_final_trading import (
+    RIDGE_FINAL_TRADING_SIGNAL_RULE,
+    RIDGE_FINAL_TRADING_VERSION,
+    RidgeFinalTradingError,
+    RidgeFinalTradingMetrics,
+    RidgeFinalTradingResult,
+    RidgeFinalTradingTrade,
+    evaluate_ridge_final_trading,
+)
+
+__all__ += [
+    "RIDGE_FINAL_TRADING_SIGNAL_RULE",
+    "RIDGE_FINAL_TRADING_VERSION",
+    "RidgeFinalTradingError",
+    "RidgeFinalTradingMetrics",
+    "RidgeFinalTradingResult",
+    "RidgeFinalTradingTrade",
+    "evaluate_ridge_final_trading",
+]
