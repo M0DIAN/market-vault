@@ -474,10 +474,8 @@ def write_ridge_final_evaluation_artifact(
             False,
         )
 
-    created = False
     try:
         with file_path.open("xb") as handle:
-            created = True
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
