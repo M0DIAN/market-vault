@@ -1,6 +1,6 @@
 """Research-facing standard Label library.
 
-This package contains thin, deterministic research-spec helpers only.  The
+This package contains thin, deterministic research-spec helpers only. The
 actual Label formulas and Cross-Day execution authority remain in the existing
 dataset/cross_day layers.
 """
@@ -12,6 +12,8 @@ from .labels import (
     forward_return_label,
     label_preset,
     label_preset_names,
+    maximum_adverse_excursion_label,
+    maximum_favorable_excursion_label,
 )
 
 __all__ = [
@@ -21,4 +23,6 @@ __all__ = [
     "forward_return_label",
     "label_preset",
     "label_preset_names",
+    "maximum_adverse_excursion_label",
+    "maximum_favorable_excursion_label",
 ]
