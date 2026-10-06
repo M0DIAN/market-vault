@@ -666,11 +666,6 @@ def evaluate_ridge_final_trading(
     slippage_bps: float = 0.0,
 ) -> RidgeFinalTradingResult:
     """Evaluate fixed positive-prediction Long/Flat trading on held-out TEST."""
-    _, rebuilt, validated_final = _validated_inputs(
-        dataset,
-        bundle,
-        final_test,
-    )
     try:
         costs = BacktestCosts(
             commission_bps=commission_bps,
@@ -678,4 +673,9 @@ def evaluate_ridge_final_trading(
         )
     except BacktestError as exc:
         raise RidgeFinalTradingError(str(exc)) from exc
+    _, rebuilt, validated_final = _validated_inputs(
+        dataset,
+        bundle,
+        final_test,
+    )
     return _evaluate(rebuilt, validated_final, costs)
