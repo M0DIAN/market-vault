@@ -154,9 +154,17 @@ def test_expanding_folds_purge_selected_label_overlap_and_hold_out_test():
     # requested three TRAIN periods; V1 slides to period 5. At that boundary
     # period 2 is still purged, leaving periods 0/1/3 as the minimum TRAIN.
     crossing = {
+        # Blocks the initial period-3 boundary and still overlaps period 4.
         (2, "US.AAPL"): _time(4) + timedelta(hours=1),
+        # Blocks period 4 and is the one sample purged at the first accepted
+        # period-5 validation boundary.
+        (3, "US.AAPL"): _time(5) + timedelta(hours=1),
     }
-    bundle = _bundle(crossing_ends=crossing)
+    bundle = _bundle(
+        validation_periods=(4, 5, 6, 7, 8, 9),
+        test_periods=(10, 11),
+        crossing_ends=crossing,
+    )
 
     plan = build_walk_forward_plan(
         bundle,
@@ -169,8 +177,8 @@ def test_expanding_folds_purge_selected_label_overlap_and_hold_out_test():
     assert plan.dataset_id == "a" * 64
     assert plan.feature_names == FEATURES
     assert plan.label_name == LABEL
-    assert plan.development_period_count == 8
-    assert plan.development_sample_count == 8
+    assert plan.development_period_count == 10
+    assert plan.development_sample_count == 10
     assert plan.held_out_test_count == 2
     assert len(plan.folds) == 2
 
@@ -181,17 +189,17 @@ def test_expanding_folds_purge_selected_label_overlap_and_hold_out_test():
     assert first.purged_train_count == 1
     assert tuple(
         item.feature_window_close for item in first.train.metadata
-    ) == (_time(0), _time(1), _time(3), _time(4))
+    ) == (_time(0), _time(1), _time(2), _time(4))
     assert tuple(
         item.feature_window_close for item in first.validation.metadata
     ) == (_time(5), _time(6))
 
     assert second.validation_start_time == _time(7)
-    assert second.validation_end_time == _time(7)
+    assert second.validation_end_time == _time(8)
     assert second.train_candidate_count == 7
     assert second.purged_train_count == 0
     assert second.train.row_count == 7
-    assert second.validation.row_count == 1
+    assert second.validation.row_count == 2
 
     test_keys = set(bundle.test.metadata[index].sample_key for index in range(bundle.test.row_count))
     for fold in plan.folds:
