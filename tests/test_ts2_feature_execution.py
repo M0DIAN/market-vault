@@ -26,7 +26,7 @@ def fails(code, call):
     ("rolling_volume_mean", 100.0), ("volume_ratio", 1.0),
     ("candle_range", 75.0), ("candle_body", 25.0),
 ])
-def test_eleven_real_formulas(tmp_path, monkeypatch, name, expected):
+def test_existing_eleven_real_formulas(tmp_path, monkeypatch, name, expected):
     one, selected = fixture(tmp_path)
     calls = []
     real = engine._invoke
@@ -43,8 +43,33 @@ def test_eleven_real_formulas(tmp_path, monkeypatch, name, expected):
     assert len(calls[0].rows) == (1 if name.startswith("candle_") else 2)
     assert value.candidate_canonical_row_version_ids == value.consumed_canonical_row_version_ids
     assert result.samples[0].bar_sample_version_id == selected.samples[0].sample_version_id
-    assert len(result.registry_implementation_pins) == 11
+    assert len(result.registry_implementation_pins) == 14
     assert len(result.execution_id) == 64
+
+
+def test_macd_family_real_formulas(tmp_path):
+    bars = tuple(
+        bar(slot=i, close=float((i + 1) ** 2))
+        for i in range(34)
+    )
+    one = build(tmp_path / "macd", bars)
+    selected = pit((one,), slot=33)
+    result = execute(
+        one,
+        selected,
+        (
+            spec("macd"),
+            spec("macd_signal"),
+            spec("macd_histogram"),
+        ),
+    )
+    values = {
+        value.feature_name: value.value
+        for value in result.samples[0].values
+    }
+    assert values["ts2_macd"] == pytest.approx(232.10848624079927)
+    assert values["ts2_macd_signal"] == pytest.approx(197.09349534929908)
+    assert values["ts2_macd_histogram"] == pytest.approx(35.01499089150019)
 
 
 @pytest.mark.parametrize("schema", ["10.9", "unknown"])
@@ -266,7 +291,7 @@ def test_zero_samples_specs_and_both(tmp_path, monkeypatch):
     zero_specs = execute(one, selected, ())
     assert zero_specs.status == "COMPLETE" and zero_specs.samples[0].values == ()
     both = execute_ts2_features((), pit((), requests=()), (), dataset_as_of=AS_OF)
-    assert both.status == "EMPTY" and len(both.registry_implementation_pins) == 11
+    assert both.status == "EMPTY" and len(both.registry_implementation_pins) == 14
     assert len({r.execution_id for r in (zero_samples, zero_specs, both)}) == 3
     unknown = tamper(spec(), transform_ref="unknown.module:callback")
     fails("REGISTRY_AUTHORITY", lambda: execute(one, empty, (unknown,)))
