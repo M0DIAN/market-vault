@@ -33,7 +33,12 @@ import re
 
 from ..dataset.encoding import encode_identity
 from .experiment import ExperimentDatasetBundle, ExperimentSampleMetadata
-from .ridge_baseline import _fit, _metrics, _predict
+from .ridge_baseline import (
+    RidgeBaselineError,
+    _fit,
+    _metrics,
+    _predict,
+)
 from .ridge_selection import RidgeAlphaSelectionResult
 
 
@@ -495,25 +500,30 @@ def evaluate_ridge_final_test(
 
     train_X = tuple(item.X for item in retained)
     train_y = tuple(item.y for item in retained)
-    (
-        intercept,
-        coefficients,
-        feature_means,
-        feature_scales,
-    ) = _fit(
-        train_X,
-        train_y,
-        selection.selected_alpha,
-    )
+    try:
+        (
+            intercept,
+            coefficients,
+            feature_means,
+            feature_scales,
+        ) = _fit(
+            train_X,
+            train_y,
+            selection.selected_alpha,
+        )
 
-    test_X = bundle.test.X
-    test_y = tuple(float(value) for value in bundle.test.y)
-    predicted = _predict(
-        test_X,
-        intercept,
-        coefficients,
-    )
-    mae, rmse, r2, *_ = _metrics(test_y, predicted)
+        test_X = bundle.test.X
+        test_y = tuple(float(value) for value in bundle.test.y)
+        predicted = _predict(
+            test_X,
+            intercept,
+            coefficients,
+        )
+        mae, rmse, r2, *_ = _metrics(test_y, predicted)
+    except RidgeBaselineError as exc:
+        raise RidgeFinalTestError(
+            f"final Ridge fit/evaluation failed: {exc}"
+        ) from exc
 
     development_keys = tuple(
         item.metadata.sample_key for item in retained
