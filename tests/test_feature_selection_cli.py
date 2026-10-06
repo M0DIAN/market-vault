@@ -34,7 +34,6 @@ def _plan():
         "dataset_build_dir": "dataset_id=" + "a" * 64,
         "label_field": "forward_return_5d",
         "feature_fields": ["stable", "flip"],
-        "quantile_count": 5,
         "policy": _policy(),
     }
 
@@ -74,7 +73,6 @@ def _report():
         FEATURE_SELECTION_VERSION,
         "a" * 64,
         "forward_return_5d",
-        5,
         policy,
         (stable, flip),
         ("stable",),
@@ -177,7 +175,6 @@ def test_feature_selection_cli_is_settings_independent_and_explicit(
         "stable",
         "flip",
     )
-    assert captured["select_kwargs"]["quantile_count"] == 5
     policy = captured["select_kwargs"]["policy"]
     assert policy == _report().policy
 
@@ -197,7 +194,6 @@ def test_feature_selection_plan_rejects_duplicate_json_key():
 @pytest.mark.parametrize(
     "field,value,match",
     [
-        ("quantile_count", 1, "quantile_count"),
         ("feature_fields", [], "non-empty"),
         ("feature_fields", "stable", "JSON array"),
     ],
