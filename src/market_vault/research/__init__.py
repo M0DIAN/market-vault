@@ -263,3 +263,24 @@ __all__ += [
     "RidgeFinalEvaluationReport",
     "compare_ridge_final_trading",
 ]
+
+
+from .ridge_final_evaluation_artifact import (
+    RIDGE_FINAL_EVALUATION_ARTIFACT_SCHEMA_VERSION,
+    RidgeFinalEvaluationArtifactError,
+    RidgeFinalEvaluationArtifactWriteResult,
+    load_ridge_final_evaluation_artifact,
+    parse_ridge_final_evaluation_report_bytes,
+    serialize_ridge_final_evaluation_report,
+    write_ridge_final_evaluation_artifact,
+)
+
+__all__ += [
+    "RIDGE_FINAL_EVALUATION_ARTIFACT_SCHEMA_VERSION",
+    "RidgeFinalEvaluationArtifactError",
+    "RidgeFinalEvaluationArtifactWriteResult",
+    "load_ridge_final_evaluation_artifact",
+    "parse_ridge_final_evaluation_report_bytes",
+    "serialize_ridge_final_evaluation_report",
+    "write_ridge_final_evaluation_artifact",
+]
