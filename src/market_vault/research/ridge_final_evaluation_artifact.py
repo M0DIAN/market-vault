@@ -114,7 +114,7 @@ class RidgeFinalEvaluationArtifactWriteResult:
     created_new_file: bool
 
     def __post_init__(self) -> None:
-        if type(self.path) is not Path:
+        if not isinstance(self.path, Path):
             raise RidgeFinalEvaluationArtifactError("path must be a Path")
         if type(self.report_id) is not str or _SHA256_RE.fullmatch(self.report_id) is None:
             raise RidgeFinalEvaluationArtifactError("report_id must be lowercase SHA-256")
@@ -405,7 +405,7 @@ def parse_ridge_final_evaluation_report_bytes(
 
 
 def _explicit_path(path) -> Path:
-    if type(path) is Path:
+    if isinstance(path, Path):
         result = path
     elif type(path) is str and path:
         result = Path(path)
