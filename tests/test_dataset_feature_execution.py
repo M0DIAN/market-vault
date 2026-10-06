@@ -1,7 +1,7 @@
 """Offline deterministic tests for the built-in Feature execution core
 (v0.5.0 PR-3).
 
-Covers the built-in registrations, the eight basic OHLCV transforms and
+Covers the built-in registrations, the ten basic OHLCV/MA transforms and
 their exact formulas, domain failures, PIT row binding and clock checks,
 trailing-window and contiguity validation, explicit COMPLETE / EXCLUDED
 results, the frozen result models, execution determinism, and the
@@ -93,11 +93,13 @@ from market_vault.dataset.feature_execution import _validate_output_value
 from market_vault.dataset.feature_transforms import (
     candle_body,
     candle_range,
+    ema,
     log_return,
     rolling_mean,
     rolling_std,
     rolling_volume_mean,
     simple_return,
+    sma,
     volume_ratio,
 )
 from market_vault.models import QualityResult, RunManifest, Settings
@@ -109,6 +111,8 @@ NY = "America/New_York"
 
 REF_SIMPLE = "market_vault.dataset.feature_transforms.simple_return:simple_return"
 REF_LOG = "market_vault.dataset.feature_transforms.log_return:log_return"
+REF_EMA = "market_vault.dataset.feature_transforms.ema:ema"
+REF_SMA = "market_vault.dataset.feature_transforms.sma:sma"
 REF_MEAN = "market_vault.dataset.feature_transforms.rolling_mean:rolling_mean"
 REF_STD = "market_vault.dataset.feature_transforms.rolling_std:rolling_std"
 REF_VMEAN = "market_vault.dataset.feature_transforms.rolling_volume_mean:rolling_volume_mean"
@@ -119,6 +123,8 @@ REF_BODY = "market_vault.dataset.feature_transforms.candle_body:candle_body"
 ALL_REFS = (
     REF_SIMPLE,
     REF_LOG,
+    REF_EMA,
+    REF_SMA,
     REF_MEAN,
     REF_STD,
     REF_VMEAN,
@@ -564,7 +570,7 @@ def executed_value(result: FeatureExecutionResult, sample_key: str, feature_name
 
 def test_builtin_registrations_all_present():
     registrations = built_in_feature_registrations()
-    assert len(registrations) == 8
+    assert len(registrations) == 10
     assert tuple(reg.transform_ref for reg in registrations) == tuple(sorted(ALL_REFS))
     assert set(reg.transform_ref for reg in registrations) == set(ALL_REFS)
 
@@ -615,6 +621,8 @@ def test_builtin_registration_input_fields_and_windows():
     expected = {
         REF_SIMPLE: (("close",), "PARAMETER", "window_bars", 2),
         REF_LOG: (("close",), "PARAMETER", "window_bars", 2),
+        REF_EMA: (("close",), "PARAMETER", "window_bars", 1),
+        REF_SMA: (("close",), "PARAMETER", "window_bars", 1),
         REF_MEAN: (("close",), "PARAMETER", "window_bars", 1),
         REF_STD: (("close",), "PARAMETER", "window_bars", 2),
         REF_VMEAN: (("volume",), "PARAMETER", "window_bars", 1),
@@ -646,7 +654,7 @@ def test_builtin_registration_input_fields_and_windows():
 
 def test_builtin_registry_immutable_and_exact():
     registry = built_in_feature_registry()
-    assert len(registry.registrations) == 8
+    assert len(registry.registrations) == 10
     with pytest.raises(FrozenInstanceError):
         registry.registrations = ()
     with pytest.raises(AttributeError):
@@ -720,6 +728,27 @@ def test_formula_rolling_mean(fixtures):
     )
     value = executed_value(result, pit_sample_key(request()), "rm")
     assert value.value == (118.0 + 120.0 + 110.0) / 3.0
+
+
+def test_formula_sma(fixtures):
+    result = execute_builtin_features(
+        [fixtures.a],
+        assemble([fixtures.a], [request()]),
+        [feature_spec("sma3", REF_SMA, ("close",), parameters=(wb(3),))],
+    )
+    value = executed_value(result, pit_sample_key(request()), "sma3")
+    assert value.value == (118.0 + 120.0 + 110.0) / 3.0
+
+
+def test_formula_ema_window_local_seed(fixtures):
+    result = execute_builtin_features(
+        [fixtures.a],
+        assemble([fixtures.a], [request()]),
+        [feature_spec("ema3", REF_EMA, ("close",), parameters=(wb(3),))],
+    )
+    value = executed_value(result, pit_sample_key(request()), "ema3")
+    # N=3 => alpha=0.5; seed 118 -> 119 after 120 -> 114.5 after 110.
+    assert value.value == 114.5
 
 
 def test_formula_rolling_std_ddof_zero(fixtures):
@@ -1699,7 +1728,9 @@ def test_spec_parameter_change_affects_pin_and_result(fixtures):
 def test_no_arbitrary_registration_execution(fixtures):
     pit = assemble([fixtures.a], [request()])
     unknown = feature_spec(
-        "ema", "market_vault.dataset.feature_transforms.ema:ema", ("close",),
+        "future_indicator",
+        "market_vault.dataset.feature_transforms.future_indicator:future_indicator",
+        ("close",),
         parameters=(wb(2),),
     )
     with pytest.raises(FeatureExecutionError):
@@ -1732,7 +1763,7 @@ def test_execution_never_writes_to_repo(fixtures):
 
 
 def test_transforms_are_pure_module_level_functions():
-    for fn in (simple_return, log_return, rolling_mean, rolling_std,
+    for fn in (simple_return, log_return, sma, ema, rolling_mean, rolling_std,
                rolling_volume_mean, volume_ratio, candle_range, candle_body):
         assert isinstance(fn, types.FunctionType)
         assert fn.__module__.startswith("market_vault.dataset.feature_transforms")

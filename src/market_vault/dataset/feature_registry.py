@@ -25,11 +25,13 @@ from .models import SPEC_KIND_FEATURE
 from .feature_transforms import (
     candle_body,
     candle_range,
+    ema,
     log_return,
     rolling_mean,
     rolling_std,
     rolling_volume_mean,
     simple_return,
+    sma,
     volume_ratio,
 )
 from .transform_models import (
@@ -155,12 +157,28 @@ def built_in_feature_registrations() -> tuple[TransformRegistration, ...]:
             display_name="Simple close-to-close return",
         ),
         _registration(
+            transform_ref="market_vault.dataset.feature_transforms.sma:sma",
+            implementation=sma,
+            input_canonical_fields=("close",),
+            parameters=(_window_bars_contract(1),),
+            lookback=_parameter_window("window_bars"),
+            display_name="Simple moving average of closes",
+        ),
+        _registration(
             transform_ref="market_vault.dataset.feature_transforms.log_return:log_return",
             implementation=log_return,
             input_canonical_fields=("close",),
             parameters=(_window_bars_contract(2),),
             lookback=_parameter_window("window_bars"),
             display_name="Log close-to-close return",
+        ),
+        _registration(
+            transform_ref="market_vault.dataset.feature_transforms.ema:ema",
+            implementation=ema,
+            input_canonical_fields=("close",),
+            parameters=(_window_bars_contract(1),),
+            lookback=_parameter_window("window_bars"),
+            display_name="Window-local exponential moving average of closes",
         ),
         _registration(
             transform_ref="market_vault.dataset.feature_transforms.rolling_mean:rolling_mean",
