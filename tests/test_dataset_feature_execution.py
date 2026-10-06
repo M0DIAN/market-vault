@@ -1,7 +1,7 @@
 """Offline deterministic tests for the built-in Feature execution core
 (v0.5.0 PR-3).
 
-Covers the built-in registrations, the eleven basic OHLCV/indicator transforms and
+Covers the built-in registrations, the fourteen basic OHLCV/indicator transforms and
 their exact formulas, domain failures, PIT row binding and clock checks,
 trailing-window and contiguity validation, explicit COMPLETE / EXCLUDED
 results, the frozen result models, execution determinism, and the
@@ -95,6 +95,9 @@ from market_vault.dataset.feature_transforms import (
     candle_range,
     ema,
     log_return,
+    macd,
+    macd_histogram,
+    macd_signal,
     rolling_mean,
     rolling_std,
     rolling_volume_mean,
@@ -115,6 +118,9 @@ REF_LOG = "market_vault.dataset.feature_transforms.log_return:log_return"
 REF_EMA = "market_vault.dataset.feature_transforms.ema:ema"
 REF_SMA = "market_vault.dataset.feature_transforms.sma:sma"
 REF_RSI = "market_vault.dataset.feature_transforms.rsi:rsi"
+REF_MACD = "market_vault.dataset.feature_transforms.macd:macd"
+REF_MACD_SIGNAL = "market_vault.dataset.feature_transforms.macd_signal:macd_signal"
+REF_MACD_HIST = "market_vault.dataset.feature_transforms.macd_histogram:macd_histogram"
 REF_MEAN = "market_vault.dataset.feature_transforms.rolling_mean:rolling_mean"
 REF_STD = "market_vault.dataset.feature_transforms.rolling_std:rolling_std"
 REF_VMEAN = "market_vault.dataset.feature_transforms.rolling_volume_mean:rolling_volume_mean"
@@ -128,6 +134,9 @@ ALL_REFS = (
     REF_EMA,
     REF_SMA,
     REF_RSI,
+    REF_MACD,
+    REF_MACD_SIGNAL,
+    REF_MACD_HIST,
     REF_MEAN,
     REF_STD,
     REF_VMEAN,
@@ -573,7 +582,7 @@ def executed_value(result: FeatureExecutionResult, sample_key: str, feature_name
 
 def test_builtin_registrations_all_present():
     registrations = built_in_feature_registrations()
-    assert len(registrations) == 11
+    assert len(registrations) == 14
     assert tuple(reg.transform_ref for reg in registrations) == tuple(sorted(ALL_REFS))
     assert set(reg.transform_ref for reg in registrations) == set(ALL_REFS)
 
@@ -627,6 +636,9 @@ def test_builtin_registration_input_fields_and_windows():
         REF_EMA: (("close",), "PARAMETER", "window_bars", 1),
         REF_SMA: (("close",), "PARAMETER", "window_bars", 1),
         REF_RSI: (("close",), "PARAMETER", "window_bars", 2),
+        REF_MACD: (("close",), "FIXED", None, 26),
+        REF_MACD_SIGNAL: (("close",), "FIXED", None, 34),
+        REF_MACD_HIST: (("close",), "FIXED", None, 34),
         REF_MEAN: (("close",), "PARAMETER", "window_bars", 1),
         REF_STD: (("close",), "PARAMETER", "window_bars", 2),
         REF_VMEAN: (("volume",), "PARAMETER", "window_bars", 1),
@@ -658,7 +670,7 @@ def test_builtin_registration_input_fields_and_windows():
 
 def test_builtin_registry_immutable_and_exact():
     registry = built_in_feature_registry()
-    assert len(registry.registrations) == 11
+    assert len(registry.registrations) == 14
     with pytest.raises(FrozenInstanceError):
         registry.registrations = ()
     with pytest.raises(AttributeError):
@@ -779,6 +791,47 @@ def test_rsi_edge_cases_are_deterministic():
     assert calculate([1, 2, 3]) == 100.0
     assert calculate([3, 2, 1]) == 0.0
     assert calculate([2, 2, 2]) == 50.0
+
+
+def test_macd_family_window_local_standard_parameters():
+    closes = tuple(float(i * i) for i in range(1, 35))
+
+    line = macd(
+        FeatureTransformInput(
+            field_names=("close",),
+            rows=tuple((value,) for value in closes[:26]),
+            parameters=(),
+        )
+    )
+    signal = macd_signal(
+        FeatureTransformInput(
+            field_names=("close",),
+            rows=tuple((value,) for value in closes),
+            parameters=(),
+        )
+    )
+    histogram = macd_histogram(
+        FeatureTransformInput(
+            field_names=("close",),
+            rows=tuple((value,) for value in closes),
+            parameters=(),
+        )
+    )
+
+    assert line == pytest.approx(147.96087855802756)
+    assert signal == pytest.approx(197.09349534929908)
+    assert histogram == pytest.approx(35.01499089150019)
+
+
+def test_macd_executor_excludes_when_fixed_window_is_short(fixtures):
+    result = execute_builtin_features(
+        [fixtures.a],
+        assemble([fixtures.a], [request()]),
+        [feature_spec("macd", REF_MACD, ("close",))],
+    )
+    value = executed_value(result, pit_sample_key(request()), "macd")
+    assert value.status == FEATURE_VALUE_STATUS_EXCLUDED
+    assert value.reason_code == FEATURE_EXCLUSION_INSUFFICIENT_ROWS
 
 
 def test_formula_rolling_std_ddof_zero(fixtures):
@@ -1793,8 +1846,11 @@ def test_execution_never_writes_to_repo(fixtures):
 
 
 def test_transforms_are_pure_module_level_functions():
-    for fn in (simple_return, log_return, sma, ema, rsi, rolling_mean, rolling_std,
-               rolling_volume_mean, volume_ratio, candle_range, candle_body):
+    for fn in (
+        simple_return, log_return, sma, ema, rsi, macd, macd_signal,
+        macd_histogram, rolling_mean, rolling_std, rolling_volume_mean,
+        volume_ratio, candle_range, candle_body,
+    ):
         assert isinstance(fn, types.FunctionType)
         assert fn.__module__.startswith("market_vault.dataset.feature_transforms")
         assert fn.__closure__ is None
