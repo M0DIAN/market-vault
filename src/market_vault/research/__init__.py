@@ -247,3 +247,19 @@ __all__ += [
     "RidgeSelectedFinalTradingTrade",
     "evaluate_ridge_selected_final_trading",
 ]
+
+from .ridge_final_evaluation import (
+    RIDGE_FINAL_EVALUATION_VERSION,
+    RidgeFinalEvaluationDelta,
+    RidgeFinalEvaluationError,
+    RidgeFinalEvaluationReport,
+    compare_ridge_final_trading,
+)
+
+__all__ += [
+    "RIDGE_FINAL_EVALUATION_VERSION",
+    "RidgeFinalEvaluationDelta",
+    "RidgeFinalEvaluationError",
+    "RidgeFinalEvaluationReport",
+    "compare_ridge_final_trading",
+]
