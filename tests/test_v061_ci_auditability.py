@@ -144,8 +144,8 @@ PY314_SURFACE_STEP = "Run Python 3.14 compatibility surface"
 PY314_MANIFEST = "ci/python314_compatibility_surface.txt"
 PY314_GUARD = (
     "if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' "
-    "&& env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true' "
-    "&& matrix.python-version == '3.14'"
+    "&& env.CI_TIER != 'control_plane' && env.CI_TIER != 'research_fast' "
+    "&& env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.14'"
 )
 PACKAGE_HEAVY_STEPS = (
     "Install build tooling",
@@ -535,6 +535,73 @@ def test_audit_doc_describes_source_sha_resolution():
 
 
 # ---------------------------------------------------------------------------
+# CI Acceleration V1: duplicate-run suppression + research_fast.
+# ---------------------------------------------------------------------------
+
+RESEARCH_FAST_STEP = "Run Research fast tests"
+RESEARCH_FAST_SURFACE = (
+    "tests/test_research_dataset_builder.py",
+    "tests/test_dataset_feature_execution.py",
+    "tests/test_multi_source_feature_execution.py",
+    "tests/test_ts2_feature_boundaries.py",
+    "tests/test_ts2_feature_execution.py",
+    "tests/test_ts2_feature_identity.py",
+    "tests/test_cross_day_generator.py",
+    "tests/test_cross_day_dataset_execution.py",
+    "tests/test_cross_day_dataset_semantics.py",
+    "tests/test_dataset_end_to_end_regression.py",
+)
+
+
+def test_ci_triggers_main_push_and_pr_only_no_feature_push_duplicate():
+    on_region = _region(ci_text(), "on:", "concurrency:")
+    assert "- main" in on_region
+    assert 'feature/**' not in on_region
+    assert "pull_request:" in on_region
+
+
+def test_ci_cancels_stale_runs_per_pr_or_ref():
+    region = _region(ci_text(), "concurrency:", "jobs:")
+    assert (
+        "group: ci-${{ github.workflow }}-"
+        "${{ github.event.pull_request.number || github.ref }}"
+    ) in region
+    assert "cancel-in-progress: true" in region
+
+
+def test_research_fast_runs_fixed_portfolio_on_both_matrix_legs():
+    block = _job_block(ci_text(), "test")
+    names = _step_names(block)
+    assert RESEARCH_FAST_STEP in names
+    idx = names.index(RESEARCH_FAST_STEP)
+    end = f"- name: {names[idx + 1]}" if idx + 1 < len(names) else None
+    region = _region(block, f"- name: {RESEARCH_FAST_STEP}", end)
+    assert "if: env.CI_TIER == 'research_fast'" in region
+    assert "matrix.python-version" not in region.split("run:", 1)[0]
+    for test_file in RESEARCH_FAST_SURFACE:
+        assert test_file in region
+    assert "python -m pytest" in region
+    assert "-q --durations=50" in region
+
+
+def test_research_fast_excludes_full_python_surfaces():
+    block = _job_block(ci_text(), "test")
+    for step in (
+        "Run offline tests",
+        "Validate Python 3.14 compatibility surface",
+        "Run Python 3.14 compatibility surface",
+    ):
+        region = next(region for name, region in _steps(ci_text()) if name == step)
+        assert "env.CI_TIER != 'research_fast'" in region
+
+
+def test_research_fast_skips_pyarrow_and_package_heavy_chains():
+    for name, region in _steps(ci_text()):
+        if name in PYARROW24_HEAVY_STEPS or name in PACKAGE_HEAVY_STEPS:
+            assert "env.CI_TIER != 'research_fast'" in region, name
+
+
+# ---------------------------------------------------------------------------
 # Post-merge FULL reuse gate (PR #61).
 # ---------------------------------------------------------------------------
 
@@ -808,6 +875,8 @@ def _evaluate_guard(expr: str, tier: str, reuse: str) -> bool:
         "env.CI_TIER != 'docs_fast'": tier != "docs_fast",
         "env.CI_TIER == 'control_plane'": tier == "control_plane",
         "env.CI_TIER != 'control_plane'": tier != "control_plane",
+        "env.CI_TIER == 'research_fast'": tier == "research_fast",
+        "env.CI_TIER != 'research_fast'": tier != "research_fast",
         "env.POST_MERGE_REUSE == 'true'": reuse == "true",
         "env.POST_MERGE_REUSE != 'true'": reuse != "true",
     }
@@ -826,15 +895,14 @@ def test_package_has_exactly_one_release_checker_runtime_bootstrap():
         assert names.count("Prepare release-checker runtime") == (1 if job == "package" else 0)
 
 
-def test_bootstrap_guard_is_exactly_docs_fast_or_control_plane_or_verified_reuse():
-    """(B) The bootstrap guard is exactly ``docs_fast OR control_plane OR
-    POST_MERGE_REUSE == 'true'`` — nothing else, no tier-full exception,
-    no path filter."""
+def test_bootstrap_guard_includes_research_fast_lightweight_closure():
+    """The bootstrap covers every lightweight tier that skips build tooling:
+    docs_fast, control_plane, research_fast, or verified reuse."""
     block = _job_block(ci_text(), "package")
     guard = _guard_of(block, "Prepare release-checker runtime")
     assert guard == (
         "env.CI_TIER == 'docs_fast' || env.CI_TIER == 'control_plane' "
-        "|| env.POST_MERGE_REUSE == 'true'"
+        "|| env.CI_TIER == 'research_fast' || env.POST_MERGE_REUSE == 'true'"
     )
 
 
@@ -898,6 +966,7 @@ def test_lightweight_closure_path_composition():
         "normal_full": ("full", ""),
         "docs_fast": ("docs_fast", ""),
         "control_plane": ("control_plane", ""),
+        "research_fast": ("research_fast", ""),
         "verified_reuse": ("full", "true"),
         "package_docs": ("package_docs", ""),
         "unknown_reuse": ("full", "garbage"),
@@ -907,6 +976,7 @@ def test_lightweight_closure_path_composition():
         "normal_full": ("run", "skip", "run", "run", "skip"),
         "docs_fast": ("skip", "run", "run", "skip", "skip"),
         "control_plane": ("skip", "run", "run", "skip", "skip"),
+        "research_fast": ("skip", "run", "run", "skip", "skip"),
         "verified_reuse": ("skip", "run", "run", "skip", "run"),
         "package_docs": ("run", "skip", "run", "run", "skip"),
         "unknown_reuse": ("run", "skip", "run", "run", "skip"),
