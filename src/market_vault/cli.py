@@ -29,6 +29,11 @@ from .dataset.sample_generation_cli import (
 )
 from .doctor import run_doctor
 from .intraday_audit import run_intraday_audit
+from .research_cli import (
+    RESEARCH_COMMANDS,
+    add_research_subparsers,
+    run_research_command,
+)
 from .purge import PurgeError
 from .service import collect_history, collect_option_chain, collect_option_volatility, collect_trading_calendar
 from .storage import Catalog
@@ -106,7 +111,8 @@ def build_parser() -> argparse.ArgumentParser:
         default="config/settings.yaml",
         help=(
             "Settings file for settings-backed commands; Dataset, Sample "
-            "Generation, and Dataset Catalog commands ignore it"
+            "Generation, and Dataset Catalog commands ignore it; Research "
+            "commands ignore it"
         ),
     )
     parser.add_argument(
@@ -120,6 +126,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_dataset_subparsers(sub)
     add_sample_generation_subparsers(sub)
     add_dataset_catalog_subparsers(sub)
+    add_research_subparsers(sub)
 
     init = sub.add_parser("init-catalog", help="Create DuckDB metadata tables")
     init.set_defaults(command="init-catalog")
@@ -317,6 +324,11 @@ def main(argv: list[str] | None = None) -> int:
         # load_settings with its own contract version constants and never
         # falls under the Dataset CLI contract.
         return run_sample_generation_command(args.command, args)
+    if args.command in RESEARCH_COMMANDS:
+        # Research plans are explicit and settings-independent: the command
+        # loads only caller-declared verified artifacts/specs and never
+        # connects to OpenD or performs hidden discovery.
+        return run_research_command(args.command, args)
     if args.command in DATASET_CATALOG_COMMANDS:
         # The Dataset Catalog CLI is settings-independent exactly like the
         # Dataset commands and the Sample Generation CLI: it never loads
