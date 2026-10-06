@@ -63,6 +63,7 @@ paths = [
   "tests/test_ml_dataset_adapter.py",
   "tests/test_feature_research.py",
   "tests/test_feature_stability.py",
+  "tests/test_feature_selection.py",
   "tests/test_dataset_feature_execution.py",
   "tests/test_feature_label_specs.py",
   "tests/test_multi_source_feature_execution.py",
