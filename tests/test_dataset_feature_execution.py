@@ -1,7 +1,7 @@
 """Offline deterministic tests for the built-in Feature execution core
 (v0.5.0 PR-3).
 
-Covers the built-in registrations, the fourteen basic OHLCV/indicator transforms and
+Covers the built-in registrations, the sixteen basic OHLCV/indicator transforms and
 their exact formulas, domain failures, PIT row binding and clock checks,
 trailing-window and contiguity validation, explicit COMPLETE / EXCLUDED
 results, the frozen result models, execution determinism, and the
@@ -91,6 +91,7 @@ from market_vault.dataset import (
 from market_vault.dataset import WINDOW_BOUNDARY_INCLUSIVE, WINDOW_SOURCE_FIXED, WINDOW_SOURCE_NONE, WINDOW_SOURCE_PARAMETER, WINDOW_UNIT_BARS, WINDOW_UNIT_NONE
 from market_vault.dataset.feature_execution import _validate_output_value
 from market_vault.dataset.feature_transforms import (
+    atr,
     candle_body,
     candle_range,
     ema,
@@ -98,6 +99,7 @@ from market_vault.dataset.feature_transforms import (
     macd,
     macd_histogram,
     macd_signal,
+    obv,
     rolling_mean,
     rolling_std,
     rolling_volume_mean,
@@ -113,6 +115,8 @@ from market_vault.storage import Catalog, ParquetStore
 UTC = timezone.utc
 NY = "America/New_York"
 
+REF_ATR = "market_vault.dataset.feature_transforms.atr:atr"
+REF_OBV = "market_vault.dataset.feature_transforms.obv:obv"
 REF_SIMPLE = "market_vault.dataset.feature_transforms.simple_return:simple_return"
 REF_LOG = "market_vault.dataset.feature_transforms.log_return:log_return"
 REF_EMA = "market_vault.dataset.feature_transforms.ema:ema"
@@ -129,6 +133,8 @@ REF_RANGE = "market_vault.dataset.feature_transforms.candle_range:candle_range"
 REF_BODY = "market_vault.dataset.feature_transforms.candle_body:candle_body"
 
 ALL_REFS = (
+    REF_ATR,
+    REF_OBV,
     REF_SIMPLE,
     REF_LOG,
     REF_EMA,
@@ -582,7 +588,7 @@ def executed_value(result: FeatureExecutionResult, sample_key: str, feature_name
 
 def test_builtin_registrations_all_present():
     registrations = built_in_feature_registrations()
-    assert len(registrations) == 14
+    assert len(registrations) == 16
     assert tuple(reg.transform_ref for reg in registrations) == tuple(sorted(ALL_REFS))
     assert set(reg.transform_ref for reg in registrations) == set(ALL_REFS)
 
@@ -631,6 +637,8 @@ def test_contract_version_constants():
 
 def test_builtin_registration_input_fields_and_windows():
     expected = {
+        REF_ATR: (("high", "low", "close"), "PARAMETER", "window_bars", 2),
+        REF_OBV: (("close", "volume"), "PARAMETER", "window_bars", 2),
         REF_SIMPLE: (("close",), "PARAMETER", "window_bars", 2),
         REF_LOG: (("close",), "PARAMETER", "window_bars", 2),
         REF_EMA: (("close",), "PARAMETER", "window_bars", 1),
@@ -670,7 +678,7 @@ def test_builtin_registration_input_fields_and_windows():
 
 def test_builtin_registry_immutable_and_exact():
     registry = built_in_feature_registry()
-    assert len(registry.registrations) == 14
+    assert len(registry.registrations) == 16
     with pytest.raises(FrozenInstanceError):
         registry.registrations = ()
     with pytest.raises(AttributeError):
@@ -832,6 +840,33 @@ def test_macd_executor_excludes_when_fixed_window_is_short(fixtures):
     value = executed_value(result, pit_sample_key(request()), "macd")
     assert value.status == FEATURE_VALUE_STATUS_EXCLUDED
     assert value.reason_code == FEATURE_EXCLUSION_INSUFFICIENT_ROWS
+
+
+def test_atr_wilder_seed_formula():
+    value = atr(
+        FeatureTransformInput(
+            field_names=("high", "low", "close"),
+            rows=(
+                (11.0, 9.0, 10.0),
+                (13.0, 10.0, 12.0),
+                (12.5, 11.0, 11.5),
+            ),
+            parameters=(wb(3),),
+        )
+    )
+    # TRs: max(3,3,0)=3 and max(1.5,0.5,1)=1.5.
+    assert value == 2.25
+
+
+def test_obv_window_local_zero_seed_formula():
+    value = obv(
+        FeatureTransformInput(
+            field_names=("close", "volume"),
+            rows=((10.0, 100.0), (12.0, 200.0), (11.0, 300.0), (11.0, 400.0)),
+            parameters=(wb(4),),
+        )
+    )
+    assert value == -100.0
 
 
 def test_formula_rolling_std_ddof_zero(fixtures):
@@ -1847,9 +1882,9 @@ def test_execution_never_writes_to_repo(fixtures):
 
 def test_transforms_are_pure_module_level_functions():
     for fn in (
-        simple_return, log_return, sma, ema, rsi, macd, macd_signal,
-        macd_histogram, rolling_mean, rolling_std, rolling_volume_mean,
-        volume_ratio, candle_range, candle_body,
+        atr, obv, simple_return, log_return, sma, ema, rsi, macd,
+        macd_signal, macd_histogram, rolling_mean, rolling_std,
+        rolling_volume_mean, volume_ratio, candle_range, candle_body,
     ):
         assert isinstance(fn, types.FunctionType)
         assert fn.__module__.startswith("market_vault.dataset.feature_transforms")
