@@ -23,6 +23,10 @@ from .feature_research_cli import (
     add_feature_research_subparser,
     research_feature_report_main,
 )
+from .feature_selection_cli import (
+    add_feature_selection_subparser,
+    research_feature_select_main,
+)
 from .feature_stability_cli import (
     add_feature_stability_subparser,
     research_feature_stability_main,
@@ -62,6 +66,7 @@ RESEARCH_COMMANDS = frozenset({
     "research-build",
     "research-backtest",
     "research-feature-report",
+    "research-feature-select",
     "research-feature-stability",
 })
 RESEARCH_BUILD_PLAN_SCHEMA_VERSION = "market-vault-research-build-plan-v1"
@@ -139,6 +144,7 @@ def add_research_subparsers(subparsers) -> None:
     )
     add_backtest_subparser(subparsers)
     add_feature_research_subparser(subparsers)
+    add_feature_selection_subparser(subparsers)
     add_feature_stability_subparser(subparsers)
 
 
@@ -149,6 +155,8 @@ def run_research_command(command: str, args: argparse.Namespace) -> int:
         return research_backtest_main(args)
     if command == "research-feature-report":
         return research_feature_report_main(args)
+    if command == "research-feature-select":
+        return research_feature_select_main(args)
     if command == "research-feature-stability":
         return research_feature_stability_main(args)
     raise AssertionError(f"unknown Research command {command!r}")
