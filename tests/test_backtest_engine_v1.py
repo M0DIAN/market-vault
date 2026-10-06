@@ -53,7 +53,7 @@ def test_non_overlapping_long_flat_metrics_and_drawdown():
     assert metrics.trade_count == 2
     assert metrics.gross_total_return == pytest.approx(0.045)
     assert metrics.total_return == pytest.approx(0.045)
-    assert metrics.max_drawdown == pytest.approx(0.05)
+    assert metrics.realized_max_drawdown == pytest.approx(0.05)
     assert metrics.win_rate == pytest.approx(0.5)
     assert metrics.average_trade_return == pytest.approx(0.025)
     assert metrics.profit_factor == pytest.approx(0.10 / 0.055)
@@ -200,7 +200,7 @@ def test_live_research_dataset_end_to_end_execution_safe_backtest(tmp_path):
     assert result.metrics.signal_count == 1
     assert result.metrics.trade_count == 1
     assert result.metrics.overlap_skipped_count == 0
-    assert result.metrics.max_drawdown == 0.0
+    assert result.metrics.realized_max_drawdown == 0.0
     assert result.metrics.win_rate == 1.0
     assert result.metrics.profit_factor is None
     assert result.metrics.exposure == 1.0
