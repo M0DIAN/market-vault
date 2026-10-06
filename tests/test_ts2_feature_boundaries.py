@@ -151,10 +151,17 @@ def test_relocation_is_in_memory_only(tmp_path, monkeypatch):
     assert execute(relocated, selected) == expected
 
 
-def test_only_fourteen_static_source_reads_no_other_io(tmp_path, monkeypatch):
+def test_only_baseline_static_source_reads_no_other_io(tmp_path, monkeypatch):
     one, selected = fixture(tmp_path)
     real_source = inspect.getsource
-    allowed = {c.implementation.__module__: sys.modules[c.implementation.__module__].__file__ for c in registry._CONTRACTS}
+    contracts = tuple(
+        c for c in registry._CONTRACTS
+        if c.name in registry._BASELINE_CONTRACT_NAMES
+    )
+    allowed = {
+        c.implementation.__module__: sys.modules[c.implementation.__module__].__file__
+        for c in contracts
+    }
     paths = {os.path.normcase(os.path.abspath(p)) for p in allowed.values()}
     for p in allowed.values():
         linecache.cache.pop(p, None)
