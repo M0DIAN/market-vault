@@ -15,7 +15,7 @@ from ._validation import TS2FeatureError, require, instant, finite_float
 from . import identity as ids
 from .models import TS2FeatureExecutionResult, TS2FeatureSampleResult, TS2FeatureValueResult
 from .registry import (
-    _registry, SOURCE_SCHEMA_VERSION, CANONICAL_SCHEMA_VERSION,
+    _registry_for_specs, SOURCE_SCHEMA_VERSION, CANONICAL_SCHEMA_VERSION,
     TS2_FEATURE_EXECUTION_CONTRACT_VERSION, TS2_FEATURE_REGISTRY_CONTRACT_VERSION,
 )
 
@@ -181,7 +181,7 @@ def execute_ts2_features(
 ) -> TS2FeatureExecutionResult:
     """Issue TS2 Feature facts from exact in-memory authority, never re-select PIT."""
     specs = _specs(feature_specs)
-    registrations = _registry()
+    registrations = _registry_for_specs(specs)
     resolved = _resolve(specs, registrations)
     cutoff = None if dataset_as_of is None else instant(dataset_as_of)
     admitted_builds, rows = _builds(builds)
