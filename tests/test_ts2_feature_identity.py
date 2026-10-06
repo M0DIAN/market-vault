@@ -1,4 +1,4 @@
-"""Six frozen design vector groups, with 49 literal expected digests."""
+"""Six frozen design vector groups, with 58 literal expected digests."""
 
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -32,6 +32,9 @@ EXPECTED = {
     "rolling_volume_mean.source_sha256": "617bdd2685cf7485f89336241a2a3b4e6818c006c051ce775b8b6a607c1e81af",
     "rolling_volume_mean.fingerprint": "46ece8f194e40253f2ee527837b4c9be04c6791be5ae34507cf36397aeb14fa0",
     "rolling_volume_mean.implementation_pin_id": "d053c4ae596074cafb41ee53d7743712758fbbee3e232af09ffeb7f124c45491",
+    "rsi.source_sha256": "cdc6b6aa0f61f209c9941b13e464ac917c88cd8be1da562dc620616a347e8773",
+    "rsi.fingerprint": "e38091714689d1cb234085f9ec34f20d04e08ee56e7c1fe177754693bc2262d2",
+    "rsi.implementation_pin_id": "7a78bcea7a872ec642ecd8229beacfa5ab7d99590808bbcc5ba6de8f5765b28a",
     "simple_return.source_sha256": "41345d65d910b01012a909b136dfb8681e33feb55d6b663628e301d3f0bcce32",
     "simple_return.fingerprint": "984589ae4cfe3471d72e1cf0438105dcd29360979ef89eb062a3d5c177c1c70e",
     "simple_return.implementation_pin_id": "55d3885db5b6eccdea45f2ad0baa41d170884c63bcb1bdf2f5bdd9f24f763782",
@@ -44,7 +47,7 @@ EXPECTED = {
     "spec_content_id": "73dc26da80653a4959ff8a8f733cda416235f19e404fc6f995327d94fa387a40",
     "spec_pin_id": "908e88052dabd17e6efd045a1e8af5ebe4f5b97560fb7bbb193918ac3c0ee600",
     "spec_pins_digest": "b57a6f8a51d1e65780d44a980bfb7f86262a85b6dae6cbff9895cc80af95356c",
-    "registry_pins_digest": "6ad264c26295554d55c0675c187dea82f735b358934de9750ea5cc16e2518188",
+    "registry_pins_digest": "f91304ecc8a5bc2ac62098d87020093eca047151628598cea8810388ff72a6f2",
     "considered_builds_digest": "ee9387846c20f93cb412b1ad8a6bf586f15dbe721eac2847407581a180d501ec",
     "input_rows_digest": "e74426c75d468d6b851c6099950e4f284b09397b7bab9af11b80f284e63f4965",
     "empty.ts2-feature-considered-builds-v1": "a208644d37cfbf0cfd3afd066ea2cbe6a2c93b4be8167bdbd725a2e3ed3a4340",
@@ -56,16 +59,16 @@ EXPECTED = {
     "complete.values_content_id": "5fd7745f3d1699d2313753d26b8de05f4fee82f85ca4d090aa875bafb7713f43",
     "complete.sample_id": "b869236fbc5bae51803d1a6d6210d3c620e6b448d5536e0b15ea5abcfd06d9f2",
     "complete.samples_content_id": "3c0060e325ebf0cbfe4edb7f3d95b206838c0cc946ef5fed66019259a430809b",
-    "complete.execution_id": "d948b13a3570fd4e5883434dae0e919b8ce0c50da14a7f048b2b5e01426cb5ac",
+    "complete.execution_id": "4ff55bbf51dbef67207b1de83784294096ea2140c3c47c92289df6b5e79a1005",
     "excluded.value_id": "070b2c1665a469a2c454d8fac2e837246fb543c1e32df9c9c60ff76df4de9823",
     "excluded.values_content_id": "a8207e7a3eb557a17c7ea0103b47dee7f2715e808e17d13a3a9625a3edaf01d5",
     "excluded.sample_id": "c868cae29df9b5c94e013475ef93cabf15ab878c8d61eeace9dc4d45f19288db",
     "excluded.samples_content_id": "04cd1c4a69a663781c23db5925d3c5e397e31192e073340a78e2594d252310ae",
-    "excluded.execution_id": "f0c0e7256ba12fc30ca9ca336b093a62a7cc26049e9506f6465584be68fc8444",
-    "zero_samples.execution_id": "d2a1a113de0d946277a5e737e19b550a8194b1b11697cd0825badb9260c33daf",
+    "excluded.execution_id": "ee6aad0203b74d60bed4329d5a2de215ba011414bdf39d23c32e7c490b68cb34",
+    "zero_samples.execution_id": "3ea15328dc251b773df6a99b0fc5cc864016abbe544766f36cf575c61f58132e",
     "zero_specs.sample_id": "fa873cbb61d1ac0d277dc84a325aa67547bae4d74e758a379613c15239963d9a",
     "zero_specs.samples_content_id": "5d2595b6454d0e2f228b999c4229c0827934fafefcf5247d7a43a9928ea893e2",
-    "zero_specs.execution_id": "3ef8152fbd5ad3168caa265f77d347fe78b21a4e6045caa3e0c81ab82f101259",
+    "zero_specs.execution_id": "31988271486213a55d47501b1ebebd1eaf481056da2a581ff5e28ef3df9cccd1",
 }
 
 
@@ -121,7 +124,7 @@ def actual():
     execution.update(status="COMPLETE", sample_count=1, feature_count=0,
         feature_spec_pins_digest=result["empty.ts2-feature-spec-pins-v1"], samples_content_id=result["zero_specs.samples_content_id"])
     result["zero_specs.execution_id"] = ids.execution_id(execution)
-    assert len(result) == len(EXPECTED) == 55
+    assert len(result) == len(EXPECTED) == 58
     return result
 
 
