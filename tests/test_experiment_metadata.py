@@ -8,6 +8,7 @@ import pytest
 
 import cross_day_helpers as cd
 from cross_day_dataset_helpers import fixture
+from cross_day_artifact_memory_fs import MemoryFS
 from market_vault.cross_day_dataset import (
     join_multi_source_cross_day_dataset,
     materialize_multi_source_cross_day_dataset_build,
@@ -21,21 +22,34 @@ from market_vault.research.experiment import (
 )
 
 
-def _materialized(tmp_path, *, case="F", **fixture_kwargs):
+def _materialized(
+    tmp_path,
+    monkeypatch,
+    *,
+    case="F",
+    split_spec=None,
+    **fixture_kwargs,
+):
     inputs = fixture(tmp_path / "upstream", case=case, **fixture_kwargs)
+    if split_spec is not None:
+        inputs["split_spec"] = split_spec
     logical = join_multi_source_cross_day_dataset(**inputs)
-    output_root = tmp_path / "artifacts"
-    output_root.mkdir()
+    model = MemoryFS(
+        monkeypatch,
+        tmp_path / "ONLY_IN_MEMORY_NOT_CREATED",
+    )
     result = materialize_multi_source_cross_day_dataset_build(
         logical,
-        output_root=output_root,
+        output_root=model.root,
         built_at=cd.AS_OF + timedelta(days=30),
     )
     return logical, result.verified
 
 
-def test_experiment_metadata_binds_selected_label_end_time(tmp_path):
-    logical, verified = _materialized(tmp_path)
+def test_experiment_metadata_binds_selected_label_end_time(
+    tmp_path, monkeypatch
+):
+    logical, verified = _materialized(tmp_path, monkeypatch)
     experiment = build_experiment_dataset(
         verified,
         label_field="cd_direction_1d",
@@ -72,7 +86,9 @@ def test_experiment_metadata_binds_selected_label_end_time(tmp_path):
     assert experiment.split("TEST") is experiment.test
 
 
-def test_selected_label_end_not_sample_wide_latest_end(tmp_path):
+def test_selected_label_end_not_sample_wide_latest_end(
+    tmp_path, monkeypatch
+):
     labels = (
         cd.spec(
             1,
@@ -120,22 +136,14 @@ def test_selected_label_end_not_sample_wide_latest_end(tmp_path):
         "EXCLUDE",
     )
 
-    inputs = fixture(
-        tmp_path / "upstream",
+    logical, verified = _materialized(
+        tmp_path,
+        monkeypatch,
         label_specs=labels,
         label_bars=label_bars,
         schedule=schedule,
+        split_spec=split_spec,
     )
-    inputs["split_spec"] = split_spec
-    logical = join_multi_source_cross_day_dataset(**inputs)
-    output_root = tmp_path / "artifacts"
-    output_root.mkdir()
-    materialized = materialize_multi_source_cross_day_dataset_build(
-        logical,
-        output_root=output_root,
-        built_at=cd.AS_OF + timedelta(days=30),
-    )
-    verified = materialized.verified
 
     fields = tuple(field.name for field in verified.schema.fields)
     row = dict(zip(fields, verified.rows[0]))
@@ -170,8 +178,10 @@ def test_experiment_requires_verified_artifact(tmp_path):
         )
 
 
-def test_experiment_feature_subset_preserves_ml_projection(tmp_path):
-    _, verified = _materialized(tmp_path)
+def test_experiment_feature_subset_preserves_ml_projection(
+    tmp_path, monkeypatch
+):
+    _, verified = _materialized(tmp_path, monkeypatch)
     selected = ("obs_rate", "ts2_simple_return")
     experiment = build_experiment_dataset(
         verified,
@@ -199,8 +209,8 @@ def test_experiment_metadata_rejects_nonfuture_label_end():
         )
 
 
-def test_experiment_split_lookup_is_exact(tmp_path):
-    _, verified = _materialized(tmp_path)
+def test_experiment_split_lookup_is_exact(tmp_path, monkeypatch):
+    _, verified = _materialized(tmp_path, monkeypatch)
     experiment = build_experiment_dataset(
         verified,
         label_field="cd_direction_1d",
