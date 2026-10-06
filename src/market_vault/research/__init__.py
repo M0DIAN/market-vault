@@ -150,3 +150,22 @@ __all__ += [
     "RidgeFoldResult",
     "evaluate_ridge_baseline",
 ]
+
+
+from .ridge_selection import (
+    RIDGE_ALPHA_SELECTION_METRIC,
+    RIDGE_ALPHA_SELECTION_VERSION,
+    RidgeAlphaCandidate,
+    RidgeAlphaSelectionError,
+    RidgeAlphaSelectionResult,
+    select_ridge_alpha,
+)
+
+__all__ += [
+    "RIDGE_ALPHA_SELECTION_METRIC",
+    "RIDGE_ALPHA_SELECTION_VERSION",
+    "RidgeAlphaCandidate",
+    "RidgeAlphaSelectionError",
+    "RidgeAlphaSelectionResult",
+    "select_ridge_alpha",
+]
