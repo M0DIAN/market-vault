@@ -173,7 +173,7 @@ def test_live_research_dataset_end_to_end_execution_safe_backtest(tmp_path):
     dataset = _research_result(tmp_path)
     result = run_backtest(
         dataset,
-        signal_field="ts2_return",
+        signal_field="ts2_simple_return",
         comparator="GT",
         threshold=0.0,
         return_label="forward_open_to_close_return_1d",
@@ -207,7 +207,7 @@ def test_live_research_dataset_end_to_end_execution_safe_backtest(tmp_path):
 
     again = run_backtest(
         dataset,
-        signal_field="ts2_return",
+        signal_field="ts2_simple_return",
         comparator="GT",
         threshold=0.0,
         return_label="forward_open_to_close_return_1d",
@@ -278,7 +278,7 @@ def test_selected_return_label_controls_exit_time_in_multi_label_dataset(tmp_pat
 
     result = run_backtest(
         dataset,
-        signal_field="ts2_return",
+        signal_field="ts2_simple_return",
         comparator="GT",
         threshold=0.0,
         return_label="forward_open_to_close_return_1d",
@@ -297,7 +297,7 @@ def test_backtest_refuses_anchor_close_forward_return_as_pnl(tmp_path):
     ):
         run_backtest(
             dataset,
-            signal_field="ts2_return",
+            signal_field="ts2_simple_return",
             comparator="GT",
             threshold=0.0,
             return_label="cd_return_1d",
@@ -321,7 +321,7 @@ def test_backtest_refuses_label_as_signal_and_unissued_clone(tmp_path):
     with pytest.raises(BacktestError, match="unissued or changed"):
         run_backtest(
             clone,
-            signal_field="ts2_return",
+            signal_field="ts2_simple_return",
             comparator="GT",
             threshold=0.0,
             return_label="forward_open_to_close_return_1d",
@@ -342,7 +342,7 @@ def test_backtest_refuses_label_as_signal_and_unissued_clone(tmp_path):
 def test_backtest_invalid_configuration_fails_closed(tmp_path, kwargs):
     dataset = _research_result(tmp_path)
     call = dict(
-        signal_field="ts2_return",
+        signal_field="ts2_simple_return",
         comparator="GT",
         threshold=0.0,
         return_label="forward_open_to_close_return_1d",
