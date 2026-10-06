@@ -265,7 +265,7 @@ def test_zero_samples_specs_and_both(tmp_path, monkeypatch):
     zero_specs = execute(one, selected, ())
     assert zero_specs.status == "COMPLETE" and zero_specs.samples[0].values == ()
     both = execute_ts2_features((), pit((), requests=()), (), dataset_as_of=AS_OF)
-    assert both.status == "EMPTY" and len(both.registry_implementation_pins) == 8
+    assert both.status == "EMPTY" and len(both.registry_implementation_pins) == 10
     assert len({r.execution_id for r in (zero_samples, zero_specs, both)}) == 3
     unknown = tamper(spec(), transform_ref="unknown.module:callback")
     fails("REGISTRY_AUTHORITY", lambda: execute(one, empty, (unknown,)))
