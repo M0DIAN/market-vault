@@ -176,12 +176,17 @@ def _candidates(dataset, rule: BacktestRule, return_label: str, split: str):
         (decision.sample_key, decision.label_spec_pin_id): decision
         for decision in dataset.cross_day_association.decisions
     }
+    label_values = {
+        (value.sample_key, value.label_name): value
+        for value in dataset.cross_day_labels.values
+    }
+    if len(label_values) != len(dataset.cross_day_labels.values):
+        raise BacktestError("Cross-Day Label values contain duplicate sample/name pairs")
     index = _schema_index(dataset)
     for required in (
         "code",
         "sample_key",
         "feature_window_close",
-        "actual_label_end_time",
         "label_status",
         "final_split",
         "assignment_status",
@@ -210,13 +215,21 @@ def _candidates(dataset, rule: BacktestRule, return_label: str, split: str):
             raise BacktestError("Dataset row code differs from the sole Dataset symbol")
         sample_key = values["sample_key"]
         decision = decisions.get((sample_key, target_pin))
-        if decision is None or decision.status != "COMPLETE" or not decision.selected_rows:
-            raise BacktestError("execution-safe Label decision evidence is missing")
+        label_value = label_values.get((sample_key, return_label))
+        if (
+            decision is None
+            or decision.status != "COMPLETE"
+            or not decision.selected_rows
+            or label_value is None
+            or label_value.status != "COMPLETE"
+            or label_value.spec_pin.content_sha256 != spec.content_sha256
+        ):
+            raise BacktestError("execution-safe Label decision/value evidence is missing")
         signal_time = values["feature_window_close"]
         entry_time = decision.selected_rows[0].event_time
-        exit_time = values["actual_label_end_time"]
+        exit_time = label_value.actual_label_end_time
         if exit_time != decision.actual_label_end_time:
-            raise BacktestError("Dataset row/Label decision exit time mismatch")
+            raise BacktestError("selected Label value/decision exit time mismatch")
         if not (
             type(signal_time) is datetime
             and type(entry_time) is datetime
@@ -228,7 +241,10 @@ def _candidates(dataset, rule: BacktestRule, return_label: str, split: str):
         ):
             raise BacktestError("execution-safe trade timing is invalid")
         signal_value = _finite(values[rule.signal_field], "signal value")
-        gross_return = _finite(values[return_label], "return Label value")
+        gross_return = _finite(label_value.value, "return Label value")
+        row_return = _finite(values[return_label], "Dataset return Label value")
+        if row_return != gross_return:
+            raise BacktestError("Dataset row/selected Label value mismatch")
         if gross_return <= -1.0:
             raise BacktestError("return Label must be greater than -100%")
         result.append(_Candidate(
