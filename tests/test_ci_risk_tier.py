@@ -186,6 +186,14 @@ def test_research_ts2_source_is_research_fast_on_pr(tmp_path):
     )
 
 
+def test_ml_adapter_test_is_research_fast_on_pr(tmp_path):
+    repo = make_repo(tmp_path)
+    assert (
+        classify_change(repo, "tests/test_ml_dataset_adapter.py")
+        == "research_fast"
+    )
+
+
 def test_research_test_is_research_fast_on_pr(tmp_path):
     repo = make_repo(tmp_path)
     assert (
