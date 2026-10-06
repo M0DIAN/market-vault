@@ -149,6 +149,30 @@ def test_constant_feature_is_zero_weight_after_train_only_standardization():
     assert fold.intercept == pytest.approx(1.0)
 
 
+def test_validation_features_never_enter_fit_or_standardization():
+    one = evaluate_ridge_baseline(
+        _plan(
+            validation_X=((4.0,), (5.0,)),
+            validation_y=(8.0, 10.0),
+        ),
+        alpha=1.0,
+    )
+    two = evaluate_ridge_baseline(
+        _plan(
+            validation_X=((4000.0,), (5000.0,)),
+            validation_y=(8.0, 10.0),
+        ),
+        alpha=1.0,
+    )
+
+    left = one.folds[0]
+    right = two.folds[0]
+    assert left.feature_means == right.feature_means
+    assert left.feature_scales == right.feature_scales
+    assert left.coefficients == right.coefficients
+    assert left.intercept == right.intercept
+
+
 def test_constant_validation_target_has_no_r2():
     plan = _plan(validation_y=(8.0, 8.0))
     report = evaluate_ridge_baseline(plan, alpha=1.0)
