@@ -439,7 +439,13 @@ def test_bookkeeping_and_verifier_do_no_io_or_upstream_execution(issued, monkeyp
     from market_vault.cross_day import registry as label_registry
     import sys
     inputs, result = issued
-    contracts = ts2_registry._CONTRACTS + label_registry._contracts()
+    contracts = (
+        tuple(
+            contract for contract in ts2_registry._CONTRACTS
+            if contract.name in ts2_registry._BASELINE_CONTRACT_NAMES
+        )
+        + label_registry._contracts()
+    )
     modules = tuple(sys.modules[c.implementation.__module__] for c in contracts)
     sources = {m: inspect.getsource(m) for m in modules}
     acquisitions = []

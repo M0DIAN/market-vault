@@ -5,7 +5,7 @@ from datetime import timedelta
 from ..dataset.specs import feature_label_spec_pin
 from ..ts2_feature import identity as ids
 from ..ts2_feature.execution import _specs, _resolve
-from ..ts2_feature.registry import _registry, TS2_FEATURE_EXECUTION_CONTRACT_VERSION, TS2_FEATURE_REGISTRY_CONTRACT_VERSION
+from ..ts2_feature.registry import _registry_for_specs, TS2_FEATURE_EXECUTION_CONTRACT_VERSION, TS2_FEATURE_REGISTRY_CONTRACT_VERSION
 from ..ts2_feature._validation import finite_float
 from ._artifact_canonical import _check, _ordered, _view, _INTERVALS
 from ._artifact_records import _encode_record
@@ -17,7 +17,7 @@ def _ts2_closure(record, pit, builds, rows, cutoff):
     _encode_record(record, "TS2Features")
     specs = tuple(_value(s) for s in record.feature_specs)
     _check(specs == _specs(specs) and bool(specs), "TS2 canonical nonempty specs required")
-    registrations = _registry()
+    registrations = _registry_for_specs(specs)
     resolved = _resolve(specs, registrations)
     expected_hashes = tuple((r.contract.transform_ref, r.source_sha256)
                             for r in sorted(registrations, key=lambda r: r.contract.transform_ref))

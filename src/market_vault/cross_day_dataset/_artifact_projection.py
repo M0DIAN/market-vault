@@ -9,7 +9,7 @@ from ..dataset.specs import feature_label_spec_pin
 from ..multi_source.feature_specs import serialize_observation_feature_spec, observation_feature_spec_pin
 from ..observation.identity import observation_source_snapshot_id
 from ..observation.pit_identity import feature_spec_pin_id, observation_build_pin_id
-from ..ts2_feature.registry import _registry
+from ..ts2_feature.registry import _registry_for_specs
 from ._artifact_encoding import parquet_bytes
 from ._artifact_records import (
     _Recorded, _SCHEMAS, _decode_record, _encode_record, _fact_bytes,
@@ -143,10 +143,15 @@ def _prepare_artifact_facts(facts):
         sample_bindings=_snapshot_value(association["sample_bindings"], "*CrossDayLabelSampleBinding"))
     values_record = _record("CrossDayValues", **{
         name: _snapshot_value(label_values[name], shape) for name, shape in _SCHEMAS["CrossDayValues"]})
-    registrations = _registry()
-    _require({_value(pin) for pin in ts2.registry_implementation_pins} == {r.pin for r in registrations}
-             and len(ts2.registry_implementation_pins) == len(registrations) == 8,
-             "ARTIFACT_AUTHORITY", "detached TS2 pins differ from static source fingerprints")
+    ts2_specs = tuple(_value(item) for item in ts2.feature_specs)
+    registrations = _registry_for_specs(ts2_specs)
+    _require(
+        {_value(pin) for pin in ts2.registry_implementation_pins}
+        == {r.pin for r in registrations}
+        and len(ts2.registry_implementation_pins) == len(registrations),
+        "ARTIFACT_AUTHORITY",
+        "detached TS2 pins differ from baseline/used source fingerprints",
+    )
     ts2_record = _record("TS2Features", **dict(ts2._items), implementation_source_hashes=tuple(
         _record("ImplementationSourceHash", transform_ref=r.contract.transform_ref, source_sha256=r.source_sha256)
         for r in sorted(registrations, key=lambda r: r.contract.transform_ref)))
