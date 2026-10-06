@@ -20,7 +20,6 @@ from types import SimpleNamespace
 
 from .backtest import (
     BACKTEST_COMPARATORS,
-    BACKTEST_ENGINE_VERSION,
     BACKTEST_SPLITS,
     BacktestError,
     run_backtest,
