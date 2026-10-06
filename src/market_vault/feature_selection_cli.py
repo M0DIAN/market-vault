@@ -53,7 +53,6 @@ _PLAN_FIELDS = frozenset({
     "dataset_build_dir",
     "label_field",
     "feature_fields",
-    "quantile_count",
     "policy",
 })
 _POLICY_FIELDS = frozenset({
@@ -95,14 +94,6 @@ def add_feature_selection_subparser(subparsers) -> None:
         metavar="PATH",
         help="Path to market-vault-feature-selection-plan-v1 JSON",
     )
-
-
-def _quantile_count(value) -> int:
-    if type(value) is not int or not 2 <= value <= 10:
-        raise FeatureSelectionCLIError(
-            "quantile_count must be an integer within [2, 10]"
-        )
-    return value
 
 
 def _feature_fields(value):
@@ -184,7 +175,6 @@ def parse_feature_selection_plan_bytes(payload: bytes):
                 "label_field",
             ),
             feature_fields=_feature_fields(root["feature_fields"]),
-            quantile_count=_quantile_count(root["quantile_count"]),
             policy=_policy(root["policy"]),
         )
     except DatasetCLIError as exc:
@@ -207,7 +197,6 @@ def _run_plan(plan, plan_parent: Path):
         bundle,
         policy=plan.policy,
         feature_names=plan.feature_fields,
-        quantile_count=plan.quantile_count,
     )
 
 
@@ -246,7 +235,6 @@ def _success_payload(report) -> dict:
         "feature_selection_version": FEATURE_SELECTION_VERSION,
         "dataset_id": report.dataset_id,
         "label_name": report.label_name,
-        "quantile_count": report.quantile_count,
         "policy": _policy_payload(report.policy),
         "selected_features": list(report.selected_features),
         "decisions": [
