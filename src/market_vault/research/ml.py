@@ -189,6 +189,8 @@ def _normalize_feature_fields(dataset, feature_fields) -> tuple[str, ...]:
     if feature_fields is None:
         selected = catalog
     else:
+        if isinstance(feature_fields, (str, bytes)):
+            raise MLDatasetError("feature_fields must be an iterable of Feature names")
         try:
             selected = tuple(feature_fields)
         except TypeError as exc:
