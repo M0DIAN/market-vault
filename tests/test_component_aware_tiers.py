@@ -46,6 +46,7 @@ requires_package = true
 [components.research]
 paths = [
   "src/market_vault/research_dataset.py",
+  "src/market_vault/research",
   "src/market_vault/ts2_feature",
   "src/market_vault/dataset/feature_execution.py",
   "src/market_vault/dataset/feature_models.py",
@@ -218,6 +219,18 @@ def test_research_component_uses_validated_fast_tier(tmp_path):
     result = classify_change(
         repo, "src/market_vault/dataset/feature_transforms"
     )
+
+    assert tier(result) == "research_fast"
+    assert line_value(result, "reason") == "all_changes_in_research_fast_scope"
+    assert line_value(result, "components") == "core,research"
+    assert line_value(result, "core_changed") == "true"
+    assert line_value(result, "unknown_changed") == "false"
+    assert line_value(result, "full_matrix_required") == "false"
+
+
+def test_research_package_uses_validated_fast_tier(tmp_path):
+    repo = make_repo(tmp_path)
+    result = classify_change(repo, "src/market_vault/research/labels.py")
 
     assert tier(result) == "research_fast"
     assert line_value(result, "reason") == "all_changes_in_research_fast_scope"

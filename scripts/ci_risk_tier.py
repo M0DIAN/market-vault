@@ -180,6 +180,7 @@ CONTROL_PLANE_SCOPE_RULES = [
 # remain FULL.  Docs may accompany a Research change without widening it.
 RESEARCH_FAST_SCOPE_RULES = [
     "src/market_vault/research_dataset.py",
+    "src/market_vault/research",
     "src/market_vault/ts2_feature",
     "src/market_vault/dataset/feature_execution.py",
     "src/market_vault/dataset/feature_models.py",
