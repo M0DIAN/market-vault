@@ -271,6 +271,62 @@ def test_fold_with_no_retained_training_rows_fails_closed():
         )
 
 
+def test_duplicate_train_timestamp_fails_closed():
+    base = _experiment()
+    ml_meta = list(base.ml_bundle.train.metadata)
+    previous = ml_meta[-2]
+    last = ml_meta[-1]
+    ml_meta[-1] = MLSampleMetadata(
+        last.sample_key,
+        last.code,
+        previous.feature_window_close,
+    )
+    train_ml = MLDatasetSplit(
+        "TRAIN",
+        FEATURES,
+        LABEL,
+        "float64",
+        base.ml_bundle.train.X,
+        base.ml_bundle.train.y,
+        tuple(ml_meta),
+    )
+    ml_bundle = MLDatasetBundle(
+        ML_DATASET_ADAPTER_VERSION,
+        base.dataset_id,
+        FEATURES,
+        LABEL,
+        "float64",
+        train_ml,
+        base.ml_bundle.validation,
+        base.ml_bundle.test,
+    )
+    exp_meta = list(base.train.metadata)
+    old = exp_meta[-1]
+    exp_meta[-1] = ExperimentSampleMetadata(
+        old.sample_key,
+        old.code,
+        previous.feature_window_close,
+        old.actual_label_end_time,
+        old.label_value_id,
+    )
+    experiment = ExperimentDatasetBundle(
+        EXPERIMENT_METADATA_VERSION,
+        base.dataset_id,
+        FEATURES,
+        LABEL,
+        "float64",
+        ml_bundle,
+        ExperimentSplit("TRAIN", train_ml, tuple(exp_meta)),
+        base.validation,
+        base.test,
+    )
+    with pytest.raises(WalkForwardError, match="strictly increasing"):
+        generate_walk_forward_folds(
+            experiment,
+            WalkForwardSpec(4, 2, 2, 0),
+        )
+
+
 def test_multi_symbol_train_split_fails_closed():
     base = _experiment()
     ml_meta = list(base.ml_bundle.train.metadata)
