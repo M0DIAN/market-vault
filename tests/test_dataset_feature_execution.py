@@ -649,9 +649,9 @@ def test_builtin_registration_input_fields_and_windows():
         REF_ATR: (("high", "low", "close"), "PARAMETER", "window_bars", 2),
         REF_OBV: (("close", "volume"), "PARAMETER", "window_bars", 2),
         REF_SIMPLE: (("close",), "PARAMETER", "window_bars", 2),
-        REF_KDJ_K: (("high", "low", "close"), "PARAMETER", "window_bars", 9),
-        REF_KDJ_D: (("high", "low", "close"), "PARAMETER", "window_bars", 9),
-        REF_KDJ_J: (("high", "low", "close"), "PARAMETER", "window_bars", 9),
+        REF_KDJ_K: (("high", "low", "close"), "FIXED", None, 17),
+        REF_KDJ_D: (("high", "low", "close"), "FIXED", None, 17),
+        REF_KDJ_J: (("high", "low", "close"), "FIXED", None, 17),
         REF_LOG: (("close",), "PARAMETER", "window_bars", 2),
         REF_EMA: (("close",), "PARAMETER", "window_bars", 1),
         REF_SMA: (("close",), "PARAMETER", "window_bars", 1),
@@ -862,11 +862,30 @@ def test_kdj_window_local_standard_rsv9():
     input_ = FeatureTransformInput(
         field_names=("high", "low", "close"),
         rows=rows,
-        parameters=(wb(17),),
+        parameters=(),
     )
     assert kdj_k(input_) == pytest.approx(82.46625683754169)
     assert kdj_d(input_) == pytest.approx(79.8650273501668)
     assert kdj_j(input_) == pytest.approx(87.66871581229148)
+
+
+def test_kdj_rejects_parameter_and_wrong_fixed_window():
+    rows = tuple(
+        (float(102 + i), float(98 + i), float(100 + i))
+        for i in range(17)
+    )
+    with pytest.raises(ValueError, match="accepts no parameters"):
+        kdj_k(FeatureTransformInput(
+            field_names=("high", "low", "close"),
+            rows=rows,
+            parameters=(wb(17),),
+        ))
+    with pytest.raises(ValueError, match="exactly 17 rows"):
+        kdj_k(FeatureTransformInput(
+            field_names=("high", "low", "close"),
+            rows=rows[:-1],
+            parameters=(),
+        ))
 
 
 def test_atr_wilder_seed_formula():
