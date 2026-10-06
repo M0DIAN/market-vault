@@ -63,6 +63,7 @@ requires_package = true
 [components.research]
 paths = [
   "src/market_vault/research_dataset.py",
+  "src/market_vault/research",
   "src/market_vault/ts2_feature",
   "src/market_vault/dataset/feature_execution.py",
   "src/market_vault/dataset/feature_models.py",
