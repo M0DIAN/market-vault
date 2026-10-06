@@ -80,3 +80,21 @@ __all__ += [
     "FeatureStabilityReport",
     "compare_feature_stability",
 ]
+
+from .feature_selection import (
+    FEATURE_SELECTION_VERSION,
+    FeatureSelectionDecision,
+    FeatureSelectionError,
+    FeatureSelectionPolicy,
+    FeatureSelectionReport,
+    select_features,
+)
+
+__all__ += [
+    "FEATURE_SELECTION_VERSION",
+    "FeatureSelectionDecision",
+    "FeatureSelectionError",
+    "FeatureSelectionPolicy",
+    "FeatureSelectionReport",
+    "select_features",
+]
