@@ -134,3 +134,19 @@ __all__ += [
     "WalkForwardSlice",
     "build_walk_forward_plan",
 ]
+
+from .ridge_baseline import (
+    RIDGE_BASELINE_VERSION,
+    RidgeBaselineError,
+    RidgeBaselineReport,
+    RidgeFoldResult,
+    evaluate_ridge_baseline,
+)
+
+__all__ += [
+    "RIDGE_BASELINE_VERSION",
+    "RidgeBaselineError",
+    "RidgeBaselineReport",
+    "RidgeFoldResult",
+    "evaluate_ridge_baseline",
+]
