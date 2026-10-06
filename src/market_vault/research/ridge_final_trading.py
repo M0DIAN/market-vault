@@ -32,30 +32,22 @@ import math
 import re
 
 from ..backtest.models import BacktestCosts, BacktestError
-from ..cross_day_dataset import (
-    VerifiedMultiSourceCrossDayDataset,
-    load_verified_multi_source_cross_day_dataset,
-)
-from ..cross_day_dataset.artifact_models import MultiSourceCrossDayArtifactError
+from ..cross_day_dataset import VerifiedMultiSourceCrossDayDataset
 from ..dataset.encoding import encode_identity
-from .experiment import (
-    ExperimentDatasetBundle,
-    ExperimentMetadataError,
-    build_experiment_dataset,
-)
+from .experiment import ExperimentDatasetBundle
 from .ridge_final_test import (
     RidgeFinalTestError,
     RidgeFinalTestPrediction,
     RidgeFinalTestResult,
 )
+from .trading_authority import (
+    TradingAuthorityError,
+    validate_execution_safe_experiment,
+)
 
 
 RIDGE_FINAL_TRADING_VERSION = "market-vault-ridge-final-trading-v1"
 RIDGE_FINAL_TRADING_SIGNAL_RULE = "PREDICTED_RETURN_GT_ZERO"
-_EXECUTION_SAFE_RETURN_REF = (
-    "market_vault.dataset.label_transforms.forward_open_to_close_return:"
-    "forward_open_to_close_return"
-)
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -387,70 +379,18 @@ def _validated_inputs(
     bundle: ExperimentDatasetBundle,
     final_test: RidgeFinalTestResult,
 ):
-    if type(dataset) is not VerifiedMultiSourceCrossDayDataset:
-        raise RidgeFinalTradingError(
-            "Ridge final trading V1 requires a Verified Research Dataset artifact"
-        )
-    if type(bundle) is not ExperimentDatasetBundle:
-        raise RidgeFinalTradingError(
-            "Ridge final trading V1 requires ExperimentDatasetBundle"
-        )
     if type(final_test) is not RidgeFinalTestResult:
         raise RidgeFinalTradingError(
             "Ridge final trading V1 requires RidgeFinalTestResult"
         )
 
     try:
-        fresh = load_verified_multi_source_cross_day_dataset(
-            dataset.build_path
+        fresh, rebuilt = validate_execution_safe_experiment(
+            dataset,
+            bundle,
         )
-    except (
-        MultiSourceCrossDayArtifactError,
-        OSError,
-        TypeError,
-        ValueError,
-    ) as exc:
-        raise RidgeFinalTradingError(
-            "verified Research Dataset revalidation failed"
-        ) from exc
-    if fresh.dataset_id != dataset.dataset_id:
-        raise RidgeFinalTradingError(
-            "verified Research Dataset identity changed since load"
-        )
-
-    specs = tuple(
-        spec for spec in fresh.cross_day_labels.label_specs
-        if spec.name == bundle.label_name
-    )
-    if len(specs) != 1:
-        raise RidgeFinalTradingError(
-            "Experiment Label must select exactly one verified Dataset Label"
-        )
-    spec = specs[0]
-    if (
-        spec.transform_ref != _EXECUTION_SAFE_RETURN_REF
-        or spec.output.logical_type != "float64"
-        or spec.input_canonical_fields != ("open", "close")
-    ):
-        raise RidgeFinalTradingError(
-            "Ridge final trading requires execution-safe "
-            "forward_open_to_close_return Label semantics"
-        )
-
-    try:
-        rebuilt = build_experiment_dataset(
-            fresh,
-            label_field=bundle.label_name,
-            feature_fields=bundle.feature_names,
-        )
-    except ExperimentMetadataError as exc:
-        raise RidgeFinalTradingError(
-            "Experiment Dataset rebuild failed"
-        ) from exc
-    if rebuilt != bundle:
-        raise RidgeFinalTradingError(
-            "Experiment Dataset differs from the verified Research Dataset"
-        )
+    except TradingAuthorityError as exc:
+        raise RidgeFinalTradingError(str(exc)) from exc
 
     try:
         validated_final = replace(final_test)
@@ -460,22 +400,22 @@ def _validated_inputs(
         ) from exc
 
     if (
-        validated_final.dataset_id != bundle.dataset_id
-        or validated_final.feature_names != bundle.feature_names
-        or validated_final.label_name != bundle.label_name
-        or validated_final.test_count != bundle.test.row_count
+        validated_final.dataset_id != rebuilt.dataset_id
+        or validated_final.feature_names != rebuilt.feature_names
+        or validated_final.label_name != rebuilt.label_name
+        or validated_final.test_count != rebuilt.test.row_count
     ):
         raise RidgeFinalTradingError(
             "Ridge final TEST result differs from Experiment Dataset schema"
         )
 
-    if bundle.test.row_count <= 0:
+    if rebuilt.test.row_count <= 0:
         raise RidgeFinalTradingError("held-out TEST split must not be empty")
 
     for prediction, actual, metadata in zip(
         validated_final.predictions,
-        bundle.test.y,
-        bundle.test.metadata,
+        rebuilt.test.y,
+        rebuilt.test.metadata,
     ):
         if (
             prediction.sample_key != metadata.sample_key
@@ -489,7 +429,6 @@ def _validated_inputs(
             )
 
     return fresh, rebuilt, validated_final
-
 
 def _evaluate(
     bundle: ExperimentDatasetBundle,
