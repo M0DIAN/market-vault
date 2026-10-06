@@ -98,6 +98,7 @@ class RidgeTestPrediction:
     code: str
     feature_window_close: datetime
     actual_label_end_time: datetime
+    label_value_id: str
     actual: float
     predicted: float
     residual: float
@@ -116,6 +117,7 @@ class RidgeTestPrediction:
             raise RidgeFinalTestError(
                 "TEST selected Label must end after feature_window_close"
             )
+        _sha(self.label_value_id, "label_value_id")
         actual = _finite(self.actual, "actual")
         predicted = _finite(self.predicted, "predicted")
         residual = _finite(self.residual, "residual")
@@ -139,6 +141,7 @@ def _prediction_id(model_id: str, item: RidgeTestPrediction) -> str:
             "code": item.code,
             "feature_window_close": item.feature_window_close,
             "actual_label_end_time": item.actual_label_end_time,
+            "label_value_id": item.label_value_id,
             "actual": item.actual,
             "predicted": item.predicted,
             "residual": item.residual,
@@ -548,6 +551,7 @@ def evaluate_ridge_final_test(
             metadata.code,
             metadata.feature_window_close,
             metadata.actual_label_end_time,
+            metadata.label_value_id,
             actual,
             prediction,
             actual - prediction,
