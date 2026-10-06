@@ -53,6 +53,21 @@ _CONTRACTS = (
     _Contract("volume_ratio", volume_ratio, ("volume",), 2),
 )
 
+# Compatibility baseline of the original TS2 registry shipped before the
+# v0.9.0 Feature Library expansion.  These eight implementation pins remain
+# part of every TS2 execution identity so historical Dataset/Artifact IDs do
+# not churn when unrelated extension transforms are added later.
+_BASELINE_CONTRACT_NAMES = frozenset((
+    "candle_body",
+    "candle_range",
+    "log_return",
+    "rolling_mean",
+    "rolling_std",
+    "rolling_volume_mean",
+    "simple_return",
+    "volume_ratio",
+))
+
 
 @dataclass(frozen=True, slots=True)
 class _Registration:
@@ -86,9 +101,9 @@ def implementation_payload(contract, source_sha256):
     return payload
 
 
-def _registry():
+def _build_registry(contracts):
     registrations = []
-    for contract in _CONTRACTS:
+    for contract in contracts:
         require(type(contract.fixed_lookback) is int and contract.fixed_lookback >= 1,
                 "REGISTRY_AUTHORITY", "fixed lookback must be a positive integer")
         require(contract.minimum is None or contract.fixed_lookback == 1,
@@ -114,3 +129,32 @@ def _registry():
                                       implementation_payload(contract, source))
         registrations.append(_Registration(contract, source, ImplementationPin(contract.transform_ref, "v1", fingerprint)))
     return tuple(registrations)
+
+
+def _registry():
+    """Full static catalog, used by catalog/identity tests and discovery."""
+    return _build_registry(_CONTRACTS)
+
+
+def _registry_for_specs(specs):
+    """Compatibility baseline plus only extension transforms requested by specs.
+
+    The original eight registrations remain identity-bearing for every TS2
+    execution.  Feature-Library extensions are admitted lazily and become
+    identity-bearing only when their exact transform_ref is requested.
+    Unknown refs are intentionally not added here; _resolve rejects them.
+    """
+    require(type(specs) is tuple, "REGISTRY_AUTHORITY", "exact spec tuple required")
+    requested_refs = frozenset(getattr(spec, "transform_ref", None) for spec in specs)
+    selected = tuple(
+        contract for contract in _CONTRACTS
+        if contract.name in _BASELINE_CONTRACT_NAMES
+        or contract.transform_ref in requested_refs
+    )
+    require(
+        {contract.name for contract in selected if contract.name in _BASELINE_CONTRACT_NAMES}
+        == _BASELINE_CONTRACT_NAMES,
+        "REGISTRY_AUTHORITY",
+        "TS2 compatibility baseline is incomplete",
+    )
+    return _build_registry(selected)
