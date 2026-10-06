@@ -256,7 +256,6 @@ class FeatureSelectionReport:
     version: str
     dataset_id: str
     label_name: str
-    quantile_count: int
     policy: FeatureSelectionPolicy
     decisions: tuple[FeatureSelectionDecision, ...]
     selected_features: tuple[str, ...]
@@ -275,13 +274,6 @@ class FeatureSelectionReport:
             )
         if type(self.label_name) is not str or not self.label_name:
             raise FeatureSelectionError("label_name must be non-empty")
-        if (
-            type(self.quantile_count) is not int
-            or not 2 <= self.quantile_count <= 10
-        ):
-            raise FeatureSelectionError(
-                "quantile_count must be an integer within [2, 10]"
-            )
         if type(self.policy) is not FeatureSelectionPolicy:
             raise FeatureSelectionError(
                 "exact FeatureSelectionPolicy required"
@@ -315,7 +307,6 @@ def _feature_order(train_report, validation_report) -> tuple[str, ...]:
     if (
         train_report.dataset_id != validation_report.dataset_id
         or train_report.label_name != validation_report.label_name
-        or train_report.quantile_count != validation_report.quantile_count
     ):
         raise FeatureSelectionError(
             "TRAIN and VALIDATION Feature Research reports disagree "
@@ -398,7 +389,6 @@ def select_features(
     *,
     policy: FeatureSelectionPolicy,
     feature_names=None,
-    quantile_count: int = 5,
 ) -> FeatureSelectionReport:
     """Select Features using TRAIN + VALIDATION only.
 
@@ -412,26 +402,18 @@ def select_features(
         raise FeatureSelectionError(
             "exact FeatureSelectionPolicy required"
         )
-    if (
-        type(quantile_count) is not int
-        or not 2 <= quantile_count <= 10
-    ):
-        raise FeatureSelectionError(
-            "quantile_count must be an integer within [2, 10]"
-        )
-
     try:
         train_report = analyze_features(
             bundle,
             split="TRAIN",
             feature_names=feature_names,
-            quantile_count=quantile_count,
+            quantile_count=5,
         )
         validation_report = analyze_features(
             bundle,
             split="VALIDATION",
             feature_names=feature_names,
-            quantile_count=quantile_count,
+            quantile_count=5,
         )
     except FeatureResearchError as exc:
         raise FeatureSelectionError(str(exc)) from exc
@@ -453,7 +435,6 @@ def select_features(
         FEATURE_SELECTION_VERSION,
         bundle.dataset_id,
         bundle.label_name,
-        quantile_count,
         policy,
         decisions,
         tuple(
