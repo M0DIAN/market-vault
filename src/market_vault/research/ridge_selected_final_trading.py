@@ -377,7 +377,10 @@ def _trading_id(
             "ridge_selection_id": ridge_selection_id,
             "walk_forward_id": walk_forward_id,
             "dataset_id": dataset_id,
-            "feature_names": feature_names,
+            "feature_names_digest": _members_digest(
+                "market-vault-ridge-selected-final-trading-feature-names-v1",
+                feature_names,
+            ),
             "label_name": label_name,
             "selected_alpha": selected_alpha,
             "selected_threshold": selected_threshold,
