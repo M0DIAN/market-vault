@@ -28,12 +28,13 @@ from market_vault.dataset.models import ImplementationPin
 from market_vault.dataset.encoding import encode_identity
 
 
-def test_fixed_registry_is_eleven_immutable_static_functions():
+def test_fixed_registry_is_fourteen_immutable_static_functions():
     entries = registry._registry()
-    assert len(entries) == 11
+    assert len(entries) == 14
     assert tuple(r.contract.name for r in entries) == (
-        "candle_body", "candle_range", "ema", "log_return", "rolling_mean", "rolling_std",
-        "rolling_volume_mean", "rsi", "simple_return", "sma", "volume_ratio")
+        "candle_body", "candle_range", "ema", "log_return", "macd", "macd_histogram",
+        "macd_signal", "rolling_mean", "rolling_std", "rolling_volume_mean", "rsi",
+        "simple_return", "sma", "volume_ratio")
     for entry in entries:
         assert entry.contract.implementation is getattr(sys.modules[entry.contract.implementation.__module__], entry.contract.name)
         with pytest.raises(FrozenInstanceError):
@@ -150,7 +151,7 @@ def test_relocation_is_in_memory_only(tmp_path, monkeypatch):
     assert execute(relocated, selected) == expected
 
 
-def test_only_eleven_static_source_reads_no_other_io(tmp_path, monkeypatch):
+def test_only_fourteen_static_source_reads_no_other_io(tmp_path, monkeypatch):
     one, selected = fixture(tmp_path)
     real_source = inspect.getsource
     allowed = {c.implementation.__module__: sys.modules[c.implementation.__module__].__file__ for c in registry._CONTRACTS}
