@@ -54,7 +54,8 @@ _PLAN_FIELDS = frozenset({
     "dataset_build_dir",
     "label_field",
     "feature_fields",
-    "minimum_train_samples",
+    "initial_train_samples",
+    "minimum_retained_train_samples",
     "validation_samples",
     "step_samples",
     "embargo_seconds",
@@ -164,6 +165,19 @@ def parse_walk_forward_plan_bytes(payload: bytes):
             raise WalkForwardCLIError(
                 "step_samples must be >= validation_samples"
             )
+        initial = _positive_int(
+            root["initial_train_samples"],
+            "initial_train_samples",
+        )
+        retained = _positive_int(
+            root["minimum_retained_train_samples"],
+            "minimum_retained_train_samples",
+        )
+        if retained > initial:
+            raise WalkForwardCLIError(
+                "minimum_retained_train_samples must be <= "
+                "initial_train_samples"
+            )
         return SimpleNamespace(
             plan_schema_version=version,
             dataset_build_dir=_require_string(
@@ -175,10 +189,8 @@ def parse_walk_forward_plan_bytes(payload: bytes):
                 "label_field",
             ),
             feature_fields=_feature_fields(root["feature_fields"]),
-            minimum_train_samples=_positive_int(
-                root["minimum_train_samples"],
-                "minimum_train_samples",
-            ),
+            initial_train_samples=initial,
+            minimum_retained_train_samples=retained,
             validation_samples=validation,
             step_samples=step,
             embargo_seconds=_non_negative_int(
@@ -203,7 +215,8 @@ def _run_plan(plan, plan_parent: Path):
         feature_fields=plan.feature_fields,
     )
     spec = WalkForwardSpec(
-        plan.minimum_train_samples,
+        plan.initial_train_samples,
+        plan.minimum_retained_train_samples,
         plan.validation_samples,
         plan.step_samples,
         plan.embargo_seconds,
@@ -235,7 +248,9 @@ def _success_payload(plan) -> dict:
         "source_row_count": plan.source_row_count,
         "unused_tail_count": plan.unused_tail_count,
         "spec": {
-            "minimum_train_samples": plan.spec.minimum_train_samples,
+            "initial_train_samples": plan.spec.initial_train_samples,
+            "minimum_retained_train_samples":
+                plan.spec.minimum_retained_train_samples,
             "validation_samples": plan.spec.validation_samples,
             "step_samples": plan.spec.step_samples,
             "embargo_seconds": plan.spec.embargo_seconds,
