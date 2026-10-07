@@ -39,6 +39,12 @@ PAGE_DEFINITIONS: Final[tuple[dict[str, object], ...]] = (
         "showGroup": False,
     },
     {
+        "id": "quant_research",
+        "labelKey": "nav.quant_research",
+        "groupKey": "nav.group.research",
+        "showGroup": True,
+    },
+    {
         "id": "coverage_audit",
         "labelKey": "nav.coverage_audit",
         "groupKey": "nav.group.quality",

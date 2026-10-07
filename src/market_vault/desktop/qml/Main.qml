@@ -30,6 +30,7 @@ ApplicationWindow {
             "trading_calendar": "calendar",
             "market_data": "chart",
             "inventory": "inventory",
+            "quant_research": "chart",
             "coverage_audit": "audit",
             "intraday_audit": "pulse",
             "runs": "runs",
@@ -123,6 +124,7 @@ ApplicationWindow {
                         Pages.TradingCalendarPage { objectName: "tradingCalendarPage"; controller: tradingCalendarController; i18n: i18nBridge }
                         Pages.MarketDataPage { objectName: "marketDataPage"; controller: marketDataController; i18n: i18nBridge }
                         Pages.InventoryPage { objectName: "inventoryPage"; controller: inventoryController; i18n: i18nBridge }
+                        Pages.QuantResearchPage { objectName: "quantResearchPage"; controller: quantResearchController; i18n: i18nBridge }
                         Pages.AuditPage { objectName: "coverageAuditPage"; tableObjectName: "coverageAuditTable"; controller: coverageAuditController; i18n: i18nBridge }
                         Pages.AuditPage { objectName: "intradayAuditPage"; tableObjectName: "intradayAuditTable"; controller: intradayAuditController; i18n: i18nBridge }
                         Pages.RunsPage { objectName: "runsPage"; controller: runsController; i18n: i18nBridge }
