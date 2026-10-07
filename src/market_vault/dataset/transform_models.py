@@ -42,6 +42,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 import numbers
+from pathlib import Path
 import re
 import sys
 import types
