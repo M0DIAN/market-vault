@@ -40,6 +40,10 @@ from .ridge_final_evaluation_cli import (
     add_ridge_final_evaluation_subparser,
     research_ridge_final_evaluation_main,
 )
+from .ridge_final_evaluation_export_cli import (
+    add_ridge_final_evaluation_export_subparser,
+    research_ridge_final_evaluation_export_main,
+)
 from .ridge_trading_selection_cli import (
     add_ridge_trading_selection_subparser,
     research_ridge_trading_select_main,
@@ -96,6 +100,7 @@ RESEARCH_COMMANDS = frozenset({
     "research-ridge",
     "research-ridge-final",
     "research-ridge-final-evaluation",
+    "research-ridge-final-evaluation-export",
     "research-ridge-final-trading",
     "research-ridge-selected-final-trading",
     "research-ridge-trading-select",
@@ -181,6 +186,7 @@ def add_research_subparsers(subparsers) -> None:
     add_ridge_subparser(subparsers)
     add_ridge_final_subparser(subparsers)
     add_ridge_final_evaluation_subparser(subparsers)
+    add_ridge_final_evaluation_export_subparser(subparsers)
     add_ridge_final_trading_subparser(subparsers)
     add_ridge_selected_final_trading_subparser(subparsers)
     add_ridge_trading_selection_subparser(subparsers)
@@ -204,6 +210,8 @@ def run_research_command(command: str, args: argparse.Namespace) -> int:
         return research_ridge_final_main(args)
     if command == "research-ridge-final-evaluation":
         return research_ridge_final_evaluation_main(args)
+    if command == "research-ridge-final-evaluation-export":
+        return research_ridge_final_evaluation_export_main(args)
     if command == "research-ridge-final-trading":
         return research_ridge_final_trading_main(args)
     if command == "research-ridge-selected-final-trading":
