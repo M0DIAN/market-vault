@@ -1,0 +1,51 @@
+{
+  "name": "PR251 Research Builder Focused Verification",
+  "permissions": {
+    "contents": "read"
+  },
+  "on": {
+    "push": {
+      "branches": [
+        "verify/pr251-research-builder-focused"
+      ]
+    }
+  },
+  "jobs": {
+    "focused": {
+      "runs-on": "ubuntu-latest",
+      "steps": [
+        {
+          "name": "Checkout exact candidate",
+          "uses": "actions/checkout@v6",
+          "with": {
+            "ref": "b5347d895f13031ab5daa39cf3d2977a7d9f03d8",
+            "fetch-depth": 0
+          }
+        },
+        {
+          "name": "Verify identity",
+          "run": "set -euo pipefail\ntest \"$(git rev-parse HEAD)\" = \"b5347d895f13031ab5daa39cf3d2977a7d9f03d8\"\ntest -z \"$(git status --porcelain)\"\necho PR251_FOCUSED_SOURCE=PASS"
+        },
+        {
+          "name": "Set up Python",
+          "uses": "actions/setup-python@v6",
+          "with": {
+            "python-version": "3.11"
+          }
+        },
+        {
+          "name": "Install dependencies",
+          "run": "python -m pip install --upgrade pip\npython -m pip install -e \".[dev]\""
+        },
+        {
+          "name": "Run focused research builder surface",
+          "env": {
+            "QT_QPA_PLATFORM": "offscreen",
+            "QSG_RHI_BACKEND": "software"
+          },
+          "run": "python -m pytest   tests/test_research_workspace.py   tests/test_ts2_feature_execution.py   tests/test_cross_day_execution.py   tests/test_desktop_quant_research.py   tests/test_desktop_shell.py   tests/test_desktop_localization.py   tests/test_desktop_packaging.py   -q\necho PR251_RESEARCH_BUILDER_FOCUSED=PASS"
+        }
+      ]
+    }
+  }
+}
