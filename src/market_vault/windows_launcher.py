@@ -40,7 +40,31 @@ def build_parser() -> argparse.ArgumentParser:
     from market_vault.desktop.app import add_application_arguments
 
     parser = argparse.ArgumentParser(description="Launch MarketVault")
-    return add_application_arguments(parser, hide_internal_smoke_options=True)
+    add_application_arguments(parser, hide_internal_smoke_options=True)
+    parser.add_argument(
+        "--research-import-smoke",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    return parser
+
+
+def _run_research_import_smoke() -> int:
+    """Exercise the exact lazy Quant Research import chain used by the GUI."""
+    from market_vault.research_dataset import build_research_dataset
+    from market_vault.research_workspace import (
+        build_local_research_dataset,
+        plan_local_research_dataset,
+    )
+
+    entry_points = (
+        build_research_dataset,
+        build_local_research_dataset,
+        plan_local_research_dataset,
+    )
+    if not all(callable(item) for item in entry_points):
+        raise RuntimeError("Quant Research import smoke did not resolve entry points")
+    return 0
 
 
 def _show_frozen_error(message: str) -> None:
@@ -49,9 +73,14 @@ def _show_frozen_error(message: str) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     settings_path: Path | None = None
+    research_import_smoke = False
     try:
         parser = build_parser()
         args = parser.parse_args(argv)
+        research_import_smoke = bool(args.research_import_smoke)
+        if research_import_smoke:
+            return _run_research_import_smoke()
+
         from market_vault.desktop.app import (
             run_application,
             validate_application_arguments,
@@ -69,6 +98,10 @@ def main(argv: list[str] | None = None) -> int:
             ),
         )
     except Exception as exc:
+        if research_import_smoke:
+            if not is_frozen():
+                raise
+            return 1
         if not is_frozen():
             raise
         _show_frozen_error(
