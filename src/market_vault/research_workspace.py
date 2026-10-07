@@ -601,18 +601,43 @@ def _label_specs(horizon: int) -> tuple[LabelSpec, ...]:
     )
 
 
-def _split_spec(anchor_dates: tuple[date, ...]) -> ChronologicalSplitSpec:
+def _split_spec(
+    anchor_dates: tuple[date, ...],
+    horizon_trading_days: int,
+) -> ChronologicalSplitSpec:
     count = len(anchor_dates)
-    if count < 4:
+    minimum_train = horizon_trading_days + 1
+    minimum_validation = horizon_trading_days + 1
+    minimum_test = 1
+    minimum_total = minimum_train + minimum_validation + minimum_test
+    if count < minimum_total:
         raise ResearchWorkspaceError(
-            "At least four anchor trading dates are required for TRAIN/VALIDATION/TEST"
+            "Research range is too short for leakage-safe TRAIN/VALIDATION/TEST "
+            f"with a {horizon_trading_days}-trading-day Label horizon; "
+            f"need at least {minimum_total} anchor trading dates"
         )
-    train_end_index = max(0, math.floor(count * 0.70) - 1)
-    validation_end_index = max(
-        train_end_index + 1,
-        math.floor(count * 0.85) - 1,
-    )
-    validation_end_index = min(validation_end_index, count - 2)
+
+    train_count = max(minimum_train, math.floor(count * 0.70))
+    validation_count = max(minimum_validation, math.floor(count * 0.15))
+    allowed_development = count - minimum_test
+    excess = train_count + validation_count - allowed_development
+    if excess > 0:
+        reducible_train = train_count - minimum_train
+        reduction = min(excess, reducible_train)
+        train_count -= reduction
+        excess -= reduction
+    if excess > 0:
+        reducible_validation = validation_count - minimum_validation
+        reduction = min(excess, reducible_validation)
+        validation_count -= reduction
+        excess -= reduction
+    if excess:
+        raise ResearchWorkspaceError(
+            "Unable to allocate leakage-safe chronological split boundaries"
+        )
+
+    train_end_index = train_count - 1
+    validation_end_index = train_count + validation_count - 1
     return ChronologicalSplitSpec(
         CHRONOLOGICAL_SPLIT_SPEC_SCHEMA_VERSION,
         "desktop_quant_70_15_15",
@@ -676,7 +701,7 @@ def plan_local_research_dataset(
             "Research range does not contain enough future trading days for the Label horizon"
         )
     anchor_dates = trading_dates[:-horizon]
-    split = _split_spec(anchor_dates)
+    split = _split_spec(anchor_dates, horizon)
     features, feature_window = _feature_preset(preset)
     labels = _label_specs(horizon)
 
