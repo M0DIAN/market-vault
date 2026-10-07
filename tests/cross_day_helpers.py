@@ -76,7 +76,8 @@ def spec(n=1, transform="forward_return", name=None, schema="10.9-mv-ts2"):
 
 
 def bar(day="2025-03-03", slot=1, *, open=100.0, close=100.0, high=150.0, low=75.0, interval="5m",
-        schema="10.9-mv-ts2", archive=ARCHIVE, market=None, source="a", code="US.AAPL"):
+        schema="10.9-mv-ts2", archive=ARCHIVE, market=None, source="a", code="US.AAPL",
+        row_session="RTH"):
     day = date.fromisoformat(day) if type(day) is str else day
     event = pd.Timestamp(local(day) + timedelta(minutes=int(interval[:-1]) * slot))
     key = canonical_bar_key(dataset_kind=DEFAULT_DATASET_KIND, code=code, interval=interval, adjustment="NONE", event_time=event)
@@ -85,7 +86,7 @@ def bar(day="2025-03-03", slot=1, *, open=100.0, close=100.0, high=150.0, low=75
     return CanonicalBar(key, version, DEFAULT_DATASET_KIND, code, interval, "NONE", event,
         pd.Timestamp(market or event + timedelta(minutes=int(interval[:-1]))), pd.Timestamp(archive),
         open, high, low, close, 100.0, (), "run-" + source, source * 64, "f" * 64,
-        schema, CANONICAL_BUILDER_VERSION, day, "RTH", day, "RTH", "offline/" + source + ".parquet")
+        schema, CANONICAL_BUILDER_VERSION, day, "RTH", day, row_session, "offline/" + source + ".parquet")
 
 
 def build(tmp_path, bars, *, dates=None, schema="10.9-mv-ts2", interval="5m"):

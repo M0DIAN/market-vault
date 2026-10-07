@@ -452,3 +452,30 @@ def test_coordinated_fake_implementation_proof_rejected(normal, empty):
     with pytest.raises(CrossDayLabelError, match="fixed registry implementation source"):
         replace(result, implementation_pins=(fake_pin,), implementation_source_hashes=((real.transform_ref, fake_source),),
                 values=fake_values)
+
+
+def test_real_canonical_regular_row_session_cross_day_is_admitted(tmp_path):
+    feature = build(
+        tmp_path / "feature",
+        (
+            bar(day="2025-03-03", slot=1, close=100.0, row_session="REGULAR"),
+        ),
+    )
+    label = build(
+        tmp_path / "label",
+        (
+            bar(day="2025-03-04", slot=1, close=102.0, row_session="REGULAR"),
+        ),
+        dates=[date(2025, 3, 4)],
+    )
+    association = assemble_cross_day_labels(
+        pit((feature,), day="2025-03-03", slot=1),
+        (feature,),
+        (label,),
+        schedule(),
+        (spec(),),
+        dataset_as_of=AS_OF,
+    )
+    result = execute_cross_day_labels(association)
+    assert result.status == "COMPLETE"
+    assert result.samples[0].status == "COMPLETE"

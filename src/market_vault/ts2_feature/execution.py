@@ -80,7 +80,12 @@ def _builds(values):
         require(request.interval in authority.INTERVAL_MINUTES and request.requested_session == "RTH"
                 and request.adjustment == "NONE" and type(request.symbols) is tuple
                 and all(type(s) is str and s.startswith("US.") for s in request.symbols)
-                and all(b.session == b.requested_session == "RTH" and b.adjustment == "NONE" for b in build.bars),
+                and all(
+                    b.requested_session == "RTH"
+                    and b.session in authority.RTH_CANONICAL_ROW_SESSIONS
+                    and b.adjustment == "NONE"
+                    for b in build.bars
+                ),
                 "SCOPE", "unsupported Canonical scope")
         require(type(request.trade_dates) is tuple and all(type(d) is date for d in request.trade_dates),
                 "CANONICAL_AUTHORITY", "exact immutable Canonical request dates required")

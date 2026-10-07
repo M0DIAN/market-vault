@@ -24,6 +24,7 @@ from ._validation import require, scalar, sha256, instant, typed_tuple
 from .registry import CROSS_DAY_SOURCE_SCHEMA_VERSION
 
 INTERVAL_MINUTES = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "60m": 60}
+RTH_CANONICAL_ROW_SESSIONS = frozenset({"RTH", "REGULAR"})
 
 
 def admit_builds(builds):
@@ -62,7 +63,8 @@ def admit_builds(builds):
             require((bar.interval, bar.requested_session, bar.adjustment, bar.source_schema_version) ==
                     (request.interval, request.requested_session, request.adjustment, request.source_schema_version)
                     and bar.code in request.symbols and bar.requested_trade_date in request.trade_dates
-                    and bar.session == "RTH" and bar.market_calendar_date == bar.requested_trade_date
+                    and bar.session in RTH_CANONICAL_ROW_SESSIONS
+                    and bar.market_calendar_date == bar.requested_trade_date
                     and bar.canonical_builder_version == build.canonical_builder_version,
                     "row/build scope or provenance mismatch")
             require(bar.dataset_kind == "market_bars_canonical", "unsupported Canonical dataset kind")

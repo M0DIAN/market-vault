@@ -8,7 +8,15 @@ from ..dataset.spec_models import LabelSpec
 from ..dataset.pit_models import PITAssemblyResult
 from ..canonical.reader import VerifiedCanonicalBuild
 from ..observation.pit_models import ObservationPITAssemblyResult
-from ._authority import INTERVAL_MINUTES, admit_builds, admit_feature_pit, admit_observation_pit, gap_boundary_rows, reconcile
+from ._authority import (
+    INTERVAL_MINUTES,
+    RTH_CANONICAL_ROW_SESSIONS,
+    admit_builds,
+    admit_feature_pit,
+    admit_observation_pit,
+    gap_boundary_rows,
+    reconcile,
+)
 from ._validation import CrossDayLabelError, instant, require, typed_tuple
 from . import identity
 from .models import CrossDayLabelDecision, CrossDayLabelGapProof, CrossDayLabelRowReference, CrossDayLabelSlot, CrossDayLabelSampleBinding
@@ -26,8 +34,11 @@ def _proofs(offset, event, request, builds, cutoff):
     grouped = {}
     for build in builds:
         for gap in build.gap_ranges:
-            if ((gap.code, gap.interval, gap.adjustment, gap.market_calendar_date, gap.session) !=
-                    (request.code, request.interval, request.adjustment, event.date(), "RTH")):
+            if (
+                (gap.code, gap.interval, gap.adjustment, gap.market_calendar_date) !=
+                (request.code, request.interval, request.adjustment, event.date())
+                or gap.session not in RTH_CANONICAL_ROW_SESSIONS
+            ):
                 # event.date() is UTC; all qualified US RTH events share their UTC civil date.
                 continue
             nominal = timedelta(minutes=INTERVAL_MINUTES[request.interval])
@@ -98,10 +109,27 @@ def _facts(pit, feature_builds, label_builds, schedule, specs, cutoff, observati
                                                target.session_open, target.session_close, fits))
                 if not fits:
                     continue
-                candidates = [r for r in rows.values() if
-                    (r.bar.code, r.bar.interval, r.bar.adjustment, r.bar.requested_session, r.bar.session,
-                     r.bar.market_calendar_date, r.bar.event_time) ==
-                    (request.code, request.interval, request.adjustment, "RTH", "RTH", target.market_calendar_date, expected)]
+                candidates = [
+                    r
+                    for r in rows.values()
+                    if (
+                        r.bar.code,
+                        r.bar.interval,
+                        r.bar.adjustment,
+                        r.bar.requested_session,
+                        r.bar.market_calendar_date,
+                        r.bar.event_time,
+                    )
+                    == (
+                        request.code,
+                        request.interval,
+                        request.adjustment,
+                        "RTH",
+                        target.market_calendar_date,
+                        expected,
+                    )
+                    and r.bar.session in RTH_CANONICAL_ROW_SESSIONS
+                ]
                 require(len(candidates) <= 1, "conflicting required row")
                 if candidates:
                     ref = _reference(offset, candidates[0])
