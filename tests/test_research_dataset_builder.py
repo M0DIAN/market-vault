@@ -1,6 +1,7 @@
 """Focused composition tests for Research Dataset Builder V1."""
 
 from datetime import date, timedelta
+from pathlib import Path
 
 import market_vault
 
@@ -59,6 +60,18 @@ def test_builder_composes_existing_pipeline_without_redefining_authority(tmp_pat
     assert actual.split_result == expected.split_result
     assert captured["output_root"] == kwargs["output_root"]
     assert captured["built_at"] == kwargs["built_at"]
+
+
+def test_source_mode_keeps_exact_caller_output_root(tmp_path):
+    requested = tmp_path / "research" / "cross_day"
+    assert research._production_materialization_output_root(requested) == requested
+
+
+def test_frozen_windows_research_output_root_contract_is_direct_volume_child():
+    source = Path(research.__file__).read_text(encoding="utf-8")
+    assert 'Path(root.anchor) / "MarketVault-Research" / "cross_day"' in source
+    assert 'os.name != "nt"' in source
+    assert 'getattr(sys, "frozen", False)' in source
 
 
 def test_top_level_lazy_export_points_to_builder():
