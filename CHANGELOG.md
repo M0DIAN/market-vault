@@ -4,6 +4,68 @@ All notable changes to MarketVault are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-10-07
+
+### Added
+
+- High-level PIT-safe Research Dataset Builder and strict `research-build`
+  Plan/CLI over verified Canonical, Observation, Multi-Source and Cross-Day
+  authorities.
+- Quant Feature Library V1: SMA/EMA, RSI, MACD line/signal/histogram, ATR,
+  OBV, and fixed KDJ K/D/J.
+- Research Label Library V1 with 1/3/5/10 trading-day forward return,
+  direction, MFE, MAE, plus execution-safe future-open-to-close return Labels.
+- Deterministic single-symbol Long/Flat Backtest Engine V1 and explicit
+  `research-backtest` Plan/CLI with chronological splits, non-overlapping
+  trades, commission/slippage, and realized-equity metrics.
+- Verified ML Dataset Adapter with immutable TRAIN/VALIDATION/TEST X/y/metadata
+  projections and detached pandas convenience views.
+- Feature Research, Feature Stability, leakage-safe Feature Selection, and
+  explicit Experiment Metadata.
+- Walk-Forward experiments, deterministic Ridge baseline, validation-only
+  alpha selection, frozen permanent TEST evaluation, and Plan/CLI surfaces.
+- Validation-only trading-threshold selection, fixed-zero and selected-threshold
+  permanent TEST trading evaluation, and read-only final Ridge comparison.
+- Lightweight canonical JSON Final Ridge Evaluation Artifact with strict
+  identity revalidation, exclusive create/byte-identical reuse, and explicit
+  `research-ridge-final-evaluation-artifact` Plan/CLI.
+
+### Changed
+
+- Research commands are explicit-path, settings-independent offline workflows;
+  they do not connect to OpenD or auto-select a latest artifact.
+- CI adds `research_fast` for bounded research regressions, removes duplicate
+  feature-branch push CI, cancels stale runs, and preserves FULL main
+  integration or verified post-merge FULL reuse.
+- TS2 execution identity uses the original compatibility baseline plus only
+  extension implementations actually requested by an execution, preventing
+  unrelated Feature additions from churning historical Dataset identities.
+- README and user documentation now describe the offline quantitative-research
+  capabilities instead of the v0.8 data-only boundary.
+
+### Compatibility
+
+- Existing v0.8.0 Canonical, legacy Dataset, Dataset Catalog and Raw/Curated
+  artifacts require no migration or rewrite.
+- The four existing `ArtifactClient` business methods remain unchanged.
+- New Cross-Day/research/experiment/final-evaluation artifacts are additive
+  versioned capabilities.
+- Runtime dependency set remains unchanged.
+- Legacy TS2 execution identities are preserved for the original baseline
+  closure.
+
+### Known boundaries
+
+- Adjusted-Price PIT remains NONE-only; QFQ/HFQ PIT is not enabled.
+- Backtest V1 is single-symbol Long/Flat and reports realized trade-close
+  drawdown rather than a full intraholding mark-to-market equity curve.
+- Ridge is a deterministic offline research baseline, not a general model zoo
+  or model-serving platform.
+- No live broker execution, automatic trading, MLOps, REST research service,
+  distributed backtest cluster, or GPU training platform.
+- v0.9.0 is currently a release-preparation candidate; v0.8.0 remains the
+  formal release until a separate formal-release action completes.
+
 ## [0.8.0] - 2026-09-11
 
 ### Added
@@ -521,6 +583,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Historical K-line collection for closed dates (`collect`), query layer
   (`query`), and option datasets.
 
+[0.9.0]: https://github.com/M0DIAN/market-vault/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/M0DIAN/market-vault/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/M0DIAN/market-vault/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/M0DIAN/market-vault/compare/v0.6.0...v0.6.1
