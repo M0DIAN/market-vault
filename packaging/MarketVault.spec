@@ -58,6 +58,30 @@ FONT_ASSETS = [
         "OFL.txt",
     )
 ]
+FINGERPRINT_SOURCE_ASSETS = [
+    (
+        SOURCE_ROOT / "market_vault" / "multi_source" / "feature_transforms.py",
+        "market_vault/multi_source",
+    ),
+    *[
+        (path, "market_vault/dataset/feature_transforms")
+        for path in sorted(
+            (
+                SOURCE_ROOT / "market_vault" / "dataset" / "feature_transforms"
+            ).glob("*.py")
+        )
+        if path.name != "__init__.py"
+    ],
+    *[
+        (path, "market_vault/dataset/label_transforms")
+        for path in sorted(
+            (
+                SOURCE_ROOT / "market_vault" / "dataset" / "label_transforms"
+            ).glob("*.py")
+        )
+        if path.name != "__init__.py"
+    ],
+]
 QML_PAGES = [
     SOURCE_ROOT / "market_vault" / "desktop" / "qml" / "pages" / name
     for name in (
@@ -109,6 +133,7 @@ analysis = Analysis(
     binaries=[],
     datas=collect_data_files("moomoo", include_py_files=False)
     + [(str(WINDOWS_ICON), "assets/windows")]
+    + [(str(path), destination) for path, destination in FINGERPRINT_SOURCE_ASSETS]
     + [
         (str(QML_ENTRY_POINT), "market_vault/desktop/qml"),
         *[
