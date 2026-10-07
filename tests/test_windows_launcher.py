@@ -125,12 +125,44 @@ def test_production_launcher_preserves_dashboard_smoke_arguments(
     assert calls[0]["dashboard_smoke_require_recent_runs"] is True
 
 
+def test_production_launcher_runs_research_import_smoke_without_qml(monkeypatch) -> None:
+    calls = []
+    monkeypatch.setattr(
+        windows_launcher,
+        "_run_research_import_smoke",
+        lambda: calls.append("research-import") or 0,
+    )
+    monkeypatch.setattr(
+        app,
+        "run_application",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("QML must not start")),
+    )
+
+    assert windows_launcher.main(["--research-import-smoke"]) == 0
+    assert calls == ["research-import"]
+
+
+def test_frozen_research_import_smoke_failure_is_noninteractive(monkeypatch) -> None:
+    messages = []
+
+    def fail() -> int:
+        raise RuntimeError("research import failed")
+
+    monkeypatch.setattr(windows_launcher, "_run_research_import_smoke", fail)
+    monkeypatch.setattr(windows_launcher, "is_frozen", lambda: True)
+    monkeypatch.setattr(windows_launcher, "_show_frozen_error", messages.append)
+
+    assert windows_launcher.main(["--research-import-smoke"]) == 1
+    assert messages == []
+
+
 def test_production_help_hides_internal_smoke_flags() -> None:
     help_text = windows_launcher.build_parser().format_help()
 
     assert "--settings" in help_text
     assert "--smoke-exit-ms" not in help_text
     assert "--dashboard-smoke" not in help_text
+    assert "--research-import-smoke" not in help_text
 
 
 def test_frozen_qml_startup_failure_uses_existing_error_boundary(
