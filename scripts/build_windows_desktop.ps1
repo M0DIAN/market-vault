@@ -219,6 +219,26 @@ foreach ($RequiredFrozenModule in @(
     }
 }
 
+$FingerprintSourceFiles = @(
+    Get-Item -LiteralPath (Join-Path $SourceRoot "market_vault\multi_source\feature_transforms.py")
+    Get-ChildItem -LiteralPath (Join-Path $SourceRoot "market_vault\dataset\feature_transforms") -Filter "*.py" -File |
+        Where-Object { $_.Name -ne "__init__.py" }
+    Get-ChildItem -LiteralPath (Join-Path $SourceRoot "market_vault\dataset\label_transforms") -Filter "*.py" -File |
+        Where-Object { $_.Name -ne "__init__.py" }
+)
+foreach ($SourceAsset in $FingerprintSourceFiles) {
+    $RelativeAsset = [IO.Path]::GetRelativePath($SourceRoot, $SourceAsset.FullName)
+    $BundledAsset = Join-Path $FinalApp ("_internal\" + $RelativeAsset)
+    if (-not (Test-Path -LiteralPath $BundledAsset -PathType Leaf)) {
+        throw "Identity-bearing transform source is missing from the production bundle: $RelativeAsset"
+    }
+    $SourceAssetHash = (Get-FileHash -LiteralPath $SourceAsset.FullName -Algorithm SHA256).Hash
+    $BundledAssetHash = (Get-FileHash -LiteralPath $BundledAsset -Algorithm SHA256).Hash
+    if ($SourceAssetHash -ne $BundledAssetHash) {
+        throw "Identity-bearing transform source hash mismatch in production bundle: $RelativeAsset"
+    }
+}
+
 $ForbiddenTopLevel = @(".git", "tests", "data", "catalog", "manifests", "reports", "quarantine")
 $TopLevelNames = Get-ChildItem -LiteralPath $FinalApp -Force | ForEach-Object { $_.Name }
 $ForbiddenFound = @($TopLevelNames | Where-Object { $ForbiddenTopLevel -contains $_ })
@@ -243,6 +263,11 @@ New-Item -ItemType Directory -Force -Path (Split-Path -Parent $SmokeConfig) | Ou
 New-Item -ItemType Directory -Force -Path $SmokeCwd | Out-Null
 New-Item -ItemType Directory -Force -Path $SmokeLocalAppData | Out-Null
 Copy-Item -LiteralPath $ConfigTemplate -Destination $SmokeConfig
+
+$ResearchImportSmokeProcess = Start-Process -FilePath $ExePath -ArgumentList @("--research-import-smoke") -WorkingDirectory $SmokeCwd -Wait -PassThru
+if ($ResearchImportSmokeProcess.ExitCode -ne 0) {
+    throw "Frozen Quant Research import smoke failed with exit code $($ResearchImportSmokeProcess.ExitCode)."
+}
 
 $OriginalLocalAppData = $env:LOCALAPPDATA
 $env:LOCALAPPDATA = $SmokeLocalAppData
@@ -323,6 +348,7 @@ $Metadata = [ordered]@{
     tkinter_bundle_audit = "absent"
     fusion_pixel_sha256 = $BundledFontHash
     unrelated_cwd_smoke_exit_code = $SmokeProcess.ExitCode
+    research_import_smoke_exit_code = $ResearchImportSmokeProcess.ExitCode
     startup_runtime_mutation = $false
     dashboard_smoke_settings = $ResolvedDashboardSmokeSettings
     dashboard_smoke_require_recent_runs = [bool]$DashboardSmokeRequireRecentRuns
