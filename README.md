@@ -1,10 +1,10 @@
 # MarketVault
 
-MarketVault is a local-first historical market-data and verified
-research-data pipeline for moomoo OpenD. It collects and audits historical
-market data, builds immutable and verifiable research artifacts, and
-exposes deterministic Dataset / Catalog / Python read surfaces for
-research and ML consumers.
+MarketVault is a local-first historical market-data and deterministic
+quantitative-research pipeline for moomoo OpenD. It collects and audits
+historical market data, builds immutable verified research artifacts, and
+supports PIT-safe Dataset construction, Feature/Label research, backtesting,
+walk-forward experiments, and frozen offline Ridge evaluation.
 
 ## What MarketVault is
 
@@ -12,8 +12,9 @@ MarketVault runs against a locally installed moomoo OpenD instance. It
 collects historical candlesticks, option contract metadata, daily option
 volatility, and trading-calendar data; keeps immutable Raw / Curated
 snapshots; audits coverage and intraday integrity; and derives verified
-Canonical builds and deterministic Datasets that research code can consume
-safely. It does not train models, produce signals, or trade automatically.
+Canonical builds and deterministic Datasets that research code can consume safely. The v0.9 research layer can fit and evaluate
+offline deterministic Ridge baselines and research trading rules; it does not
+submit live broker orders or run automatic trading.
 
 ## Core capabilities
 
@@ -27,6 +28,13 @@ safely. It does not train models, produce signals, or trade automatically.
 - Deterministic point-in-time-safe Dataset construction
 - Deterministic Sample Generation and immutable Dataset Catalog
 - Verified CLI and Python ArtifactClient read access
+- PIT-safe Multi-Source / Cross-Day Research Dataset construction
+- Quant Feature Library: SMA/EMA, RSI, MACD, ATR, OBV, and KDJ
+- Research Label Library with execution-safe forward returns, direction, MFE, and MAE
+- Single-symbol Long/Flat Backtest Engine with explicit costs and chronological splits
+- ML Dataset Adapter, Feature Research/Stability/Selection, and experiment metadata
+- Walk-Forward Ridge research with validation-only alpha/threshold selection and frozen TEST evaluation
+- Canonical JSON final Ridge evaluation artifact with explicit-path CLI
 
 ## Data flow
 
@@ -39,11 +47,17 @@ Audit
     ↓
 Verified Canonical
     ↓
-Deterministic Dataset
+PIT-safe Research Dataset
     ↓
-Dataset Catalog
+Feature / Label Library
     ↓
-Python / research / ML consumers
+Feature Research / Backtest / ML Adapter
+    ↓
+Walk-Forward Ridge validation
+    ↓
+Frozen Final TEST evaluation
+    ↓
+Verified final-evaluation artifact
 ```
 
 ## Design principles
@@ -133,6 +147,7 @@ details in the [user guide](docs/USER_GUIDE.md) and the
 - Formal v0.7.0 release record: [docs/release_v0_7_0.md](docs/release_v0_7_0.md)
 - V0.8.0 release direction: [docs/v0_8_0_direction.md](docs/v0_8_0_direction.md)
 - Formal v0.8.0 release record: [docs/release_v0_8_0.md](docs/release_v0_8_0.md)
+- v0.9.0 release candidate: [docs/release_v0_9_0.md](docs/release_v0_9_0.md)
 - Python Client detailed guide: [docs/v0_7_0_python_client_usage.md](docs/v0_7_0_python_client_usage.md)
 - Contracts: [docs/contracts/](docs/contracts/)
 - Historical Console v0.1 contract: [docs/contracts/console_v01.md](docs/contracts/console_v01.md)
@@ -142,15 +157,18 @@ details in the [user guide](docs/USER_GUIDE.md) and the
 
 ## Release lifecycle
 
-- Current package version: v0.8.0
+- Current package candidate: v0.9.0
 - Current formal release: v0.8.0
-- GitHub Release: published
+- v0.9.0 formal release: pending separate release gate
+- GitHub Release: v0.8.0 published; v0.9.0 not yet published
 - PyPI: not published
 - TestPyPI: not published
 
-The formal v0.8.0 GitHub Release is published and sealed. Its immutable
-release identities and verification evidence are recorded in
-[docs/release_v0_8_0.md](docs/release_v0_8_0.md).
+The v0.9.0 source package is in release-preparation candidate state. Its
+candidate scope and compatibility boundaries are recorded in
+[docs/release_v0_9_0.md](docs/release_v0_9_0.md). The formal v0.8.0 GitHub
+Release remains published and sealed; its immutable identities remain recorded
+in [docs/release_v0_8_0.md](docs/release_v0_8_0.md).
 
 Release commit SHAs, tag objects, asset hashes, and release audit evidence
 belong in the formal release records, not in this README.
