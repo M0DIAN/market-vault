@@ -149,6 +149,11 @@ def test_smoke_exit_argument_accepts_bounded_values(value):
     )
 
 
+def test_research_import_smoke_argument_is_internal_and_explicit():
+    args = app.build_parser().parse_args(["--research-import-smoke"])
+    assert args.research_import_smoke is True
+
+
 def test_qml_settings_resolution_is_cwd_independent_in_source_and_frozen_modes(
     tmp_path,
 ):
@@ -573,6 +578,13 @@ def test_production_packaging_retains_complete_qml_runtime_contract():
     assert 'Copy-Item -LiteralPath $ConfigTemplate' in production_build
     assert 'application_context = "shared-lazy"' in production_build
     assert 'collect_submodules("market_vault.multi_source")' in production_spec
+    assert "FINGERPRINT_SOURCE_ASSETS" in production_spec
+    assert '"market_vault/multi_source"' in production_spec
+    assert '"market_vault/dataset/feature_transforms"' in production_spec
+    assert '"market_vault/dataset/label_transforms"' in production_spec
+    assert '--research-import-smoke' in production_build
+    assert "research_import_smoke_exit_code" in production_build
+    assert "Identity-bearing transform source hash mismatch" in production_build
     assert 'collect_submodules(' in production_spec
     assert 'collect_data_files("moomoo"' in production_spec
     for frozen_module in (
