@@ -80,6 +80,14 @@ def add_application_arguments(
         ),
     )
     parser.add_argument(
+        "--research-import-smoke",
+        action="store_true",
+        help=(
+            smoke_help
+            or "Import the frozen Quant Research authority chain and exit."
+        ),
+    )
+    parser.add_argument(
         "--settings",
         default=None,
         help="Settings file. Frozen relative paths resolve from the executable directory.",
@@ -121,6 +129,8 @@ def validate_application_arguments(
 
     if args.dashboard_smoke and args.smoke_exit_ms is not None:
         parser.error("--dashboard-smoke cannot be combined with --smoke-exit-ms")
+    if args.research_import_smoke and args.dashboard_smoke:
+        parser.error("--research-import-smoke cannot be combined with --dashboard-smoke")
     if args.dashboard_smoke_require_recent_runs and not args.dashboard_smoke:
         parser.error("--dashboard-smoke-require-recent-runs requires --dashboard-smoke")
 
@@ -211,8 +221,20 @@ def run_application(
     dashboard_smoke: bool = False,
     dashboard_smoke_timeout_ms: int = DEFAULT_DASHBOARD_SMOKE_TIMEOUT_MS,
     dashboard_smoke_require_recent_runs: bool = False,
+    research_import_smoke: bool = False,
 ) -> int:
     """Create the Qt application over one shared production backend context."""
+
+    if research_import_smoke:
+        import importlib
+
+        importlib.import_module("market_vault.multi_source")
+        importlib.import_module("market_vault.research_dataset")
+        from market_vault import multi_source
+
+        if multi_source.__name__ != "market_vault.multi_source":
+            raise RuntimeError("Quant Research package import identity mismatch")
+        return 0
 
     from PySide6.QtCore import QTimer, QUrl
     from PySide6.QtGui import QGuiApplication, QIcon
@@ -328,6 +350,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             dashboard_smoke_require_recent_runs=(
                 args.dashboard_smoke_require_recent_runs
             ),
+            research_import_smoke=args.research_import_smoke,
         )
     except Exception as exc:
         print(f"MarketVault QML startup failed: {exc}", file=sys.stderr)
