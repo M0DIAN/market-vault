@@ -18,14 +18,14 @@
           "name": "Checkout exact canary",
           "uses": "actions/checkout@v6",
           "with": {
-            "ref": "0177006225ab9aa70c4be7ec13405a211fd49f3c",
+            "ref": "247bd66bb3af5dc4e0820f293a9a70777af38581",
             "fetch-depth": 0
           }
         },
         {
           "name": "Verify identity",
           "shell": "pwsh",
-          "run": "$ErrorActionPreference=\"Stop\"\n$head=(git rev-parse HEAD).Trim()\nif ($head -ne \"0177006225ab9aa70c4be7ec13405a211fd49f3c\") { throw \"HEAD drift: $head\" }\nif (git status --porcelain) { throw \"dirty checkout\" }\nWrite-Output \"FROZEN_IMPORT_CANARY_SOURCE=PASS\""
+          "run": "$ErrorActionPreference=\"Stop\"\n$head=(git rev-parse HEAD).Trim()\nif ($head -ne \"247bd66bb3af5dc4e0820f293a9a70777af38581\") { throw \"HEAD drift: $head\" }\nif (git status --porcelain) { throw \"dirty checkout\" }\nWrite-Output \"FROZEN_IMPORT_CANARY_SOURCE=PASS\""
         },
         {
           "name": "Set up Python",
