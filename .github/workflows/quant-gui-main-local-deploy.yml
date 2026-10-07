@@ -1,0 +1,87 @@
+{
+  "name": "Quant GUI Main Local Deployment Candidate",
+  "permissions": {
+    "contents": "read"
+  },
+  "on": {
+    "push": {
+      "branches": [
+        "deploy/quant-gui-main-local-candidate"
+      ]
+    }
+  },
+  "concurrency": {
+    "group": "quant-gui-main-local-candidate",
+    "cancel-in-progress": false
+  },
+  "jobs": {
+    "build": {
+      "runs-on": "windows-latest",
+      "env": {
+        "SOURCE_COMMIT": "707867ca2df01889cb5735cf9d4c11c0ef017fb0",
+        "SOURCE_TREE": "2a36fe4aaeb490f01007dd9db9b0578299aa396f",
+        "CANDIDATE_CHANNEL": "MAIN_QUANT_GUI_CANDIDATE"
+      },
+      "steps": [
+        {
+          "name": "Check out exact main candidate",
+          "uses": "actions/checkout@v6",
+          "with": {
+            "ref": "707867ca2df01889cb5735cf9d4c11c0ef017fb0",
+            "fetch-depth": 0
+          }
+        },
+        {
+          "name": "Verify exact source identity",
+          "shell": "pwsh",
+          "run": "$ErrorActionPreference = \"Stop\"\n$head = (git rev-parse HEAD).Trim()\n$tree = (git rev-parse \"HEAD^{tree}\").Trim()\nif ($head -ne $env:SOURCE_COMMIT) { throw \"HEAD drift: $head\" }\nif ($tree -ne $env:SOURCE_TREE) { throw \"TREE drift: $tree\" }\nif (git status --porcelain) { throw \"Candidate checkout is dirty\" }\nWrite-Output \"QUANT_GUI_SOURCE_IDENTITY=PASS\""
+        },
+        {
+          "name": "Set up Python 3.11.9",
+          "uses": "actions/setup-python@v6",
+          "with": {
+            "python-version": "3.11.9",
+            "architecture": "x64"
+          }
+        },
+        {
+          "name": "Install frozen Windows build dependencies",
+          "shell": "pwsh",
+          "run": "$ErrorActionPreference = \"Stop\"\npython -m pip install --upgrade pip\npython -m pip install -e \".[windows-exe]\"\npython -m pip install \"moomoo-api==10.9.6908\"\n$pyinstaller = (python -m PyInstaller --version).Trim()\n$pyside = (python -c \"import PySide6; print(PySide6.__version__)\").Trim()\n$moomoo = (python -c \"from importlib.metadata import version; print(version('moomoo-api'))\").Trim()\nif ($pyinstaller -ne \"6.22.2\") { throw \"Unexpected PyInstaller: $pyinstaller\" }\nif ($pyside -ne \"6.11.2\") { throw \"Unexpected PySide6: $pyside\" }\nif ($moomoo -ne \"10.9.6908\") { throw \"Unexpected moomoo-api: $moomoo\" }\npython -m pip freeze | Out-File -LiteralPath \"$env:RUNNER_TEMP\\quant-gui-build-freeze.txt\" -Encoding utf8\nWrite-Output \"QUANT_GUI_WINDOWS_BUILD_ENV=PASS\""
+        },
+        {
+          "name": "Build and smoke production ONEDIR",
+          "shell": "pwsh",
+          "run": "$ErrorActionPreference = \"Stop\"\n$out = Join-Path $env:RUNNER_TEMP \"quant-gui-main\"\n& .\\scripts\\build_windows_desktop.ps1 -PythonExecutable (Get-Command python).Source -OutputRoot $out -NoZip\nif ($LASTEXITCODE -ne 0) { throw \"build_windows_desktop.ps1 failed: $LASTEXITCODE\" }\n\n$metaPath = Join-Path $out \"MarketVault\\build-metadata.json\"\n$meta = Get-Content -LiteralPath $metaPath -Raw | ConvertFrom-Json\nif ($meta.build_head_sha -ne $env:SOURCE_COMMIT) { throw \"Build metadata HEAD drift: $($meta.build_head_sha)\" }\nif ($meta.packaging_mode -ne \"pyinstaller-onedir\") { throw \"Unexpected packaging mode\" }\nif ($meta.desktop_ui -ne \"pyside6-qml\") { throw \"Unexpected desktop UI\" }\nif ($meta.unrelated_cwd_smoke_exit_code -ne 0) { throw \"Frozen startup smoke did not pass\" }\n\n$qml = Join-Path $out \"MarketVault\\_internal\\market_vault\\desktop\\qml\\pages\\QuantResearchPage.qml\"\nif (-not (Test-Path -LiteralPath $qml -PathType Leaf)) {\n    throw \"QuantResearchPage.qml is missing from frozen bundle\"\n}\nWrite-Output \"QUANT_GUI_WINDOWS_ONEDIR_BUILD=PASS\"\nWrite-Output \"QUANT_GUI_FROZEN_SMOKE=PASS\""
+        },
+        {
+          "name": "Create protected local deployment package",
+          "shell": "pwsh",
+          "run": "$ErrorActionPreference = \"Stop\"\n$out = Join-Path $env:RUNNER_TEMP \"quant-gui-main\"\n$candidate = Join-Path $out \"MarketVault\"\n$exe = Join-Path $candidate \"MarketVault.exe\"\n$exeSha = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()\n\n$deployTemplate = @'\n[CmdletBinding()]\nparam(\n    [string]$LiveRoot = \"D:\\MarketVault\\App\\MarketVault\",\n    [switch]$NoLaunch\n)\n\n$ErrorActionPreference = \"Stop\"\nSet-StrictMode -Version Latest\n\n$SourceCommit = \"707867ca2df01889cb5735cf9d4c11c0ef017fb0\"\n$SourceTree = \"2a36fe4aaeb490f01007dd9db9b0578299aa396f\"\n$CandidateChannel = \"MAIN_QUANT_GUI_CANDIDATE\"\n$ExpectedExeSha = \"__EXE_SHA__\"\n\n$CandidateRoot = Join-Path $PSScriptRoot \"MarketVault\"\n$CandidateExe = Join-Path $CandidateRoot \"MarketVault.exe\"\n$CandidateInternal = Join-Path $CandidateRoot \"_internal\"\n$CandidateMetadata = Join-Path $CandidateRoot \"build-metadata.json\"\n\nforeach ($p in @($CandidateExe, $CandidateInternal, $CandidateMetadata)) {\n    if (-not (Test-Path -LiteralPath $p)) {\n        throw \"Candidate payload missing: $p\"\n    }\n}\n\n$meta = Get-Content -LiteralPath $CandidateMetadata -Raw | ConvertFrom-Json\nif ($meta.build_head_sha -ne $SourceCommit) {\n    throw \"Candidate build HEAD mismatch: $($meta.build_head_sha)\"\n}\nif ($meta.packaging_mode -ne \"pyinstaller-onedir\") {\n    throw \"Candidate packaging mode mismatch: $($meta.packaging_mode)\"\n}\n$actualCandidateSha = (Get-FileHash -LiteralPath $CandidateExe -Algorithm SHA256).Hash.ToLowerInvariant()\nif ($actualCandidateSha -ne $ExpectedExeSha) {\n    throw \"Candidate EXE SHA256 mismatch: $actualCandidateSha\"\n}\n\n$LiveRoot = [IO.Path]::GetFullPath($LiveRoot)\n$LiveExe = Join-Path $LiveRoot \"MarketVault.exe\"\n$LiveInternal = Join-Path $LiveRoot \"_internal\"\n$LiveMetadata = Join-Path $LiveRoot \"build-metadata.json\"\n\nif (-not (Test-Path -LiteralPath $LiveRoot -PathType Container)) {\n    throw \"Existing MarketVault production root not found: $LiveRoot\"\n}\nif (-not (Test-Path -LiteralPath $LiveExe -PathType Leaf)) {\n    throw \"Existing MarketVault.exe not found: $LiveExe\"\n}\n\n$ProtectedNames = @(\"config\", \"data\", \"catalog\", \"manifests\", \"reports\", \"quarantine\")\n$ProtectedBefore = [ordered]@{}\nforeach ($name in $ProtectedNames) {\n    $ProtectedBefore[$name] = Test-Path -LiteralPath (Join-Path $LiveRoot $name)\n}\n\n$running = @(Get-Process -Name \"MarketVault\" -ErrorAction SilentlyContinue)\nif ($running.Count -gt 0) {\n    foreach ($proc in $running) {\n        try { [void]$proc.CloseMainWindow() } catch {}\n    }\n    $deadline = [DateTime]::UtcNow.AddSeconds(12)\n    do {\n        Start-Sleep -Milliseconds 500\n        $running = @(Get-Process -Name \"MarketVault\" -ErrorAction SilentlyContinue)\n    } while ($running.Count -gt 0 -and [DateTime]::UtcNow -lt $deadline)\n}\nif (@(Get-Process -Name \"MarketVault\" -ErrorAction SilentlyContinue).Count -gt 0) {\n    throw \"MarketVault.exe is still running. Close it normally and rerun this script.\"\n}\n\n$BackupBase = \"D:\\MarketVault\\_market_vault_retired_local\"\nNew-Item -ItemType Directory -Force -Path $BackupBase | Out-Null\n$BackupRoot = Join-Path $BackupBase (\"quant-gui-predeploy-\" + [DateTime]::UtcNow.ToString(\"yyyyMMddTHHmmssZ\"))\nNew-Item -ItemType Directory -Path $BackupRoot | Out-Null\n\n$Moved = New-Object System.Collections.Generic.List[string]\ntry {\n    foreach ($name in @(\"MarketVault.exe\", \"_internal\", \"build-metadata.json\")) {\n        $src = Join-Path $LiveRoot $name\n        if (Test-Path -LiteralPath $src) {\n            Move-Item -LiteralPath $src -Destination (Join-Path $BackupRoot $name)\n            $Moved.Add($name)\n        }\n    }\n\n    Copy-Item -LiteralPath $CandidateExe -Destination $LiveExe\n    Copy-Item -LiteralPath $CandidateInternal -Destination $LiveInternal -Recurse\n    Copy-Item -LiteralPath $CandidateMetadata -Destination $LiveMetadata\n\n    $liveSha = (Get-FileHash -LiteralPath $LiveExe -Algorithm SHA256).Hash.ToLowerInvariant()\n    if ($liveSha -ne $ExpectedExeSha) {\n        throw \"Deployed EXE SHA256 mismatch: $liveSha\"\n    }\n\n    foreach ($name in $ProtectedNames) {\n        $now = Test-Path -LiteralPath (Join-Path $LiveRoot $name)\n        if ($ProtectedBefore[$name] -and -not $now) {\n            throw \"Protected production state disappeared: $name\"\n        }\n    }\n\n    $QuantQml = Join-Path $LiveRoot \"_internal\\market_vault\\desktop\\qml\\pages\\QuantResearchPage.qml\"\n    if (-not (Test-Path -LiteralPath $QuantQml -PathType Leaf)) {\n        throw \"Deployed QuantResearchPage.qml is missing.\"\n    }\n\n    $SmokeBase = \"D:\\MarketVault-Candidates\\_deploy_smoke\"\n    $SmokeRoot = Join-Path $SmokeBase (\"quant-gui-\" + [guid]::NewGuid().ToString(\"N\"))\n    $SmokeConfig = Join-Path $SmokeRoot \"config\\settings.yaml\"\n    $SmokeCwd = Join-Path $SmokeRoot \"cwd\"\n    $SmokeLocalAppData = Join-Path $SmokeRoot \"LocalAppData\"\n    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $SmokeConfig) | Out-Null\n    New-Item -ItemType Directory -Force -Path $SmokeCwd | Out-Null\n    New-Item -ItemType Directory -Force -Path $SmokeLocalAppData | Out-Null\n    Copy-Item -LiteralPath (Join-Path $CandidateRoot \"config\\settings.yaml\") -Destination $SmokeConfig\n\n    $oldLocalAppData = $env:LOCALAPPDATA\n    $env:LOCALAPPDATA = $SmokeLocalAppData\n    try {\n        $p = Start-Process -FilePath $LiveExe -ArgumentList @(\n            \"--settings\", ('\"{0}\"' -f $SmokeConfig),\n            \"--smoke-exit-ms\", \"500\"\n        ) -WorkingDirectory $SmokeCwd -Wait -PassThru\n    } finally {\n        $env:LOCALAPPDATA = $oldLocalAppData\n    }\n    if ($p.ExitCode -ne 0) {\n        throw \"Deployed frozen startup smoke failed: exit $($p.ExitCode)\"\n    }\n\n    Remove-Item -LiteralPath $SmokeRoot -Recurse -Force -ErrorAction SilentlyContinue\n\n    $InstalledMarker = [ordered]@{\n        schema = \"market-vault-local-candidate-install-v1\"\n        channel = $CandidateChannel\n        source_commit = $SourceCommit\n        source_tree = $SourceTree\n        exe_sha256 = $liveSha\n        installed_at_utc = [DateTime]::UtcNow.ToString(\"o\")\n        rollback_root = $BackupRoot\n    }\n    [IO.File]::WriteAllText(\n        (Join-Path $LiveRoot \"local-candidate.json\"),\n        ($InstalledMarker | ConvertTo-Json -Depth 4),\n        (New-Object Text.UTF8Encoding($false))\n    )\n\n    Write-Output \"MARKET_VAULT_QUANT_GUI_LOCAL_DEPLOY=PASS\"\n    Write-Output \"CANDIDATE_CHANNEL=$CandidateChannel\"\n    Write-Output \"SOURCE_COMMIT=$SourceCommit\"\n    Write-Output \"SOURCE_TREE=$SourceTree\"\n    Write-Output \"LIVE_ROOT=$LiveRoot\"\n    Write-Output \"LIVE_EXE_SHA256=$liveSha\"\n    Write-Output \"ROLLBACK_ROOT=$BackupRoot\"\n    Write-Output \"PROTECTED_STATE_PRESERVED=true\"\n    Write-Output \"QUANT_RESEARCH_GUI_PRESENT=true\"\n\n    if (-not $NoLaunch) {\n        Start-Process -FilePath $LiveExe -WorkingDirectory $LiveRoot\n        Write-Output \"MARKET_VAULT_STARTED=true\"\n    } else {\n        Write-Output \"MARKET_VAULT_STARTED=false\"\n    }\n}\ncatch {\n    Write-Warning \"Deployment failed; restoring previous application payload.\"\n    foreach ($name in @(\"MarketVault.exe\", \"_internal\", \"build-metadata.json\", \"local-candidate.json\")) {\n        $live = Join-Path $LiveRoot $name\n        if (Test-Path -LiteralPath $live) {\n            Remove-Item -LiteralPath $live -Recurse -Force\n        }\n    }\n    foreach ($name in $Moved) {\n        $backup = Join-Path $BackupRoot $name\n        if (Test-Path -LiteralPath $backup) {\n            Move-Item -LiteralPath $backup -Destination (Join-Path $LiveRoot $name)\n        }\n    }\n    throw\n}\n'@\n\n$deploy = $deployTemplate.Replace(\"__EXE_SHA__\", $exeSha)\n$deployPath = Join-Path $out \"deploy_quant_gui_candidate.ps1\"\n[IO.File]::WriteAllText($deployPath, $deploy, (New-Object Text.UTF8Encoding($false)))\n\n$manifest = [ordered]@{\n    schema = \"market-vault-local-deployment-candidate-v1\"\n    channel = $env:CANDIDATE_CHANNEL\n    source_commit = $env:SOURCE_COMMIT\n    source_tree = $env:SOURCE_TREE\n    packaging = \"pyinstaller-onedir\"\n    candidate_exe_sha256 = $exeSha\n    intended_live_root = \"D:\\MarketVault\\App\\MarketVault\"\n    protected_state = @(\"config\",\"data\",\"catalog\",\"manifests\",\"reports\",\"quarantine\")\n    replacement_payload = @(\"MarketVault.exe\",\"_internal\",\"build-metadata.json\")\n    rollback_root = \"D:\\MarketVault\\_market_vault_retired_local\"\n    formal_release = $false\n    release_tag_mutated = $false\n    pypi_published = $false\n    testpypi_published = $false\n}\n$manifestPath = Join-Path $out \"DEPLOYMENT_MANIFEST.json\"\n[IO.File]::WriteAllText(\n    $manifestPath,\n    ($manifest | ConvertTo-Json -Depth 5),\n    (New-Object Text.UTF8Encoding($false))\n)\n\n$zip = Join-Path $env:RUNNER_TEMP \"MarketVault-quant-gui-main-local.zip\"\nCompress-Archive -Path @(\n    (Join-Path $out \"MarketVault\"),\n    $deployPath,\n    $manifestPath,\n    (Join-Path $env:RUNNER_TEMP \"quant-gui-build-freeze.txt\")\n) -DestinationPath $zip -CompressionLevel Optimal\n\n$zipSha = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()\nWrite-Output \"CANDIDATE_EXE_SHA256=$exeSha\"\nWrite-Output \"DEPLOYMENT_ZIP_SHA256=$zipSha\"\nWrite-Output \"QUANT_GUI_DEPLOYMENT_PACKAGE=PASS\""
+        },
+        {
+          "name": "Upload local deployment candidate",
+          "id": "artifact",
+          "uses": "actions/upload-artifact@v7",
+          "with": {
+            "name": "MarketVault-quant-gui-main-local",
+            "path": "${{ runner.temp }}\\MarketVault-quant-gui-main-local.zip",
+            "if-no-files-found": "error",
+            "retention-days": 30,
+            "overwrite": false
+          }
+        },
+        {
+          "name": "Record artifact metadata",
+          "shell": "pwsh",
+          "env": {
+            "ARTIFACT_ID": "${{ steps.artifact.outputs.artifact-id }}",
+            "ARTIFACT_URL": "${{ steps.artifact.outputs.artifact-url }}",
+            "ARTIFACT_DIGEST": "${{ steps.artifact.outputs.artifact-digest }}"
+          },
+          "run": "$ErrorActionPreference = \"Stop\"\nif (-not $env:ARTIFACT_ID) { throw \"artifact-id missing\" }\nif (-not $env:ARTIFACT_URL) { throw \"artifact-url missing\" }\nif ($env:ARTIFACT_DIGEST -notmatch '^[0-9a-f]{64}$') { throw \"artifact digest invalid\" }\nWrite-Output \"QUANT_GUI_ARTIFACT_ID=$env:ARTIFACT_ID\"\nWrite-Output \"QUANT_GUI_ARTIFACT_DIGEST=$env:ARTIFACT_DIGEST\"\nWrite-Output \"QUANT_GUI_ARTIFACT_URL=$env:ARTIFACT_URL\"\nWrite-Output \"QUANT_GUI_LOCAL_CANDIDATE=PASS\""
+        }
+      ]
+    }
+  }
+}
