@@ -578,6 +578,9 @@ def test_production_packaging_retains_complete_qml_runtime_contract():
     assert 'Copy-Item -LiteralPath $ConfigTemplate' in production_build
     assert 'application_context = "shared-lazy"' in production_build
     assert 'collect_submodules("market_vault.multi_source")' in production_spec
+    assert 'OBSERVATION_FEATURE_TRANSFORM_SOURCE' in production_spec
+    assert '"market_vault/multi_source"' in production_spec
+    assert "Required frozen Observation Feature transform source is missing" in production_build
     assert 'collect_submodules(' in production_spec
     assert 'collect_data_files("moomoo"' in production_spec
     for frozen_module in (
