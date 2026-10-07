@@ -174,6 +174,17 @@ $ObservationFeatureTransformSource = Join-Path $FinalApp "_internal\market_vault
 if (-not (Test-Path -LiteralPath $ObservationFeatureTransformSource -PathType Leaf)) {
     throw "Required frozen Observation Feature transform source is missing: $ObservationFeatureTransformSource"
 }
+foreach ($FingerprintSourceRoot in @(
+    (Join-Path $FinalApp "_internal\market_vault\dataset\feature_transforms"),
+    (Join-Path $FinalApp "_internal\market_vault\dataset\label_transforms")
+)) {
+    if (-not (Test-Path -LiteralPath $FingerprintSourceRoot -PathType Container)) {
+        throw "Required frozen Dataset fingerprint source root is missing: $FingerprintSourceRoot"
+    }
+    if (@(Get-ChildItem -LiteralPath $FingerprintSourceRoot -Filter "*.py" -File).Count -eq 0) {
+        throw "Required frozen Dataset fingerprint sources are missing: $FingerprintSourceRoot"
+    }
+}
 $BundledFontRoot = Join-Path $FinalApp "_internal\market_vault\desktop\assets\fonts\fusion-pixel-12px-proportional-zh_hans-v2026.07.20"
 $BundledFont = Join-Path $BundledFontRoot "fusion-pixel-12px-proportional-zh_hans.otf"
 $ExpectedFontHash = "9955f9e20abd758316418a2942aa6ee773754060da4a3f9286581fd11312f6c3"
