@@ -580,7 +580,16 @@ def test_production_packaging_retains_complete_qml_runtime_contract():
     assert 'collect_submodules("market_vault.multi_source")' in production_spec
     assert 'OBSERVATION_FEATURE_TRANSFORM_SOURCE' in production_spec
     assert '"market_vault/multi_source"' in production_spec
+    assert "DATASET_FINGERPRINT_SOURCE_DATAS" in production_spec
+    assert '"market_vault/dataset/feature_transforms"' in production_spec
+    assert '"market_vault/dataset/label_transforms"' in production_spec
     assert "Required frozen Observation Feature transform source is missing" in production_build
+    assert "Required frozen Dataset fingerprint source is missing" in production_build
+    assert "Frozen Dataset fingerprint source hash mismatch" in production_build
+    assert "built_in_feature_registry" in production_launcher
+    assert "built_in_label_registry" in production_launcher
+    assert "built_in_cross_day_label_registry" in production_launcher
+    assert "build_ts2_feature_registry" in production_launcher
     assert 'collect_submodules(' in production_spec
     assert 'collect_data_files("moomoo"' in production_spec
     for frozen_module in (

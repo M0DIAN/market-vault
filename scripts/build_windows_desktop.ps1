@@ -174,6 +174,27 @@ $ObservationFeatureTransformSource = Join-Path $FinalApp "_internal\market_vault
 if (-not (Test-Path -LiteralPath $ObservationFeatureTransformSource -PathType Leaf)) {
     throw "Required frozen Observation Feature transform source is missing: $ObservationFeatureTransformSource"
 }
+$FingerprintSourceFiles = @(
+    Get-ChildItem -LiteralPath (Join-Path $SourceRoot "market_vault\dataset\feature_transforms") -Filter "*.py" -File |
+        Where-Object { $_.Name -ne "__init__.py" }
+    Get-ChildItem -LiteralPath (Join-Path $SourceRoot "market_vault\dataset\label_transforms") -Filter "*.py" -File |
+        Where-Object { $_.Name -ne "__init__.py" }
+)
+if ($FingerprintSourceFiles.Count -eq 0) {
+    throw "No Dataset fingerprint source files were discovered from the repository source tree."
+}
+foreach ($SourceAsset in $FingerprintSourceFiles) {
+    $RelativeAsset = [IO.Path]::GetRelativePath($SourceRoot, $SourceAsset.FullName)
+    $BundledAsset = Join-Path $FinalApp ("_internal\" + $RelativeAsset)
+    if (-not (Test-Path -LiteralPath $BundledAsset -PathType Leaf)) {
+        throw "Required frozen Dataset fingerprint source is missing: $RelativeAsset"
+    }
+    $SourceAssetHash = (Get-FileHash -LiteralPath $SourceAsset.FullName -Algorithm SHA256).Hash
+    $BundledAssetHash = (Get-FileHash -LiteralPath $BundledAsset -Algorithm SHA256).Hash
+    if ($SourceAssetHash -ne $BundledAssetHash) {
+        throw "Frozen Dataset fingerprint source hash mismatch: $RelativeAsset"
+    }
+}
 $BundledFontRoot = Join-Path $FinalApp "_internal\market_vault\desktop\assets\fonts\fusion-pixel-12px-proportional-zh_hans-v2026.07.20"
 $BundledFont = Join-Path $BundledFontRoot "fusion-pixel-12px-proportional-zh_hans.otf"
 $ExpectedFontHash = "9955f9e20abd758316418a2942aa6ee773754060da4a3f9286581fd11312f6c3"
