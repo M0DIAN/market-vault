@@ -58,6 +58,9 @@ FONT_ASSETS = [
         "OFL.txt",
     )
 ]
+OBSERVATION_FEATURE_TRANSFORM_SOURCE = (
+    SOURCE_ROOT / "market_vault" / "multi_source" / "feature_transforms.py"
+)
 QML_PAGES = [
     SOURCE_ROOT / "market_vault" / "desktop" / "qml" / "pages" / name
     for name in (
@@ -115,6 +118,10 @@ analysis = Analysis(
     datas=collect_data_files("moomoo", include_py_files=False)
     + [(str(WINDOWS_ICON), "assets/windows")]
     + [
+        (
+            str(OBSERVATION_FEATURE_TRANSFORM_SOURCE),
+            "market_vault/multi_source",
+        ),
         (str(QML_ENTRY_POINT), "market_vault/desktop/qml"),
         *[
             (str(path), "market_vault/desktop/qml/components")
