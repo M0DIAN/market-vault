@@ -1,0 +1,51 @@
+{
+  "name": "PR253 Frozen Research Source Assets Windows Verification",
+  "permissions": {
+    "contents": "read"
+  },
+  "on": {
+    "push": {
+      "branches": [
+        "verify/pr253-frozen-source-assets-windows"
+      ]
+    }
+  },
+  "jobs": {
+    "verify": {
+      "runs-on": "windows-latest",
+      "steps": [
+        {
+          "name": "Checkout exact candidate",
+          "uses": "actions/checkout@v6",
+          "with": {
+            "ref": "60f5938b21736728ead312fb33a40b283d0cb4b3",
+            "fetch-depth": 0
+          }
+        },
+        {
+          "name": "Verify identity",
+          "shell": "pwsh",
+          "run": "$ErrorActionPreference=\"Stop\"\n$head=(git rev-parse HEAD).Trim()\nif ($head -ne \"60f5938b21736728ead312fb33a40b283d0cb4b3\") { throw \"HEAD drift: $head\" }\nif (git status --porcelain) { throw \"dirty checkout\" }\nWrite-Output \"PR253_WINDOWS_SOURCE=PASS\""
+        },
+        {
+          "name": "Set up Python",
+          "uses": "actions/setup-python@v6",
+          "with": {
+            "python-version": "3.11.9",
+            "architecture": "x64"
+          }
+        },
+        {
+          "name": "Install frozen dependencies",
+          "shell": "pwsh",
+          "run": "$ErrorActionPreference=\"Stop\"\npython -m pip install --upgrade pip\npython -m pip install -e \".[windows-exe]\"\npython -m pip install \"moomoo-api==10.9.6908\""
+        },
+        {
+          "name": "Build exact production ONEDIR",
+          "shell": "pwsh",
+          "run": "$ErrorActionPreference=\"Stop\"\n$out=Join-Path $env:RUNNER_TEMP \"pr253-frozen-source-assets\"\n& .\\scripts\\build_windows_desktop.ps1 -PythonExecutable (Get-Command python).Source -OutputRoot $out -NoZip\nif ($LASTEXITCODE -ne 0) { throw \"production build failed\" }\n$meta=Get-Content -LiteralPath (Join-Path $out \"MarketVault\\build-metadata.json\") -Raw | ConvertFrom-Json\nif ($meta.build_head_sha -ne \"60f5938b21736728ead312fb33a40b283d0cb4b3\") { throw \"metadata HEAD drift\" }\nif ($meta.unrelated_cwd_smoke_exit_code -ne 0) { throw \"startup smoke failed\" }\nif ($meta.research_import_smoke_exit_code -ne 0) { throw \"Research import smoke failed\" }\nWrite-Output \"PR253_FROZEN_RESEARCH_IMPORT_SMOKE=PASS\"\nWrite-Output \"PR253_WINDOWS_ONEDIR=PASS\""
+        }
+      ]
+    }
+  }
+}
