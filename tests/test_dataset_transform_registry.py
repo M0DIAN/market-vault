@@ -742,6 +742,7 @@ def test_source_fingerprint_falls_back_to_physical_module_source(impl, monkeypat
         raise OSError("frozen loader has no source")
 
     monkeypatch.setattr(transform_models.inspect, "getsource", unavailable)
+    monkeypatch.setattr(transform_models.sys, "frozen", True, raising=False)
     frozen_style = registration(module)
 
     assert frozen_style.implementation_fingerprint == baseline.implementation_fingerprint
