@@ -1,0 +1,51 @@
+{
+  "name": "PR251 Research Builder Windows Verification R2",
+  "permissions": {
+    "contents": "read"
+  },
+  "on": {
+    "push": {
+      "branches": [
+        "verify/pr251-research-builder-windows-r2"
+      ]
+    }
+  },
+  "jobs": {
+    "verify": {
+      "runs-on": "windows-latest",
+      "steps": [
+        {
+          "name": "Checkout exact candidate",
+          "uses": "actions/checkout@v6",
+          "with": {
+            "ref": "c876efb9a07749429f775c4460ee52fb42a78959",
+            "fetch-depth": 0
+          }
+        },
+        {
+          "name": "Verify identity",
+          "shell": "pwsh",
+          "run": "$ErrorActionPreference=\"Stop\"\n$head=(git rev-parse HEAD).Trim()\nif ($head -ne \"c876efb9a07749429f775c4460ee52fb42a78959\") { throw \"HEAD drift: $head\" }\nif (git status --porcelain) { throw \"dirty checkout\" }\nWrite-Output \"PR251_WINDOWS_R2_SOURCE=PASS\""
+        },
+        {
+          "name": "Set up Python",
+          "uses": "actions/setup-python@v6",
+          "with": {
+            "python-version": "3.11.9",
+            "architecture": "x64"
+          }
+        },
+        {
+          "name": "Install frozen dependencies",
+          "shell": "pwsh",
+          "run": "$ErrorActionPreference=\"Stop\"\npython -m pip install --upgrade pip\npython -m pip install -e \".[windows-exe]\"\npython -m pip install \"moomoo-api==10.9.6908\"\nif ((python -m PyInstaller --version).Trim() -ne \"6.22.2\") { throw \"PyInstaller drift\" }\nif ((python -c \"import PySide6; print(PySide6.__version__)\").Trim() -ne \"6.11.2\") { throw \"PySide6 drift\" }\nWrite-Output \"PR251_WINDOWS_R2_DEPS=PASS\""
+        },
+        {
+          "name": "Build and frozen smoke",
+          "shell": "pwsh",
+          "run": "$ErrorActionPreference=\"Stop\"\n$out=Join-Path $env:RUNNER_TEMP \"pr251-research-builder-r2\"\n& .\\scripts\\build_windows_desktop.ps1 -PythonExecutable (Get-Command python).Source -OutputRoot $out -NoZip\nif ($LASTEXITCODE -ne 0) { throw \"Windows build failed\" }\n$meta=Get-Content -LiteralPath (Join-Path $out \"MarketVault\\build-metadata.json\") -Raw | ConvertFrom-Json\nif ($meta.build_head_sha -ne \"c876efb9a07749429f775c4460ee52fb42a78959\") { throw \"metadata HEAD drift\" }\nif ($meta.unrelated_cwd_smoke_exit_code -ne 0) { throw \"frozen smoke failed\" }\n$qml=Join-Path $out \"MarketVault\\_internal\\market_vault\\desktop\\qml\\pages\\QuantResearchPage.qml\"\nif (-not (Test-Path -LiteralPath $qml -PathType Leaf)) { throw \"QuantResearchPage.qml missing\" }\n$workspace=Join-Path $out \"MarketVault\\_internal\\market_vault\\research_workspace.py\"\nif (-not (Test-Path -LiteralPath $workspace -PathType Leaf)) { throw \"research_workspace.py missing\" }\nWrite-Output \"PR251_WINDOWS_R2_ONEDIR=PASS\"\nWrite-Output \"PR251_WINDOWS_R2_FROZEN_SMOKE=PASS\""
+        }
+      ]
+    }
+  }
+}
