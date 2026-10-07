@@ -1,0 +1,56 @@
+{
+  "name": "Frozen Research Import Runtime Canary",
+  "permissions": {
+    "contents": "read"
+  },
+  "on": {
+    "push": {
+      "branches": [
+        "verify/frozen-research-import-runtime"
+      ]
+    }
+  },
+  "jobs": {
+    "canary": {
+      "runs-on": "windows-latest",
+      "steps": [
+        {
+          "name": "Checkout exact canary",
+          "uses": "actions/checkout@v6",
+          "with": {
+            "ref": "0177006225ab9aa70c4be7ec13405a211fd49f3c",
+            "fetch-depth": 0
+          }
+        },
+        {
+          "name": "Verify identity",
+          "shell": "pwsh",
+          "run": "$ErrorActionPreference=\"Stop\"\n$head=(git rev-parse HEAD).Trim()\nif ($head -ne \"0177006225ab9aa70c4be7ec13405a211fd49f3c\") { throw \"HEAD drift: $head\" }\nif (git status --porcelain) { throw \"dirty checkout\" }\nWrite-Output \"FROZEN_IMPORT_CANARY_SOURCE=PASS\""
+        },
+        {
+          "name": "Set up Python",
+          "uses": "actions/setup-python@v6",
+          "with": {
+            "python-version": "3.11.9",
+            "architecture": "x64"
+          }
+        },
+        {
+          "name": "Install frozen dependencies",
+          "shell": "pwsh",
+          "run": "$ErrorActionPreference=\"Stop\"\npython -m pip install --upgrade pip\npython -m pip install -e \".[windows-exe]\"\npython -m pip install \"moomoo-api==10.9.6908\""
+        },
+        {
+          "name": "Build canary ONEDIR",
+          "shell": "pwsh",
+          "run": "$ErrorActionPreference=\"Stop\"\n$out=Join-Path $env:RUNNER_TEMP \"frozen-import-canary\"\n& .\\scripts\\build_windows_desktop.ps1 -PythonExecutable (Get-Command python).Source -OutputRoot $out -NoZip\nif ($LASTEXITCODE -ne 0) { throw \"build failed\" }\nWrite-Output \"FROZEN_IMPORT_CANARY_BUILD=PASS\""
+        },
+        {
+          "name": "Run frozen Research import canary",
+          "shell": "pwsh",
+          "run": "$ErrorActionPreference=\"Stop\"\n$out=Join-Path $env:RUNNER_TEMP \"frozen-import-canary\"\n$marker=Join-Path $env:RUNNER_TEMP \"research-import-canary.txt\"\n$env:MARKET_VAULT_RESEARCH_IMPORT_CANARY=$marker\n$p=Start-Process -FilePath (Join-Path $out \"MarketVault\\MarketVault.exe\") -ArgumentList @(\"--smoke-exit-ms\",\"100\") -WorkingDirectory (Join-Path $out \"MarketVault\") -Wait -PassThru\nif (-not (Test-Path -LiteralPath $marker -PathType Leaf)) { throw \"canary marker missing\" }\n$content=Get-Content -LiteralPath $marker -Raw\nWrite-Output \"=== CANARY ===\"\nWrite-Output $content\nWrite-Output \"=== END CANARY ===\"\nif ($content -notmatch \"^RESULT=PASS\") { throw \"frozen Research import canary failed\" }\nif ($p.ExitCode -ne 0) { throw \"frozen process exit $($p.ExitCode)\" }\nWrite-Output \"FROZEN_RESEARCH_IMPORT_RUNTIME=PASS\""
+        }
+      ]
+    }
+  }
+}
