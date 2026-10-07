@@ -366,3 +366,22 @@ def test_mixed_values_participate_in_identity(tmp_path):
     assert result.status == "EXCLUDED"
     assert {v.status for v in result.samples[0].values} == {"COMPLETE", "EXCLUDED"}
     assert result.values_content_id != execute(one, selected).values_content_id
+
+
+def test_real_canonical_regular_row_session_is_admitted(tmp_path):
+    one = build(
+        tmp_path,
+        (
+            bar(slot=0, close=100.0, row_session="REGULAR"),
+            bar(slot=1, close=101.0, row_session="REGULAR"),
+        ),
+    )
+    result = pit((one,), slot=1)
+    executed = execute_ts2_features(
+        (one,),
+        result,
+        (spec("simple_return", n=2),),
+        dataset_as_of=AS_OF,
+    )
+    assert executed.status == "COMPLETE"
+    assert executed.samples[0].status == "COMPLETE"

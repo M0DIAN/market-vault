@@ -133,7 +133,6 @@ def _recorded_closure(*, scope, cutoff, sidecars, observation_specs, label_specs
     ts2 = _ts2_closure(one("ts2_features.json"), pit, features, feature_rows, cutoff)
     _check(bool(ts2.feature_specs), "TS2 specs must be nonempty")
     observation_specs = normalize_specs(observation_specs)
-    _check(bool(observation_specs), "Observation specs must be nonempty")
     a3, proofs, selected = _observation_closure(one("observation_pit.json"), sidecars["observation_evidence.json"],
                                                observation_specs, pit)
     obs = _observation_features_closure(one("observation_features.json"), observation_specs, a3, selected)

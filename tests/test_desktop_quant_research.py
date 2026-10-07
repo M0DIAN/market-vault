@@ -157,6 +157,94 @@ def test_quant_controller_runs_views_without_initializing_console_backend(
     assert runtime.shutdown() is True
 
 
+def test_quant_builder_calls_backend_and_autoloads_built_dataset(
+    qt_app, tmp_path, monkeypatch
+):
+    backend_calls = []
+    dataset_dir = tmp_path / "built-dataset"
+    dataset_dir.mkdir()
+
+    class Backend:
+        def preview_research_workspace(self, **values):
+            return (
+                {
+                    "build_ready": "true",
+                    "missing_research_dates": "0",
+                    "research_schema": "10.9-mv-ts2",
+                },
+                TablePage(
+                    columns=("trade_date", "calendar_profile", "research_data", "role"),
+                    rows=(("2026-01-05", "NORMAL", "READY", "TRAIN"),),
+                    page_size=1,
+                    total_rows=1,
+                ),
+            )
+
+        def build_research_workspace(self, **values):
+            return {
+                "dataset_build_path": str(dataset_dir.resolve()),
+                "dataset_id": "d" * 64,
+                "dataset_status": "COMPLETE",
+            }
+
+    settings = tmp_path / "settings.yaml"
+    settings.write_text(
+        """
+storage:
+  root_dir: ./data
+  catalog_path: ./catalog/market_vault.duckdb
+  manifest_dir: ./manifests
+  report_dir: ./reports
+""".lstrip(),
+        encoding="utf-8",
+    )
+    runner = _Runner()
+    runtime = DesktopOperationRuntime(
+        settings_path=settings.resolve(),
+        backend_factory=lambda path: backend_calls.append(path) or Backend(),
+        runner_factory=lambda: runner,
+    )
+    controller = QuantResearchController(runtime)
+    values = {
+        "symbol": "US.SPY",
+        "start_date": "2026-01-05",
+        "end_date": "2026-01-16",
+        "interval": "5m",
+        "preset": "LIGHT_TECHNICAL",
+        "horizon_trading_days": "1",
+    }
+
+    assert controller.previewBuilder(values) is True
+    runtime._poll()
+    assert controller.builderSummary["build_ready"] == "true"
+    assert controller.builderModel.rowCount() == 1
+    assert len(backend_calls) == 1
+
+    monkeypatch.setattr(
+        "market_vault.desktop.quant_research._inspect_dataset",
+        lambda path: _DatasetView(
+            str(dataset_dir.resolve()),
+            {"dataset_id": "d" * 64, "rows": "9"},
+            ("rsi_5",),
+            ("execution_return_1d",),
+            ("execution_return_1d",),
+        ),
+    )
+    built = []
+    controller.datasetBuilt.connect(lambda: built.append(True))
+    assert controller.buildDataset(values) is True
+    runtime._poll()
+
+    assert built == [True]
+    assert controller.datasetLoaded is True
+    assert controller.datasetPath == str(dataset_dir.resolve())
+    assert controller.featureNames == ["rsi_5"]
+    assert controller.returnLabelNames == ["execution_return_1d"]
+    assert controller.builderSummary["dataset_status"] == "COMPLETE"
+    assert runner.names == ["research_workspace_preview", "research_workspace_build"]
+    assert runtime.shutdown() is True
+
+
 def test_quant_qml_is_functional_workflow_not_placeholder():
     qml = (
         ROOT / "src" / "market_vault" / "desktop" / "qml" / "pages"
@@ -165,8 +253,13 @@ def test_quant_qml_is_functional_workflow_not_placeholder():
     for marker in (
         "FolderDialog",
         "inspectDataset",
+        "previewBuilder",
+        "requestPrepareResearchData",
+        "buildDataset",
         "runFeatureResearch",
         "runBacktest",
+        'objectName: "quantBuilderTable"',
+        'objectName: "quantBuilderPrepareButton"',
         'objectName: "quantFeatureTable"',
         'objectName: "quantTradesTable"',
         'objectName: "quantEquityCanvas"',

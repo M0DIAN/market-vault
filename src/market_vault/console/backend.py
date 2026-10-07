@@ -341,6 +341,124 @@ class ConsoleBackend:
         manifest = self.vault.backfill(**self._backfill_arguments(values, execute=True))
         return manifest.as_dict()
 
+    def preview_research_workspace(
+        self,
+        *,
+        symbol: str,
+        start_date: str,
+        end_date: str,
+        interval: str = "1m",
+        preset: str = "CORE_TECHNICAL",
+        horizon_trading_days: int = 1,
+    ) -> tuple[dict[str, Any], TablePage]:
+        from market_vault.research_workspace import plan_local_research_dataset
+
+        plan = plan_local_research_dataset(
+            self.vault,
+            symbol=symbol,
+            start_date=parse_iso_date(start_date, "start_date"),
+            end_date=parse_iso_date(end_date, "end_date"),
+            interval=interval,
+            preset=preset,
+            horizon_trading_days=int(horizon_trading_days),
+        )
+        records = list(plan.rows[:MAX_REPORT_DISPLAY_ROWS])
+        return plan.summary, table_page_from_records(
+            records,
+            page_size=MAX_REPORT_DISPLAY_ROWS,
+            total_rows=len(plan.rows),
+        )
+
+    def build_research_workspace(
+        self,
+        *,
+        symbol: str,
+        start_date: str,
+        end_date: str,
+        interval: str = "1m",
+        preset: str = "CORE_TECHNICAL",
+        horizon_trading_days: int = 1,
+    ) -> dict[str, Any]:
+        from market_vault.research_workspace import build_local_research_dataset
+
+        result = build_local_research_dataset(
+            self.vault,
+            symbol=symbol,
+            start_date=parse_iso_date(start_date, "start_date"),
+            end_date=parse_iso_date(end_date, "end_date"),
+            interval=interval,
+            preset=preset,
+            horizon_trading_days=int(horizon_trading_days),
+        )
+        return {
+            **result.summary,
+            "dataset_build_path": str(result.dataset_build_path),
+        }
+
+    def plan_research_backfill(
+        self,
+        *,
+        symbol: str,
+        start_date: str,
+        end_date: str,
+        interval: str = "1m",
+    ) -> BackfillPlanView:
+        from market_vault.research_workspace import plan_research_ready_backfill
+
+        plan = plan_research_ready_backfill(
+            self.vault.settings,
+            symbol=symbol,
+            start_date=parse_iso_date(start_date, "start_date"),
+            end_date=parse_iso_date(end_date, "end_date"),
+            interval=interval,
+        )
+        records = [
+            {"code": item.code, "trade_date": item.trade_date, "state": "PENDING"}
+            for item in plan.pending_items[:MAX_PLAN_DISPLAY_ROWS]
+        ]
+        remaining = MAX_PLAN_DISPLAY_ROWS - len(records)
+        if remaining > 0:
+            records.extend(
+                {"code": item.code, "trade_date": item.trade_date, "state": "READY"}
+                for item in plan.skipped_items[:remaining]
+            )
+        total = len(plan.pending_items) + len(plan.skipped_items)
+        return BackfillPlanView(
+            scope=f"{plan.calendar_scope_type}:{plan.calendar_scope_value}",
+            symbols=tuple(plan.symbols),
+            trading_date_count=len(plan.trading_dates),
+            pending_count=len(plan.pending_items),
+            skipped_count=len(plan.skipped_items),
+            items=table_page_from_records(
+                records,
+                page_size=MAX_PLAN_DISPLAY_ROWS,
+                total_rows=total,
+            ),
+        )
+
+    def execute_research_backfill(
+        self,
+        *,
+        symbol: str,
+        start_date: str,
+        end_date: str,
+        interval: str = "1m",
+        max_retries: int = 2,
+        retry_backoff_seconds: float = 2.0,
+    ) -> dict[str, Any]:
+        from market_vault.research_workspace import collect_research_ready_backfill
+
+        manifest = collect_research_ready_backfill(
+            self.vault.settings,
+            symbol=symbol,
+            start_date=parse_iso_date(start_date, "start_date"),
+            end_date=parse_iso_date(end_date, "end_date"),
+            interval=interval,
+            max_retries=int(max_retries),
+            retry_backoff_seconds=float(retry_backoff_seconds),
+        )
+        return manifest.as_dict()
+
     def preview_purge(
         self,
         *,

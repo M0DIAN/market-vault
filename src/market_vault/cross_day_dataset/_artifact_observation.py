@@ -49,7 +49,7 @@ def _evidence_builds(evidence, specs):
 
 def _observation_closure(record, evidence_records, specs, pit):
     _encode_record(record, "ObservationPITAssemblyResult")
-    _check(specs == normalize_specs(specs) and bool(specs), "canonical nonempty Observation specs required")
+    _check(specs == normalize_specs(specs), "canonical Observation specs required")
     builds = _evidence_builds(evidence_records, specs)
     bindings = tuple(_value(b) for b in record.bindings)
     expected_bindings = tuple(sorted((observation_feature_binding(s) for s in specs), key=lambda b: b.feature_spec_pin_id))

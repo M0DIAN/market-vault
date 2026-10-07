@@ -18,6 +18,7 @@ from .artifact_models import _require
 
 
 _INTERVALS = MappingProxyType({"1m": 1, "5m": 5, "15m": 15, "30m": 30, "60m": 60})
+_RTH_CANONICAL_ROW_SESSIONS = frozenset(("RTH", "REGULAR"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,9 +70,11 @@ def _canonical_closure(records, scope):
         _check(len(sources) == len(set(sources)), "duplicate Canonical source provenance")
         seen = set()
         for bar in b.bars:
-            _check((bar.interval, bar.adjustment, bar.requested_session, bar.session, bar.source_schema_version) ==
-                   (req.interval, "NONE", "RTH", "RTH", "10.9-mv-ts2")
-                   and bar.code in req.symbols and bar.requested_trade_date in req.trade_dates
+            _check(
+                (bar.interval, bar.adjustment, bar.requested_session, bar.source_schema_version)
+                == (req.interval, "NONE", "RTH", "10.9-mv-ts2")
+                and bar.session in _RTH_CANONICAL_ROW_SESSIONS
+                and bar.code in req.symbols and bar.requested_trade_date in req.trade_dates
                    and bar.market_calendar_date == bar.requested_trade_date
                    and bar.canonical_builder_version == b.canonical_builder_version
                    and bar.dataset_kind == "market_bars_canonical", "Canonical row scope mismatch")

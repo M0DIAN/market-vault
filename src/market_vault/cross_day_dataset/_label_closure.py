@@ -3,7 +3,11 @@
 from datetime import timedelta
 
 from ..cross_day import identity as ids
-from ..cross_day._authority import INTERVAL_MINUTES, gap_boundary_rows
+from ..cross_day._authority import (
+    INTERVAL_MINUTES,
+    RTH_CANONICAL_ROW_SESSIONS,
+    gap_boundary_rows,
+)
 from ..cross_day.models import (
     CrossDayLabelDecision, CrossDayLabelGapProof, CrossDayLabelRowReference,
     CrossDayLabelSampleBinding, CrossDayLabelSlot, CrossDayLabelValueResult,
@@ -14,8 +18,14 @@ from ._validation import checked_record, digest, numeric, records, require
 
 
 def _row_key(bar):
-    return (bar.code, bar.interval, bar.adjustment, bar.requested_session, bar.session,
-            bar.market_calendar_date, bar.event_time)
+    return (
+        bar.code,
+        bar.interval,
+        bar.adjustment,
+        bar.requested_session,
+        bar.market_calendar_date,
+        bar.event_time,
+    )
 
 
 def _reference(ref, offset, resolved):
@@ -47,7 +57,16 @@ def _verify_absence(proofs, offset, slot, request, inventory, cutoff, nominal):
     code = "CROSS_DAY_BINDING"
     expected = {}
     for key, backing in inventory:
-        if key[:5] != (request.code, request.interval, request.adjustment, slot.market_calendar_date, "RTH"):
+        if (
+            key[:4]
+            != (
+                request.code,
+                request.interval,
+                request.adjustment,
+                slot.market_calendar_date,
+            )
+            or key[4] not in RTH_CANONICAL_ROW_SESSIONS
+        ):
             continue
         if (key[8] <= slot.event_time <= key[9]
                 and (slot.event_time - key[8]) % nominal == timedelta(0)
@@ -147,8 +166,16 @@ def verify_labels(association, execution, pit, a3, schedule, builds, rows, admit
                 require(slot.offset not in selected and slot.offset not in rejected and not proofs[slot.offset],
                         code, "non-fitting slot has evidence")
                 continue
-            resolved = row_index.get((req.code, req.interval, req.adjustment, "RTH", "RTH",
-                                      target.market_calendar_date, expected_event))
+            resolved = row_index.get(
+                (
+                    req.code,
+                    req.interval,
+                    req.adjustment,
+                    "RTH",
+                    target.market_calendar_date,
+                    expected_event,
+                )
+            )
             if resolved is None:
                 _verify_absence(proofs[slot.offset], slot.offset, slot, req, gaps, cutoff, nominal)
                 missing.append(slot.offset)
