@@ -23,7 +23,7 @@ import sys
 import tomllib
 from pathlib import Path
 
-EXPECTED_VERSION = "0.8.0"
+EXPECTED_VERSION = "0.9.0"
 PEP440_RE = re.compile(
     r"^([1-9]\d*!)?(0|[1-9]\d*)(\.(0|[1-9]\d*))*((a|b|rc)(0|[1-9]\d*))?"
     r"(\.post(0|[1-9]\d*))?(\.dev(0|[1-9]\d*))?$"
@@ -66,6 +66,52 @@ CI_V080_PUBLIC_API_LINES = (
     "'load_dataset_catalog'",
     "'select_dataset_catalog_entry'",
     "assert public == methods",
+)
+
+CI_V090_RELEASE_PREP_MARKER = "V090_RELEASE_PREP_OK"
+CI_V090_STALE_RELEASED_MARKER = "V090_RELEASED_OK"
+CI_V090_RESEARCH_SURFACE_MARKER = "V090_RESEARCH_SURFACE_OK"
+CI_V090_RESEARCH_SURFACE_LINES = (
+    ".release-venv/bin/market-vault research-build --help",
+    ".release-venv/bin/market-vault research-backtest --help",
+    ".release-venv/bin/market-vault research-ridge-final-evaluation-artifact --help",
+    "from market_vault.backtest import run_backtest",
+    "build_ml_dataset",
+    "evaluate_ridge_baseline",
+    "write_ridge_final_evaluation_artifact",
+    "print('V090_RESEARCH_SURFACE_OK')",
+)
+V090_DIRECTION_FACTS = (
+    "# MarketVault v0.9.0 Release Direction",
+    "Status: scope frozen on main; Stage 2 release-preparation candidate.",
+    "V090_DIRECTION_BASE_SHA=d01bcf22f9b6d526cff90f3aceb7e3ef441a1a1e",
+    "V090_DIRECTION_BASE_TREE=a961df4fa31c722122c0e891d0bb89f60acbd21f",
+    "FORMAL_V080_RELEASE_SHA=90230ce1b55e63da0c583eaac8e94b64f6f4c2f9",
+    "CURRENT_PACKAGE_VERSION=0.9.0",
+    "TARGET_VERSION=0.9.0",
+    "SEMVER_CLASS=MINOR",
+    "RELEASE_MODEL=MODEL_RELEASE_FIRST",
+    "V090_SCOPE_FROZEN=true",
+    "RELEASE_PREPARATION_STAGE=STAGE_2_CANDIDATE",
+    "FORMAL_RELEASE_REQUIRES_SEPARATE_EXPLICIT_GATE=true",
+    "FORMAL_V090_RELEASED=false",
+)
+V090_RELEASE_PREP_FACTS = (
+    "# MarketVault v0.9.0 Release Notes",
+    "Status: Stage 2 release-preparation candidate; formal release gate pending.",
+    "V090_RELEASE_STATUS=RELEASE_PREPARATION_CANDIDATE",
+    "RELEASE_PREPARATION_BASE_SHA=d01bcf22f9b6d526cff90f3aceb7e3ef441a1a1e",
+    "RELEASE_PREPARATION_BASE_TREE=a961df4fa31c722122c0e891d0bb89f60acbd21f",
+    "FORMAL_V080_RELEASE_SHA=90230ce1b55e63da0c583eaac8e94b64f6f4c2f9",
+    "CANDIDATE_VERSION=0.9.0",
+    "TARGET_VERSION=0.9.0",
+    "SEMVER_CLASS=MINOR",
+    "RELEASE_MODEL=MODEL_RELEASE_FIRST",
+    "FORMAL_RELEASE_REQUIRES_SEPARATE_EXPLICIT_GATE=true",
+    "FORMAL_V090_RELEASED=false",
+    "PYPI_PUBLICATION_DECISION=SEPARATE_EXPLICIT_GATE",
+    "TESTPYPI_PUBLICATION_DECISION=SEPARATE_EXPLICIT_GATE",
+    "CURRENT_FORMAL_RELEASE=v0.8.0",
 )
 V080_DIRECTION_FACTS = (
     "# MarketVault v0.8.0 Release Direction",
