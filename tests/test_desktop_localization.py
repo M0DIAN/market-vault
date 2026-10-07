@@ -38,6 +38,10 @@ def test_translation_catalogs_have_exact_key_parity_and_representative_strings()
     assert set(EN) == set(ZH_CN)
     assert EN["nav.home"] == "Home"
     assert ZH_CN["nav.home"] == "首页"
+    assert EN["nav.quant_research"] == "Quant Research"
+    assert ZH_CN["nav.quant_research"] == "量化研究"
+    assert EN["quant.run_backtest"] == "Run Backtest"
+    assert ZH_CN["quant.run_backtest"] == "运行回测"
     assert EN["home.recent_runs"] == "Recent Runs"
     assert ZH_CN["columns.run_id"] == "运行 ID"
     assert EN["historical.execute"] == "Execute via OpenD"

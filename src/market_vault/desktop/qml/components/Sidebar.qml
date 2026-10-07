@@ -18,6 +18,7 @@ Rectangle {
             "trading_calendar": "calendar",
             "market_data": "chart",
             "inventory": "inventory",
+            "quant_research": "chart",
             "coverage_audit": "audit",
             "intraday_audit": "pulse",
             "runs": "runs",

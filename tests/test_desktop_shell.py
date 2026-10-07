@@ -23,6 +23,7 @@ from market_vault.desktop.controllers import (
 )
 from market_vault.desktop.localization import I18nBridge
 from market_vault.desktop.preferences import DesktopPreferenceStore
+from market_vault.desktop.quant_research import QuantResearchController
 from market_vault.desktop.runtime import DesktopOperationRuntime
 from market_vault.desktop.shell import PAGE_IDS, ShellController
 from market_vault.desktop.storage_cleanup import StorageCleanupController
@@ -36,6 +37,7 @@ EXPECTED_PAGE_IDS = (
     "trading_calendar",
     "market_data",
     "inventory",
+    "quant_research",
     "coverage_audit",
     "intraday_audit",
     "runs",
@@ -111,6 +113,7 @@ from market_vault.desktop.dashboard import DashboardController
 from market_vault.desktop.controllers import AuditController, HistoricalDataController, InventoryController, MarketDataController, RunsController, TradingCalendarController
 from market_vault.desktop.localization import I18nBridge
 from market_vault.desktop.preferences import DesktopPreferenceStore
+from market_vault.desktop.quant_research import QuantResearchController
 from market_vault.desktop.runtime import DesktopOperationRuntime
 from market_vault.desktop.shell import ShellController
 from market_vault.desktop.storage_cleanup import StorageCleanupController
@@ -125,6 +128,7 @@ historical = HistoricalDataController(runtime, parent=engine)
 calendar = TradingCalendarController(runtime, parent=engine)
 market_data = MarketDataController(runtime, parent=engine)
 inventory = InventoryController(runtime, parent=engine)
+quant_research = QuantResearchController(runtime, parent=engine)
 coverage = AuditController(runtime, method_name='coverage_audit', parent=engine)
 intraday = AuditController(runtime, method_name='intraday_audit', parent=engine)
 runs = RunsController(runtime, parent=engine)
@@ -138,6 +142,7 @@ engine.rootContext().setContextProperty('historicalDataController', historical)
 engine.rootContext().setContextProperty('tradingCalendarController', calendar)
 engine.rootContext().setContextProperty('marketDataController', market_data)
 engine.rootContext().setContextProperty('inventoryController', inventory)
+engine.rootContext().setContextProperty('quantResearchController', quant_research)
 engine.rootContext().setContextProperty('coverageAuditController', coverage)
 engine.rootContext().setContextProperty('intradayAuditController', intraday)
 engine.rootContext().setContextProperty('runsController', runs)
@@ -180,6 +185,8 @@ table_connections = {{
     'calendar': root.findChild(QObject, 'calendarTable').property('tableModel') == calendar.tableModel,
     'market': root.findChild(QObject, 'marketDataTable').property('tableModel') == market_data.tableModel,
     'inventory': root.findChild(QObject, 'inventoryTable').property('tableModel') == inventory.tableModel,
+    'quant_feature': root.findChild(QObject, 'quantFeatureTable').property('tableModel') == quant_research.featureModel,
+    'quant_trades': root.findChild(QObject, 'quantTradesTable').property('tableModel') == quant_research.tradesModel,
     'coverage': root.findChild(QObject, 'coverageAuditTable').property('tableModel') == coverage.tableModel,
     'intraday': root.findChild(QObject, 'intradayAuditTable').property('tableModel') == intraday.tableModel,
     'runs': root.findChild(QObject, 'runsTable').property('tableModel') == runs.tableModel,
@@ -189,7 +196,8 @@ table_connections = {{
 page_names = {{page_id: root.findChild(QObject, object_name) is not None for page_id, object_name in {{
     'home': 'homePage', 'historical_data': 'historicalDataPage',
     'trading_calendar': 'tradingCalendarPage', 'market_data': 'marketDataPage',
-    'inventory': 'inventoryPage', 'coverage_audit': 'coverageAuditPage',
+    'inventory': 'inventoryPage', 'quant_research': 'quantResearchPage',
+    'coverage_audit': 'coverageAuditPage',
     'intraday_audit': 'intradayAuditPage', 'runs': 'runsPage',
     'storage_cleanup': 'storageCleanupPage'
 }}.items()}}
@@ -252,6 +260,8 @@ runtime.shutdown()
             "calendar": True,
             "market": True,
             "inventory": True,
+            "quant_feature": True,
+            "quant_trades": True,
             "coverage": True,
             "intraday": True,
             "runs": True,

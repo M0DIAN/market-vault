@@ -124,6 +124,7 @@ class PageController(QObject):
         apply: Callable[[Any], None],
         *,
         result_status: Callable[[Any], str] | None = None,
+        requires_backend: bool = True,
     ) -> bool:
         self._assert_thread()
         if self._busy or self._runtime.busy:
@@ -156,6 +157,7 @@ class PageController(QObject):
             success,
             failure,
             result_status=result_status,
+            requires_backend=requires_backend,
         )
         if not accepted and self._busy:
             self._busy = False

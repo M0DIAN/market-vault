@@ -20,6 +20,7 @@ from market_vault.desktop.controllers import (
 from market_vault.desktop.dashboard import DashboardController
 from market_vault.desktop.localization import I18nBridge
 from market_vault.desktop.preferences import DesktopPreferenceStore
+from market_vault.desktop.quant_research import QuantResearchController
 from market_vault.desktop.runtime import DesktopOperationRuntime
 from market_vault.desktop.shell import ShellController
 from market_vault.desktop.storage_cleanup import StorageCleanupController
@@ -91,6 +92,7 @@ def create_qml_application_session(
     calendar = TradingCalendarController(runtime, parent=engine)
     market_data = MarketDataController(runtime, parent=engine)
     inventory = InventoryController(runtime, parent=engine)
+    quant_research = QuantResearchController(runtime, parent=engine)
     coverage = AuditController(runtime, method_name="coverage_audit", parent=engine)
     intraday = AuditController(runtime, method_name="intraday_audit", parent=engine)
     runs = RunsController(runtime, parent=engine)
@@ -108,6 +110,7 @@ def create_qml_application_session(
         "tradingCalendarController": calendar,
         "marketDataController": market_data,
         "inventoryController": inventory,
+        "quantResearchController": quant_research,
         "coverageAuditController": coverage,
         "intradayAuditController": intraday,
         "runsController": runs,
@@ -124,6 +127,7 @@ def create_qml_application_session(
         calendar,
         market_data,
         inventory,
+        quant_research,
         coverage,
         intraday,
         runs,

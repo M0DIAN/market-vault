@@ -159,6 +159,7 @@ $RequiredQmlAssets = @(
     "_internal\market_vault\desktop\qml\pages\HomePage.qml",
     "_internal\market_vault\desktop\qml\pages\InventoryPage.qml",
     "_internal\market_vault\desktop\qml\pages\MarketDataPage.qml",
+    "_internal\market_vault\desktop\qml\pages\QuantResearchPage.qml",
     "_internal\market_vault\desktop\qml\pages\RunsPage.qml",
     "_internal\market_vault\desktop\qml\pages\StorageCleanupPage.qml",
     "_internal\market_vault\desktop\qml\pages\TradingCalendarPage.qml"
