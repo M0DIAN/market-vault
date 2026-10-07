@@ -586,6 +586,8 @@ def test_production_packaging_retains_complete_qml_runtime_contract():
     assert "Required frozen Observation Feature transform source is missing" in production_build
     assert "Required frozen Dataset fingerprint source is missing" in production_build
     assert "Frozen Dataset fingerprint source hash mismatch" in production_build
+    assert "[IO.Path]::GetRelativePath" not in production_build
+    assert "Substring($SourceRootPrefix.Length)" in production_build
     assert "built_in_feature_registry" in production_launcher
     assert "built_in_label_registry" in production_launcher
     assert "built_in_cross_day_label_registry" in production_launcher
