@@ -50,12 +50,16 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _run_research_import_smoke() -> int:
-    """Exercise the exact lazy Quant Research import chain used by the GUI."""
+    """Exercise the lazy Quant Research imports and static registry fingerprints."""
+    from market_vault.cross_day.registry import built_in_cross_day_label_registry
+    from market_vault.dataset.feature_registry import built_in_feature_registry
+    from market_vault.dataset.label_registry import built_in_label_registry
     from market_vault.research_dataset import build_research_dataset
     from market_vault.research_workspace import (
         build_local_research_dataset,
         plan_local_research_dataset,
     )
+    from market_vault.ts2_feature.registry import _registry as build_ts2_feature_registry
 
     entry_points = (
         build_research_dataset,
@@ -64,6 +68,11 @@ def _run_research_import_smoke() -> int:
     )
     if not all(callable(item) for item in entry_points):
         raise RuntimeError("Quant Research import smoke did not resolve entry points")
+
+    built_in_feature_registry()
+    built_in_label_registry()
+    built_in_cross_day_label_registry()
+    build_ts2_feature_registry()
     return 0
 
 
