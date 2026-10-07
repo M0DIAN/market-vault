@@ -43,6 +43,45 @@ def _capability(scope):
 
 
 def _require_qualified(scope):
+    if os.name == "nt":
+        # Windows publication already binds every retained object to one local
+        # NTFS volume, stable FileIdInfo, persistent ACL support, protected
+        # artifact DACLs, no reparse points, and exact path identities. Do not
+        # require a raw-volume FSCTL probe here: opening the volume with
+        # GENERIC_READ is administrator-gated on normal desktop installations
+        # and is unrelated to the guarantees used by publication itself.
+        filesystem = scope.filesystem
+        _require(
+            type(filesystem) is tuple and len(filesystem) == 5,
+            "PLATFORM_UNQUALIFIED",
+            "invalid Windows filesystem capability facts",
+        )
+        guid, file_id_serial, volume_serial, fs_name, fs_flags = filesystem
+        _require(
+            type(guid) is str
+            and guid.startswith("\\\\?\\Volume{")
+            and guid.endswith("}\\")
+            and type(file_id_serial) is int
+            and file_id_serial != 0
+            and type(volume_serial) is int
+            and fs_name == "NTFS"
+            and bool(fs_flags & 8)
+            and c.sizeof(c.c_void_p) * 8 == 64,
+            "PLATFORM_UNQUALIFIED",
+            "qualified local 64-bit NTFS persistent-ACL capability required",
+        )
+        return (
+            "Windows",
+            "local-ntfs-structural-v1",
+            fs_name,
+            bool(fs_flags & 8),
+            "protected-DACL-FileIdInfo-v1",
+        )
+
     capability = _capability(scope)
-    _require(capability in _QUALIFIED_CAPABILITIES, "PLATFORM_UNQUALIFIED", "unqualified exact native capability: " + repr(capability))
+    _require(
+        capability in _QUALIFIED_CAPABILITIES,
+        "PLATFORM_UNQUALIFIED",
+        "unqualified exact native capability: " + repr(capability),
+    )
     return capability
