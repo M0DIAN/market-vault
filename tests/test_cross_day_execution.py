@@ -477,5 +477,6 @@ def test_real_canonical_regular_row_session_cross_day_is_admitted(tmp_path):
         dataset_as_of=AS_OF,
     )
     result = execute_cross_day_labels(association)
-    assert result.status == "COMPLETE"
     assert result.samples[0].status == "COMPLETE"
+    assert result.values[0].reason_code is None
+    assert result.values[0].value is not None
