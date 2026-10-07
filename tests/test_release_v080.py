@@ -18,7 +18,7 @@ def _load_release_checker():
     return module
 
 
-def test_v080_versions_are_consistent():
+def test_current_versions_remain_consistent_after_v080_release():
     with (ROOT / "pyproject.toml").open("rb") as handle:
         project_version = tomllib.load(handle)["project"]["version"]
     namespace: dict[str, str] = {}
@@ -28,7 +28,7 @@ def test_v080_versions_are_consistent():
         ),
         namespace,
     )
-    assert project_version == namespace["__version__"] == "0.8.0"
+    assert project_version == namespace["__version__"]
 
 
 def test_v080_released_state_documents_pass_checker():
@@ -113,10 +113,12 @@ def test_v080_changelog_and_readme_lifecycle_markers():
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
         encoding="utf-8"
     )
+    assert "## [0.9.0] - 2026-10-07" in changelog
     assert "## [0.8.0] - 2026-09-11" in changelog
-    assert "Current package version: v0.8.0" in readme
+    assert "Current package candidate: v0.9.0" in readme
     assert "Current formal release: v0.8.0" in readme
     assert "Formal v0.8.0 release record" in readme
+    assert "docs/release_v0_9_0.md" in readme
     assert "Status: v0.8.0 formally released; release direction closed." in direction
     assert "V080_DIRECTION_BASE_SHA=1f4da9154cdbe4a9b48e025a4777562fed0ef305" in direction
     assert "FORMAL_V080_RELEASE_COMMIT=90230ce1b55e63da0c583eaac8e94b64f6f4c2f9" in direction
