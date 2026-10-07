@@ -1,0 +1,51 @@
+{
+  "name": "PR252 Frozen Multi-Source Windows Verification",
+  "permissions": {
+    "contents": "read"
+  },
+  "on": {
+    "push": {
+      "branches": [
+        "verify/pr252-frozen-multi-source-windows"
+      ]
+    }
+  },
+  "jobs": {
+    "verify": {
+      "runs-on": "windows-latest",
+      "steps": [
+        {
+          "name": "Checkout exact candidate",
+          "uses": "actions/checkout@v6",
+          "with": {
+            "ref": "737573527b746f72854668eefa50971bed409418",
+            "fetch-depth": 0
+          }
+        },
+        {
+          "name": "Verify identity",
+          "shell": "pwsh",
+          "run": "$ErrorActionPreference=\"Stop\"\n$head=(git rev-parse HEAD).Trim()\nif ($head -ne \"737573527b746f72854668eefa50971bed409418\") { throw \"HEAD drift: $head\" }\nif (git status --porcelain) { throw \"dirty checkout\" }\nWrite-Output \"PR252_WINDOWS_SOURCE=PASS\""
+        },
+        {
+          "name": "Set up Python",
+          "uses": "actions/setup-python@v6",
+          "with": {
+            "python-version": "3.11.9",
+            "architecture": "x64"
+          }
+        },
+        {
+          "name": "Install frozen dependencies",
+          "shell": "pwsh",
+          "run": "$ErrorActionPreference=\"Stop\"\npython -m pip install --upgrade pip\npython -m pip install -e \".[windows-exe]\"\npython -m pip install \"moomoo-api==10.9.6908\"\nWrite-Output \"PR252_WINDOWS_DEPS=PASS\""
+        },
+        {
+          "name": "Build exact production ONEDIR",
+          "shell": "pwsh",
+          "run": "$ErrorActionPreference=\"Stop\"\n$out=Join-Path $env:RUNNER_TEMP \"pr252-frozen-multi-source\"\n& .\\scripts\\build_windows_desktop.ps1 -PythonExecutable (Get-Command python).Source -OutputRoot $out -NoZip\nif ($LASTEXITCODE -ne 0) { throw \"production build failed\" }\n$meta=Get-Content -LiteralPath (Join-Path $out \"MarketVault\\build-metadata.json\") -Raw | ConvertFrom-Json\nif ($meta.build_head_sha -ne \"737573527b746f72854668eefa50971bed409418\") { throw \"metadata HEAD drift\" }\nif ($meta.unrelated_cwd_smoke_exit_code -ne 0) { throw \"frozen startup smoke failed\" }\nWrite-Output \"PR252_WINDOWS_ONEDIR=PASS\"\nWrite-Output \"PR252_WINDOWS_FROZEN_SMOKE=PASS\""
+        }
+      ]
+    }
+  }
+}
