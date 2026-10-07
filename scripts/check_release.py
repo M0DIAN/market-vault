@@ -2075,7 +2075,7 @@ def check_readme_landing_page(root: Path) -> list[str]:
     for phrase in (
         "PyPI: not published",
         "TestPyPI: not published",
-        "GitHub Release: published",
+        "GitHub Release: v0.8.0 remains the current published release",
     ):
         if phrase not in text:
             failures.append(f"README does not state the release truth {phrase!r}")
