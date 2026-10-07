@@ -18,7 +18,7 @@ def _load_release_checker():
     return module
 
 
-def test_v080_versions_are_consistent():
+def test_v080_release_is_historical_while_current_candidate_is_v090():
     with (ROOT / "pyproject.toml").open("rb") as handle:
         project_version = tomllib.load(handle)["project"]["version"]
     namespace: dict[str, str] = {}
@@ -28,7 +28,11 @@ def test_v080_versions_are_consistent():
         ),
         namespace,
     )
-    assert project_version == namespace["__version__"] == "0.8.0"
+    assert project_version == namespace["__version__"] == "0.9.0"
+    release = (ROOT / "docs" / "release_v0_8_0.md").read_text(
+        encoding="utf-8"
+    )
+    assert "V080_RELEASE_STATUS=FORMALLY_RELEASED_AND_SEALED" in release
 
 
 def test_v080_released_state_documents_pass_checker():
@@ -114,7 +118,7 @@ def test_v080_changelog_and_readme_lifecycle_markers():
         encoding="utf-8"
     )
     assert "## [0.8.0] - 2026-09-11" in changelog
-    assert "Current package version: v0.8.0" in readme
+    assert "Package candidate version: v0.9.0" in readme
     assert "Current formal release: v0.8.0" in readme
     assert "Formal v0.8.0 release record" in readme
     assert "Status: v0.8.0 formally released; release direction closed." in direction
