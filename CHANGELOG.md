@@ -4,6 +4,87 @@ All notable changes to MarketVault are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-10-07
+
+### Added
+
+- Research Dataset Builder V1 and strict JSON `research-build` plan/CLI,
+  composing the existing PIT, TS2, Observation, Cross-Day, Multi-Source, split,
+  and immutable artifact authorities without a second Dataset implementation.
+- Observation PIT sidecars, Multi-Source Features/Datasets, Cross-Day
+  `TRADING_DAYS` Labels, TS2 Feature execution, and immutable verified
+  Multi-Source Cross-Day Dataset artifacts.
+- Quant Feature Library V1 with explicit PIT-safe SMA, EMA, RSI, MACD
+  line/signal/histogram, ATR, OBV, and fixed 17-bar KDJ K/D/J transforms.
+- Research Label Library V1 with 1/3/5/10 trading-day forward return,
+  direction, MFE, MAE, and execution-safe future-open-to-horizon-close return
+  presets.
+- Deterministic single-symbol Long/Flat Backtest Engine V1 and
+  `research-backtest` plan/CLI, including explicit costs, non-overlapping
+  trades, execution-safe PnL binding, and realized-equity metrics.
+- Verified ML Dataset Adapter V1, Feature Research/Stability/Selection,
+  Experiment Metadata, leakage-safe Walk-Forward folds, and their
+  settings-independent plan/CLI surfaces.
+- Deterministic Ridge research pipeline: regression baseline, validation-only
+  alpha selection, permanent TEST evaluation, validation trading-threshold
+  selection, fixed/selected TEST trading evaluation, final comparison report,
+  immutable final-evaluation artifact, and explicit plan/CLI wrappers.
+
+### Changed
+
+- MarketVault now exposes a local-first verified quant-research pipeline in
+  addition to its historical market-data archive and Dataset/Catalog surfaces.
+- Research CI gained a bounded `research_fast` tier, duplicate feature-branch
+  push runs were removed, and stale PR runs are cancelled while `main`
+  continues to receive FULL final integration validation.
+- TS2 execution identity now preserves the original eight-transform
+  compatibility baseline and adds extension implementation pins only when
+  those Features are actually requested, preventing unrelated Feature-library
+  growth from changing historical Dataset identities.
+- Research model evaluation remains chronological and leakage-safe: Feature
+  selection, Walk-Forward, Ridge alpha selection, trading-threshold selection,
+  and permanent TEST use are separated by explicit authority boundaries.
+
+### Fixed
+
+- Corrected the Research fast-path Feature-transform directory scope so new
+  transforms do not fall back to FULL CI unnecessarily.
+- Added downstream Cross-Day Dataset identity and TS2 artifact regressions to
+  the Research fast portfolio after main FULL exposed registry-wide identity
+  churn.
+- Added an execution-safe return Label using the first future aligned bar open
+  through the horizon close, avoiding an implicit same-close fill when a
+  signal is only known at `feature_window_close`.
+- Backtest V1 binds trade exits to the selected return Label's own evidence
+  rather than a sample-wide maximum Label end time, and revalidates verified
+  Dataset artifacts at invocation.
+
+### Compatibility
+
+- The v0.8.0 Raw/Curated, Canonical, legacy Dataset, and Dataset Catalog
+  artifacts are not migrated or rewritten.
+- Existing v0.8.0 public `ArtifactClient` business methods retain their
+  signatures and behavior.
+- The original eight TS2 implementation pins remain the compatibility baseline;
+  new Feature implementations are identity-bearing only when used.
+- Runtime dependencies remain unchanged; Python >=3.11, Python 3.14
+  compatibility validation, and the audited PyArrow 24 surface remain in CI.
+- PyPI and TestPyPI publication remain separate explicit decisions.
+
+### Known boundaries
+
+- Adjusted-Price PIT remains `MODEL_C_NONE_ONLY`; QFQ/HFQ and
+  corporate-action PIT authority are not enabled.
+- Backtest V1 is single-symbol, Long/Flat, full-notional and research-only; it
+  does not simulate an order book, margin, shorting, portfolio allocation, or
+  broker execution.
+- The ML research stack ships deterministic Ridge regression only; it is not a
+  general-purpose ML framework or MLOps platform.
+- Research signals and evaluations never place live orders. Automatic trading
+  and broker execution remain out of scope.
+- REST service, cloud/distributed execution, and live microstructure capture
+  are not part of v0.9.0.
+
 ## [0.8.0] - 2026-09-11
 
 ### Added
@@ -521,6 +602,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Historical K-line collection for closed dates (`collect`), query layer
   (`query`), and option datasets.
 
+[0.9.0]: https://github.com/M0DIAN/market-vault/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/M0DIAN/market-vault/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/M0DIAN/market-vault/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/M0DIAN/market-vault/compare/v0.6.0...v0.6.1

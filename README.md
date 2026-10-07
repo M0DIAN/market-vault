@@ -1,10 +1,10 @@
 # MarketVault
 
-MarketVault is a local-first historical market-data and verified
-research-data pipeline for moomoo OpenD. It collects and audits historical
-market data, builds immutable and verifiable research artifacts, and
-exposes deterministic Dataset / Catalog / Python read surfaces for
-research and ML consumers.
+MarketVault is a local-first historical market-data and verified quant-research
+pipeline for moomoo OpenD. It collects and audits historical market data,
+builds immutable and verifiable research artifacts, and exposes deterministic
+Dataset, feature/label research, backtest, walk-forward, and Ridge evaluation
+surfaces for local research and ML workflows.
 
 ## What MarketVault is
 
@@ -12,8 +12,9 @@ MarketVault runs against a locally installed moomoo OpenD instance. It
 collects historical candlesticks, option contract metadata, daily option
 volatility, and trading-calendar data; keeps immutable Raw / Curated
 snapshots; audits coverage and intraday integrity; and derives verified
-Canonical builds and deterministic Datasets that research code can consume
-safely. It does not train models, produce signals, or trade automatically.
+Canonical builds and deterministic Datasets that research code can consume safely. The v0.9 research stack can run deterministic
+Ridge model evaluation and research-only trading/backtest signals, but it does
+not place live orders or execute trades through a broker.
 
 ## Core capabilities
 
@@ -27,6 +28,13 @@ safely. It does not train models, produce signals, or trade automatically.
 - Deterministic point-in-time-safe Dataset construction
 - Deterministic Sample Generation and immutable Dataset Catalog
 - Verified CLI and Python ArtifactClient read access
+- Observation PIT, Multi-Source, TS2, and Cross-Day `TRADING_DAYS` research data
+- Quant Feature Library: SMA, EMA, RSI, MACD, ATR, OBV, and KDJ
+- Research Label Library including execution-safe forward returns, MFE, and MAE
+- Single-symbol Long/Flat Backtest Engine with explicit costs and non-overlap
+- ML Dataset Adapter, Feature Research/Stability/Selection, and Walk-Forward
+- Deterministic Ridge regression selection, permanent TEST evaluation, and
+  research trading/evaluation artifacts
 
 ## Data flow
 
@@ -39,11 +47,15 @@ Audit
     ↓
 Verified Canonical
     ↓
-Deterministic Dataset
+PIT / Observation / Multi-Source / TS2
     ↓
-Dataset Catalog
+Cross-Day Research Dataset
     ↓
-Python / research / ML consumers
+Feature + Label Research
+    ↓
+Walk-Forward / Ridge / Backtest
+    ↓
+Verified research evaluation artifacts
 ```
 
 ## Design principles
@@ -121,8 +133,11 @@ details in the [user guide](docs/USER_GUIDE.md) and the
 - Historical minute-by-minute Bid/Ask, order-book depth, complete intraday
   Greeks, and IV cannot be reconstructed after the fact if they were never
   captured; those fields need a live capture and subscription pipeline.
-- MarketVault does not provide automatic trading, signals, or ML model
-  training.
+- Research signals, Backtest results, and Ridge evaluations are offline
+  research outputs only; MarketVault does not place live broker orders or
+  provide automatic trading.
+- v0.9.0 ships a deterministic Ridge research pipeline, not a general-purpose
+  ML framework or MLOps platform.
 - `ArtifactClient` is read-only, and verified artifact reads never
   auto-discover a "latest" artifact.
 
@@ -133,6 +148,8 @@ details in the [user guide](docs/USER_GUIDE.md) and the
 - Formal v0.7.0 release record: [docs/release_v0_7_0.md](docs/release_v0_7_0.md)
 - V0.8.0 release direction: [docs/v0_8_0_direction.md](docs/v0_8_0_direction.md)
 - Formal v0.8.0 release record: [docs/release_v0_8_0.md](docs/release_v0_8_0.md)
+- V0.9.0 release direction: [docs/v0_9_0_direction.md](docs/v0_9_0_direction.md)
+- V0.9.0 release-preparation notes: [docs/release_v0_9_0.md](docs/release_v0_9_0.md)
 - Python Client detailed guide: [docs/v0_7_0_python_client_usage.md](docs/v0_7_0_python_client_usage.md)
 - Contracts: [docs/contracts/](docs/contracts/)
 - Historical Console v0.1 contract: [docs/contracts/console_v01.md](docs/contracts/console_v01.md)
@@ -142,15 +159,17 @@ details in the [user guide](docs/USER_GUIDE.md) and the
 
 ## Release lifecycle
 
-- Current package version: v0.8.0
+- Package candidate version: v0.9.0
 - Current formal release: v0.8.0
-- GitHub Release: published
+- GitHub Release: v0.8.0 remains the current published release
 - PyPI: not published
 - TestPyPI: not published
 
-The formal v0.8.0 GitHub Release is published and sealed. Its immutable
-release identities and verification evidence are recorded in
-[docs/release_v0_8_0.md](docs/release_v0_8_0.md).
+The v0.9.0 source/package candidate is prepared from the current verified
+quant-research mainline. Formal v0.9.0 tagging, GitHub Release publication,
+and asset identities require merge, exact-main verification, and a separate
+explicit release gate. The existing formal v0.8.0 release remains sealed and
+is recorded in [docs/release_v0_8_0.md](docs/release_v0_8_0.md).
 
 Release commit SHAs, tag objects, asset hashes, and release audit evidence
 belong in the formal release records, not in this README.
