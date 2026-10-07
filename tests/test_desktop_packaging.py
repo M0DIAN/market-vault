@@ -219,6 +219,7 @@ def test_production_startup_source_has_no_eager_business_imports():
         DESKTOP_ROOT / "dashboard.py",
         DESKTOP_ROOT / "localization.py",
         DESKTOP_ROOT / "preferences.py",
+        DESKTOP_ROOT / "quant_research.py",
         DESKTOP_ROOT / "runtime.py",
         DESKTOP_ROOT / "shell.py",
         DESKTOP_ROOT / "storage_cleanup.py",
@@ -258,6 +259,7 @@ def test_componentized_qml_exercises_dashboard_controller_and_generic_table():
         "TradingCalendarPage",
         "MarketDataPage",
         "InventoryPage",
+        "QuantResearchPage",
         "AuditPage",
         "RunsPage",
         "StorageCleanupPage",
@@ -332,6 +334,7 @@ from market_vault.desktop.dashboard import DashboardController
 from market_vault.desktop.controllers import AuditController, HistoricalDataController, InventoryController, MarketDataController, RunsController, TradingCalendarController
 from market_vault.desktop.localization import I18nBridge
 from market_vault.desktop.preferences import DesktopPreferenceStore
+from market_vault.desktop.quant_research import QuantResearchController
 from market_vault.desktop.runtime import DesktopOperationRuntime
 from market_vault.desktop.shell import ShellController
 from market_vault.desktop.storage_cleanup import StorageCleanupController
@@ -346,6 +349,7 @@ historical = HistoricalDataController(runtime, parent=engine)
 calendar = TradingCalendarController(runtime, parent=engine)
 market_data = MarketDataController(runtime, parent=engine)
 inventory = InventoryController(runtime, parent=engine)
+quant_research = QuantResearchController(runtime, parent=engine)
 coverage = AuditController(runtime, method_name='coverage_audit', parent=engine)
 intraday = AuditController(runtime, method_name='intraday_audit', parent=engine)
 runs = RunsController(runtime, parent=engine)
@@ -359,6 +363,7 @@ engine.rootContext().setContextProperty('historicalDataController', historical)
 engine.rootContext().setContextProperty('tradingCalendarController', calendar)
 engine.rootContext().setContextProperty('marketDataController', market_data)
 engine.rootContext().setContextProperty('inventoryController', inventory)
+engine.rootContext().setContextProperty('quantResearchController', quant_research)
 engine.rootContext().setContextProperty('coverageAuditController', coverage)
 engine.rootContext().setContextProperty('intradayAuditController', intraday)
 engine.rootContext().setContextProperty('runsController', runs)
@@ -528,6 +533,7 @@ def test_production_packaging_retains_complete_qml_runtime_contract():
         "HomePage.qml",
         "InventoryPage.qml",
         "MarketDataPage.qml",
+        "QuantResearchPage.qml",
         "RunsPage.qml",
         "StorageCleanupPage.qml",
         "TradingCalendarPage.qml",
@@ -554,6 +560,7 @@ def test_production_packaging_retains_complete_qml_runtime_contract():
         '"market_vault.console.backend"',
         '"market_vault.console.tasks"',
         '"market_vault.desktop.bootstrap"',
+        '"market_vault.desktop.quant_research"',
         '"market_vault.desktop.windows_chrome"',
         '"duckdb"',
         '"pandas"',
