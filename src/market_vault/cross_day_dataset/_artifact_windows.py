@@ -278,7 +278,8 @@ class _WindowsObject:
         security = _security_facts(self.handle)
         _access_boundary(security, self.current_sid, ancestor=self.ancestor, held_handle=self.handle)
         _require(self.ancestor or not tag.attributes & 0x2, "INVENTORY_MISMATCH", "hidden artifact object")
-        _require(all(n == "::$DATA" for n in _streams(self.handle)), "INVENTORY_MISMATCH", "named stream outside inventory")
+        if not self.ancestor:
+            _require(all(n == "::$DATA" for n in _streams(self.handle)), "INVENTORY_MISMATCH", "named stream outside inventory")
         # Archive/access-time changes from our own writes are not permission changes.
         security = (*security, tag.attributes & 0x7)
         return (identity.serial, bytes(identity.identifier), self.directory), (guid.value, identity.serial, serial.value, fs.value, flags.value), security

@@ -2,6 +2,7 @@
 
 import os
 import ctypes
+from pathlib import Path
 
 import pytest
 
@@ -136,6 +137,16 @@ def test_protected_private_child_and_trusted_owner_required():
 def test_inherited_ace_is_not_ignored():
     with pytest.raises(MultiSourceCrossDayArtifactError):
         _access_boundary((CURRENT, 0x1000, ((0, 0x10, 0x10000, "S-1-5-11"),), b"sd"), CURRENT, ancestor=False)
+
+
+def test_named_stream_inventory_guard_is_scoped_to_owned_artifact_objects():
+    source = Path(__import__(
+        "market_vault.cross_day_dataset._artifact_windows",
+        fromlist=["__file__"],
+    ).__file__).read_text(encoding="utf-8")
+    assert 'if not self.ancestor:' in source
+    assert 'all(n == "::$DATA" for n in _streams(self.handle))' in source
+
 
 
 def test_linux_native_adapter_refuses_windows():
