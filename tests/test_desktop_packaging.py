@@ -584,7 +584,8 @@ def test_production_packaging_retains_complete_qml_runtime_contract():
     assert '"market_vault/dataset/feature_transforms"' in production_spec
     assert '"market_vault/dataset/label_transforms"' in production_spec
     assert "Required frozen Observation Feature transform source is missing" in production_build
-    assert "Required frozen Dataset fingerprint source root is missing" in production_build
+    assert "Required frozen Dataset fingerprint source is missing" in production_build
+    assert "Frozen Dataset fingerprint source hash mismatch" in production_build
     assert "built_in_feature_registry" in production_launcher
     assert "built_in_label_registry" in production_launcher
     assert "built_in_cross_day_label_registry" in production_launcher
