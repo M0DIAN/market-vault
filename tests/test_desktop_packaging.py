@@ -562,6 +562,7 @@ def test_production_packaging_retains_complete_qml_runtime_contract():
         '"market_vault.desktop.bootstrap"',
         '"market_vault.desktop.quant_research"',
         '"market_vault.research_workspace"',
+        '"market_vault.research_dataset"',
         '"market_vault.multi_source"',
         '"market_vault.multi_source.feature_execution"',
         '"market_vault.multi_source.feature_spec_models"',
