@@ -212,6 +212,7 @@ foreach ($RequiredFrozenModule in @(
     "market_vault.research_dataset",
     "market_vault.multi_source",
     "market_vault.multi_source.feature_execution",
+    "market_vault.multi_source.feature_spec_models",
     "market_vault.multi_source.feature_specs"
 )) {
     if ($ArchiveListing -notmatch [regex]::Escape($RequiredFrozenModule)) {
@@ -247,6 +248,16 @@ Copy-Item -LiteralPath $ConfigTemplate -Destination $SmokeConfig
 $OriginalLocalAppData = $env:LOCALAPPDATA
 $env:LOCALAPPDATA = $SmokeLocalAppData
 try {
+    $ResearchImportSmokeProcess = Start-Process `
+        -FilePath $ExePath `
+        -ArgumentList @("--research-import-smoke") `
+        -WorkingDirectory $SmokeCwd `
+        -Wait `
+        -PassThru
+    if ($ResearchImportSmokeProcess.ExitCode -ne 0) {
+        throw "Frozen Quant Research import smoke failed with exit code $($ResearchImportSmokeProcess.ExitCode)."
+    }
+
     $QuotedSmokeSettings = '"{0}"' -f $SmokeConfig
     $SmokeProcess = Start-Process `
         -FilePath $ExePath `
@@ -322,6 +333,7 @@ $Metadata = [ordered]@{
     build_path_sanitized = $true
     tkinter_bundle_audit = "absent"
     fusion_pixel_sha256 = $BundledFontHash
+    research_import_smoke_exit_code = $ResearchImportSmokeProcess.ExitCode
     unrelated_cwd_smoke_exit_code = $SmokeProcess.ExitCode
     startup_runtime_mutation = $false
     dashboard_smoke_settings = $ResolvedDashboardSmokeSettings
