@@ -207,6 +207,17 @@ if ($ArchiveListing -match '(?im)(^|[^A-Za-z0-9_])_?tkinter([^A-Za-z0-9_]|$)' -o
 if ($ArchiveListing -match '(?im)PySide6\.(?:QtWidgets|QtWebEngine\w*)') {
     throw "Unapproved QtWidgets/WebEngine modules entered the production executable archive."
 }
+foreach ($RequiredFrozenModule in @(
+    "market_vault.research_workspace",
+    "market_vault.research_dataset",
+    "market_vault.multi_source",
+    "market_vault.multi_source.feature_execution",
+    "market_vault.multi_source.feature_specs"
+)) {
+    if ($ArchiveListing -notmatch [regex]::Escape($RequiredFrozenModule)) {
+        throw "Required Quant Research module is missing from the production executable archive: $RequiredFrozenModule"
+    }
+}
 
 $ForbiddenTopLevel = @(".git", "tests", "data", "catalog", "manifests", "reports", "quarantine")
 $TopLevelNames = Get-ChildItem -LiteralPath $FinalApp -Force | ForEach-Object { $_.Name }
