@@ -49,6 +49,7 @@ def _show_frozen_error(message: str) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     settings_path: Path | None = None
+    research_import_smoke = False
     try:
         parser = build_parser()
         args = parser.parse_args(argv)
@@ -58,6 +59,7 @@ def main(argv: list[str] | None = None) -> int:
         )
 
         validate_application_arguments(parser, args)
+        research_import_smoke = bool(args.research_import_smoke)
         settings_path = resolve_settings_path(args.settings)
         return run_application(
             smoke_exit_ms=args.smoke_exit_ms,
@@ -67,10 +69,13 @@ def main(argv: list[str] | None = None) -> int:
             dashboard_smoke_require_recent_runs=(
                 args.dashboard_smoke_require_recent_runs
             ),
+            research_import_smoke=research_import_smoke,
         )
     except Exception as exc:
         if not is_frozen():
             raise
+        if research_import_smoke:
+            return 1
         _show_frozen_error(
             "MarketVault could not start.\n\n"
             f"{exc.__class__.__name__}: {exc}\n\n"
