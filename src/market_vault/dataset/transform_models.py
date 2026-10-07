@@ -921,6 +921,11 @@ def _module_source_sha256(implementation, transform_ref: str) -> str:
     try:
         source = inspect.getsource(module)
     except (OSError, TypeError) as inspect_exc:
+        if not bool(getattr(sys, "frozen", False)):
+            raise TransformRegistryError(
+                f"cannot read stable Python source of module "
+                f"{implementation.__module__!r}: {inspect_exc}"
+            ) from inspect_exc
         module_file = getattr(module, "__file__", None)
         if type(module_file) is not str or not module_file:
             raise TransformRegistryError(
