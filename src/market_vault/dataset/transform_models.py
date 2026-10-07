@@ -920,11 +920,29 @@ def _module_source_sha256(implementation, transform_ref: str) -> str:
         )
     try:
         source = inspect.getsource(module)
-    except (OSError, TypeError) as exc:
-        raise TransformRegistryError(
-            f"cannot read stable Python source of module "
-            f"{implementation.__module__!r}: {exc}"
-        ) from exc
+    except (OSError, TypeError) as inspect_exc:
+        module_file = getattr(module, "__file__", None)
+        if type(module_file) is not str or not module_file:
+            raise TransformRegistryError(
+                f"cannot read stable Python source of module "
+                f"{implementation.__module__!r}: {inspect_exc}"
+            ) from inspect_exc
+        source_path = Path(module_file)
+        if source_path.suffix.lower() in {".pyc", ".pyo"}:
+            source_path = source_path.with_suffix(".py")
+        if source_path.suffix.lower() != ".py":
+            raise TransformRegistryError(
+                f"cannot read stable Python source of module "
+                f"{implementation.__module__!r}: unsupported source path "
+                f"{source_path.name!r}"
+            ) from inspect_exc
+        try:
+            source = source_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as file_exc:
+            raise TransformRegistryError(
+                f"cannot read stable Python source of module "
+                f"{implementation.__module__!r}: {file_exc}"
+            ) from file_exc
     normalized = _normalize_source_text(source)
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
