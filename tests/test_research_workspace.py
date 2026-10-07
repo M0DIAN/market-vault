@@ -213,6 +213,7 @@ def test_build_workspace_composes_canonical_and_research_authorities(
 ):
     days = _days()
     settings = _settings(tmp_path)
+    settings.data_root.mkdir(parents=True, exist_ok=True)
     vault = _Vault(settings, _calendar_frame(days))
     _ResearchCatalog.complete = {("US.SPY", day) for day in days}
     monkeypatch.setattr(workspace, "Catalog", _ResearchCatalog)
