@@ -95,6 +95,7 @@ hidden_imports = [
     "pyarrow.parquet",
     "yaml",
 ]
+hidden_imports.extend(collect_submodules("market_vault.multi_source"))
 hidden_imports.extend(
     collect_submodules(
         "moomoo",
