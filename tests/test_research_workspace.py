@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -8,7 +8,15 @@ import pandas as pd
 import pytest
 
 import market_vault.research_workspace as workspace
-from market_vault.models import Settings
+from market_vault import MarketVault
+from market_vault.models import (
+    MarketBarSnapshotPair,
+    QualityResult,
+    RunManifest,
+    Settings,
+)
+from market_vault.normalization import normalize_bars, normalize_trading_calendar
+from market_vault.storage import Catalog, ParquetStore
 
 
 def _settings(tmp_path: Path) -> Settings:
@@ -287,3 +295,151 @@ def test_build_workspace_composes_canonical_and_research_authorities(
     assert captured["anchors"] == plan.anchors
     assert captured["ts2_feature_specs"] == plan.feature_specs
     assert captured["label_specs"] == plan.label_specs
+
+
+def _write_real_calendar(cfg: Settings, trading_days: list[date]) -> None:
+    frame = pd.DataFrame(
+        {
+            "time": [day.isoformat() for day in trading_days],
+            "trade_date_type": ["WHOLE"] * len(trading_days),
+        }
+    )
+    curated = normalize_trading_calendar(
+        frame,
+        market="US",
+        code=None,
+        requested_start_date=trading_days[0],
+        requested_end_date=trading_days[-1],
+        captured_at=pd.Timestamp("2026-01-20T12:00:00Z"),
+        source="moomoo",
+        source_schema_version="10.9",
+        run_id="calendar-real",
+    )
+    ParquetStore(cfg).write_trading_calendar_curated(
+        curated,
+        "MARKET",
+        "US",
+        trading_days[0],
+        trading_days[-1],
+        "calendar-real",
+    )
+    Catalog(cfg).refresh_trading_calendar_views()
+
+
+def _provider_5m_times(day: date) -> list[pd.Timestamp]:
+    opened = pd.Timestamp(f"{day.isoformat()} 09:30:00", tz="America/New_York")
+    closed = pd.Timestamp(f"{day.isoformat()} 16:00:00", tz="America/New_York")
+    return list(
+        pd.date_range(
+            opened + pd.Timedelta(5, unit="m"),
+            closed,
+            freq="5min",
+        )
+    )
+
+
+def _write_real_ts2_day(cfg: Settings, day: date, *, ordinal: int) -> None:
+    code = "US.SPY"
+    run_id = f"real-ts2-{day.isoformat()}"
+    provider = _provider_5m_times(day)
+    count = len(provider)
+    base = 100.0 + ordinal
+    raw = pd.DataFrame(
+        {
+            "code": [code] * count,
+            "name": [code] * count,
+            "time_key": [value.strftime("%Y-%m-%d %H:%M:%S") for value in provider],
+            "open": [base + index * 0.01 for index in range(count)],
+            "high": [base + index * 0.01 + 0.15 for index in range(count)],
+            "low": [base + index * 0.01 - 0.10 for index in range(count)],
+            "close": [base + index * 0.01 + 0.05 for index in range(count)],
+            "volume": [1000.0 + index for index in range(count)],
+        }
+    )
+    raw["requested_trade_date"] = day
+    raw["interval"] = "5m"
+    raw["requested_session"] = "RTH"
+    raw["adjustment"] = "NONE"
+    raw["ingestion_run_id"] = run_id
+    curated = normalize_bars(
+        raw,
+        requested_trade_date=day,
+        interval="5m",
+        requested_session="RTH",
+        adjustment="NONE",
+        source="moomoo",
+        source_schema_version=workspace.RESEARCH_SOURCE_SCHEMA_VERSION,
+        run_id=run_id,
+    )
+    assert set(curated["session"]) == {"REGULAR"}
+
+    store = ParquetStore(cfg)
+    raw_path = store.write_raw(
+        raw, day, "5m", [code], "RTH", "NONE", run_id=run_id
+    )
+    curated_path = store.write_curated(
+        curated, day, "5m", [code], "RTH", "NONE", run_id=run_id
+    )
+    pair = MarketBarSnapshotPair.create(
+        run_id=run_id,
+        symbol=code,
+        requested_trade_date=day,
+        interval="5m",
+        session="RTH",
+        adjustment="NONE",
+        source="moomoo",
+        source_schema_version=workspace.RESEARCH_SOURCE_SCHEMA_VERSION,
+        raw_file=str(raw_path),
+        curated_file=str(curated_path),
+        row_count=len(curated),
+    )
+    run = RunManifest(
+        requested_trade_date=day,
+        requested_symbols=[code],
+        interval="5m",
+        session="RTH",
+        adjustment="NONE",
+        run_id=run_id,
+        snapshot_binding_mode="REGISTERED_PER_SYMBOL",
+    )
+    run.successful_symbols = [code]
+    run.snapshot_pairs = [pair]
+    run.row_count = len(curated)
+    run.raw_file = str(raw_path)
+    run.curated_file = str(curated_path)
+    run.status = "SUCCESS"
+    run.finished_at = datetime.now(timezone.utc)
+
+    catalog = Catalog(cfg)
+    catalog.register_market_bar_snapshot_pair(pair)
+    catalog.record_run(run)
+    catalog.record_quality(run_id, [QualityResult("bars_complete", "PASS")])
+
+
+def test_real_ts2_catalog_to_canonical_to_research_dataset_e2e(tmp_path):
+    days = _days()
+    base = _settings(tmp_path)
+    research_cfg = workspace.research_ready_settings(base)
+    _write_real_calendar(base, days)
+    for index, day in enumerate(days):
+        _write_real_ts2_day(research_cfg, day, ordinal=index)
+
+    result = workspace.build_local_research_dataset(
+        MarketVault(base),
+        symbol="US.SPY",
+        start_date=days[0],
+        end_date=days[-1],
+        interval="5m",
+        preset="LIGHT_TECHNICAL",
+        horizon_trading_days=1,
+    )
+
+    assert result.plan.ready is True
+    assert result.canonical_row_count == 10 * 78
+    assert result.dataset_status == "COMPLETE"
+    assert result.dataset_row_count == 9
+    assert result.split_counts["TRAIN"] > 0
+    assert result.split_counts["VALIDATION"] > 0
+    assert result.split_counts["TEST"] > 0
+    assert result.canonical_build_path.is_dir()
+    assert result.dataset_build_path.is_dir()
