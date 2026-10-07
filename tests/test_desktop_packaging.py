@@ -562,6 +562,10 @@ def test_production_packaging_retains_complete_qml_runtime_contract():
         '"market_vault.desktop.bootstrap"',
         '"market_vault.desktop.quant_research"',
         '"market_vault.research_workspace"',
+        '"market_vault.multi_source"',
+        '"market_vault.multi_source.feature_execution"',
+        '"market_vault.multi_source.feature_spec_models"',
+        '"market_vault.multi_source.feature_specs"',
         '"market_vault.desktop.windows_chrome"',
         '"duckdb"',
         '"pandas"',
@@ -580,6 +584,7 @@ def test_production_packaging_retains_complete_qml_runtime_contract():
         "market_vault.research_dataset",
         "market_vault.multi_source",
         "market_vault.multi_source.feature_execution",
+        "market_vault.multi_source.feature_spec_models",
         "market_vault.multi_source.feature_specs",
     ):
         assert frozen_module in production_build
@@ -587,6 +592,8 @@ def test_production_packaging_retains_complete_qml_runtime_contract():
     assert "$DashboardSmokeRequireRecentRuns" in production_build
     assert '"--dashboard-smoke"' in production_build
     assert '"--dashboard-smoke-require-recent-runs"' in production_build
+    assert '"--research-import-smoke"' in production_build
+    assert "research_import_smoke_exit_code" in production_build
 
 
 def test_pyproject_keeps_qt_optional_and_packages_production_qml():
