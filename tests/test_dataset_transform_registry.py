@@ -732,6 +732,21 @@ def test_missing_source_rejected(impl, monkeypatch):
         registration(ghost)
 
 
+def test_source_fingerprint_falls_back_to_physical_module_source(impl, monkeypatch):
+    module = impl(FEATURE_SOURCE)
+    baseline = registration(module)
+
+    import market_vault.dataset.transform_models as transform_models
+
+    def unavailable(_module):
+        raise OSError("frozen loader has no source")
+
+    monkeypatch.setattr(transform_models.inspect, "getsource", unavailable)
+    frozen_style = registration(module)
+
+    assert frozen_style.implementation_fingerprint == baseline.implementation_fingerprint
+
+
 def test_implementation_is_never_executed(impl):
     calls = {"n": 0}
     source = (
