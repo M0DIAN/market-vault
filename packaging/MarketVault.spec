@@ -135,7 +135,7 @@ analysis = Analysis(
     hiddenimports=hidden_imports,
     hookspath=[str(HOOKS_ROOT)],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=[str(PROJECT_ROOT / "packaging" / "runtime_research_import_canary.py")],
     excludes=[
         "PyQt5",
         "PyQt6",
