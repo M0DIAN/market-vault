@@ -183,8 +183,15 @@ $FingerprintSourceFiles = @(
 if ($FingerprintSourceFiles.Count -eq 0) {
     throw "No Dataset fingerprint source files were discovered from the repository source tree."
 }
+$SourceRootTrimChars = [char[]]@([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+$SourceRootFull = [IO.Path]::GetFullPath($SourceRoot).TrimEnd($SourceRootTrimChars)
+$SourceRootPrefix = $SourceRootFull + [IO.Path]::DirectorySeparatorChar
 foreach ($SourceAsset in $FingerprintSourceFiles) {
-    $RelativeAsset = [IO.Path]::GetRelativePath($SourceRoot, $SourceAsset.FullName)
+    $SourceAssetFull = [IO.Path]::GetFullPath($SourceAsset.FullName)
+    if (-not $SourceAssetFull.StartsWith($SourceRootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Dataset fingerprint source escaped the source root: $SourceAssetFull"
+    }
+    $RelativeAsset = $SourceAssetFull.Substring($SourceRootPrefix.Length)
     $BundledAsset = Join-Path $FinalApp ("_internal\" + $RelativeAsset)
     if (-not (Test-Path -LiteralPath $BundledAsset -PathType Leaf)) {
         throw "Required frozen Dataset fingerprint source is missing: $RelativeAsset"
