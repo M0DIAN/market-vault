@@ -11,6 +11,17 @@ Item {
     required property var i18n
     property int workspaceIndex: 0
 
+    function builderValues() {
+        return {
+            "symbol": builderSymbol.text,
+            "start_date": builderStartDate.text,
+            "end_date": builderEndDate.text,
+            "interval": builderInterval.currentText,
+            "preset": builderPreset.currentText,
+            "horizon_trading_days": builderHorizon.text
+        }
+    }
+
     function featureResearchValues() {
         return {
             "label_field": featureLabel.currentText,
@@ -29,6 +40,11 @@ Item {
             "commission_bps": commission.text,
             "slippage_bps": slippage.text
         }
+    }
+
+    Connections {
+        target: root.controller
+        function onDatasetBuilt() { root.workspaceIndex = 1 }
     }
 
     FolderDialog {
@@ -106,18 +122,25 @@ Item {
             Layout.fillWidth: true
             spacing: Theme.PixelTheme.spacingSm
             Components.PixelButton {
+                objectName: "quantBuilderTab"
+                text: root.i18n.catalog["quant.builder_tab"]
+                glyph: "inventory"
+                variant: root.workspaceIndex === 0 ? "primary" : "secondary"
+                onClicked: root.workspaceIndex = 0
+            }
+            Components.PixelButton {
                 objectName: "quantFeatureTab"
                 text: root.i18n.catalog["quant.feature_tab"]
                 glyph: "pulse"
-                variant: root.workspaceIndex === 0 ? "primary" : "secondary"
-                onClicked: root.workspaceIndex = 0
+                variant: root.workspaceIndex === 1 ? "primary" : "secondary"
+                onClicked: root.workspaceIndex = 1
             }
             Components.PixelButton {
                 objectName: "quantBacktestTab"
                 text: root.i18n.catalog["quant.backtest_tab"]
                 glyph: "chart"
-                variant: root.workspaceIndex === 1 ? "primary" : "secondary"
-                onClicked: root.workspaceIndex = 1
+                variant: root.workspaceIndex === 2 ? "primary" : "secondary"
+                onClicked: root.workspaceIndex = 2
             }
             Item { Layout.fillWidth: true }
             Label {
@@ -134,6 +157,148 @@ Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
             currentIndex: root.workspaceIndex
+
+            Item {
+                ColumnLayout {
+                    anchors.fill: parent
+                    spacing: Theme.PixelTheme.spacingSm
+
+                    Components.PixelPanel {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 194
+                        padding: Theme.PixelTheme.panelPadding
+                        GridLayout {
+                            anchors.fill: parent
+                            columns: 4
+                            columnSpacing: Theme.PixelTheme.spacingMd
+                            rowSpacing: 6
+
+                            Components.LabeledTextField {
+                                id: builderSymbol
+                                objectName: "quantBuilderSymbol"
+                                label: root.i18n.catalog["quant.builder_symbol"]
+                                text: "US.SPY"
+                            }
+                            Components.PixelDateField {
+                                id: builderStartDate
+                                objectName: "quantBuilderStartDate"
+                                label: root.i18n.catalog["field.start_date"]
+                                language: root.i18n.language
+                            }
+                            Components.PixelDateField {
+                                id: builderEndDate
+                                objectName: "quantBuilderEndDate"
+                                label: root.i18n.catalog["field.end_date"]
+                                language: root.i18n.language
+                            }
+                            Components.LabeledComboBox {
+                                id: builderInterval
+                                objectName: "quantBuilderInterval"
+                                label: root.i18n.catalog["field.interval"]
+                                model: ["1m", "5m", "15m", "30m", "60m"]
+                            }
+                            Components.LabeledComboBox {
+                                id: builderPreset
+                                objectName: "quantBuilderPreset"
+                                label: root.i18n.catalog["quant.builder_preset"]
+                                model: ["CORE_TECHNICAL", "LIGHT_TECHNICAL"]
+                            }
+                            Components.LabeledTextField {
+                                id: builderHorizon
+                                objectName: "quantBuilderHorizon"
+                                label: root.i18n.catalog["quant.builder_horizon"]
+                                text: "1"
+                            }
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                Layout.minimumWidth: Theme.PixelTheme.formFieldMinimumWidth
+                                Layout.maximumWidth: Theme.PixelTheme.formFieldWidth
+                                spacing: 4
+                                Label {
+                                    text: root.i18n.catalog["quant.builder_cohort"]
+                                    color: Theme.PixelTheme.inkMuted
+                                    font.pixelSize: Theme.PixelTheme.fontSm
+                                }
+                                Components.PixelTag {
+                                    text: "10.9-mv-ts2 / RTH / NONE"
+                                }
+                            }
+                            Item {
+                                Layout.preferredWidth: Theme.PixelTheme.formFieldWidth
+                                Layout.preferredHeight: 1
+                            }
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: Theme.PixelTheme.spacingSm
+                        Components.PixelButton {
+                            objectName: "quantBuilderPreviewButton"
+                            text: root.i18n.catalog["quant.builder_preview"]
+                            glyph: "audit"
+                            variant: "primary"
+                            enabled: !root.controller.busy
+                                && !root.controller.confirmationPending
+                                && !operationRuntime.busy
+                            onClicked: root.controller.previewBuilder(root.builderValues())
+                        }
+                        Components.PixelButton {
+                            objectName: "quantBuilderPrepareButton"
+                            text: root.i18n.catalog["quant.builder_prepare"]
+                            glyph: "network"
+                            enabled: !root.controller.busy
+                                && !root.controller.confirmationPending
+                                && !operationRuntime.busy
+                            onClicked: root.controller.requestPrepareResearchData(
+                                root.builderValues()
+                            )
+                        }
+                        Components.PixelButton {
+                            objectName: "quantBuilderBuildButton"
+                            text: root.i18n.catalog["quant.builder_build"]
+                            glyph: "inventory"
+                            variant: "primary"
+                            enabled: root.controller.builderSummary["build_ready"] === "true"
+                                && !root.controller.busy
+                                && !root.controller.confirmationPending
+                                && !operationRuntime.busy
+                            onClicked: root.controller.buildDataset(root.builderValues())
+                        }
+                        Components.PixelStatusBadge {
+                            status: root.controller.status
+                            text: {
+                                root.i18n.language
+                                return root.i18n.statusLabel(root.controller.status)
+                            }
+                        }
+                        Item { Layout.fillWidth: true }
+                    }
+
+                    Label {
+                        Layout.fillWidth: true
+                        text: root.i18n.catalog["quant.builder_help"]
+                        color: Theme.PixelTheme.inkMuted
+                        font.pixelSize: Theme.PixelTheme.fontSm
+                        wrapMode: Text.Wrap
+                    }
+
+                    Components.SummaryStrip {
+                        Layout.fillWidth: true
+                        summary: root.controller.builderSummary
+                        i18n: root.i18n
+                    }
+
+                    Components.DataTable {
+                        objectName: "quantBuilderTable"
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        Layout.minimumHeight: 120
+                        tableModel: root.controller.builderModel
+                        i18n: root.i18n
+                    }
+                }
+            }
 
             Item {
                 ColumnLayout {
@@ -378,5 +543,10 @@ Item {
                 }
             }
         }
+    }
+
+    Components.OpenDConfirmDialog {
+        controller: root.controller
+        i18n: root.i18n
     }
 }
