@@ -130,6 +130,7 @@ analysis = Analysis(
     binaries=[],
     datas=collect_data_files("moomoo", include_py_files=False)
     + [(str(WINDOWS_ICON), "assets/windows")]
+    + DATASET_FINGERPRINT_SOURCE_DATAS
     + [
         (
             str(OBSERVATION_FEATURE_TRANSFORM_SOURCE),
