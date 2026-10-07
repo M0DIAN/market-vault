@@ -88,13 +88,17 @@ def _dataset_directory(value: str) -> Path:
     text = str(value).strip()
     if not text:
         raise ValueError("Research Dataset directory is required.")
-    url = QUrl(text)
-    if url.scheme():
-        if not url.isLocalFile():
-            raise ValueError("Research Dataset directory must be a local path.")
-        path = Path(url.toLocalFile()).expanduser()
+    direct_path = Path(text).expanduser()
+    if direct_path.is_absolute():
+        path = direct_path
     else:
-        path = Path(text).expanduser()
+        url = QUrl(text)
+        if url.scheme():
+            if not url.isLocalFile():
+                raise ValueError("Research Dataset directory must be a local path.")
+            path = Path(url.toLocalFile()).expanduser()
+        else:
+            path = direct_path
     if not path.is_absolute():
         raise ValueError("Research Dataset directory must be an absolute local path.")
     resolved = path.resolve(strict=True)
