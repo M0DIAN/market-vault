@@ -77,7 +77,10 @@ def _specs(files):
                 "observation": ("OBSERVATION_SPEC", "observation_feature"),
                 "cross_day": ("CROSS_DAY_SPEC", "cross_day_label")}[family]
             declarations.append((path, role, _SPEC_VERSIONS[version], pin))
-    _check("specs/split.yaml" in files and all(found.values()), "missing spec family")
+    _check(
+        "specs/split.yaml" in files and bool(found["ts2"]) and bool(found["cross_day"]),
+        "missing required spec family",
+    )
     return tuple(tuple(s for _, s in sorted(found[k])) for k in ("ts2", "observation", "cross_day")), split, tuple(declarations)
 
 
