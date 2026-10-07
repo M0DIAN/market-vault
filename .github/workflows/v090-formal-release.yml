@@ -1,339 +1,144 @@
-name: V0.9.0 Formal Release Executor
-
-permissions:
-  contents: write
-  actions: read
-
-on:
-  push:
-    branches:
-      - release/v0.9.0-formal-executor
-
-concurrency:
-  group: v090-formal-release
-  cancel-in-progress: false
-
-jobs:
-  release:
-    runs-on: ubuntu-latest
-    env:
-      RELEASE_COMMIT: 5a796f0d4290b50291993dfcdfcacccb0c8dcb69
-      RELEASE_TREE: 62f051f0c5a59edf35e7ec3fa3d74206407b7773
-      RELEASE_PARENT: d01bcf22f9b6d526cff90f3aceb7e3ef441a1a1e
-      MAIN_CI_RUN: "37556656352"
-      TAG: v0.9.0
-      VERSION: 0.9.0
-
-    steps:
-      - name: Check out exact release commit
-        uses: actions/checkout@v6
-        with:
-          ref: 5a796f0d4290b50291993dfcdfcacccb0c8dcb69
-          fetch-depth: 0
-
-      - name: Preflight frozen identity and remote state
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT"
-          test "$(git rev-parse HEAD^{tree})" = "$RELEASE_TREE"
-          test "$(git rev-parse HEAD^)" = "$RELEASE_PARENT"
-          test -z "$(git status --porcelain)"
-
-          remote_main="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
-          test "$remote_main" = "$RELEASE_COMMIT"
-
-          run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$MAIN_CI_RUN")"
-          python - "$RELEASE_COMMIT" <<'PY' <<<"$run_json"
-import json, sys
-data=json.load(sys.stdin)
-release_commit=sys.argv[1]
-assert data["event"] == "push", data
-assert data["head_branch"] == "main", data
-assert data["head_sha"] == release_commit, data
-assert data["status"] == "completed", data
-assert data["conclusion"] == "success", data
-print("AUTHORITATIVE_MAIN_CI=PASS")
-PY
-
-          test -z "$(git ls-remote --tags origin "refs/tags/$TAG")"
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "V090_RELEASE_ALREADY_EXISTS"
-            exit 1
-          fi
-          echo "V090_PREFLIGHT=PASS"
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.11"
-
-      - name: Install build tooling
-        run: |
-          set -euo pipefail
-          python -m pip install --upgrade pip
-          python -m pip install .
-          python -m pip install "build>=1.2,<2" "twine>=5,<7"
-
-      - name: Run release checker
-        run: |
-          set -euo pipefail
-          python scripts/check_release.py
-
-      - name: Fresh formal build
-        run: |
-          set -euo pipefail
-          rm -rf build dist
-          python -m build
-          python -m twine check dist/*
-          test "$(find dist -maxdepth 1 -type f -name '*.whl' | wc -l)" -eq 1
-          test "$(find dist -maxdepth 1 -type f -name '*.tar.gz' | wc -l)" -eq 1
-          test -f "dist/market_vault-0.9.0-py3-none-any.whl"
-          test -f "dist/market_vault-0.9.0.tar.gz"
-
-      - name: Fresh-wheel smoke
-        run: |
-          set -euo pipefail
-          python -m venv .release-venv
-          .release-venv/bin/python -m pip install --upgrade pip
-          .release-venv/bin/python -m pip install dist/market_vault-0.9.0-py3-none-any.whl
-          test "$(.release-venv/bin/market-vault --version)" = "market-vault 0.9.0"
-          .release-venv/bin/market-vault --help >/dev/null
-          for cmd in             research-build             research-backtest             research-feature-report             research-feature-stability             research-feature-select             research-walk-forward             research-ridge             research-ridge-final             research-ridge-trading-select             research-ridge-final-trading             research-ridge-selected-final-trading             research-ridge-final-evaluation             research-ridge-final-evaluation-artifact
-          do
-            .release-venv/bin/market-vault "$cmd" --help >/dev/null
-          done
-          .release-venv/bin/python - <<'PY'
-from importlib.metadata import version
-import market_vault
-from market_vault import ArtifactClient
-from market_vault.backtest import run_backtest
-from market_vault.research import (
-    analyze_features,
-    build_ml_dataset,
-    build_walk_forward_plan,
-    compare_ridge_final_trading,
-    evaluate_ridge_baseline,
-    write_ridge_final_evaluation_artifact,
-)
-assert market_vault.__version__ == "0.9.0"
-assert version("market-vault") == "0.9.0"
-client = ArtifactClient()
-methods = (
-    "load_canonical_build",
-    "load_dataset",
-    "load_dataset_catalog",
-    "select_dataset_catalog_entry",
-)
-assert all(callable(getattr(client, name)) for name in methods)
-assert all(callable(x) for x in (
-    run_backtest,
-    analyze_features,
-    build_ml_dataset,
-    build_walk_forward_plan,
-    compare_ridge_final_trading,
-    evaluate_ridge_baseline,
-    write_ridge_final_evaluation_artifact,
-))
-print("V090_FORMAL_FRESH_WHEEL_SMOKE=PASS")
-PY
-
-      - name: Check wheel contents
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-import zipfile
-from pathlib import Path
-wheel = Path("dist/market_vault-0.9.0-py3-none-any.whl")
-names = zipfile.ZipFile(wheel).namelist()
-forbidden = (
-    "data/", "catalog/", "manifests/", "reports/", ".venv/",
-    ".duckdb", ".parquet", "examples/", "tests/", ".b64",
-)
-violations = [n for n in names if any(f in n for f in forbidden)]
-assert not violations, violations
-print("V090_FORMAL_WHEEL_CONTENTS=PASS")
-PY
-
-      - name: Build and verify formal SHA256 manifest
-        run: |
-          set -euo pipefail
-          cd dist
-          sha256sum             market_vault-0.9.0-py3-none-any.whl             market_vault-0.9.0.tar.gz             > SHA256SUMS.txt
-          test "$(grep -cve '^$' SHA256SUMS.txt)" -eq 2
-          sha256sum -c SHA256SUMS.txt
-          wheel_sha="$(sha256sum market_vault-0.9.0-py3-none-any.whl | awk '{print $1}')"
-          sdist_sha="$(sha256sum market_vault-0.9.0.tar.gz | awk '{print $1}')"
-          manifest_sha="$(sha256sum SHA256SUMS.txt | awk '{print $1}')"
-          {
-            echo "FORMAL_WHEEL_SHA256=$wheel_sha"
-            echo "FORMAL_SDIST_SHA256=$sdist_sha"
-            echo "FORMAL_MANIFEST_SHA256=$manifest_sha"
-          } | tee ../formal-hashes.txt
-
-      - name: Prepare release body
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-from pathlib import Path
-text = Path("CHANGELOG.md").read_text(encoding="utf-8")
-start = text.index("## [0.9.0] - 2026-10-07")
-rest = text[start:]
-next_index = rest.find("\n## [", 1)
-body = rest if next_index == -1 else rest[:next_index]
-Path("release-body.md").write_text(body.rstrip() + "\n", encoding="utf-8", newline="\n")
-PY
-
-      - name: Final pre-tag drift check
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          remote_main="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
-          test "$remote_main" = "$RELEASE_COMMIT"
-          test -z "$(git ls-remote --tags origin "refs/tags/$TAG")"
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            exit 1
-          fi
-          echo "V090_PRE_TAG_DRIFT_CHECK=PASS"
-
-      - name: Create and push annotated tag
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "$TAG" "$RELEASE_COMMIT" -m "MarketVault v0.9.0"
-          test "$(git cat-file -t "$TAG")" = "tag"
-          test "$(git rev-parse "$TAG^{}")" = "$RELEASE_COMMIT"
-          git push origin "refs/tags/$TAG"
-
-          ref_json="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG")"
-          tag_object="$(python -c 'import json,sys; d=json.load(sys.stdin); assert d["object"]["type"]=="tag"; print(d["object"]["sha"])' <<<"$ref_json")"
-          tag_json="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_object")"
-          peeled="$(python -c 'import json,sys; d=json.load(sys.stdin); assert d["object"]["type"]=="commit"; print(d["object"]["sha"])' <<<"$tag_json")"
-          test "$peeled" = "$RELEASE_COMMIT"
-          {
-            echo "TAG_OBJECT_SHA=$tag_object"
-            echo "PEELED_TAG_COMMIT=$peeled"
-          } | tee tag-identity.txt
-          echo "V090_ANNOTATED_TAG=PASS"
-
-      - name: Create draft GitHub Release with exactly three assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          gh release create "$TAG"             --repo "$GITHUB_REPOSITORY"             --title "MarketVault v0.9.0"             --notes-file release-body.md             --draft             --verify-tag             dist/market_vault-0.9.0-py3-none-any.whl             dist/market_vault-0.9.0.tar.gz             dist/SHA256SUMS.txt
-
-      - name: Verify draft Release assets byte-for-byte
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          rm -rf redownload-draft
-          mkdir redownload-draft
-          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir redownload-draft
-          test "$(find redownload-draft -maxdepth 1 -type f | wc -l)" -eq 3
-          test -f redownload-draft/market_vault-0.9.0-py3-none-any.whl
-          test -f redownload-draft/market_vault-0.9.0.tar.gz
-          test -f redownload-draft/SHA256SUMS.txt
-          cmp dist/market_vault-0.9.0-py3-none-any.whl redownload-draft/market_vault-0.9.0-py3-none-any.whl
-          cmp dist/market_vault-0.9.0.tar.gz redownload-draft/market_vault-0.9.0.tar.gz
-          cmp dist/SHA256SUMS.txt redownload-draft/SHA256SUMS.txt
-          (cd redownload-draft && sha256sum -c SHA256SUMS.txt)
-          echo "V090_DRAFT_ASSET_VERIFICATION=PASS"
-
-      - name: Final pre-publication drift check
-        run: |
-          set -euo pipefail
-          remote_main="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
-          test "$remote_main" = "$RELEASE_COMMIT"
-          echo "V090_PRE_PUBLICATION_DRIFT_CHECK=PASS"
-
-      - name: Publish GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
-
-      - name: Verify published Release and assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          rm -rf redownload-published
-          mkdir redownload-published
-          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir redownload-published
-          test "$(find redownload-published -maxdepth 1 -type f | wc -l)" -eq 3
-          cmp dist/market_vault-0.9.0-py3-none-any.whl redownload-published/market_vault-0.9.0-py3-none-any.whl
-          cmp dist/market_vault-0.9.0.tar.gz redownload-published/market_vault-0.9.0.tar.gz
-          cmp dist/SHA256SUMS.txt redownload-published/SHA256SUMS.txt
-          (cd redownload-published && sha256sum -c SHA256SUMS.txt)
-
-          release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG")"
-          latest_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest")"
-          python - "$TAG" <<'PY' <<<"$release_json"
-import json, sys
-tag=sys.argv[1]
-d=json.load(sys.stdin)
-assert d["tag_name"] == tag, d
-assert d["name"] == "MarketVault v0.9.0", d
-assert d["draft"] is False, d
-assert d["prerelease"] is False, d
-assert sorted(a["name"] for a in d["assets"]) == [
-    "SHA256SUMS.txt",
-    "market_vault-0.9.0-py3-none-any.whl",
-    "market_vault-0.9.0.tar.gz",
-], d
-print(f"GITHUB_RELEASE_ID={d['id']}")
-print(f"PUBLISHED_AT={d['published_at']}")
-print("DRAFT=false")
-print("PRERELEASE=false")
-PY
-          python - "$TAG" <<'PY' <<<"$latest_json"
-import json, sys
-tag=sys.argv[1]
-d=json.load(sys.stdin)
-assert d["tag_name"] == tag, d
-print("LATEST=true")
-PY
-          echo "PUBLISHED_ASSET_REDOWNLOAD_VERIFICATION=PASS"
-
-      - name: Record formal release evidence
-        if: always()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          {
-            echo "RELEASE_COMMIT=$RELEASE_COMMIT"
-            echo "RELEASE_TREE=$RELEASE_TREE"
-            echo "MAIN_CI_RUN=$MAIN_CI_RUN"
-            test -f formal-hashes.txt && cat formal-hashes.txt || true
-            test -f tag-identity.txt && cat tag-identity.txt || true
-            if gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" > release.json 2>/dev/null; then
-              python - <<'PY'
-import json
-d=json.load(open("release.json", encoding="utf-8"))
-print(f"GITHUB_RELEASE_ID={d['id']}")
-print(f"PUBLISHED_AT={d['published_at']}")
-print(f"DRAFT={str(d['draft']).lower()}")
-print(f"PRERELEASE={str(d['prerelease']).lower()}")
-for a in sorted(d["assets"], key=lambda x: x["name"]):
-    print(f"ASSET={a['name']} DIGEST={a.get('digest')}")
-PY
-            fi
-          } | tee formal-release-evidence.txt
-
-      - name: Upload formal release evidence
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: v090-formal-release-evidence
-          path: formal-release-evidence.txt
-          if-no-files-found: warn
-          retention-days: 30
+{
+  "name": "V0.9.0 Formal Release Executor",
+  "permissions": {
+    "contents": "write",
+    "actions": "read"
+  },
+  "on": {
+    "push": {
+      "branches": [
+        "release/v0.9.0-formal-executor"
+      ]
+    }
+  },
+  "concurrency": {
+    "group": "v090-formal-release",
+    "cancel-in-progress": false
+  },
+  "jobs": {
+    "release": {
+      "runs-on": "ubuntu-latest",
+      "env": {
+        "RELEASE_COMMIT": "5a796f0d4290b50291993dfcdfcacccb0c8dcb69",
+        "RELEASE_TREE": "62f051f0c5a59edf35e7ec3fa3d74206407b7773",
+        "RELEASE_PARENT": "d01bcf22f9b6d526cff90f3aceb7e3ef441a1a1e",
+        "MAIN_CI_RUN": "37556656352",
+        "TAG": "v0.9.0",
+        "VERSION": "0.9.0"
+      },
+      "steps": [
+        {
+          "name": "Check out exact release commit",
+          "uses": "actions/checkout@v6",
+          "with": {
+            "ref": "5a796f0d4290b50291993dfcdfcacccb0c8dcb69",
+            "fetch-depth": 0
+          }
+        },
+        {
+          "name": "Preflight frozen identity and remote state",
+          "env": {
+            "GH_TOKEN": "${{ github.token }}"
+          },
+          "run": "set -euo pipefail\ntest \"$(git rev-parse HEAD)\" = \"$RELEASE_COMMIT\"\ntest \"$(git rev-parse HEAD^{tree})\" = \"$RELEASE_TREE\"\ntest \"$(git rev-parse HEAD^)\" = \"$RELEASE_PARENT\"\ntest -z \"$(git status --porcelain)\"\nremote_main=\"$(git ls-remote origin refs/heads/main | awk '{print $1}')\"\ntest \"$remote_main\" = \"$RELEASE_COMMIT\"\ntest \"$(gh api \"repos/$GITHUB_REPOSITORY/actions/runs/$MAIN_CI_RUN\" --jq .event)\" = \"push\"\ntest \"$(gh api \"repos/$GITHUB_REPOSITORY/actions/runs/$MAIN_CI_RUN\" --jq .head_branch)\" = \"main\"\ntest \"$(gh api \"repos/$GITHUB_REPOSITORY/actions/runs/$MAIN_CI_RUN\" --jq .head_sha)\" = \"$RELEASE_COMMIT\"\ntest \"$(gh api \"repos/$GITHUB_REPOSITORY/actions/runs/$MAIN_CI_RUN\" --jq .status)\" = \"completed\"\ntest \"$(gh api \"repos/$GITHUB_REPOSITORY/actions/runs/$MAIN_CI_RUN\" --jq .conclusion)\" = \"success\"\ntest -z \"$(git ls-remote --tags origin \"refs/tags/$TAG\")\"\nif gh release view \"$TAG\" --repo \"$GITHUB_REPOSITORY\" >/dev/null 2>&1; then\n  echo \"V090_RELEASE_ALREADY_EXISTS\"\n  exit 1\nfi\necho \"V090_PREFLIGHT=PASS\""
+        },
+        {
+          "name": "Set up Python",
+          "uses": "actions/setup-python@v6",
+          "with": {
+            "python-version": "3.11"
+          }
+        },
+        {
+          "name": "Install build tooling",
+          "run": "set -euo pipefail\npython -m pip install --upgrade pip\npython -m pip install .\npython -m pip install \"build>=1.2,<2\" \"twine>=5,<7\""
+        },
+        {
+          "name": "Run release checker",
+          "run": "set -euo pipefail\npython scripts/check_release.py"
+        },
+        {
+          "name": "Fresh formal build",
+          "run": "set -euo pipefail\nrm -rf build dist\npython -m build\npython -m twine check dist/*\ntest \"$(find dist -maxdepth 1 -type f -name '*.whl' | wc -l)\" -eq 1\ntest \"$(find dist -maxdepth 1 -type f -name '*.tar.gz' | wc -l)\" -eq 1\ntest -f dist/market_vault-0.9.0-py3-none-any.whl\ntest -f dist/market_vault-0.9.0.tar.gz"
+        },
+        {
+          "name": "Fresh-wheel smoke",
+          "run": "set -euo pipefail\npython -m venv .release-venv\n.release-venv/bin/python -m pip install --upgrade pip\n.release-venv/bin/python -m pip install dist/market_vault-0.9.0-py3-none-any.whl\ntest \"$(.release-venv/bin/market-vault --version)\" = \"market-vault 0.9.0\"\n.release-venv/bin/market-vault --help >/dev/null\nfor cmd in research-build research-backtest research-feature-report research-feature-stability research-feature-select research-walk-forward research-ridge research-ridge-final research-ridge-trading-select research-ridge-final-trading research-ridge-selected-final-trading research-ridge-final-evaluation research-ridge-final-evaluation-artifact; do\n  .release-venv/bin/market-vault \"$cmd\" --help >/dev/null\ndone\n.release-venv/bin/python -c \"from importlib.metadata import version; import market_vault; assert market_vault.__version__ == '0.9.0'; assert version('market-vault') == '0.9.0'; print('V090_VERSION_SMOKE=PASS')\"\n.release-venv/bin/python -c \"from market_vault import ArtifactClient; c=ArtifactClient(); m=('load_canonical_build','load_dataset','load_dataset_catalog','select_dataset_catalog_entry'); assert all(callable(getattr(c,n)) for n in m); print('V090_ARTIFACT_CLIENT_SMOKE=PASS')\"\n.release-venv/bin/python -c \"from market_vault.backtest import run_backtest; from market_vault.research import analyze_features,build_ml_dataset,build_walk_forward_plan,compare_ridge_final_trading,evaluate_ridge_baseline,write_ridge_final_evaluation_artifact; assert all(callable(x) for x in (run_backtest,analyze_features,build_ml_dataset,build_walk_forward_plan,compare_ridge_final_trading,evaluate_ridge_baseline,write_ridge_final_evaluation_artifact)); print('V090_RESEARCH_SURFACE_OK')\""
+        },
+        {
+          "name": "Check wheel contents",
+          "run": "set -euo pipefail\npython -c \"import zipfile; from pathlib import Path; w=Path('dist/market_vault-0.9.0-py3-none-any.whl'); n=zipfile.ZipFile(w).namelist(); f=('data/','catalog/','manifests/','reports/','.venv/','.duckdb','.parquet','examples/','tests/','.b64'); v=[x for x in n if any(y in x for y in f)]; assert not v, v; print('V090_FORMAL_WHEEL_CONTENTS=PASS')\""
+        },
+        {
+          "name": "Build and verify formal SHA256 manifest",
+          "run": "set -euo pipefail\ncd dist\nsha256sum market_vault-0.9.0-py3-none-any.whl market_vault-0.9.0.tar.gz > SHA256SUMS.txt\ntest \"$(grep -cve '^$' SHA256SUMS.txt)\" -eq 2\nsha256sum -c SHA256SUMS.txt\nwheel_sha=\"$(sha256sum market_vault-0.9.0-py3-none-any.whl | awk '{print $1}')\"\nsdist_sha=\"$(sha256sum market_vault-0.9.0.tar.gz | awk '{print $1}')\"\nmanifest_sha=\"$(sha256sum SHA256SUMS.txt | awk '{print $1}')\"\necho \"FORMAL_WHEEL_SHA256=$wheel_sha\" | tee ../formal-hashes.txt\necho \"FORMAL_SDIST_SHA256=$sdist_sha\" | tee -a ../formal-hashes.txt\necho \"FORMAL_MANIFEST_SHA256=$manifest_sha\" | tee -a ../formal-hashes.txt"
+        },
+        {
+          "name": "Prepare release body",
+          "run": "set -euo pipefail\npython -c \"from pathlib import Path; t=Path('CHANGELOG.md').read_text(encoding='utf-8'); s=t.index('## [0.9.0] - 2026-10-07'); r=t[s:]; n=r.find('\\n## [',1); b=r if n<0 else r[:n]; Path('release-body.md').write_text(b.rstrip()+'\\n',encoding='utf-8',newline='\\n')\""
+        },
+        {
+          "name": "Final pre-tag drift check",
+          "env": {
+            "GH_TOKEN": "${{ github.token }}"
+          },
+          "run": "set -euo pipefail\ntest \"$(git ls-remote origin refs/heads/main | awk '{print $1}')\" = \"$RELEASE_COMMIT\"\ntest -z \"$(git ls-remote --tags origin \"refs/tags/$TAG\")\"\nif gh release view \"$TAG\" --repo \"$GITHUB_REPOSITORY\" >/dev/null 2>&1; then\n  exit 1\nfi\necho \"V090_PRE_TAG_DRIFT_CHECK=PASS\""
+        },
+        {
+          "name": "Create and push annotated tag",
+          "env": {
+            "GH_TOKEN": "${{ github.token }}"
+          },
+          "run": "set -euo pipefail\ngit config user.name \"github-actions[bot]\"\ngit config user.email \"41898282+github-actions[bot]@users.noreply.github.com\"\ngit tag -a \"$TAG\" \"$RELEASE_COMMIT\" -m \"MarketVault v0.9.0\"\ntest \"$(git cat-file -t \"$TAG\")\" = \"tag\"\ntest \"$(git rev-parse \"$TAG^{}\")\" = \"$RELEASE_COMMIT\"\ngit push origin \"refs/tags/$TAG\"\ntag_object=\"$(gh api \"repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG\" --jq '.object.sha')\"\ntest \"$(gh api \"repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG\" --jq '.object.type')\" = \"tag\"\npeeled=\"$(gh api \"repos/$GITHUB_REPOSITORY/git/tags/$tag_object\" --jq '.object.sha')\"\ntest \"$(gh api \"repos/$GITHUB_REPOSITORY/git/tags/$tag_object\" --jq '.object.type')\" = \"commit\"\ntest \"$peeled\" = \"$RELEASE_COMMIT\"\necho \"TAG_OBJECT_SHA=$tag_object\" | tee tag-identity.txt\necho \"PEELED_TAG_COMMIT=$peeled\" | tee -a tag-identity.txt\necho \"V090_ANNOTATED_TAG=PASS\""
+        },
+        {
+          "name": "Create draft GitHub Release with exactly three assets",
+          "env": {
+            "GH_TOKEN": "${{ github.token }}"
+          },
+          "run": "set -euo pipefail\ngh release create \"$TAG\" --repo \"$GITHUB_REPOSITORY\" --title \"MarketVault v0.9.0\" --notes-file release-body.md --draft --verify-tag dist/market_vault-0.9.0-py3-none-any.whl dist/market_vault-0.9.0.tar.gz dist/SHA256SUMS.txt"
+        },
+        {
+          "name": "Verify draft Release assets byte-for-byte",
+          "env": {
+            "GH_TOKEN": "${{ github.token }}"
+          },
+          "run": "set -euo pipefail\nrm -rf redownload-draft\nmkdir redownload-draft\ngh release download \"$TAG\" --repo \"$GITHUB_REPOSITORY\" --dir redownload-draft\ntest \"$(find redownload-draft -maxdepth 1 -type f | wc -l)\" -eq 3\ncmp dist/market_vault-0.9.0-py3-none-any.whl redownload-draft/market_vault-0.9.0-py3-none-any.whl\ncmp dist/market_vault-0.9.0.tar.gz redownload-draft/market_vault-0.9.0.tar.gz\ncmp dist/SHA256SUMS.txt redownload-draft/SHA256SUMS.txt\n(cd redownload-draft && sha256sum -c SHA256SUMS.txt)\necho \"V090_DRAFT_ASSET_VERIFICATION=PASS\""
+        },
+        {
+          "name": "Final pre-publication drift check",
+          "run": "set -euo pipefail\ntest \"$(git ls-remote origin refs/heads/main | awk '{print $1}')\" = \"$RELEASE_COMMIT\"\necho \"V090_PRE_PUBLICATION_DRIFT_CHECK=PASS\""
+        },
+        {
+          "name": "Publish GitHub Release",
+          "env": {
+            "GH_TOKEN": "${{ github.token }}"
+          },
+          "run": "set -euo pipefail\ngh release edit \"$TAG\" --repo \"$GITHUB_REPOSITORY\" --draft=false"
+        },
+        {
+          "name": "Verify published Release and assets",
+          "env": {
+            "GH_TOKEN": "${{ github.token }}"
+          },
+          "run": "set -euo pipefail\nrm -rf redownload-published\nmkdir redownload-published\ngh release download \"$TAG\" --repo \"$GITHUB_REPOSITORY\" --dir redownload-published\ntest \"$(find redownload-published -maxdepth 1 -type f | wc -l)\" -eq 3\ncmp dist/market_vault-0.9.0-py3-none-any.whl redownload-published/market_vault-0.9.0-py3-none-any.whl\ncmp dist/market_vault-0.9.0.tar.gz redownload-published/market_vault-0.9.0.tar.gz\ncmp dist/SHA256SUMS.txt redownload-published/SHA256SUMS.txt\n(cd redownload-published && sha256sum -c SHA256SUMS.txt)\ntest \"$(gh api \"repos/$GITHUB_REPOSITORY/releases/tags/$TAG\" --jq .tag_name)\" = \"$TAG\"\ntest \"$(gh api \"repos/$GITHUB_REPOSITORY/releases/tags/$TAG\" --jq .name)\" = \"MarketVault v0.9.0\"\ntest \"$(gh api \"repos/$GITHUB_REPOSITORY/releases/tags/$TAG\" --jq .draft)\" = \"false\"\ntest \"$(gh api \"repos/$GITHUB_REPOSITORY/releases/tags/$TAG\" --jq .prerelease)\" = \"false\"\ntest \"$(gh api \"repos/$GITHUB_REPOSITORY/releases/tags/$TAG\" --jq '[.assets[].name] | sort | join(\"|\")')\" = \"SHA256SUMS.txt|market_vault-0.9.0-py3-none-any.whl|market_vault-0.9.0.tar.gz\"\ntest \"$(gh api \"repos/$GITHUB_REPOSITORY/releases/latest\" --jq .tag_name)\" = \"$TAG\"\nrelease_id=\"$(gh api \"repos/$GITHUB_REPOSITORY/releases/tags/$TAG\" --jq .id)\"\npublished_at=\"$(gh api \"repos/$GITHUB_REPOSITORY/releases/tags/$TAG\" --jq .published_at)\"\necho \"GITHUB_RELEASE_ID=$release_id\" | tee release-identity.txt\necho \"PUBLISHED_AT=$published_at\" | tee -a release-identity.txt\necho \"DRAFT=false\" | tee -a release-identity.txt\necho \"PRERELEASE=false\" | tee -a release-identity.txt\necho \"LATEST=true\" | tee -a release-identity.txt\necho \"PUBLISHED_ASSET_REDOWNLOAD_VERIFICATION=PASS\""
+        },
+        {
+          "name": "Assemble formal release evidence",
+          "run": "set -euo pipefail\ncat formal-hashes.txt tag-identity.txt release-identity.txt > formal-release-evidence.txt\necho \"RELEASE_COMMIT=$RELEASE_COMMIT\" >> formal-release-evidence.txt\necho \"RELEASE_TREE=$RELEASE_TREE\" >> formal-release-evidence.txt\necho \"MAIN_CI_RUN=$MAIN_CI_RUN\" >> formal-release-evidence.txt\ncat formal-release-evidence.txt"
+        },
+        {
+          "name": "Upload formal release evidence",
+          "uses": "actions/upload-artifact@v7",
+          "with": {
+            "name": "v090-formal-release-evidence",
+            "path": "formal-release-evidence.txt",
+            "if-no-files-found": "error",
+            "retention-days": 30,
+            "overwrite": false
+          }
+        }
+      ]
+    }
+  }
+}
