@@ -41,7 +41,7 @@ from .cross_day.registry import CROSS_DAY_SOURCE_SCHEMA_VERSION
 from .cross_day.schedule import (
     CALENDAR_CONTRACT_VERSION,
     SCHEDULE_NORMALIZATION_VERSION,
-    SCHEDULE_SCHEMA_VERSION,
+    TRADING_DAY_SCHEDULE_SCHEMA_VERSION,
 )
 from .cross_day_dataset import CrossDayAnchor
 from .dataset.models import DatasetField, DatasetScope
@@ -457,7 +457,7 @@ def _calendar_schedule(
         )
     return verify_trading_day_schedule(
         dataset_as_of=None,
-        schedule_schema_version=SCHEDULE_SCHEMA_VERSION,
+        schedule_schema_version=TRADING_DAY_SCHEDULE_SCHEMA_VERSION,
         market=RESEARCH_MARKET,
         requested_session=RESEARCH_SESSION,
         market_timezone=RTH_TIMEZONE,
