@@ -1996,6 +1996,10 @@ def check_changelog(root: Path) -> list[str]:
         return ["CHANGELOG.md is missing"]
     text = path.read_text(encoding="utf-8")
     failures = []
+    if "## [0.9.0] - 2026-10-07" not in text:
+        failures.append("CHANGELOG.md is missing '## [0.9.0] - 2026-10-07'")
+    if "[0.9.0]: https://github.com/M0DIAN/market-vault/compare/v0.8.0...v0.9.0" not in text:
+        failures.append("CHANGELOG.md is missing the v0.9.0 compare link")
     if "## [0.8.0] - 2026-09-11" not in text:
         failures.append("CHANGELOG.md is missing '## [0.8.0] - 2026-09-11'")
     if "[0.8.0]: https://github.com/M0DIAN/market-vault/compare/v0.7.0...v0.8.0" not in text:
@@ -2059,9 +2063,12 @@ def check_readme_landing_page(root: Path) -> list[str]:
         "CHANGELOG.md",
         "docs/v0_8_0_direction.md",
         "docs/release_v0_8_0.md",
-        "Current package version: v0.8.0",
+        "docs/v0_9_0_direction.md",
+        "docs/release_v0_9_0.md",
+        "Package candidate version: v0.9.0",
         "Current formal release: v0.8.0",
         "Formal v0.8.0 release record",
+        "V0.9.0 release-preparation notes",
     ):
         if marker not in text:
             failures.append(f"README does not contain the landing-page marker {marker!r}")
@@ -4454,6 +4461,94 @@ def check_ci_v080_released_state(root: Path) -> list[str]:
     return failures
 
 
+def check_v090_release_preparation_docs(root: Path) -> list[str]:
+    """The v0.9 Stage-2 candidate records only present/pending release facts."""
+    failures: list[str] = []
+    direction = root / "docs" / "v0_9_0_direction.md"
+    notes = root / "docs" / "release_v0_9_0.md"
+
+    if not direction.exists():
+        failures.append("docs/v0_9_0_direction.md is missing")
+    else:
+        failures.extend(
+            _check_marker_facts(
+                "docs/v0_9_0_direction.md",
+                direction,
+                V090_DIRECTION_FACTS,
+                "v0.9.0 direction fact",
+            )
+        )
+        text = direction.read_text(encoding="utf-8")
+        for forbidden in (
+            "FORMAL_V090_RELEASED=true",
+            "DIRECTION_WORKSTREAM=CLOSED",
+            "tag object:",
+            "release ID:",
+            "publishedAt:",
+        ):
+            if forbidden in text:
+                failures.append(
+                    "docs/v0_9_0_direction.md contains premature formal-release "
+                    f"state {forbidden!r}"
+                )
+
+    if not notes.exists():
+        failures.append("docs/release_v0_9_0.md is missing")
+    else:
+        failures.extend(
+            _check_marker_facts(
+                "docs/release_v0_9_0.md",
+                notes,
+                V090_RELEASE_PREP_FACTS,
+                "v0.9.0 release-preparation fact",
+            )
+        )
+        text = notes.read_text(encoding="utf-8")
+        for forbidden in (
+            "V090_RELEASE_STATUS=FORMALLY_RELEASED_AND_SEALED",
+            "FORMAL_V090_RELEASED=true",
+            "V090_RELEASED_OK",
+            "release commit:",
+            "release tree:",
+            "main CI:",
+            "tag object:",
+            "peeled tag commit:",
+            "release ID:",
+            "publishedAt:",
+        ):
+            if forbidden in text:
+                failures.append(
+                    "docs/release_v0_9_0.md contains premature formal-release "
+                    f"identity/state {forbidden!r}"
+                )
+    return failures
+
+
+def check_ci_v090_release_preparation(root: Path) -> list[str]:
+    """Fresh-wheel CI proves the v0.9 candidate Research surface without release claim."""
+    path = root / ".github" / "workflows" / "ci.yml"
+    if not path.exists():
+        return [".github/workflows/ci.yml is missing"]
+    text = path.read_text(encoding="utf-8")
+    failures: list[str] = []
+    if CI_V090_RELEASE_PREP_MARKER not in text:
+        failures.append(
+            f"CI package job must carry the {CI_V090_RELEASE_PREP_MARKER} marker"
+        )
+    if CI_V090_STALE_RELEASED_MARKER in text:
+        failures.append(
+            "CI must not claim v0.9 formal release during Stage-2 preparation"
+        )
+    if CI_V090_RESEARCH_SURFACE_MARKER not in text:
+        failures.append(
+            f"CI fresh-wheel smoke must carry {CI_V090_RESEARCH_SURFACE_MARKER}"
+        )
+    for line in CI_V090_RESEARCH_SURFACE_LINES:
+        if line not in text:
+            failures.append(f"CI v0.9 Research smoke must run {line}")
+    return failures
+
+
 def check_old_release_notes(root: Path) -> list[str]:
     failures = []
     if not (root / "docs" / "release_v0_5_0.md").exists():
@@ -5646,6 +5741,7 @@ CHECKS = (
     ("v0.7.0 Python client usage doc", check_v070_python_client_usage_doc),
     ("v0.7.0 Python client examples", check_v070_python_client_examples),
     ("v0.8.0 released-state docs", check_v080_released_state_docs),
+    ("v0.9.0 release preparation docs", check_v090_release_preparation_docs),
     ("CI auditability", check_ci_auditability),
     ("v0.6.1 CI package audit", check_v061_ci_package_audit),
     ("v0.6.0 ADR", check_v060_adr),
@@ -5666,6 +5762,7 @@ CHECKS = (
     ("CI v0.7.0 released state", check_ci_v070_released_state),
     ("CI v0.7.0 public API smoke", check_ci_v070_public_api_smoke),
     ("CI v0.8.0 released state", check_ci_v080_released_state),
+    ("CI v0.9.0 release preparation", check_ci_v090_release_preparation),
     ("old release notes", check_old_release_notes),
     ("warning guard", check_warning_guard),
     ("examples", check_examples),
