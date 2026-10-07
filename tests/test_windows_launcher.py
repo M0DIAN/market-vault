@@ -95,6 +95,7 @@ def test_production_launcher_delegates_to_qml_runtime(monkeypatch, tmp_path) -> 
             "dashboard_smoke": False,
             "dashboard_smoke_timeout_ms": 30_000,
             "dashboard_smoke_require_recent_runs": False,
+            "research_import_smoke": False,
         }
     ]
 
@@ -131,6 +132,7 @@ def test_production_help_hides_internal_smoke_flags() -> None:
     assert "--settings" in help_text
     assert "--smoke-exit-ms" not in help_text
     assert "--dashboard-smoke" not in help_text
+    assert "--research-import-smoke" not in help_text
 
 
 def test_frozen_qml_startup_failure_uses_existing_error_boundary(
