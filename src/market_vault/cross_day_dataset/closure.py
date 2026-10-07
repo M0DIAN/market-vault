@@ -96,8 +96,9 @@ def admit_inputs(*, feature_pit, ts2_features, observation_pit, observation_buil
     with stage("SPEC_CONTRACT"):
         specs = _specs(ts2_features.feature_specs)
         observation_specs = normalize_specs(observation_feature_specs)
-        require(specs and observation_specs and cross_day_association.label_specs,
-                "SPEC_CONTRACT", "all three spec families must be nonempty")
+        require(specs and cross_day_association.label_specs,
+                "SPEC_CONTRACT",
+                "TS2 Feature and Cross-Day Label spec families must be nonempty")
         split_spec = checked_record(split_spec, ChronologicalSplitSpec, "SPEC_CONTRACT")
         names = tuple(s.name for s in specs + observation_specs + cross_day_association.label_specs)
         require(len(set(names)) == len(names), "DUPLICATE_INPUT", "cross-family output collision")
