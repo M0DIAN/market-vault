@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "market-vault"
-version = "0.8.0"
-description = "A reproducible moomoo historical market-data archive with option metadata using Parquet and DuckDB."
+version = "0.9.0"
+description = "A local-first moomoo market-data archive and deterministic verified quantitative research pipeline."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
