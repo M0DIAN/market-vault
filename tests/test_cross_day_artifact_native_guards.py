@@ -149,6 +149,19 @@ def test_named_stream_inventory_guard_is_scoped_to_owned_artifact_objects():
 
 
 
+def test_windows_publication_qualification_avoids_privileged_raw_volume_probe():
+    from market_vault.cross_day_dataset import _artifact_platform as platform
+
+    source = Path(platform.__file__).read_text(encoding="utf-8")
+    qualified = source.split("def _require_qualified(scope):", 1)[1]
+    assert 'if os.name == "nt":' in qualified
+    assert "_ntfs_capability" not in qualified.split("capability = _capability(scope)", 1)[0]
+    assert "local-ntfs-structural-v1" in qualified
+    assert "fs_name == \"NTFS\"" in qualified
+    assert "bool(fs_flags & 8)" in qualified
+
+
+
 def test_linux_native_adapter_refuses_windows():
     if os.name != "nt":
         pytest.skip("Windows-only unavailable-API refusal")
