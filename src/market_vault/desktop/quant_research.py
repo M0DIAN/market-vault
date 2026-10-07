@@ -17,9 +17,9 @@ import math
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Property, QObject, QUrl, Signal, Slot
+from PySide6.QtCore import Property, QObject, QTimer, QUrl, Signal, Slot
 
-from market_vault.desktop.controllers import PageController
+from market_vault.desktop.controllers import NetworkController
 from market_vault.desktop.table_model import QtTableModel
 
 
@@ -328,24 +328,38 @@ def _run_backtest(
     return _BacktestView(summary, rows, equity)
 
 
-class QuantResearchController(PageController):
-    """Expose verified Feature Research and Backtest Engine V1 to QML."""
+class QuantResearchController(NetworkController):
+    """Build, inspect, research, and backtest verified local Research Datasets."""
 
     researchChanged = Signal()
+    datasetBuilt = Signal()
+    _NETWORK_METHODS = {
+        **NetworkController._NETWORK_METHODS,
+        "research_backfill_execute": "execute_research_backfill",
+    }
 
     def __init__(self, runtime, *, parent: QObject | None = None) -> None:
         super().__init__(runtime, parent=parent)
         self._dataset_path = ""
         self._dataset_summary: dict[str, str] = {}
+        self._builder_summary: dict[str, str] = {}
+        self._builder_values: dict[str, Any] = {}
         self._feature_summary: dict[str, str] = {}
         self._backtest_summary: dict[str, str] = {}
         self._feature_names: tuple[str, ...] = ()
         self._label_names: tuple[str, ...] = ()
         self._return_label_names: tuple[str, ...] = ()
+        self._builder_model = QtTableModel(parent=self)
         self._feature_model = QtTableModel(parent=self)
         self._trade_model = QtTableModel(parent=self)
         self._trade_rows: tuple[tuple[str, ...], ...] = ()
         self._equity_series: tuple[float, ...] = ()
+        self._builder_model.set_page(
+            _table_page(
+                ("trade_date", "calendar_profile", "research_data", "role"),
+                (),
+            )
+        )
         self._set_feature_page(())
         self._set_trade_page(1)
 
@@ -360,6 +374,10 @@ class QuantResearchController(PageController):
     @Property("QVariantMap", notify=researchChanged)
     def datasetSummary(self) -> dict[str, str]:
         return dict(self._dataset_summary)
+
+    @Property("QVariantMap", notify=researchChanged)
+    def builderSummary(self) -> dict[str, str]:
+        return dict(self._builder_summary)
 
     @Property("QVariantMap", notify=researchChanged)
     def featureSummary(self) -> dict[str, str]:
@@ -384,6 +402,10 @@ class QuantResearchController(PageController):
     @Property("QVariantList", notify=researchChanged)
     def equitySeries(self) -> list[float]:
         return list(self._equity_series)
+
+    @Property(QObject, constant=True)
+    def builderModel(self) -> QObject:
+        return self._builder_model
 
     @Property(QObject, constant=True)
     def featureModel(self) -> QObject:
@@ -441,6 +463,126 @@ class QuantResearchController(PageController):
                 page_size=TRADE_PAGE_SIZE,
                 total_rows=total,
             )
+        )
+
+    def _builder_arguments(self, values: dict[str, Any]) -> dict[str, Any]:
+        arguments = dict(values)
+        horizon = _bounded_int(
+            arguments.get("horizon_trading_days", 1),
+            "horizon_trading_days",
+            1,
+            20,
+        )
+        return {
+            "symbol": str(arguments.get("symbol", "")).strip().upper(),
+            "start_date": str(arguments.get("start_date", "")).strip(),
+            "end_date": str(arguments.get("end_date", "")).strip(),
+            "interval": str(arguments.get("interval", "1m")).strip().lower(),
+            "preset": str(arguments.get("preset", "CORE_TECHNICAL")).strip().upper(),
+            "horizon_trading_days": horizon,
+        }
+
+    @Slot("QVariantMap", result=bool)
+    def previewBuilder(self, values: dict[str, Any]) -> bool:
+        try:
+            arguments = self._builder_arguments(values)
+        except (TypeError, ValueError) as exc:
+            return self._reject_input(exc)
+        self._builder_values = dict(arguments)
+
+        def apply(result: Any) -> None:
+            summary, page = result
+            self._builder_summary = {str(k): str(v) for k, v in summary.items()}
+            self._builder_model.set_page(page)
+            self.researchChanged.emit()
+
+        return self._submit(
+            "research_workspace_preview",
+            lambda backend: backend.preview_research_workspace(**arguments),
+            apply,
+        )
+
+    @Slot("QVariantMap", result=bool)
+    def requestPrepareResearchData(self, values: dict[str, Any]) -> bool:
+        try:
+            arguments = self._builder_arguments(values)
+        except (TypeError, ValueError) as exc:
+            return self._reject_input(exc)
+        self._builder_values = dict(arguments)
+        network_arguments = {
+            key: arguments[key]
+            for key in ("symbol", "start_date", "end_date", "interval")
+        }
+
+        def result_status(result: Any) -> str:
+            if not isinstance(result, dict):
+                raise TypeError("research backfill result must be a mapping")
+            status = str(result.get("status", "")).strip().upper()
+            if status not in {"SUCCESS", "PARTIAL", "FAILED"}:
+                raise ValueError("invalid research backfill status")
+            return status
+
+        def apply(result: Any) -> None:
+            self._builder_summary = {
+                "research_data_prepare": str(result.get("status", "")),
+                "successful_items": str(
+                    len(result.get("successful_items", ()) or ())
+                ),
+                "failed_items": str(
+                    len(result.get("failed_items", {}) or {})
+                ),
+            }
+            self.researchChanged.emit()
+            if str(result.get("status", "")).upper() == "SUCCESS":
+                QTimer.singleShot(
+                    0,
+                    lambda: self.previewBuilder(dict(self._builder_values)),
+                )
+
+        return self._request_network(
+            "research_backfill_execute",
+            network_arguments,
+            apply,
+            result_status=result_status,
+        )
+
+    @Slot("QVariantMap", result=bool)
+    def buildDataset(self, values: dict[str, Any]) -> bool:
+        try:
+            arguments = self._builder_arguments(values)
+        except (TypeError, ValueError) as exc:
+            return self._reject_input(exc)
+        self._builder_values = dict(arguments)
+
+        def operation(backend: Any):
+            result = backend.build_research_workspace(**arguments)
+            path = _dataset_directory(str(result["dataset_build_path"]))
+            return result, _inspect_dataset(path)
+
+        def apply(payload: Any) -> None:
+            result, view = payload
+            self._builder_summary = {
+                str(k): str(v) for k, v in dict(result).items()
+            }
+            self._dataset_path = view.path
+            self._dataset_summary = dict(view.summary)
+            self._feature_names = view.feature_names
+            self._label_names = view.label_names
+            self._return_label_names = view.return_label_names
+            self._clear_results()
+            self._builder_model.set_page(
+                _table_page(
+                    ("trade_date", "calendar_profile", "research_data", "role"),
+                    (),
+                )
+            )
+            self.researchChanged.emit()
+            self.datasetBuilt.emit()
+
+        return self._submit(
+            "research_workspace_build",
+            operation,
+            apply,
         )
 
     @Slot(str, result=bool)
