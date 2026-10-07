@@ -740,7 +740,7 @@ jobs:
           echo 'PR8_INTEGRATED_ACCEPTANCE_OK'
           echo 'V070_RELEASED_OK'
           echo 'V080_RELEASED_OK'
-          echo 'V090_RELEASE_PREP_OK'
+          echo 'V090_RELEASED_OK'
 
       - name: Check wheel contents exclude local data
         if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'control_plane' && env.CI_TIER != 'research_fast' && env.POST_MERGE_REUSE != 'true'

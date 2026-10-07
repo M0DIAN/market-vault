@@ -149,7 +149,7 @@ details in the [user guide](docs/USER_GUIDE.md) and the
 - V0.8.0 release direction: [docs/v0_8_0_direction.md](docs/v0_8_0_direction.md)
 - Formal v0.8.0 release record: [docs/release_v0_8_0.md](docs/release_v0_8_0.md)
 - V0.9.0 release direction: [docs/v0_9_0_direction.md](docs/v0_9_0_direction.md)
-- V0.9.0 release-preparation notes: [docs/release_v0_9_0.md](docs/release_v0_9_0.md)
+- Formal v0.9.0 release record: [docs/release_v0_9_0.md](docs/release_v0_9_0.md)
 - Python Client detailed guide: [docs/v0_7_0_python_client_usage.md](docs/v0_7_0_python_client_usage.md)
 - Contracts: [docs/contracts/](docs/contracts/)
 - Historical Console v0.1 contract: [docs/contracts/console_v01.md](docs/contracts/console_v01.md)
@@ -159,17 +159,16 @@ details in the [user guide](docs/USER_GUIDE.md) and the
 
 ## Release lifecycle
 
-- Package candidate version: v0.9.0
-- Current formal release: v0.8.0
-- GitHub Release: v0.8.0 remains the current published release
+- Current package version: v0.9.0
+- Current formal release: v0.9.0
+- GitHub Release: published
 - PyPI: not published
 - TestPyPI: not published
 
-The v0.9.0 source/package candidate is prepared from the current verified
-quant-research mainline. Formal v0.9.0 tagging, GitHub Release publication,
-and asset identities require merge, exact-main verification, and a separate
-explicit release gate. The existing formal v0.8.0 release remains sealed and
-is recorded in [docs/release_v0_8_0.md](docs/release_v0_8_0.md).
+The formal v0.9.0 GitHub Release is published and sealed. Its immutable
+release identities and verification evidence are recorded in
+[docs/release_v0_9_0.md](docs/release_v0_9_0.md). The v0.8.0 release remains
+immutable historical state.
 
 Release commit SHAs, tag objects, asset hashes, and release audit evidence
 belong in the formal release records, not in this README.
