@@ -58,6 +58,9 @@ FONT_ASSETS = [
         "OFL.txt",
     )
 ]
+OBSERVATION_FEATURE_TRANSFORM_SOURCE = (
+    SOURCE_ROOT / "market_vault" / "multi_source" / "feature_transforms.py"
+)
 QML_PAGES = [
     SOURCE_ROOT / "market_vault" / "desktop" / "qml" / "pages" / name
     for name in (
