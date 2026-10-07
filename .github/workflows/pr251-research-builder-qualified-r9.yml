@@ -1,0 +1,51 @@
+{
+  "name": "PR251 Research Builder Qualified E2E Verification R9",
+  "permissions": {
+    "contents": "read"
+  },
+  "on": {
+    "push": {
+      "branches": [
+        "verify/pr251-research-builder-focused-r9"
+      ]
+    }
+  },
+  "jobs": {
+    "focused": {
+      "runs-on": "ubuntu-latest",
+      "steps": [
+        {
+          "name": "Checkout exact candidate",
+          "uses": "actions/checkout@v6",
+          "with": {
+            "ref": "9cbf701275468a4bde942f160f1a0c4a16112665",
+            "fetch-depth": 0
+          }
+        },
+        {
+          "name": "Verify identity",
+          "run": "set -euo pipefail\ntest \"$(git rev-parse HEAD)\" = \"9cbf701275468a4bde942f160f1a0c4a16112665\"\ntest -z \"$(git status --porcelain)\"\necho PR251_FOCUSED_R9_SOURCE=PASS"
+        },
+        {
+          "name": "Set up qualified Python",
+          "uses": "actions/setup-python@v6",
+          "with": {
+            "python-version": "3.11.16"
+          }
+        },
+        {
+          "name": "Install dependencies",
+          "run": "python -m pip install --upgrade pip\npython -m pip install -e \".[dev]\""
+        },
+        {
+          "name": "Run qualified Research Builder E2E",
+          "env": {
+            "QT_QPA_PLATFORM": "offscreen",
+            "QSG_RHI_BACKEND": "software"
+          },
+          "run": "python - <<'PY'\nimport sys\nassert sys.version.startswith(\"3.11.16 \"), sys.version\nprint(\"QUALIFIED_PYTHON_IDENTITY=\" + sys.version)\nPY\npython -m pytest   tests/test_research_workspace.py   tests/test_research_dataset_builder.py   tests/test_cross_day_dataset_execution.py   tests/test_cross_day_dataset_semantics.py   tests/test_cross_day_artifact_canonical.py   tests/test_cross_day_artifact_observation.py   tests/test_cross_day_artifact_reader_boundaries.py   tests/test_cross_day_artifact_manifest.py   tests/test_ts2_feature_execution.py   tests/test_cross_day_execution.py   tests/test_desktop_quant_research.py   tests/test_desktop_shell.py   tests/test_desktop_localization.py   tests/test_desktop_packaging.py   -q\necho PR251_RESEARCH_BUILDER_QUALIFIED_E2E_R9=PASS"
+        }
+      ]
+    }
+  }
+}
