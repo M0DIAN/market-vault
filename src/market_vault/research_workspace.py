@@ -805,12 +805,26 @@ def _ensure_research_output_root(data_root: Path, output_root: Path) -> None:
             )
 
     validate_directory(data_root)
+    windows_sid = None
+    windows_mkdir = None
+    if os.name == "nt":
+        from .cross_day_dataset._artifact_windows import (
+            _current_sid,
+            _new_directory,
+        )
+
+        windows_sid = _current_sid()
+        windows_mkdir = _new_directory
+
     for path in (data_root / "research", output_root):
         if path.exists():
             validate_directory(path)
             continue
         try:
-            os.mkdir(path, 0o700)
+            if windows_mkdir is not None:
+                windows_mkdir(path, windows_sid)
+            else:
+                os.mkdir(path, 0o700)
         except FileExistsError:
             pass
         except OSError as exc:
