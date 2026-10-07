@@ -23,7 +23,9 @@ from datetime import date, datetime, timedelta, timezone
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
+import stat
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
@@ -763,6 +765,61 @@ def plan_local_research_dataset(
     )
 
 
+def _ensure_research_output_root(data_root: Path, output_root: Path) -> None:
+    """Create only the fixed app-owned Research output root.
+
+    The sealed artifact publisher deliberately requires a pre-existing root.
+    This helper creates the two deterministic descendants under the configured
+    data root and rejects links/reparse points before the publisher performs
+    its own stronger native identity/capability validation.
+    """
+
+    data_root = Path(data_root)
+    output_root = Path(output_root)
+    expected = data_root / "research" / "cross_day"
+    if output_root != expected:
+        raise ResearchWorkspaceError("Research output root differs from the fixed workspace path")
+    if not data_root.is_absolute():
+        raise ResearchWorkspaceError("Configured data root must be absolute")
+
+    def validate_directory(path: Path) -> None:
+        try:
+            info = os.lstat(path)
+        except OSError as exc:
+            raise ResearchWorkspaceError(
+                f"Cannot inspect Research output ancestry: {path}"
+            ) from exc
+        if not stat.S_ISDIR(info.st_mode):
+            raise ResearchWorkspaceError(
+                f"Research output ancestry is not a directory: {path}"
+            )
+        if stat.S_ISLNK(info.st_mode):
+            raise ResearchWorkspaceError(
+                f"Research output ancestry cannot be a symlink: {path}"
+            )
+        if os.name == "nt" and (
+            getattr(info, "st_file_attributes", 0) & 0x400
+        ):
+            raise ResearchWorkspaceError(
+                f"Research output ancestry cannot be a reparse point: {path}"
+            )
+
+    validate_directory(data_root)
+    for path in (data_root / "research", output_root):
+        if path.exists():
+            validate_directory(path)
+            continue
+        try:
+            os.mkdir(path, 0o700)
+        except FileExistsError:
+            pass
+        except OSError as exc:
+            raise ResearchWorkspaceError(
+                f"Cannot create Research output root: {path}"
+            ) from exc
+        validate_directory(path)
+
+
 def build_local_research_dataset(
     vault: "MarketVault",
     *,
@@ -814,6 +871,7 @@ def build_local_research_dataset(
         )
     canonical = load_verified_canonical_build(canonical_result.build_path)
 
+    _ensure_research_output_root(settings.data_root, plan.dataset_output_root)
     materialized = build_research_dataset(
         feature_builds=(canonical,),
         label_builds=(canonical,),

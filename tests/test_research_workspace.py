@@ -417,6 +417,17 @@ def _write_real_ts2_day(cfg: Settings, day: date, *, ordinal: int) -> None:
 
 
 def test_real_ts2_catalog_to_canonical_to_research_dataset_e2e(tmp_path):
+    from market_vault.cross_day_dataset._artifact_io import _NativeScope
+    from market_vault.cross_day_dataset._artifact_platform import (
+        _QUALIFIED_CAPABILITIES,
+        _capability,
+    )
+
+    with _NativeScope(tmp_path, output=True) as scope:
+        capability = _capability(scope)
+    if capability not in _QUALIFIED_CAPABILITIES:
+        pytest.skip("exact native artifact publication capability is not qualified")
+
     days = _days()
     base = _settings(tmp_path)
     research_cfg = workspace.research_ready_settings(base)
