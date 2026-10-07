@@ -607,8 +607,21 @@ jobs:
           .release-venv/bin/market-vault dataset-catalog-verify --help
           .release-venv/bin/market-vault dataset-catalog-list --help
           .release-venv/bin/market-vault dataset-catalog-show --help
-          .release-venv/bin/python -c "import market_vault; assert market_vault.__version__ == '0.8.0'"
-          .release-venv/bin/python -c "from importlib.metadata import version; assert version('market-vault') == '0.8.0'"
+          .release-venv/bin/market-vault research-build --help
+          .release-venv/bin/market-vault research-backtest --help
+          .release-venv/bin/market-vault research-feature-report --help
+          .release-venv/bin/market-vault research-feature-stability --help
+          .release-venv/bin/market-vault research-feature-select --help
+          .release-venv/bin/market-vault research-walk-forward --help
+          .release-venv/bin/market-vault research-ridge --help
+          .release-venv/bin/market-vault research-ridge-final --help
+          .release-venv/bin/market-vault research-ridge-trading-select --help
+          .release-venv/bin/market-vault research-ridge-final-trading --help
+          .release-venv/bin/market-vault research-ridge-selected-final-trading --help
+          .release-venv/bin/market-vault research-ridge-final-evaluation --help
+          .release-venv/bin/market-vault research-ridge-final-evaluation-artifact --help
+          .release-venv/bin/python -c "import market_vault; assert market_vault.__version__ == '0.9.0'"
+          .release-venv/bin/python -c "from importlib.metadata import version; assert version('market-vault') == '0.9.0'"
 
       - name: Fresh-wheel public API smoke check
         if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'control_plane' && env.CI_TIER != 'research_fast' && env.POST_MERGE_REUSE != 'true'
@@ -692,6 +705,27 @@ jobs:
           print('V080_CURRENT_PUBLIC_API_OK')
           "
           .release-venv/bin/python -c "
+          from market_vault.backtest import run_backtest
+          from market_vault.research import (
+              analyze_features,
+              build_ml_dataset,
+              build_walk_forward_plan,
+              compare_ridge_final_trading,
+              evaluate_ridge_baseline,
+              write_ridge_final_evaluation_artifact,
+          )
+          assert all(callable(item) for item in (
+              run_backtest,
+              analyze_features,
+              build_ml_dataset,
+              build_walk_forward_plan,
+              compare_ridge_final_trading,
+              evaluate_ridge_baseline,
+              write_ridge_final_evaluation_artifact,
+          ))
+          print('V090_RESEARCH_SURFACE_OK')
+          "
+          .release-venv/bin/python -c "
           from market_vault.dataset.dataset_catalog_cli import (
               DATASET_CATALOG_COMMANDS,
           )
@@ -706,6 +740,7 @@ jobs:
           echo 'PR8_INTEGRATED_ACCEPTANCE_OK'
           echo 'V070_RELEASED_OK'
           echo 'V080_RELEASED_OK'
+          echo 'V090_RELEASE_PREP_OK'
 
       - name: Check wheel contents exclude local data
         if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'control_plane' && env.CI_TIER != 'research_fast' && env.POST_MERGE_REUSE != 'true'
