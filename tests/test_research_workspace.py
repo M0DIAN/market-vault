@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -114,6 +114,19 @@ def test_research_ready_settings_pins_ts2_without_moving_storage(tmp_path):
     assert resolved.data_root == original.data_root
     assert resolved.catalog_path == original.catalog_path
     assert original.source_schema_version == "10.9"
+
+
+def test_split_spec_allows_normal_70_15_15_residual_test_capacity():
+    anchors = tuple(
+        date(2026, 1, 1) + timedelta(days=index)
+        for index in range(80)
+    )
+
+    split = workspace._split_spec(anchors, 1)
+
+    assert split.train_end_date == anchors[55]
+    assert split.validation_end_date == anchors[67]
+    assert split.test_end_date == anchors[-1]
 
 
 def test_workspace_plan_uses_local_calendar_exact_cohort_and_split(tmp_path, monkeypatch):
