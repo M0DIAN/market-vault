@@ -633,7 +633,7 @@ def _split_spec(
         reduction = min(excess, reducible_validation)
         validation_count -= reduction
         excess -= reduction
-    if excess:
+    if excess > 0:
         raise ResearchWorkspaceError(
             "Unable to allocate leakage-safe chronological split boundaries"
         )
