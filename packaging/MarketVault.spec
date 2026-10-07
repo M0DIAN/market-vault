@@ -89,6 +89,7 @@ hidden_imports = [
     "market_vault.desktop.bootstrap",
     "market_vault.desktop.quant_research",
     "market_vault.research_workspace",
+    "market_vault.research_dataset",
     "market_vault.multi_source",
     "market_vault.multi_source.feature_execution",
     "market_vault.multi_source.feature_spec_models",
