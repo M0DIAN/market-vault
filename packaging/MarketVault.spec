@@ -70,9 +70,11 @@ DATASET_LABEL_TRANSFORM_SOURCE_ROOT = (
 DATASET_FINGERPRINT_SOURCE_DATAS = [
     (str(path), "market_vault/dataset/feature_transforms")
     for path in sorted(DATASET_FEATURE_TRANSFORM_SOURCE_ROOT.glob("*.py"))
+    if path.name != "__init__.py"
 ] + [
     (str(path), "market_vault/dataset/label_transforms")
     for path in sorted(DATASET_LABEL_TRANSFORM_SOURCE_ROOT.glob("*.py"))
+    if path.name != "__init__.py"
 ]
 QML_PAGES = [
     SOURCE_ROOT / "market_vault" / "desktop" / "qml" / "pages" / name
