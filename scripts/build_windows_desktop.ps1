@@ -183,7 +183,8 @@ $FingerprintSourceFiles = @(
 if ($FingerprintSourceFiles.Count -eq 0) {
     throw "No Dataset fingerprint source files were discovered from the repository source tree."
 }
-$SourceRootFull = [IO.Path]::GetFullPath($SourceRoot).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+$SourceRootTrimChars = [char[]]@([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+$SourceRootFull = [IO.Path]::GetFullPath($SourceRoot).TrimEnd($SourceRootTrimChars)
 $SourceRootPrefix = $SourceRootFull + [IO.Path]::DirectorySeparatorChar
 foreach ($SourceAsset in $FingerprintSourceFiles) {
     $SourceAssetFull = [IO.Path]::GetFullPath($SourceAsset.FullName)
