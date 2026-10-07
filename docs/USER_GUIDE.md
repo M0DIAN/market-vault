@@ -606,18 +606,142 @@ print(entry.dataset_id, entry.content_id)
 11. **把 EMPTY 当失败** — `dataset_status = EMPTY`（`logical_row_count = 0`）是 `requests: []` 的设计结果，仍可验证，不是失败。
 12. **时区缺失的 datetime** — build-plan / generation-plan / catalog 的 `built_at`（与 `dataset_as_of`）必须为带时区 ISO 8601，否则严格解析拒绝。
 
-## 18. Data capability boundaries
+## 18. Research / Backtest / ML / Ridge workflow
+
+v0.9.0 增加的是**离线、显式输入、可验证**的研究工作流，不是实时交易系统。
+Research 命令忽略 `--settings`，不会连接 OpenD，也不会自动寻找 `latest`。
+所有 Dataset / plan / artifact 都必须由调用者给出精确路径。
+
+推荐主线：
+
+```text
+research-build
+    ↓
+research-feature-report / research-feature-stability
+    ↓
+research-feature-select
+    ↓
+research-backtest
+    ↓
+research-walk-forward
+    ↓
+research-ridge
+    ↓
+research-ridge-trading-select
+    ↓
+research-ridge-final
+    ↓
+research-ridge-selected-final-trading
+    ↓
+research-ridge-final-evaluation
+    ↓
+research-ridge-final-evaluation-artifact
+```
+
+### Research Dataset
+
+`research-build --plan <plan.json>` 把显式 verified Canonical /
+Observation / schedule / FeatureSpec / LabelSpec 输入组合成 PIT-safe Research
+Dataset。它复用正式 PIT、TS2、Multi-Source、Cross-Day 和 artifact
+authority，不维护第二套 Dataset 算法。
+
+Feature Library V1 包含 SMA/EMA、RSI、MACD、ATR、OBV、KDJ。Research
+Label Library 提供 1/3/5/10 交易日的 forward return / direction / MFE /
+MAE，以及用于交易 PnL 的 execution-safe
+`forward_open_to_close_return`。后者在**未来第一根同 slot bar 的 open**
+进入，在目标交易日同 slot bar 的 close 退出；它不会假设在已经观察到的
+Feature close 成交。
+
+### Backtest
+
+`research-backtest --plan <plan.json>` 运行 Backtest Engine V1：
+
+- 单标的；
+- Long / Flat；
+- full-notional；
+- TRAIN / VALIDATION / TEST 显式 split；
+- 非重叠交易；
+- entry / exit 两侧固定 commission + slippage；
+- PnL 只接受 execution-safe return Label。
+
+V1 的 `realized_max_drawdown` 是**已平仓 equity**的 drawdown，不是持仓内
+逐 bar mark-to-market drawdown。
+
+### ML Dataset Adapter
+
+Python API `market_vault.research.build_ml_dataset(...)` 从一个严格 verified
+Research Dataset artifact 生成不可变的 TRAIN / VALIDATION / TEST
+`X / y / metadata`。它：
+
+- 不随机 split；
+- 不 shuffle；
+- 不 impute；
+- 不自动 scale；
+- 不训练模型；
+- 不把 pandas DataFrame 当身份 authority。
+
+`to_pandas()` 只返回方便下游工具使用的 detached copies。
+
+### Feature Research / Selection
+
+- `research-feature-report`：Feature research / predictive report；
+- `research-feature-stability`：时间稳定性；
+- `research-feature-select`：只在 development 数据上做 leakage-safe
+  Feature selection。
+
+永久 TEST 不参与 Feature 选择。
+
+### Walk-Forward / Ridge
+
+- `research-walk-forward`：按 chronological TRAIN / VALIDATION 生成
+  walk-forward folds；
+- `research-ridge`：确定性 Ridge baseline；
+- Ridge alpha 只按 VALIDATION 选择；
+- `research-ridge-trading-select`：交易 threshold 只按 VALIDATION
+  economics 选择；
+- `research-ridge-final`：冻结后只执行一次 permanent TEST；
+- `research-ridge-selected-final-trading`：把**已经在 VALIDATION 选好的**
+  threshold 应用于 permanent TEST，不重新搜索。
+
+`research-ridge-final-evaluation` 只比较两个已经冻结的 TEST policy：
+
+1. fixed-zero threshold；
+2. VALIDATION-selected threshold。
+
+Final evaluation **没有 winner / decision / recommendation**，不会用 TEST
+结果再做一轮模型或 threshold 选择。
+
+### Final evaluation artifact
+
+`research-ridge-final-evaluation-artifact --plan <plan.json>` 运行同一条
+frozen final-evaluation pipeline 一次，并把原始
+`RidgeFinalEvaluationReport` 写到 plan 中显式声明的单一 JSON 文件。
+
+Artifact writer：
+
+- 不创建/选择 output root；
+- 不扫描目录；
+- 不覆盖已有不同文件；
+- existing 文件只有 byte-identical 才复用；
+- 每次读取重新校验 `report_id`；
+- 返回内容 SHA-256；
+- `report_id` 仍是唯一语义 report identity。
+
+## 19. Data capability boundaries
 
 - **历史可回填**：K 线、期权合约静态元数据、日度波动率分析——在 OpenD 与账户权限允许的范围内。
 - **历史不可重建**：分钟级 Bid/Ask、订单簿深度（order-book depth）、Greeks、完整盘中 IV——若从未实时捕获，事后无法重建（cannot be reconstructed after the fact）；这些字段需要实时捕获与订阅管线。
-- **产品不支持**：实时订阅、实时 Bid/Ask / Greeks、持仓、信号（signals）、执行、自动交易（automatic trading）。
-- **产品不支持**：ML 训练（ML training）、模型评估、回测框架（backtest）、特征重要性——MarketVault 只生产可验证的数据与 Dataset 产物，ML 训练与模型评估是用户自己的下游工作。
-- `ArtifactClient` 严格只读；验证读取没有 `latest` 自动发现。
+- **研究能力**：PIT-safe Dataset、量化 Feature/Label、离线 Backtest、ML Dataset Adapter、Feature Research/Selection、Walk-Forward、Ridge baseline 与 frozen TEST evaluation。
+- **产品不支持**：live order routing、broker execution、自动交易（automatic trading）、实时策略服务器、模型 serving / MLOps、分布式回测/GPU 训练平台。
+- Adjusted-Price PIT 仍为 NONE-only；QFQ/HFQ PIT 未开放。
+- `ArtifactClient` 严格只读；所有验证读取和 Research 命令都没有 `latest` 自动发现。
 
-## 19. Further documentation
+## 20. Further documentation
 
 - 版本历史：[CHANGELOG.md](../CHANGELOG.md)
 - 正式 v0.7.0 release 记录：[release_v0_7_0.md](release_v0_7_0.md)
+- 正式 v0.8.0 release 记录：[release_v0_8_0.md](release_v0_8_0.md)
+- v0.9.0 release candidate：[release_v0_9_0.md](release_v0_9_0.md)
 - 正式契约：[contracts/](contracts/)（含 [python_client.md](contracts/python_client.md)、[dataset_cli.md](contracts/dataset_cli.md)、[sample_generation.md](contracts/sample_generation.md)、[dataset_catalog.md](contracts/dataset_catalog.md)）
 - Dataset CLI 完整示例：[examples/dataset_cli/README.md](../examples/dataset_cli/README.md)
 - Python Client 详细指南：[v0_7_0_python_client_usage.md](v0_7_0_python_client_usage.md)
