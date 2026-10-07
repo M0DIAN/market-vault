@@ -1,5 +1,61 @@
 # MarketVault v0.9.0 Release Notes
 
+## Formal release status
+
+The v0.9.0 release is formally released and sealed.
+
+```text
+V090_RELEASE_STATUS=FORMALLY_RELEASED_AND_SEALED
+release commit: 5a796f0d4290b50291993dfcdfcacccb0c8dcb69
+release tree: 62f051f0c5a59edf35e7ec3fa3d74206407b7773
+main HEAD at release sealing: 5a796f0d4290b50291993dfcdfcacccb0c8dcb69
+main CI: 37556656352
+tag: v0.9.0
+tag type: annotated
+tag object: 029890e4d857e3db98e9ed104d9ec5dfe81c8ea0
+peeled tag commit: 5a796f0d4290b50291993dfcdfcacccb0c8dcb69
+GitHub Release: MarketVault v0.9.0
+release ID: 405290783
+publishedAt: 2026-10-07T01:46:35Z
+draft: false
+prerelease: false
+latest: true
+PyPI: NOT PUBLISHED
+TestPyPI: NOT PUBLISHED
+```
+
+The annotated `v0.9.0` tag points at the release commit above. The formal
+GitHub Release contains exactly the wheel, sdist, and `SHA256SUMS.txt` assets
+sealed below.
+
+```text
+market_vault-0.9.0-py3-none-any.whl
+SHA-256:
+71de59c5170384a7f22115761077fd525d2190ff666108888950e081d33ccc99
+
+market_vault-0.9.0.tar.gz
+SHA-256:
+0ae6f46144d66fdc85e0ecb96191bb6f68a90bdc16f3aea3eab908c09dc17ef5
+
+SHA256SUMS.txt
+SHA-256:
+10f96d62ef0f55148e9e0948e926c5fb28f2b8ff1a1cc9d595f2f50fb7146d8d
+
+Contents:
+71de59c5170384a7f22115761077fd525d2190ff666108888950e081d33ccc99  market_vault-0.9.0-py3-none-any.whl
+0ae6f46144d66fdc85e0ecb96191bb6f68a90bdc16f3aea3eab908c09dc17ef5  market_vault-0.9.0.tar.gz
+```
+
+### Main CI and formal gate
+
+The authoritative post-merge main push CI was run `37556656352` at release
+commit `5a796f0d4290b50291993dfcdfcacccb0c8dcb69` and completed successfully.
+Formal assets were then rebuilt fresh from that exact release commit. The
+draft Release assets were downloaded and verified byte-for-byte before
+publication, and the published assets were downloaded again and reverified.
+
+## Historical release-preparation record
+
 Status: Stage 2 release-preparation candidate; formal release gate pending.
 
 ```text
@@ -125,15 +181,16 @@ Before merge, the candidate must pass:
 Candidate CI artifacts and hashes are validation evidence only. They are not
 formal release asset identities.
 
-## 4. Formal release gate remains pending
+## 4. Formal release gate pending at preparation time
 
-Formal v0.9.0 release requires a future explicit gate after the candidate is
-merged and exact-main CI succeeds. That gate must create a fresh build from
-the exact release commit, create the annotated `v0.9.0` tag, publish exactly
-one wheel, one sdist, and `SHA256SUMS.txt`, and verify the downloaded
-published assets byte-for-byte.
+At preparation time, formal v0.9.0 release required a future explicit gate
+after the candidate merged and exact-main CI succeeded. That gate had to
+create a fresh build from the exact release commit, create the annotated
+`v0.9.0` tag, publish exactly one wheel, one sdist, and `SHA256SUMS.txt`, and
+verify the downloaded published assets byte-for-byte. The Formal release
+status section above records the completed gate.
 
-Until that gate completes:
+At that preparation time:
 
 ```text
 V090_TAG_CREATED=false

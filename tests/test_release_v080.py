@@ -118,8 +118,8 @@ def test_v080_changelog_and_readme_lifecycle_markers():
         encoding="utf-8"
     )
     assert "## [0.8.0] - 2026-09-11" in changelog
-    assert "Package candidate version: v0.9.0" in readme
-    assert "Current formal release: v0.8.0" in readme
+    assert "Current package version: v0.9.0" in readme
+    assert "Current formal release: v0.9.0" in readme
     assert "Formal v0.8.0 release record" in readme
     assert "Status: v0.8.0 formally released; release direction closed." in direction
     assert "V080_DIRECTION_BASE_SHA=1f4da9154cdbe4a9b48e025a4777562fed0ef305" in direction

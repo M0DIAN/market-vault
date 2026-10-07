@@ -5128,8 +5128,8 @@ def test_ci_contains_current_assertions_and_historical_markers():
     assert "V080_RELEASED_OK" in text
     assert "V080_RELEASE_PREP_OK" not in text
     assert "V080_CURRENT_PUBLIC_API_OK" in text
-    assert "V090_RELEASE_PREP_OK" in text
-    assert "V090_RELEASED_OK" not in text
+    assert "V090_RELEASED_OK" in text
+    assert "V090_RELEASE_PREP_OK" not in text
     assert "V090_RESEARCH_SURFACE_OK" in text
     assert "'select_dataset_catalog_entry'" in text
     assert "V070_RELEASE_PREP_OK" not in text
@@ -9080,7 +9080,7 @@ EXPECTED_CHECKS = (
     ("v0.7.0 Python client usage doc", "check_v070_python_client_usage_doc"),
     ("v0.7.0 Python client examples", "check_v070_python_client_examples"),
     ("v0.8.0 released-state docs", "check_v080_released_state_docs"),
-    ("v0.9.0 release preparation docs", "check_v090_release_preparation_docs"),
+    ("v0.9.0 released-state docs", "check_v090_released_state_docs"),
     ("CI auditability", "check_ci_auditability"),
     ("v0.6.1 CI package audit", "check_v061_ci_package_audit"),
     ("v0.6.0 ADR", "check_v060_adr"),
@@ -9101,7 +9101,7 @@ EXPECTED_CHECKS = (
     ("CI v0.7.0 released state", "check_ci_v070_released_state"),
     ("CI v0.7.0 public API smoke", "check_ci_v070_public_api_smoke"),
     ("CI v0.8.0 released state", "check_ci_v080_released_state"),
-    ("CI v0.9.0 release preparation", "check_ci_v090_release_preparation"),
+    ("CI v0.9.0 released state", "check_ci_v090_released_state"),
     ("old release notes", "check_old_release_notes"),
     ("warning guard", "check_warning_guard"),
     ("examples", "check_examples"),

@@ -68,8 +68,8 @@ CI_V080_PUBLIC_API_LINES = (
     "assert public == methods",
 )
 
-CI_V090_RELEASE_PREP_MARKER = "V090_RELEASE_PREP_OK"
-CI_V090_STALE_RELEASED_MARKER = "V090_RELEASED_OK"
+CI_V090_RELEASED_MARKER = "V090_RELEASED_OK"
+CI_V090_STALE_RELEASE_PREP_MARKER = "V090_RELEASE_PREP_OK"
 CI_V090_RESEARCH_SURFACE_MARKER = "V090_RESEARCH_SURFACE_OK"
 CI_V090_RESEARCH_SURFACE_LINES = (
     ".release-venv/bin/market-vault research-build --help",
@@ -83,7 +83,7 @@ CI_V090_RESEARCH_SURFACE_LINES = (
 )
 V090_DIRECTION_FACTS = (
     "# MarketVault v0.9.0 Release Direction",
-    "Status: scope frozen on main; Stage 2 release-preparation candidate.",
+    "Status: v0.9.0 formally released; release direction closed.",
     "V090_DIRECTION_BASE_SHA=d01bcf22f9b6d526cff90f3aceb7e3ef441a1a1e",
     "V090_DIRECTION_BASE_TREE=a961df4fa31c722122c0e891d0bb89f60acbd21f",
     "FORMAL_V080_RELEASE_SHA=90230ce1b55e63da0c583eaac8e94b64f6f4c2f9",
@@ -92,14 +92,38 @@ V090_DIRECTION_FACTS = (
     "SEMVER_CLASS=MINOR",
     "RELEASE_MODEL=MODEL_RELEASE_FIRST",
     "V090_SCOPE_FROZEN=true",
-    "RELEASE_PREPARATION_STAGE=STAGE_2_CANDIDATE",
-    "FORMAL_RELEASE_REQUIRES_SEPARATE_EXPLICIT_GATE=true",
-    "FORMAL_V090_RELEASED=false",
+    "FORMAL_V090_RELEASE_COMMIT=5a796f0d4290b50291993dfcdfcacccb0c8dcb69",
+    "FORMAL_V090_RELEASED=true",
+    "DIRECTION_WORKSTREAM=CLOSED",
 )
-V090_RELEASE_PREP_FACTS = (
+V090_RELEASE_NOTES_FACTS = (
     "# MarketVault v0.9.0 Release Notes",
+    "## Formal release status",
+    "V090_RELEASE_STATUS=FORMALLY_RELEASED_AND_SEALED",
+    "release commit: 5a796f0d4290b50291993dfcdfcacccb0c8dcb69",
+    "release tree: 62f051f0c5a59edf35e7ec3fa3d74206407b7773",
+    "main HEAD at release sealing: 5a796f0d4290b50291993dfcdfcacccb0c8dcb69",
+    "main CI: 37556656352",
+    "tag: v0.9.0",
+    "tag type: annotated",
+    "tag object: 029890e4d857e3db98e9ed104d9ec5dfe81c8ea0",
+    "peeled tag commit: 5a796f0d4290b50291993dfcdfcacccb0c8dcb69",
+    "GitHub Release: MarketVault v0.9.0",
+    "release ID: 405290783",
+    "publishedAt: 2026-10-07T01:46:35Z",
+    "draft: false",
+    "prerelease: false",
+    "latest: true",
+    "market_vault-0.9.0-py3-none-any.whl",
+    "71de59c5170384a7f22115761077fd525d2190ff666108888950e081d33ccc99",
+    "market_vault-0.9.0.tar.gz",
+    "0ae6f46144d66fdc85e0ecb96191bb6f68a90bdc16f3aea3eab908c09dc17ef5",
+    "SHA256SUMS.txt",
+    "10f96d62ef0f55148e9e0948e926c5fb28f2b8ff1a1cc9d595f2f50fb7146d8d",
+    "PyPI: NOT PUBLISHED",
+    "TestPyPI: NOT PUBLISHED",
+    "## Historical release-preparation record",
     "Status: Stage 2 release-preparation candidate; formal release gate pending.",
-    "V090_RELEASE_STATUS=RELEASE_PREPARATION_CANDIDATE",
     "RELEASE_PREPARATION_BASE_SHA=d01bcf22f9b6d526cff90f3aceb7e3ef441a1a1e",
     "RELEASE_PREPARATION_BASE_TREE=a961df4fa31c722122c0e891d0bb89f60acbd21f",
     "FORMAL_V080_RELEASE_SHA=90230ce1b55e63da0c583eaac8e94b64f6f4c2f9",
@@ -2065,17 +2089,17 @@ def check_readme_landing_page(root: Path) -> list[str]:
         "docs/release_v0_8_0.md",
         "docs/v0_9_0_direction.md",
         "docs/release_v0_9_0.md",
-        "Package candidate version: v0.9.0",
-        "Current formal release: v0.8.0",
+        "Current package version: v0.9.0",
+        "Current formal release: v0.9.0",
         "Formal v0.8.0 release record",
-        "V0.9.0 release-preparation notes",
+        "Formal v0.9.0 release record",
     ):
         if marker not in text:
             failures.append(f"README does not contain the landing-page marker {marker!r}")
     for phrase in (
         "PyPI: not published",
         "TestPyPI: not published",
-        "GitHub Release: v0.8.0 remains the current published release",
+        "GitHub Release: published",
     ):
         if phrase not in text:
             failures.append(f"README does not state the release truth {phrase!r}")
@@ -4461,8 +4485,8 @@ def check_ci_v080_released_state(root: Path) -> list[str]:
     return failures
 
 
-def check_v090_release_preparation_docs(root: Path) -> list[str]:
-    """The v0.9 Stage-2 candidate records only present/pending release facts."""
+def check_v090_released_state_docs(root: Path) -> list[str]:
+    """The v0.9 records separate sealed facts from Stage-2 history."""
     failures: list[str] = []
     direction = root / "docs" / "v0_9_0_direction.md"
     notes = root / "docs" / "release_v0_9_0.md"
@@ -4478,18 +4502,14 @@ def check_v090_release_preparation_docs(root: Path) -> list[str]:
                 "v0.9.0 direction fact",
             )
         )
-        text = direction.read_text(encoding="utf-8")
-        for forbidden in (
-            "FORMAL_V090_RELEASED=true",
-            "DIRECTION_WORKSTREAM=CLOSED",
-            "tag object:",
-            "release ID:",
-            "publishedAt:",
+        direction_text = direction.read_text(encoding="utf-8")
+        for stale in (
+            "Status: scope frozen on main; Stage 2 release-preparation candidate.",
+            "RELEASE_PREPARATION_STAGE=STAGE_2_CANDIDATE",
         ):
-            if forbidden in text:
+            if stale in direction_text:
                 failures.append(
-                    "docs/v0_9_0_direction.md contains premature formal-release "
-                    f"state {forbidden!r}"
+                    f"docs/v0_9_0_direction.md contains stale current state {stale!r}"
                 )
 
     if not notes.exists():
@@ -4499,45 +4519,69 @@ def check_v090_release_preparation_docs(root: Path) -> list[str]:
             _check_marker_facts(
                 "docs/release_v0_9_0.md",
                 notes,
-                V090_RELEASE_PREP_FACTS,
-                "v0.9.0 release-preparation fact",
+                V090_RELEASE_NOTES_FACTS,
+                "v0.9.0 released-state fact",
             )
         )
         text = notes.read_text(encoding="utf-8")
-        for forbidden in (
-            "V090_RELEASE_STATUS=FORMALLY_RELEASED_AND_SEALED",
-            "FORMAL_V090_RELEASED=true",
-            "V090_RELEASED_OK",
-            "release commit:",
-            "release tree:",
-            "main CI:",
-            "tag object:",
-            "peeled tag commit:",
-            "release ID:",
-            "publishedAt:",
-        ):
-            if forbidden in text:
+        historical_header = "## Historical release-preparation record"
+        if text.count(historical_header) != 1:
+            failures.append(
+                "docs/release_v0_9_0.md must contain exactly one historical "
+                "release-preparation record"
+            )
+        else:
+            formal, historical = text.split(historical_header, 1)
+            for marker in (
+                "V090_RELEASE_STATUS=FORMALLY_RELEASED_AND_SEALED",
+                "release commit: 5a796f0d4290b50291993dfcdfcacccb0c8dcb69",
+                "release tree: 62f051f0c5a59edf35e7ec3fa3d74206407b7773",
+                "main CI: 37556656352",
+                "tag object: 029890e4d857e3db98e9ed104d9ec5dfe81c8ea0",
+                "release ID: 405290783",
+                "publishedAt: 2026-10-07T01:46:35Z",
+                "71de59c5170384a7f22115761077fd525d2190ff666108888950e081d33ccc99  market_vault-0.9.0-py3-none-any.whl",
+                "0ae6f46144d66fdc85e0ecb96191bb6f68a90bdc16f3aea3eab908c09dc17ef5  market_vault-0.9.0.tar.gz",
+            ):
+                if marker not in formal:
+                    failures.append(
+                        "docs/release_v0_9_0.md formal section is missing "
+                        f"{marker!r}"
+                    )
+            if "formal release gate pending" in formal:
                 failures.append(
-                    "docs/release_v0_9_0.md contains premature formal-release "
-                    f"identity/state {forbidden!r}"
+                    "docs/release_v0_9_0.md formal section still claims the "
+                    "release gate is pending"
                 )
+            for marker in (
+                "Status: Stage 2 release-preparation candidate; formal release gate pending.",
+                "RELEASE_PREPARATION_BASE_SHA=d01bcf22f9b6d526cff90f3aceb7e3ef441a1a1e",
+                "FORMAL_V090_RELEASED=false",
+                "CURRENT_FORMAL_RELEASE=v0.8.0",
+            ):
+                if marker not in historical:
+                    failures.append(
+                        "docs/release_v0_9_0.md historical section is missing "
+                        f"{marker!r}"
+                    )
     return failures
 
 
-def check_ci_v090_release_preparation(root: Path) -> list[str]:
-    """Fresh-wheel CI proves the v0.9 candidate Research surface without release claim."""
+def check_ci_v090_released_state(root: Path) -> list[str]:
+    """Fresh-wheel CI proves released v0.9 and its Research surface."""
     path = root / ".github" / "workflows" / "ci.yml"
     if not path.exists():
         return [".github/workflows/ci.yml is missing"]
     text = path.read_text(encoding="utf-8")
     failures: list[str] = []
-    if CI_V090_RELEASE_PREP_MARKER not in text:
+    if CI_V090_RELEASED_MARKER not in text:
         failures.append(
-            f"CI package job must carry the {CI_V090_RELEASE_PREP_MARKER} marker"
+            f"CI package job must carry the {CI_V090_RELEASED_MARKER} marker"
         )
-    if CI_V090_STALE_RELEASED_MARKER in text:
+    if CI_V090_STALE_RELEASE_PREP_MARKER in text:
         failures.append(
-            "CI must not claim v0.9 formal release during Stage-2 preparation"
+            "CI must not carry the stale current-state "
+            f"{CI_V090_STALE_RELEASE_PREP_MARKER} marker"
         )
     if CI_V090_RESEARCH_SURFACE_MARKER not in text:
         failures.append(
@@ -5741,7 +5785,7 @@ CHECKS = (
     ("v0.7.0 Python client usage doc", check_v070_python_client_usage_doc),
     ("v0.7.0 Python client examples", check_v070_python_client_examples),
     ("v0.8.0 released-state docs", check_v080_released_state_docs),
-    ("v0.9.0 release preparation docs", check_v090_release_preparation_docs),
+    ("v0.9.0 released-state docs", check_v090_released_state_docs),
     ("CI auditability", check_ci_auditability),
     ("v0.6.1 CI package audit", check_v061_ci_package_audit),
     ("v0.6.0 ADR", check_v060_adr),
@@ -5762,7 +5806,7 @@ CHECKS = (
     ("CI v0.7.0 released state", check_ci_v070_released_state),
     ("CI v0.7.0 public API smoke", check_ci_v070_public_api_smoke),
     ("CI v0.8.0 released state", check_ci_v080_released_state),
-    ("CI v0.9.0 release preparation", check_ci_v090_release_preparation),
+    ("CI v0.9.0 released state", check_ci_v090_released_state),
     ("old release notes", check_old_release_notes),
     ("warning guard", check_warning_guard),
     ("examples", check_examples),

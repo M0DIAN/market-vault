@@ -1,6 +1,6 @@
 # MarketVault v0.9.0 Release Direction
 
-Status: scope frozen on main; Stage 2 release-preparation candidate.
+Status: v0.9.0 formally released; release direction closed.
 
 ```text
 V090_DIRECTION_BASE_SHA=d01bcf22f9b6d526cff90f3aceb7e3ef441a1a1e
@@ -11,15 +11,16 @@ TARGET_VERSION=0.9.0
 SEMVER_CLASS=MINOR
 RELEASE_MODEL=MODEL_RELEASE_FIRST
 V090_SCOPE_FROZEN=true
-RELEASE_PREPARATION_STAGE=STAGE_2_CANDIDATE
-FORMAL_RELEASE_REQUIRES_SEPARATE_EXPLICIT_GATE=true
-FORMAL_V090_RELEASED=false
+FORMAL_V090_RELEASE_COMMIT=5a796f0d4290b50291993dfcdfcacccb0c8dcb69
+FORMAL_V090_RELEASED=true
+DIRECTION_WORKSTREAM=CLOSED
 ```
 
-This document freezes the intended v0.9.0 release boundary. The direction
-base is the verified product mainline immediately before release preparation;
-it is not the future release commit, tag, GitHub Release, or formal package
-asset identity.
+This document froze the v0.9.0 release boundary. The direction base remains
+the verified product mainline immediately before release preparation, not the
+release commit itself. The formal v0.9.0 release was sealed at the commit
+recorded above. This document does not authorize mutation of the tag, GitHub
+Release, release assets, or production.
 
 ## 1. Release objective
 
@@ -121,7 +122,7 @@ The newer Cross-Day/Research artifact families are additive.
 
 ### STAGE_2: release preparation
 
-The focused release-preparation candidate may contain only release-surface
+The focused release-preparation candidate contained only release-surface
 changes:
 
 - package version 0.8.0 -> 0.9.0;
@@ -135,13 +136,13 @@ No new product capability is authorized by this stage.
 
 ### STAGE_3: exact-main verification
 
-After the release-preparation PR merges, the exact resulting main commit and
-natural main push CI must be verified. Any product drift after that point
-invalidates release authorization and requires a new release candidate.
+After the release-preparation PR merged, the exact resulting main commit and
+natural main push CI were verified before formal release.
 
 ### STAGE_4: immutable formal release gate
 
-Only after a separate explicit formal-release authorization:
+After separate explicit formal-release authorization, Stage 4 completed this
+sealed sequence:
 
 1. use a clean checkout at the exact verified release commit;
 2. build one fresh wheel and one fresh sdist;
@@ -153,7 +154,7 @@ Only after a separate explicit formal-release authorization:
 7. download and re-hash the published assets; and
 8. record the immutable formal identities in the release record.
 
-PyPI and TestPyPI remain separate explicit decisions.
+PyPI and TestPyPI remain unpublished and require separate explicit decisions.
 
 ## 5. Blocker rule
 
