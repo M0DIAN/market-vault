@@ -23,7 +23,7 @@ import sys
 import tomllib
 from pathlib import Path
 
-EXPECTED_VERSION = "0.8.0"
+EXPECTED_VERSION = "0.9.0"
 PEP440_RE = re.compile(
     r"^([1-9]\d*!)?(0|[1-9]\d*)(\.(0|[1-9]\d*))*((a|b|rc)(0|[1-9]\d*))?"
     r"(\.post(0|[1-9]\d*))?(\.dev(0|[1-9]\d*))?$"
@@ -80,6 +80,30 @@ V080_DIRECTION_FACTS = (
     "FORMAL_V080_RELEASED=true",
     "DIRECTION_WORKSTREAM=CLOSED",
 )
+V090_RELEASE_CANDIDATE_FACTS = (
+    "# MarketVault v0.9.0 Release Notes",
+    "Status: release-preparation candidate; formal release gate pending.",
+    "V090_RELEASE_STATUS=RELEASE_PREPARATION_CANDIDATE",
+    "RELEASE_PREPARATION_BASE_SHA=d01bcf22f9b6d526cff90f3aceb7e3ef441a1a1e",
+    "RELEASE_PREPARATION_BASE_TREE=a961df4fa31c722122c0e891d0bb89f60acbd21f",
+    "CANDIDATE_VERSION=0.9.0",
+    "CURRENT_FORMAL_RELEASE=v0.8.0",
+    "SEMVER_CLASS=MINOR",
+    "V090_SCOPE_FROZEN=true",
+    "FORMAL_RELEASE_REQUIRES_SEPARATE_EXPLICIT_GATE=true",
+    "PyPI: NOT PUBLISHED",
+    "TestPyPI: NOT PUBLISHED",
+    "PUBLIC_PYTHON_API=BACKWARD_COMPATIBLE_ADDITIVE",
+    "ARTIFACTCLIENT_BUSINESS_METHOD_COUNT=4",
+    "CANONICAL_ARTIFACT_MIGRATION_REQUIRED=false",
+    "LEGACY_DATASET_ARTIFACT_MIGRATION_REQUIRED=false",
+    "DATASET_CATALOG_ARTIFACT_MIGRATION_REQUIRED=false",
+    "RAW_CURATED_ARTIFACT_REWRITE_REQUIRED=false",
+    "LEGACY_TS2_EXECUTION_IDENTITIES_PRESERVED=true",
+    "QFQ_PIT_ALLOWED=false",
+    "HFQ_PIT_ALLOWED=false",
+)
+
 V080_RELEASE_NOTES_FACTS = (
     "# MarketVault v0.8.0 Release Notes",
     "## Formal release status",
@@ -1950,6 +1974,10 @@ def check_changelog(root: Path) -> list[str]:
         return ["CHANGELOG.md is missing"]
     text = path.read_text(encoding="utf-8")
     failures = []
+    if "## [0.9.0] - 2026-10-07" not in text:
+        failures.append("CHANGELOG.md is missing '## [0.9.0] - 2026-10-07'")
+    if "[0.9.0]: https://github.com/M0DIAN/market-vault/compare/v0.8.0...v0.9.0" not in text:
+        failures.append("CHANGELOG.md is missing the v0.9.0 compare link")
     if "## [0.8.0] - 2026-09-11" not in text:
         failures.append("CHANGELOG.md is missing '## [0.8.0] - 2026-09-11'")
     if "[0.8.0]: https://github.com/M0DIAN/market-vault/compare/v0.7.0...v0.8.0" not in text:
@@ -2013,7 +2041,8 @@ def check_readme_landing_page(root: Path) -> list[str]:
         "CHANGELOG.md",
         "docs/v0_8_0_direction.md",
         "docs/release_v0_8_0.md",
-        "Current package version: v0.8.0",
+        "docs/release_v0_9_0.md",
+        "Current package candidate: v0.9.0",
         "Current formal release: v0.8.0",
         "Formal v0.8.0 release record",
     ):
@@ -2022,7 +2051,8 @@ def check_readme_landing_page(root: Path) -> list[str]:
     for phrase in (
         "PyPI: not published",
         "TestPyPI: not published",
-        "GitHub Release: published",
+        "GitHub Release: v0.8.0 published; v0.9.0 not yet published",
+        "v0.9.0 formal release: pending separate release gate",
     ):
         if phrase not in text:
             failures.append(f"README does not state the release truth {phrase!r}")
@@ -4304,6 +4334,31 @@ def check_ci_v070_public_api_smoke(root: Path) -> list[str]:
     return failures
 
 
+def check_v090_release_candidate_docs(root: Path) -> list[str]:
+    """The v0.9 candidate records only observed preparation facts."""
+    path = root / "docs" / "release_v0_9_0.md"
+    if not path.exists():
+        return ["docs/release_v0_9_0.md is missing"]
+    failures = _check_marker_facts(
+        "docs/release_v0_9_0.md",
+        path,
+        V090_RELEASE_CANDIDATE_FACTS,
+        "v0.9.0 release-candidate fact",
+    )
+    text = path.read_text(encoding="utf-8")
+    for false_claim in (
+        "V090_RELEASE_STATUS=FORMALLY_RELEASED_AND_SEALED",
+        "FORMAL_V090_RELEASED=true",
+        "GitHub Release: MarketVault v0.9.0",
+    ):
+        if false_claim in text:
+            failures.append(
+                "docs/release_v0_9_0.md contains premature formal-release "
+                f"claim {false_claim!r}"
+            )
+    return failures
+
+
 def check_v080_released_state_docs(root: Path) -> list[str]:
     """The v0.8 records separate sealed facts from Stage 2 history."""
     failures: list[str] = []
@@ -5600,6 +5655,7 @@ CHECKS = (
     ("v0.7.0 Python client usage doc", check_v070_python_client_usage_doc),
     ("v0.7.0 Python client examples", check_v070_python_client_examples),
     ("v0.8.0 released-state docs", check_v080_released_state_docs),
+    ("v0.9.0 release-candidate docs", check_v090_release_candidate_docs),
     ("CI auditability", check_ci_auditability),
     ("v0.6.1 CI package audit", check_v061_ci_package_audit),
     ("v0.6.0 ADR", check_v060_adr),
