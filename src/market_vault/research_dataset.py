@@ -20,7 +20,9 @@ behavior.
 from __future__ import annotations
 
 from datetime import datetime
+import os
 from pathlib import Path
+import sys
 
 from .canonical.reader import VerifiedCanonicalBuild
 from .cross_day import (
@@ -48,6 +50,43 @@ from .multi_source import (
 )
 from .observation import VerifiedObservationBuild, assemble_observation_pit_sidecar
 from .ts2_feature import execute_ts2_features
+
+
+def _production_materialization_output_root(output_root: str | Path) -> Path:
+    """Resolve the frozen Windows local-Research publication root.
+
+    The installed application keeps collected market data below its ONEDIR
+    application root. Those ordinary application ancestors may carry inherited
+    mutation grants that are intentionally not accepted by the sealed artifact
+    publisher. In frozen Windows production only, the local Research workspace
+    therefore publishes its default research/cross_day artifact tree under
+    one dedicated protected directory directly below the same volume root.
+    Explicit non-workspace output roots and all source-mode callers are unchanged.
+    """
+
+    root = Path(output_root)
+    if os.name != "nt" or not bool(getattr(sys, "frozen", False)):
+        return root
+    if len(root.parts) < 2 or tuple(part.casefold() for part in root.parts[-2:]) != (
+        "research",
+        "cross_day",
+    ):
+        return root
+    if not root.is_absolute() or not root.anchor:
+        raise ValueError("Frozen Windows Research output root must be absolute")
+
+    secured = Path(root.anchor) / "MarketVault-Research" / "cross_day"
+    from .cross_day_dataset._artifact_windows import _current_sid, _new_directory
+
+    current_sid = _current_sid()
+    for path in (secured.parent, secured):
+        if path.exists():
+            continue
+        try:
+            _new_directory(path, current_sid)
+        except FileExistsError:
+            pass
+    return secured
 
 
 def build_research_dataset(
@@ -137,6 +176,6 @@ def build_research_dataset(
     )
     return materialize_multi_source_cross_day_dataset_build(
         logical,
-        output_root=output_root,
+        output_root=_production_materialization_output_root(output_root),
         built_at=built_at,
     )
