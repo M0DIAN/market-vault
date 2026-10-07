@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Dialogs
 import QtQuick.Layouts
 import "../components" as Components
 import "../theme" as Theme
@@ -27,6 +28,16 @@ Item {
             "split": backtestSplit.currentText,
             "commission_bps": commission.text,
             "slippage_bps": slippage.text
+        }
+    }
+
+    FolderDialog {
+        id: datasetFolderDialog
+        objectName: "quantDatasetFolderDialog"
+        title: root.i18n.catalog["quant.choose_dataset"]
+        onAccepted: {
+            datasetPath.text = selectedFolder.toString()
+            root.controller.inspectDataset(datasetPath.text)
         }
     }
 
@@ -59,6 +70,13 @@ Item {
                             placeholderText: root.i18n.catalog["quant.dataset_placeholder"]
                             text: root.controller.datasetPath
                         }
+                    }
+                    Components.PixelButton {
+                        objectName: "quantBrowseButton"
+                        text: root.i18n.catalog["quant.browse"]
+                        glyph: "inventory"
+                        enabled: !root.controller.busy && !operationRuntime.busy
+                        onClicked: datasetFolderDialog.open()
                     }
                     Components.PixelButton {
                         objectName: "quantInspectButton"

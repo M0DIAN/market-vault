@@ -17,7 +17,7 @@ import math
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Property, QObject, Signal, Slot
+from PySide6.QtCore import Property, QObject, QUrl, Signal, Slot
 
 from market_vault.desktop.controllers import PageController
 from market_vault.desktop.table_model import QtTableModel
@@ -88,7 +88,13 @@ def _dataset_directory(value: str) -> Path:
     text = str(value).strip()
     if not text:
         raise ValueError("Research Dataset directory is required.")
-    path = Path(text).expanduser()
+    url = QUrl(text)
+    if url.scheme():
+        if not url.isLocalFile():
+            raise ValueError("Research Dataset directory must be a local path.")
+        path = Path(url.toLocalFile()).expanduser()
+    else:
+        path = Path(text).expanduser()
     if not path.is_absolute():
         raise ValueError("Research Dataset directory must be an absolute local path.")
     resolved = path.resolve(strict=True)
@@ -453,6 +459,7 @@ class QuantResearchController(PageController):
             "quant_inspect",
             lambda backend: _inspect_dataset(path),
             apply,
+            requires_backend=False,
         )
 
     @Slot("QVariantMap", result=bool)
@@ -486,6 +493,7 @@ class QuantResearchController(PageController):
                 quantile_count=quantiles,
             ),
             apply,
+            requires_backend=False,
         )
 
     @Slot("QVariantMap", result=bool)
@@ -533,6 +541,7 @@ class QuantResearchController(PageController):
                 slippage_bps=slippage,
             ),
             apply,
+            requires_backend=False,
         )
 
     @Slot(result=bool)

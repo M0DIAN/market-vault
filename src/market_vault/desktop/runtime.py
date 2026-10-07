@@ -137,11 +137,12 @@ class DesktopOperationRuntime(QObject):
         failure: Callable[[Exception], None],
         *,
         result_status: Callable[[Any], str] | None = None,
+        requires_backend: bool = True,
     ) -> bool:
         self._assert_thread()
         if self._closed or self.busy:
             return False
-        if self._settings_path is None:
+        if requires_backend and self._settings_path is None:
             exc = RuntimeError("Desktop settings are not configured.")
             self._deliver_failure(failure, exc)
             return False
@@ -156,9 +157,11 @@ class DesktopOperationRuntime(QObject):
                     self._runner = self._application_context.get_task_runner()
                 else:
                     self._runner = self._runner_factory()
-            self._future = self._runner.submit(
-                name, lambda: self._backend_operation(operation)
-            )
+            if requires_backend:
+                work = lambda: self._backend_operation(operation)
+            else:
+                work = lambda: operation(None)
+            self._future = self._runner.submit(name, work)
         except Exception as exc:
             self._future = None
             self._active_operation = ""
