@@ -534,6 +534,7 @@ def test_production_packaging_retains_complete_qml_runtime_contract():
         "InventoryPage.qml",
         "MarketDataPage.qml",
         "QuantResearchPage.qml",
+        "StrategyComparisonPanel.qml",
         "RunsPage.qml",
         "StorageCleanupPage.qml",
         "TradingCalendarPage.qml",

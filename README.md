@@ -35,6 +35,8 @@ not place live orders or execute trades through a broker.
 - ML Dataset Adapter, Feature Research/Stability/Selection, and Walk-Forward
 - Deterministic Ridge regression selection, permanent TEST evaluation, and
   research trading/evaluation artifacts
+- [Common walk-forward strategy comparison](docs/strategy_comparison_v1.md)
+  for explicit Feature rules and Ridge, through the CLI and desktop
 
 ## Data flow
 

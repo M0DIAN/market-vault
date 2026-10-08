@@ -19,6 +19,10 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from .backtest_cli import add_backtest_subparser, research_backtest_main
+from .strategy_comparison_cli import (
+    add_strategy_comparison_subparser,
+    research_compare_strategies_main,
+)
 from .feature_research_cli import (
     add_feature_research_subparser,
     research_feature_report_main,
@@ -94,6 +98,7 @@ from .research_dataset import build_research_dataset
 RESEARCH_COMMANDS = frozenset({
     "research-build",
     "research-backtest",
+    "research-compare-strategies",
     "research-feature-report",
     "research-feature-select",
     "research-feature-stability",
@@ -180,6 +185,7 @@ def add_research_subparsers(subparsers) -> None:
         help="Path to market-vault-research-build-plan-v1 JSON",
     )
     add_backtest_subparser(subparsers)
+    add_strategy_comparison_subparser(subparsers)
     add_feature_research_subparser(subparsers)
     add_feature_selection_subparser(subparsers)
     add_feature_stability_subparser(subparsers)
@@ -198,6 +204,8 @@ def run_research_command(command: str, args: argparse.Namespace) -> int:
         return research_build_main(args)
     if command == "research-backtest":
         return research_backtest_main(args)
+    if command == "research-compare-strategies":
+        return research_compare_strategies_main(args)
     if command == "research-feature-report":
         return research_feature_report_main(args)
     if command == "research-feature-select":

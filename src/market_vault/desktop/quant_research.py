@@ -55,6 +55,12 @@ class _BacktestView:
     equity_series: tuple[float, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class _ComparisonView:
+    summary: dict[str, str]
+    page: Any
+
+
 def _finite_float(value: Any, field_name: str, *, nonnegative: bool = False) -> float:
     if isinstance(value, bool):
         raise ValueError(f"{field_name} must be a finite number")
@@ -328,6 +334,52 @@ def _run_backtest(
     return _BacktestView(summary, rows, equity)
 
 
+def _run_strategy_comparison(path: Path, **values) -> _ComparisonView:
+    from market_vault.backtest import BacktestRule
+    from market_vault.research.strategy_comparison import (
+        FeatureRuleStrategy, RidgeStrategy, compare_strategies,
+    )
+
+    trend = values.pop("trend_feature")
+    reversion = values.pop("reversion_feature")
+    strategies = (
+        FeatureRuleStrategy("Trend", BacktestRule(trend, "GT", values.pop("trend_threshold"))),
+        FeatureRuleStrategy("MeanReversion", BacktestRule(reversion, "LT", values.pop("reversion_threshold"))),
+        RidgeStrategy("Ridge", values.pop("ridge_alpha"), values.pop("ridge_threshold")),
+    )
+    report = compare_strategies(
+        _load_verified_dataset(path),
+        feature_fields=tuple(dict.fromkeys((trend, reversion))),
+        strategies=strategies,
+        **values,
+    )
+    rows = tuple((
+        result.strategy.name,
+        str(result.metrics.trade_count),
+        _format_percent(result.metrics.total_return),
+        _format_percent(result.metrics.gross_total_return),
+        _format_percent(result.metrics.realized_max_drawdown),
+        _format_percent(result.metrics.win_rate),
+        _format_number(result.metrics.profit_factor),
+        str(result.metrics.overlap_skipped_count),
+        _format_percent(result.metrics.exposure),
+    ) for result in report.results)
+    return _ComparisonView({
+        "comparison_id": report.comparison_id,
+        "fold_count": str(len(report.plan.folds)),
+        "common_validation_rows": str(len(report.validation_sample_keys)),
+        "held_out_test_rows": str(report.plan.held_out_test_count),
+    }, _comparison_page(rows))
+
+
+def _comparison_page(rows):
+    return _table_page((
+        "strategy", "trade_count", "total_return", "gross_total_return",
+        "realized_max_drawdown", "win_rate", "profit_factor",
+        "overlap_skipped_count", "exposure",
+    ), rows)
+
+
 class QuantResearchController(NetworkController):
     """Build, inspect, research, and backtest verified local Research Datasets."""
 
@@ -346,12 +398,15 @@ class QuantResearchController(NetworkController):
         self._builder_values: dict[str, Any] = {}
         self._feature_summary: dict[str, str] = {}
         self._backtest_summary: dict[str, str] = {}
+        self._comparison_summary: dict[str, str] = {}
         self._feature_names: tuple[str, ...] = ()
         self._label_names: tuple[str, ...] = ()
         self._return_label_names: tuple[str, ...] = ()
         self._builder_model = QtTableModel(parent=self)
         self._feature_model = QtTableModel(parent=self)
         self._trade_model = QtTableModel(parent=self)
+        self._comparison_model = QtTableModel(parent=self)
+        self._comparison_model.set_page(_comparison_page(()))
         self._trade_rows: tuple[tuple[str, ...], ...] = ()
         self._equity_series: tuple[float, ...] = ()
         self._builder_model.set_page(
@@ -387,6 +442,14 @@ class QuantResearchController(NetworkController):
     def backtestSummary(self) -> dict[str, str]:
         return dict(self._backtest_summary)
 
+    @Property("QVariantMap", notify=researchChanged)
+    def comparisonSummary(self) -> dict[str, str]:
+        return dict(self._comparison_summary)
+
+    @Property(QObject, constant=True)
+    def comparisonModel(self) -> QObject:
+        return self._comparison_model
+
     @Property("QVariantList", notify=researchChanged)
     def featureNames(self) -> list[str]:
         return list(self._feature_names)
@@ -418,6 +481,8 @@ class QuantResearchController(NetworkController):
     def _clear_results(self) -> None:
         self._feature_summary = {}
         self._backtest_summary = {}
+        self._comparison_summary = {}
+        self._comparison_model.set_page(_comparison_page(()))
         self._trade_rows = ()
         self._equity_series = ()
         self._set_feature_page(())
@@ -686,6 +751,49 @@ class QuantResearchController(NetworkController):
                 commission_bps=commission,
                 slippage_bps=slippage,
             ),
+            apply,
+            requires_backend=False,
+        )
+
+    @Slot("QVariantMap", result=bool)
+    def runStrategyComparison(self, values: dict[str, Any]) -> bool:
+        if not self._dataset_path:
+            return self._reject_input(ValueError("Inspect a Research Dataset first."))
+        try:
+            values = dict(values)
+            parsed = {}
+            for field in ("trend_feature", "reversion_feature"):
+                parsed[field] = str(values.get(field, "")).strip()
+                if parsed[field] not in self._feature_names:
+                    raise ValueError("Select admitted numeric Features for both rules.")
+            for field in ("trend_threshold", "reversion_threshold", "ridge_threshold"):
+                parsed[field] = _finite_float(values.get(field, 0), field)
+            parsed["ridge_alpha"] = _finite_float(values.get("ridge_alpha", 1), "ridge_alpha")
+            if parsed["ridge_alpha"] <= 0:
+                raise ValueError("ridge_alpha must be strictly positive")
+            for field in ("minimum_train_periods", "validation_periods", "step_periods"):
+                parsed[field] = _bounded_int(values.get(field), field, 1, 1_000_000)
+            if parsed["step_periods"] < parsed["validation_periods"]:
+                raise ValueError("step_periods must be at least validation_periods")
+            for field in ("commission_bps", "slippage_bps"):
+                parsed[field] = _finite_float(values.get(field, 0), field, nonnegative=True)
+            if parsed["commission_bps"] + parsed["slippage_bps"] >= 10_000:
+                raise ValueError("per-side costs must be below 10000 bps")
+            parsed["return_label"] = str(values.get("return_label", "")).strip()
+            if parsed["return_label"] not in self._return_label_names:
+                raise ValueError("Select an execution-safe forward-open-to-close return Label.")
+            path = Path(self._dataset_path)
+        except (TypeError, ValueError) as exc:
+            return self._reject_input(exc)
+
+        def apply(view: _ComparisonView) -> None:
+            self._comparison_summary = dict(view.summary)
+            self._comparison_model.set_page(view.page)
+            self.researchChanged.emit()
+
+        return self._submit(
+            "strategy_comparison",
+            lambda backend: _run_strategy_comparison(path, **parsed),
             apply,
             requires_backend=False,
         )
