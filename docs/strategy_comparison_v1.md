@@ -102,3 +102,81 @@ The Python entry is `market_vault.research.strategy_comparison.compare_strategie
 with explicit `FeatureRuleStrategy` / `RidgeStrategy` tuples. New signal types
 should reuse the common verified evidence and execution kernel; they should
 not introduce another PnL or cost implementation.
+
+## Optional bar-close equity and cash/share ledger V1
+
+Use the same plan with the optional flag:
+
+```bash
+market-vault research-compare-strategies --plan comparison.json --equity-curve
+```
+
+The Python entry is
+`market_vault.research.strategy_equity.compare_strategies_with_equity`.
+It reruns the explicit V1 comparison and adds a versioned valuation report;
+it does not accept an arbitrary caller-created report as trading authority.
+The existing V1 comparison, strategy IDs, accepted trades, costs and metrics
+remain unchanged. Without the flag, the original CLI JSON is unchanged. With
+the flag, `result_schema_version` is
+`market-vault-strategy-equity-cli-result-v1`; the additional `equity` object
+binds the comparison, verified price evidence, valuation window and each curve.
+The JSON includes every ledger point with UTC time, event, cash, fractional
+shares, mark price, position value, total equity, drawdown and event cost.
+
+In the desktop **Strategy Comparison** tab, check **Include bar-close valuation /
+加入 K 线收盘估值** before running. The comparison table gains a bar-close maximum
+drawdown column. Open **Equity & ledger / 净值与账本** to select a strategy, view
+its equity path and page through its cash/share ledger. This view collapses
+the parameter form to make room; **Show parameters / 展开参数** restores it.
+The chart's time axis
+uses elapsed UTC time and steps between observed account states. Complete
+ledger values are available through the CLI, without display rounding.
+
+### Accounting and clocks
+
+Initial account equity is normalized to **1.0**. Every accepted trade uses
+fractional shares and the same per-side cost rate `c` as Backtest V1:
+
+- Entry: `fee = cash * c`; `quantity = (cash - fee) / entry_open`; cash becomes zero.
+- Holding: `equity = quantity * current_close`.
+- Exit: `fee = quantity * exit_close * c`; cash becomes the remaining proceeds,
+  and quantity becomes zero.
+
+The entry open and exit close are resolved from the exact Canonical row versions
+selected by the execution-safe Label. Their price return and the ledger's exit
+cash must reconcile with V1. This represents V1's proportional transaction-cost
+model; it adds no broker fee schedule, actual fill slippage or order sizing.
+The sum of paid event costs is reported separately; with compounding, it is not
+the difference between separately simulated gross and net final equities.
+
+The shared valuation window runs from the earliest candidate entry to the latest
+candidate exit in the common validation stream. All strategies use the same
+verified RTH session grid. An account continues across folds, validation gaps
+and overnight holdings. At an equal timestamp the order is **close mark, exit
+and its cost, then next entry and its cost**. The entry event uses the bar's open,
+never its not-yet-available close.
+
+The grid comes from the Dataset's verified complete trading-day schedule,
+including closed dates and qualified early closes. Price evidence comes only
+from that Dataset's recorded Canonical builds and respects `dataset_as_of`.
+A missing price during a holding fails valuation, including missing whole
+sessions or session edges. A cash-only point requires no price: an absent quote
+is reported as null, with no forward-filled or interpolated quote.
+
+Supported RTH intervals retain their recorded `market_available_at` clocks.
+For the truncated final 60m bar, this is the existing conservative nominal end:
+16:30 on a normal session or 13:30 on a qualified early-close session. Valuation
+does not move that close earlier to the physical session boundary. See the
+[timestamp contract](contracts/market_bar_timestamp_semantics.md).
+
+### Interpreting drawdown
+
+`bar_close_max_drawdown` includes recorded close marks and entry/exit cost events.
+For example, with no costs, a trade entering at 100, marked down to 60, then
+exiting at 110 has a 10% realized gain and zero realized maximum drawdown, but a
+**40% bar-close maximum drawdown**. Both metrics remain visible.
+
+OHLC bars do not establish the order of intrabar highs and lows. This curve
+therefore does not claim tick-level or worst intrabar drawdown, liquidity,
+partial fills, borrowing, margin, or multi-asset accounting. Valuation adds no
+signals or model fitting and does not evaluate permanent TEST candidates.

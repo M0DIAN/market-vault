@@ -356,9 +356,19 @@ for name, text in [('Train', '3'), ('Validation', '2'), ('Step', '2')]:
 captured = []
 def compare(path, **values):
     captured.append((path, values))
+    summary = {{'comparison_id': 'c' * 64, 'fold_count': '3', 'common_validation_rows': '6', 'held_out_test_rows': '2'}}
+    rows = (('Trend', '3', '1%', '2%', '0%', '100%', '—', '0', '50%'),)
+    equity = ()
+    if values.get('equity_curve'):
+        summary['equity_comparison_id'] = 'e' * 64
+        rows = tuple(row + ('40%',) for row in rows)
+        ledger_rows = tuple(('2026-01-05 14:35:00', '0.6', '40%', '0', '0.01', '60', '0.6', '0', 'BAR_CLOSE') for i in range(105))
+        equity = (
+            quant._ComparisonEquityView('Trend', ledger_rows, ((1767623400000.0, 1.0), (1767623700000.0, 0.6), (1767624000000.0, 1.1))),
+            quant._ComparisonEquityView('Ridge', ledger_rows[:2], ((1767623400000.0, 1.0), (1767624000000.0, 1.02))),
+        )
     return quant._ComparisonView(
-        {{'comparison_id': 'c' * 64, 'fold_count': '3', 'common_validation_rows': '6', 'held_out_test_rows': '2'}},
-        quant._comparison_page((('Trend', '3', '1%', '2%', '0%', '100%', '—', '0', '50%'),)),
+        summary, quant._comparison_page(rows, with_equity=bool(equity)), equity,
     )
 quant._run_strategy_comparison = compare
 assert button.property('enabled')
@@ -389,11 +399,48 @@ assert session.i18n.setLanguage('zh-CN')
 app.processEvents()
 assert button.property('text') == '比较策略'
 assert window.grabWindow().save(str(root_path / 'comparison-ui.png'))
+toggle = window.findChild(QObject, 'quantComparisonEquityToggle')
+toggle.forceActiveFocus()
+QTest.keyClick(window, Qt.Key_Space)
+app.processEvents()
+assert toggle.property('checked')
+assert QMetaObject.invokeMethod(button, 'clicked', Qt.DirectConnection)
+session.runtime._poll()
+app.processEvents()
+assert captured[-1][1]['equity_curve'] is True
+assert controller.comparisonModel.columnCount() == 10
+assert controller.comparisonEquityNames == ['Trend', 'Ridge']
+ledger_button = window.findChild(QObject, 'quantComparisonLedgerButton')
+assert ledger_button.property('visible')
+assert QMetaObject.invokeMethod(ledger_button, 'clicked', Qt.DirectConnection)
+app.processEvents()
+assert window.findChild(QObject, 'quantComparisonEquityCanvas').property('visible')
+assert window.findChild(QObject, 'quantComparisonEquityTable').property('visible')
+assert panel.property('showInputs') is False
+assert window.findChild(QObject, 'quantComparisonEquityCanvas').property('height') >= 100
+assert controller.comparisonEquityModel.rowCount() == 100
+assert controller.changeComparisonEquityPage(1)
+assert controller.comparisonEquityModel.rowCount() == 5
+selector = window.findChild(QObject, 'quantComparisonEquityStrategy')
+selector.forceActiveFocus()
+QTest.keyClick(window, Qt.Key_Down)
+app.processEvents()
+assert selector.property('currentIndex') == controller.comparisonEquityIndex == 1
+assert controller.comparisonEquityModel.page == 1
+assert controller.comparisonEquityModel.rowCount() == 2
+assert controller.comparisonEquitySeries[-1][1] == 1.02
+# Repeating identical research preserves both form fields and selected curve.
+assert QMetaObject.invokeMethod(button, 'clicked', Qt.DirectConnection)
+session.runtime._poll()
+app.processEvents()
+assert len(captured) == 4
+assert selector.property('currentIndex') == controller.comparisonEquityIndex == 1
+assert window.grabWindow().save(str(root_path / 'comparison-equity-ui.png'))
 window.findChild(QObject, 'quantComparisonStepPeriods').setProperty('text', '1')
 assert QMetaObject.invokeMethod(button, 'clicked', Qt.DirectConnection)
 app.processEvents()
 assert controller.status == 'VALIDATION_ERROR'
-assert len(captured) == 2
+assert len(captured) == 4
 assert backend_calls == []
 assert session.runtime.backend_if_initialized is None
 other_dataset = root_path / 'other-dataset'
@@ -405,6 +452,11 @@ assert window.findChild(QObject, 'quantComparisonTrendFeature').property('curren
 assert window.findChild(QObject, 'quantComparisonReversionFeature').property('currentText') == 'return_2'
 assert window.findChild(QObject, 'quantComparisonReturnLabel').property('currentText') == 'execution_return_1d'
 assert controller.comparisonModel.rowCount() == 0
+assert controller.comparisonEquityNames == []
+assert controller.comparisonEquitySeries == []
+assert controller.comparisonEquityModel.rowCount() == 0
+assert panel.property('resultsView') == 0
+assert panel.property('showInputs') is True
 assert session.shutdown()
 print(json.dumps({{'clicked': True, 'rows': controller.comparisonModel.rowCount()}}))
 '''

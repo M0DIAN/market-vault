@@ -32,6 +32,7 @@ from .research.walk_forward import _positive_int
 
 STRATEGY_COMPARISON_PLAN_VERSION = "market-vault-strategy-comparison-plan-v1"
 STRATEGY_COMPARISON_CLI_VERSION = "market-vault-strategy-comparison-cli-result-v1"
+STRATEGY_EQUITY_CLI_VERSION = "market-vault-strategy-equity-cli-result-v1"
 _PLAN_FIELDS = frozenset({
     "plan_schema_version", "dataset_build_dir", "feature_fields", "return_label",
     "strategies", "minimum_train_periods", "validation_periods", "step_periods",
@@ -45,6 +46,10 @@ def add_strategy_comparison_subparser(subparsers) -> None:
         help="Compare rules and Ridge on common walk-forward validation samples",
     )
     parser.add_argument("--plan", required=True, metavar="PATH")
+    parser.add_argument(
+        "--equity-curve", action="store_true",
+        help="Add verified bar-close cash/share equity paths and drawdown",
+    )
 
 
 def parse_strategy_comparison_plan_bytes(payload: bytes) -> dict:
@@ -152,7 +157,33 @@ def _success_payload(report) -> dict:
     }
 
 
+def _equity_payload(report) -> dict:
+    payload = _success_payload(report.comparison)
+    payload["result_schema_version"] = STRATEGY_EQUITY_CLI_VERSION
+    payload["equity"] = {
+        "version": report.version,
+        "equity_comparison_id": report.equity_comparison_id,
+        "interval": report.interval,
+        "start_time": report.start_time.isoformat(),
+        "end_time": report.end_time.isoformat(),
+        "price_evidence_id": report.price_evidence_id,
+        "results": [{
+            "strategy_result_id": result.strategy_result_id,
+            "version": result.curve.version,
+            "curve_id": result.curve.curve_id,
+            "final_equity": result.curve.final_equity,
+            "bar_close_max_drawdown": result.curve.bar_close_max_drawdown,
+            "transaction_cost_total": result.curve.transaction_cost_total,
+            "points": [{
+                **asdict(point), "timestamp": point.timestamp.isoformat(),
+            } for point in result.curve.points],
+        } for result in report.results],
+    }
+    return payload
+
+
 def research_compare_strategies_main(args) -> int:
+    with_equity = getattr(args, "equity_curve", False)
     try:
         plan_path = _coerce_plan_path(args.plan)
         config = parse_strategy_comparison_plan_bytes(_read_plan_bytes(plan_path))
@@ -161,12 +192,16 @@ def research_compare_strategies_main(args) -> int:
             label="Research Dataset build",
         )
         dataset = load_verified_multi_source_cross_day_dataset(build_dir)
-        report = compare_strategies(dataset, **config)
-        print(json.dumps(_success_payload(report), ensure_ascii=False, indent=2, allow_nan=False))
+        if with_equity:
+            from .research.strategy_equity import compare_strategies_with_equity
+            payload = _equity_payload(compare_strategies_with_equity(dataset, **config))
+        else:
+            payload = _success_payload(compare_strategies(dataset, **config))
+        print(json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False))
         return 0
     except (BacktestCLIError, DatasetCLIError, OSError, TypeError, ValueError, KeyError) as exc:
         print(json.dumps({
-            "result_schema_version": STRATEGY_COMPARISON_CLI_VERSION,
+            "result_schema_version": STRATEGY_EQUITY_CLI_VERSION if with_equity else STRATEGY_COMPARISON_CLI_VERSION,
             "status": "FAILED",
             "error": f"research-compare-strategies failed: {exc}",
         }, ensure_ascii=False, indent=2), file=sys.stderr)
