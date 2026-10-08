@@ -161,6 +161,7 @@ $RequiredQmlAssets = @(
     "_internal\market_vault\desktop\qml\pages\MarketDataPage.qml",
     "_internal\market_vault\desktop\qml\pages\QuantResearchPage.qml",
     "_internal\market_vault\desktop\qml\pages\StrategyComparisonPanel.qml",
+    "_internal\market_vault\desktop\qml\pages\StrategyListEditor.qml",
     "_internal\market_vault\desktop\qml\pages\RunsPage.qml",
     "_internal\market_vault\desktop\qml\pages\StorageCleanupPage.qml",
     "_internal\market_vault\desktop\qml\pages\TradingCalendarPage.qml"

@@ -13,6 +13,7 @@ ColumnLayout {
     property var featureOptions: []
     property var returnOptions: []
     property string equityKey: ""
+    property string comparisonKey: ""
     property var equityOptions: []
     property int resultsView: 0
     property bool showInputs: true
@@ -27,14 +28,18 @@ ColumnLayout {
         root.featureOptions = root.controller.featureNames
         root.returnOptions = root.controller.returnLabelNames
         const index = Math.max(0, root.featureOptions.indexOf("return_2"))
-        trendFeature.currentIndex = index
-        reversionFeature.currentIndex = index
+        commonFeatures.text = root.featureOptions[index] || ""
+        strategyEditor.reset(root.featureOptions[index] || "")
         returnLabel.currentIndex = 0
     }
 
     function syncEquity() {
-        if (!root.controller.comparisonSummary.comparison_id)
+        const comparisonId = root.controller.comparisonSummary.comparison_id || ""
+        if (!comparisonId)
             root.showInputs = true
+        else if (comparisonId !== root.comparisonKey)
+            root.showInputs = false
+        root.comparisonKey = comparisonId
         const equityId = root.controller.comparisonSummary.equity_comparison_id || ""
         const riskId = root.controller.comparisonSummary.risk_report_id || ""
         const key = equityId ? equityId + "|" + riskId : ""
@@ -56,13 +61,9 @@ ColumnLayout {
 
     function comparisonValues() {
         return {
-            "trend_feature": trendFeature.currentText,
-            "trend_threshold": trendThreshold.text,
-            "reversion_feature": reversionFeature.currentText,
-            "reversion_threshold": reversionThreshold.text,
+            "feature_fields": commonFeatures.text.split(",").map(value => value.trim()),
+            "strategies": strategyEditor.snapshot(),
             "return_label": returnLabel.currentText,
-            "ridge_alpha": ridgeAlpha.text,
-            "ridge_threshold": ridgeThreshold.text,
             "minimum_train_periods": trainPeriods.text,
             "validation_periods": validationPeriods.text,
             "step_periods": stepPeriods.text,
@@ -76,78 +77,73 @@ ColumnLayout {
     Components.PixelPanel {
         visible: root.showInputs
         Layout.fillWidth: true
-        Layout.preferredHeight: 222
+        Layout.preferredHeight: 258
         padding: Theme.PixelTheme.panelPadding
-        GridLayout {
+        RowLayout {
             anchors.fill: parent
-            columns: 4
-            columnSpacing: Theme.PixelTheme.spacingMd
-            rowSpacing: 6
-            Components.LabeledComboBox {
-                id: trendFeature
-                objectName: "quantComparisonTrendFeature"
-                label: root.i18n.catalog["quant.trend_feature"]
-                model: root.featureOptions
+            spacing: Theme.PixelTheme.spacingMd
+            GridLayout {
+                Layout.preferredWidth: 310
+                Layout.maximumWidth: 310
+                Layout.fillHeight: true
+                columns: 2
+                columnSpacing: 8
+                rowSpacing: 6
+                Components.LabeledTextField {
+                    id: commonFeatures
+                    objectName: "quantComparisonFeatures"
+                    Layout.minimumWidth: 120
+                    label: root.i18n.catalog["quant.common_features"]
+                    text: "return_2"
+                }
+                Components.LabeledComboBox {
+                    id: returnLabel
+                    objectName: "quantComparisonReturnLabel"
+                    Layout.minimumWidth: 120
+                    label: root.i18n.catalog["quant.return_label"]
+                    model: root.returnOptions
+                }
+                Components.LabeledTextField {
+                    id: trainPeriods
+                    objectName: "quantComparisonTrainPeriods"
+                    Layout.minimumWidth: 120
+                    label: root.i18n.catalog["quant.train_periods"]
+                    text: "20"
+                }
+                Components.LabeledTextField {
+                    id: validationPeriods
+                    objectName: "quantComparisonValidationPeriods"
+                    Layout.minimumWidth: 120
+                    label: root.i18n.catalog["quant.validation_periods"]
+                    text: "5"
+                }
+                Components.LabeledTextField {
+                    id: stepPeriods
+                    objectName: "quantComparisonStepPeriods"
+                    Layout.minimumWidth: 120
+                    label: root.i18n.catalog["quant.step_periods"]
+                    text: "5"
+                }
+                Components.LabeledTextField {
+                    id: commission
+                    Layout.minimumWidth: 120
+                    label: root.i18n.catalog["quant.commission_bps"]
+                    text: "0"
+                }
+                Components.LabeledTextField {
+                    id: slippage
+                    Layout.minimumWidth: 120
+                    label: root.i18n.catalog["quant.slippage_bps"]
+                    text: "0"
+                }
             }
-            Components.LabeledTextField {
-                id: trendThreshold
-                label: root.i18n.catalog["quant.trend_threshold"]
-                text: "0"
-            }
-            Components.LabeledComboBox {
-                id: reversionFeature
-                objectName: "quantComparisonReversionFeature"
-                label: root.i18n.catalog["quant.reversion_feature"]
-                model: root.featureOptions
-            }
-            Components.LabeledTextField {
-                id: reversionThreshold
-                label: root.i18n.catalog["quant.reversion_threshold"]
-                text: "0"
-            }
-            Components.LabeledComboBox {
-                id: returnLabel
-                objectName: "quantComparisonReturnLabel"
-                label: root.i18n.catalog["quant.return_label"]
-                model: root.returnOptions
-            }
-            Components.LabeledTextField {
-                id: ridgeAlpha
-                label: root.i18n.catalog["quant.ridge_alpha"]
-                text: "1"
-            }
-            Components.LabeledTextField {
-                id: ridgeThreshold
-                label: root.i18n.catalog["quant.ridge_threshold"]
-                text: "0"
-            }
-            Components.LabeledTextField {
-                id: trainPeriods
-                objectName: "quantComparisonTrainPeriods"
-                label: root.i18n.catalog["quant.train_periods"]
-                text: "20"
-            }
-            Components.LabeledTextField {
-                id: validationPeriods
-                objectName: "quantComparisonValidationPeriods"
-                label: root.i18n.catalog["quant.validation_periods"]
-                text: "5"
-            }
-            Components.LabeledTextField {
-                id: stepPeriods
-                objectName: "quantComparisonStepPeriods"
-                label: root.i18n.catalog["quant.step_periods"]
-                text: "5"
-            }
-            Components.LabeledTextField {
-                id: commission
-                label: root.i18n.catalog["quant.commission_bps"]
-                text: "0"
-            }
-            Components.LabeledTextField {
-                id: slippage
-                label: root.i18n.catalog["quant.slippage_bps"]
-                text: "0"
+            StrategyListEditor {
+                id: strategyEditor
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                i18n: root.i18n
+                featureOptions: root.featureOptions
+                defaultFeature: commonFeatures.text.split(",")[0].trim()
             }
         }
     }

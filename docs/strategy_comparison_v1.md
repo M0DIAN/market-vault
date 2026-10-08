@@ -1,7 +1,7 @@
-# Walk-forward strategy comparison V1
+# Walk-forward strategy comparison
 
-MarketVault can compare multiple explicit Feature rules and fixed-alpha Ridge
-models against one verified, single-symbol Research Dataset. The CLI command
+MarketVault can compare explicit Feature rules, flat composite rules and
+fixed-alpha Ridge models against one verified, single-symbol Research Dataset. The CLI command
 is `research-compare-strategies`; the desktop entry is **Quant Research →
 Strategy Comparison / 策略比较** after loading a Dataset.
 
@@ -86,22 +86,84 @@ Combined per-side costs must be nonnegative and below 10000 bps.
 
 ## Desktop
 
-Load the Dataset, open **策略比较**, select a trend Feature and a mean-reversion
-Feature, and enter the thresholds, Ridge alpha, windows and costs. The desktop
-compares three named research rules: `Trend` (`Feature > threshold`),
-`MeanReversion` (`Feature < threshold`) and `Ridge` (`prediction > threshold`).
-Their common Feature projection is the ordered union of the two selections;
-choosing the same Feature twice gives Ridge one input column.
+Load the Dataset and open **策略比较**. Set an explicit comma-separated common
+Feature projection, execution-safe return Label, windows and costs. The initial
+list contains `Trend`, `MeanReversion` and `Ridge`, using `return_2` where that
+Feature is available. Add, remove, rename or edit strategies in the list; at
+least one strategy remains. The selected strategy's editor supports a single
+Feature rule, Ridge alpha/threshold, or two-or-more ALL/ANY conditions. Rule
+thresholds use the Dataset's raw units. Switching type starts that type's
+default parameters, which remain visible for editing before the next run.
+
+The common Feature projection is explicit and independent of the list. Every
+rule condition must reference it; Ridge uses the same projection, including
+when it is the only strategy. Editing a condition does not silently add an
+input column or select every available Feature. Blank numbers, duplicate
+strategy names and invalid/out-of-projection Features are rejected.
 
 The table shows trade count, net/gross return, realized drawdown, win rate,
 profit factor, overlap skips and exposure. The summary shows comparison ID,
-fold count, common validation sample count and held-out TEST count. For more
-rule variants or complete trade/fold details, use the CLI plan.
+fold count, common validation sample count and held-out TEST count. A new
+successful comparison collapses the editor to leave room for results; use
+**Expand parameters / 展开参数** to continue editing. Revalidating the same
+Dataset preserves the configured list and clears results; selecting another
+Dataset restores the default strategy list. Complete trade/fold details remain
+available in the CLI JSON.
 
 The Python entry is `market_vault.research.strategy_comparison.compare_strategies`
-with explicit `FeatureRuleStrategy` / `RidgeStrategy` tuples. New signal types
+with explicit `FeatureRuleStrategy` / `RidgeStrategy` / `CompositeRuleStrategy`
+tuples. New signal types
 should reuse the common verified evidence and execution kernel; they should
 not introduce another PnL or cost implementation.
+
+## Composite rules and versioned configuration
+
+`market-vault-strategy-comparison-plan-v1` keeps its original grammar, accepting
+only `FEATURE_RULE` and `RIDGE`. For composite conditions use
+`market-vault-strategy-comparison-plan-v2`, with the same top-level plan fields.
+For example, set `feature_fields` to `["return_2", "volume_ratio_5"]` and include:
+
+```json
+{
+  "kind": "COMPOSITE_RULE",
+  "name": "MomentumWithVolume",
+  "match": "ALL",
+  "conditions": [
+    {"signal_field": "return_2", "comparator": "GT", "threshold": 0},
+    {"signal_field": "volume_ratio_5", "comparator": "GE", "threshold": 1.2}
+  ]
+}
+```
+
+`ALL` requires every condition; `ANY` requires at least one. Conditions are a
+flat ordered list of at least two existing `GT`/`GE`/`LT`/`LE` rules. There is no
+nested expression language, arbitrary import or executable expression. All
+conditions are checked against the admitted common Feature projection before
+short-circuit evaluation. Contradictory conditions are valid and may produce
+zero trades. They do not change which samples are common to the comparison.
+
+The signal adapter in `research/strategy_comparison.py` supplies numeric scores
+and a rule to the existing execution kernel. Legacy Feature rules retain their
+original numeric scores; Ridge retains its fold fitting and predictions.
+Composite rules use an internal 0/1 score, without adding a synthetic Dataset
+Feature. Their implementation version and complete ordered conditions enter
+their result identity. Reordering conditions can preserve trades while changing
+the configuration identity.
+
+A comparison containing a composite rule uses `market-vault-strategy-comparison-v2`
+and the corresponding `market-vault-strategy-comparison-cli-result-v2`,
+`market-vault-strategy-equity-cli-result-v2` or
+`market-vault-strategy-risk-cli-result-v2` envelope. The account and risk formulas
+remain the Q1 versions below. A comparison containing only original strategy
+types retains its complete V1 result payload and identities, even when loaded
+from plan-v2. Adding a composite without changing the shared projection,
+samples, windows or costs leaves the existing per-strategy result IDs unchanged.
+
+Plan-input encoding is `research.strategy_config.strategy_plan_fields`; result
+descriptors have additional implementation fields and are not plan inputs.
+`parse_strategy_specs` is shared by the CLI and desktop. Failures before a valid
+strategy list is admitted use the original selected error envelope; after a
+composite list is admitted, execution failures use its V2 envelope.
 
 ## Optional bar-close equity and cash/share ledger V1
 
