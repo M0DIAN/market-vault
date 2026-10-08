@@ -1,4 +1,4 @@
-"""User-owned preferences for the parallel QML desktop."""
+"""User-owned preferences for the QML desktop, including window placement."""
 
 from __future__ import annotations
 
@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 import sys
 from typing import Any, Callable
+
+from market_vault.desktop.window_geometry import is_valid_saved_window
 
 
 DESKTOP_PREFERENCE_SCHEMA = "market-vault-desktop-preferences-v1"
@@ -17,19 +19,17 @@ PREFERENCE_FILENAME = "desktop-preferences.json"
 
 def default_desktop_preference_path() -> Path:
     """Resolve the desktop preference file independently of the current directory."""
-
     if sys.platform == "win32":
         root = os.environ.get("LOCALAPPDATA")
         base = Path(root) if root else Path.home() / "AppData" / "Local"
         return base / "MarketVault" / PREFERENCE_FILENAME
-
     root = os.environ.get("XDG_CONFIG_HOME")
     base = Path(root) if root else Path.home() / ".config"
     return base / "market-vault" / PREFERENCE_FILENAME
 
 
 class DesktopPreferenceStore:
-    """Read and write the isolated bilingual QML preference contract."""
+    """Preserve bilingual settings and one ordinary QWindow geometry atomically."""
 
     def __init__(
         self,
@@ -52,35 +52,48 @@ class DesktopPreferenceStore:
     def path(self) -> Path:
         return self._path
 
-    def load_language(self) -> str:
+    def _read(self) -> dict[str, Any]:
         try:
             payload = json.loads(self._path.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, json.JSONDecodeError):
-            return DEFAULT_LANGUAGE
-        if not isinstance(payload, dict):
-            return DEFAULT_LANGUAGE
-        if payload.get("schema") != DESKTOP_PREFERENCE_SCHEMA:
-            return DEFAULT_LANGUAGE
-        language = payload.get("language")
-        if language not in SUPPORTED_LANGUAGES:
-            return DEFAULT_LANGUAGE
-        return str(language)
+            return {}
+        if not isinstance(payload, dict) or payload.get("schema") != DESKTOP_PREFERENCE_SCHEMA:
+            return {}
+        return payload
+
+    def load_language(self) -> str:
+        language = self._read().get("language")
+        return str(language) if language in SUPPORTED_LANGUAGES else DEFAULT_LANGUAGE
+
+    def load_window(self) -> dict[str, Any] | None:
+        window = self._read().get("window")
+        return dict(window) if is_valid_saved_window(window) else None
 
     def save_language(self, language: str) -> bool:
         if language not in SUPPORTED_LANGUAGES:
             return False
+        payload = {"schema": DESKTOP_PREFERENCE_SCHEMA, "language": language}
+        window = self.load_window()
+        if window is not None:
+            payload["window"] = window
+        return self._write(payload)
+
+    def save_window(self, window: dict[str, Any]) -> bool:
+        if not is_valid_saved_window(window):
+            return False
         payload = {
             "schema": DESKTOP_PREFERENCE_SCHEMA,
-            "language": language,
+            "language": self.load_language(),
+            "window": dict(window),
         }
-        data = (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode(
-            "utf-8"
-        )
+        return self._write(payload)
+
+    def _write(self, payload: dict[str, Any]) -> bool:
+        data = (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             if self._save_file_factory is None:
                 from PySide6.QtCore import QIODevice, QSaveFile
-
                 factory = QSaveFile
                 write_only_mode = QIODevice.OpenModeFlag.WriteOnly
             else:

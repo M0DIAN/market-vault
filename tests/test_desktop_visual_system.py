@@ -141,8 +141,9 @@ def test_shell_retains_native_window_and_safe_purge_danger_semantics():
     assert "flags: Qt.FramelessWindowHint" not in main
     assert "Qt.ExpandedClientAreaHint" not in main
     assert "Qt.NoTitleBarBackgroundHint" not in main
-    assert "minimumWidth: 1000" in main
-    assert "minimumHeight: 650" in main
+    # The production controller now computes minima from QScreen.availableGeometry.
+    assert "minimumWidth: 1" in main
+    assert "minimumHeight: 1" in main
     assert "StackLayout" in main
     assert "operationRuntime.requestShutdown()" in main
     assert 'title: "MARKETVAULT"' in main

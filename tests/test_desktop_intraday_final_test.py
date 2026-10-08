@@ -252,7 +252,7 @@ assert controller.resultSummary['intraday_test_proof'] == 'RECORDED'
 # supported minimum, scroll the panel instead of crushing its only metrics row.
 for language in ('en', 'zh-CN'):
     assert session.i18n.setLanguage(language)
-    for width, height in ((1000, 650), (1100, 700)):
+    for width, height in ((1000, 650), (1024, 600), (1100, 700)):
         window.setWidth(width); window.setHeight(height)
         choose('intradayTestView', 0); QTest.qWait(100)
         scroll = find('intradayFinalScroll')

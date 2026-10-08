@@ -11,8 +11,10 @@ ApplicationWindow {
     visible: true
     width: 1100
     height: 700
-    minimumWidth: 1000
-    minimumHeight: 650
+    // The production geometry controller sets screen-specific limits in Qt DIPs.
+    minimumWidth: 1
+    minimumHeight: 1
+    readonly property bool compactNavigation: width < 1060
     title: "MARKETVAULT"
     color: Theme.PixelTheme.canvas
     font.family: Theme.PixelTheme.fontForLanguage(i18nBridge.language)
@@ -57,7 +59,8 @@ ApplicationWindow {
 
             Components.Sidebar {
                 objectName: "sidebar"
-                Layout.preferredWidth: Theme.PixelTheme.sidebarWidth
+                compact: window.compactNavigation
+                Layout.preferredWidth: compact ? 64 : Theme.PixelTheme.sidebarWidth
                 Layout.fillHeight: true
                 shell: shellController
                 i18n: i18nBridge
@@ -98,7 +101,7 @@ ApplicationWindow {
                         Item {
                             objectName: "pageTitleDividerSlot"
                             Layout.fillWidth: true
-                            Layout.minimumWidth: 160
+                            Layout.minimumWidth: window.width < 800 ? 0 : 160
                             Layout.preferredWidth: 640
                             Layout.preferredHeight: 2
                             Layout.leftMargin: 16

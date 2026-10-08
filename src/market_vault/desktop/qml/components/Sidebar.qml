@@ -7,6 +7,7 @@ Rectangle {
     id: sidebar
     required property var shell
     required property var i18n
+    property bool compact: false
     color: Theme.PixelTheme.surface
     border.color: Theme.PixelTheme.line
     border.width: 1
@@ -57,7 +58,7 @@ Rectangle {
                     spacing: 2
 
                     Label {
-                        visible: modelData.showGroup
+                        visible: !sidebar.compact && modelData.showGroup
                         height: visible ? implicitHeight + 12 : 0
                         leftPadding: 18
                         topPadding: 10
@@ -75,6 +76,8 @@ Rectangle {
                         height: 38
                         anchors.horizontalCenter: parent.horizontalCenter
                         text: sidebar.i18n.catalog[modelData.labelKey]
+                        ToolTip.visible: sidebar.compact && hovered
+                        ToolTip.text: text
                         checkable: true
                         activeFocusOnTab: true
                         checked: sidebar.shell.currentPage === modelData.id
@@ -89,6 +92,7 @@ Rectangle {
                                 Layout.preferredHeight: 24
                             }
                             Label {
+                                visible: !sidebar.compact
                                 text: navigationButton.text
                                 color: navigationButton.checked ? Theme.PixelTheme.ink : Theme.PixelTheme.inkMuted
                                 font.family: Theme.PixelTheme.fontForLanguage(sidebar.i18n.language)
