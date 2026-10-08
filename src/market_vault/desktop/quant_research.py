@@ -13,6 +13,7 @@ navigation shell.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import timezone
 import math
 from pathlib import Path
 from typing import Any
@@ -56,9 +57,17 @@ class _BacktestView:
 
 
 @dataclass(frozen=True, slots=True)
+class _ComparisonEquityView:
+    name: str
+    rows: tuple[tuple[str, ...], ...]
+    series: tuple[tuple[float, float], ...]
+
+
+@dataclass(frozen=True, slots=True)
 class _ComparisonView:
     summary: dict[str, str]
     page: Any
+    equity: tuple[_ComparisonEquityView, ...] = ()
 
 
 def _finite_float(value: Any, field_name: str, *, nonnegative: bool = False) -> float:
@@ -347,12 +356,18 @@ def _run_strategy_comparison(path: Path, **values) -> _ComparisonView:
         FeatureRuleStrategy("MeanReversion", BacktestRule(reversion, "LT", values.pop("reversion_threshold"))),
         RidgeStrategy("Ridge", values.pop("ridge_alpha"), values.pop("ridge_threshold")),
     )
-    report = compare_strategies(
-        _load_verified_dataset(path),
-        feature_fields=tuple(dict.fromkeys((trend, reversion))),
-        strategies=strategies,
-        **values,
+    with_equity = values.pop("equity_curve", False)
+    dataset = _load_verified_dataset(path)
+    configuration = dict(
+        feature_fields=tuple(dict.fromkeys((trend, reversion))), strategies=strategies, **values,
     )
+    equity_report = None
+    if with_equity:
+        from market_vault.research.strategy_equity import compare_strategies_with_equity
+        equity_report = compare_strategies_with_equity(dataset, **configuration)
+        report = equity_report.comparison
+    else:
+        report = compare_strategies(dataset, **configuration)
     rows = tuple((
         result.strategy.name,
         str(result.metrics.trade_count),
@@ -364,20 +379,37 @@ def _run_strategy_comparison(path: Path, **values) -> _ComparisonView:
         str(result.metrics.overlap_skipped_count),
         _format_percent(result.metrics.exposure),
     ) for result in report.results)
-    return _ComparisonView({
+    summary = {
         "comparison_id": report.comparison_id,
         "fold_count": str(len(report.plan.folds)),
         "common_validation_rows": str(len(report.validation_sample_keys)),
         "held_out_test_rows": str(report.plan.held_out_test_count),
-    }, _comparison_page(rows))
+    }
+    equity_views = ()
+    if equity_report is not None:
+        summary["equity_comparison_id"] = equity_report.equity_comparison_id
+        rows = tuple(row + (_format_percent(valued.curve.bar_close_max_drawdown),)
+                     for row, valued in zip(rows, equity_report.results, strict=True))
+        equity_views = tuple(_ComparisonEquityView(
+            result.strategy.name,
+            tuple((
+                point.timestamp.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+                _format_number(point.equity), _format_percent(point.drawdown),
+                _format_number(point.cash), _format_number(point.quantity),
+                _format_number(point.mark_price), _format_number(point.market_value),
+                _format_number(point.transaction_cost), point.event,
+            ) for point in valued.curve.points),
+            tuple((point.timestamp.timestamp() * 1000, point.equity) for point in valued.curve.points),
+        ) for result, valued in zip(report.results, equity_report.results, strict=True))
+    return _ComparisonView(summary, _comparison_page(rows, with_equity=with_equity), equity_views)
 
 
-def _comparison_page(rows):
+def _comparison_page(rows, *, with_equity=False):
     return _table_page((
         "strategy", "trade_count", "total_return", "gross_total_return",
         "realized_max_drawdown", "win_rate", "profit_factor",
         "overlap_skipped_count", "exposure",
-    ), rows)
+    ) + (("bar_close_max_drawdown",) if with_equity else ()), rows)
 
 
 class QuantResearchController(NetworkController):
@@ -407,6 +439,10 @@ class QuantResearchController(NetworkController):
         self._trade_model = QtTableModel(parent=self)
         self._comparison_model = QtTableModel(parent=self)
         self._comparison_model.set_page(_comparison_page(()))
+        self._comparison_equity: tuple[_ComparisonEquityView, ...] = ()
+        self._comparison_equity_index = 0
+        self._comparison_equity_model = QtTableModel(parent=self)
+        self._set_comparison_equity_page(1)
         self._trade_rows: tuple[tuple[str, ...], ...] = ()
         self._equity_series: tuple[float, ...] = ()
         self._builder_model.set_page(
@@ -451,6 +487,24 @@ class QuantResearchController(NetworkController):
         return self._comparison_model
 
     @Property("QVariantList", notify=researchChanged)
+    def comparisonEquityNames(self) -> list[str]:
+        return [view.name for view in self._comparison_equity]
+
+    @Property(int, notify=researchChanged)
+    def comparisonEquityIndex(self) -> int:
+        return self._comparison_equity_index
+
+    @Property("QVariantList", notify=researchChanged)
+    def comparisonEquitySeries(self) -> list:
+        if not self._comparison_equity:
+            return []
+        return [list(point) for point in self._comparison_equity[self._comparison_equity_index].series]
+
+    @Property(QObject, constant=True)
+    def comparisonEquityModel(self) -> QObject:
+        return self._comparison_equity_model
+
+    @Property("QVariantList", notify=researchChanged)
     def featureNames(self) -> list[str]:
         return list(self._feature_names)
 
@@ -483,6 +537,9 @@ class QuantResearchController(NetworkController):
         self._backtest_summary = {}
         self._comparison_summary = {}
         self._comparison_model.set_page(_comparison_page(()))
+        self._comparison_equity = ()
+        self._comparison_equity_index = 0
+        self._set_comparison_equity_page(1)
         self._trade_rows = ()
         self._equity_series = ()
         self._set_feature_page(())
@@ -762,6 +819,11 @@ class QuantResearchController(NetworkController):
         try:
             values = dict(values)
             parsed = {}
+            with_equity = values.get("equity_curve", False)
+            if type(with_equity) is not bool:
+                raise ValueError("equity_curve must be a boolean")
+            if with_equity:
+                parsed["equity_curve"] = True
             for field in ("trend_feature", "reversion_feature"):
                 parsed[field] = str(values.get(field, "")).strip()
                 if parsed[field] not in self._feature_names:
@@ -787,8 +849,14 @@ class QuantResearchController(NetworkController):
             return self._reject_input(exc)
 
         def apply(view: _ComparisonView) -> None:
+            selected = (self._comparison_equity[self._comparison_equity_index].name
+                        if self._comparison_equity else None)
             self._comparison_summary = dict(view.summary)
             self._comparison_model.set_page(view.page)
+            self._comparison_equity = view.equity
+            names = [item.name for item in view.equity]
+            self._comparison_equity_index = names.index(selected) if selected in names else 0
+            self._set_comparison_equity_page(1)
             self.researchChanged.emit()
 
         return self._submit(
@@ -797,6 +865,38 @@ class QuantResearchController(NetworkController):
             apply,
             requires_backend=False,
         )
+
+    def _set_comparison_equity_page(self, page: int) -> None:
+        from market_vault.console.models import TablePage
+        rows = (self._comparison_equity[self._comparison_equity_index].rows
+                if self._comparison_equity else ())
+        pages = max(1, (len(rows) + TRADE_PAGE_SIZE - 1) // TRADE_PAGE_SIZE)
+        page = max(1, min(page, pages))
+        offset = (page - 1) * TRADE_PAGE_SIZE
+        self._comparison_equity_model.set_page(TablePage(
+            columns=("timestamp", "equity", "drawdown", "cash", "quantity",
+                     "mark_price", "market_value", "transaction_cost", "event"),
+            rows=rows[offset:offset + TRADE_PAGE_SIZE], page=page,
+            page_size=TRADE_PAGE_SIZE, total_rows=len(rows),
+        ))
+
+    @Slot(int, result=bool)
+    def selectComparisonEquity(self, index: int) -> bool:
+        if not 0 <= index < len(self._comparison_equity):
+            return False
+        self._comparison_equity_index = index
+        self._set_comparison_equity_page(1)
+        self.researchChanged.emit()
+        return True
+
+    @Slot(int, result=bool)
+    def changeComparisonEquityPage(self, offset: int) -> bool:
+        page = self._comparison_equity_model.page + offset
+        if offset not in (-1, 1) or not 1 <= page <= self._comparison_equity_model.totalPages:
+            return False
+        self._set_comparison_equity_page(page)
+        self.researchChanged.emit()
+        return True
 
     @Slot(result=bool)
     def previousTradesPage(self) -> bool:
