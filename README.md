@@ -111,8 +111,9 @@ For the full workflow (`init-catalog` → `calendar` → `backfill` →
 [MarketVault 使用说明](docs/USER_GUIDE.md).
 
 The intraday quant workflow adds [verified Feature/target data](docs/intraday_research_v1.md),
-[execution V2](docs/intraday_execution_v2.md), and
-[development comparison, diagnostics and replayable experiments](docs/intraday_development_research.md).
+[execution V2](docs/intraday_execution_v2.md),
+[development comparison, diagnostics and replayable experiments](docs/intraday_development_research.md),
+and [frozen candidate selection with independent TEST evaluation](docs/intraday_final_test.md).
 
 ## Python access
 

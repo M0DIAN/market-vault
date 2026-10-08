@@ -107,7 +107,7 @@ def _execution(value, *, policy, days, interval, versions):
     _hash(value, "execution_id", function=execution_digest)
     _identity(value["price_evidence_id"], "price_evidence_id")
     if (value["version"] != versions["execution"] or value["cost_version"] != versions["cost"]
-            or value["interval"] != interval or value["policy"] != policy
+            or value["interval"] != interval or canonical_json(value["policy"]) != canonical_json(policy)
             or value["event_order"] != "BAR_CLOSE_THEN_DECISION_THEN_NEXT_PLANNED_OPEN"):
         raise ValueError("execution version, policy or phase binding differs")
     daily = _array(value["daily"], "daily")
@@ -212,6 +212,12 @@ def _execution(value, *, policy, days, interval, versions):
                 or _clock(window["forced_flat_time"], "forced flat time") != opened + window["forced_flat_slot"] * delta):
             raise ValueError("entry windows or complete ledger grid differ from the recorded session")
     _decisions(value["decisions"], days)
+    opens = {row["trading_day"]: _clock(row["open_time"], "daily open") for row in daily}
+    delta = timedelta(minutes=int(interval[:-1]))
+    for row in value["decisions"]:
+        if (row["slot"] >= seen[row["trading_day"]] // 2
+                or _clock(row["decision_time"], "decision time") != opens[row["trading_day"]] + (row["slot"] + 1) * delta):
+            raise ValueError("decision day, slot and clock must bind its recorded session grid")
 
 
 def validate_intraday_experiment_root(root):

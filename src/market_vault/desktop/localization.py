@@ -863,6 +863,46 @@ ZH_CN.update({
     "operation.intraday_experiment_open": "打开日内实验", "operation.intraday_experiment_replay": "重放日内实验",
 })
 
+EN.update({
+    "quant.intraday_final_tab": "Freeze / TEST", "quant.intraday_development_candidate": "Development candidate",
+    "quant.intraday_freeze": "Freeze selected", "quant.intraday_frozen": "Frozen",
+    "quant.intraday_final_help": "Save the development experiment before freezing. Costs below are commission/slippage. Ridge fits TRAIN + VALIDATION once; rules need no fit. TEST starts with independent capital.",
+    "quant.intraday_selection_open": "Open selection", "quant.intraday_selection_save": "Save selection",
+    "quant.intraday_selection_replay": "Replay selection", "quant.intraday_test_run": "Run frozen TEST",
+    "quant.intraday_test_open": "Open TEST", "quant.intraday_test_save": "Save TEST",
+    "quant.intraday_test_replay": "Replay TEST", "quant.intraday_final_model": "Final model & scaler",
+    "quant.intraday_locations": "Source locations", "quant.intraday_locations_clear": "Use recorded locations",
+    "quant.intraday_locations_help": "Optional relocated files. Blank uses the frozen location. Both identities must match. Choosing a file does not run TEST or replay; use the main action buttons afterward.",
+    "quant.intraday_source_override": "Development experiment file (optional)",
+    "quant.intraday_data_override": "Intraday data file (optional)",
+    "quant.intraday_locations_active": "Explicit source locations are active. Review them in Source locations.",
+    "summary.intraday_selection_proof": "Selection verification", "summary.intraday_test_proof": "TEST verification",
+    "operation.intraday_selection_freeze": "Freeze intraday candidate",
+    "operation.intraday_selection_open": "Open intraday selection", "operation.intraday_selection_save": "Save intraday selection",
+    "operation.intraday_selection_replay": "Replay intraday selection", "operation.intraday_test_run": "Run frozen intraday TEST",
+    "operation.intraday_test_open": "Open intraday TEST", "operation.intraday_test_save": "Save intraday TEST",
+    "operation.intraday_test_replay": "Replay complete intraday TEST",
+})
+ZH_CN.update({
+    "quant.intraday_final_tab": "冻结 / TEST", "quant.intraday_development_candidate": "开发期候选",
+    "quant.intraday_freeze": "冻结所选候选", "quant.intraday_frozen": "已冻结",
+    "quant.intraday_final_help": "冻结前请先保存开发实验。下方成本为手续费/滑点。Ridge 使用 TRAIN + VALIDATION 拟合一次；规则无需拟合。TEST 使用独立初始资金。",
+    "quant.intraday_selection_open": "打开冻结记录", "quant.intraday_selection_save": "保存冻结记录",
+    "quant.intraday_selection_replay": "重放冻结来源", "quant.intraday_test_run": "运行冻结 TEST",
+    "quant.intraday_test_open": "打开 TEST", "quant.intraday_test_save": "保存 TEST",
+    "quant.intraday_test_replay": "完整重放 TEST", "quant.intraday_final_model": "最终模型与标准化",
+    "quant.intraday_locations": "来源位置", "quant.intraday_locations_clear": "使用记录的位置",
+    "quant.intraday_locations_help": "可选迁移后的文件，留空使用冻结记录中的位置，两个身份均须匹配。选择文件不会运行 TEST 或重放；完成后使用主页面的操作按钮。",
+    "quant.intraday_source_override": "开发实验文件（可选）", "quant.intraday_data_override": "日内数据文件（可选）",
+    "quant.intraday_locations_active": "已启用显式来源位置，可在“来源位置”中查看。",
+    "summary.intraday_selection_proof": "冻结来源验证", "summary.intraday_test_proof": "TEST 验证",
+    "operation.intraday_selection_freeze": "冻结日内候选",
+    "operation.intraday_selection_open": "打开日内冻结记录", "operation.intraday_selection_save": "保存日内冻结记录",
+    "operation.intraday_selection_replay": "重放日内冻结来源", "operation.intraday_test_run": "运行冻结日内 TEST",
+    "operation.intraday_test_open": "打开日内 TEST", "operation.intraday_test_save": "保存日内 TEST",
+    "operation.intraday_test_replay": "完整重放日内 TEST",
+})
+
 TRANSLATIONS: Final[dict[str, dict[str, str]]] = {
     "en": EN,
     "zh-CN": ZH_CN,

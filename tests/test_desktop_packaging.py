@@ -542,6 +542,7 @@ def test_production_packaging_retains_complete_qml_runtime_contract():
         "IntradayBacktestPanel.qml",
         "IntradayComparisonPanel.qml",
         "IntradayResearchSettings.qml",
+        "IntradayFinalPanel.qml",
         "RunsPage.qml",
         "StorageCleanupPage.qml",
         "TradingCalendarPage.qml",

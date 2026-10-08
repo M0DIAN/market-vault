@@ -333,6 +333,14 @@ def _validate_report(report, config, dataset_id, mode, versions):
 
 def _validate_root(root):
     _object(root, _ROOT_FIELDS, "experiment snapshot")
+    if root["artifact_schema_version"] == "market-vault-intraday-selection-v1":
+        from .intraday_final_experiment import validate_intraday_selection_root
+        validate_intraday_selection_root(root)
+        return
+    if root["artifact_schema_version"] == "market-vault-intraday-test-v1":
+        from .intraday_final_experiment import validate_intraday_test_root
+        validate_intraday_test_root(root)
+        return
     if root["artifact_schema_version"] == "market-vault-intraday-experiment-v1":
         from .intraday_experiment import validate_intraday_experiment_root
         validate_intraday_experiment_root(root)
@@ -540,11 +548,20 @@ def write_strategy_experiment(snapshot: StrategyExperiment, *, path: str | Path)
 
 
 def replay_strategy_experiment(snapshot: StrategyExperiment, *, dataset_build_dir: str | Path | None = None,
-                               intraday_data_file: str | Path | None = None) -> dict:
+                               intraday_data_file: str | Path | None = None,
+                               source_experiment_file: str | Path | None = None) -> dict:
     """Verify versions and Dataset identity before fitting, then compare every raw value."""
     if type(snapshot) is not StrategyExperiment:
         raise ValueError("an immutable StrategyExperiment is required")
     root = snapshot.as_dict()
+    if root["artifact_schema_version"] in ("market-vault-intraday-selection-v1", "market-vault-intraday-test-v1"):
+        if dataset_build_dir is not None:
+            raise ValueError("intraday final replay requires source_experiment_file/intraday_data_file, not a Dataset directory")
+        from .intraday_final_test import replay_intraday_final_experiment
+        return replay_intraday_final_experiment(snapshot, source_experiment_file=source_experiment_file,
+                                                intraday_data_file=intraday_data_file)
+    if source_experiment_file is not None:
+        raise ValueError("source_experiment_file applies only to an intraday selection or TEST experiment")
     if root["artifact_schema_version"] == "market-vault-intraday-experiment-v1":
         if dataset_build_dir is not None:
             raise ValueError("intraday replay requires intraday_data_file, not a Dataset directory")
