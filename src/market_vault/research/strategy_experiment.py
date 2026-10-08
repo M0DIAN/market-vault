@@ -333,6 +333,10 @@ def _validate_report(report, config, dataset_id, mode, versions):
 
 def _validate_root(root):
     _object(root, _ROOT_FIELDS, "experiment snapshot")
+    if root["artifact_schema_version"] == "market-vault-intraday-experiment-v1":
+        from .intraday_experiment import validate_intraday_experiment_root
+        validate_intraday_experiment_root(root)
+        return
     if root["artifact_schema_version"] == STRATEGY_EXPERIMENT_V2_VERSION:
         _validate_diagnostics_root(root)
         return
@@ -535,11 +539,19 @@ def write_strategy_experiment(snapshot: StrategyExperiment, *, path: str | Path)
     return StrategyExperimentWriteResult(file_path, snapshot.experiment_id, sha256(data).hexdigest(), True)
 
 
-def replay_strategy_experiment(snapshot: StrategyExperiment, *, dataset_build_dir: str | Path | None = None) -> dict:
+def replay_strategy_experiment(snapshot: StrategyExperiment, *, dataset_build_dir: str | Path | None = None,
+                               intraday_data_file: str | Path | None = None) -> dict:
     """Verify versions and Dataset identity before fitting, then compare every raw value."""
     if type(snapshot) is not StrategyExperiment:
         raise ValueError("an immutable StrategyExperiment is required")
     root = snapshot.as_dict()
+    if root["artifact_schema_version"] == "market-vault-intraday-experiment-v1":
+        if dataset_build_dir is not None:
+            raise ValueError("intraday replay requires intraday_data_file, not a Dataset directory")
+        from .intraday_experiment import replay_intraday_experiment
+        return replay_intraday_experiment(snapshot, intraday_data_file=intraday_data_file)
+    if intraday_data_file is not None:
+        raise ValueError("intraday_data_file applies only to an intraday experiment")
     diagnostics = root["evaluation_mode"] == "DIAGNOSTICS"
     config = parse_strategy_comparison_plan_bytes(canonical_json(
         root["plan"]["comparison_plan"] if diagnostics else root["plan"],

@@ -9,6 +9,8 @@ Dialog {
     objectName: "quantDiagnosticsDialog"
     required property var controller
     required property var i18n
+    property bool inputAvailable: root.controller.datasetLoaded
+    property var submit: function(values) { return root.controller.runStrategyDiagnostics(values) }
     property var comparison: ({})
     property var strategyNames: []
     property var axisOptions: []
@@ -194,9 +196,9 @@ Dialog {
                 objectName: "quantDiagnosticsRunButton"
                 text: root.i18n.catalog["quant.run_diagnostics"]
                 variant: "primary"
-                enabled: root.controller.datasetLoaded && !root.controller.busy && !operationRuntime.busy
+                enabled: root.inputAvailable && !root.controller.busy && !operationRuntime.busy
                     && root.evaluationCount > 0 && root.evaluationCount <= 64
-                onClicked: { if (root.controller.runStrategyDiagnostics(root.values())) root.close() }
+                onClicked: { if (root.submit(root.values())) root.close() }
             }
         }
     }

@@ -730,6 +730,12 @@ class QuantResearchController(NetworkController):
         )
         self._set_feature_page(())
         self._set_trade_page(1)
+        from .intraday_research import IntradayResearchController
+        self._intraday_research_controller = IntradayResearchController(runtime, owner=self)
+
+    @Property(QObject, constant=True)
+    def intradayResearchController(self):
+        return self._intraday_research_controller
 
     @Property(str, notify=researchChanged)
     def intradayPath(self) -> str:

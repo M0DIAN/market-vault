@@ -33,7 +33,8 @@ and CompositeRule use the existing finite comparators and ALL/ANY semantics.
 True means Long, false means Flat. Composite conditions must all use the
 explicit Feature projection, even when an earlier condition decides ALL/ANY.
 Targets may be disabled or incomplete without removing READY decisions.
-Ridge requires fold training and is provided by the subsequent research task;
+Ridge requires fold training and is provided by
+[development research](intraday_development_research.md);
 the single-rule adapter refuses to fit on the entire data simply to produce a
 prediction.
 
@@ -101,7 +102,7 @@ does not claim to measure intra-bar extrema from high/low prices.
 
 Daily rows record opening cash, closing cash and their ratio minus one,
 including the first evaluated day. Annualized daily risk and a daily benchmark
-belong to Q7, not this single-strategy output.
+are defined in the Q7 development research report.
 
 ## CLI and desktop
 

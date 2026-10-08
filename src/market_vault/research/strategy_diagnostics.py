@@ -46,21 +46,9 @@ def _number(value, label):
     return 0.0 if number == 0 else number
 
 
-def normalize_strategy_diagnostics_plan(plan: dict) -> dict:
-    """Validate all axes, costs and the finite bound before any Dataset or fit."""
-    _object(plan, _PLAN_FIELDS, "diagnostics plan")
-    if plan["plan_schema_version"] != STRATEGY_DIAGNOSTICS_PLAN_VERSION:
-        raise ValueError("unsupported diagnostics plan_schema_version")
-    config = parse_strategy_comparison_plan_bytes(canonical_json(plan["comparison_plan"]))
-    name = _string(plan["strategy_name"], "strategy_name")
-    selected = next((item for item in config["strategies"] if item.name == name), None)
-    if selected is None:
-        raise ValueError("diagnostics strategy_name must select an existing strategy")
-    rules = ((selected.rule,) if type(selected) is FeatureRuleStrategy else
-             selected.conditions if type(selected) is CompositeRuleStrategy else ())
-    if any(rule.signal_field not in config["feature_fields"] for rule in rules):
-        raise ValueError("diagnostics rule Feature must belong to the common Feature projection")
-    raw_axes = _list(plan["parameter_axes"], "parameter_axes")
+def normalize_parameter_axes(selected, raw_axes) -> list[dict]:
+    """Shared finite axes, independent of data and execution cost grammar."""
+    raw_axes = _list(raw_axes, "parameter_axes")
     if len(raw_axes) > 2:
         raise ValueError("diagnostics permits at most two parameter axes")
     axes, targets = [], set()
@@ -97,6 +85,44 @@ def normalize_strategy_diagnostics_plan(plan: dict) -> dict:
             raise ValueError("Ridge alpha must be strictly positive")
         axes.append({"parameter": parameter, **({"condition_index": index} if composite else {}),
                      "values": values})
+    return axes
+
+
+def parameter_variants(selected, axes) -> tuple[tuple, tuple[tuple[float, ...], ...]]:
+    """Preserve explicit axis order and the existing variant naming contract."""
+    combinations = tuple(product(*(axis["values"] for axis in axes)))
+    variants = []
+    for index, values in enumerate(combinations):
+        variant = replace(selected, name=f"{selected.name} [{index + 1}]")
+        for axis, value in zip(axes, values, strict=True):
+            if axis["parameter"] == "condition_threshold":
+                conditions = list(variant.conditions)
+                position = axis["condition_index"]
+                conditions[position] = replace(conditions[position], threshold=value)
+                variant = replace(variant, conditions=tuple(conditions))
+            elif type(variant) is FeatureRuleStrategy:
+                variant = replace(variant, rule=replace(variant.rule, threshold=value))
+            else:
+                variant = replace(variant, **{axis["parameter"]: value})
+        variants.append(variant)
+    return tuple(variants), combinations
+
+
+def normalize_strategy_diagnostics_plan(plan: dict) -> dict:
+    """Validate all axes, costs and the finite bound before any Dataset or fit."""
+    _object(plan, _PLAN_FIELDS, "diagnostics plan")
+    if plan["plan_schema_version"] != STRATEGY_DIAGNOSTICS_PLAN_VERSION:
+        raise ValueError("unsupported diagnostics plan_schema_version")
+    config = parse_strategy_comparison_plan_bytes(canonical_json(plan["comparison_plan"]))
+    name = _string(plan["strategy_name"], "strategy_name")
+    selected = next((item for item in config["strategies"] if item.name == name), None)
+    if selected is None:
+        raise ValueError("diagnostics strategy_name must select an existing strategy")
+    rules = ((selected.rule,) if type(selected) is FeatureRuleStrategy else
+             selected.conditions if type(selected) is CompositeRuleStrategy else ())
+    if any(rule.signal_field not in config["feature_fields"] for rule in rules):
+        raise ValueError("diagnostics rule Feature must belong to the common Feature projection")
+    axes = normalize_parameter_axes(selected, plan["parameter_axes"])
     raw_costs = _list(plan["cost_scenarios"], "cost_scenarios", nonempty=True)
     if len(raw_costs) * math.prod(len(axis["values"]) for axis in axes) > MAX_DIAGNOSTIC_EVALUATIONS:
         raise ValueError("diagnostics is limited to 64 evaluations")
@@ -129,21 +155,7 @@ def expand_strategy_diagnostics_plan(plan: dict) -> tuple[dict, tuple[dict, ...]
     normalized = normalize_strategy_diagnostics_plan(plan)
     config = parse_strategy_comparison_plan_bytes(canonical_json(normalized["comparison_plan"]))
     selected = next(item for item in config["strategies"] if item.name == normalized["strategy_name"])
-    combinations = tuple(product(*(axis["values"] for axis in normalized["parameter_axes"])))
-    variants = []
-    for index, values in enumerate(combinations):
-        variant = replace(selected, name=f"{selected.name} [{index + 1}]")
-        for axis, value in zip(normalized["parameter_axes"], values, strict=True):
-            if axis["parameter"] == "condition_threshold":
-                conditions = list(variant.conditions)
-                position = axis["condition_index"]
-                conditions[position] = replace(conditions[position], threshold=value)
-                variant = replace(variant, conditions=tuple(conditions))
-            elif type(variant) is FeatureRuleStrategy:
-                variant = replace(variant, rule=replace(variant.rule, threshold=value))
-            else:
-                variant = replace(variant, **{axis["parameter"]: value})
-        variants.append(variant)
+    variants, combinations = parameter_variants(selected, normalized["parameter_axes"])
     children = tuple(normalized_comparison_plan(
         {**config, "strategies": tuple(variants), **cost},
         dataset_build_dir=config["dataset_build_dir"],
