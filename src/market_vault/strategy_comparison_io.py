@@ -41,6 +41,11 @@ _PLAN_FIELDS = frozenset({
 })
 
 
+def canonical_json(value) -> bytes:
+    return (json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+                       allow_nan=False) + "\n").encode("utf-8")
+
+
 def parse_strategy_comparison_plan_bytes(payload: bytes) -> dict:
     if payload.startswith(codecs.BOM_UTF8):
         raise ValueError("strategy comparison plan must not carry a UTF-8 BOM")

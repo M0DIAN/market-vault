@@ -26,7 +26,7 @@ from ..backtest_cli import BacktestCLIError
 from ..dataset.cli import DatasetCLIError, _no_duplicate_pairs, _resolve_plan_path
 from ..strategy_comparison_io import (
     STRATEGY_COMPARISON_CLI_VERSION, STRATEGY_EQUITY_CLI_VERSION, STRATEGY_RISK_CLI_VERSION,
-    _cli_result_version, evaluate_comparison_payload, normalized_comparison_plan,
+    _cli_result_version, canonical_json, evaluate_comparison_payload, normalized_comparison_plan,
     parse_strategy_comparison_plan_bytes,
 )
 from .experiment import EXPERIMENT_METADATA_VERSION
@@ -42,6 +42,7 @@ from .walk_forward import WALK_FORWARD_VERSION
 
 
 STRATEGY_EXPERIMENT_VERSION = "market-vault-strategy-experiment-v1"
+STRATEGY_EXPERIMENT_V2_VERSION = "market-vault-strategy-experiment-v2"
 _ROOT_FIELDS = {
     "artifact_schema_version", "experiment_id", "dataset_id", "evaluation_mode",
     "algorithm_versions", "environment", "plan", "report", "name", "notes",
@@ -55,11 +56,6 @@ _REPORT_FIELDS = {
 _SHA = re.compile(r"^[0-9a-f]{64}$")
 _MODES = {"COMPARISON": STRATEGY_COMPARISON_CLI_VERSION,
           "EQUITY": STRATEGY_EQUITY_CLI_VERSION, "RISK": STRATEGY_RISK_CLI_VERSION}
-
-
-def canonical_json(value) -> bytes:
-    return (json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
-                       allow_nan=False) + "\n").encode("utf-8")
 
 
 def _object(value, expected, label):
@@ -337,6 +333,9 @@ def _validate_report(report, config, dataset_id, mode, versions):
 
 def _validate_root(root):
     _object(root, _ROOT_FIELDS, "experiment snapshot")
+    if root["artifact_schema_version"] == STRATEGY_EXPERIMENT_V2_VERSION:
+        _validate_diagnostics_root(root)
+        return
     if root["artifact_schema_version"] != STRATEGY_EXPERIMENT_VERSION:
         raise ValueError("unsupported experiment artifact_schema_version")
     if root["evaluation_mode"] not in _MODES:
@@ -360,6 +359,74 @@ def _validate_root(root):
     if type(root["name"]) is not str or type(root["notes"]) is not str:
         raise ValueError("experiment name and notes must be strings")
     _validate_report(root["report"], config, root["dataset_id"], root["evaluation_mode"], versions)
+
+
+def _diagnostic_versions(plan: dict) -> dict[str, str]:
+    from .strategy_diagnostics import STRATEGY_DIAGNOSTICS_VERSION, expand_strategy_diagnostics_plan
+    _, children, _ = expand_strategy_diagnostics_plan(plan)
+    config = parse_strategy_comparison_plan_bytes(canonical_json(children[0]))
+    return {**algorithm_versions(config, "RISK"), "diagnostics": STRATEGY_DIAGNOSTICS_VERSION}
+
+
+def _validate_diagnostics_root(root):
+    from .strategy_diagnostics import (
+        STRATEGY_DIAGNOSTICS_RESULT_VERSION, diagnostic_candidate_records,
+        diagnostic_common_context, diagnostics_report_identity, expand_strategy_diagnostics_plan,
+    )
+    if root["evaluation_mode"] != "DIAGNOSTICS":
+        raise ValueError("experiment-v2 requires DIAGNOSTICS evaluation_mode")
+    _identity(root["dataset_id"], "dataset_id")
+    _identity(root["experiment_id"], "experiment_id")
+    if root["experiment_id"] != sha256(canonical_json(
+        {key: value for key, value in root.items() if key != "experiment_id"},
+    )).hexdigest():
+        raise ValueError("experiment content digest does not match experiment_id")
+    plan, children, values = expand_strategy_diagnostics_plan(root["plan"])
+    if canonical_json(plan) != canonical_json(root["plan"]):
+        raise ValueError("saved diagnostics plan must contain normalized explicit inputs")
+    locator = plan["comparison_plan"]["dataset_build_dir"]
+    if not (Path(locator).is_absolute() or PureWindowsPath(locator).is_absolute()):
+        raise ValueError("saved Dataset locator must be absolute")
+    versions = _object(root["algorithm_versions"], _diagnostic_versions(plan), "algorithm versions")
+    environment = _object(root["environment"], {"market_vault", "python", "pandas", "pyarrow"}, "environment")
+    for key, value in {**versions, **environment}.items():
+        _string(value, key)
+    if type(root["name"]) is not str or type(root["notes"]) is not str:
+        raise ValueError("experiment name and notes must be strings")
+    report = _object(root["report"], {
+        "result_schema_version", "status", "version", "dataset_id", "evaluation_scope",
+        "plan_sha256", "evaluation_count", "variant_count", "groups", "diagnostics_id",
+    }, "diagnostics report")
+    _identity(report["diagnostics_id"], "diagnostics_id")
+    _identity(report["plan_sha256"], "plan_sha256")
+    if (report["result_schema_version"] != STRATEGY_DIAGNOSTICS_RESULT_VERSION
+            or report["status"] != "SUCCESS" or report["version"] != versions["diagnostics"]
+            or report["evaluation_scope"] != EVALUATION_SCOPE
+            or report["dataset_id"] != root["dataset_id"]
+            or report["plan_sha256"] != sha256(canonical_json(plan)).hexdigest()
+            or report["diagnostics_id"] != diagnostics_report_identity(report)):
+        raise ValueError("diagnostics report identity, scope, plan or algorithm binding is invalid")
+    if (_count(report["evaluation_count"], "evaluation_count") != len(children) * len(values)
+            or _count(report["variant_count"], "variant_count") != len(values)):
+        raise ValueError("diagnostics report must cover every parameter and cost combination")
+    groups = _array(report["groups"], "diagnostics groups", nonempty=True)
+    if len(groups) != len(children):
+        raise ValueError("diagnostics cost group coverage differs from the plan")
+    context = None
+    for index, (group, child) in enumerate(zip(groups, children, strict=True)):
+        _object(group, {"cost_index", "comparison_plan", "report", "candidates"}, "cost group")
+        if (_count(group["cost_index"], "cost_index") != index
+                or canonical_json(group["comparison_plan"]) != canonical_json(child)):
+            raise ValueError("diagnostics cost order or expanded child plan differs")
+        config = parse_strategy_comparison_plan_bytes(canonical_json(child))
+        _validate_report(group["report"], config, root["dataset_id"], "RISK", versions)
+        current = diagnostic_common_context(group["report"])
+        if context is not None and context != current:
+            raise ValueError("diagnostics cost groups must share the same Dataset, folds and prices")
+        context = current
+        expected = diagnostic_candidate_records(group["report"], values, groups[0]["report"])
+        if canonical_json(group["candidates"]) != canonical_json(expected):
+            raise ValueError("diagnostics candidate mapping, cost delta or fold contributions differ")
 
 
 @dataclass(frozen=True, slots=True)
@@ -393,6 +460,20 @@ def create_strategy_experiment(*, plan: dict, report: dict, mode: str,
             "dataset_id": report["dataset_id"], "evaluation_mode": mode,
             "plan": plan, "report": report, "algorithm_versions": algorithm_versions(config, mode),
             "environment": environment_versions(), "name": name, "notes": notes}
+    root["experiment_id"] = sha256(canonical_json(root)).hexdigest()
+    return StrategyExperiment(canonical_json(root))
+
+
+def create_strategy_diagnostics_experiment(*, plan: dict, report: dict,
+                                           name: str = "", notes: str = "") -> StrategyExperiment:
+    from .strategy_diagnostics import normalize_strategy_diagnostics_plan
+    normalized = normalize_strategy_diagnostics_plan(plan)
+    root = {
+        "artifact_schema_version": STRATEGY_EXPERIMENT_V2_VERSION,
+        "dataset_id": report["dataset_id"], "evaluation_mode": "DIAGNOSTICS",
+        "plan": normalized, "report": report, "algorithm_versions": _diagnostic_versions(normalized),
+        "environment": environment_versions(), "name": name, "notes": notes,
+    }
     root["experiment_id"] = sha256(canonical_json(root)).hexdigest()
     return StrategyExperiment(canonical_json(root))
 
@@ -459,8 +540,13 @@ def replay_strategy_experiment(snapshot: StrategyExperiment, *, dataset_build_di
     if type(snapshot) is not StrategyExperiment:
         raise ValueError("an immutable StrategyExperiment is required")
     root = snapshot.as_dict()
-    config = parse_strategy_comparison_plan_bytes(canonical_json(root["plan"]))
-    if root["algorithm_versions"] != algorithm_versions(config, root["evaluation_mode"]):
+    diagnostics = root["evaluation_mode"] == "DIAGNOSTICS"
+    config = parse_strategy_comparison_plan_bytes(canonical_json(
+        root["plan"]["comparison_plan"] if diagnostics else root["plan"],
+    ))
+    current_versions = (_diagnostic_versions(root["plan"]) if diagnostics
+                        else algorithm_versions(config, root["evaluation_mode"]))
+    if root["algorithm_versions"] != current_versions:
         raise ValueError("recorded algorithm versions differ; experiment cannot be replayed by this implementation")
     recorded_path = config.pop("dataset_build_dir")
     path = _resolve_plan_path(str(dataset_build_dir) if dataset_build_dir is not None else recorded_path,
@@ -469,11 +555,16 @@ def replay_strategy_experiment(snapshot: StrategyExperiment, *, dataset_build_di
     dataset = load_verified_multi_source_cross_day_dataset(path)
     if dataset.dataset_id != root["dataset_id"]:
         raise ValueError("replay Dataset ID differs from the saved experiment; no strategy was fitted")
-    actual = evaluate_comparison_payload(dataset, config, root["evaluation_mode"])
+    if diagnostics:
+        from .strategy_diagnostics import run_strategy_diagnostics
+        actual = run_strategy_diagnostics(dataset, plan=root["plan"])
+    else:
+        actual = evaluate_comparison_payload(dataset, config, root["evaluation_mode"])
     expected_bytes, actual_bytes = canonical_json(root["report"]), canonical_json(actual)
     expected_digest, actual_digest = sha256(expected_bytes).hexdigest(), sha256(actual_bytes).hexdigest()
     if actual_bytes != expected_bytes:
         raise ValueError(f"replay complete report mismatch: expected {expected_digest}, actual {actual_digest}")
+    identity = "diagnostics_id" if diagnostics else "comparison_id"
     return {"experiment_id": snapshot.experiment_id, "dataset_id": dataset.dataset_id,
-            "comparison_id": actual["comparison_id"], "report_matches": True,
+            identity: actual[identity], "report_matches": True,
             "expected_report_sha256": expected_digest, "actual_report_sha256": actual_digest}

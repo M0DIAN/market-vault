@@ -24,6 +24,7 @@ from .strategy_comparison_cli import (
     research_compare_strategies_main,
 )
 from .strategy_experiment_cli import add_strategy_experiment_subparsers, research_experiment_main
+from .strategy_diagnostics_cli import add_strategy_diagnostics_subparser, research_diagnose_strategy_main
 from .feature_research_cli import (
     add_feature_research_subparser,
     research_feature_report_main,
@@ -102,6 +103,7 @@ RESEARCH_COMMANDS = frozenset({
     "research-compare-strategies",
     "research-experiment-open",
     "research-experiment-replay",
+    "research-diagnose-strategy",
     "research-feature-report",
     "research-feature-select",
     "research-feature-stability",
@@ -190,6 +192,7 @@ def add_research_subparsers(subparsers) -> None:
     add_backtest_subparser(subparsers)
     add_strategy_comparison_subparser(subparsers)
     add_strategy_experiment_subparsers(subparsers)
+    add_strategy_diagnostics_subparser(subparsers)
     add_feature_research_subparser(subparsers)
     add_feature_selection_subparser(subparsers)
     add_feature_stability_subparser(subparsers)
@@ -212,6 +215,8 @@ def run_research_command(command: str, args: argparse.Namespace) -> int:
         return research_compare_strategies_main(args)
     if command in ("research-experiment-open", "research-experiment-replay"):
         return research_experiment_main(args, replay=command == "research-experiment-replay")
+    if command == "research-diagnose-strategy":
+        return research_diagnose_strategy_main(args)
     if command == "research-feature-report":
         return research_feature_report_main(args)
     if command == "research-feature-select":

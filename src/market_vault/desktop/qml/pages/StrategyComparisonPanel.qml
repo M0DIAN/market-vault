@@ -15,6 +15,7 @@ ColumnLayout {
     property var returnOptions: []
     property string equityKey: ""
     property string comparisonKey: ""
+    property string diagnosticsKey: ""
     property var equityOptions: []
     property int resultsView: 0
     property bool showInputs: true
@@ -67,12 +68,18 @@ ColumnLayout {
         slippage.text = String(plan.slippage_bps)
         strategyEditor.strategies = strategyEditor.clone(plan.strategies)
         strategyEditor.load(0)
-        riskToggle.checked = info.evaluation_mode === "RISK"
+        riskToggle.checked = info.evaluation_mode === "RISK" || info.evaluation_mode === "DIAGNOSTICS"
         equityToggle.checked = info.evaluation_mode !== "COMPARISON"
         root.showInputs = false
     }
 
     function syncEquity() {
+        const diagnosticsId = root.controller.comparisonDiagnosticsSummary.evaluation_count
+            ? root.controller.comparisonExperimentInfo.experiment_id : ""
+        if (diagnosticsId && diagnosticsId !== root.diagnosticsKey) root.resultsView = 3
+        if (!diagnosticsId && root.resultsView > 2) root.resultsView = 0
+        root.diagnosticsKey = diagnosticsId
+        diagnosticCandidate.currentIndex = root.controller.comparisonDiagnosticIndex
         const comparisonId = root.controller.comparisonSummary.comparison_id || ""
         if (!comparisonId)
             root.showInputs = true
@@ -120,6 +127,11 @@ ColumnLayout {
         objectName: "quantExperimentReplayDatasetDialog"
         title: root.i18n.catalog["quant.replay_relocated"]
         onAccepted: root.controller.replayComparisonExperiment(selectedFolder.toString())
+    }
+    StrategyDiagnosticsDialog {
+        id: diagnosticsDialog
+        controller: root.controller
+        i18n: root.i18n
     }
 
     RowLayout {
@@ -272,6 +284,15 @@ ColumnLayout {
                 && !root.controller.busy && !operationRuntime.busy
             onClicked: root.controller.runStrategyComparison(root.comparisonValues())
         }
+        Components.PixelButton {
+            objectName: "quantOpenDiagnosticsButton"
+            text: root.i18n.catalog["quant.diagnose_strategy"]
+            enabled: root.controller.datasetLoaded
+                && root.controller.featureNames.length > 0 && root.controller.returnLabelNames.length > 0
+                && !root.controller.busy && !operationRuntime.busy
+            onClicked: diagnosticsDialog.prepare(root.comparisonValues(),
+                root.controller.comparisonDiagnosticsPlan, root.controller.comparisonRestoreRevision)
+        }
         CheckBox {
             id: equityToggle
             objectName: "quantComparisonEquityToggle"
@@ -292,17 +313,19 @@ ColumnLayout {
             text: root.i18n.catalog[root.showInputs ? "quant.collapse_inputs" : "quant.expand_inputs"]
             onClicked: root.showInputs = !root.showInputs
         }
-        Label {
-            Layout.fillWidth: true
-            text: root.i18n.catalog["quant.comparison_help"]
-            wrapMode: Text.WordWrap
-            color: Theme.PixelTheme.inkMuted
-            font.pixelSize: Theme.PixelTheme.fontSm
-        }
+        Item { Layout.fillWidth: true }
+    }
+    Label {
+        visible: root.showInputs
+        Layout.fillWidth: true
+        text: root.i18n.catalog["quant.comparison_help"]
+        wrapMode: Text.WordWrap
+        color: Theme.PixelTheme.inkMuted
+        font.pixelSize: Theme.PixelTheme.fontSm
     }
     Components.SummaryStrip {
         Layout.fillWidth: true
-        summary: root.controller.comparisonSummary
+        summary: root.resultsView > 2 ? root.controller.comparisonDiagnosticsSummary : root.controller.comparisonSummary
         i18n: root.i18n
     }
     RowLayout {
@@ -327,6 +350,20 @@ ColumnLayout {
             variant: root.resultsView === 2 ? "primary" : "secondary"
             onClicked: { root.resultsView = 2; root.showInputs = false }
         }
+        Components.PixelButton {
+            objectName: "quantDiagnosticsResultsButton"
+            visible: !!root.diagnosticsKey
+            text: root.i18n.catalog["quant.diagnostics_results"]
+            variant: root.resultsView === 3 ? "primary" : "secondary"
+            onClicked: { root.resultsView = 3; root.showInputs = false }
+        }
+        Components.PixelButton {
+            objectName: "quantDiagnosticsFoldsButton"
+            visible: !!root.diagnosticsKey
+            text: root.i18n.catalog["quant.fold_contributions"]
+            variant: root.resultsView === 4 ? "primary" : "secondary"
+            onClicked: { root.resultsView = 4; root.showInputs = false }
+        }
         Item { Layout.fillWidth: true }
         Components.PixelComboBox {
             id: equityStrategy
@@ -336,6 +373,30 @@ ColumnLayout {
             model: root.equityOptions
             onActivated: index => root.controller.selectComparisonEquity(index)
         }
+    }
+    RowLayout {
+        visible: !!root.diagnosticsKey
+        Layout.fillWidth: true
+        Label {
+            text: root.i18n.catalog["quant.diagnostic_candidate"]
+            color: Theme.PixelTheme.inkMuted
+            font.pixelSize: Theme.PixelTheme.fontSm
+        }
+        Components.PixelComboBox {
+            id: diagnosticCandidate
+            objectName: "quantDiagnosticCandidate"
+            Layout.fillWidth: true
+            model: root.controller.comparisonDiagnosticCandidates
+            onActivated: index => root.controller.selectStrategyDiagnostic(index)
+        }
+    }
+    Label {
+        visible: root.resultsView === 3 || root.resultsView === 4
+        Layout.fillWidth: true
+        text: root.i18n.catalog[root.resultsView === 4 ? "quant.fold_help" : "quant.diagnostic_results_help"]
+        wrapMode: Text.WordWrap
+        color: Theme.PixelTheme.inkMuted
+        font.pixelSize: Theme.PixelTheme.fontSm
     }
     Label {
         visible: root.resultsView === 2
@@ -444,6 +505,25 @@ ColumnLayout {
             Layout.fillHeight: true
             tableModel: root.controller.comparisonModel
             i18n: root.i18n
+        }
+        Components.DataTable {
+            objectName: "quantDiagnosticsTable"
+            visible: root.resultsView === 3
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            tableModel: root.controller.comparisonDiagnosticsModel
+            i18n: root.i18n
+        }
+        Components.DataTable {
+            objectName: "quantDiagnosticsFoldTable"
+            visible: root.resultsView === 4
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            tableModel: root.controller.comparisonFoldModel
+            i18n: root.i18n
+            paged: true
+            onPreviousRequested: root.controller.changeComparisonFoldPage(-1)
+            onNextRequested: root.controller.changeComparisonFoldPage(1)
         }
         Components.DataTable {
             objectName: "quantComparisonRiskTable"

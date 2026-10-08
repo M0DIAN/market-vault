@@ -397,3 +397,174 @@ The Python surface is `research.strategy_experiment`: `StrategyExperiment`,
 `write_strategy_experiment` and `replay_strategy_experiment`. The shared
 `strategy_comparison_io` module preserves the existing plan and complete result
 codecs used by both CLI and desktop.
+
+## Finite parameter and cost diagnostics
+
+`research-diagnose-strategy` evaluates one explicitly selected strategy across
+zero, one or two finite parameter axes and an explicit list of cost scenarios.
+Every candidate uses the existing risk comparison authority: the same verified
+Dataset, Feature projection, execution-safe Label, purged expanding folds,
+continuous Backtest V1 account, bar-close equity and cost-matched buy-and-hold
+benchmark. TEST stays held out of fitting, signals and diagnostic selection.
+Dataset verification still reads the complete artifact, including TEST records.
+
+The diagnostic plan embeds a **complete comparison plan**, including its
+original strategy list. `strategy_name` selects exactly one name from that
+list. Unselected strategies are recorded as context but are not evaluated.
+The available axes are:
+
+| Selected strategy | Allowed parameter axes |
+| --- | --- |
+| `FEATURE_RULE` | `threshold`, preserving its Feature and comparator |
+| `RIDGE` | `alpha` and/or `threshold` |
+| `COMPOSITE_RULE` | `condition_threshold` with an explicit zero-based `condition_index`; the condition order, Features, comparators and ALL/ANY match remain fixed |
+
+Values and cost scenarios preserve input order. Within each cost scenario the
+last parameter axis varies fastest. Every variant gets the deterministic name
+`<original name> [1]`, `[2]`, etc.; those exact evaluated names are part of the
+existing result identities. Zero axes means one unchanged parameter variant,
+which supports a cost-only diagnostic. No baseline cost or original parameter
+value is silently added: include it explicitly when it is needed for comparison.
+
+The total number of evaluations is the product of all axis lengths and the
+number of cost scenarios, with a maximum of **64**. The plan is fully checked
+before Dataset loading in the CLI or before queuing desktop work. Empty lists,
+more than two axes, duplicate parameter targets, duplicate normalized values,
+duplicate commission/slippage pairs, bools, nonfinite numbers, nonpositive
+Ridge alpha and invalid per-side costs are rejected. Distinct pairs such as
+`5/2` and `2/5` remain separate scenarios even though the current execution
+kernel uses their sum. The two records preserve their different cost metadata.
+
+### Diagnostic CLI example
+
+Save the following as `diagnostics.json`, replacing the Dataset locator with
+an existing verified directory. The example requests **2 × 3 × 2 = 12**
+evaluations. Thresholds are illustrative explicit inputs.
+
+```json
+{
+  "plan_schema_version": "market-vault-strategy-diagnostics-plan-v1",
+  "comparison_plan": {
+    "plan_schema_version": "market-vault-strategy-comparison-plan-v1",
+    "dataset_build_dir": "./dataset_id=REPLACE_WITH_VERIFIED_DATASET_ID",
+    "feature_fields": ["return_2", "rsi_5"],
+    "return_label": "execution_return_1d",
+    "minimum_train_periods": 20,
+    "validation_periods": 5,
+    "step_periods": 5,
+    "commission_bps": 0,
+    "slippage_bps": 0,
+    "strategies": [
+      {"kind": "RIDGE", "name": "ridge", "alpha": 1, "threshold": 0}
+    ]
+  },
+  "strategy_name": "ridge",
+  "parameter_axes": [
+    {"parameter": "alpha", "values": [0.1, 1]},
+    {"parameter": "threshold", "values": [-0.001, 0, 0.001]}
+  ],
+  "cost_scenarios": [
+    {"commission_bps": 0, "slippage_bps": 0},
+    {"commission_bps": 10, "slippage_bps": 5}
+  ]
+}
+```
+
+```bash
+market-vault research-diagnose-strategy --plan diagnostics.json --output diagnostic-experiment.json --name "Ridge neighborhood"
+market-vault research-experiment-open --experiment diagnostic-experiment.json
+market-vault research-experiment-replay --experiment diagnostic-experiment.json
+```
+
+The command runs offline, without application settings or OpenD. Its stdout
+is the complete `market-vault-strategy-diagnostics-result-v1` report, grouped
+by cost scenario. Each group contains the complete actual child comparison
+plan, raw risk report, all trades, all equity points, benchmark and daily risk,
+plus an ordered mapping from parameter values to strategy result IDs. The
+optional output saves the already-computed whole bundle exactly once.
+
+For a composite axis the descriptor is, for example,
+`{"parameter": "condition_threshold", "condition_index": 1, "values": [0.8, 1.2]}`.
+The embedded comparison plan must use its existing V2 grammar. A diagnostic
+of Ridge or Feature retains child result V1 even if the original, unselected
+strategy list contains a composite; a selected composite uses child result V2.
+
+### Interpreting cost and fold contributions
+
+`return_change_from_first_cost` is the candidate's net return minus the net
+return of the **same parameter variant in the first explicit cost scenario**.
+It is zero for the first scenario. A later scenario can have lower costs and
+a positive difference; the report does not presume that the first cost is zero
+or that input order increases cost. It is a difference in return, not a relative
+percentage change: a raw difference of `0.01` is one percentage point. Existing
+returns and benchmark comparisons retain their original definitions.
+
+Each accepted trade belongs to the validation fold containing its signal's
+sample key, even if it exits in a later fold. Its `cash_contribution` is
+`equity_after - equity_before` on the existing continuously compounded account
+with initial equity 1. Each fold contains the sum of those cash contributions;
+zero-trade folds remain present. For example, +10% followed by -10% gives cash
+contributions +0.10 and -0.11, summing to -0.01. Fold returns are not added and
+the account is never restarted at a fold boundary. Overlap-skipped signals do
+not create trades or cash contributions.
+
+The contribution sum reconciles to final net return and final equity at the
+existing equity layer's accounting tolerance, comparing account wealth
+(`1 + contribution sum`) to avoid an artificially strict near-zero-return
+comparison. Fold attribution is realized cash by originating signal; it is not
+calendar-period mark-to-market PnL, independent per-fold performance or an
+attribution of benchmark returns.
+
+All candidates are retained in input order. There is no optimizer, automatic
+winner, final TEST evaluation, model promotion or live trading operation.
+These reports reveal sensitivity, cost dependence and concentration in a few
+folds; repeated inspection still consumes development validation information.
+
+### Diagnostic desktop and complete experiment files
+
+In Strategy Comparison choose **Diagnose / 策略诊断** after inspecting a Dataset.
+The dialog takes the current common inputs and strategy list. Select one
+strategy, enter comma-separated parameter values, and enter comma-separated
+`commission/slippage` pairs such as `0/0,10/5`. The evaluation count is visible
+before Run. The initial dialog uses the selected strategy's current threshold
+and current common costs; both axes can be disabled for a cost-only run.
+
+**All candidates / 全部候选** shows parameter and cost sensitivity. The candidate
+selector switches the displayed cost group, selected equity curve and **Fold
+contributions / 各折贡献**. The existing comparison, benchmark/risk and paged
+equity ledger remain available for that cost group. Fold rows are also paged
+without truncating the recorded result. Selecting the benchmark curve leaves
+the explicitly labelled strategy candidate as the fold-attribution subject.
+
+Save, offline Open and verified Replay operate on the **whole diagnostic
+experiment**, including every cost group and candidate regardless of selection
+or pagination. The explicit new file schema is
+`market-vault-strategy-experiment-v2` with `evaluation_mode: "DIAGNOSTICS"`;
+Open/Replay CLI responses for admitted diagnostic experiments use
+`market-vault-strategy-experiment-cli-result-v2`. Ordinary comparison/equity/risk
+experiments retain their V1 file, CLI response and numerical contracts.
+
+The diagnostic file binds the normalized original plan, all actual child plans,
+common sample/fold/equity evidence, complete raw reports and derived contribution
+records. Both diagnostic identity and experiment identity cover their full
+canonical records. The recorded Dataset locator is part of that binding.
+Explicit relocated Replay loads the replacement directory but compares against
+the original recorded plan and report, without changing their identities.
+Only applicable algorithms are replay version gates; environment versions are
+metadata. A digest and structural validation are not proof of calculation:
+Replay reloads the verified Dataset and compares the **complete raw bundle**,
+including values outside currently visible tables and cost groups.
+
+Open restores the base strategy form and the recorded grid on the next dialog
+open; it clears Dataset verification until explicit inspection. Candidate
+selection, pagination, Save and Replay preserve current drafts, the complete
+snapshot and any successful replay status. Explicit Open restores inputs again.
+A failed new diagnostic or invalid grid leaves the previous completed bundle
+available. The exclusive-create and byte-identical-reuse file policy above
+applies unchanged.
+
+The Python entry is `research.strategy_diagnostics.run_strategy_diagnostics`;
+`normalize_strategy_diagnostics_plan` and `expand_strategy_diagnostics_plan`
+provide strict preflight and ordered expansion. Whole-bundle construction uses
+`research.strategy_experiment.create_strategy_diagnostics_experiment` and the
+same explicit write/load/replay functions as ordinary experiments.
