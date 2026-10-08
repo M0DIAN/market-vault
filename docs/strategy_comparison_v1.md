@@ -75,7 +75,8 @@ The command runs offline without loading application settings or initializing
 OpenD. It prints structured JSON with comparison and per-strategy identities,
 all supplied strategies in input order, the shared sample keys, fold boundaries
 and purge counts, common costs, realized metrics and complete trade records.
-It does not write an evaluation artifact or freeze a final model.
+By default it only prints the result. The explicit `--output` option below
+saves that completed experiment; it does not freeze a final model.
 
 Plans reject unknown or duplicate fields, unknown strategy kinds and duplicate
 strategy names. Rule comparators are `GT`, `GE`, `LT`, `LE`; Ridge uses predicted
@@ -297,3 +298,102 @@ The equity chart overlays the selected curve in gold and the benchmark in grey
 on shared axes; selecting **Buy & Hold** opens its ledger. Switching risk off
 removes its table and overlay while retaining the existing equity-only mode.
 Desktop numbers are display-formatted; full-precision values remain in CLI JSON.
+
+## Save, open and replay an experiment
+
+Save one completed comparison, equity report or risk report to an explicit
+JSON file. Existing comparison output remains identical with and without
+`--output`; saving uses the already-computed result and does not fit twice.
+
+```bash
+market-vault research-compare-strategies --plan comparison.json --risk-report \
+  --output experiment-001.json --name "Momentum with volume" \
+  --notes "Development validation; explicit parameters and costs"
+
+market-vault research-experiment-open --experiment experiment-001.json
+market-vault research-experiment-replay --experiment experiment-001.json
+
+# If the same Dataset has moved, choose its new directory explicitly:
+market-vault research-experiment-replay --experiment experiment-001.json \
+  --dataset-build-dir /absolute/new/dataset-directory
+```
+
+`--name` and `--notes` are optional and require `--output`. All three commands
+work without application settings or OpenD. Open returns the saved experiment
+in a `market-vault-strategy-experiment-cli-result-v1` envelope; Replay returns
+the Dataset/comparison identities and expected/actual complete-report digests.
+Input, version, identity or result mismatch returns structured failure.
+
+The `market-vault-strategy-experiment-v1` file includes:
+
+- The actual Dataset identity and original absolute directory locator.
+- The normalized plan: ordered common Features, return Label, complete ordered
+  strategy/condition descriptors, fold windows and per-side cost inputs.
+- The exact evaluation mode: `COMPARISON`, `EQUITY` or `RISK`.
+- The full raw CLI report, including every strategy, fold and accepted trade;
+  equity/risk modes also retain every ledger point, benchmark and daily series.
+  The file does not use table paging or display rounding.
+- Applicable ML adapter, Experiment, walk-forward, execution, signal/model,
+  valuation and risk versions. Package, Python, pandas and PyArrow versions
+  are recorded as environment context. A packaged runtime without distribution
+  metadata records `unavailable` for that metadata.
+- Optional name/notes and a SHA-256 experiment identity over all saved content.
+
+The in-memory snapshot is immutable canonical UTF-8 JSON. Open checks duplicate
+and unknown fields, finite numeric values, types, version/identity references,
+plan/report bindings and the complete content digest. It validates the record
+without reading its Dataset, fitting a model, calling OpenD or running a
+comparison; a missing or relocated Dataset therefore does not prevent viewing.
+Windows absolute locators also remain viewable on another operating system.
+
+The file is a research record, not a signed execution attestation. A digest
+detects changed content relative to its recorded identity; someone can create a
+different record with a new digest. Some original strategy IDs also bind scores
+that are not present in the report. Only explicit Replay establishes that the
+current supported implementation reproduces the recorded computation: it
+checks applicable algorithm versions before Dataset I/O, strictly loads the
+chosen Dataset, checks its ID before fitting, then recomputes the saved mode
+and compares the **entire canonical raw report**. Matching summary values or
+existing result IDs alone is insufficient. Environment versions are diagnostic
+metadata; this does not claim binary or Git-commit equivalence.
+
+A historical algorithm version can be viewed if its file/report structure is
+recognized; Replay refuses differing applicable algorithm versions. An explicit
+relocated directory must contain the same verified Dataset ID. Replay never
+changes the original locator, experiment file, plan or identity.
+
+### Desktop workflow
+
+Use **Save experiment / 保存实验**, **Open experiment / 打开实验**, **Verify replay /
+重放核验**, and **Choose Dataset & replay / 换目录重放** in Strategy Comparison.
+The status distinguishes a retained run from a complete matching replay; hover
+over it for the experiment file and recorded Dataset identity/directory.
+
+Save and Replay always capture the **last successful run or opened snapshot**.
+Editing the visible parameters prepares a new comparison and does not change
+that snapshot. Open restores parameters once, together with the report and
+its display mode; it clears the active Dataset verification context so an
+archived path cannot silently enable a new Run against an unrelated Dataset.
+Inspecting the same Dataset ID at an explicitly chosen directory then updates
+the verified context while preserving current edits and the original snapshot.
+Selecting curves, paging, saving and replaying do not restore parameters again.
+Explicitly opening the same file again does restore them. Normal comparison
+re-inspection retains the pre-existing result-clearing behavior.
+
+All file parsing and presentation preparation finish in the worker before an
+Open replaces visible state. A failed Open, Save, Replay, inspection or new
+comparison leaves the previous completed snapshot and results available.
+
+Saving requires an existing parent directory and exclusively creates the
+chosen regular file. A byte-identical existing file is reused; different
+content, directories and symlinks are refused. The writer flushes and strictly
+reads back the file. A failed write does not delete a partial file or replace
+an existing one; choose another explicit path when the contents differ.
+There is no experiment database, directory scan, `latest` pointer, automatic
+overwrite, deletion, Dataset migration or final TEST selection.
+
+The Python surface is `research.strategy_experiment`: `StrategyExperiment`,
+`create_strategy_experiment`, `load_strategy_experiment`,
+`write_strategy_experiment` and `replay_strategy_experiment`. The shared
+`strategy_comparison_io` module preserves the existing plan and complete result
+codecs used by both CLI and desktop.

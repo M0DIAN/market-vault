@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Dialogs
 import QtQuick.Layouts
 import "../components" as Components
 import "../theme" as Theme
@@ -17,20 +18,58 @@ ColumnLayout {
     property var equityOptions: []
     property int resultsView: 0
     property bool showInputs: true
+    property int restoreRevision: -1
+    property string restoredDatasetId: ""
     spacing: Theme.PixelTheme.spacingSm
 
     function syncDataset() {
-        const key = root.controller.datasetPath + "|" + (root.controller.datasetSummary.dataset_id || "")
-        if (!root.controller.datasetLoaded || key === root.datasetKey)
+        if (!root.controller.datasetLoaded)
             return
+        const datasetId = root.controller.datasetSummary.dataset_id || ""
+        const key = root.controller.datasetPath + "|" + datasetId
+        const selectedLabel = returnLabel.currentText
+        if (JSON.stringify(root.featureOptions) !== JSON.stringify(root.controller.featureNames))
+            root.featureOptions = root.controller.featureNames
+        if (JSON.stringify(root.returnOptions) !== JSON.stringify(root.controller.returnLabelNames))
+            root.returnOptions = root.controller.returnLabelNames
+        if (key === root.datasetKey || (root.controller.comparisonExperimentInfo.opened_snapshot
+                && root.restoredDatasetId && datasetId === root.restoredDatasetId)) {
+            root.datasetKey = key
+            returnLabel.currentIndex = Math.max(0, root.returnOptions.indexOf(selectedLabel))
+            return
+        }
+        root.restoredDatasetId = ""
         root.datasetKey = key
         root.showInputs = true
-        root.featureOptions = root.controller.featureNames
-        root.returnOptions = root.controller.returnLabelNames
         const index = Math.max(0, root.featureOptions.indexOf("return_2"))
         commonFeatures.text = root.featureOptions[index] || ""
         strategyEditor.reset(root.featureOptions[index] || "")
         returnLabel.currentIndex = 0
+    }
+
+    function syncExperiment() {
+        const revision = root.controller.comparisonRestoreRevision
+        if (revision === root.restoreRevision) return
+        root.restoreRevision = revision
+        const plan = root.controller.comparisonExperimentPlan
+        if (!plan.strategies || !plan.strategies.length) return
+        const info = root.controller.comparisonExperimentInfo
+        root.restoredDatasetId = info.dataset_id
+        root.datasetKey = plan.dataset_build_dir + "|" + info.dataset_id
+        root.featureOptions = plan.feature_fields.slice()
+        root.returnOptions = [plan.return_label]
+        commonFeatures.text = plan.feature_fields.join(",")
+        returnLabel.currentIndex = 0
+        trainPeriods.text = String(plan.minimum_train_periods)
+        validationPeriods.text = String(plan.validation_periods)
+        stepPeriods.text = String(plan.step_periods)
+        commission.text = String(plan.commission_bps)
+        slippage.text = String(plan.slippage_bps)
+        strategyEditor.strategies = strategyEditor.clone(plan.strategies)
+        strategyEditor.load(0)
+        riskToggle.checked = info.evaluation_mode === "RISK"
+        equityToggle.checked = info.evaluation_mode !== "COMPARISON"
+        root.showInputs = false
     }
 
     function syncEquity() {
@@ -53,10 +92,81 @@ ColumnLayout {
         equityCanvas.requestPaint()
     }
 
-    Component.onCompleted: { syncDataset(); syncEquity() }
+    Component.onCompleted: { syncDataset(); syncExperiment(); syncEquity() }
     Connections {
         target: root.controller
-        function onResearchChanged() { root.syncDataset(); root.syncEquity() }
+        function onResearchChanged() { root.syncDataset(); root.syncExperiment(); root.syncEquity() }
+    }
+
+    FileDialog {
+        id: openExperimentDialog
+        objectName: "quantExperimentOpenDialog"
+        title: root.i18n.catalog["quant.open_experiment"]
+        fileMode: FileDialog.OpenFile
+        nameFilters: ["JSON files (*.json)"]
+        onAccepted: root.controller.openComparisonExperiment(selectedFile.toString())
+    }
+    FileDialog {
+        id: saveExperimentDialog
+        objectName: "quantExperimentSaveDialog"
+        title: root.i18n.catalog["quant.save_experiment"]
+        fileMode: FileDialog.SaveFile
+        nameFilters: ["JSON files (*.json)"]
+        defaultSuffix: "json"
+        onAccepted: root.controller.saveComparisonExperiment(selectedFile.toString())
+    }
+    FolderDialog {
+        id: replayDatasetDialog
+        objectName: "quantExperimentReplayDatasetDialog"
+        title: root.i18n.catalog["quant.replay_relocated"]
+        onAccepted: root.controller.replayComparisonExperiment(selectedFolder.toString())
+    }
+
+    RowLayout {
+        Layout.fillWidth: true
+        enabled: !root.controller.busy && !operationRuntime.busy
+        Components.PixelButton {
+            objectName: "quantExperimentOpenButton"
+            text: root.i18n.catalog["quant.open_experiment"]
+            onClicked: openExperimentDialog.open()
+        }
+        Components.PixelButton {
+            objectName: "quantExperimentSaveButton"
+            text: root.i18n.catalog["quant.save_experiment"]
+            enabled: !!root.controller.comparisonExperimentInfo.experiment_id
+            onClicked: saveExperimentDialog.open()
+        }
+        Components.PixelButton {
+            objectName: "quantExperimentReplayButton"
+            text: root.i18n.catalog["quant.replay_experiment"]
+            enabled: !!root.controller.comparisonExperimentInfo.experiment_id
+            onClicked: root.controller.replayComparisonExperiment("")
+        }
+        Components.PixelButton {
+            objectName: "quantExperimentRelocateButton"
+            text: root.i18n.catalog["quant.replay_relocated"]
+            enabled: !!root.controller.comparisonExperimentInfo.experiment_id
+            onClicked: replayDatasetDialog.open()
+        }
+        Label {
+            objectName: "quantExperimentStatus"
+            Layout.fillWidth: true
+            text: {
+                const info = root.controller.comparisonExperimentInfo
+                return info.experiment_id ? (info.name || info.experiment_id.slice(0, 12)) + " · "
+                    + root.i18n.catalog[info.replay_verified ? "quant.replay_verified" : "quant.snapshot_loaded"]
+                    : root.i18n.catalog["quant.experiment_help"]
+            }
+            wrapMode: Text.WordWrap
+            color: Theme.PixelTheme.inkMuted
+            font.pixelSize: Theme.PixelTheme.fontSm
+            ToolTip.visible: experimentHover.hovered
+            ToolTip.text: {
+                const info = root.controller.comparisonExperimentInfo
+                return (info.path || "") + "\n" + (info.dataset_id || "") + "\n" + (info.dataset_build_dir || "")
+            }
+            HoverHandler { id: experimentHover }
+        }
     }
 
     function comparisonValues() {
@@ -126,12 +236,14 @@ ColumnLayout {
                 }
                 Components.LabeledTextField {
                     id: commission
+                    objectName: "quantComparisonCommission"
                     Layout.minimumWidth: 120
                     label: root.i18n.catalog["quant.commission_bps"]
                     text: "0"
                 }
                 Components.LabeledTextField {
                     id: slippage
+                    objectName: "quantComparisonSlippage"
                     Layout.minimumWidth: 120
                     label: root.i18n.catalog["quant.slippage_bps"]
                     text: "0"
