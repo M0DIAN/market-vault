@@ -367,8 +367,18 @@ def compare(path, **values):
             quant._ComparisonEquityView('Trend', ledger_rows, ((1767623400000.0, 1.0), (1767623700000.0, 0.6), (1767624000000.0, 1.1))),
             quant._ComparisonEquityView('Ridge', ledger_rows[:2], ((1767623400000.0, 1.0), (1767624000000.0, 1.02))),
         )
+    risk_page, benchmark_series = None, ()
+    if values.get('risk_report'):
+        summary['risk_report_id'] = 'f' * 64
+        benchmark_series = ((1767623400000.0, 1.0), (1767624000000.0, 1.15))
+        equity += (quant._ComparisonEquityView('Buy & Hold', ledger_rows[:2], benchmark_series),)
+        risk_page = quant._comparison_risk_page((
+            ('Trend', '10%', '-5%', '40%', '12%', '0.5', '5', 'OK'),
+            ('Buy & Hold', '15%', '0%', '10%', '15%', '0.7', '5', 'OK'),
+        ))
     return quant._ComparisonView(
         summary, quant._comparison_page(rows, with_equity=bool(equity)), equity,
+        risk_page, benchmark_series,
     )
 quant._run_strategy_comparison = compare
 assert button.property('enabled')
@@ -436,11 +446,50 @@ app.processEvents()
 assert len(captured) == 4
 assert selector.property('currentIndex') == controller.comparisonEquityIndex == 1
 assert window.grabWindow().save(str(root_path / 'comparison-equity-ui.png'))
+risk_toggle = window.findChild(QObject, 'quantComparisonRiskToggle')
+risk_toggle.forceActiveFocus()
+QTest.keyClick(window, Qt.Key_Space)
+app.processEvents()
+assert risk_toggle.property('checked') and toggle.property('checked')
+assert QMetaObject.invokeMethod(button, 'clicked', Qt.DirectConnection)
+session.runtime._poll()
+app.processEvents()
+assert captured[-1][1]['risk_report'] is True
+assert controller.comparisonEquityNames == ['Trend', 'Ridge', 'Buy & Hold']
+assert controller.comparisonEquityIndex == 1
+assert len(controller.comparisonBenchmarkSeries) == 2
+assert controller.comparisonRiskModel.rowCount() == 2
+risk_button = window.findChild(QObject, 'quantComparisonRiskButton')
+assert risk_button.property('visible')
+assert QMetaObject.invokeMethod(risk_button, 'clicked', Qt.DirectConnection)
+app.processEvents()
+QTest.qWait(30)
+risk_table = window.findChild(QObject, 'quantComparisonRiskTable')
+assert risk_table.property('visible') and risk_table.property('height') >= 100
+assert panel.property('showInputs') is False
+assert window.grabWindow().save(str(root_path / 'comparison-risk-ui.png'))
+assert QMetaObject.invokeMethod(ledger_button, 'clicked', Qt.DirectConnection)
+app.processEvents()
+QTest.qWait(30)
+assert window.grabWindow().save(str(root_path / 'comparison-benchmark-ui.png'))
+# Turning risk off on the same equity identity must remove benchmark state.
+assert QMetaObject.invokeMethod(risk_button, 'clicked', Qt.DirectConnection)
+risk_toggle.forceActiveFocus()
+QTest.keyClick(window, Qt.Key_Space)
+app.processEvents()
+assert QMetaObject.invokeMethod(button, 'clicked', Qt.DirectConnection)
+session.runtime._poll()
+app.processEvents()
+assert controller.comparisonRiskModel.rowCount() == 0
+assert controller.comparisonBenchmarkSeries == []
+assert controller.comparisonEquityNames == ['Trend', 'Ridge']
+assert controller.comparisonEquityIndex == 1
+assert panel.property('resultsView') == 0
 window.findChild(QObject, 'quantComparisonStepPeriods').setProperty('text', '1')
 assert QMetaObject.invokeMethod(button, 'clicked', Qt.DirectConnection)
 app.processEvents()
 assert controller.status == 'VALIDATION_ERROR'
-assert len(captured) == 4
+assert len(captured) == 6
 assert backend_calls == []
 assert session.runtime.backend_if_initialized is None
 # Revalidating the same Dataset clears results without changing datasetKey.
@@ -455,6 +504,8 @@ assert window.findChild(QObject, 'quantComparisonTrendFeature').property('visibl
 assert panel.property('resultsView') == 0
 assert controller.comparisonEquitySeries == []
 assert controller.comparisonEquityModel.rowCount() == 0
+assert controller.comparisonRiskModel.rowCount() == 0
+assert controller.comparisonBenchmarkSeries == []
 for name, key, selected in selections:
     assert window.findChild(QObject, name).property('currentText') == selected
 other_dataset = root_path / 'other-dataset'

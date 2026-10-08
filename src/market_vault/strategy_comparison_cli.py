@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import codecs
 from dataclasses import asdict
+from datetime import date, datetime
 import json
 import sys
 
@@ -33,6 +34,7 @@ from .research.walk_forward import _positive_int
 STRATEGY_COMPARISON_PLAN_VERSION = "market-vault-strategy-comparison-plan-v1"
 STRATEGY_COMPARISON_CLI_VERSION = "market-vault-strategy-comparison-cli-result-v1"
 STRATEGY_EQUITY_CLI_VERSION = "market-vault-strategy-equity-cli-result-v1"
+STRATEGY_RISK_CLI_VERSION = "market-vault-strategy-risk-cli-result-v1"
 _PLAN_FIELDS = frozenset({
     "plan_schema_version", "dataset_build_dir", "feature_fields", "return_label",
     "strategies", "minimum_train_periods", "validation_periods", "step_periods",
@@ -49,6 +51,10 @@ def add_strategy_comparison_subparser(subparsers) -> None:
     parser.add_argument(
         "--equity-curve", action="store_true",
         help="Add verified bar-close cash/share equity paths and drawdown",
+    )
+    parser.add_argument(
+        "--risk-report", action="store_true",
+        help="Include equity, same-symbol buy-and-hold and daily risk statistics",
     )
 
 
@@ -157,6 +163,27 @@ def _success_payload(report) -> dict:
     }
 
 
+def _curve_payload(curve) -> dict:
+    return {
+        "version": curve.version, "curve_id": curve.curve_id,
+        "final_equity": curve.final_equity,
+        "bar_close_max_drawdown": curve.bar_close_max_drawdown,
+        "transaction_cost_total": curve.transaction_cost_total,
+        "points": [{**asdict(point), "timestamp": point.timestamp.isoformat()}
+                   for point in curve.points],
+    }
+
+
+def _json_values(value):
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {key: _json_values(item) for key, item in value.items()}
+    if isinstance(value, (tuple, list)):
+        return [_json_values(item) for item in value]
+    return value
+
+
 def _equity_payload(report) -> dict:
     payload = _success_payload(report.comparison)
     payload["result_schema_version"] = STRATEGY_EQUITY_CLI_VERSION
@@ -169,21 +196,32 @@ def _equity_payload(report) -> dict:
         "price_evidence_id": report.price_evidence_id,
         "results": [{
             "strategy_result_id": result.strategy_result_id,
-            "version": result.curve.version,
-            "curve_id": result.curve.curve_id,
-            "final_equity": result.curve.final_equity,
-            "bar_close_max_drawdown": result.curve.bar_close_max_drawdown,
-            "transaction_cost_total": result.curve.transaction_cost_total,
-            "points": [{
-                **asdict(point), "timestamp": point.timestamp.isoformat(),
-            } for point in result.curve.points],
+            **_curve_payload(result.curve),
         } for result in report.results],
+    }
+    return payload
+
+
+def _risk_payload(report) -> dict:
+    payload = _equity_payload(report.equity)
+    payload["result_schema_version"] = STRATEGY_RISK_CLI_VERSION
+    payload["risk"] = {
+        "version": report.version, "risk_report_id": report.risk_report_id,
+        "benchmark_definition": report.benchmark_definition,
+        "sampling": "COMPLETE_RECORDED_SESSION_CLOSE_TO_CLOSE",
+        "benchmark": {
+            "curve": _curve_payload(report.benchmark_curve),
+            "total_return": report.benchmark_curve.final_equity - 1.0,
+            "daily_risk": _json_values(asdict(report.benchmark_risk)),
+        },
+        "results": [_json_values(asdict(result)) for result in report.results],
     }
     return payload
 
 
 def research_compare_strategies_main(args) -> int:
     with_equity = getattr(args, "equity_curve", False)
+    with_risk = getattr(args, "risk_report", False)
     try:
         plan_path = _coerce_plan_path(args.plan)
         config = parse_strategy_comparison_plan_bytes(_read_plan_bytes(plan_path))
@@ -192,7 +230,10 @@ def research_compare_strategies_main(args) -> int:
             label="Research Dataset build",
         )
         dataset = load_verified_multi_source_cross_day_dataset(build_dir)
-        if with_equity:
+        if with_risk:
+            from .research.strategy_risk import compare_strategies_with_risk
+            payload = _risk_payload(compare_strategies_with_risk(dataset, **config))
+        elif with_equity:
             from .research.strategy_equity import compare_strategies_with_equity
             payload = _equity_payload(compare_strategies_with_equity(dataset, **config))
         else:
@@ -201,7 +242,9 @@ def research_compare_strategies_main(args) -> int:
         return 0
     except (BacktestCLIError, DatasetCLIError, OSError, TypeError, ValueError, KeyError) as exc:
         print(json.dumps({
-            "result_schema_version": STRATEGY_EQUITY_CLI_VERSION if with_equity else STRATEGY_COMPARISON_CLI_VERSION,
+            "result_schema_version": (STRATEGY_RISK_CLI_VERSION if with_risk else
+                                      STRATEGY_EQUITY_CLI_VERSION if with_equity else
+                                      STRATEGY_COMPARISON_CLI_VERSION),
             "status": "FAILED",
             "error": f"research-compare-strategies failed: {exc}",
         }, ensure_ascii=False, indent=2), file=sys.stderr)

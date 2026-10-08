@@ -68,6 +68,8 @@ class _ComparisonView:
     summary: dict[str, str]
     page: Any
     equity: tuple[_ComparisonEquityView, ...] = ()
+    risk_page: Any = None
+    benchmark_series: tuple[tuple[float, float], ...] = ()
 
 
 def _finite_float(value: Any, field_name: str, *, nonnegative: bool = False) -> float:
@@ -356,13 +358,19 @@ def _run_strategy_comparison(path: Path, **values) -> _ComparisonView:
         FeatureRuleStrategy("MeanReversion", BacktestRule(reversion, "LT", values.pop("reversion_threshold"))),
         RidgeStrategy("Ridge", values.pop("ridge_alpha"), values.pop("ridge_threshold")),
     )
-    with_equity = values.pop("equity_curve", False)
+    with_risk = values.pop("risk_report", False)
+    with_equity = values.pop("equity_curve", False) or with_risk
     dataset = _load_verified_dataset(path)
     configuration = dict(
         feature_fields=tuple(dict.fromkeys((trend, reversion))), strategies=strategies, **values,
     )
-    equity_report = None
-    if with_equity:
+    equity_report = risk_report = None
+    if with_risk:
+        from market_vault.research.strategy_risk import compare_strategies_with_risk
+        risk_report = compare_strategies_with_risk(dataset, **configuration)
+        equity_report = risk_report.equity
+        report = equity_report.comparison
+    elif with_equity:
         from market_vault.research.strategy_equity import compare_strategies_with_equity
         equity_report = compare_strategies_with_equity(dataset, **configuration)
         report = equity_report.comparison
@@ -390,18 +398,47 @@ def _run_strategy_comparison(path: Path, **values) -> _ComparisonView:
         summary["equity_comparison_id"] = equity_report.equity_comparison_id
         rows = tuple(row + (_format_percent(valued.curve.bar_close_max_drawdown),)
                      for row, valued in zip(rows, equity_report.results, strict=True))
-        equity_views = tuple(_ComparisonEquityView(
-            result.strategy.name,
-            tuple((
-                point.timestamp.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
-                _format_number(point.equity), _format_percent(point.drawdown),
-                _format_number(point.cash), _format_number(point.quantity),
-                _format_number(point.mark_price), _format_number(point.market_value),
-                _format_number(point.transaction_cost), point.event,
-            ) for point in valued.curve.points),
-            tuple((point.timestamp.timestamp() * 1000, point.equity) for point in valued.curve.points),
-        ) for result, valued in zip(report.results, equity_report.results, strict=True))
-    return _ComparisonView(summary, _comparison_page(rows, with_equity=with_equity), equity_views)
+        equity_views = tuple(_comparison_curve_view(result.strategy.name, valued.curve)
+                             for result, valued in zip(report.results, equity_report.results, strict=True))
+    risk_page, benchmark_series = None, ()
+    if risk_report is not None:
+        summary["risk_report_id"] = risk_report.risk_report_id
+        benchmark = risk_report.benchmark_curve
+        benchmark_view = _comparison_curve_view("Buy & Hold", benchmark)
+        equity_views += (benchmark_view,)
+        benchmark_series = benchmark_view.series
+        risk_rows = tuple(_risk_row(
+            result.strategy.name, value.total_return, value.return_difference,
+            value.bar_close_max_drawdown, value.daily_risk,
+        ) for result, value in zip(report.results, risk_report.results, strict=True))
+        risk_rows += (_risk_row("Buy & Hold", benchmark.final_equity - 1, 0.0,
+                               benchmark.bar_close_max_drawdown, risk_report.benchmark_risk),)
+        risk_page = _comparison_risk_page(risk_rows)
+    return _ComparisonView(summary, _comparison_page(rows, with_equity=with_equity),
+                           equity_views, risk_page, benchmark_series)
+
+
+def _comparison_curve_view(name, curve):
+    return _ComparisonEquityView(name, tuple((
+        point.timestamp.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+        _format_number(point.equity), _format_percent(point.drawdown),
+        _format_number(point.cash), _format_number(point.quantity),
+        _format_number(point.mark_price), _format_number(point.market_value),
+        _format_number(point.transaction_cost), point.event,
+    ) for point in curve.points), tuple((point.timestamp.timestamp() * 1000, point.equity)
+                                       for point in curve.points))
+
+
+def _risk_row(name, total, difference, drawdown, risk):
+    status = {None: "OK", "INSUFFICIENT_DAILY_RETURNS": "n < 2", "ZERO_VOLATILITY": "σ = 0"}
+    return (name, _format_percent(total), _format_percent(difference), _format_percent(drawdown),
+            _format_percent(risk.annualized_volatility), _format_number(risk.sharpe_ratio),
+            str(risk.return_count), status[risk.unavailable_reason])
+
+
+def _comparison_risk_page(rows):
+    return _table_page(("strategy", "total_return", "return_difference", "bar_close_max_drawdown",
+                        "annualized_volatility", "sharpe_ratio", "daily_return_count", "risk_status"), rows)
 
 
 def _comparison_page(rows, *, with_equity=False):
@@ -439,6 +476,9 @@ class QuantResearchController(NetworkController):
         self._trade_model = QtTableModel(parent=self)
         self._comparison_model = QtTableModel(parent=self)
         self._comparison_model.set_page(_comparison_page(()))
+        self._comparison_risk_model = QtTableModel(parent=self)
+        self._comparison_risk_model.set_page(_comparison_risk_page(()))
+        self._comparison_benchmark_series: tuple[tuple[float, float], ...] = ()
         self._comparison_equity: tuple[_ComparisonEquityView, ...] = ()
         self._comparison_equity_index = 0
         self._comparison_equity_model = QtTableModel(parent=self)
@@ -485,6 +525,14 @@ class QuantResearchController(NetworkController):
     @Property(QObject, constant=True)
     def comparisonModel(self) -> QObject:
         return self._comparison_model
+
+    @Property(QObject, constant=True)
+    def comparisonRiskModel(self) -> QObject:
+        return self._comparison_risk_model
+
+    @Property("QVariantList", notify=researchChanged)
+    def comparisonBenchmarkSeries(self) -> list:
+        return [list(point) for point in self._comparison_benchmark_series]
 
     @Property("QVariantList", notify=researchChanged)
     def comparisonEquityNames(self) -> list[str]:
@@ -537,6 +585,8 @@ class QuantResearchController(NetworkController):
         self._backtest_summary = {}
         self._comparison_summary = {}
         self._comparison_model.set_page(_comparison_page(()))
+        self._comparison_risk_model.set_page(_comparison_risk_page(()))
+        self._comparison_benchmark_series = ()
         self._comparison_equity = ()
         self._comparison_equity_index = 0
         self._set_comparison_equity_page(1)
@@ -820,8 +870,13 @@ class QuantResearchController(NetworkController):
             values = dict(values)
             parsed = {}
             with_equity = values.get("equity_curve", False)
+            with_risk = values.get("risk_report", False)
             if type(with_equity) is not bool:
                 raise ValueError("equity_curve must be a boolean")
+            if type(with_risk) is not bool:
+                raise ValueError("risk_report must be a boolean")
+            if with_risk:
+                parsed["risk_report"] = True
             if with_equity:
                 parsed["equity_curve"] = True
             for field in ("trend_feature", "reversion_feature"):
@@ -853,6 +908,9 @@ class QuantResearchController(NetworkController):
                         if self._comparison_equity else None)
             self._comparison_summary = dict(view.summary)
             self._comparison_model.set_page(view.page)
+            self._comparison_risk_model.set_page(view.risk_page if view.risk_page is not None
+                                                else _comparison_risk_page(()))
+            self._comparison_benchmark_series = view.benchmark_series
             self._comparison_equity = view.equity
             names = [item.name for item in view.equity]
             self._comparison_equity_index = names.index(selected) if selected in names else 0
