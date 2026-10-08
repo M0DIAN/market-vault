@@ -33,6 +33,8 @@ ColumnLayout {
     }
 
     function syncEquity() {
+        if (!root.controller.comparisonSummary.comparison_id)
+            root.showInputs = true
         const key = root.controller.comparisonSummary.equity_comparison_id || ""
         if (key !== root.equityKey) {
             root.equityKey = key

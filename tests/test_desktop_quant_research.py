@@ -443,6 +443,20 @@ assert controller.status == 'VALIDATION_ERROR'
 assert len(captured) == 4
 assert backend_calls == []
 assert session.runtime.backend_if_initialized is None
+# Revalidating the same Dataset clears results without changing datasetKey.
+# The form must become reachable again even though the result toolbar hides.
+assert panel.property('showInputs') is False
+assert controller.inspectDataset(str(dataset))
+session.runtime._poll()
+app.processEvents()
+assert controller.comparisonSummary == {{}}
+assert panel.property('showInputs') is True
+assert window.findChild(QObject, 'quantComparisonTrendFeature').property('visible')
+assert panel.property('resultsView') == 0
+assert controller.comparisonEquitySeries == []
+assert controller.comparisonEquityModel.rowCount() == 0
+for name, key, selected in selections:
+    assert window.findChild(QObject, name).property('currentText') == selected
 other_dataset = root_path / 'other-dataset'
 other_dataset.mkdir()
 assert controller.inspectDataset(str(other_dataset))
