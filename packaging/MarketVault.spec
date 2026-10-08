@@ -89,6 +89,8 @@ QML_PAGES = [
         "StrategyListEditor.qml",
         "StrategyDiagnosticsDialog.qml",
         "IntradayResearchPanel.qml",
+        "IntradayWorkspacePanel.qml",
+        "IntradayBacktestPanel.qml",
         "RunsPage.qml",
         "StorageCleanupPage.qml",
         "TradingCalendarPage.qml",
