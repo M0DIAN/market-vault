@@ -35,7 +35,10 @@ ColumnLayout {
     function syncEquity() {
         if (!root.controller.comparisonSummary.comparison_id)
             root.showInputs = true
-        const key = root.controller.comparisonSummary.equity_comparison_id || ""
+        const equityId = root.controller.comparisonSummary.equity_comparison_id || ""
+        const riskId = root.controller.comparisonSummary.risk_report_id || ""
+        const key = equityId ? equityId + "|" + riskId : ""
+        if (!riskId && root.resultsView === 2) root.resultsView = 0
         if (key !== root.equityKey) {
             root.equityKey = key
             root.equityOptions = root.controller.comparisonEquityNames
@@ -65,7 +68,8 @@ ColumnLayout {
             "step_periods": stepPeriods.text,
             "commission_bps": commission.text,
             "slippage_bps": slippage.text,
-            "equity_curve": equityToggle.checked
+            "equity_curve": equityToggle.checked,
+            "risk_report": riskToggle.checked
         }
     }
 
@@ -165,6 +169,14 @@ ColumnLayout {
             objectName: "quantComparisonEquityToggle"
             text: root.i18n.catalog["quant.include_equity"]
             checked: false
+            enabled: !riskToggle.checked
+        }
+        CheckBox {
+            id: riskToggle
+            objectName: "quantComparisonRiskToggle"
+            text: root.i18n.catalog["quant.include_risk"]
+            checked: false
+            onCheckedChanged: { if (checked) equityToggle.checked = true }
         }
         Components.PixelButton {
             objectName: "quantComparisonInputsButton"
@@ -200,6 +212,13 @@ ColumnLayout {
             variant: root.resultsView === 1 ? "primary" : "secondary"
             onClicked: { root.resultsView = 1; root.showInputs = false }
         }
+        Components.PixelButton {
+            objectName: "quantComparisonRiskButton"
+            visible: !!root.controller.comparisonSummary.risk_report_id
+            text: root.i18n.catalog["quant.risk_results"]
+            variant: root.resultsView === 2 ? "primary" : "secondary"
+            onClicked: { root.resultsView = 2; root.showInputs = false }
+        }
         Item { Layout.fillWidth: true }
         Components.PixelComboBox {
             id: equityStrategy
@@ -209,6 +228,14 @@ ColumnLayout {
             model: root.equityOptions
             onActivated: index => root.controller.selectComparisonEquity(index)
         }
+    }
+    Label {
+        visible: root.resultsView === 2
+        Layout.fillWidth: true
+        text: root.i18n.catalog["quant.risk_help"]
+        wrapMode: Text.WordWrap
+        color: Theme.PixelTheme.inkMuted
+        font.pixelSize: Theme.PixelTheme.fontSm
     }
     RowLayout {
         Layout.fillWidth: true
@@ -232,6 +259,14 @@ ColumnLayout {
                     color: Theme.PixelTheme.inkMuted
                     font.pixelSize: Theme.PixelTheme.fontSm
                 }
+                Label {
+                    visible: root.controller.comparisonBenchmarkSeries.length > 0
+                    Layout.fillWidth: true
+                    text: root.i18n.catalog["quant.benchmark_legend"]
+                    wrapMode: Text.WordWrap
+                    color: Theme.PixelTheme.inkMuted
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                }
                 Canvas {
                     id: equityCanvas
                     objectName: "quantComparisonEquityCanvas"
@@ -245,9 +280,11 @@ ColumnLayout {
                         ctx.clearRect(0, 0, width, height)
                         const series = root.controller.comparisonEquitySeries
                         if (!series || series.length < 2 || width < 60 || height < 40) return
+                        const benchmark = root.controller.comparisonBenchmarkSeries
+                        const all = series.concat(benchmark)
                         let lo = series[0][1], hi = lo
-                        for (let i = 1; i < series.length; ++i) {
-                            lo = Math.min(lo, series[i][1]); hi = Math.max(hi, series[i][1])
+                        for (let i = 1; i < all.length; ++i) {
+                            lo = Math.min(lo, all[i][1]); hi = Math.max(hi, all[i][1])
                         }
                         if (lo === hi) { lo -= 0.01; hi += 0.01 }
                         const left = 48, top = 12, w = width - 56, h = height - 24
@@ -259,18 +296,23 @@ ColumnLayout {
                         ctx.font = "10px sans-serif"
                         ctx.fillText(hi.toFixed(3), 0, top + 4)
                         ctx.fillText(lo.toFixed(3), 0, top + h)
-                        ctx.strokeStyle = Theme.PixelTheme.goldDark
-                        ctx.lineWidth = 2
-                        ctx.beginPath()
-                        let previousY = top + h * (hi - series[0][1]) / (hi - lo)
-                        for (let i = 0; i < series.length; ++i) {
-                            const x = left + w * (series[i][0] - start) / duration
-                            const y = top + h * (hi - series[i][1]) / (hi - lo)
-                            if (i === 0) ctx.moveTo(x, y)
-                            else { ctx.lineTo(x, previousY); ctx.lineTo(x, y) }
-                            previousY = y
+                        const draw = function(points, color) {
+                            if (!points || points.length < 2) return
+                            ctx.strokeStyle = color
+                            ctx.lineWidth = 2
+                            ctx.beginPath()
+                            let previousY = top + h * (hi - points[0][1]) / (hi - lo)
+                            for (let i = 0; i < points.length; ++i) {
+                                const x = left + w * (points[i][0] - start) / duration
+                                const y = top + h * (hi - points[i][1]) / (hi - lo)
+                                if (i === 0) ctx.moveTo(x, y)
+                                else { ctx.lineTo(x, previousY); ctx.lineTo(x, y) }
+                                previousY = y
+                            }
+                            ctx.stroke()
                         }
-                        ctx.stroke()
+                        draw(benchmark, Theme.PixelTheme.inkMuted)
+                        draw(series, Theme.PixelTheme.goldDark)
                     }
                 }
                 Label {
@@ -293,6 +335,14 @@ ColumnLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
             tableModel: root.controller.comparisonModel
+            i18n: root.i18n
+        }
+        Components.DataTable {
+            objectName: "quantComparisonRiskTable"
+            visible: root.resultsView === 2
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            tableModel: root.controller.comparisonRiskModel
             i18n: root.i18n
         }
         Components.DataTable {

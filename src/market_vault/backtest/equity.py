@@ -17,6 +17,7 @@ from .models import BacktestCosts, BacktestError, BacktestTrade, _finite_number,
 
 
 EQUITY_VERSION = "market-vault-bar-close-equity-v1"
+BUY_AND_HOLD_VERSION = "market-vault-buy-and-hold-equity-v1"
 
 
 class EquityError(BacktestError):
@@ -76,23 +77,17 @@ class EquityCurve:
     transaction_cost_total: float
 
 
-def build_equity_curve(
-    *,
-    trades: tuple[PricedTrade, ...],
-    bars: tuple[EquityBar, ...],
-    valuation_times: tuple[datetime, ...],
-    start_time: datetime,
-    end_time: datetime,
-    costs: BacktestCosts,
-) -> EquityCurve:
-    """Value one normalized account over an explicit, shared session grid.
+@dataclass(frozen=True, slots=True)
+class _Position:
+    entry_time: datetime
+    exit_time: datetime
+    entry_row_version_id: str
+    exit_row_version_id: str
+    sample_key: str | None
+    equity_after: float
 
-    Equal-time order is close mark -> exit/cost -> next entry/cost. A missing
-    close fails while invested; cash-only points need no price or forward fill.
-    Prices must already belong to one instrument. This pure accounting helper
-    does not establish Dataset authority; use the Research combination API for
-    verified strategy evaluation.
-    """
+
+def _valuation_inputs(bars, valuation_times, start_time, end_time, costs):
     start_time = _instant(start_time, "start_time")
     end_time = _instant(end_time, "end_time")
     if start_time >= end_time or type(costs) is not BacktestCosts:
@@ -111,6 +106,29 @@ def build_equity_curve(
         raise EquityError("duplicate valuation bar identity or close time")
     if any(bar.close_time not in grid for bar in bars):
         raise EquityError("valuation price lies outside the session grid")
+    return by_version, by_close, grid
+
+
+def build_equity_curve(
+    *,
+    trades: tuple[PricedTrade, ...],
+    bars: tuple[EquityBar, ...],
+    valuation_times: tuple[datetime, ...],
+    start_time: datetime,
+    end_time: datetime,
+    costs: BacktestCosts,
+) -> EquityCurve:
+    """Value one normalized account over an explicit, shared session grid.
+
+    Equal-time order is close mark -> exit/cost -> next entry/cost. A missing
+    close fails while invested; cash-only points need no price or forward fill.
+    Prices must already belong to one instrument. This pure accounting helper
+    does not establish Dataset authority; use the Research combination API for
+    verified strategy evaluation.
+    """
+    by_version, by_close, grid = _valuation_inputs(
+        bars, valuation_times, start_time, end_time, costs,
+    )
     if type(trades) is not tuple or any(type(item) is not PricedTrade for item in trades):
         raise EquityError("trades must be an immutable PricedTrade tuple")
 
@@ -136,10 +154,49 @@ def build_equity_curve(
                 and math.isclose(expected_equity * (1.0 + net), trade.equity_after,
                                  rel_tol=1e-12, abs_tol=1e-12)):
             raise EquityError("execution price/cost ledger differs from Backtest V1")
-        entries[trade.entry_time] = item
+        entries[trade.entry_time] = _Position(
+            trade.entry_time, trade.exit_time, item.entry_row_version_id,
+            item.exit_row_version_id, trade.sample_key, trade.equity_after,
+        )
         previous_exit = trade.exit_time
         expected_equity = trade.equity_after
 
+    return _value_account(
+        entries, by_version, by_close, grid, start_time, end_time, costs,
+        EQUITY_VERSION, "".join(_trade_id(item.trade) for item in trades),
+    )
+
+
+def build_buy_and_hold_curve(
+    *, bars: tuple[EquityBar, ...], valuation_times: tuple[datetime, ...],
+    start_time: datetime, end_time: datetime, costs: BacktestCosts,
+) -> EquityCurve:
+    """Buy at the window's first open and sell at its last recorded close.
+
+    This is a price benchmark with one entry and exit at the strategy costs.
+    It creates no signal or Label-backed BacktestTrade.
+    """
+    by_version, by_close, grid = _valuation_inputs(
+        bars, valuation_times, start_time, end_time, costs,
+    )
+    first = tuple(bar for bar in bars if bar.event_time == start_time)
+    last = by_close.get(end_time)
+    if len(first) != 1 or last is None:
+        raise EquityError("buy-and-hold requires exact window entry and exit prices")
+    entry = first[0]
+    final = last.close / entry.open * (1.0 - costs.per_side_rate) ** 2
+    position = _Position(start_time, end_time, entry.row_version_id, last.row_version_id, None, final)
+    identity = encode_identity(BUY_AND_HOLD_VERSION + ":position", {
+        "entry_row_version_id": entry.row_version_id,
+        "exit_row_version_id": last.row_version_id,
+    })
+    return _value_account(
+        {start_time: position}, by_version, by_close, grid, start_time, end_time,
+        costs, BUY_AND_HOLD_VERSION, identity,
+    )
+
+
+def _value_account(entries, by_version, by_close, grid, start_time, end_time, costs, version, trades_id):
     cash, quantity, peak, cost_total = 1.0, 0.0, 1.0, 0.0
     position = None
     points = []
@@ -166,16 +223,16 @@ def build_equity_curve(
             record(
                 timestamp, "BAR_CLOSE", bar.close if bar else None,
                 bar.row_version_id if bar else None,
-                position.trade.sample_key if position else None,
+                position.sample_key if position else None,
             )
-        if position is not None and position.trade.exit_time == timestamp:
+        if position is not None and position.exit_time == timestamp:
             bar = by_version[position.exit_row_version_id]
             proceeds = quantity * bar.close
             fee = proceeds * costs.per_side_rate
             cash, quantity = proceeds - fee, 0.0
-            if not math.isclose(cash, position.trade.equity_after, rel_tol=1e-11, abs_tol=1e-12):
+            if not math.isclose(cash, position.equity_after, rel_tol=1e-11, abs_tol=1e-12):
                 raise EquityError("exit cash differs from accepted trade equity")
-            record(timestamp, "EXIT", bar.close, bar.row_version_id, position.trade.sample_key, fee)
+            record(timestamp, "EXIT", bar.close, bar.row_version_id, position.sample_key, fee)
             position = None
         if timestamp in entries:
             if position is not None:
@@ -184,17 +241,17 @@ def build_equity_curve(
             bar = by_version[position.entry_row_version_id]
             fee = cash * costs.per_side_rate
             quantity, cash = (cash - fee) / bar.open, 0.0
-            record(timestamp, "ENTRY", bar.open, bar.row_version_id, position.trade.sample_key, fee)
+            record(timestamp, "ENTRY", bar.open, bar.row_version_id, position.sample_key, fee)
     if position is not None:
         raise EquityError("valuation window ends before the final position exits")
-    curve_id = encode_identity(EQUITY_VERSION, {
+    curve_id = encode_identity(version, {
         "start_time": start_time, "end_time": end_time,
         "commission_bps": costs.commission_bps, "slippage_bps": costs.slippage_bps,
-        "trades": "".join(_trade_id(item.trade) for item in trades),
+        "trades": trades_id,
         "point_count": len(points),
-        "points": "".join(encode_identity(EQUITY_VERSION + ":point", asdict(p)) for p in points),
+        "points": "".join(encode_identity(version + ":point", asdict(p)) for p in points),
     })
     return EquityCurve(
-        EQUITY_VERSION, curve_id, tuple(points), points[-1].equity,
+        version, curve_id, tuple(points), points[-1].equity,
         max(point.drawdown for point in points), cost_total,
     )

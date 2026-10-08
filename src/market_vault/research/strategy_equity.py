@@ -112,6 +112,11 @@ def compare_strategies_with_equity(
         validation_periods=validation_periods, step_periods=step_periods,
         commission_bps=commission_bps, slippage_bps=slippage_bps,
     )
+    return _value_verified_comparison(dataset, comparison)[0]
+
+
+def _value_verified_comparison(dataset, comparison):
+    """Share one admitted valuation context with additive research reports."""
     fresh = _admit_dataset(dataset)
     if fresh.dataset_id != comparison.plan.dataset_id:
         raise EquityError("Dataset identity differs from the strategy comparison")
@@ -148,7 +153,8 @@ def compare_strategies_with_equity(
         "comparison_id": comparison.comparison_id, "price_evidence_id": price_id,
         "results": "".join(r.strategy_result_id + r.curve.curve_id for r in results),
     })
-    return StrategyEquityReport(
+    report = StrategyEquityReport(
         STRATEGY_EQUITY_VERSION, equity_id, comparison, fresh.scope.interval,
         start, end, price_id, tuple(results),
     )
+    return report, fresh, bars, tuple(grid.values())

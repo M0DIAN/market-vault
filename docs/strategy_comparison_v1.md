@@ -180,3 +180,58 @@ OHLC bars do not establish the order of intrabar highs and lows. This curve
 therefore does not claim tick-level or worst intrabar drawdown, liquidity,
 partial fills, borrowing, margin, or multi-asset accounting. Valuation adds no
 signals or model fitting and does not evaluate permanent TEST candidates.
+
+## Optional benchmark and daily risk report V1
+
+Run the same plan with `--risk-report` (which also includes the equity report):
+
+```bash
+market-vault research-compare-strategies --plan comparison.json --risk-report
+```
+
+The Python entry is
+`market_vault.research.strategy_risk.compare_strategies_with_risk`. It recomputes
+the explicit comparison and obtains one strictly admitted valuation context;
+it accepts no caller-created report as execution authority. Existing V1 and
+equity payloads and identities are retained inside the optional
+`market-vault-strategy-risk-cli-result-v1` envelope.
+
+The benchmark is **same-symbol buy-and-hold price return**: buy once at the
+common window's first entry open, sell once at its final recorded close, and
+pay the same per-side costs as the strategies. Its bars and row versions come
+from the same verified Dataset, schedule and as-of price evidence. It shares
+the cash/share arithmetic with strategy valuation but creates no strategy
+signal or Label-backed trade. Its ledger and curve ID are separate from the
+accepted strategy trades. Required holding prices must exist throughout the
+window, even when a compared strategy is in cash. The benchmark retains the
+Dataset's price convention; it does not include dividend reinvestment.
+
+Daily observations use each trading session's **complete recorded closing
+clock**, derived from the full schedule before clipping to the comparison
+window. The conservative 60m tails stay at 16:30 or 13:30. At an equal timestamp
+the last ledger event wins, so closing execution costs are included. Weekends
+and closed dates add no artificial zero-return days. Missing declared session
+equity is an error, not permission to bridge multiple days.
+
+Only consecutive complete close endpoints form daily returns. The first close
+can anchor the next full interval even when the valuation window starts during
+that first day. INITIAL-to-first-close and last-close-to-partial-end changes
+remain in total return and drawdown, but are excluded from daily statistics.
+The report includes all daily observations, returns, actual timestamps and counts.
+
+Statistics use arithmetic daily returns, sample standard deviation (`n - 1`),
+an annualization factor of **252**, and an explicitly recorded risk-free rate
+of **0**. Annualized volatility is `daily_std * sqrt(252)`; Sharpe is
+`mean_daily_return / daily_std * sqrt(252)`. Fewer than two daily returns gives
+null volatility/Sharpe with `INSUFFICIENT_DAILY_RETURNS`. Numerically zero daily
+standard deviation (at most `1e-15`) gives zero volatility and null Sharpe with
+`ZERO_VOLATILITY`. This fixed tolerance handles binary floating-point noise.
+`return_difference` is strategy total return minus benchmark total return,
+in return units, not a fitted alpha or a ratio of final wealth.
+
+In the desktop, enable **Include benchmark & risk / 加入基准与风险**. The
+**Benchmark & risk / 基准与风险** table shows all strategies and the benchmark.
+The equity chart overlays the selected curve in gold and the benchmark in grey
+on shared axes; selecting **Buy & Hold** opens its ledger. Switching risk off
+removes its table and overlay while retaining the existing equity-only mode.
+Desktop numbers are display-formatted; full-precision values remain in CLI JSON.
