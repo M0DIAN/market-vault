@@ -13,7 +13,7 @@ from market_vault.research import intraday_research as research
 from market_vault.research.intraday_data import build_intraday_dataset, write_intraday_dataset, json_values
 
 
-def research_data(root, *, changed_day=None, missing=False, test_change=False):
+def research_data(root, *, changed_day=None, missing=False, missing_day=20, test_change=False):
     first, last = date(2025, 2, 3), date(2025, 3, 25)
     entries, days, bars = [], [], []
     current = first
@@ -26,7 +26,7 @@ def research_data(root, *, changed_day=None, missing=False, test_change=False):
         current += timedelta(days=1)
     for index, day in enumerate(days):
         for slot in range(78):
-            if missing and index == 20 and slot == 7:
+            if missing and index == missing_day and slot == 7:
                 continue
             base = Decimal(100 + index)
             price = base + Decimal(slot) / 100 if slot < 77 else (base + Decimal(".05")) * (1 + rates[index % 5])

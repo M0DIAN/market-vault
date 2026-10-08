@@ -13,6 +13,18 @@ from .controllers import PageController
 from .table_model import QtTableModel
 
 
+def execution_series(execution):
+    daily = execution["daily"]
+    return [[datetime.fromisoformat(daily[0]["open_time"]).timestamp() * 1000, 1.0]] + [
+        [datetime.fromisoformat(row["close_time"]).timestamp() * 1000, row["cash_close"]] for row in daily]
+
+
+def formatted_rows(rows, columns):
+    from .quant_research import _format_number
+    return tuple(tuple(_format_number(row[k]) if type(row[k]) in (int, float) else
+                       ", ".join(row[k]) if type(row[k]) is list else str(row[k]) for k in columns) for row in rows)
+
+
 class IntradayResearchController(PageController):
     changed = Signal()
 
@@ -141,17 +153,23 @@ class IntradayResearchController(PageController):
         if not self._positions:
             return []
         group, candidate = self._selected()
-        return [self._series(candidate["execution"]), self._series(group["benchmark"]["execution"])]
-
-    def _series(self, execution):
-        daily = execution["daily"]
-        return [[datetime.fromisoformat(daily[0]["open_time"]).timestamp() * 1000, 1.0]] + [
-            [datetime.fromisoformat(row["close_time"]).timestamp() * 1000, row["cash_close"]] for row in daily]
+        return [execution_series(candidate["execution"]), execution_series(group["benchmark"]["execution"])]
 
     def _selected(self):
         cost, index = self._positions[self._candidate_index]
         group = self._root["report"]["groups"][cost]
         return group, group["results"][index]
+
+    def selection_source(self):
+        """Capture one saved immutable result before a worker can be scheduled."""
+        if not self._content or not self._path or not self._positions:
+            raise ValueError("Save or open the development experiment before freezing a candidate.")
+        content, path = self._content, self._path
+        root = json.loads(content)
+        cost, index = self._positions[self._candidate_index]
+        return {"path": path, "content": content, "experiment_id": root["experiment_id"],
+                "cost_index": cost, "candidate_index": index,
+                "candidate_id": root["report"]["groups"][cost]["results"][index]["candidate_id"]}
 
     def _set_page(self):
         from ..console.models import TablePage
@@ -193,8 +211,7 @@ class IntradayResearchController(PageController):
             else:
                 columns, rows = ("fold_index", "validation_days", "trade_count", "cash_contribution"), candidate["fold_contributions"]
             self._columns = columns
-            self._rows = tuple(tuple(_format_number(row[k]) if type(row[k]) in (int, float) else
-                                    ", ".join(row[k]) if type(row[k]) is list else str(row[k]) for k in columns) for row in rows)
+            self._rows = formatted_rows(rows, columns)
         self._page = 1
         self._set_page()
 

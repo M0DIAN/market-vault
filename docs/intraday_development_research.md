@@ -208,4 +208,6 @@ cover offline access, malformed nested records, full raw replay and relocation.
 Actual rendered QML tests exercise research, model/ledger views, pagination,
 immutable Save, Open, full Replay and bilingual draft preservation.
 
-Final candidate freeze and TEST evaluation are the next authorized task, Q8.
+Continue with [frozen candidate selection and final TEST](intraday_final_test.md)
+after saving the development experiment. Q8 uses the already declared TEST
+dates and keeps its final account separate from this development result.
