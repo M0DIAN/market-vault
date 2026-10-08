@@ -351,19 +351,23 @@ def _run_strategy_comparison(path: Path, **values) -> _ComparisonView:
         FeatureRuleStrategy, RidgeStrategy, compare_strategies,
     )
 
-    trend = values.pop("trend_feature")
-    reversion = values.pop("reversion_feature")
-    strategies = (
-        FeatureRuleStrategy("Trend", BacktestRule(trend, "GT", values.pop("trend_threshold"))),
-        FeatureRuleStrategy("MeanReversion", BacktestRule(reversion, "LT", values.pop("reversion_threshold"))),
-        RidgeStrategy("Ridge", values.pop("ridge_alpha"), values.pop("ridge_threshold")),
-    )
     with_risk = values.pop("risk_report", False)
     with_equity = values.pop("equity_curve", False) or with_risk
+    if "strategies" in values:
+        configuration = dict(values)
+    else:
+        # Preserve the original controller/worker interface for existing callers.
+        trend = values.pop("trend_feature")
+        reversion = values.pop("reversion_feature")
+        strategies = (
+            FeatureRuleStrategy("Trend", BacktestRule(trend, "GT", values.pop("trend_threshold"))),
+            FeatureRuleStrategy("MeanReversion", BacktestRule(reversion, "LT", values.pop("reversion_threshold"))),
+            RidgeStrategy("Ridge", values.pop("ridge_alpha"), values.pop("ridge_threshold")),
+        )
+        configuration = dict(
+            feature_fields=tuple(dict.fromkeys((trend, reversion))), strategies=strategies, **values,
+        )
     dataset = _load_verified_dataset(path)
-    configuration = dict(
-        feature_fields=tuple(dict.fromkeys((trend, reversion))), strategies=strategies, **values,
-    )
     equity_report = risk_report = None
     if with_risk:
         from market_vault.research.strategy_risk import compare_strategies_with_risk
@@ -447,6 +451,48 @@ def _comparison_page(rows, *, with_equity=False):
         "realized_max_drawdown", "win_rate", "profit_factor",
         "overlap_skipped_count", "exposure",
     ) + (("bar_close_max_drawdown",) if with_equity else ()), rows)
+
+
+def _parse_comparison_strategies(values, admitted_features):
+    from market_vault.research.strategy_config import parse_strategy_specs, strategy_plan_fields
+
+    fields = values.get("feature_fields")
+    if type(fields) not in (tuple, list) or not fields:
+        raise ValueError("Select an explicit common Feature projection.")
+    if any(type(field) is not str or field not in admitted_features for field in fields):
+        raise ValueError("Common Features must be admitted numeric Dataset Features.")
+    if len(set(fields)) != len(fields):
+        raise ValueError("Common Features must be unique.")
+    raw = values.get("strategies")
+    if type(raw) is not list:
+        raise ValueError("strategies must be a list")
+    specs = []
+    for item in raw:
+        if type(item) is not dict:
+            raise ValueError("strategy must be an object")
+        item = dict(item)
+        for key in ("alpha", "threshold"):
+            if key in item:
+                item[key] = _finite_float(item[key], key)
+        if "conditions" in item:
+            if type(item["conditions"]) is not list:
+                raise ValueError("conditions must be a list")
+            conditions = []
+            for condition in item["conditions"]:
+                if type(condition) is not dict:
+                    raise ValueError("condition must be an object")
+                condition = dict(condition)
+                condition["threshold"] = _finite_float(condition.get("threshold"), "condition threshold")
+                conditions.append(condition)
+            item["conditions"] = conditions
+        specs.append(item)
+    strategies = parse_strategy_specs(specs)
+    for strategy in strategies:
+        spec = strategy_plan_fields(strategy)
+        rules = ([spec] if spec["kind"] == "FEATURE_RULE" else spec.get("conditions", []))
+        if any(rule["signal_field"] not in fields for rule in rules):
+            raise ValueError("Every rule Feature must belong to the common projection.")
+    return {"feature_fields": tuple(fields), "strategies": strategies}
 
 
 class QuantResearchController(NetworkController):
@@ -879,15 +925,18 @@ class QuantResearchController(NetworkController):
                 parsed["risk_report"] = True
             if with_equity:
                 parsed["equity_curve"] = True
-            for field in ("trend_feature", "reversion_feature"):
-                parsed[field] = str(values.get(field, "")).strip()
-                if parsed[field] not in self._feature_names:
-                    raise ValueError("Select admitted numeric Features for both rules.")
-            for field in ("trend_threshold", "reversion_threshold", "ridge_threshold"):
-                parsed[field] = _finite_float(values.get(field, 0), field)
-            parsed["ridge_alpha"] = _finite_float(values.get("ridge_alpha", 1), "ridge_alpha")
-            if parsed["ridge_alpha"] <= 0:
-                raise ValueError("ridge_alpha must be strictly positive")
+            if "strategies" in values:
+                parsed.update(_parse_comparison_strategies(values, self._feature_names))
+            else:
+                for field in ("trend_feature", "reversion_feature"):
+                    parsed[field] = str(values.get(field, "")).strip()
+                    if parsed[field] not in self._feature_names:
+                        raise ValueError("Select admitted numeric Features for both rules.")
+                for field in ("trend_threshold", "reversion_threshold", "ridge_threshold"):
+                    parsed[field] = _finite_float(values.get(field, 0), field)
+                parsed["ridge_alpha"] = _finite_float(values.get("ridge_alpha", 1), "ridge_alpha")
+                if parsed["ridge_alpha"] <= 0:
+                    raise ValueError("ridge_alpha must be strictly positive")
             for field in ("minimum_train_periods", "validation_periods", "step_periods"):
                 parsed[field] = _bounded_int(values.get(field), field, 1, 1_000_000)
             if parsed["step_periods"] < parsed["validation_periods"]:

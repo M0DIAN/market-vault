@@ -291,8 +291,8 @@ def test_comparison_qml_click_dispatches_form_values_and_shows_results(tmp_path)
 import json
 import sys
 from pathlib import Path
-from PySide6.QtCore import QObject, QMetaObject, QUrl, Qt
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtCore import QObject, QMetaObject, QUrl, Qt, QEvent
+from PySide6.QtGui import QGuiApplication, QKeyEvent
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuickControls2 import QQuickStyle
 from PySide6.QtTest import QTest
@@ -339,11 +339,80 @@ quant._inspect_dataset = lambda path: quant._DatasetView(
 assert controller.inspectDataset(str(dataset))
 session.runtime._poll()
 app.processEvents()
-selections = [
-    ('quantComparisonTrendFeature', Qt.Key_Up, 'sma_5'),
-    ('quantComparisonReversionFeature', Qt.Key_Down, 'rsi_5'),
-    ('quantComparisonReturnLabel', Qt.Key_Down, 'execution_return_2d'),
-]
+QTest.qWait(30)
+def find_item(name):
+    found = window.findChild(QObject, name)
+    if found is not None:
+        return found
+    # ListView delegates belong to the visual tree, not necessarily QObject children.
+    pending = [window.contentItem()]
+    while pending:
+        item = pending.pop()
+        if item.objectName() == name:
+            return item
+        pending.extend(item.childItems())
+    return None
+
+def select_combo(name, key):
+    QTest.qWait(20)
+    field = find_item(name)
+    assert field is not None, name
+    combo = next((c for c in field.children() if 'PixelComboBox' in c.metaObject().className()), field)
+    combo.forceActiveFocus()
+    QTest.keyClick(window, key)
+    app.processEvents()
+    return field
+
+def type_text(name, text):
+    QTest.qWait(20)
+    field = find_item(name)
+    assert field is not None, name
+    edit = next((c for c in field.children() if 'PixelTextField' in c.metaObject().className()), field)
+    edit.forceActiveFocus()
+    QTest.keyClick(window, Qt.Key_A, Qt.ControlModifier)
+    for character in text:
+        QGuiApplication.sendEvent(window, QKeyEvent(QEvent.KeyPress, ord(character.upper()), Qt.NoModifier, character))
+    app.processEvents()
+    assert edit.property('text') == text
+
+assert QMetaObject.invokeMethod(window.findChild(QObject, 'quantStrategyAddButton'), 'clicked', Qt.DirectConnection)
+QTest.qWait(20)
+assert find_item('quantConditionFeature0').property('currentText') == 'return_2'
+assert QMetaObject.invokeMethod(window.findChild(QObject, 'quantStrategyRemoveButton'), 'clicked', Qt.DirectConnection)
+app.processEvents()
+select_combo('quantStrategySelector', Qt.Key_Up)
+select_combo('quantStrategySelector', Qt.Key_Up)
+type_text('quantComparisonFeatures', 'sma_5,rsi_5')
+select_combo('quantConditionFeature0', Qt.Key_Up)
+select_combo('quantStrategySelector', Qt.Key_Down)
+select_combo('quantConditionFeature0', Qt.Key_Down)
+add_strategy = window.findChild(QObject, 'quantStrategyAddButton')
+assert QMetaObject.invokeMethod(add_strategy, 'clicked', Qt.DirectConnection)
+app.processEvents()
+select_combo('quantStrategyKind', Qt.Key_Down)
+select_combo('quantStrategyKind', Qt.Key_Down)
+type_text('quantStrategyName', 'Composite')
+select_combo('quantStrategyMatch', Qt.Key_Down)
+select_combo('quantConditionFeature1', Qt.Key_Down)
+select_combo('quantConditionFeature1', Qt.Key_Down)
+type_text('quantConditionThreshold1', '50')
+conditions = window.findChild(QObject, 'quantStrategyConditions')
+assert conditions.property('count') == 2
+assert QMetaObject.invokeMethod(window.findChild(QObject, 'quantConditionAddButton'), 'clicked', Qt.DirectConnection)
+app.processEvents()
+assert conditions.property('count') == 3
+QTest.qWait(20)
+assert QMetaObject.invokeMethod(find_item('quantConditionRemove2'), 'clicked', Qt.DirectConnection)
+app.processEvents()
+assert conditions.property('count') == 2
+assert QMetaObject.invokeMethod(add_strategy, 'clicked', Qt.DirectConnection)
+app.processEvents()
+assert window.findChild(QObject, 'quantStrategySelector').property('count') == 5
+assert QMetaObject.invokeMethod(window.findChild(QObject, 'quantStrategyRemoveButton'), 'clicked', Qt.DirectConnection)
+app.processEvents()
+assert window.findChild(QObject, 'quantStrategySelector').property('count') == 4
+assert window.findChild(QObject, 'quantStrategyName').property('text') == 'Composite'
+selections = [('quantComparisonReturnLabel', Qt.Key_Down, 'execution_return_2d')]
 for name, key, selected in selections:
     field = window.findChild(QObject, name)
     combo = next(c for c in field.children() if 'PixelComboBox' in c.metaObject().className())
@@ -388,10 +457,19 @@ app.processEvents()
 assert len(captured) == 1
 path, values = captured[0]
 assert path == dataset
-assert values == {{
-    'trend_feature': 'sma_5', 'trend_threshold': 0.0,
-    'reversion_feature': 'rsi_5', 'reversion_threshold': 0.0,
-    'ridge_alpha': 1.0, 'ridge_threshold': 0.0, 'return_label': 'execution_return_2d',
+from market_vault.research.strategy_config import strategy_plan_fields
+expected_specs = [
+    {{'kind': 'FEATURE_RULE', 'name': 'Trend', 'signal_field': 'sma_5', 'comparator': 'GT', 'threshold': 0.0}},
+    {{'kind': 'FEATURE_RULE', 'name': 'MeanReversion', 'signal_field': 'rsi_5', 'comparator': 'LT', 'threshold': 0.0}},
+    {{'kind': 'RIDGE', 'name': 'Ridge', 'alpha': 1.0, 'threshold': 0.0}},
+    {{'kind': 'COMPOSITE_RULE', 'name': 'Composite', 'match': 'ANY', 'conditions': [
+        {{'signal_field': 'sma_5', 'comparator': 'GT', 'threshold': 0.0}},
+        {{'signal_field': 'rsi_5', 'comparator': 'GT', 'threshold': 50.0}},
+    ]}},
+]
+assert [strategy_plan_fields(item) for item in values['strategies']] == expected_specs
+assert {{key: value for key, value in values.items() if key != 'strategies'}} == {{
+    'feature_fields': ('sma_5', 'rsi_5'), 'return_label': 'execution_return_2d',
     'minimum_train_periods': 3, 'validation_periods': 2, 'step_periods': 2,
     'commission_bps': 0.0, 'slippage_bps': 0.0,
 }}
@@ -408,6 +486,8 @@ assert captured[1] == captured[0]
 assert session.i18n.setLanguage('zh-CN')
 app.processEvents()
 assert button.property('text') == '比较策略'
+assert window.findChild(QObject, 'quantStrategyKind').property('currentIndex') == 2
+assert window.findChild(QObject, 'quantStrategyMatch').property('currentIndex') == 1
 assert window.grabWindow().save(str(root_path / 'comparison-ui.png'))
 toggle = window.findChild(QObject, 'quantComparisonEquityToggle')
 toggle.forceActiveFocus()
@@ -500,7 +580,12 @@ session.runtime._poll()
 app.processEvents()
 assert controller.comparisonSummary == {{}}
 assert panel.property('showInputs') is True
-assert window.findChild(QObject, 'quantComparisonTrendFeature').property('visible')
+assert window.findChild(QObject, 'quantComparisonFeatures').property('visible')
+assert window.findChild(QObject, 'quantComparisonFeatures').property('text') == 'sma_5,rsi_5'
+assert window.findChild(QObject, 'quantStrategySelector').property('count') == 4
+assert window.findChild(QObject, 'quantStrategyName').property('text') == 'Composite'
+assert window.findChild(QObject, 'quantStrategyMatch').property('currentIndex') == 1
+assert window.grabWindow().save(str(root_path / 'comparison-strategy-editor-ui.png'))
 assert panel.property('resultsView') == 0
 assert controller.comparisonEquitySeries == []
 assert controller.comparisonEquityModel.rowCount() == 0
@@ -513,8 +598,11 @@ other_dataset.mkdir()
 assert controller.inspectDataset(str(other_dataset))
 session.runtime._poll()
 app.processEvents()
-assert window.findChild(QObject, 'quantComparisonTrendFeature').property('currentText') == 'return_2'
-assert window.findChild(QObject, 'quantComparisonReversionFeature').property('currentText') == 'return_2'
+assert window.findChild(QObject, 'quantComparisonFeatures').property('text') == 'return_2'
+assert window.findChild(QObject, 'quantStrategySelector').property('count') == 3
+assert window.findChild(QObject, 'quantStrategyName').property('text') == 'Trend'
+QTest.qWait(20)
+assert find_item('quantConditionFeature0').property('currentText') == 'return_2'
 assert window.findChild(QObject, 'quantComparisonReturnLabel').property('currentText') == 'execution_return_1d'
 assert controller.comparisonModel.rowCount() == 0
 assert controller.comparisonEquityNames == []
@@ -522,6 +610,42 @@ assert controller.comparisonEquitySeries == []
 assert controller.comparisonEquityModel.rowCount() == 0
 assert panel.property('resultsView') == 0
 assert panel.property('showInputs') is True
+# Recreated virtual delegates must show the same draft that Run submits.
+# Build a long list through the real editor and edit one row with key events.
+select_combo('quantStrategyKind', Qt.Key_Down)
+select_combo('quantStrategyKind', Qt.Key_Down)
+for _ in range(38):
+    assert QMetaObject.invokeMethod(window.findChild(QObject, 'quantConditionAddButton'), 'clicked', Qt.DirectConnection)
+app.processEvents()
+conditions = window.findChild(QObject, 'quantStrategyConditions')
+assert conditions.property('count') == 40
+conditions.setProperty('cacheBuffer', 0)
+QTest.qWait(30)
+select_combo('quantConditionFeature0', Qt.Key_Down)
+select_combo('quantConditionComparator0', Qt.Key_Down)
+type_text('quantConditionThreshold0', '5.125')
+first_threshold = find_item('quantConditionThreshold0')
+# Focus another row so the first delegate can leave ListView's retained set.
+type_text('quantConditionThreshold1', '2')
+conditions.setProperty('currentIndex', 1)
+conditions.setProperty('contentY', conditions.property('contentHeight') - conditions.property('height'))
+QTest.qWait(80)
+import shiboken6
+assert not shiboken6.isValid(first_threshold), 'probe must destroy the edited delegate'
+conditions.setProperty('contentY', 0)
+QTest.qWait(80)
+assert find_item('quantConditionFeature0').property('currentText') == 'rsi_5'
+assert find_item('quantConditionComparator0').property('currentIndex') == 1
+assert find_item('quantConditionThreshold0').property('text') == '5.125'
+type_text('quantConditionThreshold0', '6.25')
+window.findChild(QObject, 'quantComparisonStepPeriods').setProperty('text', '2')
+type_text('quantComparisonFeatures', 'return_2,rsi_5')
+assert QMetaObject.invokeMethod(button, 'clicked', Qt.DirectConnection)
+session.runtime._poll()
+app.processEvents()
+assert strategy_plan_fields(captured[-1][1]['strategies'][0])['conditions'][0] == {{
+    'signal_field': 'rsi_5', 'comparator': 'GE', 'threshold': 6.25,
+}}
 assert session.shutdown()
 print(json.dumps({{'clicked': True, 'rows': controller.comparisonModel.rowCount()}}))
 '''

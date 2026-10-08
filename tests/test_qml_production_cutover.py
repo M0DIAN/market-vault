@@ -36,7 +36,8 @@ def test_production_spec_has_exact_qml_asset_inventory() -> None:
     assert _quoted_qml_names(production) == expected_qml
     assert "QuantResearchPage.qml" in expected_qml
     assert "StrategyComparisonPanel.qml" in expected_qml
-    assert len(expected_qml) == 38
+    assert "StrategyListEditor.qml" in expected_qml
+    assert len(expected_qml) == 39
     for asset in (
         "qmldir",
         "fusion-pixel-12px-proportional-zh_hans.otf",

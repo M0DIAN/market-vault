@@ -7,10 +7,10 @@ not a marked-to-market portfolio or an independent final TEST evaluation.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 import math
 
-from ..backtest.engine import _candidates, _run_candidates, _trade_id
+from ..backtest.engine import _candidates, _compare, _run_candidates, _trade_id
 from ..backtest.models import (
     BACKTEST_ENGINE_VERSION,
     BacktestCosts,
@@ -27,6 +27,8 @@ from .walk_forward import WalkForwardPlan, build_walk_forward_plan
 
 
 STRATEGY_COMPARISON_VERSION = "market-vault-strategy-comparison-v1"
+STRATEGY_COMPARISON_V2_VERSION = "market-vault-strategy-comparison-v2"
+COMPOSITE_RULE_VERSION = "market-vault-composite-feature-rule-v1"
 EVALUATION_SCOPE = "WALK_FORWARD_VALIDATION"
 
 
@@ -68,7 +70,22 @@ class RidgeStrategy:
             raise StrategyComparisonError("Ridge alpha must be strictly positive")
 
 
-Strategy = FeatureRuleStrategy | RidgeStrategy
+@dataclass(frozen=True, slots=True)
+class CompositeRuleStrategy:
+    name: str
+    conditions: tuple[BacktestRule, ...]
+    match: str = "ALL"
+
+    def __post_init__(self) -> None:
+        _name(self.name)
+        if (type(self.conditions) is not tuple or len(self.conditions) < 2
+                or any(type(rule) is not BacktestRule for rule in self.conditions)):
+            raise StrategyComparisonError("composite rule requires at least two BacktestRule conditions")
+        if self.match not in ("ALL", "ANY"):
+            raise StrategyComparisonError("composite match must be ALL or ANY")
+
+
+Strategy = FeatureRuleStrategy | RidgeStrategy | CompositeRuleStrategy
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,6 +117,14 @@ def _strategy_fields(strategy: Strategy) -> dict:
             "comparator": strategy.rule.comparator,
             "threshold": strategy.rule.threshold,
         }
+    if type(strategy) is CompositeRuleStrategy:
+        return {
+            "name": strategy.name, "kind": "COMPOSITE_RULE",
+            "rule_version": COMPOSITE_RULE_VERSION, "match": strategy.match,
+            "conditions": [asdict(rule) for rule in strategy.conditions],
+        }
+    if type(strategy) is not RidgeStrategy:
+        raise StrategyComparisonError("unsupported strategy type")
     return {
         "name": strategy.name,
         "kind": "RIDGE",
@@ -108,6 +133,45 @@ def _strategy_fields(strategy: Strategy) -> dict:
         "comparator": "GT",
         "threshold": strategy.threshold,
     }
+
+
+def _strategy_identity_fields(strategy: Strategy) -> dict:
+    if type(strategy) is not CompositeRuleStrategy:
+        return _strategy_fields(strategy)  # Preserve both original identity domains.
+    return {
+        "name": strategy.name, "kind": "COMPOSITE_RULE",
+        "rule_version": COMPOSITE_RULE_VERSION, "match": strategy.match,
+        "condition_count": len(strategy.conditions),
+        "conditions_id": "".join(encode_identity(COMPOSITE_RULE_VERSION + ":condition", asdict(rule))
+                                 for rule in strategy.conditions),
+    }
+
+
+def _strategy_signals(strategy: Strategy, plan: WalkForwardPlan, feature_rows: dict):
+    """Adapt one supported signal family to the shared execution kernel.
+
+    Stateless rules receive only the explicit Feature projection. Ridge fits
+    on each fold's training slice; no adapter gets the final TEST partition.
+    Original Feature scores stay numeric so their trade/result IDs stay stable.
+    """
+    if type(strategy) is FeatureRuleStrategy:
+        index = plan.feature_names.index(strategy.rule.signal_field)
+        return {key: row[index] for key, row in feature_rows.items()}, strategy.rule
+    if type(strategy) is CompositeRuleStrategy:
+        indexed = tuple((plan.feature_names.index(rule.signal_field), rule)
+                        for rule in strategy.conditions)
+        combine = all if strategy.match == "ALL" else any
+        scores = {key: float(combine(_compare(row[index], rule) for index, rule in indexed))
+                  for key, row in feature_rows.items()}
+        return scores, BacktestRule("composite_signal", "GT", 0.5)
+    if type(strategy) is RidgeStrategy:
+        ridge = evaluate_ridge_baseline(plan, alpha=strategy.alpha)
+        scores = {}
+        for fold, fitted in zip(plan.folds, ridge.folds, strict=True):
+            predictions = _predict(fold.validation.X, fitted.intercept, fitted.coefficients)
+            scores.update(zip(fold.validation.sample_keys, predictions, strict=True))
+        return scores, BacktestRule("ridge_prediction", "GT", strategy.threshold)
+    raise StrategyComparisonError("unsupported strategy type")
 
 
 def _common_candidates(dataset, plan: WalkForwardPlan):
@@ -165,8 +229,8 @@ def compare_strategies(
     """
     if type(strategies) is not tuple or not strategies:
         raise StrategyComparisonError("strategies must be a non-empty tuple")
-    if any(type(item) not in (FeatureRuleStrategy, RidgeStrategy) for item in strategies):
-        raise StrategyComparisonError("only FeatureRuleStrategy and RidgeStrategy are supported")
+    if any(type(item) not in (FeatureRuleStrategy, RidgeStrategy, CompositeRuleStrategy) for item in strategies):
+        raise StrategyComparisonError("unsupported strategy type")
     if len({item.name for item in strategies}) != len(strategies):
         raise StrategyComparisonError("strategy names must be unique")
     if type(feature_fields) is not tuple or not feature_fields:
@@ -177,7 +241,9 @@ def compare_strategies(
     )
     fresh, bundle = validate_execution_safe_experiment(dataset, bundle)
     for strategy in strategies:
-        if type(strategy) is FeatureRuleStrategy and strategy.rule.signal_field not in bundle.feature_names:
+        rules = ((strategy.rule,) if type(strategy) is FeatureRuleStrategy else
+                 strategy.conditions if type(strategy) is CompositeRuleStrategy else ())
+        if any(rule.signal_field not in bundle.feature_names for rule in rules):
             raise StrategyComparisonError("rule signal_field must belong to the common Feature projection")
     plan = build_walk_forward_plan(
         bundle,
@@ -199,27 +265,15 @@ def compare_strategies(
         "sample_keys": "".join(sample_keys),
     })
 
+    feature_rows = {key: row[1] for key, row in rows.items()}
     results = []
     for strategy in strategies:
-        if type(strategy) is FeatureRuleStrategy:
-            index = plan.feature_names.index(strategy.rule.signal_field)
-            scores = {key: value[1][index] for key, value in rows.items()}
-            rule = strategy.rule
-        else:
-            ridge = evaluate_ridge_baseline(plan, alpha=strategy.alpha)
-            scores = {}
-            for fold, fitted in zip(plan.folds, ridge.folds, strict=True):
-                predictions = _predict(
-                    fold.validation.X, fitted.intercept, fitted.coefficients
-                )
-                scores.update(zip(fold.validation.sample_keys, predictions, strict=True))
-            # Internal model scores never enter the Dataset's Feature namespace.
-            rule = BacktestRule("ridge_prediction", "GT", strategy.threshold)
+        scores, rule = _strategy_signals(strategy, plan, feature_rows)
         scored = tuple(replace(c, signal_value=scores[c.sample_key]) for c in candidates)
         trades, metrics = _run_candidates(scored, rule=rule, costs=costs)
         result_id = encode_identity(STRATEGY_COMPARISON_VERSION + ":strategy", {
             "context_id": context_id,
-            **_strategy_fields(strategy),
+            **_strategy_identity_fields(strategy),
             "scores_id": encode_identity(STRATEGY_COMPARISON_VERSION + ":scores", {
                 c.sample_key: c.signal_value for c in scored
             }),
@@ -227,12 +281,15 @@ def compare_strategies(
             "trades": "".join(_trade_id(trade) for trade in trades),
         })
         results.append(StrategyComparisonResult(strategy, result_id, metrics, trades))
-    comparison_id = encode_identity(STRATEGY_COMPARISON_VERSION, {
+    version = (STRATEGY_COMPARISON_V2_VERSION
+               if any(type(item) is CompositeRuleStrategy for item in strategies)
+               else STRATEGY_COMPARISON_VERSION)
+    comparison_id = encode_identity(version, {
         "context_id": context_id,
         "strategy_count": len(results),
         "results": "".join(result.result_id for result in results),
     })
     return StrategyComparisonReport(
-        STRATEGY_COMPARISON_VERSION, comparison_id, BACKTEST_ENGINE_VERSION,
+        version, comparison_id, BACKTEST_ENGINE_VERSION,
         EVALUATION_SCOPE, plan, costs, sample_keys, tuple(results),
     )

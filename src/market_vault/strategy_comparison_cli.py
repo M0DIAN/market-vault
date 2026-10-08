@@ -8,7 +8,7 @@ from datetime import date, datetime
 import json
 import sys
 
-from .backtest import BacktestCosts, BacktestRule
+from .backtest import BacktestCosts
 from .backtest_cli import BacktestCLIError, _metrics_payload, _number
 from .cross_day_dataset import load_verified_multi_source_cross_day_dataset
 from .dataset.cli import (
@@ -23,18 +23,23 @@ from .dataset.cli import (
     _resolve_plan_path,
 )
 from .research.strategy_comparison import (
-    FeatureRuleStrategy,
-    RidgeStrategy,
+    CompositeRuleStrategy,
+    STRATEGY_COMPARISON_V2_VERSION,
     _strategy_fields,
     compare_strategies,
 )
+from .research.strategy_config import parse_strategy_specs
 from .research.walk_forward import _positive_int
 
 
 STRATEGY_COMPARISON_PLAN_VERSION = "market-vault-strategy-comparison-plan-v1"
+STRATEGY_COMPARISON_PLAN_V2_VERSION = "market-vault-strategy-comparison-plan-v2"
 STRATEGY_COMPARISON_CLI_VERSION = "market-vault-strategy-comparison-cli-result-v1"
 STRATEGY_EQUITY_CLI_VERSION = "market-vault-strategy-equity-cli-result-v1"
 STRATEGY_RISK_CLI_VERSION = "market-vault-strategy-risk-cli-result-v1"
+STRATEGY_COMPARISON_CLI_V2_VERSION = "market-vault-strategy-comparison-cli-result-v2"
+STRATEGY_EQUITY_CLI_V2_VERSION = "market-vault-strategy-equity-cli-result-v2"
+STRATEGY_RISK_CLI_V2_VERSION = "market-vault-strategy-risk-cli-result-v2"
 _PLAN_FIELDS = frozenset({
     "plan_schema_version", "dataset_build_dir", "feature_fields", "return_label",
     "strategies", "minimum_train_periods", "validation_periods", "step_periods",
@@ -45,7 +50,7 @@ _PLAN_FIELDS = frozenset({
 def add_strategy_comparison_subparser(subparsers) -> None:
     parser = subparsers.add_parser(
         "research-compare-strategies",
-        help="Compare rules and Ridge on common walk-forward validation samples",
+        help="Compare Feature rules, composite rules and Ridge on common validation samples",
     )
     parser.add_argument("--plan", required=True, metavar="PATH")
     parser.add_argument(
@@ -66,40 +71,11 @@ def parse_strategy_comparison_plan_bytes(payload: bytes) -> dict:
         "strategy comparison plan",
     )
     _require_exact_fields(root, _PLAN_FIELDS, "strategy comparison plan")
-    if root["plan_schema_version"] != STRATEGY_COMPARISON_PLAN_VERSION:
+    if root["plan_schema_version"] not in (STRATEGY_COMPARISON_PLAN_VERSION, STRATEGY_COMPARISON_PLAN_V2_VERSION):
         raise ValueError("unsupported strategy comparison plan_schema_version")
-    specs = root["strategies"]
-    if type(specs) is not list or not specs:
-        raise ValueError("strategies must be a non-empty JSON array")
-    strategies = []
-    for spec in specs:
-        spec = _require_object(spec, "strategy")
-        kind = spec.get("kind")
-        if kind == "FEATURE_RULE":
-            _require_exact_fields(spec, frozenset({
-                "kind", "name", "signal_field", "comparator", "threshold",
-            }), "feature rule strategy")
-            strategies.append(FeatureRuleStrategy(
-                _require_string(spec["name"], "name"),
-                BacktestRule(
-                    _require_string(spec["signal_field"], "signal_field"),
-                    _require_string(spec["comparator"], "comparator"),
-                    _number(spec["threshold"], "threshold"),
-                ),
-            ))
-        elif kind == "RIDGE":
-            _require_exact_fields(spec, frozenset({
-                "kind", "name", "alpha", "threshold",
-            }), "Ridge strategy")
-            strategies.append(RidgeStrategy(
-                _require_string(spec["name"], "name"),
-                _number(spec["alpha"], "alpha"),
-                _number(spec["threshold"], "threshold"),
-            ))
-        else:
-            raise ValueError("strategy kind must be FEATURE_RULE or RIDGE")
-    if len({spec.name for spec in strategies}) != len(strategies):
-        raise ValueError("strategy names must be unique")
+    strategies = parse_strategy_specs(
+        root["strategies"], allow_composite=root["plan_schema_version"] == STRATEGY_COMPARISON_PLAN_V2_VERSION,
+    )
     costs = BacktestCosts(
         _number(root["commission_bps"], "commission_bps"),
         _number(root["slippage_bps"], "slippage_bps"),
@@ -121,10 +97,20 @@ def parse_strategy_comparison_plan_bytes(payload: bytes) -> dict:
     }
 
 
+def _cli_result_version(version: str, extended: bool) -> str:
+    return {
+        STRATEGY_COMPARISON_CLI_VERSION: STRATEGY_COMPARISON_CLI_V2_VERSION,
+        STRATEGY_EQUITY_CLI_VERSION: STRATEGY_EQUITY_CLI_V2_VERSION,
+        STRATEGY_RISK_CLI_VERSION: STRATEGY_RISK_CLI_V2_VERSION,
+    }[version] if extended else version
+
+
 def _success_payload(report) -> dict:
     plan = report.plan
     return {
-        "result_schema_version": STRATEGY_COMPARISON_CLI_VERSION,
+        "result_schema_version": _cli_result_version(
+            STRATEGY_COMPARISON_CLI_VERSION, report.version == STRATEGY_COMPARISON_V2_VERSION,
+        ),
         "status": "SUCCESS",
         "version": report.version,
         "comparison_id": report.comparison_id,
@@ -186,7 +172,9 @@ def _json_values(value):
 
 def _equity_payload(report) -> dict:
     payload = _success_payload(report.comparison)
-    payload["result_schema_version"] = STRATEGY_EQUITY_CLI_VERSION
+    payload["result_schema_version"] = _cli_result_version(
+        STRATEGY_EQUITY_CLI_VERSION, report.comparison.version == STRATEGY_COMPARISON_V2_VERSION,
+    )
     payload["equity"] = {
         "version": report.version,
         "equity_comparison_id": report.equity_comparison_id,
@@ -204,7 +192,9 @@ def _equity_payload(report) -> dict:
 
 def _risk_payload(report) -> dict:
     payload = _equity_payload(report.equity)
-    payload["result_schema_version"] = STRATEGY_RISK_CLI_VERSION
+    payload["result_schema_version"] = _cli_result_version(
+        STRATEGY_RISK_CLI_VERSION, report.equity.comparison.version == STRATEGY_COMPARISON_V2_VERSION,
+    )
     payload["risk"] = {
         "version": report.version, "risk_report_id": report.risk_report_id,
         "benchmark_definition": report.benchmark_definition,
@@ -222,9 +212,11 @@ def _risk_payload(report) -> dict:
 def research_compare_strategies_main(args) -> int:
     with_equity = getattr(args, "equity_curve", False)
     with_risk = getattr(args, "risk_report", False)
+    extended = False
     try:
         plan_path = _coerce_plan_path(args.plan)
         config = parse_strategy_comparison_plan_bytes(_read_plan_bytes(plan_path))
+        extended = any(type(item) is CompositeRuleStrategy for item in config["strategies"])
         build_dir = _resolve_plan_path(
             config.pop("dataset_build_dir"), base=plan_path.parent,
             label="Research Dataset build",
@@ -240,11 +232,13 @@ def research_compare_strategies_main(args) -> int:
             payload = _success_payload(compare_strategies(dataset, **config))
         print(json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False))
         return 0
-    except (BacktestCLIError, DatasetCLIError, OSError, TypeError, ValueError, KeyError) as exc:
+    except (BacktestCLIError, DatasetCLIError, OSError, TypeError, ValueError, KeyError, OverflowError) as exc:
         print(json.dumps({
-            "result_schema_version": (STRATEGY_RISK_CLI_VERSION if with_risk else
-                                      STRATEGY_EQUITY_CLI_VERSION if with_equity else
-                                      STRATEGY_COMPARISON_CLI_VERSION),
+            "result_schema_version": _cli_result_version(
+                STRATEGY_RISK_CLI_VERSION if with_risk else
+                STRATEGY_EQUITY_CLI_VERSION if with_equity else STRATEGY_COMPARISON_CLI_VERSION,
+                extended,
+            ),
             "status": "FAILED",
             "error": f"research-compare-strategies failed: {exc}",
         }, ensure_ascii=False, indent=2), file=sys.stderr)
