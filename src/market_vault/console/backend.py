@@ -341,6 +341,26 @@ class ConsoleBackend:
         manifest = self.vault.backfill(**self._backfill_arguments(values, execute=True))
         return manifest.as_dict()
 
+    def preview_intraday_workspace(self, **values) -> tuple[dict[str, Any], TablePage]:
+        from market_vault.research_workspace import plan_local_intraday_research
+        values = dict(values)
+        for key in ("start_date", "end_date"):
+            values[key] = parse_iso_date(values[key], key)
+        plan = plan_local_intraday_research(self.vault, **values)
+        return plan["summary"], table_page_from_records(
+            list(plan["rows"][:MAX_REPORT_DISPLAY_ROWS]), page_size=MAX_REPORT_DISPLAY_ROWS,
+            total_rows=len(plan["rows"]),
+        )
+
+    def build_intraday_workspace(self, *, output_path: str, **values) -> dict[str, Any]:
+        from market_vault.research_workspace import build_local_intraday_research
+        from market_vault.research.intraday_data import intraday_summary
+        values = dict(values)
+        for key in ("start_date", "end_date"):
+            values[key] = parse_iso_date(values[key], key)
+        result = build_local_intraday_research(self.vault, output_path=output_path, **values)
+        return {"data_path": str(result.path), "summary": intraday_summary(result)}
+
     def preview_research_workspace(
         self,
         *,

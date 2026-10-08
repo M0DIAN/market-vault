@@ -668,6 +668,17 @@ class QuantResearchController(NetworkController):
     def __init__(self, runtime, *, parent: QObject | None = None) -> None:
         super().__init__(runtime, parent=parent)
         self._dataset_path = ""
+        self._intraday_path = ""
+        self._intraday_data = b""
+        self._intraday_summary: dict[str, str] = {}
+        self._intraday_preview_summary: dict[str, str] = {}
+        self._intraday_rows: tuple[tuple[str, ...], ...] = ()
+        self._intraday_columns: tuple[str, ...] = ()
+        self._intraday_page = 1
+        self._intraday_model = QtTableModel(parent=self)
+        self._intraday_preview_model = QtTableModel(parent=self)
+        self._intraday_model.set_page(_table_page((), ()))
+        self._intraday_preview_model.set_page(_table_page((), ()))
         self._dataset_summary: dict[str, str] = {}
         self._builder_summary: dict[str, str] = {}
         self._builder_values: dict[str, Any] = {}
@@ -711,6 +722,109 @@ class QuantResearchController(NetworkController):
         )
         self._set_feature_page(())
         self._set_trade_page(1)
+
+    @Property(str, notify=researchChanged)
+    def intradayPath(self) -> str:
+        return self._intraday_path
+
+    @Property(bool, notify=researchChanged)
+    def intradayLoaded(self) -> bool:
+        return bool(self._intraday_data)
+
+    @Property("QVariantMap", notify=researchChanged)
+    def intradaySummary(self) -> dict:
+        return self._intraday_summary
+
+    @Property("QVariantMap", notify=researchChanged)
+    def intradayPreviewSummary(self) -> dict:
+        return self._intraday_preview_summary
+
+    @Property(QObject, constant=True)
+    def intradayModel(self) -> QObject:
+        return self._intraday_model
+
+    @Property(QObject, constant=True)
+    def intradayPreviewModel(self) -> QObject:
+        return self._intraday_preview_model
+
+    def _intraday_arguments(self, values: dict) -> dict:
+        horizon = str(values.get("target_horizon_bars", "3")).strip()
+        return {"symbol": str(values.get("symbol", "")).strip().upper(),
+                "start_date": str(values.get("start_date", "")).strip(),
+                "end_date": str(values.get("end_date", "")).strip(),
+                "interval": str(values.get("interval", "5m")),
+                "preset": str(values.get("preset", "LIGHT_TECHNICAL")),
+                "stride_bars": _bounded_int(values.get("stride_bars", 1), "stride_bars", 1, 2**31 - 1),
+                "target_horizon_bars": None if not horizon else _bounded_int(horizon, "target_horizon_bars", 1, 2**31 - 1)}
+
+    @Slot("QVariantMap", result=bool)
+    def previewIntraday(self, values: dict) -> bool:
+        try:
+            arguments = self._intraday_arguments(values)
+        except (TypeError, ValueError) as exc:
+            return self._reject_input(exc)
+        def apply(result):
+            self._intraday_preview_summary = result[0]
+            self._intraday_preview_model.set_page(result[1])
+            self.researchChanged.emit()
+        return self._submit("intraday_preview", lambda backend: backend.preview_intraday_workspace(**arguments), apply)
+
+    def _apply_intraday(self, snapshot) -> None:
+        from ..research.intraday_data import intraday_summary
+        self._intraday_path = str(snapshot.path)
+        self._intraday_data = snapshot.content
+        self._intraday_summary = intraday_summary(snapshot)
+        report = snapshot.as_dict()["report"]
+        targets = {row["observation_key"]: row for row in report["targets"]}
+        self._intraday_columns = ("decision_time", "status", "target_status", "target_value", "reason", *report["feature_names"])
+        self._intraday_rows = tuple(
+            (row["decision_time"], row["status"], targets.get(row["observation_key"], {}).get("status", "DISABLED"),
+             _format_number(targets.get(row["observation_key"], {}).get("value")),
+             row["reason"] or targets.get(row["observation_key"], {}).get("reason") or "",
+             *(_format_number(row["features"][name]) for name in report["feature_names"]))
+            for row in report["observations"])
+        self._intraday_page = 1
+        self._set_intraday_page()
+        self.researchChanged.emit()
+
+    def _set_intraday_page(self) -> None:
+        from ..console.models import TablePage
+        start = (self._intraday_page - 1) * 100
+        self._intraday_model.set_page(TablePage(self._intraday_columns, self._intraday_rows[start:start + 100],
+                                               self._intraday_page, 100, len(self._intraday_rows)))
+
+    @Slot(int, result=bool)
+    def changeIntradayPage(self, offset: int) -> bool:
+        page = self._intraday_page + offset
+        if not 1 <= page <= max(1, (len(self._intraday_rows) + 99) // 100):
+            return False
+        self._intraday_page = page
+        self._set_intraday_page()
+        return True
+
+    @Slot("QVariantMap", str, result=bool)
+    def buildIntraday(self, values: dict, raw_path: str) -> bool:
+        try:
+            arguments = self._intraday_arguments(values)
+            path = _experiment_file_path(raw_path)
+        except (OSError, TypeError, ValueError) as exc:
+            return self._reject_input(exc)
+        def operation(backend):
+            from ..research.intraday_data import load_intraday_dataset
+            result = backend.build_intraday_workspace(output_path=str(path), **arguments)
+            return load_intraday_dataset(result["data_path"])
+        return self._submit("intraday_build", operation, self._apply_intraday)
+
+    @Slot(str, result=bool)
+    def inspectIntraday(self, raw_path: str) -> bool:
+        try:
+            path = _experiment_file_path(raw_path)
+        except (OSError, TypeError, ValueError) as exc:
+            return self._reject_input(exc)
+        def operation(backend):
+            from ..research.intraday_data import load_intraday_dataset
+            return load_intraday_dataset(path)
+        return self._submit("intraday_inspect", operation, self._apply_intraday, requires_backend=False)
 
     @Property(str, notify=researchChanged)
     def datasetPath(self) -> str:

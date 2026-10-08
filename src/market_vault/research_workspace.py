@@ -834,6 +834,78 @@ def _ensure_research_output_root(data_root: Path, output_root: Path) -> None:
         validate_directory(path)
 
 
+def plan_local_intraday_research(
+    vault: "MarketVault", *, symbol: str, start_date: date, end_date: date,
+    interval: str = "5m", preset: str = "LIGHT_TECHNICAL", stride_bars: int = 1,
+    target_horizon_bars: int | None = 3,
+) -> dict:
+    """Preview a same-session research range without requiring future days."""
+    from .research.intraday_data import INTRADAY_INTERVALS, positive_int
+    symbol = _symbol(symbol)
+    if interval not in INTRADAY_INTERVALS:
+        raise ResearchWorkspaceError("Intraday interval must be 1m, 5m, 15m or 30m")
+    preset = _preset(preset)
+    positive_int(stride_bars, "stride_bars")
+    if target_horizon_bars is not None:
+        positive_int(target_horizon_bars, "target_horizon_bars")
+    if type(start_date) is not date or type(end_date) is not date or start_date > end_date:
+        raise ResearchWorkspaceError("Intraday dates must form an ordered date range")
+    schedule = _calendar_schedule(vault, start_date=start_date, end_date=end_date)
+    days = tuple(day for day in schedule.daily_records if day.day_status == "TRADING")
+    if not days:
+        raise ResearchWorkspaceError("Intraday range contains no trading dates")
+    _, window = _feature_preset(preset)
+    settings = research_ready_settings(vault.settings)
+    complete = Catalog(settings).completed_market_bar_items(
+        symbols=[symbol], trade_dates=[day.market_calendar_date for day in days], interval=interval,
+        requested_session=RESEARCH_SESSION, adjustment=RESEARCH_ADJUSTMENT,
+        source_schema_version=RESEARCH_SOURCE_SCHEMA_VERSION,
+    )
+    rows = []
+    for day in days:
+        count = int((day.session_close - day.session_open).total_seconds() // (60 * _INTERVAL_MINUTES[interval]))
+        rows.append({"trade_date": day.market_calendar_date.isoformat(), "calendar_profile": day.session_profile,
+                     "research_data": "READY" if (symbol, day.market_calendar_date) in complete else "MISSING",
+                     "intraday_observations": str(len(range(window - 1, count, stride_bars)))})
+    missing = sum(row["research_data"] == "MISSING" for row in rows)
+    return {"symbol": symbol, "interval": interval, "preset": preset, "stride_bars": stride_bars,
+            "target_horizon_bars": target_horizon_bars, "schedule": schedule,
+            "trading_dates": tuple(day.market_calendar_date for day in days), "rows": tuple(rows),
+            "summary": {"symbol": symbol, "interval": interval, "trading_dates": str(len(days)),
+                        "intraday_observations": str(sum(int(row["intraday_observations"]) for row in rows)),
+                        "feature_window_bars": str(window), "missing_research_dates": str(missing),
+                        "build_ready": str(missing == 0).lower()}}
+
+
+def build_local_intraday_research(vault: "MarketVault", *, output_path: str | Path, **values):
+    """Compose the existing local Catalog/Canonical path and additive data writer."""
+    from dataclasses import asdict
+    from .research.intraday_data import (
+        INTRADAY_PLAN_VERSION, IntradayDataset, build_intraday_dataset, json_values, write_intraday_dataset,
+    )
+    plan = plan_local_intraday_research(vault, **values)
+    if plan["summary"]["build_ready"] != "true":
+        raise ResearchWorkspaceError("Research-ready Timestamp V2 RTH data is missing; prepare the declared dates first")
+    settings = research_ready_settings(vault.settings)
+    canonical = materialize_canonical_market_bars(
+        Catalog(settings), symbols=[plan["symbol"]], trade_dates=list(plan["trading_dates"]),
+        request_key=CanonicalRequestKey(plan["interval"], RESEARCH_SESSION, RESEARCH_ADJUSTMENT,
+                                        RESEARCH_SOURCE_SCHEMA_VERSION),
+        output_root=settings.data_root / "canonical" / "dataset=market_bars_canonical",
+        created_at=datetime.now(timezone.utc),
+    )
+    if canonical.status != "COMPLETE":
+        raise ResearchWorkspaceError("Intraday Canonical build is not COMPLETE")
+    snapshot = build_intraday_dataset({
+        "plan_schema_version": INTRADAY_PLAN_VERSION, "canonical_build_dirs": [str(canonical.build_path)],
+        "schedule": json_values(asdict(plan["schedule"])), "symbol": plan["symbol"],
+        "interval": plan["interval"], "preset": plan["preset"], "stride_bars": plan["stride_bars"],
+        "target_horizon_bars": plan["target_horizon_bars"], "dataset_as_of": None,
+    })
+    path = write_intraday_dataset(snapshot, path=output_path)
+    return IntradayDataset(snapshot.content, path)
+
+
 def build_local_research_dataset(
     vault: "MarketVault",
     *,
