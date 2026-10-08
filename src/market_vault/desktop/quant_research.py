@@ -12,7 +12,7 @@ navigation shell.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import math
 import json
@@ -72,6 +72,17 @@ class _ComparisonView:
     risk_page: Any = None
     benchmark_series: tuple[tuple[float, float], ...] = ()
     experiment: bytes = b""
+    diagnostics: _DiagnosticsView | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _DiagnosticsView:
+    summary: dict[str, str]
+    page: Any
+    labels: tuple[str, ...]
+    positions: tuple[tuple[int, int], ...]
+    groups: tuple[_ComparisonView, ...]
+    fold_rows: tuple[tuple[tuple[str, ...], ...], ...]
 
 
 def _finite_float(value: Any, field_name: str, *, nonnegative: bool = False) -> float:
@@ -427,6 +438,80 @@ def _comparison_payload_view(payload: dict, *, experiment: bytes = b"") -> _Comp
                            equity_views, risk_page, benchmark_series, experiment)
 
 
+def _run_strategy_diagnostics(path: Path, *, plan: dict) -> _ComparisonView:
+    from market_vault.research.strategy_diagnostics import run_strategy_diagnostics
+    from market_vault.research.strategy_experiment import create_strategy_diagnostics_experiment
+
+    dataset = _load_verified_dataset(path)
+    report = run_strategy_diagnostics(dataset, plan=plan)
+    snapshot = create_strategy_diagnostics_experiment(plan=plan, report=report)
+    return _diagnostics_payload_view(report, plan=plan, experiment=snapshot.content)
+
+
+def _diagnostics_page(rows):
+    return _table_page(("diagnostic_candidate", "parameters", "commission_bps", "slippage_bps",
+                        "total_return", "return_change_from_first_cost", "trade_count",
+                        "bar_close_max_drawdown", "annualized_volatility", "sharpe_ratio"), rows)
+
+
+def _fold_contribution_page(rows, *, page=1):
+    from market_vault.console.models import TablePage
+    pages = max(1, (len(rows) + TRADE_PAGE_SIZE - 1) // TRADE_PAGE_SIZE)
+    page = max(1, min(page, pages))
+    offset = (page - 1) * TRADE_PAGE_SIZE
+    return TablePage(columns=("fold_index", "validation_start_time", "validation_end_time",
+                              "validation_sample_count", "trade_count", "cash_contribution"),
+                     rows=rows[offset:offset + TRADE_PAGE_SIZE], page=page,
+                     page_size=TRADE_PAGE_SIZE, total_rows=len(rows))
+
+
+def _diagnostics_payload_view(payload: dict, *, plan: dict, experiment: bytes = b"") -> _ComparisonView:
+    """Present every candidate; selecting a group never substitutes its child report for the bundle."""
+    groups, rows, labels, positions, fold_rows = [], [], [], [], []
+    for group in payload["groups"]:
+        report = group["report"]
+        groups.append(_comparison_payload_view(report))
+        costs = group["comparison_plan"]
+        commission, slippage = str(costs["commission_bps"]), str(costs["slippage_bps"])
+        for candidate, result, risk in zip(group["candidates"], report["results"],
+                                            report["risk"]["results"], strict=True):
+            parameters = ", ".join(
+                (f"condition {axis['condition_index'] + 1}" if axis["parameter"] == "condition_threshold"
+                 else axis["parameter"]) + "=" + str(value)
+                for axis, value in zip(plan["parameter_axes"], candidate["axis_values"], strict=True)
+            ) or "—"
+            number = str(len(labels) + 1)
+            labels.append(f"{number}: {parameters} · {commission}/{slippage} bps")
+            positions.append((group["cost_index"], candidate["variant_index"]))
+            rows.append((number, parameters, commission, slippage,
+                         _format_percent(result["metrics"]["total_return"]),
+                         _format_percent(candidate["return_change_from_first_cost"]),
+                         str(result["metrics"]["trade_count"]),
+                         _format_percent(risk["bar_close_max_drawdown"]),
+                         _format_percent(risk["daily_risk"]["annualized_volatility"]),
+                         _format_number(risk["daily_risk"]["sharpe_ratio"])))
+            fold_rows.append(tuple((
+                str(fold["fold_index"] + 1),
+                datetime.fromisoformat(fold["validation_start_time"]).astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+                datetime.fromisoformat(fold["validation_end_time"]).astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+                str(fold["validation_sample_count"]), str(fold["trade_count"]),
+                _format_number(fold["cash_contribution"], 12),
+            ) for fold in candidate["fold_contributions"]))
+    diagnostics = _DiagnosticsView({
+        "evaluation_count": str(payload["evaluation_count"]),
+        "variant_count": str(payload["variant_count"]),
+        "cost_scenario_count": str(len(groups)),
+    }, _diagnostics_page(tuple(rows)), tuple(labels), tuple(positions), tuple(groups), tuple(fold_rows))
+    return replace(groups[0], experiment=experiment, diagnostics=diagnostics)
+
+
+def _experiment_payload_view(snapshot) -> _ComparisonView:
+    root = snapshot.as_dict()
+    if root["evaluation_mode"] == "DIAGNOSTICS":
+        return _diagnostics_payload_view(root["report"], plan=root["plan"], experiment=snapshot.content)
+    return _comparison_payload_view(root["report"], experiment=snapshot.content)
+
+
 def _comparison_curve_view(name, curve):
     return _ComparisonEquityView(name, tuple((
         datetime.fromisoformat(point["timestamp"]).astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
@@ -500,6 +585,61 @@ def _parse_comparison_strategies(values, admitted_features):
     return {"feature_fields": tuple(fields), "strategies": strategies}
 
 
+def _parse_comparison_windows(values, admitted_labels):
+    parsed = {}
+    for field in ("minimum_train_periods", "validation_periods", "step_periods"):
+        parsed[field] = _bounded_int(values.get(field), field, 1, 1_000_000)
+    if parsed["step_periods"] < parsed["validation_periods"]:
+        raise ValueError("step_periods must be at least validation_periods")
+    for field in ("commission_bps", "slippage_bps"):
+        parsed[field] = _finite_float(values.get(field, 0), field, nonnegative=True)
+    if parsed["commission_bps"] + parsed["slippage_bps"] >= 10_000:
+        raise ValueError("per-side costs must be below 10000 bps")
+    parsed["return_label"] = str(values.get("return_label", "")).strip()
+    if parsed["return_label"] not in admitted_labels:
+        raise ValueError("Select an execution-safe forward-open-to-close return Label.")
+    return parsed
+
+
+def _parse_diagnostics_input(values, *, path, admitted_features, admitted_labels):
+    from market_vault.research.strategy_diagnostics import (
+        STRATEGY_DIAGNOSTICS_PLAN_VERSION, normalize_strategy_diagnostics_plan,
+    )
+    from market_vault.strategy_comparison_io import normalized_comparison_plan
+
+    if type(values) is not dict or set(values) != {
+        "comparison", "strategy_name", "parameter_axes", "cost_scenarios",
+    }:
+        raise ValueError("Diagnostics require comparison, strategy_name, parameter_axes and cost_scenarios.")
+    comparison = values["comparison"]
+    if type(comparison) is not dict:
+        raise ValueError("comparison must be an object")
+    config = {**_parse_comparison_strategies(comparison, admitted_features),
+              **_parse_comparison_windows(comparison, admitted_labels)}
+    if type(values["parameter_axes"]) is not list:
+        raise ValueError("parameter_axes must be a list")
+    axes = []
+    for raw in values["parameter_axes"]:
+        if type(raw) is not dict:
+            raise ValueError("Each parameter axis must be an object")
+        axis = dict(raw)
+        if type(axis.get("values")) is str:
+            axis["values"] = [_finite_float(item.strip(), "axis value") for item in axis["values"].split(",")]
+        axes.append(axis)
+    costs = values["cost_scenarios"]
+    if type(costs) is str:
+        pairs = [item.split("/") for item in costs.split(",")]
+        if any(len(pair) != 2 for pair in pairs):
+            raise ValueError("Costs use commission/slippage pairs separated by commas.")
+        costs = [{"commission_bps": _finite_float(pair[0].strip(), "commission_bps"),
+                  "slippage_bps": _finite_float(pair[1].strip(), "slippage_bps")} for pair in pairs]
+    return normalize_strategy_diagnostics_plan({
+        "plan_schema_version": STRATEGY_DIAGNOSTICS_PLAN_VERSION,
+        "comparison_plan": normalized_comparison_plan(config, dataset_build_dir=str(path)),
+        "strategy_name": values["strategy_name"], "parameter_axes": axes, "cost_scenarios": costs,
+    })
+
+
 def _experiment_file_path(raw_path: str) -> Path:
     text = str(raw_path).strip()
     if not text:
@@ -539,6 +679,13 @@ class QuantResearchController(NetworkController):
         self._comparison_plan_json = "{}"
         self._comparison_opened = False
         self._comparison_restore_revision = 0
+        self._diagnostics_view: _DiagnosticsView | None = None
+        self._diagnostic_index = 0
+        self._diagnostics_plan_json = "{}"
+        self._comparison_diagnostics_model = QtTableModel(parent=self)
+        self._comparison_diagnostics_model.set_page(_diagnostics_page(()))
+        self._comparison_fold_model = QtTableModel(parent=self)
+        self._comparison_fold_model.set_page(_fold_contribution_page(()))
         self._feature_names: tuple[str, ...] = ()
         self._label_names: tuple[str, ...] = ()
         self._return_label_names: tuple[str, ...] = ()
@@ -604,6 +751,30 @@ class QuantResearchController(NetworkController):
     @Property(int, notify=researchChanged)
     def comparisonRestoreRevision(self) -> int:
         return self._comparison_restore_revision
+
+    @Property("QVariantMap", notify=researchChanged)
+    def comparisonDiagnosticsPlan(self) -> dict:
+        return json.loads(self._diagnostics_plan_json)
+
+    @Property("QVariantMap", notify=researchChanged)
+    def comparisonDiagnosticsSummary(self) -> dict:
+        return dict(self._diagnostics_view.summary) if self._diagnostics_view else {}
+
+    @Property("QVariantList", notify=researchChanged)
+    def comparisonDiagnosticCandidates(self) -> list[str]:
+        return list(self._diagnostics_view.labels) if self._diagnostics_view else []
+
+    @Property(int, notify=researchChanged)
+    def comparisonDiagnosticIndex(self) -> int:
+        return self._diagnostic_index
+
+    @Property(QObject, constant=True)
+    def comparisonDiagnosticsModel(self) -> QObject:
+        return self._comparison_diagnostics_model
+
+    @Property(QObject, constant=True)
+    def comparisonFoldModel(self) -> QObject:
+        return self._comparison_fold_model
 
     @Property(QObject, constant=True)
     def comparisonModel(self) -> QObject:
@@ -671,6 +842,7 @@ class QuantResearchController(NetworkController):
         self._comparison_experiment_info = {}
         self._comparison_plan_json = "{}"
         self._comparison_opened = False
+        self._clear_diagnostics()
         self._comparison_model.set_page(_comparison_page(()))
         self._comparison_risk_model.set_page(_comparison_risk_page(()))
         self._comparison_benchmark_series = ()
@@ -681,6 +853,13 @@ class QuantResearchController(NetworkController):
         self._equity_series = ()
         self._set_feature_page(())
         self._set_trade_page(1)
+
+    def _clear_diagnostics(self) -> None:
+        self._diagnostics_view = None
+        self._diagnostic_index = 0
+        self._diagnostics_plan_json = "{}"
+        self._comparison_diagnostics_model.set_page(_diagnostics_page(()))
+        self._comparison_fold_model.set_page(_fold_contribution_page(()))
 
     def _set_feature_page(self, rows: tuple[tuple[str, ...], ...]) -> None:
         self._feature_model.set_page(
@@ -980,17 +1159,7 @@ class QuantResearchController(NetworkController):
                 parsed["ridge_alpha"] = _finite_float(values.get("ridge_alpha", 1), "ridge_alpha")
                 if parsed["ridge_alpha"] <= 0:
                     raise ValueError("ridge_alpha must be strictly positive")
-            for field in ("minimum_train_periods", "validation_periods", "step_periods"):
-                parsed[field] = _bounded_int(values.get(field), field, 1, 1_000_000)
-            if parsed["step_periods"] < parsed["validation_periods"]:
-                raise ValueError("step_periods must be at least validation_periods")
-            for field in ("commission_bps", "slippage_bps"):
-                parsed[field] = _finite_float(values.get(field, 0), field, nonnegative=True)
-            if parsed["commission_bps"] + parsed["slippage_bps"] >= 10_000:
-                raise ValueError("per-side costs must be below 10000 bps")
-            parsed["return_label"] = str(values.get("return_label", "")).strip()
-            if parsed["return_label"] not in self._return_label_names:
-                raise ValueError("Select an execution-safe forward-open-to-close return Label.")
+            parsed.update(_parse_comparison_windows(values, self._return_label_names))
             path = Path(self._dataset_path)
         except (TypeError, ValueError) as exc:
             return self._reject_input(exc)
@@ -1005,6 +1174,25 @@ class QuantResearchController(NetworkController):
             apply,
             requires_backend=False,
         )
+
+    @Slot("QVariantMap", result=bool)
+    def runStrategyDiagnostics(self, values: dict[str, Any]) -> bool:
+        if not self._dataset_path:
+            return self._reject_input(ValueError("Inspect a Research Dataset first."))
+        try:
+            path = Path(self._dataset_path)
+            plan = _parse_diagnostics_input(values, path=path,
+                                           admitted_features=self._feature_names,
+                                           admitted_labels=self._return_label_names)
+        except (TypeError, ValueError) as exc:
+            return self._reject_input(exc)
+
+        def apply(view):
+            self._apply_comparison_view(view)
+            self.researchChanged.emit()
+
+        return self._submit("strategy_diagnostics", lambda backend: _run_strategy_diagnostics(path, plan=plan),
+                            apply, requires_backend=False)
 
     @Slot(str, result=bool)
     def saveComparisonExperiment(self, raw_path: str) -> bool:
@@ -1036,7 +1224,7 @@ class QuantResearchController(NetworkController):
         def operation(backend):
             from market_vault.research.strategy_experiment import load_strategy_experiment
             snapshot = load_strategy_experiment(path)
-            return _comparison_payload_view(snapshot.as_dict()["report"], experiment=snapshot.content)
+            return _experiment_payload_view(snapshot)
 
         def apply(view):
             # An archived locator is not a verified Dataset context.
@@ -1071,7 +1259,7 @@ class QuantResearchController(NetworkController):
 
         return self._submit("strategy_experiment_replay", operation, apply, requires_backend=False)
 
-    def _apply_comparison_view(self, view: _ComparisonView, *, opened_path: str = "") -> None:
+    def _apply_comparison_tables(self, view: _ComparisonView) -> None:
         selected = (self._comparison_equity[self._comparison_equity_index].name
                     if self._comparison_equity else None)
         self._comparison_summary = dict(view.summary)
@@ -1084,17 +1272,57 @@ class QuantResearchController(NetworkController):
         self._comparison_equity_index = names.index(selected) if selected in names else 0
         self._set_comparison_equity_page(1)
 
+    def _apply_comparison_view(self, view: _ComparisonView, *, opened_path: str = "") -> None:
+        self._apply_comparison_tables(view)
+        self._clear_diagnostics()
+        if view.diagnostics is not None:
+            self._diagnostics_view = view.diagnostics
+            self._comparison_diagnostics_model.set_page(view.diagnostics.page)
+            self._comparison_fold_model.set_page(_fold_contribution_page(view.diagnostics.fold_rows[0]))
+            self._comparison_equity_index = 0
+            self._set_comparison_equity_page(1)
         self._comparison_experiment = view.experiment
         self._comparison_opened = bool(opened_path)
         root = json.loads(view.experiment) if view.experiment else None
-        self._comparison_plan_json = json.dumps(root["plan"]) if root else "{}"
+        plan = root["plan"] if root else {}
+        if root and root["evaluation_mode"] == "DIAGNOSTICS":
+            self._diagnostics_plan_json = json.dumps(plan)
+            plan = plan["comparison_plan"]
+        self._comparison_plan_json = json.dumps(plan)
         self._comparison_experiment_info = ({
             "experiment_id": root["experiment_id"], "dataset_id": root["dataset_id"],
-            "dataset_build_dir": root["plan"]["dataset_build_dir"],
+            "dataset_build_dir": plan["dataset_build_dir"],
             "evaluation_mode": root["evaluation_mode"], "path": opened_path,
             "opened_snapshot": bool(opened_path),
             "name": root["name"], "notes": root["notes"], "replay_verified": False,
         } if root else {})
+
+    @Slot(int, result=bool)
+    def selectStrategyDiagnostic(self, index: int) -> bool:
+        view = self._diagnostics_view
+        if view is None or not 0 <= index < len(view.positions):
+            return False
+        group, variant = view.positions[index]
+        # Only replace presentation. The complete experiment, saved path, replay
+        # status and form restoration revision continue to refer to the bundle.
+        self._apply_comparison_tables(view.groups[group])
+        self._diagnostic_index = index
+        self._comparison_equity_index = variant
+        self._set_comparison_equity_page(1)
+        self._comparison_fold_model.set_page(_fold_contribution_page(view.fold_rows[index]))
+        self.researchChanged.emit()
+        return True
+
+    @Slot(int, result=bool)
+    def changeComparisonFoldPage(self, offset: int) -> bool:
+        page = self._comparison_fold_model.page + offset
+        if (self._diagnostics_view is None or offset not in (-1, 1)
+                or not 1 <= page <= self._comparison_fold_model.totalPages):
+            return False
+        self._comparison_fold_model.set_page(_fold_contribution_page(
+            self._diagnostics_view.fold_rows[self._diagnostic_index], page=page))
+        self.researchChanged.emit()
+        return True
 
     def _set_comparison_equity_page(self, page: int) -> None:
         from market_vault.console.models import TablePage
@@ -1114,6 +1342,9 @@ class QuantResearchController(NetworkController):
     def selectComparisonEquity(self, index: int) -> bool:
         if not 0 <= index < len(self._comparison_equity):
             return False
+        if self._diagnostics_view is not None and index < len(self._comparison_equity) - 1:
+            group = self._diagnostics_view.positions[self._diagnostic_index][0]
+            return self.selectStrategyDiagnostic(self._diagnostics_view.positions.index((group, index)))
         self._comparison_equity_index = index
         self._set_comparison_equity_page(1)
         self.researchChanged.emit()

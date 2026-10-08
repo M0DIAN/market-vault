@@ -10,6 +10,7 @@ from .dataset.cli import DatasetCLIError
 
 
 STRATEGY_EXPERIMENT_CLI_VERSION = "market-vault-strategy-experiment-cli-result-v1"
+STRATEGY_EXPERIMENT_CLI_V2_VERSION = "market-vault-strategy-experiment-cli-result-v2"
 
 
 def add_strategy_experiment_subparsers(subparsers) -> None:
@@ -21,14 +22,17 @@ def add_strategy_experiment_subparsers(subparsers) -> None:
 
 
 def research_experiment_main(args, *, replay: bool = False) -> int:
+    version = STRATEGY_EXPERIMENT_CLI_VERSION
     try:
         snapshot = load_strategy_experiment(args.experiment)
+        if snapshot.as_dict()["evaluation_mode"] == "DIAGNOSTICS":
+            version = STRATEGY_EXPERIMENT_CLI_V2_VERSION
         payload = (replay_strategy_experiment(snapshot, dataset_build_dir=getattr(args, "dataset_build_dir", None))
                    if replay else {"experiment": snapshot.as_dict()})
-        print(json.dumps({"result_schema_version": STRATEGY_EXPERIMENT_CLI_VERSION,
+        print(json.dumps({"result_schema_version": version,
                           "status": "SUCCESS", **payload}, ensure_ascii=False, indent=2, allow_nan=False))
         return 0
     except (DatasetCLIError, OSError, TypeError, ValueError, KeyError, OverflowError, RecursionError) as exc:
-        print(json.dumps({"result_schema_version": STRATEGY_EXPERIMENT_CLI_VERSION,
+        print(json.dumps({"result_schema_version": version,
                           "status": "FAILED", "error": str(exc)}, ensure_ascii=False, indent=2), file=sys.stderr)
         return 1
