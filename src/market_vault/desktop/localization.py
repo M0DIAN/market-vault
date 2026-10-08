@@ -756,6 +756,33 @@ ZH_CN: Final[dict[str, str]] = {
     "columns.retained_ingested_at": "保留快照采集时间",
 }
 
+EN.update({
+    "quant.intraday_tab": "Intraday", "quant.intraday_build": "Build & save intraday data",
+    "quant.intraday_open": "Open intraday data", "quant.intraday_stride": "Observation stride (bars)",
+    "quant.intraday_horizon": "Training target bars (blank: off)",
+    "quant.intraday_observations": "Observations", "quant.intraday_path": "Absolute intraday JSON file path",
+    "quant.intraday_help": "Same-session Features, complete price history and independent training targets. Warmup restarts each day. Missing targets retain observations. Times below are UTC. Source preparation is available in Dataset Builder.",
+    "summary.intraday_data_id": "Intraday data ID", "summary.intraday_prices": "Price bars",
+    "summary.intraday_observations": "Observations", "summary.intraday_ready": "Ready observations",
+    "summary.intraday_complete_targets": "Complete targets", "summary.intraday_incomplete_targets": "Incomplete targets",
+    "summary.intraday_missing_prices": "Missing price bars", "columns.decision_time": "Decision (UTC)",
+    "columns.target_status": "Training target", "columns.target_value": "Target return",
+    "columns.intraday_observations": "Observations", "columns.reason": "Reason",
+})
+ZH_CN.update({
+    "quant.intraday_tab": "日内研究", "quant.intraday_build": "构建并保存日内数据",
+    "quant.intraday_open": "打开日内数据", "quant.intraday_stride": "观察步长（bar）",
+    "quant.intraday_horizon": "训练目标 bar 数（留空关闭）",
+    "quant.intraday_observations": "查看观察", "quant.intraday_path": "日内 JSON 文件的绝对路径",
+    "quant.intraday_help": "同日特征、完整价格流与独立训练目标。每天重新预热；目标不完整仍保留观察。下表时间为 UTC。可在“构建数据集”中准备研究来源数据。",
+    "summary.intraday_data_id": "日内数据 ID", "summary.intraday_prices": "价格 bar 数",
+    "summary.intraday_observations": "观察数", "summary.intraday_ready": "可用观察",
+    "summary.intraday_complete_targets": "完整目标", "summary.intraday_incomplete_targets": "不完整目标",
+    "summary.intraday_missing_prices": "缺价 bar 数", "columns.decision_time": "决策时间（UTC）",
+    "columns.target_status": "训练目标状态", "columns.target_value": "目标收益",
+    "columns.intraday_observations": "观察数", "columns.reason": "原因",
+})
+
 TRANSLATIONS: Final[dict[str, dict[str, str]]] = {
     "en": EN,
     "zh-CN": ZH_CN,

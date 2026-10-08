@@ -62,6 +62,7 @@ Item {
         spacing: Theme.PixelTheme.spacingMd
 
         Components.PixelPanel {
+            visible: root.workspaceIndex !== 4
             Layout.fillWidth: true
             Layout.preferredHeight: 126
             padding: Theme.PixelTheme.panelPadding
@@ -148,6 +149,13 @@ Item {
                 glyph: "chart"
                 variant: root.workspaceIndex === 3 ? "primary" : "secondary"
                 onClicked: root.workspaceIndex = 3
+            }
+            Components.PixelButton {
+                objectName: "quantIntradayTab"
+                text: root.i18n.catalog["quant.intraday_tab"]
+                glyph: "chart"
+                variant: root.workspaceIndex === 4 ? "primary" : "secondary"
+                onClicked: root.workspaceIndex = 4
             }
             Item { Layout.fillWidth: true }
             Label {
@@ -550,6 +558,10 @@ Item {
                 }
             }
             StrategyComparisonPanel {
+                controller: root.controller
+                i18n: root.i18n
+            }
+            IntradayResearchPanel {
                 controller: root.controller
                 i18n: root.i18n
             }
