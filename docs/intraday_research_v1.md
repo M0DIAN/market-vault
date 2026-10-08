@@ -150,6 +150,6 @@ open/build failure preserves the last successful file and view. Preview is a
 separate display and never substitutes for data verification. Language changes
 retain edited parameters. The legacy Dataset context remains independent.
 
-This data milestone does not yet activate the intraday execution, strategy
-comparison or final TEST entries; those consume this format in the following
-authorized mainline tasks.
+This data contract is consumed by [execution V2](intraday_execution_v2.md) and
+[development comparison and diagnostics](intraday_development_research.md).
+Final TEST evaluation remains the following authorized task.

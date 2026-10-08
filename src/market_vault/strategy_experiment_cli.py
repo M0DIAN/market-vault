@@ -11,6 +11,7 @@ from .dataset.cli import DatasetCLIError
 
 STRATEGY_EXPERIMENT_CLI_VERSION = "market-vault-strategy-experiment-cli-result-v1"
 STRATEGY_EXPERIMENT_CLI_V2_VERSION = "market-vault-strategy-experiment-cli-result-v2"
+STRATEGY_EXPERIMENT_CLI_V3_VERSION = "market-vault-strategy-experiment-cli-result-v3"
 
 
 def add_strategy_experiment_subparsers(subparsers) -> None:
@@ -19,6 +20,7 @@ def add_strategy_experiment_subparsers(subparsers) -> None:
     replay = subparsers.add_parser("research-experiment-replay", help="Verify the Dataset and reproduce the complete saved result")
     replay.add_argument("--experiment", required=True, metavar="PATH")
     replay.add_argument("--dataset-build-dir", metavar="PATH", help="Explicit relocated Dataset directory; ID must match")
+    replay.add_argument("--intraday-data-file", metavar="PATH", help="Explicit relocated intraday file; data ID must match")
 
 
 def research_experiment_main(args, *, replay: bool = False) -> int:
@@ -27,7 +29,10 @@ def research_experiment_main(args, *, replay: bool = False) -> int:
         snapshot = load_strategy_experiment(args.experiment)
         if snapshot.as_dict()["evaluation_mode"] == "DIAGNOSTICS":
             version = STRATEGY_EXPERIMENT_CLI_V2_VERSION
-        payload = (replay_strategy_experiment(snapshot, dataset_build_dir=getattr(args, "dataset_build_dir", None))
+        if snapshot.as_dict()["evaluation_mode"].startswith("INTRADAY_"):
+            version = STRATEGY_EXPERIMENT_CLI_V3_VERSION
+        payload = (replay_strategy_experiment(snapshot, dataset_build_dir=getattr(args, "dataset_build_dir", None),
+                                              intraday_data_file=getattr(args, "intraday_data_file", None))
                    if replay else {"experiment": snapshot.as_dict()})
         print(json.dumps({"result_schema_version": version,
                           "status": "SUCCESS", **payload}, ensure_ascii=False, indent=2, allow_nan=False))

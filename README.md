@@ -110,6 +110,10 @@ For the full workflow (`init-catalog` → `calendar` → `backfill` →
 `inventory` → `audit` → `intraday-audit` → `query`), see the
 [MarketVault 使用说明](docs/USER_GUIDE.md).
 
+The intraday quant workflow adds [verified Feature/target data](docs/intraday_research_v1.md),
+[execution V2](docs/intraday_execution_v2.md), and
+[development comparison, diagnostics and replayable experiments](docs/intraday_development_research.md).
+
 ## Python access
 
 ```python

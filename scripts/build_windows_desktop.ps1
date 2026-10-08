@@ -166,6 +166,8 @@ $RequiredQmlAssets = @(
     "_internal\market_vault\desktop\qml\pages\IntradayResearchPanel.qml",
     "_internal\market_vault\desktop\qml\pages\IntradayWorkspacePanel.qml",
     "_internal\market_vault\desktop\qml\pages\IntradayBacktestPanel.qml",
+    "_internal\market_vault\desktop\qml\pages\IntradayComparisonPanel.qml",
+    "_internal\market_vault\desktop\qml\pages\IntradayResearchSettings.qml",
     "_internal\market_vault\desktop\qml\pages\RunsPage.qml",
     "_internal\market_vault\desktop\qml\pages\StorageCleanupPage.qml",
     "_internal\market_vault\desktop\qml\pages\TradingCalendarPage.qml"
