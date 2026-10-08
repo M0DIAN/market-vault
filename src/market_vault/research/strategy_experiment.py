@@ -22,6 +22,7 @@ from .._version import __version__
 from ..backtest.models import BACKTEST_ENGINE_VERSION, BacktestMetrics, BacktestTrade, _finite_number
 from ..backtest.equity import EQUITY_VERSION, BUY_AND_HOLD_VERSION, EquityPoint
 from ..backtest.risk import DAILY_RISK_VERSION, DailyRisk, DailyEquity, DailyReturn
+from ..backtest_cli import BacktestCLIError
 from ..dataset.cli import DatasetCLIError, _no_duplicate_pairs, _resolve_plan_path
 from ..strategy_comparison_io import (
     STRATEGY_COMPARISON_CLI_VERSION, STRATEGY_EQUITY_CLI_VERSION, STRATEGY_RISK_CLI_VERSION,
@@ -373,7 +374,7 @@ class StrategyExperiment:
         try:
             root = json.loads(self.content.decode("utf-8"), object_pairs_hook=_no_duplicate_pairs)
             _validate_root(root)
-        except DatasetCLIError as exc:
+        except (DatasetCLIError, BacktestCLIError) as exc:
             raise ValueError(f"invalid experiment JSON: {exc}") from exc
         object.__setattr__(self, "content", canonical_json(root))
 

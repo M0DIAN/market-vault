@@ -168,6 +168,29 @@ def test_corruption_in_unpaged_or_unselected_raw_values_changes_identity(experim
         StrategyExperiment(canonical_json(root))
 
 
+@pytest.mark.parametrize("command", ["research-experiment-open", "research-experiment-replay"])
+@pytest.mark.parametrize("field", ["commission_bps", "slippage_bps"])
+@pytest.mark.parametrize("value", [True, "bad", None, [], {}])
+def test_malformed_costs_return_structured_cli_failure_before_dataset_io(
+    experiment_snapshots, tmp_path, monkeypatch, capsys, command, field, value,
+):
+    root = experiment_snapshots["COMPARISON"].as_dict()
+    root["plan"][field] = value
+    path = tmp_path / "malformed-cost.json"
+    path.write_bytes(resign(root))
+    monkeypatch.setattr(cross_day_dataset, "load_verified_multi_source_cross_day_dataset",
+                        lambda *a, **k: pytest.fail("malformed snapshot loaded a Dataset"))
+    monkeypatch.setattr(cli, "load_settings", lambda *a, **k: pytest.fail("experiment loaded settings"))
+    with pytest.raises(ValueError, match=field + " must be a JSON number"):
+        load_strategy_experiment(path)
+    assert cli.main([command, "--experiment", str(path)]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    error = json.loads(captured.err)
+    assert error["result_schema_version"] == "market-vault-strategy-experiment-cli-result-v1"
+    assert error["status"] == "FAILED" and field + " must be a JSON number" in error["error"]
+
+
 def test_open_needs_no_dataset_and_replay_accepts_explicit_relocation(experiment_snapshots, tmp_path, monkeypatch):
     original = experiment_snapshots["RISK"]
     root = original.as_dict()
