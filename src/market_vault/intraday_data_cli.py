@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import sys
 
 from .research.intraday_data import (
     build_intraday_dataset, intraday_summary, load_intraday_dataset,
     parse_json, write_intraday_dataset,
 )
-from .dataset.cli import DatasetCLIError
+from .dataset.cli import DatasetCLIError, _coerce_plan_path
 
 
 INTRADAY_DATA_CLI_VERSION = "market-vault-intraday-data-cli-result-v1"
@@ -30,9 +29,7 @@ def research_intraday_data_main(args, *, inspect=False):
             snapshot = load_intraday_dataset(args.data)
             path = snapshot.path
         else:
-            path = Path(args.plan).absolute()
-            if path.is_symlink() or not path.is_file():
-                raise ValueError("intraday plan must be a regular file")
+            path = _coerce_plan_path(args.plan)
             snapshot = build_intraday_dataset(parse_json(path.read_bytes()), base=path.parent)
             path = write_intraday_dataset(snapshot, path=args.output)
         print(json.dumps({"result_schema_version": INTRADAY_DATA_CLI_VERSION, "status": "SUCCESS",

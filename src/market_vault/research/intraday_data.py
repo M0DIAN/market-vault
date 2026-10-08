@@ -116,7 +116,10 @@ def parse_intraday_plan(value, *, base: Path | None = None) -> dict:
     paths = value["canonical_build_dirs"]
     if type(paths) is not list or not paths:
         raise IntradayDataError("canonical_build_dirs must be a nonempty array")
-    base = Path.cwd() if base is None else base
+    if any(type(path) is not str or not path.strip() for path in paths):
+        raise IntradayDataError("Canonical build paths must be nonempty strings")
+    base = (Path.cwd() if base is None else
+            _resolve_plan_path(str(base), base=Path.cwd(), label="intraday plan base"))
     resolved = [str(_resolve_plan_path(path, base=base, label="Canonical build")) for path in paths]
     if len(set(resolved)) != len(resolved):
         raise IntradayDataError("duplicate Canonical build directories")

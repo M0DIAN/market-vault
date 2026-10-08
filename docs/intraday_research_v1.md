@@ -123,6 +123,12 @@ nonfinite values are rejected. Successful stdout contains the full data and
 summary in `market-vault-intraday-data-cli-result-v1`; documented failures
 return code 1 with structured JSON on stderr. No result is silently truncated.
 
+Plan and Canonical source paths use the existing lexical path contract: no
+`.`/`..` components, shell expansion or hidden link resolution. Relative paths
+without those components are supported. Invalid plan paths and non-string
+Canonical path elements fail before output creation, so a successful build
+never records an unreadable locator inherited from its plan directory.
+
 Python entry points are in `market_vault.research.intraday_data`:
 `build_intraday_dataset`, `write_intraday_dataset`, `load_intraday_dataset`,
 `verify_intraday_dataset`, `intraday_summary`. Execution consumers must verify

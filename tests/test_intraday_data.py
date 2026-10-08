@@ -4,12 +4,15 @@ from dataclasses import asdict, replace
 from datetime import date
 from pathlib import Path
 import json
-from types import SimpleNamespace
+import os
+import subprocess
+import sys
 
 import pytest
 
 import cross_day_helpers as cd
 from market_vault import cli
+from market_vault.dataset.cli import DatasetCLIError
 from market_vault.research.intraday_data import (
     INTRADAY_PLAN_VERSION, IntradayDataset, build_intraday_dataset, canonical_json,
     intraday_summary, json_values, load_intraday_dataset, parse_intraday_plan,
@@ -142,6 +145,44 @@ def test_strict_source_reconstruction_exclusive_write_and_cli(tmp_path, capsys):
     assert cli.main(["research-intraday-build", "--plan", str(plan_path), "--output", str(tmp_path / "bad.json")]) == 1
     assert json.loads(capsys.readouterr().err)["status"] == "FAILED"
     assert not (tmp_path / "bad.json").exists()
+
+
+@pytest.mark.parametrize("bad", [None, 1, True, {}])
+def test_cli_path_elements_fail_with_json_before_output(tmp_path, capsys, bad):
+    plan = input_plan(tmp_path)
+    plan["canonical_build_dirs"] = [bad]
+    plan_path, output = tmp_path / "invalid-plan.json", tmp_path / "output.json"
+    plan_path.write_bytes(canonical_json(plan))
+    assert cli.main(["research-intraday-build", "--plan", str(plan_path), "--output", str(output)]) == 1
+    captured = capsys.readouterr()
+    assert not captured.out
+    assert json.loads(captured.err)["status"] == "FAILED"
+    assert "nonempty strings" in captured.err and not output.exists()
+
+
+def test_cli_plan_path_cannot_publish_unreadable_relative_sources(tmp_path):
+    plan_dir, work = tmp_path / "plans", tmp_path / "work"
+    work.mkdir()
+    plan = input_plan(plan_dir)
+    plan["canonical_build_dirs"] = [str(Path(plan["canonical_build_dirs"][0]).relative_to(plan_dir))]
+    plan_path, output = plan_dir / "plan.json", work / "output.json"
+    plan_path.write_bytes(canonical_json(plan))
+    env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src")}
+    command = [sys.executable, "-c", "from market_vault.cli import main; raise SystemExit(main())"]
+    rejected = subprocess.run(command + ["research-intraday-build", "--plan", "../plans/plan.json",
+                                         "--output", str(output)], cwd=work, env=env, capture_output=True, text=True)
+    assert rejected.returncode == 1 and not rejected.stdout and not output.exists()
+    assert json.loads(rejected.stderr)["status"] == "FAILED"
+    # Supported relative plan/source locators still build and immediately reopen.
+    built = subprocess.run(command + ["research-intraday-build", "--plan", "plan.json", "--output", str(output)],
+                           cwd=plan_dir, env=env, capture_output=True, text=True)
+    assert built.returncode == 0, built.stderr
+    inspected = subprocess.run(command + ["research-intraday-inspect", "--data", str(output)],
+                               cwd=work, env=env, capture_output=True, text=True)
+    assert inspected.returncode == 0, inspected.stderr
+    assert json.loads(built.stdout)["data"] == json.loads(inspected.stdout)["data"]
+    with pytest.raises(DatasetCLIError, match="components"):
+        build_intraday_dataset(plan, base=work / ".." / "plans")
 
 
 def test_workspace_uses_real_catalog_canonical_and_only_requested_day(tmp_path):
