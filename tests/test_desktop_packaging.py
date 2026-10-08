@@ -538,6 +538,8 @@ def test_production_packaging_retains_complete_qml_runtime_contract():
         "StrategyListEditor.qml",
         "StrategyDiagnosticsDialog.qml",
         "IntradayResearchPanel.qml",
+        "IntradayWorkspacePanel.qml",
+        "IntradayBacktestPanel.qml",
         "RunsPage.qml",
         "StorageCleanupPage.qml",
         "TradingCalendarPage.qml",

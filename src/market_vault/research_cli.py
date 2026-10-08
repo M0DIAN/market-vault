@@ -26,6 +26,7 @@ from .strategy_comparison_cli import (
 from .strategy_experiment_cli import add_strategy_experiment_subparsers, research_experiment_main
 from .strategy_diagnostics_cli import add_strategy_diagnostics_subparser, research_diagnose_strategy_main
 from .intraday_data_cli import add_intraday_data_subparsers, research_intraday_data_main
+from .intraday_backtest_cli import add_intraday_backtest_subparser, research_intraday_backtest_main
 from .feature_research_cli import (
     add_feature_research_subparser,
     research_feature_report_main,
@@ -99,6 +100,7 @@ from .research_dataset import build_research_dataset
 
 
 RESEARCH_COMMANDS = frozenset({
+    "research-intraday-backtest",
     "research-intraday-build",
     "research-intraday-inspect",
     "research-build",
@@ -197,6 +199,7 @@ def add_research_subparsers(subparsers) -> None:
     add_strategy_experiment_subparsers(subparsers)
     add_strategy_diagnostics_subparser(subparsers)
     add_intraday_data_subparsers(subparsers)
+    add_intraday_backtest_subparser(subparsers)
     add_feature_research_subparser(subparsers)
     add_feature_selection_subparser(subparsers)
     add_feature_stability_subparser(subparsers)
@@ -211,6 +214,8 @@ def add_research_subparsers(subparsers) -> None:
 
 
 def run_research_command(command: str, args: argparse.Namespace) -> int:
+    if command == "research-intraday-backtest":
+        return research_intraday_backtest_main(args)
     if command in ("research-intraday-build", "research-intraday-inspect"):
         return research_intraday_data_main(args, inspect=command == "research-intraday-inspect")
     if command == "research-build":

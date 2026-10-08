@@ -2,8 +2,8 @@
 
 The desktop is a presentation layer over the already-validated v0.9 research
 authorities. This module does not implement Feature calculations or Backtest
-math. Worker operations load one explicit verified Research Dataset and call
-the existing ML adapter, Feature Research, and Backtest Engine V1 directly.
+math. Workers verify explicit local data and call the versioned research and
+execution adapters, including the independent intraday V2 path.
 
 Business imports stay inside worker functions so normal desktop startup remains
 lazy and does not initialize research/storage authorities merely by showing the
@@ -670,6 +670,7 @@ class QuantResearchController(NetworkController):
         self._dataset_path = ""
         self._intraday_path = ""
         self._intraday_data = b""
+        self._intraday_feature_names: tuple[str, ...] = ()
         self._intraday_summary: dict[str, str] = {}
         self._intraday_preview_summary: dict[str, str] = {}
         self._intraday_rows: tuple[tuple[str, ...], ...] = ()
@@ -679,6 +680,13 @@ class QuantResearchController(NetworkController):
         self._intraday_preview_model = QtTableModel(parent=self)
         self._intraday_model.set_page(_table_page((), ()))
         self._intraday_preview_model.set_page(_table_page((), ()))
+        self._intraday_backtest_summary: dict[str, str] = {}
+        self._intraday_backtest_data_id = ""
+        self._intraday_backtest_tables: tuple = ()
+        self._intraday_backtest_view = 0
+        self._intraday_backtest_page = 1
+        self._intraday_backtest_model = QtTableModel(parent=self)
+        self._intraday_backtest_model.set_page(_table_page((), ()))
         self._dataset_summary: dict[str, str] = {}
         self._builder_summary: dict[str, str] = {}
         self._builder_values: dict[str, Any] = {}
@@ -731,6 +739,101 @@ class QuantResearchController(NetworkController):
     def intradayLoaded(self) -> bool:
         return bool(self._intraday_data)
 
+    @Property("QStringList", notify=researchChanged)
+    def intradayFeatureNames(self) -> list[str]:
+        return list(self._intraday_feature_names)
+
+    @Property("QVariantMap", notify=researchChanged)
+    def intradayBacktestSummary(self) -> dict:
+        return dict(self._intraday_backtest_summary)
+
+    @Property(str, notify=researchChanged)
+    def intradayBacktestDataId(self) -> str:
+        return self._intraday_backtest_data_id
+
+    @Property(int, notify=researchChanged)
+    def intradayBacktestView(self) -> int:
+        return self._intraday_backtest_view
+
+    @Property(QObject, constant=True)
+    def intradayBacktestModel(self) -> QObject:
+        return self._intraday_backtest_model
+
+    def _set_intraday_backtest_page(self) -> None:
+        from ..console.models import TablePage
+        columns, rows = self._intraday_backtest_tables[self._intraday_backtest_view] if self._intraday_backtest_tables else ((), ())
+        start = (self._intraday_backtest_page - 1) * TRADE_PAGE_SIZE
+        self._intraday_backtest_model.set_page(TablePage(columns, rows[start:start + TRADE_PAGE_SIZE],
+            self._intraday_backtest_page, TRADE_PAGE_SIZE, len(rows)))
+
+    @Slot(int, result=bool)
+    def selectIntradayBacktestView(self, index: int) -> bool:
+        if index not in (0, 1, 2):
+            return False
+        self._intraday_backtest_view, self._intraday_backtest_page = index, 1
+        self._set_intraday_backtest_page()
+        self.researchChanged.emit()
+        return True
+
+    @Slot(int, result=bool)
+    def changeIntradayBacktestPage(self, offset: int) -> bool:
+        count = self._intraday_backtest_model.totalRows
+        page = self._intraday_backtest_page + offset
+        if not 1 <= page <= max(1, (count + TRADE_PAGE_SIZE - 1) // TRADE_PAGE_SIZE):
+            return False
+        self._intraday_backtest_page = page
+        self._set_intraday_backtest_page()
+        return True
+
+    def _intraday_execution_values(self, values: dict) -> dict:
+        defaults = {"entry_delay_minutes": 15, "stop_new_minutes": 30, "flatten_minutes": 5, "max_hold_bars": 12}
+        return {**{name: _finite_float(values.get(name), name, nonnegative=True)
+                   for name in ("commission_bps", "slippage_bps")},
+                **{name: _bounded_int(values.get(name, default), name, 0 if name == "entry_delay_minutes" else 1, 2**31 - 1)
+                   for name, default in defaults.items()}}
+
+    def _apply_intraday_backtest(self, result: dict) -> None:
+        execution = result["execution"]
+        columns_by_view = (
+            ("entry_time", "exit_time", "exit_reason", "held_bars", "quantity", "entry_fill_price", "exit_fill_price",
+             "cash_before", "cash_after", "net_return", "commission_total", "slippage_total"),
+            ("timestamp", "phase", "action", "reason", "slot", "mark_price", "cash", "quantity", "equity", "drawdown"),
+            ("trading_day", "cash_open", "cash_close", "return", "trade_count"),
+        )
+        self._intraday_backtest_tables = tuple((columns, tuple(tuple(
+            _format_number(row[name]) if type(row[name]) in (float, int) else str(row[name])
+            for name in columns) for row in execution[key]))
+            for columns, key in zip(columns_by_view, ("trades", "ledger", "daily")))
+        metrics = execution["metrics"]
+        self._intraday_backtest_summary = {
+            "trade_count": str(metrics["trade_count"]), "final_cash": _format_number(metrics["final_cash"]),
+            "total_return": _format_percent(metrics["total_return"]),
+            "observed_max_drawdown": _format_percent(metrics["observed_max_drawdown"]),
+        }
+        self._intraday_backtest_data_id = result["data_id"]
+        self._intraday_backtest_page = 1
+        self._set_intraday_backtest_page()
+        self.researchChanged.emit()
+
+    @Slot("QVariantMap", result=bool)
+    def runIntradayBacktest(self, values: dict) -> bool:
+        try:
+            if not self._intraday_data:
+                raise ValueError("Open verified intraday data before running execution V2.")
+            plan = {"plan_schema_version": "market-vault-intraday-backtest-plan-v2",
+                    "intraday_data_path": self._intraday_path,
+                    "strategy": {"name": "Intraday rule", "kind": "FEATURE_RULE", "signal_field": str(values.get("signal_field", "")),
+                                 "comparator": str(values.get("comparator", "GT")),
+                                 "threshold": _finite_float(values.get("threshold"), "threshold")},
+                    "execution": self._intraday_execution_values(values)}
+            expected_data_id = json.loads(self._intraday_data)["data_id"]
+        except (TypeError, ValueError) as exc:
+            return self._reject_input(exc)
+        def operation(backend):
+            from ..research.intraday_backtest import run_intraday_backtest
+            return run_intraday_backtest(plan, expected_data_id=expected_data_id)
+        return self._submit("intraday_backtest", operation, self._apply_intraday_backtest, requires_backend=False)
+
     @Property("QVariantMap", notify=researchChanged)
     def intradaySummary(self) -> dict:
         return self._intraday_summary
@@ -775,6 +878,7 @@ class QuantResearchController(NetworkController):
         self._intraday_data = snapshot.content
         self._intraday_summary = intraday_summary(snapshot)
         report = snapshot.as_dict()["report"]
+        self._intraday_feature_names = tuple(report["feature_names"])
         targets = {row["observation_key"]: row for row in report["targets"]}
         self._intraday_columns = ("decision_time", "status", "target_status", "target_value", "reason", *report["feature_names"])
         self._intraday_rows = tuple(

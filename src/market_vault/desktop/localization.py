@@ -783,6 +783,43 @@ ZH_CN.update({
     "columns.intraday_observations": "观察数", "columns.reason": "原因",
 })
 
+EN.update({
+    "quant.intraday_data_tab": "Data", "quant.intraday_execution_tab": "Execution V2",
+    "quant.intraday_open_first": "Open intraday data in the Data tab first.",
+    "quant.intraday_entry_delay": "Entry delay after open (min)",
+    "quant.intraday_stop_new": "Stop entry before close (min)",
+    "quant.intraday_flatten": "Flatten before close (min)",
+    "quant.intraday_max_hold": "Maximum hold (price bars)",
+    "quant.intraday_result_data": "Result data ID", "quant.intraday_ledger": "Bar ledger (UTC)",
+    "quant.intraday_daily": "Daily settlement", "summary.final_cash": "Final cash",
+    "summary.observed_max_drawdown": "Observed maximum drawdown",
+    "columns.phase": "Event phase", "columns.action": "Action", "columns.slot": "Price bar slot",
+    "columns.held_bars": "Held price bars", "columns.exit_reason": "Exit reason",
+    "columns.entry_fill_price": "Entry fill", "columns.exit_fill_price": "Exit fill",
+    "columns.cash_before": "Cash before", "columns.cash_after": "Cash after",
+    "columns.commission_total": "Commission", "columns.slippage_total": "Slippage cost",
+    "columns.trading_day": "Trading day", "columns.cash_open": "Opening cash", "columns.cash_close": "Closing cash",
+    "columns.return": "Day return", "operation.intraday_backtest": "Intraday execution V2",
+})
+ZH_CN.update({
+    "quant.intraday_data_tab": "数据", "quant.intraday_execution_tab": "执行 V2",
+    "quant.intraday_open_first": "请先在“数据”页打开日内数据。",
+    "quant.intraday_entry_delay": "开盘后禁入（分钟）",
+    "quant.intraday_stop_new": "收盘前停止入场（分钟）",
+    "quant.intraday_flatten": "收盘前清仓（分钟）",
+    "quant.intraday_max_hold": "最长持有（价格 bar）",
+    "quant.intraday_result_data": "结果数据 ID", "quant.intraday_ledger": "逐 bar 账本（UTC）",
+    "quant.intraday_daily": "每日结算", "summary.final_cash": "最终现金",
+    "summary.observed_max_drawdown": "观察点最大回撤",
+    "columns.phase": "事件阶段", "columns.action": "操作", "columns.slot": "价格 bar 序号",
+    "columns.held_bars": "持有 bar 数", "columns.exit_reason": "离场原因",
+    "columns.entry_fill_price": "入场成交价", "columns.exit_fill_price": "离场成交价",
+    "columns.cash_before": "交易前现金", "columns.cash_after": "交易后现金",
+    "columns.commission_total": "手续费", "columns.slippage_total": "滑点成本",
+    "columns.trading_day": "交易日期", "columns.cash_open": "日初现金", "columns.cash_close": "日末现金",
+    "columns.return": "日收益率", "operation.intraday_backtest": "日内执行 V2",
+})
+
 TRANSLATIONS: Final[dict[str, dict[str, str]]] = {
     "en": EN,
     "zh-CN": ZH_CN,

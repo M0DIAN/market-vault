@@ -561,7 +561,7 @@ Item {
                 controller: root.controller
                 i18n: root.i18n
             }
-            IntradayResearchPanel {
+            IntradayWorkspacePanel {
                 controller: root.controller
                 i18n: root.i18n
             }
