@@ -248,6 +248,40 @@ assert controller.tableModel.page == 2
 click('intradayTestOpenButton'); file_selected('intradayTestOpenDialog', saved_test)
 assert controller.selectionPath == '' and controller.frozenCandidate['strategy']['name'] == 'Ridge'
 assert controller.resultSummary['intraday_test_proof'] == 'RECORDED'
+# Opened proof labels are longer than freshly computed labels. At the actual
+# supported minimum, scroll the panel instead of crushing its only metrics row.
+for language in ('en', 'zh-CN'):
+    assert session.i18n.setLanguage(language)
+    for width, height in ((1000, 650), (1100, 700)):
+        window.setWidth(width); window.setHeight(height)
+        choose('intradayTestView', 0); QTest.qWait(100)
+        scroll = find('intradayFinalScroll')
+        flickable = scroll.property('contentItem')
+        assert table.height() >= 120, (language, width, height, table.height())
+        bottom = max(0, flickable.property('contentHeight') - flickable.height())
+        assert flickable.setProperty('contentY', bottom)
+        QTest.qWait(50)
+        header = find('intradayTestTableHeader')
+        viewport = next(obj for obj in table.findChildren(QObject)
+                        if obj.metaObject().className().startswith('QQuickTableView') and obj.property('height') is not None)
+        assert viewport.height() >= 32, (language, viewport.height())
+        header_top = header.mapToScene(header.boundingRect().topLeft()).y()
+        header_bottom = header.mapToScene(header.boundingRect().bottomLeft()).y()
+        row_top = viewport.mapToScene(viewport.boundingRect().topLeft()).y()
+        scroll_top = scroll.mapToScene(scroll.boundingRect().topLeft()).y()
+        scroll_bottom = scroll.mapToScene(scroll.boundingRect().bottomLeft()).y()
+        assert scroll_top <= header_top < header_bottom <= row_top + 1
+        assert row_top + 32 <= scroll_bottom
+        footer_top = next_button.mapToScene(next_button.boundingRect().topLeft()).y()
+        assert row_top + 32 <= footer_top < scroll_bottom
+        assert window.grabWindow().save(str(root / f'final-{language}-{width}-{height}.png'))
+        choose('intradayTestView', 2); QTest.qWait(50)
+        assert table.height() >= 170
+window.setWidth(1100); window.setHeight(700)
+assert session.i18n.setLanguage('en')
+choose('intradayTestView', 2)
+assert flickable.setProperty('contentY', 0)
+QTest.qWait(50)
 # Relocate this test's private source file; the shared Q5/Canonical fixture stays
 # intact. Both override values are exercised through visible file dialogs.
 moved_source, moved_data = root / 'moved-development.json', root / 'moved-data.json'

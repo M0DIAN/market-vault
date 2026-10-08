@@ -183,6 +183,8 @@ save the completed development experiment. Then use **Freeze / TEST**:
 3. Run frozen TEST. Inspect the single final model/scaler, all READY predictions,
    trades, complete ledger and daily returns. The overview includes the daily
    benchmark chart; detail views give that space to the table.
+   At the supported minimum window size, the panel scrolls vertically so the
+   result header, rows and pagination retain usable space in both languages.
 4. Save TEST. Opening it restores the embedded selection and full result without
    reading source files. The embedded selection has no invented save path.
 5. Use Replay selection to reproduce its full development source, or Replay TEST
