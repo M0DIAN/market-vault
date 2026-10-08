@@ -115,23 +115,37 @@ ApplicationWindow {
                         }
                     }
 
-                    StackLayout {
-                        id: pageContent
-                        objectName: "pageContent"
+                    ScrollView {
+                        id: workspaceViewport
+                        objectName: "adaptiveWorkspaceViewport"
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        currentIndex: shellController.currentPageIndex
+                        clip: true
+                        // Keep the existing page layout readable on small work
+                        // areas. Scroll the viewport; never scale all controls.
+                        contentWidth: Math.max(availableWidth, 750)
+                        contentHeight: Math.max(availableHeight, 504)
+                        ScrollBar.horizontal: Components.PixelScrollBar {}
+                        ScrollBar.vertical: Components.PixelScrollBar {}
 
-                        Pages.HomePage { objectName: "homePage"; dashboard: dashboardController; desktop: desktopBridge; i18n: i18nBridge }
-                        Pages.HistoricalDataPage { objectName: "historicalDataPage"; controller: historicalDataController; i18n: i18nBridge }
-                        Pages.TradingCalendarPage { objectName: "tradingCalendarPage"; controller: tradingCalendarController; i18n: i18nBridge }
-                        Pages.MarketDataPage { objectName: "marketDataPage"; controller: marketDataController; i18n: i18nBridge }
-                        Pages.InventoryPage { objectName: "inventoryPage"; controller: inventoryController; i18n: i18nBridge }
-                        Pages.QuantResearchPage { objectName: "quantResearchPage"; controller: quantResearchController; i18n: i18nBridge }
-                        Pages.AuditPage { objectName: "coverageAuditPage"; tableObjectName: "coverageAuditTable"; controller: coverageAuditController; i18n: i18nBridge }
-                        Pages.AuditPage { objectName: "intradayAuditPage"; tableObjectName: "intradayAuditTable"; controller: intradayAuditController; i18n: i18nBridge }
-                        Pages.RunsPage { objectName: "runsPage"; controller: runsController; i18n: i18nBridge }
-                        Pages.StorageCleanupPage { objectName: "storageCleanupPage"; controller: storageCleanupController; i18n: i18nBridge }
+                        StackLayout {
+                            id: pageContent
+                            objectName: "pageContent"
+                            width: workspaceViewport.contentWidth
+                            height: workspaceViewport.contentHeight
+                            currentIndex: shellController.currentPageIndex
+
+                            Pages.HomePage { objectName: "homePage"; dashboard: dashboardController; desktop: desktopBridge; i18n: i18nBridge }
+                            Pages.HistoricalDataPage { objectName: "historicalDataPage"; controller: historicalDataController; i18n: i18nBridge }
+                            Pages.TradingCalendarPage { objectName: "tradingCalendarPage"; controller: tradingCalendarController; i18n: i18nBridge }
+                            Pages.MarketDataPage { objectName: "marketDataPage"; controller: marketDataController; i18n: i18nBridge }
+                            Pages.InventoryPage { objectName: "inventoryPage"; controller: inventoryController; i18n: i18nBridge }
+                            Pages.QuantResearchPage { objectName: "quantResearchPage"; controller: quantResearchController; i18n: i18nBridge }
+                            Pages.AuditPage { objectName: "coverageAuditPage"; tableObjectName: "coverageAuditTable"; controller: coverageAuditController; i18n: i18nBridge }
+                            Pages.AuditPage { objectName: "intradayAuditPage"; tableObjectName: "intradayAuditTable"; controller: intradayAuditController; i18n: i18nBridge }
+                            Pages.RunsPage { objectName: "runsPage"; controller: runsController; i18n: i18nBridge }
+                            Pages.StorageCleanupPage { objectName: "storageCleanupPage"; controller: storageCleanupController; i18n: i18nBridge }
+                        }
                     }
                 }
             }

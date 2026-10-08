@@ -21,6 +21,7 @@ Dialog {
     parent: Overlay.overlay
     anchors.centerIn: parent
     width: Math.min(650, parent ? parent.width - 32 : 650)
+    height: Math.max(1, Math.min(implicitHeight, parent ? parent.height - 24 : implicitHeight))
     title: root.i18n.catalog["quant.diagnostics_title"]
     padding: Theme.PixelTheme.panelPadding
     standardButtons: Dialog.NoButton
@@ -112,93 +113,106 @@ Dialog {
         * count(secondAxis.currentIndex, secondValues.text) * (costs.text.trim() ? costs.text.split(",").length : 0)
 
     background: Rectangle { color: Theme.PixelTheme.surface; border.color: Theme.PixelTheme.goldDark }
-    contentItem: ColumnLayout {
-        spacing: Theme.PixelTheme.spacingMd
-        Label {
-            Layout.fillWidth: true
-            text: root.i18n.catalog["quant.diagnostics_help"]
-            wrapMode: Text.WordWrap
-            color: Theme.PixelTheme.inkMuted
-            font.pixelSize: Theme.PixelTheme.fontSm
-        }
-        Components.LabeledComboBox {
-            id: strategy
-            objectName: "quantDiagnosticsStrategy"
-            Layout.maximumWidth: 620
-            label: root.i18n.catalog["columns.strategy"]
-            model: root.strategyNames
-            onSelected: root.resetAxes()
-        }
-        GridLayout {
-            Layout.fillWidth: true
-            columns: 2
-            columnSpacing: Theme.PixelTheme.spacingMd
-            rowSpacing: Theme.PixelTheme.spacingSm
-            Components.LabeledComboBox {
-                id: firstAxis
-                objectName: "quantDiagnosticsFirstAxis"
-                Layout.maximumWidth: 290
-                label: root.i18n.catalog["quant.first_axis"]
-                model: root.axisLabels
-                onSelected: firstValues.text = root.defaultValue(currentIndex)
-            }
-            Components.LabeledTextField {
-                id: firstValues
-                objectName: "quantDiagnosticsFirstValues"
-                Layout.maximumWidth: 290
-                label: root.i18n.catalog["quant.axis_values"]
-                enabled: firstAxis.currentIndex > 0
+    contentItem: ScrollView {
+        id: strategyDiagnosticsScroll
+        objectName: "strategyDiagnosticsScroll"
+        clip: true
+        implicitHeight: strategyDiagnosticsContent.implicitHeight
+        contentWidth: Math.max(availableWidth, 600)
+        contentHeight: strategyDiagnosticsContent.implicitHeight
+        ScrollBar.horizontal: Components.PixelScrollBar {}
+        ScrollBar.vertical: Components.PixelScrollBar {}
+
+        ColumnLayout {
+            id: strategyDiagnosticsContent
+            width: strategyDiagnosticsScroll.contentWidth
+            spacing: Theme.PixelTheme.spacingMd
+            Label {
+                Layout.fillWidth: true
+                text: root.i18n.catalog["quant.diagnostics_help"]
+                wrapMode: Text.WordWrap
+                color: Theme.PixelTheme.inkMuted
+                font.pixelSize: Theme.PixelTheme.fontSm
             }
             Components.LabeledComboBox {
-                id: secondAxis
-                objectName: "quantDiagnosticsSecondAxis"
-                Layout.maximumWidth: 290
-                label: root.i18n.catalog["quant.second_axis"]
-                model: root.axisLabels
-                onSelected: secondValues.text = root.defaultValue(currentIndex)
+                id: strategy
+                objectName: "quantDiagnosticsStrategy"
+                Layout.maximumWidth: 620
+                label: root.i18n.catalog["columns.strategy"]
+                model: root.strategyNames
+                onSelected: root.resetAxes()
+            }
+            GridLayout {
+                Layout.fillWidth: true
+                columns: 2
+                columnSpacing: Theme.PixelTheme.spacingMd
+                rowSpacing: Theme.PixelTheme.spacingSm
+                Components.LabeledComboBox {
+                    id: firstAxis
+                    objectName: "quantDiagnosticsFirstAxis"
+                    Layout.maximumWidth: 290
+                    label: root.i18n.catalog["quant.first_axis"]
+                    model: root.axisLabels
+                    onSelected: firstValues.text = root.defaultValue(currentIndex)
+                }
+                Components.LabeledTextField {
+                    id: firstValues
+                    objectName: "quantDiagnosticsFirstValues"
+                    Layout.maximumWidth: 290
+                    label: root.i18n.catalog["quant.axis_values"]
+                    enabled: firstAxis.currentIndex > 0
+                }
+                Components.LabeledComboBox {
+                    id: secondAxis
+                    objectName: "quantDiagnosticsSecondAxis"
+                    Layout.maximumWidth: 290
+                    label: root.i18n.catalog["quant.second_axis"]
+                    model: root.axisLabels
+                    onSelected: secondValues.text = root.defaultValue(currentIndex)
+                }
+                Components.LabeledTextField {
+                    id: secondValues
+                    objectName: "quantDiagnosticsSecondValues"
+                    Layout.maximumWidth: 290
+                    label: root.i18n.catalog["quant.axis_values"]
+                    enabled: secondAxis.currentIndex > 0
+                }
             }
             Components.LabeledTextField {
-                id: secondValues
-                objectName: "quantDiagnosticsSecondValues"
-                Layout.maximumWidth: 290
-                label: root.i18n.catalog["quant.axis_values"]
-                enabled: secondAxis.currentIndex > 0
+                id: costs
+                objectName: "quantDiagnosticsCosts"
+                Layout.maximumWidth: 620
+                label: root.i18n.catalog["quant.cost_scenarios"]
             }
-        }
-        Components.LabeledTextField {
-            id: costs
-            objectName: "quantDiagnosticsCosts"
-            Layout.maximumWidth: 620
-            label: root.i18n.catalog["quant.cost_scenarios"]
-        }
-        Label {
-            objectName: "quantDiagnosticsCount"
-            Layout.fillWidth: true
-            text: root.i18n.catalog["quant.diagnostics_count"] + ": " + root.evaluationCount + " / 64"
-            color: Theme.PixelTheme.ink
-        }
-        Label {
-            Layout.fillWidth: true
-            visible: root.controller.status === "FAILED" || root.controller.status === "VALIDATION_ERROR"
-            text: root.controller.error
-            wrapMode: Text.WordWrap
-            color: Theme.PixelTheme.ink
-            font.pixelSize: Theme.PixelTheme.fontSm
-        }
-        RowLayout {
-            Item { Layout.fillWidth: true }
-            Components.PixelButton {
-                objectName: "quantDiagnosticsCancelButton"
-                text: root.i18n.catalog["common.cancel"]
-                onClicked: root.close()
+            Label {
+                objectName: "quantDiagnosticsCount"
+                Layout.fillWidth: true
+                text: root.i18n.catalog["quant.diagnostics_count"] + ": " + root.evaluationCount + " / 64"
+                color: Theme.PixelTheme.ink
             }
-            Components.PixelButton {
-                objectName: "quantDiagnosticsRunButton"
-                text: root.i18n.catalog["quant.run_diagnostics"]
-                variant: "primary"
-                enabled: root.inputAvailable && !root.controller.busy && !operationRuntime.busy
-                    && root.evaluationCount > 0 && root.evaluationCount <= 64
-                onClicked: { if (root.submit(root.values())) root.close() }
+            Label {
+                Layout.fillWidth: true
+                visible: root.controller.status === "FAILED" || root.controller.status === "VALIDATION_ERROR"
+                text: root.controller.error
+                wrapMode: Text.WordWrap
+                color: Theme.PixelTheme.ink
+                font.pixelSize: Theme.PixelTheme.fontSm
+            }
+            RowLayout {
+                Item { Layout.fillWidth: true }
+                Components.PixelButton {
+                    objectName: "quantDiagnosticsCancelButton"
+                    text: root.i18n.catalog["common.cancel"]
+                    onClicked: root.close()
+                }
+                Components.PixelButton {
+                    objectName: "quantDiagnosticsRunButton"
+                    text: root.i18n.catalog["quant.run_diagnostics"]
+                    variant: "primary"
+                    enabled: root.inputAvailable && !root.controller.busy && !operationRuntime.busy
+                        && root.evaluationCount > 0 && root.evaluationCount <= 64
+                    onClicked: { if (root.submit(root.values())) root.close() }
+                }
             }
         }
     }

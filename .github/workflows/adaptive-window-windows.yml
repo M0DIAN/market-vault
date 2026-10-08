@@ -10,11 +10,14 @@ on:
       - "src/market_vault/desktop/window_geometry.py"
       - "src/market_vault/desktop/qml/Main.qml"
       - "src/market_vault/desktop/qml/components/Sidebar.qml"
+      - "src/market_vault/desktop/qml/pages/IntradayResearchSettings.qml"
+      - "src/market_vault/desktop/qml/pages/StrategyDiagnosticsDialog.qml"
       - "tests/test_window_geometry.py"
       - "tests/test_window_preference_roundtrip.py"
       - "tests/test_adaptive_window_controller.py"
       - "tests/test_adaptive_window_state_regressions.py"
       - "tests/test_desktop_window_native.py"
+      - "tests/test_desktop_adaptive_layout.py"
       - "tests/test_desktop_intraday_final_test.py"
 
 permissions:
@@ -55,6 +58,12 @@ jobs:
       - name: Check focused geometry and preference regressions
         shell: pwsh
         run: python -m pytest tests/test_window_geometry.py tests/test_window_preference_roundtrip.py tests/test_adaptive_window_controller.py tests/test_adaptive_window_state_regressions.py tests/test_desktop_preferences.py -q
+      - name: Check small-workspace dialog completion through actual QML
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QT_QUICK_BACKEND: software
+        run: python -m pytest tests/test_desktop_adaptive_layout.py -q -s
       - name: Exercise actual PySide6 QML 1024x600 interaction on Windows host
         shell: pwsh
         env:

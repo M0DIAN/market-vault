@@ -190,6 +190,10 @@ class AdaptiveWindowGeometry:
         self._dirty = False
         self._normal: Rect | None = None
         self._was_maximized = False
+        self._normal_screen = ""
+        self._known_layout = self._layout_signature()
+        self._topology_recovery = False
+        self._recovery_geometry: Rect | None = None
         self._connected_screens: set[object] = set()
         self._timer = QTimer(window)
         self._timer.setSingleShot(True)
@@ -214,6 +218,7 @@ class AdaptiveWindowGeometry:
             plan.geometry.width, plan.geometry.height,
         ))
         self._normal = plan.geometry
+        self._normal_screen = screen.name()
         self._was_maximized = bool(saved and saved.get("maximized") is True)
         if self._was_maximized:
             self.window.showMaximized()
@@ -235,6 +240,19 @@ class AdaptiveWindowGeometry:
             screen.availableGeometryChanged.connect(self._on_screen_change)
             self._connected_screens.add(screen)
 
+    def _layout_signature(self):
+        return tuple(
+            (id(screen), qt_rect(screen.availableGeometry()))
+            for screen in self.application.screens()
+        )
+
+    def _notice_topology_change(self) -> bool:
+        if self._layout_signature() != self._known_layout:
+            self._topology_recovery = True
+            self._dirty = False
+            self._timer.stop()
+        return self._topology_recovery
+
     def _normal_state(self) -> bool:
         from PySide6.QtCore import Qt
         state = self.window.windowStates()
@@ -243,15 +261,24 @@ class AdaptiveWindowGeometry:
     def _on_geometry_changed(self, *_args) -> None:
         if not self._ready or self._applying or not self._normal_state():
             return
-        rect = qt_rect(self.window.geometry())
-        if rect.width < 1 or rect.height < 1:
+        if self._notice_topology_change():
+            self._on_screen_change()
             return
+        rect = qt_rect(self.window.geometry())
+        if rect.width < 1 or rect.height < 1 or rect == self._recovery_geometry:
+            return
+        self._recovery_geometry = None
         self._normal = rect
+        screen = self.window.screen()
+        self._normal_screen = screen.name() if screen is not None else ""
         self._dirty = True
         self._timer.start()
 
     def _on_window_state_changed(self, *_args) -> None:
         if not self._ready or self._applying:
+            return
+        if self._notice_topology_change():
+            self._on_screen_change()
             return
         from PySide6.QtCore import Qt
         state = self.window.windowStates()
@@ -268,11 +295,35 @@ class AdaptiveWindowGeometry:
         from PySide6.QtCore import QTimer
         if not self._ready:
             return
+        self._notice_topology_change()
         # Screen notifications can fire mid-reparent/mid-resize. Coalesce into
         # the following UI turn, not every individual QWindow geometry signal.
         QTimer.singleShot(0, self._reconcile_screens)
 
     def _reconcile_screens(self) -> None:
+        recovering = self._notice_topology_change()
+        normal, normal_screen = self._normal, self._normal_screen
+        self._known_layout = self._layout_signature()
+        applying = self._applying
+        self._applying = True
+        try:
+            self._apply_screen_geometry()
+        finally:
+            self._applying = applying
+            if recovering:
+                # A window-manager relocation is not a user's new preference,
+                # including when its rectangle already fitted the new display.
+                self._normal, self._normal_screen = normal, normal_screen
+                self._dirty = False
+                self._timer.stop()
+                self._recovery_geometry = qt_rect(self.window.geometry())
+            else:
+                screen = self.window.screen()
+                if self._normal == qt_rect(self.window.geometry()) and screen is not None:
+                    self._normal_screen = screen.name()
+            self._topology_recovery = False
+
+    def _apply_screen_geometry(self) -> None:
         from PySide6.QtCore import QRect, QSize
         screens = list(self.application.screens())
         if not screens:
@@ -353,12 +404,11 @@ class AdaptiveWindowGeometry:
             return
         self._dirty = False
         rect = self._normal
-        screen = self.window.screen()
         saved = {
             "x": rect.x, "y": rect.y, "width": rect.width,
             "height": rect.height,
             "maximized": self._was_maximized,
-            "screen": screen.name() if screen is not None else "",
+            "screen": self._normal_screen,
         }
         if not self.preferences.save_window(saved):
             self._dirty = True
