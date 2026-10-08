@@ -100,7 +100,7 @@ ColumnLayout {
         load(root.selectedIndex)
     }
     function setCondition(index, field, value) {
-        // Keep draft delegates alive while typing; commit publishes the list.
+        // Keep controls alive while typing; recreated rows read this same draft.
         root.conditionDraft[index][field] = value
     }
     function addCondition() {
@@ -204,12 +204,12 @@ ColumnLayout {
         Layout.minimumHeight: 36
         clip: true
         spacing: 4
-        model: root.conditionDraft
+        model: root.conditionDraft.length
         ScrollBar.vertical: ScrollBar {}
         delegate: RowLayout {
             id: conditionRow
             required property int index
-            required property var modelData
+            readonly property var conditionValue: root.conditionDraft[index]
             width: ListView.view.width - 12
             height: 32
             Components.PixelComboBox {
@@ -217,20 +217,20 @@ ColumnLayout {
                 Layout.fillWidth: true
                 Layout.minimumWidth: 90
                 model: root.featureOptions
-                currentIndex: Math.max(0, root.featureOptions.indexOf(modelData.signal_field))
+                currentIndex: Math.max(0, root.featureOptions.indexOf(conditionRow.conditionValue.signal_field))
                 onActivated: chosen => root.setCondition(conditionRow.index, "signal_field", currentText)
             }
             Components.PixelComboBox {
                 objectName: "quantConditionComparator" + index
                 Layout.preferredWidth: 68
                 model: [">", ">=", "<", "<="]
-                currentIndex: root.comparators.indexOf(modelData.comparator)
+                currentIndex: root.comparators.indexOf(conditionRow.conditionValue.comparator)
                 onActivated: chosen => root.setCondition(conditionRow.index, "comparator", root.comparators[chosen])
             }
             Components.PixelTextField {
                 objectName: "quantConditionThreshold" + index
                 Layout.preferredWidth: 80
-                text: String(modelData.threshold)
+                text: String(conditionRow.conditionValue.threshold)
                 onTextEdited: root.setCondition(conditionRow.index, "threshold", text)
             }
             Components.PixelButton {

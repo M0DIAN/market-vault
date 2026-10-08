@@ -610,6 +610,42 @@ assert controller.comparisonEquitySeries == []
 assert controller.comparisonEquityModel.rowCount() == 0
 assert panel.property('resultsView') == 0
 assert panel.property('showInputs') is True
+# Recreated virtual delegates must show the same draft that Run submits.
+# Build a long list through the real editor and edit one row with key events.
+select_combo('quantStrategyKind', Qt.Key_Down)
+select_combo('quantStrategyKind', Qt.Key_Down)
+for _ in range(38):
+    assert QMetaObject.invokeMethod(window.findChild(QObject, 'quantConditionAddButton'), 'clicked', Qt.DirectConnection)
+app.processEvents()
+conditions = window.findChild(QObject, 'quantStrategyConditions')
+assert conditions.property('count') == 40
+conditions.setProperty('cacheBuffer', 0)
+QTest.qWait(30)
+select_combo('quantConditionFeature0', Qt.Key_Down)
+select_combo('quantConditionComparator0', Qt.Key_Down)
+type_text('quantConditionThreshold0', '5.125')
+first_threshold = find_item('quantConditionThreshold0')
+# Focus another row so the first delegate can leave ListView's retained set.
+type_text('quantConditionThreshold1', '2')
+conditions.setProperty('currentIndex', 1)
+conditions.setProperty('contentY', conditions.property('contentHeight') - conditions.property('height'))
+QTest.qWait(80)
+import shiboken6
+assert not shiboken6.isValid(first_threshold), 'probe must destroy the edited delegate'
+conditions.setProperty('contentY', 0)
+QTest.qWait(80)
+assert find_item('quantConditionFeature0').property('currentText') == 'rsi_5'
+assert find_item('quantConditionComparator0').property('currentIndex') == 1
+assert find_item('quantConditionThreshold0').property('text') == '5.125'
+type_text('quantConditionThreshold0', '6.25')
+window.findChild(QObject, 'quantComparisonStepPeriods').setProperty('text', '2')
+type_text('quantComparisonFeatures', 'return_2,rsi_5')
+assert QMetaObject.invokeMethod(button, 'clicked', Qt.DirectConnection)
+session.runtime._poll()
+app.processEvents()
+assert strategy_plan_fields(captured[-1][1]['strategies'][0])['conditions'][0] == {{
+    'signal_field': 'rsi_5', 'comparator': 'GE', 'threshold': 6.25,
+}}
 assert session.shutdown()
 print(json.dumps({{'clicked': True, 'rows': controller.comparisonModel.rowCount()}}))
 '''
