@@ -35,7 +35,8 @@ def test_production_spec_has_exact_qml_asset_inventory() -> None:
     expected_qml = {path.name for path in QML_ROOT.rglob("*.qml")}
     assert _quoted_qml_names(production) == expected_qml
     assert "QuantResearchPage.qml" in expected_qml
-    assert len(expected_qml) == 37
+    assert "StrategyComparisonPanel.qml" in expected_qml
+    assert len(expected_qml) == 38
     for asset in (
         "qmldir",
         "fusion-pixel-12px-proportional-zh_hans.otf",

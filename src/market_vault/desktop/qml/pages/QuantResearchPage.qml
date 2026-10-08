@@ -142,6 +142,13 @@ Item {
                 variant: root.workspaceIndex === 2 ? "primary" : "secondary"
                 onClicked: root.workspaceIndex = 2
             }
+            Components.PixelButton {
+                objectName: "quantComparisonTab"
+                text: root.i18n.catalog["quant.comparison_tab"]
+                glyph: "chart"
+                variant: root.workspaceIndex === 3 ? "primary" : "secondary"
+                onClicked: root.workspaceIndex = 3
+            }
             Item { Layout.fillWidth: true }
             Label {
                 visible: root.controller.error.length > 0
@@ -541,6 +548,10 @@ Item {
                         }
                     }
                 }
+            }
+            StrategyComparisonPanel {
+                controller: root.controller
+                i18n: root.i18n
             }
         }
     }

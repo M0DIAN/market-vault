@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from concurrent.futures import Future
+import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
@@ -276,3 +280,143 @@ def test_quant_controller_source_keeps_business_imports_lazy():
     assert "market_vault.cross_day_dataset" not in prefix
     assert "market_vault.research" not in prefix
     assert "market_vault.backtest" not in prefix
+
+
+def test_comparison_qml_click_dispatches_form_values_and_shows_results(tmp_path):
+    """Actual QML button/slot wiring; the financial worker has separate integration coverage."""
+    dataset_dir = tmp_path / "dataset"
+    dataset_dir.mkdir()
+    (tmp_path / "settings.yaml").write_text("storage:\n  root_dir: ./data\n", encoding="utf-8")
+    script = f'''
+import json
+import sys
+from pathlib import Path
+from PySide6.QtCore import QObject, QMetaObject, QUrl, Qt
+from PySide6.QtGui import QGuiApplication
+from PySide6.QtQml import QQmlApplicationEngine
+from PySide6.QtQuickControls2 import QQuickStyle
+from PySide6.QtTest import QTest
+from market_vault.application import build_application_context
+from market_vault.desktop.bootstrap import create_qml_application_session
+from market_vault.desktop.preferences import DesktopPreferenceStore
+from market_vault.desktop import quant_research as quant
+sys.path.insert(0, {str(ROOT / "tests")!r})
+from test_desktop_quant_research import _Runner
+
+root_path = Path({str(tmp_path)!r})
+dataset = Path({str(dataset_dir)!r})
+runner = _Runner()
+backend_calls = []
+context = build_application_context(
+    root_path / 'settings.yaml',
+    backend_factory=lambda value: backend_calls.append(value),
+    runner_factory=lambda: runner,
+)
+QQuickStyle.setStyle('Basic')
+app = QGuiApplication([])
+engine = QQmlApplicationEngine()
+session = create_qml_application_session(
+    context, engine,
+    preference_store=DesktopPreferenceStore(root=root_path / 'preferences'),
+)
+engine.load(QUrl.fromLocalFile({str(ROOT / "src/market_vault/desktop/qml/Main.qml")!r}))
+assert engine.rootObjects()
+window = engine.rootObjects()[0]
+controller = session.context_properties['quantResearchController']
+assert session.shell.selectPage('quant_research')
+tab = window.findChild(QObject, 'quantComparisonTab')
+assert QMetaObject.invokeMethod(tab, 'clicked', Qt.DirectConnection)
+app.processEvents()
+panel = window.findChild(QObject, 'quantStrategyComparisonPanel')
+button = window.findChild(QObject, 'quantRunComparisonButton')
+assert panel.property('visible')
+assert not button.property('enabled')
+quant._inspect_dataset = lambda path: quant._DatasetView(
+    str(path), {{'dataset_id': 'd' * 64}}, ('sma_5', 'return_2', 'rsi_5'),
+    ('execution_return_1d', 'execution_return_2d'),
+    ('execution_return_1d', 'execution_return_2d'),
+)
+assert controller.inspectDataset(str(dataset))
+session.runtime._poll()
+app.processEvents()
+selections = [
+    ('quantComparisonTrendFeature', Qt.Key_Up, 'sma_5'),
+    ('quantComparisonReversionFeature', Qt.Key_Down, 'rsi_5'),
+    ('quantComparisonReturnLabel', Qt.Key_Down, 'execution_return_2d'),
+]
+for name, key, selected in selections:
+    field = window.findChild(QObject, name)
+    combo = next(c for c in field.children() if 'PixelComboBox' in c.metaObject().className())
+    combo.forceActiveFocus()
+    QTest.keyClick(window, key)
+    app.processEvents()
+    assert field.property('currentText') == selected
+for name, text in [('Train', '3'), ('Validation', '2'), ('Step', '2')]:
+    window.findChild(QObject, 'quantComparison' + name + 'Periods').setProperty('text', text)
+captured = []
+def compare(path, **values):
+    captured.append((path, values))
+    return quant._ComparisonView(
+        {{'comparison_id': 'c' * 64, 'fold_count': '3', 'common_validation_rows': '6', 'held_out_test_rows': '2'}},
+        quant._comparison_page((('Trend', '3', '1%', '2%', '0%', '100%', '—', '0', '50%'),)),
+    )
+quant._run_strategy_comparison = compare
+assert button.property('enabled')
+assert QMetaObject.invokeMethod(button, 'clicked', Qt.DirectConnection)
+session.runtime._poll()
+app.processEvents()
+assert len(captured) == 1
+path, values = captured[0]
+assert path == dataset
+assert values == {{
+    'trend_feature': 'sma_5', 'trend_threshold': 0.0,
+    'reversion_feature': 'rsi_5', 'reversion_threshold': 0.0,
+    'ridge_alpha': 1.0, 'ridge_threshold': 0.0, 'return_label': 'execution_return_2d',
+    'minimum_train_periods': 3, 'validation_periods': 2, 'step_periods': 2,
+    'commission_bps': 0.0, 'slippage_bps': 0.0,
+}}
+assert controller.comparisonModel.rowCount() == 1
+assert controller.comparisonSummary['fold_count'] == '3'
+assert runner.names == ['quant_inspect', 'strategy_comparison']
+for name, key, selected in selections:
+    assert window.findChild(QObject, name).property('currentText') == selected
+assert QMetaObject.invokeMethod(button, 'clicked', Qt.DirectConnection)
+session.runtime._poll()
+app.processEvents()
+assert len(captured) == 2
+assert captured[1] == captured[0]
+assert session.i18n.setLanguage('zh-CN')
+app.processEvents()
+assert button.property('text') == '比较策略'
+assert window.grabWindow().save(str(root_path / 'comparison-ui.png'))
+window.findChild(QObject, 'quantComparisonStepPeriods').setProperty('text', '1')
+assert QMetaObject.invokeMethod(button, 'clicked', Qt.DirectConnection)
+app.processEvents()
+assert controller.status == 'VALIDATION_ERROR'
+assert len(captured) == 2
+assert backend_calls == []
+assert session.runtime.backend_if_initialized is None
+other_dataset = root_path / 'other-dataset'
+other_dataset.mkdir()
+assert controller.inspectDataset(str(other_dataset))
+session.runtime._poll()
+app.processEvents()
+assert window.findChild(QObject, 'quantComparisonTrendFeature').property('currentText') == 'return_2'
+assert window.findChild(QObject, 'quantComparisonReversionFeature').property('currentText') == 'return_2'
+assert window.findChild(QObject, 'quantComparisonReturnLabel').property('currentText') == 'execution_return_1d'
+assert controller.comparisonModel.rowCount() == 0
+assert session.shutdown()
+print(json.dumps({{'clicked': True, 'rows': controller.comparisonModel.rowCount()}}))
+'''
+    env = os.environ.copy()
+    env["QT_QPA_PLATFORM"] = "offscreen"
+    env["QSG_RHI_BACKEND"] = "software"
+    env["PYTHONPATH"] = str(ROOT / "src")
+    result = subprocess.run(
+        [sys.executable, "-c", script], cwd=tmp_path, env=env,
+        capture_output=True, text=True, timeout=30, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["clicked"] is True
+    assert "ReferenceError" not in result.stderr
+    assert "TypeError" not in result.stderr
