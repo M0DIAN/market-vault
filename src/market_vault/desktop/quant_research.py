@@ -13,8 +13,9 @@ navigation shell.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import timezone
+from datetime import datetime, timezone
 import math
+import json
 from pathlib import Path
 from typing import Any
 
@@ -70,6 +71,7 @@ class _ComparisonView:
     equity: tuple[_ComparisonEquityView, ...] = ()
     risk_page: Any = None
     benchmark_series: tuple[tuple[float, float], ...] = ()
+    experiment: bytes = b""
 
 
 def _finite_float(value: Any, field_name: str, *, nonnegative: bool = False) -> float:
@@ -348,7 +350,7 @@ def _run_backtest(
 def _run_strategy_comparison(path: Path, **values) -> _ComparisonView:
     from market_vault.backtest import BacktestRule
     from market_vault.research.strategy_comparison import (
-        FeatureRuleStrategy, RidgeStrategy, compare_strategies,
+        FeatureRuleStrategy, RidgeStrategy,
     )
 
     with_risk = values.pop("risk_report", False)
@@ -367,77 +369,80 @@ def _run_strategy_comparison(path: Path, **values) -> _ComparisonView:
         configuration = dict(
             feature_fields=tuple(dict.fromkeys((trend, reversion))), strategies=strategies, **values,
         )
+    from market_vault.strategy_comparison_io import evaluate_comparison_payload, normalized_comparison_plan
+    from market_vault.research.strategy_experiment import create_strategy_experiment
+
     dataset = _load_verified_dataset(path)
-    equity_report = risk_report = None
-    if with_risk:
-        from market_vault.research.strategy_risk import compare_strategies_with_risk
-        risk_report = compare_strategies_with_risk(dataset, **configuration)
-        equity_report = risk_report.equity
-        report = equity_report.comparison
-    elif with_equity:
-        from market_vault.research.strategy_equity import compare_strategies_with_equity
-        equity_report = compare_strategies_with_equity(dataset, **configuration)
-        report = equity_report.comparison
-    else:
-        report = compare_strategies(dataset, **configuration)
+    mode = "RISK" if with_risk else "EQUITY" if with_equity else "COMPARISON"
+    payload = evaluate_comparison_payload(dataset, configuration, mode)
+    snapshot = create_strategy_experiment(
+        plan=normalized_comparison_plan(configuration, dataset_build_dir=str(path.resolve())),
+        report=payload, mode=mode,
+    )
+    return _comparison_payload_view(payload, experiment=snapshot.content)
+
+
+def _comparison_payload_view(payload: dict, *, experiment: bytes = b"") -> _ComparisonView:
+    """Pure presentation shared by computed and reopened complete raw reports."""
+    results = payload["results"]
     rows = tuple((
-        result.strategy.name,
-        str(result.metrics.trade_count),
-        _format_percent(result.metrics.total_return),
-        _format_percent(result.metrics.gross_total_return),
-        _format_percent(result.metrics.realized_max_drawdown),
-        _format_percent(result.metrics.win_rate),
-        _format_number(result.metrics.profit_factor),
-        str(result.metrics.overlap_skipped_count),
-        _format_percent(result.metrics.exposure),
-    ) for result in report.results)
+        result["strategy"]["name"], str(result["metrics"]["trade_count"]),
+        _format_percent(result["metrics"]["total_return"]),
+        _format_percent(result["metrics"]["gross_total_return"]),
+        _format_percent(result["metrics"]["realized_max_drawdown"]),
+        _format_percent(result["metrics"]["win_rate"]),
+        _format_number(result["metrics"]["profit_factor"]),
+        str(result["metrics"]["overlap_skipped_count"]),
+        _format_percent(result["metrics"]["exposure"]),
+    ) for result in results)
     summary = {
-        "comparison_id": report.comparison_id,
-        "fold_count": str(len(report.plan.folds)),
-        "common_validation_rows": str(len(report.validation_sample_keys)),
-        "held_out_test_rows": str(report.plan.held_out_test_count),
+        "comparison_id": payload["comparison_id"], "fold_count": str(len(payload["folds"])),
+        "common_validation_rows": str(len(payload["validation_sample_keys"])),
+        "held_out_test_rows": str(payload["held_out_test_sample_count"]),
     }
     equity_views = ()
-    if equity_report is not None:
-        summary["equity_comparison_id"] = equity_report.equity_comparison_id
-        rows = tuple(row + (_format_percent(valued.curve.bar_close_max_drawdown),)
-                     for row, valued in zip(rows, equity_report.results, strict=True))
-        equity_views = tuple(_comparison_curve_view(result.strategy.name, valued.curve)
-                             for result, valued in zip(report.results, equity_report.results, strict=True))
+    equity = payload.get("equity")
+    if equity is not None:
+        summary["equity_comparison_id"] = equity["equity_comparison_id"]
+        rows = tuple(row + (_format_percent(curve["bar_close_max_drawdown"]),)
+                     for row, curve in zip(rows, equity["results"], strict=True))
+        equity_views = tuple(_comparison_curve_view(result["strategy"]["name"], curve)
+                             for result, curve in zip(results, equity["results"], strict=True))
     risk_page, benchmark_series = None, ()
-    if risk_report is not None:
-        summary["risk_report_id"] = risk_report.risk_report_id
-        benchmark = risk_report.benchmark_curve
-        benchmark_view = _comparison_curve_view("Buy & Hold", benchmark)
+    risk = payload.get("risk")
+    if risk is not None:
+        summary["risk_report_id"] = risk["risk_report_id"]
+        benchmark = risk["benchmark"]
+        benchmark_view = _comparison_curve_view("Buy & Hold", benchmark["curve"])
         equity_views += (benchmark_view,)
         benchmark_series = benchmark_view.series
         risk_rows = tuple(_risk_row(
-            result.strategy.name, value.total_return, value.return_difference,
-            value.bar_close_max_drawdown, value.daily_risk,
-        ) for result, value in zip(report.results, risk_report.results, strict=True))
-        risk_rows += (_risk_row("Buy & Hold", benchmark.final_equity - 1, 0.0,
-                               benchmark.bar_close_max_drawdown, risk_report.benchmark_risk),)
+            result["strategy"]["name"], value["total_return"], value["return_difference"],
+            value["bar_close_max_drawdown"], value["daily_risk"],
+        ) for result, value in zip(results, risk["results"], strict=True))
+        risk_rows += (_risk_row("Buy & Hold", benchmark["total_return"], 0.0,
+                               benchmark["curve"]["bar_close_max_drawdown"], benchmark["daily_risk"]),)
         risk_page = _comparison_risk_page(risk_rows)
-    return _ComparisonView(summary, _comparison_page(rows, with_equity=with_equity),
-                           equity_views, risk_page, benchmark_series)
+    return _ComparisonView(summary, _comparison_page(rows, with_equity=equity is not None),
+                           equity_views, risk_page, benchmark_series, experiment)
 
 
 def _comparison_curve_view(name, curve):
     return _ComparisonEquityView(name, tuple((
-        point.timestamp.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
-        _format_number(point.equity), _format_percent(point.drawdown),
-        _format_number(point.cash), _format_number(point.quantity),
-        _format_number(point.mark_price), _format_number(point.market_value),
-        _format_number(point.transaction_cost), point.event,
-    ) for point in curve.points), tuple((point.timestamp.timestamp() * 1000, point.equity)
-                                       for point in curve.points))
+        datetime.fromisoformat(point["timestamp"]).astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+        _format_number(point["equity"]), _format_percent(point["drawdown"]),
+        _format_number(point["cash"]), _format_number(point["quantity"]),
+        _format_number(point["mark_price"]), _format_number(point["market_value"]),
+        _format_number(point["transaction_cost"]), point["event"],
+    ) for point in curve["points"]), tuple((datetime.fromisoformat(point["timestamp"]).timestamp() * 1000, point["equity"])
+                                          for point in curve["points"]))
 
 
 def _risk_row(name, total, difference, drawdown, risk):
     status = {None: "OK", "INSUFFICIENT_DAILY_RETURNS": "n < 2", "ZERO_VOLATILITY": "σ = 0"}
     return (name, _format_percent(total), _format_percent(difference), _format_percent(drawdown),
-            _format_percent(risk.annualized_volatility), _format_number(risk.sharpe_ratio),
-            str(risk.return_count), status[risk.unavailable_reason])
+            _format_percent(risk["annualized_volatility"]), _format_number(risk["sharpe_ratio"]),
+            str(risk["return_count"]), status[risk["unavailable_reason"]])
 
 
 def _comparison_risk_page(rows):
@@ -495,6 +500,21 @@ def _parse_comparison_strategies(values, admitted_features):
     return {"feature_fields": tuple(fields), "strategies": strategies}
 
 
+def _experiment_file_path(raw_path: str) -> Path:
+    text = str(raw_path).strip()
+    if not text:
+        raise ValueError("An experiment file path is required.")
+    path = Path(text).expanduser()
+    if not path.is_absolute():
+        url = QUrl(text)
+        if not url.isLocalFile():
+            raise ValueError("Experiment file must be an absolute local path.")
+        path = Path(url.toLocalFile()).expanduser()
+    if not path.is_absolute():
+        raise ValueError("Experiment file must be an absolute local path.")
+    return path
+
+
 class QuantResearchController(NetworkController):
     """Build, inspect, research, and backtest verified local Research Datasets."""
 
@@ -514,6 +534,11 @@ class QuantResearchController(NetworkController):
         self._feature_summary: dict[str, str] = {}
         self._backtest_summary: dict[str, str] = {}
         self._comparison_summary: dict[str, str] = {}
+        self._comparison_experiment = b""
+        self._comparison_experiment_info: dict[str, Any] = {}
+        self._comparison_plan_json = "{}"
+        self._comparison_opened = False
+        self._comparison_restore_revision = 0
         self._feature_names: tuple[str, ...] = ()
         self._label_names: tuple[str, ...] = ()
         self._return_label_names: tuple[str, ...] = ()
@@ -567,6 +592,18 @@ class QuantResearchController(NetworkController):
     @Property("QVariantMap", notify=researchChanged)
     def comparisonSummary(self) -> dict[str, str]:
         return dict(self._comparison_summary)
+
+    @Property("QVariantMap", notify=researchChanged)
+    def comparisonExperimentInfo(self) -> dict:
+        return dict(self._comparison_experiment_info)
+
+    @Property("QVariantMap", notify=researchChanged)
+    def comparisonExperimentPlan(self) -> dict:
+        return json.loads(self._comparison_plan_json)
+
+    @Property(int, notify=researchChanged)
+    def comparisonRestoreRevision(self) -> int:
+        return self._comparison_restore_revision
 
     @Property(QObject, constant=True)
     def comparisonModel(self) -> QObject:
@@ -630,6 +667,10 @@ class QuantResearchController(NetworkController):
         self._feature_summary = {}
         self._backtest_summary = {}
         self._comparison_summary = {}
+        self._comparison_experiment = b""
+        self._comparison_experiment_info = {}
+        self._comparison_plan_json = "{}"
+        self._comparison_opened = False
         self._comparison_model.set_page(_comparison_page(()))
         self._comparison_risk_model.set_page(_comparison_risk_page(()))
         self._comparison_benchmark_series = ()
@@ -816,7 +857,9 @@ class QuantResearchController(NetworkController):
             self._feature_names = view.feature_names
             self._label_names = view.label_names
             self._return_label_names = view.return_label_names
-            self._clear_results()
+            if not (self._comparison_opened and view.summary.get("dataset_id") ==
+                    self._comparison_experiment_info.get("dataset_id")):
+                self._clear_results()
             self.researchChanged.emit()
 
         return self._submit(
@@ -953,17 +996,7 @@ class QuantResearchController(NetworkController):
             return self._reject_input(exc)
 
         def apply(view: _ComparisonView) -> None:
-            selected = (self._comparison_equity[self._comparison_equity_index].name
-                        if self._comparison_equity else None)
-            self._comparison_summary = dict(view.summary)
-            self._comparison_model.set_page(view.page)
-            self._comparison_risk_model.set_page(view.risk_page if view.risk_page is not None
-                                                else _comparison_risk_page(()))
-            self._comparison_benchmark_series = view.benchmark_series
-            self._comparison_equity = view.equity
-            names = [item.name for item in view.equity]
-            self._comparison_equity_index = names.index(selected) if selected in names else 0
-            self._set_comparison_equity_page(1)
+            self._apply_comparison_view(view)
             self.researchChanged.emit()
 
         return self._submit(
@@ -972,6 +1005,96 @@ class QuantResearchController(NetworkController):
             apply,
             requires_backend=False,
         )
+
+    @Slot(str, result=bool)
+    def saveComparisonExperiment(self, raw_path: str) -> bool:
+        if not self._comparison_experiment:
+            return self._reject_input(ValueError("Complete or open a strategy experiment first."))
+        try:
+            path = _experiment_file_path(raw_path)
+        except (TypeError, ValueError) as exc:
+            return self._reject_input(exc)
+        captured = self._comparison_experiment
+
+        def operation(backend):
+            from market_vault.research.strategy_experiment import StrategyExperiment, write_strategy_experiment
+            return write_strategy_experiment(StrategyExperiment(captured), path=path)
+
+        def apply(result):
+            self._comparison_experiment_info = {**self._comparison_experiment_info, "path": str(result.path)}
+            self.researchChanged.emit()
+
+        return self._submit("strategy_experiment_save", operation, apply, requires_backend=False)
+
+    @Slot(str, result=bool)
+    def openComparisonExperiment(self, raw_path: str) -> bool:
+        try:
+            path = _experiment_file_path(raw_path)
+        except (TypeError, ValueError) as exc:
+            return self._reject_input(exc)
+
+        def operation(backend):
+            from market_vault.research.strategy_experiment import load_strategy_experiment
+            snapshot = load_strategy_experiment(path)
+            return _comparison_payload_view(snapshot.as_dict()["report"], experiment=snapshot.content)
+
+        def apply(view):
+            # An archived locator is not a verified Dataset context.
+            self._dataset_path = ""
+            self._dataset_summary = {}
+            self._feature_names = self._label_names = self._return_label_names = ()
+            self._clear_results()
+            self._apply_comparison_view(view, opened_path=str(path))
+            self._comparison_restore_revision += 1
+            self.researchChanged.emit()
+
+        return self._submit("strategy_experiment_open", operation, apply, requires_backend=False)
+
+    @Slot(str, result=bool)
+    def replayComparisonExperiment(self, raw_dataset_path: str = "") -> bool:
+        if not self._comparison_experiment:
+            return self._reject_input(ValueError("Complete or open a strategy experiment first."))
+        try:
+            path = _dataset_directory(raw_dataset_path) if raw_dataset_path.strip() else None
+        except (OSError, TypeError, ValueError) as exc:
+            return self._reject_input(exc)
+        captured = self._comparison_experiment
+
+        def operation(backend):
+            from market_vault.research.strategy_experiment import StrategyExperiment, replay_strategy_experiment
+            return replay_strategy_experiment(StrategyExperiment(captured), dataset_build_dir=path)
+
+        def apply(result):
+            self._comparison_experiment_info = {**self._comparison_experiment_info,
+                "replay_verified": True, "report_sha256": result["actual_report_sha256"]}
+            self.researchChanged.emit()
+
+        return self._submit("strategy_experiment_replay", operation, apply, requires_backend=False)
+
+    def _apply_comparison_view(self, view: _ComparisonView, *, opened_path: str = "") -> None:
+        selected = (self._comparison_equity[self._comparison_equity_index].name
+                    if self._comparison_equity else None)
+        self._comparison_summary = dict(view.summary)
+        self._comparison_model.set_page(view.page)
+        self._comparison_risk_model.set_page(view.risk_page if view.risk_page is not None
+                                            else _comparison_risk_page(()))
+        self._comparison_benchmark_series = view.benchmark_series
+        self._comparison_equity = view.equity
+        names = [item.name for item in view.equity]
+        self._comparison_equity_index = names.index(selected) if selected in names else 0
+        self._set_comparison_equity_page(1)
+
+        self._comparison_experiment = view.experiment
+        self._comparison_opened = bool(opened_path)
+        root = json.loads(view.experiment) if view.experiment else None
+        self._comparison_plan_json = json.dumps(root["plan"]) if root else "{}"
+        self._comparison_experiment_info = ({
+            "experiment_id": root["experiment_id"], "dataset_id": root["dataset_id"],
+            "dataset_build_dir": root["plan"]["dataset_build_dir"],
+            "evaluation_mode": root["evaluation_mode"], "path": opened_path,
+            "opened_snapshot": bool(opened_path),
+            "name": root["name"], "notes": root["notes"], "replay_verified": False,
+        } if root else {})
 
     def _set_comparison_equity_page(self, page: int) -> None:
         from market_vault.console.models import TablePage
