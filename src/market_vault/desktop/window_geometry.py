@@ -255,8 +255,9 @@ class AdaptiveWindowGeometry:
             return
         from PySide6.QtCore import Qt
         state = self.window.windowStates()
-        # Minimizing a maximized window must not erase the restore preference.
-        if not bool(state & Qt.WindowMinimized):
+        # Temporary minimized/fullscreen states must not erase how the user
+        # last wanted the ordinary desktop window restored.
+        if not bool(state & (Qt.WindowMinimized | Qt.WindowFullScreen)):
             self._was_maximized = bool(state & Qt.WindowMaximized)
         self._dirty = True
         self._timer.start()
@@ -294,8 +295,17 @@ class AdaptiveWindowGeometry:
         visible = (area.x <= usable.x and area.y <= usable.y
                    and usable.right <= area.right and usable.bottom <= area.bottom)
         if not self._normal_state():
-            # Maximized geometry belongs to Qt, but new screen dimensions must
-            # still adjust the ordinary-window minimum after restoration.
+            # Keep the window-manager-owned geometry, but update its minimum
+            # now: a stale minimum can exceed a newly smaller work area.
+            limits = window_plan(area, frame=frame)
+            applying = self._applying
+            self._applying = True
+            try:
+                self.window.setMinimumSize(QSize(
+                    limits.minimum_width, limits.minimum_height,
+                ))
+            finally:
+                self._applying = applying
             return
         reference = {"x": current.x, "y": current.y, "width": current.width,
                      "height": current.height, "maximized": False, "screen": selected.name()}

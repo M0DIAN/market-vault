@@ -13,6 +13,8 @@ on:
       - "tests/test_window_geometry.py"
       - "tests/test_window_preference_roundtrip.py"
       - "tests/test_adaptive_window_controller.py"
+      - "tests/test_adaptive_window_state_regressions.py"
+      - "tests/test_desktop_window_native.py"
       - "tests/test_desktop_intraday_final_test.py"
 
 permissions:
@@ -44,11 +46,18 @@ jobs:
           QT_QPA_PLATFORM: windows
           QT_QUICK_BACKEND: software
         run: python -m market_vault.desktop.app --smoke-exit-ms 1500
+      - name: Check native window placement and state restoration
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: windows
+          QT_QUICK_BACKEND: software
+        run: python -m pytest tests/test_desktop_window_native.py -q -s
+      - name: Check focused geometry and preference regressions
+        shell: pwsh
+        run: python -m pytest tests/test_window_geometry.py tests/test_window_preference_roundtrip.py tests/test_adaptive_window_controller.py tests/test_adaptive_window_state_regressions.py tests/test_desktop_preferences.py -q
       - name: Exercise actual PySide6 QML 1024x600 interaction on Windows host
         shell: pwsh
         env:
           QT_QPA_PLATFORM: offscreen
           QT_QUICK_BACKEND: software
-        run: |
-          python -m pytest tests/test_window_geometry.py tests/test_window_preference_roundtrip.py tests/test_adaptive_window_controller.py -q
-          python -m pytest tests/test_desktop_intraday_final_test.py -q
+        run: python -m pytest tests/test_desktop_intraday_final_test.py -q
