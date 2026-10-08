@@ -9,7 +9,29 @@ ColumnLayout {
     objectName: "quantStrategyComparisonPanel"
     required property var controller
     required property var i18n
+    property string datasetKey: ""
+    property var featureOptions: []
+    property var returnOptions: []
     spacing: Theme.PixelTheme.spacingSm
+
+    function syncDataset() {
+        const key = root.controller.datasetPath + "|" + (root.controller.datasetSummary.dataset_id || "")
+        if (!root.controller.datasetLoaded || key === root.datasetKey)
+            return
+        root.datasetKey = key
+        root.featureOptions = root.controller.featureNames
+        root.returnOptions = root.controller.returnLabelNames
+        const index = Math.max(0, root.featureOptions.indexOf("return_2"))
+        trendFeature.currentIndex = index
+        reversionFeature.currentIndex = index
+        returnLabel.currentIndex = 0
+    }
+
+    Component.onCompleted: syncDataset()
+    Connections {
+        target: root.controller
+        function onResearchChanged() { root.syncDataset() }
+    }
 
     function comparisonValues() {
         return {
@@ -41,8 +63,7 @@ ColumnLayout {
                 id: trendFeature
                 objectName: "quantComparisonTrendFeature"
                 label: root.i18n.catalog["quant.trend_feature"]
-                model: root.controller.featureNames
-                currentIndex: Math.max(0, root.controller.featureNames.indexOf("return_2"))
+                model: root.featureOptions
             }
             Components.LabeledTextField {
                 id: trendThreshold
@@ -53,8 +74,7 @@ ColumnLayout {
                 id: reversionFeature
                 objectName: "quantComparisonReversionFeature"
                 label: root.i18n.catalog["quant.reversion_feature"]
-                model: root.controller.featureNames
-                currentIndex: Math.max(0, root.controller.featureNames.indexOf("return_2"))
+                model: root.featureOptions
             }
             Components.LabeledTextField {
                 id: reversionThreshold
@@ -63,8 +83,9 @@ ColumnLayout {
             }
             Components.LabeledComboBox {
                 id: returnLabel
+                objectName: "quantComparisonReturnLabel"
                 label: root.i18n.catalog["quant.return_label"]
-                model: root.controller.returnLabelNames
+                model: root.returnOptions
             }
             Components.LabeledTextField {
                 id: ridgeAlpha

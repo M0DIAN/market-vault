@@ -295,6 +295,7 @@ from PySide6.QtCore import QObject, QMetaObject, QUrl, Qt
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuickControls2 import QQuickStyle
+from PySide6.QtTest import QTest
 from market_vault.application import build_application_context
 from market_vault.desktop.bootstrap import create_qml_application_session
 from market_vault.desktop.preferences import DesktopPreferenceStore
@@ -331,12 +332,25 @@ button = window.findChild(QObject, 'quantRunComparisonButton')
 assert panel.property('visible')
 assert not button.property('enabled')
 quant._inspect_dataset = lambda path: quant._DatasetView(
-    str(path), {{'dataset_id': 'd' * 64}}, ('sma_5', 'return_2'),
-    ('execution_return_1d',), ('execution_return_1d',),
+    str(path), {{'dataset_id': 'd' * 64}}, ('sma_5', 'return_2', 'rsi_5'),
+    ('execution_return_1d', 'execution_return_2d'),
+    ('execution_return_1d', 'execution_return_2d'),
 )
 assert controller.inspectDataset(str(dataset))
 session.runtime._poll()
 app.processEvents()
+selections = [
+    ('quantComparisonTrendFeature', Qt.Key_Up, 'sma_5'),
+    ('quantComparisonReversionFeature', Qt.Key_Down, 'rsi_5'),
+    ('quantComparisonReturnLabel', Qt.Key_Down, 'execution_return_2d'),
+]
+for name, key, selected in selections:
+    field = window.findChild(QObject, name)
+    combo = next(c for c in field.children() if 'PixelComboBox' in c.metaObject().className())
+    combo.forceActiveFocus()
+    QTest.keyClick(window, key)
+    app.processEvents()
+    assert field.property('currentText') == selected
 for name, text in [('Train', '3'), ('Validation', '2'), ('Step', '2')]:
     window.findChild(QObject, 'quantComparison' + name + 'Periods').setProperty('text', text)
 captured = []
@@ -355,15 +369,22 @@ assert len(captured) == 1
 path, values = captured[0]
 assert path == dataset
 assert values == {{
-    'trend_feature': 'return_2', 'trend_threshold': 0.0,
-    'reversion_feature': 'return_2', 'reversion_threshold': 0.0,
-    'ridge_alpha': 1.0, 'ridge_threshold': 0.0, 'return_label': 'execution_return_1d',
+    'trend_feature': 'sma_5', 'trend_threshold': 0.0,
+    'reversion_feature': 'rsi_5', 'reversion_threshold': 0.0,
+    'ridge_alpha': 1.0, 'ridge_threshold': 0.0, 'return_label': 'execution_return_2d',
     'minimum_train_periods': 3, 'validation_periods': 2, 'step_periods': 2,
     'commission_bps': 0.0, 'slippage_bps': 0.0,
 }}
 assert controller.comparisonModel.rowCount() == 1
 assert controller.comparisonSummary['fold_count'] == '3'
 assert runner.names == ['quant_inspect', 'strategy_comparison']
+for name, key, selected in selections:
+    assert window.findChild(QObject, name).property('currentText') == selected
+assert QMetaObject.invokeMethod(button, 'clicked', Qt.DirectConnection)
+session.runtime._poll()
+app.processEvents()
+assert len(captured) == 2
+assert captured[1] == captured[0]
 assert session.i18n.setLanguage('zh-CN')
 app.processEvents()
 assert button.property('text') == '比较策略'
@@ -372,9 +393,18 @@ window.findChild(QObject, 'quantComparisonStepPeriods').setProperty('text', '1')
 assert QMetaObject.invokeMethod(button, 'clicked', Qt.DirectConnection)
 app.processEvents()
 assert controller.status == 'VALIDATION_ERROR'
-assert len(captured) == 1
+assert len(captured) == 2
 assert backend_calls == []
 assert session.runtime.backend_if_initialized is None
+other_dataset = root_path / 'other-dataset'
+other_dataset.mkdir()
+assert controller.inspectDataset(str(other_dataset))
+session.runtime._poll()
+app.processEvents()
+assert window.findChild(QObject, 'quantComparisonTrendFeature').property('currentText') == 'return_2'
+assert window.findChild(QObject, 'quantComparisonReversionFeature').property('currentText') == 'return_2'
+assert window.findChild(QObject, 'quantComparisonReturnLabel').property('currentText') == 'execution_return_1d'
+assert controller.comparisonModel.rowCount() == 0
 assert session.shutdown()
 print(json.dumps({{'clicked': True, 'rows': controller.comparisonModel.rowCount()}}))
 '''
