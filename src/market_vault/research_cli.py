@@ -29,6 +29,7 @@ from .intraday_data_cli import add_intraday_data_subparsers, research_intraday_d
 from .intraday_backtest_cli import add_intraday_backtest_subparser, research_intraday_backtest_main
 from .intraday_research_cli import add_intraday_research_subparsers, research_intraday_research_main
 from .intraday_performance_cli import add_intraday_performance_subparser, research_intraday_performance_main
+from .intraday_saved_comparison_cli import add_intraday_saved_comparison_subparser, research_intraday_saved_comparison_main
 from .intraday_execution_scenarios_cli import add_intraday_execution_scenarios_subparsers, research_intraday_execution_scenarios_main
 from .intraday_final_cli import add_intraday_final_subparsers, research_intraday_final_main
 from .feature_research_cli import (
@@ -107,6 +108,7 @@ RESEARCH_COMMANDS = frozenset({
     "research-intraday-freeze", "research-intraday-test",
     "research-intraday-plan", "research-intraday-compare", "research-intraday-diagnose",
     "research-intraday-performance",
+    "research-intraday-compare-saved",
     "research-intraday-scenarios", "research-intraday-export-scenario",
     "research-intraday-backtest",
     "research-intraday-build",
@@ -210,6 +212,7 @@ def add_research_subparsers(subparsers) -> None:
     add_intraday_backtest_subparser(subparsers)
     add_intraday_research_subparsers(subparsers)
     add_intraday_performance_subparser(subparsers)
+    add_intraday_saved_comparison_subparser(subparsers)
     add_intraday_execution_scenarios_subparsers(subparsers)
     add_intraday_final_subparsers(subparsers)
     add_feature_research_subparser(subparsers)
@@ -230,6 +233,8 @@ def run_research_command(command: str, args: argparse.Namespace) -> int:
         return research_intraday_execution_scenarios_main(args, command=command)
     if command == "research-intraday-performance":
         return research_intraday_performance_main(args)
+    if command == "research-intraday-compare-saved":
+        return research_intraday_saved_comparison_main(args)
     if command in ("research-intraday-freeze", "research-intraday-test"):
         return research_intraday_final_main(args, command=command)
     if command in ("research-intraday-plan", "research-intraday-compare", "research-intraday-diagnose"):

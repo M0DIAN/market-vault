@@ -7,6 +7,10 @@ the complete candidate predictions, fold models, execution ledger, daily risk
 and benchmark evidence. It does not evaluate the held-out TEST period, select a
 winner automatically or introduce release, deployment or live trading.
 
+For two explicitly selected saved records, see
+[saved experiment A/B comparison](intraday_saved_comparison.md). Matching DEV
+evaluation evidence permits neutral differences; TEST remains descriptive.
+
 ## Explicit trading-day boundaries
 
 `research-intraday-plan` proposes a plan before evaluation. From the verified

@@ -396,3 +396,52 @@ def test_actual_cli_freeze_test_open_and_structured_preflight(selection_case, tm
     bad[bad.index("--cost-index") + 1] = "True"
     assert cli.main(bad) == 1
     assert json.loads(capsys.readouterr().err)["status"] == "FAILED"
+
+
+def test_saved_comparison_test_and_mixed_cli_are_descriptive_without_source_access(
+        intraday_experiment, final_case, tmp_path, monkeypatch, capsys):
+    from market_vault.research.intraday_saved_comparison import compare_saved_intraday_experiments
+    tested = final_case[1]
+    paths = [tmp_path / "development.json", tmp_path / "test.json"]
+    for snapshot, path in zip((intraday_experiment, tested), paths, strict=True):
+        write_strategy_experiment(snapshot, path=path)
+    before = [path.read_bytes() for path in paths]
+    blocked = lambda *a, **kw: pytest.fail("saved TEST comparison read source, loaded settings, or fitted")
+    monkeypatch.setattr(research, "load_intraday_dataset", blocked)
+    monkeypatch.setattr(final, "load_intraday_dataset", blocked)
+    monkeypatch.setattr(final, "load_strategy_experiment", blocked)
+    monkeypatch.setattr(research, "_fit", blocked)
+    monkeypatch.setattr(cli, "load_settings", blocked)
+    for left_path, left_id, index in ((paths[1], tested.experiment_id, 0),
+                                      (paths[0], intraday_experiment.experiment_id, 2)):
+        args = ["research-intraday-compare-saved", "--left", str(left_path), "--right", str(paths[1]),
+                "--left-candidate-index", str(index)]
+        assert cli.main(args) == 0
+        captured = capsys.readouterr()
+        assert not captured.err
+        result = json.loads(captured.out)["report"]
+        assert result["status"] == "SUCCESS" and not result["delta_allowed"]
+        assert result["left"]["experiment_id"] == left_id
+        assert result["right"]["experiment_id"] == tested.experiment_id
+        assert result["right"]["evaluation_mode"] == "INTRADAY_TEST"
+        assert result["right"]["candidate_id"] == final_case[0]["final_test_id"]
+        assert result["right"]["candidate_performance"]["status"] == "AVAILABLE"
+        for section in ("strategy_metrics", "benchmark_metrics"):
+            assert result[section]
+            assert all(row["delta"]["value"] is None and row["delta"]["unavailable_reason"] == "TEST_DESCRIPTIVE_ONLY"
+                       for row in result[section])
+        metrics = {row["metric"]: row for row in result["strategy_metrics"]}
+        assert metrics["prediction_count"]["right"]["value"] == 444
+        assert metrics["total_return"]["right"]["value"] == final_case[0]["execution"]["metrics"]["total_return"]
+        assert metrics["total_return"]["right"]["evidence"] == "RECORDED"
+    for kwargs in ({"right_cost_index": 1}, {"right_candidate_index": 1}, {"left_candidate_index": True}):
+        with pytest.raises(ValueError):
+            compare_saved_intraday_experiments(tested, tested, **kwargs)
+    assert [path.read_bytes() for path in paths] == before
+
+
+def test_saved_comparison_rejects_selection_artifacts_without_running_them(selection_case, intraday_experiment, monkeypatch):
+    from market_vault.research.intraday_saved_comparison import compare_saved_intraday_experiments
+    monkeypatch.setattr(final, "run_intraday_final_test", lambda *a, **kw: pytest.fail("comparison evaluated a selection"))
+    with pytest.raises(ValueError):
+        compare_saved_intraday_experiments(selection_case[1], intraday_experiment)
