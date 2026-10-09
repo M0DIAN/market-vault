@@ -9,6 +9,11 @@ CI, squash merge and verification of the resulting natural main-push CI before
 implementation of the next item begins. This is source development and
 integration; release, deployment and live trading are outside this package.
 
+The subsequent [Q18–Q20 package](intraday_research_quality_next.md), selected
+after these capabilities were completed, covers sequential selection,
+per-signal bar-delay stress and daily cash reallocation. It preserves the
+statistical and capital contracts below.
+
 ## Why these three tasks
 
 The existing system already provides rule/Composite/Ridge comparisons,
