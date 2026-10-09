@@ -655,10 +655,86 @@ print('REAL_EXECUTION_SCENARIOS_FREEZE_WORKFLOW_OK')
     assert "ReferenceError" not in result.stderr and "TypeError" not in result.stderr
 
 
-def test_actual_qml_offline_performance_views_in_both_languages(intraday_experiment, final_case, tmp_path):
+def test_risk_views_keep_selected_accounts_and_offline_proofs(qt_app, saved_comparison_diagnostics,
+        intraday_experiment, final_case, tmp_path, monkeypatch):
+    from market_vault.research import intraday_risk_diagnostics as diagnostics
+    from market_vault.desktop.intraday_research import risk_value
+    calls = []
+    analyze = diagnostics.analyze_intraday_risk_diagnostics
+
+    def captured(snapshot, **indices):
+        calls.append((snapshot.experiment_id, indices))
+        return analyze(snapshot, **indices)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Risk display must not load, fit, or execute")
+
+    monkeypatch.setattr(diagnostics, "analyze_intraday_risk_diagnostics", captured)
+    for name in ("load_intraday_dataset", "fit_ridge_rows", "run_intraday_execution"):
+        monkeypatch.setattr(research, name, forbidden)
+    backend_calls = []
+    runtime, runner = _runtime(tmp_path, backend_calls)
+    owner = QuantResearchController(runtime)
+    development, controller = owner.intradayResearchController, owner.intradayFinalController
+    development._apply(saved_comparison_diagnostics, path=str(tmp_path / "diagnostic.json"), opened=True)
+    assert development.selectCandidate(6)  # cost 1, candidate 2, not the first result
+    source = development.selection_source()
+    assert development.selectView(11)
+    report = development._risk_report
+    assert (report["cost_index"], report["candidate_index"], report["candidate_id"]) == (
+        1, 2, source["candidate_id"])
+    before = (development._content, development.experimentPath, development.restoredPlan,
+              development.restoreRevision, development.resultSummary)
+    for view in range(11, 16):
+        assert development.selectView(view)
+        assert {row[0] for row in development._rows} == {"STRATEGY", "BENCHMARK"}
+    assert len(calls) == 1 and development._risk_report is report
+    assert (development._content, development.experimentPath, development.restoredPlan,
+            development.restoreRevision, development.resultSummary) == before
+    assert development.selectCandidate(4)
+    assert development._risk_report["candidate_id"] != report["candidate_id"]
+    assert development._risk_report["candidate_index"] == 0
+
+    development._apply(intraday_experiment, opened=True)
+    assert development.selectCandidate(0) and development.selectView(13)
+    rows = {(row[0], row[1], row[2]): row for row in development._rows}
+    assert rows["STRATEGY", "TRADE_RETURNS", "sample_count"][3:5] == ("0", "COUNT")
+    assert rows["STRATEGY", "TRADE_RETURNS", "p05"][3:] == ("—", "RATIO", "NO_TRADES")
+    assert rows["STRATEGY", "DAILY_RETURNS", "p05"][3:] == ("0%", "RATIO", "")
+    assert rows["BENCHMARK", "TRADE_RETURNS", "sample_count"][3] != "0"
+    assert risk_value(1e-9, "RATIO") != "0%"
+    assert "Infinity" not in risk_value(1e308, "RATIO")
+
+    partial = _unavailable_saved_candidate(intraday_experiment)
+    development._apply(partial, opened=True)
+    assert development.selectCandidate(1) and development.selectView(11)
+    assert development._risk_report["strategy_diagnostics"]["status"] == "UNAVAILABLE"
+    assert development._risk_report["benchmark_diagnostics"]["status"] == "AVAILABLE"
+    assert next(row for row in development._rows if row[0] == "STRATEGY")[-1] == "RECORDED_CASH_RECONCILIATION_FAILED"
+    assert any(row[0] == "BENCHMARK" and row[2] == "maximum_drawdown" for row in development._rows)
+
+    controller._apply_test(final_case[1], opened=True)
+    bound_test = (controller._test_content, controller._selection_content, controller.resultSummary)
+    for view in range(10, 15):
+        assert controller.selectView(view)
+        assert {row[0] for row in controller._rows} == {"STRATEGY", "BENCHMARK"}
+    assert controller._rows == (("STRATEGY", "fold_diagnostics", "NOT_APPLICABLE"),
+                               ("BENCHMARK", "fold_diagnostics", "NOT_APPLICABLE"))
+    assert (controller._test_content, controller._selection_content, controller.resultSummary) == bound_test
+    assert development.resultSummary["intraday_verification"] == "RECORDED"
+    assert controller.resultSummary["intraday_test_proof"] == "RECORDED"
+    assert not backend_calls and not runner.names and runtime.backend_if_initialized is None
+    assert runtime.shutdown()
+
+
+def test_actual_qml_offline_performance_views_in_both_languages(intraday_experiment, final_case,
+        saved_comparison_diagnostics, tmp_path):
     source, test_path = tmp_path / "development.json", tmp_path / "test.json"
     write_strategy_experiment(intraday_experiment, path=source)
     write_strategy_experiment(final_case[1], path=test_path)
+    diagnostic_path, partial_path = tmp_path / "diagnostic.json", tmp_path / "partial.json"
+    write_strategy_experiment(saved_comparison_diagnostics, path=diagnostic_path)
+    write_strategy_experiment(_unavailable_saved_candidate(intraday_experiment), path=partial_path)
     (tmp_path / "settings.yaml").write_text("storage:\n  root_dir: ./data\n")
     script = r'''
 import sys, time
@@ -671,7 +747,7 @@ from PySide6.QtTest import QTest
 from market_vault.application import build_application_context
 from market_vault.desktop.bootstrap import create_qml_application_session
 from market_vault.desktop.preferences import DesktopPreferenceStore
-root, source, test_path = map(Path, sys.argv[1:])
+root, source, test_path, diagnostic_path, partial_path = map(Path, sys.argv[1:])
 QQuickStyle.setStyle('Basic')
 app = QGuiApplication([])
 engine = QQmlApplicationEngine()
@@ -740,15 +816,138 @@ for tab, controller, selector, first, table_name, day_count in (
             if offset == 3: assert controller.tableModel.totalRows == day_count
         choose(selector, first)
 assert (development._content, final._test_content) == before
+
+# Exercise the new diagnostics on the actual rendered pages and controls.
+def descendants(parent):
+    pending = [parent]
+    while pending:
+        item = pending.pop()
+        yield item
+        pending.extend(item.childItems())
+def reveal(item, scroll_name):
+    flick = find(scroll_name).property('contentItem')
+    rect = item.mapRectToItem(flick, item.boundingRect())
+    delta = rect.top() if rect.top() < 0 else max(0, rect.bottom() - flick.height())
+    flick.setProperty('contentY', min(max(0, flick.property('contentY') + delta),
+        max(0, flick.property('contentHeight') - flick.height())))
+    QTest.qWait(30)
+    rect = item.mapRectToItem(flick, item.boundingRect())
+    assert rect.top() >= -1 and rect.bottom() <= flick.height() + 1, (item.objectName(), rect, flick.height())
+def risk_choose(selector, index, scroll_name):
+    reveal(find(selector), scroll_name)
+    choose(selector, index)
+def visible_label(parent, caption):
+    for label in descendants(parent):
+        if label.property('text') != caption or not label.isVisible() or label.property('truncated'): continue
+        rect = label.mapRectToItem(parent, label.boundingRect())
+        if rect.left() >= 0 and rect.right() <= parent.width() and rect.top() >= 0 and rect.bottom() <= parent.height(): return label
+    raise AssertionError(('visible complete label', caption))
+def visible_table(table_name, scroll_name):
+    table = find(table_name)
+    reveal(table, scroll_name)
+    assert table.height() >= 170
+    viewport = next(item for item in descendants(table) if item.metaObject().className().startswith('QQuickTableView'))
+    assert viewport.height() >= 70
+    viewport.setProperty('contentX', 0); viewport.setProperty('contentY', 0)
+    QTest.qWait(60)
+    return table, viewport
+def forbidden(*args, **kwargs):
+    raise AssertionError('Risk view cannot load sources, fit, execute, or rewrite records')
+from market_vault.research import intraday_research as research
+research.load_intraday_dataset = research.fit_ridge_rows = research.run_intraday_execution = forbidden
+content_before = {path: path.read_bytes() for path in (source, test_path, diagnostic_path, partial_path)}
+click('intradayComparisonTab')
+assert development.openExperiment(str(diagnostic_path)); complete(development)
+risk_choose('intradayResearchCandidate', 6, 'intradayResearchScroll')
+selected = development.selection_source()
+assert (selected['cost_index'], selected['candidate_index']) == (1, 2)
+view_keys = ('quant.risk_summary', 'quant.risk_drawdowns', 'quant.risk_distributions', 'quant.risk_concentration', 'quant.risk_folds')
+for tab, controller, selector, first, table_name, scroll_name in (
+    ('intradayComparisonTab', development, 'intradayResearchView', 11, 'intradayResearchTable', 'intradayResearchScroll'),
+    ('intradayFinalTab', final, 'intradayTestView', 10, 'intradayTestTable', 'intradayFinalScroll')):
+    click(tab)
+    bound = (controller._content, controller.resultSummary) if controller is development else (
+        controller._test_content, controller._selection_content, controller.resultSummary)
+    for language in ('en', 'zh-CN'):
+        previous_view = controller._view_index
+        assert session.i18n.setLanguage(language)
+        assert find(selector).property('currentIndex') == previous_view
+        for offset, view_key in enumerate(view_keys):
+            risk_choose(selector, first + offset, scroll_name)
+            assert controller._view_index == first + offset
+            assert find(selector).property('currentText') == session.i18n.catalog[view_key]
+            assert {row[0] for row in controller._rows} == {'STRATEGY', 'BENCHMARK'}
+            table, viewport = visible_table(table_name, scroll_name)
+            visible_label(viewport, session.i18n.catalog['risk.STRATEGY'])
+            if offset == 0:
+                visible_label(viewport, session.i18n.catalog['risk.drawdown_episode_count'])
+            if offset == 2:
+                assert any(row[2] == 'p05' and row[4] == 'RATIO' for row in controller._rows)
+                assert any(row[2] == 'sample_count' and row[4] == 'COUNT' for row in controller._rows)
+                visible_label(viewport, session.i18n.catalog['risk.DAILY_RETURNS'])
+            if offset == 4 and controller is final:
+                assert all(row[-1] == 'NOT_APPLICABLE' for row in controller._rows)
+                visible_label(viewport, 'Not applicable' if language == 'en' else '不适用')
+            if offset in (0, 1, 4):
+                assert window.grabWindow().save(str(root / (tab + '-risk-' + str(offset) + '-' + language + '.png')))
+            viewport.setProperty('contentY', max(0, viewport.property('contentHeight') - viewport.height()))
+            QTest.qWait(50)
+            visible_label(viewport, session.i18n.catalog['risk.BENCHMARK'])
+        current = (controller._content, controller.resultSummary) if controller is development else (
+            controller._test_content, controller._selection_content, controller.resultSummary)
+        assert current == bound
+    if controller is development:
+        assert controller._risk_report['candidate_id'] == selected['candidate_id']
+        assert (controller._risk_report['cost_index'], controller._risk_report['candidate_index']) == (1, 2)
+
+# Reopening same-shaped records and selecting another candidate must replace
+# the derived identity while preserving the captured TEST and verification.
+click('intradayComparisonTab')
+assert development.openExperiment(str(source)); complete(development)
+risk_choose('intradayResearchCandidate', 1, 'intradayResearchScroll')
+risk_choose('intradayResearchView', 12, 'intradayResearchScroll')
+assert development._risk_report['candidate_id'] == development.selection_source()['candidate_id']
+assert development._risk_report['strategy_diagnostics']['status'] == 'AVAILABLE'
+table, viewport = visible_table('intradayResearchTable', 'intradayResearchScroll')
+assert any(row[2] == 'TROUGH' for row in development._rows)
+assert any(row[2] in ('RECOVERY', 'UNRECOVERED') for row in development._rows)
+if development.tableModel.hasNext:
+    button = next(item for item in descendants(table) if 'PixelButton' in item.metaObject().className()
+        and item.property('text') == session.i18n.catalog['common.next'])
+    reveal(button, 'intradayResearchScroll')
+    point = button.mapToScene(button.boundingRect().center()).toPoint()
+    QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier, point); QTest.qWait(50)
+    assert development.tableModel.page == 2
+    assert development.tableModel._page.rows == development._rows[100:200]
+    assert window.grabWindow().save(str(root / 'development-risk-drawdown-page-2.png'))
+risk_choose('intradayResearchCandidate', 0, 'intradayResearchScroll')
+risk_choose('intradayResearchView', 13, 'intradayResearchScroll')
+rows = {(row[0], row[1], row[2]): row for row in development._rows}
+assert rows['STRATEGY', 'TRADE_RETURNS', 'p05'][3:] == ('—', 'RATIO', 'NO_TRADES')
+assert rows['STRATEGY', 'DAILY_RETURNS', 'p05'][3:] == ('0%', 'RATIO', '')
+assert development.openExperiment(str(partial_path)); complete(development)
+risk_choose('intradayResearchCandidate', 1, 'intradayResearchScroll')
+risk_choose('intradayResearchView', 11, 'intradayResearchScroll')
+assert development._risk_report['strategy_diagnostics']['status'] == 'UNAVAILABLE'
+assert development._risk_report['benchmark_diagnostics']['status'] == 'AVAILABLE'
+assert next(row for row in development._rows if row[0] == 'STRATEGY')[-1] == 'RECORDED_CASH_RECONCILIATION_FAILED'
+table, viewport = visible_table('intradayResearchTable', 'intradayResearchScroll')
+visible_label(viewport, '现金对账不一致')
+assert window.grabWindow().save(str(root / 'development-risk-partial-zh-CN.png'))
+assert final._test_content == before[1]
+assert all(path.read_bytes() == content for path, content in content_before.items())
 assert development.resultSummary['intraday_verification'] == 'RECORDED'
 assert final.resultSummary['intraday_test_proof'] == 'RECORDED'
 assert session.runtime.backend_if_initialized is None
 assert session.shutdown()
+print('REAL_INTRADAY_RISK_VIEWS_OK')
 '''
-    result = subprocess.run([sys.executable, "-c", script, str(tmp_path), str(source), str(test_path)],
+    result = subprocess.run([sys.executable, "-c", script, str(tmp_path), str(source), str(test_path),
+                             str(diagnostic_path), str(partial_path)],
                             cwd=ROOT, env={**os.environ, "QT_QPA_PLATFORM": "offscreen", "QSG_RHI_BACKEND": "software"},
                             capture_output=True, text=True, timeout=120)
     assert result.returncode == 0, result.stdout + result.stderr
+    assert "REAL_INTRADAY_RISK_VIEWS_OK" in result.stdout
 
 
 def test_controller_freezes_nonfirst_candidate_in_second_cost(qt_app, saved_comparison_diagnostics, tmp_path):

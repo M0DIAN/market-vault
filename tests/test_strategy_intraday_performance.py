@@ -5,12 +5,17 @@ from datetime import datetime, timedelta
 from decimal import Decimal, localcontext
 import json
 import math
+import os
+from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
 from market_vault import cli
 from market_vault.backtest.intraday import IntradayExecutionPolicy, run_intraday_execution
 from market_vault.research.intraday_performance import analyze_intraday_experiment, summarize_intraday_execution
+from market_vault.research.intraday_risk_diagnostics import analyze_intraday_risk_diagnostics, summarize_intraday_risk_diagnostics
 from market_vault.research.strategy_experiment import write_strategy_experiment
 from test_intraday_experiment import intraday_experiment  # noqa: F401
 from test_intraday_final_test import final_case, selection_case  # noqa: F401
@@ -128,9 +133,173 @@ def test_saved_development_and_test_cli_are_offline_and_remain_distinct(intraday
         assert result["performance"]["summary"]["evaluated_days"]["value"] == (10 if index == 0 else 6)
         assert result["benchmark"]["execution_id"] != result["performance"]["execution_id"]
         assert result["experiment_id"] == sources[index].experiment_id
+        risk_args = ["research-intraday-risk-diagnostics", "--experiment", str(path)]
+        if index == 0:
+            risk_args += ["--candidate-index", "1"]
+        assert cli.main(risk_args) == 0
+        risk = json.loads(capsys.readouterr().out)["report"]
+        assert risk["experiment_id"] == result["experiment_id"] and risk["candidate_id"] == result["candidate_id"]
+        assert risk["evidence"] == "RECORDED_LEDGER_DERIVATION"
+        for side in ("strategy_diagnostics", "benchmark_diagnostics"):
+            derived = risk[side]["report"]
+            assert risk[side]["status"] == "AVAILABLE"
+            assert derived["daily_return_distribution"]["sample_count"] == (10 if index == 0 else 6)
+            assert derived["fold_diagnostics"]["status"] == ("AVAILABLE" if index == 0 else "NOT_APPLICABLE")
+        # Exercise the console entry in a separate process, with this
+        # checkout's source rather than another editable installation.
+        environment = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src")}
+        completed = subprocess.run([sys.executable, "-m", "market_vault", *risk_args],
+                                   capture_output=True, text=True, env=environment, check=False)
+        assert completed.returncode == 0, completed.stderr
+        assert json.loads(completed.stdout)["report"] == risk
     assert [path.read_bytes() for path in paths] == before
     for path, candidate in ((paths[0], "-1"), (paths[0], "100"), (paths[1], "1")):
         assert cli.main(["research-intraday-performance", "--experiment", str(path), "--candidate-index", candidate]) == 1
         assert json.loads(capsys.readouterr().err)["status"] == "FAILED"
     with pytest.raises(ValueError, match="nonnegative"):
         analyze_intraday_experiment(intraday_experiment, cost_index=True)
+    for value in (True, False, -1, 1.0, "1"):
+        with pytest.raises(ValueError, match="nonnegative"):
+            analyze_intraday_risk_diagnostics(intraday_experiment, cost_index=value)
+    for path, candidate in ((paths[0], "-1"), (paths[0], "100"), (paths[1], "1")):
+        assert cli.main(["research-intraday-risk-diagnostics", "--experiment", str(path), "--candidate-index", candidate]) == 1
+        assert json.loads(capsys.readouterr().err)["status"] == "FAILED"
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["research-intraday-risk-diagnostics", "--experiment", str(paths[0]), "--candidate-index", "True"])
+    assert exc.value.code == 2
+    capsys.readouterr()
+    assert [path.read_bytes() for path in paths] == before
+
+
+def risk_execution(changes, *, first_prices=None):
+    """Small real V2 account, with a DST weekend and optional cash-only days."""
+    sessions, prices, decisions = [], [], []
+    for index, change in enumerate(changes):
+        opened = datetime.fromisoformat("2025-03-07T09:30:00-05:00") if index == 0 else (
+            datetime.fromisoformat("2025-03-10T09:30:00-04:00") + timedelta(days=index - 1))
+        day = opened.date().isoformat()
+        sessions.append({"trading_day": day, "open_time": opened.isoformat(),
+                         "close_time": (opened + timedelta(minutes=40)).isoformat(), "bar_count": 8})
+        path = first_prices if index == 0 and first_prices is not None else [100] * 6 + [100 * (1 + (change or 0))] * 2
+        for slot, price in enumerate(path):
+            prices.append({"trading_day": day, "slot": slot, "event_time": (opened + timedelta(minutes=slot * 5)).isoformat(),
+                           "available_at": (opened + timedelta(minutes=(slot + 1) * 5)).isoformat(),
+                           "open": price, "close": price, "row_version_id": f"risk-{index}-{slot}"})
+        if change is not None:
+            decisions.append({"trading_day": day, "slot": 0, "decision_time": (opened + timedelta(minutes=5)).isoformat(),
+                              "observation_key": "risk-observation-" + str(index), "target": "LONG"})
+    return run_intraday_execution(sessions=tuple(sessions), prices=tuple(prices), decisions=tuple(decisions),
+        interval="5m", policy=IntradayExecutionPolicy(0, 0, entry_delay_minutes=0, stop_new_minutes=15,
+                                                     flatten_minutes=10, max_hold_bars=100))
+
+
+def test_risk_drawdown_episodes_same_clock_latest_peak_dst_gap_and_unrecovered_tail():
+    original = risk_execution([.05, None], first_prices=[100, 100, 110, 99, 110, 88, 105, 105])
+    before = deepcopy(original)
+    report = summarize_intraday_risk_diagnostics(original)
+    first, second = report["drawdown_episodes"]
+    assert first["peak_sequence"] == 5 and first["trough_sequence"] == 6 and first["recovery_sequence"] == 8
+    assert first["peak_time"] == first["trough_time"] == "2025-03-07T09:45:00-05:00"
+    assert first["depth"] == pytest.approx(.1) and first["duration_minutes"] == 5
+    assert first["recovered"] is True
+    assert second["peak_sequence"] == 9 and second["trough_sequence"] == 10
+    assert second["depth"] == pytest.approx(.2)
+    assert second["duration_minutes"] == 4275  # DST removes 60 minutes from this calendar span.
+    assert second["recovered"] is False
+    assert second["recovery_sequence"] is second["recovery_time"] is second["recovery_equity"] is None
+    assert report["summary"]["maximum_drawdown"]["value"] == pytest.approx(.2)
+    assert report["summary"]["last_drawdown"]["value"] == pytest.approx(1 - 1.05 / 1.1)
+    assert report["summary"]["longest_drawdown_minutes"]["unit"] == "MINUTES"
+    assert report["daily_return_distribution"]["sample_count"] == 2
+    assert report["daily_return_distribution"]["zero_count"] == 1
+    assert report["trade_return_distribution"]["sample_count"] == 1
+    assert {report["trade_return_distribution"][key] for key in ("minimum", "maximum", "p05", "p50", "p95")} == {original["trades"][0]["net_return"]}
+    assert original == before
+
+
+def test_risk_quantiles_cash_concentration_and_compound_fold_oracles():
+    execution = risk_execution([.1, -.1, None, .2, -.2])
+    days = [row["trading_day"] for row in execution["daily"]]
+    folds = [{"fold_index": index, "fold_id": "fold-" + str(index), "validation_days": values}
+             for index, values in enumerate((days[:2], days[2:3], days[3:4], days[4:]))]
+    report = summarize_intraday_risk_diagnostics(execution, folds=folds)
+    daily, trades = report["daily_return_distribution"], report["trade_return_distribution"]
+    assert (daily["sample_count"], daily["positive_count"], daily["zero_count"], daily["negative_count"]) == (5, 2, 1, 2)
+    assert [daily[key] for key in ("p05", "p25", "p50", "p75", "p95")] == pytest.approx([-.18, -.1, 0, .1, .18])
+    assert [trades[key] for key in ("p05", "p25", "p50", "p75", "p95")] == pytest.approx([-.185, -.125, 0, .125, .185])
+    positive, negative = (report["cash_concentration"][side] for side in ("positive", "negative"))
+    assert positive["total_absolute_cash"] == pytest.approx(.298)
+    assert positive["top_1_share"] == pytest.approx(.198 / .298)
+    assert negative["total_absolute_cash"] == pytest.approx(.3476)
+    assert negative["top_1_share"] == pytest.approx(.2376 / .3476)
+    assert positive["top_3_share"] == negative["top_3_share"] == 1
+    assert negative["top_days"][0]["cash_contribution"] == pytest.approx(-.2376)
+    fold_report = report["fold_diagnostics"]
+    assert [row["compound_return"] for row in fold_report["rows"]] == pytest.approx([-.01, 0, .2, -.2])
+    assert [row["cash_contribution"] for row in fold_report["rows"]] == pytest.approx([-.01, 0, .198, -.2376])
+    assert fold_report["rows"][0]["cash_open"] == 1 and fold_report["rows"][0]["cash_close"] == pytest.approx(.99)
+    assert fold_report["rows"][0]["day_count"] == fold_report["rows"][0]["trade_count"] == 2
+    assert fold_report["rows"][1]["cash_only_days"] == 1
+    summary = fold_report["summary"]
+    assert [summary[key]["value"] for key in ("positive_folds", "zero_folds", "negative_folds")] == [1, 1, 2]
+    assert summary["median_fold_return"]["value"] == pytest.approx(-.005)
+    assert math.fsum(row["cash_contribution"] for row in fold_report["rows"]) == pytest.approx(-.0496)
+    assert math.fsum(row["compound_return"] for row in fold_report["rows"]) != pytest.approx(-.0496)
+
+
+def test_risk_empty_trade_sample_zero_account_and_not_applicable_folds():
+    report = summarize_intraday_risk_diagnostics(risk_execution([None]))
+    assert report["drawdown_episodes"] == []
+    assert all(item["value"] == 0 for item in report["summary"].values())
+    trade = report["trade_return_distribution"]
+    assert trade["sample_count"] == 0 and trade["unavailable_reason"] == "NO_TRADES"
+    assert all(trade[key] is None for key in ("minimum", "maximum", "p05", "p25", "p50", "p75", "p95"))
+    assert report["daily_return_distribution"]["p95"] == 0
+    assert report["fold_diagnostics"] == {"status": "NOT_APPLICABLE", "unavailable_reason": "NOT_APPLICABLE", "rows": [], "summary": {}}
+    for side in ("positive", "negative"):
+        assert report["cash_concentration"][side]["top_1_share"] is None
+        assert report["cash_concentration"][side]["top_3_share"] is None
+        assert report["cash_concentration"][side]["day_count"] == 0
+    assert "NaN" not in json.dumps(report, allow_nan=False)
+
+
+def test_risk_concentration_uses_actual_sign_ties_and_top_three_not_zero_tolerance():
+    from market_vault.research.intraday_risk_diagnostics import _concentration, _distribution
+    changes = [.125, .125, .25, .5, -.125, -.125, -.25, -.5, 2 ** -48]
+    cash, daily = 1.0, []
+    for index, change in enumerate(changes):
+        daily.append({"trading_day": str(index), "cash_open": cash, "cash_close": cash + change})
+        cash += change
+    result = _concentration(daily)
+    assert result["positive"]["day_count"] == 5  # The tiny actual gain remains a positive cash contribution.
+    assert result["positive"]["top_1_share"] == pytest.approx(.5 / (1 + 2 ** -48))
+    assert result["positive"]["top_3_share"] == pytest.approx(.875 / (1 + 2 ** -48))
+    assert result["negative"]["top_1_share"] == .5 and result["negative"]["top_3_share"] == .875
+    assert [row["trading_day"] for row in result["positive"]["top_days"]] == ["3", "2", "0"]
+    signs = _distribution([-1e-12, 1e-12, -2e-12, 2e-12], "EMPTY")
+    assert [signs[key] for key in ("positive_count", "zero_count", "negative_count")] == [1, 2, 1]
+
+
+@pytest.mark.parametrize("case", ["ledger", "ledger_scale", "drawdown", "maximum", "fold_gap", "fold_overlap"])
+def test_risk_inconsistent_ledger_or_fold_partition_rejects_derived_analysis(case):
+    execution = risk_execution([.1, -.1])
+    days = [row["trading_day"] for row in execution["daily"]]
+    folds = [{"fold_index": 0, "fold_id": "fold-0", "validation_days": days}]
+    if case == "ledger":
+        execution["ledger"][2]["cash"] += .1
+    elif case == "ledger_scale":
+        # Internally consistent marks with unchanged drawdown ratios, but a
+        # different account scale from the recorded daily cash and trades.
+        for point in execution["ledger"]:
+            for key in ("cash", "quantity", "equity"):
+                point[key] *= 2
+    elif case == "drawdown":
+        execution["ledger"][2]["drawdown"] += .1
+    elif case == "maximum":
+        execution["metrics"]["observed_max_drawdown"] += .1
+    elif case == "fold_gap":
+        folds[0]["validation_days"] = days[:1]
+    else:
+        folds[0]["validation_days"] = days + days[:1]
+    with pytest.raises(ValueError, match="reconcile|partition"):
+        summarize_intraday_risk_diagnostics(execution, folds=folds)

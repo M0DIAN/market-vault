@@ -48,6 +48,62 @@ def intraday_experiment(research_case):
     return create_intraday_experiment(plan=plan, report=report, name="Development", notes="Explicit candidate evidence")
 
 
+@pytest.mark.parametrize("side", ["strategy", "benchmark"])
+@pytest.mark.parametrize("case", ["cash", "overflow", "ledger", "ledger_scale"])
+def test_saved_risk_diagnostics_partial_failures_remain_local_and_cli_succeeds(intraday_experiment, side, case, tmp_path, monkeypatch, capsys):
+    from market_vault.research.intraday_risk_diagnostics import analyze_intraday_risk_diagnostics
+    root = intraday_experiment.as_dict()
+    group = root["report"]["groups"][0]
+    execution = (group["results"][1] if side == "strategy" else group["benchmark"])["execution"]
+    if case == "cash":
+        execution["trades"][0]["commission_total"] += .01
+    elif case == "overflow":
+        execution["trades"][0]["quantity"] = 1e308
+        execution["trades"][0]["exit_raw_open"] = 1e308
+    elif case == "ledger":
+        execution["ledger"][0]["cash"] += .01
+    else:
+        for point in execution["ledger"]:
+            for key in ("cash", "quantity", "equity"):
+                point[key] *= 2
+    snapshot = StrategyExperiment(signed(root))  # Accepted immutable grammar, beyond checksum-only rejection.
+    path = tmp_path / "saved-risk.json"
+    write_strategy_experiment(snapshot, path=path)
+    before = path.read_bytes()
+    monkeypatch.setattr(research, "load_intraday_dataset", lambda *a, **kw: pytest.fail("risk diagnostics read Q5"))
+    monkeypatch.setattr(research, "_fit", lambda *a, **kw: pytest.fail("risk diagnostics fitted"))
+    monkeypatch.setattr(research, "run_intraday_execution", lambda *a, **kw: pytest.fail("risk diagnostics executed"))
+    result = analyze_intraday_risk_diagnostics(snapshot, candidate_index=1)
+    failed = result[side + "_diagnostics"]
+    available = result[("benchmark" if side == "strategy" else "strategy") + "_diagnostics"]
+    assert failed["status"] == "UNAVAILABLE" and failed["report"] is None
+    expected = ("NUMERIC_OVERFLOW" if case == "overflow" else "RECORDED_LEDGER_RECONCILIATION_FAILED"
+                if case in ("ledger", "ledger_scale") else "RECORDED_CASH_RECONCILIATION_FAILED")
+    assert failed["unavailable_reason"] == expected
+    assert available["status"] == "AVAILABLE" and available["report"]["fold_diagnostics"]["status"] == "AVAILABLE"
+    assert result["experiment_id"] == snapshot.experiment_id
+    assert result["candidate_id"] == snapshot.as_dict()["report"]["groups"][0]["results"][1]["candidate_id"]
+    assert cli.main(["research-intraday-risk-diagnostics", "--experiment", str(path), "--candidate-index", "1"]) == 0
+    assert json.loads(capsys.readouterr().out)["report"] == result
+    assert path.read_bytes() == snapshot.content == before
+
+
+def test_saved_risk_diagnostics_historical_execution_is_descriptive_unavailable(intraday_experiment):
+    from market_vault.research.intraday_risk_diagnostics import analyze_intraday_risk_diagnostics
+    root = intraday_experiment.as_dict()
+    root["algorithm_versions"]["execution"] = "recorded-historical-execution"
+    for group in root["report"]["groups"]:
+        for record in [*group["results"], group["benchmark"]]:
+            record["execution"]["version"] = root["algorithm_versions"]["execution"]
+    snapshot = StrategyExperiment(signed(root))
+    result = analyze_intraday_risk_diagnostics(snapshot, candidate_index=1)
+    assert result["status"] == "SUCCESS" and result["experiment_id"] == snapshot.experiment_id
+    for key in ("strategy_diagnostics", "benchmark_diagnostics"):
+        assert result[key]["status"] == "UNAVAILABLE"
+        assert result[key]["unavailable_reason"] == "UNSUPPORTED_EXECUTION_OR_COST_VERSION"
+        assert result[key]["report"] is None
+
+
 def signed_scenarios(root):
     for row in root["report"]["scenarios"]:
         row["experiment"] = json.loads(signed(row["experiment"]))
@@ -59,10 +115,13 @@ def signed_scenarios(root):
 def test_scenarios_offline_cli_export_guards_and_nonfirst_child_final_test(execution_scenarios_case, tmp_path, monkeypatch, capsys):
     from market_vault.research.intraday_execution_scenarios import extract_intraday_execution_scenario
     from market_vault.research.intraday_final_test import freeze_intraday_candidate, run_intraday_final_test
+    from market_vault.research.intraday_risk_diagnostics import analyze_intraday_risk_diagnostics
     _, _, collection, _ = execution_scenarios_case
     path, output = tmp_path / "collection.json", tmp_path / "delayed.json"
     write_strategy_experiment(collection, path=path)
     child = collection.as_dict()["report"]["scenarios"][1]["experiment"]
+    with pytest.raises(ValueError, match="export an ordinary Q7"):
+        analyze_intraday_risk_diagnostics(collection)
     selected = child["report"]["groups"][0]["results"][2]
     capture = {"expected_experiment_id": collection.experiment_id, "scenario_index": 1,
                "expected_child_experiment_id": child["experiment_id"]}
