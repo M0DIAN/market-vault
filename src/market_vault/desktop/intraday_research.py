@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from copy import deepcopy
 from decimal import Decimal
 import json
@@ -187,6 +187,62 @@ def family_bounds_table(result):
         for member in result["members"])
 
 
+def sequential_selection_table(result, index):
+    """Show the saved selection procedure, including every historical score."""
+    members = {member["candidate_index"]: member for member in result["members"]}
+
+    def member_name(candidate_index):
+        return (f'{candidate_index} · {members[candidate_index]["strategy"]["name"]}'
+                if candidate_index is not None else "—")
+
+    if index in (0, 3):
+        columns = ("sequential_account", "metric", "value", "unit", "unavailable_reason")
+        accounts = ([("SEQUENTIAL_STRATEGY", result["strategy"]), ("BENCHMARK", result["benchmark"])]
+                    if index == 0 else [(member_name(row["candidate_index"]), row)
+                                        for row in result["static_references"]])
+        rows = []
+        for label, account in accounts:
+            for values in (account["summary"], account["risk"]):
+                for key, metric in values.items():
+                    if type(metric) is dict and "value" in metric:
+                        rows.append((label, key, risk_value(metric["value"], metric["unit"]),
+                                     metric["unit"], metric["unavailable_reason"] or ""))
+        return columns, tuple(rows)
+    if index == 1:
+        columns = ("fold_index", "sequential_chosen", "sequential_fold_return", "sequential_fold_benchmark_return",
+                   "sequential_fold_excess", "sequential_history_days", "validation_start_day", "validation_end_day",
+                   "status", "sequential_candidate_id", "unavailable_reason")
+        return columns, tuple((str(fold["fold_index"]), member_name(fold["chosen_candidate_index"]),
+            risk_value(fold["outcome"]["compound_return"]["value"], "RATIO"),
+            risk_value(fold["outcome"]["benchmark_compound_return"]["value"], "RATIO"),
+            risk_value(fold["outcome"]["mean_daily_excess"]["value"], "RATIO").removesuffix("%"),
+            str(fold["history_day_count"]), fold["validation_days"][0], fold["validation_days"][-1], fold["status"],
+            (fold["chosen_candidate_id"] or "—")[:12],
+            fold["unavailable_reason"] or "") for fold in result["folds"])
+    if index == 2:
+        columns = ("fold_index", "sequential_history_days", "family_member", "sequential_candidate_id",
+                   "sequential_score", "unavailable_reason")
+        return columns, tuple((str(fold["fold_index"]), str(fold["history_day_count"]),
+            member_name(score["candidate_index"]), score["candidate_id"][:12],
+            risk_value(score["mean_excess"], "RATIO").removesuffix("%"), score["unavailable_reason"] or "")
+            for fold in result["folds"] for score in fold["scores"])
+    if index == 4:
+        columns = ("trading_day", "fold_index", "sequential_chosen", "cash_open", "cash_close", "return",
+                   "sequential_benchmark_open", "sequential_benchmark_close", "sequential_benchmark_return")
+        return columns, tuple((row["trading_day"], str(row["fold_index"]), member_name(row["candidate_index"]),
+            risk_value(row["cash_open"]), risk_value(row["cash_close"]), risk_value(row["return"], "RATIO"),
+            risk_value(row["benchmark_cash_open"]), risk_value(row["benchmark_cash_close"]),
+            risk_value(row["benchmark_return"], "RATIO")) for row in result["daily_returns"])
+    columns = ("portfolio_sequence", "trading_day", "portfolio_time", "phase", "fold_index", "sequential_chosen",
+               "equity", "cash", "drawdown", "portfolio_benchmark_equity", "portfolio_benchmark_cash",
+               "portfolio_benchmark_drawdown")
+    return columns, tuple((str(row["sequence"]), row["trading_day"],
+        datetime.fromisoformat(row["timestamp"]).astimezone(timezone.utc).time().isoformat(), row["phase"],
+        str(row["fold_index"]), member_name(row["candidate_index"]), risk_value(row["equity"]),
+        risk_value(row["cash"]), risk_value(row["drawdown"], "RATIO"), risk_value(row["benchmark_equity"]),
+        risk_value(row["benchmark_cash"]), risk_value(row["benchmark_drawdown"], "RATIO")) for row in result["path"])
+
+
 class IntradayResearchController(PageController):
     changed = Signal()
 
@@ -223,6 +279,10 @@ class IntradayResearchController(PageController):
         self._family_report = None
         self._family_error = ""
         self._family_pending = None
+        self._sequential_report = None
+        self._sequential_error = ""
+        self._sequential_pending = None
+        self._sequential_view = 0
         self._grid_snapshot = None
         self._grid_report = None
         self._grid_key = None
@@ -236,6 +296,7 @@ class IntradayResearchController(PageController):
         self.operationFailed.connect(self._replay_failed)
         self.operationFailed.connect(self._uncertainty_failed)
         self.operationFailed.connect(self._family_bounds_failed)
+        self.operationFailed.connect(self._sequential_failed)
         runtime.operationFinished.connect(self._analysis_idle)
 
     def _replay_failed(self):
@@ -424,6 +485,37 @@ class IntradayResearchController(PageController):
         return deepcopy(summary)
 
     @Property(bool, notify=changed)
+    def sequentialAvailable(self):
+        return self.uncertaintyAvailable
+
+    @Property(str, notify=changed)
+    def sequentialError(self):
+        return self._sequential_error
+
+    @Property(int, notify=changed)
+    def sequentialViewIndex(self):
+        return self._sequential_view
+
+    @Property("QVariantMap", notify=changed)
+    def sequentialSummary(self):
+        if self._sequential_report is None:
+            return {}
+        report = self._sequential_report
+        summary = {key: report[key] for key in ("sequential_selection_id", "experiment_id", "data_id", "cost_index",
+            "family_size", "family_scope", "historical_search_coverage", "family_precommitment", "selection_rule", "selection_summary",
+            "source_sample", "sample", "availability", "basis", "causality", "execution_policy",
+            "benchmark_execution_policy", "members")}
+        summary["folds"] = [{key: fold[key] for key in ("fold_index", "fold_id", "training_boundary",
+            "validation_days", "history_days", "history_day_count", "history_fold_ids", "status",
+            "unavailable_reason", "chosen_candidate_index", "chosen_candidate_id", "chosen_model_id")}
+            for fold in report["folds"]]
+        for source, fold in zip(report["folds"], summary["folds"], strict=True):
+            fold["outcome"] = {key: {**metric, "display": risk_value(metric["value"], metric["unit"])}
+                               for key, metric in source["outcome"].items()}
+            fold["outcome"]["mean_daily_excess"]["display"] = fold["outcome"]["mean_daily_excess"]["display"].removesuffix("%")
+        return deepcopy(summary)
+
+    @Property(bool, notify=changed)
     def gridAvailable(self):
         return self._grid_snapshot is not None
 
@@ -547,7 +639,12 @@ class IntradayResearchController(PageController):
         report = self._root["report"]
         group, candidate = self._selected()
         execution = candidate["execution"]
-        if self._view_index == 18:
+        if self._view_index == 19:
+            if self._sequential_report is not None:
+                self._columns, self._rows = sequential_selection_table(self._sequential_report, self._sequential_view)
+            else:
+                self._columns, self._rows = (), ()
+        elif self._view_index == 18:
             if self._family_report is not None:
                 self._columns, self._rows = family_bounds_table(self._family_report)
             else:
@@ -607,6 +704,8 @@ class IntradayResearchController(PageController):
             self._start_uncertainty()
         elif self._view_index == 18:
             self._start_family_bounds()
+        elif self._view_index == 19:
+            self._start_sequential()
 
     @Slot(int, result=bool)
     def selectCandidate(self, index):
@@ -618,6 +717,7 @@ class IntradayResearchController(PageController):
             self._grid_report, self._grid_key = None, None
             if self._positions[self._candidate_index][0] != self._positions[index][0]:
                 self._family_report, self._family_error = None, ""
+                self._sequential_report, self._sequential_error = None, ""
         self._candidate_index = index
         self._refresh_view()
         self.changed.emit()
@@ -639,7 +739,7 @@ class IntradayResearchController(PageController):
 
     @Slot(int, result=bool)
     def selectView(self, index):
-        if type(index) is not int or not 0 <= index <= 18:
+        if type(index) is not int or not 0 <= index <= 19:
             return False
         self._view_index = index
         self._refresh_view()
@@ -682,6 +782,7 @@ class IntradayResearchController(PageController):
         # here also replaces a stale in-flight selection without nested workers.
         self._start_uncertainty()
         self._start_family_bounds()
+        self._start_sequential()
 
     def _uncertainty_failed(self):
         selection, self._uncertainty_pending = self._uncertainty_pending, None
@@ -739,6 +840,62 @@ class IntradayResearchController(PageController):
         if self.busy or self._runtime.busy or not self.familyBoundsAvailable or not self._family_error:
             return False
         self._family_error = ""
+        self._refresh_view()
+        self.changed.emit()
+        return True
+
+    @Slot(int, result=bool)
+    def selectSequentialView(self, index):
+        if type(index) is not int or not 0 <= index <= 5:
+            return False
+        self._sequential_view = index
+        if self._view_index == 19:
+            self._refresh_view()
+        self.changed.emit()
+        return True
+
+    def _sequential_selection(self):
+        if not self.sequentialAvailable:
+            return None
+        return (self._root["experiment_id"], self._positions[self._candidate_index][0], 20)
+
+    def _start_sequential(self):
+        """Capture one full saved cost group and the fixed desktop rule."""
+        if (self._view_index != 19 or not self.sequentialAvailable or self._sequential_report is not None
+                or self._sequential_error or self._sequential_pending is not None or self.busy or self._runtime.busy):
+            return
+        selection, content = self._sequential_selection(), self._content
+        self._sequential_pending = selection
+
+        def operation(backend):
+            from ..research.intraday_sequential_selection import analyze_intraday_sequential_selection
+            from ..research.strategy_experiment import StrategyExperiment
+            return analyze_intraday_sequential_selection(StrategyExperiment(content),
+                cost_index=selection[1], minimum_history_days=selection[2])
+
+        def apply(report):
+            self._sequential_pending = None
+            if selection != self._sequential_selection():
+                return
+            self._sequential_report = report
+            if self._view_index == 19:
+                self._refresh_view()
+            self.changed.emit()
+
+        if not self._submit("intraday_sequential_selection", operation, apply, requires_backend=False):
+            self._sequential_pending = None
+
+    def _sequential_failed(self):
+        selection, self._sequential_pending = self._sequential_pending, None
+        if selection is not None and selection == self._sequential_selection():
+            self._sequential_error = self.error
+            self.changed.emit()
+
+    @Slot(result=bool)
+    def retrySequential(self):
+        if self.busy or self._runtime.busy or not self.sequentialAvailable or not self._sequential_error:
+            return False
+        self._sequential_error = ""
         self._refresh_view()
         self.changed.emit()
         return True
@@ -957,6 +1114,7 @@ class IntradayResearchController(PageController):
         self._risk_report = None
         self._uncertainty_report, self._uncertainty_error = None, ""
         self._family_report, self._family_error = None, ""
+        self._sequential_report, self._sequential_error = None, ""
         self._grid_snapshot = snapshot if root["evaluation_mode"] == "INTRADAY_DIAGNOSTICS" else None
         self._grid_report, self._grid_key, self._grid_error = None, None, ""
         self._grid_metric = GRID_METRICS[0]

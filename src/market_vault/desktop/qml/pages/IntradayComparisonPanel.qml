@@ -18,6 +18,9 @@ Item {
     readonly property var gridData: root.controller.parameterGrid
     readonly property var uncertaintyData: root.controller.uncertaintySummary
     readonly property var familyData: root.controller.familyBoundsSummary
+    readonly property var sequentialData: root.controller.sequentialSummary
+    property bool showSequentialDetails: false
+    readonly property var sequentialFold: (root.sequentialData.folds || [])[sequentialFoldPicker.currentIndex] || ({})
     readonly property var gridMetrics: ["total_return", "observed_max_drawdown", "trade_count",
         "worst_fold_return", "median_fold_return", "best_fold_return"]
 
@@ -32,6 +35,9 @@ Item {
     }
     function familyLabel(key) {
         return root.i18n.catalog["family_bounds." + key] || root.uncertaintyLabel(key)
+    }
+    function sequentialLabel(key) {
+        return root.i18n.catalog["sequential." + key] || root.i18n.catalog["columns." + key] || root.familyLabel(key)
     }
     function axisName(axis) {
         return root.i18n.catalog["grid.axis"] + " " + axis.axis_index + " · "
@@ -354,7 +360,7 @@ Item {
                         "quant.performance", "quant.performance_exit", "quant.performance_entry", "quant.performance_day",
                         "quant.risk_summary", "quant.risk_drawdowns", "quant.risk_distributions", "quant.risk_concentration",
                         "quant.risk_folds", "quant.parameter_grid", "quant.return_uncertainty",
-                        "quant.family_bounds"].map(key => root.i18n.catalog[key])
+                        "quant.family_bounds", "quant.sequential_selection"].map(key => root.i18n.catalog[key])
                     onSelected: root.controller.selectView(currentIndex)
                     onModelChanged: currentIndex = selectedView
                 }
@@ -835,6 +841,121 @@ Item {
                     }
                 }
             }
+            ColumnLayout {
+                objectName: "intradaySequentialPanel"
+                Layout.fillWidth: true
+                visible: view.selectedView === 19
+                spacing: 4
+                Label {
+                    objectName: "intradaySequentialNotice"
+                    Layout.fillWidth: true
+                    text: root.i18n.catalog[root.controller.sequentialAvailable ? "sequential.note" : "sequential.saved_only"]
+                    wrapMode: Text.WordWrap
+                    color: Theme.PixelTheme.inkMuted
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                }
+                Label {
+                    objectName: "intradaySequentialScope"
+                    Layout.fillWidth: true
+                    visible: !!root.sequentialData.sample
+                    text: {
+                        const data = root.sequentialData
+                        if (!data.sample) return ""
+                        return root.i18n.catalog["grid.cost_index"] + " " + data.cost_index
+                            + " · " + root.i18n.catalog["family_bounds.count"] + ": " + data.family_size
+                            + " · " + root.familyLabel(data.family_scope) + "\n"
+                            + root.i18n.catalog["family_bounds.history"] + ": " + root.familyLabel(data.historical_search_coverage)
+                            + " · " + root.i18n.catalog["sequential.precommitment"] + ": " + root.familyLabel(data.family_precommitment) + "\n"
+                            + root.i18n.catalog["sequential.minimum_history"] + ": " + data.selection_rule.minimum_history_days
+                    }
+                    wrapMode: Text.WordWrap
+                    color: Theme.PixelTheme.ink
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                }
+                Label {
+                    objectName: "intradaySequentialSample"
+                    Layout.fillWidth: true
+                    visible: !!root.sequentialData.sample
+                    text: {
+                        const data = root.sequentialData
+                        if (!data.sample) return ""
+                        const source = data.source_sample, sample = data.sample
+                        return root.i18n.catalog["sequential.source_sample"] + ": " + source.sample_count
+                            + " · " + source.first_day + " → " + source.last_day + "\n"
+                            + root.i18n.catalog["sequential.warmup"] + ": " + sample.warmup_days.length
+                            + " · " + root.i18n.catalog["sequential.following_sample"] + ": " + (sample.sample_count == null ? "—" : sample.sample_count)
+                            + " · " + (sample.first_day || "—") + " → " + (sample.last_day || "—") + "\n"
+                            + root.i18n.catalog["sequential.selections"] + ": " + (data.selection_summary.selection_count == null ? "—" : data.selection_summary.selection_count)
+                            + " · " + root.i18n.catalog["sequential.switches"] + ": " + (data.selection_summary.switch_count == null ? "—" : data.selection_summary.switch_count)
+                    }
+                    wrapMode: Text.WordWrap
+                    color: Theme.PixelTheme.ink
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                }
+                Label {
+                    objectName: "intradaySequentialAvailability"
+                    Layout.fillWidth: true
+                    visible: !!root.sequentialData.availability
+                    text: {
+                        const data = root.sequentialData
+                        if (!data.availability) return ""
+                        const available = data.availability
+                        return root.sequentialLabel(available.status)
+                            + (available.unavailable_reason ? " · " + root.sequentialLabel(available.unavailable_reason) : "")
+                            + (available.detail ? "\n" + available.detail : "")
+                    }
+                    textFormat: Text.PlainText
+                    wrapMode: Text.WrapAnywhere
+                    color: Theme.PixelTheme.ink
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                }
+                Label {
+                    objectName: "intradaySequentialProgress"
+                    Layout.fillWidth: true
+                    visible: root.controller.sequentialAvailable && !root.sequentialData.sample && !root.controller.sequentialError
+                    text: root.i18n.catalog["sequential.calculating"]
+                    wrapMode: Text.WordWrap
+                    color: Theme.PixelTheme.inkMuted
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    visible: root.controller.sequentialError.length > 0
+                    Label {
+                        objectName: "intradaySequentialError"
+                        Layout.fillWidth: true
+                        textFormat: Text.PlainText
+                        text: root.controller.sequentialError
+                        wrapMode: Text.WrapAnywhere
+                        color: Theme.PixelTheme.ink
+                        font.pixelSize: Theme.PixelTheme.fontSm
+                    }
+                    Components.PixelButton {
+                        objectName: "intradaySequentialRetry"
+                        text: root.i18n.catalog["uncertainty.retry"]
+                        enabled: !root.controller.busy && !operationRuntime.busy
+                        onClicked: root.controller.retrySequential()
+                    }
+                }
+                Components.LabeledComboBox {
+                    objectName: "intradaySequentialView"
+                    Layout.fillWidth: true
+                    Layout.maximumWidth: Infinity
+                    label: root.i18n.catalog["sequential.view"]
+                    model: ["summary", "timeline", "scores", "references", "daily", "path"].map(key => root.i18n.catalog["sequential." + key])
+                    currentIndex: root.controller.sequentialViewIndex
+                    onModelChanged: currentIndex = Qt.binding(() => root.controller.sequentialViewIndex)
+                    onSelected: root.controller.selectSequentialView(currentIndex)
+                }
+                Label {
+                    objectName: "intradaySequentialViewNote"
+                    Layout.fillWidth: true
+                    text: root.i18n.catalog["sequential." + ["summary", "timeline", "scores", "references", "daily", "path"][root.controller.sequentialViewIndex] + "_note"]
+                    wrapMode: Text.WordWrap
+                    color: Theme.PixelTheme.inkMuted
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                }
+            }
             Components.DataTable {
                 objectName: "intradayResearchTable"
                 visible: view.selectedView !== 16
@@ -845,6 +966,7 @@ Item {
                 tableModel: root.controller.tableModel
                 i18n: root.i18n
                 cellFormatter: function(value) {
+                    if (view.selectedView === 19) return root.sequentialLabel(value)
                     if (view.selectedView === 18) return root.familyLabel(value)
                     if (view.selectedView === 17) return root.uncertaintyLabel(value)
                     if (view.selectedView >= 11) return root.i18n.catalog["risk." + value] || root.i18n.catalog["performance." + value] || value
@@ -852,6 +974,73 @@ Item {
                 }
                 onPreviousRequested: root.controller.changePage(-1)
                 onNextRequested: root.controller.changePage(1)
+            }
+            Components.PixelButton {
+                objectName: "intradaySequentialDetailsButton"
+                visible: view.selectedView === 19 && !!root.sequentialData.sample
+                text: root.i18n.catalog["sequential.details"]
+                onClicked: root.showSequentialDetails = !root.showSequentialDetails
+            }
+            ColumnLayout {
+                objectName: "intradaySequentialDetails"
+                Layout.fillWidth: true
+                visible: view.selectedView === 19 && root.showSequentialDetails && !!root.sequentialData.sample
+                spacing: 4
+                Label {
+                    objectName: "intradaySequentialIdentities"
+                    Layout.fillWidth: true
+                    text: root.sequentialData.sample ? root.controller.experimentPath + "\n"
+                        + root.i18n.catalog["sequential.report_id"] + ": " + root.sequentialData.sequential_selection_id + "\n"
+                        + root.i18n.catalog["sequential.experiment_id"] + ": " + root.sequentialData.experiment_id + "\n"
+                        + "Data ID: " + root.sequentialData.data_id + "\n"
+                        + (root.sequentialData.members || []).map(member => member.candidate_index + " · "
+                            + member.strategy.name + " · " + member.candidate_id).join("\n") : ""
+                    textFormat: Text.PlainText
+                    wrapMode: Text.WrapAnywhere
+                    color: Theme.PixelTheme.inkMuted
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                }
+                Components.LabeledComboBox {
+                    id: sequentialFoldPicker
+                    objectName: "intradaySequentialFoldPicker"
+                    Layout.fillWidth: true
+                    Layout.maximumWidth: Infinity
+                    label: root.i18n.catalog["sequential.fold_details"]
+                    model: (root.sequentialData.folds || []).map(fold => fold.fold_index + " · "
+                        + fold.validation_days[0] + " → " + fold.validation_days[fold.validation_days.length - 1])
+                }
+                Label {
+                    objectName: "intradaySequentialPolicies"
+                    Layout.fillWidth: true
+                    text: root.sequentialData.sample ? ["execution_policy", "benchmark_execution_policy"].map((key, i) =>
+                        root.sequentialLabel(i ? "BENCHMARK" : "STRATEGY") + ": "
+                        + Object.keys(root.sequentialData[key]).map(field => (root.i18n.catalog["columns." + field] || field)
+                            + " = " + root.sequentialData[key][field]).join(" · ")).join("\n") : ""
+                    textFormat: Text.PlainText
+                    wrapMode: Text.WordWrap
+                    color: Theme.PixelTheme.inkMuted
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                }
+                Label {
+                    objectName: "intradaySequentialFoldDetails"
+                    Layout.fillWidth: true
+                    text: {
+                        const fold = root.sequentialFold
+                        if (!fold.fold_id) return ""
+                        return root.sequentialLabel(fold.status) + (fold.unavailable_reason ? " · " + root.sequentialLabel(fold.unavailable_reason) : "")
+                            + "\n" + root.i18n.catalog["sequential.fold_id"] + ": " + fold.fold_id
+                            + "\n" + root.i18n.catalog["sequential.training_boundary"] + ": " + fold.training_boundary
+                            + "\n" + root.i18n.catalog["sequential.history_dates"] + " (" + fold.history_day_count + "): " + (fold.history_days.join(", ") || "—")
+                            + "\n" + root.i18n.catalog["sequential.chosen_id"] + ": " + (fold.chosen_candidate_id || "—")
+                            + "\n" + root.i18n.catalog["sequential.model_id"] + ": " + (fold.chosen_model_id || "—")
+                            + "\n" + Object.keys(fold.outcome).map(key => root.sequentialLabel(key) + ": " + fold.outcome[key].display
+                                + (fold.outcome[key].unavailable_reason ? " · " + root.sequentialLabel(fold.outcome[key].unavailable_reason) : "")).join("\n")
+                    }
+                    textFormat: Text.PlainText
+                    wrapMode: Text.WrapAnywhere
+                    color: Theme.PixelTheme.inkMuted
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                }
             }
             ColumnLayout {
                 Layout.fillWidth: true

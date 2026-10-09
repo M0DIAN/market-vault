@@ -130,6 +130,12 @@ basis; they do not inherit Q15/Q16's statistical sample gates. The sampling and
 capital assumptions remain explicit and separate from the recorded metrics
 above.
 
+The [Q18–Q20 research-quality package](intraday_research_quality_next.md)
+evaluates a declared sequential selection rule, stresses each saved signal's
+arrival time and adds an explicit daily cash-reallocation model. These
+derived DEV studies retain their own evidence and do not change Freeze/TEST
+eligibility or the original Q7 account.
+
 ## CLI and plan grammar
 
 Commands work offline, without settings or OpenD initialization:

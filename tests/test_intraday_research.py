@@ -489,11 +489,20 @@ def test_return_uncertainty_real_gap_keeps_cash_means(return_uncertainty_case):
     plan = deepcopy(return_uncertainty_case.plan["comparison_plan"])
     plan["walk_forward"]["step_days"] = 6
     report = research.run_intraday_research(plan)
-    result = analyze_intraday_return_uncertainty(create_intraday_experiment(plan=plan, report=report))
+    snapshot = create_intraday_experiment(plan=plan, report=report)
+    result = analyze_intraday_return_uncertainty(snapshot)
     assert not result["sample"]["is_contiguous"] and result["sample"]["gap_days"]
     assert result["sample"]["sample_count"] == len(report["context"]["evaluated_days"])
     assert all(row["mean"] is not None and row["mean_unavailable_reason"] is None for row in result["statistics"])
     assert all(row["lower"] is row["upper"] is None and row["interval_unavailable_reason"] == "GAPPED_EVALUATION_DAYS" for row in result["statistics"])
+    # Reuse this actual gapped account for Q18; a gap cannot become fabricated
+    # cash days in the selected path, even after enough historical observations.
+    from market_vault.research.intraday_sequential_selection import analyze_intraday_sequential_selection
+    selection = analyze_intraday_sequential_selection(snapshot)
+    assert selection["availability"]["unavailable_reason"] == "GAPPED_EVALUATION_DAYS"
+    assert selection["source_sample"]["gap_days"] == result["sample"]["gap_days"]
+    assert selection["path"] == selection["daily_returns"] == selection["sample"]["evaluated_days"] == []
+    assert all(row["chosen_candidate_index"] is None for row in selection["folds"])
 
 
 @pytest.mark.parametrize("case", ["strategy_cash", "benchmark_cash", "basis"])
@@ -1095,3 +1104,258 @@ def test_portfolio_low_variance_correlation_does_not_block_cash_paths_or_differe
     assert blocked["left"]["sample"]["sample_count"] == 10 and blocked["right"]["sample"]["sample_count"] == 105
     assert "evaluated_days" in blocked["basis"]["failed_checks"] and blocked["availability"]["unavailable_reason"] == "BASIS_MISMATCH"
     assert blocked["path"] == blocked["daily_returns"] == blocked["sample"]["evaluated_days"] == []
+
+
+def test_sequential_selection_strict_prefix_negative_scores_exact_ties_and_future_nonintervention():
+    from fractions import Fraction
+    from market_vault.research.intraday_sequential_selection import _fold_selections
+    folds = [{"fold_index": index, "fold_id": f"fold-{index}", "training_boundary": f"open-{index}",
+              "validation_days": [f"day-{2 * index}", f"day-{2 * index + 1}"]} for index in range(4)]
+    candidates = [{"candidate_index": index, "candidate_id": f"candidate-{index}", "fold_models": []} for index in range(2)]
+    a = (-.25, -.25, 1., 1., -1., -1., 8., 8.)
+    b = (-.125, -.125, -.25, -.25, .5, .5, 0., 0.)
+    rows = _fold_selections({"folds": folds}, candidates, [a, b], 2)
+    assert [row["chosen_candidate_index"] for row in rows] == [None, 1, 0, 1]
+    assert rows[0]["status"] == "WARMUP" and rows[0]["scores"][0]["mean_excess"] is None
+    assert rows[1]["scores"][1]["mean_excess"] < 0  # No silent cash alternative.
+    for index, row in enumerate(rows):
+        assert row["history_days"] == [day for fold in folds[:index] for day in fold["validation_days"]]
+        assert row["history_fold_ids"] == [fold["fold_id"] for fold in folds[:index]]
+        if index:
+            assert [score["mean_excess"] for score in row["scores"]] == pytest.approx([
+                float(sum(map(Fraction, values[:2 * index])) / (2 * index)) for values in (a, b)])
+    changed = [a[:4] + (10.,) * 4, b[:4] + (-10.,) * 4]
+    later = _fold_selections({"folds": folds}, candidates, changed, 2)
+    assert later[:3] == rows[:3] and later[3]["chosen_candidate_index"] == 0
+    tied = _fold_selections({"folds": folds}, candidates, [a, a], 2)
+    assert all(row["chosen_candidate_index"] == 0 for row in tied[1:])
+    tiny = _fold_selections({"folds": folds}, candidates, [(0.,) * 8, (1e-14,) * 8], 2)
+    assert all(row["chosen_candidate_index"] == 1 for row in tiny[1:])
+    # One completed 2-day fold is enough for an explicit 2-day requirement;
+    # no unrequested minimum count of historical folds is imposed.
+    assert rows[1]["history_day_count"] == 2 and rows[1]["status"] == "SELECTED"
+
+
+def test_sequential_selection_rebased_switching_account_keeps_every_ordered_mark():
+    from market_vault.research import intraday_sequential_selection as sequential
+    prices = [[(1, 1), (1, 1), (1, 1), (2, 2)],
+              [(2, 2), (2, 8), (2, 2), (1, 1)],
+              [(1, 1), (1, 1), (1, 1), (2, 2)]]
+    a = portfolio_execution(prices, [{0: "LONG"}, {0: "LONG"}, {0: "LONG"}])
+    b = portfolio_execution(prices, [{}, {}, {0: "LONG"}])
+    accounts = {index: sequential._indexed_account({"execution": execution}) for index, execution in enumerate((a, b))}
+    selections = [{"fold_index": index, "fold_id": f"fold-{index}", "validation_days": [a["daily"][index]["trading_day"]],
+                   "chosen_candidate_index": index - 1} for index in (1, 2)]
+    path, daily = sequential._scaled_account(accounts, selections)
+    assert [row["cash_close"] for row in daily] == [.5, 1.]
+    assert [row["return"] for row in daily] == [-.5, 1.]
+    assert daily[0]["source_cash_open"] == 2 and daily[0]["cash_open"] == 1
+    assert daily[1]["source_cash_open"] == 1 and daily[1]["cash_open"] == .5
+    assert [point["sequence"] for point in path] == list(range(16))
+    assert [point["source_sequence"] for point in path] == list(range(8, 24))
+    high, next_open = path[3:5]
+    assert high["timestamp"] == next_open["timestamp"] and (high["phase"], next_open["phase"]) == ("CLOSE", "OPEN")
+    assert high["equity"] == 4 and next_open["equity"] == 1
+    summary = sequential._account_summary(daily, path)
+    assert summary["summary"]["observed_max_drawdown"]["value"] == .875
+    assert summary["summary"]["total_return"]["value"] == 0
+    assert summary["risk"]["mean_daily_return"]["value"] == .25
+    assert summary["risk"]["annualized_volatility"]["value"] == pytest.approx(math.sqrt(1.125 * 252))
+    reference_path, reference_daily = sequential._scaled_account(accounts, selections, fixed_index=1)
+    assert sequential._account_summary(reference_daily, reference_path)["summary"]["final_cash"]["value"] == 2
+
+
+def test_sequential_selection_real_complete_family_scores_same_sample_accounts_and_console(return_uncertainty_case, monkeypatch, capsys, tmp_path):
+    import json
+    import os
+    import statistics
+    import subprocess
+    import sysconfig
+    from pathlib import Path
+    from market_vault import cli
+    from market_vault.research import intraday_return_uncertainty as uncertainty
+    from market_vault.research import intraday_sequential_selection as sequential
+    from market_vault.research.intraday_data import digest
+    from market_vault.research.strategy_experiment import StrategyExperiment
+    case, calls = return_uncertainty_case, {"decode": 0, "accounts": 0}
+    root = case.snapshot.as_dict()
+    context, group = root["report"]["context"], root["report"]["groups"][1]
+    decoded, checked = StrategyExperiment.as_dict, uncertainty._available
+    def decode(self):
+        calls["decode"] += 1
+        return decoded(self)
+    def account(*args, **kwargs):
+        calls["accounts"] += 1
+        return checked(*args, **kwargs)
+    monkeypatch.setattr(StrategyExperiment, "as_dict", decode)
+    monkeypatch.setattr(uncertainty, "_available", account)
+    for name in ("load_intraday_dataset", "_fit", "run_intraday_execution"):
+        monkeypatch.setattr(research, name, lambda *a, **kw: pytest.fail("selection accessed source, fit or execution"))
+    monkeypatch.setattr(cli, "load_settings", lambda *a, **kw: pytest.fail("selection accessed settings"))
+    before = case.path.read_bytes()
+    result = sequential.analyze_intraday_sequential_selection(case.snapshot, cost_index=1)
+    assert calls == {"decode": 1, "accounts": 3}
+    assert result["availability"]["status"] == "AVAILABLE" and result["causality"]["status"] == "AVAILABLE"
+    assert result["basis"] == {"matches": True, "failed_checks": []}
+    assert result["family_size"] == 2 and result["family_scope"] == "SAVED_COST_GROUP_ONLY"
+    assert result["historical_search_coverage"] == result["family_precommitment"] == "UNKNOWN"
+    assert result["source_sample"]["sample_count"] == 105 and result["sample"]["sample_count"] == 85
+    assert result["sample"]["evaluated_days"] == context["evaluated_days"][20:]
+    assert result["sample"]["warmup_days"] == context["evaluated_days"][:20]
+    assert result["sample"]["warmup_fold_count"] == 4 and result["selection_summary"]["selection_count"] == 17
+    executions = [row["execution"] for row in group["results"]]
+    values = [[day["cash_close"] / day["cash_open"] - 1 for day in execution["daily"]] for execution in executions]
+    benchmark = group["benchmark"]["execution"]
+    benchmark_values = [day["cash_close"] / day["cash_open"] - 1 for day in benchmark["daily"]]
+    for index, fold in enumerate(result["folds"]):
+        count = 5 * index
+        assert fold["history_days"] == context["evaluated_days"][:count]
+        assert fold["history_fold_ids"] == [row["fold_id"] for row in context["folds"][:index]]
+        if count:
+            expected = [statistics.fmean(a - b for a, b in zip(series[:count], benchmark_values[:count], strict=True)) for series in values]
+            assert [score["mean_excess"] for score in fold["scores"]] == pytest.approx(expected)
+        if index < 4:
+            assert fold["status"] == "WARMUP" and fold["chosen_candidate_id"] is None
+            assert fold["outcome"]["compound_return"]["value"] is None
+        else:
+            assert fold["chosen_candidate_index"] == max(range(2), key=lambda j: expected[j])
+            actual_days = [row for row in result["daily_returns"] if row["fold_id"] == fold["fold_id"]]
+            assert fold["outcome"]["compound_return"]["value"] == pytest.approx(math.prod(1 + row["return"] for row in actual_days) - 1)
+            assert fold["outcome"]["mean_daily_excess"]["value"] == pytest.approx(statistics.fmean(row["paired_excess"] for row in actual_days))
+    cumulative = benchmark_cumulative = 1.
+    for index, row in enumerate(result["daily_returns"], 20):
+        selected = row["candidate_index"]
+        assert row["source_execution_id"] == executions[selected]["execution_id"]
+        assert row["candidate_id"] == group["results"][selected]["candidate_id"]
+        assert row["cash_open"] == pytest.approx(cumulative)
+        cumulative *= 1 + values[selected][index]
+        benchmark_cumulative *= 1 + benchmark_values[index]
+        assert row["cash_close"] == pytest.approx(cumulative)
+        assert row["benchmark_cash_close"] == pytest.approx(benchmark_cumulative)
+        assert row["paired_excess"] == row["return"] - row["benchmark_return"]
+    by_day = {row["trading_day"]: row for row in result["daily_returns"]}
+    peak = benchmark_peak = 1.
+    for point in result["path"]:
+        original = executions[point["candidate_index"]]["ledger"][point["source_sequence"]]
+        reference = benchmark["ledger"][point["benchmark_source_sequence"]]
+        day = by_day[point["trading_day"]]
+        assert (point["timestamp"], point["phase"], point["slot"]) == (original["timestamp"], original["phase"], original["slot"])
+        assert point["equity"] == pytest.approx(day["cash_open"] * original["equity"] / day["source_cash_open"])
+        assert point["benchmark_equity"] == pytest.approx(day["benchmark_cash_open"] * reference["equity"] / day["benchmark_source_cash_open"])
+        peak, benchmark_peak = max(peak, point["equity"]), max(benchmark_peak, point["benchmark_equity"])
+        assert point["drawdown"] == pytest.approx(1 - point["equity"] / peak)
+        assert point["benchmark_drawdown"] == pytest.approx(1 - point["benchmark_equity"] / benchmark_peak)
+    assert len(result["path"]) == 85 * 26 and len(result["static_references"]) == 2
+    for reference, execution in zip(result["static_references"], executions, strict=True):
+        assert reference["risk"]["return_count"]["value"] == 85
+        assert reference["summary"]["final_cash"]["value"] == pytest.approx(execution["daily"][-1]["cash_close"] / execution["daily"][20]["cash_open"])
+    assert sum(row["selected_day_count"] for row in result["members"]) == 85
+    assert result["sequential_selection_id"] == digest({key: value for key, value in result.items() if key != "sequential_selection_id"})
+    assert "execution_id" not in result["strategy"] and "trades" not in result["strategy"]
+    arguments = ["research-intraday-sequential-selection", "--experiment", str(case.path), "--cost-index", "1"]
+    assert cli.main(arguments) == 0 and json.loads(capsys.readouterr().out)["report"] == result
+    console = Path(sysconfig.get_path("scripts")) / ("market-vault.exe" if os.name == "nt" else "market-vault")
+    env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"), "PYTHONIOENCODING": "cp1252:strict"}
+    process = subprocess.run([str(console), "--settings", str(tmp_path / "missing.yaml"), *arguments], env=env, capture_output=True, check=False)
+    assert process.returncode == 0 and not process.stderr and process.stdout.isascii()
+    assert json.loads(process.stdout)["report"] == result and case.path.read_bytes() == before
+
+
+@pytest.mark.parametrize("case", ["hidden_cash", "hidden_basis", "benchmark_overflow"])
+def test_sequential_selection_invalid_unselected_member_or_benchmark_blocks_whole_path(return_uncertainty_case, case):
+    from market_vault.research.intraday_sequential_selection import analyze_intraday_sequential_selection
+    from market_vault.research.strategy_experiment import StrategyExperiment
+    from test_intraday_experiment import signed
+    snapshot = return_uncertainty_case.snapshot
+    normal = analyze_intraday_sequential_selection(snapshot, cost_index=1)
+    hidden = next(row["candidate_index"] for row in normal["members"] if not row["selected_day_count"])
+    root = snapshot.as_dict()
+    group = root["report"]["groups"][1]
+    execution = group["benchmark"]["execution"] if case == "benchmark_overflow" else group["results"][hidden]["execution"]
+    if case == "hidden_cash":
+        execution["trades"][0]["commission_total"] += .01
+    elif case == "hidden_basis":
+        execution["ledger"][-2]["row_version_id"] = "f" * 64
+    else:
+        execution["trades"][0]["quantity"] = execution["trades"][0]["exit_raw_open"] = 1e308
+    result = analyze_intraday_sequential_selection(StrategyExperiment(signed(root)), cost_index=1)
+    expected = "BASIS_MISMATCH" if case == "hidden_basis" else "SOURCE_ACCOUNT_UNAVAILABLE"
+    assert result["availability"]["unavailable_reason"] == expected
+    assert len(result["members"]) == len(result["static_references"]) == 2
+    assert result["path"] == result["daily_returns"] == result["sample"]["evaluated_days"] == []
+    assert result["strategy"]["summary"]["final_cash"]["value"] is result["selection_summary"]["selection_count"] is None
+    assert all(row["chosen_candidate_index"] is None and all(score["mean_excess"] is None for score in row["scores"]) for row in result["folds"])
+
+
+@pytest.mark.parametrize("case", ["boundary", "validation_membership", "future_training", "future_purged"])
+def test_sequential_selection_saved_clock_and_known_key_causality_gate(return_uncertainty_case, case):
+    from datetime import datetime
+    from market_vault.research.intraday_sequential_selection import analyze_intraday_sequential_selection
+    from test_intraday_experiment import _comparison_snapshot
+    root = return_uncertainty_case.snapshot.as_dict()
+    folds = root["report"]["context"]["folds"]
+    if case == "boundary":
+        folds[0]["training_boundary"] = (datetime.fromisoformat(folds[0]["training_boundary"]) + timedelta(seconds=1)).isoformat()
+    elif case == "validation_membership":
+        folds[1]["validation_keys"].insert(0, folds[0]["validation_keys"].pop())
+    else:
+        folds[0]["training_keys" if case == "future_training" else "purged_keys"].append(folds[1]["validation_keys"][0])
+    snapshot = _comparison_snapshot(root)  # Legal saved grammar, deliberately false causal evidence.
+    result = analyze_intraday_sequential_selection(snapshot)
+    assert result["basis"]["matches"] and all(row["status"] == "AVAILABLE" for row in result["availability"]["account_checks"])
+    assert result["availability"]["unavailable_reason"] == "RECORDED_CAUSALITY_CHECK_FAILED"
+    expected = {"boundary": "boundary_matches_open", "validation_membership": "validation_keys_match_days",
+                "future_training": "invalid_training_keys", "future_purged": "invalid_purged_keys"}[case]
+    assert any(expected in name for name in result["causality"]["failed_checks"])
+    assert result["path"] == result["daily_returns"] == []
+
+
+def test_sequential_selection_short_default_preserves_warmup_and_explicit_smaller_history(research_case):
+    from market_vault.research.intraday_experiment import create_intraday_experiment
+    from market_vault.research.intraday_sequential_selection import analyze_intraday_sequential_selection
+    _, plan, report = research_case
+    snapshot = create_intraday_experiment(plan=plan, report=report)
+    result = analyze_intraday_sequential_selection(snapshot)
+    assert result["availability"]["unavailable_reason"] == "INSUFFICIENT_HISTORY_FOR_SELECTION"
+    assert result["selection_rule"]["minimum_history_days"] == 20 and result["source_sample"]["sample_count"] == 10
+    assert len(result["folds"]) == 2 and all(row["status"] == "WARMUP" for row in result["folds"])
+    assert all(score["mean_excess"] is not None for score in result["folds"][1]["scores"])
+    assert result["path"] == result["daily_returns"] == [] and result["sample"]["sample_count"] is None
+    explicit = analyze_intraday_sequential_selection(snapshot, minimum_history_days=5)
+    assert explicit["availability"]["status"] == "AVAILABLE" and explicit["sample"]["sample_count"] == 5
+    assert explicit["selection_summary"]["selection_count"] == 1
+    assert explicit["sequential_selection_id"] != result["sequential_selection_id"]
+
+
+def test_sequential_selection_ordinary_q10_child_keeps_ridge_model_bindings_and_rejects_collection(execution_scenarios_case):
+    from market_vault.research.intraday_execution_scenarios import extract_intraday_execution_scenario
+    from market_vault.research.intraday_sequential_selection import analyze_intraday_sequential_selection
+    collection = execution_scenarios_case[2]
+    root = collection.as_dict()
+    child = extract_intraday_execution_scenario(collection, expected_experiment_id=root["experiment_id"], scenario_index=1,
+        expected_child_experiment_id=root["report"]["scenarios"][1]["experiment"]["experiment_id"])
+    child_root = child.as_dict()
+    report = analyze_intraday_sequential_selection(child, minimum_history_days=5)
+    assert report["availability"]["status"] == "AVAILABLE" and report["experiment_id"] == child_root["experiment_id"]
+    assert report["execution_policy"] == child_root["report"]["groups"][0]["execution_policy"]
+    for member, candidate in zip(report["members"], child_root["report"]["groups"][0]["results"], strict=True):
+        assert member["fold_model_ids"] == [{"fold_id": row["fold_id"], "model_id": row["model"]["model_id"]} for row in candidate["fold_models"]]
+    with pytest.raises(ValueError, match="ordinary saved Q7 DEV"):
+        analyze_intraday_sequential_selection(collection)
+
+
+@pytest.mark.parametrize("changes", [{"cost_index": True}, {"cost_index": -1}, {"minimum_history_days": True},
+                                      {"minimum_history_days": 0}, {"minimum_history_days": 1.5}])
+def test_sequential_selection_invalid_arguments_precede_decode_and_cli_file_io(return_uncertainty_case, monkeypatch, capsys, changes):
+    import json
+    from market_vault import intraday_sequential_selection_cli as console
+    from market_vault.research.intraday_sequential_selection import analyze_intraday_sequential_selection
+    from market_vault.research.strategy_experiment import StrategyExperiment
+    monkeypatch.setattr(StrategyExperiment, "as_dict", lambda self: pytest.fail("invalid parameters decoded an experiment"))
+    monkeypatch.setattr(console, "load_strategy_experiment", lambda *a: pytest.fail("invalid parameters opened a file"))
+    with pytest.raises(ValueError, match="integer"):
+        analyze_intraday_sequential_selection(return_uncertainty_case.snapshot, **changes)
+    args = SimpleNamespace(experiment="missing.json", **{"cost_index": 0, "minimum_history_days": 20, **changes})
+    assert console.research_intraday_sequential_selection_main(args) == 1
+    output = capsys.readouterr()
+    assert not output.out and json.loads(output.err)["status"] == "FAILED"

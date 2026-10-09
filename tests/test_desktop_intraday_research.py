@@ -536,6 +536,118 @@ def test_family_bounds_unselected_invalid_member_is_retained(qt_app, parameter_g
     assert runtime.backend_if_initialized is None and runtime.shutdown()
 
 
+def test_sequential_selection_complete_group_views_cache_and_source(qt_app, parameter_grid_experiment,
+                                                                  tmp_path, monkeypatch):
+    from market_vault.research import intraday_sequential_selection as sequential
+
+    path = tmp_path / "saved-grid.json"
+    write_strategy_experiment(parameter_grid_experiment, path=path)
+    analyze, calls = sequential.analyze_intraday_sequential_selection, []
+
+    def captured(snapshot, **options):
+        calls.append((snapshot.experiment_id, options))
+        return analyze(snapshot, **options)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Saved sequential selection must not load Q5, fit, or execute")
+
+    monkeypatch.setattr(sequential, "analyze_intraday_sequential_selection", captured)
+    for name in ("load_intraday_dataset", "_fit", "fit_ridge_rows", "run_intraday_execution"):
+        monkeypatch.setattr(research, name, forbidden)
+    runtime, _ = _runtime(tmp_path, [])
+    owner = QuantResearchController(runtime)
+    controller = owner.intradayResearchController
+    assert controller.openExperiment(str(path))
+    runtime._poll()
+    assert controller.selectCandidate(8)  # all six members of cost 1, not candidate 2 alone
+    bound = (controller._content, controller.restoredPlan, controller.restoreRevision,
+             controller.resultSummary, owner.intradayFinalController.canFreeze)
+    assert controller.selectView(19) and controller.busy and controller._sequential_report is None
+    runtime._poll()
+    assert controller.status == "SUCCESS", controller.error
+    report = controller._sequential_report
+    assert calls == [(parameter_grid_experiment.experiment_id, {"cost_index": 1, "minimum_history_days": 20})]
+    assert report["family_size"] == 6 and report["family_scope"] == "SAVED_COST_GROUP_ONLY"
+    assert report["historical_search_coverage"] == report["family_precommitment"] == "UNKNOWN"
+    assert report["availability"]["unavailable_reason"] == "INSUFFICIENT_HISTORY_FOR_SELECTION"
+    assert controller.selectSequentialView(1) and controller.tableModel.totalRows == 2
+    assert all(row[8] == "WARMUP" and row[1:5] == ("—", "—", "—", "—") for row in controller._rows)
+    assert controller.selectSequentialView(2) and controller.tableModel.totalRows == 12
+    assert [row[2].split(" · ")[0] for row in controller._rows] == [str(i) for i in range(6)] * 2
+    assert controller._rows[0][-1] == "NO_COMPLETED_HISTORY"
+    assert controller.selectSequentialView(3) and controller.tableModel.totalRows == 48
+    assert controller.selectSequentialView(4) and controller.tableModel.totalRows == 0
+    assert controller.selectSequentialView(5) and controller.tableModel.totalRows == 0
+    summary = controller.sequentialSummary
+    assert summary["sequential_selection_id"] == report["sequential_selection_id"]
+    assert [member["candidate_id"] for member in summary["members"]] == [member["candidate_id"] for member in report["members"]]
+    summary["selection_rule"]["minimum_history_days"] = 999
+    summary["folds"].clear()
+    assert controller.sequentialSummary["selection_rule"]["minimum_history_days"] == 20
+    assert len(controller.sequentialSummary["folds"]) == 2
+    assert controller.selectCandidate(11) and controller.selectView(0) and controller.selectView(19)
+    assert controller._sequential_report is report and len(calls) == 1
+    assert (controller._content, controller.restoredPlan, controller.restoreRevision,
+            controller.resultSummary, owner.intradayFinalController.canFreeze) == bound
+    assert controller.selectCandidate(2) and controller.busy and controller.sequentialSummary == {}
+    runtime._poll()
+    assert controller._sequential_report["cost_index"] == 0 and len(calls) == 2
+    current = controller._sequential_report
+    assert controller.openExperiment(str(tmp_path / "missing.json"))
+    runtime._poll()
+    assert controller.status == "FAILED" and controller._sequential_report is current and controller.sequentialError == ""
+    assert controller.experimentPath == str(path) and path.read_bytes() == parameter_grid_experiment.content
+    assert runtime.backend_if_initialized is None and runtime.shutdown()
+
+
+def test_sequential_selection_saved_boundary_stale_group_and_retry(qt_app, parameter_grid_experiment,
+                                                                 tmp_path, monkeypatch):
+    runtime, runner = _runtime(tmp_path, [])
+    owner = QuantResearchController(runtime)
+    controller = owner.intradayResearchController
+    controller._apply(parameter_grid_experiment, opened=True)
+    assert controller.selectView(19) and not controller.sequentialAvailable and not runner.names
+    assert controller.saveExperiment(str(tmp_path / "saved.json"))
+    runtime._poll()
+    assert controller.sequentialAvailable and controller.busy
+    runtime._poll()
+    assert controller._sequential_report["cost_index"] == 0
+    pending = []
+
+    def deferred(name, operation):
+        future = Future()
+        pending.append((future, operation))
+        return future
+
+    monkeypatch.setattr(runner, "submit", deferred)
+    assert controller.selectCandidate(6) and len(pending) == 1
+    assert controller.selectCandidate(1) and len(pending) == 1
+    stale, operation = pending.pop()
+    stale.set_result(operation())
+    runtime._poll()
+    assert controller._sequential_report is None and len(pending) == 1
+    assert controller.selectCandidate(2) and len(pending) == 1
+    current, operation = pending.pop()
+    current.set_result(operation())
+    runtime._poll()
+    assert controller._sequential_report["cost_index"] == 0
+    assert controller.selectCandidate(6) and len(pending) == 1
+    failed, _ = pending.pop()
+    failed.set_exception(ValueError("sequential selection failed"))
+    runtime._poll()
+    assert controller.status == "FAILED" and controller.sequentialError == "sequential selection failed"
+    assert controller._sequential_report is None and not pending
+    assert controller.selectCandidate(7) and controller.selectSequentialView(2) and not pending
+    assert controller.retrySequential() and len(pending) == 1
+    retried, operation = pending.pop()
+    retried.set_result(operation())
+    runtime._poll()
+    assert controller.status == "SUCCESS" and controller.sequentialError == ""
+    assert controller._sequential_report["cost_index"] == 1 and controller.tableModel.totalRows == 12
+    assert controller.resultSummary["intraday_verification"] == "RECORDED"
+    assert runtime.backend_if_initialized is None and runtime.shutdown()
+
+
 def test_actual_qml_compare_models_pagination_save_open_replay_and_language(research_case, tmp_path):
     data, _, _ = research_case
     (tmp_path / "settings.yaml").write_text("storage:\n  root_dir: ./data\n")
@@ -686,6 +798,37 @@ assert settings.property('dataId') == original_id
 assert session.i18n.setLanguage('zh-CN')
 choose('intradayResearchCandidate', 2); choose('intradayResearchView', 2)
 assert window.grabWindow().save(str(root / 'intraday-research-ui.png'))
+# The saved 10-day DEV sample reaches Q18's real unavailable path at the fixed
+# 20-day default. Use the open popup so traversing other detail views does not
+# initiate their separate analyses.
+combo = nested(find('intradayResearchView'), 'PixelComboBox')
+click_obj(combo)
+QTest.keyClick(window, Qt.Key_Home)
+for _ in range(19): QTest.keyClick(window, Qt.Key_Down)
+QTest.keyClick(window, Qt.Key_Return)
+complete()
+assert controller.viewIndex == 19 and controller.sequentialAvailable
+assert controller._sequential_report['selection_rule']['minimum_history_days'] == 20
+assert controller._sequential_report['availability']['unavailable_reason'] == 'INSUFFICIENT_HISTORY_FOR_SELECTION'
+assert '所需历史之后没有后续折' in find('intradaySequentialAvailability').property('text')
+assert '不能进入 Freeze/TEST' in find('intradaySequentialNotice').property('text')
+flick = find('intradayResearchScroll').property('contentItem')
+picker = find('intradaySequentialView')
+for _ in range(2):
+    rect = picker.mapRectToItem(flick, picker.boundingRect())
+    flick.setProperty('contentY', min(max(0, flick.property('contentY') + rect.bottom() - flick.height()),
+                                    max(0, flick.property('contentHeight') - flick.height())))
+    QTest.qWait(30)
+click_obj(nested(picker, 'PixelComboBox'))
+QTest.keyClick(window, Qt.Key_Home)
+QTest.keyClick(window, Qt.Key_Down); QTest.keyClick(window, Qt.Key_Down)
+QTest.keyClick(window, Qt.Key_Return); QTest.qWait(30)
+assert controller.sequentialViewIndex == 2 and controller.tableModel.totalRows == 6
+captured_id = controller._sequential_report['sequential_selection_id']
+assert session.i18n.setLanguage('en')
+assert controller._sequential_report['sequential_selection_id'] == captured_id
+assert 'cannot enter Freeze/TEST' in find('intradaySequentialNotice').property('text')
+assert saved.read_bytes() == controller._content
 assert session.runtime.backend_if_initialized is None and session.runtime.shutdown()
 engine.deleteLater(); app.processEvents()
 print('REAL_INTRADAY_RESEARCH_WORKFLOW_OK')
