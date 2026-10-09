@@ -211,3 +211,6 @@ immutable Save, Open, full Replay and bilingual draft preservation.
 Continue with [frozen candidate selection and final TEST](intraday_final_test.md)
 after saving the development experiment. Q8 uses the already declared TEST
 dates and keeps its final account separate from this development result.
+
+Use the [trade-performance and cash-attribution views](intraday_performance.md)
+to inspect a recorded candidate without fitting or replaying it.

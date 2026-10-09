@@ -203,7 +203,8 @@ Item {
                 label: root.i18n.catalog["quant.intraday_result_view"]
                 property int selectedView: 0
                 model: ["quant.intraday_overview", "quant.trades", "quant.intraday_ledger", "quant.intraday_daily",
-                    "quant.intraday_final_model", "quant.intraday_predictions"].map(key => root.i18n.catalog[key])
+                    "quant.intraday_final_model", "quant.intraday_predictions", "quant.performance",
+                    "quant.performance_exit", "quant.performance_entry", "quant.performance_day"].map(key => root.i18n.catalog[key])
                 onSelected: { selectedView = currentIndex; root.controller.selectView(currentIndex) }
                 onModelChanged: currentIndex = selectedView
             }
@@ -248,8 +249,17 @@ Item {
                 paged: true
                 tableModel: root.controller.tableModel
                 i18n: root.i18n
+                cellFormatter: function(value) { return view.selectedView >= 6 ? (root.i18n.catalog["performance." + value] || value) : value }
                 onPreviousRequested: root.controller.changePage(-1)
                 onNextRequested: root.controller.changePage(1)
+            }
+            Label {
+                Layout.fillWidth: true
+                visible: root.controller.testLoaded && view.selectedView >= 6
+                text: root.i18n.catalog["quant.performance_note"]
+                wrapMode: Text.WordWrap
+                color: Theme.PixelTheme.inkMuted
+                font.pixelSize: Theme.PixelTheme.fontSm
             }
         }
     }

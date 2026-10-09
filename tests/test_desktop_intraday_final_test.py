@@ -17,10 +17,107 @@ from market_vault.research.intraday_experiment import create_intraday_experiment
 from market_vault.research.strategy_experiment import write_strategy_experiment
 from test_desktop_quant_research import _runtime, qt_app  # noqa: F401
 from test_intraday_experiment import intraday_experiment  # noqa: F401
+from test_intraday_final_test import final_case, selection_case  # noqa: F401
 from test_intraday_research import diagnostic_plan, research_case  # noqa: F401
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_actual_qml_offline_performance_views_in_both_languages(intraday_experiment, final_case, tmp_path):
+    source, test_path = tmp_path / "development.json", tmp_path / "test.json"
+    write_strategy_experiment(intraday_experiment, path=source)
+    write_strategy_experiment(final_case[1], path=test_path)
+    (tmp_path / "settings.yaml").write_text("storage:\n  root_dir: ./data\n")
+    script = r'''
+import sys, time
+from pathlib import Path
+from PySide6.QtCore import QObject, QUrl, Qt
+from PySide6.QtGui import QGuiApplication
+from PySide6.QtQml import QQmlApplicationEngine
+from PySide6.QtQuickControls2 import QQuickStyle
+from PySide6.QtTest import QTest
+from market_vault.application import build_application_context
+from market_vault.desktop.bootstrap import create_qml_application_session
+from market_vault.desktop.preferences import DesktopPreferenceStore
+root, source, test_path = map(Path, sys.argv[1:])
+QQuickStyle.setStyle('Basic')
+app = QGuiApplication([])
+engine = QQmlApplicationEngine()
+session = create_qml_application_session(build_application_context(root / 'settings.yaml'), engine,
+    preference_store=DesktopPreferenceStore(root=root / 'preferences'))
+engine.load(QUrl.fromLocalFile(str(Path.cwd() / 'src/market_vault/desktop/qml/Main.qml')))
+assert engine.rootObjects()
+window = engine.rootObjects()[0]
+window.setWidth(1024); window.setHeight(600)
+owner = session.context_properties['quantResearchController']
+development, final = owner.intradayResearchController, owner.intradayFinalController
+assert session.shell.selectPage('quant_research')
+def visual():
+    pending = [window.contentItem()]
+    while pending:
+        item = pending.pop()
+        yield item
+        pending.extend(item.childItems())
+def find(name):
+    result = window.findChild(QObject, name)
+    if result is None:
+        result = next((item for item in visual() if item.objectName() == name), None)
+    assert result is not None, name
+    return result
+def click(name):
+    item = find(name)
+    app.processEvents()
+    assert item.isVisible() and item.isEnabled(), name
+    point = item.mapToScene(item.boundingRect().center()).toPoint()
+    assert 0 <= point.x() < window.width() and 0 <= point.y() < window.height(), point
+    QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier, point)
+    QTest.qWait(30)
+def choose(name, index):
+    item = find(name)
+    combo = next(c for c in item.findChildren(QObject) if 'PixelComboBox' in c.metaObject().className())
+    window.requestActivate(); QTest.qWait(20)
+    combo.forceActiveFocus()
+    QTest.keyClick(window, Qt.Key_Home)
+    for _ in range(index): QTest.keyClick(window, Qt.Key_Down)
+    QTest.qWait(30)
+    assert item.property('currentIndex') == index
+def complete(controller):
+    deadline = time.monotonic() + 30
+    while controller.busy and time.monotonic() < deadline:
+        app.processEvents(); time.sleep(.01)
+    assert controller.status == 'SUCCESS', (controller.status, controller.error)
+click('quantIntradayTab'); click('intradayComparisonTab')
+assert development.openExperiment(str(source)); complete(development)
+assert final.openTest(str(test_path)); complete(final)
+before = (development._content, final._test_content)
+for tab, controller, selector, first, table_name, day_count in (
+    ('intradayComparisonTab', development, 'intradayResearchView', 7, 'intradayResearchTable', 10),
+    ('intradayFinalTab', final, 'intradayTestView', 6, 'intradayTestTable', 6)):
+    click(tab)
+    for language, label in (('en', 'Trades'), ('zh-CN', '交易次数')):
+        assert session.i18n.setLanguage(language)
+        choose(selector, first)
+        assert controller.tableModel.totalRows == 17
+        QTest.qWait(80)
+        table = find(table_name)
+        assert table.height() >= 130, (tab, language, table.height())
+        assert any(item.isVisible() and item.property('text') == label for item in visual()), (tab, language)
+        assert window.grabWindow().save(str(root / (tab + '-' + language + '.png')))
+        for offset in (1, 2, 3):
+            choose(selector, first + offset)
+            if offset == 3: assert controller.tableModel.totalRows == day_count
+        choose(selector, first)
+assert (development._content, final._test_content) == before
+assert development.resultSummary['intraday_verification'] == 'RECORDED'
+assert final.resultSummary['intraday_test_proof'] == 'RECORDED'
+assert session.runtime.backend_if_initialized is None
+assert session.shutdown()
+'''
+    result = subprocess.run([sys.executable, "-c", script, str(tmp_path), str(source), str(test_path)],
+                            cwd=ROOT, env={**os.environ, "QT_QPA_PLATFORM": "offscreen", "QSG_RHI_BACKEND": "software"},
+                            capture_output=True, text=True, timeout=120)
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_controller_freezes_nonfirst_candidate_in_second_cost(qt_app, research_case, tmp_path):
