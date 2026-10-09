@@ -233,9 +233,9 @@ def test_workflow_never_restores_stale_action_majors():
 # ---------------------------------------------------------------------------
 
 
-def test_formal_jobs_are_exactly_four_surfaces():
+def test_formal_jobs_keep_four_surfaces_with_six_full_partitions():
     headers = list(JOB_HEADER_RE.findall(_jobs_section(ci_text())))
-    assert headers == ["test", "portability-pyarrow24", "package"]
+    assert headers == ["plan", "test-modules", "test", "portability-pyarrow24", "package"]
     for forbidden in ("package-artifact-audit", "release", "publish", "deploy"):
         assert forbidden not in headers
 
@@ -250,7 +250,7 @@ def test_normal_test_matrix_exactly_311_and_314():
 
 def test_package_job_needs_test_and_portability():
     block = _job_block(ci_text(), "package")
-    assert "needs: [test, portability-pyarrow24]" in block
+    assert "needs: [plan, test, portability-pyarrow24]" in block
 
 
 def test_release_checker_step_runs_on_all_tiers():
@@ -332,24 +332,23 @@ def test_pyarrow24_job_runs_exact_c_surface_step():
     assert "--durations=100" in region
 
 
-def test_normal_matrix_keeps_blanket_full_pytest_on_311_only():
-    # P1-1 (PR #75): the unqualified blanket `python -m pytest` remains in
-    # the normal test job, but ONLY on the Python 3.11 leg. On 3.14 the
-    # formal contract is the audited compatibility surface; an
-    # unvalidated blanket run on 3.14 is a contract violation. Only the
-    # portability-pyarrow24 job dropped its duplicate blanket suite.
+def test_normal_matrix_aggregates_full_partitions_on_311_only():
+    # The complete 3.11 suite runs in the partition matrix. The stable
+    # 3.11 check must verify its result; 3.14 retains its audited surface.
     block = _job_block(ci_text(), "test")
     names = _step_names(block)
     assert "Run offline tests" in names
-    # Exactly one direct blanket line (the 3.11 step) and no bare
-    # `python -m pytest` hidden inside a `run: |` block.
-    assert len(re.findall(r"(?m)^\s*run: python -m pytest\s*$", block)) == 1
+    assert not re.findall(r"(?m)^\s*run: python -m pytest\s*$", block)
     assert not re.findall(r"(?m)^\s*python -m pytest\s*$", block)
-    # The blanket step itself is pinned to the 3.11 leg.
+    # The FULL aggregate itself is pinned to the 3.11 leg.
     idx = names.index("Run offline tests")
     end = f"- name: {names[idx + 1]}"
     region = _region(block, "- name: Run offline tests", end)
     assert "matrix.python-version == '3.11'" in region
+    assert "run: python scripts/ci_test_partitions.py verify" in region
+    modules = _job_block(ci_text(), "test-modules")
+    assert 'python-version: "3.11"' in modules
+    assert 'run: python scripts/ci_test_partitions.py run --partition "${{ matrix.partition }}"' in modules
 
 
 def test_314_leg_keeps_fail_closed_validator_step():
@@ -571,11 +570,11 @@ def test_ci_triggers_main_push_and_pr_only_no_feature_push_duplicate():
     assert "pull_request:" in on_region
 
 
-def test_ci_cancels_stale_runs_per_pr_or_ref():
+def test_ci_cancels_stale_pr_runs_and_preserves_each_main_run():
     region = _region(ci_text(), "concurrency:", "jobs:")
     assert (
         "group: ci-${{ github.workflow }}-"
-        "${{ github.event.pull_request.number || github.ref }}"
+        "${{ github.event.pull_request.number || github.run_id }}"
     ) in region
     assert "cancel-in-progress: true" in region
 
@@ -628,7 +627,7 @@ def test_research_fast_skips_pyarrow_and_package_heavy_chains():
 def _steps(text: str) -> list[tuple[str, str]]:
     """(name, region) for every step of every formal job."""
     out = []
-    for job in ("test", "portability-pyarrow24", "package"):
+    for job in JOB_HEADER_RE.findall(_jobs_section(text)):
         block = _job_block(text, job)
         names = _step_names(block)
         for i, name in enumerate(names):
@@ -653,24 +652,26 @@ def test_no_workflow_level_path_filtering():
     assert "paths-ignore:" not in on_region
 
 
-def test_reuse_proof_step_present_in_all_three_jobs():
+def test_reuse_proof_has_one_plan_authority():
+    text = ci_text()
+    block = _job_block(text, "plan")
+    assert "Post-merge FULL reuse proof" in block
+    assert "python scripts/ci_post_merge_reuse.py" in block
+    assert "github.event_name == 'push'" in block
+    assert "github.ref == 'refs/heads/main'" in block
+    assert "env.CI_TIER == 'full'" in block
+    assert "POST_MERGE_REUSE=" in block
+    assert text.count("- name: Post-merge FULL reuse proof") == 1
     for job in ("test", "portability-pyarrow24", "package"):
-        block = _job_block(ci_text(), job)
-        assert "Post-merge FULL reuse proof" in block
-        assert "python scripts/ci_post_merge_reuse.py" in block
-        assert "github.event_name == 'push'" in block
-        assert "github.ref == 'refs/heads/main'" in block
-        assert "env.CI_TIER == 'full'" in block
-        assert "POST_MERGE_REUSE=" in block
+        assert "POST_MERGE_REUSE: ${{ needs.plan.outputs.reuse }}" in _job_block(text, job)
 
 
 def test_reuse_proof_step_fail_closes_on_verifier_crash():
     """A verifier crash must fail-closed: marker=false with a specific
     reason, never a skip of heavy validation."""
-    for job in ("test", "portability-pyarrow24", "package"):
-        block = _job_block(ci_text(), job)
-        assert "verifier_crash_fail_closed" in block
-        assert "marker=false" in block
+    block = _job_block(ci_text(), "plan")
+    assert "verifier_crash_fail_closed" in block
+    assert "marker=false" in block
 
 
 def test_every_reuse_proof_step_binds_step_scoped_github_token():
@@ -680,19 +681,19 @@ def test_every_reuse_proof_step_binds_step_scoped_github_token():
     every proof step must expose ``github.token`` as ``GITHUB_TOKEN``."""
     proofs = [region for name, region in _steps(ci_text())
               if name == "Post-merge FULL reuse proof"]
-    assert len(proofs) == 3
+    assert len(proofs) == 1
     for region in proofs:
         assert "env:" in region
         assert "GITHUB_TOKEN: ${{ github.token }}" in region
 
 
 def test_github_token_binding_is_step_scoped_only():
-    """The token binding must be step-scoped: exactly three bindings in the
+    """The token binding must be step-scoped: exactly one binding in the
     whole workflow, each inside a proof step — never workflow-global and
     never job-global."""
     text = ci_text()
     binding = "GITHUB_TOKEN: ${{ github.token }}"
-    assert text.count(binding) == 3
+    assert text.count(binding) == 1
     for name, region in _steps(text):
         if binding in region:
             assert name == "Post-merge FULL reuse proof", name
@@ -739,18 +740,19 @@ def test_missing_token_proof_failure_never_skips_heavy_validation():
     assert marker != "true"  # -> heavy guard holds -> FULL validation runs
 
 
-def test_classify_exports_full_matrix_required_in_every_job():
+def test_classify_exports_one_full_matrix_decision_to_all_consumers():
+    text = ci_text()
+    assert text.count("- name: Classify change tier") == 1
+    assert "CI_FULL_MATRIX_REQUIRED=" in _job_block(text, "plan")
     for job in ("test", "portability-pyarrow24", "package"):
-        block = _job_block(ci_text(), job)
-        assert "full_matrix_required" in block
-        assert "CI_FULL_MATRIX_REQUIRED=" in block
+        block = _job_block(text, job)
+        assert "CI_FULL_MATRIX_REQUIRED: ${{ needs.plan.outputs.full_matrix_required }}" in block
 
 
 _HEAVY_STEPS_PER_JOB = {
     "test": (
         "Install dependencies",
         "Compile Python",
-        "Run offline tests",
     ),
     "portability-pyarrow24": (
         "Install dependencies",
@@ -785,9 +787,18 @@ def test_heavy_steps_never_skip_without_verified_proof():
     state."""
     text = ci_text()
     for job, names in _HEAVY_STEPS_PER_JOB.items():
-        for name, region in _steps(text):
-            if name in names and _job_block(text, job).count(f"- name: {name}") == 1:
-                assert "env.POST_MERGE_REUSE != 'true'" in region, (job, name)
+        block = _job_block(text, job)
+        step_names = _step_names(block)
+        for name in names:
+            idx = step_names.index(name)
+            end = f"- name: {step_names[idx + 1]}" if idx + 1 < len(step_names) else None
+            region = _region(block, f"- name: {name}", end)
+            assert "env.POST_MERGE_REUSE != 'true'" in region, (job, name)
+    # Module steps are gated once, by the normalized plan at job level.
+    modules = _job_block(text, "test-modules")
+    assert "if: needs.plan.outputs.run_partitions == 'true'" in modules
+    assert "fail-fast: false" in modules
+    assert "continue-on-error:" not in modules
 
 
 def test_reuse_true_guard_appears_only_on_marker_and_bootstrap_steps():
@@ -1046,7 +1057,7 @@ def test_control_plane_314_skips_blanket_full_pytest():
     end = f"- name: {names[idx + 1]}" if idx + 1 < len(names) else None
     region = _region(block, "- name: Run offline tests", end)
     assert CONTROL_PLANE_EXCLUDED in region
-    assert re.search(r"(?m)^\s*run: python -m pytest\s*$", region) is not None
+    assert "run: python scripts/ci_test_partitions.py verify" in region
 
 
 def test_pyarrow24_heavy_steps_skip_on_control_plane():

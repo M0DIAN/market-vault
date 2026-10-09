@@ -69,9 +69,9 @@ PR 会为 exact final head SHA 触发 GitHub Actions。final head 的权威验�
 CI（见 2.3）。CI 未到达 terminal 状态前不得报告完成——见
 [AGENT_HANDOFF.md](AGENT_HANDOFF.md) 的 CI-wait 报告规则。
 
-PR 验证按第 2 节的 tier 分层。tier=full 的 PR（含任何 CI 控制面变更、
-`src/**`、`tests/**`、`scripts/**` 变更）执行完整矩阵：Python 3.11 /
-3.14 全量离线套件、PyArrow 24 可移植性 gate、package build /
+PR 验证按第 2 节的 tier 分层。tier=full 的 PR 执行完整验证：Python 3.11
+六个功能分片的全量离线套件、Python 3.14 审定兼容性 surface、PyArrow 24
+可移植性 gate、package build /
 fresh-wheel / SHA256 closure。tier=full 且 full-matrix-required 的 PR
 运行在 package job 全部成功后会产出 **FULL CI attestation** artifact
 （`market-vault-full-ci-attestation-<head_sha>-attempt-<attempt>`，
@@ -192,8 +192,8 @@ GitHub / network），是 scope audit 的机械部分；independent review 仍�
 ### LEVEL 3 — authoritative full verification
 
 - GitHub final-head CI，按仓库策略
-  （[.github/workflows/ci.yml](../../.github/workflows/ci.yml)）：完整测试矩阵
-  （Python 3.11 与 3.14）、PyArrow 24 可移植性 gate、以及 package
+  （[.github/workflows/ci.yml](../../.github/workflows/ci.yml)）：Python 3.11
+  完整功能分片与 Python 3.14 兼容性验证、PyArrow 24 可移植性 gate、以及 package
   build / fresh-wheel / SHA256 closure job。
 - merge 前（适用时）的权威验证。完整矩阵的权威从来不在本地机器，而是
   GitHub final-head CI。
@@ -215,7 +215,12 @@ final-head CI 按 changed paths 分层（CI Risk-Tier Optimization Phase 1，
   document 一致性检查），target ≤ 5 min（prefer ≤ 3 min）。
 - **PACKAGE_DOCS**：DOCS_FAST set + `README.md` 变更（README 是 package
   metadata 敏感路径）—— package job 保持完整验证。
-- **FULL**：任何其他变更 —— 当前完整矩阵不变。unknown / unset tier
+- **CONTROL_PLANE**：分类器中明确列出的十个 CI 治理文件及文档的组合，
+  执行既有六文件控制面回归。工作流 `ci.yml`、3.11 分片清单与执行器、
+  3.14 兼容性契约不属于此快速范围。
+- **RESEARCH_FAST**：PR 中符合既有研究路径规则的变更，执行固定研究组合；
+  main 的相同变更仍要求 FULL。
+- **FULL**：任何其他变更 —— 完整验证范围不减。unknown / unset tier
   一律按 FULL 处理（fail-safe）。
 
 分类由 [scripts/ci_risk_tier.py](../../scripts/ci_risk_tier.py) 完成
@@ -228,18 +233,52 @@ final-head CI 按 changed paths 分层（CI Risk-Tier Optimization Phase 1，
 登记组件路径面，分类器额外输出组件 impact（`components=` /
 `core_changed=` / `package_changed=` / `unknown_changed=` /
 `shared_changed=` / `independent_only=` / `full_matrix_required=`）。
-独立组件未来可避免无关 core CI，但 unknown / shared（workflow、
-classifier、registry、package schema）变更必须 FULL。当前没有任何
-组件可跳过验证：core 组件 `requires_core_full`，package 路径由
-package job 覆盖，控制面变更恒 FULL。`independent_only=` 只是
+组件注册本身不授权跳过 core CI；只有上文明确验证的路径 tier 可以采用
+对应快速组合。unknown 路径、执行工作流、分片契约和 package schema
+变更仍要求 FULL。core 组件 `requires_core_full`，package 路径由
+package job 覆盖。`independent_only=` 只是
 eligibility / impact 信息（changed paths 结构性隔离于已注册的非
 core / 非 package / 非 shared 组件），本身并不授权跳过 core full
 matrix；`full_matrix_required=` 反映当前 active 的 validation 策略
-——仅 docs_fast / package_docs 为 false，其余（core、unknown、
-shared、以及无 validation 契约的 registered independent component）
-恒为 true。只有未来 PR 落地显式的 component-validation 契约后，才
+——docs_fast / package_docs / control_plane / research_fast 为 false，
+FULL 为 true。没有 validation 契约的 registered independent component
+仍要求 FULL。只有未来 PR 落地显式的 component-validation 契约后，才
 可能对该组件出现 `independent_only=true` 且
 `full_matrix_required=false`。
+
+### 2.4 Python 3.11 FULL 的功能分片
+
+PR 与 main push 使用同一套分片规则；`plan` job 是整次运行唯一的分类和
+复用证明来源。FULL 且未受证复用时，同时运行下列六片。每片保留完整
+checkout，只改变 pytest 的文件选择，片内仍按原方式顺序执行。
+
+| 分片 | 功能边界 |
+|---|---|
+| `data` | 采集、Canonical、审计、清理、日内数据准备及桌面入口 |
+| `dataset_features` | Dataset、PIT、多源、跨日、特征与样本生成 |
+| `strategy` | 策略研究、诊断、比较、回测、执行及对应桌面入口 |
+| `intraday_research` | 日内研究与实验及对应桌面入口 |
+| `intraday_final` | 日内最终 TEST 及对应桌面入口 |
+| `app_ops` | 通用桌面、启动、CI、打包、治理与其余历史回归 |
+
+[ci/test_partitions.toml](../../ci/test_partitions.toml) 以精确文件优先、
+随后前缀匹配的规则分配测试；新增陌生名称、重复归属、空分片或发现规则
+变化会直接失败。所有发现的测试文件必须恰好归属一片。分片规则变更时，
+还应在相同依赖环境中比较原完整 collection 与六片 collection 的 node-id
+多重集，确认没有漏测或重复收集。执行器拒绝继承 `PYTEST_ADDOPTS`，防止
+环境过滤或 collect-only 把完整执行变成成功的空验证。
+
+稳定检查名 `test (3.11)` 在 FULL 路径汇总六片结果；只有计划成功且整个
+分片矩阵成功才通过。快速路径或受证复用必须对应按计划跳过的分片。
+`package` 保持成功依赖，任何必要验证失败都不能生成 FULL attestation。
+复用校验除四个原逻辑验证面外，还要求 `plan` 和全部六片在同一 PR
+run/attempt 上成功。执行契约变更禁止沿用旧证据，main 会实际运行 FULL。
+
+首版最多并发六片，不同时引入片内多进程。研究与最终 TEST 分开以降低
+最长片耗时；实际等待时间由最慢片、runner 排队、兼容性与打包尾部决定。
+保留原双 Python `test` 矩阵意味着 3.14 在六片后运行。12–15 分钟是首轮
+FULL 的优化目标，须以真实 CI 验证，不能把六片宣称为固定六倍加速。
+PR 的后续推送取消旧 PR 运行；main 的每个自然 push 保留独立运行身份。
 
 ## 3. 何时不要求本地完整 pytest
 

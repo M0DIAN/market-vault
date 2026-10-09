@@ -3319,7 +3319,6 @@ CI_CONTROL_PLANE_TESTS = (
 # pyproject.toml, README.md and every non-ci.yml workflow are
 # INTENTIONALLY absent (they protect package / CLI / Python contracts).
 CI_CONTROL_PLANE_SCOPE_FILES = (
-    ".github/workflows/ci.yml",
     "scripts/ci_risk_tier.py",
     "scripts/ci_post_merge_reuse.py",
     "scripts/audit_pr.py",
@@ -3495,6 +3494,94 @@ def _ci_join_continuations(region: str) -> str:
     return re.sub(r"[ \t]*\\\n[ \t]*", " ", region)
 
 
+def check_ci_partitions(root: Path) -> list[str]:
+    """Pin the FULL partition execution and its stable, fail-closed aggregate."""
+    text = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    failures = []
+    required_lines = {
+        "plan": (
+            "tier: ${{ steps.execution.outputs.tier }}",
+            "reuse: ${{ steps.execution.outputs.reuse }}",
+            "reuse_reason: ${{ steps.reuse_proof.outputs.reuse_reason }}",
+            "full_matrix_required: ${{ steps.execution.outputs.full_matrix_required }}",
+            "run_partitions: ${{ steps.execution.outputs.run_partitions }}",
+        ),
+        "test-modules": (
+            "name: test-311 (${{ matrix.partition }})",
+            "needs: plan",
+            "if: needs.plan.outputs.run_partitions == 'true'",
+            "fail-fast: false",
+            "max-parallel: 6",
+            "partition: [data, dataset_features, strategy, intraday_research, intraday_final, app_ops]",
+            'python-version: "3.11"',
+        ),
+        "test": (
+            "needs: [plan, test-modules]",
+            "if: ${{ always() && !cancelled() }}",
+            "CI_PLAN_RESULT: ${{ needs.plan.result }}",
+            "CI_PARTITIONS_RESULT: ${{ needs.test-modules.result }}",
+        ),
+        "portability-pyarrow24": ("needs: plan",),
+        "package": ("needs: [plan, test, portability-pyarrow24]",),
+    }
+    for job in ("test", "portability-pyarrow24", "package"):
+        required_lines[job] += (
+            "CI_TIER: ${{ needs.plan.outputs.tier }}",
+            "POST_MERGE_REUSE: ${{ needs.plan.outputs.reuse }}",
+            "POST_MERGE_REUSE_REASON: ${{ needs.plan.outputs.reuse_reason }}",
+            "CI_FULL_MATRIX_REQUIRED: ${{ needs.plan.outputs.full_matrix_required }}",
+        )
+    for job, lines in required_lines.items():
+        block = _ci_job_block(text, job) or ""
+        for line in lines:
+            if not _guard_is_exact_line(block, line):
+                failures.append(f"CI partition contract: {job} must contain {line!r}")
+        if re.search(r"(?m)^\s*continue-on-error:", block):
+            failures.append(f"CI partition contract: {job} cannot ignore failures")
+        if job == "test-modules" and re.search(r"(?m)^\s*(?:include|exclude):", block):
+            failures.append("CI partition contract: module matrix cannot include or exclude partitions")
+        expected_job_guards = {
+            "test-modules": ["if: needs.plan.outputs.run_partitions == 'true'"],
+            "test": ["if: ${{ always() && !cancelled() }}"],
+        }.get(job, [])
+        if re.findall(r"(?m)^    (if:.*)$", block) != expected_job_guards:
+            failures.append(f"CI partition contract: {job} must keep its exact job condition")
+        # Consumer job env is the sole binding for these fields. Step env
+        # must never replace the proof/plan or mask a failed matrix result.
+        if re.search(
+            r"(?m)^          (?:CI_TIER|POST_MERGE_REUSE|CI_FULL_MATRIX_REQUIRED|"
+            r"CI_PLAN_RESULT|CI_PARTITIONS_RESULT):", block
+        ):
+            failures.append(f"CI partition contract: {job} cannot override execution decisions in step env")
+    steps = (
+        ("plan", "Validate partition ownership", "python scripts/ci_test_partitions.py validate", None),
+        ("plan", "Export execution plan", "python scripts/ci_test_partitions.py plan", None),
+        ("test-modules", "Run partition tests",
+         'python scripts/ci_test_partitions.py run --partition "${{ matrix.partition }}"', None),
+        ("test", "Require successful CI plan", 'test "$CI_PLAN_RESULT" = success', None),
+        ("test", "Validate planned execution results", "python scripts/ci_test_partitions.py verify",
+         "if: needs.plan.outputs.run_partitions != 'true'"),
+    )
+    for job, name, command, guard in steps:
+        try:
+            region = _ci_step_region(_ci_job_block(text, job) or "", name)
+        except ValueError as exc:
+            failures.append(f"CI partition contract: {exc}")
+            continue
+        if region is None or not _guard_is_exact_line(region, f"run: {command}"):
+            failures.append(f"CI partition contract: {job}/{name} must run {command!r}")
+            continue
+        actual_guards = re.findall(r"(?m)^\s*(if:.*)$", region)
+        if actual_guards != ([guard] if guard else []):
+            failures.append(f"CI partition contract: unexpected condition on {job}/{name}")
+    if text.count("- name: Classify change tier") != 1 or text.count("- name: Post-merge FULL reuse proof") != 1:
+        failures.append("CI partition contract: classification/reuse must have one plan authority")
+    for relative in ("ci/test_partitions.toml", "scripts/ci_test_partitions.py"):
+        if not (root / relative).is_file():
+            failures.append(f"CI partition contract: missing {relative}")
+    return failures
+
+
 def check_ci_pr8(root: Path) -> list[str]:
     """The CI matrix stays exactly ``["3.11", "3.14"]``, the
     ``portability-pyarrow24`` job stays on Python 3.11, installs and
@@ -3502,9 +3589,9 @@ def check_ci_pr8(root: Path) -> list[str]:
     24 compatibility surface A + B + C (targeted portability, canonical /
     frozen regression, and the six-file sensitive regression surface) —
     never a blanket full-suite run under PyArrow 24.0.0. The package job
-    carries the ``PR8_INTEGRATED_ACCEPTANCE_OK`` marker and still depends
-    on ``[test, portability-pyarrow24]``; the formal job topology stays
-    unchanged, and the C step's fail-closed heavy guard plus the
+    carries the ``PR8_INTEGRATED_ACCEPTANCE_OK`` marker and depends on
+    ``[plan, test, portability-pyarrow24]`` after partitioning. The C
+    step's fail-closed heavy guard plus the
     verified-reuse marker guard are pinned to their own exact step
     regions."""
     path = root / ".github" / "workflows" / "ci.yml"
@@ -3524,15 +3611,16 @@ def check_ci_pr8(root: Path) -> list[str]:
         failures.append(
             "CI package job must carry the PR8_INTEGRATED_ACCEPTANCE_OK marker"
         )
-    if "needs: [test, portability-pyarrow24]" not in text:
+    if "needs: [plan, test, portability-pyarrow24]" not in text:
         failures.append(
-            "CI package job must depend on [test, portability-pyarrow24]"
+            "CI package job must depend on [plan, test, portability-pyarrow24]"
         )
+    failures.extend(check_ci_partitions(root))
     job_headers = _CI_JOB_HEADER_RE.findall(_ci_jobs_section(text))
-    if job_headers != ["test", "portability-pyarrow24", "package"]:
+    if job_headers != ["plan", "test-modules", "test", "portability-pyarrow24", "package"]:
         failures.append(
             "CI formal job topology must stay exactly "
-            "[test, portability-pyarrow24, package]"
+            "[plan, test-modules, test, portability-pyarrow24, package]"
         )
     block = _ci_job_block(text, "portability-pyarrow24")
     if block is None:
@@ -3679,9 +3767,9 @@ def check_ci_control_plane(root: Path) -> list[str]:
     if not path.exists():
         return [".github/workflows/ci.yml is missing"]
     text = path.read_text(encoding="utf-8")
-    if "needs: [test, portability-pyarrow24]" not in text:
+    if "needs: [plan, test, portability-pyarrow24]" not in text:
         failures.append(
-            "CI package job must depend on [test, portability-pyarrow24]"
+            "CI package job must depend on [plan, test, portability-pyarrow24]"
         )
 
     # --- classifier contract (scripts/ci_risk_tier.py) ---
@@ -3723,7 +3811,7 @@ def check_ci_control_plane(root: Path) -> list[str]:
     ):
         failures.append(
             "ci_risk_tier.py CONTROL_PLANE_SCOPE_RULES must stay exactly "
-            f"the 11-path allowlist {list(CI_CONTROL_PLANE_SCOPE_FILES)!r} — "
+            f"the 10-path allowlist {list(CI_CONTROL_PLANE_SCOPE_FILES)!r} — "
             "tests/test_release_v061.py, pyproject.toml, README.md and "
             "every non-ci.yml workflow stay non-eligible"
         )
@@ -3751,12 +3839,11 @@ def check_ci_control_plane(root: Path) -> list[str]:
                     "(FULL never runs for control_plane; unknown/unset "
                     "tiers still run FULL; no extra conditions allowed)"
                 )
-            if not re.search(
-                r"(?m)^\s*run: python -m pytest\s*$", offline_region
+            if not _guard_is_exact_line(
+                offline_region, "run: python scripts/ci_test_partitions.py verify"
             ):
                 failures.append(
-                    "CI test job FULL offline step must run the literal "
-                    "`python -m pytest`"
+                    "CI test job FULL offline step must verify partition results"
                 )
         cp_duplicated = False
         try:
@@ -3909,13 +3996,13 @@ def check_ci_control_plane(root: Path) -> list[str]:
                     f"(control_plane never attests): {guard!r}"
                 )
         try:
-            reuse_region = _ci_step_region(package_block, CI_REUSE_PROOF_STEP)
+            reuse_region = _ci_step_region(_ci_job_block(text, "plan") or "", CI_REUSE_PROOF_STEP)
         except ValueError as exc:
             failures.append(f"CI package job {exc}")
             reuse_region = None
         if reuse_region is None:
             failures.append(
-                f"CI package job must keep the post-merge reuse proof step "
+                f"CI plan job must keep the post-merge reuse proof step "
                 f"({CI_REUSE_PROOF_STEP!r})"
             )
         elif not _guard_is_exact_line(reuse_region, CI_REUSE_PROOF_GUARD):
@@ -4096,7 +4183,7 @@ def check_ci_python314_surface(root: Path) -> list[str]:
         failures.append("CI test job block is missing")
         return failures
 
-    # --- the blanket FULL pytest must exist, on Python 3.11 ONLY ---
+    # --- the FULL partition aggregate must exist on Python 3.11 ONLY ---
     try:
         offline_region = _ci_step_region(test_block, CI_OFFLINE_TESTS_STEP)
     except ValueError as exc:
@@ -4115,24 +4202,20 @@ def check_ci_python314_surface(root: Path) -> list[str]:
                 "(a blanket FULL pytest on the 3.14 leg is a contract "
                 "violation; no extra conditions allowed)"
             )
-        if not re.search(r"(?m)^\s*run: python -m pytest\s*$", offline_region):
+        if not _guard_is_exact_line(offline_region, "run: python scripts/ci_test_partitions.py verify"):
             failures.append(
-                "CI test job blanket FULL step must run the literal "
-                "`python -m pytest`"
+                "CI test job FULL offline step must verify partition results"
             )
-    # No OTHER unqualified blanket `python -m pytest` may exist in the
-    # test job (that would be an unvalidated blanket run on 3.14). Both
-    # forms are pinned: the direct `run: python -m pytest` line must
-    # appear exactly once (the 3.11 FULL step), and no step may hide a
-    # bare `python -m pytest` inside a `run: |` block.
+    # The full suite belongs to the partition jobs. Neither a direct
+    # blanket pytest line nor one hidden in a multiline run is allowed
+    # in the test job, including on the 3.14 leg.
     if (
-        len(re.findall(r"(?m)^\s*run: python -m pytest\s*$", test_block)) != 1
+        len(re.findall(r"(?m)^\s*run: python -m pytest\s*$", test_block)) != 0
         or re.findall(r"(?m)^\s*python -m pytest\s*$", test_block)
     ):
         failures.append(
-            "CI test job must run an unqualified blanket `python -m pytest` "
-            "exactly once (the 3.11 FULL step) — an unvalidated blanket "
-            "run on 3.14 is a contract violation"
+            "CI test job must never run an unqualified blanket `python -m pytest`; "
+            "3.11 FULL runs in partitions and 3.14 runs the compatibility surface"
         )
 
     # --- validator step: exact guard, exact invocation ---

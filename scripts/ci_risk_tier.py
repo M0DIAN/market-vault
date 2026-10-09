@@ -147,21 +147,24 @@ CONTROL_RULES = [
     "scripts/audit_pr.py",
     "ci/components.toml",
     "pyproject.toml",
+    "ci/test_partitions.toml",
+    "scripts/ci_test_partitions.py",
+    "tests/test_ci_test_partitions.py",
     "ci/python314_compatibility_surface.txt",
     "scripts/ci_python314_surface.py",
     "tests/test_python314_compatibility_surface.py",
 ]
 
+# CI execution changes, including ci.yml and partition rules, require FULL.
 # P1-2 (PR #71): the exact fast-eligible control-plane scope. This is the
 # ONLY explicit allowlist for the control_plane tier — never a broad
 # tests/** / scripts/** / .github/workflows/** rule. Tests
 # tests/test_release_v061.py is INTENTIONALLY absent: that file also
 # protects package / CLI / Python compatibility contracts, so changing it
-# must keep forcing FULL. pyproject.toml and every non-ci.yml workflow are
+# must keep forcing FULL. pyproject.toml and every workflow are
 # absent for the same reason. Renames classify by BOTH paths, so renaming
 # an eligible path into a non-eligible one fails closed to FULL.
 CONTROL_PLANE_SCOPE_RULES = [
-    ".github/workflows/ci.yml",
     "scripts/ci_risk_tier.py",
     "scripts/ci_post_merge_reuse.py",
     "scripts/audit_pr.py",

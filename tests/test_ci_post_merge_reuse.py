@@ -91,7 +91,7 @@ def make_job(name: str, **over: object) -> dict:
 
 
 def make_all_jobs() -> list[dict]:
-    return [make_job(surface) for surface in reuse.REQUIRED_JOB_SURFACES]
+    return [make_job(surface) for surface in reuse.FULL_REQUIRED_JOB_NAMES]
 
 
 def make_artifact(**over: object) -> dict:
@@ -466,12 +466,18 @@ def test_all_candidates_failing_denies_reuse():
 # ---------------------------------------------------------------------------
 
 
-def test_all_four_required_jobs_accepted():
+def test_all_required_full_jobs_accepted():
     v = run_verifier(api_kwargs={"jobs": make_all_jobs()})
     assert v.reuse is True
 
 
-@pytest.mark.parametrize("surface", reuse.REQUIRED_JOB_SURFACES)
+def test_four_logical_surfaces_without_partitions_cannot_prove_full():
+    jobs = [make_job(surface) for surface in reuse.REQUIRED_JOB_SURFACES]
+    v = run_verifier(api_kwargs={"jobs": jobs})
+    assert v.reuse is False and v.reason == "jobs_missing_surface"
+
+
+@pytest.mark.parametrize("surface", reuse.FULL_REQUIRED_JOB_NAMES)
 def test_missing_one_job_rejected(surface):
     jobs = [j for j in make_all_jobs() if j["name"] != surface]
     v = run_verifier(api_kwargs={"jobs": jobs})
@@ -482,7 +488,7 @@ def test_missing_one_job_rejected(surface):
     "conclusion", ["failure", "cancelled", "timed_out", "skipped", "neutral",
                    "action_required"]
 )
-@pytest.mark.parametrize("surface", reuse.REQUIRED_JOB_SURFACES)
+@pytest.mark.parametrize("surface", reuse.FULL_REQUIRED_JOB_NAMES)
 def test_non_success_job_conclusion_rejected(surface, conclusion):
     jobs = make_all_jobs()
     for job in jobs:
@@ -733,6 +739,9 @@ CONTROL_CHANGED_CASES = [
     "scripts/audit_pr.py",
     "scripts/check_release.py",
     "ci/components.toml",
+    "ci/test_partitions.toml",
+    "scripts/ci_test_partitions.py",
+    "tests/test_ci_test_partitions.py",
     # P1-1 (PR #75): the Python 3.14 compatibility surface contract
     # (manifest, fail-closed validator, regression surface) is
     # control-plane: a merged change touching it denies reuse so the

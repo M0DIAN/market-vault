@@ -1,0 +1,108 @@
+# Python 3.11 FULL execution ownership. Exact filenames override broad prefixes.
+# Each job checks out all files, then executes only its owned test files.
+# Unknown, multiply-owned or stale files fail validation; no catch-all partition.
+# GUI/business ownership and measured runtime determine these groups, not counts.
+schema_version = 1
+
+[partitions.data]
+prefixes = [
+  "test_canonical_",
+  "test_safe_purge_",
+  "test_timestamp_semantics_",
+]
+files = [
+  "test_audit_v03.py",
+  "test_backfill_v03.py",
+  "test_calendar_v03.py",
+  "test_collector.py",
+  "test_console_v01.py",
+  "test_desktop_intraday_data.py",
+  "test_early_close_rth_geometry_v1.py",
+  "test_intraday_audit_v03.py",
+  "test_intraday_data.py",
+  "test_inventory_v03.py",
+  "test_market_bar_snapshot_pairs_v1.py",
+  "test_moomoo_sdk.py",
+  "test_normalization.py",
+  "test_options_v02.py",
+  "test_quality.py",
+  "test_requested_session_current_view.py",
+  "test_snapshot_safety.py",
+  "test_superseded_snapshot_cleanup_v1.py",
+]
+
+[partitions.dataset_features]
+prefixes = [
+  "test_cross_day_",
+  "test_dataset_",
+  "test_feature_",
+  "test_multi_source_",
+  "test_observation_",
+  "test_sample_generation_",
+  "test_ts2_feature_",
+]
+files = [
+  "test_chronological_splits.py",
+  "test_experiment_metadata.py",
+  "test_leakage_threat_model.py",
+  "test_ml_dataset_adapter.py",
+  "test_pit_sample_assembly.py",
+  "test_research_cli.py",
+  "test_research_dataset_builder.py",
+  "test_verified_dataset_reader.py",
+]
+
+[partitions.strategy]
+prefixes = [
+  "test_ridge_",
+  "test_strategy_",
+  "test_backtest_",
+  "test_walk_forward_",
+]
+files = [
+  "test_desktop_intraday_execution.py",
+  "test_desktop_quant_research.py",
+  "test_desktop_strategy_diagnostics.py",
+  "test_desktop_strategy_experiment.py",
+  "test_intraday_execution.py",
+  "test_research_workspace.py",
+]
+
+[partitions.intraday_research]
+prefixes = [
+]
+files = [
+  "test_desktop_intraday_research.py",
+  "test_intraday_experiment.py",
+  "test_intraday_research.py",
+]
+
+[partitions.intraday_final]
+prefixes = [
+]
+files = [
+  "test_desktop_intraday_final_test.py",
+  "test_intraday_final_test.py",
+]
+
+[partitions.app_ops]
+prefixes = [
+  "test_adaptive_window_",
+  "test_ci_",
+  "test_desktop_",
+  "test_release_",
+  "test_v0",
+  "test_window_",
+  "test_windows_",
+]
+files = [
+  "test_application_bootstrap.py",
+  "test_audit_pr.py",
+  "test_component_aware_tiers.py",
+  "test_deprecation_compatibility_v051.py",
+  "test_destructive_design_gate.py",
+  "test_legacy_desktop_retirement.py",
+  "test_python314_compatibility_surface.py",
+  "test_qml_production_cutover.py",
+  "test_verify_full.py",
+]
