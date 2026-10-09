@@ -16,7 +16,7 @@ from market_vault.research import intraday_research as research
 from market_vault.research.intraday_experiment import create_intraday_experiment
 from market_vault.research.strategy_experiment import StrategyExperiment, canonical_json, write_strategy_experiment
 from test_desktop_quant_research import _runtime, qt_app  # noqa: F401
-from test_intraday_experiment import intraday_experiment, signed  # noqa: F401
+from test_intraday_experiment import intraday_experiment, parameter_grid_experiment, signed  # noqa: F401
 from test_intraday_final_test import final_case, selection_case  # noqa: F401
 from test_intraday_research import diagnostic_plan, research_case  # noqa: F401
 
@@ -43,6 +43,358 @@ def _unavailable_saved_candidate(snapshot):
     root = snapshot.as_dict()
     root["report"]["groups"][0]["results"][1]["execution"]["trades"][0]["commission_total"] += .01
     return StrategyExperiment(signed(root))
+
+
+@pytest.fixture(scope="session")
+def small_parameter_grids(research_case):
+    """Cover zero/one axis using the same verified data and rule execution only."""
+    data, comparison, _ = research_case
+    snapshots = []
+    for axes in ([], [{"parameter": "threshold", "values": [130, 130.000000000001]}]):
+        plan = {"plan_schema_version": research.INTRADAY_DIAGNOSTICS_PLAN_VERSION,
+            "comparison_plan": comparison, "strategy_name": "Flat", "parameter_axes": axes,
+            "cost_scenarios": [{"commission_bps": 0, "slippage_bps": 0}]}
+        normalized, children, coordinates = research.expand_intraday_plan(plan, recorded=True)
+        prepared = research._prepare_intraday_research(children[0], data=data)
+        report = research._evaluate_intraday_research(normalized, children, coordinates, prepared)
+        snapshots.append(create_intraday_experiment(plan=normalized, report=report))
+    return tuple(snapshots)
+
+
+def _grid_unavailable_center(snapshot):
+    root = snapshot.as_dict()
+    for point in root["report"]["groups"][1]["results"][1]["execution"]["ledger"]:
+        for key in ("cash", "quantity", "equity"):
+            point[key] *= 2
+    return StrategyExperiment(signed(root))
+
+
+def test_parameter_grid_controller_preserves_selection_cache_and_proof(qt_app, parameter_grid_experiment,
+        small_parameter_grids, intraday_experiment, tmp_path, monkeypatch):
+    from market_vault.research import intraday_parameter_grid as grid
+    second = _named_saved_experiment(parameter_grid_experiment, "Same shape, another saved record")
+    partial = _grid_unavailable_center(parameter_grid_experiment)
+    runtime, runner = _runtime(tmp_path, [])
+    controller = QuantResearchController(runtime).intradayResearchController
+    calls, analyze = [], grid.analyze_intraday_parameter_grid
+    def captured(snapshot, **indices):
+        calls.append((snapshot, indices))
+        return analyze(snapshot, **indices)
+    def forbidden(*args, **kwargs):
+        pytest.fail("Grid selection revalidated, loaded data, fitted, or executed")
+    monkeypatch.setattr(grid, "analyze_intraday_parameter_grid", captured)
+    monkeypatch.setattr(StrategyExperiment, "__post_init__", forbidden)
+    for name in ("load_intraday_dataset", "_fit", "fit_ridge_rows", "run_intraday_execution"):
+        monkeypatch.setattr(research, name, forbidden)
+    assert not controller.gridAvailable and not controller.selectGridCandidate(0)
+    controller._apply(parameter_grid_experiment, path=str(tmp_path / "grid.json"), opened=True)
+    assert controller.gridCostIndex == controller.candidateIndex == controller.gridMetricIndex == 0
+    assert not calls and controller._grid_snapshot is parameter_grid_experiment
+    # A previous explicit choice is the center when entering the new view.
+    assert controller.selectCandidate(7) and controller.selectView(16)
+    first = controller.parameterGrid
+    assert first["selection"]["cost_index"] == 1 and first["selection"]["center_candidate_index"] == 1
+    assert first["selection"]["metric"] == "total_return"
+    assert [row["candidate_index"] for row in first["cells"]] == list(range(6))
+    assert [axis["condition_index"] for axis in first["axes"]] == [0, 1]
+    assert first["axes"][0]["values"][-1] == "130.000000000001"
+    assert [(n["axis_index"], n["direction"], n["candidate_index"]) for n in first["neighbors"]] == [
+        (0, "LOWER", 3), (0, "HIGHER", 5), (1, "HIGHER", 0)]
+    assert first["neighborhood_summary"]["available_count"] == 3
+    assert all(row["delta"]["unit"] == "PERCENTAGE_POINTS" for row in first["neighbors"])
+    original = (controller._content, controller.experimentPath, controller.restoredPlan, controller._proof)
+    first["cells"][1]["candidate_id"] = "changed detached view"
+    assert controller.parameterGrid["center"]["candidate_id"] != "changed detached view"
+    count = len(calls)
+    assert controller.selectView(1) and controller.selectView(16)
+    assert len(calls) == count
+    for index, metric in enumerate(grid.PARAMETER_GRID_METRICS):
+        assert controller.selectGridMetric(index)
+        assert controller.parameterGrid["selection"]["metric"] == metric
+        assert controller.candidateIndex == 7
+    assert controller.selectGridCost(0) and controller.candidateIndex == 1
+    assert controller.selectGridCandidate(4) and controller.candidateIndex == 4
+    selected = controller.selection_source()
+    assert (selected["cost_index"], selected["candidate_index"]) == (0, 4)
+    assert selected["candidate_id"] == controller.parameterGrid["center"]["candidate_id"]
+    assert controller.openGridCandidateDetails() and controller.viewIndex == 1
+    assert controller.tableModel.totalRows == len(controller._selected()[1]["execution"]["trades"])
+    assert controller.selectView(16) and controller.candidateIndex == 4 and controller.gridMetricIndex == 5
+    assert (controller._content, controller.experimentPath, controller.restoredPlan, controller._proof) == original
+    assert all(snapshot is parameter_grid_experiment for snapshot, _ in calls)
+    for action in (controller.selectGridCost, controller.selectGridCandidate, controller.selectGridMetric):
+        assert not action(-1) and not action(True) and not action(99)
+    # Reopening a same-shaped record clears both immutable object and derived cache.
+    controller._apply(second, path=str(tmp_path / "second.json"), opened=True)
+    assert controller.candidateIndex == controller.gridCostIndex == controller.gridMetricIndex == 0
+    assert calls[-1][0] is second and controller._grid_snapshot is second
+    assert controller.parameterGrid["experiment_id"] == second.experiment_id
+    assert controller._proof == "RECORDED"
+    controller._apply(partial, path=str(tmp_path / "partial.json"), opened=True)
+    assert controller.selectGridCost(1) and controller.selectGridCandidate(1) and controller.selectGridMetric(4)
+    unavailable = controller.parameterGrid
+    assert unavailable["center"]["metric"]["display"] == "—"
+    assert unavailable["center"]["metric"]["unavailable_reason"] == "RECORDED_LEDGER_RECONCILIATION_FAILED"
+    assert all(row["delta"]["unavailable_reason"] == "LEFT_UNAVAILABLE" for row in unavailable["neighbors"])
+    assert unavailable["neighborhood_summary"]["available_count"] == 3
+    for dimension, snapshot in enumerate(small_parameter_grids):
+        controller._apply(snapshot, opened=True)
+        assert len(controller.parameterGrid["axes"]) == dimension
+        assert len(controller.parameterGrid["cells"]) == dimension + 1
+        if dimension == 0:
+            assert controller.parameterGrid["neighborhood_summary"]["unavailable_reason"] == "NO_NEIGHBORS"
+    controller._apply(intraday_experiment, opened=True)
+    assert not controller.gridAvailable and controller.parameterGrid == {} and controller._grid_snapshot is None
+    assert not controller.selectGridMetric(0) and not controller.openGridCandidateDetails()
+    assert controller._proof == "RECORDED" and not runner.names
+    assert runtime.backend_if_initialized is None and runtime.shutdown()
+
+
+def test_actual_qml_parameter_grid_selection_precision_and_offline_identity(parameter_grid_experiment,
+        small_parameter_grids, intraday_experiment, final_case, tmp_path):
+    mismatch_root = parameter_grid_experiment.as_dict()
+    mismatch_root["report"]["groups"][1]["benchmark"]["execution"]["ledger"][0]["mark_price"] += .01
+    snapshots = {"grid": parameter_grid_experiment,
+        "second": _named_saved_experiment(parameter_grid_experiment, "Same-shaped second file"),
+        "partial": _grid_unavailable_center(parameter_grid_experiment),
+        "mismatch": StrategyExperiment(signed(mismatch_root)),
+        "zero": small_parameter_grids[0], "one": small_parameter_grids[1],
+        "ordinary": intraday_experiment, "test": final_case[1]}
+    for name, snapshot in snapshots.items():
+        write_strategy_experiment(snapshot, path=tmp_path / (name + ".json"))
+    (tmp_path / "settings.yaml").write_text("storage:\n  root_dir: ./data\n")
+    script = r'''
+import hashlib, sys, time
+from pathlib import Path
+from PySide6.QtCore import QObject, QUrl, Qt
+from PySide6.QtGui import QGuiApplication
+from PySide6.QtQml import QQmlApplicationEngine
+from PySide6.QtQuickControls2 import QQuickStyle
+from PySide6.QtTest import QTest
+from market_vault.application import build_application_context
+from market_vault.desktop.bootstrap import create_qml_application_session
+from market_vault.desktop.preferences import DesktopPreferenceStore
+from market_vault.research import intraday_research as research
+from market_vault.research.strategy_experiment import StrategyExperiment
+root = Path(sys.argv[1])
+sources = {name: root / (name + '.json') for name in ('grid', 'second', 'partial', 'mismatch', 'zero', 'one', 'ordinary', 'test')}
+before = {name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in sources.items()}
+QQuickStyle.setStyle('Basic')
+app = QGuiApplication([])
+engine = QQmlApplicationEngine()
+session = create_qml_application_session(build_application_context(root / 'settings.yaml'), engine,
+    preference_store=DesktopPreferenceStore(root=root / 'preferences'))
+engine.load(QUrl.fromLocalFile(str(Path.cwd() / 'src/market_vault/desktop/qml/Main.qml')))
+assert engine.rootObjects()
+window = engine.rootObjects()[0]
+window.setWidth(1024); window.setHeight(600)
+owner = session.context_properties['quantResearchController']
+controller, final = owner.intradayResearchController, owner.intradayFinalController
+assert session.shell.selectPage('quant_research')
+def descendants(parent):
+    pending = [parent]
+    while pending:
+        item = pending.pop()
+        yield item
+        pending.extend(item.childItems())
+def find(name):
+    result = window.findChild(QObject, name)
+    if result is None:
+        result = next((item for item in descendants(window.contentItem()) if item.objectName() == name), None)
+    assert result is not None, name
+    return result
+def reveal(item):
+    flick = find('intradayResearchScroll').property('contentItem')
+    rect = item.mapRectToItem(flick, item.boundingRect())
+    delta = rect.top() if rect.top() < 0 else max(0, rect.bottom() - flick.height())
+    flick.setProperty('contentY', min(max(0, flick.property('contentY') + delta),
+        max(0, flick.property('contentHeight') - flick.height())))
+    QTest.qWait(25)
+    rect = item.mapRectToItem(flick, item.boundingRect())
+    assert rect.top() >= -1 and rect.bottom() <= flick.height() + 1, (item.objectName(), rect, flick.height())
+def click(name):
+    item = find(name)
+    app.processEvents()
+    assert item.isVisible() and item.isEnabled(), name
+    point = item.mapToScene(item.boundingRect().center()).toPoint()
+    assert 0 <= point.x() < window.width() and 0 <= point.y() < window.height(), (name, point)
+    QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier, point)
+    QTest.qWait(30)
+def choose(name, index):
+    item = find(name)
+    reveal(item)
+    combo = next(c for c in item.findChildren(QObject) if 'PixelComboBox' in c.metaObject().className())
+    window.requestActivate(); QTest.qWait(15)
+    combo.forceActiveFocus()
+    QTest.keyClick(window, Qt.Key_Space)
+    QTest.keyClick(window, Qt.Key_Home)
+    for _ in range(index): QTest.keyClick(window, Qt.Key_Down)
+    QTest.keyClick(window, Qt.Key_Return)
+    QTest.qWait(35)
+    assert item.property('currentIndex') == index, (name, index, item.property('currentIndex'))
+def complete(operation):
+    deadline = time.monotonic() + 30
+    while operation.busy and time.monotonic() < deadline:
+        app.processEvents(); time.sleep(.01)
+    assert operation.status == 'SUCCESS', (operation.status, operation.error)
+    QTest.qWait(40)
+def open_record(name):
+    assert controller.openExperiment(str(sources[name])); complete(controller)
+def inside(item, parent):
+    assert item.isVisible() and not item.property('truncated'), item.objectName()
+    rect = item.mapRectToItem(parent, item.boundingRect())
+    assert rect.left() >= -1 and rect.right() <= parent.width() + 1, (item.objectName(), rect, parent.width())
+    assert rect.top() >= -1 and rect.bottom() <= parent.height() + 1, (item.objectName(), rect, parent.height())
+def reveal_cell(index):
+    viewport = find('intradayParameterGridScroll')
+    reveal(viewport)
+    item = find('intradayGridCell' + str(index))
+    rect = item.mapRectToItem(viewport, item.boundingRect())
+    for axis, start, end, size in (('X', rect.left(), rect.right(), viewport.width()),
+            ('Y', rect.top(), rect.bottom(), viewport.height())):
+        delta = start if start < 0 else max(0, end - size)
+        viewport.setProperty('content' + axis, max(0, viewport.property('content' + axis) + delta))
+    QTest.qWait(35)
+    inside(item, viewport)
+    label = find('intradayGridCoordinates' + str(index))
+    inside(label, item); inside(label, viewport)
+    return label
+def screenshot(name):
+    assert window.grabWindow().save(str(root / (name + '.png')))
+def forbidden(*args, **kwargs):
+    raise AssertionError('Parameter grid cannot load Q5, fit, execute, or write records')
+for name in ('load_intraday_dataset', '_fit', 'fit_ridge_rows', 'run_intraday_execution'):
+    setattr(research, name, forbidden)
+built, validated = [], StrategyExperiment.__post_init__
+def validate(snapshot):
+    built.append(id(snapshot))
+    validated(snapshot)
+StrategyExperiment.__post_init__ = validate
+click('quantIntradayTab'); click('intradayComparisonTab')
+open_record('grid')
+assert controller.gridCostIndex == controller.candidateIndex == controller.gridMetricIndex == 0
+choose('intradayResearchCandidate', 7)
+find('intradayResearchCommission').setProperty('text', '17.25')
+saved = (controller._content, controller.experimentPath, controller._proof)
+choose('intradayResearchView', 16)
+assert controller._grid_report['selection']['cost_index'] == 1
+assert controller._grid_report['selection']['center_candidate_index'] == 1
+assert controller._grid_report['selection']['metric'] == 'total_return'
+validation_count = len(built)
+snapshot = controller._grid_snapshot
+for language, axis_caption in (('en', 'Condition threshold'), ('zh-CN', '条件阈值')):
+    assert session.i18n.setLanguage(language); QTest.qWait(40)
+    assert (controller.gridCostIndex, controller.candidateIndex, controller.gridMetricIndex) == (1, 7, 0)
+    assert find('intradayResearchView').property('currentIndex') == 16
+    text = reveal_cell(4).property('text')
+    assert axis_caption in text and '130.000000000001' in text
+    assert 'strategy.condition_threshold' not in text
+    screenshot('grid-composite-' + language)
+click('intradayGridCell4')
+assert controller.candidateIndex == 10 and find('intradayResearchCandidate').property('currentIndex') == 10
+selected = controller.selection_source()
+assert (selected['cost_index'], selected['candidate_index']) == (1, 4)
+assert controller._grid_report['selection']['center_candidate_id'] == selected['candidate_id']
+identity = find('intradayGridCenterIdentity')
+reveal(identity)
+assert selected['experiment_id'] in identity.property('text') and selected['candidate_id'] in identity.property('text')
+inside(identity, find('intradayResearchScroll').property('contentItem'))
+screenshot('grid-center-identity-zh-CN')
+reveal(find('intradayGridOpenDetails')); click('intradayGridOpenDetails')
+assert controller.viewIndex == 1 and find('intradayResearchView').property('currentIndex') == 1
+assert find('intradayResearchTable').isVisible()
+assert controller.tableModel.totalRows == len(controller._selected()[1]['execution']['trades'])
+assert controller.selection_source() == selected
+choose('intradayResearchView', 16)
+choose('intradayGridMetric', 2)
+assert controller._grid_report['cells'][4]['metric']['unit'] == 'COUNT'
+choose('intradayGridMetric', 4)
+assert controller._grid_report['selection']['metric'] == 'median_fold_return'
+assert controller._grid_report['cells'][4]['metric']['evidence'] == 'RECORDED_LEDGER_DERIVATION'
+choose('intradayGridCost', 0)
+assert controller.candidateIndex == 4 and controller.gridMetricIndex == 4
+reveal(find('intradayGridSelectNeighbor0')); click('intradayGridSelectNeighbor0')
+assert controller.candidateIndex == 0
+assert [(n['axis_index'], n['direction'], n['candidate_index']) for n in controller._grid_report['neighbors']] == [
+    (0, 'LOWER', 2), (0, 'HIGHER', 4), (1, 'LOWER', 1)]
+summary = find('intradayGridSummary'); reveal(summary)
+assert '不含中心' in summary.property('text') and '纳入值数: 3' in summary.property('text')
+inside(summary, find('intradayResearchScroll').property('contentItem'))
+screenshot('grid-neighbor-summary-zh-CN')
+assert len(built) == validation_count and controller._grid_snapshot is snapshot
+assert find('intradayResearchCommission').property('text') == '17.25'
+assert (controller._content, controller.experimentPath, controller._proof) == saved
+
+open_record('partial')
+choose('intradayGridCost', 1); reveal_cell(1); click('intradayGridCell1')
+choose('intradayGridMetric', 4)
+assert controller.parameterGrid['center']['metric']['display'] == '—'
+assert controller._grid_report['cells'][1]['metric']['value'] is None
+assert controller._grid_report['neighborhood_summary']['available_count'] == 3
+identity = find('intradayGridCenterIdentity'); reveal(identity)
+assert '账本记录不一致' in identity.property('text')
+delta = find('intradayGridDelta3'); reveal(delta)
+assert '中心指标不可用' in delta.property('text') and '百分点' in delta.property('text')
+inside(delta, find('intradayResearchScroll').property('contentItem'))
+screenshot('grid-unavailable-center-zh-CN')
+assert controller._proof == 'RECORDED'
+open_record('mismatch')
+choose('intradayGridCost', 1); reveal_cell(1); click('intradayGridCell1')
+assert all(cell['metric']['value'] is not None for cell in controller._grid_report['cells'])
+assert controller._grid_report['neighborhood_summary']['unavailable_reason'] == 'NO_MATCHING_BASIS'
+delta = find('intradayGridDelta3'); reveal(delta)
+assert '基础不同' in delta.property('text') and '原始价格序列' in delta.property('text')
+screenshot('grid-basis-mismatch-zh-CN')
+
+old_snapshot = controller._grid_snapshot
+open_record('second')
+assert controller._grid_snapshot is not old_snapshot
+assert controller._grid_report['experiment_id'] == controller._root['experiment_id']
+assert controller._grid_report['experiment_id'] != selected['experiment_id']
+assert (controller.gridCostIndex, controller.candidateIndex, controller.gridMetricIndex) == (0, 0, 0)
+assert controller._proof == 'RECORDED'
+open_record('one')
+assert controller.parameterGrid['axes'][0]['values'] == ['130.0', '130.000000000001']
+assert len(controller._grid_report['cells']) == 2
+for language in ('en', 'zh-CN'):
+    assert session.i18n.setLanguage(language); QTest.qWait(40)
+    first = reveal_cell(0).property('text')
+    second = reveal_cell(1).property('text')
+    assert first != second and '130.0' in first and '130.000000000001' in second
+    assert '130.000000000001' not in first
+    inside(find('intradayGridCoordinates0'), find('intradayParameterGridScroll'))
+    screenshot('grid-close-coordinates-' + language)
+open_record('zero')
+assert controller.parameterGrid['axes'] == [] and len(controller.parameterGrid['cells']) == 1
+assert controller._grid_report['neighbors'] == []
+summary = find('intradayGridSummary'); reveal(summary)
+assert '无轴向邻居' in summary.property('text') and '—' in summary.property('text')
+screenshot('grid-zero-axis-zh-CN')
+open_record('ordinary')
+assert not controller.gridAvailable and controller.parameterGrid == {} and controller._grid_snapshot is None
+notice = find('intradayParameterGridNotice'); reveal(notice)
+assert '普通比较、情景子项和 TEST' in notice.property('text')
+assert not find('intradayParameterGridScroll').isVisible()
+screenshot('grid-ordinary-unavailable-zh-CN')
+assert final.openTest(str(sources['test'])); complete(final)
+click('intradayFinalTab')
+assert not find('intradayParameterGridPanel').isVisible()
+test_view = find('intradayTestView')
+test_views = test_view.property('model')
+if hasattr(test_views, 'toVariant'):
+    test_views = test_views.toVariant()
+assert session.i18n.catalog['quant.parameter_grid'] not in test_views
+assert not final.selectView(15)
+assert final._test_proof == 'RECORDED' and controller._proof == 'RECORDED'
+assert {name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in sources.items()} == before
+assert session.runtime.backend_if_initialized is None and session.runtime.shutdown()
+print('REAL_PARAMETER_GRID_QML_OK')
+'''
+    result = subprocess.run([sys.executable, "-c", script, str(tmp_path)], cwd=ROOT,
+        env={**os.environ, "QT_QPA_PLATFORM": "offscreen", "QT_QUICK_BACKEND": "software"},
+        capture_output=True, text=True, timeout=120)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "REAL_PARAMETER_GRID_QML_OK" in result.stdout
 
 
 def test_saved_comparison_captures_sources_and_indices_with_offline_failure_retention(qt_app,

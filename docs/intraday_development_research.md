@@ -113,6 +113,10 @@ alter predictions or fitted models. Within one action, equal fold/alpha fits
 are reused across threshold variants and costs; different folds or alpha values
 receive their own models. There is no optimizer or automatic candidate choice.
 
+After saving diagnostics, use the [parameter grid and neighbor view](intraday_parameter_grid.md)
+to inspect exact coordinates and nearby recorded candidates without running
+additional evaluations.
+
 ## CLI and plan grammar
 
 Commands work offline, without settings or OpenD initialization:

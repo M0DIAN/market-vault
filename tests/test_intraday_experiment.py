@@ -3,6 +3,10 @@
 from copy import deepcopy
 from hashlib import sha256
 import json
+import os
+from pathlib import Path
+import subprocess
+import sysconfig
 
 import pytest
 
@@ -116,12 +120,17 @@ def test_scenarios_offline_cli_export_guards_and_nonfirst_child_final_test(execu
     from market_vault.research.intraday_execution_scenarios import extract_intraday_execution_scenario
     from market_vault.research.intraday_final_test import freeze_intraday_candidate, run_intraday_final_test
     from market_vault.research.intraday_risk_diagnostics import analyze_intraday_risk_diagnostics
+    from market_vault.research.intraday_parameter_grid import analyze_intraday_parameter_grid
     _, _, collection, _ = execution_scenarios_case
     path, output = tmp_path / "collection.json", tmp_path / "delayed.json"
     write_strategy_experiment(collection, path=path)
     child = collection.as_dict()["report"]["scenarios"][1]["experiment"]
     with pytest.raises(ValueError, match="export an ordinary Q7"):
         analyze_intraday_risk_diagnostics(collection)
+    with pytest.raises(ValueError, match="INTRADAY_DIAGNOSTICS"):
+        analyze_intraday_parameter_grid(collection)
+    with pytest.raises(ValueError, match="INTRADAY_DIAGNOSTICS"):
+        analyze_intraday_parameter_grid(StrategyExperiment(canonical_json(child)))
     selected = child["report"]["groups"][0]["results"][2]
     capture = {"expected_experiment_id": collection.experiment_id, "scenario_index": 1,
                "expected_child_experiment_id": child["experiment_id"]}
@@ -422,6 +431,149 @@ def saved_comparison_feature_pair(research_case):
         report = research._evaluate_intraday_research(normalized, children, axes, prepared)
         snapshots.append(create_intraday_experiment(plan=normalized, report=report))
     return tuple(snapshots)
+
+
+@pytest.fixture(scope="session")
+def parameter_grid_experiment(research_case):
+    """One real Composite grid reuses verified Q5; no extra source load or fit."""
+    data, comparison, _ = research_case
+    plan = {"plan_schema_version": research.INTRADAY_DIAGNOSTICS_PLAN_VERSION,
+        "comparison_plan": deepcopy(comparison), "strategy_name": "Long",
+        "parameter_axes": [{"parameter": "condition_threshold", "condition_index": 0, "values": [125, 0, 130.000000000001]},
+                           {"parameter": "condition_threshold", "condition_index": 1, "values": [1000000, 126]}],
+        "cost_scenarios": [{"commission_bps": 0, "slippage_bps": 0}, {"commission_bps": 10, "slippage_bps": 5}]}
+    normalized, children, coordinates = research.expand_intraday_plan(plan, recorded=True)
+    prepared = research._prepare_intraday_research(children[0], data=data)
+    report = research._evaluate_intraday_research(normalized, children, coordinates, prepared)
+    return create_intraday_experiment(plan=normalized, report=report, name="Explicit Composite grid")
+
+
+def test_parameter_grid_real_second_cost_all_metrics_single_decode_and_console(parameter_grid_experiment, tmp_path, monkeypatch, capsys):
+    from market_vault.research.intraday_parameter_grid import PARAMETER_GRID_METRICS, analyze_intraday_parameter_grid
+    snapshot = parameter_grid_experiment
+    source = tmp_path / "grid.json"
+    write_strategy_experiment(snapshot, path=source)
+    before = source.read_bytes()
+    root = snapshot.as_dict()
+    monkeypatch.setattr(research, "load_intraday_dataset", lambda *a, **kw: pytest.fail("grid read Q5"))
+    monkeypatch.setattr(research, "_fit", lambda *a, **kw: pytest.fail("grid fitted"))
+    monkeypatch.setattr(research, "run_intraday_execution", lambda *a, **kw: pytest.fail("grid executed"))
+    decoded, original = [], StrategyExperiment.as_dict
+    def decode(value):
+        decoded.append(value is snapshot)
+        return original(value)
+    monkeypatch.setattr(StrategyExperiment, "as_dict", decode)
+    for metric in PARAMETER_GRID_METRICS:
+        decoded.clear()
+        result = analyze_intraday_parameter_grid(snapshot, cost_index=1, center_candidate_index=1, metric=metric)
+        assert decoded == [True]
+        assert [axis["condition_index"] for axis in result["axes"]] == [0, 1]
+        assert result["axes"][0]["values"] == [125, 0, 130.000000000001]
+        assert [row["candidate_index"] for row in result["cells"]] == list(range(6))
+        assert [row["axis_values"] for row in result["cells"]] == [row["axis_values"] for row in root["report"]["groups"][1]["results"]]
+        assert len(result["cost_scenarios"]) == 2
+        assert result["selection"]["center_candidate_id"] == result["cells"][1]["candidate_id"]
+        assert [(row["axis_index"], row["direction"], row["candidate_index"]) for row in result["neighbors"]] == [(0, "LOWER", 3), (0, "HIGHER", 5), (1, "HIGHER", 0)]
+        assert all(row["basis_matches"] and not row["failed_basis_checks"] for row in result["neighbors"])
+        assert result["neighborhood_summary"]["available_count"] == 3
+        unit = "COUNT" if metric == "trade_count" else "RATIO"
+        for row in result["neighbors"]:
+            assert row["metric"]["unit"] == unit
+            assert row["delta"]["unit"] == ("COUNT" if metric == "trade_count" else "PERCENTAGE_POINTS")
+            expected = (row["metric"]["value"] - result["cells"][1]["metric"]["value"]) * (1 if metric == "trade_count" else 100)
+            assert row["delta"]["value"] == pytest.approx(expected)
+    args = ["research-intraday-parameter-grid", "--experiment", str(source), "--cost-index", "1", "--center-candidate-index", "1", "--metric", "best_fold_return"]
+    assert cli.main(args) == 0
+    assert json.loads(capsys.readouterr().out)["report"] == result
+    executable = Path(sysconfig.get_path("scripts")) / ("market-vault.exe" if os.name == "nt" else "market-vault")
+    environment = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src")}
+    for extra, expected_code in (([], 0), (["--metric", "unknown"], 1), (["--center-candidate-index", "-1"], 1),
+                                 (["--center-candidate-index", "True"], 2)):
+        completed = subprocess.run([str(executable), *args, *extra], capture_output=True, text=True,
+                                   env=environment, check=False)
+        assert completed.returncode == expected_code, completed.stderr
+        if expected_code == 0:
+            assert json.loads(completed.stdout)["report"] == result
+        elif expected_code == 1:
+            assert json.loads(completed.stderr)["status"] == "FAILED"
+    assert source.read_bytes() == snapshot.content == before
+
+
+@pytest.mark.parametrize("case", ["candidate_price", "benchmark_price", "candidate_clock", "candidate_row"])
+def test_parameter_grid_full_basis_closes_only_delta_and_keeps_raw(parameter_grid_experiment, case):
+    from market_vault.research.intraday_parameter_grid import analyze_intraday_parameter_grid
+    root = parameter_grid_experiment.as_dict()
+    group = root["report"]["groups"][1]
+    record = group["benchmark"] if case == "benchmark_price" else group["results"][3]
+    point = record["execution"]["ledger"][0]
+    if case.endswith("price"):
+        point["mark_price"] += .01
+    elif case.endswith("row"):
+        point["row_version_id"] = "0" * 64
+    else:
+        from datetime import datetime, timedelta
+        point["timestamp"] = (datetime.fromisoformat(point["timestamp"]) + timedelta(seconds=1)).isoformat()
+    snapshot = StrategyExperiment(signed(root))
+    result = analyze_intraday_parameter_grid(snapshot, cost_index=1, center_candidate_index=1)
+    assert len(result["cells"]) == 6 and all(row["metric"]["value"] is not None for row in result["cells"])
+    blocked = [row for row in result["neighbors"] if not row["basis_matches"]]
+    assert len(blocked) == (3 if case == "benchmark_price" else 1)
+    assert all("raw_prices" in row["failed_basis_checks"] and row["delta"]["value"] is None
+               and row["delta"]["unavailable_reason"] == "BASIS_MISMATCH" for row in blocked)
+    assert result["neighborhood_summary"]["available_count"] == (0 if case == "benchmark_price" else 2)
+    if case == "benchmark_price":
+        assert result["neighborhood_summary"]["unavailable_reason"] == "NO_MATCHING_BASIS"
+
+
+@pytest.mark.parametrize("broken", [1, 3])
+def test_parameter_grid_fold_metric_failure_is_local_to_cell_and_center_null_keeps_neighbors(parameter_grid_experiment, broken):
+    from market_vault.research.intraday_parameter_grid import analyze_intraday_parameter_grid
+    root = parameter_grid_experiment.as_dict()
+    for point in root["report"]["groups"][1]["results"][broken]["execution"]["ledger"]:
+        for key in ("cash", "quantity", "equity"):
+            point[key] *= 2
+    snapshot = StrategyExperiment(signed(root))
+    result = analyze_intraday_parameter_grid(snapshot, cost_index=1, center_candidate_index=1, metric="median_fold_return")
+    assert result["cells"][broken]["metric"]["value"] is None
+    assert result["cells"][broken]["metric"]["unavailable_reason"] == "RECORDED_LEDGER_RECONCILIATION_FAILED"
+    assert all(row["metric"]["value"] is not None for row in result["cells"] if row["candidate_index"] != broken)
+    assert result["neighborhood_summary"]["available_count"] == (3 if broken == 1 else 2)
+    assert all(row["basis_matches"] for row in result["neighbors"])
+    if broken == 1:
+        assert all(row["delta"]["unavailable_reason"] == "LEFT_UNAVAILABLE" for row in result["neighbors"])
+    raw = analyze_intraday_parameter_grid(snapshot, cost_index=1, center_candidate_index=1)
+    assert all(row["metric"]["value"] is not None for row in raw["cells"])
+
+
+def test_parameter_grid_strict_selection_metric_and_ordinary_mode(parameter_grid_experiment, intraday_experiment):
+    from market_vault.research.intraday_parameter_grid import analyze_intraday_parameter_grid
+    for field in ("cost_index", "center_candidate_index"):
+        for value in (True, False, -1, 1.0, "1", 100):
+            with pytest.raises(ValueError, match="nonnegative|outside"):
+                analyze_intraday_parameter_grid(parameter_grid_experiment, **{field: value})
+    for metric in (None, True, 1, "sharpe_ratio"):
+        with pytest.raises(ValueError, match="metric"):
+            analyze_intraday_parameter_grid(parameter_grid_experiment, metric=metric)
+    with pytest.raises(ValueError, match="INTRADAY_DIAGNOSTICS"):
+        analyze_intraday_parameter_grid(intraday_experiment)
+
+
+@pytest.mark.parametrize("axes", [[], [{"parameter": "threshold", "values": [0]}]])
+def test_parameter_grid_zero_or_singleton_axis_preserves_real_single_cell_without_neighbors(research_case, axes):
+    from market_vault.research.intraday_parameter_grid import analyze_intraday_parameter_grid
+    data, comparison, _ = research_case
+    plan = {"plan_schema_version": research.INTRADAY_DIAGNOSTICS_PLAN_VERSION,
+        "comparison_plan": deepcopy(comparison), "strategy_name": "Flat", "parameter_axes": axes,
+        "cost_scenarios": [{"commission_bps": 0, "slippage_bps": 0}]}
+    normalized, children, coordinates = research.expand_intraday_plan(plan, recorded=True)
+    prepared = research._prepare_intraday_research(children[0], data=data)
+    report = research._evaluate_intraday_research(normalized, children, coordinates, prepared)
+    snapshot = create_intraday_experiment(plan=normalized, report=report)
+    result = analyze_intraday_parameter_grid(snapshot)
+    assert len(result["cells"]) == 1 and result["cells"][0]["axis_values"] == ([] if not axes else [0])
+    assert result["neighbors"] == []
+    assert result["neighborhood_summary"]["unavailable_reason"] == "NO_NEIGHBORS"
+    assert result["neighborhood_summary"]["minimum"] is result["neighborhood_summary"]["median"] is result["neighborhood_summary"]["maximum"] is None
 
 
 def test_saved_comparison_q10_children_allow_policy_changes_and_keep_metric_units(execution_scenarios_case):
