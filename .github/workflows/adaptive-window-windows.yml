@@ -1,0 +1,72 @@
+name: Adaptive Window Windows Validation
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/adaptive-window-windows.yml"
+      - "src/market_vault/desktop/app.py"
+      - "src/market_vault/desktop/preferences.py"
+      - "src/market_vault/desktop/window_geometry.py"
+      - "src/market_vault/desktop/qml/Main.qml"
+      - "src/market_vault/desktop/qml/components/Sidebar.qml"
+      - "src/market_vault/desktop/qml/pages/IntradayResearchSettings.qml"
+      - "src/market_vault/desktop/qml/pages/StrategyDiagnosticsDialog.qml"
+      - "tests/test_window_geometry.py"
+      - "tests/test_window_preference_roundtrip.py"
+      - "tests/test_adaptive_window_controller.py"
+      - "tests/test_adaptive_window_state_regressions.py"
+      - "tests/test_desktop_window_native.py"
+      - "tests/test_desktop_adaptive_layout.py"
+      - "tests/test_desktop_intraday_final_test.py"
+
+permissions:
+  contents: read
+
+jobs:
+  native-qt-and-qml:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - name: Check out exact PR merge tree
+        uses: actions/checkout@v6
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Install desktop and test dependencies
+        run: python -m pip install -e ".[desktop,dev]"
+      - name: Inspect native Windows Qt screens and DPI
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: windows
+          QT_QUICK_BACKEND: software
+        run: |
+          python -c "from PySide6.QtGui import QGuiApplication; a=QGuiApplication([]); screens=a.screens(); print('QT_NATIVE_PLATFORM',a.platformName()); print('WINDOWS_SCREEN_COUNT',len(screens)); [print('WINDOWS_SCREEN',s.name(),'WORK_AREA_DIP',s.availableGeometry().getRect(),'DPR',s.devicePixelRatio(),'LOGICAL_DPI',s.logicalDotsPerInch()) for s in screens]; assert a.platformName()=='windows' and len(screens)>0"
+      - name: Smoke-test actual MarketVault startup using Windows Qt
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: windows
+          QT_QUICK_BACKEND: software
+        run: python -m market_vault.desktop.app --smoke-exit-ms 1500
+      - name: Check native window placement and state restoration
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: windows
+          QT_QUICK_BACKEND: software
+        run: python -m pytest tests/test_desktop_window_native.py -q -s
+      - name: Check focused geometry and preference regressions
+        shell: pwsh
+        run: python -m pytest tests/test_window_geometry.py tests/test_window_preference_roundtrip.py tests/test_adaptive_window_controller.py tests/test_adaptive_window_state_regressions.py tests/test_desktop_preferences.py -q
+      - name: Check small-workspace dialog completion through actual QML
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QT_QUICK_BACKEND: software
+        run: python -m pytest tests/test_desktop_adaptive_layout.py -q -s
+      - name: Exercise actual PySide6 QML 1024x600 interaction on Windows host
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QT_QUICK_BACKEND: software
+        run: python -m pytest tests/test_desktop_intraday_final_test.py -q

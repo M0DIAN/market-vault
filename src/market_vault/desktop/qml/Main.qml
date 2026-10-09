@@ -11,8 +11,10 @@ ApplicationWindow {
     visible: true
     width: 1100
     height: 700
-    minimumWidth: 1000
-    minimumHeight: 650
+    // The production geometry controller sets screen-specific limits in Qt DIPs.
+    minimumWidth: 1
+    minimumHeight: 1
+    readonly property bool compactNavigation: width < 1060
     title: "MARKETVAULT"
     color: Theme.PixelTheme.canvas
     font.family: Theme.PixelTheme.fontForLanguage(i18nBridge.language)
@@ -57,7 +59,8 @@ ApplicationWindow {
 
             Components.Sidebar {
                 objectName: "sidebar"
-                Layout.preferredWidth: Theme.PixelTheme.sidebarWidth
+                compact: window.compactNavigation
+                Layout.preferredWidth: compact ? 64 : Theme.PixelTheme.sidebarWidth
                 Layout.fillHeight: true
                 shell: shellController
                 i18n: i18nBridge
@@ -98,7 +101,7 @@ ApplicationWindow {
                         Item {
                             objectName: "pageTitleDividerSlot"
                             Layout.fillWidth: true
-                            Layout.minimumWidth: 160
+                            Layout.minimumWidth: window.width < 800 ? 0 : 160
                             Layout.preferredWidth: 640
                             Layout.preferredHeight: 2
                             Layout.leftMargin: 16
@@ -112,23 +115,37 @@ ApplicationWindow {
                         }
                     }
 
-                    StackLayout {
-                        id: pageContent
-                        objectName: "pageContent"
+                    ScrollView {
+                        id: workspaceViewport
+                        objectName: "adaptiveWorkspaceViewport"
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        currentIndex: shellController.currentPageIndex
+                        clip: true
+                        // Keep the existing page layout readable on small work
+                        // areas. Scroll the viewport; never scale all controls.
+                        contentWidth: Math.max(availableWidth, 750)
+                        contentHeight: Math.max(availableHeight, 504)
+                        ScrollBar.horizontal: Components.PixelScrollBar {}
+                        ScrollBar.vertical: Components.PixelScrollBar {}
 
-                        Pages.HomePage { objectName: "homePage"; dashboard: dashboardController; desktop: desktopBridge; i18n: i18nBridge }
-                        Pages.HistoricalDataPage { objectName: "historicalDataPage"; controller: historicalDataController; i18n: i18nBridge }
-                        Pages.TradingCalendarPage { objectName: "tradingCalendarPage"; controller: tradingCalendarController; i18n: i18nBridge }
-                        Pages.MarketDataPage { objectName: "marketDataPage"; controller: marketDataController; i18n: i18nBridge }
-                        Pages.InventoryPage { objectName: "inventoryPage"; controller: inventoryController; i18n: i18nBridge }
-                        Pages.QuantResearchPage { objectName: "quantResearchPage"; controller: quantResearchController; i18n: i18nBridge }
-                        Pages.AuditPage { objectName: "coverageAuditPage"; tableObjectName: "coverageAuditTable"; controller: coverageAuditController; i18n: i18nBridge }
-                        Pages.AuditPage { objectName: "intradayAuditPage"; tableObjectName: "intradayAuditTable"; controller: intradayAuditController; i18n: i18nBridge }
-                        Pages.RunsPage { objectName: "runsPage"; controller: runsController; i18n: i18nBridge }
-                        Pages.StorageCleanupPage { objectName: "storageCleanupPage"; controller: storageCleanupController; i18n: i18nBridge }
+                        StackLayout {
+                            id: pageContent
+                            objectName: "pageContent"
+                            width: workspaceViewport.contentWidth
+                            height: workspaceViewport.contentHeight
+                            currentIndex: shellController.currentPageIndex
+
+                            Pages.HomePage { objectName: "homePage"; dashboard: dashboardController; desktop: desktopBridge; i18n: i18nBridge }
+                            Pages.HistoricalDataPage { objectName: "historicalDataPage"; controller: historicalDataController; i18n: i18nBridge }
+                            Pages.TradingCalendarPage { objectName: "tradingCalendarPage"; controller: tradingCalendarController; i18n: i18nBridge }
+                            Pages.MarketDataPage { objectName: "marketDataPage"; controller: marketDataController; i18n: i18nBridge }
+                            Pages.InventoryPage { objectName: "inventoryPage"; controller: inventoryController; i18n: i18nBridge }
+                            Pages.QuantResearchPage { objectName: "quantResearchPage"; controller: quantResearchController; i18n: i18nBridge }
+                            Pages.AuditPage { objectName: "coverageAuditPage"; tableObjectName: "coverageAuditTable"; controller: coverageAuditController; i18n: i18nBridge }
+                            Pages.AuditPage { objectName: "intradayAuditPage"; tableObjectName: "intradayAuditTable"; controller: intradayAuditController; i18n: i18nBridge }
+                            Pages.RunsPage { objectName: "runsPage"; controller: runsController; i18n: i18nBridge }
+                            Pages.StorageCleanupPage { objectName: "storageCleanupPage"; controller: storageCleanupController; i18n: i18nBridge }
+                        }
                     }
                 }
             }

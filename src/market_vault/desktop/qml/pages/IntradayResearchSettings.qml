@@ -14,6 +14,7 @@ Dialog {
     parent: Overlay.overlay
     anchors.centerIn: parent
     width: Math.min(960, parent ? parent.width - 32 : 960)
+    height: Math.max(1, Math.min(implicitHeight, parent ? parent.height - 24 : implicitHeight))
     title: root.i18n.catalog["quant.intraday_settings"]
     padding: Theme.PixelTheme.panelPadding
     standardButtons: Dialog.NoButton
@@ -68,56 +69,69 @@ Dialog {
         + " | " + root.i18n.catalog["quant.slippage_bps"] + ": " + (slippage.text || "—")
 
     background: Rectangle { color: Theme.PixelTheme.surface; border.color: Theme.PixelTheme.goldDark }
-    contentItem: ColumnLayout {
-        spacing: Theme.PixelTheme.spacingSm
-        Label {
-            Layout.fillWidth: true
-            text: root.i18n.catalog["quant.intraday_research_help"]
-            wrapMode: Text.WordWrap
-            color: Theme.PixelTheme.inkMuted
-            font.pixelSize: Theme.PixelTheme.fontSm
-        }
-        RowLayout {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 340
-            spacing: Theme.PixelTheme.spacingMd
-            GridLayout {
-                Layout.preferredWidth: 460
-                Layout.maximumWidth: 460
-                Layout.fillHeight: true
-                columns: 3
-                columnSpacing: 8
-                rowSpacing: 6
-                Components.LabeledTextField { id: features; objectName: "intradayResearchFeatures"; Layout.columnSpan: 3; label: root.i18n.catalog["quant.common_features"] }
-                Components.LabeledTextField { id: trainEnd; objectName: "intradayResearchTrainEnd"; label: root.i18n.catalog["quant.intraday_train_end"] }
-                Components.LabeledTextField { id: valEnd; objectName: "intradayResearchValidationEnd"; label: root.i18n.catalog["quant.intraday_validation_end"] }
-                Components.LabeledTextField { id: testEnd; objectName: "intradayResearchTestEnd"; label: root.i18n.catalog["quant.intraday_test_end"] }
-                Components.LabeledTextField { id: trainDays; objectName: "intradayResearchTrainDays"; label: root.i18n.catalog["quant.intraday_train_days"]; text: "20" }
-                Components.LabeledTextField { id: valDays; objectName: "intradayResearchValidationDays"; label: root.i18n.catalog["quant.intraday_validation_days"]; text: "5" }
-                Components.LabeledTextField { id: stepDays; objectName: "intradayResearchStepDays"; label: root.i18n.catalog["quant.intraday_step_days"]; text: "5" }
-                Components.LabeledTextField { id: commission; objectName: "intradayResearchCommission"; label: root.i18n.catalog["quant.commission_bps"] }
-                Components.LabeledTextField { id: slippage; objectName: "intradayResearchSlippage"; label: root.i18n.catalog["quant.slippage_bps"] }
-                Components.LabeledTextField { id: maxHold; objectName: "intradayResearchMaxHold"; label: root.i18n.catalog["quant.intraday_max_hold"]; text: "12" }
-                Components.LabeledTextField { id: entryDelay; objectName: "intradayResearchEntryDelay"; label: root.i18n.catalog["quant.intraday_entry_delay"]; text: "15" }
-                Components.LabeledTextField { id: stopNew; objectName: "intradayResearchStopNew"; label: root.i18n.catalog["quant.intraday_stop_new"]; text: "30" }
-                Components.LabeledTextField { id: flatten; objectName: "intradayResearchFlatten"; label: root.i18n.catalog["quant.intraday_flatten"]; text: "5" }
-            }
-            StrategyListEditor {
-                id: editor
-                objectName: "intradayStrategyEditor"
+    contentItem: ScrollView {
+        id: intradaySettingsScroll
+        objectName: "intradaySettingsScroll"
+        clip: true
+        implicitHeight: intradaySettingsContent.implicitHeight
+        contentWidth: Math.max(availableWidth, 880)
+        contentHeight: intradaySettingsContent.implicitHeight
+        ScrollBar.horizontal: Components.PixelScrollBar {}
+        ScrollBar.vertical: Components.PixelScrollBar {}
+
+        ColumnLayout {
+            id: intradaySettingsContent
+            width: intradaySettingsScroll.contentWidth
+            spacing: Theme.PixelTheme.spacingSm
+            Label {
                 Layout.fillWidth: true
-                Layout.fillHeight: true
-                i18n: root.i18n
-                featureOptions: root.featureOptions
-                defaultFeature: features.text.split(",")[0].trim()
+                text: root.i18n.catalog["quant.intraday_research_help"]
+                wrapMode: Text.WordWrap
+                color: Theme.PixelTheme.inkMuted
+                font.pixelSize: Theme.PixelTheme.fontSm
             }
-        }
-        RowLayout {
-            Item { Layout.fillWidth: true }
-            Components.PixelButton {
-                objectName: "intradayResearchSettingsDone"
-                text: root.i18n.catalog["quant.intraday_apply_settings"]
-                onClicked: { editor.commit(); root.close() }
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 340
+                spacing: Theme.PixelTheme.spacingMd
+                GridLayout {
+                    Layout.preferredWidth: 460
+                    Layout.maximumWidth: 460
+                    Layout.fillHeight: true
+                    columns: 3
+                    columnSpacing: 8
+                    rowSpacing: 6
+                    Components.LabeledTextField { id: features; objectName: "intradayResearchFeatures"; Layout.columnSpan: 3; label: root.i18n.catalog["quant.common_features"] }
+                    Components.LabeledTextField { id: trainEnd; objectName: "intradayResearchTrainEnd"; label: root.i18n.catalog["quant.intraday_train_end"] }
+                    Components.LabeledTextField { id: valEnd; objectName: "intradayResearchValidationEnd"; label: root.i18n.catalog["quant.intraday_validation_end"] }
+                    Components.LabeledTextField { id: testEnd; objectName: "intradayResearchTestEnd"; label: root.i18n.catalog["quant.intraday_test_end"] }
+                    Components.LabeledTextField { id: trainDays; objectName: "intradayResearchTrainDays"; label: root.i18n.catalog["quant.intraday_train_days"]; text: "20" }
+                    Components.LabeledTextField { id: valDays; objectName: "intradayResearchValidationDays"; label: root.i18n.catalog["quant.intraday_validation_days"]; text: "5" }
+                    Components.LabeledTextField { id: stepDays; objectName: "intradayResearchStepDays"; label: root.i18n.catalog["quant.intraday_step_days"]; text: "5" }
+                    Components.LabeledTextField { id: commission; objectName: "intradayResearchCommission"; label: root.i18n.catalog["quant.commission_bps"] }
+                    Components.LabeledTextField { id: slippage; objectName: "intradayResearchSlippage"; label: root.i18n.catalog["quant.slippage_bps"] }
+                    Components.LabeledTextField { id: maxHold; objectName: "intradayResearchMaxHold"; label: root.i18n.catalog["quant.intraday_max_hold"]; text: "12" }
+                    Components.LabeledTextField { id: entryDelay; objectName: "intradayResearchEntryDelay"; label: root.i18n.catalog["quant.intraday_entry_delay"]; text: "15" }
+                    Components.LabeledTextField { id: stopNew; objectName: "intradayResearchStopNew"; label: root.i18n.catalog["quant.intraday_stop_new"]; text: "30" }
+                    Components.LabeledTextField { id: flatten; objectName: "intradayResearchFlatten"; label: root.i18n.catalog["quant.intraday_flatten"]; text: "5" }
+                }
+                StrategyListEditor {
+                    id: editor
+                    objectName: "intradayStrategyEditor"
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    i18n: root.i18n
+                    featureOptions: root.featureOptions
+                    defaultFeature: features.text.split(",")[0].trim()
+                }
+            }
+            RowLayout {
+                Item { Layout.fillWidth: true }
+                Components.PixelButton {
+                    objectName: "intradayResearchSettingsDone"
+                    text: root.i18n.catalog["quant.intraday_apply_settings"]
+                    onClicked: { editor.commit(); root.close() }
+                }
             }
         }
     }

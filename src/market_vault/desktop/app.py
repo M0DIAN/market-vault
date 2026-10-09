@@ -221,7 +221,9 @@ def run_application(
 
     from market_vault.application import build_application_context
     from market_vault.desktop.bootstrap import create_qml_application_session
+    from market_vault.desktop.preferences import DesktopPreferenceStore
     from market_vault.desktop.windows_chrome import apply_native_caption
+    from market_vault.desktop.window_geometry import AdaptiveWindowGeometry
 
     qml_path = resolve_qml_path()
     if not qml_path.is_file():
@@ -240,10 +242,12 @@ def run_application(
         )
         _apply_application_icon(application, application_icon)
         engine = QQmlApplicationEngine()
+        desktop_preferences = DesktopPreferenceStore()
         session = create_qml_application_session(
             context,
             engine,
             application_icon_url=application_icon_url,
+            preference_store=desktop_preferences,
         )
     except Exception:
         context.shutdown()
@@ -256,6 +260,11 @@ def run_application(
         engine._market_vault_window_icon_applied = _apply_application_icon(
             root_window, application_icon
         )
+        adaptive_geometry = AdaptiveWindowGeometry(
+            application, root_window, desktop_preferences
+        )
+        adaptive_geometry.install()
+        engine._market_vault_adaptive_geometry = adaptive_geometry
         engine._market_vault_native_caption_applied = apply_native_caption(root_window)
         session.validate_wiring()
     except Exception:
