@@ -77,3 +77,7 @@ result binding. The equity chart gives its space to detail views.
 Existing Q5–Q8 artifacts and numerical algorithms remain unchanged. Run and
 Replay retain their original verification meanings; no trading, release or
 deployment is part of this feature.
+
+For observed drawdown episodes, empirical return distributions, daily cash
+concentration and continuous-account fold summaries, use the additive
+[saved risk diagnostics](intraday_risk_diagnostics.md).

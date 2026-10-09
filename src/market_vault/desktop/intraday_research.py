@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from copy import deepcopy
+from decimal import Decimal
 import json
 from pathlib import Path
 
@@ -42,6 +43,118 @@ def performance_table(execution, index):
     return columns, formatted_rows(rows, columns)
 
 
+def risk_value(value, unit="NUMBER"):
+    """Keep small ratios visible without overflowing the percentage display."""
+    if value is None:
+        return "—"
+    if value == 0:
+        value = 0
+    if unit == "RATIO":
+        return f"{Decimal(str(value)) * 100:.6g}%"
+    return str(value) if type(value) is int else f"{value:.6g}"
+
+
+def risk_diagnostics_report(content, *, cost_index=0, candidate_index=0):
+    """Derive the current immutable selection; never alter its replay proof."""
+    from ..research.intraday_risk_diagnostics import analyze_intraday_risk_diagnostics
+    from ..research.strategy_experiment import StrategyExperiment
+    try:
+        return analyze_intraday_risk_diagnostics(StrategyExperiment(content),
+            cost_index=cost_index, candidate_index=candidate_index)
+    except (ValueError, ArithmeticError) as exc:
+        unavailable = {"status": "UNAVAILABLE", "unavailable_reason": str(exc), "report": None}
+        return {"strategy_diagnostics": unavailable, "benchmark_diagnostics": unavailable}
+
+
+def risk_diagnostics_table(result, index):
+    """Small scalar tables over the public report, with each account identified."""
+    sides = (("STRATEGY", "strategy_diagnostics"), ("BENCHMARK", "benchmark_diagnostics"))
+    if index == 4 and not any(result[key]["status"] == "AVAILABLE"
+            and result[key]["report"]["fold_diagnostics"]["status"] == "AVAILABLE" for _, key in sides):
+        return ("risk_series", "metric", "unavailable_reason"), tuple(
+            (side, "fold_diagnostics", result[key]["unavailable_reason"] if result[key]["status"] != "AVAILABLE"
+             else result[key]["report"]["fold_diagnostics"]["unavailable_reason"]) for side, key in sides)
+    columns = (
+        ("risk_series", "group", "metric", "value", "unit", "unavailable_reason"),
+        ("risk_series", "drawdown_episode", "drawdown_stage", "risk_date", "risk_clock", "risk_zone", "risk_equity",
+         "drawdown_depth", "duration_minutes", "unavailable_reason"),
+        ("risk_series", "distribution", "metric", "value", "unit", "unavailable_reason"),
+        ("risk_series", "contribution_sign", "metric", "trading_day", "value", "unit", "unavailable_reason"),
+        ("risk_series", "fold_index", "validation_start_day", "validation_end_day", "day_count", "trade_count",
+         "cash_only_days", "compound_return", "cash_contribution", "return_sign", "unavailable_reason"),
+    )[index]
+    rows = []
+
+    def unavailable(side, reason):
+        message = reason or "UNAVAILABLE"
+        values = {"risk_series": side, "metric": "UNAVAILABLE", "drawdown_stage": message, "unavailable_reason": message}
+        rows.append(tuple(values.get(column, "—") for column in columns))
+
+    for side, key in sides:
+        wrapper = result[key]
+        if wrapper["status"] != "AVAILABLE":
+            unavailable(side, wrapper["unavailable_reason"])
+            continue
+        report = wrapper["report"]
+        if index == 0:
+            for metric, value in report["summary"].items():
+                rows.append((side, "DRAWDOWNS", metric, risk_value(value["value"], value["unit"]),
+                             value["unit"], value["unavailable_reason"] or ""))
+            folds = report["fold_diagnostics"]
+            if folds["status"] == "AVAILABLE":
+                for metric, value in folds["summary"].items():
+                    rows.append((side, "FOLDS", metric, risk_value(value["value"], value["unit"]),
+                                 value["unit"], value["unavailable_reason"] or ""))
+            else:
+                rows.append((side, "FOLDS", "fold_diagnostics", "—", "—", folds["unavailable_reason"]))
+        elif index == 1:
+            if not report["drawdown_episodes"]:
+                unavailable(side, "NO_DRAWDOWN_EPISODES")
+            for episode in report["drawdown_episodes"]:
+                number = str(episode["episode_index"])
+                for stage, prefix in (("PEAK", "peak"), ("TROUGH", "trough"),
+                                      ("RECOVERY" if episode["recovered"] else "UNRECOVERED", "recovery")):
+                    instant = episode[prefix + "_time"]
+                    point = datetime.fromisoformat(instant) if instant else None
+                    clock = (point.date().isoformat(), point.time().isoformat(), point.strftime("%z")) if point else ("—", "—", "—")
+                    rows.append((side, number, stage, *clock,
+                        risk_value(episode[prefix + "_equity"], "INITIAL_CASH_UNITS"),
+                        risk_value(episode["depth"], "RATIO") if prefix == "trough" else "—",
+                        risk_value(episode["duration_minutes"], "MINUTES") if prefix == "recovery" else "—",
+                        "UNRECOVERED" if prefix == "recovery" and not episode["recovered"] else ""))
+        elif index == 2:
+            for distribution, key in (("DAILY_RETURNS", "daily_return_distribution"),
+                                      ("TRADE_RETURNS", "trade_return_distribution")):
+                values = report[key]
+                for metric in ("sample_count", "positive_count", "zero_count", "negative_count",
+                               "minimum", "p05", "p25", "p50", "p75", "p95", "maximum"):
+                    unit = "COUNT" if metric.endswith("_count") else values["unit"]
+                    rows.append((side, distribution, metric, risk_value(values[metric], unit), unit,
+                                 values["unavailable_reason"] if values[metric] is None else ""))
+        elif index == 3:
+            for sign in ("positive", "negative"):
+                values = report["cash_concentration"][sign]
+                for metric in ("day_count", "total_absolute_cash", "top_1_absolute_cash", "top_3_absolute_cash",
+                               "top_1_share", "top_3_share"):
+                    unit = "COUNT" if metric == "day_count" else "RATIO" if metric.endswith("_share") else "INITIAL_CASH_UNITS"
+                    rows.append((side, sign.upper(), metric, "—", risk_value(values[metric], unit), unit,
+                                 values["unavailable_reason"] if values[metric] is None else ""))
+                for rank, day in enumerate(values["top_days"], 1):
+                    rows.append((side, sign.upper(), f"top_day_{rank}", day["trading_day"],
+                                 risk_value(day["cash_contribution"], "INITIAL_CASH_UNITS"), "INITIAL_CASH_UNITS", ""))
+        else:
+            folds = report["fold_diagnostics"]
+            if folds["status"] != "AVAILABLE":
+                unavailable(side, folds["unavailable_reason"])
+                continue
+            for fold in folds["rows"]:
+                rows.append((side, str(fold["fold_index"]), fold["validation_days"][0], fold["validation_days"][-1],
+                    str(fold["day_count"]), str(fold["trade_count"]), str(fold["cash_only_days"]),
+                    risk_value(fold["compound_return"], "RATIO"), risk_value(fold["cash_contribution"], "INITIAL_CASH_UNITS"),
+                    fold["return_sign"], ""))
+    return columns, tuple(rows)
+
+
 class IntradayResearchController(PageController):
     changed = Signal()
 
@@ -67,6 +180,7 @@ class IntradayResearchController(PageController):
         self._positions = ()
         self._names = []
         self._view_index = 0
+        self._risk_report = None
         self._page = 1
         self._columns, self._rows = (), ()
         self._model = QtTableModel(parent=self)
@@ -258,7 +372,12 @@ class IntradayResearchController(PageController):
         report = self._root["report"]
         group, candidate = self._selected()
         execution = candidate["execution"]
-        if self._view_index == 0 and self._collection_content:
+        if self._view_index >= 11:
+            if self._risk_report is None:
+                cost, index = self._positions[self._candidate_index]
+                self._risk_report = risk_diagnostics_report(self._content, cost_index=cost, candidate_index=index)
+            self._columns, self._rows = risk_diagnostics_table(self._risk_report, self._view_index - 11)
+        elif self._view_index == 0 and self._collection_content:
             self._scenario_overview()
         elif self._view_index == 0:
             self._columns = ("strategy", "commission_bps", "slippage_bps", "trade_count", "total_return", "benchmark_return",
@@ -301,6 +420,8 @@ class IntradayResearchController(PageController):
     def selectCandidate(self, index):
         if type(index) is not int or not 0 <= index < len(self._positions):
             return False
+        if self._candidate_index != index:
+            self._risk_report = None
         self._candidate_index = index
         self._refresh_view()
         self.changed.emit()
@@ -322,7 +443,7 @@ class IntradayResearchController(PageController):
 
     @Slot(int, result=bool)
     def selectView(self, index):
-        if type(index) is not int or not 0 <= index <= 10:
+        if type(index) is not int or not 0 <= index <= 15:
             return False
         self._view_index = index
         self._refresh_view()
@@ -360,6 +481,7 @@ class IntradayResearchController(PageController):
         from ..strategy_comparison_io import canonical_json
         self._content = canonical_json(root)
         self._root = root
+        self._risk_report = None
         self._path, self._proof = path, proof
         self._positions = tuple((i, j) for i, g in enumerate(self._root["report"]["groups"]) for j in range(len(g["results"])))
         self._names = [f'{self._root["report"]["groups"][i]["results"][j]["strategy"]["name"]} | {self._root["report"]["groups"][i]["execution_policy"]["commission_bps"]}/{self._root["report"]["groups"][i]["execution_policy"]["slippage_bps"]} bps'

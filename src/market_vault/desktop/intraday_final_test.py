@@ -8,7 +8,9 @@ import json
 from PySide6.QtCore import QObject, Property, Signal, Slot
 
 from .controllers import PageController
-from .intraday_research import execution_series, formatted_rows, performance_table
+from .intraday_research import (
+    execution_series, formatted_rows, performance_table, risk_diagnostics_report, risk_diagnostics_table,
+)
 from .table_model import QtTableModel
 
 
@@ -25,6 +27,7 @@ class IntradayFinalController(PageController):
         self._pending_replay = ""
         self._binding_revision = 0
         self._view_index, self._page = 0, 1
+        self._risk_report = None
         self._columns, self._rows = (), ()
         self._model = QtTableModel(parent=self)
         self._set_page()
@@ -119,7 +122,11 @@ class IntradayFinalController(PageController):
         if self.testLoaded:
             report = self._test_root["report"]
             execution, model = report["execution"], report["model"]
-            if self._view_index == 0:
+            if self._view_index >= 10:
+                if self._risk_report is None:
+                    self._risk_report = risk_diagnostics_report(self._test_content)
+                self._columns, self._rows = risk_diagnostics_table(self._risk_report, self._view_index - 10)
+            elif self._view_index == 0:
                 self._columns = ("strategy", "commission_bps", "slippage_bps", "trade_count", "total_return", "benchmark_return",
                                  "observed_max_drawdown", "annualized_volatility", "sharpe_ratio", "mae", "rmse", "r2")
                 self._rows = ((report["strategy"]["name"], _format_number(report["execution_policy"]["commission_bps"]),
@@ -153,7 +160,7 @@ class IntradayFinalController(PageController):
 
     @Slot(int, result=bool)
     def selectView(self, index):
-        if type(index) is not int or not 0 <= index <= 9:
+        if type(index) is not int or not 0 <= index <= 14:
             return False
         self._view_index = index
         self._refresh_view()
@@ -172,6 +179,7 @@ class IntradayFinalController(PageController):
         self._selection_content, self._selection_root = snapshot.content, snapshot.as_dict()
         self._selection_path, self._selection_proof = path, "RECORDED" if opened else "FROZEN"
         self._test_content, self._test_root, self._test_path, self._test_proof = b"", {}, "", ""
+        self._risk_report = None
         self._binding_revision += 1
         self._refresh_view()
         if notify:
@@ -184,6 +192,7 @@ class IntradayFinalController(PageController):
             selection = StrategyExperiment(json.dumps(root["plan"]["selection"]).encode("utf-8"))
             self._apply_selection(selection, opened=True, notify=False)
         self._test_content, self._test_root = snapshot.content, root
+        self._risk_report = None
         self._test_path, self._test_proof = path, "RECORDED" if opened else "COMPUTED"
         self._refresh_view()
         self.changed.emit()
