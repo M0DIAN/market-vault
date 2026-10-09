@@ -203,6 +203,16 @@ reason. No signal moves to the next trading day. The zero-delay baseline
 retains the original in-grid decision sequence, including its unconsumable
 final-close signals.
 
+For a session with `bar_count` planned bars, an arrival before slot
+`bar_count - 1` is `FORWARDED`: the next planned open exists. An arrival at
+that final slot is `NO_NEXT_OPEN`: the decision remains in the kernel input
+but cannot be consumed. An arrival at or beyond `bar_count` is
+`OUTSIDE_SESSION`: the provenance remains visible but the decision is not
+passed to the kernel. Zero delay keeps each original observation key; an
+in-session delayed key binds the method version, original key, delay and
+arrival time. None of these labels claims that a signal resulted in a trade;
+the unchanged entry and risk rules still decide that.
+
 Entry/stop windows, max-hold and EOD forced flattening keep their existing
 calendar semantics. Risk controls are not delayed with signals. Apply the
 same delay to the original policy-matched benchmark decisions; do not replace
@@ -217,6 +227,20 @@ is not fully present in the Q7 ledger, so the reconstructed projection's
 `price_evidence_id` and execution identity need not equal the source identity.
 Compare all other complete execution fields, rather than claiming recovery of
 unknown Q5 metadata. Preserve both source and derived projection identities.
+
+The reconstructed session projection contains only `trading_day`, `open_time`,
+`close_time` and `bar_count`. Each price row contains its day, slot, event and
+availability clocks, row version identity, open and close. The zero-delay
+comparison excludes exactly `price_evidence_id` and `execution_id`; decisions,
+trades, transactions, every ordered ledger mark, daily records, policy,
+windows, metrics and execution versions must still agree. Failure on either
+account makes all three paired scenarios unavailable. Reconstructed identities
+are computed by Q6 and are never rewritten to imitate the original Q5 input.
+
+This deterministic stress uses the actual recorded evaluation schedule,
+including gaps. It does not adopt Q15's 100-day minimum or continuous-sample
+inference gate. Split dates, evaluated and unevaluated dates, internal gaps,
+folds and session clocks remain in the derived report.
 
 The new report is **recorded-price-grid re-execution**, distinct from Q18/Q20's
 ledger-only arithmetic and from source-verified Q7 Replay. It contains every
@@ -244,6 +268,55 @@ Ticks/order books, measured latency distributions, partial fills, queue
 priority, capacity/market impact, cross-session pending orders, changing the
 old six-field execution policy, new model predictions, optimizing delays,
 live execution, and promoting the derived paths into ordinary Q7 or TEST.
+
+### API, console and desktop
+
+`research.intraday_signal_delay.analyze_intraday_signal_delay` accepts an
+immutable `StrategyExperiment`, `cost_index=0` and `candidate_index=0`.
+Indexes are explicit nonnegative integers; booleans are rejected before
+decoding the snapshot. The result has version
+`market-vault-intraday-signal-delay-v1`, evidence
+`RECORDED_PRICE_GRID_REEXECUTION` and a content-bound `signal_delay_id`.
+
+```console
+market-vault research-intraday-signal-delay --experiment /absolute/development.json
+market-vault research-intraday-signal-delay --experiment /absolute/development.json --cost-index 1 --candidate-index 1
+```
+
+There is no delay-list or best-delay argument. Every analysis uses exactly
+0, 1 and 2 additional bars. CLI success means the requested report was
+produced; inspect its `availability`, `baseline` and each scenario's status
+before interpreting numbers. An unavailable valid record returns explicit
+reasons and source identities. Invalid arguments or files use the existing
+ASCII-safe JSON failure convention and a nonzero exit status.
+
+The report separates complete source `basis` and account `availability`
+from reconstructed `projection` and zero-delay `baseline` checks.
+`scenarios` retains both complete executions, daily risk and signal
+provenance for each delay. `metrics` includes final cash, net return,
+observed maximum drawdown, trade count, commission, slippage, daily mean,
+annualized volatility, Sharpe ratio and daily return count. Metric return
+values use raw ratios; `delta_from_zero` explicitly uses percentage points
+for ratio differences, with the difference already multiplied by 100.
+Other deltas retain their declared units. Original signal count, count passed
+to Q6, count with a following open and both session-tail counts remain visible.
+
+In ordinary saved DEV details, select **DEV signal-delay stress**. The action
+captures the saved source, cost group and candidate together. Changing any of
+them invalidates the report; changing
+only the language does not relabel or recompute its captured identity. The
+desktop presents the same fixed scenarios, source and reconstructed IDs,
+baseline result, metrics and original-to-arrival signal mapping in both
+languages. A failed calculation remains explicit and retryable. Q18's
+whole-family selection study keeps its separate input and cache behavior.
+
+The summary compares all three delays and both accounts. Daily settlement,
+completed trades, the complete ordered path and signal provenance each have
+a separate view for the selected delay/account. Changing those view controls
+uses the completed report and does not re-execute. Expand the evidence section
+to inspect complete source and derived identities, zero-delay comparison,
+policies and sample dates. The signal view also exposes a full single-signal
+detail below its paginated table.
 
 ## Q20 — daily cash reallocation for two saved strategies
 

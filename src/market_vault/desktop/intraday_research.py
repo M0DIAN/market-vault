@@ -243,6 +243,59 @@ def sequential_selection_table(result, index):
         risk_value(row["benchmark_cash"]), risk_value(row["benchmark_drawdown"], "RATIO")) for row in result["path"])
 
 
+def signal_delay_table(result, index, delay_index, account_index):
+    """Keep all declared delay scenarios and distinguish returns from pp deltas."""
+    if index == 0:
+        columns = ("metric", "signal_delay_bars", "risk_series", "value", "signal_delay_change", "unit",
+                   "signal_delay_change_unit", "unavailable_reason")
+        rows = []
+        for key in ("total_return", "observed_max_drawdown", "trade_count", "commission_total", "slippage_total",
+                    "mean_daily_return", "annualized_volatility", "sharpe_ratio", "final_cash", "return_count"):
+            for scenario in result["scenarios"]:
+                for account in ("strategy", "benchmark"):
+                    metric, delta = scenario[account]["metrics"][key], scenario[account]["delta_from_zero"][key]
+                    reasons = list(dict.fromkeys(reason for reason in
+                        (metric["unavailable_reason"], delta["unavailable_reason"]) if reason))
+                    rows.append((key, str(scenario["delay_bars"]), account.upper(),
+                        risk_value(metric["value"], metric["unit"]), risk_value(delta["value"], delta["unit"]),
+                        metric["unit"], delta["unit"], "; ".join(reasons)))
+        return columns, tuple(rows)
+    account = result["scenarios"][delay_index][("strategy", "benchmark")[account_index]]
+    if index == 4:
+        columns = ("signal_delay_signal", "trading_day", "signal_delay_source_slot", "signal_delay_source_time",
+                   "target", "signal_delay_arrival_slot", "signal_delay_arrival_time", "status", "score",
+                   "signal_delay_source_key", "signal_delay_derived_key", "signal_delay_to_kernel")
+        return columns, tuple((str(number), row["source_trading_day"], str(row["source_slot"]),
+            datetime.fromisoformat(row["source_time"]).astimezone(timezone.utc).time().isoformat(), row["source_target"],
+            str(row["arrival_slot"]) if row["arrival_slot"] is not None else "—",
+            datetime.fromisoformat(row["arrival_time"]).astimezone(timezone.utc).time().isoformat() if row["arrival_time"] else "—",
+            row["status"], risk_value(row["source_score"]), row["source_observation_key"][:12],
+            (row["derived_decision_key"] or "—")[:12], "YES" if row["passed_to_kernel"] else "NO")
+            for number, row in enumerate(account["signals"]["provenance"]))
+    execution = account["execution"]
+    if execution is None:
+        return (), ()
+    if index == 1:
+        columns = ("trading_day", "cash_open", "cash_close", "return", "trade_count")
+        return columns, tuple((row["trading_day"], risk_value(row["cash_open"]), risk_value(row["cash_close"]),
+            risk_value(row["return"], "RATIO"), str(row["trade_count"])) for row in execution["daily"])
+    if index == 2:
+        columns = ("trading_day", "signal_delay_entry_time", "signal_delay_exit_time", "exit_reason", "held_bars", "cash_before", "cash_after", "net_return",
+                   "commission_total", "slippage_total")
+        return columns, tuple((row["trading_day"],
+            datetime.fromisoformat(row["entry_time"]).astimezone(timezone.utc).time().isoformat(),
+            datetime.fromisoformat(row["exit_time"]).astimezone(timezone.utc).time().isoformat(), row["exit_reason"],
+            str(row["held_bars"]), risk_value(row["cash_before"]), risk_value(row["cash_after"]),
+            risk_value(row["net_return"], "RATIO"), risk_value(row["commission_total"]), risk_value(row["slippage_total"]))
+            for row in execution["trades"])
+    columns = ("portfolio_sequence", "trading_day", "portfolio_time", "phase", "action", "reason", "cash",
+               "quantity", "equity", "drawdown")
+    return columns, tuple((str(row["sequence"]), row["trading_day"],
+        datetime.fromisoformat(row["timestamp"]).astimezone(timezone.utc).time().isoformat(), row["phase"],
+        row["action"], row["reason"], risk_value(row["cash"]), risk_value(row["quantity"]),
+        risk_value(row["equity"]), risk_value(row["drawdown"], "RATIO")) for row in execution["ledger"])
+
+
 class IntradayResearchController(PageController):
     changed = Signal()
 
@@ -283,6 +336,13 @@ class IntradayResearchController(PageController):
         self._sequential_error = ""
         self._sequential_pending = None
         self._sequential_view = 0
+        self._signal_delay_report = None
+        self._signal_delay_error = ""
+        self._signal_delay_pending = None
+        self._signal_delay_view = 0
+        self._signal_delay_scenario = 0
+        self._signal_delay_account = 0
+        self._signal_delay_signal = 0
         self._grid_snapshot = None
         self._grid_report = None
         self._grid_key = None
@@ -297,6 +357,7 @@ class IntradayResearchController(PageController):
         self.operationFailed.connect(self._uncertainty_failed)
         self.operationFailed.connect(self._family_bounds_failed)
         self.operationFailed.connect(self._sequential_failed)
+        self.operationFailed.connect(self._signal_delay_failed)
         runtime.operationFinished.connect(self._analysis_idle)
 
     def _replay_failed(self):
@@ -516,6 +577,71 @@ class IntradayResearchController(PageController):
         return deepcopy(summary)
 
     @Property(bool, notify=changed)
+    def signalDelayAvailable(self):
+        return self.uncertaintyAvailable
+
+    @Property(str, notify=changed)
+    def signalDelayError(self):
+        return self._signal_delay_error
+
+    @Property(int, notify=changed)
+    def signalDelayViewIndex(self):
+        return self._signal_delay_view
+
+    @Property(int, notify=changed)
+    def signalDelayScenarioIndex(self):
+        return self._signal_delay_scenario
+
+    @Property(int, notify=changed)
+    def signalDelayAccountIndex(self):
+        return self._signal_delay_account
+
+    @Property(int, notify=changed)
+    def signalDelaySignalIndex(self):
+        return self._signal_delay_signal
+
+    @Property("QVariantMap", notify=changed)
+    def signalDelaySummary(self):
+        if self._signal_delay_report is None:
+            return {}
+        report = self._signal_delay_report
+        summary = {key: report[key] for key in ("version", "signal_delay_id", "evidence", "experiment_id", "name", "data_id",
+            "research_id", "context_id", "algorithm_versions", "feature_fields", "axis_values", "method", "warnings",
+            "cost_index", "candidate_index", "candidate_id", "strategy", "strategy_execution_id", "benchmark_execution_id",
+            "execution_policy", "benchmark_execution_policy", "projection", "baseline", "availability", "basis")}
+        summary["sample"] = {key: report["sample"][key] for key in ("sample_count", "first_day", "last_day", "fold_count",
+            "is_contiguous", "gap_days", "evaluated_days", "development_day_count", "unevaluated_development_days")}
+        summary["scenarios"] = [{key: row[key] for key in ("delay_bars", "status", "unavailable_reason", "detail")}
+                                for row in report["scenarios"]]
+        return deepcopy(summary)
+
+    def _signal_delay_selected(self):
+        if self._signal_delay_report is None:
+            return None, None
+        scenario = self._signal_delay_report["scenarios"][self._signal_delay_scenario]
+        return scenario, scenario[("strategy", "benchmark")[self._signal_delay_account]]
+
+    @Property("QVariantMap", notify=changed)
+    def signalDelayDetails(self):
+        scenario, account = self._signal_delay_selected()
+        if account is None:
+            return {}
+        execution, signals = account["execution"], account["signals"]
+        provenance = signals["provenance"]
+        return deepcopy({"delay_bars": scenario["delay_bars"], "account": ("STRATEGY", "BENCHMARK")[self._signal_delay_account],
+            "status": scenario["status"], "unavailable_reason": scenario["unavailable_reason"], "detail": scenario["detail"],
+            "execution_id": execution["execution_id"] if execution else None,
+            "price_evidence_id": execution["price_evidence_id"] if execution else None,
+            "signals": {key: value for key, value in signals.items() if key != "provenance"},
+            "signal": provenance[self._signal_delay_signal] if provenance else {}})
+
+    @Property("QStringList", notify=changed)
+    def signalDelaySignalNames(self):
+        _, account = self._signal_delay_selected()
+        return [] if account is None else [f'{i} · {row["source_trading_day"]} · {row["source_slot"]} · {row["source_target"]}'
+            for i, row in enumerate(account["signals"]["provenance"])]
+
+    @Property(bool, notify=changed)
     def gridAvailable(self):
         return self._grid_snapshot is not None
 
@@ -639,7 +765,13 @@ class IntradayResearchController(PageController):
         report = self._root["report"]
         group, candidate = self._selected()
         execution = candidate["execution"]
-        if self._view_index == 19:
+        if self._view_index == 20:
+            if self._signal_delay_report is not None:
+                self._columns, self._rows = signal_delay_table(self._signal_delay_report, self._signal_delay_view,
+                    self._signal_delay_scenario, self._signal_delay_account)
+            else:
+                self._columns, self._rows = (), ()
+        elif self._view_index == 19:
             if self._sequential_report is not None:
                 self._columns, self._rows = sequential_selection_table(self._sequential_report, self._sequential_view)
             else:
@@ -706,6 +838,8 @@ class IntradayResearchController(PageController):
             self._start_family_bounds()
         elif self._view_index == 19:
             self._start_sequential()
+        elif self._view_index == 20:
+            self._start_signal_delay()
 
     @Slot(int, result=bool)
     def selectCandidate(self, index):
@@ -714,6 +848,8 @@ class IntradayResearchController(PageController):
         if self._candidate_index != index:
             self._risk_report = None
             self._uncertainty_report, self._uncertainty_error = None, ""
+            self._signal_delay_report, self._signal_delay_error = None, ""
+            self._signal_delay_signal = 0
             self._grid_report, self._grid_key = None, None
             if self._positions[self._candidate_index][0] != self._positions[index][0]:
                 self._family_report, self._family_error = None, ""
@@ -739,7 +875,7 @@ class IntradayResearchController(PageController):
 
     @Slot(int, result=bool)
     def selectView(self, index):
-        if type(index) is not int or not 0 <= index <= 19:
+        if type(index) is not int or not 0 <= index <= 20:
             return False
         self._view_index = index
         self._refresh_view()
@@ -783,6 +919,7 @@ class IntradayResearchController(PageController):
         self._start_uncertainty()
         self._start_family_bounds()
         self._start_sequential()
+        self._start_signal_delay()
 
     def _uncertainty_failed(self):
         selection, self._uncertainty_pending = self._uncertainty_pending, None
@@ -896,6 +1033,84 @@ class IntradayResearchController(PageController):
         if self.busy or self._runtime.busy or not self.sequentialAvailable or not self._sequential_error:
             return False
         self._sequential_error = ""
+        self._refresh_view()
+        self.changed.emit()
+        return True
+
+    @Slot(int, result=bool)
+    def selectSignalDelayView(self, index):
+        if type(index) is not int or not 0 <= index <= 4:
+            return False
+        self._signal_delay_view = index
+        if self._view_index == 20:
+            self._refresh_view()
+        self.changed.emit()
+        return True
+
+    @Slot(int, int, result=bool)
+    def selectSignalDelayDetail(self, delay_index, account_index):
+        if (type(delay_index) is not int or not 0 <= delay_index <= 2
+                or type(account_index) is not int or not 0 <= account_index <= 1):
+            return False
+        self._signal_delay_scenario, self._signal_delay_account = delay_index, account_index
+        self._signal_delay_signal = 0
+        if self._view_index == 20:
+            self._refresh_view()
+        self.changed.emit()
+        return True
+
+    @Slot(int, result=bool)
+    def selectSignalDelaySignal(self, index):
+        _, account = self._signal_delay_selected()
+        if (account is None or type(index) is not int
+                or not 0 <= index < len(account["signals"]["provenance"])):
+            return False
+        self._signal_delay_signal = index
+        self.changed.emit()
+        return True
+
+    def _signal_delay_selection(self):
+        if not self.signalDelayAvailable:
+            return None
+        return (self._root["experiment_id"], *self._positions[self._candidate_index])
+
+    def _start_signal_delay(self):
+        """Re-execute the fixed delay set for one captured saved DEV candidate."""
+        if (self._view_index != 20 or not self.signalDelayAvailable or self._signal_delay_report is not None
+                or self._signal_delay_error or self._signal_delay_pending is not None or self.busy or self._runtime.busy):
+            return
+        selection, content = self._signal_delay_selection(), self._content
+        self._signal_delay_pending = selection
+
+        def operation(backend):
+            from ..research.intraday_signal_delay import analyze_intraday_signal_delay
+            from ..research.strategy_experiment import StrategyExperiment
+            return analyze_intraday_signal_delay(StrategyExperiment(content), cost_index=selection[1], candidate_index=selection[2])
+
+        def apply(report):
+            self._signal_delay_pending = None
+            if selection != self._signal_delay_selection():
+                return
+            self._signal_delay_report = report
+            self._signal_delay_signal = 0
+            if self._view_index == 20:
+                self._refresh_view()
+            self.changed.emit()
+
+        if not self._submit("intraday_signal_delay", operation, apply, requires_backend=False):
+            self._signal_delay_pending = None
+
+    def _signal_delay_failed(self):
+        selection, self._signal_delay_pending = self._signal_delay_pending, None
+        if selection is not None and selection == self._signal_delay_selection():
+            self._signal_delay_error = self.error
+            self.changed.emit()
+
+    @Slot(result=bool)
+    def retrySignalDelay(self):
+        if self.busy or self._runtime.busy or not self.signalDelayAvailable or not self._signal_delay_error:
+            return False
+        self._signal_delay_error = ""
         self._refresh_view()
         self.changed.emit()
         return True
@@ -1115,6 +1330,8 @@ class IntradayResearchController(PageController):
         self._uncertainty_report, self._uncertainty_error = None, ""
         self._family_report, self._family_error = None, ""
         self._sequential_report, self._sequential_error = None, ""
+        self._signal_delay_report, self._signal_delay_error = None, ""
+        self._signal_delay_signal = 0
         self._grid_snapshot = snapshot if root["evaluation_mode"] == "INTRADAY_DIAGNOSTICS" else None
         self._grid_report, self._grid_key, self._grid_error = None, None, ""
         self._grid_metric = GRID_METRICS[0]
