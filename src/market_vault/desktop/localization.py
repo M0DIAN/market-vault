@@ -1205,6 +1205,51 @@ for key, english, chinese in (
     EN["comparison.test_context." + key] = "TEST: " + english
     ZH_CN["comparison.test_context." + key] = "TEST：" + chinese
 
+EN.update({
+    "quant.parameter_grid": "Parameter grid & neighbors",
+    "grid.note": "Read the recorded development grid. Choose a cost, metric and center; selecting a cell also selects its existing candidate details. Indices start at 0. Verification stays unchanged.",
+    "grid.diagnostics_only": "Open or run a development parameter diagnostics experiment to read its grid. Ordinary comparisons, scenario children and TEST results do not declare a parameter grid.",
+    "grid.axis": "Axis", "grid.condition": "Condition", "grid.no_axes": "No varying parameter axes",
+    "grid.strategy.condition_threshold": "Condition threshold", "grid.p50": "Median",
+    "grid.order_note": "Declared value order is preserved: axis 0 changes by row and axis 1 by column. With one axis, values run across the row. Scroll to see every cell; coordinates retain full precision.",
+    "grid.cost": "Cost index · commission / slippage (bps)", "grid.metric": "Observed metric",
+    "grid.cost_index": "Cost", "grid.candidate": "Candidate", "grid.center": "Selected center",
+    "grid.open_details": "Open candidate details", "grid.select_center": "Use as center",
+    "grid.neighbors": "Nearest axis neighbors",
+    "grid.neighbor_note": "Each neighbor changes only one axis to the nearest smaller or larger numeric value. Delta = neighbor − center; return differences use percentage points. Raw values remain visible when the recorded comparison basis differs.",
+    "grid.delta": "Neighbor − center", "grid.failed_basis": "Different comparison basis",
+    "grid.summary": "Neighbor summary · excludes the center; includes only matching basis and available metrics",
+    "grid.neighbor_count": "Neighbors", "grid.basis_matching_count": "Matching basis", "grid.available_count": "Included values",
+    "grid.LOWER": "Nearest smaller", "grid.HIGHER": "Nearest larger",
+    "grid.NO_NEIGHBORS": "No axis neighbors",
+    "grid.NO_MATCHING_BASIS": "No neighbors have a matching comparison basis",
+    "grid.NO_AVAILABLE_NEIGHBOR_METRICS": "Matching neighbors have no available metric values",
+    "grid.LEFT_UNAVAILABLE": "Center metric unavailable", "grid.RIGHT_UNAVAILABLE": "Neighbor metric unavailable",
+    "grid.BOTH_UNAVAILABLE": "Center and neighbor metrics unavailable",
+})
+ZH_CN.update({
+    "quant.parameter_grid": "参数网格与邻域",
+    "grid.note": "读取已记录的开发期网格，选择成本、指标和中心。选择格子会同步选中已有候选明细；索引从 0 开始，验证状态保持不变。",
+    "grid.diagnostics_only": "请打开或运行开发期参数诊断实验以查看网格。普通比较、情景子项和 TEST 结果未声明参数网格。",
+    "grid.axis": "参数轴", "grid.condition": "条件", "grid.no_axes": "没有变化的参数轴",
+    "grid.strategy.condition_threshold": "条件阈值", "grid.p50": "中位数",
+    "grid.order_note": "保留声明的取值顺序：轴 0 按行变化，轴 1 按列变化；单轴时取值横向排列。滚动可查看全部格子，坐标保留完整精度。",
+    "grid.cost": "成本索引 · 佣金 / 滑点（bps）", "grid.metric": "观察指标",
+    "grid.cost_index": "成本", "grid.candidate": "候选", "grid.center": "当前中心",
+    "grid.open_details": "打开候选明细", "grid.select_center": "选为中心",
+    "grid.neighbors": "最近轴向邻居",
+    "grid.neighbor_note": "每个邻居只改变一条轴，取数值上最近的更小值或更大值。差值为邻居减中心，收益率差使用百分点；记录的比较基础不同仍保留原始值。",
+    "grid.delta": "邻居 − 中心", "grid.failed_basis": "不同的比较基础",
+    "grid.summary": "邻域汇总 · 不含中心，仅纳入基础一致且指标有值的邻居",
+    "grid.neighbor_count": "邻居数", "grid.basis_matching_count": "基础一致数", "grid.available_count": "纳入值数",
+    "grid.LOWER": "最近更小值", "grid.HIGHER": "最近更大值",
+    "grid.NO_NEIGHBORS": "无轴向邻居",
+    "grid.NO_MATCHING_BASIS": "没有比较基础一致的邻居",
+    "grid.NO_AVAILABLE_NEIGHBOR_METRICS": "基础一致的邻居均无可用指标值",
+    "grid.LEFT_UNAVAILABLE": "中心指标不可用", "grid.RIGHT_UNAVAILABLE": "邻居指标不可用",
+    "grid.BOTH_UNAVAILABLE": "中心和邻居指标均不可用",
+})
+
 TRANSLATIONS: Final[dict[str, dict[str, str]]] = {
     "en": EN,
     "zh-CN": ZH_CN,

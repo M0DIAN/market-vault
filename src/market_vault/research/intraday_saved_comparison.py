@@ -50,7 +50,15 @@ def _selected(snapshot, cost_index, candidate_index):
         raise ValueError("an immutable StrategyExperiment is required for each side")
     if any(type(value) is not int or value < 0 for value in (cost_index, candidate_index)):
         raise ValueError("cost_index and candidate_index must be nonnegative integers")
-    root = snapshot.as_dict()
+    return _selected_from_root(snapshot.as_dict(), cost_index, candidate_index)
+
+
+def _selected_from_root(root, cost_index, candidate_index):
+    """Select from this action's already validated, detached immutable root.
+
+    Internal callers validate their indices first. This is not a public
+    admission path for an unverified dictionary or a cross-action cache.
+    """
     report = root["report"]
     if root["artifact_schema_version"] == INTRADAY_EXPERIMENT_VERSION:
         if cost_index >= len(report["groups"]) or candidate_index >= len(report["groups"][cost_index]["results"]):

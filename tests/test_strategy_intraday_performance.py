@@ -114,6 +114,7 @@ def test_inconsistent_recorded_cash_or_unsupported_semantics_are_not_presented_a
 
 def test_saved_development_and_test_cli_are_offline_and_remain_distinct(intraday_experiment, final_case, tmp_path, monkeypatch, capsys):
     from market_vault.research import intraday_research as research, intraday_final_test as final
+    from market_vault.research.intraday_parameter_grid import analyze_intraday_parameter_grid
     sources = (intraday_experiment, final_case[1])
     paths = [tmp_path / "development.json", tmp_path / "test.json"]
     for snapshot, path in zip(sources, paths):
@@ -123,6 +124,8 @@ def test_saved_development_and_test_cli_are_offline_and_remain_distinct(intraday
     monkeypatch.setattr(research, "_fit", lambda *a: pytest.fail("analysis fitted"))
     before = [path.read_bytes() for path in paths]
     for index, path in enumerate(paths):
+        with pytest.raises(ValueError, match="INTRADAY_DIAGNOSTICS"):
+            analyze_intraday_parameter_grid(sources[index])
         args = ["research-intraday-performance", "--experiment", str(path)]
         if index == 0:
             args += ["--candidate-index", "1"]
@@ -303,3 +306,33 @@ def test_risk_inconsistent_ledger_or_fold_partition_rejects_derived_analysis(cas
         folds[0]["validation_days"] = days + days[:1]
     with pytest.raises(ValueError, match="reconcile|partition"):
         summarize_intraday_risk_diagnostics(execution, folds=folds)
+
+
+def test_parameter_grid_neighbors_use_numeric_order_and_fixed_other_axes():
+    from itertools import product
+    from market_vault.research.intraday_parameter_grid import _neighbors
+    axes = [{"values": [10, 1, 100]}, {"values": [7, -2, 1]}]
+    cells = [{"candidate_index": index, "axis_values": list(values)}
+             for index, values in enumerate(product(*(axis["values"] for axis in axes)))]
+    original = deepcopy(cells)
+    # Center (10, 1) is candidate 2 in input order. Numeric adjacency is not
+    # neighboring array positions and never includes a diagonal coordinate.
+    assert _neighbors(axes, cells, 2) == [(0, "LOWER", 5), (0, "HIGHER", 8), (1, "LOWER", 1), (1, "HIGHER", 0)]
+    assert _neighbors([{"values": [1]}], [{"candidate_index": 0, "axis_values": [1]}], 0) == []
+    assert _neighbors([], [{"candidate_index": 0, "axis_values": []}], 0) == []
+    assert cells == original
+
+
+def test_parameter_grid_neighborhood_population_availability_and_finite_midpoint():
+    from market_vault.research.intraday_parameter_grid import _summary
+    rows = [{"basis_matches": True, "metric": {"value": 1e308}},
+            {"basis_matches": True, "metric": {"value": 1e308}},
+            {"basis_matches": False, "metric": {"value": -100}},
+            {"basis_matches": True, "metric": {"value": None}}]
+    result = _summary(rows, "RATIO")
+    assert (result["neighbor_count"], result["basis_matching_count"], result["available_count"]) == (4, 3, 2)
+    assert result["minimum"] == result["median"] == result["maximum"] == 1e308
+    assert result["population"] == "AXIS_NEIGHBORS_EXCLUDING_CENTER"
+    assert _summary([], "RATIO")["unavailable_reason"] == "NO_NEIGHBORS"
+    assert _summary(rows[2:3], "RATIO")["unavailable_reason"] == "NO_MATCHING_BASIS"
+    assert _summary(rows[3:], "RATIO")["unavailable_reason"] == "NO_AVAILABLE_NEIGHBOR_METRICS"

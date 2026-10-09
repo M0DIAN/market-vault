@@ -12,6 +12,27 @@ Item {
     required property var i18n
     property string sourceKey: ""
     property int restoreRevision: -1
+    readonly property var gridData: root.controller.parameterGrid
+    readonly property var gridMetrics: ["total_return", "observed_max_drawdown", "trade_count",
+        "worst_fold_return", "median_fold_return", "best_fold_return"]
+
+    function gridLabel(key) {
+        return root.i18n.catalog["grid." + key] || root.i18n.catalog["risk." + key]
+            || root.i18n.catalog["comparison." + key] || root.i18n.catalog["performance." + key]
+            || root.i18n.catalog["columns." + key] || key
+    }
+    function axisName(axis) {
+        return root.i18n.catalog["grid.axis"] + " " + axis.axis_index + " · "
+            + root.gridLabel("strategy." + axis.parameter)
+            + (axis.condition_index !== undefined ? " · " + root.i18n.catalog["grid.condition"] + " " + axis.condition_index : "")
+    }
+    function coordinates(row, stacked) {
+        return (root.gridData.axes || []).map((axis, i) => root.axisName(axis) + (stacked ? "\n" : " = ") + row.axis_values[i]).join("\n")
+            || root.i18n.catalog["grid.no_axes"]
+    }
+    function gridAmount(metric) {
+        return metric.display + (metric.unit === "RATIO" ? "" : " " + root.gridLabel(metric.unit))
+    }
 
     function sync() {
         if (root.controller.sourceId && root.controller.sourceId !== root.sourceKey) {
@@ -28,6 +49,9 @@ Item {
         }
         scenario.currentIndex = root.controller.scenarioIndex
         candidate.currentIndex = root.controller.candidateIndex
+        view.currentIndex = root.controller.viewIndex
+        gridCost.currentIndex = root.controller.gridCostIndex
+        gridMetric.currentIndex = root.controller.gridMetricIndex
         equity.requestPaint()
     }
     Component.onCompleted: sync()
@@ -215,13 +239,13 @@ Item {
                     objectName: "intradayResearchView"
                     Layout.preferredWidth: 250
                     label: root.i18n.catalog["quant.intraday_result_view"]
-                    property int selectedView: 0
+                    readonly property int selectedView: root.controller.viewIndex
                     model: ["quant.intraday_overview", "quant.trades", "quant.intraday_ledger", "quant.intraday_daily",
                         "quant.intraday_models", "quant.intraday_predictions", "quant.intraday_contributions",
                         "quant.performance", "quant.performance_exit", "quant.performance_entry", "quant.performance_day",
                         "quant.risk_summary", "quant.risk_drawdowns", "quant.risk_distributions", "quant.risk_concentration",
-                        "quant.risk_folds"].map(key => root.i18n.catalog[key])
-                    onSelected: { selectedView = currentIndex; root.controller.selectView(currentIndex) }
+                        "quant.risk_folds", "quant.parameter_grid"].map(key => root.i18n.catalog[key])
+                    onSelected: root.controller.selectView(currentIndex)
                     onModelChanged: currentIndex = selectedView
                 }
             }
@@ -266,8 +290,251 @@ Item {
                     }
                 }
             }
+            ColumnLayout {
+                objectName: "intradayParameterGridPanel"
+                Layout.fillWidth: true
+                visible: view.selectedView === 16
+                spacing: Theme.PixelTheme.spacingSm
+                Label {
+                    objectName: "intradayParameterGridNotice"
+                    Layout.fillWidth: true
+                    text: root.controller.gridAvailable ? root.i18n.catalog["grid.note"] : root.i18n.catalog["grid.diagnostics_only"]
+                    wrapMode: Text.WordWrap
+                    color: Theme.PixelTheme.inkMuted
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                }
+                Label {
+                    Layout.fillWidth: true
+                    visible: root.controller.gridError.length > 0
+                    text: root.controller.gridError
+                    wrapMode: Text.WrapAnywhere
+                    color: Theme.PixelTheme.ink
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    visible: root.controller.gridAvailable
+                    Components.LabeledComboBox {
+                        id: gridCost
+                        objectName: "intradayGridCost"
+                        Layout.maximumWidth: 340
+                        label: root.i18n.catalog["grid.cost"]
+                        model: root.controller.gridCostNames
+                        onSelected: root.controller.selectGridCost(currentIndex)
+                        onModelChanged: currentIndex = root.controller.gridCostIndex
+                    }
+                    Components.LabeledComboBox {
+                        id: gridMetric
+                        objectName: "intradayGridMetric"
+                        Layout.maximumWidth: 400
+                        label: root.i18n.catalog["grid.metric"]
+                        model: root.gridMetrics.map(key => root.gridLabel(key))
+                        onSelected: root.controller.selectGridMetric(currentIndex)
+                        onModelChanged: currentIndex = root.controller.gridMetricIndex
+                    }
+                }
+                Label {
+                    Layout.fillWidth: true
+                    visible: !!root.gridData.center
+                    text: (root.gridData.axes || []).map(axis => root.axisName(axis)).join("\n")
+                        + "\n" + root.i18n.catalog["grid.order_note"]
+                    wrapMode: Text.WordWrap
+                    color: Theme.PixelTheme.inkMuted
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                }
+                Flickable {
+                    id: gridScroll
+                    objectName: "intradayParameterGridScroll"
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 234
+                    visible: !!root.gridData.center
+                    clip: true
+                    contentWidth: cells.implicitWidth + 12
+                    contentHeight: cells.implicitHeight + 12
+                    boundsBehavior: Flickable.StopAtBounds
+                    ScrollBar.horizontal: Components.PixelScrollBar {}
+                    ScrollBar.vertical: Components.PixelScrollBar {}
+                    Grid {
+                        id: cells
+                        spacing: 8
+                        columns: (root.gridData.axes || []).length === 2 ? root.gridData.axes[1].values.length
+                            : ((root.gridData.axes || []).length === 1 ? root.gridData.axes[0].values.length : 1)
+                        Repeater {
+                            model: root.gridData.cells || []
+                            Components.PixelButton {
+                                id: cellButton
+                                required property var modelData
+                                objectName: "intradayGridCell" + modelData.candidate_index
+                                width: 280
+                                height: Math.max(204, contentItem.implicitHeight + 24)
+                                variant: root.gridData.selection && root.gridData.selection.center_candidate_index === modelData.candidate_index ? "primary" : "secondary"
+                                Accessible.name: root.i18n.catalog["grid.candidate"] + " " + modelData.candidate_index + "; " + root.coordinates(modelData)
+                                onClicked: root.controller.selectGridCandidate(modelData.candidate_index)
+                                ToolTip.visible: hovered
+                                ToolTip.text: modelData.candidate_id
+                                contentItem: ColumnLayout {
+                                    spacing: 4
+                                    Label {
+                                        Layout.fillWidth: true
+                                        text: root.i18n.catalog["grid.candidate"] + " " + cellButton.modelData.candidate_index + " · " + cellButton.modelData.strategy_name
+                                        wrapMode: Text.WrapAnywhere
+                                        font.pixelSize: Theme.PixelTheme.fontMd
+                                        font.bold: true
+                                        color: Theme.PixelTheme.ink
+                                    }
+                                    Label {
+                                        objectName: "intradayGridCoordinates" + cellButton.modelData.candidate_index
+                                        Layout.fillWidth: true
+                                        text: root.coordinates(cellButton.modelData, true)
+                                        wrapMode: Text.WordWrap
+                                        font.pixelSize: Theme.PixelTheme.fontSm
+                                        color: Theme.PixelTheme.ink
+                                    }
+                                    Label {
+                                        Layout.fillWidth: true
+                                        text: root.gridAmount(cellButton.modelData.metric)
+                                        wrapMode: Text.WrapAnywhere
+                                        font.pixelSize: Theme.PixelTheme.fontMd
+                                        color: Theme.PixelTheme.ink
+                                    }
+                                    Label {
+                                        Layout.fillWidth: true
+                                        text: root.gridLabel(cellButton.modelData.metric.evidence)
+                                            + (cellButton.modelData.metric.unavailable_reason ? "\n" + root.gridLabel(cellButton.modelData.metric.unavailable_reason) : "")
+                                        wrapMode: Text.WrapAnywhere
+                                        font.pixelSize: Theme.PixelTheme.fontSm
+                                        color: Theme.PixelTheme.inkMuted
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    visible: !!root.gridData.center
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Label {
+                            Layout.fillWidth: true
+                            text: root.i18n.catalog["grid.center"] + (root.gridData.selection ? " · "
+                                + root.i18n.catalog["grid.cost_index"] + " " + root.gridData.selection.cost_index + " · "
+                                + root.i18n.catalog["grid.candidate"] + " " + root.gridData.selection.center_candidate_index : "")
+                            font.bold: true
+                            wrapMode: Text.WordWrap
+                            color: Theme.PixelTheme.ink
+                        }
+                        Components.PixelButton {
+                            objectName: "intradayGridOpenDetails"
+                            text: root.i18n.catalog["grid.open_details"]
+                            onClicked: root.controller.openGridCandidateDetails()
+                        }
+                    }
+                    Label {
+                        objectName: "intradayGridCenterIdentity"
+                        Layout.fillWidth: true
+                        text: root.gridData.center ? root.i18n.catalog["quant.saved_experiment_id"] + ": " + root.gridData.experiment_id + "\n"
+                            + root.i18n.catalog["quant.saved_candidate_id"] + ": " + root.gridData.center.candidate_id + "\n"
+                            + root.coordinates(root.gridData.center) + "\n" + root.gridLabel(root.gridData.selection.metric) + ": "
+                            + root.gridAmount(root.gridData.center.metric)
+                            + (root.gridData.center.metric.unavailable_reason ? " · " + root.gridLabel(root.gridData.center.metric.unavailable_reason) : "") : ""
+                        wrapMode: Text.WrapAnywhere
+                        font.pixelSize: Theme.PixelTheme.fontSm
+                        color: Theme.PixelTheme.ink
+                    }
+                    Label {
+                        Layout.fillWidth: true
+                        text: root.i18n.catalog["grid.neighbors"]
+                        font.bold: true
+                        wrapMode: Text.WordWrap
+                        color: Theme.PixelTheme.ink
+                    }
+                    Label {
+                        Layout.fillWidth: true
+                        text: root.i18n.catalog["grid.neighbor_note"]
+                        wrapMode: Text.WordWrap
+                        font.pixelSize: Theme.PixelTheme.fontSm
+                        color: Theme.PixelTheme.inkMuted
+                    }
+                    Repeater {
+                        model: root.gridData.neighbors || []
+                        Rectangle {
+                            required property var modelData
+                            id: neighborCard
+                            objectName: "intradayGridNeighbor" + modelData.candidate_index
+                            Layout.fillWidth: true
+                            implicitHeight: neighborBody.implicitHeight + 16
+                            color: Theme.PixelTheme.surfaceRaised
+                            border.color: Theme.PixelTheme.line
+                            ColumnLayout {
+                                id: neighborBody
+                                anchors.fill: parent
+                                anchors.margins: 8
+                                spacing: 4
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    Label {
+                                        Layout.fillWidth: true
+                                        text: root.axisName(root.gridData.axes[neighborCard.modelData.axis_index]) + " · "
+                                            + root.gridLabel(neighborCard.modelData.direction) + " · "
+                                            + root.i18n.catalog["grid.candidate"] + " " + neighborCard.modelData.candidate_index
+                                        wrapMode: Text.WordWrap
+                                        color: Theme.PixelTheme.ink
+                                        font.bold: true
+                                        font.pixelSize: Theme.PixelTheme.fontSm
+                                    }
+                                    Components.PixelButton {
+                                        objectName: "intradayGridSelectNeighbor" + neighborCard.modelData.candidate_index
+                                        compact: true
+                                        text: root.i18n.catalog["grid.select_center"]
+                                        onClicked: root.controller.selectGridCandidate(neighborCard.modelData.candidate_index)
+                                    }
+                                }
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: root.coordinates(neighborCard.modelData) + "\n"
+                                        + root.gridAmount(neighborCard.modelData.metric) + " · " + root.gridLabel(neighborCard.modelData.metric.evidence)
+                                        + (neighborCard.modelData.metric.unavailable_reason ? " · " + root.gridLabel(neighborCard.modelData.metric.unavailable_reason) : "")
+                                    wrapMode: Text.WrapAnywhere
+                                    color: Theme.PixelTheme.ink
+                                    font.pixelSize: Theme.PixelTheme.fontSm
+                                }
+                                Label {
+                                    objectName: "intradayGridDelta" + neighborCard.modelData.candidate_index
+                                    Layout.fillWidth: true
+                                    text: root.i18n.catalog["grid.delta"] + ": " + root.gridAmount(neighborCard.modelData.delta)
+                                        + (neighborCard.modelData.delta.unavailable_reason ? " · " + root.gridLabel(neighborCard.modelData.delta.unavailable_reason) : "")
+                                        + (neighborCard.modelData.failed_basis_checks.length ? "\n" + root.i18n.catalog["grid.failed_basis"] + ": "
+                                            + neighborCard.modelData.failed_basis_checks.map(key => root.gridLabel(key)).join(", ") : "")
+                                    wrapMode: Text.WordWrap
+                                    color: Theme.PixelTheme.inkMuted
+                                    font.pixelSize: Theme.PixelTheme.fontSm
+                                }
+                            }
+                        }
+                    }
+                    Label {
+                        objectName: "intradayGridSummary"
+                        Layout.fillWidth: true
+                        text: {
+                            const summary = root.gridData.neighborhood_summary
+                            if (!summary) return ""
+                            return root.i18n.catalog["grid.summary"] + "\n" + root.i18n.catalog["grid.neighbor_count"] + ": " + summary.neighbor_count
+                                + " · " + root.i18n.catalog["grid.basis_matching_count"] + ": " + summary.basis_matching_count
+                                + " · " + root.i18n.catalog["grid.available_count"] + ": " + summary.available_count + "\n"
+                                + root.gridLabel("minimum") + ": " + summary.minimum_display + " · "
+                                + root.gridLabel("p50") + ": " + summary.median_display + " · "
+                                + root.gridLabel("maximum") + ": " + summary.maximum_display + " (" + root.gridLabel(summary.unit) + ")"
+                                + (summary.unavailable_reason ? "\n" + root.gridLabel(summary.unavailable_reason) : "")
+                        }
+                        wrapMode: Text.WordWrap
+                        color: Theme.PixelTheme.ink
+                        font.pixelSize: Theme.PixelTheme.fontSm
+                    }
+                }
+            }
             Components.DataTable {
                 objectName: "intradayResearchTable"
+                visible: view.selectedView !== 16
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 Layout.minimumHeight: view.selectedView === 0 ? 120 : 170
@@ -283,7 +550,7 @@ Item {
             }
             Label {
                 Layout.fillWidth: true
-                visible: view.selectedView >= 7
+                visible: view.selectedView >= 7 && view.selectedView < 16
                 text: {
                     if (view.selectedView < 11) return root.i18n.catalog["quant.performance_note"]
                     const note = ["", "quant.risk_drawdowns_note", "quant.risk_distributions_note",

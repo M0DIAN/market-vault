@@ -14,6 +14,10 @@ from .controllers import PageController
 from .table_model import QtTableModel
 
 
+GRID_METRICS = ("total_return", "observed_max_drawdown", "trade_count", "worst_fold_return",
+                "median_fold_return", "best_fold_return")
+
+
 def execution_series(execution):
     daily = execution["daily"]
     return [[datetime.fromisoformat(daily[0]["open_time"]).timestamp() * 1000, 1.0]] + [
@@ -181,6 +185,11 @@ class IntradayResearchController(PageController):
         self._names = []
         self._view_index = 0
         self._risk_report = None
+        self._grid_snapshot = None
+        self._grid_report = None
+        self._grid_key = None
+        self._grid_error = ""
+        self._grid_metric = GRID_METRICS[0]
         self._page = 1
         self._columns, self._rows = (), ()
         self._model = QtTableModel(parent=self)
@@ -290,6 +299,52 @@ class IntradayResearchController(PageController):
     def candidateIndex(self):
         return self._candidate_index
 
+    @Property(int, notify=changed)
+    def viewIndex(self):
+        return self._view_index
+
+    @Property(bool, notify=changed)
+    def gridAvailable(self):
+        return self._grid_snapshot is not None
+
+    @Property(str, notify=changed)
+    def gridError(self):
+        return self._grid_error
+
+    @Property(int, notify=changed)
+    def gridCostIndex(self):
+        return self._positions[self._candidate_index][0] if self._positions else 0
+
+    @Property(int, notify=changed)
+    def gridMetricIndex(self):
+        return GRID_METRICS.index(self._grid_metric)
+
+    @Property("QStringList", notify=changed)
+    def gridCostNames(self):
+        if not self.gridAvailable:
+            return []
+        return [f'{i} · {g["execution_policy"]["commission_bps"]}/{g["execution_policy"]["slippage_bps"]} bps'
+                for i, g in enumerate(self._root["report"]["groups"])]
+
+    @Property("QVariantMap", notify=changed)
+    def parameterGrid(self):
+        """Small detached view; coordinates retain Python's round-trip precision."""
+        if self._grid_report is None:
+            return {}
+        view = deepcopy(self._grid_report)
+        for axis in view["axes"]:
+            axis["values"] = [str(value) for value in axis["values"]]
+        for row in [*view["cells"], *view["neighbors"]]:
+            row["axis_values"] = [str(value) for value in row["axis_values"]]
+            for key in ("metric", "delta"):
+                if key in row:
+                    row[key]["display"] = risk_value(row[key]["value"], row[key]["unit"])
+        view["center"] = view["cells"][view["selection"]["center_candidate_index"]]
+        summary = view["neighborhood_summary"]
+        for key in ("minimum", "median", "maximum"):
+            summary[key + "_display"] = risk_value(summary[key], summary["unit"])
+        return view
+
     @Property(QObject, constant=True)
     def tableModel(self):
         return self._model
@@ -372,7 +427,10 @@ class IntradayResearchController(PageController):
         report = self._root["report"]
         group, candidate = self._selected()
         execution = candidate["execution"]
-        if self._view_index >= 11:
+        if self._view_index == 16:
+            self._refresh_grid()
+            self._columns, self._rows = (), ()
+        elif self._view_index >= 11:
             if self._risk_report is None:
                 cost, index = self._positions[self._candidate_index]
                 self._risk_report = risk_diagnostics_report(self._content, cost_index=cost, candidate_index=index)
@@ -422,6 +480,7 @@ class IntradayResearchController(PageController):
             return False
         if self._candidate_index != index:
             self._risk_report = None
+            self._grid_report, self._grid_key = None, None
         self._candidate_index = index
         self._refresh_view()
         self.changed.emit()
@@ -443,11 +502,55 @@ class IntradayResearchController(PageController):
 
     @Slot(int, result=bool)
     def selectView(self, index):
-        if type(index) is not int or not 0 <= index <= 15:
+        if type(index) is not int or not 0 <= index <= 16:
             return False
         self._view_index = index
         self._refresh_view()
+        self.changed.emit()
         return True
+
+    def _refresh_grid(self):
+        if not self.gridAvailable:
+            return
+        cost, candidate = self._positions[self._candidate_index]
+        key = (cost, candidate, self._grid_metric)
+        if self._grid_key == key:
+            return
+        from ..research.intraday_parameter_grid import analyze_intraday_parameter_grid
+        try:
+            self._grid_report = analyze_intraday_parameter_grid(self._grid_snapshot, cost_index=cost,
+                center_candidate_index=candidate, metric=self._grid_metric)
+            self._grid_key, self._grid_error = key, ""
+        except (ValueError, ArithmeticError) as exc:
+            self._grid_report, self._grid_key, self._grid_error = None, None, str(exc)
+
+    @Slot(int, result=bool)
+    def selectGridCost(self, index):
+        if not self.gridAvailable or type(index) is not int or not 0 <= index < len(self.gridCostNames):
+            return False
+        candidate = self._positions[self._candidate_index][1]
+        return self.selectCandidate(self._positions.index((index, candidate)))
+
+    @Slot(int, result=bool)
+    def selectGridCandidate(self, index):
+        if not self.gridAvailable or type(index) is not int:
+            return False
+        position = (self.gridCostIndex, index)
+        return self.selectCandidate(self._positions.index(position)) if position in self._positions else False
+
+    @Slot(int, result=bool)
+    def selectGridMetric(self, index):
+        if not self.gridAvailable or type(index) is not int or not 0 <= index < len(GRID_METRICS):
+            return False
+        self._grid_metric = GRID_METRICS[index]
+        if self._view_index == 16:
+            self._refresh_grid()
+        self.changed.emit()
+        return True
+
+    @Slot(result=bool)
+    def openGridCandidateDetails(self):
+        return self.selectView(1) if self.gridAvailable else False
 
     @Slot(int, result=bool)
     def changePage(self, offset):
@@ -476,12 +579,15 @@ class IntradayResearchController(PageController):
                 "execution": self._owner._intraday_execution_values(values)}
         return normalize_intraday_research_plan(plan)
 
-    def _apply_child(self, root, *, path="", proof="COMPUTED", candidate_index=0):
+    def _apply_child(self, root, *, path="", proof="COMPUTED", candidate_index=0, snapshot=None):
         """Present an already validated ordinary Q7 child; its file path is separate."""
         from ..strategy_comparison_io import canonical_json
         self._content = canonical_json(root)
         self._root = root
         self._risk_report = None
+        self._grid_snapshot = snapshot if root["evaluation_mode"] == "INTRADAY_DIAGNOSTICS" else None
+        self._grid_report, self._grid_key, self._grid_error = None, None, ""
+        self._grid_metric = GRID_METRICS[0]
         self._path, self._proof = path, proof
         self._positions = tuple((i, j) for i, g in enumerate(self._root["report"]["groups"]) for j in range(len(g["results"])))
         self._names = [f'{self._root["report"]["groups"][i]["results"][j]["strategy"]["name"]} | {self._root["report"]["groups"][i]["execution_policy"]["commission_bps"]}/{self._root["report"]["groups"][i]["execution_policy"]["slippage_bps"]} bps'
@@ -501,7 +607,7 @@ class IntradayResearchController(PageController):
         else:
             self._collection_content, self._collection_root = b"", {}
             self._collection_path, self._collection_proof = "", ""
-            self._apply_child(root, path=path, proof=proof)
+            self._apply_child(root, path=path, proof=proof, snapshot=snapshot)
         if opened:
             self._restore_revision += 1
         self.changed.emit()
