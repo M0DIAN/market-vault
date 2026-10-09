@@ -279,6 +279,30 @@ def visible_label(parent, caption):
         rect = label.mapRectToItem(parent, label.boundingRect())
         if rect.left() >= 0 and rect.right() <= parent.width() and rect.top() >= 0 and rect.bottom() <= parent.height(): return label
     raise AssertionError(('visible complete label', caption))
+def check_source_selection(side):
+    source = controller.leftSource if side == 'Left' else controller.rightSource
+    for suffix, index_key, names_key in (('Cost', 'cost_index', 'cost_names'), ('Candidate', 'candidate_index', 'candidate_names')):
+        selector = find('intradaySaved' + side + suffix); reveal(selector)
+        combo = next(item for item in visual(selector) if 'PixelComboBox' in item.metaObject().className())
+        expected = source[names_key][source[index_key]]
+        assert selector.property('currentIndex') == combo.property('currentIndex') == source[index_key], (side, suffix, source)
+        assert selector.property('currentText') == combo.property('currentText') == combo.property('displayText') == expected
+        visible_label(combo, expected)
+    return {key: source[key] for key in ('cost_index', 'candidate_index', 'experiment_id', 'candidate_id')}
+def check_view_selection(index):
+    selector = find('intradaySavedComparisonView'); reveal(selector)
+    combo = next(item for item in visual(selector) if 'PixelComboBox' in item.metaObject().className())
+    key = ('quant.saved_strategy_metrics', 'quant.saved_benchmark_metrics', 'quant.saved_config_differences', 'quant.saved_basis_checks')[index]
+    expected = session.i18n.catalog[key]
+    assert controller.viewIndex == selector.property('currentIndex') == combo.property('currentIndex') == index
+    assert selector.property('currentText') == combo.property('currentText') == combo.property('displayText') == expected
+    visible_label(combo, expected)
+def compare_visible_selections():
+    expected = [check_source_selection(side) for side in ('Left', 'Right')]
+    click('intradaySavedCompareButton'); complete()
+    for captured, selected in zip(controller.boundSources, expected, strict=True):
+        assert all(captured[key] == value for key, value in selected.items()), (captured, selected)
+    return expected
 click('quantIntradayTab', False)
 click('intradaySavedComparisonTab', False)
 assert not find('intradaySavedCompareButton').property('enabled')
@@ -375,8 +399,38 @@ QTest.qWait(80); app.processEvents()
 assert controller.viewIndex == selector.property('currentIndex') == combo.property('currentIndex') == 0
 assert selector.property('currentText') == combo.property('currentText') == combo.property('displayText') == expected
 visible_label(combo, expected)
-print('SAVED_AB_FINAL_SELECTOR', controller.viewIndex, selector.property('currentIndex'), combo.property('currentText'))
+print('SAVED_AB_FINAL_SELECTOR', json.dumps({'controller_index': controller.viewIndex,
+    'visible_index': selector.property('currentIndex'), 'text': combo.property('currentText')}, ensure_ascii=True))
 assert window.grabWindow().save(str(root / 'saved-ab-partial-unavailable.png'))
+for side, original, reopened, candidate in (('Left', a_path, b_path, 2), ('Right', b_path, a_path, 3)):
+    open_file(side, original)
+    choose('intradaySaved' + side + 'Cost', 1)
+    choose('intradaySaved' + side + 'Candidate', candidate)
+    before = check_source_selection(side)
+    assert (before['cost_index'], before['candidate_index']) == (1, candidate)
+    bound_before, result_before = controller.boundSources, canonical_json(controller._result)
+    open_file(side, reopened)
+    after = check_source_selection(side)
+    assert (after['cost_index'], after['candidate_index']) == (0, 0)
+    assert before['experiment_id'] != after['experiment_id']
+    assert controller.boundSources == bound_before and canonical_json(controller._result) == result_before
+    print('SAVED_AB_REOPEN_SELECTION', json.dumps({'side': side, 'before': before, 'after': after}, ensure_ascii=True))
+assert [(row['cost_index'], row['candidate_index']) for row in compare_visible_selections()] == [(0, 0), (0, 0)]
+for side, candidate in (('Left', 2), ('Right', 3)):
+    choose('intradaySaved' + side + 'Cost', 1)
+    choose('intradaySaved' + side + 'Candidate', candidate)
+for language in ('en', 'zh-CN'):
+    choose('intradaySavedComparisonView', 2)
+    assert session.i18n.setLanguage(language)
+    QTest.qWait(50)
+    for side in ('Left', 'Right'):
+        check_source_selection(side)
+    check_view_selection(2)
+    assert controller.selectView(3)
+    check_view_selection(3)
+    reveal(find('intradaySavedBoundASelection'))
+    assert window.grabWindow().save(str(root / ('saved-ab-binding-language-' + language + '.png')))
+assert [(row['cost_index'], row['candidate_index']) for row in compare_visible_selections()] == [(1, 2), (1, 3)]
 assert all(hashlib.sha256(path.read_bytes()).hexdigest() == digest for path, digest in originals.items())
 assert 'REPLAY_MATCH' not in canonical_json(controller._result).decode()
 assert session.runtime.backend_if_initialized is None and session.shutdown()

@@ -23,6 +23,13 @@ def _total(rows: list[dict], key: str) -> float:
     return math.fsum(row[key] for row in rows)
 
 
+def _reconcile_cash(actual: float, expected: float, message: str) -> None:
+    if not math.isfinite(actual) or not math.isfinite(expected):
+        raise OverflowError("recorded cash arithmetic overflowed during reconciliation")
+    if not math.isclose(actual, expected, rel_tol=1e-10, abs_tol=1e-12):
+        raise ValueError(message)
+
+
 def _attribution(rows: list[dict], group: str) -> dict:
     return {"group": group, "trade_count": len(rows),
             **{key: _total(rows, key) for key in
@@ -53,8 +60,8 @@ def summarize_intraday_execution(execution: dict) -> dict:
                "holding_minutes": (exit_ - entry).total_seconds() / 60,
                "held_bars": trade["held_bars"], "net_return": trade["cash_after"] / trade["cash_before"] - 1}
         expected = row["market_pnl"] - row["commission_total"] - row["slippage_total"]
-        if not math.isclose(expected, row["net_cash_pnl"], rel_tol=1e-10, abs_tol=1e-12):
-            raise ValueError("recorded trade cash does not reconcile with prices, quantity and costs")
+        _reconcile_cash(row["net_cash_pnl"], expected,
+                        "recorded trade cash does not reconcile with prices, quantity and costs")
         offset = int((entry - opens[row["trading_day"]]).total_seconds() // 3600)
         rows.append(row)
         day_groups[row["trading_day"]].append(row)
@@ -63,12 +70,12 @@ def summarize_intraday_execution(execution: dict) -> dict:
     total = _attribution(rows, "ALL")
     metrics = execution["metrics"]
     expected_net = metrics["final_cash"] - metrics["initial_cash"]
-    if not math.isclose(total["net_cash_pnl"], expected_net, rel_tol=1e-10, abs_tol=1e-12):
-        raise ValueError("recorded trade cash does not reconcile with final account cash")
+    _reconcile_cash(total["net_cash_pnl"], expected_net,
+                    "recorded trade cash does not reconcile with final account cash")
     for day in daily:
         pnl = _total(day_groups[day["trading_day"]], "net_cash_pnl")
-        if not math.isclose(pnl, day["cash_close"] - day["cash_open"], rel_tol=1e-10, abs_tol=1e-12):
-            raise ValueError("recorded trade cash does not reconcile with daily cash")
+        _reconcile_cash(pnl, day["cash_close"] - day["cash_open"],
+                        "recorded trade cash does not reconcile with daily cash")
     wins = [r for r in rows if r["net_return"] > BREAKEVEN_RETURN_TOLERANCE]
     losses = [r for r in rows if r["net_return"] < -BREAKEVEN_RETURN_TOLERANCE]
     count = len(rows)

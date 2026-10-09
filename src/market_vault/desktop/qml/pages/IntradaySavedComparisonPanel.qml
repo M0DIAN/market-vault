@@ -94,7 +94,8 @@ Item {
                                 currentIndex: inputSide.source.cost_index
                                 enabled: inputSide.source.loaded && !inputSide.source.is_test
                                 onSelected: inputSide.isLeft ? root.controller.selectLeftCost(currentIndex) : root.controller.selectRightCost(currentIndex)
-                                onModelChanged: currentIndex = inputSide.source.cost_index
+                                // A model reset must preserve updates from later same-shaped file opens.
+                                onModelChanged: currentIndex = Qt.binding(() => inputSide.source.cost_index)
                             }
                             Components.LabeledComboBox {
                                 objectName: inputSide.prefix + "Candidate"
@@ -105,7 +106,7 @@ Item {
                                 currentIndex: inputSide.source.candidate_index
                                 enabled: inputSide.source.loaded && !inputSide.source.is_test
                                 onSelected: inputSide.isLeft ? root.controller.selectLeftCandidate(currentIndex) : root.controller.selectRightCandidate(currentIndex)
-                                onModelChanged: currentIndex = inputSide.source.candidate_index
+                                onModelChanged: currentIndex = Qt.binding(() => inputSide.source.candidate_index)
                             }
                         }
                     }
@@ -225,7 +226,7 @@ Item {
                 model: ["quant.saved_strategy_metrics", "quant.saved_benchmark_metrics", "quant.saved_config_differences", "quant.saved_basis_checks"].map(key => root.i18n.catalog[key])
                 currentIndex: root.controller.viewIndex
                 onSelected: root.controller.selectView(currentIndex)
-                onModelChanged: currentIndex = root.controller.viewIndex
+                onModelChanged: currentIndex = Qt.binding(() => root.controller.viewIndex)
             }
             Label {
                 Layout.fillWidth: true

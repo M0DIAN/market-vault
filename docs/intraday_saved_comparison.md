@@ -80,6 +80,8 @@ describable; unsupported Q9 derivation is
 `RECORDED_CASH_RECONCILIATION_FAILED`. Each side's candidate and benchmark are
 independent: one unavailable derivation does not erase the other three analyses
 or the original recorded fields. Overflow is unavailable, never NaN or infinity.
+Finite recorded inputs can still overflow during cash arithmetic; this is
+`NUMERIC_OVERFLOW`, separate from a finite cash reconciliation mismatch.
 
 Basis equality and derivation availability are separate. Two records with the
 same historical versions may have matching recorded basis while Q9 metrics are

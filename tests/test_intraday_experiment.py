@@ -601,6 +601,65 @@ def test_saved_comparison_retains_raw_metrics_when_one_derived_portion_is_unavai
             assert rows["win_rate"]["right"]["value"] is not None
 
 
+@pytest.mark.parametrize("portion", ["candidate", "benchmark"])
+def test_saved_comparison_finite_multiplication_overflow_is_local_and_cli_remains_successful(
+        intraday_experiment, portion, tmp_path, monkeypatch, capsys):
+    import math
+    root = intraday_experiment.as_dict()
+    group = root["report"]["groups"][0]
+    record = group["results"][1] if portion == "candidate" else group["benchmark"]
+    trade = record["execution"]["trades"][0]
+    trade["quantity"] = trade["exit_raw_open"] = 1e308
+    assert math.isfinite(trade["quantity"]) and math.isfinite(trade["exit_raw_open"])
+    assert not math.isfinite(trade["quantity"] * (trade["exit_raw_open"] - trade["entry_raw_open"]))
+    # Q7 admits finite saved inputs. Only the Q9 multiplication overflows;
+    # the raw session/price foundation and recorded cash/risk remain intact.
+    changed = _comparison_snapshot(root)
+    before = (intraday_experiment.content, changed.content)
+    result = _compare_saved(intraday_experiment, changed, left_candidate_index=1, right_candidate_index=1)
+    assert result["status"] == "SUCCESS" and result["basis_matches"] and result["delta_allowed"]
+    for side in ("left", "right"):
+        for name in ("candidate", "benchmark"):
+            state = result[side][name + "_performance"]
+            affected = side == "right" and name == portion
+            assert state["status"] == ("UNAVAILABLE" if affected else "AVAILABLE")
+            assert state["unavailable_reason"] == ("NUMERIC_OVERFLOW" if affected else None)
+            assert (state["report"] is None) == affected
+            assert bool(state["detail"]) == affected
+    for section, saved in (("strategy_metrics", group["results"][1]), ("benchmark_metrics", group["benchmark"])):
+        rows = _saved_metrics(result, section)
+        for key in ("total_return", "observed_max_drawdown", "final_cash"):
+            assert rows[key]["right"]["value"] == saved["execution"]["metrics"][key]
+            assert rows[key]["right"]["evidence"] == "RECORDED"
+        assert rows["sharpe_ratio"]["right"]["value"] == saved["risk"]["sharpe_ratio"]
+        assert rows["sharpe_ratio"]["right"]["evidence"] == "RECORDED"
+        affected = (portion == "candidate") == (section == "strategy_metrics")
+        row = rows["market_pnl"]
+        if affected:
+            assert row["right"]["value"] is None
+            assert row["right"]["unavailable_reason"] == "NUMERIC_OVERFLOW"
+            assert row["right"]["evidence"] == "RECORDED_LEDGER_DERIVATION"
+            assert row["delta"]["value"] is None and row["delta"]["unavailable_reason"] == "RIGHT_UNAVAILABLE"
+        else:
+            assert row["right"]["value"] is not None and row["delta"]["value"] == 0
+    json.dumps(result, allow_nan=False)
+    assert (intraday_experiment.content, changed.content) == before
+    if portion == "candidate":
+        paths = [tmp_path / "ordinary.json", tmp_path / "finite-overflow.json"]
+        for snapshot, path in zip((intraday_experiment, changed), paths, strict=True):
+            write_strategy_experiment(snapshot, path=path)
+        blocked = lambda *a, **kw: pytest.fail("saved comparison overflow fallback read Q5 or fitted")
+        monkeypatch.setattr(research, "load_intraday_dataset", blocked)
+        monkeypatch.setattr(research, "_fit", blocked)
+        assert cli.main(["research-intraday-compare-saved", "--left", str(paths[0]), "--right", str(paths[1]),
+                         "--left-candidate-index", "1", "--right-candidate-index", "1"]) == 0
+        captured = capsys.readouterr()
+        assert not captured.err and "NaN" not in captured.out and "Infinity" not in captured.out
+        payload = json.loads(captured.out)
+        assert payload["status"] == "SUCCESS" and payload["report"] == result
+        assert [path.read_bytes() for path in paths] == list(before)
+
+
 def test_saved_comparison_preserves_zero_volatility_and_each_null_reason(intraday_experiment):
     root = intraday_experiment.as_dict()
     errors = root["report"]["groups"][0]["results"][2]["prediction_metrics"]
