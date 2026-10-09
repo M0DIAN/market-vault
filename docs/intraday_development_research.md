@@ -117,6 +117,10 @@ After saving diagnostics, use the [parameter grid and neighbor view](intraday_pa
 to inspect exact coordinates and nearby recorded candidates without running
 additional evaluations.
 
+[Complete plan reuse and candidate continuation](intraday_plan_reuse.md) saves
+comparison, diagnostics or execution-scenarios plans and starts an editable
+single-candidate comparison from an explicitly selected saved DEV result.
+
 ## CLI and plan grammar
 
 Commands work offline, without settings or OpenD initialization:
@@ -185,28 +189,38 @@ unchanged. An offline experiment may preserve a Windows absolute locator on a
 different operating system. The original Canonical references inside Q5 must
 still be available; relocating the outer file does not relocate its sources.
 
-Save captures the last completed immutable result, regardless of current form
-drafts. The writer creates a new named file, or reuses byte-identical existing
-content. Different content at that destination is an error. No existing file
-is overwritten. Saved replay status is not a cryptographic execution proof.
+Save experiment captures the last completed immutable result, regardless of
+current form drafts. The writer creates a new named file, or reuses
+byte-identical existing content. Different content at that destination is an
+error. No existing file is overwritten. Saved replay status is not a
+cryptographic execution proof.
+Save plan instead captures a complete valid normalized configuration before
+its file dialog opens; it does not save unfinished editor text or a result.
 
 ## Desktop workflow and evidence
 
 Use **Quant Research → Intraday → Data**, then **Development research**. Research
 settings expose actual split dates, day windows, common Features, the existing
 strategy editor and all Q6 execution parameters. The proposed dates and entered
-costs stay visible before Run. A saved plan's data identity remains bound to its
-settings; running against another currently opened file is rejected.
+costs stay visible before Run. A saved plan's data identity and original locator
+remain bound to its settings. Run requires the currently opened Q5 identity and
+Features to match, and still reads the plan's own host-absolute locator. A
+same-ID file opened at another path never replaces that locator silently.
 
 Comparison and finite diagnostics use the same research adapter as the CLI.
 Select any completed cost/candidate result to inspect trades, all OPEN/CLOSE
 marks, daily cash, per-fold Ridge model/scaler, all READY predictions, and fold
 cash contributions. The daily chart shows the candidate and its daily benchmark
 on their actual time axis. Pagination and language changes preserve drafts and
-do not recompute results. Open restores the saved settings explicitly. Save
-and Replay preserve current drafts; failed operations preserve the last result
-and its page. A failed latest replay cannot retain a previous replay-match
-status.
+do not recompute results. Load plan and Continue selected candidate bind an
+independent editable draft without changing results or evidence. That draft
+survives result/Q5 changes, Open experiment, scenario changes, language changes
+and editor reopening; only explicit Load or Continue replaces its binding.
+Without a bound draft, Open experiment retains its original settings-restoration
+behavior. Save experiment and Replay preserve current drafts; failed operations,
+including a Run whose original locator is unavailable, preserve the draft and
+last result with its page. A failed latest replay cannot retain a previous
+replay-match status.
 
 The focused suite uses real 36-day Canonical input with DST, independently
 calculated Ridge coefficients, means/scales and benchmark cash/risk. It checks

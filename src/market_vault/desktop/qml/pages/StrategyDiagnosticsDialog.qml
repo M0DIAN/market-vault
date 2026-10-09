@@ -11,12 +11,14 @@ Dialog {
     required property var i18n
     property bool inputAvailable: root.controller.datasetLoaded
     property var submit: function(values) { return root.controller.runStrategyDiagnostics(values) }
+    property var savePlan: null
+    property bool preserveCosts: false
     property var comparison: ({})
     property var strategyNames: []
     property var axisOptions: []
     property var axisLabels: []
     property string sourceKey: ""
-    property int restoreRevision: -1
+    property var restoreRevision: -1
     modal: true
     parent: Overlay.overlay
     anchors.centerIn: parent
@@ -81,6 +83,7 @@ Dialog {
         const oldName = strategy.currentText
         const restore = revision !== root.restoreRevision
         const changed = key !== root.sourceKey
+        const previousCosts = costs.text, hadOptions = root.axisOptions.length > 0
         root.comparison = clone(values)
         root.strategyNames = values.strategies.map(value => value.name)
         const name = restore && saved.strategy_name ? saved.strategy_name : oldName
@@ -93,6 +96,7 @@ Dialog {
                 loadAxis(secondAxis, secondValues, saved.parameter_axes[1])
                 costs.text = saved.cost_scenarios.map(value => value.commission_bps + "/" + value.slippage_bps).join(",")
             }
+            if (!restore && root.preserveCosts && hadOptions) costs.text = previousCosts
         }
         root.sourceKey = key
         root.restoreRevision = revision
@@ -199,6 +203,13 @@ Dialog {
                 font.pixelSize: Theme.PixelTheme.fontSm
             }
             RowLayout {
+                Components.PixelButton {
+                    objectName: "quantDiagnosticsSavePlan"
+                    visible: root.savePlan !== null
+                    enabled: !root.controller.busy && !operationRuntime.busy
+                    text: root.i18n.catalog["plan.save_diagnostics"]
+                    onClicked: root.savePlan(root.values())
+                }
                 Item { Layout.fillWidth: true }
                 Components.PixelButton {
                     objectName: "quantDiagnosticsCancelButton"

@@ -9,11 +9,12 @@ Dialog {
     objectName: "intradayExecutionScenariosDialog"
     required property var controller
     required property var i18n
+    property var savePlan: null
     property var comparison: ({})
     property var scenarios: []
     property int activeIndex: -1
     property string sourceKey: ""
-    property int restoreRevision: -1
+    property var restoreRevision: -1
     readonly property int evaluationCount: scenarios.length * (comparison.strategies || []).length
     modal: true
     parent: Overlay.overlay
@@ -86,9 +87,12 @@ Dialog {
         root.scenarios = values
         root.load(index)
     }
-    function run() {
+    function values() {
         root.commit()
-        if (root.controller.runScenarios({comparison: root.clone(root.comparison), execution_scenarios: root.clone(root.scenarios)}))
+        return {comparison: root.clone(root.comparison), execution_scenarios: root.clone(root.scenarios)}
+    }
+    function run() {
+        if (root.controller.runScenarios(root.values()))
             root.close()
     }
     onClosed: root.commit()
@@ -204,6 +208,13 @@ Dialog {
     }
     footer: RowLayout {
         spacing: Theme.PixelTheme.spacingSm
+        Components.PixelButton {
+            objectName: "intradayScenariosSavePlan"
+            visible: root.savePlan !== null
+            enabled: !root.controller.busy && !operationRuntime.busy
+            text: root.i18n.catalog["plan.save_scenarios"]
+            onClicked: root.savePlan(root.values())
+        }
         Item { Layout.fillWidth: true }
         Components.PixelButton {
             objectName: "intradayScenariosKeep"

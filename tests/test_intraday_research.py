@@ -219,7 +219,7 @@ def diagnostic_plan(plan):
             "cost_scenarios": [{"commission_bps": 0, "slippage_bps": 0}, {"commission_bps": 10, "slippage_bps": 5}]}
 
 
-def test_finite_grid_shared_data_fit_reuse_cost_order_and_bound(research_case, monkeypatch):
+def test_finite_grid_shared_data_fit_reuse_cost_order_and_bound(research_case, monkeypatch, tmp_path):
     data, plan, report = research_case
     loader, fitter = research.load_intraday_dataset, research._fit
     calls, fits = [], []
@@ -240,6 +240,16 @@ def test_finite_grid_shared_data_fit_reuse_cost_order_and_bound(research_case, m
         assert first["predictions"] == second["predictions"] and first["fold_models"] == second["fold_models"]
         assert first["candidate_id"] != second["candidate_id"]
     assert actual["groups"][1]["benchmark"]["execution"]["metrics"]["final_cash"] == pytest.approx(1.028516452870082824)
+    from market_vault.research.intraday_experiment import create_intraday_experiment
+    from market_vault.research.intraday_plan import extract_intraday_candidate_plan
+    saved = create_intraday_experiment(plan=diagnostic_plan(plan), report=actual)
+    source = tmp_path / "ridge-grid.json"
+    source.write_bytes(saved.content)
+    continued = extract_intraday_candidate_plan(source, cost_index=1, candidate_index=3)
+    assert continued["strategies"] == [actual["groups"][1]["results"][3]["strategy"]]
+    assert continued["strategies"][0]["alpha"] == 1000 and continued["strategies"][0]["threshold"] == .00025
+    assert continued["execution"] == actual["groups"][1]["execution_policy"]
+    assert len(calls) == 1 and len(fits) == 4 and source.read_bytes() == saved.content
     oversized = diagnostic_plan({**plan, "intraday_data_path": "/unreachable/data.json"})
     oversized["parameter_axes"] = [{"parameter": "alpha", "values": list(range(1, 66))}]
     calls.clear()

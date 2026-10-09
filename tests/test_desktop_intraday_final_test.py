@@ -1,6 +1,8 @@
 """Real controller and visible QML freeze / final TEST / replay workflows."""
 
 from concurrent.futures import Future
+from copy import deepcopy
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -18,10 +20,537 @@ from market_vault.research.strategy_experiment import StrategyExperiment, canoni
 from test_desktop_quant_research import _runtime, qt_app  # noqa: F401
 from test_intraday_experiment import intraday_experiment, parameter_grid_experiment, signed  # noqa: F401
 from test_intraday_final_test import final_case, selection_case  # noqa: F401
-from test_intraday_research import diagnostic_plan, research_case  # noqa: F401
+from test_intraday_research import diagnostic_plan, execution_scenarios_case, research_case, research_data  # noqa: F401
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _intraday_plan_form(plan, *, bound=True):
+    return {"data_id": plan["data_id"], "intraday_data_path": plan["intraday_data_path"],
+        "execution_policy_bound": bound, "feature_fields": deepcopy(plan["feature_fields"]),
+        "strategies": deepcopy(plan["strategies"]), **plan["split"], **plan["walk_forward"], **plan["execution"]}
+
+
+def _intraday_plan_inputs(plan):
+    if "comparison_plan" not in plan:
+        return "comparison", _intraday_plan_form(plan)
+    values = {"comparison": _intraday_plan_form(plan["comparison_plan"])}
+    if "parameter_axes" in plan:
+        return "diagnostics", {**values, **{key: deepcopy(plan[key]) for key in
+            ("strategy_name", "parameter_axes", "cost_scenarios")}}
+    return "scenarios", {**values, "execution_scenarios": deepcopy(plan["execution_scenarios"])}
+
+
+def _intraday_scenarios_draft(comparison):
+    from market_vault.research.intraday_execution_scenarios import INTRADAY_EXECUTION_SCENARIOS_PLAN_VERSION
+    common = deepcopy(comparison)
+    common["execution"].update(commission_bps=7.5, slippage_bps=2.25, max_hold_bars=4)
+    return {"plan_schema_version": INTRADAY_EXECUTION_SCENARIOS_PLAN_VERSION, "comparison_plan": common,
+        "execution_scenarios": [{"name": "Original", "execution": deepcopy(comparison["execution"])},
+            {"name": "Later", "execution": {**comparison["execution"], "entry_delay_minutes": 60,
+                "max_hold_bars": 3, "commission_bps": 10, "slippage_bps": 5}}]}
+
+
+def test_plan_draft_controller_offline_capture_and_failure_retention(qt_app, parameter_grid_experiment,
+        tmp_path, monkeypatch):
+    from market_vault.research.intraday_plan import serialize_intraday_plan, load_intraday_plan, write_intraday_plan
+    root = parameter_grid_experiment.as_dict()
+    comparison, diagnostics = root["plan"]["comparison_plan"], root["plan"]
+    plans = [comparison, diagnostics, _intraday_scenarios_draft(comparison)]
+    runtime, runner = _runtime(tmp_path, [])
+    owner = QuantResearchController(runtime)
+    controller = owner.intradayResearchController
+    controller._apply(parameter_grid_experiment, path=str(tmp_path / "result.json"), opened=True)
+    result_before = (controller._content, controller._proof, controller.experimentPath, controller.restoreRevision)
+    def forbidden(*args, **kwargs):
+        pytest.fail("offline plan work loaded Q5, fitted or executed")
+    for name in ("load_intraday_dataset", "_fit", "fit_ridge_rows", "run_intraday_execution"):
+        monkeypatch.setattr(research, name, forbidden)
+    assert not controller.dataLoaded and not controller.draftLoaded
+    for index, plan in enumerate(plans):
+        source = tmp_path / f"plan-{index}.json"
+        write_intraday_plan(serialize_intraday_plan(plan), path=source)
+        assert controller.loadPlan(str(source)); runtime._poll()
+        assert controller.status == "SUCCESS", controller.error
+        assert controller.draftPlan == load_intraday_plan(source)
+        assert controller.draftRevision == index + 1 and controller.draftSource == {"kind": "FILE", "path": str(source)}
+        kind, values = _intraday_plan_inputs(plan)
+        common = values.get("comparison", values)
+        common["commission_bps"] = "8.25"
+        assert controller.preparePlanSave(kind, values)
+        captured = controller._plan_save_pending["content"]
+        common["commission_bps"] = "9.25"
+        output = tmp_path / f"captured-{index}.json"
+        assert controller.savePreparedPlan(str(output)); runtime._poll()
+        assert controller.status == "SUCCESS", controller.error
+        assert output.read_bytes() == captured and not controller.pendingPlanKind
+        saved = load_intraday_plan(output)
+        assert saved.get("comparison_plan", saved)["execution"]["commission_bps"] == 8.25
+        if kind == "scenarios":
+            assert saved["comparison_plan"]["execution"]["max_hold_bars"] == 4
+            assert saved["execution_scenarios"] == plan["execution_scenarios"]
+        if kind == "diagnostics":
+            assert saved["cost_scenarios"] == plan["cost_scenarios"]
+        common["commission_bps"] = "8.25"
+        assert controller.preparePlanSave(kind, values) and controller.savePreparedPlan(str(output))
+        runtime._poll()
+        assert controller.status == "SUCCESS" and controller.planSaveReceipt["created_new_file"] is False
+        common["commission_bps"] = "9.25"
+        assert controller.preparePlanSave(kind, values) and controller.savePreparedPlan(str(output))
+        runtime._poll()
+        assert controller.status == "FAILED" and output.read_bytes() == captured
+        assert controller.draftPlan == load_intraday_plan(source)
+    draft_before = (controller.draftPlan, controller.draftSource, controller.draftRevision)
+    bad = tmp_path / "bad.json"
+    bad.write_text('{"not": "a plan"}')
+    assert controller.loadPlan(str(bad)); runtime._poll()
+    assert controller.status == "FAILED" and (controller.draftPlan, controller.draftSource, controller.draftRevision) == draft_before
+    values = _intraday_plan_form(comparison)
+    assert controller.preparePlanSave("comparison", values)
+    controller.cancelPlanSave()
+    assert not controller.pendingPlanKind and not controller.savePreparedPlan(str(tmp_path / "cancelled.json"))
+    assert controller.preparePlanSave("comparison", values)
+    assert not controller.preparePlanSave("comparison", {**values, "max_hold_bars": "invalid"})
+    assert not controller.pendingPlanKind
+    assert (controller._content, controller._proof, controller.experimentPath, controller.restoreRevision) == result_before
+    assert (controller.draftPlan, controller.draftSource, controller.draftRevision) == draft_before
+    # First-scenario fallback is only for missing costs in a valid initial form.
+    _, scenarios = _intraday_plan_inputs(plans[2])
+    scenarios["comparison"].update(execution_policy_bound=False, commission_bps="", slippage_bps="")
+    assert controller.preparePlanSave("scenarios", scenarios)
+    captured = json.loads(controller._plan_save_pending["content"])
+    assert captured["comparison_plan"]["execution"] == plans[2]["execution_scenarios"][0]["execution"]
+    for changes in ({"max_hold_bars": "not-an-int"}, {"entry_delay_minutes": -1},
+                    {"commission_bps": "invalid"}, {"execution_policy_bound": True}):
+        invalid = deepcopy(scenarios)
+        invalid["comparison"].update(changes)
+        assert not controller.preparePlanSave("scenarios", invalid) and not controller.pendingPlanKind
+    assert runtime.backend_if_initialized is None and runtime.shutdown()
+
+
+def test_continue_candidate_controller_captures_ids_and_requires_export(qt_app, parameter_grid_experiment,
+        execution_scenarios_case, tmp_path, monkeypatch):
+    from market_vault.research import intraday_plan as plans
+    runtime, runner = _runtime(tmp_path, [])
+    owner = QuantResearchController(runtime)
+    controller = owner.intradayResearchController
+    source = tmp_path / "grid.json"
+    write_strategy_experiment(parameter_grid_experiment, path=source)
+    controller._apply(parameter_grid_experiment, path=str(source), opened=True)
+    assert controller.selectCandidate(7)
+    captured_source = controller.selection_source()
+    calls, extract = [], plans.extract_intraday_candidate_plan
+    def recorded(path, **kwargs):
+        calls.append((path, kwargs))
+        return extract(path, **kwargs)
+    monkeypatch.setattr(plans, "extract_intraday_candidate_plan", recorded)
+    pending = []
+    def deferred(name, operation):
+        future = Future(); pending.append((future, operation)); return future
+    with monkeypatch.context() as patch:
+        patch.setattr(runner, "submit", deferred)
+        assert controller.continueCandidate()
+        assert controller.selectCandidate(0)
+        pending[0][0].set_result(pending[0][1]()); runtime._poll()
+    assert controller.status == "SUCCESS", controller.error
+    group = parameter_grid_experiment.as_dict()["report"]["groups"][1]
+    assert controller.draftPlan["strategies"] == [group["results"][1]["strategy"]]
+    assert controller.draftPlan["execution"] == group["execution_policy"]
+    assert controller.draftSource["cost_index"] == controller.draftSource["candidate_index"] == 1
+    assert calls[-1] == (str(source), {"cost_index": 1, "candidate_index": 1,
+        "expected_experiment_id": captured_source["experiment_id"], "expected_candidate_id": captured_source["candidate_id"]})
+    before = (controller.draftPlan, controller.draftRevision, controller._content, controller._proof)
+    source.write_bytes(_named_saved_experiment(parameter_grid_experiment, "Changed source").content)
+    assert controller.continueCandidate(); runtime._poll()
+    assert controller.status == "FAILED" and (controller.draftPlan, controller.draftRevision, controller._content, controller._proof) == before
+    collection = execution_scenarios_case[2]
+    controller._apply(collection, path=str(tmp_path / "collection.json"), opened=True)
+    assert not controller.canContinueCandidate and not controller.continueCandidate()
+    assert controller.exportScenario(str(tmp_path / "child.json")); runtime._poll()
+    assert controller.status == "SUCCESS" and controller.canContinueCandidate
+    assert controller.selectCandidate(1) and controller.continueCandidate(); runtime._poll()
+    assert controller.status == "SUCCESS", controller.error
+    assert len(controller.draftPlan["strategies"]) == 1
+    assert controller.draftSource["path"] == str(tmp_path / "child.json")
+    assert controller.collectionProof == controller._proof == "RECORDED"
+    assert runtime.backend_if_initialized is None and runtime.shutdown()
+
+
+def test_plan_run_admission_keeps_original_locator_and_projection(qt_app, parameter_grid_experiment,
+        tmp_path, monkeypatch):
+    runtime, _ = _runtime(tmp_path, [])
+    owner = QuantResearchController(runtime)
+    controller = owner.intradayResearchController
+    comparison = parameter_grid_experiment.as_dict()["plan"]["comparison_plan"]
+    values = _intraday_plan_form(comparison)
+    admitted = []
+    monkeypatch.setattr(controller, "_run", lambda plan: admitted.append(plan) or True)
+    assert not controller.runComparison(values) and not admitted
+    owner._intraday_data = b"opened source state"
+    owner._intraday_path = str(tmp_path / "different-open-locator.json")
+    controller._source_id = "0" * 64
+    assert not controller.runComparison(values) and not admitted
+    controller._source_id = comparison["data_id"]
+    owner._intraday_feature_names = tuple(comparison["feature_fields"])
+    assert controller.runComparison(values)
+    assert admitted[-1]["intraday_data_path"] == comparison["intraday_data_path"]
+    assert admitted[-1]["feature_fields"] == comparison["feature_fields"]
+    assert not controller.runComparison({**values, "feature_fields": ["missing_feature"]})
+    if os.name != "nt":
+        portable = {**values, "intraday_data_path": r"C:\portable\original.json"}
+        assert controller.preparePlanSave("comparison", portable)
+        assert not controller.runComparison(portable) and "this host" in controller.error
+        assert json.loads(controller._plan_save_pending["content"])["intraday_data_path"] == portable["intraday_data_path"]
+    assert len(admitted) == 1 and runtime.backend_if_initialized is None and runtime.shutdown()
+
+
+@pytest.fixture(scope="session")
+def mismatched_plan_data(tmp_path_factory):
+    """A different, real Q5 identity; no research or model fitting."""
+    return research_data(tmp_path_factory.mktemp("plan-mismatched-data"), test_change=True)
+
+
+def test_actual_qml_plan_drafts_capture_editors_and_keep_original_run_locator(parameter_grid_experiment,
+        execution_scenarios_case, final_case, mismatched_plan_data, tmp_path):
+    from market_vault.research.intraday_plan import serialize_intraday_plan, write_intraday_plan
+    diagnostic = deepcopy(parameter_grid_experiment.as_dict()["plan"])
+    diagnostic["parameter_axes"][0]["values"] = [130, 130.000000000001]
+    diagnostic["cost_scenarios"] = [{"commission_bps": 1, "slippage_bps": 2}, {"commission_bps": 3, "slippage_bps": 4}]
+    comparison = diagnostic["comparison_plan"]
+    for name, plan in (("comparison", comparison), ("diagnostics", diagnostic),
+                       ("scenarios", _intraday_scenarios_draft(comparison))):
+        write_intraday_plan(serialize_intraday_plan(plan), path=tmp_path / (name + "-plan.json"))
+    for name, snapshot in (("grid", parameter_grid_experiment), ("collection", execution_scenarios_case[2]),
+                           ("test", final_case[1])):
+        write_strategy_experiment(snapshot, path=tmp_path / (name + ".json"))
+    original = Path(comparison["intraday_data_path"])
+    assert original.is_file()
+    alternate = tmp_path / "same-id-other-locator.json"
+    alternate.write_bytes(original.read_bytes())
+    (tmp_path / "settings.yaml").write_text("storage:\n  root_dir: ./data\n", encoding="utf-8")
+    (tmp_path / "bad-plan.json").write_text('{"not": "a plan"}', encoding="utf-8")
+    script = r'''
+import hashlib, json, sys, time
+from pathlib import Path
+from PySide6.QtCore import QObject, QUrl, Qt, QEvent, QMetaObject
+from PySide6.QtGui import QGuiApplication, QKeyEvent
+from PySide6.QtQml import QQmlApplicationEngine, QQmlExpression
+from PySide6.QtQuickControls2 import QQuickStyle
+from PySide6.QtTest import QTest
+from market_vault.application import build_application_context
+from market_vault.desktop.bootstrap import create_qml_application_session
+from market_vault.desktop.preferences import DesktopPreferenceStore
+from market_vault.research import intraday_research as research, intraday_data
+from market_vault.research.intraday_plan import load_intraday_plan, serialize_intraday_plan, write_intraday_plan
+root, mismatch_path = Path(sys.argv[1]), Path(sys.argv[2])
+sources = {name: root / (name + '.json') for name in ('grid', 'collection', 'test')}
+before = {name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in sources.items()}
+diagnostic_plan = load_intraday_plan(root / 'diagnostics-plan.json')
+original = diagnostic_plan['comparison_plan']['intraday_data_path']
+original_digest = hashlib.sha256(Path(original).read_bytes()).hexdigest()
+QQuickStyle.setStyle('Basic')
+app = QGuiApplication([])
+engine = QQmlApplicationEngine()
+session = create_qml_application_session(build_application_context(root / 'settings.yaml'), engine,
+    preference_store=DesktopPreferenceStore(root=root / 'preferences'))
+engine.load(QUrl.fromLocalFile(str(Path.cwd() / 'src/market_vault/desktop/qml/Main.qml')))
+assert engine.rootObjects()
+window = engine.rootObjects()[0]
+window.setWidth(1024); window.setHeight(600)
+owner = session.context_properties['quantResearchController']
+controller, final = owner.intradayResearchController, owner.intradayFinalController
+assert session.shell.selectPage('quant_research')
+def descendants(parent):
+    pending = [parent]
+    while pending:
+        item = pending.pop()
+        yield item
+        if hasattr(item, 'childItems'): pending.extend(item.childItems())
+def find(name, parent=None):
+    base = parent or window
+    item = base.findChild(QObject, name)
+    if item is None:
+        visual = window.contentItem() if base is window else base
+        if not hasattr(visual, 'childItems'):
+            visual = base.property('contentItem') or base
+        item = next((obj for obj in descendants(visual)
+            if obj.objectName() == name), None)
+    assert item is not None, name
+    return item
+def value(obj, name):
+    result = obj.property(name)
+    return result.toVariant() if hasattr(result, 'toVariant') else result
+def reveal(item, scroll=None, scope=None):
+    if scroll is None: return
+    flick = find(scroll, scope).property('contentItem')
+    rect = item.mapRectToItem(flick, item.boundingRect())
+    for axis, start, end, size in (('X', rect.left(), rect.right(), flick.width()),
+            ('Y', rect.top(), rect.bottom(), flick.height())):
+        delta = start if start < 0 else max(0, end - size)
+        limit = max(0, flick.property('contentWidth' if axis == 'X' else 'contentHeight') - size)
+        flick.setProperty('content' + axis, min(max(0, flick.property('content' + axis) + delta), limit))
+    QTest.qWait(25)
+    rect = item.mapRectToItem(flick, item.boundingRect())
+    assert rect.left() >= -1 and rect.right() <= flick.width() + 1, (item.objectName(), rect, flick.width())
+    assert rect.top() >= -1 and rect.bottom() <= flick.height() + 1, (item.objectName(), rect, flick.height())
+def click(name, scroll=None, scope=None):
+    item = find(name, scope); app.processEvents(); reveal(item, scroll, scope)
+    assert item.isVisible() and item.isEnabled(), name
+    point = item.mapToScene(item.boundingRect().center()).toPoint()
+    assert 0 <= point.x() < 1024 and 0 <= point.y() < 600, (name, point)
+    QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier, point); QTest.qWait(30)
+def nested(item, kind):
+    if kind in item.metaObject().className(): return item
+    return next(child for child in item.findChildren(QObject) if kind in child.metaObject().className())
+def fill(name, text, scroll=None, scope=None):
+    item = find(name, scope); reveal(item, scroll, scope)
+    window.requestActivate(); QTest.qWait(15)
+    edit = nested(item, 'PixelTextField'); edit.forceActiveFocus()
+    QTest.keyClick(window, Qt.Key_A, Qt.ControlModifier); QTest.keyClick(window, Qt.Key_Backspace)
+    for char in text:
+        QGuiApplication.sendEvent(window, QKeyEvent(QEvent.KeyPress, ord(char.upper()), Qt.NoModifier, char))
+    app.processEvents()
+    assert item.property('text') == text, (name, item.property('text'))
+def choose(name, index, scroll=None, scope=None):
+    item = find(name, scope); reveal(item, scroll, scope)
+    combo = nested(item, 'PixelComboBox')
+    window.requestActivate(); QTest.qWait(15); combo.forceActiveFocus()
+    QTest.keyClick(window, Qt.Key_Space); QTest.keyClick(window, Qt.Key_Home)
+    for _ in range(index): QTest.keyClick(window, Qt.Key_Down)
+    QTest.keyClick(window, Qt.Key_Return); QTest.qWait(30)
+    assert item.property('currentIndex') == index, (name, index, item.property('currentIndex'))
+def complete(target=controller, status='SUCCESS'):
+    deadline = time.monotonic() + 150
+    while target.busy and time.monotonic() < deadline:
+        app.processEvents(); time.sleep(.01)
+    assert not target.busy and target.status == status, (target.status, target.error)
+    QTest.qWait(35)
+def selected(name, path, target=controller, status='SUCCESS'):
+    dialog = find(name)
+    assert dialog.property('visible'), name
+    assert dialog.setProperty('selectedFile', QUrl.fromLocalFile(str(path)))
+    assert QMetaObject.invokeMethod(dialog, 'accepted', Qt.DirectConnection)
+    QMetaObject.invokeMethod(dialog, 'close', Qt.DirectConnection)
+    complete(target, status)
+def close(dialog):
+    assert QMetaObject.invokeMethod(dialog, 'close', Qt.DirectConnection)
+    QTest.qWait(25)
+def screenshot(name):
+    QTest.qWait(60)
+    assert window.grabWindow().save(str(root / (name + '.png')))
+def open_plan(name, status='SUCCESS'):
+    click('intradayPlanLoadButton', panel_scroll)
+    selected('intradayPlanOpenDialog', root / name, status=status)
+def open_record(name):
+    click('intradayExperimentOpenButton', panel_scroll)
+    selected('intradayExperimentOpenDialog', sources[name])
+def proof():
+    return controller._content, controller._proof, controller.experimentPath, controller.restoreRevision
+def draft():
+    return controller.draftPlan, controller.draftSource, controller.draftRevision
+def forbidden(*args, **kwargs):
+    raise AssertionError('offline draft action loaded Q5, fitted or executed')
+data_loader, research_loader, execution = intraday_data.load_intraday_dataset, research.load_intraday_dataset, research.run_intraday_execution
+intraday_data.load_intraday_dataset = research.load_intraday_dataset = forbidden
+research._fit = research.fit_ridge_rows = research.run_intraday_execution = forbidden
+panel_scroll, settings_scroll = 'intradayResearchScroll', 'intradaySettingsScroll'
+click('quantIntradayTab'); click('intradayComparisonTab')
+settings, diagnostics = find('intradayResearchSettings'), find('intradayDiagnosticsDialog')
+scenarios, editor = find('intradayExecutionScenariosDialog'), find('intradayStrategyEditor')
+open_record('grid')
+assert controller.restoreRevision == 1 and not controller.draftLoaded and not controller.dataLoaded
+recorded_proof = proof()
+click('intradayOpenDiagnosticsButton', panel_scroll)
+assert diagnostics.property('restoreRevision') == 'result:1'
+close(diagnostics)
+open_plan('diagnostics-plan.json')
+assert controller.draftRevision == 1 and proof() == recorded_proof
+click('intradayPlanEditButton', panel_scroll)
+assert diagnostics.property('restoreRevision') == 'draft:1'
+assert find('quantDiagnosticsFirstValues', diagnostics).property('text') == '130,130.000000000001'
+assert find('quantDiagnosticsCosts', diagnostics).property('text') == '1/2,3/4'
+for language, caption in (('en', 'Save diagnostics plan'), ('zh-CN', '保存参数诊断计划')):
+    assert session.i18n.setLanguage(language); QTest.qWait(35)
+    button = find('quantDiagnosticsSavePlan', diagnostics)
+    reveal(button, 'strategyDiagnosticsScroll', diagnostics)
+    assert button.property('text') == caption and not button.property('truncated')
+    screenshot('plan-diagnostics-' + language)
+fill('quantDiagnosticsCosts', '1.5/2.5,3/4', 'strategyDiagnosticsScroll', diagnostics)
+click('quantDiagnosticsSavePlan', 'strategyDiagnosticsScroll', diagnostics)
+assert controller.pendingPlanKind == 'diagnostics' and find('intradayPlanSaveDialog').property('visible')
+screenshot('plan-save-dialog-zh-CN')
+captured = controller._plan_save_pending['content']
+find('quantDiagnosticsCosts', diagnostics).setProperty('text', '9/9')
+selected('intradayPlanSaveDialog', root / '参数诊断-captured.json')
+saved = load_intraday_plan(root / '参数诊断-captured.json')
+assert (root / '参数诊断-captured.json').read_bytes() == captured
+assert saved['cost_scenarios'][0] == {'commission_bps': 1.5, 'slippage_bps': 2.5}
+assert find('quantDiagnosticsCosts', diagnostics).property('text') == '9/9'
+click('quantDiagnosticsSavePlan', 'strategyDiagnosticsScroll', diagnostics)
+assert controller.pendingPlanKind == 'diagnostics'
+assert QMetaObject.invokeMethod(find('intradayPlanSaveDialog'), 'rejected', Qt.DirectConnection)
+close(find('intradayPlanSaveDialog'))
+assert not controller.pendingPlanKind
+fill('quantDiagnosticsCosts', 'invalid', 'strategyDiagnosticsScroll', diagnostics)
+click('quantDiagnosticsSavePlan', 'strategyDiagnosticsScroll', diagnostics)
+assert controller.status == 'VALIDATION_ERROR' and not controller.pendingPlanKind
+assert not find('intradayPlanSaveDialog').property('visible') and proof() == recorded_proof
+fill('quantDiagnosticsCosts', '9/9', 'strategyDiagnosticsScroll', diagnostics)
+close(diagnostics)
+open_plan('scenarios-plan.json')
+click('intradayPlanEditButton', panel_scroll)
+assert scenarios.property('restoreRevision') == 'draft:2'
+fill('intradayScenarioMaxHold', '6', 'intradayScenariosEditorScroll')
+for language, caption in (('en', 'Save scenarios plan'), ('zh-CN', '保存执行情景计划')):
+    assert session.i18n.setLanguage(language); QTest.qWait(35)
+    assert find('intradayScenariosSavePlan').property('text') == caption
+    screenshot('plan-scenarios-' + language)
+click('intradayScenariosSavePlan')
+captured = controller._plan_save_pending['content']
+find('intradayScenarioMaxHold').setProperty('text', '7')
+selected('intradayPlanSaveDialog', root / 'scenarios-captured.json')
+saved = load_intraday_plan(root / 'scenarios-captured.json')
+assert (root / 'scenarios-captured.json').read_bytes() == captured
+assert saved['comparison_plan']['execution']['max_hold_bars'] == 4
+assert saved['comparison_plan']['execution']['commission_bps'] == 7.5
+assert saved['execution_scenarios'][0]['execution']['max_hold_bars'] == 6
+assert find('intradayScenarioMaxHold').property('text') == '7'
+close(scenarios)
+open_plan('comparison-plan.json')
+click('intradayPlanEditButton', panel_scroll)
+fill('quantStrategyName', 'Edited Flat', settings_scroll, settings)
+fill('quantConditionThreshold0', '999999', settings_scroll, settings)
+for language, caption in (('en', 'Save comparison plan'), ('zh-CN', '保存比较计划')):
+    assert session.i18n.setLanguage(language); QTest.qWait(35)
+    button = find('intradayComparisonPlanSave')
+    reveal(button, settings_scroll)
+    assert button.property('text') == caption
+    assert original in find('intradayPlanLocator').property('text')
+    screenshot('plan-comparison-' + language)
+click('intradayComparisonPlanSave', settings_scroll)
+captured = controller._plan_save_pending['content']
+assert json.loads(captured)['strategies'][0]['name'] == 'Edited Flat'
+assert json.loads(captured)['strategies'][0]['threshold'] == 999999
+find('intradayResearchCommission').setProperty('text', '12.5')
+selected('intradayPlanSaveDialog', root / 'comparison-captured.json')
+assert (root / 'comparison-captured.json').read_bytes() == captured
+assert find('intradayResearchCommission').property('text') == '12.5'
+# An offline projection edit keeps the existing rule visible, then fails validation.
+fill('intradayResearchFeatures', 'missing_feature', settings_scroll)
+assert value(settings, 'featureOptions') == ['missing_feature', 'sma_5']
+assert find('quantConditionFeature0', editor).property('currentText') == 'sma_5'
+click('intradayComparisonPlanSave', settings_scroll)
+assert controller.status == 'VALIDATION_ERROR' and not controller.pendingPlanKind
+assert not find('intradayPlanSaveDialog').property('visible')
+fill('intradayResearchFeatures', 'sma_5', settings_scroll)
+click('intradayResearchSettingsDone', settings_scroll)
+assert proof() == recorded_proof
+retained_draft = draft()
+open_plan('bad-plan.json', status='FAILED')
+assert draft() == retained_draft and proof() == recorded_proof
+assert find('intradayResearchCommission').property('text') == '12.5'
+assert value(editor, 'strategies')[0]['name'] == 'Edited Flat'
+open_record('collection')
+assert draft() == retained_draft and not controller.canContinueCandidate
+assert not find('intradayPlanContinueButton').isEnabled()
+choose('intradayResearchScenario', 1, panel_scroll)
+assert draft() == retained_draft and find('intradayResearchCommission').property('text') == '12.5'
+click('intradayResearchSettingsButton', panel_scroll)
+assert value(editor, 'strategies')[0]['name'] == 'Edited Flat'
+click('intradayResearchSettingsDone', settings_scroll)
+click('intradayScenarioExportButton', panel_scroll)
+selected('intradayScenarioExportDialog', root / 'ordinary-child.json')
+assert controller.canContinueCandidate
+choose('intradayResearchCandidate', 1, panel_scroll)
+click('intradayPlanContinueButton', panel_scroll); complete()
+assert controller.draftSource['path'] == str(root / 'ordinary-child.json')
+assert controller.draftPlan['execution'] == controller._root['report']['groups'][0]['execution_policy']
+open_record('grid')
+choose('intradayResearchCandidate', 7, panel_scroll)
+click('intradayPlanContinueButton', panel_scroll); complete()
+expected = controller._root['report']['groups'][1]
+continued = controller.draftPlan
+assert continued['strategies'] == [expected['results'][1]['strategy']]
+assert continued['execution'] == expected['execution_policy']
+assert controller.draftSource['cost_index'] == controller.draftSource['candidate_index'] == 1
+assert continued['intraday_data_path'] == original
+retained_draft, retained_proof = draft(), proof()
+for language, caption in (('en', 'Independent plan draft'), ('zh-CN', '独立计划草稿')):
+    assert session.i18n.setLanguage(language); QTest.qWait(35)
+    notice = find('intradayPlanDraftNotice'); reveal(notice, panel_scroll)
+    assert caption in notice.property('text') and controller.draftSource['candidate_id'] in notice.property('text')
+    assert not notice.property('truncated')
+    screenshot('plan-candidate-source-' + language)
+# The shared non-intraday dialog keeps its optional Save hidden and accepts numeric revisions.
+normal = find('quantDiagnosticsDialog')
+assert normal.property('preserveCosts') is False
+form = {'strategies': [{'kind': 'FEATURE_RULE', 'name': 'Normal', 'signal_field': 'sma_5',
+    'comparator': 'GT', 'threshold': 1}], 'commission_bps': '0', 'slippage_bps': '0'}
+expr = QQmlExpression(engine.rootContext(), normal, 'prepare(' + json.dumps(form) + ', {}, 1)')
+expr.evaluate(); assert not expr.hasError(), expr.error().toString()
+assert normal.property('restoreRevision') == 1
+assert not find('quantDiagnosticsSavePlan', normal).isVisible()
+close(normal)
+assert draft() == retained_draft and proof() == retained_proof
+# Real Q5 Open is now allowed; fitting remains forbidden for the single Composite Run.
+load_calls = []
+def checked_data(path):
+    load_calls.append(('open', str(path))); return data_loader(path)
+def checked_research(path):
+    load_calls.append(('run', str(path))); return research_loader(path)
+intraday_data.load_intraday_dataset = checked_data
+research.load_intraday_dataset = checked_research
+research.run_intraday_execution = execution
+click('intradayDataTab')
+fill('intradayDataPath', str(mismatch_path)); click('intradayInspectButton'); complete(owner)
+assert controller.sourceId != continued['data_id']
+click('intradayComparisonTab')
+assert draft() == retained_draft and proof() == retained_proof
+assert settings.property('dataLocator') == original
+click('intradayRunComparisonButton', panel_scroll)
+assert controller.status == 'VALIDATION_ERROR' and 'matching' in controller.error
+assert not any(kind == 'run' for kind, _ in load_calls)
+click('intradayDataTab')
+fill('intradayDataPath', str(root / 'same-id-other-locator.json'))
+click('intradayInspectButton'); complete(owner)
+assert controller.sourceId == continued['data_id'] and controller.dataPath != original
+click('intradayComparisonTab')
+assert draft() == retained_draft and proof() == retained_proof
+assert settings.property('dataLocator') == original
+missing = dict(continued, intraday_data_path=str(root / 'missing-original.json'))
+write_intraday_plan(serialize_intraday_plan(missing), path=root / 'missing-plan.json')
+open_plan('missing-plan.json')
+missing_draft = draft()
+click('intradayRunComparisonButton', panel_scroll); complete(status='FAILED')
+assert draft() == missing_draft and proof() == retained_proof
+assert load_calls[-1] == ('run', str(root / 'missing-original.json'))
+click('intradayPlanContinueButton', panel_scroll); complete()
+run_draft = draft()
+click('intradayRunComparisonButton', panel_scroll); complete()
+assert controller._proof == 'COMPUTED' and len(controller._root['report']['groups'][0]['results']) == 1
+assert controller._root['plan']['intraday_data_path'] == original
+assert controller._root['plan']['strategies'] == continued['strategies']
+assert controller._root['plan']['execution'] == continued['execution']
+assert load_calls[-1] == ('run', original) and draft() == run_draft
+assert [kind for kind, _ in load_calls] == ['open', 'open', 'run', 'run']
+notice = find('intradayPlanDraftNotice'); reveal(notice, panel_scroll)
+screenshot('plan-original-locator-run-zh-CN')
+assert final.openTest(str(sources['test'])); complete(final)
+click('intradayFinalTab')
+assert final._test_proof == 'RECORDED' and not find('intradayPlanContinueButton').isVisible()
+assert draft() == run_draft
+assert {name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in sources.items()} == before
+assert hashlib.sha256(Path(original).read_bytes()).hexdigest() == original_digest
+assert session.runtime.backend_if_initialized is None and session.runtime.shutdown()
+print('REAL_PLAN_DRAFT_QML_OK')
+'''
+    result = subprocess.run([sys.executable, "-c", script, str(tmp_path), str(mismatched_plan_data.path)],
+        cwd=ROOT, env={**os.environ, "QT_QPA_PLATFORM": "offscreen", "QT_QUICK_BACKEND": "software"},
+        capture_output=True, text=True, timeout=300)
+    (tmp_path / "qml-process.log").write_text(result.stdout + result.stderr, encoding="utf-8")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "REAL_PLAN_DRAFT_QML_OK" in result.stdout
 
 
 @pytest.fixture(scope="session")

@@ -12,6 +12,9 @@ Item {
     required property var i18n
     property string sourceKey: ""
     property int restoreRevision: -1
+    property int draftRevision: -1
+    readonly property string editorRevision: root.controller.draftLoaded
+        ? "draft:" + root.controller.draftRevision : "result:" + root.controller.restoreRevision
     readonly property var gridData: root.controller.parameterGrid
     readonly property var gridMetrics: ["total_return", "observed_max_drawdown", "trade_count",
         "worst_fold_return", "median_fold_return", "best_fold_return"]
@@ -35,18 +38,22 @@ Item {
     }
 
     function sync() {
+        settings.availableFeatures = root.controller.featureNames
+        settings.availableDataId = root.controller.sourceId
         if (root.controller.sourceId && root.controller.sourceId !== root.sourceKey) {
             root.sourceKey = root.controller.sourceId
-            settings.applySource(root.sourceKey, root.controller.featureNames, root.controller.defaults)
+            if (!root.controller.draftLoaded)
+                settings.applySource(root.sourceKey, root.controller.featureNames, root.controller.defaults, root.controller.dataPath)
         }
-        if (root.restoreRevision !== root.controller.restoreRevision) {
-            root.restoreRevision = root.controller.restoreRevision
+        if (root.controller.draftLoaded && root.draftRevision !== root.controller.draftRevision) {
+            root.draftRevision = root.controller.draftRevision
+            const draft = root.controller.draftPlan
+            settings.applyPlan(draft.comparison_plan || draft, true)
+        } else if (!root.controller.draftLoaded && root.restoreRevision !== root.controller.restoreRevision) {
             const plan = root.controller.restoredPlan
-            if (plan.strategies) {
-                settings.featureOptions = root.controller.sourceId === plan.data_id ? root.controller.featureNames : plan.feature_fields.slice()
-                settings.applyPlan(plan, true)
-            }
+            if (plan.strategies) settings.applyPlan(plan, true)
         }
+        root.restoreRevision = root.controller.restoreRevision
         scenario.currentIndex = root.controller.scenarioIndex
         candidate.currentIndex = root.controller.candidateIndex
         view.currentIndex = root.controller.viewIndex
@@ -57,11 +64,40 @@ Item {
     Component.onCompleted: sync()
     Connections { target: root.controller; function onChanged() { root.sync() } }
 
-    IntradayResearchSettings { id: settings; i18n: root.i18n }
+    function prepareDiagnostics() {
+        root.controller.cancelPlanSave()
+        diagnostics.prepare(settings.values(), root.controller.draftLoaded ? root.controller.draftPlan : root.controller.diagnosticPlan,
+            root.editorRevision)
+    }
+    function prepareScenarios() {
+        root.controller.cancelPlanSave()
+        scenarios.prepare(settings.values(), root.controller.draftLoaded ? root.controller.draftPlan : root.controller.scenarioPlan,
+            root.editorRevision)
+    }
+    function preparePlanSave(kind, values) {
+        if (root.controller.preparePlanSave(kind, values)) planSaveDialog.open()
+    }
+    function editDraft() {
+        const draft = root.controller.draftPlan
+        if (draft.parameter_axes !== undefined) root.prepareDiagnostics()
+        else if (draft.execution_scenarios !== undefined) root.prepareScenarios()
+        else { root.controller.cancelPlanSave(); settings.open() }
+    }
+    function planKind(plan) {
+        return plan.parameter_axes !== undefined ? "diagnostics" : (plan.execution_scenarios !== undefined ? "scenarios" : "comparison")
+    }
+
+    IntradayResearchSettings {
+        id: settings
+        i18n: root.i18n
+        errorText: root.controller.error
+        savePlan: function(values) { root.preparePlanSave("comparison", values) }
+    }
     IntradayExecutionScenariosDialog {
         id: scenarios
         controller: root.controller
         i18n: root.i18n
+        savePlan: function(values) { root.preparePlanSave("scenarios", values) }
     }
     StrategyDiagnosticsDialog {
         id: diagnostics
@@ -70,6 +106,27 @@ Item {
         i18n: root.i18n
         inputAvailable: root.controller.dataLoaded
         submit: function(values) { return root.controller.runDiagnostics(values) }
+        savePlan: function(values) { root.preparePlanSave("diagnostics", values) }
+        preserveCosts: true
+    }
+    FileDialog {
+        id: planOpenDialog
+        objectName: "intradayPlanOpenDialog"
+        title: root.i18n.catalog["plan.load"]
+        fileMode: FileDialog.OpenFile
+        nameFilters: ["JSON files (*.json)"]
+        onAccepted: root.controller.loadPlan(selectedFile.toString())
+    }
+    FileDialog {
+        id: planSaveDialog
+        objectName: "intradayPlanSaveDialog"
+        title: root.i18n.catalog["plan.save_" + root.controller.pendingPlanKind] || root.i18n.catalog["plan.save"]
+        fileMode: FileDialog.SaveFile
+        options: FileDialog.DontConfirmOverwrite
+        nameFilters: ["JSON files (*.json)"]
+        defaultSuffix: "json"
+        onAccepted: root.controller.savePreparedPlan(selectedFile.toString())
+        onRejected: root.controller.cancelPlanSave()
     }
     FileDialog {
         id: openDialog
@@ -121,7 +178,7 @@ Item {
             RowLayout {
                 Layout.fillWidth: true
                 enabled: !root.controller.busy && !operationRuntime.busy
-                Components.PixelButton { objectName: "intradayResearchSettingsButton"; text: root.i18n.catalog["quant.intraday_settings"]; onClicked: settings.open() }
+                Components.PixelButton { objectName: "intradayResearchSettingsButton"; text: root.i18n.catalog["quant.intraday_settings"]; onClicked: { root.controller.cancelPlanSave(); settings.open() } }
                 Components.PixelButton {
                     objectName: "intradayRunComparisonButton"
                     text: root.i18n.catalog["quant.run_comparison"]
@@ -132,14 +189,14 @@ Item {
                 Components.PixelButton {
                     objectName: "intradayOpenDiagnosticsButton"
                     text: root.i18n.catalog["quant.diagnose_strategy"]
-                    enabled: root.controller.dataLoaded
-                    onClicked: diagnostics.prepare(settings.values(), root.controller.diagnosticPlan, root.controller.restoreRevision)
+                    enabled: settings.dataId.length > 0
+                    onClicked: root.prepareDiagnostics()
                 }
                 Components.PixelButton {
                     objectName: "intradayOpenScenariosButton"
                     text: root.i18n.catalog["quant.execution_scenarios"]
-                    enabled: root.controller.dataLoaded
-                    onClicked: scenarios.prepare(settings.values(), root.controller.scenarioPlan, root.controller.restoreRevision)
+                    enabled: settings.dataId.length > 0
+                    onClicked: root.prepareScenarios()
                 }
                 Item { Layout.fillWidth: true }
                 Components.PixelStatusBadge { status: root.controller.status; text: { root.i18n.language; return root.i18n.statusLabel(root.controller.status) } }
@@ -159,6 +216,49 @@ Item {
                 Components.PixelButton { objectName: "intradayExperimentSaveButton"; text: root.i18n.catalog[root.controller.scenariosLoaded ? "quant.scenarios_save" : "quant.save_experiment"]; enabled: root.controller.resultLoaded; onClicked: saveDialog.open() }
                 Components.PixelButton { objectName: "intradayExperimentReplayButton"; text: root.i18n.catalog[root.controller.scenariosLoaded ? "quant.scenarios_replay" : "quant.replay_experiment"]; enabled: root.controller.resultLoaded; onClicked: root.controller.replayExperiment("") }
                 Components.PixelButton { objectName: "intradayExperimentRelocateButton"; text: root.i18n.catalog["quant.replay_relocated"]; enabled: root.controller.resultLoaded; onClicked: relocateDialog.open() }
+            }
+            Label {
+                objectName: "intradayPlanDraftNotice"
+                Layout.fillWidth: true
+                visible: root.controller.draftLoaded
+                text: {
+                    const draft = root.controller.draftPlan, source = root.controller.draftSource
+                    if (!root.controller.draftLoaded) return ""
+                    return root.i18n.catalog["plan.bound_draft"] + " · " + root.i18n.catalog["plan.kind_" + root.planKind(draft)]
+                        + "\n" + root.i18n.catalog["plan.source_" + source.kind] + ": " + source.path
+                        + (source.kind === "CANDIDATE" ? "\n" + root.i18n.catalog["grid.cost_index"] + " " + source.cost_index
+                            + " · " + root.i18n.catalog["grid.candidate"] + " " + source.candidate_index + " · " + source.candidate_id : "")
+                        + "\n" + root.i18n.catalog["plan.separate_results"]
+                }
+                wrapMode: Text.WrapAnywhere
+                color: Theme.PixelTheme.inkMuted
+                font.pixelSize: Theme.PixelTheme.fontSm
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                enabled: !root.controller.busy && !operationRuntime.busy
+                Components.PixelButton { objectName: "intradayPlanLoadButton"; text: root.i18n.catalog["plan.load"]; onClicked: planOpenDialog.open() }
+                Components.PixelButton {
+                    objectName: "intradayPlanContinueButton"
+                    text: root.i18n.catalog["plan.continue"]
+                    enabled: root.controller.canContinueCandidate
+                    onClicked: root.controller.continueCandidate()
+                }
+                Components.PixelButton { objectName: "intradayPlanEditButton"; text: root.i18n.catalog["plan.edit"]; enabled: root.controller.draftLoaded; onClicked: root.editDraft() }
+                Item { Layout.fillWidth: true }
+            }
+            Label {
+                objectName: "intradayPlanSaveReceipt"
+                Layout.fillWidth: true
+                visible: !!root.controller.planSaveReceipt.path
+                text: {
+                    const saved = root.controller.planSaveReceipt
+                    return saved.path ? root.i18n.catalog["plan.saved_capture"] + " · " + root.i18n.catalog["plan.kind_" + saved.kind]
+                        + ": " + saved.path + "\nSHA-256: " + saved.content_sha256 : ""
+                }
+                wrapMode: Text.WrapAnywhere
+                color: Theme.PixelTheme.inkMuted
+                font.pixelSize: Theme.PixelTheme.fontSm
             }
             Label {
                 Layout.fillWidth: true

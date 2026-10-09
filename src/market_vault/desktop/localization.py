@@ -1250,6 +1250,33 @@ ZH_CN.update({
     "grid.BOTH_UNAVAILABLE": "中心和邻居指标均不可用",
 })
 
+EN.update({
+    "plan.load": "Load plan draft", "plan.continue": "Continue saved candidate", "plan.edit": "Edit loaded draft",
+    "plan.save": "Save captured plan", "plan.save_comparison": "Save comparison plan",
+    "plan.save_diagnostics": "Save diagnostics plan", "plan.save_scenarios": "Save scenarios plan",
+    "plan.kind_comparison": "Comparison", "plan.kind_diagnostics": "Parameter diagnostics", "plan.kind_scenarios": "Execution scenarios",
+    "plan.bound_draft": "Independent plan draft", "plan.source_FILE": "Loaded plan", "plan.source_CANDIDATE": "Saved candidate source",
+    "plan.separate_results": "Editing this draft keeps the existing results and verification. Load or Continue explicitly replaces the draft; opening results or data does not.",
+    "plan.saved_capture": "Saved captured request (later edits are separate)", "plan.locator": "Original data locator",
+    "plan.matching_data": "Matching data is open. Run uses the original locator and verifies its data again.",
+    "plan.needs_matching_data": "Offline editing and plan saving are available. Open matching data before Run; the original locator is retained.",
+    "operation.intraday_plan_save": "Save captured intraday plan", "operation.intraday_plan_load": "Load intraday plan draft",
+    "operation.intraday_plan_continue": "Continue saved intraday candidate",
+})
+ZH_CN.update({
+    "plan.load": "载入计划草稿", "plan.continue": "从已存候选继续", "plan.edit": "编辑已载入草稿",
+    "plan.save": "保存已捕获计划", "plan.save_comparison": "保存比较计划",
+    "plan.save_diagnostics": "保存参数诊断计划", "plan.save_scenarios": "保存执行情景计划",
+    "plan.kind_comparison": "策略比较", "plan.kind_diagnostics": "参数诊断", "plan.kind_scenarios": "执行情景",
+    "plan.bound_draft": "独立计划草稿", "plan.source_FILE": "载入的计划", "plan.source_CANDIDATE": "已存候选来源",
+    "plan.separate_results": "编辑此草稿会保留已有结果和验证状态。只有明确“载入”或“继续”会替换草稿，打开结果或数据不会覆盖它。",
+    "plan.saved_capture": "已保存捕获的请求（后续编辑另计）", "plan.locator": "原始数据路径",
+    "plan.matching_data": "已打开匹配数据。运行仍读取原始路径并重新校验数据。",
+    "plan.needs_matching_data": "可以离线编辑和保存计划；运行前需打开匹配数据，原始路径保持不变。",
+    "operation.intraday_plan_save": "保存已捕获的日内计划", "operation.intraday_plan_load": "载入日内计划草稿",
+    "operation.intraday_plan_continue": "从已存日内候选继续",
+})
+
 TRANSLATIONS: Final[dict[str, dict[str, str]]] = {
     "en": EN,
     "zh-CN": ZH_CN,
