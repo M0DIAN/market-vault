@@ -316,10 +316,11 @@ def fold_cash_contributions(context: dict, execution: dict) -> list[dict]:
     return result
 
 
-def _evaluate_intraday_research(normalized: dict, children: tuple[dict, ...], axis_values: tuple, prepared: _PreparedIntradayResearch) -> dict:
+def _evaluate_intraday_research(normalized: dict, children: tuple[dict, ...], axis_values: tuple,
+                                prepared: _PreparedIntradayResearch, *, fit_cache: dict | None = None) -> dict:
     """Pure evaluation of an already verified context, shared across all costs."""
     strategies = parse_strategy_specs(children[0]["strategies"])
-    cache = {}
+    cache = {} if fit_cache is None else fit_cache
     candidates = [candidate_predictions(prepared, strategy, cache) for strategy in strategies]
     days = tuple(prepared.context["evaluated_days"])
     sessions, prices = execution_views(prepared.report, trading_days=days)

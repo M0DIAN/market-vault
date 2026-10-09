@@ -333,6 +333,10 @@ def _validate_report(report, config, dataset_id, mode, versions):
 
 def _validate_root(root):
     _object(root, _ROOT_FIELDS, "experiment snapshot")
+    if root["artifact_schema_version"] == "market-vault-intraday-execution-scenarios-v1":
+        from .intraday_execution_scenarios import validate_intraday_execution_scenarios_root
+        validate_intraday_execution_scenarios_root(root)
+        return
     if root["artifact_schema_version"] == "market-vault-intraday-selection-v1":
         from .intraday_final_experiment import validate_intraday_selection_root
         validate_intraday_selection_root(root)
@@ -562,6 +566,11 @@ def replay_strategy_experiment(snapshot: StrategyExperiment, *, dataset_build_di
                                                 intraday_data_file=intraday_data_file)
     if source_experiment_file is not None:
         raise ValueError("source_experiment_file applies only to an intraday selection or TEST experiment")
+    if root["artifact_schema_version"] == "market-vault-intraday-execution-scenarios-v1":
+        if dataset_build_dir is not None:
+            raise ValueError("intraday replay requires intraday_data_file, not a Dataset directory")
+        from .intraday_execution_scenarios import replay_intraday_execution_scenarios
+        return replay_intraday_execution_scenarios(snapshot, intraday_data_file=intraday_data_file)
     if root["artifact_schema_version"] == "market-vault-intraday-experiment-v1":
         if dataset_build_dir is not None:
             raise ValueError("intraday replay requires intraday_data_file, not a Dataset directory")

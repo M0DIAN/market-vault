@@ -1,6 +1,7 @@
 """Real Canonical development research, independent numerical oracles and leakage."""
 
 from dataclasses import asdict, replace
+from copy import deepcopy
 from datetime import date, timedelta
 from decimal import Decimal
 import math
@@ -60,6 +61,94 @@ def research_case(tmp_path_factory):
     data = research_data(tmp_path_factory.mktemp("intraday-research"))
     plan = comparison_plan(data)
     return data, plan, research.run_intraday_research(plan)
+
+
+def execution_scenarios_plan(plan):
+    from market_vault.research.intraday_execution_scenarios import INTRADAY_EXECUTION_SCENARIOS_PLAN_VERSION
+    base = deepcopy(plan)
+    return {"plan_schema_version": INTRADAY_EXECUTION_SCENARIOS_PLAN_VERSION, "comparison_plan": base,
+            "execution_scenarios": [
+                {"name": "Original", "execution": deepcopy(base["execution"])},
+                {"name": "Delayed", "execution": {"commission_bps": 10, "slippage_bps": 5,
+                    "entry_delay_minutes": 60, "stop_new_minutes": 45, "flatten_minutes": 10, "max_hold_bars": 3}}]}
+
+
+@pytest.fixture(scope="session")
+def execution_scenarios_case(research_case):
+    from market_vault.research.intraday_execution_scenarios import run_intraday_execution_scenarios
+    data, comparison, _ = research_case
+    plan, calls = execution_scenarios_plan(comparison), {"loads": 0, "fits": []}
+    loader, fit = research.load_intraday_dataset, research._fit
+    def loaded(*args, **kwargs):
+        calls["loads"] += 1
+        return loader(*args, **kwargs)
+    def fitted(*args, **kwargs):
+        calls["fits"].append((len(args[0]), args[2]))
+        return fit(*args, **kwargs)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(research, "load_intraday_dataset", loaded)
+        patch.setattr(research, "_fit", fitted)
+        snapshot = run_intraday_execution_scenarios(plan, name="Execution sensitivity")
+    return data, plan, snapshot, calls
+
+
+def test_execution_scenarios_share_one_load_and_fit_and_match_standalone_q7(execution_scenarios_case, research_case):
+    from market_vault.research.strategy_experiment import canonical_json
+    _, plan, snapshot, calls = execution_scenarios_case
+    root = snapshot.as_dict()
+    first, second = [row["experiment"] for row in root["report"]["scenarios"]]
+    assert calls == {"loads": 1, "fits": [(1420, 1.0), (1775, 1.0)]}
+    assert root["report"]["evaluation_count"] == 6
+    assert canonical_json(first["report"]) == canonical_json(research_case[2])
+    assert canonical_json(second["report"]) == canonical_json(research.run_intraday_research(second["plan"]))
+    for child, scenario in zip((first, second), plan["execution_scenarios"], strict=True):
+        report, group = child["report"], child["report"]["groups"][0]
+        assert report["evaluation_scope"] == "DEVELOPMENT_WALK_FORWARD_ONLY"
+        assert child["evaluation_mode"] == "INTRADAY_COMPARISON" and len(report["groups"]) == 1
+        assert group["execution_policy"] == scenario["execution"]
+        assert all(r["axis_values"] == [] and r["return_change_from_first_cost"] == 0 for r in group["results"])
+        assert not set(report["context"]["split"]["TEST"]) & set(report["context"]["evaluated_days"])
+        assert group["benchmark"]["execution"]["policy"]["max_hold_bars"] == 78
+    assert all((t["entry_slot"], t["exit_slot"], t["exit_reason"]) == (12, 76, "EOD")
+               for t in second["report"]["groups"][0]["benchmark"]["execution"]["trades"])
+    assert plan == execution_scenarios_plan(research_case[1])
+
+
+@pytest.mark.parametrize("case", ["duplicate_policy", "duplicate_name", "missing_field", "bool_window", "limit", "diagnostics", "test_field"])
+def test_execution_scenarios_preflight_rejects_before_source_io(research_case, monkeypatch, case):
+    from market_vault.research.intraday_execution_scenarios import run_intraday_execution_scenarios
+    plan = execution_scenarios_plan(research_case[1])
+    if case == "duplicate_policy":
+        plan["execution_scenarios"][1]["execution"] = {**plan["execution_scenarios"][0]["execution"], "commission_bps": -0.0}
+    elif case == "duplicate_name":
+        plan["execution_scenarios"][1]["name"] = "Original"
+    elif case == "missing_field":
+        del plan["execution_scenarios"][1]["execution"]["flatten_minutes"]
+    elif case == "bool_window":
+        plan["execution_scenarios"][1]["execution"]["max_hold_bars"] = True
+    elif case == "limit":
+        plan["execution_scenarios"] = plan["execution_scenarios"] * 33
+    elif case == "diagnostics":
+        plan["comparison_plan"] = diagnostic_plan(plan["comparison_plan"])
+    else:
+        plan["evaluation_scope"] = "TEST"
+    monkeypatch.setattr(research, "load_intraday_dataset", lambda *a, **kw: pytest.fail("invalid scenarios read data"))
+    monkeypatch.setattr(research, "_fit", lambda *a, **kw: pytest.fail("invalid scenarios fitted"))
+    with pytest.raises(ValueError):
+        run_intraday_execution_scenarios(plan)
+
+
+def test_all_actual_scenario_windows_precede_fit_and_unused_base_is_not_evaluated(research_case, monkeypatch):
+    from market_vault.research.intraday_execution_scenarios import run_intraday_execution_scenarios
+    plan = execution_scenarios_plan(research_case[1])
+    plan["comparison_plan"]["execution"]["entry_delay_minutes"] = 400
+    # No actual scenario uses this geometrically invalid base policy.
+    result = run_intraday_execution_scenarios(plan).as_dict()
+    assert result["report"]["scenarios"][0]["experiment"]["report"] == research_case[2]
+    plan["execution_scenarios"][1]["execution"]["entry_delay_minutes"] = 400
+    monkeypatch.setattr(research, "_fit", lambda *a, **kw: pytest.fail("a later invalid scenario was checked after fitting"))
+    with pytest.raises(ValueError, match="windows do not fit"):
+        run_intraday_execution_scenarios(plan)
 
 
 def test_real_common_folds_tail_predictions_cash_benchmark_and_ridge_oracles(research_case):
