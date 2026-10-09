@@ -226,6 +226,9 @@ centered maximum as zeros, but their own lower bounds are unavailable. Other
 nondegenerate members may receive bounds, with their availability explicit.
 If all columns or the joint resampled statistic degenerate, the family bounds
 are unavailable. There is no inferred positive result for a constant sample.
+If one nonconstant member has no variation among its resampled means, its own
+bound is unavailable with `DEGENERATE_RESAMPLING`; it still participates in the
+joint maximum, and other members can remain available.
 
 ### Acceptance and exclusions
 
@@ -239,6 +242,61 @@ family scope, sample/method parameters and availability without a new fit/run.
 No global overfitting probability, p-value panel, quality score, winner,
 automatic Freeze, PBO, DSR, studentization, step-down, arbitrary multi-file
 registry or reconstruction of unseen historical trials is included.
+
+### API, console and desktop
+
+`research.intraday_family_bounds.analyze_intraday_family_bounds` accepts an
+immutable snapshot and `cost_index=0`, `block_days=None`, `replications=5000`,
+`seed=0`. It uses Q15's integer validation, block default, continuous-day
+admission and minimum sample/expected-block rules. There is no candidate-index
+or subset argument: the selected saved cost group defines the complete family.
+
+```console
+market-vault research-intraday-family-bounds --experiment /absolute/development.json --cost-index 1
+market-vault research-intraday-family-bounds --experiment /absolute/development.json --block-days 5 --replications 5000 --seed 0
+```
+
+The report version is `market-vault-intraday-family-bounds-v1`. Its `members`
+array retains every saved candidate in order, including `candidate_index`,
+`candidate_id`, `strategy`, `execution_id`, `mean_excess`, `lower`, paired
+`basis`, and prediction coverage. `mean_unavailable_reason` is separate from
+`bound_unavailable_reason`. Values use raw daily return ratios. An available
+`lower` is one endpoint of a one-sided simultaneous confidence region; there
+is no implied upper bound or two-sided interval.
+Q15's two-sided percentile endpoint and Q16's one-sided centered-maximum bound
+use different constructions and tail probabilities. Their numerical endpoints
+are not a direct measure of how much the family adjustment penalized a result.
+
+`family_inference` reports `AVAILABLE` or `UNAVAILABLE`, a reason and detail,
+and the common `deduction`. `sample` records the evaluated trading-day sequence
+and its coverage. `sampling` records Q15's actual sampling parameters, with
+`bound_method=SINGLE_STEP_UNSTUDENTIZED_CENTERED_MAX` and
+`bound_type=ONE_SIDED_LOWER`. The overall `basis` describes complete family
+compatibility, while each member retains its own paired basis. A failed family
+member or common basis prevents family inference; still-valid own paired
+means remain visible.
+
+`family_size` is the number of candidates in the selected cost group.
+`cost_group_count` and `evaluation_count` describe the saved experiment's
+recorded scope; they are not estimates of historical or independent trials.
+The report explicitly carries `family_scope=SAVED_COST_GROUP_ONLY` and
+`historical_search_coverage=UNKNOWN`. `family_bounds_id` binds the complete
+derived report, including all members and the method parameters.
+
+The settings-independent console follows Q15's success/error convention:
+unavailable inference is a `SUCCESS` analysis with null bounds; invalid inputs
+return structured stderr `FAILED` with exit 1, and noninteger argument tokens
+return argparse exit 2. JSON envelopes use ASCII escapes for non-ASCII text.
+
+In the saved ordinary DEV details, select **DEV family bounds**. The current
+candidate selector identifies a cost group, and the table includes that
+group's entire family. The desktop uses the fixed defaults, displays excess
+means and lower bounds in percentage points, and makes the selected cost,
+family count, scope, history limitation and sampling parameters visible.
+Source or cost changes invalidate the cached report; changing candidate within
+the same cost group preserves it. Background results bind to their captured
+source/group, and analysis errors offer an explicit retry. View and language
+changes preserve the completed calculation.
 
 ## Q17 — A/B complementarity and fixed initial capital sleeves
 

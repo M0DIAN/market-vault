@@ -176,6 +176,17 @@ def return_uncertainty_table(result):
     return columns, tuple(rows)
 
 
+def family_bounds_table(result):
+    """Keep the complete saved family in recorded order, with separate reasons."""
+    columns = ("family_member", "family_candidate_id", "family_mean_excess", "family_lower_95",
+               "family_mean_reason", "family_bound_reason")
+    return columns, tuple((f'{member["candidate_index"]} · {member["strategy"]["name"]}',
+        member["candidate_id"][:12], risk_value(member["mean_excess"], "RATIO").removesuffix("%"),
+        risk_value(member["lower"], "RATIO").removesuffix("%"),
+        member["mean_unavailable_reason"] or "", member["bound_unavailable_reason"] or "")
+        for member in result["members"])
+
+
 class IntradayResearchController(PageController):
     changed = Signal()
 
@@ -209,6 +220,9 @@ class IntradayResearchController(PageController):
         self._uncertainty_report = None
         self._uncertainty_error = ""
         self._uncertainty_pending = None
+        self._family_report = None
+        self._family_error = ""
+        self._family_pending = None
         self._grid_snapshot = None
         self._grid_report = None
         self._grid_key = None
@@ -221,7 +235,8 @@ class IntradayResearchController(PageController):
         owner.researchChanged.connect(self._source_changed)
         self.operationFailed.connect(self._replay_failed)
         self.operationFailed.connect(self._uncertainty_failed)
-        runtime.operationFinished.connect(self._uncertainty_idle)
+        self.operationFailed.connect(self._family_bounds_failed)
+        runtime.operationFinished.connect(self._analysis_idle)
 
     def _replay_failed(self):
         if self._replay_pending:
@@ -386,6 +401,29 @@ class IntradayResearchController(PageController):
                 if row["mean_unavailable_reason"] or row["interval_unavailable_reason"]]})
 
     @Property(bool, notify=changed)
+    def familyBoundsAvailable(self):
+        return self.uncertaintyAvailable
+
+    @Property(str, notify=changed)
+    def familyBoundsError(self):
+        return self._family_error
+
+    @Property("QVariantMap", notify=changed)
+    def familyBoundsSummary(self):
+        if self._family_report is None:
+            return {}
+        report = self._family_report
+        summary = {key: report[key] for key in ("experiment_id", "data_id", "cost_index", "family_size",
+            "family_scope", "historical_search_coverage", "execution_policy", "sampling", "family_inference")}
+        summary["sample"] = {key: report["sample"][key] for key in ("sample_count", "first_day", "last_day",
+            "fold_count", "is_contiguous", "unevaluated_development_day_count")}
+        summary["deduction_display"] = risk_value(report["family_inference"]["deduction"], "RATIO").removesuffix("%")
+        summary["members"] = [{key: member[key] for key in
+            ("candidate_index", "candidate_id", "strategy", "mean_unavailable_reason", "detail")}
+            for member in report["members"]]
+        return deepcopy(summary)
+
+    @Property(bool, notify=changed)
     def gridAvailable(self):
         return self._grid_snapshot is not None
 
@@ -509,7 +547,12 @@ class IntradayResearchController(PageController):
         report = self._root["report"]
         group, candidate = self._selected()
         execution = candidate["execution"]
-        if self._view_index == 17:
+        if self._view_index == 18:
+            if self._family_report is not None:
+                self._columns, self._rows = family_bounds_table(self._family_report)
+            else:
+                self._columns, self._rows = (), ()
+        elif self._view_index == 17:
             if self._uncertainty_report is not None:
                 self._columns, self._rows = return_uncertainty_table(self._uncertainty_report)
             else:
@@ -562,6 +605,8 @@ class IntradayResearchController(PageController):
         self._set_page()
         if self._view_index == 17:
             self._start_uncertainty()
+        elif self._view_index == 18:
+            self._start_family_bounds()
 
     @Slot(int, result=bool)
     def selectCandidate(self, index):
@@ -571,6 +616,8 @@ class IntradayResearchController(PageController):
             self._risk_report = None
             self._uncertainty_report, self._uncertainty_error = None, ""
             self._grid_report, self._grid_key = None, None
+            if self._positions[self._candidate_index][0] != self._positions[index][0]:
+                self._family_report, self._family_error = None, ""
         self._candidate_index = index
         self._refresh_view()
         self.changed.emit()
@@ -592,7 +639,7 @@ class IntradayResearchController(PageController):
 
     @Slot(int, result=bool)
     def selectView(self, index):
-        if type(index) is not int or not 0 <= index <= 17:
+        if type(index) is not int or not 0 <= index <= 18:
             return False
         self._view_index = index
         self._refresh_view()
@@ -630,10 +677,11 @@ class IntradayResearchController(PageController):
         if not self._submit("intraday_return_uncertainty", operation, apply, requires_backend=False):
             self._uncertainty_pending = None
 
-    def _uncertainty_idle(self, operation):
+    def _analysis_idle(self, operation):
         # Open/Save applies its result before the runtime becomes idle. Starting
         # here also replaces a stale in-flight selection without nested workers.
         self._start_uncertainty()
+        self._start_family_bounds()
 
     def _uncertainty_failed(self):
         selection, self._uncertainty_pending = self._uncertainty_pending, None
@@ -646,6 +694,51 @@ class IntradayResearchController(PageController):
         if self.busy or self._runtime.busy or not self.uncertaintyAvailable or not self._uncertainty_error:
             return False
         self._uncertainty_error = ""
+        self._refresh_view()
+        self.changed.emit()
+        return True
+
+    def _family_selection(self):
+        if not self.familyBoundsAvailable:
+            return None
+        return (self._root["experiment_id"], self._positions[self._candidate_index][0])
+
+    def _start_family_bounds(self):
+        """The saved cost group is the family, regardless of its selected member."""
+        if (self._view_index != 18 or not self.familyBoundsAvailable or self._family_report is not None
+                or self._family_error or self._family_pending is not None or self.busy or self._runtime.busy):
+            return
+        selection, content = self._family_selection(), self._content
+        self._family_pending = selection
+
+        def operation(backend):
+            from ..research.intraday_family_bounds import analyze_intraday_family_bounds
+            from ..research.strategy_experiment import StrategyExperiment
+            return analyze_intraday_family_bounds(StrategyExperiment(content), cost_index=selection[1])
+
+        def apply(report):
+            self._family_pending = None
+            if selection != self._family_selection():
+                return
+            self._family_report = report
+            if self._view_index == 18:
+                self._refresh_view()
+            self.changed.emit()
+
+        if not self._submit("intraday_family_bounds", operation, apply, requires_backend=False):
+            self._family_pending = None
+
+    def _family_bounds_failed(self):
+        selection, self._family_pending = self._family_pending, None
+        if selection is not None and selection == self._family_selection():
+            self._family_error = self.error
+            self.changed.emit()
+
+    @Slot(result=bool)
+    def retryFamilyBounds(self):
+        if self.busy or self._runtime.busy or not self.familyBoundsAvailable or not self._family_error:
+            return False
+        self._family_error = ""
         self._refresh_view()
         self.changed.emit()
         return True
@@ -863,6 +956,7 @@ class IntradayResearchController(PageController):
         self._root = root
         self._risk_report = None
         self._uncertainty_report, self._uncertainty_error = None, ""
+        self._family_report, self._family_error = None, ""
         self._grid_snapshot = snapshot if root["evaluation_mode"] == "INTRADAY_DIAGNOSTICS" else None
         self._grid_report, self._grid_key, self._grid_error = None, None, ""
         self._grid_metric = GRID_METRICS[0]

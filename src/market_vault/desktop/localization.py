@@ -1328,6 +1328,43 @@ ZH_CN.update({
     "operation.intraday_return_uncertainty": "分析已存 DEV 收益不确定性",
 })
 
+EN.update({
+    "quant.family_bounds": "DEV family bounds",
+    "family_bounds.note": "Approximate nominal 95% one-sided simultaneous lower bounds, using joint stationary resampling and a common deduction. Assumes stationary, weakly dependent daily returns; this is not a probability of future profit.",
+    "family_bounds.count": "Candidates", "family_bounds.history": "Historical search coverage",
+    "family_bounds.SAVED_COST_GROUP_ONLY": "Full saved cost group only", "family_bounds.UNKNOWN": "Unknown",
+    "family_bounds.selection": "The selected candidate's cost group sets the family; all its members are included.",
+    "family_bounds.inference": "Family inference", "family_bounds.deduction": "Common deduction",
+    "family_bounds.AVAILABLE": "Available", "family_bounds.UNAVAILABLE": "Unavailable",
+    "family_bounds.FAMILY_MEMBER_UNAVAILABLE": "Member unavailable",
+    "family_bounds.DEGENERATE_FAMILY": "No joint variation",
+    "family_bounds.ZERO_SAMPLE_VARIATION": "Constant daily excess",
+    "family_bounds.calculating": "Preparing bounds for the complete saved cost group…",
+    "family_bounds.units": "Arithmetic means of daily strategy-minus-benchmark returns and their one-sided simultaneous lower bounds are shown in percentage points (pp), in recorded candidate order. The method is single-step and unstudentized. Bounds require 100 contiguous evaluated days and 10 expected blocks. This saved family does not cover all historical research.",
+    "columns.family_member": "Candidate", "columns.family_candidate_id": "Candidate ID",
+    "columns.family_mean_excess": "Mean excess (pp)", "columns.family_lower_95": "95% lower (pp)",
+    "columns.family_mean_reason": "Mean unavailable", "columns.family_bound_reason": "Bound unavailable",
+    "operation.intraday_family_bounds": "Analyze saved DEV family bounds",
+})
+ZH_CN.update({
+    "quant.family_bounds": "DEV 候选族同时下界",
+    "family_bounds.note": "通过联合平稳重采样和共同扣减量，估计近似名义 95% 单侧同时下界。假设日收益平稳且弱依赖；这不是未来盈利概率。",
+    "family_bounds.count": "候选数", "family_bounds.history": "历史搜索覆盖",
+    "family_bounds.SAVED_COST_GROUP_ONLY": "仅完整已存成本组", "family_bounds.UNKNOWN": "未知",
+    "family_bounds.selection": "候选选择器的成本组决定候选族，包含该组全部成员。",
+    "family_bounds.inference": "候选族推断", "family_bounds.deduction": "共同扣减量",
+    "family_bounds.AVAILABLE": "可用", "family_bounds.UNAVAILABLE": "不可用",
+    "family_bounds.FAMILY_MEMBER_UNAVAILABLE": "族内成员不可用",
+    "family_bounds.DEGENERATE_FAMILY": "联合样本无变化",
+    "family_bounds.ZERO_SAMPLE_VARIATION": "日超额收益恒定",
+    "family_bounds.calculating": "正在准备完整已存成本组的同时下界…",
+    "family_bounds.units": "报告策略减基准日收益的算术均值及其单侧同时下界，单位为百分点，候选保持已存顺序。采用单步非学生化方法，下界至少需要 100 个连续已评估交易日及 10 个预期块。该已存候选族不代表全部历史研究。",
+    "columns.family_member": "候选", "columns.family_candidate_id": "候选 ID",
+    "columns.family_mean_excess": "超额均值（百分点）", "columns.family_lower_95": "95% 下界（百分点）",
+    "columns.family_mean_reason": "均值不可用原因", "columns.family_bound_reason": "下界不可用原因",
+    "operation.intraday_family_bounds": "分析已存 DEV 候选族同时下界",
+})
+
 TRANSLATIONS: Final[dict[str, dict[str, str]]] = {
     "en": EN,
     "zh-CN": ZH_CN,

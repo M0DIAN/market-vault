@@ -17,6 +17,7 @@ Item {
         ? "draft:" + root.controller.draftRevision : "result:" + root.controller.restoreRevision
     readonly property var gridData: root.controller.parameterGrid
     readonly property var uncertaintyData: root.controller.uncertaintySummary
+    readonly property var familyData: root.controller.familyBoundsSummary
     readonly property var gridMetrics: ["total_return", "observed_max_drawdown", "trade_count",
         "worst_fold_return", "median_fold_return", "best_fold_return"]
 
@@ -28,6 +29,9 @@ Item {
     function uncertaintyLabel(key) {
         return root.i18n.catalog["uncertainty." + key] || root.i18n.catalog["risk." + key]
             || root.i18n.catalog["comparison." + key] || root.i18n.catalog["performance." + key] || key
+    }
+    function familyLabel(key) {
+        return root.i18n.catalog["family_bounds." + key] || root.uncertaintyLabel(key)
     }
     function axisName(axis) {
         return root.i18n.catalog["grid.axis"] + " " + axis.axis_index + " · "
@@ -349,7 +353,8 @@ Item {
                         "quant.intraday_models", "quant.intraday_predictions", "quant.intraday_contributions",
                         "quant.performance", "quant.performance_exit", "quant.performance_entry", "quant.performance_day",
                         "quant.risk_summary", "quant.risk_drawdowns", "quant.risk_distributions", "quant.risk_concentration",
-                        "quant.risk_folds", "quant.parameter_grid", "quant.return_uncertainty"].map(key => root.i18n.catalog[key])
+                        "quant.risk_folds", "quant.parameter_grid", "quant.return_uncertainty",
+                        "quant.family_bounds"].map(key => root.i18n.catalog[key])
                     onSelected: root.controller.selectView(currentIndex)
                     onModelChanged: currentIndex = selectedView
                 }
@@ -722,6 +727,114 @@ Item {
                     }
                 }
             }
+            ColumnLayout {
+                objectName: "intradayFamilyBoundsPanel"
+                Layout.fillWidth: true
+                visible: view.selectedView === 18
+                spacing: 4
+                Label {
+                    objectName: "intradayFamilyBoundsNotice"
+                    Layout.fillWidth: true
+                    text: root.i18n.catalog[root.controller.familyBoundsAvailable ? "family_bounds.note" : "uncertainty.saved_only"]
+                    wrapMode: Text.WordWrap
+                    color: Theme.PixelTheme.inkMuted
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                }
+                Label {
+                    objectName: "intradayFamilyBoundsScope"
+                    Layout.fillWidth: true
+                    visible: !!root.familyData.sample
+                    text: {
+                        const data = root.familyData
+                        if (!data.sample) return ""
+                        return root.i18n.catalog["grid.cost_index"] + " " + data.cost_index
+                            + " · " + root.i18n.catalog["family_bounds.count"] + ": " + data.family_size
+                            + " · " + root.familyLabel(data.family_scope) + "\n"
+                            + root.i18n.catalog["family_bounds.history"] + ": " + root.familyLabel(data.historical_search_coverage)
+                            + ". " + root.i18n.catalog["family_bounds.selection"]
+                    }
+                    wrapMode: Text.WordWrap
+                    color: Theme.PixelTheme.ink
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                    ToolTip.visible: familyHover.hovered
+                    ToolTip.text: root.controller.experimentPath + "\n" + (root.familyData.experiment_id || "")
+                        + "\n" + (root.familyData.data_id || "") + "\n"
+                        + (root.familyData.members || []).map(member => member.candidate_index + " · "
+                            + member.strategy.name + " · " + member.candidate_id).join("\n")
+                    HoverHandler { id: familyHover }
+                }
+                Label {
+                    objectName: "intradayFamilyBoundsParameters"
+                    Layout.fillWidth: true
+                    visible: !!root.familyData.sample
+                    text: {
+                        const data = root.familyData
+                        if (!data.sample) return ""
+                        const sample = data.sample, sampling = data.sampling
+                        return root.i18n.catalog["uncertainty.samples"] + ": " + sample.sample_count
+                            + " · " + sample.first_day + " → " + sample.last_day
+                            + " · " + root.i18n.catalog["uncertainty.folds"] + ": " + sample.fold_count
+                            + " · " + root.i18n.catalog["uncertainty.unevaluated_days"] + ": " + sample.unevaluated_development_day_count + "\n"
+                            + root.i18n.catalog["uncertainty.block_days"] + ": " + sampling.block_days
+                            + " (" + root.uncertaintyLabel(sampling.block_days_source) + ")"
+                            + " · " + root.i18n.catalog["uncertainty.expected_blocks"] + ": " + Number(sampling.expected_block_count).toPrecision(6)
+                            + " · " + root.i18n.catalog["uncertainty.replications"] + ": " + sampling.replications
+                            + " · " + root.i18n.catalog["uncertainty.seed"] + ": " + sampling.seed
+                            + " · " + root.uncertaintyLabel(sampling.prng)
+                    }
+                    wrapMode: Text.WordWrap
+                    color: Theme.PixelTheme.ink
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                }
+                Label {
+                    objectName: "intradayFamilyBoundsInference"
+                    Layout.fillWidth: true
+                    visible: !!root.familyData.sample
+                    text: {
+                        const data = root.familyData
+                        if (!data.sample) return ""
+                        const inference = data.family_inference
+                        return root.i18n.catalog["family_bounds.inference"] + ": " + root.familyLabel(inference.status)
+                            + (inference.reason ? " · " + root.familyLabel(inference.reason) : "")
+                            + " · " + root.i18n.catalog["family_bounds.deduction"] + ": " + data.deduction_display
+                            + " " + root.uncertaintyLabel("PERCENTAGE_POINTS")
+                    }
+                    wrapMode: Text.WordWrap
+                    color: Theme.PixelTheme.ink
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                    ToolTip.visible: familyInferenceHover.hovered
+                    ToolTip.text: root.familyData.family_inference ? (root.familyData.family_inference.detail || "") : ""
+                    HoverHandler { id: familyInferenceHover }
+                }
+                Label {
+                    objectName: "intradayFamilyBoundsProgress"
+                    Layout.fillWidth: true
+                    visible: root.controller.familyBoundsAvailable && !root.familyData.sample && !root.controller.familyBoundsError
+                    text: root.i18n.catalog["family_bounds.calculating"]
+                    wrapMode: Text.WordWrap
+                    color: Theme.PixelTheme.inkMuted
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    visible: root.controller.familyBoundsError.length > 0
+                    Label {
+                        objectName: "intradayFamilyBoundsError"
+                        Layout.fillWidth: true
+                        textFormat: Text.PlainText
+                        text: root.controller.familyBoundsError
+                        wrapMode: Text.WrapAnywhere
+                        color: Theme.PixelTheme.ink
+                        font.pixelSize: Theme.PixelTheme.fontSm
+                    }
+                    Components.PixelButton {
+                        objectName: "intradayFamilyBoundsRetry"
+                        text: root.i18n.catalog["uncertainty.retry"]
+                        enabled: !root.controller.busy && !operationRuntime.busy
+                        onClicked: root.controller.retryFamilyBounds()
+                    }
+                }
+            }
             Components.DataTable {
                 objectName: "intradayResearchTable"
                 visible: view.selectedView !== 16
@@ -732,12 +845,42 @@ Item {
                 tableModel: root.controller.tableModel
                 i18n: root.i18n
                 cellFormatter: function(value) {
+                    if (view.selectedView === 18) return root.familyLabel(value)
                     if (view.selectedView === 17) return root.uncertaintyLabel(value)
                     if (view.selectedView >= 11) return root.i18n.catalog["risk." + value] || root.i18n.catalog["performance." + value] || value
                     return view.selectedView >= 7 ? (root.i18n.catalog["performance." + value] || value) : value
                 }
                 onPreviousRequested: root.controller.changePage(-1)
                 onNextRequested: root.controller.changePage(1)
+            }
+            ColumnLayout {
+                Layout.fillWidth: true
+                visible: view.selectedView === 18 && root.controller.familyBoundsAvailable
+                spacing: 4
+                Label {
+                    objectName: "intradayFamilyBoundsUnits"
+                    Layout.fillWidth: true
+                    text: root.i18n.catalog["family_bounds.units"]
+                    wrapMode: Text.WordWrap
+                    color: Theme.PixelTheme.inkMuted
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                }
+                Repeater {
+                    model: (root.familyData.members || []).filter(member => member.mean_unavailable_reason)
+                    Label {
+                        required property var modelData
+                        objectName: "intradayFamilyBoundsWarning" + modelData.candidate_index
+                        Layout.fillWidth: true
+                        text: root.i18n.catalog["grid.candidate"] + " " + modelData.candidate_index
+                            + ": " + root.familyLabel(modelData.mean_unavailable_reason)
+                        wrapMode: Text.WordWrap
+                        color: Theme.PixelTheme.inkMuted
+                        font.pixelSize: Theme.PixelTheme.fontSm
+                        ToolTip.visible: familyWarningHover.hovered
+                        ToolTip.text: modelData.detail || ""
+                        HoverHandler { id: familyWarningHover }
+                    }
+                }
             }
             ColumnLayout {
                 Layout.fillWidth: true
