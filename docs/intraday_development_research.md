@@ -121,12 +121,14 @@ additional evaluations.
 comparison, diagnostics or execution-scenarios plans and starts an editable
 single-candidate comparison from an explicitly selected saved DEV result.
 
-[Saved DEV return uncertainty and family bounds](intraday_research_quality.md)
-add Q15 paired mean intervals and Q16 simultaneous lower bounds for every
-candidate in a saved cost group. The package also specifies the following Q17
-two-strategy complementarity and fixed initial capital sleeves. Its statistical
-admission and capital assumptions are separate from the recorded descriptive
-metrics above.
+[Saved DEV research quality](intraday_research_quality.md) adds Q15 paired mean
+intervals, Q16 simultaneous lower bounds for every candidate in a saved cost
+group, and Q17 two-strategy complementarity and fixed initial capital sleeves.
+Q17 extends Saved A/B with explicit initial weights, a combined ordered account
+path and cost attribution. Its descriptive calculations use the complete Q11
+basis; they do not inherit Q15/Q16's statistical sample gates. The sampling and
+capital assumptions remain explicit and separate from the recorded metrics
+above.
 
 ## CLI and plan grammar
 

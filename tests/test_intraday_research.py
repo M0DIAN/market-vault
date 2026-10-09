@@ -760,3 +760,338 @@ def test_family_bounds_common_gates_preserve_means_and_reject_subset_before_deco
         family.analyze_intraday_family_bounds(return_uncertainty_case.snapshot, cost_index=True)
     with pytest.raises(TypeError, match="candidate_index"):
         family.analyze_intraday_family_bounds(return_uncertainty_case.snapshot, candidate_index=0)
+
+
+def portfolio_execution(day_prices, targets, *, policy=None):
+    """Tiny real Q6 accounts for capital and elapsed-minute numerical oracles."""
+    from datetime import datetime, timezone
+    from market_vault.backtest.intraday import IntradayExecutionPolicy, run_intraday_execution
+    sessions, prices, decisions = [], [], []
+    for index, bars in enumerate(day_prices):
+        opened = datetime(2025, 2, 3 + index, 14, 30, tzinfo=timezone.utc)
+        day = opened.date().isoformat()
+        sessions.append({"trading_day": day, "open_time": opened.isoformat(),
+                         "close_time": (opened + timedelta(minutes=30 * len(bars))).isoformat(), "bar_count": len(bars)})
+        for slot, (start_price, end_price) in enumerate(bars):
+            start = opened + timedelta(minutes=30 * slot)
+            prices.append({"trading_day": day, "slot": slot, "event_time": start.isoformat(),
+                "available_at": (start + timedelta(minutes=30)).isoformat(), "open": start_price, "close": end_price,
+                "row_version_id": f"price-{index}-{slot}"})
+        for slot, target in targets[index].items():
+            decisions.append({"observation_key": f"decision-{index}-{slot}", "trading_day": day, "slot": slot,
+                "decision_time": (opened + timedelta(minutes=30 * (slot + 1))).isoformat(), "target": target, "score": 1.0})
+    return run_intraday_execution(sessions=tuple(sessions), prices=tuple(prices), decisions=tuple(decisions), interval="30m",
+        policy=policy or IntradayExecutionPolicy(commission_bps=0, slippage_bps=0, entry_delay_minutes=0,
+                                                stop_new_minutes=30, flatten_minutes=5, max_hold_bars=20))
+
+
+def test_portfolio_two_day_fixed_capital_oracle_preserves_same_clock_drawdown_and_daily_risk():
+    from market_vault.research import intraday_portfolio as portfolio
+    prices = [[(1, 1), (1, 4), (1, 1), (2, 2)], [(2, 2), (2, 2), (2, 2), (1, 1)]]
+    a = portfolio_execution(prices, [{0: "LONG"}, {0: "LONG"}])
+    b = portfolio_execution(prices, [{}, {}])
+    assert [row["return"] for row in a["daily"]] == [1.0, -.5]
+    allocation = portfolio._allocation(.5, .5)
+    path, daily = portfolio._combined_path(a, b, a, b, allocation)
+    assert [1.0, *[row["cash_close"] for row in daily]] == [1.0, 1.5, 1.0]
+    assert [row["return"] for row in daily] == pytest.approx([.5, -1 / 3])
+    assert math.prod(1 + .5 * row["return"] for row in a["daily"]) - 1 == .125
+    summary = portfolio._account_summary(daily, path)
+    assert summary["summary"]["total_return"]["value"] == 0
+    assert summary["summary"]["observed_max_drawdown"]["value"] == pytest.approx(.6)
+    assert .5 * a["metrics"]["observed_max_drawdown"] == .375
+    # The high CLOSE and lower following OPEN share a clock. Keeping only the
+    # final point at that timestamp would erase the actual portfolio peak.
+    high, following = path[3:5]
+    assert high["timestamp"] == following["timestamp"] and high["phase"] == "CLOSE" and following["phase"] == "OPEN"
+    assert high["equity"] == 2.5 and following["equity"] == 1 and following["drawdown"] == pytest.approx(.6)
+    assert [row["sequence"] for row in path] == list(range(16))
+    risk = summary["risk"]
+    assert (risk["annualization_factor"], risk["risk_free_rate"], risk["ddof"], risk["zero_volatility_tolerance"]) == (252, 0, 1, 1e-15)
+    assert risk["return_count"]["value"] == 2 and risk["mean_daily_return"]["value"] == pytest.approx(1 / 12)
+    assert risk["annualized_volatility"]["value"] == pytest.approx(5 / (6 * math.sqrt(2)) * math.sqrt(252))
+    assert risk["sharpe_ratio"]["value"] == pytest.approx(math.sqrt(504) / 10)
+
+
+def test_portfolio_holding_elapsed_minutes_early_close_and_tiny_positive_quantity():
+    from market_vault.research import intraday_portfolio as portfolio
+    prices = [[(1e15, 1e15)] * 13, [(1e15, 1e15)] * 7]
+    a = portfolio_execution(prices, [{0: "LONG", 2: "FLAT"}, {0: "LONG", 1: "FLAT"}])
+    b = portfolio_execution(prices, [{1: "LONG", 3: "FLAT"}, {}])
+    assert 0 < a["trades"][0]["quantity"] < 1e-12
+    actual = portfolio._holding_overlap(a, b, 390 + 210)
+    expected = {"both": 30, "a_only": 60, "b_only": 30, "neither": 480}
+    assert {key: row["minutes"]["value"] for key, row in actual.items()} == expected
+    assert {key: row["ratio"]["value"] for key, row in actual.items()} == pytest.approx({key: value / 600 for key, value in expected.items()})
+    assert sum(row["ratio"]["value"] for row in actual.values()) == pytest.approx(1)
+
+
+def test_portfolio_cash_days_pearson_tolerance_and_unrounded_joint_losses():
+    from market_vault.research import intraday_portfolio as portfolio
+    prices = [[(1, 1), (1, 1), (1, 1), (1 - loss, 1 - loss)] for loss in (1e-12, 2e-12, .01)]
+    a = portfolio_execution(prices, [{0: "LONG"}, {0: "LONG"}, {}])
+    b = portfolio_execution(prices, [{0: "LONG"}, {0: "LONG"}, {}])
+    av, reason, _ = portfolio._daily_values(a, None)
+    bv, _, _ = portfolio._daily_values(b, None)
+    assert reason is None and av[-1] == bv[-1] == 0
+    days = [row["trading_day"] for row in a["daily"]]
+    result = portfolio._complementarity(a, b, av, bv, {"sample_count": 3, "evaluated_days": days, "total_session_minutes": 360})
+    assert -1e-12 < av[0] < 0 and av[1] < -1e-12
+    assert result["joint_loss_days"] == days[1:2] and result["joint_loss_count"]["value"] == 1
+    assert result["joint_loss_ratio"]["value"] == pytest.approx(1 / 3)
+    assert result["correlation"]["value"] == pytest.approx(1)
+    assert portfolio._correlation((0., 1e-14, 2e-14), (2e-14, 1e-14, 0.))["value"] == pytest.approx(-1)
+    assert portfolio._correlation((0., 1e-16), (0., 1.))["unavailable_reason"] == "ZERO_VOLATILITY"
+    assert portfolio._correlation((0.,), (0.,))["unavailable_reason"] == "INSUFFICIENT_DAILY_RETURNS"
+
+
+def test_portfolio_real_saved_accounts_full_path_cost_attribution_and_installed_console(return_uncertainty_case, monkeypatch, capsys, tmp_path):
+    import json
+    import os
+    import statistics
+    import subprocess
+    import sysconfig
+    from pathlib import Path
+    from market_vault import cli
+    from market_vault.research import intraday_portfolio as portfolio
+    from market_vault.research import intraday_return_uncertainty as uncertainty
+    from market_vault.research.strategy_experiment import StrategyExperiment
+    case = return_uncertainty_case
+    root = case.snapshot.as_dict()
+    other = StrategyExperiment(case.snapshot.content)
+    groups = root["report"]["groups"]
+    a, b = groups[1]["results"][1]["execution"], groups[0]["results"][0]["execution"]
+    ab, bb = groups[1]["benchmark"]["execution"], groups[0]["benchmark"]["execution"]
+    calls, decode, available = {"decode": 0, "accounts": 0}, StrategyExperiment.as_dict, uncertainty._available
+    checked_accounts = []
+    def decoded(self):
+        calls["decode"] += 1
+        return decode(self)
+    def checked(*args, **kwargs):
+        calls["accounts"] += 1
+        checked_accounts.append((args[0]["execution_id"], args[1], args[2]))
+        return available(*args, **kwargs)
+    monkeypatch.setattr(StrategyExperiment, "as_dict", decoded)
+    monkeypatch.setattr(uncertainty, "_available", checked)
+    for name in ("load_intraday_dataset", "_fit", "run_intraday_execution"):
+        monkeypatch.setattr(research, name, lambda *a, **kw: pytest.fail("portfolio accessed source, fit or execution"))
+    monkeypatch.setattr(cli, "load_settings", lambda *a, **kw: pytest.fail("portfolio loaded settings"))
+    before = case.path.read_bytes()
+    options = dict(left_cost_index=1, left_candidate_index=1, right_cost_index=0, right_candidate_index=0, weight_a=.35, weight_b=.45)
+    result = portfolio.analyze_intraday_portfolio(case.snapshot, other, **options)
+    assert calls == {"decode": 2, "accounts": 4}
+    folds = root["report"]["context"]["folds"]
+    assert checked_accounts == [(a["execution_id"], folds, groups[1]["results"][1]["fold_contributions"]),
+                                (ab["execution_id"], folds, None),
+                                (b["execution_id"], folds, groups[0]["results"][0]["fold_contributions"]),
+                                (bb["execution_id"], folds, None)]
+    assert result["availability"]["status"] == "AVAILABLE" and result["basis"] == {"matches": True, "failed_checks": []}
+    assert result["sample"]["sample_count"] == 105 and result["sample"]["total_session_minutes"] == 105 * 390
+    assert result["sample"]["evaluated_days"] == result["left"]["sample"]["evaluated_days"] == result["right"]["sample"]["evaluated_days"]
+    assert (result["left"]["cost_index"], result["left"]["candidate_index"], result["right"]["cost_index"], result["right"]["candidate_index"]) == (1, 1, 0, 0)
+    assert result["left"]["strategy_execution_id"] == a["execution_id"] and result["right"]["strategy_execution_id"] == b["execution_id"]
+    assert result["left"]["benchmark_execution_id"] == ab["execution_id"] and result["right"]["benchmark_execution_id"] == bb["execution_id"]
+    assert result["left"]["execution_policy"] == a["policy"] and result["right"]["execution_policy"] == b["policy"]
+    assert result["left"]["benchmark_execution_policy"] == ab["policy"] and result["right"]["benchmark_execution_policy"] == bb["policy"]
+    assert "execution_id" not in result["portfolio"] and "trades" not in result["portfolio"]
+    cash_weight = 1 - math.fsum((.35, .45))
+    for point, pa, pb, pab, pbb in zip(result["path"], a["ledger"], b["ledger"], ab["ledger"], bb["ledger"], strict=True):
+        assert (point["sequence"], point["timestamp"], point["phase"]) == (pa["sequence"], pa["timestamp"], pa["phase"])
+        assert (point["equity"], point["cash"], point["benchmark_equity"], point["benchmark_cash"]) == pytest.approx((
+            cash_weight + .35 * pa["equity"] + .45 * pb["equity"], cash_weight + .35 * pa["cash"] + .45 * pb["cash"],
+            cash_weight + .35 * pab["equity"] + .45 * pbb["equity"], cash_weight + .35 * pab["cash"] + .45 * pbb["cash"]))
+    for name, aa, ba, prefix in (("portfolio", a, b, ""), ("benchmark", ab, bb, "benchmark_")):
+        expected = []
+        for row, da, db in zip(result["daily_returns"], aa["daily"], ba["daily"], strict=True):
+            opened, closed = cash_weight + .35 * da["cash_open"] + .45 * db["cash_open"], cash_weight + .35 * da["cash_close"] + .45 * db["cash_close"]
+            expected.append(closed / opened - 1)
+            assert (row[prefix + "cash_open"], row[prefix + "cash_close"], row[prefix + "return"]) == pytest.approx((opened, closed, expected[-1]))
+        risk = result[name]["risk"]
+        assert risk["mean_daily_return"]["value"] == pytest.approx(statistics.mean(expected))
+        assert risk["annualized_volatility"]["value"] == pytest.approx(statistics.stdev(expected) * math.sqrt(252))
+        rows = result["attribution"][name]
+        assert [row["sleeve"] for row in rows] == ["A", "B", "CASH"]
+        for row, execution, weight in zip(rows[:2], (aa, ba), (.35, .45), strict=True):
+            assert row["cash_contribution"]["value"] == pytest.approx(weight * (execution["metrics"]["final_cash"] - 1))
+            assert row["market_pnl"]["value"] == pytest.approx(weight * math.fsum(t["quantity"] * (t["exit_raw_open"] - t["entry_raw_open"]) for t in execution["trades"]))
+            for key in ("commission_total", "slippage_total"):
+                assert row[key]["value"] == pytest.approx(weight * math.fsum(t[key] for t in execution["trades"]))
+        assert rows[2]["final_cash"]["value"] == cash_weight
+        assert all(rows[2][key]["value"] == 0 for key in ("cash_contribution", "market_pnl", "commission_total", "slippage_total"))
+        assert math.fsum(row["cash_contribution"]["value"] for row in rows) == pytest.approx(result[name]["summary"]["total_return"]["value"])
+        assert math.fsum(row["market_pnl"]["value"] - row["commission_total"]["value"] - row["slippage_total"]["value"] for row in rows) == pytest.approx(result[name]["summary"]["total_return"]["value"])
+    assert result["attribution"]["portfolio"][0]["commission_total"]["value"] > 0
+    av, bv = ([row["cash_close"] / row["cash_open"] - 1 for row in execution["daily"]] for execution in (a, b))
+    assert any(row["trade_count"] == 0 for row in a["daily"])
+    assert result["complementarity"]["correlation"]["value"] == pytest.approx(statistics.correlation(av, bv))
+    expected_loss_days = [row["trading_day"] for row, avalue, bvalue in zip(a["daily"], av, bv, strict=True) if avalue < -1e-12 and bvalue < -1e-12]
+    assert result["complementarity"]["joint_loss_days"] == expected_loss_days
+    assert result["complementarity"]["joint_loss_ratio"]["value"] == len(expected_loss_days) / 105
+    assert portfolio.analyze_intraday_portfolio(case.snapshot, case.snapshot, **options) == result
+    arguments = ["research-intraday-portfolio", "--left", str(case.path), "--right", str(case.path),
+                 "--left-cost-index", "1", "--left-candidate-index", "1", "--right-cost-index", "0", "--right-candidate-index", "0",
+                 "--weight-a", ".35", "--weight-b", ".45"]
+    assert cli.main(arguments) == 0 and json.loads(capsys.readouterr().out)["report"] == result
+    console = Path(sysconfig.get_path("scripts")) / ("market-vault.exe" if os.name == "nt" else "market-vault")
+    env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"), "PYTHONIOENCODING": "cp1252:strict"}
+    process = subprocess.run([str(console), "--settings", str(tmp_path / "absent.yaml"), *arguments], env=env, capture_output=True, check=False)
+    assert process.returncode == 0 and not process.stderr and process.stdout.isascii()
+    assert json.loads(process.stdout)["report"] == result
+    assert case.path.read_bytes() == before
+
+
+def test_portfolio_same_source_endpoints_all_cash_and_identity(return_uncertainty_case):
+    from market_vault.research.intraday_portfolio import analyze_intraday_portfolio
+    from test_intraday_experiment import _comparison_snapshot
+    snapshot = return_uncertainty_case.snapshot
+    original = snapshot.as_dict()["report"]["groups"][1]["results"][1]["execution"]
+    identities = []
+    for a, b in ((1, 0), (0, 1), (.5, .5), (0, 0)):
+        result = analyze_intraday_portfolio(snapshot, snapshot, left_cost_index=1, right_cost_index=1,
+            left_candidate_index=1, right_candidate_index=1, weight_a=a, weight_b=b)
+        assert result["availability"]["status"] == "AVAILABLE"
+        identities.append(result["portfolio_id"])
+        assert [row["equity"] for row in result["path"]] == ([1.] * len(original["ledger"]) if a == b == 0 else [row["equity"] for row in original["ledger"]])
+        assert [row["cash"] for row in result["path"]] == ([1.] * len(original["ledger"]) if a == b == 0 else [row["cash"] for row in original["ledger"]])
+    assert len(set(identities)) == 4
+    assert result["portfolio"]["summary"]["total_return"]["value"] == result["portfolio"]["summary"]["observed_max_drawdown"]["value"] == 0
+    assert result["portfolio"]["risk"]["sharpe_ratio"]["unavailable_reason"] == "ZERO_VOLATILITY"
+    assert all(row["cash_contribution"]["value"] == 0 for row in result["attribution"]["portfolio"])
+    # An additional unused recorded Feature changes provenance, not Q11's
+    # common raw prices, decision identities or evaluation folds.
+    root = snapshot.as_dict()
+    root["plan"]["comparison_plan"]["feature_fields"] = ["return_2", "sma_5"]
+    root["report"]["context"]["feature_fields"] = ["return_2", "sma_5"]
+    other = _comparison_snapshot(root)
+    feature_pair = analyze_intraday_portfolio(snapshot, other, left_cost_index=1, right_cost_index=1,
+        left_candidate_index=1, right_candidate_index=1)
+    assert feature_pair["availability"]["status"] == "AVAILABLE" and feature_pair["basis"]["matches"]
+    assert feature_pair["left"]["feature_fields"] != feature_pair["right"]["feature_fields"]
+
+
+@pytest.mark.parametrize("changes", [{"weight_a": True}, {"weight_b": float("nan")}, {"weight_a": float("inf")},
+    {"weight_a": -0.01}, {"weight_a": .6}, {"weight_b": "0.5"}, {"weight_a": 10 ** 1000},
+    {"left_cost_index": True}, {"right_candidate_index": -1}, {"right_cost_index": 1.0}])
+def test_portfolio_invalid_parameters_precede_decode_and_cli_file_load(return_uncertainty_case, monkeypatch, capsys, changes):
+    from market_vault.research import intraday_portfolio as portfolio
+    from market_vault.research.strategy_experiment import StrategyExperiment
+    from market_vault import intraday_portfolio_cli as console
+    monkeypatch.setattr(StrategyExperiment, "as_dict", lambda self: pytest.fail("invalid portfolio parameters decoded an experiment"))
+    monkeypatch.setattr(console, "load_strategy_experiment", lambda *a: pytest.fail("invalid portfolio parameters loaded a file"))
+    with pytest.raises(ValueError):
+        portfolio.analyze_intraday_portfolio(return_uncertainty_case.snapshot, return_uncertainty_case.snapshot, **changes)
+    arguments = {"left": "absent-left.json", "right": "absent-right.json", "left_cost_index": 0, "left_candidate_index": 0,
+                 "right_cost_index": 0, "right_candidate_index": 0, "weight_a": .5, "weight_b": .5, **changes}
+    assert console.research_intraday_portfolio_main(SimpleNamespace(**arguments)) == 1
+    assert '"status": "FAILED"' in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("side,account,case", [("LEFT", "STRATEGY", "cash"), ("LEFT", "BENCHMARK", "cash"),
+    ("RIGHT", "STRATEGY", "cash"), ("RIGHT", "BENCHMARK", "cash"), ("RIGHT", "STRATEGY", "ledger"),
+    ("RIGHT", "BENCHMARK", "overflow"), ("RIGHT", "STRATEGY", "raw_basis"), ("RIGHT", "BENCHMARK", "raw_basis"),
+    ("RIGHT", "STRATEGY", "decision_basis"), ("RIGHT", "STRATEGY", "fold_basis")])
+def test_portfolio_complete_basis_and_each_source_account_block_every_joint_result(return_uncertainty_case, side, account, case):
+    from datetime import datetime
+    from market_vault.research.intraday_portfolio import analyze_intraday_portfolio
+    from market_vault.research.strategy_experiment import StrategyExperiment
+    from test_intraday_experiment import signed, _comparison_snapshot
+    original = return_uncertainty_case.snapshot
+    root = original.as_dict()
+    group = root["report"]["groups"][1]
+    record = group["results"][1] if account == "STRATEGY" else group["benchmark"]
+    execution = record["execution"]
+    if case == "cash":
+        execution["trades"][0]["commission_total"] += .01
+    elif case == "ledger":
+        execution["ledger"][0]["cash"] += .01
+    elif case == "overflow":
+        execution["trades"][0]["quantity"] = execution["trades"][0]["exit_raw_open"] = 1e308
+    elif case == "raw_basis":
+        execution["ledger"][-2]["row_version_id"] = "f" * 64
+    elif case == "decision_basis":
+        for saved_group in root["report"]["groups"]:
+            candidate = saved_group["results"][1]
+            for row in (candidate["predictions"][0], candidate["execution"]["decisions"][0]):
+                row["slot"] -= 1
+                row["decision_time"] = (datetime.fromisoformat(row["decision_time"]) - timedelta(minutes=30)).isoformat()
+    else:
+        # Rule-only samples have no supervised training keys. Move a real
+        # validation key between folds while preserving the complete key order.
+        folds = root["report"]["context"]["folds"]
+        folds[1]["validation_keys"].insert(0, folds[0]["validation_keys"].pop())
+    changed = _comparison_snapshot(root) if case == "fold_basis" else StrategyExperiment(signed(root))
+    result = analyze_intraday_portfolio(changed if side == "LEFT" else original, changed if side == "RIGHT" else original,
+        left_cost_index=1, right_cost_index=1, left_candidate_index=1, right_candidate_index=1)
+    assert result["availability"]["status"] == "UNAVAILABLE"
+    assert result["path"] == result["daily_returns"] == []
+    assert result["complementarity"]["correlation"]["value"] is result["complementarity"]["joint_loss_count"]["value"] is None
+    assert all(row["minutes"]["value"] is row["ratio"]["value"] is None for row in result["complementarity"]["holding_overlap"].values())
+    for name in ("portfolio", "benchmark"):
+        assert result[name]["summary"]["final_cash"]["value"] is result[name]["summary"]["total_return"]["value"] is None
+        for row in result["attribution"][name]:
+            assert row["weight"]["value"] is not None
+            assert all(row[key]["value"] is None for key in ("final_cash", "cash_contribution", "market_pnl", "commission_total", "slippage_total"))
+    assert result["left"]["sample"]["sample_count"] == result["right"]["sample"]["sample_count"] == 105
+    if case.endswith("basis"):
+        expected = {"raw_basis": "raw_prices", "decision_basis": "decision_identity", "fold_basis": "development_folds"}[case]
+        assert expected in result["basis"]["failed_checks"]
+        assert result["availability"]["unavailable_reason"] == "BASIS_MISMATCH"
+        assert result["sample"]["evaluated_days"] == [] and result["sample"]["sample_count"] is result["sample"]["total_session_minutes"] is None
+    else:
+        assert result["basis"]["matches"] and result["availability"]["unavailable_reason"] == "SOURCE_ACCOUNT_UNAVAILABLE"
+        failure = next(row for row in result["availability"]["account_checks"] if row["side"] == side and row["account"] == account)
+        expected = {"cash": "RECORDED_CASH_RECONCILIATION_FAILED", "ledger": "RECORDED_LEDGER_RECONCILIATION_FAILED", "overflow": "NUMERIC_OVERFLOW"}[case]
+        assert failure["unavailable_reason"] == expected
+
+
+def test_portfolio_historical_accounts_remain_unavailable_even_at_zero_weights(return_uncertainty_case):
+    from market_vault.research.intraday_portfolio import analyze_intraday_portfolio
+    from market_vault.research.strategy_experiment import StrategyExperiment
+    from test_intraday_experiment import signed
+    root = return_uncertainty_case.snapshot.as_dict()
+    root["algorithm_versions"]["execution"], root["algorithm_versions"]["cost"] = "historical-execution", "historical-cost"
+    for group in root["report"]["groups"]:
+        for record in (*group["results"], group["benchmark"]):
+            record["execution"]["version"] = "historical-execution"
+            record["execution"]["cost_version"] = "historical-cost"
+    snapshot = StrategyExperiment(signed(root))
+    result = analyze_intraday_portfolio(snapshot, snapshot, weight_a=0, weight_b=0)
+    assert result["basis"]["matches"] and result["availability"]["status"] == "UNAVAILABLE"
+    assert all(row["unavailable_reason"] == "UNSUPPORTED_EXECUTION_OR_COST_VERSION" for row in result["availability"]["account_checks"])
+    assert result["path"] == [] and result["attribution"]["portfolio"][2]["weight"]["value"] == 1
+
+
+def test_portfolio_ordinary_q10_children_keep_distinct_strategies_and_policies(execution_scenarios_case):
+    from market_vault.research.intraday_portfolio import analyze_intraday_portfolio
+    from market_vault.research.intraday_execution_scenarios import extract_intraday_execution_scenario
+    collection = execution_scenarios_case[2]
+    root = collection.as_dict()
+    children = [extract_intraday_execution_scenario(collection, expected_experiment_id=root["experiment_id"], scenario_index=index,
+                expected_child_experiment_id=row["experiment"]["experiment_id"]) for index, row in enumerate(root["report"]["scenarios"])]
+    before = [child.content for child in children]
+    result = analyze_intraday_portfolio(*children, left_candidate_index=1, right_candidate_index=2)
+    assert result["availability"]["status"] == "AVAILABLE" and result["basis"]["matches"]
+    assert result["left"]["strategy"]["kind"] != result["right"]["strategy"]["kind"]
+    assert result["left"]["execution_policy"] != result["right"]["execution_policy"]
+    assert result["left"]["benchmark_execution_policy"] != result["right"]["benchmark_execution_policy"]
+    assert result["left"]["benchmark_execution_id"] != result["right"]["benchmark_execution_id"]
+    assert [child.content for child in children] == before
+    with pytest.raises(ValueError, match="ordinary saved Q7 DEV"):
+        analyze_intraday_portfolio(collection, children[0])
+
+
+def test_portfolio_low_variance_correlation_does_not_block_cash_paths_or_different_window_refusal(research_case, return_uncertainty_case):
+    from market_vault.research.intraday_experiment import create_intraday_experiment
+    from market_vault.research.intraday_portfolio import analyze_intraday_portfolio
+    _, plan, report = research_case
+    short = create_intraday_experiment(plan=plan, report=report)
+    result = analyze_intraday_portfolio(short, short)
+    assert result["sample"]["sample_count"] == 10 and result["availability"]["status"] == "AVAILABLE"
+    assert result["complementarity"]["correlation"]["unavailable_reason"] == "ZERO_VOLATILITY"
+    assert result["complementarity"]["holding_overlap"]["neither"]["ratio"]["value"] == 1
+    assert all(point["equity"] == point["cash"] == 1 for point in result["path"])
+    assert result["portfolio"]["summary"]["total_return"]["value"] == 0
+    blocked = analyze_intraday_portfolio(short, return_uncertainty_case.snapshot)
+    assert blocked["left"]["sample"]["sample_count"] == 10 and blocked["right"]["sample"]["sample_count"] == 105
+    assert "evaluated_days" in blocked["basis"]["failed_checks"] and blocked["availability"]["unavailable_reason"] == "BASIS_MISMATCH"
+    assert blocked["path"] == blocked["daily_returns"] == blocked["sample"]["evaluated_days"] == []
