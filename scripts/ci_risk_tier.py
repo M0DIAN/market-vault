@@ -21,7 +21,8 @@ five conservative tiers:
                 RESEARCH_FAST_SCOPE_RULES allowlist (or the docs scope),
                 with at least one Research path. This runs the fixed
                 Research/Feature regression portfolio on Python 3.11
-                and 3.14, skips unrelated PyArrow/package heavy work,
+                and the compatibility contract on Python 3.14,
+                skips unrelated PyArrow/package heavy work,
                 and never mints FULL evidence.
 - full:         anything else, including empty diffs and any condition
                 that prevents reliable classification
@@ -488,7 +489,7 @@ def classify(
         tier, reason = TIER_CONTROL_PLANE, REASON_CONTROL_PLANE
     elif _is_research_fast_change(paths):
         # CI Acceleration V1: the exact Research/Feature subset is validated
-        # by a fixed targeted portfolio in ci.yml on Python 3.11 and 3.14.
+        # by the fixed portfolio on 3.11 and runtime compatibility on 3.14.
         # It never mints FULL evidence; main still receives final FULL CI.
         tier, reason = TIER_RESEARCH_FAST, REASON_RESEARCH_FAST
     elif impact.shared_changed:

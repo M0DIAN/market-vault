@@ -3348,7 +3348,7 @@ CI_OFFLINE_TESTS_GUARD = (
     "&& env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.11'"
 )
 # P1-1 (PR #75): the Python 3.14 compatibility surface activation. The
-# 3.14 leg runs exactly the audited 294-node surface sealed in PR #74
+# 3.14 leg preserves the audited 294-node surface sealed in PR #74
 # (docs/python314_compatibility_surface_redesign_canary.md): a fail-closed
 # validator re-derives the sealed resolved-node digest from a live pytest
 # collection, then the surface step loads the selector list into an
@@ -3363,8 +3363,20 @@ CI_PY314_VALIDATOR_RUN = "python scripts/ci_python314_surface.py --repo ."
 CI_PY314_MANIFEST_REL = "ci/python314_compatibility_surface.txt"
 CI_PY314_GUARD = (
     "if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' "
-    "&& env.CI_TIER != 'control_plane' && env.CI_TIER != 'research_fast' "
+    "&& env.CI_TIER != 'control_plane' "
     "&& env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.14'"
+)
+CI_PY314_RESEARCH_STEP = "Run Python 3.14 research compatibility"
+CI_PY314_RESEARCH_FILES = (
+    "tests/test_ml_dataset_adapter.py",
+    "tests/test_ts2_feature_boundaries.py",
+)
+CI_RESEARCH_FAST_GUARD = (
+    "if: env.CI_TIER == 'research_fast' && env.POST_MERGE_REUSE != 'true' "
+    "&& matrix.python-version == '3.11'"
+)
+CI_RESEARCH_MARKER_GUARD = (
+    "if: env.CI_TIER == 'research_fast' && matrix.python-version == '3.11'"
 )
 # Sealed PR #74 contract pins for the permanent manifest (the validator
 # re-derives them from the manifest itself; this check pins them
@@ -4160,12 +4172,13 @@ def _py314_manifest_static_failures(path: Path) -> list[str]:
 def check_ci_python314_surface(root: Path) -> list[str]:
     """P1-1 (PR #75): the Python 3.14 compatibility surface activation.
 
-    The formal FULL contract is now: blanket FULL product pytest on the
-    Python 3.11 matrix leg ONLY, plus the audited 294-node compatibility
-    surface on the Python 3.14 leg, validated fail-closed by
+    FULL runs complete Python 3.11 partitions. Python 3.14 runs the same
+    compatibility contract for FULL and research_fast: the audited
+    294-node base plus two complete research runtime-boundary files.
+    The base is validated fail-closed by
     scripts/ci_python314_surface.py against the permanent manifest
     ci/python314_compatibility_surface.txt (sealed PR #74). This check
-    pins: the 3.11 restriction on the blanket FULL step, the validator
+    pins: the 3.11 FULL aggregate, the validator
     step and its exact invocation, the surface step with its exact guard
     and the fail-closed Bash array execution (mapfile from the exact
     manifest path, hard selector-count check, PY314_SELECTOR_COUNT audit
@@ -4329,6 +4342,46 @@ def check_ci_python314_surface(root: Path) -> list[str]:
                 "execution step (surface runs only after fail-closed "
                 "validation)"
             )
+
+    # Research business regression stays on 3.11. Both FULL and
+    # research_fast use the same small 3.14 runtime compatibility supplement.
+    try:
+        research_region = _ci_step_region(test_block, CI_PY314_RESEARCH_STEP)
+    except ValueError as exc:
+        failures.append(f"CI test job {exc}")
+        research_region = None
+    if research_region is None:
+        failures.append("CI test job must keep the Python 3.14 research compatibility step")
+    else:
+        if not _guard_is_exact_line(research_region, CI_PY314_GUARD):
+            failures.append("CI Python 3.14 research compatibility must use the shared FULL/research_fast guard")
+        expected_commands = [
+            "set -euo pipefail",
+            "python -m pytest " + " ".join(CI_PY314_RESEARCH_FILES) + " -q --durations=20",
+            'echo "PY314_RESEARCH_COMPATIBILITY_OK"',
+        ]
+        body = research_region.split("run: |", 1)[-1]
+        commands = [
+            line.strip() for line in _ci_join_continuations(body).splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        ]
+        if commands != expected_commands:
+            failures.append("CI Python 3.14 research compatibility must run exactly the two complete boundary files and success marker")
+        if surface_region is not None and test_block.index(
+            f"- name: {CI_PY314_RESEARCH_STEP}\n"
+        ) < test_block.index(f"- name: {CI_PY314_SURFACE_STEP}\n"):
+            failures.append("CI Python 3.14 research compatibility must follow the validated base surface")
+    for name, guard in (
+        ("Run Research fast tests", CI_RESEARCH_FAST_GUARD),
+        ("Research fast tier marker", CI_RESEARCH_MARKER_GUARD),
+    ):
+        try:
+            region = _ci_step_region(test_block, name)
+        except ValueError as exc:
+            failures.append(f"CI test job {exc}")
+            region = None
+        if region is None or not _guard_is_exact_line(region, guard):
+            failures.append(f"CI {name} must keep the exact Python 3.11-only research_fast guard")
 
     # --- the workflow never reads the manifest via command substitution ---
     if re.findall(r"\$\(cat ", test_block):

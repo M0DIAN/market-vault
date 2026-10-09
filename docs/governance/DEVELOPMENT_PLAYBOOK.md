@@ -219,6 +219,7 @@ final-head CI 按 changed paths 分层（CI Risk-Tier Optimization Phase 1，
   执行既有六文件控制面回归。工作流 `ci.yml`、3.11 分片清单与执行器、
   3.14 兼容性契约不属于此快速范围。
 - **RESEARCH_FAST**：PR 中符合既有研究路径规则的变更，执行固定研究组合；
+  该业务组合在 Python 3.11 执行，Python 3.14 执行第 2.5 节的兼容性范围。
   main 的相同变更仍要求 FULL。
 - **FULL**：任何其他变更 —— 完整验证范围不减。unknown / unset tier
   一律按 FULL 处理（fail-safe）。
@@ -279,6 +280,29 @@ run/attempt 上成功。执行契约变更禁止沿用旧证据，main 会实际
 保留原双 Python `test` 矩阵意味着 3.14 在六片后运行。12–15 分钟是首轮
 FULL 的优化目标，须以真实 CI 验证，不能把六片宣称为固定六倍加速。
 PR 的后续推送取消旧 PR 运行；main 的每个自然 push 保留独立运行身份。
+
+### 2.5 Python 3.14 的兼容性范围
+
+Python 3.14 的 FULL 与 RESEARCH_FAST 路径使用同一兼容性定义：
+
+| 范围 | 执行方式 | 主要边界 |
+|---|---|---|
+| 原有兼容性基线 | 原 258 selectors，解析为 294 nodes，先验证 count 与 digest 再执行 | 解释器、导入/CLI、时间戳/时区、路径、pandas/PyArrow/DuckDB 读写与类型 |
+| `tests/test_ml_dataset_adapter.py` | 完整文件，当前 14 nodes | 研究数据投影、pandas float64/int64、列顺序及输出拷贝隔离 |
+| `tests/test_ts2_feature_boundaries.py` | 完整文件，当前 11 nodes | 静态注册实现、inspect 签名/源码、CRLF 规范化、fingerprint、冻结 dataclass |
+
+两个补充文件与原 sealed manifest 分开执行；原基线的 selector 数、294-node
+解析结果及两个 digest 保持原有身份。研究边界文件按完整文件执行，新加
+边界用例自动包含在内。成功 marker `PY314_RESEARCH_COMPATIBILITY_OK`
+仅在两个补充文件执行成功后输出。
+
+RESEARCH_FAST 的既有 21 文件业务组合及其成功 marker 限于 Python 3.11。
+main 的研究变更仍执行 Python 3.11 六片 FULL，3.14 使用上述同一兼容性
+范围。其他快速 tier 和受证复用遵循原有跳过策略。
+
+ML Adapter 的小型 fixture 包含实际 PIT、Observation、TS2、跨日 join 与
+pandas 投影；它替换了最终 verified artifact loader，因此这一补充验证的
+范围是运行时数据边界，完整磁盘产物与业务回归仍由 3.11 FULL 承担。
 
 ## 3. 何时不要求本地完整 pytest
 
