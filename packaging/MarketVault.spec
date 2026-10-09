@@ -95,6 +95,7 @@ QML_PAGES = [
         "IntradayResearchSettings.qml",
         "IntradayExecutionScenariosDialog.qml",
         "IntradayFinalPanel.qml",
+        "IntradaySavedComparisonPanel.qml",
         "RunsPage.qml",
         "StorageCleanupPage.qml",
         "TradingCalendarPage.qml",

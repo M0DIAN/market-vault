@@ -14,14 +14,434 @@ from market_vault.desktop.quant_research import QuantResearchController
 from market_vault.research import intraday_final_test as final
 from market_vault.research import intraday_research as research
 from market_vault.research.intraday_experiment import create_intraday_experiment
-from market_vault.research.strategy_experiment import write_strategy_experiment
+from market_vault.research.strategy_experiment import StrategyExperiment, canonical_json, write_strategy_experiment
 from test_desktop_quant_research import _runtime, qt_app  # noqa: F401
-from test_intraday_experiment import intraday_experiment  # noqa: F401
+from test_intraday_experiment import intraday_experiment, signed  # noqa: F401
 from test_intraday_final_test import final_case, selection_case  # noqa: F401
 from test_intraday_research import diagnostic_plan, research_case  # noqa: F401
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.fixture(scope="session")
+def saved_comparison_diagnostics(research_case):
+    _, plan, _ = research_case
+    diagnostic = diagnostic_plan(plan)
+    return create_intraday_experiment(plan=diagnostic, report=research.run_intraday_research(diagnostic))
+
+
+def _named_saved_experiment(snapshot, name):
+    from market_vault.research.intraday_data import digest
+    root = snapshot.as_dict()
+    root["name"] = name
+    root["experiment_id"] = digest({key: value for key, value in root.items() if key != "experiment_id"})
+    return StrategyExperiment(canonical_json(root))
+
+
+def _unavailable_saved_candidate(snapshot):
+    root = snapshot.as_dict()
+    root["report"]["groups"][0]["results"][1]["execution"]["trades"][0]["commission_total"] += .01
+    return StrategyExperiment(signed(root))
+
+
+def test_saved_comparison_captures_sources_and_indices_with_offline_failure_retention(qt_app,
+        saved_comparison_diagnostics, intraday_experiment, tmp_path, monkeypatch):
+    from market_vault.desktop.intraday_saved_comparison import metric_value
+    from market_vault.research import intraday_saved_comparison as comparison
+    a = _named_saved_experiment(saved_comparison_diagnostics, "Saved A")
+    b = _named_saved_experiment(saved_comparison_diagnostics, "Saved B")
+    a_path, b_path = tmp_path / "a.json", tmp_path / "b.json"
+    write_strategy_experiment(a, path=a_path)
+    write_strategy_experiment(b, path=b_path)
+    runtime, runner = _runtime(tmp_path, [])
+    owner = QuantResearchController(runtime)
+    controller = owner.intradaySavedComparisonController
+    monkeypatch.setattr(research, "load_intraday_dataset", lambda *a, **k: pytest.fail("comparison read Q5"))
+    monkeypatch.setattr(final, "load_intraday_dataset", lambda *a, **k: pytest.fail("comparison read TEST data"))
+    monkeypatch.setattr(research, "_fit", lambda *a, **k: pytest.fail("comparison fitted"))
+    assert not controller.canCompare and not controller.compare()
+    assert controller.openLeft(str(a_path))
+    runtime._poll()
+    assert controller.openRight(str(b_path))
+    runtime._poll()
+    assert controller.canCompare and controller.status == "SUCCESS", controller.error
+    assert controller.selectLeftCost(1) and controller.selectLeftCandidate(2)
+    assert controller.selectRightCost(0) and controller.selectRightCandidate(3)
+    pending = []
+    def deferred(name, operation):
+        future = Future()
+        pending.append((future, operation))
+        return future
+    with monkeypatch.context() as patch:
+        patch.setattr(runner, "submit", deferred)
+        assert controller.compare() and controller.busy
+        assert controller.selectLeftCost(0) and controller.selectLeftCandidate(0)
+        assert controller.selectRightCandidate(1)
+        detached = controller.leftSource
+        detached["candidate_names"][0] = "Changed draft copy"
+        assert "Changed draft copy" not in controller.leftSource["candidate_names"]
+        future, operation = pending.pop()
+        future.set_result(operation())
+        runtime._poll()
+    assert controller.status == "SUCCESS", controller.error
+    bound = controller.boundSources
+    assert [(row["cost_index"], row["candidate_index"]) for row in bound] == [(1, 2), (0, 3)]
+    assert [row["experiment_id"] for row in bound] == [a.experiment_id, b.experiment_id]
+    assert [row["name"] for row in bound] == ["Saved A", "Saved B"]
+    assert [row["path"] for row in bound] == [str(a_path), str(b_path)]
+    assert controller.leftSource["cost_index"] == 0 and controller.leftSource["candidate_index"] == 0
+    assert controller.comparisonNotice == "COMPARABLE_DEV" and controller._result["basis_matches"]
+    assert controller._result["evidence"] == "RECORDED_LEDGER_DERIVATION"
+    rows = {row[0]: row for row in controller._rows}
+    values = {row["metric"]: row for row in controller._result["strategy_metrics"]}
+    assert rows["mae"][2] == "RATIO" and rows["mae"][1].endswith("%")
+    assert float(rows["mae"][1][:-1]) == pytest.approx(values["mae"]["left"]["value"] * 100, rel=1e-5)
+    assert rows["mae"][1] != "0.00%" and float(rows["mae"][1][:-1]) > 0
+    assert rows["r2"][2] == "NUMBER" and "%" not in rows["r2"][1]
+    assert float(rows["r2"][1]) == pytest.approx(values["r2"]["left"]["value"], rel=1e-5)
+    assert rows["total_return"][6] == "PERCENTAGE_POINTS"
+    assert float(rows["total_return"][5]) == pytest.approx(values["total_return"]["delta"]["value"], rel=1e-5)
+    assert float(metric_value(1e-14, "RATIO")[:-1]) == 1e-12
+    assert metric_value(2.5, "NUMBER") == "2.5"
+    recorded = canonical_json(controller._result)
+    assert controller.selectView(2) and controller.configurationRows
+    assert any(row["key"] == "execution_policy.commission_bps" for row in controller.configurationRows)
+    assert controller.selectView(3)
+    basis = {row[0]: row for row in controller._rows}
+    assert " · " in basis["raw_prices"][1] and len(basis["raw_prices"][1]) < 32
+    assert len(controller._result["basis_checks"]) == 26
+    assert canonical_json(controller._result) == recorded
+    changed_path = tmp_path / "new-draft.json"
+    write_strategy_experiment(intraday_experiment, path=changed_path)
+    assert controller.openRight(str(changed_path))
+    runtime._poll()
+    assert controller.rightSource["experiment_id"] == intraday_experiment.experiment_id
+    assert controller.boundSources == bound and canonical_json(controller._result) == recorded
+    assert controller.openLeft(str(tmp_path / "missing.json"))
+    runtime._poll()
+    assert controller.status == "FAILED" and controller.boundSources == bound
+    assert canonical_json(controller._result) == recorded and controller.viewIndex == 3
+    with monkeypatch.context() as patch:
+        patch.setattr(comparison, "compare_saved_intraday_experiments", lambda *a, **k: (_ for _ in ()).throw(ValueError("comparison failed")))
+        assert controller.compare()
+        runtime._poll()
+    assert controller.status == "FAILED" and controller.boundSources == bound
+    assert canonical_json(controller._result) == recorded
+    assert a_path.read_bytes() == a.content and b_path.read_bytes() == b.content
+    assert runtime.backend_if_initialized is None and runtime.shutdown()
+
+
+def test_saved_comparison_keeps_individual_unavailable_values_and_test_descriptive(qt_app,
+        intraday_experiment, final_case, tmp_path, monkeypatch):
+    partial = _unavailable_saved_candidate(intraday_experiment)
+    a_path, b_path, test_path = tmp_path / "a.json", tmp_path / "partial.json", tmp_path / "test.json"
+    for snapshot, path in ((intraday_experiment, a_path), (partial, b_path), (final_case[1], test_path)):
+        write_strategy_experiment(snapshot, path=path)
+    runtime, _ = _runtime(tmp_path, [])
+    owner = QuantResearchController(runtime)
+    controller = owner.intradaySavedComparisonController
+    owner.intradayResearchController._proof = "REPLAY_MATCH"
+    owner.intradayFinalController._test_proof = "REPLAY_MATCH"
+    monkeypatch.setattr(research, "load_intraday_dataset", lambda *a, **k: pytest.fail("comparison read Q5"))
+    monkeypatch.setattr(final, "load_intraday_dataset", lambda *a, **k: pytest.fail("comparison read TEST data"))
+    monkeypatch.setattr(research, "_fit", lambda *a, **k: pytest.fail("comparison fitted"))
+    assert controller.openLeft(str(a_path))
+    runtime._poll()
+    assert controller.openRight(str(b_path))
+    runtime._poll()
+    assert controller.selectLeftCandidate(1) and controller.selectRightCandidate(1)
+    assert controller.compare()
+    runtime._poll()
+    assert controller.status == "SUCCESS", controller.error
+    assert controller._result["left"]["candidate_performance"]["status"] == "AVAILABLE"
+    assert controller._result["right"]["candidate_performance"]["status"] == "UNAVAILABLE"
+    assert controller._result["right"]["benchmark_performance"]["status"] == "AVAILABLE"
+    assert [(row["side"], row["part"]) for row in controller.performanceWarnings] == [("B", "candidate")]
+    rows = {row[0]: row for row in controller._rows}
+    assert rows["win_rate"][3] == "—" and rows["win_rate"][8] == "RECORDED_CASH_RECONCILIATION_FAILED"
+    assert rows["win_rate"][9] == "RIGHT_UNAVAILABLE"
+    assert rows["total_return"][3] != "—" and rows["total_return"][11] == "RECORDED"
+    assert controller.selectView(1)
+    assert {row[0]: row for row in controller._rows}["trade_count"][3] != "—"
+    assert controller.openRight(str(test_path))
+    runtime._poll()
+    assert controller.rightSource["is_test"] and not controller.selectRightCandidate(1)
+    assert controller.compare()
+    runtime._poll()
+    assert controller.status == "SUCCESS", controller.error
+    assert controller.comparisonNotice == "TEST_DESCRIPTIVE_ONLY"
+    assert controller.comparisonReasons[0] == "TEST_DESCRIPTIVE_ONLY"
+    for view in (0, 1):
+        assert controller.selectView(view)
+        assert all(row[5] == "—" and row[9] == "TEST_DESCRIPTIVE_ONLY" for row in controller._rows)
+    assert "REPLAY_MATCH" not in canonical_json(controller._result).decode()
+    assert owner.intradayResearchController._proof == owner.intradayFinalController._test_proof == "REPLAY_MATCH"
+    assert runtime.backend_if_initialized is None and runtime.shutdown()
+
+
+def test_actual_qml_saved_comparison_captured_identity_units_and_test_boundary(saved_comparison_diagnostics,
+        intraday_experiment, final_case, tmp_path):
+    paths = [tmp_path / name for name in ("a.json", "b.json", "ordinary.json", "partial.json", "test.json")]
+    snapshots = (_named_saved_experiment(saved_comparison_diagnostics, "Saved A"),
+        _named_saved_experiment(saved_comparison_diagnostics, "Saved B"), intraday_experiment,
+        _unavailable_saved_candidate(intraday_experiment), final_case[1])
+    for snapshot, path in zip(snapshots, paths, strict=True):
+        write_strategy_experiment(snapshot, path=path)
+    (tmp_path / "settings.yaml").write_text("storage:\n  root_dir: ./data\n")
+    script = r'''
+import hashlib, json, sys, time
+from pathlib import Path
+from PySide6.QtCore import QObject, QUrl, Qt, QMetaObject
+from PySide6.QtGui import QGuiApplication
+from PySide6.QtQml import QQmlApplicationEngine
+from PySide6.QtQuickControls2 import QQuickStyle
+from PySide6.QtTest import QTest
+from market_vault.application import build_application_context
+from market_vault.desktop.bootstrap import create_qml_application_session
+from market_vault.desktop.preferences import DesktopPreferenceStore
+from market_vault.research import intraday_research, intraday_final_test
+from market_vault.research.strategy_experiment import canonical_json
+root, a_path, b_path, ordinary_path, partial_path, test_path = map(Path, sys.argv[1:])
+originals = {path: hashlib.sha256(path.read_bytes()).hexdigest() for path in (a_path, b_path, ordinary_path, partial_path, test_path)}
+def forbidden(*args, **kwargs): raise AssertionError('Saved comparison read Q5 or fitted a model')
+intraday_research.load_intraday_dataset = forbidden
+intraday_final_test.load_intraday_dataset = forbidden
+intraday_research._fit = forbidden
+QQuickStyle.setStyle('Basic')
+app = QGuiApplication([])
+engine = QQmlApplicationEngine()
+session = create_qml_application_session(build_application_context(root / 'settings.yaml'), engine,
+    preference_store=DesktopPreferenceStore(root=root / 'preferences'))
+engine.load(QUrl.fromLocalFile(str(Path.cwd() / 'src/market_vault/desktop/qml/Main.qml')))
+assert engine.rootObjects()
+window = engine.rootObjects()[0]
+window.setWidth(1024); window.setHeight(600)
+owner = session.context_properties['quantResearchController']
+controller = owner.intradaySavedComparisonController
+assert session.i18n.setLanguage('en')
+assert session.shell.selectPage('quant_research')
+def visual(parent):
+    pending = [parent]
+    while pending:
+        item = pending.pop()
+        yield item
+        pending.extend(item.childItems())
+def find(name):
+    item = window.findChild(QObject, name)
+    if item is None: item = next((item for item in visual(window.contentItem()) if item.objectName() == name), None)
+    assert item is not None, name
+    return item
+def reveal(item):
+    flick = find('intradaySavedComparisonScroll').property('contentItem')
+    rect = item.mapRectToItem(flick, item.boundingRect())
+    offset = rect.top() if rect.top() < 0 else max(0, rect.bottom() - flick.height())
+    limit = max(0, flick.property('contentHeight') - flick.height())
+    flick.setProperty('contentY', min(max(0, flick.property('contentY') + offset), limit))
+    QTest.qWait(30)
+    rect = item.mapRectToItem(flick, item.boundingRect())
+    assert rect.left() >= -1 and rect.right() <= flick.width() + 1, (item.objectName(), rect, flick.width())
+    assert rect.top() >= -1 and rect.bottom() <= flick.height() + 1, (item.objectName(), rect, flick.height())
+def click(name, inside=True):
+    item = find(name)
+    app.processEvents()
+    if inside: reveal(item)
+    assert item.property('visible') and item.property('enabled'), name
+    point = item.mapToScene(item.boundingRect().center()).toPoint()
+    assert 0 <= point.x() < window.width() and 0 <= point.y() < window.height(), (name, point)
+    QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier, point)
+    QTest.qWait(30)
+def choose(name, index):
+    item = find(name); reveal(item)
+    combo = next(item for item in visual(item) if 'PixelComboBox' in item.metaObject().className())
+    window.requestActivate(); QTest.qWait(20)
+    combo.forceActiveFocus()
+    QTest.keyClick(window, Qt.Key_Home)
+    for _ in range(index): QTest.keyClick(window, Qt.Key_Down)
+    QTest.qWait(30)
+    assert item.property('currentIndex') == index, (name, item.property('currentIndex'))
+def complete(status='SUCCESS'):
+    deadline = time.monotonic() + 90
+    while controller.busy and time.monotonic() < deadline:
+        app.processEvents(); time.sleep(.01)
+    app.processEvents()
+    assert not controller.busy and controller.status == status, (controller.status, controller.error)
+def open_file(side, path, status='SUCCESS'):
+    click('intradaySaved' + side + 'Open')
+    dialog = find('intradaySavedOpen' + side + 'Dialog')
+    assert dialog.setProperty('selectedFile', QUrl.fromLocalFile(str(path)))
+    assert QMetaObject.invokeMethod(dialog, 'accepted', Qt.DirectConnection)
+    QMetaObject.invokeMethod(dialog, 'close', Qt.DirectConnection)
+    complete(status)
+def visible_label(parent, caption):
+    for label in visual(parent):
+        if label.property('text') != caption or not label.property('visible') or label.property('truncated'): continue
+        rect = label.mapRectToItem(parent, label.boundingRect())
+        if rect.left() >= 0 and rect.right() <= parent.width() and rect.top() >= 0 and rect.bottom() <= parent.height(): return label
+    raise AssertionError(('visible complete label', caption))
+def check_source_selection(side):
+    source = controller.leftSource if side == 'Left' else controller.rightSource
+    for suffix, index_key, names_key in (('Cost', 'cost_index', 'cost_names'), ('Candidate', 'candidate_index', 'candidate_names')):
+        selector = find('intradaySaved' + side + suffix); reveal(selector)
+        combo = next(item for item in visual(selector) if 'PixelComboBox' in item.metaObject().className())
+        expected = source[names_key][source[index_key]]
+        assert selector.property('currentIndex') == combo.property('currentIndex') == source[index_key], (side, suffix, source)
+        assert selector.property('currentText') == combo.property('currentText') == combo.property('displayText') == expected
+        visible_label(combo, expected)
+    return {key: source[key] for key in ('cost_index', 'candidate_index', 'experiment_id', 'candidate_id')}
+def check_view_selection(index):
+    selector = find('intradaySavedComparisonView'); reveal(selector)
+    combo = next(item for item in visual(selector) if 'PixelComboBox' in item.metaObject().className())
+    key = ('quant.saved_strategy_metrics', 'quant.saved_benchmark_metrics', 'quant.saved_config_differences', 'quant.saved_basis_checks')[index]
+    expected = session.i18n.catalog[key]
+    assert controller.viewIndex == selector.property('currentIndex') == combo.property('currentIndex') == index
+    assert selector.property('currentText') == combo.property('currentText') == combo.property('displayText') == expected
+    visible_label(combo, expected)
+def compare_visible_selections():
+    expected = [check_source_selection(side) for side in ('Left', 'Right')]
+    click('intradaySavedCompareButton'); complete()
+    for captured, selected in zip(controller.boundSources, expected, strict=True):
+        assert all(captured[key] == value for key, value in selected.items()), (captured, selected)
+    return expected
+click('quantIntradayTab', False)
+click('intradaySavedComparisonTab', False)
+assert not find('intradaySavedCompareButton').property('enabled')
+open_file('Left', a_path)
+open_file('Right', b_path)
+choose('intradaySavedLeftCost', 1)
+choose('intradaySavedLeftCandidate', 2)
+choose('intradaySavedRightCost', 0)
+choose('intradaySavedRightCandidate', 3)
+click('intradaySavedCompareButton'); complete()
+bound, recorded = controller.boundSources, canonical_json(controller._result)
+assert [(row['cost_index'], row['candidate_index']) for row in bound] == [(1, 2), (0, 3)]
+assert [row['name'] for row in bound] == ['Saved A', 'Saved B']
+assert controller.comparisonNotice == 'COMPARABLE_DEV' and controller._result['delta_allowed']
+for side, path in (('A', a_path), ('B', b_path)):
+    identity = find('intradaySavedBound' + side + 'Identity')
+    reveal(identity)
+    assert str(path) in identity.property('text') and not identity.property('truncated')
+    assert bound[0 if side == 'A' else 1]['experiment_id'] in identity.property('text')
+assert window.grabWindow().save(str(root / 'saved-ab-sources.png'))
+for language in ('en', 'zh-CN'):
+    assert session.i18n.setLanguage(language)
+    choose('intradaySavedComparisonView', 0)
+    assert controller.leftSource['cost_index'] == 1 and controller.leftSource['candidate_index'] == 2
+    assert controller.rightSource['candidate_index'] == 3 and controller.boundSources == bound
+    table, header = find('intradaySavedComparisonTable'), find('intradaySavedComparisonTableHeader')
+    flick = find('intradaySavedComparisonScroll').property('contentItem')
+    flick.setProperty('contentY', max(0, flick.property('contentHeight') - flick.height()))
+    QTest.qWait(60)
+    assert table.height() >= 220
+    viewport = next(item for item in visual(table) if item.metaObject().className().startswith('QQuickTableView'))
+    assert viewport.height() >= 120
+    viewport.setProperty('contentY', max(0, viewport.property('contentHeight') - viewport.height()))
+    viewport.setProperty('contentX', 0)
+    QTest.qWait(80)
+    rows = {row[0]: row for row in controller._rows}
+    assert rows['mae'][1].endswith('%') and rows['mae'][1] != '0.00%' and float(rows['mae'][1][:-1]) > 0
+    visible_label(viewport, rows['mae'][1])
+    visible_label(viewport, rows['r2'][1])
+    visible_label(header, session.i18n.columnLabel('compare_left_unit'))
+    assert window.grabWindow().save(str(root / ('saved-ab-values-' + language + '.png')))
+    viewport.setProperty('contentX', min(5 * 145, max(0, viewport.property('contentWidth') - viewport.width())))
+    QTest.qWait(80)
+    visible_label(header, session.i18n.columnLabel('compare_delta_unit'))
+    visible_label(viewport, session.i18n.catalog['comparison.PERCENTAGE_POINTS'])
+    assert window.grabWindow().save(str(root / ('saved-ab-units-' + language + '.png')))
+    choose('intradaySavedComparisonView', 2)
+    assert find('intradaySavedConfigurationDifferences').property('visible')
+    assert not table.property('visible')
+    assert any(row['key'] == 'execution_policy.commission_bps' and row['left'] == '10.0' and row['right'] == '0.0'
+        for row in controller.configurationRows)
+    choose('intradaySavedComparisonView', 3)
+    assert controller.tableModel.totalRows == 26
+    basis = {row[0]: row for row in controller._rows}
+    assert ' · ' in basis['raw_prices'][1] and len(basis['raw_prices'][1]) < 32
+    assert canonical_json(controller._result) == recorded
+choose('intradaySavedLeftCost', 0)
+choose('intradaySavedLeftCandidate', 0)
+open_file('Right', test_path)
+assert controller.rightSource['is_test']
+assert not find('intradaySavedRightCost').property('enabled') and not find('intradaySavedRightCandidate').property('enabled')
+assert controller.boundSources == bound and canonical_json(controller._result) == recorded
+assert controller.comparisonNotice == 'COMPARABLE_DEV'
+assert 'Saved B' in find('intradaySavedBoundBSelection').property('text')
+invalid_path = root / 'invalid.json'
+invalid_path.write_text('not valid JSON', encoding='utf-8')
+open_file('Left', invalid_path, 'FAILED')
+assert controller.boundSources == bound and canonical_json(controller._result) == recorded
+click('intradaySavedCompareButton'); complete()
+assert controller.comparisonNotice == 'TEST_DESCRIPTIVE_ONLY'
+for view in (0, 1):
+    choose('intradaySavedComparisonView', view)
+    assert all(row[5] == '—' and row[9] == 'TEST_DESCRIPTIVE_ONLY' for row in controller._rows)
+assert controller.boundSources[1]['evaluation_mode'] == 'INTRADAY_TEST'
+reveal(find('intradaySavedComparisonNotice'))
+assert window.grabWindow().save(str(root / 'saved-ab-test-descriptive.png'))
+open_file('Left', ordinary_path)
+open_file('Right', partial_path)
+choose('intradaySavedLeftCandidate', 1)
+choose('intradaySavedRightCandidate', 1)
+click('intradaySavedCompareButton'); complete()
+choose('intradaySavedComparisonView', 0)
+assert [(row['side'], row['part']) for row in controller.performanceWarnings] == [('B', 'candidate')]
+warning = find('intradaySavedWarningBcandidate'); reveal(warning)
+assert warning.property('visible') and not warning.property('truncated')
+rows = {row[0]: row for row in controller._rows}
+assert rows['win_rate'][3] == '—' and rows['win_rate'][8] == 'RECORDED_CASH_RECONCILIATION_FAILED'
+assert rows['total_return'][3] != '—'
+assert controller._result['right']['benchmark_performance']['status'] == 'AVAILABLE'
+selector = find('intradaySavedComparisonView'); reveal(selector)
+combo = next(item for item in visual(selector) if 'PixelComboBox' in item.metaObject().className())
+expected = session.i18n.catalog['quant.saved_strategy_metrics']
+QTest.qWait(80); app.processEvents()
+assert controller.viewIndex == selector.property('currentIndex') == combo.property('currentIndex') == 0
+assert selector.property('currentText') == combo.property('currentText') == combo.property('displayText') == expected
+visible_label(combo, expected)
+print('SAVED_AB_FINAL_SELECTOR', json.dumps({'controller_index': controller.viewIndex,
+    'visible_index': selector.property('currentIndex'), 'text': combo.property('currentText')}, ensure_ascii=True))
+assert window.grabWindow().save(str(root / 'saved-ab-partial-unavailable.png'))
+for side, original, reopened, candidate in (('Left', a_path, b_path, 2), ('Right', b_path, a_path, 3)):
+    open_file(side, original)
+    choose('intradaySaved' + side + 'Cost', 1)
+    choose('intradaySaved' + side + 'Candidate', candidate)
+    before = check_source_selection(side)
+    assert (before['cost_index'], before['candidate_index']) == (1, candidate)
+    bound_before, result_before = controller.boundSources, canonical_json(controller._result)
+    open_file(side, reopened)
+    after = check_source_selection(side)
+    assert (after['cost_index'], after['candidate_index']) == (0, 0)
+    assert before['experiment_id'] != after['experiment_id']
+    assert controller.boundSources == bound_before and canonical_json(controller._result) == result_before
+    print('SAVED_AB_REOPEN_SELECTION', json.dumps({'side': side, 'before': before, 'after': after}, ensure_ascii=True))
+assert [(row['cost_index'], row['candidate_index']) for row in compare_visible_selections()] == [(0, 0), (0, 0)]
+for side, candidate in (('Left', 2), ('Right', 3)):
+    choose('intradaySaved' + side + 'Cost', 1)
+    choose('intradaySaved' + side + 'Candidate', candidate)
+for language in ('en', 'zh-CN'):
+    choose('intradaySavedComparisonView', 2)
+    assert session.i18n.setLanguage(language)
+    QTest.qWait(50)
+    for side in ('Left', 'Right'):
+        check_source_selection(side)
+    check_view_selection(2)
+    assert controller.selectView(3)
+    check_view_selection(3)
+    reveal(find('intradaySavedBoundASelection'))
+    assert window.grabWindow().save(str(root / ('saved-ab-binding-language-' + language + '.png')))
+assert [(row['cost_index'], row['candidate_index']) for row in compare_visible_selections()] == [(1, 2), (1, 3)]
+assert all(hashlib.sha256(path.read_bytes()).hexdigest() == digest for path, digest in originals.items())
+assert 'REPLAY_MATCH' not in canonical_json(controller._result).decode()
+assert session.runtime.backend_if_initialized is None and session.shutdown()
+print('REAL_SAVED_INTRADAY_COMPARISON_OK')
+'''
+    result = subprocess.run([sys.executable, "-c", script, str(tmp_path), *(str(path) for path in paths)],
+        cwd=ROOT, env={**os.environ, "QT_QPA_PLATFORM": "offscreen", "QT_QUICK_BACKEND": "software", "PYTHONPATH": str(ROOT / "src")},
+        capture_output=True, text=True, timeout=360)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "REAL_SAVED_INTRADAY_COMPARISON_OK" in result.stdout
+    assert "ReferenceError" not in result.stderr and "TypeError" not in result.stderr
 
 
 def test_actual_qml_execution_scenarios_export_freeze_and_small_window(research_case, tmp_path):
@@ -331,10 +751,8 @@ assert session.shutdown()
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_controller_freezes_nonfirst_candidate_in_second_cost(qt_app, research_case, tmp_path):
-    _, plan, _ = research_case
-    diagnostic = diagnostic_plan(plan)
-    snapshot = create_intraday_experiment(plan=diagnostic, report=research.run_intraday_research(diagnostic))
+def test_controller_freezes_nonfirst_candidate_in_second_cost(qt_app, saved_comparison_diagnostics, tmp_path):
+    snapshot = saved_comparison_diagnostics
     runtime, runner = _runtime(tmp_path, [])
     owner = QuantResearchController(runtime)
     development, controller = owner.intradayResearchController, owner.intradayFinalController

@@ -45,7 +45,8 @@ def test_production_spec_has_exact_qml_asset_inventory() -> None:
     assert "IntradayResearchSettings.qml" in expected_qml
     assert "IntradayExecutionScenariosDialog.qml" in expected_qml
     assert "IntradayFinalPanel.qml" in expected_qml
-    assert len(expected_qml) == 47
+    assert "IntradaySavedComparisonPanel.qml" in expected_qml
+    assert len(expected_qml) == 48
     for asset in (
         "qmldir",
         "fusion-pixel-12px-proportional-zh_hans.otf",
