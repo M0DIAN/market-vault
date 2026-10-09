@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from datetime import datetime, timezone
 from decimal import Decimal
 import hashlib
 import json
+import math
 
 from PySide6.QtCore import QObject, Property, Signal, Slot
 
@@ -34,6 +36,11 @@ def compact_value(value: object, *, present: bool = True) -> str:
     return text
 
 
+def utc_time(value: str) -> str:
+    """Keep the displayed time consistent with its UTC column heading."""
+    return datetime.fromisoformat(value).astimezone(timezone.utc).time().isoformat()
+
+
 class IntradaySavedComparisonController(PageController):
     changed = Signal()
 
@@ -42,6 +49,9 @@ class IntradaySavedComparisonController(PageController):
         self._sources = {"left": None, "right": None}
         self._result = {}
         self._bound_sources = []
+        self._portfolio_result = {}
+        self._portfolio_bound_sources = []
+        self._weight_a_text, self._weight_b_text = "0.5", "0.5"
         self._view_index, self._page = 0, 1
         self._columns, self._rows = (), ()
         self._model = QtTableModel(parent=self)
@@ -84,6 +94,105 @@ class IntradaySavedComparisonController(PageController):
     @Property("QVariantList", notify=changed)
     def boundSources(self):
         return deepcopy(self._bound_sources)
+
+    @Property(bool, notify=changed)
+    def portfolioView(self):
+        return self._view_index >= 4
+
+    @Property(bool, notify=changed)
+    def portfolioResultLoaded(self):
+        return bool(self._portfolio_result)
+
+    @Property(bool, notify=changed)
+    def displayedResultLoaded(self):
+        return self.portfolioResultLoaded if self.portfolioView else self.resultLoaded
+
+    @Property("QVariantList", notify=changed)
+    def displayedBoundSources(self):
+        return deepcopy(self._portfolio_bound_sources if self.portfolioView else self._bound_sources)
+
+    @Property(str, notify=changed)
+    def weightAText(self):
+        return self._weight_a_text
+
+    @Property(str, notify=changed)
+    def weightBText(self):
+        return self._weight_b_text
+
+    def _draft_weights(self):
+        try:
+            values = (float(self._weight_a_text), float(self._weight_b_text))
+        except ValueError as exc:
+            raise ValueError("Enter finite initial A and B weights from 0 to 1, with a total no greater than 1.") from exc
+        if any(not math.isfinite(value) or not 0 <= value <= 1 for value in values) or math.fsum(values) > 1:
+            raise ValueError("Enter finite initial A and B weights from 0 to 1, with a total no greater than 1.")
+        return values
+
+    @Property(str, notify=changed)
+    def draftCashWeight(self):
+        try:
+            a, b = self._draft_weights()
+        except ValueError:
+            return "—"
+        return metric_value(1 - math.fsum((a, b)), "RATIO")
+
+    @Property(str, notify=changed)
+    def portfolioInputReason(self):
+        if not self.canCompare:
+            return "OPEN_TWO_DEV"
+        if any(self._source_view(side)["is_test"] for side in ("left", "right")):
+            return "DEV_ONLY"
+        try:
+            self._draft_weights()
+        except ValueError:
+            return "INVALID_WEIGHTS"
+        return ""
+
+    @Property(bool, notify=changed)
+    def canAnalyzePortfolio(self):
+        return not self.portfolioInputReason
+
+    @Slot(str, result=bool)
+    def setWeightA(self, value):
+        if type(value) is not str:
+            return False
+        self._weight_a_text = value
+        self.changed.emit()
+        return True
+
+    @Slot(str, result=bool)
+    def setWeightB(self, value):
+        if type(value) is not str:
+            return False
+        self._weight_b_text = value
+        self.changed.emit()
+        return True
+
+    @Property("QVariantMap", notify=changed)
+    def portfolioContext(self):
+        return deepcopy({key: self._portfolio_result[key] for key in
+            ("portfolio_id", "allocation", "sample", "basis", "availability")} if self._portfolio_result else {})
+
+    @Property("QVariantList", notify=changed)
+    def portfolioWarnings(self):
+        availability = self._portfolio_result.get("availability", {})
+        return [{"side": "A" if row["side"] == "LEFT" else "B", "part": row["account"],
+                 "reason": row["unavailable_reason"] or "", "detail": row["detail"] or ""}
+                for row in availability.get("account_checks", []) if row["status"] != "AVAILABLE"]
+
+    @Property("QStringList", notify=changed)
+    def portfolioJointLossDays(self):
+        return list(self._portfolio_result.get("complementarity", {}).get("joint_loss_days", []))
+
+    @Property("QVariantList", notify=changed)
+    def portfolioPolicyRows(self):
+        rows = []
+        for source in self._portfolio_bound_sources:
+            for account, policy_key in (("STRATEGY", "execution_policy"), ("BENCHMARK", "benchmark_execution_policy")):
+                rows.append({"side": source["side"], "account": account,
+                    "fields": [{"key": "execution_policy." + key, "value": compact_value(value)}
+                               for key, value in source[policy_key].items()]})
+        return rows
 
     @Property(str, notify=changed)
     def comparisonNotice(self):
@@ -131,7 +240,9 @@ class IntradaySavedComparisonController(PageController):
 
     def _refresh_view(self):
         self._columns, self._rows = (), ()
-        if self._result:
+        if self.portfolioView:
+            self._refresh_portfolio_view()
+        elif self._result:
             if self._view_index < 2:
                 self._columns = ("metric", "compare_left", "compare_left_unit", "compare_right", "compare_right_unit",
                                  "compare_delta", "compare_delta_unit", "compare_left_reason", "compare_right_reason",
@@ -154,9 +265,43 @@ class IntradaySavedComparisonController(PageController):
         self._page = 1
         self._set_page()
 
+    def _refresh_portfolio_view(self):
+        report = self._portfolio_result
+        if not report:
+            return
+        def metric(row):
+            return metric_value(row["value"], row["unit"]), row["unit"], row["unavailable_reason"] or ""
+        if self._view_index == 4:
+            self._columns = ("metric", "value", "unit", "unavailable_reason")
+            values = report["complementarity"]
+            rows = [(key, *metric(values[key])) for key in ("correlation", "joint_loss_count", "joint_loss_ratio")]
+            rows.extend(("holding_" + key + "_" + measure, *metric(row[measure]))
+                        for key, row in values["holding_overlap"].items() for measure in ("minutes", "ratio"))
+            self._rows = tuple(rows)
+        elif self._view_index == 5:
+            self._columns = ("portfolio_account", "metric", "value", "unit", "unavailable_reason")
+            self._rows = tuple((account, key, *metric(report[account][section][key]))
+                for account in ("portfolio", "benchmark")
+                for section, keys in (("summary", ("initial_cash", "final_cash", "total_return", "observed_max_drawdown")),
+                    ("risk", ("return_count", "mean_daily_return", "annualized_volatility", "sharpe_ratio")))
+                for key in keys)
+        elif self._view_index == 6:
+            self._columns = ("portfolio_sequence", "trading_day", "slot", "portfolio_time", "phase", "equity", "cash",
+                             "drawdown", "portfolio_benchmark_equity", "portfolio_benchmark_cash", "portfolio_benchmark_drawdown")
+            self._rows = tuple((str(row["sequence"]), row["trading_day"], str(row["slot"]),
+                utc_time(row["timestamp"]), row["phase"],
+                *(metric_value(row[key], "RATIO" if "drawdown" in key else "NUMBER")
+                  for key in ("equity", "cash", "drawdown", "benchmark_equity", "benchmark_cash", "benchmark_drawdown")))
+                for row in report["path"])
+        else:
+            self._columns = ("portfolio_account", "portfolio_sleeve", "metric", "value", "unit", "unavailable_reason")
+            self._rows = tuple((account, row["sleeve"], key, *metric(row[key]))
+                for account in ("portfolio", "benchmark") for row in report["attribution"][account]
+                for key in ("weight", "final_cash", "cash_contribution", "market_pnl", "commission_total", "slippage_total"))
+
     @Slot(int, result=bool)
     def selectView(self, index):
-        if type(index) is not int or not 0 <= index < 4:
+        if type(index) is not int or not 0 <= index < 8:
             return False
         self._view_index = index
         self._refresh_view()
@@ -263,3 +408,30 @@ class IntradaySavedComparisonController(PageController):
             self._refresh_view()
             self.changed.emit()
         return self._submit("intraday_compare_saved", operation, apply, requires_backend=False)
+
+    @Slot(result=bool)
+    def analyzePortfolio(self):
+        try:
+            if not self.canCompare or any(self._source_view(side)["is_test"] for side in ("left", "right")):
+                raise ValueError("Open two ordinary saved DEV candidates before analyzing fixed initial capital sleeves.")
+            weight_a, weight_b = self._draft_weights()
+            captured = {side: {key: self._sources[side][key] for key in ("content", "path", "cost_index", "candidate_index")}
+                        for side in ("left", "right")}
+        except (TypeError, ValueError) as exc:
+            return self._reject_input(exc)
+        def operation(backend):
+            from ..research.strategy_experiment import StrategyExperiment
+            from ..research.intraday_portfolio import analyze_intraday_portfolio
+            return analyze_intraday_portfolio(StrategyExperiment(captured["left"]["content"]),
+                StrategyExperiment(captured["right"]["content"]), weight_a=weight_a, weight_b=weight_b,
+                **{side + "_" + key: source[key] for side, source in captured.items() for key in ("cost_index", "candidate_index")})
+        def apply(value):
+            # An explicit action owns this captured result, even if drafts changed while it ran.
+            self._portfolio_result = value
+            self._portfolio_bound_sources = [{"side": label, "path": captured[side]["path"], **deepcopy(value[side])}
+                for side, label in (("left", "A"), ("right", "B"))]
+            if not self.portfolioView:
+                self._view_index = 4
+            self._refresh_view()
+            self.changed.emit()
+        return self._submit("intraday_portfolio", operation, apply, requires_backend=False)

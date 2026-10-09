@@ -313,17 +313,27 @@ remain permissible when the complete recorded evaluation basis matches.
 Complementarity describes Pearson correlation of net daily returns, joint
 loss days and actual simultaneous holding minutes. Include cash days; never
 correlate cumulative equity or scores with different meanings. Fewer than two
-days or zero return variance makes correlation unavailable. Loss-day
-classification uses the existing 1e-12 sign tolerance without rounding input
-returns. Holding overlap uses each shared OPEN→CLOSE interval's real elapsed
-minutes and divides by all evaluated session minutes, preserving early closes.
+days or a sample standard deviation at or below the existing Q7 risk tolerance
+of `1e-15` makes correlation unavailable. This does not suppress an otherwise
+valid combined path or holding description. Loss-day classification instead
+uses Q12's `1e-12` sign tolerance: both original returns must be below `-1e-12`.
+Keep the actual dates and unrounded returns.
+
+Holding overlap uses each shared OPEN→CLOSE interval's real UTC elapsed
+minutes. Report both held, A only, B only and neither held; each ratio divides
+by all evaluated session minutes, preserving early closes. A positive recorded
+OPEN quantity means held for that interval, with no small-quantity cutoff.
+These describe the original strategies' overlap, independently of the chosen
+capital weights. Q17 has no bootstrap, 100-day gate or minimum-block rule.
 
 ### Fixed initial capital convention
 
 Start total capital at 1. Defaults are `weight_a = 0.5`, `weight_b = 0.5` and
-`cash_weight = 1 - weight_a - weight_b`. All weights are finite, nonnegative;
-the sum of A and B cannot exceed 1. Do not automatically normalize them.
-Allow 1/0, 0/1 and 0/0. Cash earns zero interest. Each sleeve retains its own
+`cash_weight = 1 - math.fsum((weight_a, weight_b))`. All weights are finite,
+nonnegative numbers, excluding booleans; the sum of A and B cannot exceed 1.
+Validate weights and explicit integer positions before decoding either input.
+Do not automatically normalize them. Allow 1/0, 0/1 and 0/0. Cash earns zero
+interest. Each sleeve retains its own
 profit, loss and idle cash; no capital is transferred between sleeves.
 
 At every common recorded OPEN/CLOSE position:
@@ -341,7 +351,9 @@ policies. Construct the comparison benchmark using the same initial weights
 and each sleeve's own policy-matched benchmark.
 
 Recompute total return, daily risk and observed drawdown from the combined
-path. Never average drawdowns or compound constant-weight daily returns.
+path. Daily risk retains Q7's 252-day annualization, zero risk-free rate,
+sample standard deviation (`ddof=1`) and `1e-15` zero-volatility tolerance.
+Never average drawdowns or compound constant-weight daily returns.
 Preserve distinct same-clock CLOSE/OPEN sequence positions. Sleeve cash
 contributions must sum to final combined cash minus 1. Initial capital shares
 stay fixed while the sleeves' proportions of current wealth drift.
@@ -364,6 +376,73 @@ the current idealized account, daily reallocation could also be derived from
 saved daily returns if its capital-transfer assumptions were explicitly
 adopted; it remains a different deferred model. True shared-capital/netted
 execution requires a separate order and cost contract.
+
+### API, console and recorded evidence
+
+```python
+from market_vault.research.intraday_portfolio import analyze_intraday_portfolio
+from market_vault.research.strategy_experiment import load_strategy_experiment
+
+result = analyze_intraday_portfolio(
+    load_strategy_experiment("/absolute/left.json"),
+    load_strategy_experiment("/absolute/right.json"),
+    left_cost_index=0,
+    left_candidate_index=0,
+    right_cost_index=0,
+    right_candidate_index=0,
+    weight_a=0.5,
+    weight_b=0.5,
+)
+```
+
+```console
+market-vault research-intraday-portfolio --left /absolute/left.json --right /absolute/right.json
+market-vault research-intraday-portfolio --left /absolute/left.json --right /absolute/right.json --left-cost-index 1 --left-candidate-index 1 --right-cost-index 0 --right-candidate-index 0 --weight-a 0.3 --weight-b 0.4
+```
+
+The second example leaves 30% of initial capital in cash. The source and
+position arguments select two saved records; they do not search or recommend
+weights. No settings, market connection, model fit or execution is needed.
+The console emits ASCII JSON, including for Unicode source names and error
+messages, with a separate derived report version and `portfolio_id`.
+
+The report separates the captured `allocation`, full-basis result and four
+account checks from the derived statistics. `left` and `right` retain their
+experiment, data, candidate and execution identities, Features, selections,
+original strategy and benchmark policies, and individual sample coverage.
+Common sample information is available only when the full basis matches.
+The `complementarity` section preserves joint-loss dates and all four holding
+categories. `portfolio` and `benchmark` contain independently recomputed
+summary and daily-risk metrics. `path` preserves every original event position;
+`daily_returns` records both combined cash accounts and the original A/B
+returns. `attribution` contains separate portfolio and benchmark A/B/CASH rows.
+
+Scalar metrics carry their value, unit and unavailable reason. Returns and
+allocation ratios remain raw ratios; cash and fees use units of initial total
+capital. A complete-basis mismatch or any failed source account makes all
+common derived results unavailable, with empty paths and explicit reasons.
+Known identities, each source's coverage and the requested weights remain
+visible. This admission rule also applies to zero-weight endpoints and the
+all-cash combination; it never hides an invalid selected source. A valid
+descriptive result with an unavailable correlation is still a successful
+analysis. Invalid arguments, files and unsupported artifact kinds fail before
+a combined result is produced.
+
+### Saved A/B desktop workflow
+
+In **Saved A/B**, open two ordinary DEV results and explicitly choose each
+cost/candidate. The weight drafts start at 0.5/0.5; the residual cash share is
+read-only. Run the explicit portfolio analysis to capture those sources,
+selections and weights. The result has four views: A/B complementarity,
+fixed-sleeve summary, ordered path and sleeve/fee attribution. Each view shows
+the sources and initial weights bound to that completed analysis.
+
+Later draft changes, failed opens and failed analyses preserve the previous
+successful result and its captured identities. An analysis already in progress
+keeps its captured inputs even if drafts change. View and language changes do
+not recalculate it. The existing Q11 comparison result is separate, including
+its descriptive TEST behavior. TEST inputs cannot initiate a new Q17 analysis;
+an earlier completed DEV portfolio remains viewable with its own identities.
 
 ## Method references
 
