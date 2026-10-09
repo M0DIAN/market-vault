@@ -8326,6 +8326,33 @@ def test_control_plane_check_fails_when_classify_branch_removed(tmp_path):
 
 
 # --- P1-1 Python 3.14 compatibility surface (PR #75) mutation tests --------
+
+
+@pytest.mark.parametrize("step,old,new,diagnostic", [
+    ("Run Python 3.14 research compatibility", "- name: Run Python 3.14 research compatibility",
+     "- name: Removed research compatibility", "must keep the Python 3.14 research compatibility step"),
+    ("Run Python 3.14 research compatibility", "&& matrix.python-version == '3.14'",
+     "&& env.CI_TIER != 'research_fast' && matrix.python-version == '3.14'", "must use the shared FULL/research_fast guard"),
+    ("Run Python 3.14 research compatibility", "tests/test_ml_dataset_adapter.py",
+     "tests/test_feature_research.py", "must run exactly the two complete boundary files"),
+    ("Run Python 3.14 research compatibility", "tests/test_ts2_feature_boundaries.py",
+     "", "must run exactly the two complete boundary files"),
+    ("Run Python 3.14 research compatibility", "-q --durations=20",
+     "tests/test_feature_research.py -q --durations=20", "must run exactly the two complete boundary files"),
+    ("Run Python 3.14 research compatibility", "-q --durations=20",
+     "-q --durations=20 || true", "must run exactly the two complete boundary files"),
+    ("Run Research fast tests", " && matrix.python-version == '3.11'",
+     "", "Run Research fast tests must keep the exact Python 3.11-only research_fast guard"),
+    ("Research fast tier marker", " && matrix.python-version == '3.11'",
+     "", "Research fast tier marker must keep the exact Python 3.11-only research_fast guard"),
+    ("Validate Python 3.14 compatibility surface", "&& matrix.python-version == '3.14'",
+     "&& env.CI_TIER != 'research_fast' && matrix.python-version == '3.14'", "validator step must keep the exact fail-closed 3.14 guard"),
+    ("Run Python 3.14 compatibility surface", "&& matrix.python-version == '3.14'",
+     "&& env.CI_TIER != 'research_fast' && matrix.python-version == '3.14'", "surface step must keep the exact fail-closed 3.14 guard"),
+])
+def test_py314_research_contract_rejects_scope_or_guard_regressions(tmp_path, step, old, new, diagnostic):
+    repo = _mutate_step_guard(tmp_path, step, old, new, job="test")
+    assert_check_fails(_check_release.check_ci_python314_surface, repo, diagnostic)
 #
 # Every mutation changes exactly ONE activation invariant and leaves every
 # other step byte-identical, proving check_ci_python314_surface is

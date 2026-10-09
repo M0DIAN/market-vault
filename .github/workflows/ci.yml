@@ -230,7 +230,7 @@ jobs:
         run: python scripts/ci_test_partitions.py verify
 
       - name: Validate Python 3.14 compatibility surface
-        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.CI_TIER != 'research_fast' && env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.14'
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.14'
         run: python scripts/ci_python314_surface.py --repo .
 
       # P1-1 (PR #75): execute exactly the validated surface, fail-closed.
@@ -242,7 +242,7 @@ jobs:
       # must have passed, otherwise this step never runs and the job
       # fails.
       - name: Run Python 3.14 compatibility surface
-        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.CI_TIER != 'research_fast' && env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.14'
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.14'
         run: |
           set -euo pipefail
 
@@ -260,13 +260,25 @@ jobs:
             "${PY314_SELECTORS[@]}" \
             -q --durations=200
 
-      # CI Acceleration V1: bounded Research/Feature portfolio.  It runs
-      # on both supported Python versions and is the complete PR validation
-      # contract for tier=research_fast.  The path classifier is narrower than
-      # this portfolio: integration tests deliberately cover adjacent Dataset
-      # and Cross-Day boundaries without making those source paths fast-eligible.
+      # FULL and research_fast share the same 3.14 compatibility contract:
+      # the sealed base above plus pandas projection and inspect/TS2 runtime
+      # boundaries. These complete files supplement the sealed 294-node base.
+      - name: Run Python 3.14 research compatibility
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.14'
+        run: |
+          set -euo pipefail
+          python -m pytest \
+            tests/test_ml_dataset_adapter.py \
+            tests/test_ts2_feature_boundaries.py \
+            -q --durations=20
+          echo "PY314_RESEARCH_COMPATIBILITY_OK"
+
+      # CI Acceleration V1: bounded Research/Feature portfolio on 3.11.
+      # Python 3.14 runs the compatibility contract above in research_fast.
+      # Integration tests also cover adjacent Dataset and Cross-Day boundaries;
+      # their source paths keep the existing tier classification.
       - name: Run Research fast tests
-        if: env.CI_TIER == 'research_fast' && env.POST_MERGE_REUSE != 'true'
+        if: env.CI_TIER == 'research_fast' && env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.11'
         run: |
           python -m pytest \
             tests/test_research_dataset_builder.py \
@@ -293,7 +305,7 @@ jobs:
             -q --durations=50
 
       - name: Research fast tier marker
-        if: env.CI_TIER == 'research_fast'
+        if: env.CI_TIER == 'research_fast' && matrix.python-version == '3.11'
         run: |
           echo "CI_TIER=research_fast"
           echo "RESEARCH_FAST_PORTFOLIO_PASSED"

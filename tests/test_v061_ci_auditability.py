@@ -133,7 +133,7 @@ PYARROW24_HEAVY_STEPS = (
 )
 
 # P1-1 (PR #75): the Python 3.14 compatibility surface activation. The
-# 3.14 leg of the test job runs exactly the audited 294-node surface
+# 3.14 leg preserves the audited 294-node base surface
 # sealed in PR #74: a fail-closed validator first, then the surface step
 # loads the selector list into an explicit Bash array from the permanent
 # manifest ci/python314_compatibility_surface.txt (mapfile, fail-closed
@@ -144,9 +144,10 @@ PY314_SURFACE_STEP = "Run Python 3.14 compatibility surface"
 PY314_MANIFEST = "ci/python314_compatibility_surface.txt"
 PY314_GUARD = (
     "if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' "
-    "&& env.CI_TIER != 'control_plane' && env.CI_TIER != 'research_fast' "
+    "&& env.CI_TIER != 'control_plane' "
     "&& env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.14'"
 )
+PY314_RESEARCH_STEP = "Run Python 3.14 research compatibility"
 PACKAGE_HEAVY_STEPS = (
     "Install build tooling",
     "Example renderer help smoke",
@@ -579,7 +580,7 @@ def test_ci_cancels_stale_pr_runs_and_preserves_each_main_run():
     assert "cancel-in-progress: true" in region
 
 
-def test_research_fast_runs_fixed_portfolio_on_both_matrix_legs():
+def test_research_fast_runs_unchanged_fixed_portfolio_on_python_311():
     block = _job_block(ci_text(), "test")
     names = _step_names(block)
     assert RESEARCH_FAST_STEP in names
@@ -587,22 +588,41 @@ def test_research_fast_runs_fixed_portfolio_on_both_matrix_legs():
     end = f"- name: {names[idx + 1]}" if idx + 1 < len(names) else None
     region = _region(block, f"- name: {RESEARCH_FAST_STEP}", end)
     assert "if: env.CI_TIER == 'research_fast'" in region
-    assert "matrix.python-version" not in region.split("run:", 1)[0]
-    for test_file in RESEARCH_FAST_SURFACE:
-        assert test_file in region
+    assert "matrix.python-version == '3.11'" in region.split("run:", 1)[0]
+    assert tuple(re.findall(r"tests/[A-Za-z0-9_/.]+\.py", region)) == RESEARCH_FAST_SURFACE
     assert "python -m pytest" in region
     assert "-q --durations=50" in region
 
 
-def test_research_fast_excludes_full_python_surfaces():
-    block = _job_block(ci_text(), "test")
+def test_research_fast_uses_314_compatibility_and_skips_311_full_aggregate():
+    regions = dict(_steps(ci_text()))
+    assert "env.CI_TIER != 'research_fast'" in regions["Run offline tests"]
     for step in (
-        "Run offline tests",
         "Validate Python 3.14 compatibility surface",
         "Run Python 3.14 compatibility surface",
+        PY314_RESEARCH_STEP,
     ):
-        region = next(region for name, region in _steps(ci_text()) if name == step)
-        assert "env.CI_TIER != 'research_fast'" in region
+        region = regions[step]
+        assert PY314_GUARD in region
+        assert "env.CI_TIER != 'research_fast'" not in region
+
+
+def test_python314_research_compatibility_is_two_complete_runtime_boundary_files():
+    region = dict(_steps(ci_text()))[PY314_RESEARCH_STEP]
+    assert re.findall(r"tests/[A-Za-z0-9_/.]+\.py", region) == [
+        "tests/test_ml_dataset_adapter.py", "tests/test_ts2_feature_boundaries.py",
+    ]
+    assert "set -euo pipefail" in region
+    assert "PY314_RESEARCH_COMPATIBILITY_OK" in region
+    assert "--durations=20" in region
+    pytest_args = region.split("python -m pytest", 1)[1]
+    assert "::" not in pytest_args and " -k " not in pytest_args and " -m " not in pytest_args
+
+
+def test_research_business_marker_only_claims_python311_portfolio():
+    region = dict(_steps(ci_text()))["Research fast tier marker"]
+    assert "if: env.CI_TIER == 'research_fast' && matrix.python-version == '3.11'" in region
+    assert "RESEARCH_FAST_PORTFOLIO_PASSED" in region
 
 
 def test_research_fast_skips_pyarrow_and_package_heavy_chains():
