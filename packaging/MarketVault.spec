@@ -93,6 +93,7 @@ QML_PAGES = [
         "IntradayBacktestPanel.qml",
         "IntradayComparisonPanel.qml",
         "IntradayResearchSettings.qml",
+        "IntradayExecutionScenariosDialog.qml",
         "IntradayFinalPanel.qml",
         "RunsPage.qml",
         "StorageCleanupPage.qml",

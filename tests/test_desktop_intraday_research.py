@@ -1,6 +1,9 @@
 """Real intraday research controller and visible QML development workflow."""
 
 import os
+from concurrent.futures import Future
+from copy import deepcopy
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -17,6 +20,151 @@ from test_intraday_experiment import intraday_experiment  # noqa: F401
 from test_intraday_research import research_case  # noqa: F401
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.fixture(scope="session")
+def desktop_execution_scenarios(research_case):
+    from market_vault.research.intraday_execution_scenarios import (
+        INTRADAY_EXECUTION_SCENARIOS_PLAN_VERSION, run_intraday_execution_scenarios,
+    )
+    _, comparison, _ = research_case
+    scenarios = [
+        {"name": "Baseline", "execution": {**comparison["execution"], "commission_bps": 10, "slippage_bps": 5}},
+        {"name": "Shorter", "execution": {"entry_delay_minutes": 30, "stop_new_minutes": 45,
+            "flatten_minutes": 10, "max_hold_bars": 6, "commission_bps": 20, "slippage_bps": 7}},
+    ]
+    return run_intraday_execution_scenarios({"plan_schema_version": INTRADAY_EXECUTION_SCENARIOS_PLAN_VERSION,
+        "comparison_plan": comparison, "execution_scenarios": scenarios})
+
+
+def test_scenarios_controller_offline_collection_export_and_replay(qt_app, desktop_execution_scenarios,
+                                                                tmp_path, monkeypatch):
+    from market_vault.strategy_comparison_io import canonical_json
+    snapshot = desktop_execution_scenarios
+    path = tmp_path / "all.json"
+    write_strategy_experiment(snapshot, path=path)
+    runtime, _ = _runtime(tmp_path, [])
+    owner = QuantResearchController(runtime)
+    controller, final = owner.intradayResearchController, owner.intradayFinalController
+    with monkeypatch.context() as patch:
+        patch.setattr(research, "load_intraday_dataset", lambda *a, **k: pytest.fail("offline action read Q5"))
+        patch.setattr(research, "_fit", lambda *a, **k: pytest.fail("offline action fitted"))
+        assert controller.openExperiment(str(path))
+        runtime._poll()
+        assert controller.status == "SUCCESS", controller.error
+        assert controller.scenariosLoaded and controller.scenarioNames == ["Baseline", "Shorter"]
+        assert controller.collectionPath == str(path) and controller.collectionProof == "RECORDED"
+        assert controller.experimentPath == "" and not final.canFreeze
+        assert controller.resultSummary["evaluation_count"] == "6" and controller.tableModel.totalRows == 6
+        assert controller._columns[2:8] == ("entry_delay_minutes", "stop_new_minutes", "flatten_minutes", "max_hold_bars",
+                                            "commission_bps", "slippage_bps")
+        assert [row[:2] for row in controller._rows] == [(scenario, name) for scenario in ("Baseline", "Shorter")
+                                                       for name in ("Flat", "Long", "Ridge")]
+        from market_vault.desktop.quant_research import _format_number
+        roots = snapshot.as_dict()["report"]["scenarios"]
+        baseline, changed = [root["experiment"]["report"]["groups"][0]["results"] for root in roots]
+        assert [row[10] for row in controller._rows[3:]] == [_format_number(100 * (
+            b["execution"]["metrics"]["total_return"] - a["execution"]["metrics"]["total_return"]))
+            for a, b in zip(baseline, changed, strict=True)]
+        assert controller.saveExperiment(str(tmp_path / "all-copy.json"))
+        runtime._poll()
+        assert (tmp_path / "all-copy.json").read_bytes() == path.read_bytes()
+        assert controller.experimentPath == "" and not final.canFreeze
+        assert controller.selectScenario(1) and controller.selectCandidate(2)
+        assert controller.selectView(7) and controller.tableModel.totalRows == 17
+        detached = controller.scenarioPlan
+        detached["execution_scenarios"][1]["execution"]["max_hold_bars"] = 999
+        assert controller.scenarioPlan["execution_scenarios"][1]["execution"]["max_hold_bars"] == 6
+        child_path = tmp_path / "selected.json"
+        assert controller.exportScenario(str(child_path))
+        runtime._poll()
+        assert controller.status == "SUCCESS", controller.error
+        child = roots[1]["experiment"]
+        assert child_path.read_bytes() == canonical_json(child) == controller._content
+        assert final.canFreeze and controller.selection_source()["candidate_index"] == 2
+        assert controller.selection_source()["experiment_id"] == child["experiment_id"]
+        assert controller.selectScenario(0) and not final.canFreeze and controller.candidateIndex == 2
+        assert controller.selectScenario(1) and final.canFreeze and controller.experimentPath == str(child_path)
+        assert controller.exportScenario(str(path))  # the collection cannot be overwritten by its child
+        runtime._poll()
+        assert controller.status == "FAILED" and controller._content == canonical_json(child)
+        assert controller.experimentPath == str(child_path) and path.read_bytes() == snapshot.content
+        assert final.freezeSelected()
+        runtime._poll()
+        assert final.status == "SUCCESS", final.error
+        assert final.frozenCandidate["strategy"]["name"] == "Ridge"
+        assert final.frozenCandidate["execution_policy"] == child["plan"]["execution"]
+    assert controller.selectView(5) and controller.changePage(1)
+    assert controller.replayExperiment("")
+    runtime._poll()
+    assert controller.status == "SUCCESS", controller.error
+    assert controller.collectionProof == controller.resultSummary["intraday_verification"] == "REPLAY_MATCH"
+    assert controller.scenarioIndex == 1 and controller.candidateIndex == 2 and controller.tableModel.page == 2
+    assert controller._collection_content == snapshot.content
+    assert controller.replayExperiment(str(tmp_path / "missing.json"))
+    runtime._poll()
+    assert controller.status == "FAILED" and controller.collectionProof == "REPLAY_FAILED"
+    assert controller._collection_content == snapshot.content and controller.tableModel.page == 2
+    assert controller.selectScenario(0) and controller.resultSummary["intraday_verification"] == "REPLAY_FAILED"
+    assert controller.openExperiment(str(path))
+    runtime._poll()
+    assert controller.collectionProof == "RECORDED" and not final.canFreeze
+    assert controller.selectScenario(1) and controller.experimentPath == ""
+    assert controller.openExperiment(str(child_path))
+    runtime._poll()
+    assert not controller.scenariosLoaded and final.canFreeze and controller.collectionPath == ""
+    assert runtime.backend_if_initialized is None and runtime.shutdown()
+
+
+def test_scenarios_capture_complete_explicit_policies_without_common_costs(qt_app, research_case,
+                                                                        desktop_execution_scenarios,
+                                                                        tmp_path, monkeypatch):
+    data, comparison, _ = research_case
+    runtime, runner = _runtime(tmp_path, [])
+    owner = QuantResearchController(runtime)
+    owner._apply_intraday(data)
+    controller = owner.intradayResearchController
+    values = {"comparison": {"data_id": data.data_id, "feature_fields": list(comparison["feature_fields"]),
+        "strategies": deepcopy(comparison["strategies"]), **comparison["split"], **comparison["walk_forward"],
+        **comparison["execution"], "commission_bps": "", "slippage_bps": ""},
+        "execution_scenarios": deepcopy(desktop_execution_scenarios.as_dict()["plan"]["execution_scenarios"])}
+    pending = []
+    def deferred(name, operation):
+        future = Future()
+        pending.append((future, operation))
+        return future
+    with monkeypatch.context() as patch:
+        patch.setattr(runner, "submit", deferred)
+        assert controller.runScenarios(values) and controller.busy
+        values["execution_scenarios"][1]["execution"]["max_hold_bars"] = 999
+        values["comparison"]["strategies"][0]["threshold"] = -1000
+        future, operation = pending.pop()
+        future.set_result(operation())
+        runtime._poll()
+        assert controller.status == "SUCCESS", controller.error
+        assert controller._collection_root["plan"]["comparison_plan"]["execution"]["commission_bps"] == 10
+        assert controller.scenarioPlan["execution_scenarios"][1]["execution"]["max_hold_bars"] == 6
+        assert controller.restoredPlan["strategies"][0]["threshold"] == 1000000
+        assert values["comparison"]["commission_bps"] == values["comparison"]["slippage_bps"] == ""
+        assert controller.selectScenario(1) and controller.selectCandidate(2)
+        exported_id = controller._root["experiment_id"]
+        assert controller.exportScenario(str(tmp_path / "captured.json"))
+        assert not controller.selectScenario(0)  # scenario identity cannot change during an action
+        assert controller.selectCandidate(0)  # exporting the complete child does not freeze a candidate
+        future, operation = pending.pop()
+        future.set_result(operation())
+        runtime._poll()
+        assert controller.status == "SUCCESS", controller.error
+        assert json.loads((tmp_path / "captured.json").read_bytes())["experiment_id"] == exported_id
+        assert controller.scenarioIndex == 1 and controller.experimentPath == str(tmp_path / "captured.json")
+    previous = controller._collection_content
+    incomplete = deepcopy(values)
+    del incomplete["execution_scenarios"][0]["execution"]["flatten_minutes"]
+    before = list(runner.names)
+    assert not controller.runScenarios(incomplete)
+    assert controller.status == "VALIDATION_ERROR" and runner.names == before
+    assert controller._collection_content == previous
+    assert runtime.backend_if_initialized is None and runtime.shutdown()
 
 
 def test_offline_controller_views_drafts_failure_and_replay_state(qt_app, intraday_experiment, tmp_path, monkeypatch):

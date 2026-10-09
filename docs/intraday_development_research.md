@@ -214,3 +214,7 @@ dates and keeps its final account separate from this development result.
 
 Use the [trade-performance and cash-attribution views](intraday_performance.md)
 to inspect a recorded candidate without fitting or replaying it.
+
+Use [finite execution scenarios](intraday_execution_scenarios.md) to compare
+explicit execution conditions on the same development context and export one
+ordinary Q7 child for the existing Freeze / TEST handoff.

@@ -24,6 +24,217 @@ from test_intraday_research import diagnostic_plan, research_case  # noqa: F401
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_actual_qml_execution_scenarios_export_freeze_and_small_window(research_case, tmp_path):
+    data, _, _ = research_case
+    (tmp_path / "settings.yaml").write_text("storage:\n  root_dir: ./data\n")
+    script = r'''
+import sys, time, json
+from pathlib import Path
+from PySide6.QtCore import QObject, QUrl, Qt, QEvent, QMetaObject
+from PySide6.QtGui import QGuiApplication, QKeyEvent
+from PySide6.QtQml import QQmlApplicationEngine
+from PySide6.QtQuickControls2 import QQuickStyle
+from PySide6.QtTest import QTest
+from market_vault.application import build_application_context
+from market_vault.desktop.bootstrap import create_qml_application_session
+from market_vault.desktop.preferences import DesktopPreferenceStore
+root, data_path = Path(sys.argv[1]), Path(sys.argv[2])
+QQuickStyle.setStyle('Basic')
+app = QGuiApplication([])
+engine = QQmlApplicationEngine()
+session = create_qml_application_session(build_application_context(root / 'settings.yaml'), engine,
+    preference_store=DesktopPreferenceStore(root=root / 'preferences'))
+engine.load(QUrl.fromLocalFile(str(Path.cwd() / 'src/market_vault/desktop/qml/Main.qml')))
+assert engine.rootObjects()
+window = engine.rootObjects()[0]
+window.setWidth(1024); window.setHeight(600)
+owner = session.context_properties['quantResearchController']
+development, final = owner.intradayResearchController, owner.intradayFinalController
+assert session.shell.selectPage('quant_research')
+def find(name):
+    obj = window.findChild(QObject, name)
+    if obj is None:
+        pending = [window.contentItem()]
+        while pending:
+            item = pending.pop()
+            if item.objectName() == name: obj = item; break
+            pending.extend(item.childItems())
+    assert obj is not None, name
+    return obj
+def reveal(item, scroll_name):
+    if scroll_name is None: return
+    flick = find(scroll_name).property('contentItem')
+    rect = item.mapRectToItem(flick, item.boundingRect())
+    dy = rect.top() if rect.top() < 0 else max(0, rect.bottom() - flick.height())
+    limit = max(0, flick.property('contentHeight') - flick.height())
+    flick.setProperty('contentY', min(max(0, flick.property('contentY') + dy), limit))
+    QTest.qWait(30)
+    rect = item.mapRectToItem(flick, item.boundingRect())
+    assert rect.left() >= -1 and rect.right() <= flick.width() + 1, (item.objectName(), rect, flick.width())
+    assert rect.top() >= -1 and rect.bottom() <= flick.height() + 1, (item.objectName(), rect, flick.height())
+def click(name, scroll_name=None):
+    item = find(name)
+    app.processEvents(); reveal(item, scroll_name)
+    assert item.property('visible') and item.property('enabled'), name
+    point = item.mapToScene(item.boundingRect().center()).toPoint()
+    assert 0 <= point.x() < window.width() and 0 <= point.y() < window.height(), (name, point)
+    QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier, point)
+    QTest.qWait(30)
+def nested(item, kind):
+    if kind in item.metaObject().className(): return item
+    return next(child for child in item.findChildren(QObject) if kind in child.metaObject().className())
+def fill(name, value, scroll_name=None):
+    item = find(name); reveal(item, scroll_name)
+    window.requestActivate(); QTest.qWait(20)
+    edit = nested(item, 'PixelTextField')
+    edit.forceActiveFocus()
+    QTest.keyClick(window, Qt.Key_A, Qt.ControlModifier)
+    QTest.keyClick(window, Qt.Key_Backspace)
+    for char in value:
+        QGuiApplication.sendEvent(window, QKeyEvent(QEvent.KeyPress, ord(char.upper()), Qt.NoModifier, char))
+    app.processEvents()
+    assert item.property('text') == value, (name, item.property('text'))
+def choose(name, index, scroll_name=None):
+    item = find(name); reveal(item, scroll_name)
+    combo = nested(item, 'PixelComboBox')
+    window.requestActivate(); QTest.qWait(20)
+    combo.forceActiveFocus()
+    QTest.keyClick(window, Qt.Key_Home)
+    for _ in range(index): QTest.keyClick(window, Qt.Key_Down)
+    QTest.qWait(30)
+    assert item.property('currentIndex') == index, (name, item.property('currentIndex'))
+def complete(target=development):
+    deadline = time.monotonic() + 150
+    while target.busy and time.monotonic() < deadline:
+        app.processEvents(); time.sleep(.01)
+    app.processEvents()
+    assert not target.busy and target.status == 'SUCCESS', (target.status, target.error)
+def file_selected(name, path):
+    dialog = find(name)
+    assert dialog.setProperty('selectedFile', QUrl.fromLocalFile(str(path)))
+    assert QMetaObject.invokeMethod(dialog, 'accepted', Qt.DirectConnection)
+    QMetaObject.invokeMethod(dialog, 'close', Qt.DirectConnection)
+    complete()
+panel_scroll = 'intradayResearchScroll'
+editor_scroll = 'intradayScenariosEditorScroll'
+click('quantIntradayTab')
+fill('intradayDataPath', str(data_path))
+click('intradayInspectButton'); complete(owner)
+click('intradayComparisonTab')
+click('intradayOpenScenariosButton', panel_scroll)
+assert find('intradayResearchCommission').property('text') == ''
+assert find('intradayResearchSlippage').property('text') == ''
+fill('intradayScenarioName', 'Baseline', editor_scroll)
+fill('intradayScenarioCommission', '10', editor_scroll)
+fill('intradayScenarioSlippage', '5', editor_scroll)
+click('intradayScenarioAdd', editor_scroll)
+fill('intradayScenarioName', 'Shorter', editor_scroll)
+for name, value in (('EntryDelay', '30'), ('StopNew', '45'), ('Flatten', '10'),
+                    ('MaxHold', '6'), ('Commission', '20'), ('Slippage', '7')):
+    fill('intradayScenario' + name, value, editor_scroll)
+assert '2 × 3 = 6' in find('intradayScenariosEvaluationCount').property('text')
+assert session.i18n.setLanguage('zh-CN'); assert session.i18n.setLanguage('en')
+assert find('intradayScenarioMaxHold').property('text') == '6'
+choose('intradayScenarioEditorChoice', 0, editor_scroll)
+assert find('intradayScenarioName').property('text') == 'Baseline'
+choose('intradayScenarioEditorChoice', 1, editor_scroll)
+assert find('intradayScenarioMaxHold').property('text') == '6'
+assert window.grabWindow().save(str(root / 'execution-scenarios-editor.png'))
+click('intradayScenariosRun'); complete()
+assert development.scenariosLoaded and development.scenarioNames == ['Baseline', 'Shorter']
+assert development.tableModel.totalRows == 6 and development.resultSummary['evaluation_count'] == '6'
+assert not final.canFreeze and development.experimentPath == ''
+assert find('intradayResearchCommission').property('text') == ''
+assert find('intradayResearchSlippage').property('text') == ''
+choose('intradayResearchScenario', 1, panel_scroll)
+choose('intradayResearchCandidate', 2, panel_scroll)
+assert development.scenarioIndex == 1 and development.candidateIndex == 2
+click('intradayResearchSettingsButton', panel_scroll)
+fill('intradayResearchMaxHold', '99', 'intradaySettingsScroll')
+click('intradayResearchSettingsDone', 'intradaySettingsScroll')
+all_path, child_path = root / 'all-scenarios.json', root / 'selected-scenario.json'
+click('intradayExperimentSaveButton', panel_scroll)
+file_selected('intradayExperimentSaveDialog', all_path)
+record = json.loads(all_path.read_bytes())
+assert record['evaluation_mode'] == 'INTRADAY_EXECUTION_SCENARIOS'
+assert len(record['report']['scenarios']) == 2
+assert not final.canFreeze and development.collectionPath == str(all_path)
+assert development.experimentPath == ''
+click('intradayExperimentReplayButton', panel_scroll); complete()
+assert development.collectionProof == 'REPLAY_MATCH'
+assert find('intradayResearchMaxHold').property('text') == '99'
+choose('intradayResearchView', 7, panel_scroll)
+assert development.tableModel.totalRows == 17
+click('intradayScenarioExportButton', panel_scroll)
+file_selected('intradayScenarioExportDialog', child_path)
+child = json.loads(child_path.read_bytes())
+assert child == record['report']['scenarios'][1]['experiment']
+assert child['plan']['execution']['max_hold_bars'] == 6
+assert final.canFreeze and development.experimentPath == str(child_path)
+choose('intradayResearchScenario', 0, panel_scroll)
+assert not final.canFreeze and development.experimentPath == ''
+choose('intradayResearchScenario', 1, panel_scroll)
+assert final.canFreeze and development.candidateIndex == 2
+click('intradayFinalTab')
+click('intradayFreezeButton', 'intradayFinalScroll'); complete(final)
+assert final.frozenCandidate['strategy']['name'] == 'Ridge'
+assert final.frozenCandidate['execution_policy'] == child['plan']['execution']
+click('intradayRunTestButton', 'intradayFinalScroll'); complete(final)
+assert final._test_root['report']['execution_policy'] == child['plan']['execution']
+assert len(final._test_root['report']['predictions']) == 444
+click('intradayComparisonTab')
+click('intradayExperimentOpenButton', panel_scroll)
+file_selected('intradayExperimentOpenDialog', all_path)
+assert development.collectionProof == 'RECORDED' and development.scenarioIndex == 0
+assert not final.canFreeze and find('intradayResearchMaxHold').property('text') == '12'
+choose('intradayResearchScenario', 1, panel_scroll)
+assert not final.canFreeze  # Open does not invent child export paths
+click('intradayOpenScenariosButton', panel_scroll)
+choose('intradayScenarioEditorChoice', 1, editor_scroll)
+assert find('intradayScenarioMaxHold').property('text') == '6'
+click('intradayScenariosKeep')
+choose('intradayResearchCandidate', 2, panel_scroll)
+for language in ('en', 'zh-CN'):
+    assert session.i18n.setLanguage(language)
+    choose('intradayResearchView', 0, panel_scroll)
+    table = find('intradayResearchTable')
+    flick = find(panel_scroll).property('contentItem')
+    flick.setProperty('contentY', max(0, flick.property('contentHeight') - flick.height()))
+    QTest.qWait(80)
+    assert table.height() >= 120
+    header = find('intradayResearchTableHeader')
+    viewport = next(item for item in table.findChildren(QObject)
+        if item.metaObject().className().startswith('QQuickTableView') and item.property('height') is not None)
+    assert viewport.height() >= 32
+    assert header.mapToScene(header.boundingRect().topLeft()).y() >= find(panel_scroll).mapToScene(find(panel_scroll).boundingRect().topLeft()).y()
+    assert window.grabWindow().save(str(root / ('execution-scenarios-' + language + '.png')))
+    viewport.setProperty('contentX', min(9 * 145, max(0, viewport.property('contentWidth') - viewport.width())))
+    QTest.qWait(80)
+    caption = session.i18n.columnLabel('scenario_return_change')
+    pending, labels = [header], []
+    while pending:
+        item = pending.pop()
+        if item.property('text') == caption: labels.append(item)
+        pending.extend(item.childItems())
+    assert any(label.property('visible') and not label.property('truncated')
+        and label.mapRectToItem(header, label.boundingRect()).left() >= 0
+        and label.mapRectToItem(header, label.boundingRect()).right() <= header.width() for label in labels), caption
+    assert window.grabWindow().save(str(root / ('execution-scenarios-units-' + language + '.png')))
+    choose('intradayResearchView', 7, panel_scroll)
+    assert development.tableModel.totalRows == 17 and table.height() >= 170
+assert development._collection_content == all_path.read_bytes()
+assert development.collectionProof == 'RECORDED'
+assert session.runtime.backend_if_initialized is None and session.shutdown()
+print('REAL_EXECUTION_SCENARIOS_FREEZE_WORKFLOW_OK')
+'''
+    result = subprocess.run([sys.executable, "-c", script, str(tmp_path), str(data.path)],
+        cwd=ROOT, env={**os.environ, "QT_QPA_PLATFORM": "offscreen", "QT_QUICK_BACKEND": "software", "PYTHONPATH": str(ROOT / "src")},
+        capture_output=True, text=True, timeout=360)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "REAL_EXECUTION_SCENARIOS_FREEZE_WORKFLOW_OK" in result.stdout
+    assert "ReferenceError" not in result.stderr and "TypeError" not in result.stderr
+
+
 def test_actual_qml_offline_performance_views_in_both_languages(intraday_experiment, final_case, tmp_path):
     source, test_path = tmp_path / "development.json", tmp_path / "test.json"
     write_strategy_experiment(intraday_experiment, path=source)

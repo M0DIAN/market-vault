@@ -948,6 +948,45 @@ ZH_CN.update({
     "performance.EOD": "日终强平", "performance.MAX_HOLD": "持仓期限", "performance.TARGET_FLAT": "空仓信号",
 })
 
+EN.update({
+    "quant.execution_scenarios": "Execution scenarios", "quant.execution_scenario": "Execution scenario",
+    "quant.scenarios_editor_help": "Compare the current strategies and day split using explicit execution policies. Enter costs for each scenario; new scenarios copy the selected policy for editing. All evaluations stay in development.",
+    "quant.scenario_name_prefix": "Scenario", "quant.scenario_name": "Scenario name",
+    "quant.scenario_add": "Add", "quant.scenario_remove": "Remove",
+    "quant.scenarios_evaluation_limit": "evaluations (maximum 64)", "quant.scenarios_run": "Run scenarios",
+    "quant.scenarios_save": "Save all scenarios", "quant.scenarios_replay": "Replay all scenarios",
+    "quant.scenario_export": "Export selected scenario",
+    "quant.scenario_exported": "This scenario is saved as a development experiment. Select its candidate in Freeze / TEST.",
+    "quant.scenario_export_required": "Export this scenario as a development experiment before freezing its candidate. Saving the collection retains all scenarios.",
+    "quant.scenarios_comparison_note": "All scenarios and strategies remain in input order. Return change compares the same strategy with the first scenario, in percentage points. Detail views and the chart show the selected scenario and candidate.",
+    "summary.intraday_scenarios": "Scenarios", "columns.scenario": "Scenario",
+    "columns.entry_delay_minutes": "Entry delay (min)", "columns.stop_new_minutes": "Stop entry (min before close)",
+    "columns.flatten_minutes": "Flatten (min before close)", "columns.max_hold_bars": "Maximum hold (bars)",
+    "columns.scenario_return_change": "Return change (pp)",
+    "operation.intraday_scenarios": "Evaluate intraday execution scenarios",
+    "operation.intraday_scenarios_save": "Save all intraday scenarios",
+    "operation.intraday_scenarios_replay": "Replay all intraday scenarios",
+    "operation.intraday_scenario_export": "Export selected intraday scenario",
+})
+ZH_CN.update({
+    "quant.execution_scenarios": "执行情景", "quant.execution_scenario": "执行情景",
+    "quant.scenarios_editor_help": "沿用当前策略和交易日切分，比较明确填写的执行政策。每个情景需填写成本；新增情景会复制所选政策供修改。全部评估只使用开发期。",
+    "quant.scenario_name_prefix": "情景", "quant.scenario_name": "情景名称",
+    "quant.scenario_add": "添加", "quant.scenario_remove": "移除",
+    "quant.scenarios_evaluation_limit": "次评估（最多 64）", "quant.scenarios_run": "运行情景",
+    "quant.scenarios_save": "保存全部情景", "quant.scenarios_replay": "重放全部情景",
+    "quant.scenario_export": "导出所选情景",
+    "quant.scenario_exported": "此情景已保存为开发实验，可前往“冻结 / TEST”选择并冻结其中的候选。",
+    "quant.scenario_export_required": "冻结候选前，请将此情景导出为开发实验。保存情景集合会保留全部情景。",
+    "quant.scenarios_comparison_note": "全部情景和策略保持输入顺序。收益变化以百分点表示，相对首个情景中的同一策略计算。明细和图表显示当前所选情景与候选。",
+    "summary.intraday_scenarios": "情景数", "columns.scenario": "情景",
+    "columns.entry_delay_minutes": "开盘后禁入（分钟）", "columns.stop_new_minutes": "收盘前停止入场（分钟）",
+    "columns.flatten_minutes": "收盘前清仓（分钟）", "columns.max_hold_bars": "最长持有（bar）",
+    "columns.scenario_return_change": "收益变化（百分点）",
+    "operation.intraday_scenarios": "评估日内执行情景", "operation.intraday_scenarios_save": "保存全部日内情景",
+    "operation.intraday_scenarios_replay": "重放全部日内情景", "operation.intraday_scenario_export": "导出所选日内情景",
+})
+
 TRANSLATIONS: Final[dict[str, dict[str, str]]] = {
     "en": EN,
     "zh-CN": ZH_CN,

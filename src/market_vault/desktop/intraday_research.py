@@ -55,6 +55,12 @@ class IntradayResearchController(PageController):
         self._root = {}
         self._path = ""
         self._proof = ""
+        self._collection_content = b""
+        self._collection_root = {}
+        self._collection_path = ""
+        self._collection_proof = ""
+        self._scenario_index = 0
+        self._scenario_paths = {}
         self._replay_pending = False
         self._restore_revision = 0
         self._candidate_index = 0
@@ -72,6 +78,8 @@ class IntradayResearchController(PageController):
         if self._replay_pending:
             self._replay_pending = False
             self._proof = "REPLAY_FAILED"
+            if self._collection_content:
+                self._collection_proof = "REPLAY_FAILED"
             self.changed.emit()
 
     def _source_changed(self):
@@ -124,6 +132,30 @@ class IntradayResearchController(PageController):
         plan = self._root.get("plan", {})
         return deepcopy(plan) if "comparison_plan" in plan else {}
 
+    @Property("QVariantMap", notify=changed)
+    def scenarioPlan(self):
+        return deepcopy(self._collection_root.get("plan", {}))
+
+    @Property(bool, notify=changed)
+    def scenariosLoaded(self):
+        return bool(self._collection_content)
+
+    @Property("QStringList", notify=changed)
+    def scenarioNames(self):
+        return [row["name"] for row in self._collection_root.get("report", {}).get("scenarios", [])]
+
+    @Property(int, notify=changed)
+    def scenarioIndex(self):
+        return self._scenario_index
+
+    @Property(str, notify=changed)
+    def collectionPath(self):
+        return self._collection_path
+
+    @Property(str, notify=changed)
+    def collectionProof(self):
+        return self._collection_proof
+
     @Property(int, notify=changed)
     def restoreRevision(self):
         return self._restore_revision
@@ -153,9 +185,13 @@ class IntradayResearchController(PageController):
         if not self._root:
             return {}
         context = self._root["report"]["context"]
-        return {"evaluation_count": str(self._root["report"]["evaluation_count"]),
+        report = self._collection_root["report"] if self._collection_content else self._root["report"]
+        result = {"evaluation_count": str(report["evaluation_count"]),
                 "intraday_eval_days": str(len(context["evaluated_days"])),
                 "intraday_ready": str(len(context["validation_keys"])), "intraday_verification": self._proof}
+        if self._collection_content:
+            result["intraday_scenarios"] = str(len(report["scenarios"]))
+        return result
 
     @Property(str, notify=changed)
     def resultDetails(self):
@@ -188,6 +224,28 @@ class IntradayResearchController(PageController):
                 "cost_index": cost, "candidate_index": index,
                 "candidate_id": root["report"]["groups"][cost]["results"][index]["candidate_id"]}
 
+    def _scenario_overview(self):
+        from .quant_research import _format_number, _format_percent
+        scenarios = self._collection_root["report"]["scenarios"]
+        baseline = scenarios[0]["experiment"]["report"]["groups"][0]["results"]
+        fields = ("entry_delay_minutes", "stop_new_minutes", "flatten_minutes", "max_hold_bars",
+                  "commission_bps", "slippage_bps")
+        self._columns = ("scenario", "strategy", *fields, "trade_count", "total_return", "scenario_return_change",
+                         "benchmark_return", "observed_max_drawdown", "annualized_volatility", "sharpe_ratio")
+        rows = []
+        for scenario in scenarios:
+            group = scenario["experiment"]["report"]["groups"][0]
+            for index, candidate in enumerate(group["results"]):
+                metrics, risk = candidate["execution"]["metrics"], candidate["risk"]
+                delta = metrics["total_return"] - baseline[index]["execution"]["metrics"]["total_return"]
+                rows.append((scenario["name"], candidate["strategy"]["name"],
+                    *(_format_number(group["execution_policy"][field]) for field in fields),
+                    str(metrics["trade_count"]), _format_percent(metrics["total_return"]), _format_number(delta * 100),
+                    _format_percent(group["benchmark"]["execution"]["metrics"]["total_return"]),
+                    _format_percent(metrics["observed_max_drawdown"]), _format_percent(risk["annualized_volatility"]),
+                    _format_number(risk["sharpe_ratio"])))
+        self._rows = tuple(rows)
+
     def _set_page(self):
         from ..console.models import TablePage
         start = (self._page - 1) * 100
@@ -200,7 +258,9 @@ class IntradayResearchController(PageController):
         report = self._root["report"]
         group, candidate = self._selected()
         execution = candidate["execution"]
-        if self._view_index == 0:
+        if self._view_index == 0 and self._collection_content:
+            self._scenario_overview()
+        elif self._view_index == 0:
             self._columns = ("strategy", "commission_bps", "slippage_bps", "trade_count", "total_return", "benchmark_return",
                              "observed_max_drawdown", "annualized_volatility", "sharpe_ratio", "cost_return_change", "mae", "rmse", "r2")
             self._rows = tuple((r["strategy"]["name"], _format_number(g["execution_policy"]["commission_bps"]),
@@ -247,6 +307,20 @@ class IntradayResearchController(PageController):
         return True
 
     @Slot(int, result=bool)
+    def selectScenario(self, index):
+        if self.busy or self._runtime.busy:
+            return False
+        scenarios = self._collection_root.get("report", {}).get("scenarios", [])
+        if type(index) is not int or not 0 <= index < len(scenarios):
+            return False
+        self._scenario_index = index
+        child = scenarios[index]["experiment"]
+        self._apply_child(child, path=self._scenario_paths.get(child["experiment_id"], ""),
+                          proof=self._collection_proof, candidate_index=self._candidate_index)
+        self.changed.emit()
+        return True
+
+    @Slot(int, result=bool)
     def selectView(self, index):
         if type(index) is not int or not 0 <= index <= 10:
             return False
@@ -281,17 +355,33 @@ class IntradayResearchController(PageController):
                 "execution": self._owner._intraday_execution_values(values)}
         return normalize_intraday_research_plan(plan)
 
-    def _apply(self, snapshot, *, path="", opened=False):
-        self._content = snapshot.content
-        self._root = snapshot.as_dict()
-        self._path, self._proof = path, "RECORDED" if opened else "COMPUTED"
+    def _apply_child(self, root, *, path="", proof="COMPUTED", candidate_index=0):
+        """Present an already validated ordinary Q7 child; its file path is separate."""
+        from ..strategy_comparison_io import canonical_json
+        self._content = canonical_json(root)
+        self._root = root
+        self._path, self._proof = path, proof
         self._positions = tuple((i, j) for i, g in enumerate(self._root["report"]["groups"]) for j in range(len(g["results"])))
         self._names = [f'{self._root["report"]["groups"][i]["results"][j]["strategy"]["name"]} | {self._root["report"]["groups"][i]["execution_policy"]["commission_bps"]}/{self._root["report"]["groups"][i]["execution_policy"]["slippage_bps"]} bps'
                        for i, j in self._positions]
-        self._candidate_index = 0
+        self._candidate_index = min(candidate_index, len(self._positions) - 1)
+        self._refresh_view()
+
+    def _apply(self, snapshot, *, path="", opened=False):
+        from ..research.intraday_execution_scenarios import INTRADAY_EXECUTION_SCENARIOS_VERSION
+        root = snapshot.as_dict()
+        proof = "RECORDED" if opened else "COMPUTED"
+        self._scenario_index, self._scenario_paths = 0, {}
+        if root["artifact_schema_version"] == INTRADAY_EXECUTION_SCENARIOS_VERSION:
+            self._collection_content, self._collection_root = snapshot.content, root
+            self._collection_path, self._collection_proof = path, proof
+            self._apply_child(root["report"]["scenarios"][0]["experiment"], proof=proof)
+        else:
+            self._collection_content, self._collection_root = b"", {}
+            self._collection_path, self._collection_proof = "", ""
+            self._apply_child(root, path=path, proof=proof)
         if opened:
             self._restore_revision += 1
-        self._refresh_view()
         self.changed.emit()
 
     def _run(self, plan):
@@ -329,6 +419,38 @@ class IntradayResearchController(PageController):
             return self._reject_input(exc)
         return self._run(plan)
 
+    @Slot("QVariantMap", result=bool)
+    def runScenarios(self, values):
+        try:
+            from ..research.intraday_backtest import EXECUTION_FIELDS
+            from ..research.intraday_execution_scenarios import (
+                INTRADAY_EXECUTION_SCENARIOS_PLAN_VERSION, normalize_intraday_execution_scenarios_plan,
+            )
+            scenarios = values["execution_scenarios"]
+            if type(scenarios) is not list or not scenarios:
+                raise ValueError("Enter at least one explicit execution scenario.")
+            normalized_scenarios = []
+            for scenario in scenarios:
+                if type(scenario) is not dict or set(scenario) != {"name", "execution"}:
+                    raise ValueError("Each scenario requires a name and its complete execution policy.")
+                if type(scenario["execution"]) is not dict or set(scenario["execution"]) != EXECUTION_FIELDS:
+                    raise ValueError("Each scenario requires all six execution fields.")
+                policy = self._owner._intraday_execution_values(scenario["execution"])
+                normalized_scenarios.append({"name": scenario["name"], "execution": policy})
+            # Scenario costs suffice even when the unused common form costs are blank.
+            # Build from detached inputs so this does not fill or restore live drafts.
+            comparison = self._plan({**values["comparison"], **normalized_scenarios[0]["execution"]})
+            plan = normalize_intraday_execution_scenarios_plan({
+                "plan_schema_version": INTRADAY_EXECUTION_SCENARIOS_PLAN_VERSION,
+                "comparison_plan": comparison, "execution_scenarios": normalized_scenarios,
+            })
+        except (TypeError, ValueError, KeyError) as exc:
+            return self._reject_input(exc)
+        def operation(backend):
+            from ..research.intraday_execution_scenarios import run_intraday_execution_scenarios
+            return run_intraday_execution_scenarios(plan, name="Intraday execution scenarios")
+        return self._submit("intraday_scenarios", operation, self._apply, requires_backend=False)
+
     @Slot(str, result=bool)
     def saveExperiment(self, raw_path):
         try:
@@ -336,16 +458,49 @@ class IntradayResearchController(PageController):
             path = _experiment_file_path(raw_path)
             if not self._content:
                 raise ValueError("Run or open an intraday experiment before saving.")
-            content = self._content
+            is_collection = bool(self._collection_content)
+            content = self._collection_content if is_collection else self._content
+            experiment_id = json.loads(content)["experiment_id"]
         except (OSError, TypeError, ValueError) as exc:
             return self._reject_input(exc)
         def operation(backend):
             from ..research.strategy_experiment import StrategyExperiment, write_strategy_experiment
             return write_strategy_experiment(StrategyExperiment(content), path=path)
         def apply(result):
-            self._path = str(result.path)
+            if is_collection:
+                if self._collection_root.get("experiment_id") == experiment_id:
+                    self._collection_path = str(result.path)
+            elif self._root.get("experiment_id") == experiment_id:
+                self._path = str(result.path)
             self.changed.emit()
-        return self._submit("intraday_experiment_save", operation, apply, requires_backend=False)
+        return self._submit("intraday_scenarios_save" if is_collection else "intraday_experiment_save",
+                            operation, apply, requires_backend=False)
+
+    @Slot(str, result=bool)
+    def exportScenario(self, raw_path):
+        try:
+            from .quant_research import _experiment_file_path
+            path = _experiment_file_path(raw_path)
+            if not self._collection_content:
+                raise ValueError("Run or open execution scenarios before exporting one scenario.")
+            content = self._collection_content
+            collection_id = self._collection_root["experiment_id"]
+            index, child_id = self._scenario_index, self._root["experiment_id"]
+        except (OSError, TypeError, ValueError, KeyError) as exc:
+            return self._reject_input(exc)
+        def operation(backend):
+            from ..research.intraday_execution_scenarios import extract_intraday_execution_scenario
+            from ..research.strategy_experiment import StrategyExperiment, write_strategy_experiment
+            child = extract_intraday_execution_scenario(StrategyExperiment(content),
+                expected_experiment_id=collection_id, scenario_index=index, expected_child_experiment_id=child_id)
+            return write_strategy_experiment(child, path=path)
+        def apply(result):
+            if self._collection_root.get("experiment_id") == collection_id:
+                self._scenario_paths[child_id] = str(result.path)
+                if self._scenario_index == index and self._root.get("experiment_id") == child_id:
+                    self._path = str(result.path)
+            self.changed.emit()
+        return self._submit("intraday_scenario_export", operation, apply, requires_backend=False)
 
     @Slot(str, result=bool)
     def openExperiment(self, raw_path):
@@ -357,9 +512,10 @@ class IntradayResearchController(PageController):
         def operation(backend):
             from ..research.strategy_experiment import load_strategy_experiment
             from ..research.intraday_experiment import INTRADAY_EXPERIMENT_VERSION
+            from ..research.intraday_execution_scenarios import INTRADAY_EXECUTION_SCENARIOS_VERSION
             snapshot = load_strategy_experiment(path)
-            if snapshot.as_dict()["artifact_schema_version"] != INTRADAY_EXPERIMENT_VERSION:
-                raise ValueError("Select an intraday development experiment.")
+            if snapshot.as_dict()["artifact_schema_version"] not in (INTRADAY_EXPERIMENT_VERSION, INTRADAY_EXECUTION_SCENARIOS_VERSION):
+                raise ValueError("Select an intraday development experiment or execution scenario collection.")
             return snapshot
         return self._submit("intraday_experiment_open", operation, lambda value: self._apply(value, path=str(path), opened=True), requires_backend=False)
 
@@ -374,18 +530,24 @@ class IntradayResearchController(PageController):
             data_file = _experiment_file_path(raw_path) if raw_path else None
         except (OSError, TypeError, ValueError) as exc:
             return self._reject_input(exc)
-        content = self._content
+        is_collection = bool(self._collection_content)
+        content = self._collection_content if is_collection else self._content
         def operation(backend):
             from ..research.strategy_experiment import StrategyExperiment, replay_strategy_experiment
             return replay_strategy_experiment(StrategyExperiment(content), intraday_data_file=data_file)
         def apply(result):
             self._replay_pending = False
             self._proof = "REPLAY_MATCH"
+            if is_collection:
+                self._collection_proof = "REPLAY_MATCH"
             self.changed.emit()
         self._replay_pending = True
         self._proof = "REPLAY_PENDING"
+        if is_collection:
+            self._collection_proof = "REPLAY_PENDING"
         self.changed.emit()
-        accepted = self._submit("intraday_experiment_replay", operation, apply, requires_backend=False)
+        accepted = self._submit("intraday_scenarios_replay" if is_collection else "intraday_experiment_replay",
+                                operation, apply, requires_backend=False)
         if not accepted:
             self._replay_failed()
         return accepted

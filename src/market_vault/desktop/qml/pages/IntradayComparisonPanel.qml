@@ -26,6 +26,7 @@ Item {
                 settings.applyPlan(plan, true)
             }
         }
+        scenario.currentIndex = root.controller.scenarioIndex
         candidate.currentIndex = root.controller.candidateIndex
         equity.requestPaint()
     }
@@ -33,6 +34,11 @@ Item {
     Connections { target: root.controller; function onChanged() { root.sync() } }
 
     IntradayResearchSettings { id: settings; i18n: root.i18n }
+    IntradayExecutionScenariosDialog {
+        id: scenarios
+        controller: root.controller
+        i18n: root.i18n
+    }
     StrategyDiagnosticsDialog {
         id: diagnostics
         objectName: "intradayDiagnosticsDialog"
@@ -52,11 +58,20 @@ Item {
     FileDialog {
         id: saveDialog
         objectName: "intradayExperimentSaveDialog"
-        title: root.i18n.catalog["quant.save_experiment"]
+        title: root.i18n.catalog[root.controller.scenariosLoaded ? "quant.scenarios_save" : "quant.save_experiment"]
         fileMode: FileDialog.SaveFile
         nameFilters: ["JSON files (*.json)"]
         defaultSuffix: "json"
         onAccepted: root.controller.saveExperiment(selectedFile.toString())
+    }
+    FileDialog {
+        id: exportDialog
+        objectName: "intradayScenarioExportDialog"
+        title: root.i18n.catalog["quant.scenario_export"]
+        fileMode: FileDialog.SaveFile
+        nameFilters: ["JSON files (*.json)"]
+        defaultSuffix: "json"
+        onAccepted: root.controller.exportScenario(selectedFile.toString())
     }
     FileDialog {
         id: relocateDialog
@@ -96,6 +111,12 @@ Item {
                     enabled: root.controller.dataLoaded
                     onClicked: diagnostics.prepare(settings.values(), root.controller.diagnosticPlan, root.controller.restoreRevision)
                 }
+                Components.PixelButton {
+                    objectName: "intradayOpenScenariosButton"
+                    text: root.i18n.catalog["quant.execution_scenarios"]
+                    enabled: root.controller.dataLoaded
+                    onClicked: scenarios.prepare(settings.values(), root.controller.scenarioPlan, root.controller.restoreRevision)
+                }
                 Item { Layout.fillWidth: true }
                 Components.PixelStatusBadge { status: root.controller.status; text: { root.i18n.language; return root.i18n.statusLabel(root.controller.status) } }
             }
@@ -111,8 +132,8 @@ Item {
                 Layout.fillWidth: true
                 enabled: !root.controller.busy && !operationRuntime.busy
                 Components.PixelButton { objectName: "intradayExperimentOpenButton"; text: root.i18n.catalog["quant.open_experiment"]; onClicked: openDialog.open() }
-                Components.PixelButton { objectName: "intradayExperimentSaveButton"; text: root.i18n.catalog["quant.save_experiment"]; enabled: root.controller.resultLoaded; onClicked: saveDialog.open() }
-                Components.PixelButton { objectName: "intradayExperimentReplayButton"; text: root.i18n.catalog["quant.replay_experiment"]; enabled: root.controller.resultLoaded; onClicked: root.controller.replayExperiment("") }
+                Components.PixelButton { objectName: "intradayExperimentSaveButton"; text: root.i18n.catalog[root.controller.scenariosLoaded ? "quant.scenarios_save" : "quant.save_experiment"]; enabled: root.controller.resultLoaded; onClicked: saveDialog.open() }
+                Components.PixelButton { objectName: "intradayExperimentReplayButton"; text: root.i18n.catalog[root.controller.scenariosLoaded ? "quant.scenarios_replay" : "quant.replay_experiment"]; enabled: root.controller.resultLoaded; onClicked: root.controller.replayExperiment("") }
                 Components.PixelButton { objectName: "intradayExperimentRelocateButton"; text: root.i18n.catalog["quant.replay_relocated"]; enabled: root.controller.resultLoaded; onClicked: relocateDialog.open() }
             }
             Label {
@@ -144,8 +165,39 @@ Item {
                 color: Theme.PixelTheme.inkMuted
                 font.pixelSize: Theme.PixelTheme.fontSm
                 ToolTip.visible: detailsHover.hovered
-                ToolTip.text: root.controller.resultDetails + "\n" + root.controller.experimentPath
+                ToolTip.text: root.controller.resultDetails + "\n" + (root.controller.scenariosLoaded ? root.controller.collectionPath : root.controller.experimentPath)
                 HoverHandler { id: detailsHover }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                visible: root.controller.scenariosLoaded
+                enabled: !root.controller.busy && !operationRuntime.busy
+                Components.LabeledComboBox {
+                    id: scenario
+                    objectName: "intradayResearchScenario"
+                    Layout.fillWidth: true
+                    Layout.maximumWidth: Infinity
+                    label: root.i18n.catalog["quant.execution_scenario"]
+                    model: root.controller.scenarioNames
+                    onSelected: root.controller.selectScenario(currentIndex)
+                }
+                Components.PixelButton {
+                    objectName: "intradayScenarioExportButton"
+                    text: root.i18n.catalog["quant.scenario_export"]
+                    onClicked: exportDialog.open()
+                }
+            }
+            Label {
+                objectName: "intradayScenarioExportStatus"
+                Layout.fillWidth: true
+                visible: root.controller.scenariosLoaded
+                text: root.i18n.catalog[root.controller.experimentPath ? "quant.scenario_exported" : "quant.scenario_export_required"]
+                wrapMode: Text.WordWrap
+                color: Theme.PixelTheme.inkMuted
+                font.pixelSize: Theme.PixelTheme.fontSm
+                ToolTip.visible: exportHover.hovered
+                ToolTip.text: root.controller.experimentPath
+                HoverHandler { id: exportHover }
             }
             RowLayout {
                 Layout.fillWidth: true
@@ -155,6 +207,7 @@ Item {
                     Layout.fillWidth: true
                     label: root.i18n.catalog["columns.strategy"]
                     model: root.controller.candidateNames
+                    enabled: !root.controller.busy && !operationRuntime.busy
                     onSelected: root.controller.selectCandidate(currentIndex)
                 }
                 Components.LabeledComboBox {
@@ -169,6 +222,14 @@ Item {
                     onSelected: { selectedView = currentIndex; root.controller.selectView(currentIndex) }
                     onModelChanged: currentIndex = selectedView
                 }
+            }
+            Label {
+                Layout.fillWidth: true
+                visible: root.controller.scenariosLoaded && view.selectedView === 0
+                text: root.i18n.catalog["quant.scenarios_comparison_note"]
+                wrapMode: Text.WordWrap
+                color: Theme.PixelTheme.inkMuted
+                font.pixelSize: Theme.PixelTheme.fontSm
             }
             ColumnLayout {
                 visible: root.controller.resultLoaded && view.selectedView === 0
