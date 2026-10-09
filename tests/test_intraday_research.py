@@ -503,6 +503,14 @@ def test_return_uncertainty_real_gap_keeps_cash_means(return_uncertainty_case):
     assert selection["source_sample"]["gap_days"] == result["sample"]["gap_days"]
     assert selection["path"] == selection["daily_returns"] == selection["sample"]["evaluated_days"] == []
     assert all(row["chosen_candidate_index"] is None for row in selection["folds"])
+    # Q19 is deterministic re-execution, so it retains these actual gaps but
+    # does not impose Q15's statistical continuity/minimum-history gate.
+    from market_vault.research.intraday_signal_delay import analyze_intraday_signal_delay
+    delayed = analyze_intraday_signal_delay(snapshot)
+    assert delayed["availability"]["status"] == "AVAILABLE"
+    assert delayed["sample"]["gap_days"] == result["sample"]["gap_days"]
+    for scenario in delayed["scenarios"]:
+        assert [row["trading_day"] for row in scenario["strategy"]["execution"]["daily"]] == report["context"]["evaluated_days"]
 
 
 @pytest.mark.parametrize("case", ["strategy_cash", "benchmark_cash", "basis"])
@@ -1359,3 +1367,296 @@ def test_sequential_selection_invalid_arguments_precede_decode_and_cli_file_io(r
     assert console.research_intraday_sequential_selection_main(args) == 1
     output = capsys.readouterr()
     assert not output.out and json.loads(output.err)["status"] == "FAILED"
+
+
+def _signal_delay_oracle_case(*, prices=(100, 100, 130, 120, 100, 100, 100),
+                              signals=((0, "LONG"), (2, "FLAT")), max_hold=20):
+    """Seven 30-minute bars are an explicit 210-minute early-close session."""
+    from datetime import datetime
+    from market_vault.backtest.intraday import IntradayExecutionPolicy, run_intraday_execution
+    from market_vault.research.intraday_data import digest
+    opened = datetime.fromisoformat("2025-11-28T14:30:00+00:00")
+    step, day = timedelta(minutes=30), "2025-11-28"
+    sessions = ({"trading_day": day, "open_time": opened.isoformat(),
+                 "close_time": (opened + len(prices) * step).isoformat(), "bar_count": len(prices)},)
+    bars = tuple({"trading_day": day, "slot": slot, "event_time": (opened + slot * step).isoformat(),
+                  "available_at": (opened + (slot + 1) * step).isoformat(), "open": price, "close": price,
+                  "row_version_id": digest({"day": day, "slot": slot, "price": price})}
+                 for slot, price in enumerate(prices))
+    decisions = tuple({"trading_day": day, "slot": slot, "decision_time": (opened + (slot + 1) * step).isoformat(),
+                       "observation_key": digest({"day": day, "slot": slot}), "target": target, "score": slot + .25}
+                      for slot, target in signals)
+    policy = IntradayExecutionPolicy(0, 0, entry_delay_minutes=0, stop_new_minutes=30,
+                                    flatten_minutes=30, max_hold_bars=max_hold)
+    original = run_intraday_execution(sessions=sessions, prices=bars, decisions=decisions, interval="30m", policy=policy)
+    return original, sessions, bars, policy
+
+
+def test_signal_delay_price_reversal_sparse_signals_and_delayed_flat_oracle():
+    from market_vault.backtest.intraday import run_intraday_execution
+    from market_vault.research.intraday_signal_delay import _delayed_decisions, _reconstructed_prices
+    original, sessions, bars, policy = _signal_delay_oracle_case()
+    assert original["metrics"]["total_return"] == pytest.approx(.2)
+    assert (original["trades"][0]["entry_slot"], original["trades"][0]["exit_slot"]) == (1, 3)
+    assert _reconstructed_prices(original) == bars
+    decisions, signals = _delayed_decisions(original, sessions, 1)
+    # Slot 1 had no original observation. Delay is on the planned grid, not
+    # the next saved observation, which is slot 2.
+    assert [row["slot"] for row in decisions] == [1, 3]
+    assert [row["target"] for row in decisions] == ["LONG", "FLAT"]
+    delayed = run_intraday_execution(sessions=sessions, prices=bars, decisions=decisions, interval="30m", policy=policy)
+    trade = delayed["trades"][0]
+    assert (trade["entry_slot"], trade["exit_slot"], trade["exit_reason"]) == (2, 4, "TARGET_FLAT")
+    assert trade["entry_raw_open"] == 130 and trade["exit_raw_open"] == 100
+    assert delayed["metrics"]["final_cash"] == pytest.approx(100 / 130)
+    assert delayed["metrics"]["total_return"] < 0
+    for source, mapping, decision in zip(original["decisions"], signals["provenance"], decisions, strict=True):
+        assert mapping["source_observation_key"] == source["observation_key"]
+        assert mapping["source_time"] == source["decision_time"]
+        assert mapping["source_score"] == source["score"]
+        assert mapping["source_target"] == decision["target"]
+        assert mapping["arrival_slot"] == mapping["source_slot"] + 1
+        assert mapping["status"] == "FORWARDED" and mapping["passed_to_kernel"]
+        assert mapping["derived_decision_key"] == decision["observation_key"] != source["observation_key"]
+    assert delayed["ledger"][3]["timestamp"] == delayed["ledger"][4]["timestamp"]
+    assert delayed["ledger"][3]["phase"] == "CLOSE" and delayed["ledger"][4]["phase"] == "OPEN"
+
+
+@pytest.mark.parametrize("signals,max_hold,expected_slot,expected_reason", [
+    (((0, "LONG"), (2, "FLAT")), 1, 3, "MAX_HOLD"),
+    (((0, "LONG"), (4, "FLAT")), 20, 6, "EOD"),
+])
+def test_signal_delay_risk_controls_precede_delayed_exit(signals, max_hold, expected_slot, expected_reason):
+    from market_vault.backtest.intraday import run_intraday_execution
+    from market_vault.research.intraday_signal_delay import _delayed_decisions
+    original, sessions, prices, policy = _signal_delay_oracle_case(signals=signals, max_hold=max_hold)
+    decisions, _ = _delayed_decisions(original, sessions, 1)
+    delayed = run_intraday_execution(sessions=sessions, prices=prices, decisions=decisions, interval="30m", policy=policy)
+    trade = delayed["trades"][0]
+    assert trade["entry_slot"] == 2
+    assert trade["exit_slot"] == expected_slot and trade["exit_reason"] == expected_reason
+    assert trade["exit_observation_key"] is None
+    assert delayed["windows"] == original["windows"]
+    assert delayed["ledger"][-1]["quantity"] == 0 and delayed["policy"] == original["policy"]
+
+
+def test_signal_delay_last_eligible_entry_benchmark_is_not_reselected():
+    from market_vault.backtest.intraday import run_intraday_execution
+    from market_vault.research.intraday_signal_delay import _delayed_decisions
+    original, sessions, prices, policy = _signal_delay_oracle_case(signals=((4, "LONG"),))
+    assert original["trades"][0]["entry_slot"] == 5
+    assert original["trades"][0]["exit_slot"] == 6
+    for delay in (1, 2):
+        decisions, signals = _delayed_decisions(original, sessions, delay)
+        result = run_intraday_execution(sessions=sessions, prices=prices, decisions=decisions, interval="30m", policy=policy)
+        assert signals["source_count"] == len(decisions) == 1
+        assert decisions[0]["slot"] == 4 + delay
+        assert result["trades"] == [] and result["metrics"]["final_cash"] == 1
+        if delay == 1:
+            assert signals["consumable_count"] == 1
+            assert result["ledger"][12]["reason"] == "OUTSIDE_ENTRY_WINDOW"
+        else:
+            assert signals["no_next_open_count"] == 1
+
+
+def test_signal_delay_session_tail_provenance_never_moves_to_next_day():
+    from datetime import datetime
+    from market_vault.backtest.intraday import run_intraday_execution
+    from market_vault.research.intraday_signal_delay import _delayed_decisions
+    original, sessions, prices, policy = _signal_delay_oracle_case(signals=((5, "LONG"), (6, "FLAT")))
+    next_open = datetime.fromisoformat("2025-12-01T14:30:00+00:00")
+    next_session = {"trading_day": "2025-12-01", "open_time": next_open.isoformat(),
+                    "close_time": (next_open + timedelta(minutes=390)).isoformat(), "bar_count": 13}
+    next_prices = tuple({"trading_day": "2025-12-01", "slot": slot,
+        "event_time": (next_open + timedelta(minutes=30 * slot)).isoformat(),
+        "available_at": (next_open + timedelta(minutes=30 * (slot + 1))).isoformat(),
+        "open": 100, "close": 100, "row_version_id": f"{slot:064x}"} for slot in range(13))
+    sessions, prices = (*sessions, next_session), (*prices, *next_prices)
+    zero, zero_signals = _delayed_decisions(original, sessions, 0)
+    assert list(zero) == original["decisions"]
+    assert zero_signals["no_next_open_count"] == 1 and zero_signals["outside_session_count"] == 0
+    for delay, forwarded, no_next, outside in ((1, 1, 1, 1), (2, 0, 0, 2)):
+        decisions, signals = _delayed_decisions(original, sessions, delay)
+        assert (signals["passed_to_kernel_count"], signals["no_next_open_count"], signals["outside_session_count"]) == (forwarded, no_next, outside)
+        assert len(signals["provenance"]) == 2
+        for row in signals["provenance"]:
+            assert row["source_trading_day"] == "2025-11-28"
+            assert row["arrival_slot"] == row["source_slot"] + delay
+            assert row["passed_to_kernel"] == (row["status"] == "NO_NEXT_OPEN")
+        result = run_intraday_execution(sessions=sessions, prices=prices, decisions=decisions, interval="30m", policy=policy)
+        assert result["trades"] == [] and len(result["daily"]) == 2
+        assert all(row["trade_count"] == 0 and row["return"] == 0 for row in result["daily"])
+        assert all(row["observation_key"] is None for row in result["ledger"])
+
+
+def test_signal_delay_real_saved_full_zero_equality_one_decode_and_installed_console(return_uncertainty_case, monkeypatch, capsys, tmp_path):
+    import json
+    import os
+    import subprocess
+    import sysconfig
+    from pathlib import Path
+    from market_vault import cli
+    from market_vault.research import intraday_signal_delay as delay
+    from market_vault.research.intraday_data import canonical_json, digest
+    from market_vault.research.strategy_experiment import StrategyExperiment
+    case = return_uncertainty_case
+    root = case.snapshot.as_dict()
+    group = root["report"]["groups"][1]
+    sources = {"strategy": group["results"][1]["execution"], "benchmark": group["benchmark"]["execution"]}
+    calls, decoded, checked, executed = {"decode": 0, "accounts": 0, "executions": 0}, StrategyExperiment.as_dict, delay._available, delay.run_intraday_execution
+    def decode(self):
+        calls["decode"] += 1
+        return decoded(self)
+    def account(*args, **kwargs):
+        calls["accounts"] += 1
+        return checked(*args, **kwargs)
+    def execution(*args, **kwargs):
+        calls["executions"] += 1
+        return executed(*args, **kwargs)
+    monkeypatch.setattr(StrategyExperiment, "as_dict", decode)
+    monkeypatch.setattr(delay, "_available", account)
+    monkeypatch.setattr(delay, "run_intraday_execution", execution)
+    for name in ("load_intraday_dataset", "_fit"):
+        monkeypatch.setattr(research, name, lambda *a, **kw: pytest.fail("signal delay accessed source or fit"))
+    monkeypatch.setattr(cli, "load_settings", lambda *a, **kw: pytest.fail("signal delay accessed settings"))
+    before = case.path.read_bytes()
+    result = delay.analyze_intraday_signal_delay(case.snapshot, cost_index=1, candidate_index=1)
+    assert calls == {"decode": 1, "accounts": 2, "executions": 6}
+    assert result["availability"]["status"] == result["baseline"]["status"] == "AVAILABLE"
+    assert result["evidence"] == "RECORDED_PRICE_GRID_REEXECUTION"
+    assert result["baseline"]["excluded_identity_fields"] == ["price_evidence_id", "execution_id"]
+    assert all(row["matches"] and row["differing_fields"] == [] for row in result["baseline"]["accounts"])
+    assert result["sample"]["sample_count"] == 105 and result["sample"]["prediction_count"] == 945
+    assert result["sample"]["split"] == root["report"]["context"]["split"]
+    assert result["candidate_id"] == group["results"][1]["candidate_id"]
+    for name, original in sources.items():
+        baseline = result["scenarios"][0][name]
+        strip = lambda value: {key: item for key, item in value.items() if key not in result["baseline"]["excluded_identity_fields"]}
+        assert canonical_json(strip(baseline["execution"])) == canonical_json(strip(original))
+        assert baseline["execution"]["execution_id"] != original["execution_id"]
+        assert baseline["execution"]["price_evidence_id"] == result["projection"]["reconstructed_price_evidence_id"]
+        assert baseline["execution"]["price_evidence_id"] != original["price_evidence_id"]
+        for scenario in result["scenarios"]:
+            side = scenario[name]
+            assert scenario["status"] == "AVAILABLE"
+            assert side["execution"]["policy"] == original["policy"]
+            assert len(side["execution"]["ledger"]) == len(original["ledger"]) == 2730
+            assert side["risk"]["execution_id"] == side["execution"]["execution_id"]
+            assert side["risk"]["return_count"] == 105
+            assert side["metrics"]["total_return"]["value"] == side["execution"]["metrics"]["total_return"]
+            change = side["delta_from_zero"]["total_return"]
+            assert change["unit"] == "PERCENTAGE_POINTS"
+            assert change["value"] == (side["metrics"]["total_return"]["value"] - baseline["metrics"]["total_return"]["value"]) * 100
+            assert [row["trading_day"] for row in side["execution"]["daily"]] == result["sample"]["evaluated_days"]
+            assert [row["source_observation_key"] for row in side["signals"]["provenance"]] == [row["observation_key"] for row in original["decisions"]]
+            assert side["signals"]["source_count"] == len(original["decisions"])
+    assert [row["strategy"]["signals"]["passed_to_kernel_count"] for row in result["scenarios"]] == [945, 840, 735]
+    assert [row["strategy"]["signals"]["outside_session_count"] for row in result["scenarios"]] == [0, 105, 210]
+    # This saved counterexample prevents claiming monotonic degradation.
+    assert result["scenarios"][1]["strategy"]["metrics"]["total_return"]["value"] > result["scenarios"][0]["strategy"]["metrics"]["total_return"]["value"]
+    assert result["signal_delay_id"] == digest({key: value for key, value in result.items() if key != "signal_delay_id"})
+    arguments = ["research-intraday-signal-delay", "--experiment", str(case.path), "--cost-index", "1", "--candidate-index", "1"]
+    assert cli.main(arguments) == 0 and json.loads(capsys.readouterr().out)["report"] == result
+    console = Path(sysconfig.get_path("scripts")) / ("market-vault.exe" if os.name == "nt" else "market-vault")
+    env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"), "PYTHONIOENCODING": "cp1252:strict"}
+    process = subprocess.run([str(console), "--settings", str(tmp_path / "missing.yaml"), *arguments], env=env, capture_output=True, check=False)
+    assert process.returncode == 0 and not process.stderr and process.stdout.isascii()
+    assert json.loads(process.stdout)["report"] == result
+    invalid = subprocess.run([str(console), *arguments, "--candidate-index", "-1"], env=env, capture_output=True, check=False)
+    assert invalid.returncode == 1 and not invalid.stdout and json.loads(invalid.stderr)["status"] == "FAILED"
+    for extra in (["--cost-index", "1.5"], ["--delay-bars", "3"]):
+        rejected = subprocess.run([str(console), *arguments, *extra], env=env, capture_output=True, check=False)
+        assert rejected.returncode == 2 and not rejected.stdout
+    assert case.path.read_bytes() == before
+
+
+@pytest.mark.parametrize("fault", ["semantic_ledger", "account", "basis"])
+def test_signal_delay_signed_bad_source_or_complete_zero_mismatch_blocks_stress(return_uncertainty_case, monkeypatch, fault):
+    from market_vault.research import intraday_signal_delay as delay
+    from market_vault.research.strategy_experiment import StrategyExperiment
+    from test_intraday_experiment import signed
+    root = return_uncertainty_case.snapshot.as_dict()
+    source = root["report"]["groups"][1]["results"][1]["execution"]
+    if fault == "semantic_ledger":
+        source["ledger"][0]["reason"] = "CHANGED_SAVED_REASON"
+    elif fault == "account":
+        source["trades"][0]["commission_total"] += .01
+    else:
+        source["ledger"][-2]["row_version_id"] = "f" * 64
+    snapshot = StrategyExperiment(signed(root))
+    calls, execute = [], delay.run_intraday_execution
+    def recorded(**kwargs):
+        calls.append(kwargs["decisions"])
+        return execute(**kwargs)
+    monkeypatch.setattr(delay, "run_intraday_execution", recorded)
+    result = delay.analyze_intraday_signal_delay(snapshot, cost_index=1, candidate_index=1)
+    assert result["availability"]["status"] == result["baseline"]["status"] == "UNAVAILABLE"
+    if fault == "semantic_ledger":
+        assert result["basis"]["matches"]
+        assert all(row["status"] == "AVAILABLE" for row in result["availability"]["accounts"])
+        assert result["availability"]["unavailable_reason"] == "ZERO_DELAY_REPRODUCTION_FAILED"
+        assert len(calls) == 2
+        check = result["baseline"]["accounts"][0]
+        assert check["matches"] is False and check["differing_fields"] == ["ledger"]
+        assert result["baseline"]["accounts"][1]["matches"] is True
+    else:
+        assert calls == []
+        assert result["availability"]["unavailable_reason"] == ("BASIS_MISMATCH" if fault == "basis" else "SOURCE_ACCOUNT_UNAVAILABLE")
+    for scenario in result["scenarios"]:
+        assert scenario["status"] == "UNAVAILABLE"
+        for name in ("strategy", "benchmark"):
+            side = scenario[name]
+            assert side["execution"] is side["risk"] is None
+            assert all(row["value"] is None and row["unavailable_reason"] for row in side["metrics"].values())
+            assert all(row["value"] is None and row["unavailable_reason"] for row in side["delta_from_zero"].values())
+    assert result["sample"]["sample_count"] == 105
+
+
+@pytest.mark.parametrize("changes", [{"cost_index": True}, {"cost_index": -1}, {"candidate_index": False}, {"candidate_index": 1.5}])
+def test_signal_delay_invalid_indices_precede_decode_and_cli_file_io(return_uncertainty_case, monkeypatch, capsys, changes):
+    import json
+    from market_vault import intraday_signal_delay_cli as console
+    from market_vault.research.intraday_signal_delay import analyze_intraday_signal_delay
+    from market_vault.research.strategy_experiment import StrategyExperiment
+    monkeypatch.setattr(StrategyExperiment, "as_dict", lambda self: pytest.fail("invalid arguments decoded source"))
+    monkeypatch.setattr(console, "load_strategy_experiment", lambda *a: pytest.fail("invalid arguments opened file"))
+    with pytest.raises(ValueError, match="integer"):
+        analyze_intraday_signal_delay(return_uncertainty_case.snapshot, **changes)
+    args = SimpleNamespace(experiment="missing.json", **{"cost_index": 0, "candidate_index": 0, **changes})
+    assert console.research_intraday_signal_delay_main(args) == 1
+    output = capsys.readouterr()
+    assert not output.out and json.loads(output.err)["status"] == "FAILED"
+
+
+def test_signal_delay_short_q10_child_rejects_collection_and_keeps_flat_accounts(execution_scenarios_case):
+    from market_vault.research.intraday_execution_scenarios import extract_intraday_execution_scenario
+    from market_vault.research.intraday_signal_delay import analyze_intraday_signal_delay
+    collection = execution_scenarios_case[2]
+    root = collection.as_dict()
+    child = extract_intraday_execution_scenario(collection, expected_experiment_id=root["experiment_id"], scenario_index=1,
+        expected_child_experiment_id=root["report"]["scenarios"][1]["experiment"]["experiment_id"])
+    report = analyze_intraday_signal_delay(child, candidate_index=0)
+    assert report["availability"]["status"] == "AVAILABLE" and report["sample"]["sample_count"] == 10
+    assert report["sample"]["sample_count"] < 100
+    for scenario in report["scenarios"]:
+        assert scenario["strategy"]["execution"]["trades"] == []
+        assert scenario["strategy"]["metrics"]["final_cash"]["value"] == 1
+        assert scenario["strategy"]["metrics"]["sharpe_ratio"]["unavailable_reason"] == "ZERO_VOLATILITY"
+        assert scenario["strategy"]["delta_from_zero"]["sharpe_ratio"]["unavailable_reason"] == "BOTH_UNAVAILABLE"
+    with pytest.raises(ValueError, match="ordinary saved Q7 DEV"):
+        analyze_intraday_signal_delay(collection)
+
+
+def test_signal_delay_rejects_frozen_selection_and_out_of_range_indices(return_uncertainty_case):
+    from market_vault.research.intraday_final_test import freeze_intraday_candidate
+    from market_vault.research.intraday_signal_delay import analyze_intraday_signal_delay
+    case = return_uncertainty_case
+    root = case.snapshot.as_dict()
+    candidate = root["report"]["groups"][0]["results"][0]
+    selection = freeze_intraday_candidate(case.path, expected_experiment_id=root["experiment_id"], cost_index=0,
+                                          candidate_index=0, expected_candidate_id=candidate["candidate_id"])
+    with pytest.raises(ValueError, match="ordinary saved Q7 DEV"):
+        analyze_intraday_signal_delay(selection)
+    for options in ({"cost_index": 2}, {"candidate_index": 2}):
+        with pytest.raises(ValueError, match="outside the saved experiment"):
+            analyze_intraday_signal_delay(case.snapshot, **options)

@@ -14,6 +14,12 @@ after these capabilities were completed, covers sequential selection,
 per-signal bar-delay stress and daily cash reallocation. It preserves the
 statistical and capital contracts below.
 
+Q19's deterministic signal-delay study keeps actual evaluated dates and gaps.
+It uses recorded-price-grid re-execution and a complete zero-delay baseline
+check; it does not inherit the bootstrap sample gates below. Its fixed
+0/1/2-bar scenarios address an execution assumption, with no new confidence
+interval or preferred-delay selection.
+
 ## Why these three tasks
 
 The existing system already provides rule/Composite/Ridge comparisons,

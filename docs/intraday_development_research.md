@@ -136,6 +136,15 @@ arrival time and adds an explicit daily cash-reallocation model. These
 derived DEV studies retain their own evidence and do not change Freeze/TEST
 eligibility or the original Q7 account.
 
+The Q19 `research-intraday-signal-delay` action re-executes one saved DEV
+candidate and its original benchmark at 0, 1 and 2 additional bars. This
+differs from the existing `entry_delay_minutes` policy, which controls the
+opening eligibility window. It reconstructs the recorded price grid and
+requires complete zero-delay agreement, excluding only the two input-derived
+identities. It does not load Q5 or fit models; the pure Q6 execution kernel is
+used deliberately. See the package's Q19 contract for baseline evidence,
+session-tail handling, units and unavailable results.
+
 ## CLI and plan grammar
 
 Commands work offline, without settings or OpenD initialization:

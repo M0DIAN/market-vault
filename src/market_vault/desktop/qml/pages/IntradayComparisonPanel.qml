@@ -21,6 +21,9 @@ Item {
     readonly property var sequentialData: root.controller.sequentialSummary
     property bool showSequentialDetails: false
     readonly property var sequentialFold: (root.sequentialData.folds || [])[sequentialFoldPicker.currentIndex] || ({})
+    readonly property var signalDelayData: root.controller.signalDelaySummary
+    readonly property var signalDelayDetail: root.controller.signalDelayDetails
+    property bool showSignalDelayDetails: false
     readonly property var gridMetrics: ["total_return", "observed_max_drawdown", "trade_count",
         "worst_fold_return", "median_fold_return", "best_fold_return"]
 
@@ -38,6 +41,14 @@ Item {
     }
     function sequentialLabel(key) {
         return root.i18n.catalog["sequential." + key] || root.i18n.catalog["columns." + key] || root.familyLabel(key)
+    }
+    function signalDelayLabel(key) {
+        return root.i18n.catalog["signal_delay." + key] || root.i18n.catalog["columns." + key] || root.uncertaintyLabel(key)
+    }
+    function signalDelayStatus(check) {
+        return root.signalDelayLabel(check.status)
+            + (check.unavailable_reason ? " · " + root.signalDelayLabel(check.unavailable_reason) : "")
+            + (check.detail ? "\n" + check.detail : "")
     }
     function axisName(axis) {
         return root.i18n.catalog["grid.axis"] + " " + axis.axis_index + " · "
@@ -360,7 +371,7 @@ Item {
                         "quant.performance", "quant.performance_exit", "quant.performance_entry", "quant.performance_day",
                         "quant.risk_summary", "quant.risk_drawdowns", "quant.risk_distributions", "quant.risk_concentration",
                         "quant.risk_folds", "quant.parameter_grid", "quant.return_uncertainty",
-                        "quant.family_bounds", "quant.sequential_selection"].map(key => root.i18n.catalog[key])
+                        "quant.family_bounds", "quant.sequential_selection", "quant.signal_delay"].map(key => root.i18n.catalog[key])
                     onSelected: root.controller.selectView(currentIndex)
                     onModelChanged: currentIndex = selectedView
                 }
@@ -956,6 +967,140 @@ Item {
                     font.pixelSize: Theme.PixelTheme.fontSm
                 }
             }
+            ColumnLayout {
+                objectName: "intradaySignalDelayPanel"
+                Layout.fillWidth: true
+                visible: view.selectedView === 20
+                spacing: 4
+                Label {
+                    objectName: "intradaySignalDelayNotice"
+                    Layout.fillWidth: true
+                    text: root.i18n.catalog[root.controller.signalDelayAvailable ? "signal_delay.note" : "signal_delay.saved_only"]
+                    wrapMode: Text.WordWrap
+                    color: Theme.PixelTheme.inkMuted
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                }
+                Label {
+                    objectName: "intradaySignalDelayScope"
+                    Layout.fillWidth: true
+                    visible: !!root.signalDelayData.sample
+                    text: {
+                        const data = root.signalDelayData
+                        if (!data.sample) return ""
+                        const sample = data.sample
+                        return data.strategy.name + " · " + root.i18n.catalog["grid.cost_index"] + " " + data.cost_index
+                            + " · " + root.i18n.catalog["signal_delay.candidate_index"] + " " + data.candidate_index
+                            + "\n" + root.i18n.catalog["sequential.source_sample"] + ": " + sample.sample_count
+                            + " · " + sample.first_day + " → " + sample.last_day
+                            + " · " + root.i18n.catalog["risk.fold_count"] + ": " + sample.fold_count
+                            + " · " + root.i18n.catalog["signal_delay.gaps"] + ": " + sample.gap_days.length
+                    }
+                    textFormat: Text.PlainText
+                    wrapMode: Text.WordWrap
+                    color: Theme.PixelTheme.ink
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                }
+                Label {
+                    objectName: "intradaySignalDelayAvailability"
+                    Layout.fillWidth: true
+                    visible: !!root.signalDelayData.availability
+                    text: {
+                        const data = root.signalDelayData
+                        if (!data.availability) return ""
+                        return root.i18n.catalog["signal_delay.analysis"] + ": " + root.signalDelayStatus(data.availability)
+                            + "\n" + root.i18n.catalog["signal_delay.baseline"] + ": " + root.signalDelayStatus(data.baseline)
+                            + "\n" + data.scenarios.map(row => root.i18n.catalog["signal_delay.delay"] + " " + row.delay_bars
+                                + ": " + root.signalDelayStatus(row)).join(" · ")
+                    }
+                    textFormat: Text.PlainText
+                    wrapMode: Text.WrapAnywhere
+                    color: Theme.PixelTheme.ink
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                }
+                Label {
+                    objectName: "intradaySignalDelayProgress"
+                    Layout.fillWidth: true
+                    visible: root.controller.signalDelayAvailable && !root.signalDelayData.sample && !root.controller.signalDelayError
+                    text: root.i18n.catalog["signal_delay.calculating"]
+                    wrapMode: Text.WordWrap
+                    color: Theme.PixelTheme.inkMuted
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    visible: root.controller.signalDelayError.length > 0
+                    Label {
+                        objectName: "intradaySignalDelayError"
+                        Layout.fillWidth: true
+                        textFormat: Text.PlainText
+                        text: root.controller.signalDelayError
+                        wrapMode: Text.WrapAnywhere
+                        color: Theme.PixelTheme.ink
+                        font.pixelSize: Theme.PixelTheme.fontSm
+                    }
+                    Components.PixelButton {
+                        objectName: "intradaySignalDelayRetry"
+                        text: root.i18n.catalog["uncertainty.retry"]
+                        enabled: !root.controller.busy && !operationRuntime.busy
+                        onClicked: root.controller.retrySignalDelay()
+                    }
+                }
+                Components.LabeledComboBox {
+                    objectName: "intradaySignalDelayView"
+                    Layout.fillWidth: true
+                    Layout.maximumWidth: Infinity
+                    label: root.i18n.catalog["signal_delay.view"]
+                    model: ["summary", "daily", "trades", "path", "provenance"].map(key => root.i18n.catalog["signal_delay." + key])
+                    currentIndex: root.controller.signalDelayViewIndex
+                    onModelChanged: currentIndex = Qt.binding(() => root.controller.signalDelayViewIndex)
+                    onSelected: root.controller.selectSignalDelayView(currentIndex)
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    visible: root.controller.signalDelayViewIndex > 0
+                    Components.LabeledComboBox {
+                        objectName: "intradaySignalDelayScenario"
+                        Layout.maximumWidth: Infinity
+                        label: root.i18n.catalog["signal_delay.delay"]
+                        model: [0, 1, 2].map(value => value + " · " + root.i18n.catalog["performance.BARS"])
+                        currentIndex: root.controller.signalDelayScenarioIndex
+                        onModelChanged: currentIndex = Qt.binding(() => root.controller.signalDelayScenarioIndex)
+                        onSelected: root.controller.selectSignalDelayDetail(currentIndex, root.controller.signalDelayAccountIndex)
+                    }
+                    Components.LabeledComboBox {
+                        objectName: "intradaySignalDelayAccount"
+                        Layout.maximumWidth: Infinity
+                        label: root.i18n.catalog["columns.risk_series"]
+                        model: ["STRATEGY", "BENCHMARK"].map(key => root.signalDelayLabel(key))
+                        currentIndex: root.controller.signalDelayAccountIndex
+                        onModelChanged: currentIndex = Qt.binding(() => root.controller.signalDelayAccountIndex)
+                        onSelected: root.controller.selectSignalDelayDetail(root.controller.signalDelayScenarioIndex, currentIndex)
+                    }
+                }
+                Label {
+                    objectName: "intradaySignalDelayViewNote"
+                    Layout.fillWidth: true
+                    text: root.i18n.catalog["signal_delay." + ["summary", "daily", "trades", "path", "provenance"][root.controller.signalDelayViewIndex] + "_note"]
+                    wrapMode: Text.WordWrap
+                    color: Theme.PixelTheme.inkMuted
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                }
+                Label {
+                    objectName: "intradaySignalDelayDetailStatus"
+                    Layout.fillWidth: true
+                    visible: root.controller.signalDelayViewIndex > 0 && !!root.signalDelayDetail.signals
+                    text: {
+                        const detail = root.signalDelayDetail
+                        if (!detail.signals) return ""
+                        return root.signalDelayStatus(detail) + "\n"
+                            + Object.keys(detail.signals).map(key => root.signalDelayLabel(key) + ": " + detail.signals[key]).join(" · ")
+                    }
+                    textFormat: Text.PlainText
+                    wrapMode: Text.WrapAnywhere
+                    color: Theme.PixelTheme.ink
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                }
+            }
             Components.DataTable {
                 objectName: "intradayResearchTable"
                 visible: view.selectedView !== 16
@@ -966,6 +1111,7 @@ Item {
                 tableModel: root.controller.tableModel
                 i18n: root.i18n
                 cellFormatter: function(value) {
+                    if (view.selectedView === 20) return root.signalDelayLabel(value)
                     if (view.selectedView === 19) return root.sequentialLabel(value)
                     if (view.selectedView === 18) return root.familyLabel(value)
                     if (view.selectedView === 17) return root.uncertaintyLabel(value)
@@ -974,6 +1120,140 @@ Item {
                 }
                 onPreviousRequested: root.controller.changePage(-1)
                 onNextRequested: root.controller.changePage(1)
+            }
+            Components.LabeledComboBox {
+                objectName: "intradaySignalDelaySignalPicker"
+                visible: view.selectedView === 20 && root.controller.signalDelayViewIndex === 4 && model.length > 0
+                Layout.fillWidth: true
+                Layout.maximumWidth: Infinity
+                label: root.i18n.catalog["signal_delay.signal_details"]
+                model: root.controller.signalDelaySignalNames
+                currentIndex: root.controller.signalDelaySignalIndex
+                onModelChanged: currentIndex = Qt.binding(() => root.controller.signalDelaySignalIndex)
+                onSelected: root.controller.selectSignalDelaySignal(currentIndex)
+            }
+            Label {
+                objectName: "intradaySignalDelaySignalDetails"
+                visible: view.selectedView === 20 && root.controller.signalDelayViewIndex === 4
+                Layout.fillWidth: true
+                text: {
+                    const signal = root.signalDelayDetail.signal || ({})
+                    if (!signal.source_observation_key) return ""
+                    return ["source_observation_key", "source_trading_day", "source_slot", "source_time", "source_target",
+                        "source_score", "delay_bars", "arrival_slot", "arrival_time", "derived_decision_key", "status", "passed_to_kernel"]
+                        .map(key => root.signalDelayLabel(key) + ": " + (signal[key] == null ? "—"
+                            : typeof signal[key] === "boolean" ? root.signalDelayLabel(signal[key] ? "YES" : "NO")
+                            : root.signalDelayLabel(String(signal[key])))).join("\n")
+                }
+                textFormat: Text.PlainText
+                wrapMode: Text.WrapAnywhere
+                color: Theme.PixelTheme.inkMuted
+                font.pixelSize: Theme.PixelTheme.fontSm
+            }
+            Components.PixelButton {
+                objectName: "intradaySignalDelayDetailsButton"
+                visible: view.selectedView === 20 && !!root.signalDelayData.sample
+                text: root.i18n.catalog["signal_delay.details"]
+                onClicked: root.showSignalDelayDetails = !root.showSignalDelayDetails
+            }
+            ColumnLayout {
+                objectName: "intradaySignalDelayDetails"
+                Layout.fillWidth: true
+                visible: view.selectedView === 20 && root.showSignalDelayDetails && !!root.signalDelayData.sample
+                spacing: 4
+                Label {
+                    objectName: "intradaySignalDelayIdentities"
+                    Layout.fillWidth: true
+                    text: {
+                        const data = root.signalDelayData
+                        if (!data.sample) return ""
+                        return root.controller.experimentPath + "\n"
+                            + ["signal_delay_id", "version", "experiment_id", "data_id", "research_id", "context_id", "candidate_id", "evidence"]
+                                .map(key => root.signalDelayLabel(key) + ": " + data[key]).join("\n")
+                            + "\n" + root.i18n.catalog["signal_delay.features"] + ": " + data.feature_fields.join(", ")
+                            + "\n" + root.i18n.catalog["signal_delay.versions"] + ": " + JSON.stringify(data.algorithm_versions)
+                    }
+                    textFormat: Text.PlainText
+                    wrapMode: Text.WrapAnywhere
+                    color: Theme.PixelTheme.inkMuted
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                }
+                Label {
+                    objectName: "intradaySignalDelayProjection"
+                    Layout.fillWidth: true
+                    text: {
+                        const data = root.signalDelayData
+                        if (!data.projection) return ""
+                        const projection = data.projection
+                        return root.i18n.catalog["signal_delay.projection"] + ": " + root.signalDelayStatus(projection)
+                            + "\n" + ["source_strategy_price_evidence_id", "source_benchmark_price_evidence_id", "reconstructed_price_evidence_id"]
+                                .map(key => root.signalDelayLabel(key) + ": " + (projection[key] || "—")).join("\n")
+                            + "\n" + root.i18n.catalog["signal_delay.session_fields"] + ": " + projection.session_fields.join(", ")
+                            + "\n" + root.i18n.catalog["signal_delay.price_fields"] + ": " + projection.price_fields.join(", ")
+                            + "\n" + root.i18n.catalog["signal_delay.basis"] + ": " + root.signalDelayLabel(data.basis.matches ? "YES" : "NO")
+                            + " · " + JSON.stringify(data.basis.failed_checks)
+                    }
+                    textFormat: Text.PlainText
+                    wrapMode: Text.WrapAnywhere
+                    color: Theme.PixelTheme.inkMuted
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                }
+                Label {
+                    objectName: "intradaySignalDelayBaseline"
+                    Layout.fillWidth: true
+                    text: {
+                        const data = root.signalDelayData
+                        if (!data.baseline) return ""
+                        return root.i18n.catalog["signal_delay.baseline_note"] + "\n"
+                            + root.i18n.catalog["signal_delay.excluded_fields"] + ": " + data.baseline.excluded_identity_fields.join(", ")
+                            + "\n" + data.baseline.accounts.map(check => root.signalDelayLabel(check.account) + ": "
+                                + root.signalDelayStatus(check) + "\n"
+                                + ["source_execution_id", "source_price_evidence_id", "reexecuted_execution_id", "reconstructed_price_evidence_id"]
+                                    .map(key => root.signalDelayLabel(key) + ": " + (check[key] || "—")).join("\n")
+                                + "\n" + root.i18n.catalog["signal_delay.differing_fields"] + ": " + (check.differing_fields.join(", ") || "—")
+                                ).join("\n\n")
+                            + "\n\n" + data.availability.accounts.map(check => root.signalDelayLabel(check.account) + " · "
+                                + root.i18n.catalog["signal_delay.source_account"] + ": " + root.signalDelayStatus(check)).join("\n")
+                    }
+                    textFormat: Text.PlainText
+                    wrapMode: Text.WrapAnywhere
+                    color: Theme.PixelTheme.inkMuted
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                }
+                Label {
+                    objectName: "intradaySignalDelayPolicies"
+                    Layout.fillWidth: true
+                    text: {
+                        const data = root.signalDelayData, detail = root.signalDelayDetail
+                        if (!data.sample) return ""
+                        return ["execution_policy", "benchmark_execution_policy"].map((key, i) =>
+                            root.signalDelayLabel(i ? "BENCHMARK" : "STRATEGY") + ": "
+                            + Object.keys(data[key]).map(field => (root.i18n.catalog["columns." + field] || field)
+                                + " = " + data[key][field]).join(" · ")).join("\n")
+                            + "\n" + root.i18n.catalog["signal_delay.selected_execution"] + " (" + detail.delay_bars
+                            + " · " + root.signalDelayLabel(detail.account) + "): " + (detail.execution_id || "—")
+                            + "\n" + root.i18n.catalog["signal_delay.reconstructed_price_evidence_id"] + ": " + (detail.price_evidence_id || "—")
+                    }
+                    textFormat: Text.PlainText
+                    wrapMode: Text.WrapAnywhere
+                    color: Theme.PixelTheme.inkMuted
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                }
+                Label {
+                    objectName: "intradaySignalDelaySampleDetails"
+                    Layout.fillWidth: true
+                    text: {
+                        const sample = root.signalDelayData.sample
+                        if (!sample) return ""
+                        return root.i18n.catalog["signal_delay.evaluated_days"] + ": " + sample.evaluated_days.join(", ")
+                            + "\n" + root.i18n.catalog["signal_delay.gaps"] + ": " + (sample.gap_days.join(", ") || "—")
+                            + "\n" + root.i18n.catalog["signal_delay.unevaluated_days"] + ": " + (sample.unevaluated_development_days.join(", ") || "—")
+                    }
+                    textFormat: Text.PlainText
+                    wrapMode: Text.WordWrap
+                    color: Theme.PixelTheme.inkMuted
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                }
             }
             Components.PixelButton {
                 objectName: "intradaySequentialDetailsButton"

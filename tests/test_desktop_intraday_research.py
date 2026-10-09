@@ -648,6 +648,185 @@ def test_sequential_selection_saved_boundary_stale_group_and_retry(qt_app, param
     assert runtime.backend_if_initialized is None and runtime.shutdown()
 
 
+def test_signal_delay_saved_candidate_metrics_details_and_cache(qt_app, parameter_grid_experiment,
+                                                               tmp_path, monkeypatch):
+    from market_vault.research import intraday_signal_delay as delay
+
+    path = tmp_path / "saved-grid.json"
+    write_strategy_experiment(parameter_grid_experiment, path=path)
+    analyze, calls = delay.analyze_intraday_signal_delay, []
+
+    def captured(snapshot, **options):
+        calls.append((snapshot.experiment_id, options))
+        return analyze(snapshot, **options)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Signal-delay stress must not load Q5 or fit; pure execution is required")
+
+    monkeypatch.setattr(delay, "analyze_intraday_signal_delay", captured)
+    for name in ("load_intraday_dataset", "_fit", "fit_ridge_rows"):
+        monkeypatch.setattr(research, name, forbidden)
+    runtime, _ = _runtime(tmp_path, [])
+    owner = QuantResearchController(runtime)
+    controller = owner.intradayResearchController
+    assert controller.openExperiment(str(path))
+    runtime._poll()
+    assert controller.selectCandidate(8)  # cost 1, candidate 2
+    bound = (controller._content, controller.restoredPlan, controller.restoreRevision,
+             controller.resultSummary, owner.intradayFinalController.canFreeze)
+    assert controller.selectView(20) and controller.busy and controller.signalDelaySummary == {}
+    runtime._poll()
+    assert controller.status == "SUCCESS", controller.error
+    report = controller._signal_delay_report
+    assert calls == [(parameter_grid_experiment.experiment_id, {"cost_index": 1, "candidate_index": 2})]
+    assert report["evidence"] == "RECORDED_PRICE_GRID_REEXECUTION"
+    assert [row["delay_bars"] for row in report["scenarios"]] == [0, 1, 2]
+    assert report["baseline"]["status"] == "AVAILABLE"
+    assert all(row["matches"] for row in report["baseline"]["accounts"])
+    assert controller.tableModel.totalRows == 60
+    assert [(row[1], row[2]) for row in controller._rows[:6]] == [
+        (str(i), side) for i in range(3) for side in ("STRATEGY", "BENCHMARK")]
+    zero = report["scenarios"][0]["strategy"]["metrics"]["total_return"]["value"]
+    delayed = report["scenarios"][1]["strategy"]["metrics"]["total_return"]["value"]
+    assert controller._rows[2][3].endswith("%")
+    assert controller._rows[2][4] == f"{(delayed - zero) * 100:.6g}"
+    assert controller._rows[2][6] == "PERCENTAGE_POINTS"
+    assert controller.selectSignalDelayDetail(2, 1)
+    execution = report["scenarios"][2]["benchmark"]["execution"]
+    assert controller.selectSignalDelayView(1) and controller.tableModel.totalRows == len(execution["daily"])
+    assert controller.selectSignalDelayView(2) and controller.tableModel.totalRows == len(execution["trades"])
+    assert controller._rows[0][7].endswith("%")
+    assert controller.selectSignalDelayView(3) and controller.tableModel.totalRows == len(execution["ledger"])
+    assert [(row[0], row[3]) for row in controller._rows[:4]] == [("0", "OPEN"), ("1", "CLOSE"), ("2", "OPEN"), ("3", "CLOSE")]
+    assert controller.selectSignalDelayDetail(2, 0) and controller.selectSignalDelayView(4)
+    signals = report["scenarios"][2]["strategy"]["signals"]["provenance"]
+    assert controller.tableModel.totalRows == len(signals) == len(controller.signalDelaySignalNames)
+    assert controller.selectSignalDelaySignal(len(signals) - 1)
+    assert controller.signalDelayDetails["signal"] == signals[-1]
+    summary = controller.signalDelaySummary
+    summary["baseline"]["accounts"].clear()
+    assert len(controller.signalDelaySummary["baseline"]["accounts"]) == 2
+    assert controller.selectCandidate(8) and controller.selectView(0) and controller.selectView(20)
+    assert controller._signal_delay_report is report and len(calls) == 1
+    assert (controller._content, controller.restoredPlan, controller.restoreRevision,
+            controller.resultSummary, owner.intradayFinalController.canFreeze) == bound
+    assert controller.selectCandidate(9) and controller.busy and controller.signalDelaySummary == {}
+    runtime._poll()
+    assert controller._signal_delay_report["candidate_index"] == 3 and len(calls) == 2
+    assert controller.signalDelaySignalIndex == 0
+    assert controller.selectCandidate(3) and controller.busy  # same candidate, another cost
+    runtime._poll()
+    assert controller._signal_delay_report["cost_index"] == 0 and len(calls) == 3
+    current = controller._signal_delay_report
+    assert controller.openExperiment(str(tmp_path / "missing.json"))
+    runtime._poll()
+    assert controller.status == "FAILED" and controller._signal_delay_report is current and controller.signalDelayError == ""
+    assert path.read_bytes() == parameter_grid_experiment.content
+    assert controller.resultSummary["intraday_verification"] == "RECORDED"
+    assert runtime.backend_if_initialized is None and runtime.shutdown()
+
+
+def test_signal_delay_worker_saved_boundary_stale_candidate_source_and_retry(qt_app, parameter_grid_experiment,
+                                                                           tmp_path, monkeypatch):
+    from market_vault.research.strategy_experiment import StrategyExperiment
+    from test_intraday_experiment import signed
+
+    runtime, runner = _runtime(tmp_path, [])
+    owner = QuantResearchController(runtime)
+    controller = owner.intradayResearchController
+    controller._apply(parameter_grid_experiment, opened=True)
+    assert controller.selectView(20) and not controller.signalDelayAvailable and not runner.names
+    assert controller.saveExperiment(str(tmp_path / "saved.json"))
+    runtime._poll()
+    assert controller.signalDelayAvailable and controller.busy
+    runtime._poll()
+    pending = []
+
+    def deferred(name, operation):
+        future = Future()
+        pending.append((future, operation))
+        return future
+
+    monkeypatch.setattr(runner, "submit", deferred)
+    assert controller.selectCandidate(1) and len(pending) == 1
+    assert controller.selectCandidate(2) and len(pending) == 1
+    stale, operation = pending.pop()
+    stale.set_result(operation())
+    runtime._poll()
+    assert controller._signal_delay_report is None and len(pending) == 1
+    current, operation = pending.pop()
+    current.set_result(operation())
+    runtime._poll()
+    assert controller._signal_delay_report["candidate_index"] == 2
+    assert controller.selectCandidate(8) and len(pending) == 1
+    failed, _ = pending.pop()
+    failed.set_exception(ValueError("delay stress failed"))
+    runtime._poll()
+    assert controller.status == "FAILED" and controller.signalDelayError == "delay stress failed"
+    assert controller._signal_delay_report is None and not pending
+    assert controller.selectSignalDelayDetail(2, 1) and controller.selectSignalDelayView(4) and not pending
+    assert controller.selectView(0) and controller.selectView(20) and not pending
+    assert controller.retrySignalDelay() and len(pending) == 1
+    retried, operation = pending.pop()
+    retried.set_result(operation())
+    runtime._poll()
+    assert controller.status == "SUCCESS" and controller.signalDelayError == ""
+    assert controller._signal_delay_report["cost_index"] == 1
+    assert controller.selectCandidate(9) and len(pending) == 1
+    other_root = parameter_grid_experiment.as_dict()
+    other_root["name"] = "Another saved DEV source"
+    other = StrategyExperiment(signed(other_root))
+    other_path = tmp_path / "other.json"
+    write_strategy_experiment(other, path=other_path)
+    controller._apply(other, path=str(other_path), opened=True)
+    stale, _ = pending.pop()
+    stale.set_exception(ValueError("obsolete source failed"))
+    runtime._poll()
+    assert controller.signalDelayError == "" and controller._signal_delay_report is None and len(pending) == 1
+    current, operation = pending.pop()
+    current.set_result(operation())
+    runtime._poll()
+    assert controller._signal_delay_report["experiment_id"] == other.experiment_id
+    assert controller._content == other.content and controller.resultSummary["intraday_verification"] == "RECORDED"
+    assert runtime.backend_if_initialized is None and runtime.shutdown()
+
+
+def test_signal_delay_zero_reproduction_failure_keeps_all_scenarios(qt_app, parameter_grid_experiment,
+                                                                  tmp_path):
+    from market_vault.research.strategy_experiment import StrategyExperiment
+    from test_intraday_experiment import signed
+
+    source = parameter_grid_experiment.as_dict()
+    source["report"]["groups"][1]["results"][2]["execution"]["ledger"][0]["reason"] = "CHANGED_SAVED_REASON"
+    changed = StrategyExperiment(signed(source))
+    path = tmp_path / "saved-grid.json"
+    write_strategy_experiment(changed, path=path)
+    runtime, _ = _runtime(tmp_path, [])
+    owner = QuantResearchController(runtime)
+    controller = owner.intradayResearchController
+    assert controller.openExperiment(str(path))
+    runtime._poll()
+    assert controller.selectCandidate(8) and controller.selectView(20)
+    runtime._poll()
+    assert controller.status == "SUCCESS", controller.error
+    summary = controller.signalDelaySummary
+    assert summary["baseline"]["unavailable_reason"] == "ZERO_DELAY_REPRODUCTION_FAILED"
+    assert summary["baseline"]["accounts"][0]["differing_fields"] == ["ledger"]
+    assert summary["baseline"]["accounts"][1]["matches"]
+    assert [row["delay_bars"] for row in summary["scenarios"]] == [0, 1, 2]
+    assert all(row["status"] == "UNAVAILABLE" for row in summary["scenarios"])
+    assert controller.tableModel.totalRows == 60
+    assert all(row[3:5] == ("—", "—") and row[-1] == "ZERO_DELAY_REPRODUCTION_FAILED" for row in controller._rows)
+    assert controller.selectSignalDelayDetail(2, 0)
+    for index in (1, 2, 3):
+        assert controller.selectSignalDelayView(index) and controller.tableModel.totalRows == 0
+    assert controller.selectSignalDelayView(4) and controller.tableModel.totalRows > 0
+    assert controller.signalDelayDetails["execution_id"] is None
+    assert controller.signalDelayDetails["signals"]["source_count"] == controller.tableModel.totalRows
+    assert path.read_bytes() == changed.content
+    assert runtime.backend_if_initialized is None and runtime.shutdown()
+
+
 def test_actual_qml_compare_models_pagination_save_open_replay_and_language(research_case, tmp_path):
     data, _, _ = research_case
     (tmp_path / "settings.yaml").write_text("storage:\n  root_dir: ./data\n")
