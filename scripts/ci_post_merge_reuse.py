@@ -24,9 +24,9 @@ Conditions (all must pass):
    failed / cancelled / skipped / neutral / timed_out / action_required /
    stale-older-head runs are never accepted.
 5. Required job conclusions: the selected run's jobs terminate with SUCCESS
-   on exactly the four required surfaces (test (3.11), test (3.14),
-   portability-pyarrow24, package). No missing / duplicate / extra / non-
-   success job.
+   on the four logical surfaces (test (3.11), test (3.14),
+   portability-pyarrow24, package), their common plan, and all six Python
+   3.11 partitions. No missing / duplicate / extra / non-success job.
 6. Attestation: the attempt-bound attestation artifact produced by that
    exact run/attempt is downloaded and strictly schema-validated; its
    repository / run_id / run_attempt / pr_number / base_sha / head_sha /
@@ -101,6 +101,19 @@ REQUIRED_JOB_SURFACES = (
     "package",
 )
 
+# Physical jobs proving the four logical FULL surfaces after 3.11 partitioning.
+# V2's inactive partial-reuse model below continues to use the four logical names.
+FULL_REQUIRED_JOB_NAMES = (
+    *REQUIRED_JOB_SURFACES,
+    "plan",
+    "test-311 (data)",
+    "test-311 (dataset_features)",
+    "test-311 (strategy)",
+    "test-311 (intraday_research)",
+    "test-311 (intraday_final)",
+    "test-311 (app_ops)",
+)
+
 # Control-plane paths: a merged change touching any of these denies reuse
 # (normal FULL validation). The release checker and the risk-tier
 # classifier are control-plane; the gate contract files themselves are
@@ -119,6 +132,9 @@ CONTROL_PLANE_PATHS = (
     "scripts/audit_pr.py",
     "scripts/check_release.py",
     "ci/components.toml",
+    "ci/test_partitions.toml",
+    "scripts/ci_test_partitions.py",
+    "tests/test_ci_test_partitions.py",
     "ci/python314_compatibility_surface.txt",
     "scripts/ci_python314_surface.py",
     "tests/test_python314_compatibility_surface.py",
@@ -377,7 +393,7 @@ def select_successful_runs(runs: list[dict], head_sha: str) -> list[dict]:
 
 def check_jobs(jobs: list[dict]) -> tuple[bool, str | None]:
     """Condition 5 — the selected run's jobs must terminate SUCCESS on
-    exactly the four required surfaces: no missing job, no duplicate, no
+    the complete physical FULL job set: no missing job, no duplicate, no
     non-success conclusion, no extra job (fail-closed if the workflow
     surface ever changes without updating this contract)."""
     names = [str(j.get("name") or "") for j in jobs]
@@ -386,14 +402,14 @@ def check_jobs(jobs: list[dict]) -> tuple[bool, str | None]:
         if name in seen:
             return False, "jobs_duplicate"
         seen.add(name)
-    if set(seen) != set(REQUIRED_JOB_SURFACES):
-        missing = set(REQUIRED_JOB_SURFACES) - set(seen)
-        extra = set(seen) - set(REQUIRED_JOB_SURFACES)
+    if set(seen) != set(FULL_REQUIRED_JOB_NAMES):
+        missing = set(FULL_REQUIRED_JOB_NAMES) - set(seen)
+        extra = set(seen) - set(FULL_REQUIRED_JOB_NAMES)
         if missing:
             return False, "jobs_missing_surface"
         return False, "jobs_unexpected"
     by_name = {str(j.get("name")): j for j in jobs}
-    for surface in REQUIRED_JOB_SURFACES:
+    for surface in FULL_REQUIRED_JOB_NAMES:
         job = by_name[surface]
         if job.get("status") != "completed" or job.get("conclusion") != "success":
             return False, "jobs_non_success"

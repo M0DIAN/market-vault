@@ -7925,7 +7925,7 @@ def test_release_checker_fails_when_package_job_loses_portability_dependency(
     path = repo / ".github" / "workflows" / "ci.yml"
     path.write_text(
         path.read_text(encoding="utf-8").replace(
-            "needs: [test, portability-pyarrow24]",
+            "needs: [plan, test, portability-pyarrow24]",
             "needs: test",
         ),
         encoding="utf-8",
@@ -7933,7 +7933,7 @@ def test_release_checker_fails_when_package_job_loses_portability_dependency(
     assert_check_fails(
         _check_release.check_ci_pr8,
         repo,
-        "must depend on [test, portability-pyarrow24]",
+        "must depend on [plan, test, portability-pyarrow24]",
     )
 
 
@@ -7946,7 +7946,6 @@ def test_release_checker_fails_when_package_job_loses_portability_dependency(
 # hold.
 
 _CONTROL_PLANE_ALLOWLIST_BLOCK = """CONTROL_PLANE_SCOPE_RULES = [
-    ".github/workflows/ci.yml",
     "scripts/ci_risk_tier.py",
     "scripts/ci_post_merge_reuse.py",
     "scripts/audit_pr.py",
@@ -7989,7 +7988,7 @@ def test_control_plane_check_fails_when_tier_constant_removed(tmp_path):
 
 
 def test_control_plane_check_fails_when_scope_broadened(tmp_path):
-    # Mutation: the exact 11-path allowlist is broadened to whole
+    # Mutation: the exact 10-path allowlist is broadened to whole
     # tests//scripts//.github/workflows/ directory rules — the single
     # fast-eligibility surface must never be a broad rule.
     broad_block = (
@@ -8007,7 +8006,7 @@ def test_control_plane_check_fails_when_scope_broadened(tmp_path):
     assert_check_fails(
         _check_release.check_ci_control_plane,
         repo,
-        "must stay exactly the 11-path allowlist",
+        "must stay exactly the 10-path allowlist",
     )
 
 
@@ -8024,7 +8023,7 @@ def test_control_plane_check_fails_when_release_v061_in_scope(tmp_path):
     assert_check_fails(
         _check_release.check_ci_control_plane,
         repo,
-        "must stay exactly the 11-path allowlist",
+        "must stay exactly the 10-path allowlist",
     )
 
 
@@ -8039,7 +8038,7 @@ def test_control_plane_check_fails_when_pyproject_in_scope(tmp_path):
     assert_check_fails(
         _check_release.check_ci_control_plane,
         repo,
-        "must stay exactly the 11-path allowlist",
+        "must stay exactly the 10-path allowlist",
     )
 
 
@@ -8258,7 +8257,7 @@ def test_control_plane_check_fails_when_reuse_proof_permitted_for_control_plane(
         "Post-merge FULL reuse proof",
         "&& env.CI_TIER == 'full'",
         "&& (env.CI_TIER == 'full' || env.CI_TIER == 'control_plane')",
-        job="package",
+        job="plan",
     )
     assert_check_fails(
         _check_release.check_ci_control_plane,
@@ -8540,7 +8539,7 @@ def test_py314_check_fails_when_blanket_pytest_duplicated_on_314(tmp_path):
     assert_check_fails(
         _check_release.check_ci_python314_surface,
         repo,
-        "must run an unqualified blanket `python -m pytest` exactly once",
+        "must never run an unqualified blanket `python -m pytest`",
         "must expand the selector array QUOTED into pytest with "
         "--durations=200",
     )

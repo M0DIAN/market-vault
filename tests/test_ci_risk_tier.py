@@ -281,21 +281,24 @@ def test_pyproject_change_full(tmp_path):
     assert classify_change(repo, "pyproject.toml") == "full"
 
 
-def test_ci_workflow_only_control_plane(tmp_path):
-    """A ci.yml-only change classifies control_plane: a validated subset
-    that never requires the full matrix."""
+@pytest.mark.parametrize("path", [
+    ".github/workflows/ci.yml", "ci/test_partitions.toml",
+    "scripts/ci_test_partitions.py", "tests/test_ci_test_partitions.py",
+])
+def test_ci_execution_contract_requires_full(tmp_path, path):
+    """Execution topology and ownership changes need an actual FULL run."""
     repo = make_repo(tmp_path)
-    write_file(repo, ".github/workflows/ci.yml")
+    write_file(repo, path)
     base = commit_all(repo, "base")
-    write_file(repo, ".github/workflows/ci.yml", "changed\n")
+    write_file(repo, path, "changed\n")
     head = commit_all(repo, "head")
 
     result = run_classifier(repo, base, head)
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert tier_of(result) == "control_plane"
-    assert "reason=all_changes_in_control_plane_scope" in result.stdout
-    assert "full_matrix_required=false" in result.stdout
+    assert tier_of(result) == "full"
+    assert "reason=workflow_or_registry_mutation_requires_full" in result.stdout
+    assert "full_matrix_required=true" in result.stdout
 
 
 CONTROL_PLANE_ELIGIBLE_PATHS = [
@@ -340,7 +343,7 @@ def test_control_plane_plus_docs_control_plane(tmp_path):
     """control_plane mixed with docs stays control_plane (CP + docs scope)."""
     repo = make_repo(tmp_path)
     assert classify_changes(
-        repo, [".github/workflows/ci.yml", "docs/guide.md"]
+        repo, ["scripts/ci_risk_tier.py", "docs/guide.md"]
     ) == "control_plane"
 
 
@@ -348,21 +351,21 @@ def test_control_plane_plus_playbook_control_plane(tmp_path):
     """DEVELOPMENT_PLAYBOOK.md is in the docs scope, so the mix is valid."""
     repo = make_repo(tmp_path)
     assert classify_changes(
-        repo, [".github/workflows/ci.yml", "DEVELOPMENT_PLAYBOOK.md"]
+        repo, ["scripts/ci_risk_tier.py", "DEVELOPMENT_PLAYBOOK.md"]
     ) == "control_plane"
 
 
 def test_control_plane_plus_readme_full(tmp_path):
     """README is outside CP + docs: the mixed change must be FULL."""
     repo = make_repo(tmp_path)
-    assert classify_changes(repo, [".github/workflows/ci.yml", "README.md"]) == "full"
+    assert classify_changes(repo, ["scripts/ci_risk_tier.py", "README.md"]) == "full"
 
 
 def test_control_plane_plus_pyproject_full(tmp_path):
     """pyproject.toml is a shared/package-schema path: FULL."""
     repo = make_repo(tmp_path)
     assert classify_changes(
-        repo, [".github/workflows/ci.yml", "pyproject.toml"]
+        repo, ["scripts/ci_risk_tier.py", "pyproject.toml"]
     ) == "full"
 
 
@@ -370,7 +373,7 @@ def test_control_plane_plus_src_full(tmp_path):
     """A src/ change mixed with control-plane paths must be FULL."""
     repo = make_repo(tmp_path)
     assert classify_changes(
-        repo, [".github/workflows/ci.yml", "src/market_vault/thing.py"]
+        repo, ["scripts/ci_risk_tier.py", "src/market_vault/thing.py"]
     ) == "full"
 
 
@@ -378,7 +381,7 @@ def test_control_plane_plus_release_test_full(tmp_path):
     """tests/test_release_v061.py is deliberately NOT control-plane eligible."""
     repo = make_repo(tmp_path)
     assert classify_changes(
-        repo, [".github/workflows/ci.yml", "tests/test_release_v061.py"]
+        repo, ["scripts/ci_risk_tier.py", "tests/test_release_v061.py"]
     ) == "full"
 
 
@@ -386,15 +389,15 @@ def test_control_plane_plus_repo_hygiene_full(tmp_path):
     """scripts/check_repo_hygiene.py is outside the control-plane allowlist."""
     repo = make_repo(tmp_path)
     assert classify_changes(
-        repo, [".github/workflows/ci.yml", "scripts/check_repo_hygiene.py"]
+        repo, ["scripts/ci_risk_tier.py", "scripts/check_repo_hygiene.py"]
     ) == "full"
 
 
 def test_control_plane_plus_other_workflow_full(tmp_path):
-    """Only ci.yml is control-plane eligible; other workflows stay FULL."""
+    """A workflow change mixed with an eligible control-plane path stays FULL."""
     repo = make_repo(tmp_path)
     assert classify_changes(
-        repo, [".github/workflows/ci.yml", ".github/workflows/release.yml"]
+        repo, ["scripts/ci_risk_tier.py", ".github/workflows/release.yml"]
     ) == "full"
 
 
@@ -421,10 +424,10 @@ def test_py314_surface_path_alone_full(tmp_path, path):
 @pytest.mark.parametrize("path", PY314_SURFACE_PATHS)
 def test_py314_surface_path_not_control_plane_eligible(tmp_path, path):
     """A surface path is NOT in the control-plane allowlist: mixed with
-    ci.yml the change must stay FULL, never control_plane."""
+    an eligible control-plane file the change must stay FULL, never control_plane."""
     repo = make_repo(tmp_path)
     assert classify_changes(
-        repo, [".github/workflows/ci.yml", path]
+        repo, ["scripts/ci_risk_tier.py", path]
     ) == "full"
 
 

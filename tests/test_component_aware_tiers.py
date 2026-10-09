@@ -328,20 +328,15 @@ def test_package_schema_full_and_shared_changed(tmp_path):
     assert line_value(result, "full_matrix_required") == "true"
 
 
-def test_ci_workflow_control_plane_subset(tmp_path):
-    """ci.yml is the allowlisted control-plane path: validated subset.
-
-    The control-plane branch runs BEFORE the generic shared_changed FULL
-    check, so shared_changed stays true as impact information while the
-    tier is control_plane with full_matrix_required=false.
-    """
+def test_ci_workflow_requires_full_execution(tmp_path):
+    """Changing CI execution must validate the whole new execution plan."""
     repo = make_repo(tmp_path)
     result = classify_change(repo, ".github/workflows/ci.yml")
 
-    assert tier(result) == "control_plane"
-    assert line_value(result, "reason") == "all_changes_in_control_plane_scope"
+    assert tier(result) == "full"
+    assert line_value(result, "reason") == "workflow_or_registry_mutation_requires_full"
     assert line_value(result, "shared_changed") == "true"
-    assert line_value(result, "full_matrix_required") == "false"
+    assert line_value(result, "full_matrix_required") == "true"
 
 
 def test_registry_mutation_control_plane_subset(tmp_path):
@@ -543,7 +538,7 @@ def test_full_matrix_required_matches_active_policy(tmp_path):
             "research_fast",
         ),
         (REAL_REGISTRY, ["notes.txt"], "full"),
-        (REAL_REGISTRY, [".github/workflows/ci.yml"], "control_plane"),
+        (REAL_REGISTRY, [".github/workflows/ci.yml"], "full"),
         (REAL_REGISTRY, ["pyproject.toml"], "full"),
         (INDEPENDENT_REGISTRY, ["widgets/thing.py"], "full"),
         (INDEPENDENT_REGISTRY, ["widgets/thing.py", "README.md"], "full"),
