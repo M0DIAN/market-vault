@@ -16,7 +16,7 @@ from market_vault.desktop.quant_research import QuantResearchController
 from market_vault.research import intraday_research as research
 from market_vault.research.strategy_experiment import write_strategy_experiment
 from test_desktop_quant_research import _runtime, qt_app  # noqa: F401
-from test_intraday_experiment import intraday_experiment  # noqa: F401
+from test_intraday_experiment import intraday_experiment, parameter_grid_experiment  # noqa: F401
 from test_intraday_research import research_case  # noqa: F401
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -206,6 +206,162 @@ def test_offline_controller_views_drafts_failure_and_replay_state(qt_app, intrad
     assert controller.openExperiment(str(tmp_path / "missing-experiment.json"))
     runtime._poll()
     assert controller.status == "FAILED" and controller._content == previous and controller.restoreRevision == 1
+    assert runtime.backend_if_initialized is None and runtime.shutdown()
+
+
+def test_return_uncertainty_saved_selection_cache_units_and_proof(qt_app, parameter_grid_experiment,
+                                                               tmp_path, monkeypatch):
+    from market_vault.desktop.intraday_research import risk_value
+    from market_vault.desktop.localization import I18nBridge
+    from market_vault.desktop.preferences import DesktopPreferenceStore
+    from market_vault.research import intraday_return_uncertainty as uncertainty
+
+    path = tmp_path / "saved-grid.json"
+    write_strategy_experiment(parameter_grid_experiment, path=path)
+    analyze, calls = uncertainty.analyze_intraday_return_uncertainty, []
+
+    def captured(snapshot, **indices):
+        calls.append((snapshot.experiment_id, indices))
+        return analyze(snapshot, **indices)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Saved uncertainty must not load Q5, fit, or execute")
+
+    monkeypatch.setattr(uncertainty, "analyze_intraday_return_uncertainty", captured)
+    for name in ("load_intraday_dataset", "fit_ridge_rows", "run_intraday_execution"):
+        monkeypatch.setattr(research, name, forbidden)
+    runtime, _ = _runtime(tmp_path, [])
+    owner = QuantResearchController(runtime)
+    controller = owner.intradayResearchController
+    assert controller.openExperiment(str(path))
+    runtime._poll()
+    assert controller.selectCandidate(8)  # cost 1, candidate 2 in the saved grid
+    source = controller.selection_source()
+    bound = (controller._content, controller.experimentPath, controller.resultSummary,
+             controller.restoredPlan, controller.restoreRevision, owner.intradayFinalController.canFreeze)
+    assert controller.selectView(17) and controller.busy
+    assert controller._uncertainty_report is None  # completion applies on the owning thread
+    runtime._poll()
+    assert controller.status == "SUCCESS", controller.error
+    report = controller._uncertainty_report
+    assert (report["cost_index"], report["candidate_index"], report["candidate_id"]) == (1, 2, source["candidate_id"])
+    assert report["sample"]["sample_count"] == 10
+    assert (report["sampling"]["block_days"], report["sampling"]["replications"], report["sampling"]["seed"]) == (3, 5000, 0)
+    assert all(row["lower"] is None and row["upper"] is None and row["interval_unavailable_reason"]
+               for row in report["statistics"])
+    assert controller.tableModel.totalRows == 9
+    paired = report["statistics"][2]
+    row = next(row for row in controller._rows if row[:2] == ("PAIRED_EXCESS", "ARITHMETIC_MEAN"))
+    assert row[2:4] == (risk_value(paired["mean"], "RATIO").removesuffix("%"), "PERCENTAGE_POINTS")
+    assert next(row for row in controller._rows if row[:2] == ("STRATEGY", "ARITHMETIC_MEAN"))[2].endswith("%")
+    summary = controller.uncertaintySummary
+    summary["sampling"]["seed"] = 999
+    assert controller.uncertaintySummary["sampling"]["seed"] == 0
+    translations = I18nBridge(preference_store=DesktopPreferenceStore(root=tmp_path / "preferences"))
+    for view, language in ((0, "en"), (17, "zh-CN"), (11, "en"), (17, "zh-CN")):
+        assert controller.selectView(view) and translations.setLanguage(language)
+    assert len(calls) == 1 and controller._uncertainty_report is report
+    assert (controller._content, controller.experimentPath, controller.resultSummary,
+            controller.restoredPlan, controller.restoreRevision, owner.intradayFinalController.canFreeze) == bound
+    assert controller.selectCandidate(6) and controller.busy
+    assert controller._uncertainty_report is None and controller.uncertaintySummary == {}
+    runtime._poll()
+    current = controller._uncertainty_report
+    assert len(calls) == 2 and current["candidate_index"] == 0 and current["candidate_id"] != report["candidate_id"]
+    assert controller.openExperiment(str(tmp_path / "missing.json"))
+    runtime._poll()
+    assert controller.status == "FAILED" and controller._uncertainty_report is current
+    assert controller.uncertaintyError == "" and controller.experimentPath == str(path)
+    assert controller.resultSummary["intraday_verification"] == "RECORDED"
+    assert path.read_bytes() == parameter_grid_experiment.content
+    assert runtime.backend_if_initialized is None and runtime.shutdown()
+
+
+def test_return_uncertainty_worker_discards_stale_selection_and_recovers(qt_app, intraday_experiment,
+                                                                      tmp_path, monkeypatch):
+    runtime, runner = _runtime(tmp_path, [])
+    owner = QuantResearchController(runtime)
+    controller = owner.intradayResearchController
+    controller._apply(intraday_experiment, opened=True)
+    assert controller.selectView(17) and not controller.uncertaintyAvailable and not runner.names
+    assert controller.saveExperiment(str(tmp_path / "saved.json"))
+    runtime._poll()  # Save completes, then the now-saved selection can queue its analysis.
+    assert controller.uncertaintyAvailable and controller.busy
+    runtime._poll()
+    assert controller._uncertainty_report["candidate_index"] == 0
+    assert controller._uncertainty_report["statistics"][0]["mean"] == 0
+    assert controller._uncertainty_report["statistics"][0]["interval_unavailable_reason"] == "ZERO_SAMPLE_VARIATION"
+    pending = []
+
+    def deferred(name, operation):
+        future = Future()
+        pending.append((name, future, operation))
+        return future
+
+    monkeypatch.setattr(runner, "submit", deferred)
+    assert controller.selectCandidate(1) and len(pending) == 1
+    assert controller.selectCandidate(2) and len(pending) == 1
+    _, first, operation = pending.pop()
+    first.set_result(operation())
+    runtime._poll()
+    assert controller._uncertainty_report is None and len(pending) == 1
+    _, second, operation = pending.pop()
+    second.set_result(operation())
+    runtime._poll()
+    assert controller._uncertainty_report["candidate_index"] == 2
+    assert controller._uncertainty_report["candidate_id"] == controller.selection_source()["candidate_id"]
+    assert controller.selectCandidate(1) and len(pending) == 1
+    _, failed, _ = pending.pop()
+    failed.set_exception(ValueError("uncertainty calculation failed"))
+    runtime._poll()
+    assert controller.status == "FAILED" and controller.uncertaintyError == "uncertainty calculation failed"
+    assert controller._uncertainty_report is None and not pending
+    assert controller.selectView(0) and controller.selectView(17) and not pending
+    assert controller.retryUncertainty() and len(pending) == 1
+    _, retried, operation = pending.pop()
+    retried.set_result(operation())
+    runtime._poll()
+    assert controller.status == "SUCCESS" and controller.uncertaintyError == ""
+    assert controller._uncertainty_report["candidate_index"] == 1
+    assert controller.resultSummary["intraday_verification"] == "RECORDED"
+    assert runtime.backend_if_initialized is None and runtime.shutdown()
+
+
+def test_return_uncertainty_bad_account_and_exported_scenario_boundary(qt_app, intraday_experiment,
+        desktop_execution_scenarios, tmp_path):
+    from market_vault.research.strategy_experiment import StrategyExperiment
+    from test_intraday_experiment import signed
+
+    root = intraday_experiment.as_dict()
+    root["report"]["groups"][0]["results"][1]["execution"]["trades"][0]["commission_total"] += .01
+    partial = StrategyExperiment(signed(root))
+    path = tmp_path / "partial.json"
+    write_strategy_experiment(partial, path=path)
+    runtime, runner = _runtime(tmp_path, [])
+    owner = QuantResearchController(runtime)
+    controller = owner.intradayResearchController
+    assert controller.openExperiment(str(path))
+    runtime._poll()
+    assert controller.selectCandidate(1) and controller.selectView(17)
+    runtime._poll()
+    strategy, benchmark, paired = controller._uncertainty_report["statistics"]
+    assert strategy["mean"] is None and strategy["mean_unavailable_reason"] == "RECORDED_CASH_RECONCILIATION_FAILED"
+    assert benchmark["mean"] is not None and paired["mean_unavailable_reason"] == "STRATEGY_UNAVAILABLE"
+    assert len(controller.uncertaintySummary["warnings"]) == 3
+    controller._apply(desktop_execution_scenarios, path=str(tmp_path / "collection.json"), opened=True)
+    before = list(runner.names)
+    assert controller.selectView(17) and not controller.uncertaintyAvailable
+    assert controller._uncertainty_report is None and runner.names == before
+    child = tmp_path / "child.json"
+    assert controller.exportScenario(str(child))
+    runtime._poll()
+    assert not controller.uncertaintyAvailable and controller._uncertainty_report is None
+    assert controller.openExperiment(str(child))
+    runtime._poll()
+    assert controller.uncertaintyAvailable and controller.busy
+    runtime._poll()
+    assert controller.status == "SUCCESS" and controller._uncertainty_report["experiment_id"] == json.loads(child.read_bytes())["experiment_id"]
+    assert not controller.scenariosLoaded and controller.resultSummary["intraday_verification"] == "RECORDED"
     assert runtime.backend_if_initialized is None and runtime.shutdown()
 
 
