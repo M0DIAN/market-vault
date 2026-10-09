@@ -3438,6 +3438,10 @@ CI_REUSE_PROOF_GUARD = (
     "if: github.event_name == 'push' && github.ref == 'refs/heads/main' "
     "&& env.CI_TIER == 'full'"
 )
+CI_PACKAGE_JOB_GUARD = (
+    "if: ${{ always() && !cancelled() && needs.plan.result == 'success' "
+    "&& needs.test.result == 'success' && needs.portability-pyarrow24.result == 'success' }}"
+)
 # Classifier contract pins (scripts/ci_risk_tier.py, verified with ast).
 CI_CLASSIFIER_REL = Path("scripts") / "ci_risk_tier.py"
 CI_TIER_UNIVERSE_LINE = "tier=docs_fast|package_docs|control_plane|research_fast|full"
@@ -3543,6 +3547,7 @@ def check_ci_partitions(root: Path) -> list[str]:
         expected_job_guards = {
             "test-modules": ["if: needs.plan.outputs.run_partitions == 'true'"],
             "test": ["if: ${{ always() && !cancelled() }}"],
+            "package": [CI_PACKAGE_JOB_GUARD],
         }.get(job, [])
         if re.findall(r"(?m)^    (if:.*)$", block) != expected_job_guards:
             failures.append(f"CI partition contract: {job} must keep its exact job condition")

@@ -438,6 +438,9 @@ jobs:
   package:
     runs-on: ubuntu-latest
     needs: [plan, test, portability-pyarrow24]
+    # An explicit status function avoids transitive skips from the planned
+    # module skip. Direct prerequisites must still all succeed.
+    if: ${{ always() && !cancelled() && needs.plan.result == 'success' && needs.test.result == 'success' && needs.portability-pyarrow24.result == 'success' }}
     env:
       CI_TIER: ${{ needs.plan.outputs.tier }}
       POST_MERGE_REUSE: ${{ needs.plan.outputs.reuse }}

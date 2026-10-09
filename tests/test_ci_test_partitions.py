@@ -170,6 +170,8 @@ def test_runner_rejects_inherited_options_that_can_omit_tests(tmp_path, addopts)
      "        exclude:\n          - partition: intraday_final", "cannot include or exclude"),
     ("  package:\n", "  package:\n    if: always()\n", "package must keep its exact job condition"),
     ("  package:\n", "  package:\n    if: false\n", "package must keep its exact job condition"),
+    ("    " + release_checker.CI_PACKAGE_JOB_GUARD + "\n", "", "package must keep its exact job condition"),
+    (" && needs.test.result == 'success'", "", "package must keep its exact job condition"),
     ("      - name: Export execution plan\n", "      - name: Export execution plan\n"
      "        env:\n          POST_MERGE_REUSE: true\n", "cannot override execution decisions"),
     ("      - name: Run offline tests\n", "      - name: Run offline tests\n"
