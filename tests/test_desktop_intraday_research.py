@@ -365,6 +365,177 @@ def test_return_uncertainty_bad_account_and_exported_scenario_boundary(qt_app, i
     assert runtime.backend_if_initialized is None and runtime.shutdown()
 
 
+def test_family_bounds_complete_saved_cost_cache_units_and_source(qt_app, parameter_grid_experiment,
+                                                                 tmp_path, monkeypatch):
+    from market_vault.desktop.intraday_research import risk_value
+    from market_vault.desktop.localization import I18nBridge
+    from market_vault.desktop.preferences import DesktopPreferenceStore
+    from market_vault.research import intraday_family_bounds as family
+    from market_vault.research.strategy_experiment import StrategyExperiment
+    from test_intraday_experiment import signed
+
+    path, other_path = tmp_path / "family.json", tmp_path / "other-family.json"
+    write_strategy_experiment(parameter_grid_experiment, path=path)
+    root = parameter_grid_experiment.as_dict()
+    root["name"] = "Another saved family"
+    other = StrategyExperiment(signed(root))
+    write_strategy_experiment(other, path=other_path)
+    analyze, calls = family.analyze_intraday_family_bounds, []
+
+    def captured(snapshot, **indices):
+        calls.append((snapshot.experiment_id, indices))
+        return analyze(snapshot, **indices)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Saved family bounds must not load Q5, fit, or execute")
+
+    monkeypatch.setattr(family, "analyze_intraday_family_bounds", captured)
+    for name in ("load_intraday_dataset", "_fit", "fit_ridge_rows", "run_intraday_execution"):
+        monkeypatch.setattr(research, name, forbidden)
+    runtime, _ = _runtime(tmp_path, [])
+    owner = QuantResearchController(runtime)
+    controller = owner.intradayResearchController
+    assert controller.openExperiment(str(path))
+    runtime._poll()
+    assert controller.selectCandidate(8)  # cost 1, candidate 2 does not define a subset
+    bound = (controller._content, controller.experimentPath, controller.resultSummary,
+             controller.restoredPlan, controller.restoreRevision, owner.intradayFinalController.canFreeze)
+    assert controller.selectView(18) and controller.busy and controller._family_report is None
+    runtime._poll()
+    assert controller.status == "SUCCESS", controller.error
+    report = controller._family_report
+    assert report["family_scope"] == "SAVED_COST_GROUP_ONLY" and report["historical_search_coverage"] == "UNKNOWN"
+    assert report["cost_index"] == 1 and report["family_size"] == controller.tableModel.totalRows == 6
+    assert [row["candidate_id"] for row in report["members"]] == [row["candidate_id"] for row in root["report"]["groups"][1]["results"]]
+    assert [row["candidate_index"] for row in report["members"]] == list(range(6))
+    assert report["sample"]["sample_count"] == 10 and report["family_inference"]["status"] == "UNAVAILABLE"
+    assert report["family_inference"]["deduction"] is None
+    assert (report["sampling"]["block_days"], report["sampling"]["replications"], report["sampling"]["seed"]) == (3, 5000, 0)
+    assert all(row["mean_excess"] is not None and row["lower"] is None and row["bound_unavailable_reason"]
+               for row in report["members"])
+    for row, member in zip(controller._rows, report["members"], strict=True):
+        assert row[0].startswith(str(member["candidate_index"]) + " · ") and row[1] == member["candidate_id"][:12]
+        assert row[2] == risk_value(member["mean_excess"], "RATIO").removesuffix("%") and row[3] == "—"
+        assert row[4:] == ("", member["bound_unavailable_reason"])
+    summary = controller.familyBoundsSummary
+    summary["sampling"]["seed"] = 99
+    summary["members"].clear()
+    assert controller.familyBoundsSummary["sampling"]["seed"] == 0 and len(controller.familyBoundsSummary["members"]) == 6
+    translations = I18nBridge(preference_store=DesktopPreferenceStore(root=tmp_path / "preferences"))
+    for view, language in ((0, "en"), (18, "zh-CN"), (11, "en"), (18, "zh-CN")):
+        assert controller.selectView(view) and translations.setLanguage(language)
+    assert len(calls) == 1 and controller._family_report is report
+    assert (controller._content, controller.experimentPath, controller.resultSummary,
+            controller.restoredPlan, controller.restoreRevision, owner.intradayFinalController.canFreeze) == bound
+    assert controller.selectCandidate(11) and not controller.busy
+    assert controller._family_report is report and len(calls) == 1
+    assert controller.selectCandidate(2) and controller.busy and controller.familyBoundsSummary == {}
+    runtime._poll()
+    assert controller._family_report["cost_index"] == 0 and len(calls) == 2
+    assert controller.openExperiment(str(other_path))
+    runtime._poll()
+    assert controller.busy and controller._family_report is None
+    runtime._poll()
+    current = controller._family_report
+    assert current["experiment_id"] == other.experiment_id and len(calls) == 3
+    assert controller.openExperiment(str(tmp_path / "missing.json"))
+    runtime._poll()
+    assert controller.status == "FAILED" and controller._family_report is current and controller.familyBoundsError == ""
+    assert controller.experimentPath == str(other_path) and controller.resultSummary["intraday_verification"] == "RECORDED"
+    assert path.read_bytes() == parameter_grid_experiment.content and other_path.read_bytes() == other.content
+    assert runtime.backend_if_initialized is None and runtime.shutdown()
+
+
+def test_family_bounds_worker_discards_stale_cost_and_retries(qt_app, parameter_grid_experiment,
+                                                             tmp_path, monkeypatch):
+    runtime, runner = _runtime(tmp_path, [])
+    owner = QuantResearchController(runtime)
+    controller = owner.intradayResearchController
+    controller._apply(parameter_grid_experiment, opened=True)
+    assert controller.selectView(18) and not controller.familyBoundsAvailable and not runner.names
+    assert controller.saveExperiment(str(tmp_path / "saved.json"))
+    runtime._poll()
+    assert controller.familyBoundsAvailable and controller.busy
+    runtime._poll()
+    assert controller._family_report["cost_index"] == 0
+    pending = []
+
+    def deferred(name, operation):
+        future = Future()
+        pending.append((name, future, operation))
+        return future
+
+    monkeypatch.setattr(runner, "submit", deferred)
+    assert controller.selectCandidate(6) and len(pending) == 1
+    assert controller.selectCandidate(1) and len(pending) == 1
+    _, stale, operation = pending.pop()
+    stale.set_result(operation())
+    runtime._poll()
+    assert controller._family_report is None and len(pending) == 1
+    assert controller.selectCandidate(2) and len(pending) == 1  # same cost while its family is in flight
+    _, current, operation = pending.pop()
+    current.set_result(operation())
+    runtime._poll()
+    assert controller._family_report["cost_index"] == 0 and controller._family_report["family_size"] == 6
+    assert controller.selectCandidate(6) and len(pending) == 1
+    _, failed, _ = pending.pop()
+    failed.set_exception(ValueError("family analysis failed"))
+    runtime._poll()
+    assert controller.status == "FAILED" and controller.familyBoundsError == "family analysis failed"
+    assert controller._family_report is None and not pending
+    assert controller.selectCandidate(7) and controller.selectView(0) and controller.selectView(18) and not pending
+    assert controller.familyBoundsError == "family analysis failed"
+    assert controller.retryFamilyBounds() and len(pending) == 1
+    _, retried, operation = pending.pop()
+    retried.set_result(operation())
+    runtime._poll()
+    assert controller.status == "SUCCESS" and controller.familyBoundsError == ""
+    assert controller._family_report["cost_index"] == 1 and controller._family_report["family_size"] == 6
+    assert controller.resultSummary["intraday_verification"] == "RECORDED"
+    assert runtime.backend_if_initialized is None and runtime.shutdown()
+
+
+def test_family_bounds_unselected_invalid_member_is_retained(qt_app, parameter_grid_experiment, tmp_path):
+    from market_vault.research.strategy_experiment import StrategyExperiment
+    from test_intraday_experiment import signed
+
+    root = parameter_grid_experiment.as_dict()
+    members = root["report"]["groups"][1]["results"]
+    bad_index = next(index for index, member in enumerate(members) if index != 0 and member["execution"]["trades"])
+    members[bad_index]["execution"]["trades"][0]["commission_total"] += .01
+    invalid = StrategyExperiment(signed(root))
+    path, valid_path = tmp_path / "invalid-member.json", tmp_path / "valid-family.json"
+    write_strategy_experiment(invalid, path=path)
+    write_strategy_experiment(parameter_grid_experiment, path=valid_path)
+    runtime, runner = _runtime(tmp_path, [])
+    owner = QuantResearchController(runtime)
+    controller = owner.intradayResearchController
+    assert controller.openExperiment(str(path))
+    runtime._poll()
+    assert controller.selectCandidate(6) and controller.selectView(18)
+    runtime._poll()
+    report = controller._family_report
+    assert report["family_inference"]["reason"] == "FAMILY_MEMBER_UNAVAILABLE"
+    assert report["family_size"] == controller.tableModel.totalRows == 6
+    assert all(member["lower"] is None for member in report["members"])
+    assert report["members"][0]["mean_excess"] is not None
+    bad = report["members"][bad_index]
+    assert bad["mean_excess"] is None and bad["mean_unavailable_reason"] == "STRATEGY_UNAVAILABLE"
+    assert "RECORDED_CASH_RECONCILIATION_FAILED" in bad["detail"]
+    assert controller._rows[bad_index][4:] == ("STRATEGY_UNAVAILABLE", "STRATEGY_UNAVAILABLE")
+    before = list(runner.names)
+    assert controller.selectCandidate(6 + bad_index)
+    assert controller._family_report is report and runner.names == before
+    assert controller.openExperiment(str(valid_path))
+    runtime._poll()
+    runtime._poll()
+    assert controller._family_report["experiment_id"] == parameter_grid_experiment.experiment_id
+    assert controller._family_report["family_inference"]["reason"] == "INSUFFICIENT_DAILY_RETURNS"
+    assert all(member["mean_excess"] is not None for member in controller._family_report["members"])
+    assert path.read_bytes() == invalid.content and valid_path.read_bytes() == parameter_grid_experiment.content
+    assert runtime.backend_if_initialized is None and runtime.shutdown()
+
+
 def test_actual_qml_compare_models_pagination_save_open_replay_and_language(research_case, tmp_path):
     data, _, _ = research_case
     (tmp_path / "settings.yaml").write_text("storage:\n  root_dir: ./data\n")

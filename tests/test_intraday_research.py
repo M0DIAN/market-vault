@@ -521,3 +521,242 @@ def test_return_uncertainty_bad_saved_side_and_full_basis_are_local(return_uncer
         assert good["mean"] is not None and good["lower"] is not None
         assert paired["mean_unavailable_reason"] == ("STRATEGY_UNAVAILABLE" if case == "strategy_cash" else "BENCHMARK_UNAVAILABLE")
     assert paired["mean"] is paired["lower"] is paired["upper"] is None
+
+
+def family_test_rows(columns):
+    """Independent exact observed means for the small-matrix family oracle."""
+    from fractions import Fraction
+    return [{"candidate_index": index, "mean_excess": float(sum(map(Fraction, column)) / len(column)),
+             "lower": None, "mean_unavailable_reason": None, "bound_unavailable_reason": None, "detail": None}
+            for index, column in enumerate(columns)]
+
+
+def test_family_bounds_exact_centered_joint_oracle_duplicate_and_reordered_columns(monkeypatch):
+    from fractions import Fraction
+    from market_vault.research import intraday_family_bounds as family
+    a = (0., .125, .03125) + (0.,) * 97
+    b = (.0625, -.0625, .25) + (.0625,) * 97
+    fixed = (.1,) * 100
+    pairs = [divmod(index, 91) for index in range(1000)]
+    expected_maxima = sorted(max(Fraction(4 * x + y - 5, 3200), Fraction(-4 * x + 6 * y - 2, 3200), 0)
+                             for x, y in pairs)
+    expected_deduction = (19 * expected_maxima[949] + expected_maxima[950]) / 20
+    sample = {"sample_count": 100, "is_contiguous": True}
+    sampling = {"expected_block_count": 20.8, "block_days": 5, "seed": 0, "replications": 1000}
+    actual_quantile, actual_mean = family._quantile, family._mean
+    captured = []
+    def quantile(values, probability):
+        assert probability == .95
+        captured.append(values)
+        return actual_quantile(values, probability)
+    def mean(values):
+        assert not all(value == .1 for value in values), "constant columns must contribute exact zero directly"
+        return actual_mean(values)
+    monkeypatch.setattr(family, "_quantile", quantile)
+    monkeypatch.setattr(family, "_mean", mean)
+    def calculate(columns):
+        prescribed, calls = iter(pairs), []
+        def indices(count, block_days, rng):
+            calls.append((count, block_days))
+            x, y = next(prescribed)
+            return [1] * x + [2] * y + [0] * (count - x - y)
+        monkeypatch.setattr(family, "_stationary_indices", indices)
+        rows = family_test_rows(columns)
+        inference = family._family_bounds(rows, columns, sample, sampling, {"matches": True})
+        assert calls == [(100, 5)] * 1000  # One shared draw per replicate, not independent candidate streams.
+        return rows, inference
+    rows, inference = calculate([a, b, fixed])
+    assert captured[-1] == pytest.approx([float(value) for value in expected_maxima])
+    assert inference == {"status": "AVAILABLE", "reason": None, "detail": None,
+                         "deduction": pytest.approx(float(expected_deduction))}
+    assert [row["mean_excess"] for row in rows] == pytest.approx([5 / 3200, 202 / 3200, .1])
+    assert [row["lower"] for row in rows[:2]] == pytest.approx([float(Fraction(5, 3200) - expected_deduction),
+                                                              float(Fraction(202, 3200) - expected_deduction)])
+    assert rows[2]["lower"] is None and rows[2]["bound_unavailable_reason"] == "ZERO_SAMPLE_VARIATION"
+    duplicate, duplicate_inference = calculate([a, b, fixed, a])
+    reordered, reordered_inference = calculate([fixed, b, a])
+    assert duplicate_inference == reordered_inference == inference
+    assert [row["lower"] for row in duplicate] == [row["lower"] for row in rows] + [rows[0]["lower"]]
+    assert [row["lower"] for row in reordered] == [rows[2]["lower"], rows[1]["lower"], rows[0]["lower"]]
+    _, narrower = calculate([a])
+    assert narrower["deduction"] < inference["deduction"]  # The volatile member widens the common deduction.
+
+
+def test_family_bounds_constants_joint_degeneracy_tiny_returns_and_overflow(monkeypatch):
+    from market_vault.research import intraday_family_bounds as family
+    sample = {"sample_count": 100, "is_contiguous": True}
+    sampling = {"expected_block_count": 20.8, "block_days": 5, "seed": 0, "replications": 1000}
+    def calculate(columns):
+        rows = family_test_rows(columns)
+        return rows, family._family_bounds(rows, columns, sample, sampling, {"matches": True})
+    fixed = [(1e-14,) * 100, (-.25,) * 100]
+    rows, inference = calculate(fixed)
+    assert inference["reason"] == "DEGENERATE_FAMILY" and inference["deduction"] is None
+    assert all(row["bound_unavailable_reason"] == "ZERO_SAMPLE_VARIATION" and row["lower"] is None for row in rows)
+    assert rows[0]["mean_excess"] == 1e-14
+    monkeypatch.setattr(family, "_stationary_indices", lambda count, block_days, rng: list(range(count)))
+    rows, inference = calculate([(0., 1.) * 50, (1., 0.) * 50])
+    assert inference["reason"] == "DEGENERATE_FAMILY"
+    assert all(row["bound_unavailable_reason"] == "DEGENERATE_FAMILY" for row in rows)
+    draws = iter([0, 1] * 500)
+    monkeypatch.setattr(family, "_stationary_indices", lambda count, block_days, rng: [next(draws)] * count)
+    rows, inference = calculate([(0., 1e-14, 2e-14) + (0.,) * 97,
+                                 (.5e-14,) * 3 + (0.,) * 97])
+    assert inference["status"] == "AVAILABLE" and inference["deduction"] > 0
+    assert 0 < rows[0]["mean_excess"] < 1e-12 and rows[0]["lower"] < 0
+    assert rows[1]["mean_excess"] > 0 and rows[1]["lower"] is None
+    assert rows[1]["bound_unavailable_reason"] == "DEGENERATE_RESAMPLING"
+    # Finite inputs whose centered deviation overflows must block the entire
+    # family, without retaining an earlier member's apparent bound.
+    monkeypatch.setattr(family, "_stationary_indices", lambda count, block_days, rng: [1] * count)
+    rows, inference = calculate([(0., .125) * 50, (-1e308, 1e308) + (-1e308,) * 98])
+    assert inference["reason"] == "NUMERIC_OVERFLOW" and inference["deduction"] is None
+    assert all(row["mean_excess"] is not None and row["lower"] is None
+               and row["bound_unavailable_reason"] == "NUMERIC_OVERFLOW" for row in rows)
+
+
+def test_family_bounds_real_all_members_one_decode_and_installed_console(return_uncertainty_case, monkeypatch, capsys, tmp_path):
+    import json
+    import os
+    import statistics
+    import subprocess
+    import sysconfig
+    from pathlib import Path
+    from market_vault import cli
+    from market_vault.research import intraday_family_bounds as family
+    from market_vault.research import intraday_return_uncertainty as uncertainty
+    from market_vault.research.strategy_experiment import StrategyExperiment
+    case = return_uncertainty_case
+    original = case.snapshot.as_dict()
+    group = original["report"]["groups"][1]
+    benchmark = [row["cash_close"] / row["cash_open"] - 1 for row in group["benchmark"]["execution"]["daily"]]
+    expected = [statistics.fmean(row["cash_close"] / row["cash_open"] - 1 - reference
+                                for row, reference in zip(candidate["execution"]["daily"], benchmark, strict=True))
+                for candidate in group["results"]]
+    calls, decode, available = {"decode": 0, "accounts": 0}, StrategyExperiment.as_dict, uncertainty._available
+    def decoded(self):
+        calls["decode"] += 1
+        return decode(self)
+    def checked(*args, **kwargs):
+        calls["accounts"] += 1
+        return available(*args, **kwargs)
+    monkeypatch.setattr(StrategyExperiment, "as_dict", decoded)
+    monkeypatch.setattr(uncertainty, "_available", checked)
+    for name in ("load_intraday_dataset", "_fit", "run_intraday_execution"):
+        monkeypatch.setattr(research, name, lambda *a, **kw: pytest.fail("family bounds accessed source, fit or execution"))
+    monkeypatch.setattr(cli, "load_settings", lambda *a, **kw: pytest.fail("family bounds loaded settings"))
+    before = case.path.read_bytes()
+    report = family.analyze_intraday_family_bounds(case.snapshot, cost_index=1)
+    assert calls == {"decode": 1, "accounts": 3}
+    assert report["experiment_id"] == original["experiment_id"] and report["data_id"] == original["dataset_id"]
+    assert report["family_scope"] == "SAVED_COST_GROUP_ONLY" and report["historical_search_coverage"] == "UNKNOWN"
+    assert (report["cost_index"], report["cost_group_count"], report["evaluation_count"], report["family_size"]) == (1, 2, 4, 2)
+    assert report["execution_policy"] == group["execution_policy"]
+    assert report["benchmark_execution_id"] == group["benchmark"]["execution"]["execution_id"]
+    assert report["basis"] == {"matches": True, "failed_checks": []}
+    assert report["sample"]["sample_count"] == 105 and report["sample"]["fold_count"] == 21
+    assert report["sample"]["evaluated_days"] == original["report"]["context"]["evaluated_days"]
+    assert report["sample"]["is_contiguous"] and report["sample"]["gap_days"] == []
+    assert (report["sample"]["development_day_count"], report["sample"]["unevaluated_development_day_count"]) == (110, 5)
+    sampling = report["sampling"]
+    assert (sampling["block_days"], sampling["replications"], sampling["seed"], sampling["confidence_level"]) == (5, 5000, 0, .95)
+    assert sampling["block_days_source"] == "CUBE_ROOT_HEURISTIC" and sampling["expected_block_count"] == pytest.approx(21.8)
+    assert sampling["bound_method"] == "SINGLE_STEP_UNSTUDENTIZED_CENTERED_MAX" and sampling["bound_type"] == "ONE_SIDED_LOWER"
+    assert report["family_inference"]["status"] == "AVAILABLE"
+    deduction = report["family_inference"]["deduction"]
+    assert [row["mean_excess"] for row in report["members"]] == pytest.approx(expected)
+    for index, (row, candidate) in enumerate(zip(report["members"], group["results"], strict=True)):
+        assert row["candidate_index"] == index and row["candidate_id"] == candidate["candidate_id"]
+        assert row["execution_id"] == candidate["execution"]["execution_id"] and row["strategy"] == candidate["strategy"]
+        assert row["sample_count"] == 105 and row["basis"] == {"matches": True, "failed_checks": []}
+        assert row["prediction_coverage"] == {"prediction_count": 945, "complete_target_count": None,
+                                             "complete_target_count_unavailable_reason": "NOT_APPLICABLE"}
+        assert row["mean_unavailable_reason"] is row["bound_unavailable_reason"] is row["detail"] is None
+        assert row["lower"] == pytest.approx(expected[index] - deduction)
+        assert any(day["trade_count"] == 0 for day in candidate["execution"]["daily"])
+    assert family.analyze_intraday_family_bounds(case.snapshot, cost_index=1) == report
+    assert cli.main(["research-intraday-family-bounds", "--experiment", str(case.path), "--cost-index", "1"]) == 0
+    assert json.loads(capsys.readouterr().out)["report"] == report
+    console = Path(sysconfig.get_path("scripts")) / ("market-vault.exe" if os.name == "nt" else "market-vault")
+    env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"), "PYTHONIOENCODING": "cp1252:strict"}
+    command = [str(console), "--settings", str(tmp_path / "absent-settings.yaml"), "research-intraday-family-bounds",
+               "--experiment", str(case.path), "--cost-index", "1"]
+    process = subprocess.run(command, env=env, capture_output=True, check=False)
+    assert process.returncode == 0 and not process.stderr
+    assert process.stdout.isascii() and json.loads(process.stdout)["report"] == report
+    configured = family.analyze_intraday_family_bounds(case.snapshot, cost_index=1, block_days=6, replications=1000, seed=17)
+    explicit = subprocess.run([*command, "--block-days", "6", "--replications", "1000", "--seed", "17"], env=env, capture_output=True, check=False)
+    assert explicit.returncode == 0 and json.loads(explicit.stdout)["report"] == configured
+    assert configured["sampling"]["block_days_source"] == "EXPLICIT" and configured["family_bounds_id"] != report["family_bounds_id"]
+    invalid = subprocess.run([*command, "--cost-index", "-1"], env=env, capture_output=True, check=False)
+    assert invalid.returncode == 1 and not invalid.stdout and json.loads(invalid.stderr)["status"] == "FAILED"
+    for extra in (["--seed", "1.5"], ["--candidate-index", "0"]):
+        parsed = subprocess.run([*command, *extra], env=env, capture_output=True, check=False)
+        assert parsed.returncode == 2 and not parsed.stdout
+    assert case.path.read_bytes() == before
+
+
+@pytest.mark.parametrize("case", ["cash", "raw_basis", "decision_basis", "overflow", "benchmark"])
+def test_family_bounds_hidden_member_blocks_complete_family_without_losing_good_means(return_uncertainty_case, case):
+    from datetime import datetime
+    from market_vault.research.intraday_family_bounds import analyze_intraday_family_bounds
+    from market_vault.research.strategy_experiment import StrategyExperiment
+    from test_intraday_experiment import signed
+    root = return_uncertainty_case.snapshot.as_dict()
+    group = root["report"]["groups"][1]
+    bad = group["results"][1]
+    execution = group["benchmark"]["execution"] if case == "benchmark" else bad["execution"]
+    if case == "raw_basis":
+        execution["ledger"][-2]["row_version_id"] = "f" * 64
+    elif case == "decision_basis":
+        # The immutable grammar accepts a different valid decision-grid point
+        # with the same observation key; self-basis and day counts still match.
+        # Cost scenarios must retain identical predictions for this candidate.
+        for saved_group in root["report"]["groups"]:
+            candidate = saved_group["results"][1]
+            for row in (candidate["predictions"][0], candidate["execution"]["decisions"][0]):
+                row["slot"] -= 1
+                row["decision_time"] = (datetime.fromisoformat(row["decision_time"]) - timedelta(minutes=30)).isoformat()
+    elif case == "overflow":
+        execution["trades"][0]["quantity"] = 1e308
+        execution["trades"][0]["exit_raw_open"] = 1e308
+    else:
+        execution["trades"][0]["commission_total"] += .01
+    result = analyze_intraday_family_bounds(StrategyExperiment(signed(root)), cost_index=1, replications=1000)
+    first, second = result["members"]
+    assert result["family_size"] == 2 and [row["candidate_index"] for row in result["members"]] == [0, 1]
+    assert result["family_inference"]["status"] == "UNAVAILABLE" and result["family_inference"]["deduction"] is None
+    assert all(row["lower"] is None for row in result["members"])
+    if case in ("raw_basis", "decision_basis"):
+        failed = "raw_prices" if case == "raw_basis" else "decision_identity"
+        assert result["basis"] == {"matches": False, "failed_checks": [failed]}
+        assert result["family_inference"]["reason"] == first["bound_unavailable_reason"] == "BASIS_MISMATCH"
+        assert first["mean_excess"] is not None and first["mean_unavailable_reason"] is None
+        if case == "raw_basis":
+            assert second["mean_excess"] is None and second["mean_unavailable_reason"] == "BASIS_MISMATCH"
+        else:
+            assert second["mean_excess"] is not None and second["mean_unavailable_reason"] is None
+            assert all(row["basis"] == {"matches": True, "failed_checks": []} for row in result["members"])
+    else:
+        assert result["family_inference"]["reason"] == "FAMILY_MEMBER_UNAVAILABLE"
+        if case == "benchmark":
+            assert all(row["mean_excess"] is None and row["mean_unavailable_reason"] == "BENCHMARK_UNAVAILABLE" for row in result["members"])
+        else:
+            assert first["mean_excess"] is not None and first["bound_unavailable_reason"] == "FAMILY_MEMBER_UNAVAILABLE"
+            assert second["mean_excess"] is None and second["mean_unavailable_reason"] == "STRATEGY_UNAVAILABLE"
+        underlying = "NUMERIC_OVERFLOW" if case == "overflow" else "RECORDED_CASH_RECONCILIATION_FAILED"
+        assert underlying in second["detail"]
+
+
+def test_family_bounds_common_gates_preserve_means_and_reject_subset_before_decode(return_uncertainty_case, monkeypatch):
+    from market_vault.research import intraday_family_bounds as family
+    from market_vault.research.strategy_experiment import StrategyExperiment
+    blocked = family.analyze_intraday_family_bounds(return_uncertainty_case.snapshot, block_days=100, replications=1000)
+    assert blocked["family_inference"]["reason"] == "INSUFFICIENT_EXPECTED_BLOCKS"
+    assert all(row["mean_excess"] is not None and row["lower"] is None and row["bound_unavailable_reason"] == "INSUFFICIENT_EXPECTED_BLOCKS"
+               for row in blocked["members"])
+    monkeypatch.setattr(StrategyExperiment, "as_dict", lambda self: pytest.fail("invalid family parameters decoded a snapshot"))
+    with pytest.raises(ValueError, match="integer"):
+        family.analyze_intraday_family_bounds(return_uncertainty_case.snapshot, cost_index=True)
+    with pytest.raises(TypeError, match="candidate_index"):
+        family.analyze_intraday_family_bounds(return_uncertainty_case.snapshot, candidate_index=0)
