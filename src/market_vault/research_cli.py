@@ -31,6 +31,7 @@ from .intraday_research_cli import add_intraday_research_subparsers, research_in
 from .intraday_performance_cli import add_intraday_performance_subparser, research_intraday_performance_main
 from .intraday_risk_diagnostics_cli import add_intraday_risk_diagnostics_subparser, research_intraday_risk_diagnostics_main
 from .intraday_parameter_grid_cli import add_intraday_parameter_grid_subparser, research_intraday_parameter_grid_main
+from .intraday_return_uncertainty_cli import add_intraday_return_uncertainty_subparser, research_intraday_return_uncertainty_main
 from .intraday_plan_cli import add_intraday_plan_subparser, research_intraday_plan_main
 from .intraday_saved_comparison_cli import add_intraday_saved_comparison_subparser, research_intraday_saved_comparison_main
 from .intraday_execution_scenarios_cli import add_intraday_execution_scenarios_subparsers, research_intraday_execution_scenarios_main
@@ -113,6 +114,7 @@ RESEARCH_COMMANDS = frozenset({
     "research-intraday-performance",
     "research-intraday-risk-diagnostics",
     "research-intraday-parameter-grid",
+    "research-intraday-return-uncertainty",
     "research-intraday-plan-from-candidate",
     "research-intraday-compare-saved",
     "research-intraday-scenarios", "research-intraday-export-scenario",
@@ -220,6 +222,7 @@ def add_research_subparsers(subparsers) -> None:
     add_intraday_performance_subparser(subparsers)
     add_intraday_risk_diagnostics_subparser(subparsers)
     add_intraday_parameter_grid_subparser(subparsers)
+    add_intraday_return_uncertainty_subparser(subparsers)
     add_intraday_plan_subparser(subparsers)
     add_intraday_saved_comparison_subparser(subparsers)
     add_intraday_execution_scenarios_subparsers(subparsers)
@@ -246,6 +249,8 @@ def run_research_command(command: str, args: argparse.Namespace) -> int:
         return research_intraday_risk_diagnostics_main(args)
     if command == "research-intraday-parameter-grid":
         return research_intraday_parameter_grid_main(args)
+    if command == "research-intraday-return-uncertainty":
+        return research_intraday_return_uncertainty_main(args)
     if command == "research-intraday-plan-from-candidate":
         return research_intraday_plan_main(args)
     if command == "research-intraday-compare-saved":

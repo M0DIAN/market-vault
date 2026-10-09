@@ -121,6 +121,12 @@ additional evaluations.
 comparison, diagnostics or execution-scenarios plans and starts an editable
 single-candidate comparison from an explicitly selected saved DEV result.
 
+The next [saved DEV research-quality package](intraday_research_quality.md)
+defines Q15 return uncertainty, Q16 complete-family simultaneous bounds and
+Q17 two-strategy complementarity with fixed initial capital sleeves. Its
+statistical admission and capital assumptions are separate from the recorded
+descriptive metrics above.
+
 ## CLI and plan grammar
 
 Commands work offline, without settings or OpenD initialization:

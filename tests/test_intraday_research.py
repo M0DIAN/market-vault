@@ -292,3 +292,232 @@ def test_empty_observation_fold_rejected_but_one_empty_day_kept(research_case):
     prepared = research._prepare_intraday_research(plan, data=prepared_input)
     assert absent in prepared.context["evaluated_days"]
     assert len(prepared.context["validation_keys"]) == 666
+
+
+def return_uncertainty_fixture(root):
+    """130 declared sessions through Canonical/Q5/Q7; 105 DEV cash days.
+
+    Rule-only 30-minute data keeps this longer statistical sample smaller than
+    the existing 36-session five-minute fitting fixture. It proves software
+    behavior, not evidence of a profitable market strategy.
+    """
+    from market_vault.research.intraday_experiment import create_intraday_experiment
+    from market_vault.research.strategy_experiment import write_strategy_experiment
+    current, entries, days, bars = date(2025, 2, 3), [], [], []
+    closed_days = {"2025-02-17", "2025-04-18", "2025-05-26", "2025-06-19", "2025-07-04"}
+    while len(days) < 130:
+        day = current.isoformat()
+        closed = current.weekday() >= 5 or day in closed_days
+        entries.append((day, "C" if closed else "N"))
+        if not closed:
+            days.append(day)
+        current += timedelta(days=1)
+    for index, day in enumerate(days):
+        slope = (index % 7 - 3) * .04
+        for slot in range(13):
+            price = 100 + slot * slope
+            bars.append(cd.bar(day, slot, interval="30m", open=price, close=price + .005, code="US.SPY"))
+    source = cd.build(root, bars, interval="30m")
+    data = build_intraday_dataset({
+        "plan_schema_version": "market-vault-intraday-data-plan-v1", "canonical_build_dirs": [str(source.build_path)],
+        "schedule": json_values(asdict(cd.schedule(entries))), "symbol": "US.SPY", "interval": "30m",
+        "preset": "LIGHT_TECHNICAL", "stride_bars": 1, "target_horizon_bars": None, "dataset_as_of": cd.AS_OF.isoformat()})
+    data = replace(data, path=write_intraday_dataset(data, path=root / "intraday.json"))
+    comparison = research.default_intraday_research_plan(data, commission_bps=0, slippage_bps=0)
+    comparison["feature_fields"] = ["sma_5"]
+    comparison["strategies"] = [{"kind": "FEATURE_RULE", "name": "日内均值", "signal_field": "sma_5", "comparator": "GT", "threshold": 100}]
+    comparison["walk_forward"] = {"minimum_train_days": 5, "validation_days": 5, "step_days": 5}
+    comparison["execution"]["max_hold_bars"] = 2
+    plan = {"plan_schema_version": research.INTRADAY_DIAGNOSTICS_PLAN_VERSION, "comparison_plan": comparison,
+            "strategy_name": "日内均值", "parameter_axes": [{"parameter": "threshold", "values": [100, 100.2]}],
+            "cost_scenarios": [{"commission_bps": 0, "slippage_bps": 0}, {"commission_bps": 3, "slippage_bps": 2}]}
+    report = research.run_intraday_research(plan)
+    snapshot = create_intraday_experiment(plan=plan, report=report, name="105 日重采样样本")
+    path = root / "development.json"
+    write_strategy_experiment(snapshot, path=path)
+    return SimpleNamespace(data=data, plan=plan, snapshot=snapshot, path=path)
+
+
+@pytest.fixture(scope="session")
+def return_uncertainty_case(tmp_path_factory):
+    return return_uncertainty_fixture(tmp_path_factory.mktemp("intraday-return-uncertainty"))
+
+
+def test_return_uncertainty_stationary_restart_wrap_and_exact_quantile_oracle(monkeypatch):
+    from fractions import Fraction
+    from market_vault.research import intraday_return_uncertainty as uncertainty
+    class Draws:
+        def __init__(self):
+            self.starts, self.restarts, self.bounds = iter((4, 3)), iter((.2, .1, .9, .8)), []
+        def randrange(self, count):
+            self.bounds.append(count)
+            return next(self.starts)
+        def random(self):
+            return next(self.restarts)
+    draws = Draws()
+    assert uncertainty._stationary_indices(5, 5, draws) == [4, 0, 3, 4, 0]
+    assert draws.bounds == [5, 5]
+    assert [uncertainty._default_block_days(n) for n in (100, 125, 126, 1000)] == [5, 5, 6, 10]
+    # Independent rational oracle: each prescribed resample has a occurrences
+    # of 1/8 and b of 1/32, out of 100 observations. The paired excess is -1/4.
+    values = {"strategy": (0., .125, .03125) + (0.,) * 97}
+    values["benchmark"] = tuple(value + .25 for value in values["strategy"])
+    values["paired_excess"] = (-.25,) * 100
+    pairs = [divmod(index, 91) for index in range(1000)]
+    prescribed = iter(pairs)
+    def indices(count, block_days, rng):
+        a, b = next(prescribed)
+        assert count == 100 and block_days == 5
+        return [1] * a + [2] * b + [0] * (100 - a - b)
+    monkeypatch.setattr(uncertainty, "_stationary_indices", indices)
+    rows = [uncertainty._statistic(name, 100, series) for name, series in values.items()]
+    sample = {"sample_count": 100, "is_contiguous": True}
+    sampling = {"expected_block_count": 20.8, "block_days": 5, "seed": 0, "replications": 1000}
+    uncertainty._mean_intervals(rows, values, sample, sampling)
+    expected = sorted(Fraction(4 * a + b, 3200) for a, b in pairs)
+    lower = (expected[24] * 25 + expected[25] * 975) / 1000
+    upper = (expected[974] * 975 + expected[975] * 25) / 1000
+    assert rows[0]["mean"] == pytest.approx(float(Fraction(5, 3200)))
+    assert (rows[0]["lower"], rows[0]["upper"]) == pytest.approx((float(lower), float(upper)))
+    assert (rows[1]["lower"], rows[1]["upper"]) == pytest.approx((float(lower) + .25, float(upper) + .25))
+    assert rows[2]["mean"] == -.25 and rows[2]["mean_unavailable_reason"] is None
+    assert rows[2]["lower"] is rows[2]["upper"] is None
+    assert rows[2]["interval_unavailable_reason"] == "ZERO_SAMPLE_VARIATION"
+    # Distinguish a constant input from a nonconstant input with degenerate draws.
+    monkeypatch.setattr(uncertainty, "_stationary_indices", lambda count, block_days, rng: list(range(count)))
+    rows = [uncertainty._statistic(name, 100, series) for name, series in values.items()]
+    uncertainty._mean_intervals(rows, values, sample, sampling)
+    assert [row["interval_unavailable_reason"] for row in rows] == ["DEGENERATE_RESAMPLING", "DEGENERATE_RESAMPLING", "ZERO_SAMPLE_VARIATION"]
+
+
+def test_return_uncertainty_real_long_account_one_decode_paired_cash_days_and_console(return_uncertainty_case, monkeypatch, capsys):
+    import json
+    import os
+    import statistics
+    import subprocess
+    import sysconfig
+    from pathlib import Path
+    from market_vault import cli
+    from market_vault.research import intraday_return_uncertainty as uncertainty
+    from market_vault.research.strategy_experiment import StrategyExperiment
+    case = return_uncertainty_case
+    original = case.snapshot.as_dict()
+    group = original["report"]["groups"][1]
+    candidate = group["results"][1]
+    actual_days = candidate["execution"]["daily"]
+    expected = [row["cash_close"] / row["cash_open"] - 1 for row in actual_days]
+    benchmark = [row["cash_close"] / row["cash_open"] - 1 for row in group["benchmark"]["execution"]["daily"]]
+    calls, decode, available = {"decode": 0, "accounts": 0}, StrategyExperiment.as_dict, uncertainty._available
+    def decoded(self):
+        calls["decode"] += 1
+        return decode(self)
+    def checked(*args, **kwargs):
+        calls["accounts"] += 1
+        return available(*args, **kwargs)
+    monkeypatch.setattr(StrategyExperiment, "as_dict", decoded)
+    monkeypatch.setattr(uncertainty, "_available", checked)
+    for name in ("load_intraday_dataset", "_fit", "run_intraday_execution"):
+        monkeypatch.setattr(research, name, lambda *a, **kw: pytest.fail("uncertainty accessed source, fit or execution"))
+    monkeypatch.setattr(cli, "load_settings", lambda *a, **kw: pytest.fail("uncertainty loaded settings"))
+    before = case.path.read_bytes()
+    result = uncertainty.analyze_intraday_return_uncertainty(case.snapshot, cost_index=1, candidate_index=1)
+    assert calls == {"decode": 1, "accounts": 2}
+    assert result["sample"]["sample_count"] == 105 and result["sample"]["is_contiguous"]
+    assert result["sample"]["gap_days"] == []
+    assert result["sample"]["development_day_count"] == 110
+    assert result["sample"]["unevaluated_development_day_count"] == 5
+    assert result["sample"]["prediction_count"] == 945
+    assert result["sample"]["complete_target_count"] is None
+    assert result["sample"]["complete_target_count_unavailable_reason"] == "NOT_APPLICABLE"
+    assert result["sampling"]["block_days"] == 5 and result["sampling"]["expected_block_count"] == pytest.approx(21.8)
+    assert result["candidate_id"] == candidate["candidate_id"] and result["basis"] == {"matches": True, "failed_checks": []}
+    assert result["strategy_execution_id"] == candidate["execution"]["execution_id"]
+    assert result["benchmark_execution_id"] == group["benchmark"]["execution"]["execution_id"]
+    assert any(row["trade_count"] == 0 for row in actual_days) and len(expected) == 105
+    assert [row["mean"] for row in result["statistics"]] == pytest.approx([
+        statistics.fmean(expected), statistics.fmean(benchmark), statistics.fmean(a - b for a, b in zip(expected, benchmark, strict=True))])
+    for row in result["statistics"]:
+        assert row["mean_unavailable_reason"] is row["interval_unavailable_reason"] is None
+        assert math.isfinite(row["lower"]) and row["lower"] < row["upper"]
+    assert uncertainty.analyze_intraday_return_uncertainty(case.snapshot, cost_index=1, candidate_index=1) == result
+    assert cli.main(["research-intraday-return-uncertainty", "--experiment", str(case.path),
+                     "--cost-index", "1", "--candidate-index", "1"]) == 0
+    assert json.loads(capsys.readouterr().out)["report"] == result
+    console = Path(sysconfig.get_path("scripts")) / ("market-vault.exe" if os.name == "nt" else "market-vault")
+    env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"), "PYTHONIOENCODING": "cp1252:strict"}
+    process = subprocess.run([str(console), "research-intraday-return-uncertainty", "--experiment", str(case.path),
+                              "--cost-index", "1", "--candidate-index", "1"], env=env, capture_output=True, check=False)
+    assert process.returncode == 0 and not process.stderr
+    assert process.stdout.isascii() and json.loads(process.stdout)["report"] == result
+    invalid = subprocess.run([str(console), "research-intraday-return-uncertainty", "--experiment", str(case.path),
+                              "--candidate-index", "-1"], env=env, capture_output=True, check=False)
+    assert invalid.returncode == 1 and not invalid.stdout and json.loads(invalid.stderr)["status"] == "FAILED"
+    parsed = subprocess.run([str(console), "research-intraday-return-uncertainty", "--experiment", str(case.path),
+                             "--seed", "1.5"], env=env, capture_output=True, check=False)
+    assert parsed.returncode == 2 and not parsed.stdout
+    assert case.path.read_bytes() == before
+
+
+@pytest.mark.parametrize("changes", [
+    {"cost_index": True}, {"candidate_index": 1.5}, {"block_days": True}, {"block_days": 1},
+    {"replications": 999}, {"replications": 20001}, {"replications": False}, {"seed": -1}, {"seed": 2 ** 32}, {"seed": True},
+])
+def test_return_uncertainty_invalid_parameters_precede_decode(return_uncertainty_case, monkeypatch, changes):
+    from market_vault.research.intraday_return_uncertainty import analyze_intraday_return_uncertainty
+    from market_vault.research.strategy_experiment import StrategyExperiment
+    monkeypatch.setattr(StrategyExperiment, "as_dict", lambda self: pytest.fail("invalid parameters decoded an experiment"))
+    with pytest.raises(ValueError, match="integer"):
+        analyze_intraday_return_uncertainty(return_uncertainty_case.snapshot, **changes)
+
+
+def test_return_uncertainty_small_sample_and_expected_blocks_keep_means(research_case, return_uncertainty_case):
+    from market_vault.research.intraday_experiment import create_intraday_experiment
+    from market_vault.research.intraday_return_uncertainty import analyze_intraday_return_uncertainty
+    _, plan, report = research_case
+    small = analyze_intraday_return_uncertainty(create_intraday_experiment(plan=plan, report=report), candidate_index=1)
+    assert small["sample"]["sample_count"] == 10 and small["sample"]["is_contiguous"]
+    assert all(row["mean"] is not None and row["lower"] is row["upper"] is None for row in small["statistics"])
+    assert all(row["interval_unavailable_reason"] in ("INSUFFICIENT_DAILY_RETURNS", "ZERO_SAMPLE_VARIATION") for row in small["statistics"])
+    broad = analyze_intraday_return_uncertainty(return_uncertainty_case.snapshot, candidate_index=1, block_days=100)
+    assert broad["sampling"]["block_days_source"] == "EXPLICIT"
+    assert all(row["mean"] is not None and row["interval_unavailable_reason"] == "INSUFFICIENT_EXPECTED_BLOCKS" for row in broad["statistics"])
+
+
+def test_return_uncertainty_real_gap_keeps_cash_means(return_uncertainty_case):
+    from market_vault.research.intraday_experiment import create_intraday_experiment
+    from market_vault.research.intraday_return_uncertainty import analyze_intraday_return_uncertainty
+    plan = deepcopy(return_uncertainty_case.plan["comparison_plan"])
+    plan["walk_forward"]["step_days"] = 6
+    report = research.run_intraday_research(plan)
+    result = analyze_intraday_return_uncertainty(create_intraday_experiment(plan=plan, report=report))
+    assert not result["sample"]["is_contiguous"] and result["sample"]["gap_days"]
+    assert result["sample"]["sample_count"] == len(report["context"]["evaluated_days"])
+    assert all(row["mean"] is not None and row["mean_unavailable_reason"] is None for row in result["statistics"])
+    assert all(row["lower"] is row["upper"] is None and row["interval_unavailable_reason"] == "GAPPED_EVALUATION_DAYS" for row in result["statistics"])
+
+
+@pytest.mark.parametrize("case", ["strategy_cash", "benchmark_cash", "basis"])
+def test_return_uncertainty_bad_saved_side_and_full_basis_are_local(return_uncertainty_case, case):
+    from market_vault.research.intraday_return_uncertainty import analyze_intraday_return_uncertainty
+    from market_vault.research.strategy_experiment import StrategyExperiment
+    from test_intraday_experiment import signed
+    root = return_uncertainty_case.snapshot.as_dict()
+    group = root["report"]["groups"][0]
+    execution = group["benchmark"]["execution"] if case == "benchmark_cash" else group["results"][1]["execution"]
+    if case == "basis":
+        execution["ledger"][-2]["row_version_id"] = "f" * 64
+    else:
+        execution["trades"][0]["commission_total"] += .01
+    result = analyze_intraday_return_uncertainty(StrategyExperiment(signed(root)), candidate_index=1, replications=1000)
+    strategy, benchmark, paired = result["statistics"]
+    if case == "basis":
+        assert result["basis"] == {"matches": False, "failed_checks": ["raw_prices"]}
+        assert strategy["lower"] is not None and benchmark["lower"] is not None
+        assert paired["mean_unavailable_reason"] == paired["interval_unavailable_reason"] == "BASIS_MISMATCH"
+    else:
+        bad, good = (strategy, benchmark) if case == "strategy_cash" else (benchmark, strategy)
+        assert bad["mean"] is bad["lower"] is bad["upper"] is None
+        assert bad["mean_unavailable_reason"] == bad["interval_unavailable_reason"] == "RECORDED_CASH_RECONCILIATION_FAILED"
+        assert good["mean"] is not None and good["lower"] is not None
+        assert paired["mean_unavailable_reason"] == ("STRATEGY_UNAVAILABLE" if case == "strategy_cash" else "BENCHMARK_UNAVAILABLE")
+    assert paired["mean"] is paired["lower"] is paired["upper"] is None

@@ -16,6 +16,7 @@ Item {
     readonly property string editorRevision: root.controller.draftLoaded
         ? "draft:" + root.controller.draftRevision : "result:" + root.controller.restoreRevision
     readonly property var gridData: root.controller.parameterGrid
+    readonly property var uncertaintyData: root.controller.uncertaintySummary
     readonly property var gridMetrics: ["total_return", "observed_max_drawdown", "trade_count",
         "worst_fold_return", "median_fold_return", "best_fold_return"]
 
@@ -23,6 +24,10 @@ Item {
         return root.i18n.catalog["grid." + key] || root.i18n.catalog["risk." + key]
             || root.i18n.catalog["comparison." + key] || root.i18n.catalog["performance." + key]
             || root.i18n.catalog["columns." + key] || key
+    }
+    function uncertaintyLabel(key) {
+        return root.i18n.catalog["uncertainty." + key] || root.i18n.catalog["risk." + key]
+            || root.i18n.catalog["comparison." + key] || root.i18n.catalog["performance." + key] || key
     }
     function axisName(axis) {
         return root.i18n.catalog["grid.axis"] + " " + axis.axis_index + " · "
@@ -344,7 +349,7 @@ Item {
                         "quant.intraday_models", "quant.intraday_predictions", "quant.intraday_contributions",
                         "quant.performance", "quant.performance_exit", "quant.performance_entry", "quant.performance_day",
                         "quant.risk_summary", "quant.risk_drawdowns", "quant.risk_distributions", "quant.risk_concentration",
-                        "quant.risk_folds", "quant.parameter_grid"].map(key => root.i18n.catalog[key])
+                        "quant.risk_folds", "quant.parameter_grid", "quant.return_uncertainty"].map(key => root.i18n.catalog[key])
                     onSelected: root.controller.selectView(currentIndex)
                     onModelChanged: currentIndex = selectedView
                 }
@@ -632,6 +637,91 @@ Item {
                     }
                 }
             }
+            ColumnLayout {
+                objectName: "intradayReturnUncertaintyPanel"
+                Layout.fillWidth: true
+                visible: view.selectedView === 17
+                spacing: 4
+                Label {
+                    objectName: "intradayReturnUncertaintyNotice"
+                    Layout.fillWidth: true
+                    text: root.i18n.catalog[root.controller.uncertaintyAvailable ? "uncertainty.note" : "uncertainty.saved_only"]
+                    wrapMode: Text.WordWrap
+                    color: Theme.PixelTheme.inkMuted
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                }
+                Label {
+                    objectName: "intradayReturnUncertaintyParameters"
+                    Layout.fillWidth: true
+                    visible: !!root.uncertaintyData.sample
+                    text: {
+                        const data = root.uncertaintyData
+                        if (!data.sample) return ""
+                        const sample = data.sample, sampling = data.sampling
+                        return root.i18n.catalog["uncertainty.samples"] + ": " + sample.sample_count
+                            + " · " + sample.first_day + " → " + sample.last_day
+                            + " · " + root.i18n.catalog["uncertainty.folds"] + ": " + sample.fold_count + "\n"
+                            + root.i18n.catalog["uncertainty.block_days"] + ": " + sampling.block_days
+                            + " (" + root.uncertaintyLabel(sampling.block_days_source) + ")"
+                            + " · " + root.i18n.catalog["uncertainty.expected_blocks"] + ": " + Number(sampling.expected_block_count).toPrecision(6)
+                            + " · " + root.i18n.catalog["uncertainty.replications"] + ": " + sampling.replications
+                            + " · " + root.i18n.catalog["uncertainty.seed"] + ": " + sampling.seed
+                            + " · " + root.uncertaintyLabel(sampling.prng) + "\n"
+                            + root.i18n.catalog["uncertainty.unevaluated_days"] + ": " + sample.unevaluated_development_day_count
+                            + " · " + root.i18n.catalog["uncertainty.predictions"] + ": " + sample.prediction_count
+                            + " · " + root.i18n.catalog["uncertainty.complete_targets"] + ": "
+                            + (sample.complete_target_count == null ? root.uncertaintyLabel(sample.complete_target_count_unavailable_reason)
+                                : sample.complete_target_count)
+                    }
+                    wrapMode: Text.WordWrap
+                    color: Theme.PixelTheme.ink
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                }
+                Label {
+                    objectName: "intradayReturnUncertaintySelection"
+                    Layout.fillWidth: true
+                    visible: !!root.uncertaintyData.candidate_id
+                    text: root.uncertaintyData.candidate_id ? root.i18n.catalog["uncertainty.saved_selection"]
+                        + " · " + root.i18n.catalog["grid.cost_index"] + " " + root.uncertaintyData.cost_index
+                        + " · " + root.i18n.catalog["grid.candidate"] + " " + root.uncertaintyData.candidate_index
+                        + " · " + root.uncertaintyData.candidate_id.slice(0, 12) : ""
+                    wrapMode: Text.WrapAnywhere
+                    color: Theme.PixelTheme.inkMuted
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                    ToolTip.visible: uncertaintyHover.hovered
+                    ToolTip.text: root.controller.experimentPath + "\n" + (root.uncertaintyData.experiment_id || "")
+                        + "\n" + (root.uncertaintyData.candidate_id || "")
+                    HoverHandler { id: uncertaintyHover }
+                }
+                Label {
+                    objectName: "intradayReturnUncertaintyProgress"
+                    Layout.fillWidth: true
+                    visible: root.controller.uncertaintyAvailable && !root.uncertaintyData.sample && !root.controller.uncertaintyError
+                    text: root.i18n.catalog["uncertainty.calculating"]
+                    wrapMode: Text.WordWrap
+                    color: Theme.PixelTheme.inkMuted
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    visible: root.controller.uncertaintyError.length > 0
+                    Label {
+                        objectName: "intradayReturnUncertaintyError"
+                        Layout.fillWidth: true
+                        textFormat: Text.PlainText
+                        text: root.controller.uncertaintyError
+                        wrapMode: Text.WrapAnywhere
+                        color: Theme.PixelTheme.ink
+                        font.pixelSize: Theme.PixelTheme.fontSm
+                    }
+                    Components.PixelButton {
+                        objectName: "intradayReturnUncertaintyRetry"
+                        text: root.i18n.catalog["uncertainty.retry"]
+                        enabled: !root.controller.busy && !operationRuntime.busy
+                        onClicked: root.controller.retryUncertainty()
+                    }
+                }
+            }
             Components.DataTable {
                 objectName: "intradayResearchTable"
                 visible: view.selectedView !== 16
@@ -642,11 +732,41 @@ Item {
                 tableModel: root.controller.tableModel
                 i18n: root.i18n
                 cellFormatter: function(value) {
+                    if (view.selectedView === 17) return root.uncertaintyLabel(value)
                     if (view.selectedView >= 11) return root.i18n.catalog["risk." + value] || root.i18n.catalog["performance." + value] || value
                     return view.selectedView >= 7 ? (root.i18n.catalog["performance." + value] || value) : value
                 }
                 onPreviousRequested: root.controller.changePage(-1)
                 onNextRequested: root.controller.changePage(1)
+            }
+            ColumnLayout {
+                Layout.fillWidth: true
+                visible: view.selectedView === 17 && root.controller.uncertaintyAvailable
+                spacing: 4
+                Label {
+                    objectName: "intradayReturnUncertaintyUnits"
+                    Layout.fillWidth: true
+                    text: root.i18n.catalog["uncertainty.units"]
+                    wrapMode: Text.WordWrap
+                    color: Theme.PixelTheme.inkMuted
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                }
+                Repeater {
+                    model: root.uncertaintyData.warnings || []
+                    Label {
+                        required property var modelData
+                        objectName: "intradayReturnUncertaintyWarning" + modelData.series
+                        Layout.fillWidth: true
+                        text: root.uncertaintyLabel(modelData.series) + ": "
+                            + modelData.reasons.map(reason => root.uncertaintyLabel(reason)).join("; ")
+                        wrapMode: Text.WordWrap
+                        color: Theme.PixelTheme.inkMuted
+                        font.pixelSize: Theme.PixelTheme.fontSm
+                        ToolTip.visible: warningHover.hovered
+                        ToolTip.text: modelData.detail || ""
+                        HoverHandler { id: warningHover }
+                    }
+                }
             }
             Label {
                 Layout.fillWidth: true

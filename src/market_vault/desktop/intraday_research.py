@@ -159,6 +159,23 @@ def risk_diagnostics_table(result, index):
     return columns, tuple(rows)
 
 
+def return_uncertainty_table(result):
+    """Display arithmetic daily means and intervals with explicit excess units."""
+    columns = ("risk_series", "metric", "value", "unit", "unavailable_reason")
+    rows = []
+    for statistic in result["statistics"]:
+        series = statistic["series"].upper()
+        unit = "PERCENTAGE_POINTS" if series == "PAIRED_EXCESS" else "RATIO"
+        for field, metric in (("mean", "ARITHMETIC_MEAN"), ("lower", "LOWER_95"), ("upper", "UPPER_95")):
+            raw = statistic[field]
+            value = risk_value(raw, "RATIO")
+            if unit == "PERCENTAGE_POINTS" and raw is not None:
+                value = value.removesuffix("%")
+            reason = statistic["mean_unavailable_reason" if field == "mean" else "interval_unavailable_reason"]
+            rows.append((series, metric, value, unit, reason or ""))
+    return columns, tuple(rows)
+
+
 class IntradayResearchController(PageController):
     changed = Signal()
 
@@ -189,6 +206,9 @@ class IntradayResearchController(PageController):
         self._names = []
         self._view_index = 0
         self._risk_report = None
+        self._uncertainty_report = None
+        self._uncertainty_error = ""
+        self._uncertainty_pending = None
         self._grid_snapshot = None
         self._grid_report = None
         self._grid_key = None
@@ -200,6 +220,8 @@ class IntradayResearchController(PageController):
         self._set_page()
         owner.researchChanged.connect(self._source_changed)
         self.operationFailed.connect(self._replay_failed)
+        self.operationFailed.connect(self._uncertainty_failed)
+        runtime.operationFinished.connect(self._uncertainty_idle)
 
     def _replay_failed(self):
         if self._replay_pending:
@@ -337,6 +359,33 @@ class IntradayResearchController(PageController):
         return self._view_index
 
     @Property(bool, notify=changed)
+    def uncertaintyAvailable(self):
+        return bool(self._content and self._path and self._positions and not self._collection_content
+                    and self._root.get("evaluation_mode") in ("INTRADAY_COMPARISON", "INTRADAY_DIAGNOSTICS"))
+
+    @Property(str, notify=changed)
+    def uncertaintyError(self):
+        return self._uncertainty_error
+
+    @Property("QVariantMap", notify=changed)
+    def uncertaintySummary(self):
+        if self._uncertainty_report is None:
+            return {}
+        report = self._uncertainty_report
+        sample = report["sample"]
+        return deepcopy({"experiment_id": report["experiment_id"], "candidate_id": report["candidate_id"],
+            "cost_index": report["cost_index"], "candidate_index": report["candidate_index"],
+            "sampling": report["sampling"], "sample": {key: sample[key] for key in
+                ("sample_count", "first_day", "last_day", "development_day_count", "fold_count", "is_contiguous",
+                 "unevaluated_development_day_count", "prediction_count", "complete_target_count",
+                 "complete_target_count_unavailable_reason")},
+            "warnings": [{"series": row["series"].upper(),
+                "reasons": list(dict.fromkeys(reason for reason in
+                    (row["mean_unavailable_reason"], row["interval_unavailable_reason"]) if reason)),
+                "detail": row["detail"]} for row in report["statistics"]
+                if row["mean_unavailable_reason"] or row["interval_unavailable_reason"]]})
+
+    @Property(bool, notify=changed)
     def gridAvailable(self):
         return self._grid_snapshot is not None
 
@@ -460,7 +509,12 @@ class IntradayResearchController(PageController):
         report = self._root["report"]
         group, candidate = self._selected()
         execution = candidate["execution"]
-        if self._view_index == 16:
+        if self._view_index == 17:
+            if self._uncertainty_report is not None:
+                self._columns, self._rows = return_uncertainty_table(self._uncertainty_report)
+            else:
+                self._columns, self._rows = (), ()
+        elif self._view_index == 16:
             self._refresh_grid()
             self._columns, self._rows = (), ()
         elif self._view_index >= 11:
@@ -506,6 +560,8 @@ class IntradayResearchController(PageController):
             self._rows = formatted_rows(rows, columns)
         self._page = 1
         self._set_page()
+        if self._view_index == 17:
+            self._start_uncertainty()
 
     @Slot(int, result=bool)
     def selectCandidate(self, index):
@@ -513,6 +569,7 @@ class IntradayResearchController(PageController):
             return False
         if self._candidate_index != index:
             self._risk_report = None
+            self._uncertainty_report, self._uncertainty_error = None, ""
             self._grid_report, self._grid_key = None, None
         self._candidate_index = index
         self._refresh_view()
@@ -535,9 +592,60 @@ class IntradayResearchController(PageController):
 
     @Slot(int, result=bool)
     def selectView(self, index):
-        if type(index) is not int or not 0 <= index <= 16:
+        if type(index) is not int or not 0 <= index <= 17:
             return False
         self._view_index = index
+        self._refresh_view()
+        self.changed.emit()
+        return True
+
+    def _uncertainty_selection(self):
+        if not self.uncertaintyAvailable:
+            return None
+        return (self._root["experiment_id"], *self._positions[self._candidate_index])
+
+    def _start_uncertainty(self):
+        """Queue one saved selection through the existing offline worker."""
+        if (self._view_index != 17 or not self.uncertaintyAvailable or self._uncertainty_report is not None
+                or self._uncertainty_error or self._uncertainty_pending is not None or self.busy or self._runtime.busy):
+            return
+        selection, content = self._uncertainty_selection(), self._content
+        self._uncertainty_pending = selection
+
+        def operation(backend):
+            from ..research.intraday_return_uncertainty import analyze_intraday_return_uncertainty
+            from ..research.strategy_experiment import StrategyExperiment
+            return analyze_intraday_return_uncertainty(StrategyExperiment(content),
+                cost_index=selection[1], candidate_index=selection[2])
+
+        def apply(report):
+            self._uncertainty_pending = None
+            if selection != self._uncertainty_selection():
+                return
+            self._uncertainty_report = report
+            if self._view_index == 17:
+                self._refresh_view()
+            self.changed.emit()
+
+        if not self._submit("intraday_return_uncertainty", operation, apply, requires_backend=False):
+            self._uncertainty_pending = None
+
+    def _uncertainty_idle(self, operation):
+        # Open/Save applies its result before the runtime becomes idle. Starting
+        # here also replaces a stale in-flight selection without nested workers.
+        self._start_uncertainty()
+
+    def _uncertainty_failed(self):
+        selection, self._uncertainty_pending = self._uncertainty_pending, None
+        if selection is not None and selection == self._uncertainty_selection():
+            self._uncertainty_error = self.error
+            self.changed.emit()
+
+    @Slot(result=bool)
+    def retryUncertainty(self):
+        if self.busy or self._runtime.busy or not self.uncertaintyAvailable or not self._uncertainty_error:
+            return False
+        self._uncertainty_error = ""
         self._refresh_view()
         self.changed.emit()
         return True
@@ -754,6 +862,7 @@ class IntradayResearchController(PageController):
         self._content = canonical_json(root)
         self._root = root
         self._risk_report = None
+        self._uncertainty_report, self._uncertainty_error = None, ""
         self._grid_snapshot = snapshot if root["evaluation_mode"] == "INTRADAY_DIAGNOSTICS" else None
         self._grid_report, self._grid_key, self._grid_error = None, None, ""
         self._grid_metric = GRID_METRICS[0]
