@@ -180,6 +180,10 @@ class IntradayResearchController(PageController):
         self._scenario_paths = {}
         self._replay_pending = False
         self._restore_revision = 0
+        self._draft_plan, self._draft_source = {}, {}
+        self._draft_revision = 0
+        self._plan_save_pending = None
+        self._plan_save_receipt = {}
         self._candidate_index = 0
         self._positions = ()
         self._names = []
@@ -244,6 +248,35 @@ class IntradayResearchController(PageController):
     @Property("QVariantMap", notify=changed)
     def defaults(self):
         return deepcopy(self._defaults)
+
+    @Property(bool, notify=changed)
+    def draftLoaded(self):
+        return bool(self._draft_plan)
+
+    @Property(int, notify=changed)
+    def draftRevision(self):
+        return self._draft_revision
+
+    @Property("QVariantMap", notify=changed)
+    def draftPlan(self):
+        return deepcopy(self._draft_plan)
+
+    @Property("QVariantMap", notify=changed)
+    def draftSource(self):
+        return deepcopy(self._draft_source)
+
+    @Property("QVariantMap", notify=changed)
+    def planSaveReceipt(self):
+        return deepcopy(self._plan_save_receipt)
+
+    @Property(str, notify=changed)
+    def pendingPlanKind(self):
+        return self._plan_save_pending["kind"] if self._plan_save_pending else ""
+
+    @Property(bool, notify=changed)
+    def canContinueCandidate(self):
+        return bool(self._path and self._positions and self._root.get("evaluation_mode") in
+                    ("INTRADAY_COMPARISON", "INTRADAY_DIAGNOSTICS"))
 
     @Property("QVariantMap", notify=changed)
     def restoredPlan(self):
@@ -561,23 +594,159 @@ class IntradayResearchController(PageController):
         self._set_page()
         return True
 
-    def _plan(self, values):
+    def _compile_comparison(self, values):
         from .quant_research import _bounded_int, _parse_comparison_strategies
         from ..research.intraday_research import INTRADAY_RESEARCH_PLAN_VERSION, normalize_intraday_research_plan
         from ..research.strategy_config import strategy_plan_fields
-        if not self.dataLoaded:
-            raise ValueError("Open intraday data before running development research.")
-        if values.get("data_id", self._source_id) != self._source_id:
-            raise ValueError("Open the intraday data matching these research settings before running.")
-        common = _parse_comparison_strategies(values, self.featureNames)
-        plan = {"plan_schema_version": INTRADAY_RESEARCH_PLAN_VERSION, "intraday_data_path": self.dataPath,
-                "data_id": self._source_id, "feature_fields": list(common["feature_fields"]),
+        common = _parse_comparison_strategies(values, values.get("feature_fields", []))
+        plan = {"plan_schema_version": INTRADAY_RESEARCH_PLAN_VERSION,
+                "intraday_data_path": values.get("intraday_data_path", self.dataPath),
+                "data_id": values.get("data_id", self._source_id), "feature_fields": list(common["feature_fields"]),
                 "strategies": [strategy_plan_fields(s) for s in common["strategies"]],
                 "split": {key: values.get(key, "") for key in ("train_end_day", "validation_end_day", "test_end_day")},
                 "walk_forward": {key: _bounded_int(values.get(key), key, 1, 2**31 - 1) for key in
                                  ("minimum_train_days", "validation_days", "step_days")},
                 "execution": self._owner._intraday_execution_values(values)}
-        return normalize_intraday_research_plan(plan)
+        return normalize_intraday_research_plan(plan, recorded=True)
+
+    def _admit_run(self, plan):
+        comparison = plan.get("comparison_plan", plan)
+        if not Path(comparison["intraday_data_path"]).is_absolute():
+            raise ValueError("The original intraday data locator is not an absolute path on this host.")
+        if not self.dataLoaded:
+            raise ValueError("Open intraday data before running development research.")
+        if comparison["data_id"] != self._source_id:
+            raise ValueError("Open the intraday data matching these research settings before running.")
+        if any(field not in self.featureNames for field in comparison["feature_fields"]):
+            raise ValueError("Common Features must be available in the currently open intraday data.")
+        return plan
+
+    def _plan(self, values):
+        return self._admit_run(self._compile_comparison(values))
+
+    def _compile_diagnostics(self, values):
+        from .quant_research import _finite_float
+        from ..research.intraday_research import INTRADAY_DIAGNOSTICS_PLAN_VERSION, expand_intraday_plan
+        axes = [{**axis, "values": [_finite_float(v.strip(), "axis value") for v in axis["values"].split(",")]
+                 if type(axis["values"]) is str else axis["values"]} for axis in values["parameter_axes"]]
+        costs = values["cost_scenarios"]
+        if type(costs) is str:
+            pairs = [part.split("/") for part in costs.split(",")]
+            if any(len(pair) != 2 for pair in pairs):
+                raise ValueError("Costs use commission/slippage pairs separated by commas.")
+            costs = [{"commission_bps": _finite_float(a, "commission"), "slippage_bps": _finite_float(b, "slippage")} for a, b in pairs]
+        plan, _, _ = expand_intraday_plan({"plan_schema_version": INTRADAY_DIAGNOSTICS_PLAN_VERSION,
+            "comparison_plan": self._compile_comparison(values["comparison"]), "strategy_name": values["strategy_name"],
+            "parameter_axes": axes, "cost_scenarios": costs}, recorded=True)
+        return plan
+
+    def _compile_scenarios(self, values):
+        from ..research.intraday_backtest import EXECUTION_FIELDS
+        from ..research.intraday_execution_scenarios import (
+            INTRADAY_EXECUTION_SCENARIOS_PLAN_VERSION, normalize_intraday_execution_scenarios_plan,
+        )
+        scenarios = values["execution_scenarios"]
+        if type(scenarios) is not list or not scenarios:
+            raise ValueError("Enter at least one explicit execution scenario.")
+        normalized_scenarios = []
+        for scenario in scenarios:
+            if type(scenario) is not dict or set(scenario) != {"name", "execution"}:
+                raise ValueError("Each scenario requires a name and its complete execution policy.")
+            if type(scenario["execution"]) is not dict or set(scenario["execution"]) != EXECUTION_FIELDS:
+                raise ValueError("Each scenario requires all six execution fields.")
+            normalized_scenarios.append({"name": scenario["name"],
+                "execution": self._owner._intraday_execution_values(scenario["execution"])})
+        common = deepcopy(values["comparison"])
+        # Only the initial, unbound form may leave its unused common costs blank.
+        if not common.get("execution_policy_bound", False) and any(common.get(key) in (None, "")
+                for key in ("commission_bps", "slippage_bps")):
+            # Validate every other edited field before materializing this policy.
+            self._compile_comparison({**common, **{key: 0 for key in ("commission_bps", "slippage_bps")
+                if common.get(key) in (None, "")}})
+            common.update(normalized_scenarios[0]["execution"])
+        return normalize_intraday_execution_scenarios_plan({
+            "plan_schema_version": INTRADAY_EXECUTION_SCENARIOS_PLAN_VERSION,
+            "comparison_plan": self._compile_comparison(common), "execution_scenarios": normalized_scenarios,
+        }, recorded=True)
+
+    @Slot(str, "QVariantMap", result=bool)
+    def preparePlanSave(self, kind, values):
+        self._plan_save_pending = None
+        try:
+            from ..research.intraday_plan import serialize_intraday_plan
+            compiler = {"comparison": self._compile_comparison, "diagnostics": self._compile_diagnostics,
+                        "scenarios": self._compile_scenarios}.get(kind)
+            if compiler is None:
+                raise ValueError("Choose an explicit comparison, diagnostics or scenarios plan.")
+            self._plan_save_pending = {"kind": kind, "content": serialize_intraday_plan(compiler(values))}
+        except (TypeError, ValueError, KeyError) as exc:
+            self.changed.emit()
+            return self._reject_input(exc)
+        self._error, self._status = "", "READY"
+        self.stateChanged.emit()
+        self.changed.emit()
+        return True
+
+    @Slot()
+    def cancelPlanSave(self):
+        self._plan_save_pending = None
+        self.changed.emit()
+
+    @Slot(str, result=bool)
+    def savePreparedPlan(self, raw_path):
+        captured, self._plan_save_pending = self._plan_save_pending, None
+        try:
+            from .quant_research import _experiment_file_path
+            path = _experiment_file_path(raw_path)
+            if captured is None:
+                raise ValueError("Capture a valid plan before choosing its save path.")
+        except (OSError, TypeError, ValueError) as exc:
+            self.changed.emit()
+            return self._reject_input(exc)
+        self.changed.emit()
+        def operation(backend):
+            from ..research.intraday_plan import write_intraday_plan
+            return write_intraday_plan(captured["content"], path=path)
+        def apply(value):
+            self._plan_save_receipt = {"path": str(value.path), "kind": captured["kind"],
+                "content_sha256": value.content_sha256, "created_new_file": value.created_new_file}
+            self.changed.emit()
+        return self._submit("intraday_plan_save", operation, apply, requires_backend=False)
+
+    def _apply_draft(self, plan, source):
+        self._draft_plan, self._draft_source = deepcopy(plan), deepcopy(source)
+        self._draft_revision += 1
+        self.changed.emit()
+
+    @Slot(str, result=bool)
+    def loadPlan(self, raw_path):
+        try:
+            from .quant_research import _experiment_file_path
+            path = _experiment_file_path(raw_path)
+        except (OSError, TypeError, ValueError) as exc:
+            return self._reject_input(exc)
+        def operation(backend):
+            from ..research.intraday_plan import load_intraday_plan
+            return load_intraday_plan(path)
+        return self._submit("intraday_plan_load", operation,
+            lambda plan: self._apply_draft(plan, {"kind": "FILE", "path": str(path)}), requires_backend=False)
+
+    @Slot(result=bool)
+    def continueCandidate(self):
+        try:
+            if not self.canContinueCandidate:
+                raise ValueError("Save or open a development candidate first; export a scenario as an ordinary experiment.")
+            captured = self.selection_source()
+        except (TypeError, ValueError) as exc:
+            return self._reject_input(exc)
+        def operation(backend):
+            from ..research.intraday_plan import extract_intraday_candidate_plan
+            return extract_intraday_candidate_plan(captured["path"],
+                expected_experiment_id=captured["experiment_id"], expected_candidate_id=captured["candidate_id"],
+                cost_index=captured["cost_index"], candidate_index=captured["candidate_index"])
+        source = {key: captured[key] for key in ("path", "experiment_id", "candidate_id", "cost_index", "candidate_index")}
+        return self._submit("intraday_plan_continue", operation,
+            lambda plan: self._apply_draft(plan, {"kind": "CANDIDATE", **source}), requires_backend=False)
 
     def _apply_child(self, root, *, path="", proof="COMPUTED", candidate_index=0, snapshot=None):
         """Present an already validated ordinary Q7 child; its file path is separate."""
@@ -630,19 +799,7 @@ class IntradayResearchController(PageController):
     @Slot("QVariantMap", result=bool)
     def runDiagnostics(self, values):
         try:
-            from .quant_research import _finite_float
-            from ..research.intraday_research import INTRADAY_DIAGNOSTICS_PLAN_VERSION, expand_intraday_plan
-            axes = [{**axis, "values": [_finite_float(v.strip(), "axis value") for v in axis["values"].split(",")]
-                     if type(axis["values"]) is str else axis["values"]} for axis in values["parameter_axes"]]
-            costs = values["cost_scenarios"]
-            if type(costs) is str:
-                pairs = [part.split("/") for part in costs.split(",")]
-                if any(len(pair) != 2 for pair in pairs):
-                    raise ValueError("Costs use commission/slippage pairs separated by commas.")
-                costs = [{"commission_bps": _finite_float(a, "commission"), "slippage_bps": _finite_float(b, "slippage")} for a, b in pairs]
-            plan, _, _ = expand_intraday_plan({"plan_schema_version": INTRADAY_DIAGNOSTICS_PLAN_VERSION,
-                "comparison_plan": self._plan(values["comparison"]), "strategy_name": values["strategy_name"],
-                "parameter_axes": axes, "cost_scenarios": costs})
+            plan = self._admit_run(self._compile_diagnostics(values))
         except (TypeError, ValueError, KeyError) as exc:
             return self._reject_input(exc)
         return self._run(plan)
@@ -650,28 +807,7 @@ class IntradayResearchController(PageController):
     @Slot("QVariantMap", result=bool)
     def runScenarios(self, values):
         try:
-            from ..research.intraday_backtest import EXECUTION_FIELDS
-            from ..research.intraday_execution_scenarios import (
-                INTRADAY_EXECUTION_SCENARIOS_PLAN_VERSION, normalize_intraday_execution_scenarios_plan,
-            )
-            scenarios = values["execution_scenarios"]
-            if type(scenarios) is not list or not scenarios:
-                raise ValueError("Enter at least one explicit execution scenario.")
-            normalized_scenarios = []
-            for scenario in scenarios:
-                if type(scenario) is not dict or set(scenario) != {"name", "execution"}:
-                    raise ValueError("Each scenario requires a name and its complete execution policy.")
-                if type(scenario["execution"]) is not dict or set(scenario["execution"]) != EXECUTION_FIELDS:
-                    raise ValueError("Each scenario requires all six execution fields.")
-                policy = self._owner._intraday_execution_values(scenario["execution"])
-                normalized_scenarios.append({"name": scenario["name"], "execution": policy})
-            # Scenario costs suffice even when the unused common form costs are blank.
-            # Build from detached inputs so this does not fill or restore live drafts.
-            comparison = self._plan({**values["comparison"], **normalized_scenarios[0]["execution"]})
-            plan = normalize_intraday_execution_scenarios_plan({
-                "plan_schema_version": INTRADAY_EXECUTION_SCENARIOS_PLAN_VERSION,
-                "comparison_plan": comparison, "execution_scenarios": normalized_scenarios,
-            })
+            plan = self._admit_run(self._compile_scenarios(values))
         except (TypeError, ValueError, KeyError) as exc:
             return self._reject_input(exc)
         def operation(backend):

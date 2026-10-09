@@ -8,8 +8,24 @@ Dialog {
     id: root
     objectName: "intradayResearchSettings"
     required property var i18n
-    property var featureOptions: []
+    property var availableFeatures: []
+    property string availableDataId: ""
     property string dataId: ""
+    property string dataLocator: ""
+    property bool executionPolicyBound: false
+    property var savePlan: null
+    property string errorText: ""
+    readonly property var featureOptions: {
+        const names = root.dataId === root.availableDataId ? root.availableFeatures.slice() : []
+        const keep = function(name) { if (name && names.indexOf(name) < 0) names.push(name) }
+        features.text.split(",").forEach(name => keep(name.trim()))
+        editor.strategies.forEach(spec => {
+            if (spec.kind === "FEATURE_RULE") keep(spec.signal_field)
+            for (const rule of (spec.conditions || [])) keep(rule.signal_field)
+        })
+        editor.conditionDraft.forEach(rule => keep(rule.signal_field))
+        return names
+    }
     modal: true
     parent: Overlay.overlay
     anchors.centerIn: parent
@@ -19,10 +35,13 @@ Dialog {
     padding: Theme.PixelTheme.panelPadding
     standardButtons: Dialog.NoButton
 
-    function applySource(sourceId, names, plan) {
-        root.featureOptions = names
+    function applySource(sourceId, names, plan, locator) {
+        root.availableFeatures = names
+        root.availableDataId = sourceId
         if (root.dataId === sourceId) return
         root.dataId = sourceId
+        root.dataLocator = locator || ""
+        root.executionPolicyBound = false
         if (plan.strategies) {
             applyPlan(plan, false)
         } else {
@@ -38,6 +57,8 @@ Dialog {
     function applyPlan(plan, restoreCosts) {
         if (!plan.strategies) return
         root.dataId = plan.data_id
+        root.dataLocator = plan.intraday_data_path
+        root.executionPolicyBound = restoreCosts
         features.text = plan.feature_fields.join(",")
         trainEnd.text = plan.split.train_end_day
         valEnd.text = plan.split.validation_end_day
@@ -57,7 +78,8 @@ Dialog {
         editor.load(0)
     }
     function values() {
-        return {data_id: root.dataId, feature_fields: features.text.split(",").map(value => value.trim()), strategies: editor.snapshot(),
+        return {data_id: root.dataId, intraday_data_path: root.dataLocator, execution_policy_bound: root.executionPolicyBound,
+            feature_fields: features.text.split(",").map(value => value.trim()), strategies: editor.snapshot(),
             train_end_day: trainEnd.text, validation_end_day: valEnd.text, test_end_day: testEnd.text,
             minimum_train_days: trainDays.text, validation_days: valDays.text, step_days: stepDays.text,
             commission_bps: commission.text, slippage_bps: slippage.text, entry_delay_minutes: entryDelay.text,
@@ -87,6 +109,15 @@ Dialog {
                 Layout.fillWidth: true
                 text: root.i18n.catalog["quant.intraday_research_help"]
                 wrapMode: Text.WordWrap
+                color: Theme.PixelTheme.inkMuted
+                font.pixelSize: Theme.PixelTheme.fontSm
+            }
+            Label {
+                objectName: "intradayPlanLocator"
+                Layout.fillWidth: true
+                text: root.i18n.catalog["plan.locator"] + ": " + root.dataLocator + "\nData ID: " + root.dataId + "\n"
+                    + root.i18n.catalog[root.dataId && root.dataId === root.availableDataId ? "plan.matching_data" : "plan.needs_matching_data"]
+                wrapMode: Text.WrapAnywhere
                 color: Theme.PixelTheme.inkMuted
                 font.pixelSize: Theme.PixelTheme.fontSm
             }
@@ -126,12 +157,27 @@ Dialog {
                 }
             }
             RowLayout {
+                Components.PixelButton {
+                    objectName: "intradayComparisonPlanSave"
+                    visible: root.savePlan !== null
+                    enabled: !operationRuntime.busy
+                    text: root.i18n.catalog["plan.save_comparison"]
+                    onClicked: root.savePlan(root.values())
+                }
                 Item { Layout.fillWidth: true }
                 Components.PixelButton {
                     objectName: "intradayResearchSettingsDone"
                     text: root.i18n.catalog["quant.intraday_apply_settings"]
                     onClicked: { editor.commit(); root.close() }
                 }
+            }
+            Label {
+                Layout.fillWidth: true
+                visible: root.errorText.length > 0
+                text: root.errorText
+                wrapMode: Text.WordWrap
+                color: Theme.PixelTheme.ink
+                font.pixelSize: Theme.PixelTheme.fontSm
             }
         }
     }

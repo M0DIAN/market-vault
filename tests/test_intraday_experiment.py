@@ -448,6 +448,256 @@ def parameter_grid_experiment(research_case):
     return create_intraday_experiment(plan=normalized, report=report, name="Explicit Composite grid")
 
 
+def _plan_reuse_forms(locator):
+    """Complete grammar examples need no data, result or fitted fixture."""
+    from market_vault.research.intraday_execution_scenarios import INTRADAY_EXECUTION_SCENARIOS_PLAN_VERSION
+    comparison = {"plan_schema_version": research.INTRADAY_RESEARCH_PLAN_VERSION,
+        "intraday_data_path": locator, "data_id": "a" * 64, "feature_fields": ["return_2", "sma_5"],
+        "split": {"train_end_day": "2025-02-01", "validation_end_day": "2025-03-01", "test_end_day": "2025-04-01"},
+        "walk_forward": {"minimum_train_days": 20, "validation_days": 5, "step_days": 5},
+        "strategies": [{"kind": "COMPOSITE_RULE", "name": "条件", "match": "ALL", "conditions": [
+            {"signal_field": "return_2", "comparator": "GT", "threshold": .000000000001},
+            {"signal_field": "sma_5", "comparator": "LT", "threshold": 130.000000000001}]},
+            {"kind": "RIDGE", "name": "Ridge", "alpha": 1000, "threshold": .00025}],
+        "execution": {"commission_bps": 7, "slippage_bps": 3, "entry_delay_minutes": 60,
+                      "stop_new_minutes": 45, "flatten_minutes": 10, "max_hold_bars": 3}}
+    return {"comparison": comparison,
+        "diagnostics": {"plan_schema_version": research.INTRADAY_DIAGNOSTICS_PLAN_VERSION,
+            "comparison_plan": deepcopy(comparison), "strategy_name": "条件",
+            "parameter_axes": [{"parameter": "condition_threshold", "condition_index": 1, "values": [130.000000000001, 0]}],
+            "cost_scenarios": [{"commission_bps": 10, "slippage_bps": 5}, {"commission_bps": 0, "slippage_bps": 0}]},
+        "scenarios": {"plan_schema_version": INTRADAY_EXECUTION_SCENARIOS_PLAN_VERSION,
+            "comparison_plan": deepcopy(comparison), "execution_scenarios": [
+                {"name": "Second named first", "execution": {**comparison["execution"], "commission_bps": 10}},
+                {"name": "First named second", "execution": {**comparison["execution"], "commission_bps": 0}}]}}
+
+
+@pytest.mark.parametrize("kind", ["comparison", "diagnostics", "scenarios"])
+@pytest.mark.parametrize("portable", [False, True])
+def test_intraday_plan_reuse_grammar_roundtrip_preserves_complete_inputs_without_data(kind, portable, tmp_path, monkeypatch):
+    from market_vault.research.intraday_plan import load_intraday_plan, parse_intraday_plan_bytes, serialize_intraday_plan, write_intraday_plan
+    blocked = lambda *a, **kw: pytest.fail("plan reuse loaded Q5, fitted or executed")
+    for name in ("load_intraday_dataset", "_fit", "run_intraday_execution"):
+        monkeypatch.setattr(research, name, blocked)
+    locator = r"C:\archive\intraday.json" if portable else str(tmp_path / "missing-data.json")
+    plan = _plan_reuse_forms(locator)[kind]
+    before = deepcopy(plan)
+    content = serialize_intraday_plan(plan)
+    assert plan == before
+    normalized = parse_intraday_plan_bytes(content)
+    assert content == canonical_json(normalized) and content.endswith(b"\n")
+    assert normalized == before
+    # Pending Save owns the captured bytes, even when an editor changes later.
+    plan.get("comparison_plan", plan)["strategies"][0]["name"] = "Later edit"
+    path = tmp_path / "saved-plan.json"
+    result = write_intraday_plan(content, path=path)
+    assert result.created_new_file and result.content_sha256 == sha256(content).hexdigest()
+    assert result.plan_schema_version == before["plan_schema_version"]
+    assert path.read_bytes() == content and load_intraday_plan(path) == normalized
+    assert normalized.get("comparison_plan", normalized)["intraday_data_path"] == locator
+    if kind == "scenarios":
+        assert normalized["comparison_plan"]["execution"] != normalized["execution_scenarios"][0]["execution"]
+
+
+@pytest.mark.parametrize("kind", ["comparison", "diagnostics", "scenarios"])
+def test_intraday_plan_reuse_relative_locator_resolves_once_at_input_parent(kind, tmp_path, monkeypatch):
+    from market_vault.research.intraday_plan import load_intraday_plan, parse_intraday_plan_bytes, serialize_intraday_plan, write_intraday_plan
+    parent, elsewhere = tmp_path / "input", tmp_path / "elsewhere"
+    parent.mkdir()
+    elsewhere.mkdir()
+    plan = _plan_reuse_forms("data/intraday.json")[kind]
+    raw = canonical_json(plan)
+    with pytest.raises(ValueError, match="absolute"):
+        parse_intraday_plan_bytes(raw)
+    path = parent / "relative.json"
+    path.write_bytes(raw)
+    monkeypatch.chdir(elsewhere)
+    normalized = load_intraday_plan(path)
+    expected = deepcopy(plan)
+    expected.get("comparison_plan", expected)["intraday_data_path"] = str(parent / "data" / "intraday.json")
+    assert normalized == expected
+    assert parse_intraday_plan_bytes(raw, base=parent) == normalized
+    content = serialize_intraday_plan(normalized)
+    saved = elsewhere / "moved-plan.json"
+    write_intraday_plan(content, path=saved)
+    assert load_intraday_plan(saved) == normalized and path.read_bytes() == raw
+
+
+@pytest.mark.parametrize("case", ["bom", "duplicate", "nonfinite", "incomplete", "relative", "noncanonical", "envelope"])
+def test_intraday_plan_reuse_invalid_capture_fails_before_creating_file(case, tmp_path):
+    from market_vault.research.intraday_plan import serialize_intraday_plan, write_intraday_plan
+    plan = _plan_reuse_forms(str(tmp_path / "missing-data.json"))["comparison"]
+    content = serialize_intraday_plan(plan)
+    if case == "bom":
+        content = b"\xef\xbb\xbf" + content
+    elif case == "duplicate":
+        content = b'{"plan_schema_version":"one","plan_schema_version":"two"}'
+    elif case == "nonfinite":
+        content = b'{"value":NaN}'
+    elif case == "incomplete":
+        content = canonical_json({**plan, "execution": {}})
+    elif case == "relative":
+        content = canonical_json({**plan, "intraday_data_path": "relative.json"})
+    elif case == "noncanonical":
+        content = json.dumps(plan, indent=2).encode("utf-8")
+    else:
+        content = canonical_json({"plan": plan})
+    output = tmp_path / "must-not-exist.json"
+    with pytest.raises(ValueError):
+        write_intraday_plan(content, path=output)
+    assert not output.exists()
+
+
+def test_intraday_plan_reuse_writer_conflict_parent_and_failed_readback_recovery(tmp_path, monkeypatch):
+    from market_vault.research import intraday_plan as plans
+    plan = _plan_reuse_forms(str(tmp_path / "missing-data.json"))["comparison"]
+    content = plans.serialize_intraday_plan(plan)
+    output = tmp_path / "plan.json"
+    assert plans.write_intraday_plan(content, path=output).created_new_file
+    assert not plans.write_intraday_plan(content, path=output).created_new_file
+    changed = plans.serialize_intraday_plan({**plan, "execution": {**plan["execution"], "commission_bps": 9}})
+    with pytest.raises(ValueError, match="existing plan differs"):
+        plans.write_intraday_plan(changed, path=output)
+    assert output.read_bytes() == content
+    with pytest.raises(ValueError, match="parent"):
+        plans.write_intraday_plan(content, path=tmp_path / "absent" / "plan.json")
+    assert not (tmp_path / "absent").exists()
+    with pytest.raises(ValueError, match="regular"):
+        plans.write_intraday_plan(content, path=tmp_path)
+    uncertain = tmp_path / "readback.json"
+    reader = plans._read_plan
+    with monkeypatch.context() as patch:
+        patch.setattr(plans, "_read_plan", lambda path: reader(path) + b" ")
+        with pytest.raises(ValueError, match="readback"):
+            plans.write_intraday_plan(content, path=uncertain)
+    assert uncertain.read_bytes() == content
+    assert not plans.write_intraday_plan(content, path=uncertain).created_new_file
+
+
+def test_intraday_plan_reuse_actual_candidates_single_read_optional_guards_and_source_change(
+        parameter_grid_experiment, intraday_experiment, execution_scenarios_case, tmp_path, monkeypatch):
+    from market_vault.research import intraday_plan as plans
+    collection = execution_scenarios_case[2]
+    child = StrategyExperiment(canonical_json(collection.as_dict()["report"]["scenarios"][1]["experiment"]))
+    blocked = lambda *a, **kw: pytest.fail("candidate continuation loaded Q5, fitted or executed")
+    for name in ("load_intraday_dataset", "_fit", "run_intraday_execution"):
+        monkeypatch.setattr(research, name, blocked)
+    calls, loader = [], plans.load_strategy_experiment
+    def loaded(path):
+        calls.append(path)
+        return loader(path)
+    monkeypatch.setattr(plans, "load_strategy_experiment", loaded)
+    for index, (snapshot, cost, candidate_index) in enumerate(((parameter_grid_experiment, 1, 5), (intraday_experiment, 0, 2), (child, 0, 2))):
+        root = snapshot.as_dict()
+        group = root["report"]["groups"][cost]
+        candidate = group["results"][candidate_index]
+        path = tmp_path / f"source-{index}.json"
+        path.write_bytes(snapshot.content)
+        expected = {**root["plan"].get("comparison_plan", root["plan"]),
+                    "strategies": [candidate["strategy"]], "execution": group["execution_policy"]}
+        capture = {"expected_experiment_id": root["experiment_id"], "expected_candidate_id": candidate["candidate_id"]}
+        for guard in ({}, {"expected_experiment_id": capture["expected_experiment_id"]},
+                      {"expected_candidate_id": capture["expected_candidate_id"]}, capture):
+            calls.clear()
+            assert plans.extract_intraday_candidate_plan(path, cost_index=cost, candidate_index=candidate_index, **guard) == expected
+            assert calls == [path]
+        for field in capture:
+            with pytest.raises(ValueError, match="identity differs"):
+                plans.extract_intraday_candidate_plan(path, cost_index=cost, candidate_index=candidate_index,
+                    **{**capture, field: "0" * 64})
+        assert path.read_bytes() == snapshot.content
+    # Replacing the named source after selection must invalidate its captured ID.
+    root["name"] = "A different saved source"
+    root["plan"]["intraday_data_path"] = r"C:\archive\historical-data.json"
+    root["algorithm_versions"]["research"] = root["report"]["version"] = "recorded-historical-research"
+    changed_source = _comparison_snapshot(root)
+    path.write_bytes(changed_source.content)
+    with pytest.raises(ValueError, match="source experiment identity differs"):
+        plans.extract_intraday_candidate_plan(path, cost_index=cost, candidate_index=candidate_index, **capture)
+    continued = plans.extract_intraday_candidate_plan(path, candidate_index=candidate_index)
+    assert continued["intraday_data_path"] == r"C:\archive\historical-data.json"
+    assert continued["execution"] == expected["execution"] and continued["strategies"] == expected["strategies"]
+    assert path.read_bytes() == changed_source.content
+
+
+def test_intraday_plan_reuse_strict_indices_and_guards_precede_file_read(tmp_path, monkeypatch):
+    from market_vault.research import intraday_plan as plans
+    monkeypatch.setattr(plans, "load_strategy_experiment", lambda *a: pytest.fail("invalid selection read source"))
+    for field in ("cost_index", "candidate_index"):
+        for value in (True, False, -1, 1.0, "1"):
+            with pytest.raises(ValueError, match="nonnegative integers"):
+                plans.extract_intraday_candidate_plan(tmp_path / "missing.json", **{field: value})
+    for field in ("expected_experiment_id", "expected_candidate_id"):
+        for value in (True, "", "A" * 64, "not-an-id"):
+            with pytest.raises(ValueError, match="SHA-256"):
+                plans.extract_intraday_candidate_plan(tmp_path / "missing.json", **{field: value})
+
+
+def test_intraday_plan_reuse_installed_console_defaults_guards_reuse_and_errors(
+        parameter_grid_experiment, execution_scenarios_case, tmp_path):
+    from market_vault.research.intraday_plan import extract_intraday_candidate_plan, load_intraday_plan
+    source, collection = tmp_path / "source.json", tmp_path / "collection.json"
+    source.write_bytes(parameter_grid_experiment.content)
+    collection.write_bytes(execution_scenarios_case[2].content)
+    output, other = tmp_path / "continued.json", tmp_path / "second-cost.json"
+    conflict = tmp_path / "conflict.json"
+    conflict.write_bytes(b"existing unrelated content\n")
+    executable = Path(sysconfig.get_path("scripts")) / ("market-vault.exe" if os.name == "nt" else "market-vault")
+    environment = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src")}
+    args = ["--settings", str(tmp_path / "missing-settings.yaml"), "research-intraday-plan-from-candidate",
+            "--experiment", str(source), "--output", str(output)]
+    probes = [([], 0, True), ([], 0, False),
+        (["--cost-index", "1", "--candidate-index", "5", "--output", str(other)], 0, True),
+        (["--expected-experiment-id", "0" * 64], 1, None), (["--expected-candidate-id", "0" * 64], 1, None),
+        (["--cost-index", "99"], 1, None), (["--experiment", str(collection)], 1, None),
+        (["--output", str(conflict)], 1, None), (["--candidate-index", "True"], 2, None)]
+    for extra, code, created in probes:
+        completed = subprocess.run([str(executable), *args, *extra], capture_output=True, text=True, env=environment, check=False)
+        assert completed.returncode == code, completed.stderr
+        if code == 0:
+            payload = json.loads(completed.stdout)
+            assert payload["status"] == "SUCCESS" and payload["plan_file"]["created_new_file"] is created
+            assert load_intraday_plan(payload["plan_file"]["path"]) == payload["plan"]
+        elif code == 1:
+            assert not completed.stdout and json.loads(completed.stderr)["status"] == "FAILED"
+    assert load_intraday_plan(output) == extract_intraday_candidate_plan(source)
+    assert load_intraday_plan(other) == extract_intraday_candidate_plan(source, cost_index=1, candidate_index=5)
+    assert source.read_bytes() == parameter_grid_experiment.content and collection.read_bytes() == execution_scenarios_case[2].content
+    assert conflict.read_bytes() == b"existing unrelated content\n"
+
+
+def test_intraday_plan_reuse_installed_console_cp1252_keeps_unicode_and_utf8_file(intraday_experiment, tmp_path):
+    from market_vault.research.intraday_plan import extract_intraday_candidate_plan, serialize_intraday_plan
+    root = intraday_experiment.as_dict()
+    locator = str(tmp_path / "中文资料" / "行情.json")
+    root["plan"].get("comparison_plan", root["plan"])["intraday_data_path"] = locator
+    root["report"]["plan_sha256"] = digest(root["plan"])
+    snapshot = StrategyExperiment(signed(root))
+    source, output = tmp_path / "source.json", tmp_path / "继续计划.json"
+    source.write_bytes(snapshot.content)
+    expected = serialize_intraday_plan(extract_intraday_candidate_plan(source))
+    assert "中文资料".encode("utf-8") in expected
+    executable = Path(sysconfig.get_path("scripts")) / ("market-vault.exe" if os.name == "nt" else "market-vault")
+    environment = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"), "PYTHONIOENCODING": "cp1252"}
+    args = [str(executable), "research-intraday-plan-from-candidate", "--experiment", str(source), "--output", str(output)]
+    for created in (True, False):
+        completed = subprocess.run(args, capture_output=True, env=environment, check=False)
+        assert completed.returncode == 0 and not completed.stderr, completed.stderr
+        assert completed.stdout.isascii()
+        payload = json.loads(completed.stdout)
+        assert payload["status"] == "SUCCESS" and payload["plan_file"]["created_new_file"] is created
+        assert payload["plan"]["intraday_data_path"] == locator and payload["plan_file"]["path"] == str(output)
+        assert output.read_bytes() == expected
+    blocked = tmp_path / "不是目录"
+    blocked.write_bytes(b"existing file")
+    failed = subprocess.run([*args, "--output", str(blocked / "plan.json")], capture_output=True, env=environment, check=False)
+    assert failed.returncode == 1 and not failed.stdout and failed.stderr.isascii()
+    failure = json.loads(failed.stderr)
+    assert failure["status"] == "FAILED" and str(blocked) in failure["error"]
+    assert blocked.read_bytes() == b"existing file" and output.read_bytes() == expected
+    assert source.read_bytes() == snapshot.content
+
+
 def test_parameter_grid_real_second_cost_all_metrics_single_decode_and_console(parameter_grid_experiment, tmp_path, monkeypatch, capsys):
     from market_vault.research.intraday_parameter_grid import PARAMETER_GRID_METRICS, analyze_intraday_parameter_grid
     snapshot = parameter_grid_experiment

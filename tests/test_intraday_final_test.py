@@ -140,6 +140,7 @@ def test_feature_and_composite_test_fit_no_model(intraday_experiment, tmp_path, 
 
 
 def test_offline_open_exclusive_save_and_embedded_selection(final_case, selection_case, tmp_path, monkeypatch):
+    from market_vault.research.intraday_plan import extract_intraday_candidate_plan
     _, snapshot, _ = final_case
     _, selection = selection_case
     monkeypatch.setattr(final, "load_intraday_dataset", lambda *a: pytest.fail("offline read data"))
@@ -150,6 +151,8 @@ def test_offline_open_exclusive_save_and_embedded_selection(final_case, selectio
         assert write_strategy_experiment(value, path=path).created_new_file
         assert not write_strategy_experiment(value, path=path).created_new_file
         assert load_strategy_experiment(path).content == value.content
+        with pytest.raises(ValueError, match="ordinary saved Q7 DEV"):
+            extract_intraday_candidate_plan(path)
         root = value.as_dict()
         root["notes"] = "changed metadata"
         bind(root, "experiment_id")
