@@ -100,7 +100,8 @@ def test_scenarios_offline_cli_export_guards_and_nonfirst_child_final_test(execu
     assert path.read_bytes() == collection.content
 
 
-@pytest.mark.parametrize("case", ["swapped_child", "shared_predictions", "missing_child", "recursive_child", "bool_index"])
+@pytest.mark.parametrize("case", ["swapped_child", "shared_predictions", "missing_child", "recursive_child", "bool_index",
+                                 "cross_scenario_price", "within_scenario_price", "cross_scenario_row", "cross_scenario_clock"])
 def test_scenario_collection_checks_relationships_beyond_individual_q7_grammar(execution_scenarios_case, case):
     root = execution_scenarios_case[2].as_dict()
     scenarios = root["report"]["scenarios"]
@@ -114,6 +115,21 @@ def test_scenario_collection_checks_relationships_beyond_individual_q7_grammar(e
         scenarios.pop()
     elif case == "bool_index":
         scenarios[1]["scenario_index"] = True
+    elif case in ("cross_scenario_price", "within_scenario_price", "cross_scenario_row", "cross_scenario_clock"):
+        group = scenarios[1]["experiment"]["report"]["groups"][0]
+        records = group["results"][:1] if case == "within_scenario_price" else [*group["results"], group["benchmark"]]
+        for record in records:
+            row = record["execution"]["ledger"][0]
+            if case.endswith("price"):
+                row["mark_price"] += 0.01
+            elif case.endswith("row"):
+                row["row_version_id"] = "0" * 64
+            else:
+                from datetime import datetime, timedelta
+                row["timestamp"] = (datetime.fromisoformat(row["timestamp"]) + timedelta(seconds=1)).isoformat()
+        # Ordinary Q7 grammar accepts these re-signed records. The new
+        # collection must independently bind the actual shared raw evidence.
+        StrategyExperiment(signed(scenarios[1]["experiment"]))
     else:
         # Signed ordinary children are replaced afterwards to avoid making
         # this test helper recursively sign the intentionally forbidden type.

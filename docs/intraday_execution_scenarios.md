@@ -54,7 +54,11 @@ The report binds all children, the normalized plan, data ID, evaluation count
 and `scenarios_id`. Existing Q7/Q8 artifact formats are unchanged.
 
 Offline Open validates every child and their shared context, corresponding
-predictions, models, prediction errors, prices and session clocks. Recursive
+predictions, models, prediction errors, prices and session clocks. Complete
+ordered ledger price/row-version/slot/phase/timestamp projections must agree
+within each child and across scenarios; matching price IDs alone do not suffice.
+Policy-dependent actions, account values and trades are not part of this common
+raw-price projection. Recursive
 collections, diagnostics, frozen selections and TEST records cannot be child
 experiments. Names, indices, policies, strategy order and algorithm versions
 must match the declared scenarios. These structural checks do not prove that

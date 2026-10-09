@@ -61,13 +61,22 @@ def _versions(plan):
 def _shared_evidence(child):
     report = child["report"]
     group = report["groups"][0]
+    prices = None
+    for value in [*group["results"], group["benchmark"]]:
+        execution = value["execution"]
+        evidence = {"price_evidence_id": execution["price_evidence_id"],
+                    "sessions": [{key: day[key] for key in ("trading_day", "open_time", "close_time")}
+                                 for day in execution["daily"]],
+                    "bars": [{key: row[key] for key in
+                              ("trading_day", "slot", "timestamp", "phase", "row_version_id", "mark_price")}
+                             for row in execution["ledger"]]}
+        if prices is not None and canonical_json(evidence) != canonical_json(prices):
+            raise ValueError("all candidates and benchmarks must share complete recorded prices and session clocks")
+        prices = evidence
     return {"context": report["context"],
             "predictions": [{key: result[key] for key in ("predictions", "fold_models", "prediction_metrics")}
                             for result in group["results"]],
-            "prices_and_sessions": [{"price_evidence_id": value["execution"]["price_evidence_id"],
-                                     "sessions": [{key: day[key] for key in ("trading_day", "open_time", "close_time")}
-                                                  for day in value["execution"]["daily"]]}
-                                    for value in [*group["results"], group["benchmark"]]]}
+            "prices_and_sessions": prices}
 
 
 def validate_intraday_execution_scenarios_root(root):

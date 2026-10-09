@@ -211,7 +211,11 @@ for language in ('en', 'zh-CN'):
     viewport.setProperty('contentX', min(9 * 145, max(0, viewport.property('contentWidth') - viewport.width())))
     QTest.qWait(80)
     caption = session.i18n.columnLabel('scenario_return_change')
-    labels = [item for item in header.findChildren(QObject) if item.property('text') == caption]
+    pending, labels = [header], []
+    while pending:
+        item = pending.pop()
+        if item.property('text') == caption: labels.append(item)
+        pending.extend(item.childItems())
     assert any(label.property('visible') and not label.property('truncated')
         and label.mapRectToItem(header, label.boundingRect()).left() >= 0
         and label.mapRectToItem(header, label.boundingRect()).right() <= header.width() for label in labels), caption
