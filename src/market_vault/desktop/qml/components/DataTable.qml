@@ -8,6 +8,7 @@ Item {
     required property var tableModel
     required property var i18n
     property bool paged: false
+    property var cellFormatter: null
     signal previousRequested()
     signal nextRequested()
 
@@ -88,7 +89,10 @@ Item {
                             anchors.rightMargin: 8
                             verticalAlignment: Text.AlignVCenter
                             elide: Text.ElideRight
-                            text: parent.display
+                            text: {
+                                root.i18n.language
+                                return root.cellFormatter ? root.cellFormatter(parent.display) : parent.display
+                            }
                             color: Theme.PixelTheme.ink
                             font.family: Theme.PixelTheme.dataFont
                             font.pixelSize: Theme.PixelTheme.fontSm

@@ -152,13 +152,14 @@ ColumnLayout {
             label: root.i18n.catalog["quant.intraday_result_view"]
             property int selectedView: 0
             model: ["quant.intraday_overview", "quant.trades", "quant.intraday_ledger", "quant.intraday_daily",
-                "quant.intraday_models", "quant.intraday_predictions", "quant.intraday_contributions"].map(key => root.i18n.catalog[key])
+                "quant.intraday_models", "quant.intraday_predictions", "quant.intraday_contributions",
+                "quant.performance", "quant.performance_exit", "quant.performance_entry", "quant.performance_day"].map(key => root.i18n.catalog[key])
             onSelected: { selectedView = currentIndex; root.controller.selectView(currentIndex) }
             onModelChanged: currentIndex = selectedView
         }
     }
     ColumnLayout {
-        visible: root.controller.resultLoaded
+        visible: root.controller.resultLoaded && view.selectedView === 0
         Layout.fillWidth: true
         spacing: 2
         Label { text: root.i18n.catalog["quant.intraday_equity_legend"]; color: Theme.PixelTheme.inkMuted; font.pixelSize: Theme.PixelTheme.fontSm }
@@ -197,7 +198,16 @@ ColumnLayout {
         paged: true
         tableModel: root.controller.tableModel
         i18n: root.i18n
+        cellFormatter: function(value) { return view.selectedView >= 7 ? (root.i18n.catalog["performance." + value] || value) : value }
         onPreviousRequested: root.controller.changePage(-1)
         onNextRequested: root.controller.changePage(1)
+    }
+    Label {
+        Layout.fillWidth: true
+        visible: view.selectedView >= 7
+        text: root.i18n.catalog["quant.performance_note"]
+        wrapMode: Text.WordWrap
+        color: Theme.PixelTheme.inkMuted
+        font.pixelSize: Theme.PixelTheme.fontSm
     }
 }

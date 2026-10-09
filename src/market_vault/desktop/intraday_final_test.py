@@ -8,7 +8,7 @@ import json
 from PySide6.QtCore import QObject, Property, Signal, Slot
 
 from .controllers import PageController
-from .intraday_research import execution_series, formatted_rows
+from .intraday_research import execution_series, formatted_rows, performance_table
 from .table_model import QtTableModel
 
 
@@ -140,15 +140,20 @@ class IntradayFinalController(PageController):
                     rows = [] if model is None else [{"feature": feature, "alpha": model["alpha"], "training_count": len(model["training_keys"]),
                         "intercept": model["intercept"], "coefficient": model["coefficients"][j],
                         "mean": model["means"][j], "scale": model["scales"][j]} for j, feature in enumerate(model["feature_fields"])]
-                else:
+                elif self._view_index == 5:
                     columns, rows = ("decision_time", "trading_day", "slot", "score", "target"), report["predictions"]
+                else:
+                    self._columns, self._rows = performance_table(execution, self._view_index - 6)
+                    self._page = 1
+                    self._set_page()
+                    return
                 self._columns, self._rows = columns, formatted_rows(rows, columns)
         self._page = 1
         self._set_page()
 
     @Slot(int, result=bool)
     def selectView(self, index):
-        if type(index) is not int or not 0 <= index <= 5:
+        if type(index) is not int or not 0 <= index <= 9:
             return False
         self._view_index = index
         self._refresh_view()

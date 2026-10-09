@@ -25,6 +25,23 @@ def formatted_rows(rows, columns):
                        ", ".join(row[k]) if type(row[k]) is list else str(row[k]) for k in columns) for row in rows)
 
 
+def performance_table(execution, index):
+    """Shared descriptive views; keep Open/Replay proof states unchanged."""
+    from ..research.intraday_performance import summarize_intraday_execution
+    from .quant_research import _format_number, _format_percent
+    try:
+        report = summarize_intraday_execution(execution)
+    except (ValueError, ArithmeticError) as exc:
+        return ("metric", "value", "unavailable_reason"), (("UNAVAILABLE", "—", str(exc)),)
+    if index == 0:
+        return ("metric", "value", "unit", "unavailable_reason"), tuple(
+            (key, (_format_percent if value["unit"] == "RATIO" else _format_number)(value["value"]),
+             value["unit"], value["unavailable_reason"] or "") for key, value in report["summary"].items())
+    columns = ("group", "trade_count", "market_pnl", "commission_total", "slippage_total", "net_cash_pnl", "holding_minutes")
+    rows = report[("by_exit_reason", "by_entry_hour", "by_trading_day")[index - 1]]
+    return columns, formatted_rows(rows, columns)
+
+
 class IntradayResearchController(PageController):
     changed = Signal()
 
@@ -208,8 +225,13 @@ class IntradayResearchController(PageController):
                         for i, r in enumerate(candidate["fold_models"]) for j, feature in enumerate(r["model"]["feature_fields"])]
             elif self._view_index == 5:
                 columns, rows = ("decision_time", "trading_day", "slot", "score", "target"), candidate["predictions"]
-            else:
+            elif self._view_index == 6:
                 columns, rows = ("fold_index", "validation_days", "trade_count", "cash_contribution"), candidate["fold_contributions"]
+            else:
+                self._columns, self._rows = performance_table(execution, self._view_index - 7)
+                self._page = 1
+                self._set_page()
+                return
             self._columns = columns
             self._rows = formatted_rows(rows, columns)
         self._page = 1
@@ -226,7 +248,7 @@ class IntradayResearchController(PageController):
 
     @Slot(int, result=bool)
     def selectView(self, index):
-        if type(index) is not int or not 0 <= index <= 6:
+        if type(index) is not int or not 0 <= index <= 10:
             return False
         self._view_index = index
         self._refresh_view()
