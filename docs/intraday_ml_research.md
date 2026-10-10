@@ -261,6 +261,46 @@ Degree/alpha/representation search, automatic Feature selection, trees,
 boosting, neural networks, sklearn or another dependency, new Q7 strategy
 grammar, Q6 execution, native candidate export and Freeze/TEST integration.
 
+### API, CLI and desktop
+
+`research.intraday_quadratic_ridge.analyze_intraday_quadratic_ridge` accepts
+the same immutable `StrategyExperiment`, explicit cost/candidate indices and
+optional `intraday_data_file` as Q21/Q22. It rejects a saved projection larger
+than six before Q5 is read. The report version is
+`market-vault-intraday-quadratic-ridge-v1`, with its own `quadratic_ridge_id`.
+
+```console
+market-vault research-intraday-quadratic-ridge --experiment /absolute/development.json --cost-index 1 --candidate-index 1
+market-vault research-intraday-quadratic-ridge --experiment /absolute/development.json --intraday-data /relocated/intraday.json
+```
+
+The `quadratic` record retains the saved `input_features`, fixed `degree`,
+`expanded_width`, ordered `terms` and `fold_models`. A term's `name` is `z_i`
+or `z_i*z_j`; `input_indices` refer to the saved Feature order. Each composite
+model records its original-Feature `input_transform` (means, population scales,
+constant-to-zero policy), terms, original alpha, training keys/boundary and the
+complete existing `ridge_model`. The latter includes the generated columns'
+training means/scales and the existing solver's coefficients/intercept in
+generated-term units. Predict by applying the original-Feature transform,
+constructing the ordered terms and using that intercept/coefficients; do not
+apply the second normalization a second time to these returned coefficients.
+
+Every row and fold retains the verified linear `model_id` and a separate
+`quadratic_model_id` binding both stages of the quadratic fit. Forecasts are
+`RIDGE`, `ZERO`, `TRAIN_MEAN` and `QUADRATIC_RIDGE`, with identical READY and
+COMPLETE keys. `paired_error_changes` records quadratic minus linear Ridge
+MAE/MSE/RMSE for each original fold and the pooled rows. Positive means larger
+error; a pooled RMSE difference is derived from the two pooled RMSEs.
+
+In Development ML, choose **Quadratic-basis Ridge** and explicitly analyze.
+The bilingual view shows all four forecasts, signed changes, degree, expanded
+width, ordered terms and distinct model identities. MAE/RMSE changes display
+in percentage points; MSE changes retain squared-return-ratio units. The full
+row picker includes incomplete session tails. A completed result keeps its
+own method/source labels when the next-action draft changes; changing a view,
+language or draft does not fit or select a model. Full model and normalization
+records remain available in the CLI report.
+
 ## Desktop workflow and validation boundary
 
 The existing Development candidate selector supplies the immutable saved

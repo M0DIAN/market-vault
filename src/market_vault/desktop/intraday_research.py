@@ -317,9 +317,10 @@ def prediction_quality_table(result, index, fold_index):
         return columns, tuple(rows)
     folds = {fold["fold_id"]: fold["fold_index"] for fold in result["folds"]}
     variants = result.get("variants", [])
-    forecasts = ("RIDGE", "ZERO", "TRAIN_MEAN", *(variant["forecast"] for variant in variants))
+    forecasts = result["method"]["forecast_order"]
     columns = ("fold_index", "trading_day", "prediction_time", "prediction_ridge", "prediction_zero",
                "prediction_train_mean", *("prediction_without:" + variant["omitted_feature"] for variant in variants),
+               *(("prediction_quadratic_ridge",) if "quadratic_ridge_id" in result else ()),
                "prediction_target", "prediction_target_status", "unavailable_reason",
                "prediction_target_end", "prediction_observation_key")
     return columns, tuple((str(folds[row["fold_id"]]), row["trading_day"],
@@ -584,14 +585,17 @@ class IntradayResearchController(PageController):
         report = self._prediction_quality_report
         if report is None:
             return {}
-        identity = "feature_ablation_id" if "feature_ablation_id" in report else "prediction_quality_id"
+        identity = next(key for key in ("quadratic_ridge_id", "feature_ablation_id", "prediction_quality_id")
+                        if key in report)
         summary = {key: report[key] for key in ("version", identity, "experiment_id", "data_id",
             "research_id", "candidate_id", "cost_index", "candidate_index", "strategy", "source_locator", "evidence",
             "method", "sample")}
         summary["analysis_id_field"] = identity
-        summary["analysis_method"] = "feature_ablation" if identity == "feature_ablation_id" else "prediction_quality"
+        summary["analysis_method"] = identity.removesuffix("_id")
         summary["variants"] = [{key: value for key, value in variant.items() if key != "fold_models"}
                                for variant in report.get("variants", [])]
+        if "quadratic" in report:
+            summary["quadratic"] = {key: value for key, value in report["quadratic"].items() if key != "fold_models"}
         summary["feature_fields"] = report["context"]["feature_fields"]
         summary["target_horizon_bars"] = report["context"]["target_horizon_bars"]
         summary["folds"] = [{key: value for key, value in fold.items() if key != "forecasts"} for fold in report["folds"]]
@@ -1058,7 +1062,7 @@ class IntradayResearchController(PageController):
     @Slot(int, result=bool)
     def selectPredictionQualityMethod(self, index):
         """Edit the next action's method while retaining the completed report."""
-        if type(index) is not int or not 0 <= index <= 1:
+        if type(index) is not int or not 0 <= index <= 2:
             return False
         if index != self._prediction_quality_method:
             self._prediction_quality_method = index
@@ -1129,8 +1133,10 @@ class IntradayResearchController(PageController):
             from ..research.strategy_experiment import StrategyExperiment
             if method == 0:
                 from ..research.intraday_prediction_quality import analyze_intraday_prediction_quality as analyze
-            else:
+            elif method == 1:
                 from ..research.intraday_feature_ablation import analyze_intraday_feature_ablation as analyze
+            else:
+                from ..research.intraday_quadratic_ridge import analyze_intraday_quadratic_ridge as analyze
             return analyze(StrategyExperiment(captured["content"]),
                 cost_index=captured["cost_index"], candidate_index=captured["candidate_index"],
                 intraday_data_file=data_file)
@@ -1153,7 +1159,7 @@ class IntradayResearchController(PageController):
                 self._refresh_view()
             self.changed.emit()
 
-        operation_name = ("intraday_prediction_quality", "intraday_feature_ablation")[method]
+        operation_name = ("intraday_prediction_quality", "intraday_feature_ablation", "intraday_quadratic_ridge")[method]
         accepted = self._submit(operation_name, operation, apply, requires_backend=False)
         if not accepted:
             self._prediction_quality_pending = None

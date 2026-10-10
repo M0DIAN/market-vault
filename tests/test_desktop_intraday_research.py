@@ -952,11 +952,12 @@ def test_prediction_quality_explicit_saved_ridge_selection_source_units_and_refr
     assert runtime.backend_if_initialized is None and runtime.shutdown()
 
 
-@pytest.mark.parametrize("method_index", [0, 1], ids=["prediction-quality", "feature-ablation"])
+@pytest.mark.parametrize("method_index", [0, 1, 2], ids=["prediction-quality", "feature-ablation", "quadratic-ridge"])
 def test_prediction_quality_worker_captures_bytes_and_discards_changed_selection_or_locator(
         qt_app, desktop_prediction_experiment, tmp_path, monkeypatch, method_index):
     from market_vault.research import intraday_prediction_quality as quality
     from market_vault.research import intraday_feature_ablation as ablation
+    from market_vault.research import intraday_quadratic_ridge as quadratic
 
     snapshot = desktop_prediction_experiment
     path = tmp_path / "saved-ridge.json"
@@ -979,8 +980,9 @@ def test_prediction_quality_worker_captures_bytes_and_discards_changed_selection
         return {"stale": True}  # A stale result must be dropped before any report fields are consumed.
 
     monkeypatch.setattr(runner, "submit", deferred)
-    module, function = ((quality, "analyze_intraday_prediction_quality") if method_index == 0
-                        else (ablation, "analyze_intraday_feature_ablation"))
+    module, function = ((quality, "analyze_intraday_prediction_quality"),
+                        (ablation, "analyze_intraday_feature_ablation"),
+                        (quadratic, "analyze_intraday_quadratic_ridge"))[method_index]
     analyze = getattr(module, function)
     monkeypatch.setattr(module, function, recorded)
     source = str(tmp_path / "captured-q5.json")
@@ -994,7 +996,7 @@ def test_prediction_quality_worker_captures_bytes_and_discards_changed_selection
     assert captured == [(snapshot.content, {"cost_index": 1, "candidate_index": 1, "intraday_data_file": Path(source)})]
     assert controller.predictionQualitySummary == {} and not controller.predictionQualityPending and not pending
     assert controller.analyzePredictionQuality()
-    assert controller.selectPredictionQualityMethod(1 - method_index)
+    assert controller.selectPredictionQualityMethod(1 if method_index == 0 else 0)
     assert controller.selectPredictionQualityMethod(method_index)
     future, operation = pending.pop()
     future.set_result(operation())
@@ -1002,7 +1004,7 @@ def test_prediction_quality_worker_captures_bytes_and_discards_changed_selection
     assert controller.predictionQualitySummary == {} and not pending
     assert len(captured) == 2  # The captured method ran, even after A -> B -> A.
     assert controller.analyzePredictionQuality()
-    assert controller.selectPredictionQualityMethod(1 - method_index)
+    assert controller.selectPredictionQualityMethod(1 if method_index == 0 else 0)
     assert controller.selectPredictionQualityMethod(method_index)
     future, _ = pending.pop()
     future.set_exception(ValueError("obsolete method failed"))
@@ -1035,14 +1037,15 @@ def test_prediction_quality_worker_captures_bytes_and_discards_changed_selection
     assert runtime.backend_if_initialized is None and runtime.shutdown()
 
 
-@pytest.mark.parametrize("method_index", [0, 1], ids=["prediction-quality", "feature-ablation"])
+@pytest.mark.parametrize("method_index", [0, 1, 2], ids=["prediction-quality", "feature-ablation", "quadratic-ridge"])
 def test_actual_qml_prediction_quality_source_retry_views_and_language(desktop_prediction_experiment, tmp_path,
                                                                      method_index, research_case):
     saved = tmp_path / "saved-ridge.json"
     write_strategy_experiment(desktop_prediction_experiment, path=saved)
     recorded_source = Path(desktop_prediction_experiment.as_dict()["plan"]["comparison_plan"]["intraday_data_path"])
     relocated = tmp_path / "relocated-q5.json"
-    relocated.write_bytes(recorded_source.read_bytes())
+    source_bytes = recorded_source.read_bytes()
+    relocated.write_bytes(source_bytes)
     if method_index == 1:
         from market_vault.research.intraday_experiment import create_intraday_experiment
         _, plan, report = research_case
@@ -1062,10 +1065,12 @@ from market_vault.desktop.bootstrap import create_qml_application_session
 from market_vault.desktop.preferences import DesktopPreferenceStore
 from market_vault.research import intraday_prediction_quality as quality
 from market_vault.research import intraday_feature_ablation as ablation
+from market_vault.research import intraday_quadratic_ridge as quadratic
 from market_vault.research import intraday_research as research
 root = Path(sys.argv[1])
 method_index = int(sys.argv[2])
-module, function = (quality, 'analyze_intraday_prediction_quality') if method_index == 0 else (ablation, 'analyze_intraday_feature_ablation')
+module, function = ((quality, 'analyze_intraday_prediction_quality'), (ablation, 'analyze_intraday_feature_ablation'),
+    (quadratic, 'analyze_intraday_quadratic_ridge'))[method_index]
 analyze, calls = getattr(module, function), []
 load, fit, admissions = research.load_intraday_dataset, research._fit, {'loads': 0, 'fits': 0}
 def loaded(*args, **kwargs):
@@ -1165,23 +1170,24 @@ assert controller.predictionQualityMethodIndex == 0
 choose('intradayPredictionMethod', method_index)
 assert not calls and not controller.busy
 assert find('intradayPredictionSource').property('text') == ''
-assert ('continuous-return' if method_index == 0 else 'omitted Feature') in find('intradayPredictionQualityNotice').property('text')
+assert ('continuous-return', 'omitted Feature', 'fixed degree-two')[method_index] in find('intradayPredictionQualityNotice').property('text')
 click('intradayPredictionAnalyzeButton'); complete()
 report = controller._prediction_quality_report
 assert (report['cost_index'], report['candidate_index'], report['strategy']['alpha']) == (1, 1, 10)
 assert report['context']['feature_fields'] == ['return_2', 'sma_5', 'candle_body']
-fits_per_action = len(report['folds']) * (1 if method_index == 0 else 4)
+fits_per_action = len(report['folds']) * (1, 4, 2)[method_index]
 assert admissions == {'loads': 1, 'fits': fits_per_action}
 assert len(calls) == 1 and calls[0][1]['intraday_data_file'] is None
 assert 'not full Q7 Replay' in find('intradayPredictionCoverage').property('text')
 assert controller.resultSummary['intraday_verification'] == 'RECORDED'
-assert controller.tableModel.totalRows == (33 if method_index == 0 else 75)
+assert controller.tableModel.totalRows == (33, 75, 47)[method_index]
 def check_error_changes(selected):
     if method_index == 0:
         return
     from decimal import Decimal
     rows = {(row[0], row[1]): row[2:] for row in controller._rows}
-    assert [change['forecast'] for change in selected['paired_error_changes']] == ['DROP_0', 'DROP_1', 'DROP_2']
+    assert [change['forecast'] for change in selected['paired_error_changes']] == (
+        ['DROP_0', 'DROP_1', 'DROP_2'] if method_index == 1 else ['QUADRATIC_RIDGE'])
     for change in selected['paired_error_changes']:
         for name, metric in change['metrics'].items():
             raw = metric['value']
@@ -1208,6 +1214,9 @@ def prediction_detail(expected):
     text = label.property('text')
     for key in ('observation_key', 'trading_day', 'decision_time', 'fold_id', 'model_id', 'target_status'):
         assert expected[key] in text, (key, text)
+    if method_index == 2:
+        assert expected['quadratic_model_id'] in text
+        assert expected['quadratic_model_id'] != expected['model_id']
     fields = dict(line.split(': ', 1) for line in text.splitlines() if ': ' in line)
     catalog = session.i18n.catalog
     assert actual['prediction_count'] == report['sample']['prediction_count']
@@ -1276,9 +1285,28 @@ if method_index == 1:
     assert [variant['omitted_feature'] for variant in report['variants']] == ['return_2', 'sma_5', 'candle_body']
     assert 'positive means worse' in find('intradayPredictionAblationNote').property('text')
     assert [session.i18n.columnLabel('prediction_without:' + variant['omitted_feature']) for variant in report['variants']] == ['Without return_2 (%)', 'Without sma_5 (%)', 'Without candle_body (%)']
+if method_index == 2:
+    assert controller.predictionQualitySummary['analysis_method'] == 'quadratic_ridge'
+    assert report['quadratic']['degree'] == 2 and report['quadratic']['expanded_width'] == 9
+    assert report['quadratic']['input_features'] == ['return_2', 'sma_5', 'candle_body']
+    assert [term['name'] for term in report['quadratic']['terms']] == [
+        'z_0', 'z_1', 'z_2', 'z_0*z_0', 'z_0*z_1', 'z_0*z_2', 'z_1*z_1', 'z_1*z_2', 'z_2*z_2']
+    assert '2 · 9 · 10' in details and 'z_0*z_1' in details and 'z_2*z_2' in details
+    assert 'Δ MSE · quadratic minus linear Ridge' in details and 'Percentage points' in details
+    assert 'Raw return ratio²' in details and report['quadratic_ridge_id'] in details
+    assert all(fold['quadratic_model_id'] in details for fold in report['folds'])
+    note = find('intradayPredictionQuadraticNote')
+    assert note.property('visible') and 'positive means worse' in note.property('text')
+    assert 'Both normalization stages' in note.property('text') and 'sample adequacy' in note.property('text')
+    assert session.i18n.columnLabel('prediction_quadratic_ridge') == 'Quadratic Ridge (%)'
+    assert session.i18n.setLanguage('zh-CN'); app.processEvents()
+    assert '二次基减线性 Ridge' in find('intradayPredictionDetails').property('text')
+    assert '两阶段归一化' in note.property('text') and '样本充分' in note.property('text')
+    assert session.i18n.columnLabel('prediction_quadratic_ridge') == '二次基 Ridge（%）'
+    assert session.i18n.setLanguage('en'); app.processEvents()
 click('intradayPredictionDetailsButton')
 completed_label = find('intradayPredictionCompletedSource').property('text')
-choose('intradayPredictionMethod', 1 - method_index)
+choose('intradayPredictionMethod', 1 if method_index == 0 else 0)
 assert controller.predictionQualityDraftChanged and len(calls) == 1
 assert find('intradayPredictionCompletedSource').property('text') == completed_label
 assert controller._prediction_quality_report is report and find('intradayPredictionDraftChanged').property('visible')
@@ -1355,6 +1383,7 @@ print(json.dumps({'method_index': method_index, 'calls': len(calls), 'admissions
     assert result.returncode == 0, result.stdout + result.stderr
     assert "REAL_PREDICTION_QUALITY_UI_OK" in result.stdout
     assert "ReferenceError" not in result.stderr and "TypeError" not in result.stderr
+    assert recorded_source.read_bytes() == source_bytes and relocated.read_bytes() == source_bytes
 
 
 def test_actual_qml_compare_models_pagination_save_open_replay_and_language(research_case, tmp_path):

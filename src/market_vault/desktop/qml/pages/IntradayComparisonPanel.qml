@@ -52,6 +52,9 @@ Item {
     function predictionLabel(key) {
         const variant = (root.predictionData.variants || []).find(item => item.forecast === key)
         if (variant) return root.predictionForecastLabel(variant)
+        if (root.predictionData.analysis_method === "quadratic_ridge"
+            && ["delta_mae", "delta_mse", "delta_rmse"].indexOf(key) >= 0)
+            return root.i18n.catalog["prediction_quality.quadratic_" + key]
         return root.i18n.catalog["prediction_quality." + key] || root.i18n.catalog["columns." + key] || key
     }
     function predictionForecastLabel(forecast) {
@@ -1135,7 +1138,7 @@ Item {
                     Layout.fillWidth: true
                     Layout.maximumWidth: Infinity
                     label: root.i18n.catalog["prediction_quality.analysis_method"]
-                    model: ["prediction_quality", "feature_ablation"].map(key => root.predictionLabel(key))
+                    model: ["prediction_quality", "feature_ablation", "quadratic_ridge"].map(key => root.predictionLabel(key))
                     currentIndex: root.controller.predictionQualityMethodIndex
                     onModelChanged: currentIndex = Qt.binding(() => root.controller.predictionQualityMethodIndex)
                     onSelected: root.controller.selectPredictionQualityMethod(currentIndex)
@@ -1144,8 +1147,8 @@ Item {
                     objectName: "intradayPredictionQualityNotice"
                     Layout.fillWidth: true
                     text: root.i18n.catalog[root.controller.predictionQualityAvailable
-                        ? (root.controller.predictionQualityMethodIndex === 1
-                            ? "prediction_quality.ablation_note" : "prediction_quality.note") : "prediction_quality.saved_only"]
+                        ? "prediction_quality." + ["note", "ablation_note", "quadratic_note"][root.controller.predictionQualityMethodIndex]
+                        : "prediction_quality.saved_only"]
                     wrapMode: Text.WordWrap
                     color: Theme.PixelTheme.inkMuted
                     font.pixelSize: Theme.PixelTheme.fontSm
@@ -1237,6 +1240,15 @@ Item {
                     font.pixelSize: Theme.PixelTheme.fontSm
                 }
                 Label {
+                    objectName: "intradayPredictionQuadraticNote"
+                    Layout.fillWidth: true
+                    visible: root.predictionData.analysis_method === "quadratic_ridge"
+                    text: root.i18n.catalog["prediction_quality.quadratic_result_note"]
+                    wrapMode: Text.WordWrap
+                    color: Theme.PixelTheme.inkMuted
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                }
+                Label {
                     objectName: "intradayPredictionCoverage"
                     Layout.fillWidth: true
                     visible: !!root.predictionData.sample
@@ -1299,7 +1311,9 @@ Item {
                     Layout.fillWidth: true
                     visible: !!root.predictionData.sample
                     text: root.i18n.catalog["prediction_quality."
-                        + (root.predictionData.analysis_method === "feature_ablation"
+                        + (root.controller.predictionQualityViewIndex === 1
+                            && root.predictionData.analysis_method === "quadratic_ridge" ? "quadratic_fold"
+                            : root.predictionData.analysis_method === "feature_ablation"
                             && root.controller.predictionQualityViewIndex === 1 ? "ablation_fold"
                             : ["pooled", "fold", "predictions"][root.controller.predictionQualityViewIndex]) + "_note"]
                     wrapMode: Text.WordWrap
@@ -1364,6 +1378,8 @@ Item {
                         + "\n" + root.predictionLabel("fold_index") + ": " + row.fold_index
                             + " · " + root.predictionLabel("fold_id") + ": " + row.fold_id
                         + "\n" + root.predictionLabel("model_id") + ": " + row.model_id
+                        + (row.quadratic_model_id ? "\n" + root.predictionLabel("quadratic_model_id")
+                            + ": " + row.quadratic_model_id : "")
                 }
                 textFormat: Text.PlainText
                 wrapMode: Text.WrapAnywhere
@@ -1392,12 +1408,19 @@ Item {
                         + "\n" + root.predictionLabel("used_locator") + ": " + data.source_locator.used
                         + "\n" + root.predictionLabel("evidence") + ": " + JSON.stringify(data.evidence)
                         + "\n" + root.predictionLabel("method") + ": " + JSON.stringify(data.method)
+                        + (data.quadratic ? "\n" + root.predictionLabel("quadratic_basis") + ": "
+                            + data.quadratic.degree + " · " + data.quadratic.expanded_width + " · " + data.strategy.alpha
+                            + "\n" + root.predictionLabel("quadratic_terms") + ": "
+                            + data.quadratic.terms.map(term => term.name).join(", ")
+                            + "\n" + root.predictionLabel("quadratic_models_note") : "")
                         + (data.variants.length ? "\n" + data.variants.map(variant => root.predictionForecastLabel(variant)
                             + " · " + root.predictionLabel("retained_features") + ": "
                             + (variant.retained_features.join(", ") || root.predictionLabel("no_retained_features"))
                             + " · " + root.predictionLabel(variant.model_kind)).join("\n") : "")
                         + "\n" + root.predictionLabel("fold_ids") + ": " + data.folds.map(fold => fold.fold_index
-                            + " · " + fold.fold_id + " · " + fold.model_id).join("\n")
+                            + " · " + fold.fold_id + " · " + fold.model_id
+                            + (fold.quadratic_model_id ? " · " + root.predictionLabel("quadratic_model_id")
+                                + ": " + fold.quadratic_model_id : "")).join("\n")
                         + "\n" + root.predictionLabel("metric_details") + " · "
                         + (root.controller.predictionQualityViewIndex === 1 ? root.predictionLabel("fold")
                             + " " + root.controller.predictionQualityFoldIndex : root.predictionLabel("pooled")) + ":\n"

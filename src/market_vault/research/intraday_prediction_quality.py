@@ -39,7 +39,8 @@ def _data_override(value):
     return value
 
 
-def _prepare_selected_ridge(snapshot, *, cost_index, candidate_index, intraday_data_file=None):
+def _prepare_selected_ridge(snapshot, *, cost_index, candidate_index, intraday_data_file=None,
+                            max_feature_count=None):
     """One action's verified selected folds; never a public source bypass."""
     _index(cost_index, "cost_index")
     _index(candidate_index, "candidate_index")
@@ -62,6 +63,9 @@ def _prepare_selected_ridge(snapshot, *, cost_index, candidate_index, intraday_d
     if candidate["strategy"]["kind"] != "RIDGE":
         raise ValueError("prediction quality requires a selected RIDGE candidate")
     _, children, _ = research.expand_intraday_plan(root["plan"], recorded=True)
+    if max_feature_count is not None and len(children[cost_index]["feature_fields"]) > max_feature_count:
+        raise ValueError(f"selected Ridge projection must contain at most {max_feature_count} Features; "
+                         "no source was read or model fitted")
     prepared = research._prepare_intraday_research(children[cost_index], data_file=locator)
     if canonical_json(prepared.context) != canonical_json(root["report"]["context"]):
         raise ValueError("verified source differs from the complete saved context; no model was fitted")

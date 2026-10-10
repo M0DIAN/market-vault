@@ -1945,3 +1945,335 @@ def test_feature_ablation_real_nonfirst_selected_source_refit_and_installed_cli(
     error = capsys.readouterr()
     assert not error.out and json.loads(error.err)["error"] == "cost_index must be a nonnegative integer"
     assert (path.read_bytes(), data.path.read_bytes(), relocated.read_bytes()) == before
+
+
+def _quadratic_case(features=("x",), *, interaction=False, future_target_shift=0.0,
+                    future_feature_shift=0.0, test_shift=0.0):
+    """Small chronological rows with analytic curvature/interaction oracles."""
+    days = [f"2025-04-{index:02d}" for index in range(1, 8)]
+    observations, targets = [], []
+    for index, day in enumerate(days):
+        if interaction:
+            points = [(-1, -1), (-1, 1), (1, -1), (1, 1)]
+            if index in (4, 5):
+                points = [(-2, -3), (-2, 3), (2, -3), (2, 3), (4, 5)]
+        else:
+            points = [(x, 0) for x in ((-3, 0, 3, 4) if index == 4
+                      else (-4, -2, 0, 2, 4, 5) if index == 5 else (-2, -1, 1, 2))]
+        for slot, (x, y) in enumerate(points):
+            key = f"{day}-{slot}"
+            incomplete = index in (4, 5) and slot == len(points) - 1
+            shift = future_feature_shift if index == 4 else test_shift if index == 6 else 0.0
+            observations.append({"observation_key": key, "trading_day": day, "slot": slot,
+                "decision_time": f"{day}T15:{slot * 5:02d}:00+00:00", "status": "READY",
+                "features": {"x": x + shift, "y": y + shift, "constant": 7.0}})
+            target = x * y if interaction else x * x
+            targets.append({"observation_key": key, "status": "INCOMPLETE" if incomplete else "COMPLETE",
+                "reason": "SESSION_END" if incomplete else None,
+                "actual_label_end_time": None if incomplete else f"{day}T15:{slot * 5 + 5:02d}:00+00:00",
+                "value": None if incomplete else target + (future_target_shift if index == 4
+                                                          else test_shift if index == 6 else 0.0)})
+    observations.append({**observations[0], "observation_key": "not-ready", "status": "NOT_READY",
+                         "features": {"x": None, "y": None, "constant": 7.0}})
+    targets.append({**targets[0], "observation_key": "not-ready"})
+    observations.append({**observations[12], "observation_key": "boundary-purged"})
+    targets.append({**targets[12], "observation_key": "boundary-purged",
+                    "actual_label_end_time": f"{days[4]}T14:30:00+00:00"})
+    report, folds, training = {"observations": observations, "targets": targets}, [], []
+    for index, day in enumerate(days[4:6]):
+        boundary = f"{day}T14:30:00+00:00"
+        rows, purged = research.training_rows(report, tuple(days[:index + 4]), boundary)
+        fold = {"fold_index": index, "training_days": days[:index + 4], "validation_days": [day],
+                "training_boundary": boundary, "training_keys": [row["observation_key"] for row, _ in rows],
+                "purged_keys": list(purged),
+                "validation_keys": [row["observation_key"] for row in observations if row["trading_day"] == day]}
+        fold["fold_id"] = research.digest(fold)
+        folds.append(fold)
+        training.append(rows)
+    context = {"feature_fields": list(features), "folds": folds, "evaluated_days": days[4:6],
+               "validation_keys": [key for fold in folds for key in fold["validation_keys"]]}
+    prepared = SimpleNamespace(report=report, context=context, fold_rows=tuple(training),
+        observations=tuple(row for row in observations if row["observation_key"] in context["validation_keys"]))
+    strategy = {"kind": "RIDGE", "name": "Controlled quadratic reference", "alpha": 2.0, "threshold": 0.0}
+    predictions, models, metrics = research.candidate_predictions(prepared, research.parse_strategy_specs([strategy])[0], {})
+    return prepared, {"strategy": strategy, "predictions": predictions, "fold_models": models, "prediction_metrics": metrics}
+
+
+def test_quadratic_ridge_symmetric_heldout_curvature_and_both_training_normalizations():
+    from market_vault.research.intraday_quadratic_ridge import _quadratic_predictions
+    prepared, candidate = _quadratic_case()
+    original = deepcopy((prepared.context, prepared.report, candidate))
+    rows, folds, quadratic = _quadratic_predictions(prepared, candidate)
+    # TRAIN is sixteen symmetric x values with E[x²]=2.5. Normalized x²
+    # has scale 0.6, so the existing solver shrinks its one nonzero direction
+    # by n/(n+alpha), without fitting any expected model in this oracle.
+    shrink = 16 / (16 + 2)
+    first = rows[:4]
+    assert [row["scores"]["RIDGE"] for row in first] == pytest.approx([2.5] * 4)
+    assert [row["scores"]["QUADRATIC_RIDGE"] for row in first] == pytest.approx(
+        [2.5 * (1 - shrink) + shrink * x * x for x in (-3, 0, 3, 4)])
+    assert quadratic["degree"] == 2 and quadratic["expanded_width"] == 2
+    assert quadratic["terms"] == [{"name": "z_0", "input_indices": [0]}, {"name": "z_0*z_0", "input_indices": [0, 0]}]
+    model = quadratic["fold_models"][0]["model"]
+    assert model["input_transform"] == {"means": [0.0], "scales": [pytest.approx(math.sqrt(2.5))], "constant_policy": "ZERO"}
+    assert model["ridge_model"]["means"] == pytest.approx([0.0, 1.0])
+    assert model["ridge_model"]["scales"] == pytest.approx([1.0, .6])
+    assert model["ridge_model"]["coefficients"] == pytest.approx([0.0, 2.5 * shrink])
+    assert model["ridge_model"]["intercept"] == pytest.approx(2.5 * (1 - shrink))
+    assert folds[0]["paired_error_changes"][0]["metrics"]["mse"]["value"] < -20
+    assert [row["observation_key"] for row in rows] == prepared.context["validation_keys"]
+    assert [fold["sample"]["complete_target_count"] for fold in folds] == [3, 5]
+    assert [fold["sample"]["incomplete_target_count"] for fold in folds] == [1, 1]
+    assert all(row["target_value"] is None and math.isfinite(row["scores"]["QUADRATIC_RIDGE"])
+               for row in rows if row["target_status"] == "INCOMPLETE")
+    for record, fold in zip(quadratic["fold_models"], prepared.context["folds"], strict=True):
+        model, ridge = record["model"], record["model"]["ridge_model"]
+        assert model["training_keys"] == ridge["training_keys"] == fold["training_keys"]
+        assert model["training_boundary"] == ridge["training_boundary"] == fold["training_boundary"]
+        assert ("boundary-purged" in model["training_keys"]) == (fold["fold_index"] == 1)
+        assert "not-ready" not in model["training_keys"]
+        assert ridge["feature_fields"] == [term["name"] for term in quadratic["terms"]]
+        assert model["alpha"] == ridge["alpha"] == candidate["strategy"]["alpha"]
+        assert model["model_id"] == research.digest({key: value for key, value in model.items() if key != "model_id"})
+        assert ridge["model_id"] == research.digest({key: value for key, value in ridge.items() if key != "model_id"})
+        assert all(row["quadratic_model_id"] == model["model_id"] for row in rows if row["fold_id"] == fold["fold_id"])
+        assert all(row["model_id"] == candidate["fold_models"][fold["fold_index"]]["model"]["model_id"]
+                   for row in rows if row["fold_id"] == fold["fold_id"])
+    assert (prepared.context, prepared.report, candidate) == original
+
+
+def test_quadratic_ridge_pair_interaction_exact_order_arithmetic_and_constant_columns():
+    from market_vault.research.intraday_quadratic_ridge import _expanded_observation, _quadratic_predictions, _quadratic_terms
+    prepared, candidate = _quadratic_case(("y", "x", "constant"), interaction=True)
+    for row in prepared.observations:
+        row["features"]["constant"] = 99.0  # TRAIN-constant remains zero even on changed validation values.
+    rows, _, quadratic = _quadratic_predictions(prepared, candidate)
+    names = ["z_0", "z_1", "z_2", "z_0*z_0", "z_0*z_1", "z_0*z_2", "z_1*z_1", "z_1*z_2", "z_2*z_2"]
+    assert quadratic["input_features"] == ["y", "x", "constant"]
+    assert quadratic["expanded_width"] == 9 and [term["name"] for term in quadratic["terms"]] == names
+    assert [term["input_indices"] for term in quadratic["terms"]] == [[0], [1], [2], [0, 0], [0, 1], [0, 2], [1, 1], [1, 2], [2, 2]]
+    model = quadratic["fold_models"][0]["model"]
+    assert model["input_transform"] == {"means": [0.0, 0.0, 7.0], "scales": [1.0, 1.0, 0.0], "constant_policy": "ZERO"}
+    ridge = model["ridge_model"]
+    assert ridge["means"] == pytest.approx([0, 0, 0, 1, 0, 0, 1, 0, 0])
+    assert ridge["scales"] == pytest.approx([1, 1, 0, 0, 1, 0, 0, 0, 0])
+    shrink = 16 / 18
+    assert ridge["coefficients"] == pytest.approx([0, 0, 0, 0, shrink, 0, 0, 0, 0])
+    assert ridge["intercept"] == pytest.approx(0)
+    assert [row["scores"]["RIDGE"] for row in rows[:5]] == pytest.approx([0] * 5)
+    assert [row["scores"]["QUADRATIC_RIDGE"] for row in rows[:5]] == pytest.approx(
+        [6 * shrink, -6 * shrink, -6 * shrink, 6 * shrink, 20 * shrink])
+    observation = {"features": {"y": 14.0, "x": 4.0, "constant": 99.0}, "observation_key": "arithmetic"}
+    expanded = _expanded_observation(observation, quadratic["input_features"], (10, 2, 7), (2, 4, 0), quadratic["terms"])
+    assert list(expanded["features"].values()) == [2, .5, 0, 4, 1, 0, .25, 0, 0]
+    assert expanded["observation_key"] == observation["observation_key"]
+    assert observation["features"] == {"y": 14.0, "x": 4.0, "constant": 99.0}
+    maximum = _quadratic_terms(tuple(f"f_{index}" for index in range(6)))
+    assert len(maximum) == 6 * (6 + 3) // 2 == 27 and maximum[-1] == {"name": "z_5*z_5", "input_indices": [5, 5]}
+    assert all(term["input_indices"] for term in maximum)  # There is no explicit bias term.
+
+
+@pytest.mark.parametrize("constant", [0.1, -0.1, 7.0])
+def test_quadratic_ridge_fractional_train_constant_cannot_create_interactions(constant):
+    from market_vault.research.intraday_quadratic_ridge import _quadratic_predictions
+    training = tuple(({"observation_key": f"train-{index}", "features": {"x": x, "constant": constant}},
+                      {"value": x}) for index, x in enumerate((-3.0, -2.0, -1.0, 1.0, 2.0, 3.0)))
+    validation = tuple({"observation_key": f"validation-{index}", "trading_day": "2025-01-02",
+                        "slot": index, "decision_time": "2025-01-02T15:00:00+00:00",
+                        "features": {"x": 2.0, "constant": value}}
+                       for index, value in enumerate((constant, 99.0)))
+    fold = {"fold_index": 0, "fold_id": "constant-fold", "training_days": ["2025-01-01"],
+            "validation_days": ["2025-01-02"], "training_boundary": "2025-01-02T14:30:00+00:00",
+            "training_keys": [row["observation_key"] for row, _ in training],
+            "validation_keys": [row["observation_key"] for row in validation]}
+    prepared = SimpleNamespace(context={"feature_fields": ["x", "constant"], "folds": [fold],
+                                        "validation_keys": fold["validation_keys"]},
+        report={"targets": [{"observation_key": row["observation_key"], "status": "COMPLETE", "reason": None,
+                             "value": 2.0, "actual_label_end_time": "2025-01-02T15:05:00+00:00"}
+                            for row in validation]}, fold_rows=(training,), observations=validation)
+    strategy = {"kind": "RIDGE", "name": "Constant column reference", "alpha": 2.0, "threshold": 0.0}
+    predictions, models, metrics = research.candidate_predictions(prepared, research.parse_strategy_specs([strategy])[0], {})
+    rows, _, quadratic = _quadratic_predictions(prepared, {"strategy": strategy, "predictions": predictions,
+        "fold_models": models, "prediction_metrics": metrics})
+    model = quadratic["fold_models"][0]["model"]
+    assert model["input_transform"]["means"][1] == constant
+    assert model["input_transform"]["scales"][1] == 0.0
+    assert all(model["ridge_model"][field][index] == 0.0
+               for field in ("means", "scales", "coefficients") for index in (1, 3, 4))
+    # Symmetric TRAIN x and target=x leave one predictive direction. Its
+    # closed-form shrinkage is n/(n+alpha)=6/8, regardless of VALIDATION's
+    # changed constant input; no model fitted by this test supplies the oracle.
+    assert [row["scores"]["QUADRATIC_RIDGE"] for row in rows] == pytest.approx([1.5, 1.5])
+
+
+def test_quadratic_ridge_single_constant_is_training_mean_and_finite_overflow_fails():
+    from market_vault.research.intraday_quadratic_ridge import _expanded_observation, _quadratic_predictions, _quadratic_terms
+    rows, _, quadratic = _quadratic_predictions(*_quadratic_case(("constant",)))
+    assert quadratic["expanded_width"] == 2
+    assert all(row["scores"]["QUADRATIC_RIDGE"] == row["scores"]["TRAIN_MEAN"] for row in rows)
+    assert all(record["model"]["ridge_model"]["means"] == record["model"]["ridge_model"]["scales"] == [0.0, 0.0]
+               for record in quadratic["fold_models"])
+    terms = _quadratic_terms(("x",))
+    with pytest.raises(ValueError, match="normalization is not finite"):
+        _expanded_observation({"features": {"x": 1e308}}, ("x",), (-1e308,), (1.0,), terms)
+    with pytest.raises(ValueError, match="generated term is not finite"):
+        _expanded_observation({"features": {"x": 1e200}}, ("x",), (0.0,), (1.0,), terms)
+    prepared, candidate = _quadratic_case()
+    prepared.observations[0]["features"]["x"] = 1e200
+    with pytest.raises(ValueError, match="generated term is not finite"):
+        _quadratic_predictions(prepared, candidate)
+    prepared, candidate = _quadratic_case()
+    prepared.fold_rows[0][0][0]["features"]["x"] = 1e200
+    with pytest.raises(ArithmeticError):
+        _quadratic_predictions(prepared, candidate)
+
+
+def test_quadratic_ridge_future_data_changes_only_later_training_and_test_is_excluded():
+    from market_vault.research.intraday_quadratic_ridge import _quadratic_predictions
+    original = _quadratic_predictions(*_quadratic_case())
+    future = _quadratic_predictions(*_quadratic_case(future_target_shift=.6))
+    future_features = _quadratic_predictions(*_quadratic_case(future_feature_shift=10.0))
+    assert original == _quadratic_predictions(*_quadratic_case(test_shift=float("inf")))
+    for changed in (future, future_features):
+        assert original[2]["fold_models"][0] == changed[2]["fold_models"][0]
+        assert original[2]["fold_models"][1] != changed[2]["fold_models"][1]
+    assert original[2]["fold_models"][1]["model"]["input_transform"] == future[2]["fold_models"][1]["model"]["input_transform"]
+    assert original[2]["fold_models"][1]["model"]["input_transform"] != future_features[2]["fold_models"][1]["model"]["input_transform"]
+    assert [row["scores"] for row in original[0][:4]] == [row["scores"] for row in future[0][:4]]
+    assert original[1][0]["forecasts"] != future[1][0]["forecasts"]
+
+
+def test_quadratic_ridge_dimension_and_selected_admission_precede_q5_io(research_case, monkeypatch):
+    from market_vault.research.intraday_experiment import create_intraday_experiment
+    from market_vault.research.intraday_prediction_quality import analyze_intraday_prediction_quality
+    from market_vault.research.intraday_quadratic_ridge import analyze_intraday_quadratic_ridge
+    from test_intraday_experiment import _comparison_snapshot
+    data, plan, report = research_case
+    snapshot = create_intraday_experiment(plan=plan, report=report)
+    root = snapshot.as_dict()
+    fields = ["sma_5", *[name for name in data.as_dict()["report"]["feature_names"] if name != "sma_5"][:6]]
+    assert len(fields) == 7
+    root["plan"]["feature_fields"] = root["report"]["context"]["feature_fields"] = fields
+    for group in root["report"]["groups"]:
+        for candidate in group["results"]:
+            for record in candidate["fold_models"]:
+                model = record["model"]
+                model["feature_fields"] = fields
+                for key in ("means", "scales", "coefficients"):
+                    model[key] += [0.0] * 6
+    # A structurally valid, re-signed oversized saved projection must be rejected
+    # before source access; no source-reconstruction proof is invented here.
+    oversized = _comparison_snapshot(root)
+    calls = []
+    def blocked(*args, **kwargs):
+        calls.append(True)
+        raise RuntimeError("Q5 was requested")
+    monkeypatch.setattr(research, "load_intraday_dataset", blocked)
+    with pytest.raises(ValueError, match="at most 6 Features"):
+        analyze_intraday_quadratic_ridge(oversized, candidate_index=2)
+    for options in ({"candidate_index": True}, {"cost_index": -1}, {"candidate_index": 0},
+                    {"cost_index": 1}, {"candidate_index": 3}, {"intraday_data_file": False}):
+        with pytest.raises(ValueError):
+            analyze_intraday_quadratic_ridge(snapshot, **options)
+    assert calls == []
+    # The new comparator's engineering bound does not restrict Q21's existing
+    # selected-Ridge path: a wider request still advances to its ordinary loader.
+    with pytest.raises(RuntimeError, match="Q5 was requested"):
+        analyze_intraday_prediction_quality(oversized, candidate_index=2)
+    assert calls == [True]
+
+
+def test_quadratic_ridge_real_nonfirst_same_source_pairing_and_installed_cli(research_case, tmp_path, monkeypatch, capsys):
+    import json
+    import os
+    from pathlib import Path
+    import subprocess
+    import sysconfig
+    from market_vault import cli
+    from market_vault.research.intraday_feature_ablation import analyze_intraday_feature_ablation
+    from market_vault.research.intraday_prediction_quality import analyze_intraday_prediction_quality
+    from market_vault.research.intraday_quadratic_ridge import analyze_intraday_quadratic_ridge
+    from market_vault.research.intraday_experiment import create_intraday_experiment
+    from market_vault.research.strategy_experiment import write_strategy_experiment
+    data, comparison, _ = research_case
+    plan = diagnostic_plan(deepcopy(comparison))
+    plan["comparison_plan"]["feature_fields"] = ["return_2", "sma_5", "candle_body"]
+    plan["parameter_axes"] = [{"parameter": "alpha", "values": [1, 10]}]
+    normalized, children, coordinates = research.expand_intraday_plan(plan, recorded=True)
+    prepared = research._prepare_intraday_research(children[0], data=data)
+    saved = research._evaluate_intraday_research(normalized, children, coordinates, prepared)
+    snapshot = create_intraday_experiment(plan=normalized, report=saved, name="固定二次基函数")
+    path, relocated = tmp_path / "development.json", tmp_path / "relocated-intraday.json"
+    write_strategy_experiment(snapshot, path=path)
+    relocated.write_bytes(data.path.read_bytes())
+    before = path.read_bytes(), data.path.read_bytes(), relocated.read_bytes()
+    calls, loader, fitter = {"loads": 0, "fits": []}, research.load_intraday_dataset, research.fit_ridge_rows
+    def loaded(*args, **kwargs):
+        calls["loads"] += 1
+        return loader(*args, **kwargs)
+    def fitted(training, observations, features, alpha, *, boundary):
+        calls["fits"].append((list(features), alpha))
+        return fitter(training, observations, features, alpha, boundary=boundary)
+    monkeypatch.setattr(research, "load_intraday_dataset", loaded)
+    monkeypatch.setattr(research, "fit_ridge_rows", fitted)
+    monkeypatch.setattr(research, "run_intraday_execution", lambda *a, **kw: pytest.fail("quadratic analysis reran Q6"))
+    monkeypatch.setattr(cli, "load_settings", lambda *a, **kw: pytest.fail("quadratic analysis loaded settings"))
+    common = {"cost_index": 1, "candidate_index": 1}
+    quality = analyze_intraday_prediction_quality(snapshot, **common)
+    assert calls["loads"] == 1 and len(calls["fits"]) == 2
+    ablation = analyze_intraday_feature_ablation(snapshot, **common)
+    assert calls["loads"] == 2 and len(calls["fits"]) == 10
+    result = analyze_intraday_quadratic_ridge(snapshot, **common)
+    assert calls["loads"] == 3 and len(calls["fits"]) == 14
+    assert calls["fits"][-4:] == [(["return_2", "sma_5", "candle_body"], 10.0)] * 2 + [
+        ([term["name"] for term in result["quadratic"]["terms"]], 10.0)] * 2
+    candidate = saved["groups"][1]["results"][1]
+    assert result["candidate_id"] == quality["candidate_id"] == ablation["candidate_id"] == candidate["candidate_id"]
+    assert result["context"] == quality["context"] == ablation["context"] == saved["context"]
+    assert result["baseline"] == {"strategy": candidate["strategy"], "fold_models": candidate["fold_models"]}
+    assert result["evidence"]["execution_replayed"] is False
+    assert result["method"]["forecast_order"] == ["RIDGE", "ZERO", "TRAIN_MEAN", "QUADRATIC_RIDGE"]
+    assert result["method"]["paired_error_difference"] == "QUADRATIC_MINUS_LINEAR_RIDGE"
+    assert result["quadratic"]["expanded_width"] == 9
+    assert result["sample"] == quality["sample"] == ablation["sample"]
+    assert result["sample"]["prediction_count"] == 740 and result["sample"]["complete_target_count"] == 710
+    assert [row["observation_key"] for row in result["predictions"]] == saved["context"]["validation_keys"]
+    for row, linear, omitted in zip(result["predictions"], quality["predictions"], ablation["predictions"], strict=True):
+        assert {key: value for key, value in row.items() if key not in ("quadratic_model_id", "scores")} == {
+            key: value for key, value in linear.items() if key != "scores"}
+        assert {key: row["scores"][key] for key in linear["scores"]} == linear["scores"] == {
+            key: omitted["scores"][key] for key in linear["scores"]}
+        assert list(row["scores"]) == result["method"]["forecast_order"]
+        assert row["trading_day"] not in saved["context"]["split"]["TEST"]
+    assert result["quadratic_ridge_id"] == research.digest({key: value for key, value in result.items() if key != "quadratic_ridge_id"})
+    for summary in [result, *result["folds"]]:
+        paired = [row for row in result["predictions"] if row["target_status"] == "COMPLETE"
+                  and ("fold_id" not in summary or row["fold_id"] == summary["fold_id"])]
+        def error(name, squared=False):
+            return math.fsum((row["scores"][name] - row["target_value"]) ** 2 if squared
+                             else abs(row["scores"][name] - row["target_value"]) for row in paired) / len(paired)
+        change = summary["paired_error_changes"][0]
+        assert change["forecast"] == "QUADRATIC_RIDGE"
+        for name, expected in {"mae": error("QUADRATIC_RIDGE") - error("RIDGE"),
+                               "mse": error("QUADRATIC_RIDGE", True) - error("RIDGE", True),
+                               "rmse": math.sqrt(error("QUADRATIC_RIDGE", True)) - math.sqrt(error("RIDGE", True))}.items():
+            metric = change["metrics"][name]
+            assert metric["value"] == pytest.approx(expected, rel=1e-8, abs=1e-20)
+            assert metric["unit"] == ("SQUARED_RATIO" if name == "mse" else "RATIO") and metric["unavailable_reason"] is None
+    console = Path(sysconfig.get_path("scripts")) / ("market-vault.exe" if os.name == "nt" else "market-vault")
+    env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"), "PYTHONIOENCODING": "cp1252:strict"}
+    command = [str(console), "research-intraday-quadratic-ridge", "--experiment", str(path),
+               "--cost-index", "1", "--candidate-index", "1", "--intraday-data", str(relocated)]
+    process = subprocess.run(command, env=env, cwd=tmp_path, capture_output=True, check=False)
+    assert process.returncode == 0 and not process.stderr and process.stdout.isascii()
+    cli_result = json.loads(process.stdout)["report"]
+    assert cli_result["forecasts"] == result["forecasts"] and cli_result["predictions"] == result["predictions"]
+    assert cli_result["quadratic"] == result["quadratic"] and cli_result["paired_error_changes"] == result["paired_error_changes"]
+    assert cli_result["source_locator"] == {"recorded": str(data.path), "used": str(relocated.resolve()), "override_used": True}
+    failed = subprocess.run(command[:-1] + [str(tmp_path / "missing-q5.json")], env=env, cwd=tmp_path, capture_output=True, check=False)
+    assert failed.returncode == 1 and not failed.stdout and json.loads(failed.stderr)["status"] == "FAILED"
+    assert cli.main(["research-intraday-quadratic-ridge", "--experiment", str(tmp_path / "missing.json"),
+                     "--candidate-index", "-1"]) == 1
+    error = capsys.readouterr()
+    assert not error.out and json.loads(error.err)["error"] == "candidate_index must be a nonnegative integer"
+    assert (path.read_bytes(), data.path.read_bytes(), relocated.read_bytes()) == before
