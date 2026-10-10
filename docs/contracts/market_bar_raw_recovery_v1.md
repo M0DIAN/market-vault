@@ -40,6 +40,15 @@ Successful linking is the physical commit point. A later cleanup failure raises
 temporary path. The complete final file remains present. A caller must not
 interpret that exception as a rollback or successful run completion.
 
+A catchable interruption around `os.link` is reconciled against the retained
+temporary and final file identities, including an interruption before Python
+records the successful return. A verified commit is reported with
+`published=True` and the original failure as its cause. If inspection cannot
+establish the outcome, `published=None` reports uncertainty and temporary
+cleanup is refused. The recorded temporary pathname does not assert that
+residue exists: a verified owned temporary can be cleaned before a committed
+failure is reported.
+
 This is a single-file publication guarantee at these writers. Raw, Curated,
 lineage and Catalog remain separate publications; this is not a multi-file
 transaction, protection against arbitrary external file mutation, or a

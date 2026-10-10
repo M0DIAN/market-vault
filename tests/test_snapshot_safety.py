@@ -4,6 +4,9 @@ from datetime import date, datetime, timezone
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Barrier
+import inspect
+import signal
+import sys
 
 import pandas as pd
 import pytest
@@ -282,6 +285,95 @@ def test_atomic_publication_preserves_committed_final_on_cleanup_failure(monkeyp
     assert final.read_bytes() == b"complete"
     assert error.value.temporary_path.read_bytes() == b"complete"
     assert not error.value.temporary_path.name.endswith(".parquet")
+
+
+@pytest.mark.parametrize("failure", [RuntimeError("error after real link"), KeyboardInterrupt("interrupted after real link")])
+def test_atomic_publication_reconciles_real_link_then_error(monkeypatch, tmp_path, failure):
+    final = tmp_path / "snapshot.parquet"
+    actual_link = atomic_file.os.link
+
+    def link_then_error(source, target, **kwargs):
+        actual_link(source, target, **kwargs)
+        raise failure
+
+    monkeypatch.setattr(atomic_file.os, "link", link_then_error)
+    with pytest.raises(atomic_file.AtomicFilePublicationError) as error:
+        atomic_file._write_file_no_replace(final, lambda stream: stream.write(b"complete owned data"))
+    assert error.value.published is True
+    assert error.value.__cause__ is failure
+    assert final.read_bytes() == b"complete owned data"
+    assert not error.value.temporary_path.exists()
+    assert "owned temporary cleanup completed" in str(error.value)
+    assert "not published" not in str(error.value)
+    assert "residue retained" not in str(error.value)
+
+
+def test_atomic_publication_reports_real_sigint_after_link_before_python_flag(tmp_path):
+    final = tmp_path / "snapshot.parquet"
+    source_lines, first_line = inspect.getsourcelines(atomic_file._write_file_no_replace)
+    flag_line = first_line + next(
+        index for index, line in enumerate(source_lines) if line.strip() == "published = True"
+    )
+    previous_trace = sys.gettrace()
+    previous_handler = signal.signal(signal.SIGINT, signal.default_int_handler)
+    interrupted = []
+
+    def interrupt_after_link(frame, event, _argument):
+        if (
+            frame.f_code is atomic_file._write_file_no_replace.__code__
+            and event == "line" and frame.f_lineno == flag_line
+        ):
+            sys.settrace(previous_trace)
+            assert final.read_bytes() == b"complete owned data"
+            interrupted.append(True)
+            signal.raise_signal(signal.SIGINT)
+        return interrupt_after_link
+
+    try:
+        sys.settrace(interrupt_after_link)
+        with pytest.raises(atomic_file.AtomicFilePublicationError) as error:
+            atomic_file._write_file_no_replace(final, lambda stream: stream.write(b"complete owned data"))
+    finally:
+        sys.settrace(previous_trace)
+        signal.signal(signal.SIGINT, previous_handler)
+    assert interrupted == [True]
+    assert error.value.published is True
+    assert isinstance(error.value.__cause__, KeyboardInterrupt)
+    assert final.read_bytes() == b"complete owned data"
+    assert not error.value.temporary_path.exists()
+    assert "KeyboardInterrupt" in str(error.value)
+    assert "not published" not in str(error.value)
+
+
+def test_atomic_publication_keeps_unknown_outcome_and_temporary_when_inspection_fails(monkeypatch, tmp_path):
+    final = tmp_path / "snapshot.parquet"
+    actual_link = atomic_file.os.link
+    actual_lstat = Path.lstat
+    failure = KeyboardInterrupt("interrupted after real link")
+    linked = []
+
+    def link_then_interrupt(source, target, **kwargs):
+        actual_link(source, target, **kwargs)
+        linked.append(True)
+        raise failure
+
+    def cannot_inspect(path, *args, **kwargs):
+        if linked and path == final:
+            raise PermissionError("final identity inspection unavailable")
+        return actual_lstat(path, *args, **kwargs)
+
+    monkeypatch.setattr(atomic_file.os, "link", link_then_interrupt)
+    monkeypatch.setattr(Path, "lstat", cannot_inspect)
+    with pytest.raises(atomic_file.AtomicFilePublicationError) as error:
+        atomic_file._write_file_no_replace(final, lambda stream: stream.write(b"complete owned data"))
+    assert error.value.published is None
+    assert error.value.__cause__ is failure
+    assert final.read_bytes() == b"complete owned data"
+    assert error.value.temporary_path.read_bytes() == b"complete owned data"
+    assert actual_lstat(final).st_ino == actual_lstat(error.value.temporary_path).st_ino
+    assert "publication state unknown" in str(error.value)
+    assert "inspection unavailable" in str(error.value)
+    assert "not published" not in str(error.value)
 
 
 def test_atomic_publication_refuses_replaced_temporary_without_deleting_it(tmp_path):

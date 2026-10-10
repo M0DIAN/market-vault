@@ -12,12 +12,12 @@ from ..lifecycle import reject_link, verify_directory_chain
 class AtomicFilePublicationError(RuntimeError):
     """Publication/cleanup uncertainty with an explicit physical commit state."""
 
-    def __init__(self, message: str, *, path: Path, temporary_path: Path, published: bool):
+    def __init__(self, message: str, *, path: Path, temporary_path: Path, published: bool | None):
         self.path = path
         self.temporary_path = temporary_path
         self.published = published
-        state = "published; temporary residue retained" if published else "not published"
-        super().__init__(f"{state}: {path}; temporary file {temporary_path}: {message}")
+        state = {True: "published", False: "not published", None: "publication state unknown"}[published]
+        super().__init__(f"{state}: {path}; temporary pathname {temporary_path}: {message}")
 
 
 def _file_identity(value: os.stat_result) -> tuple[int, int]:
@@ -46,6 +46,30 @@ def _verify_owned_temporary(
         raise RuntimeError("Publication temporary file ownership changed")
 
 
+def _reconcile_publication(
+    path: Path,
+    temporary_path: Path,
+    *,
+    identity: tuple[int, int],
+    parent_identity: tuple[int, int],
+) -> bool:
+    """Determine whether an interrupted link committed this owned file."""
+    verify_directory_chain(path.parent, label="publication parent")
+    if _file_identity(path.parent.stat()) != parent_identity:
+        raise RuntimeError("Publication parent identity changed")
+    reject_link(path, "publication target")
+    try:
+        final = path.lstat()
+    except FileNotFoundError:
+        published = False
+    else:
+        published = stat.S_ISREG(final.st_mode) and _file_identity(final) == identity
+    _verify_owned_temporary(
+        temporary_path, identity=identity, parent_identity=parent_identity, published=published
+    )
+    return published
+
+
 def _write_file_no_replace(path: Path, serialize: Callable[[BinaryIO], None]) -> Path:
     """Publish one complete local file, strictly refusing every existing target.
 
@@ -65,8 +89,10 @@ def _write_file_no_replace(path: Path, serialize: Callable[[BinaryIO], None]) ->
     descriptor, name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     temporary_path = Path(name)
     identity: tuple[int, int] | None = None
-    published = False
+    published: bool | None = False
+    link_attempted = False
     failure: BaseException | None = None
+    reconciliation_failure: BaseException | None = None
     try:
         with os.fdopen(descriptor, "wb") as stream:
             created = os.fstat(stream.fileno())
@@ -85,14 +111,28 @@ def _write_file_no_replace(path: Path, serialize: Callable[[BinaryIO], None]) ->
         reject_link(path, "publication target")
         if os.path.lexists(path):
             raise FileExistsError(f"Refusing existing publication target: {path}")
+        link_attempted = True
         os.link(temporary_path, path, follow_symlinks=False)
         published = True
         return path
     except BaseException as exc:
         failure = exc
+        if link_attempted and not published:
+            try:
+                published = _reconcile_publication(
+                    path, temporary_path, identity=identity, parent_identity=parent_identity
+                )
+            except BaseException as reconciliation_error:
+                published = None
+                reconciliation_failure = reconciliation_error
         raise
     finally:
         try:
+            if published is None:
+                raise RuntimeError(
+                    "Publication outcome could not be established; temporary cleanup refused: "
+                    f"{type(reconciliation_failure).__name__}: {reconciliation_failure}"
+                )
             if identity is None:
                 raise RuntimeError("Publication temporary ownership was not established")
             _verify_owned_temporary(
@@ -102,10 +142,15 @@ def _write_file_no_replace(path: Path, serialize: Callable[[BinaryIO], None]) ->
                 published=published,
             )
             temporary_path.unlink()
-        except Exception as exc:
-            detail = str(exc)
+        except BaseException as exc:
+            detail = f"Temporary cleanup refused or failed: {type(exc).__name__}: {exc}"
             if failure is not None:
-                detail = f"{failure}; cleanup refused or failed: {detail}"
+                detail = f"{type(failure).__name__}: {failure}; {detail}"
             raise AtomicFilePublicationError(
                 detail, path=path, temporary_path=temporary_path, published=published
             ) from (failure if failure is not None else exc)
+        if failure is not None and published is True:
+            raise AtomicFilePublicationError(
+                f"{type(failure).__name__}: {failure}; owned temporary cleanup completed",
+                path=path, temporary_path=temporary_path, published=True,
+            ) from failure
