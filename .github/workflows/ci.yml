@@ -118,7 +118,7 @@ jobs:
     needs: plan
     if: needs.plan.outputs.run_partitions == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: ${{ matrix.partition == 'intraday_research' && 30 || 20 }}
     strategy:
       fail-fast: false
       max-parallel: 6
