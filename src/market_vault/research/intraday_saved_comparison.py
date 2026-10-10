@@ -10,7 +10,7 @@ import math
 
 from ..backtest.intraday import INTRADAY_COST_VERSION, INTRADAY_EXECUTION_VERSION
 from .intraday_experiment import INTRADAY_EXPERIMENT_VERSIONS
-from .intraday_final_test import INTRADAY_TEST_EXPERIMENT_VERSIONS
+from .intraday_final_test import INTRADAY_TEST_EXPERIMENT_VERSION, INTRADAY_TEST_EXPERIMENT_V2_VERSION
 from .intraday_performance import (
     BREAKEVEN_RETURN_TOLERANCE, INTRADAY_PERFORMANCE_VERSION, summarize_intraday_execution,
 )
@@ -18,6 +18,7 @@ from .strategy_experiment import StrategyExperiment
 
 
 INTRADAY_SAVED_COMPARISON_VERSION = "market-vault-intraday-saved-comparison-v1"
+_TEST_VERSIONS = (INTRADAY_TEST_EXPERIMENT_VERSION, INTRADAY_TEST_EXPERIMENT_V2_VERSION)
 _PERFORMANCE_UNITS = {
     "trade_count": "COUNT", "winning_trades": "COUNT", "losing_trades": "COUNT", "breakeven_trades": "COUNT",
     "win_rate": "RATIO", "mean_trade_return": "RATIO", "profit_factor": "NUMBER", "payoff_ratio": "NUMBER",
@@ -68,7 +69,7 @@ def _selected_from_root(root, cost_index, candidate_index):
         identity = candidate["candidate_id"]
         comparison = root["plan"].get("comparison_plan", root["plan"])
         walk = comparison["walk_forward"]
-    elif root["artifact_schema_version"] in INTRADAY_TEST_EXPERIMENT_VERSIONS:
+    elif root["artifact_schema_version"] in _TEST_VERSIONS:
         if cost_index or candidate_index:
             raise ValueError("TEST contains one frozen result; both indices must be zero")
         group = candidate = report

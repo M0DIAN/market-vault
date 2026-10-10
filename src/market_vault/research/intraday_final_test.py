@@ -38,8 +38,34 @@ INTRADAY_TEST_PLAN_V2_VERSION = "market-vault-intraday-test-plan-v2"
 INTRADAY_FINAL_TEST_V2_VERSION = "market-vault-intraday-final-test-v2"
 INTRADAY_FINAL_CONTEXT_V2_VERSION = "market-vault-intraday-final-context-v2"
 INTRADAY_FINAL_RESULT_V2_VERSION = "market-vault-intraday-final-test-result-v2"
-INTRADAY_SELECTION_VERSIONS = (INTRADAY_SELECTION_VERSION, INTRADAY_SELECTION_V2_VERSION)
-INTRADAY_TEST_EXPERIMENT_VERSIONS = (INTRADAY_TEST_EXPERIMENT_VERSION, INTRADAY_TEST_EXPERIMENT_V2_VERSION)
+INTRADAY_SELECTION_V3_VERSION = "market-vault-intraday-selection-v3"
+INTRADAY_SELECTION_PLAN_V3_VERSION = "market-vault-intraday-selection-plan-v3"
+INTRADAY_SELECTION_RESULT_V3_VERSION = "market-vault-intraday-selection-result-v3"
+INTRADAY_TEST_EXPERIMENT_V3_VERSION = "market-vault-intraday-test-v3"
+INTRADAY_TEST_PLAN_V3_VERSION = "market-vault-intraday-test-plan-v3"
+INTRADAY_FINAL_TEST_V3_VERSION = "market-vault-intraday-final-test-v3"
+INTRADAY_FINAL_CONTEXT_V3_VERSION = "market-vault-intraday-final-context-v3"
+INTRADAY_FINAL_RESULT_V3_VERSION = "market-vault-intraday-final-test-result-v3"
+INTRADAY_SELECTION_CONTRACTS = {
+    INTRADAY_SELECTION_VERSION: {
+        "plan": INTRADAY_SELECTION_PLAN_VERSION, "result": INTRADAY_SELECTION_RESULT_VERSION,
+        "test": INTRADAY_TEST_EXPERIMENT_VERSION, "test_plan": INTRADAY_TEST_PLAN_VERSION,
+        "final_test": INTRADAY_FINAL_TEST_VERSION, "final_context": INTRADAY_FINAL_CONTEXT_VERSION,
+        "final_result": INTRADAY_FINAL_RESULT_VERSION},
+    INTRADAY_SELECTION_V2_VERSION: {
+        "plan": INTRADAY_SELECTION_PLAN_V2_VERSION, "result": INTRADAY_SELECTION_RESULT_V2_VERSION,
+        "test": INTRADAY_TEST_EXPERIMENT_V2_VERSION, "test_plan": INTRADAY_TEST_PLAN_V2_VERSION,
+        "final_test": INTRADAY_FINAL_TEST_V2_VERSION, "final_context": INTRADAY_FINAL_CONTEXT_V2_VERSION,
+        "final_result": INTRADAY_FINAL_RESULT_V2_VERSION},
+    INTRADAY_SELECTION_V3_VERSION: {
+        "plan": INTRADAY_SELECTION_PLAN_V3_VERSION, "result": INTRADAY_SELECTION_RESULT_V3_VERSION,
+        "test": INTRADAY_TEST_EXPERIMENT_V3_VERSION, "test_plan": INTRADAY_TEST_PLAN_V3_VERSION,
+        "final_test": INTRADAY_FINAL_TEST_V3_VERSION, "final_context": INTRADAY_FINAL_CONTEXT_V3_VERSION,
+        "final_result": INTRADAY_FINAL_RESULT_V3_VERSION},
+}
+INTRADAY_SELECTION_VERSIONS = tuple(INTRADAY_SELECTION_CONTRACTS)
+INTRADAY_TEST_SELECTION_VERSIONS = {contract["test"]: version for version, contract in INTRADAY_SELECTION_CONTRACTS.items()}
+INTRADAY_TEST_EXPERIMENT_VERSIONS = tuple(INTRADAY_TEST_SELECTION_VERSIONS)
 SOURCE_VERSIONS = {
     "data": research.INTRADAY_DATA_VERSION, "research": research.INTRADAY_RESEARCH_VERSION,
     "walk_forward": research.INTRADAY_WALK_FORWARD_VERSION, "execution": research.INTRADAY_EXECUTION_VERSION,
@@ -67,6 +93,14 @@ def _selection_root(selection: StrategyExperiment) -> dict:
 
 
 def current_selection_versions(recorded: dict) -> dict:
+    if recorded.get("selection") == INTRADAY_SELECTION_V3_VERSION:
+        from .intraday_threshold_selection import INTRADAY_THRESHOLD_SELECTION_VERSION
+        research_version = (research.INTRADAY_RESEARCH_V2_VERSION if recorded.get("research") == research.INTRADAY_RESEARCH_V2_VERSION
+                            else research.INTRADAY_RESEARCH_VERSION)
+        return {**SOURCE_VERSIONS, "research": research_version,
+                **{key: value for key, value in OPTIONAL_SOURCE_VERSIONS.items() if key in recorded},
+                **({"quadratic": INTRADAY_QUADRATIC_RIDGE_VERSION} if "quadratic" in recorded else {}),
+                "threshold_selection": INTRADAY_THRESHOLD_SELECTION_VERSION, "selection": INTRADAY_SELECTION_V3_VERSION}
     if recorded.get("selection") == INTRADAY_SELECTION_V2_VERSION:
         from .intraday_inner_selection import INTRADAY_INNER_SELECTION_VERSION
         research_version = (research.INTRADAY_RESEARCH_V2_VERSION if recorded.get("research") == research.INTRADAY_RESEARCH_V2_VERSION
@@ -76,6 +110,8 @@ def current_selection_versions(recorded: dict) -> dict:
                 "quadratic": INTRADAY_QUADRATIC_RIDGE_VERSION,
                 **({"inner_selection": INTRADAY_INNER_SELECTION_VERSION} if "inner_selection" in recorded else {}),
                 "selection": INTRADAY_SELECTION_V2_VERSION}
+    if recorded.get("selection") != INTRADAY_SELECTION_VERSION:
+        raise ValueError("recorded selection algorithms differ; no source was read or model fitted")
     return {**SOURCE_VERSIONS, **{key: value for key, value in OPTIONAL_SOURCE_VERSIONS.items() if key in recorded},
             "selection": INTRADAY_SELECTION_VERSION}
 
@@ -91,12 +127,13 @@ def final_algorithm_versions(selection_root: dict) -> dict:
             versions["quadratic"] = source["quadratic"]
     elif kind == "COMPOSITE_RULE":
         versions["composite"] = source["composite"]
-    v2 = selection_root["artifact_schema_version"] == INTRADAY_SELECTION_V2_VERSION
-    return {**versions, "final_test": INTRADAY_FINAL_TEST_V2_VERSION if v2 else INTRADAY_FINAL_TEST_VERSION,
-            "final_context": INTRADAY_FINAL_CONTEXT_V2_VERSION if v2 else INTRADAY_FINAL_CONTEXT_VERSION}
+    contract = INTRADAY_SELECTION_CONTRACTS[selection_root["artifact_schema_version"]]
+    return {**versions, "final_test": contract["final_test"], "final_context": contract["final_context"]}
 
 
 def _selection_report(source: dict, plan: dict) -> dict:
+    if plan["plan_schema_version"] == INTRADAY_SELECTION_PLAN_V3_VERSION:
+        return _selection_report_v3(source, plan)
     if plan["plan_schema_version"] == INTRADAY_SELECTION_PLAN_V2_VERSION:
         return _selection_report_v2(source, plan)
     if source["artifact_schema_version"] != INTRADAY_EXPERIMENT_VERSION:
@@ -130,6 +167,9 @@ def _selection_report(source: dict, plan: dict) -> dict:
 
 def _source_versions(source):
     from .intraday_inner_selection import INTRADAY_INNER_SELECTION_VERSION, inner_selection_versions
+    from .intraday_threshold_selection import INTRADAY_THRESHOLD_SELECTION_VERSION, threshold_selection_versions
+    if source["artifact_schema_version"] == INTRADAY_THRESHOLD_SELECTION_VERSION:
+        return threshold_selection_versions(source["report"]["source_experiment"])
     if source["artifact_schema_version"] == INTRADAY_INNER_SELECTION_VERSION:
         return inner_selection_versions(source["report"]["source_experiment"])
     return research.research_algorithm_versions(source["plan"])
@@ -182,6 +222,43 @@ def _selection_report_v2(source, plan):
                     **{key: context[key] for key in ("symbol", "interval", "feature_fields", "target_horizon_bars", "split")}},
         "candidate": {"strategy": deepcopy(strategy), "axis_values": deepcopy(axes), "execution_policy": deepcopy(group["execution_policy"])},
         "benchmark_definition": dict(research.BENCHMARK_DEFINITION), "dev_selection": evidence}
+    result["selection_id"] = digest(result)
+    return result
+
+
+def _selection_report_v3(source, plan):
+    """Copy the saved economic winner and all four final-DEV account records."""
+    from .intraday_threshold_selection import INTRADAY_THRESHOLD_SELECTION_VERSION
+    reference, report = plan["source_experiment"], source["report"]
+    if (source["artifact_schema_version"] != INTRADAY_THRESHOLD_SELECTION_VERSION
+            or reference["artifact_schema_version"] != INTRADAY_THRESHOLD_SELECTION_VERSION
+            or reference["experiment_id"] != source["experiment_id"]
+            or reference["report_id"] != report["threshold_selection_id"]):
+        raise ValueError("source experiment identity differs from the frozen economic selection")
+    window = report["final_dev"]
+    if report["status"] != "AVAILABLE" or window["selected_recipe"] is None:
+        raise ValueError("only an AVAILABLE threshold-selection study has a final DEV recipe to freeze")
+    if plan["selection"] != {"final_dev_index": window["selected_index"]}:
+        raise ValueError("final DEV economic recipe differs from the frozen selection")
+    ordinary = report["source_experiment"]
+    context = ordinary["report"]["context"]
+    group = ordinary["report"]["groups"][source["plan"]["selection"]["cost_index"]]
+    fixed = group["results"][source["plan"]["selection"]["candidate_index"]]
+    evidence = {"version": source["algorithm_versions"]["threshold_selection"],
+        "threshold_selection_id": report["threshold_selection_id"], "method": deepcopy(report["method"]),
+        "source_experiment": {**deepcopy(source["plan"]["source_experiment"]), "research_id": ordinary["report"]["research_id"]},
+        "source_selection": deepcopy(source["plan"]["selection"]),
+        "fixed_reference": {key: deepcopy(fixed[key]) for key in ("strategy", "axis_values")},
+        "final_dev": deepcopy(window)}
+    result = {"result_schema_version": INTRADAY_SELECTION_RESULT_V3_VERSION, "version": INTRADAY_SELECTION_V3_VERSION,
+        "status": "FROZEN", "evaluation_scope": "DEVELOPMENT_INNER_ECONOMIC_THRESHOLD_FINAL_RECIPE",
+        "data_id": source["dataset_id"], "plan_sha256": digest(plan),
+        "context": {"source_context_id": context["context_id"], "intraday_data_path": source["plan"]["intraday_data_path"],
+                    **{key: deepcopy(context[key]) for key in ("symbol", "interval", "feature_fields", "target_horizon_bars", "split")}},
+        "candidate": {"strategy": deepcopy(window["selected_recipe"]), "axis_values": [],
+                      "execution_policy": deepcopy(group["execution_policy"])},
+        "benchmark_definition": dict(research.BENCHMARK_DEFINITION), "dev_selection": evidence,
+        "return_basis": deepcopy(report["return_basis"])}
     result["selection_id"] = digest(result)
     return result
 
@@ -246,6 +323,28 @@ def freeze_intraday_inner_selection(source_experiment_path: str | Path, *, expec
                       name=name, notes=notes)
 
 
+def freeze_intraday_threshold_selection(source_experiment_path: str | Path, *, expected_experiment_id: str,
+                                        name: str = "", notes: str = "") -> StrategyExperiment:
+    """Extract the saved Q31 winner; no Q5 reads, fits, reselection or execution."""
+    from .intraday_threshold_selection import INTRADAY_THRESHOLD_SELECTION_VERSION
+    research._identity(expected_experiment_id, "expected threshold-selection experiment ID")
+    path = _source_path(source_experiment_path)
+    source = load_strategy_experiment(path).as_dict()
+    if source["artifact_schema_version"] != INTRADAY_THRESHOLD_SELECTION_VERSION:
+        raise ValueError("Freeze economic final DEV recipe requires a saved threshold-selection study")
+    if source["algorithm_versions"] != _source_versions(source):
+        raise ValueError("recorded source algorithms differ; no data was read or model fitted")
+    plan = {"plan_schema_version": INTRADAY_SELECTION_PLAN_V3_VERSION,
+        "source_experiment": {"path": str(path), "experiment_id": expected_experiment_id,
+                              "artifact_schema_version": INTRADAY_THRESHOLD_SELECTION_VERSION,
+                              "report_id": source["report"]["threshold_selection_id"]},
+        "selection": {"final_dev_index": source["report"]["final_dev"]["selected_index"]}}
+    report = _selection_report_v3(source, plan)
+    return _new_experiment(version=INTRADAY_SELECTION_V3_VERSION, mode="INTRADAY_SELECTION", data_id=source["dataset_id"],
+        versions={**source["algorithm_versions"], "selection": INTRADAY_SELECTION_V3_VERSION},
+        plan=plan, report=report, name=name, notes=notes)
+
+
 def _bound_source(root: dict, *, source_experiment_file=None) -> dict:
     """Current-version and complete source/config binding, before data or fit."""
     if root["algorithm_versions"] != current_selection_versions(root["algorithm_versions"]):
@@ -273,7 +372,8 @@ def _load_bound_data(root: dict, *, intraday_data_file=None):
 def _evaluate_final_test(root: dict, data) -> dict:
     """Internal evaluation with data verified in this action, never a public bypass."""
     frozen = root["report"]
-    v2 = root["artifact_schema_version"] == INTRADAY_SELECTION_V2_VERSION
+    schema = root["artifact_schema_version"]
+    contract = INTRADAY_SELECTION_CONTRACTS[schema]
     recorded = frozen["context"]
     data_root = data.as_dict()
     report = data_root["report"]
@@ -294,14 +394,20 @@ def _evaluate_final_test(root: dict, data) -> dict:
         raise ValueError("TEST has no READY observations")
     policy = parse_execution_policy(frozen["candidate"]["execution_policy"])
     _inputs(sessions, prices, (), report["interval"], policy)
-    context = {"version": INTRADAY_FINAL_CONTEXT_V2_VERSION if v2 else INTRADAY_FINAL_CONTEXT_VERSION, "data_id": data.data_id,
+    context = {"version": contract["final_context"], "data_id": data.data_id,
                "selection_id": frozen["selection_id"], "symbol": report["symbol"], "interval": report["interval"],
                "feature_fields": recorded["feature_fields"], "target_horizon_bars": recorded["target_horizon_bars"],
                "split": parts, "training_boundary": boundary,
                "training_keys": [row["observation_key"] for row, _ in rows], "purged_keys": list(purged),
                "test_keys": [r["observation_key"] for r in observations]}
+    if schema == INTRADAY_SELECTION_V3_VERSION:
+        window = frozen["dev_selection"]["final_dev"]
+        if any(context[key] != window[frozen_key] for key, frozen_key in (
+                ("training_boundary", "history_boundary"), ("training_keys", "history_training_keys"),
+                ("purged_keys", "history_purged_keys"))):
+            raise ValueError("verified final training sample differs from frozen final DEV history; no model was fitted")
     context["context_id"] = digest(context)
-    strategy = parse_strategy_specs([frozen["candidate"]["strategy"]], allow_quadratic=v2)[0]
+    strategy = parse_strategy_specs([frozen["candidate"]["strategy"]], allow_quadratic=schema != INTRADAY_SELECTION_VERSION)[0]
     model, errors = None, None
     if type(strategy) in (RidgeStrategy, QuadraticRidgeStrategy):
         fitter = fit_quadratic_rows if type(strategy) is QuadraticRidgeStrategy else research.fit_ridge_rows
@@ -314,14 +420,15 @@ def _evaluate_final_test(root: dict, data) -> dict:
         predictions = list(rule_decisions(list(observations), strategy, feature_names=tuple(recorded["feature_fields"])))
     execution = run_intraday_execution(sessions=sessions, prices=prices, decisions=tuple(predictions),
                                        interval=report["interval"], policy=policy)
-    result = {"result_schema_version": INTRADAY_FINAL_RESULT_V2_VERSION if v2 else INTRADAY_FINAL_RESULT_VERSION,
-              "version": INTRADAY_FINAL_TEST_V2_VERSION if v2 else INTRADAY_FINAL_TEST_VERSION,
+    result = {"result_schema_version": contract["final_result"], "version": contract["final_test"],
               "status": "SUCCESS", "evaluation_scope": "FROZEN_SINGLE_CANDIDATE_TEST",
               "selection_experiment_id": root["experiment_id"], "selection_id": frozen["selection_id"],
               "data_id": data.data_id, "context": context, "strategy": frozen["candidate"]["strategy"],
               "execution_policy": asdict(policy), "model": model, "predictions": predictions,
               "prediction_metrics": errors, "execution": execution, "risk": research.intraday_daily_risk(execution),
               "benchmark": research.benchmark_execution(report, days, policy)}
+    if schema == INTRADAY_SELECTION_V3_VERSION:
+        result["return_basis"] = deepcopy(frozen["return_basis"])
     result["final_test_id"] = digest(result)
     return result
 
@@ -338,10 +445,10 @@ def run_intraday_final_test(selection: StrategyExperiment, *, source_experiment_
 def create_intraday_test_experiment(selection: StrategyExperiment, report: dict, *,
                                    name: str = "", notes: str = "") -> StrategyExperiment:
     root = _selection_root(selection)
-    v2 = root["artifact_schema_version"] == INTRADAY_SELECTION_V2_VERSION
-    return _new_experiment(version=INTRADAY_TEST_EXPERIMENT_V2_VERSION if v2 else INTRADAY_TEST_EXPERIMENT_VERSION, mode="INTRADAY_TEST",
+    contract = INTRADAY_SELECTION_CONTRACTS[root["artifact_schema_version"]]
+    return _new_experiment(version=contract["test"], mode="INTRADAY_TEST",
                            data_id=root["dataset_id"], versions=final_algorithm_versions(root),
-                           plan={"plan_schema_version": INTRADAY_TEST_PLAN_V2_VERSION if v2 else INTRADAY_TEST_PLAN_VERSION, "selection": root},
+                           plan={"plan_schema_version": contract["test_plan"], "selection": root},
                            report=report, name=name, notes=notes)
 
 
@@ -360,7 +467,10 @@ def replay_intraday_final_experiment(snapshot: StrategyExperiment, *, source_exp
     source = _bound_source(selection, source_experiment_file=source_experiment_file)
     data = _load_bound_data(selection, intraday_data_file=intraday_data_file)
     from .intraday_inner_selection import INTRADAY_INNER_SELECTION_VERSION, _evaluate as evaluate_inner_selection
-    if source["artifact_schema_version"] == INTRADAY_INNER_SELECTION_VERSION:
+    from .intraday_threshold_selection import INTRADAY_THRESHOLD_SELECTION_VERSION, _evaluate as evaluate_threshold_selection
+    if source["artifact_schema_version"] == INTRADAY_THRESHOLD_SELECTION_VERSION:
+        actual_source = evaluate_threshold_selection(source["report"]["source_experiment"], source["plan"], data=data)
+    elif source["artifact_schema_version"] == INTRADAY_INNER_SELECTION_VERSION:
         actual_source = evaluate_inner_selection(source["report"]["source_experiment"], source["plan"], data=data)
     else:
         normalized, children, values = research.expand_intraday_plan(source["plan"], recorded=True)

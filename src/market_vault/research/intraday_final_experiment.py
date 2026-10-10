@@ -68,26 +68,32 @@ def validate_intraday_selection_root(root):
     recorded = root["algorithm_versions"]
     if type(recorded) is not dict or not set(final.SOURCE_VERSIONS).issubset(recorded):
         raise ValueError("selection must retain the source algorithm versions")
-    v2 = root["artifact_schema_version"] == final.INTRADAY_SELECTION_V2_VERSION
+    schema = root["artifact_schema_version"]
+    contract = final.INTRADAY_SELECTION_CONTRACTS[schema]
+    v2, v3 = schema == final.INTRADAY_SELECTION_V2_VERSION, schema == final.INTRADAY_SELECTION_V3_VERSION
     keys = {*final.SOURCE_VERSIONS, "selection", *(set(recorded) & set(final.OPTIONAL_SOURCE_VERSIONS))}
     if v2:
         keys.update({"quadratic", *(set(recorded) & {"inner_selection"})})
+    elif v3:
+        keys.update({"threshold_selection", *(set(recorded) & {"quadratic"})})
     versions = _metadata(root, keys)
     plan = object_fields(root["plan"], {"plan_schema_version", "source_experiment", "selection"}, "selection plan")
-    if plan["plan_schema_version"] != (final.INTRADAY_SELECTION_PLAN_V2_VERSION if v2 else final.INTRADAY_SELECTION_PLAN_VERSION):
+    if plan["plan_schema_version"] != contract["plan"]:
         raise ValueError("unsupported selection plan version")
     source = object_fields(plan["source_experiment"],
-        {"path", "experiment_id", "artifact_schema_version", "report_id"} if v2 else {"path", "experiment_id", "research_id"}, "source experiment")
+        {"path", "experiment_id", "artifact_schema_version", "report_id"} if v2 or v3 else {"path", "experiment_id", "research_id"}, "source experiment")
     _recorded_path(source["path"])
-    for key in ("experiment_id", "report_id" if v2 else "research_id"):
+    for key in ("experiment_id", "report_id" if v2 or v3 else "research_id"):
         _identity(source[key], key)
     inner = v2 and source["artifact_schema_version"] == "market-vault-intraday-inner-selection-v1"
     if v2 and source["artifact_schema_version"] not in (INTRADAY_EXPERIMENT_V2_VERSION, "market-vault-intraday-inner-selection-v1"):
         raise ValueError("ML selection requires an ordinary V2 or inner-selection source")
     if v2 and inner != ("inner_selection" in versions):
         raise ValueError("ML selection source and method versions differ")
-    selected = object_fields(plan["selection"], {"final_dev_index"} if inner else {"cost_index", "candidate_index", "candidate_id"}, "explicit selection")
-    if inner:
+    if v3 and source["artifact_schema_version"] != "market-vault-intraday-threshold-selection-v1":
+        raise ValueError("economic selection requires a saved threshold-selection source")
+    selected = object_fields(plan["selection"], {"final_dev_index"} if inner or v3 else {"cost_index", "candidate_index", "candidate_id"}, "explicit selection")
+    if inner or v3:
         _count(selected["final_dev_index"], "final DEV index")
     else:
         _count(selected["cost_index"], "cost index")
@@ -95,11 +101,13 @@ def validate_intraday_selection_root(root):
         _identity(selected["candidate_id"], "candidate_id")
     report = object_fields(root["report"], {
         "result_schema_version", "version", "status", "evaluation_scope", "data_id", "plan_sha256",
-        "context", "candidate", "benchmark_definition", "selection_id", *({"dev_selection"} if v2 else set()),
+        "context", "candidate", "benchmark_definition", "selection_id", *({"dev_selection"} if v2 or v3 else set()),
+        *({"return_basis"} if v3 else set()),
     }, "selection report")
     _hash(report, "selection_id")
-    scope = "DEVELOPMENT_INNER_SELECTION_FINAL_RECIPE" if inner else "DEVELOPMENT_MANUAL_SINGLE_SELECTION"
-    if (report["result_schema_version"] != (final.INTRADAY_SELECTION_RESULT_V2_VERSION if v2 else final.INTRADAY_SELECTION_RESULT_VERSION)
+    scope = ("DEVELOPMENT_INNER_ECONOMIC_THRESHOLD_FINAL_RECIPE" if v3 else
+             "DEVELOPMENT_INNER_SELECTION_FINAL_RECIPE" if inner else "DEVELOPMENT_MANUAL_SINGLE_SELECTION")
+    if (report["result_schema_version"] != contract["result"]
             or report["version"] != versions["selection"] or report["status"] != "FROZEN" or report["evaluation_scope"] != scope
             or report["data_id"] != root["dataset_id"] or report["plan_sha256"] != digest(plan)
             or report["benchmark_definition"] != BENCHMARK_DEFINITION):
@@ -115,7 +123,7 @@ def validate_intraday_selection_root(root):
         quadratic_terms(features)
         positive_int(context["target_horizon_bars"], "ML target horizon")
     candidate = object_fields(report["candidate"], {"strategy", "axis_values", "execution_policy"}, "frozen candidate")
-    strategy = parse_strategy_specs([candidate["strategy"]], allow_quadratic=v2)[0]
+    strategy = parse_strategy_specs([candidate["strategy"]], allow_quadratic=v2 or v3)[0]
     if canonical_json(candidate["strategy"]) != canonical_json(strategy_plan_fields(strategy)):
         raise ValueError("frozen strategy must be normalized")
     rules = ((strategy.rule,) if type(strategy) is FeatureRuleStrategy else
@@ -125,6 +133,15 @@ def validate_intraday_selection_root(root):
     required = {"RIDGE": "ridge", "QUADRATIC_RIDGE": "ridge", "COMPOSITE_RULE": "composite"}.get(candidate["strategy"]["kind"])
     if required is not None and required not in versions:
         raise ValueError("selected strategy algorithm version is missing")
+    if v3:
+        positive_int(context["target_horizon_bars"], "ML target horizon")
+        if candidate["strategy"]["kind"] not in ("RIDGE", "QUADRATIC_RIDGE"):
+            raise ValueError("economic final DEV selection requires a learned strategy")
+        if candidate["strategy"]["kind"] == "QUADRATIC_RIDGE":
+            from .intraday_models import quadratic_terms
+            quadratic_terms(features)
+            if "quadratic" not in versions:
+                raise ValueError("selected quadratic algorithm version is missing")
     axes = _array(candidate["axis_values"], "selected axis values")
     if len(axes) > 2:
         raise ValueError("at most two selected axis values are supported")
@@ -140,6 +157,11 @@ def validate_intraday_selection_root(root):
                            candidate=candidate, versions=versions)
         elif report["dev_selection"] is not None:
             raise ValueError("a fixed ordinary candidate must not invent a DEV selection study")
+    elif v3:
+        _threshold_dev_selection(report["dev_selection"], source=source, selected=selected, context=context,
+                                 candidate=candidate, versions=versions)
+        from .intraday_threshold_selection import RETURN_BASIS, _equal
+        _equal(report["return_basis"], RETURN_BASIS, "frozen return basis")
 
 
 def _dev_selection(value, *, source, selected, context, candidate, versions):
@@ -179,6 +201,44 @@ def _dev_selection(value, *, source, selected, context, candidate, versions):
     _equal(window["selected_recipe"], candidate["strategy"], "frozen final DEV recipe")
 
 
+def _threshold_dev_selection(value, *, source, selected, context, candidate, versions):
+    """Validate the exact Q31 four-account evidence without data I/O or fits."""
+    from .intraday_threshold_experiment import validate_threshold_window
+    from .intraday_threshold_selection import METHOD, _equal
+    evidence = object_fields(value, {"version", "threshold_selection_id", "method", "source_experiment",
+                                    "source_selection", "fixed_reference", "final_dev"}, "frozen economic final DEV evidence")
+    _equal(evidence["method"], METHOD, "frozen economic final DEV method")
+    if (evidence["version"] != versions["threshold_selection"] or evidence["threshold_selection_id"] != source["report_id"]
+            or candidate["axis_values"]):
+        raise ValueError("frozen economic version, source or recipe axes differ")
+    ordinary = object_fields(evidence["source_experiment"], {"path", "experiment_id", "research_id"}, "original ordinary source")
+    _recorded_path(ordinary["path"])
+    for key in ("experiment_id", "research_id"):
+        _identity(ordinary[key], key)
+    reference = object_fields(evidence["source_selection"], {"cost_index", "candidate_index", "candidate_id"}, "original fixed reference")
+    for key in ("cost_index", "candidate_index"):
+        _count(reference[key], key)
+    _identity(reference["candidate_id"], "original candidate ID")
+    fixed = object_fields(evidence["fixed_reference"], {"strategy", "axis_values"}, "original reference recipe")
+    strategy = parse_strategy_specs([fixed["strategy"]], allow_quadratic=True)[0]
+    if fixed["strategy"]["kind"] not in ("RIDGE", "QUADRATIC_RIDGE"):
+        raise ValueError("an economic final DEV reference must be a learned strategy")
+    _equal(fixed["strategy"], strategy_plan_fields(strategy), "normalized reference strategy")
+    axes = _array(fixed["axis_values"], "reference axes")
+    if len(axes) > 2:
+        raise ValueError("at most two reference axes are supported")
+    for axis in axes:
+        finite_number(axis, "reference axis value")
+    window = evidence["final_dev"]
+    validate_threshold_window(window, days=context["split"]["TRAIN"] + context["split"]["VALIDATION"], boundary=None,
+        history_keys=None, history_purged=None, features=context["feature_fields"], strategy=fixed["strategy"],
+        versions=versions, policy=candidate["execution_policy"], interval=context["interval"], fitted=True)
+    if (_clock(window["history_boundary"], "economic final DEV boundary").date().isoformat() != context["split"]["TEST"][0]
+            or window["selected_index"] != selected["final_dev_index"]):
+        raise ValueError("frozen economic final DEV selection or history boundary differs")
+    _equal(window["selected_recipe"], candidate["strategy"], "frozen economic final DEV recipe")
+
+
 def _model(value, *, context, strategy, version):
     model = object_fields(value, {"version", "alpha", "feature_fields", "training_keys", "training_boundary",
                                   "intercept", "coefficients", "means", "scales", "model_id"}, "final Ridge model")
@@ -213,12 +273,14 @@ def validate_intraday_test_root(root):
     if root["evaluation_mode"] != "INTRADAY_TEST":
         raise ValueError("TEST artifact mode differs")
     plan = object_fields(root["plan"], {"plan_schema_version", "selection"}, "TEST plan")
-    v2 = root["artifact_schema_version"] == final.INTRADAY_TEST_EXPERIMENT_V2_VERSION
-    if plan["plan_schema_version"] != (final.INTRADAY_TEST_PLAN_V2_VERSION if v2 else final.INTRADAY_TEST_PLAN_VERSION):
+    selection_schema = final.INTRADAY_TEST_SELECTION_VERSIONS[root["artifact_schema_version"]]
+    contract = final.INTRADAY_SELECTION_CONTRACTS[selection_schema]
+    v3 = selection_schema == final.INTRADAY_SELECTION_V3_VERSION
+    if plan["plan_schema_version"] != contract["test_plan"]:
         raise ValueError("unsupported TEST plan version")
     embedded = plan["selection"]
     # Reject nested TEST/other roots before construction, so this cannot recurse.
-    if type(embedded) is not dict or embedded.get("artifact_schema_version") != (final.INTRADAY_SELECTION_V2_VERSION if v2 else final.INTRADAY_SELECTION_VERSION):
+    if type(embedded) is not dict or embedded.get("artifact_schema_version") != selection_schema:
         raise ValueError("TEST must embed exactly one selection artifact")
     selection = StrategyExperiment(canonical_json(embedded)).as_dict()
     expected_versions = final.final_algorithm_versions(selection)
@@ -230,9 +292,10 @@ def validate_intraday_test_root(root):
         "result_schema_version", "version", "status", "evaluation_scope", "selection_experiment_id", "selection_id",
         "data_id", "context", "strategy", "execution_policy", "model", "predictions", "prediction_metrics",
         "execution", "risk", "benchmark", "final_test_id",
+        *({"return_basis"} if v3 else set()),
     }, "final TEST report")
     _hash(report, "final_test_id")
-    if (report["result_schema_version"] != (final.INTRADAY_FINAL_RESULT_V2_VERSION if v2 else final.INTRADAY_FINAL_RESULT_VERSION)
+    if (report["result_schema_version"] != contract["final_result"]
             or report["version"] != versions["final_test"]
             or report["status"] != "SUCCESS" or report["evaluation_scope"] != "FROZEN_SINGLE_CANDIDATE_TEST"
             or report["selection_experiment_id"] != selection["experiment_id"] or report["selection_id"] != frozen["selection_id"]
@@ -240,6 +303,8 @@ def validate_intraday_test_root(root):
             or canonical_json(report["strategy"]) != canonical_json(frozen["candidate"]["strategy"])
             or canonical_json(report["execution_policy"]) != canonical_json(frozen["candidate"]["execution_policy"])):
         raise ValueError("final TEST report differs from its frozen candidate")
+    if v3 and report["return_basis"] != frozen["return_basis"]:
+        raise ValueError("final TEST return basis differs from the frozen selection")
     context = object_fields(report["context"], {
         "version", "data_id", "selection_id", "symbol", "interval", "feature_fields", "target_horizon_bars",
         "split", "training_boundary", "training_keys", "purged_keys", "test_keys", "context_id",
@@ -259,6 +324,12 @@ def validate_intraday_test_root(root):
         key_sets.append(set(values))
     if not context["test_keys"] or any(key_sets[i] & key_sets[j] for i in range(3) for j in range(i + 1, 3)):
         raise ValueError("training, purged and TEST identities must be disjoint; TEST cannot be empty")
+    if v3:
+        window = frozen["dev_selection"]["final_dev"]
+        if any(context[key] != window[frozen_key] for key, frozen_key in (
+                ("training_boundary", "history_boundary"), ("training_keys", "history_training_keys"),
+                ("purged_keys", "history_purged_keys"))):
+            raise ValueError("final TEST training sample differs from frozen final DEV history")
     days, policy = context["split"]["TEST"], report["execution_policy"]
     predictions = _array(report["predictions"], "TEST predictions")
     _decisions(predictions, days)

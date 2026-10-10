@@ -11,6 +11,7 @@ Item {
     required property var controller
     required property var i18n
     property int bindingRevision: -1
+    readonly property string sourceOverrideKey: controller.hasThresholdSelection ? "final.threshold_source_override" : "quant.intraday_source_override"
 
     function sync() {
         if (bindingRevision !== controller.bindingRevision) {
@@ -19,6 +20,9 @@ Item {
             dataPath.text = ""
         }
         candidate.currentIndex = controller.researchController.candidateIndex
+        view.selectedView = controller.viewIndex
+        view.currentIndex = controller.viewIndex
+        thresholdAccount.currentIndex = controller.thresholdAccountIndex
         equity.requestPaint()
     }
     Component.onCompleted: sync()
@@ -67,11 +71,19 @@ Item {
         onAccepted: root.controller.openInnerSource(selectedFile.toString())
     }
     FileDialog {
+        id: openThresholdSource
+        objectName: "intradayFinalThresholdSourceDialog"
+        fileMode: FileDialog.OpenFile
+        nameFilters: ["JSON files (*.json)"]
+        title: root.i18n.catalog["threshold.open"]
+        onAccepted: root.controller.openThresholdSource(selectedFile.toString())
+    }
+    FileDialog {
         id: sourcePicker
         objectName: "intradayFinalSourceDialog"
         fileMode: FileDialog.OpenFile
         nameFilters: ["JSON files (*.json)"]
-        title: root.i18n.catalog["quant.intraday_source_override"]
+        title: root.i18n.catalog[root.sourceOverrideKey]
         onAccepted: sourcePath.text = selectedFile.toString()
     }
     FileDialog {
@@ -93,10 +105,10 @@ Item {
         background: Rectangle { color: Theme.PixelTheme.surface; border.color: Theme.PixelTheme.goldDark }
         contentItem: ColumnLayout {
             spacing: Theme.PixelTheme.spacingSm
-            Label { Layout.fillWidth: true; text: root.i18n.catalog["quant.intraday_locations_help"]; wrapMode: Text.WordWrap; color: Theme.PixelTheme.ink }
+            Label { Layout.fillWidth: true; text: root.i18n.catalog[root.controller.hasThresholdSelection ? "final.threshold_locations_help" : "quant.intraday_locations_help"]; wrapMode: Text.WordWrap; color: Theme.PixelTheme.ink }
             RowLayout {
                 Layout.fillWidth: true
-                Components.LabeledTextField { id: sourcePath; objectName: "intradayFinalSourcePath"; Layout.fillWidth: true; Layout.maximumWidth: Infinity; label: root.i18n.catalog["quant.intraday_source_override"]; onTextChanged: root.controller.setLocations(text, dataPath.text) }
+                Components.LabeledTextField { id: sourcePath; objectName: "intradayFinalSourcePath"; Layout.fillWidth: true; Layout.maximumWidth: Infinity; label: root.i18n.catalog[root.sourceOverrideKey]; onTextChanged: root.controller.setLocations(text, dataPath.text) }
                 Components.PixelButton { objectName: "intradayFinalSourceBrowse"; text: root.i18n.catalog["quant.browse"]; onClicked: sourcePicker.open() }
             }
             RowLayout {
@@ -137,10 +149,13 @@ Item {
                 anchors.bottom: parent.bottom
                 anchors.right: parent.right
             }
-            Label {
+            TextArea {
                 objectName: "intradayFinalEvidenceText"
                 width: detailScroll.availableWidth
+                readOnly: true
+                selectByMouse: true
                 text: {
+                    if (!details.visible) return ""
                     root.i18n.language
                     const values = root.controller.selectionEvidence
                     const lines = [root.controller.selectionDetails]
@@ -150,7 +165,33 @@ Item {
                     }
                     return lines.join("\n")
                 }
-                wrapMode: Text.WrapAnywhere
+                wrapMode: TextEdit.WrapAnywhere
+                color: Theme.PixelTheme.ink
+            }
+        }
+    }
+    Dialog {
+        id: pageEvidence
+        objectName: "intradayFinalPageEvidenceDialog"
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        width: Math.min(900, parent.width - 40)
+        height: Math.min(650, parent.height - 40)
+        modal: true
+        title: root.i18n.catalog["threshold.page_evidence"]
+        standardButtons: Dialog.Close
+        background: Rectangle { color: Theme.PixelTheme.surface; border.color: Theme.PixelTheme.goldDark }
+        contentItem: ScrollView {
+            objectName: "intradayFinalPageEvidenceScroll"
+            clip: true
+            contentWidth: availableWidth
+            TextArea {
+                objectName: "intradayFinalPageEvidenceText"
+                width: parent.width
+                readOnly: true
+                selectByMouse: true
+                text: pageEvidence.visible ? root.controller.currentPageEvidence : ""
+                wrapMode: TextEdit.WrapAnywhere
                 color: Theme.PixelTheme.ink
             }
         }
@@ -215,6 +256,23 @@ Item {
                 }
                 Components.PixelButton { objectName: "intradayFreezeInnerButton"; text: root.i18n.catalog["quant.intraday_freeze_inner"]; enabled: root.controller.canFreezeInner; onClicked: root.controller.freezeInnerSelection() }
             }
+            RowLayout {
+                Layout.fillWidth: true
+                enabled: !root.controller.busy && !operationRuntime.busy
+                Components.PixelButton { objectName: "intradayFinalThresholdOpenButton"; text: root.i18n.catalog["threshold.open"]; onClicked: openThresholdSource.open() }
+                Label {
+                    objectName: "intradayFinalThresholdSource"
+                    Layout.fillWidth: true
+                    text: root.controller.thresholdSourceDetails || root.i18n.catalog["final.threshold_freeze_help"]
+                    elide: Text.ElideMiddle
+                    color: Theme.PixelTheme.inkMuted
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                    ToolTip.visible: thresholdHover.hovered
+                    ToolTip.text: text
+                    HoverHandler { id: thresholdHover }
+                }
+                Components.PixelButton { objectName: "intradayFreezeThresholdButton"; text: root.i18n.catalog["final.freeze_threshold"]; enabled: root.controller.canFreezeThreshold; onClicked: root.controller.freezeThresholdSelection() }
+            }
             Label {
                 Layout.fillWidth: true
                 text: root.i18n.catalog["quant.intraday_final_help"]
@@ -268,6 +326,16 @@ Item {
                 }
             }
             Label {
+                objectName: "intradayFinalCompletedPaths"
+                Layout.fillWidth: true
+                visible: root.controller.selectionPath.length > 0 || root.controller.testPath.length > 0
+                text: (root.controller.selectionPath ? root.i18n.catalog["final.saved_selection_path"] + ": " + root.controller.selectionPath : "")
+                    + (root.controller.testPath ? "\n" + root.i18n.catalog["final.saved_test_path"] + ": " + root.controller.testPath : "")
+                wrapMode: Text.WrapAnywhere
+                color: Theme.PixelTheme.inkMuted
+                font.pixelSize: Theme.PixelTheme.fontSm
+            }
+            Label {
                 objectName: "intradaySelectionDetails"
                 Layout.fillWidth: true
                 visible: root.controller.selectionLoaded
@@ -291,8 +359,17 @@ Item {
                 property bool quadraticModel: root.controller.selectionLoaded && view.selectedView === 4
                     && root.controller.frozenCandidate.strategy.kind === "QUADRATIC_RIDGE"
                 visible: root.controller.hasDevSelection || quadraticModel
-                text: (root.controller.hasDevSelection ? root.i18n.catalog["quant.intraday_final_selection_method"] : "")
+                text: (root.controller.hasDevSelection ? root.i18n.catalog[root.controller.hasThresholdSelection ? "final.threshold_method" : "quant.intraday_final_selection_method"] : "")
                     + (quadraticModel ? "\n" + root.i18n.catalog["quant.intraday_final_model_help"] : "")
+                wrapMode: Text.WordWrap
+                color: Theme.PixelTheme.inkMuted
+                font.pixelSize: Theme.PixelTheme.fontSm
+            }
+            Label {
+                objectName: "intradayFinalReturnBasis"
+                Layout.fillWidth: true
+                visible: root.controller.hasThresholdSelection
+                text: root.controller.returnBasis.price_basis ? root.i18n.catalog["quant.return_basis_help"] : ""
                 wrapMode: Text.WordWrap
                 color: Theme.PixelTheme.inkMuted
                 font.pixelSize: Theme.PixelTheme.fontSm
@@ -309,9 +386,37 @@ Item {
                     "quant.intraday_final_model", "quant.intraday_predictions", "quant.performance",
                     "quant.performance_exit", "quant.performance_entry", "quant.performance_day",
                     "quant.risk_summary", "quant.risk_drawdowns", "quant.risk_distributions", "quant.risk_concentration",
-                    "quant.risk_folds"].concat(root.controller.hasDevSelection ? ["final.family", "final.models", "final.keys", "final.predictions"] : []).map(key => root.i18n.catalog[key])
+                    "quant.risk_folds"].concat(root.controller.hasThresholdSelection ? ["final.threshold_family", "final.threshold_model", "final.keys", "final.threshold_decisions",
+                    "final.threshold_trades", "final.threshold_daily", "final.threshold_ledger", "final.threshold_transactions", "threshold.sessions", "threshold.prices"]
+                    : root.controller.hasDevSelection ? ["final.family", "final.models", "final.keys", "final.predictions"] : []).map(key => root.i18n.catalog[key])
                 onSelected: { selectedView = currentIndex; root.controller.selectView(currentIndex) }
-                onModelChanged: { if (selectedView >= model.length) selectedView = 0; currentIndex = selectedView; root.controller.selectView(selectedView) }
+                onModelChanged: { selectedView = root.controller.viewIndex < model.length ? root.controller.viewIndex : 0; currentIndex = selectedView }
+            }
+            Components.LabeledComboBox {
+                id: thresholdAccount
+                objectName: "intradayFinalThresholdAccount"
+                Layout.fillWidth: true
+                Layout.maximumWidth: 350
+                visible: root.controller.hasThresholdSelection && view.selectedView >= 15
+                label: root.i18n.catalog["final.threshold_account"]
+                model: root.controller.thresholdAccountOptions.map(option => option.threshold_bps + " bp" + (option.chosen ? " · " + root.i18n.catalog["threshold.chosen"] : ""))
+                onSelected: root.controller.selectThresholdAccount(currentIndex)
+                onModelChanged: currentIndex = root.controller.thresholdAccountIndex
+            }
+            Label {
+                objectName: "intradayFinalThresholdDecisionNote"
+                Layout.fillWidth: true
+                visible: root.controller.hasThresholdSelection && view.selectedView >= 15
+                text: root.i18n.catalog["final.threshold_decision_note"]
+                wrapMode: Text.WordWrap
+                color: Theme.PixelTheme.inkMuted
+                font.pixelSize: Theme.PixelTheme.fontSm
+            }
+            Components.PixelButton {
+                objectName: "intradayFinalPageEvidenceButton"
+                text: root.i18n.catalog["threshold.page_evidence"]
+                enabled: root.controller.selectionLoaded
+                onClicked: pageEvidence.open()
             }
             ColumnLayout {
                 visible: root.controller.testLoaded && view.selectedView === 0
@@ -350,12 +455,13 @@ Item {
                 objectName: "intradayTestTable"
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                Layout.minimumHeight: view.selectedView === 0 ? 120 : 170
+                Layout.minimumHeight: root.controller.hasThresholdSelection && view.selectedView === 15 ? 220
+                    : view.selectedView === 0 ? 120 : 170
                 paged: true
                 tableModel: root.controller.tableModel
                 i18n: root.i18n
                 cellFormatter: function(value) {
-                    if (view.selectedView >= 15 || view.selectedView === 4) return root.i18n.catalog["inner." + value] || value
+                    if (view.selectedView >= 15 || view.selectedView === 4) return root.i18n.catalog["threshold." + value] || root.i18n.catalog["inner." + value] || root.i18n.catalog["performance." + value] || value
                     if (view.selectedView >= 10) return root.i18n.catalog["risk." + value] || root.i18n.catalog["performance." + value] || value
                     return view.selectedView >= 6 ? (root.i18n.catalog["performance." + value] || value) : value
                 }

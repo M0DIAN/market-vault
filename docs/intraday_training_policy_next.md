@@ -303,31 +303,169 @@ Feature/alpha/history/cost searches, automated Freeze, TEST optimization, live
 inference and global overfitting-probability claims. Existing Q25 remains the
 separate unchanged six-member **MSE** procedure.
 
-## Q32 — economic-selection Freeze / TEST (planned)
+## Q32 — economic-selection Freeze / TEST
+
+### Goal and explicit contracts
 
 Freeze the complete Q31 final DEV threshold evidence and fixed recipe using
-explicit **Selection / TEST V3** contracts. V2 remains closed around Q26's
-ordinary quadratic and Q25 six-member MSE sources. Reuse the existing final
-training and Q6 numerical implementation rather than creating a TEST engine.
+explicit **Selection / TEST V3** contracts. The implementation starts from
+Q31's verified main `1dc871ccd71539658a096f5f4a0be866166b637e`.
+V1 retains Q8's ordinary DEV meaning; V2 remains closed around Q26's ordinary
+quadratic and Q25 six-member MSE sources. V3 admits only an `AVAILABLE` saved
+`market-vault-intraday-threshold-selection-v1` experiment. It does not convert
+an existing selection, ordinary source, Q25 study or unavailable Q31 study.
 
-Freeze is no-Q5/no-fit extraction of the saved final DEV choice, retaining
-source identity, all four final threshold accounts, model/keys/boundaries,
-ordered family, economic metric and FIRST_DECLARED tie rule. TEST then performs
-one fixed-recipe fit on all eligible TRAIN + VALIDATION rows, strictly purged
-at the first TEST open, and uses the frozen threshold for all READY TEST keys
-and an independent cash-1 Q6 account. There is no four-way TEST comparison.
+| V3 surface | Explicit version |
+| --- | --- |
+| Selection artifact / plan / result | `market-vault-intraday-selection-v3` / `market-vault-intraday-selection-plan-v3` / `market-vault-intraday-selection-result-v3` |
+| TEST artifact / plan | `market-vault-intraday-test-v3` / `market-vault-intraday-test-plan-v3` |
+| Final algorithm / context / result | `market-vault-intraday-final-test-v3` / `market-vault-intraday-final-context-v3` / `market-vault-intraday-final-test-result-v3` |
 
-Normal TEST verifies the bound frozen source. FullReplay reconstructs the
-complete applicable DEV source, Q31 procedure and final TEST. Preserve the
-existing source-relocation and immutable-file behavior and separate native
-selection/TEST verification states.
+Each TEST version embeds exactly its matching Selection version. A V3 root
+cannot fall back to V1 handling or embed a V2 selection. The Selection retains
+the complete ordinary/Q31 algorithm versions; the final TEST version set
+contains only the selected representation's required model algorithms. Linear
+Ridge preserves projections wider than six Features. Quadratic Ridge retains
+the existing six-input / 27-term bound. The existing final fitter, Q6 engine,
+benchmark, risk calculations, immutable writer and replay dispatcher are reused.
 
-Acceptance requires exact no-fit Freeze evidence, TEST intervention isolation,
-one final fit and one frozen decision policy, READY tails, full cash/cost /
-benchmark reconciliation, real CLI/native Freeze-save/open-TEST-replay paths,
-source relocation/failure recovery and legacy Q8/Q26 compatibility.
-Exclude threshold retuning after TEST, rolling-window TEST, online adaptation,
-automatic promotion, deployment, releases and live orders.
+### Freeze evidence and fixed defaults
+
+`freeze_intraday_threshold_selection(path, expected_experiment_id=...)` reads
+and validates the saved Q31 file, then extracts its saved final DEV winner.
+It does not read Q5, fit, recompute the four accounts or select a winner again.
+The source reference binds the **direct Q31 file**, its experiment ID, its
+artifact schema and its `threshold_selection_id`. The explicit selection is
+`final_dev_index`, and the scope is
+`DEVELOPMENT_INNER_ECONOMIC_THRESHOLD_FINAL_RECIPE`.
+
+The frozen candidate is exactly `final_dev.selected_recipe`, with empty
+candidate axes and the original Q6 execution policy. `dev_selection` retains
+the method, complete ordinary-source identity, original cost/candidate indices
+and candidate ID, original reference strategy/axes, and the complete final DEV
+window. That window includes all four ordered threshold accounts, the shared
+inner model and scores, complete sessions/prices, admitted targets, all keys,
+both boundaries, chosen index and recipe. The fixed source threshold remains
+visible even when outside the four-value family. The economic metric remains
+net compounded account return, ties remain FIRST_DECLARED, and decisions remain
+strictly `score > threshold`.
+
+The Selection and TEST V3 reports each retain Q31's exact `return_basis`:
+NONE unadjusted prices, no split-share adjustment, no cash-dividend accounting,
+simulated account cash change and UNKNOWN corporate-action coverage. This
+disclosure does not broaden Q29's event-assessment source grammar or claim
+corporate-action clearance.
+
+### One independent TEST evaluation
+
+Normal TEST validates the current algorithm versions and complete saved Q31
+source/config binding, then admits Q5 once. It derives the final training
+sample from all eligible TRAIN + VALIDATION observations, with actual label
+end strictly before the first TEST session open. Before any fitter runs, it
+must match all three frozen history fields exactly:
+
+| Actual final context | Frozen Q31 final DEV field |
+| --- | --- |
+| `training_boundary` | `history_boundary` |
+| `training_keys` | `history_training_keys` |
+| `purged_keys` | `history_purged_keys` |
+
+The same binding is enforced when opening a saved TEST. The inner window's
+`training_keys`, `training_boundary` and `model` are evidence for threshold
+selection; they are not the final TEST training sample or fitted model.
+Final TEST fits the fixed representation/alpha once using all admitted DEV
+rows, keeps the frozen threshold, and predicts every READY TEST observation,
+including incomplete target tails. Prediction errors use only COMPLETE TEST
+targets; execution uses every READY decision and the complete TEST price grid.
+The strategy and fixed benchmark each begin an independent cash-1 Q6 account,
+carry cash across all TEST days, and retain complete costs, trades, daily cash,
+ledger and risk. No four-way TEST comparison or threshold retuning occurs.
+
+Normal TEST does not reconstruct DEV or Q31. FullReplay separately reads Q5
+once, reconstructs the complete embedded ordinary DEV source and Q31 procedure,
+and then reconstructs the Selection and, for a TEST artifact, the final TEST.
+The same verified Q5 object is reused within that action. A selection-only
+FullReplay reconstructs its sources without fitting a final TEST model.
+Recorded Open performs pure saved grammar/account consistency checks. Neither
+Open nor normal TEST establishes that a structurally consistent saved inner
+fit was calculated from Q5; FullReplay establishes that stronger comparison.
+
+### Saved command line and relocation
+
+```console
+market-vault research-intraday-freeze-threshold-selection \
+  --source-experiment /absolute/threshold-study.json \
+  --expected-experiment-id THRESHOLD_STUDY_ID \
+  --experiment /absolute/economic-selection.json
+market-vault research-intraday-test \
+  --selection /absolute/economic-selection.json \
+  --experiment /absolute/economic-test.json
+market-vault research-experiment-open --experiment /absolute/economic-test.json
+market-vault research-experiment-replay --experiment /absolute/economic-test.json
+```
+
+For V3, `--source-experiment-file` means a relocated **direct Q31 saved file**
+whose frozen identity and contents must match. It does not replace the ordinary
+DEV file embedded inside Q31. `--intraday-data-file` relocates the verified Q5
+file with the same data identity. Both options work on normal TEST and shared
+FullReplay. A wrong ordinary-file override fails before reading Q5 or fitting.
+No third source alias, saved-path rewrite or migration is introduced. Save is
+exclusive and idempotent for identical content; a different artifact cannot
+overwrite a completed selection or TEST at that path.
+
+Q12's saved TEST risk derivation and the native raw Q6 performance view accept
+the V3 TEST account. Public Q9 saved performance, Q11 saved A/B comparison and
+Q29 return assessment keep their existing V1/V2 TEST source boundaries. A V3
+Selection is not a TEST account and cannot enter those account readers.
+
+### Native workflow
+
+In **Quant Research → Intraday → Freeze / TEST**, use **Open threshold study**
+to read a saved Q31 study, or use the completed and saved study already open
+in Economic thresholds. Review its captured source path and identity, then
+explicitly choose **Freeze economic threshold**. Opening a source does not
+freeze it. Unsaved and UNAVAILABLE studies cannot be frozen.
+
+V3 initially displays **Final DEV · four threshold accounts**. Its account
+selector exposes all four saved accounts and their actual decisions, trades,
+daily cash, ledger and transactions. Changing the displayed account does not
+change the frozen winner. Separate views retain the single shared inner model,
+all historical and inner keys/purges, both cutoffs, admitted target evidence,
+sessions and prices. Shared source prediction targets and each account's actual
+LONG/FLAT actions remain distinguishable. Full page evidence provides exact,
+selectable, wrapped and scrollable JSON for the selected evidence page, with
+complete model payloads. Pagination exposes the remaining recorded rows.
+
+Run TEST reuses the final account, benchmark, model, performance and risk views.
+The final model is fitted on all admitted DEV keys; the saved inner model
+remains selection evidence. Save/Open and FullReplay retain separate Selection
+and TEST paths and verification states. Open records RECORDED; each successful
+FullReplay establishes only its own REPLAY_MATCH. A computed TEST does not
+upgrade the Selection's historical replay proof.
+
+For V3, the Locations source field explicitly identifies the **Q31 threshold
+study file**; the Q5 field is separate. Both are captured before Run or Replay.
+Freeze also binds the completed Q31 path, artifact identity/revision and current
+Selection binding, including same-content reopen and Save As path changes.
+Stale deliveries and failures preserve completed evidence and allow retry.
+The existing V2 six-model MSE views retain their original meaning. Both
+languages and compact-window scrolling/pagination remain supported.
+
+### Acceptance and exclusions
+
+Acceptance requires no-Q5/no-fit/no-reselection Freeze with the complete saved
+four-account evidence; exact pre-fit and recorded history binding; TEST target,
+Feature and price intervention isolation of the frozen choice/final model;
+one final fit; all READY tails; independent raw-price/cost/cash and benchmark
+oracles; seven-Feature linear compatibility; rejected cross-version and
+resealed inconsistent evidence; and full reconstruction rejecting a false
+saved inner fit. Real CLI/native Freeze-save/open-TEST-replay paths must retain
+source relocation, immutable files, failure recovery and separate Selection /
+TEST verification states. Focused existing Q8/Q26 paths remain compatible.
+
+Exclude threshold retuning after TEST, four-way TEST scoring, rolling-window
+TEST, changes to the Q31 family, broad search, online adaptation, automatic
+Freeze/promotion, new event assessment, deployment, releases and live orders.
 
 ## Bounded CI follow-through
 
