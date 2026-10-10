@@ -119,6 +119,17 @@ Item {
             }
         }
 
+        Label {
+            objectName: "quantReturnBasisNotice"
+            visible: root.workspaceIndex !== 4
+            Layout.fillWidth: true
+            Layout.minimumHeight: implicitHeight
+            text: root.i18n.catalog["quant.return_basis_help"]
+            color: Theme.PixelTheme.inkMuted
+            font.pixelSize: Theme.PixelTheme.fontSm
+            wrapMode: Text.Wrap
+        }
+
         RowLayout {
             Layout.fillWidth: true
             spacing: Theme.PixelTheme.spacingSm

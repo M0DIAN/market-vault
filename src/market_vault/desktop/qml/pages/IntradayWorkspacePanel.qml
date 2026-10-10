@@ -12,6 +12,15 @@ Item {
     ColumnLayout {
         anchors.fill: parent
         spacing: Theme.PixelTheme.spacingSm
+        Label {
+            objectName: "intradayReturnBasisNotice"
+            Layout.fillWidth: true
+            Layout.minimumHeight: implicitHeight
+            text: root.i18n.catalog["quant.return_basis_help"]
+            color: Theme.PixelTheme.inkMuted
+            font.pixelSize: Theme.PixelTheme.fontSm
+            wrapMode: Text.Wrap
+        }
         RowLayout {
             Components.PixelButton {
                 objectName: "intradayDataTab"
