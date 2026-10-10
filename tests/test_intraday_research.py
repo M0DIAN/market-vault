@@ -294,15 +294,8 @@ def test_empty_observation_fold_rejected_but_one_empty_day_kept(research_case):
     assert len(prepared.context["validation_keys"]) == 666
 
 
-def return_uncertainty_fixture(root):
-    """130 declared sessions through Canonical/Q5/Q7; 105 DEV cash days.
-
-    Rule-only 30-minute data keeps this longer statistical sample smaller than
-    the existing 36-session five-minute fitting fixture. It proves software
-    behavior, not evidence of a profitable market strategy.
-    """
-    from market_vault.research.intraday_experiment import create_intraday_experiment
-    from market_vault.research.strategy_experiment import write_strategy_experiment
+def return_uncertainty_data(root, *, target_horizon_bars=None):
+    """130 declared 30-minute sessions through the actual Canonical/Q5 path."""
     current, entries, days, bars = date(2025, 2, 3), [], [], []
     closed_days = {"2025-02-17", "2025-04-18", "2025-05-26", "2025-06-19", "2025-07-04"}
     while len(days) < 130:
@@ -321,8 +314,19 @@ def return_uncertainty_fixture(root):
     data = build_intraday_dataset({
         "plan_schema_version": "market-vault-intraday-data-plan-v1", "canonical_build_dirs": [str(source.build_path)],
         "schedule": json_values(asdict(cd.schedule(entries))), "symbol": "US.SPY", "interval": "30m",
-        "preset": "LIGHT_TECHNICAL", "stride_bars": 1, "target_horizon_bars": None, "dataset_as_of": cd.AS_OF.isoformat()})
+        "preset": "LIGHT_TECHNICAL", "stride_bars": 1, "target_horizon_bars": target_horizon_bars, "dataset_as_of": cd.AS_OF.isoformat()})
     data = replace(data, path=write_intraday_dataset(data, path=root / "intraday.json"))
+    return data
+
+
+def return_uncertainty_fixture(root):
+    """Original rule-only 105 DEV cash-day account on the shared data builder.
+
+    This fixture proves software behavior, not a profitable market strategy.
+    """
+    from market_vault.research.intraday_experiment import create_intraday_experiment
+    from market_vault.research.strategy_experiment import write_strategy_experiment
+    data = return_uncertainty_data(root)
     comparison = research.default_intraday_research_plan(data, commission_bps=0, slippage_bps=0)
     comparison["feature_fields"] = ["sma_5"]
     comparison["strategies"] = [{"kind": "FEATURE_RULE", "name": "日内均值", "signal_field": "sma_5", "comparator": "GT", "threshold": 100}]
