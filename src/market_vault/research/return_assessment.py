@@ -29,6 +29,7 @@ from .strategy_risk import STRATEGY_RISK_VERSION
 RETURN_ASSESSMENT_VERSION = "market-vault-return-assessment-v1"
 RESTRICTION_LIST_VERSION = "market-vault-return-restrictions-v1"
 _ZONE = ZoneInfo("America/New_York")
+_CLOCK = re.compile(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d{1,6})?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)")
 _PRICE_FIELDS = frozenset(("open", "high", "low", "close"))
 _LABELS = {f"market_vault.dataset.label_transforms.{name}:{name}": name for name in (
     "forward_return", "forward_direction", "forward_open_to_close_return",
@@ -50,6 +51,10 @@ def _require(condition, message, code="CONTRADICTORY_WINDOW_EVIDENCE"):
 
 
 def _clock(value):
+    if type(value) is str:
+        _require(_CLOCK.fullmatch(value) is not None,
+                 "assessment requires a full date and HH:MM:SS with Z or ±HH:MM, and at most six fractional timestamp digits",
+                 "UNSUPPORTED_PRICE_CLOCK")
     parsed = datetime.fromisoformat(value) if type(value) is str else value
     _require(isinstance(parsed, datetime) and parsed.tzinfo is not None and parsed.utcoffset() is not None,
              "an aware timestamp is required", "INVALID_INPUT")
@@ -295,7 +300,7 @@ def _intraday_windows(execution, symbol, owner, role):
                  and (previous is None or previous < opened), "saved daily sessions contradict their market dates/grid")
         sessions[day] = (opened, closed, (closed - opened) // step)
         previous = closed
-    grid, actions, index = {}, [], 0
+    grid, actions, price_records, index = {}, [], [], 0
     ledger = execution["ledger"]
     for day, (opened, _, count) in sessions.items():
         held_quantity = 0.0
@@ -318,6 +323,8 @@ def _intraday_windows(execution, symbol, owner, role):
                 held_quantity = 0.0
             _require(op["quantity"] == cl["quantity"] == held_quantity,
                      "saved price ledger contains holdings absent from its execution actions")
+            price_records.append((day, slot, op["row_version_id"], _stamp(op["timestamp"]),
+                                  _stamp(cl["timestamp"]), op["mark_price"], cl["mark_price"]))
             grid[day, slot] = op
             if op["action"] in ("BUY", "SELL"):
                 actions.append(op)
@@ -361,7 +368,7 @@ def _intraday_windows(execution, symbol, owner, role):
         previous_exit = exit
         windows.append(_window(role, owner + ":" + trade["trade_id"], symbol, entry, exit,
                                trade["entry_row_version_id"], trade["exit_row_version_id"], "RECORDED_EXECUTION"))
-    return windows
+    return windows, tuple(price_records)
 
 
 def _saved_intraday_windows(root):
@@ -383,8 +390,15 @@ def _saved_intraday_windows(root):
                  "UNSUPPORTED_ECONOMIC_VERSION")
         records = [(report["execution"], report["final_test_id"], "STRATEGY_TRADE"),
                    (report["benchmark"]["execution"], "test:benchmark", "BENCHMARK_HOLDING")]
+    price_grids, row_meanings = {}, {}
     for execution, owner, role in records:
-        windows.extend(_intraday_windows(execution, symbol, owner, role))
+        holdings, grid = _intraday_windows(execution, symbol, owner, role)
+        previous = price_grids.setdefault(execution["price_evidence_id"], grid)
+        _require(previous == grid, "one saved price_evidence_id carries contradictory price grids")
+        for price in grid:
+            previous = row_meanings.setdefault(price[2], price)
+            _require(previous == price, "one saved row version ID carries contradictory bar meanings")
+        windows.extend(holdings)
     return windows, versions
 
 

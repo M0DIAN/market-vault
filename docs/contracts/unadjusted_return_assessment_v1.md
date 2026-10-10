@@ -73,6 +73,11 @@ requirement belongs to the new assessment; old source-free experiment Open
 continues to work under its existing contract. Other source kinds reject
 `--source-dataset`.
 
+Supplied source, event-list and relocation locators must be nonblank paths.
+Option presence is distinct from an empty argument: conflicting source choices,
+ineligible overrides and blank supplied paths are rejected before source or
+event-list I/O.
+
 All inputs are local and explicit. The command does not load settings,
 initialize OpenD, access the network, scan for `latest`, fit a model or execute
 a strategy. It produces independent stdout JSON and does not write inside a
@@ -178,6 +183,14 @@ and every recorded session must end flat. These checks only associate the
 saved records. They do not reexecute the kernel, reconcile all account
 arithmetic or establish Canonical provenance for the saved grid.
 
+Executions that declare the same `price_evidence_id` must agree on their
+price-only grid: day, slot, row ID, OPEN/CLOSE clocks and raw marks. Every row
+ID must also have one bar meaning within and across those grids. Cash,
+quantities, actions and policies are excluded from this shared-price
+comparison, so ordinary cost scenarios can retain different accounts over
+the same prices. Contradictory repeated price identities refuse assessment
+instead of letting one account shift a declared event outside its window.
+
 ### Economic versions and evidence labels
 
 Q29 requires the known economic versions needed to interpret these prices and
@@ -235,7 +248,14 @@ UTF-8 without a BOM; duplicate object keys and nonfinite constants are rejected.
 Provenance, event ID and source are nonempty strings; event IDs are unique
 across the list. Symbol uses the canonical uppercase US form, matching
 `US\.[A-Z0-9][A-Z0-9.\-]*`. `EFFECTIVE_INSTANT` requires a timezone-aware ISO
-timestamp. `DATE_RESTRICTION` requires ordered inclusive `YYYY-MM-DD` dates. A
+timestamp: full calendar date, `T` or space separator, `HH:MM:SS`, an optional
+fraction of at most six digits (dot or comma separator), and `Z` or a
+`±HH:MM` offset. Every parsed event or saved-source clock follows this
+microsecond precision boundary. Finer fractions, fractional timezone offsets
+and reduced-time forms are refused before Python's datetime parser can
+silently normalize or truncate a value across an entry or exit boundary.
+This assessment limit does not change an old saved reader's acceptance rules.
+`DATE_RESTRICTION` requires ordered inclusive `YYYY-MM-DD` dates. A
 date-only fact must not be converted into an invented exact effective instant.
 
 Provenance and each event's source describe the caller's declared evidence.
@@ -284,6 +304,11 @@ it neither proves an action nor turns unknown coverage into known coverage.
 ## 7. Assessment JSON, identities and CLI results
 
 Success prints one flat JSON object without a success envelope:
+
+Console JSON escapes non-ASCII characters, allowing Chinese provenance and
+error paths on legacy Windows console encodings. JSON decoding restores the
+original Unicode content. This presentation choice does not change the
+canonical UTF-8 bytes used for restriction or assessment identities.
 
 | Field | V1 meaning |
 | --- | --- |

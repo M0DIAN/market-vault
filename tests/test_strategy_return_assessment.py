@@ -5,7 +5,10 @@ not qualify native publication or establish corporate-action feed coverage.
 """
 
 from datetime import timedelta
+import io
 import json
+from pathlib import Path
+import sys
 
 import pytest
 
@@ -13,7 +16,7 @@ import cross_day_helpers as cd
 import ts2_feature_helpers as ts
 from cross_day_dataset_helpers import fixture
 from cross_day_artifact_memory_fs import MemoryFS
-from market_vault import cli
+from market_vault import cli, return_assessment_cli
 from market_vault.cross_day_dataset import join_multi_source_cross_day_dataset, materialize_multi_source_cross_day_dataset_build
 from market_vault.research import return_assessment as assessment
 from market_vault.research.intraday_data import canonical_json
@@ -94,6 +97,10 @@ def test_declared_overnight_event_does_not_block_next_day_open_to_close(tmp_path
     assert len(exact_entry["restriction_matches"]) == 4
     exact_exit = assessment.assess_dataset(dataset.build_path, events=_events(_instant("2025-03-04T14:40:00Z")))
     assert len(exact_exit["restriction_matches"]) == 5
+    after_entry = assessment.assess_dataset(dataset.build_path, events=_events(_instant("2025-03-04T14:35:00.000001Z")))
+    assert len(after_entry["restriction_matches"]) == 5
+    after_exit = assessment.assess_dataset(dataset.build_path, events=_events(_instant("2025-03-04T14:40:00.000001Z")))
+    assert after_exit["restriction_matches"] == []
     wrong_symbol = assessment.assess_dataset(dataset.build_path, events=_events(_instant("2025-03-04T14:38:00Z", symbol="US.SPY")))
     assert wrong_symbol["screening_status"] == "NO_LISTED_INTERSECTION"
 
@@ -145,6 +152,16 @@ def test_restriction_identity_normalizes_order_and_offsets():
     parsed = assessment.parse_event_restrictions(canonical_json(_events(two, one)))
     other = assessment.parse_event_restrictions(canonical_json(_events(one, {**two, "effective_at": "2025-03-04T14:39:00+00:00"})))
     assert parsed == other
+
+
+@pytest.mark.parametrize("instant", [
+    "2025-03-04T14:35:00.0000001Z", "2025-03-04T14:40:00.0000001Z",
+    "2025-03-04T14:35:00+00:00:00.000001", "2025-03-04T14.5Z",
+])
+def test_exact_restrictions_reject_unsupported_boundary_precision(instant):
+    with pytest.raises(assessment.ReturnAssessmentError, match="six fractional timestamp digits") as error:
+        assessment.parse_event_restrictions(canonical_json(_events(_instant(instant))))
+    assert error.value.reason_code == "UNSUPPORTED_PRICE_CLOCK"
 
 
 @pytest.mark.parametrize("mode", ["COMPARISON", "EQUITY", "RISK"])
@@ -260,9 +277,19 @@ def test_v2_multi_cost_quadratic_and_frozen_test_share_saved_window_adapter(quad
     assert path.read_bytes() == source.content and test_path.read_bytes() == tested.content
 
 
-@pytest.mark.parametrize("mutation", ["trade_time", "row_id", "ledger_time", "hidden_holding", "economic_version"])
+@pytest.mark.parametrize("mutation", ["trade_time", "row_id", "ledger_time", "hidden_holding", "economic_version",
+                                      "submicrosecond_clock", "contradictory_shared_grid", "aliased_row"])
 def test_saved_hashes_do_not_replace_local_grid_or_economic_evidence(intraday_experiment, tmp_path, mutation):
     root = intraday_experiment.as_dict()
+    events = None
+    if mutation in ("contradictory_shared_grid", "aliased_row"):
+        control = tmp_path / "control.json"
+        write_strategy_experiment(intraday_experiment, path=control)
+        trade = root["report"]["groups"][0]["benchmark"]["execution"]["trades"][0]
+        instant = (assessment._clock(trade["entry_time"]) + timedelta(seconds=1)).isoformat()
+        events = _events(_instant(instant, symbol=root["report"]["context"]["symbol"]))
+        checked = assessment.assess_saved_experiment(control, events=events)
+        assert checked["coverage_status"] == "PARTIAL" and checked["restriction_matches"]
     execution = root["report"]["groups"][0]["results"][1]["execution"]
     if mutation == "trade_time":
         for name in ("signal_time", "entry_time", "exit_time"):
@@ -273,6 +300,26 @@ def test_saved_hashes_do_not_replace_local_grid_or_economic_evidence(intraday_ex
         execution["ledger"][0]["timestamp"] = (assessment._clock(execution["ledger"][0]["timestamp"]) + timedelta(minutes=1)).isoformat()
     elif mutation == "hidden_holding":
         execution["ledger"][0]["quantity"] = 1.0
+    elif mutation == "submicrosecond_clock":
+        clock = assessment._clock(execution["ledger"][0]["timestamp"]).isoformat(timespec="seconds")
+        execution["ledger"][0]["timestamp"] = clock.replace("+00:00", ".0000001+00:00")
+    elif mutation == "contradictory_shared_grid":
+        def shifted(value):
+            if type(value) is dict:
+                return {key: shifted(item) for key, item in value.items()}
+            if type(value) is list:
+                return [shifted(item) for item in value]
+            if type(value) is str and "T" in value and value[:4].isdigit():
+                return (assessment._clock(value) + timedelta(hours=1)).isoformat()
+            return value
+        benchmark = root["report"]["groups"][0]["benchmark"]
+        benchmark["execution"] = shifted(benchmark["execution"])
+    elif mutation == "aliased_row":
+        for group in root["report"]["groups"]:
+            for candidate in [*group["results"], group["benchmark"]]:
+                ledger = candidate["execution"]["ledger"]
+                for point in ledger[2:4]:
+                    point["row_version_id"] = ledger[0]["row_version_id"]
     else:
         root["algorithm_versions"]["execution"] = "historical-execution"
         for group in root["report"]["groups"]:
@@ -282,8 +329,10 @@ def test_saved_hashes_do_not_replace_local_grid_or_economic_evidence(intraday_ex
     path = tmp_path / "source.json"
     write_strategy_experiment(source, path=path)
     with pytest.raises(assessment.ReturnAssessmentError) as error:
-        assessment.assess_saved_experiment(path)
-    assert error.value.reason_code == ("UNSUPPORTED_ECONOMIC_VERSION" if mutation == "economic_version" else "CONTRADICTORY_WINDOW_EVIDENCE")
+        assessment.assess_saved_experiment(path, events=events)
+    assert error.value.reason_code == ("UNSUPPORTED_ECONOMIC_VERSION" if mutation == "economic_version" else
+                                      "UNSUPPORTED_PRICE_CLOCK" if mutation == "submicrosecond_clock" else
+                                      "CONTRADICTORY_WINDOW_EVIDENCE")
     assert load_strategy_experiment(path).content == source.content
 
 
@@ -307,3 +356,47 @@ def test_cli_is_deterministic_settings_free_and_restrictions_have_distinct_statu
     assert invalid.out == "" and json.loads(invalid.err)["status"] == "FAILED"
     assert cli.main([*arguments, "--experiment", "also.json"]) == 1
     assert json.loads(capsys.readouterr().err)["reason_code"] == "INVALID_INPUT"
+
+
+@pytest.mark.parametrize("arguments", [
+    [], ["--dataset", "dummy", "--experiment", ""],
+    ["--dataset", "dummy", "--source-dataset", ""],
+    *[[option, blank] for option in ("--dataset", "--experiment") for blank in ("", " \t")],
+    *[["--experiment", "dummy", option, blank] for option in ("--events", "--source-dataset") for blank in ("", " \t")],
+])
+def test_cli_rejects_supplied_blank_paths_and_conflicts_before_io(arguments, monkeypatch, capsys):
+    def blocked(*args, **kwargs):
+        pytest.fail("invalid locator configuration performed reader/settings/event I/O")
+    monkeypatch.setattr(cli, "load_settings", blocked)
+    monkeypatch.setattr(return_assessment_cli, "assess_dataset", blocked)
+    monkeypatch.setattr(return_assessment_cli, "assess_saved_experiment", blocked)
+    monkeypatch.setattr(Path, "read_bytes", blocked)
+    assert cli.main(["research-return-assessment", *arguments]) == 1
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert json.loads(output.err)["reason_code"] == "INVALID_INPUT"
+
+
+def test_cli_cp1252_console_preserves_unicode_result_identity_and_errors(tmp_path, monkeypatch, capsys):
+    dataset, _ = _published(tmp_path, monkeypatch)
+    events = {**_events(), "provenance": "人工声明：公司行动覆盖未知；显式有限清单"}
+    event_path = tmp_path / "事件清单.json"
+    event_path.write_bytes(canonical_json(events))
+    expected = assessment.assess_dataset(dataset.build_path, events=events)
+    output, failure = io.BytesIO(), io.BytesIO()
+    stdout = io.TextIOWrapper(output, encoding="cp1252", errors="strict")
+    stderr = io.TextIOWrapper(failure, encoding="cp1252", errors="strict")
+    with monkeypatch.context() as patch:
+        patch.setattr(sys, "stdout", stdout)
+        patch.setattr(sys, "stderr", stderr)
+        assert cli.main(["research-return-assessment", "--dataset", str(dataset.build_path), "--events", str(event_path)]) == 0
+        missing = tmp_path / "未提供的事件清单.json"
+        assert cli.main(["research-return-assessment", "--dataset", str(dataset.build_path), "--events", str(missing)]) == 1
+        stdout.flush()
+        stderr.flush()
+    result = json.loads(output.getvalue().decode("ascii"))
+    error = json.loads(failure.getvalue().decode("ascii"))
+    assert result == expected and result["assessment_id"] == expected["assessment_id"]
+    assert result["restriction_provenance"] == events["provenance"]
+    assert error["status"] == "FAILED" and "未提供的事件清单.json" in error["error"]
+    assert capsys.readouterr().out == ""
