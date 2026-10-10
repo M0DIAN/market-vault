@@ -34,6 +34,7 @@ from .intraday_parameter_grid_cli import add_intraday_parameter_grid_subparser, 
 from .intraday_return_uncertainty_cli import add_intraday_return_uncertainty_subparser, research_intraday_return_uncertainty_main
 from .intraday_family_bounds_cli import add_intraday_family_bounds_subparser, research_intraday_family_bounds_main
 from .intraday_portfolio_cli import add_intraday_portfolio_subparser, research_intraday_portfolio_main
+from .intraday_portfolio_rebalance_cli import add_intraday_portfolio_rebalance_subparser, research_intraday_portfolio_rebalance_main
 from .intraday_sequential_selection_cli import add_intraday_sequential_selection_subparser, research_intraday_sequential_selection_main
 from .intraday_signal_delay_cli import add_intraday_signal_delay_subparser, research_intraday_signal_delay_main
 from .intraday_plan_cli import add_intraday_plan_subparser, research_intraday_plan_main
@@ -121,6 +122,7 @@ RESEARCH_COMMANDS = frozenset({
     "research-intraday-return-uncertainty",
     "research-intraday-family-bounds",
     "research-intraday-portfolio",
+    "research-intraday-portfolio-rebalance",
     "research-intraday-sequential-selection",
     "research-intraday-signal-delay",
     "research-intraday-plan-from-candidate",
@@ -233,6 +235,7 @@ def add_research_subparsers(subparsers) -> None:
     add_intraday_return_uncertainty_subparser(subparsers)
     add_intraday_family_bounds_subparser(subparsers)
     add_intraday_portfolio_subparser(subparsers)
+    add_intraday_portfolio_rebalance_subparser(subparsers)
     add_intraday_sequential_selection_subparser(subparsers)
     add_intraday_signal_delay_subparser(subparsers)
     add_intraday_plan_subparser(subparsers)
@@ -267,6 +270,8 @@ def run_research_command(command: str, args: argparse.Namespace) -> int:
         return research_intraday_family_bounds_main(args)
     if command == "research-intraday-portfolio":
         return research_intraday_portfolio_main(args)
+    if command == "research-intraday-portfolio-rebalance":
+        return research_intraday_portfolio_rebalance_main(args)
     if command == "research-intraday-sequential-selection":
         return research_intraday_sequential_selection_main(args)
     if command == "research-intraday-signal-delay":

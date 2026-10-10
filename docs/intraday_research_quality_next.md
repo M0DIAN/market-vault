@@ -287,8 +287,10 @@ There is no delay-list or best-delay argument. Every analysis uses exactly
 0, 1 and 2 additional bars. CLI success means the requested report was
 produced; inspect its `availability`, `baseline` and each scenario's status
 before interpreting numbers. An unavailable valid record returns explicit
-reasons and source identities. Invalid arguments or files use the existing
-ASCII-safe JSON failure convention and a nonzero exit status.
+reasons and source identities. Argument values and files rejected by the
+command handler use ASCII-safe JSON errors and exit 1. Argument-parser errors,
+such as an unknown option or a missing required option, use the existing usage
+message and exit 2.
 
 The report separates complete source `basis` and account `availability`
 from reconstructed `projection` and zero-delay `baseline` checks.
@@ -367,6 +369,93 @@ Shared order cash, netting, leverage, shorting, borrowing, multiple symbols or
 FX, fixed fees, capacity, settlement/transfer delays, automatic weights,
 weekly/monthly/threshold schedules, N-strategy optimization, portfolio
 confidence intervals and reinterpretation as an original Q7 execution.
+
+### API, console and recorded evidence
+
+`research.intraday_portfolio_rebalance.analyze_intraday_portfolio_rebalance`
+accepts two immutable `StrategyExperiment` objects and the same explicit
+cost/candidate indexes and weights as Q17. The four indexes default to 0;
+`weight_a` and `weight_b` default to 0.5. Booleans are not valid indexes or
+weights. Invalid values are rejected before snapshot decoding or CLI file I/O.
+
+```console
+market-vault research-intraday-portfolio-rebalance --left /absolute/left.json --right /absolute/right.json
+market-vault research-intraday-portfolio-rebalance --left /absolute/left.json --right /absolute/right.json --left-cost-index 1 --left-candidate-index 1 --right-cost-index 0 --right-candidate-index 0 --weight-a 0.3 --weight-b 0.4
+```
+
+The second example declares 30% cash before each evaluated session. It does
+not search for weights. The command works without settings, a market
+connection, Q5 loading, model fitting or Q6 re-execution. Ordinary Q10 child
+records are accepted; TEST, frozen selections and scenario collections are
+not ordinary DEV inputs. Handler errors use ASCII-safe JSON and exit 1;
+argument-parser errors use the existing usage message and exit 2. Exit 0
+means that the report was produced, including a valid unavailable report.
+
+The report version is `market-vault-intraday-portfolio-rebalance-v1`, with
+its own content-bound `portfolio_rebalance_id` and evidence
+`RECORDED_LEDGER_DERIVATION`. It has no Q17 `portfolio_id` or new Q7
+`execution_id`. Q17's report version, complete contents and identity retain
+their existing meaning. `allocation.method` is
+`DAILY_TARGET_CASH_REALLOCATION`; `allocation.cash_transfer_cost=0.0`
+records the cash-only transfer assumption explicitly.
+
+The report retains Q17's `left`, `right`, `basis`, `sample`, four logical
+`availability.account_checks`, `complementarity`, `portfolio`, `benchmark`,
+`path`, `daily_returns` and `attribution` sections. Source validation is reused
+only inside this action; it is not a persistent cache. Each distinct snapshot
+is decoded once, and identical account/context evidence is checked once while
+all four logical account checks remain visible. Sample coverage retains the
+actual evaluated days, unevaluated days and internal gaps; Q15's inference
+minimum and continuity gates do not apply to this deterministic calculation.
+
+`daily_allocations` contains separate `portfolio` and `benchmark` arrays.
+Each evaluated day has A, B and CASH rows with `trading_day`, `open_time`,
+`sleeve`, `target_weight`, `source_cash_open`, `scale_factor`,
+`allocated_cash`, `cash_close`, `cash_contribution`, `market_pnl`,
+`commission_total` and `slippage_total`. CASH has null source opening cash
+and scale factor, and zero trading contribution and costs. Source opening
+cash uses the original account's units; other cash amounts use the derived
+account's initial total capital of 1. Target weights are raw ratios.
+
+`cash_transfers` uses the same two account arrays. From the second evaluated
+day, every sleeve has `trading_day`, `open_time`, `sleeve`,
+`previous_cash_close`, `target_cash` and `net_transfer`, including zero
+transfers. The three transfers sum to zero separately for each account.
+
+Each attribution row adds `initial_allocation` and `net_transfers` to the
+existing weight, final cash, trading contribution and cost metrics. For each
+sleeve, `final_cash = initial_allocation + cash_contribution + net_transfers`.
+Trading contributions exclude transfers, and their sum equals total final
+cash minus 1. Costs explain the recorded net account path and are never
+deducted a second time.
+
+A failed basis, any failed source account (including a zero-weight source),
+or a failed numerical reconciliation makes all joint derived results
+unavailable together. Known source identities, weights and initial
+allocations remain visible; derived metrics carry null values and reasons.
+Paths and daily rows are empty, and both account arrays in allocations and
+transfers are empty. No apparently valid benchmark is retained beside a
+failed strategy derivation, or vice versa.
+
+### Saved A/B desktop workflow
+
+The default model is **Fixed initial capital sleeves** / **固定初始资金分仓**.
+Choose **Daily target cash reallocation** / **每日目标现金再分配** explicitly
+to run Q20. The action captures both saved source contents and paths, all
+cost/candidate indexes, weights and the model together.
+
+A completed report's model, native identity, version, weights and explanations
+come from that report. Changing a draft model, weight or source does not
+relabel an earlier result. Failed opens and analyses preserve that result;
+retry is explicit. The Q11 comparison and its TEST description remain separate.
+
+Q17's existing four portfolio views remain. A completed Q20 report adds daily
+allocations and cash transfers for both the portfolio and the independently
+compounded benchmark. Attribution separates initial allocation, net trading
+contribution and net transfer. Expand the captured evidence and calendar to
+inspect complete identities, actual dates and gaps. Switching back to a
+successfully completed Q17 analysis removes the two Q20-only views. Language
+and view changes do not calculate a new report.
 
 ## Implementation surfaces
 

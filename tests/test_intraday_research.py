@@ -511,6 +511,15 @@ def test_return_uncertainty_real_gap_keeps_cash_means(return_uncertainty_case):
     assert delayed["sample"]["gap_days"] == result["sample"]["gap_days"]
     for scenario in delayed["scenarios"]:
         assert [row["trading_day"] for row in scenario["strategy"]["execution"]["daily"]] == report["context"]["evaluated_days"]
+    from market_vault.research.intraday_portfolio_rebalance import analyze_intraday_portfolio_rebalance
+    rebalanced = analyze_intraday_portfolio_rebalance(snapshot, snapshot)
+    assert rebalanced["availability"]["status"] == "AVAILABLE"
+    assert rebalanced["sample"]["gap_days"] == result["sample"]["gap_days"]
+    days = report["context"]["evaluated_days"]
+    assert [row["trading_day"] for row in rebalanced["daily_returns"]] == days
+    for account in ("portfolio", "benchmark"):
+        assert [row["trading_day"] for row in rebalanced["daily_allocations"][account]] == [day for day in days for _ in range(3)]
+        assert [row["trading_day"] for row in rebalanced["cash_transfers"][account]] == [day for day in days[1:] for _ in range(3)]
 
 
 @pytest.mark.parametrize("case", ["strategy_cash", "benchmark_cash", "basis"])
@@ -1112,6 +1121,275 @@ def test_portfolio_low_variance_correlation_does_not_block_cash_paths_or_differe
     assert blocked["left"]["sample"]["sample_count"] == 10 and blocked["right"]["sample"]["sample_count"] == 105
     assert "evaluated_days" in blocked["basis"]["failed_checks"] and blocked["availability"]["unavailable_reason"] == "BASIS_MISMATCH"
     assert blocked["path"] == blocked["daily_returns"] == blocked["sample"]["evaluated_days"] == []
+
+
+def test_portfolio_rebalance_two_day_cash_transfers_benchmark_and_full_path_oracle():
+    from market_vault.research import intraday_portfolio as fixed
+    from market_vault.research import intraday_portfolio_rebalance as rebalanced
+    prices = [[(1, 1), (1, 4), (1, 1), (2, 2)], [(2, 2), (2, 2), (2, 2), (1, 1)]]
+    a = portfolio_execution(prices, [{0: "LONG"}, {0: "LONG"}])
+    b = portfolio_execution(prices, [{}, {}])
+    allocation = fixed._allocation(.5, .5)
+    _, original = fixed._combined_path(a, b, a, b, allocation)
+    path, daily, allocations, transfers = rebalanced._reallocated_account(a, b, allocation)
+    assert original[-1]["cash_close"] == 1
+    assert [row["cash_open"] for row in daily] == [1, 1.5]
+    assert [row["cash_close"] for row in daily] == [1.5, 1.125]
+    assert [row["return"] for row in daily] == [.5, -.25]
+    assert [row["net_transfer"] for row in transfers] == [-.25, .25, 0]
+    assert [row["previous_cash_close"] for row in transfers] == [1, .5, 0]
+    assert [row["target_cash"] for row in transfers] == [.75, .75, 0]
+    assert len(allocations) == 6 and len(transfers) == 3
+    assert [row["sequence"] for row in path] == list(range(16))
+    high, following = path[3:5]
+    assert high["timestamp"] == following["timestamp"] and (high["phase"], following["phase"]) == ("CLOSE", "OPEN")
+    assert (high["equity"], following["equity"], following["drawdown"]) == (2.5, 1, .6)
+    summary = fixed._account_summary(daily, path)
+    assert summary["summary"]["observed_max_drawdown"]["value"] == .6
+    assert summary["risk"]["mean_daily_return"]["value"] == .125
+    assert summary["risk"]["annualized_volatility"]["value"] == pytest.approx(.75 / math.sqrt(2) * math.sqrt(252))
+    assert summary["risk"]["sharpe_ratio"]["value"] == pytest.approx(math.sqrt(504) / 6)
+    attributed = rebalanced._attribution(allocations, transfers, allocation, 1.125)
+    assert [row["cash_contribution"]["value"] for row in attributed] == [.125, 0, 0]
+    assert [row["final_cash"]["value"] for row in attributed] == [.375, .75, 0]
+    # The benchmark has a different first-day return, so it must never reuse
+    # the portfolio's 1.5 opening cash for the second day.
+    benchmark = portfolio_execution(prices, [{}, {0: "LONG"}])
+    _, benchmark_days, _, benchmark_transfers = rebalanced._reallocated_account(benchmark, b, allocation)
+    assert [row["cash_open"] for row in benchmark_days] == [1, 1]
+    assert benchmark_days[-1]["cash_close"] == .75
+    assert [row["net_transfer"] for row in benchmark_transfers] == [0, 0, 0]
+    allocation = fixed._allocation(.25, .25)
+    _, daily, allocations, transfers = rebalanced._reallocated_account(a, b, allocation)
+    assert daily[-1]["cash_close"] == 35 / 32
+    assert [row["net_transfer"] for row in transfers] == [-.1875, .0625, .125]
+    cash = rebalanced._attribution(allocations, transfers, allocation, 35 / 32)[2]
+    assert (cash["initial_allocation"]["value"], cash["final_cash"]["value"], cash["cash_contribution"]["value"], cash["net_transfers"]["value"]) == (.5, .625, 0, .125)
+    assert all(row["source_cash_open"] is row["scale_factor"] is None for row in allocations if row["sleeve"] == "CASH")
+
+
+def test_portfolio_rebalance_proportional_fees_are_scaled_by_each_day_and_never_deducted_twice():
+    from market_vault.backtest.intraday import IntradayExecutionPolicy
+    from market_vault.research.intraday_portfolio import _allocation
+    from market_vault.research.intraday_portfolio_rebalance import _reallocated_account, _attribution
+    prices = [[(100, 100)] * 4] * 2
+    policy = IntradayExecutionPolicy(commission_bps=100, slippage_bps=100, entry_delay_minutes=0,
+                                     stop_new_minutes=30, flatten_minutes=5, max_hold_bars=20)
+    a = portfolio_execution(prices, [{0: "LONG"}, {0: "LONG"}], policy=policy)
+    b = portfolio_execution(prices, [{}, {}], policy=policy)
+    allocation = _allocation(.5, .5)
+    _, daily, allocations, transfers = _reallocated_account(a, b, allocation)
+    source_factor, combined_factor = 9801 / 10201, 10001 / 10201
+    assert a["daily"][1]["cash_open"] == pytest.approx(source_factor)
+    assert daily[-1]["cash_close"] == pytest.approx(combined_factor ** 2)
+    second_a = allocations[3]
+    assert second_a["scale_factor"] == pytest.approx(.5 * combined_factor / source_factor)
+    attribution = _attribution(allocations, transfers, allocation, daily[-1]["cash_close"])
+    fee = 2020200 / 104060401
+    assert attribution[0]["market_pnl"]["value"] == 0
+    assert attribution[0]["commission_total"]["value"] == pytest.approx(fee)
+    assert attribution[0]["slippage_total"]["value"] == pytest.approx(fee)
+    assert daily[-1]["cash_close"] == pytest.approx(1 - 2 * fee)
+    assert attribution[1]["cash_contribution"]["value"] == 0
+    assert attribution[1]["net_transfers"]["value"] < 0
+
+
+def test_portfolio_rebalance_real_saved_daily_cash_path_and_installed_console(return_uncertainty_case, monkeypatch, capsys, tmp_path):
+    import json
+    import os
+    from pathlib import Path
+    import subprocess
+    import sysconfig
+    from market_vault import cli
+    from market_vault.backtest import intraday as execution
+    from market_vault.research import intraday_portfolio as fixed
+    from market_vault.research import intraday_portfolio_rebalance as rebalanced
+    from market_vault.research import intraday_return_uncertainty as uncertainty
+    from market_vault.research.strategy_experiment import StrategyExperiment
+    case = return_uncertainty_case
+    root, before = case.snapshot.as_dict(), case.path.read_bytes()
+    other = StrategyExperiment(case.snapshot.content)
+    groups = root["report"]["groups"]
+    options = dict(left_cost_index=1, left_candidate_index=1, right_cost_index=0, right_candidate_index=0, weight_a=.3, weight_b=.4)
+    calls = {"decode": 0, "basis": 0, "prepare": 0, "accounts": 0}
+    def counted(name, function):
+        def run(*args, **kwargs):
+            calls[name] += 1
+            return function(*args, **kwargs)
+        return run
+    with monkeypatch.context() as patch:
+        patch.setattr(StrategyExperiment, "as_dict", counted("decode", StrategyExperiment.as_dict))
+        patch.setattr(fixed, "_basis", counted("basis", fixed._basis))
+        patch.setattr(rebalanced, "_prepare_portfolio", counted("prepare", rebalanced._prepare_portfolio))
+        patch.setattr(uncertainty, "_available", counted("accounts", uncertainty._available))
+        for name in ("load_intraday_dataset", "_fit", "run_intraday_execution"):
+            patch.setattr(research, name, lambda *a, **kw: pytest.fail("reallocation accessed source, fit or execution"))
+        patch.setattr(execution, "run_intraday_execution", lambda *a, **kw: pytest.fail("reallocation executed trades"))
+        patch.setattr(Path, "read_bytes", lambda *a, **kw: pytest.fail("reallocation read files"))
+        patch.setattr(cli, "load_settings", lambda *a, **kw: pytest.fail("reallocation loaded settings"))
+        result = rebalanced.analyze_intraday_portfolio_rebalance(case.snapshot, other, **options)
+        assert calls == {"decode": 2, "basis": 1, "prepare": 1, "accounts": 4}
+        calls.update({key: 0 for key in calls})
+        same = rebalanced.analyze_intraday_portfolio_rebalance(case.snapshot, case.snapshot)
+        assert calls == {"decode": 1, "basis": 1, "prepare": 1, "accounts": 2}
+        assert len(same["availability"]["account_checks"]) == 4
+    assert result["availability"]["status"] == "AVAILABLE" and result["sample"]["sample_count"] == 105
+    assert result["allocation"] == {"method": "DAILY_TARGET_CASH_REALLOCATION", "initial_cash": 1.0,
+        "weight_a": .3, "weight_b": .4, "cash_weight": 1 - math.fsum((.3, .4)), "cash_interest_rate": 0.0, "cash_transfer_cost": 0.0}
+    assert result["version"] == "market-vault-intraday-portfolio-rebalance-v1"
+    assert result["evidence"] == "RECORDED_LEDGER_DERIVATION" and "portfolio_id" not in result
+    assert "execution_id" not in result["portfolio"] and "trades" not in result["portfolio"]
+    for name, prefix in (("portfolio", ""), ("benchmark", "benchmark_")):
+        a = groups[1]["results"][1]["execution"] if name == "portfolio" else groups[1]["benchmark"]["execution"]
+        b = groups[0]["results"][0]["execution"] if name == "portfolio" else groups[0]["benchmark"]["execution"]
+        allocations, transfers = result["daily_allocations"][name], result["cash_transfers"][name]
+        assert len(allocations) == 315 and len(transfers) == 312
+        wealth, expected_open, previous = 1.0, {}, None
+        for index, (da, db, day) in enumerate(zip(a["daily"], b["daily"], result["daily_returns"], strict=True)):
+            expected_open[da["trading_day"]] = wealth
+            ret = .3 * (da["cash_close"] / da["cash_open"] - 1) + .4 * (db["cash_close"] / db["cash_open"] - 1)
+            assert (day[prefix + "cash_open"], day[prefix + "cash_close"], day[prefix + "return"]) == pytest.approx((wealth, wealth * (1 + ret), ret))
+            rows = allocations[index * 3:index * 3 + 3]
+            assert [row["sleeve"] for row in rows] == ["A", "B", "CASH"]
+            assert [row["allocated_cash"] for row in rows] == pytest.approx([wealth * weight for weight in (.3, .4, .3)])
+            assert sum(row["cash_close"] for row in rows) == pytest.approx(wealth * (1 + ret))
+            if previous is not None:
+                movements = transfers[(index - 1) * 3:index * 3]
+                assert sum(row["net_transfer"] for row in movements) == pytest.approx(0, abs=1e-12)
+                for moved, old, current in zip(movements, previous, rows, strict=True):
+                    assert (moved["previous_cash_close"], moved["target_cash"], moved["net_transfer"]) == pytest.approx((old["cash_close"], current["allocated_cash"], current["allocated_cash"] - old["cash_close"]))
+            previous, wealth = rows, wealth * (1 + ret)
+        peak = 1.0
+        daily_a, daily_b = ({row["trading_day"]: row["cash_open"] for row in account["daily"]} for account in (a, b))
+        for point, pa, pb in zip(result["path"], a["ledger"], b["ledger"], strict=True):
+            day = pa["trading_day"]
+            assert (point["sequence"], point["timestamp"], point["phase"]) == (pa["sequence"], pa["timestamp"], pa["phase"])
+            amounts = {key: expected_open[day] * (.3 + .3 * pa[key] / daily_a[day] + .4 * pb[key] / daily_b[day]) for key in ("cash", "equity")}
+            peak = max(peak, amounts["equity"])
+            assert (point[prefix + "cash"], point[prefix + "equity"], point[prefix + "drawdown"]) == pytest.approx((amounts["cash"], amounts["equity"], 1 - amounts["equity"] / peak))
+        assert result[name]["summary"]["final_cash"]["value"] == pytest.approx(wealth)
+        for row in result["attribution"][name]:
+            assert row["final_cash"]["value"] == pytest.approx(row["initial_allocation"]["value"] + row["cash_contribution"]["value"] + row["net_transfers"]["value"])
+    arguments = ["research-intraday-portfolio-rebalance", "--left", str(case.path), "--right", str(case.path),
+        "--left-cost-index", "1", "--left-candidate-index", "1", "--right-cost-index", "0", "--right-candidate-index", "0", "--weight-a", ".3", "--weight-b", ".4"]
+    assert cli.main(arguments) == 0 and json.loads(capsys.readouterr().out)["report"] == result
+    console = Path(sysconfig.get_path("scripts")) / ("market-vault.exe" if os.name == "nt" else "market-vault")
+    env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"), "PYTHONIOENCODING": "cp1252:strict"}
+    process = subprocess.run([str(console), "--settings", str(tmp_path / "absent.yaml"), *arguments], env=env, capture_output=True, check=False)
+    assert process.returncode == 0 and not process.stderr and process.stdout.isascii()
+    assert json.loads(process.stdout)["report"] == result and case.path.read_bytes() == before
+
+
+@pytest.mark.parametrize("changes", [{"weight_a": True}, {"weight_b": float("nan")}, {"weight_a": .6}, {"right_candidate_index": False}])
+def test_portfolio_rebalance_invalid_arguments_precede_decode_and_cli_io(return_uncertainty_case, monkeypatch, capsys, changes):
+    from market_vault.research.intraday_portfolio_rebalance import analyze_intraday_portfolio_rebalance
+    from market_vault.research.strategy_experiment import StrategyExperiment
+    from market_vault import intraday_portfolio_rebalance_cli as console
+    monkeypatch.setattr(StrategyExperiment, "as_dict", lambda self: pytest.fail("invalid arguments decoded an experiment"))
+    monkeypatch.setattr(console, "load_strategy_experiment", lambda *a: pytest.fail("invalid arguments loaded a file"))
+    with pytest.raises(ValueError):
+        analyze_intraday_portfolio_rebalance(return_uncertainty_case.snapshot, return_uncertainty_case.snapshot, **changes)
+    arguments = {"left": "absent-left.json", "right": "absent-right.json", "left_cost_index": 0, "left_candidate_index": 0,
+        "right_cost_index": 0, "right_candidate_index": 0, "weight_a": .5, "weight_b": .5, **changes}
+    assert console.research_intraday_portfolio_rebalance_main(SimpleNamespace(**arguments)) == 1
+    assert '"status": "FAILED"' in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("side,account", [("LEFT", "STRATEGY"), ("LEFT", "BENCHMARK"), ("RIGHT", "STRATEGY"), ("RIGHT", "BENCHMARK")])
+def test_portfolio_rebalance_each_zero_weight_bad_account_blocks_both_derived_paths(return_uncertainty_case, side, account):
+    from market_vault.research.intraday_portfolio_rebalance import analyze_intraday_portfolio_rebalance
+    from market_vault.research.strategy_experiment import StrategyExperiment
+    from test_intraday_experiment import signed
+    original = return_uncertainty_case.snapshot
+    root = original.as_dict()
+    group = root["report"]["groups"][1]
+    record = group["results"][1] if account == "STRATEGY" else group["benchmark"]
+    record["execution"]["trades"][0]["commission_total"] += .01
+    changed = StrategyExperiment(signed(root))
+    result = analyze_intraday_portfolio_rebalance(changed if side == "LEFT" else original, changed if side == "RIGHT" else original,
+        left_cost_index=1, left_candidate_index=1, right_cost_index=1, right_candidate_index=1, weight_a=0, weight_b=0)
+    assert result["basis"]["matches"] and result["availability"]["unavailable_reason"] == "SOURCE_ACCOUNT_UNAVAILABLE"
+    failed = [row for row in result["availability"]["account_checks"] if row["status"] == "UNAVAILABLE"]
+    assert [(row["side"], row["account"]) for row in failed] == [(side, account)]
+    assert result["path"] == result["daily_returns"] == []
+    assert result["daily_allocations"] == result["cash_transfers"] == {"portfolio": [], "benchmark": []}
+    for name in ("portfolio", "benchmark"):
+        assert result[name]["summary"]["final_cash"]["value"] is None
+        for row, initial in zip(result["attribution"][name], (0, 0, 1), strict=True):
+            assert row["weight"]["value"] == row["initial_allocation"]["value"] == initial
+            assert row["initial_allocation"]["unavailable_reason"] is None
+            assert all(row[key]["value"] is None and row[key]["unavailable_reason"] == "SOURCE_ACCOUNT_UNAVAILABLE"
+                       for key in ("final_cash", "cash_contribution", "market_pnl", "commission_total", "slippage_total", "net_transfers"))
+
+
+def test_portfolio_rebalance_endpoints_same_source_and_all_cash(return_uncertainty_case):
+    from market_vault.research.intraday_portfolio_rebalance import analyze_intraday_portfolio_rebalance
+    snapshot = return_uncertainty_case.snapshot
+    original = snapshot.as_dict()["report"]["groups"][1]["results"][1]["execution"]
+    ids = []
+    for a, b in ((1, 0), (0, 1), (.5, .5), (0, 0)):
+        result = analyze_intraday_portfolio_rebalance(snapshot, snapshot, left_cost_index=1, right_cost_index=1,
+            left_candidate_index=1, right_candidate_index=1, weight_a=a, weight_b=b)
+        assert result["availability"]["status"] == "AVAILABLE"
+        ids.append(result["portfolio_rebalance_id"])
+        for key in ("cash", "equity"):
+            expected = [1.] * len(original["ledger"]) if a == b == 0 else [row[key] for row in original["ledger"]]
+            assert [point[key] for point in result["path"]] == pytest.approx(expected)
+        assert all(row["net_transfer"] == pytest.approx(0, abs=1e-12) for row in result["cash_transfers"]["portfolio"])
+    assert len(set(ids)) == 4
+    assert result["portfolio"]["summary"]["total_return"]["value"] == result["portfolio"]["summary"]["observed_max_drawdown"]["value"] == 0
+    assert result["portfolio"]["risk"]["sharpe_ratio"]["unavailable_reason"] == "ZERO_VOLATILITY"
+
+
+def test_portfolio_rebalance_basis_and_late_numeric_failure_remain_atomic(return_uncertainty_case, monkeypatch):
+    from market_vault.research import intraday_portfolio_rebalance as rebalanced
+    from market_vault.research.strategy_experiment import StrategyExperiment
+    from test_intraday_experiment import signed
+    snapshot = return_uncertainty_case.snapshot
+    root = snapshot.as_dict()
+    root["report"]["groups"][0]["results"][0]["execution"]["ledger"][-2]["row_version_id"] = "f" * 64
+    changed = StrategyExperiment(signed(root))
+    report = rebalanced.analyze_intraday_portfolio_rebalance(snapshot, changed)
+    assert report["availability"]["unavailable_reason"] == "BASIS_MISMATCH"
+    assert "raw_prices" in report["basis"]["failed_checks"] and report["sample"]["sample_count"] is None
+    assert report["path"] == report["daily_returns"] == report["sample"]["evaluated_days"] == []
+    original, calls = rebalanced._reallocated_account, []
+    def benchmark_overflow(*args):
+        calls.append(1)
+        if len(calls) == 2:
+            raise OverflowError("benchmark arithmetic overflow after the strategy path completed")
+        return original(*args)
+    monkeypatch.setattr(rebalanced, "_reallocated_account", benchmark_overflow)
+    report = rebalanced.analyze_intraday_portfolio_rebalance(snapshot, snapshot)
+    assert len(calls) == 2 and all(row["status"] == "AVAILABLE" for row in report["availability"]["account_checks"])
+    assert report["availability"]["unavailable_reason"] == "NUMERIC_OVERFLOW"
+    assert report["path"] == report["daily_returns"] == []
+    assert report["daily_allocations"] == report["cash_transfers"] == {"portfolio": [], "benchmark": []}
+    assert report["portfolio"]["summary"]["final_cash"]["value"] is report["benchmark"]["summary"]["final_cash"]["value"] is None
+
+
+def test_portfolio_rebalance_ordinary_children_and_saved_selection_boundaries(execution_scenarios_case, return_uncertainty_case):
+    from market_vault.research.intraday_execution_scenarios import extract_intraday_execution_scenario
+    from market_vault.research.intraday_final_test import freeze_intraday_candidate
+    from market_vault.research.intraday_portfolio_rebalance import analyze_intraday_portfolio_rebalance
+    collection = execution_scenarios_case[2]
+    root = collection.as_dict()
+    children = [extract_intraday_execution_scenario(collection, expected_experiment_id=root["experiment_id"], scenario_index=index,
+        expected_child_experiment_id=row["experiment"]["experiment_id"]) for index, row in enumerate(root["report"]["scenarios"])]
+    report = analyze_intraday_portfolio_rebalance(*children, left_candidate_index=1, right_candidate_index=2)
+    assert report["availability"]["status"] == "AVAILABLE" and report["sample"]["sample_count"] == 10
+    assert report["left"]["strategy"]["kind"] != report["right"]["strategy"]["kind"]
+    assert report["left"]["execution_policy"] != report["right"]["execution_policy"]
+    with pytest.raises(ValueError, match="ordinary saved Q7 DEV"):
+        analyze_intraday_portfolio_rebalance(collection, children[0])
+    case = return_uncertainty_case
+    root = case.snapshot.as_dict()
+    selection = freeze_intraday_candidate(case.path, expected_experiment_id=root["experiment_id"], cost_index=0, candidate_index=0,
+        expected_candidate_id=root["report"]["groups"][0]["results"][0]["candidate_id"])
+    with pytest.raises(ValueError, match="ordinary saved Q7 DEV"):
+        analyze_intraday_portfolio_rebalance(selection, case.snapshot)
+    with pytest.raises(ValueError, match="outside the saved experiment"):
+        analyze_intraday_portfolio_rebalance(case.snapshot, case.snapshot, right_cost_index=2)
 
 
 def test_sequential_selection_strict_prefix_negative_scores_exact_ties_and_future_nonintervention():

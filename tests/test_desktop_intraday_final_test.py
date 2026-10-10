@@ -1097,6 +1097,168 @@ def test_saved_portfolio_keeps_statistic_and_account_na_visible_without_changing
     assert runtime.backend_if_initialized is None and runtime.shutdown()
 
 
+def test_saved_portfolio_daily_model_captures_inputs_and_keeps_native_report(qt_app,
+        saved_comparison_diagnostics, tmp_path, monkeypatch):
+    from market_vault.desktop.intraday_saved_comparison import metric_value, utc_time
+    snapshots = (saved_comparison_diagnostics, _named_saved_experiment(saved_comparison_diagnostics, "Daily B"))
+    paths = [tmp_path / "daily-a.json", tmp_path / "daily-b.json"]
+    for snapshot, path in zip(snapshots, paths, strict=True):
+        write_strategy_experiment(snapshot, path=path)
+    runtime, runner = _runtime(tmp_path, [])
+    owner = QuantResearchController(runtime)
+    controller = owner.intradaySavedComparisonController
+    assert controller.portfolioModelIndex == 0 and not controller.portfolioRebalanceResult
+    assert not controller.selectView(8) and not controller.selectView(9)
+    for index in (True, False, -1, 2, 1.0, "1"):
+        assert not controller.selectPortfolioModel(index) and controller.portfolioModelIndex == 0
+    assert controller.openLeft(str(paths[0])); runtime._poll()
+    assert controller.openRight(str(paths[1])); runtime._poll()
+    assert controller.compare(); runtime._poll()
+    previous_comparison, comparison_sources = canonical_json(controller._result), controller.boundSources
+    assert controller.selectLeftCost(1) and controller.selectLeftCandidate(1)
+    assert controller.setWeightA(".3") and controller.setWeightB(".4")
+    assert controller.selectPortfolioModel(1)
+    pending = []
+    def deferred(name, operation):
+        future = Future()
+        pending.append((name, future, operation))
+        return future
+    with monkeypatch.context() as patch:
+        patch.setattr(runner, "submit", deferred)
+        assert controller.analyzePortfolio() and controller.busy
+        assert controller.selectPortfolioModel(0) and controller.setWeightA("0") and controller.setWeightB("0")
+        assert controller.selectLeftCost(0) and controller.selectLeftCandidate(0) and controller.selectRightCandidate(1)
+        name, future, operation = pending.pop()
+        assert name == "intraday_portfolio_rebalance"
+        future.set_result(operation()); runtime._poll()
+    assert controller.status == "SUCCESS", controller.error
+    report = controller._portfolio_result
+    assert controller.portfolioRebalanceResult and controller.portfolioModelIndex == 0
+    assert report["version"] == "market-vault-intraday-portfolio-rebalance-v1"
+    assert controller.portfolioReportId == report["portfolio_rebalance_id"] and "portfolio_id" not in report
+    assert report["allocation"]["method"] == "DAILY_TARGET_CASH_REALLOCATION"
+    assert report["allocation"]["weight_a"] == .3 and report["allocation"]["weight_b"] == .4
+    captured = controller.displayedBoundSources
+    assert [(row["cost_index"], row["candidate_index"]) for row in captured] == [(1, 1), (0, 0)]
+    assert [row["experiment_id"] for row in captured] == [snapshot.experiment_id for snapshot in snapshots]
+    assert [row["path"] for row in captured] == list(map(str, paths))
+    detached = controller.portfolioContext
+    detached["allocation"]["weight_a"] = 1
+    assert controller.portfolioContext["allocation"]["weight_a"] == .3
+    assert controller.selectView(8)
+    assert controller.tableModel.totalRows == 6 * report["sample"]["sample_count"]
+    original = report["daily_allocations"]["portfolio"][0]
+    assert controller._rows[0][:7] == ("portfolio", original["trading_day"], utc_time(original["open_time"]), "A", "30.0%",
+        metric_value(original["source_cash_open"], "NUMBER"), metric_value(original["scale_factor"], "NUMBER"))
+    assert all(row[5:7] == ("—", "—") for row in controller._rows if row[3] == "CASH")
+    assert controller.selectView(9)
+    assert controller.tableModel.totalRows == 6 * (report["sample"]["sample_count"] - 1)
+    assert {row[1] for row in controller._rows} == set(report["sample"]["evaluated_days"][1:])
+    assert controller.selectView(7) and controller.tableModel.totalRows == 48
+    assert {row[2] for row in controller._rows} >= {"initial_allocation", "net_transfers", "cash_contribution"}
+    calendar = controller.portfolioCalendarRows
+    assert [row["side"] for row in calendar] == ["COMMON", "A", "B"]
+    assert calendar[0]["evaluated_days"] == report["sample"]["evaluated_days"]
+    calendar[0]["evaluated_days"].clear()
+    assert controller.portfolioCalendarRows[0]["evaluated_days"]
+    previous = canonical_json(report)
+    assert controller.openRight(str(paths[0])); runtime._poll()
+    assert controller.displayedBoundSources == captured and canonical_json(controller._portfolio_result) == previous
+    assert controller.selectView(0) and controller.displayedBoundSources == comparison_sources
+    assert canonical_json(controller._result) == previous_comparison
+    assert all(path.read_bytes() == snapshot.content for path, snapshot in zip(paths, snapshots, strict=True))
+    assert runtime.backend_if_initialized is None and runtime.shutdown()
+
+
+def test_saved_portfolio_model_failures_retry_and_fixed_return_preserve_captured_result(qt_app,
+        intraday_experiment, tmp_path, monkeypatch):
+    from market_vault.research import intraday_portfolio, intraday_portfolio_rebalance
+    path = tmp_path / "source.json"
+    write_strategy_experiment(intraday_experiment, path=path)
+    runtime, runner = _runtime(tmp_path, [])
+    owner = QuantResearchController(runtime)
+    controller = owner.intradaySavedComparisonController
+    assert controller.openLeft(str(path)); runtime._poll()
+    assert controller.openRight(str(path)); runtime._poll()
+    assert controller.analyzePortfolio(); runtime._poll()
+    assert controller.status == "SUCCESS", controller.error
+    fixed, fixed_id = canonical_json(controller._portfolio_result), controller.portfolioReportId
+    assert controller.selectPortfolioModel(1) and not controller.portfolioRebalanceResult
+    assert controller.setWeightA("nan") and not controller.analyzePortfolio()
+    assert controller.status == "VALIDATION_ERROR" and canonical_json(controller._portfolio_result) == fixed
+    assert controller.portfolioReportId == fixed_id and not controller.selectView(8)
+    assert controller.setWeightA(".3") and controller.setWeightB(".4")
+    with monkeypatch.context() as patch:
+        patch.setattr(intraday_portfolio_rebalance, "analyze_intraday_portfolio_rebalance",
+            lambda *a, **k: (_ for _ in ()).throw(ValueError("daily allocation failed")))
+        assert controller.analyzePortfolio(); runtime._poll()
+    assert controller.status == "FAILED" and controller.error == "daily allocation failed"
+    assert canonical_json(controller._portfolio_result) == fixed and not controller.portfolioRebalanceResult
+    assert controller.analyzePortfolio(); runtime._poll()
+    assert controller.status == "SUCCESS" and controller.portfolioRebalanceResult, controller.error
+    assert runner.names[-1] == "intraday_portfolio_rebalance"
+    daily, captured = canonical_json(controller._portfolio_result), controller.displayedBoundSources
+    assert controller.selectView(9) and controller.selectPortfolioModel(0)
+    assert controller.portfolioRebalanceResult and controller.viewIndex == 9
+    assert controller.openLeft(str(tmp_path / "missing.json")); runtime._poll()
+    assert controller.status == "FAILED" and controller.displayedBoundSources == captured
+    with monkeypatch.context() as patch:
+        patch.setattr(intraday_portfolio, "analyze_intraday_portfolio",
+            lambda *a, **k: (_ for _ in ()).throw(ValueError("fixed allocation failed")))
+        assert controller.analyzePortfolio(); runtime._poll()
+    assert controller.status == "FAILED" and canonical_json(controller._portfolio_result) == daily
+    assert controller.portfolioRebalanceResult and controller.viewIndex == 9
+    assert controller.analyzePortfolio(); runtime._poll()
+    assert controller.status == "SUCCESS" and not controller.portfolioRebalanceResult, controller.error
+    assert runner.names[-1] == "intraday_portfolio" and controller.viewIndex == 4
+    assert controller.portfolioReportId == controller._portfolio_result["portfolio_id"]
+    assert "portfolio_rebalance_id" not in controller.portfolioContext and not controller.selectView(8)
+    assert controller.selectView(7) and controller.tableModel.totalRows == 36
+    assert path.read_bytes() == intraday_experiment.content
+    assert runtime.backend_if_initialized is None and runtime.shutdown()
+
+
+def test_saved_portfolio_daily_zero_weight_bad_source_and_test_boundary(qt_app,
+        intraday_experiment, final_case, tmp_path, monkeypatch):
+    snapshots = (intraday_experiment, _unavailable_saved_candidate(intraday_experiment), final_case[1])
+    paths = [tmp_path / name for name in ("ordinary.json", "partial.json", "test.json")]
+    for snapshot, path in zip(snapshots, paths, strict=True):
+        write_strategy_experiment(snapshot, path=path)
+    runtime, _ = _runtime(tmp_path, [])
+    owner = QuantResearchController(runtime)
+    controller = owner.intradaySavedComparisonController
+    owner.intradayResearchController._proof = owner.intradayFinalController._test_proof = "REPLAY_MATCH"
+    for name in ("load_intraday_dataset", "_fit", "fit_ridge_rows", "run_intraday_execution"):
+        monkeypatch.setattr(research, name, lambda *a, **k: pytest.fail("saved daily allocation loaded Q5, fitted or executed"))
+    monkeypatch.setattr(final, "load_intraday_dataset", lambda *a, **k: pytest.fail("saved daily allocation loaded TEST data"))
+    assert controller.openLeft(str(paths[0])); runtime._poll()
+    assert controller.openRight(str(paths[1])); runtime._poll()
+    assert controller.selectRightCandidate(1) and controller.selectPortfolioModel(1)
+    assert controller.setWeightA("1") and controller.setWeightB("0")
+    assert controller.analyzePortfolio(); runtime._poll()
+    assert controller.status == "SUCCESS" and controller.portfolioRebalanceResult, controller.error
+    assert controller.portfolioContext["availability"]["unavailable_reason"] == "SOURCE_ACCOUNT_UNAVAILABLE"
+    assert controller.portfolioWarnings[0]["side"] == "B"
+    for view in (8, 9):
+        assert controller.selectView(view) and controller.tableModel.totalRows == 0
+    assert controller.selectView(7) and controller.tableModel.totalRows == 48
+    known = [row for row in controller._rows if row[2] in ("weight", "initial_allocation")]
+    assert all(row[3] != "—" and row[5] == "" for row in known)
+    assert all(row[3] == "—" and row[5] == "SOURCE_ACCOUNT_UNAVAILABLE"
+        for row in controller._rows if row[2] not in ("weight", "initial_allocation"))
+    previous, captured = canonical_json(controller._portfolio_result), controller.displayedBoundSources
+    assert controller.openRight(str(paths[2])); runtime._poll()
+    assert controller.portfolioInputReason == "DEV_ONLY" and not controller.analyzePortfolio()
+    assert controller.compare(); runtime._poll()
+    assert controller.comparisonNotice == "TEST_DESCRIPTIVE_ONLY"
+    assert controller.selectView(0) and all(row[5] == "—" for row in controller._rows)
+    assert controller.selectView(9) and controller.displayedBoundSources == captured
+    assert canonical_json(controller._portfolio_result) == previous
+    assert owner.intradayResearchController._proof == owner.intradayFinalController._test_proof == "REPLAY_MATCH"
+    assert all(path.read_bytes() == snapshot.content for path, snapshot in zip(paths, snapshots, strict=True))
+    assert runtime.backend_if_initialized is None and runtime.shutdown()
+
+
 def test_saved_comparison_captures_sources_and_indices_with_offline_failure_retention(qt_app,
         saved_comparison_diagnostics, intraday_experiment, tmp_path, monkeypatch):
     from market_vault.desktop.intraday_saved_comparison import metric_value
