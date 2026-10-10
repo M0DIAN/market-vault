@@ -13,14 +13,16 @@ from pathlib import Path
 from ..backtest.intraday import _digest as execution_digest
 from .intraday_data import digest, finite_number, object_fields
 from .intraday_research import (
-    INTRADAY_DIAGNOSTICS_PLAN_VERSION, INTRADAY_RESEARCH_RESULT_VERSION,
+    INTRADAY_DIAGNOSTICS_PLAN_VERSIONS, INTRADAY_RESEARCH_RESULT_VERSION, INTRADAY_RESEARCH_RESULT_V2_VERSION,
     _day, _evaluate_intraday_research, _identity, _prepare_intraday_research,
-    expand_intraday_plan, fold_cash_contributions, research_algorithm_versions,
+    expand_intraday_plan, fold_cash_contributions, is_intraday_plan_v2, research_algorithm_versions,
 )
 from .strategy_experiment import StrategyExperiment, canonical_json, environment_versions
 
 
 INTRADAY_EXPERIMENT_VERSION = "market-vault-intraday-experiment-v1"
+INTRADAY_EXPERIMENT_V2_VERSION = "market-vault-intraday-experiment-v2"
+INTRADAY_EXPERIMENT_VERSIONS = (INTRADAY_EXPERIMENT_VERSION, INTRADAY_EXPERIMENT_V2_VERSION)
 _CONTEXT_FIELDS = {"version", "data_id", "symbol", "interval", "feature_fields", "target_horizon_bars", "split", "folds",
                    "evaluated_days", "unevaluated_development_days", "validation_keys", "held_out_test_observation_count", "context_id"}
 _EXECUTION_FIELDS = {"version", "cost_version", "event_order", "interval", "policy", "price_evidence_id", "windows", "decisions",
@@ -220,16 +222,63 @@ def _execution(value, *, policy, days, interval, versions):
             raise ValueError("decision day, slot and clock must bind its recorded session grid")
 
 
+def _ridge_model(model, *, features, training_keys, boundary, alpha, version):
+    object_fields(model, {"version", "alpha", "feature_fields", "training_keys", "training_boundary",
+                         "intercept", "coefficients", "means", "scales", "model_id"}, "Ridge model")
+    _hash(model, "model_id")
+    if (model["version"] != version or model["alpha"] != alpha or model["training_keys"] != training_keys
+            or model["training_boundary"] != boundary or model["feature_fields"] != features):
+        raise ValueError("Ridge model differs from its own training fold")
+    finite_number(model["intercept"], "intercept")
+    for key in ("coefficients", "means", "scales"):
+        if len(_array(model[key], key)) != len(features):
+            raise ValueError("Ridge vector differs from explicit Feature order")
+        for number in model[key]:
+            finite_number(number, key)
+
+
+def _quadratic_model(model, *, features, training_keys, boundary, alpha, versions):
+    from .intraday_models import quadratic_terms
+
+    object_fields(model, {"version", "kind", "alpha", "input_features", "input_transform", "terms",
+                         "training_keys", "training_boundary", "ridge_model", "model_id"}, "quadratic Ridge model")
+    _hash(model, "model_id")
+    terms = quadratic_terms(features)
+    finite_number(model["alpha"], "quadratic alpha")
+    if (model["version"] != versions["quadratic"] or model["kind"] != "QUADRATIC_BASIS_RIDGE"
+            or model["alpha"] != alpha or model["input_features"] != features
+            or model["training_keys"] != training_keys or model["training_boundary"] != boundary
+            or canonical_json(model["terms"]) != canonical_json(terms)):
+        raise ValueError("quadratic model differs from its own representation or training fold")
+    transform = object_fields(model["input_transform"], {"means", "scales", "constant_policy"}, "quadratic input transform")
+    if transform["constant_policy"] != "ZERO":
+        raise ValueError("quadratic TRAIN-constant Features must map to zero")
+    for key in ("means", "scales"):
+        if len(_array(transform[key], key)) != len(features):
+            raise ValueError("quadratic transform differs from the original Feature order")
+        for value in transform[key]:
+            if finite_number(value, key) < 0 and key == "scales":
+                raise ValueError("quadratic input scales cannot be negative")
+    _ridge_model(model["ridge_model"], features=[term["name"] for term in terms],
+                 training_keys=training_keys, boundary=boundary, alpha=alpha, version=versions["ridge"])
+    finite_number(model["ridge_model"]["alpha"], "quadratic nested Ridge alpha")
+    if any(value < 0 for value in model["ridge_model"]["scales"]):
+        raise ValueError("quadratic generated-term scales cannot be negative")
+
+
 def validate_intraday_experiment_root(root):
     """Offline structural validation; hashes alone are not execution proof."""
     if type(root["plan"]) is not dict:
         raise ValueError("saved intraday plan must be an object")
-    mode = "INTRADAY_DIAGNOSTICS" if root["plan"].get("plan_schema_version") == INTRADAY_DIAGNOSTICS_PLAN_VERSION else "INTRADAY_COMPARISON"
+    mode = "INTRADAY_DIAGNOSTICS" if root["plan"].get("plan_schema_version") in INTRADAY_DIAGNOSTICS_PLAN_VERSIONS else "INTRADAY_COMPARISON"
     if root["evaluation_mode"] != mode:
         raise ValueError("intraday experiment mode differs from the plan")
     _identity(root["dataset_id"], "data_id")
     _hash(root, "experiment_id", function=lambda v: sha256(canonical_json(v)).hexdigest())
     normalized, children, axis_values = expand_intraday_plan(root["plan"], recorded=True)
+    expected_version = INTRADAY_EXPERIMENT_V2_VERSION if is_intraday_plan_v2(normalized) else INTRADAY_EXPERIMENT_VERSION
+    if root["artifact_schema_version"] != expected_version:
+        raise ValueError("intraday artifact and plan versions must agree")
     if canonical_json(normalized) != canonical_json(root["plan"]) or normalized.get("data_id", children[0]["data_id"]) != root["dataset_id"]:
         raise ValueError("saved normalized plan or data binding differs")
     versions = object_fields(root["algorithm_versions"], research_algorithm_versions(normalized), "intraday algorithm versions")
@@ -242,7 +291,8 @@ def validate_intraday_experiment_root(root):
                                             "plan_sha256", "context", "groups", "evaluation_count", "research_id"}, "intraday research report")
     _hash(report, "research_id")
     if (report["status"] != "SUCCESS" or report["evaluation_scope"] != "DEVELOPMENT_WALK_FORWARD_ONLY"
-            or report["result_schema_version"] != INTRADAY_RESEARCH_RESULT_VERSION or report["version"] != versions["research"]
+            or report["result_schema_version"] != (INTRADAY_RESEARCH_RESULT_V2_VERSION if is_intraday_plan_v2(normalized) else INTRADAY_RESEARCH_RESULT_VERSION)
+            or report["version"] != versions["research"]
             or report["data_id"] != root["dataset_id"] or report["plan_sha256"] != digest(normalized)):
         raise ValueError("intraday report plan, scope or version binding differs")
     context = object_fields(report["context"], _CONTEXT_FIELDS, "intraday common context")
@@ -328,22 +378,24 @@ def validate_intraday_experiment_root(root):
             if finite_number(candidate["return_change_from_first_cost"], "cost return change") != expected_delta:
                 raise ValueError("cost difference does not use the corresponding first-cost candidate")
             models = _array(candidate["fold_models"], "fold models")
-            if strategy["kind"] == "RIDGE":
+            if strategy["kind"] in ("RIDGE", "QUADRATIC_RIDGE"):
                 if len(models) != len(folds):
                     raise ValueError("every Ridge fold needs its own training model")
                 for record, fold in zip(models, folds, strict=True):
                     object_fields(record, {"fold_id", "model"}, "fold model")
-                    model = object_fields(record["model"], {"version", "alpha", "feature_fields", "training_keys", "training_boundary", "intercept", "coefficients", "means", "scales", "model_id"}, "Ridge model")
-                    _hash(model, "model_id")
-                    if (record["fold_id"] != fold["fold_id"] or model["version"] != versions["ridge"] or model["alpha"] != strategy["alpha"]
-                            or model["training_keys"] != fold["training_keys"] or model["training_boundary"] != fold["training_boundary"] or model["feature_fields"] != context["feature_fields"]):
+                    if record["fold_id"] != fold["fold_id"]:
                         raise ValueError("Ridge model differs from its own training fold")
-                    finite_number(model["intercept"], "intercept")
-                    for key in ("coefficients", "means", "scales"):
-                        if len(_array(model[key], key)) != len(context["feature_fields"]):
-                            raise ValueError("Ridge vector differs from explicit Feature order")
-                        for number in model[key]:
-                            finite_number(number, key)
+                    if strategy["kind"] == "QUADRATIC_RIDGE":
+                        _quadratic_model(record["model"], features=context["feature_fields"],
+                            training_keys=fold["training_keys"], boundary=fold["training_boundary"],
+                            alpha=strategy["alpha"], versions=versions)
+                    else:
+                        _ridge_model(record["model"], features=context["feature_fields"],
+                            training_keys=fold["training_keys"], boundary=fold["training_boundary"],
+                            alpha=strategy["alpha"], version=versions["ridge"])
+                if strategy["kind"] == "QUADRATIC_RIDGE" and any(
+                        row["target"] != ("LONG" if row["score"] > strategy["threshold"] else "FLAT") for row in predictions):
+                    raise ValueError("quadratic decisions must use the saved strict prediction threshold")
                 errors = object_fields(candidate["prediction_metrics"], {"prediction_count", "complete_target_count", "mae", "rmse", "r2", "unavailable_reason"}, "prediction metrics")
                 count = _count(errors["complete_target_count"], "complete targets")
                 if _count(errors["prediction_count"], "prediction count") != len(predictions) or count > len(predictions):
@@ -368,8 +420,9 @@ def validate_intraday_experiment_root(root):
 
 def create_intraday_experiment(*, plan: dict, report: dict, name: str = "", notes: str = "") -> StrategyExperiment:
     normalized, _, _ = expand_intraday_plan(plan, recorded=True)
-    root = {"artifact_schema_version": INTRADAY_EXPERIMENT_VERSION, "dataset_id": report["data_id"],
-            "evaluation_mode": "INTRADAY_DIAGNOSTICS" if normalized["plan_schema_version"] == INTRADAY_DIAGNOSTICS_PLAN_VERSION else "INTRADAY_COMPARISON",
+    root = {"artifact_schema_version": INTRADAY_EXPERIMENT_V2_VERSION if is_intraday_plan_v2(normalized) else INTRADAY_EXPERIMENT_VERSION,
+            "dataset_id": report["data_id"],
+            "evaluation_mode": "INTRADAY_DIAGNOSTICS" if normalized["plan_schema_version"] in INTRADAY_DIAGNOSTICS_PLAN_VERSIONS else "INTRADAY_COMPARISON",
             "algorithm_versions": research_algorithm_versions(normalized), "environment": environment_versions(),
             "plan": normalized, "report": report, "name": name, "notes": notes}
     root["experiment_id"] = sha256(canonical_json(root)).hexdigest()

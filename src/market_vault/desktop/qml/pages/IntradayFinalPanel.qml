@@ -145,6 +145,14 @@ Item {
                 color: Theme.PixelTheme.inkMuted
                 font.pixelSize: Theme.PixelTheme.fontSm
             }
+            Label {
+                objectName: "intradayFreezeUnsupported"
+                Layout.fillWidth: true
+                visible: root.controller.freezeUnsupported
+                text: root.i18n.catalog["quant.intraday_freeze_unsupported"]
+                wrapMode: Text.WordWrap
+                color: Theme.PixelTheme.inkMuted
+            }
             RowLayout {
                 Layout.fillWidth: true
                 enabled: !root.controller.busy && !operationRuntime.busy

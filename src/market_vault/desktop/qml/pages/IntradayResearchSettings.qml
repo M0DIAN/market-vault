@@ -12,6 +12,7 @@ Dialog {
     property string availableDataId: ""
     property string dataId: ""
     property string dataLocator: ""
+    property string planVersion: "market-vault-intraday-research-plan-v1"
     property bool executionPolicyBound: false
     property var savePlan: null
     property string errorText: ""
@@ -42,6 +43,7 @@ Dialog {
         root.dataId = sourceId
         root.dataLocator = locator || ""
         root.executionPolicyBound = false
+        root.planVersion = "market-vault-intraday-research-plan-v1"
         if (plan.strategies) {
             applyPlan(plan, false)
         } else {
@@ -56,6 +58,7 @@ Dialog {
 
     function applyPlan(plan, restoreCosts) {
         if (!plan.strategies) return
+        root.planVersion = plan.plan_schema_version
         root.dataId = plan.data_id
         root.dataLocator = plan.intraday_data_path
         root.executionPolicyBound = restoreCosts
@@ -78,7 +81,7 @@ Dialog {
         editor.load(0)
     }
     function values() {
-        return {data_id: root.dataId, intraday_data_path: root.dataLocator, execution_policy_bound: root.executionPolicyBound,
+        return {plan_schema_version: root.planVersion, data_id: root.dataId, intraday_data_path: root.dataLocator, execution_policy_bound: root.executionPolicyBound,
             feature_fields: features.text.split(",").map(value => value.trim()), strategies: editor.snapshot(),
             train_end_day: trainEnd.text, validation_end_day: valEnd.text, test_end_day: testEnd.text,
             minimum_train_days: trainDays.text, validation_days: valDays.text, step_days: stepDays.text,
@@ -152,6 +155,7 @@ Dialog {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     i18n: root.i18n
+                    allowQuadratic: true
                     featureOptions: root.featureOptions
                     defaultFeature: features.text.split(",")[0].trim()
                 }

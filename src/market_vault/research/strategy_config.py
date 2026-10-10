@@ -26,7 +26,8 @@ def _rule(spec):
                         _string(spec["comparator"], "comparator"), spec["threshold"])
 
 
-def parse_strategy_specs(specs: list[dict], *, allow_composite: bool = True) -> tuple[Strategy, ...]:
+def parse_strategy_specs(specs: list[dict], *, allow_composite: bool = True,
+                         allow_quadratic: bool = False) -> tuple[Strategy, ...]:
     """Decode finite explicit descriptors; no imports, expressions or registry lookup."""
     if type(specs) is not list or not specs:
         raise ValueError("strategies must be a non-empty JSON array")
@@ -44,6 +45,10 @@ def parse_strategy_specs(specs: list[dict], *, allow_composite: bool = True) -> 
         elif kind == "RIDGE":
             _object(spec, ("kind", "name", "alpha", "threshold"), "Ridge strategy")
             strategies.append(RidgeStrategy(_string(spec["name"], "name"), spec["alpha"], spec["threshold"]))
+        elif kind == "QUADRATIC_RIDGE" and allow_quadratic:
+            from .intraday_models import QuadraticRidgeStrategy
+            _object(spec, ("kind", "name", "alpha", "threshold"), "quadratic Ridge strategy")
+            strategies.append(QuadraticRidgeStrategy(_string(spec["name"], "name"), spec["alpha"], spec["threshold"]))
         elif kind == "COMPOSITE_RULE" and allow_composite:
             _object(spec, ("kind", "name", "match", "conditions"), "composite rule strategy")
             if type(spec["conditions"]) is not list:
@@ -61,10 +66,14 @@ def parse_strategy_specs(specs: list[dict], *, allow_composite: bool = True) -> 
 
 def strategy_plan_fields(strategy: Strategy) -> dict:
     """Encode plan input, separately from result descriptors and identity fields."""
+    from .intraday_models import QuadraticRidgeStrategy
     if type(strategy) is FeatureRuleStrategy:
         return {"kind": "FEATURE_RULE", "name": strategy.name, **asdict(strategy.rule)}
     if type(strategy) is RidgeStrategy:
         return {"kind": "RIDGE", "name": strategy.name,
+                "alpha": strategy.alpha, "threshold": strategy.threshold}
+    if type(strategy) is QuadraticRidgeStrategy:
+        return {"kind": "QUADRATIC_RIDGE", "name": strategy.name,
                 "alpha": strategy.alpha, "threshold": strategy.threshold}
     if type(strategy) is CompositeRuleStrategy:
         return {"kind": "COMPOSITE_RULE", "name": strategy.name, "match": strategy.match,

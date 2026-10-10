@@ -11,7 +11,7 @@ import statistics
 
 from ..backtest.risk import ZERO_VOLATILITY_TOLERANCE
 from .intraday_data import digest
-from .intraday_experiment import INTRADAY_EXPERIMENT_VERSION
+from .intraday_experiment import INTRADAY_EXPERIMENT_VERSIONS
 from .intraday_return_uncertainty import _daily_values, _finite, _integer, _sample_coverage
 from .intraday_risk_diagnostics import ZERO_RETURN_TOLERANCE, _clock, _metric, _reconcile
 from .intraday_saved_comparison import _basis
@@ -41,7 +41,7 @@ def _allocation(weight_a, weight_b):
 
 
 def _selection(root, cost_index, candidate_index):
-    if (root["artifact_schema_version"] != INTRADAY_EXPERIMENT_VERSION
+    if (root["artifact_schema_version"] not in INTRADAY_EXPERIMENT_VERSIONS
             or root["evaluation_mode"] not in ("INTRADAY_COMPARISON", "INTRADAY_DIAGNOSTICS")
             or root["report"]["evaluation_scope"] != "DEVELOPMENT_WALK_FORWARD_ONLY"):
         raise ValueError("portfolio analysis requires two ordinary saved Q7 DEV comparison or diagnostics experiments")

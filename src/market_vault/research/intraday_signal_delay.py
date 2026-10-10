@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 
 from ..backtest.intraday import IntradayExecutionPolicy, run_intraday_execution
 from .intraday_data import canonical_json, digest
-from .intraday_experiment import INTRADAY_EXPERIMENT_VERSION
+from .intraday_experiment import INTRADAY_EXPERIMENT_VERSIONS
 from .intraday_research import intraday_daily_risk
 from .intraday_return_uncertainty import _finite, _integer, _sample_coverage, _self_basis
 from .intraday_risk_diagnostics import _available, _metric
@@ -161,7 +161,7 @@ def analyze_intraday_signal_delay(snapshot: StrategyExperiment, *, cost_index: i
     _integer(cost_index, "cost_index", 0)
     _integer(candidate_index, "candidate_index", 0)
     root = snapshot.as_dict()
-    if (root["artifact_schema_version"] != INTRADAY_EXPERIMENT_VERSION
+    if (root["artifact_schema_version"] not in INTRADAY_EXPERIMENT_VERSIONS
             or root["evaluation_mode"] not in ("INTRADAY_COMPARISON", "INTRADAY_DIAGNOSTICS")
             or root["report"]["evaluation_scope"] != "DEVELOPMENT_WALK_FORWARD_ONLY"):
         raise ValueError("signal delay requires an ordinary saved Q7 DEV comparison or diagnostics experiment")

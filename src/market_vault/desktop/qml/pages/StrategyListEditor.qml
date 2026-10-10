@@ -15,7 +15,9 @@ ColumnLayout {
     property int selectedIndex: 0
     property string selectedKind: "FEATURE_RULE"
     property string matchChoice: "ALL"
-    readonly property var kinds: ["FEATURE_RULE", "RIDGE", "COMPOSITE_RULE"]
+    property bool allowQuadratic: false
+    readonly property bool selectedLearned: root.selectedKind === "RIDGE" || root.selectedKind === "QUADRATIC_RIDGE"
+    readonly property var kinds: ["FEATURE_RULE", "RIDGE", "COMPOSITE_RULE"].concat(root.allowQuadratic ? ["QUADRATIC_RIDGE"] : [])
     readonly property var comparators: ["GT", "GE", "LT", "LE"]
     spacing: 6
 
@@ -49,7 +51,7 @@ ColumnLayout {
         if (!root.strategies.length) return
         const items = clone(root.strategies)
         const item = {"kind": root.selectedKind, "name": nameField.text}
-        if (root.selectedKind === "RIDGE") {
+        if (root.selectedLearned) {
             item.alpha = alphaField.text
             item.threshold = ridgeThreshold.text
         } else if (root.selectedKind === "COMPOSITE_RULE") {
@@ -89,7 +91,7 @@ ColumnLayout {
         const items = clone(root.strategies)
         const feature = root.conditionDraft.length ? root.conditionDraft[0].signal_field : root.defaultFeature
         const item = {"kind": root.kinds[index], "name": nameField.text}
-        if (item.kind === "RIDGE") { item.alpha = "1"; item.threshold = "0" }
+        if (item.kind === "RIDGE" || item.kind === "QUADRATIC_RIDGE") { item.alpha = "1"; item.threshold = "0" }
         else if (item.kind === "COMPOSITE_RULE") {
             item.match = "ALL"; item.conditions = [condition(feature), condition(feature)]
         } else {
@@ -151,12 +153,13 @@ ColumnLayout {
             Layout.maximumWidth: 10000
             label: root.i18n.catalog["quant.strategy_kind"]
             model: [root.i18n.catalog["quant.feature_rule"], "Ridge", root.i18n.catalog["quant.composite_rule"]]
+                .concat(root.allowQuadratic ? [root.i18n.catalog["quant.quadratic_ridge"]] : [])
             onSelected: root.changeKind(currentIndex)
             onModelChanged: currentIndex = root.kinds.indexOf(root.selectedKind)
         }
     }
     RowLayout {
-        visible: root.selectedKind === "RIDGE"
+        visible: root.selectedLearned
         Layout.fillWidth: true
         Components.LabeledTextField {
             id: alphaField
@@ -168,6 +171,14 @@ ColumnLayout {
             objectName: "quantStrategyRidgeThreshold"
             label: root.i18n.catalog["quant.ridge_threshold"]
         }
+    }
+    Label {
+        visible: root.selectedKind === "QUADRATIC_RIDGE"
+        Layout.fillWidth: true
+        text: root.i18n.catalog["quant.quadratic_ridge_help"]
+        wrapMode: Text.WordWrap
+        font.pixelSize: Theme.PixelTheme.fontSm
+        color: Theme.PixelTheme.inkMuted
     }
     RowLayout {
         visible: root.selectedKind === "COMPOSITE_RULE"
@@ -191,14 +202,14 @@ ColumnLayout {
         }
     }
     Label {
-        visible: root.selectedKind !== "RIDGE"
+        visible: !root.selectedLearned
         text: root.i18n.catalog["quant.condition_columns"]
         color: Theme.PixelTheme.inkMuted
         font.pixelSize: Theme.PixelTheme.fontSm
     }
     ListView {
         objectName: "quantStrategyConditions"
-        visible: root.selectedKind !== "RIDGE"
+        visible: !root.selectedLearned
         Layout.fillWidth: true
         Layout.fillHeight: true
         Layout.minimumHeight: 36
@@ -245,5 +256,5 @@ ColumnLayout {
             }
         }
     }
-    Item { visible: root.selectedKind === "RIDGE"; Layout.fillHeight: true }
+    Item { visible: root.selectedLearned; Layout.fillHeight: true }
 }

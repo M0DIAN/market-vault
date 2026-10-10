@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 
 from ..backtest.intraday import INTRADAY_COST_VERSION, INTRADAY_EXECUTION_VERSION
-from .intraday_experiment import INTRADAY_EXPERIMENT_VERSION
+from .intraday_experiment import INTRADAY_EXPERIMENT_VERSIONS
 from .intraday_final_test import INTRADAY_TEST_EXPERIMENT_VERSION
 from .intraday_performance import (
     BREAKEVEN_RETURN_TOLERANCE, INTRADAY_PERFORMANCE_VERSION, summarize_intraday_execution,
@@ -60,7 +60,7 @@ def _selected_from_root(root, cost_index, candidate_index):
     admission path for an unverified dictionary or a cross-action cache.
     """
     report = root["report"]
-    if root["artifact_schema_version"] == INTRADAY_EXPERIMENT_VERSION:
+    if root["artifact_schema_version"] in INTRADAY_EXPERIMENT_VERSIONS:
         if cost_index >= len(report["groups"]) or candidate_index >= len(report["groups"][cost_index]["results"]):
             raise ValueError("selected cost/candidate index is outside the saved experiment")
         group = report["groups"][cost_index]
@@ -136,8 +136,9 @@ def _basis(left, right):
     # These maps include unselected candidates. Only a method shared by the
     # two selected strategies is an additional numerical-basis requirement.
     if a["strategy"]["kind"] == b["strategy"]["kind"]:
-        key = {"RIDGE": "ridge", "COMPOSITE_RULE": "composite"}.get(a["strategy"]["kind"])
-        if key:
+        keys = {"RIDGE": ("ridge",), "COMPOSITE_RULE": ("composite",),
+                "QUADRATIC_RIDGE": ("ridge", "quadratic")}.get(a["strategy"]["kind"], ())
+        for key in keys:
             check("algorithm_versions." + key, a["algorithm_versions"][key], b["algorithm_versions"][key])
     definition = {"version": INTRADAY_PERFORMANCE_VERSION, "breakeven_return_tolerance": BREAKEVEN_RETURN_TOLERANCE}
     check("performance_derivation", dict(definition), dict(definition))

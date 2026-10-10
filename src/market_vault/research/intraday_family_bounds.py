@@ -10,7 +10,7 @@ from __future__ import annotations
 import random
 
 from .intraday_data import digest
-from .intraday_experiment import INTRADAY_EXPERIMENT_VERSION
+from .intraday_experiment import INTRADAY_EXPERIMENT_VERSIONS
 from .intraday_return_uncertainty import (
     MINIMUM_EXPECTED_BLOCK_COUNT, MINIMUM_SAMPLE_COUNT, _daily_values,
     _default_block_days, _finite, _integer, _interval_gate, _mean,
@@ -118,7 +118,7 @@ def analyze_intraday_family_bounds(snapshot: StrategyExperiment, *, cost_index: 
     root = snapshot.as_dict()
     if root["evaluation_mode"] == "INTRADAY_EXECUTION_SCENARIOS":
         raise ValueError("export an ordinary Q7 scenario before deriving family bounds from a collection")
-    if (root["artifact_schema_version"] != INTRADAY_EXPERIMENT_VERSION
+    if (root["artifact_schema_version"] not in INTRADAY_EXPERIMENT_VERSIONS
             or root["evaluation_mode"] not in ("INTRADAY_COMPARISON", "INTRADAY_DIAGNOSTICS")
             or root["report"]["evaluation_scope"] != "DEVELOPMENT_WALK_FORWARD_ONLY"):
         raise ValueError("family bounds requires an ordinary saved Q7 DEV comparison or diagnostics experiment")

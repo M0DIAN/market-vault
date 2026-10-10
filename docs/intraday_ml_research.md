@@ -303,6 +303,14 @@ records remain available in the CLI report.
 
 ## Desktop workflow and validation boundary
 
+The following [Q24–Q26 strategy package](intraday_ml_strategy_next.md) begins
+with an ordinary quadratic DEV strategy using the same Q23 numerical helper.
+Q23's report version, forecasts, model content and forecast-only meaning stay
+unchanged. Q21–Q23 continue to require a selected **linear Ridge** source; they
+also accept that candidate in a V2 ordinary experiment containing other native
+quadratic strategies. A selected native quadratic candidate is not expanded
+again by these derived studies.
+
 The existing Development candidate selector supplies the immutable saved
 selection. An ML analysis area offers an explicit Analyze/Refresh action and
 a separate optional Q5 locator. A blank locator means the saved path. It does

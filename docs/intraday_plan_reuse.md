@@ -17,6 +17,14 @@ schema or an additional envelope:
 | Diagnostics | `market-vault-intraday-diagnostics-plan-v1` | Complete comparison plan, selected strategy, ordered axes and costs |
 | Execution scenarios | `market-vault-intraday-execution-scenarios-plan-v1` | Complete comparison plan and ordered, named full policies |
 
+[Q24](intraday_development_research.md) adds explicit `-v2` variants of all
+three plan versions for ordinary intraday `QUADRATIC_RIDGE` strategies. A V2
+diagnostics/scenario wrapper must contain a V2 comparison; a V1 wrapper keeps
+the V1 grammar. Save/Load preserves the declared version. Continue preserves
+the source comparison's version, selected strategy (including quadratic alpha
+and threshold) and exact selected execution cost/policy. Existing V1 files are
+not converted.
+
 Only complete plans accepted by these existing normalizers can be saved.
 Unfinished editor text, a result envelope, TEST and frozen-selection plans are
 not supported plan files. Existing field requirements, strategy grammar and
