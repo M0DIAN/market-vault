@@ -260,10 +260,10 @@ def test_absent_ordinary_date_uses_unchanged_normal_profile(interval: str) -> No
 
 
 @pytest.mark.parametrize("interval", INTERVAL_MINUTES)
-def test_unlisted_early_close_shape_fails_against_normal_profile(interval: str) -> None:
+def test_unqualified_early_close_has_explicit_provider_reason(interval: str) -> None:
     trade_date = date(2025, 7, 3)
     sequence = _rth_provider_sequence(trade_date, interval, close_clock="13:00")
-    with pytest.raises(ValueError, match="geometry mismatch"):
+    with pytest.raises(ValueError, match="PROVIDER_UNVERIFIED.*2025-07-03"):
         _normalize(_raw_frame(sequence), trade_date=trade_date, interval=interval)
 
 
@@ -405,3 +405,106 @@ def test_legacy_109_keeps_provider_labels_on_a_qualified_date() -> None:
     assert curated["time_market"].tolist() == [
         pd.Timestamp(value, tz=RTH_TIMEZONE) for value in sequence
     ]
+
+
+@pytest.mark.parametrize(
+    ("trade_date", "classification", "close_time"),
+    [
+        (date(2025, 7, 3), "EARLY_CLOSE", time(13)),
+        (date(2025, 11, 28), "EARLY_CLOSE", time(13)),
+        (date(2026, 11, 27), "EARLY_CLOSE", time(13)),
+        (date(2026, 12, 24), "EARLY_CLOSE", time(13)),
+        (date(2027, 11, 26), "EARLY_CLOSE", time(13)),
+        (date(2025, 1, 9), "CLOSED", None),
+        (date(2025, 7, 4), "CLOSED", None),
+        (date(2026, 7, 3), "CLOSED", None),
+        (date(2027, 12, 24), "CLOSED", None),
+        (date(2026, 10, 10), "CLOSED", None),
+        (date(2026, 7, 2), "NORMAL", time(16)),
+        (date(2027, 12, 31), "NORMAL", time(16)),
+        (date(2024, 12, 31), "UNSUPPORTED", None),
+        (date(2028, 1, 3), "UNSUPPORTED", None),
+    ],
+)
+def test_bundled_exchange_calendar_is_separate_from_provider_authority(
+    trade_date: date, classification: str, close_time: time | None,
+) -> None:
+    from market_vault.normalization.rth_calendar import (
+        US_RTH_CALENDAR_VERSION,
+        US_RTH_EMERGENCY_REFERENCE,
+        resolve_exchange_rth_session,
+    )
+
+    result = resolve_exchange_rth_session(trade_date)
+    assert result.classification == classification
+    assert result.close_time == close_time
+    assert result.authority_version == US_RTH_CALENDAR_VERSION
+    assert result.authority_captured_on == "2026-10-10"
+    if trade_date == date(2025, 1, 9):
+        assert result.authority_reference == US_RTH_EMERGENCY_REFERENCE
+        assert result.authority_published_on == "2024-12-30"
+    with pytest.raises(FrozenInstanceError):
+        result.classification = "NORMAL"  # type: ignore[misc]
+
+
+@pytest.mark.parametrize(
+    ("trade_date", "message"),
+    [
+        (date(2026, 11, 27), "PROVIDER_UNVERIFIED"),
+        (date(2026, 12, 24), "PROVIDER_UNVERIFIED"),
+        (date(2027, 11, 26), "PROVIDER_UNVERIFIED"),
+        (date(2025, 1, 9), "calendar CLOSED"),
+        (date(2026, 7, 3), "calendar CLOSED"),
+        (date(2027, 12, 24), "calendar CLOSED"),
+        (date(2026, 10, 10), "calendar CLOSED"),
+        (date(2028, 1, 3), "calendar UNSUPPORTED"),
+    ],
+)
+def test_normal_shaped_bars_cannot_override_calendar_or_provider_status(
+    trade_date: date, message: str,
+) -> None:
+    # Even a complete 390-row response cannot manufacture date authority.
+    sequence = _rth_provider_sequence(trade_date, "1m", close_clock="16:00")
+    with pytest.raises(ValueError, match=message):
+        _normalize(_raw_frame(sequence), trade_date=trade_date, interval="1m")
+
+
+def test_copying_a_sealed_profile_cannot_qualify_a_different_date() -> None:
+    copied = replace(SPECIAL_RTH_SESSION_GEOMETRIES[0], trade_date=date(2025, 7, 3))
+    with pytest.raises(ValueError, match="exact-date provider qualification"):
+        resolve_rth_session_geometry(copied.trade_date, authorities=(copied,))
+
+
+def test_collection_preserves_explicit_calendar_failure_without_parquet(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import market_vault.service as service
+    from test_timestamp_semantics_v2 import settings as make_settings
+
+    trade_date = date(2025, 7, 3)
+    frame = _raw_frame(_rth_provider_sequence(trade_date, "1m", close_clock="13:00"))
+
+    class OfflineCollector:
+        def __init__(self, settings):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def fetch_history(self, **kwargs):
+            return frame.copy()
+
+    monkeypatch.setattr(service, "MoomooHistoryCollector", OfflineCollector)
+    settings = make_settings(tmp_path)
+    manifest = service.collect_history(settings, trade_date, ["US.SPY"], "1m", "RTH", "NONE")
+    assert manifest.status == "FAILED"
+    assert not manifest.successful_symbols
+    assert not manifest.snapshot_pairs
+    assert "PROVIDER_UNVERIFIED" in manifest.failed_symbols["US.SPY"]
+    assert "2025-07-03" in manifest.failed_symbols["US.SPY"]
+    assert not list(settings.data_root.rglob("*.parquet"))
+    saved = json.loads((settings.manifest_dir / f"{trade_date}_{manifest.run_id}.json").read_text())
+    assert saved["failed_symbols"] == manifest.failed_symbols
