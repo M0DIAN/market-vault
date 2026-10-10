@@ -9,7 +9,7 @@ from PySide6.QtCore import QObject, Property, Signal, Slot
 
 from .controllers import PageController
 from .intraday_research import (
-    execution_series, formatted_rows, performance_table, risk_diagnostics_report, risk_diagnostics_table,
+    execution_series, formatted_rows, performance_table, risk_diagnostics_report, risk_diagnostics_table, risk_value,
 )
 from .table_model import QtTableModel
 
@@ -41,25 +41,31 @@ _MODEL_COLUMNS = ("model_stage", "feature", "alpha", "training_count", "intercep
 class IntradayFinalController(PageController):
     changed = Signal()
 
-    def __init__(self, runtime, *, research, parent, inner=None):
+    def __init__(self, runtime, *, research, parent, inner=None, threshold=None):
         super().__init__(runtime, parent=parent)
         self._research = research
         self._inner = inner
+        self._threshold = threshold
         self._selection_content, self._test_content = b"", b""
         self._selection_root, self._test_root = {}, {}
         self._selection_path, self._test_path = "", ""
         self._selection_proof, self._test_proof = "", ""
         self._pending_action = None
+        self._pending_threshold_freeze = None
         self._locators, self._locator_revision, self._notice = ("", ""), 0, ""
         self._binding_revision = 0
         self._view_index, self._page = 0, 1
+        self._threshold_account_index = 0
         self._risk_report = None
         self._columns, self._rows = (), ()
+        self._evidence_rows = []
         self._model = QtTableModel(parent=self)
         self._set_page()
         research.changed.connect(self.changed.emit)
         if inner is not None:
             inner.changed.connect(self.changed.emit)
+        if threshold is not None:
+            threshold.changed.connect(self.changed.emit)
         self.operationFailed.connect(self._bound_failed)
 
     @Property(QObject, constant=True)
@@ -92,6 +98,25 @@ class IntradayFinalController(PageController):
         shown = f'{recipe["kind"]} · alpha={recipe["alpha"]} · threshold={recipe["threshold"]}' if recipe else "UNAVAILABLE"
         return f'{shown}\n{self._inner.experimentPath or "UNSAVED"}'
 
+    @Property(bool, notify=changed)
+    def canFreezeThreshold(self):
+        from ..research.intraday_threshold_selection import INTRADAY_THRESHOLD_SELECTION_VERSION
+        if self._threshold is None or not self._threshold.experimentPath:
+            return False
+        root = self._threshold._root
+        return bool(root.get("artifact_schema_version") == INTRADAY_THRESHOLD_SELECTION_VERSION
+                    and root["report"]["status"] == "AVAILABLE" and root["report"]["final_dev"]["selected_recipe"])
+
+    @Property(str, notify=changed)
+    def thresholdSourceDetails(self):
+        if self._threshold is None or not self._threshold.resultLoaded:
+            return ""
+        root = self._threshold._root
+        recipe = root["report"]["final_dev"]["selected_recipe"]
+        shown = (f'{recipe["kind"]} · alpha={recipe["alpha"]} · threshold={recipe["threshold"] * 10000:g} bp'
+                 if recipe else "UNAVAILABLE")
+        return f'{shown}\n{self._threshold.experimentPath or "UNSAVED"}\n{root["experiment_id"]}'
+
     @Property(str, notify=changed)
     def notice(self):
         return self._notice
@@ -108,6 +133,28 @@ class IntradayFinalController(PageController):
     @Property(bool, notify=changed)
     def hasDevSelection(self):
         return bool(self._selection_root.get("report", {}).get("dev_selection"))
+
+    @Property(bool, notify=changed)
+    def hasThresholdSelection(self):
+        from ..research.intraday_final_test import INTRADAY_SELECTION_V3_VERSION
+        return self._selection_root.get("artifact_schema_version") == INTRADAY_SELECTION_V3_VERSION
+
+    @Property("QVariantMap", notify=changed)
+    def returnBasis(self):
+        return deepcopy(self._selection_root.get("report", {}).get("return_basis", {}))
+
+    @Property(int, notify=changed)
+    def thresholdAccountIndex(self):
+        return self._threshold_account_index
+
+    @Property("QVariantList", notify=changed)
+    def thresholdAccountOptions(self):
+        if not self.hasThresholdSelection:
+            return []
+        window = self._selection_root["report"]["dev_selection"]["final_dev"]
+        return [{"threshold_bps": member["threshold"] * 10000,
+                 "chosen": member["candidate_index"] == window["selected_index"]}
+                for member in window["family_results"]]
 
     @Property("QVariantMap", notify=changed)
     def selectionEvidence(self):
@@ -131,6 +178,13 @@ class IntradayFinalController(PageController):
                 final_cutoff=window["history_boundary"], inner_cutoff=window["training_boundary"],
                 inner_days=" → ".join((window["validation_days"][0], window["validation_days"][-1])),
                 selected_index=window["selected_index"], method=evidence["method"])
+            if self.hasThresholdSelection:
+                result.update(threshold_selection_id=evidence["threshold_selection_id"],
+                    selected_threshold_bps=candidate["strategy"]["threshold"] * 10000,
+                    inner_model_id=window["model"]["model_id"],
+                    inner_training_count=len(window["training_keys"]),
+                    history_training_count=len(window["history_training_keys"]),
+                    threshold_order_bps=[value * 10000 for value in evidence["method"]["thresholds"]])
         else:
             result.update(candidate_id=root["plan"]["selection"]["candidate_id"],
                           cost_index=root["plan"]["selection"]["cost_index"], candidate_index=root["plan"]["selection"]["candidate_index"])
@@ -203,6 +257,51 @@ class IntradayFinalController(PageController):
     def tableModel(self):
         return self._model
 
+    @Property(int, notify=changed)
+    def viewIndex(self):
+        return self._view_index
+
+    @Property(str, notify=changed)
+    def currentPageEvidence(self):
+        if not self.selectionLoaded:
+            return ""
+        start = (self._page - 1) * 100
+        evidence = {"selection_id": self._selection_root["report"]["selection_id"],
+            "selection_path": self._selection_path, "test_path": self._test_path,
+            "selection_proof": self._selection_proof, "test_proof": self._test_proof,
+            "source_experiment": self._selection_root["plan"]["source_experiment"],
+            "view_index": self._view_index, "page": self._page,
+            "rows": self._evidence_rows[start:start + 100]}
+        if self.hasThresholdSelection and self._view_index >= 15:
+            recorded = self._selection_root["report"]["dev_selection"]
+            window = recorded["final_dev"]
+            account = window["family_results"][self._threshold_account_index]
+            evidence.update(scope="FROZEN_FINAL_DEV_HOLDOUT", method=recorded["method"],
+                account=self.thresholdAccountOptions[self._threshold_account_index],
+                boundaries={key: window[key] for key in ("history_boundary", "training_boundary")},
+                execution_input=window["execution_input"], unavailable_reason=window["unavailable_reason"],
+                execution_metadata={key: value for key, value in account["execution"].items()
+                    if key not in ("decisions", "trades", "transactions", "ledger", "daily")},
+                return_basis=self.returnBasis)
+            if self._view_index == 16:
+                evidence["complete_model"] = window["model"]
+        elif self.testLoaded and self._view_index < 15:
+            report = self._test_root["report"]
+            evidence.update(scope="FINAL_TEST", test_id=self._test_root["experiment_id"],
+                execution_metadata={key: value for key, value in report["execution"].items()
+                    if key not in ("decisions", "trades", "transactions", "ledger", "daily")})
+            if self._view_index == 0:
+                evidence.update(complete_execution=report["execution"], complete_benchmark=report["benchmark"])
+            if self._view_index == 4:
+                evidence.update(complete_model=report["model"], final_context=report["context"])
+            if 6 <= self._view_index <= 9:
+                evidence["complete_execution"] = report["execution"]
+            if 10 <= self._view_index <= 14:
+                evidence["risk_diagnostics"] = self._risk_report
+            if self.hasThresholdSelection:
+                evidence["return_basis"] = report["return_basis"]
+        return json.dumps(evidence, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False)
+
     @Property("QVariantList", notify=changed)
     def equitySeries(self):
         if not self.testLoaded:
@@ -218,6 +317,7 @@ class IntradayFinalController(PageController):
     def _refresh_view(self):
         from .quant_research import _format_number, _format_percent
         self._columns, self._rows = (), ()
+        self._evidence_rows = []
         if self._view_index >= 15:
             self._dev_view()
         elif self.testLoaded:
@@ -227,6 +327,7 @@ class IntradayFinalController(PageController):
                 if self._risk_report is None:
                     self._risk_report = risk_diagnostics_report(self._test_content)
                 self._columns, self._rows = risk_diagnostics_table(self._risk_report, self._view_index - 10)
+                self._evidence_rows = [dict(zip(self._columns, row)) for row in self._rows]
             elif self._view_index == 0:
                 self._columns = ("strategy", "commission_bps", "slippage_bps", "trade_count", "total_return", "benchmark_return",
                                  "observed_max_drawdown", "annualized_volatility", "sharpe_ratio", "mae", "rmse", "r2")
@@ -236,6 +337,8 @@ class IntradayFinalController(PageController):
                     _format_percent(execution["metrics"]["observed_max_drawdown"]), _format_percent(report["risk"]["annualized_volatility"]),
                     _format_number(report["risk"]["sharpe_ratio"]),
                     *(_format_number((report["prediction_metrics"] or {}).get(key)) for key in ("mae", "rmse", "r2"))),)
+                self._evidence_rows = [{"execution_metrics": execution["metrics"], "risk": report["risk"],
+                    "prediction_metrics": report["prediction_metrics"], "benchmark_metrics": report["benchmark"]["execution"]["metrics"]}]
             else:
                 if self._view_index == 1:
                     columns, rows = ("entry_time", "exit_time", "exit_reason", "held_bars", "cash_before", "cash_after", "net_return"), execution["trades"]
@@ -249,16 +352,21 @@ class IntradayFinalController(PageController):
                     columns, rows = ("decision_time", "trading_day", "slot", "score", "target"), report["predictions"]
                 else:
                     self._columns, self._rows = performance_table(execution, self._view_index - 6)
+                    self._evidence_rows = [dict(zip(self._columns, row)) for row in self._rows]
                     self._page = 1
                     self._set_page()
                     return
                 self._columns, self._rows = columns, formatted_rows(rows, columns)
+                self._evidence_rows = rows
         self._page = 1
         self._set_page()
 
     def _dev_view(self):
         evidence = self._selection_root.get("report", {}).get("dev_selection")
         if not evidence:
+            return
+        if self.hasThresholdSelection:
+            self._threshold_view(evidence["final_dev"])
             return
         window, rows = evidence["final_dev"], []
         if self._view_index == 15:
@@ -287,13 +395,74 @@ class IntradayFinalController(PageController):
                     rows.append({**row, "inner_member": member["candidate_index"], "inner_target": target.get("value", "—"),
                                  "inner_label_end": target.get("actual_label_end_time", "—")})
         self._columns, self._rows = columns, formatted_rows(rows, columns)
+        self._evidence_rows = rows
+
+    def _threshold_view(self, window):
+        """The four actual accounts share one recorded inner model and scores."""
+        account = window["family_results"][self._threshold_account_index]
+        execution, view = account["execution"], self._view_index
+        if view == 15:
+            columns = ("inner_member", "threshold_bps", "threshold_chosen", "trade_count", "total_return",
+                       "final_cash", "observed_max_drawdown", "training_count", "prediction_count")
+            rows = [{"inner_member": member["candidate_index"], "threshold_bps": member["threshold"] * 10000,
+                "threshold_chosen": "YES" if member["candidate_index"] == window["selected_index"] else "NO",
+                **member["execution"]["metrics"], "training_count": len(window["training_keys"]),
+                "prediction_count": len(window["validation_keys"])} for member in window["family_results"]]
+        elif view == 16:
+            columns, rows = _MODEL_COLUMNS, _model_rows(window["model"])
+        elif view == 17:
+            columns = ("threshold_role", "value", "actual_label_end_time", "label_return")
+            rows = []
+            for key in ("history_boundary", "training_boundary", "history_days", "history_training_keys",
+                        "history_purged_keys", "training_days", "training_keys", "purged_keys", "validation_days", "validation_keys"):
+                values = window[key] if isinstance(window[key], list) else [window[key]]
+                rows.extend({"threshold_role": key, "value": value} for value in values)
+            rows.extend({**target, "threshold_role": "HISTORY_TARGET", "value": target["observation_key"],
+                         "label_return": target["value"]} for target in window["history_targets"])
+        elif view == 18:
+            columns = ("observation_key", "trading_day", "slot", "decision_time", "score", "target", "shared_prediction_target")
+            shared = {row["observation_key"]: row for row in window["predictions"]}
+            rows = [{**row, "shared_prediction_target": shared[row["observation_key"]]["target"]}
+                    for row in execution["decisions"]]
+        elif view == 19:
+            columns, rows = ("entry_time", "exit_time", "exit_reason", "held_bars", "cash_before", "cash_after", "net_return"), execution["trades"]
+        elif view == 20:
+            columns, rows = ("trading_day", "cash_open", "cash_close", "return", "trade_count"), execution["daily"]
+        elif view == 21:
+            columns, rows = ("timestamp", "phase", "action", "reason", "cash", "quantity", "equity", "drawdown"), execution["ledger"]
+        elif view == 22:
+            columns, rows = ("timestamp", "side", "reason", "quantity", "fill_price", "commission", "slippage"), execution["transactions"]
+        elif view == 23:
+            columns, rows = ("trading_day", "open_time", "close_time", "profile", "bar_count", "missing_bar_count"), window["sessions"]
+        else:
+            columns, rows = ("trading_day", "slot", "event_time", "available_at", "open", "close", "row_version_id"), window["prices"]
+        self._evidence_rows = rows
+        shown = [{key: row.get(key) if row.get(key) is not None else "—" for key in columns} for row in rows]
+        if view == 15:
+            for item, raw in zip(shown, rows, strict=True):
+                for key in ("total_return", "observed_max_drawdown"):
+                    item[key] = risk_value(raw[key], "RATIO")
+        self._columns, self._rows = columns, formatted_rows(shown, columns)
+
+    @Slot(int, result=bool)
+    def selectThresholdAccount(self, index):
+        if type(index) is not int or not 0 <= index < len(self.thresholdAccountOptions):
+            return False
+        if index != self._threshold_account_index:
+            self._threshold_account_index = index
+            self._refresh_view()
+            self.changed.emit()
+        return True
 
     @Slot(int, result=bool)
     def selectView(self, index):
-        if type(index) is not int or not 0 <= index <= 18:
+        maximum = 24 if self.hasThresholdSelection else 18 if self.hasDevSelection else 14
+        if type(index) is not int or not 0 <= index <= maximum:
             return False
-        self._view_index = index
-        self._refresh_view()
+        if index != self._view_index:
+            self._view_index = index
+            self._refresh_view()
+            self.changed.emit()
         return True
 
     @Slot(int, result=bool)
@@ -303,6 +472,7 @@ class IntradayFinalController(PageController):
             return False
         self._page = page
         self._set_page()
+        self.changed.emit()
         return True
 
     def _apply_selection(self, snapshot, *, path="", opened=False, notify=True):
@@ -311,6 +481,11 @@ class IntradayFinalController(PageController):
         self._selection_path, self._selection_proof = path, "RECORDED" if opened else "FROZEN"
         self._test_content, self._test_root, self._test_path, self._test_proof = b"", {}, "", ""
         self._risk_report = None
+        if self.hasThresholdSelection:
+            self._threshold_account_index = self._selection_root["report"]["dev_selection"]["final_dev"]["selected_index"]
+            self._view_index = 15
+        elif self._view_index > (18 if self.hasDevSelection else 14):
+            self._view_index = 0
         self._binding_revision += 1
         self._refresh_view()
         if notify:
@@ -325,6 +500,8 @@ class IntradayFinalController(PageController):
         self._test_content, self._test_root = snapshot.content, root
         self._risk_report = None
         self._test_path, self._test_proof = path, "RECORDED" if opened else "COMPUTED"
+        if self.hasThresholdSelection:
+            self._view_index = 0
         self._refresh_view()
         self.changed.emit()
 
@@ -355,6 +532,58 @@ class IntradayFinalController(PageController):
             from ..research.intraday_final_test import freeze_intraday_inner_selection
             return freeze_intraday_inner_selection(captured[0], expected_experiment_id=captured[1], name="Intraday final DEV selection")
         return self._submit("intraday_selection_freeze_inner", operation, self._apply_selection, requires_backend=False)
+
+    def _threshold_freeze_key(self):
+        if self._threshold is None:
+            return None
+        return (self._threshold.experimentPath, self._threshold._root.get("experiment_id"),
+                self._threshold._artifact_revision, self._binding_revision)
+
+    @Slot(result=bool)
+    def freezeThresholdSelection(self):
+        if self.busy or self._runtime.busy:
+            return False
+        try:
+            if not self.canFreezeThreshold:
+                raise ValueError("Open or save an AVAILABLE Q31 threshold study before freezing its final DEV recipe.")
+            captured = self._threshold_freeze_key()
+        except (TypeError, ValueError, KeyError) as exc:
+            return self._reject_input(exc)
+        self._pending_threshold_freeze, self._notice = captured, ""
+        def operation(backend):
+            from ..research.intraday_final_test import freeze_intraday_threshold_selection
+            return freeze_intraday_threshold_selection(captured[0], expected_experiment_id=captured[1],
+                name="Intraday economic threshold selection")
+        def completed(snapshot):
+            self._pending_threshold_freeze = None
+            if captured != self._threshold_freeze_key():
+                self._notice = "STALE_INPUT"
+                self.changed.emit()
+                return
+            self._apply_selection(snapshot)
+        accepted = self._submit("intraday_selection_freeze_threshold", operation, completed, requires_backend=False)
+        if not accepted:
+            self._pending_threshold_freeze = None
+        return accepted
+
+    @Slot(str, result=bool)
+    def openThresholdSource(self, path):
+        if self._threshold is None:
+            return self._reject_input(ValueError("The threshold study source controller is unavailable."))
+        try:
+            from .quant_research import _experiment_file_path
+            path = _experiment_file_path(path)
+        except (OSError, TypeError, ValueError) as exc:
+            return self._reject_input(exc)
+        def operation(backend):
+            from ..research.strategy_experiment import load_strategy_experiment
+            from ..research.intraday_threshold_selection import INTRADAY_THRESHOLD_SELECTION_VERSION
+            snapshot = load_strategy_experiment(path)
+            if snapshot.as_dict()["artifact_schema_version"] != INTRADAY_THRESHOLD_SELECTION_VERSION:
+                raise ValueError("Open a saved Q31 economic threshold study.")
+            return snapshot
+        return self._submit("intraday_threshold_open", operation,
+            lambda snapshot: self._threshold._apply(snapshot, path=str(path), opened=True), requires_backend=False)
 
     @Slot(str, result=bool)
     def openInnerSource(self, path):
@@ -480,6 +709,13 @@ class IntradayFinalController(PageController):
         return accepted
 
     def _bound_failed(self):
+        freeze, self._pending_threshold_freeze = self._pending_threshold_freeze, None
+        if freeze is not None:
+            if freeze != self._threshold_freeze_key():
+                self._notice, self._error, self._status = "STALE_INPUT", "", "STALE_INPUT"
+                self.stateChanged.emit()
+            self.changed.emit()
+            return
         pending, self._pending_action = self._pending_action, None
         if pending is None:
             return
