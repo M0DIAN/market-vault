@@ -37,6 +37,7 @@ from .intraday_portfolio_cli import add_intraday_portfolio_subparser, research_i
 from .intraday_portfolio_rebalance_cli import add_intraday_portfolio_rebalance_subparser, research_intraday_portfolio_rebalance_main
 from .intraday_sequential_selection_cli import add_intraday_sequential_selection_subparser, research_intraday_sequential_selection_main
 from .intraday_signal_delay_cli import add_intraday_signal_delay_subparser, research_intraday_signal_delay_main
+from .intraday_prediction_quality_cli import add_intraday_prediction_quality_subparser, research_intraday_prediction_quality_main
 from .intraday_plan_cli import add_intraday_plan_subparser, research_intraday_plan_main
 from .intraday_saved_comparison_cli import add_intraday_saved_comparison_subparser, research_intraday_saved_comparison_main
 from .intraday_execution_scenarios_cli import add_intraday_execution_scenarios_subparsers, research_intraday_execution_scenarios_main
@@ -125,6 +126,7 @@ RESEARCH_COMMANDS = frozenset({
     "research-intraday-portfolio-rebalance",
     "research-intraday-sequential-selection",
     "research-intraday-signal-delay",
+    "research-intraday-prediction-quality",
     "research-intraday-plan-from-candidate",
     "research-intraday-compare-saved",
     "research-intraday-scenarios", "research-intraday-export-scenario",
@@ -238,6 +240,7 @@ def add_research_subparsers(subparsers) -> None:
     add_intraday_portfolio_rebalance_subparser(subparsers)
     add_intraday_sequential_selection_subparser(subparsers)
     add_intraday_signal_delay_subparser(subparsers)
+    add_intraday_prediction_quality_subparser(subparsers)
     add_intraday_plan_subparser(subparsers)
     add_intraday_saved_comparison_subparser(subparsers)
     add_intraday_execution_scenarios_subparsers(subparsers)
@@ -276,6 +279,8 @@ def run_research_command(command: str, args: argparse.Namespace) -> int:
         return research_intraday_sequential_selection_main(args)
     if command == "research-intraday-signal-delay":
         return research_intraday_signal_delay_main(args)
+    if command == "research-intraday-prediction-quality":
+        return research_intraday_prediction_quality_main(args)
     if command == "research-intraday-plan-from-candidate":
         return research_intraday_plan_main(args)
     if command == "research-intraday-compare-saved":

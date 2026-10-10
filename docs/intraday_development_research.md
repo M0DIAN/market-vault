@@ -136,6 +136,12 @@ arrival time and adds an explicit daily cash-reallocation model. These
 derived DEV studies retain their own evidence and do not change Freeze/TEST
 eligibility or the original Q7 account.
 
+The [Q21–Q23 intraday ML package](intraday_ml_research.md) defines selected Ridge
+prediction quality, exhaustive single-Feature removal refits and a bounded
+quadratic-basis Ridge comparison. These studies strictly reload the matching
+Q5 source and reconstruct the selected historical prediction evidence. They
+use the existing DEV folds and do not grant full Replay or Freeze/TEST proof.
+
 The Q19 `research-intraday-signal-delay` action re-executes one saved DEV
 candidate and its original benchmark at 0, 1 and 2 additional bars. This
 differs from the existing `entry_delay_minutes` policy, which controls the

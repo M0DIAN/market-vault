@@ -24,6 +24,10 @@ Item {
     readonly property var signalDelayData: root.controller.signalDelaySummary
     readonly property var signalDelayDetail: root.controller.signalDelayDetails
     property bool showSignalDelayDetails: false
+    readonly property var predictionData: root.controller.predictionQualitySummary
+    readonly property var predictionFold: root.controller.predictionQualityFold
+    readonly property var predictionRow: root.controller.predictionQualityRowDetails
+    property bool showPredictionDetails: false
     readonly property var gridMetrics: ["total_return", "observed_max_drawdown", "trade_count",
         "worst_fold_return", "median_fold_return", "best_fold_return"]
 
@@ -44,6 +48,9 @@ Item {
     }
     function signalDelayLabel(key) {
         return root.i18n.catalog["signal_delay." + key] || root.i18n.catalog["columns." + key] || root.uncertaintyLabel(key)
+    }
+    function predictionLabel(key) {
+        return root.i18n.catalog["prediction_quality." + key] || root.i18n.catalog["columns." + key] || key
     }
     function signalDelayStatus(check) {
         return root.signalDelayLabel(check.status)
@@ -85,6 +92,8 @@ Item {
         view.currentIndex = root.controller.viewIndex
         gridCost.currentIndex = root.controller.gridCostIndex
         gridMetric.currentIndex = root.controller.gridMetricIndex
+        if (predictionSource.text !== root.controller.predictionQualitySource)
+            predictionSource.text = root.controller.predictionQualitySource
         equity.requestPaint()
     }
     Component.onCompleted: sync()
@@ -187,6 +196,14 @@ Item {
         fileMode: FileDialog.OpenFile
         nameFilters: ["JSON files (*.json)"]
         onAccepted: root.controller.replayExperiment(selectedFile.toString())
+    }
+    FileDialog {
+        id: predictionSourceDialog
+        objectName: "intradayPredictionSourceDialog"
+        title: root.i18n.catalog["prediction_quality.locate"]
+        fileMode: FileDialog.OpenFile
+        nameFilters: ["JSON files (*.json)"]
+        onAccepted: root.controller.setPredictionQualitySource(selectedFile.toString())
     }
     ScrollView {
         id: scroll
@@ -371,7 +388,8 @@ Item {
                         "quant.performance", "quant.performance_exit", "quant.performance_entry", "quant.performance_day",
                         "quant.risk_summary", "quant.risk_drawdowns", "quant.risk_distributions", "quant.risk_concentration",
                         "quant.risk_folds", "quant.parameter_grid", "quant.return_uncertainty",
-                        "quant.family_bounds", "quant.sequential_selection", "quant.signal_delay"].map(key => root.i18n.catalog[key])
+                        "quant.family_bounds", "quant.sequential_selection", "quant.signal_delay",
+                        "quant.prediction_quality"].map(key => root.i18n.catalog[key])
                     onSelected: root.controller.selectView(currentIndex)
                     onModelChanged: currentIndex = selectedView
                 }
@@ -1101,6 +1119,164 @@ Item {
                     font.pixelSize: Theme.PixelTheme.fontSm
                 }
             }
+            ColumnLayout {
+                objectName: "intradayPredictionQualityPanel"
+                Layout.fillWidth: true
+                visible: view.selectedView === 21
+                spacing: Theme.PixelTheme.spacingSm
+                Label {
+                    objectName: "intradayPredictionQualityNotice"
+                    Layout.fillWidth: true
+                    text: root.i18n.catalog[root.controller.predictionQualityAvailable
+                        ? "prediction_quality.note" : "prediction_quality.saved_only"]
+                    wrapMode: Text.WordWrap
+                    color: Theme.PixelTheme.inkMuted
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    Components.LabeledTextField {
+                        id: predictionSource
+                        objectName: "intradayPredictionSource"
+                        Layout.fillWidth: true
+                        Layout.maximumWidth: Infinity
+                        label: root.i18n.catalog["prediction_quality.source"]
+                        placeholderText: root.i18n.catalog["prediction_quality.recorded_source"]
+                        onEdited: value => root.controller.setPredictionQualitySource(value)
+                    }
+                    Components.PixelButton {
+                        objectName: "intradayPredictionLocateButton"
+                        Layout.alignment: Qt.AlignBottom
+                        text: root.i18n.catalog["prediction_quality.locate"]
+                        onClicked: predictionSourceDialog.open()
+                    }
+                    Components.PixelButton {
+                        objectName: "intradayPredictionAnalyzeButton"
+                        Layout.alignment: Qt.AlignBottom
+                        text: root.i18n.catalog[root.predictionData.sample ? "prediction_quality.refresh" : "prediction_quality.analyze"]
+                        variant: "primary"
+                        enabled: root.controller.predictionQualityAvailable && !root.controller.busy && !operationRuntime.busy
+                        onClicked: root.controller.analyzePredictionQuality()
+                    }
+                }
+                Label {
+                    Layout.fillWidth: true
+                    text: root.i18n.catalog["prediction_quality.source_note"]
+                    wrapMode: Text.WordWrap
+                    color: Theme.PixelTheme.inkMuted
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                }
+                Label {
+                    objectName: "intradayPredictionPending"
+                    Layout.fillWidth: true
+                    visible: root.controller.predictionQualityPending
+                    text: root.i18n.catalog["prediction_quality.calculating"]
+                    wrapMode: Text.WordWrap
+                    color: Theme.PixelTheme.ink
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                }
+                Label {
+                    objectName: "intradayPredictionError"
+                    Layout.fillWidth: true
+                    visible: root.controller.predictionQualityError.length > 0
+                    text: root.controller.predictionQualityError + "\n" + root.i18n.catalog["prediction_quality.retry_note"]
+                    textFormat: Text.PlainText
+                    wrapMode: Text.WrapAnywhere
+                    color: Theme.PixelTheme.ink
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                }
+                Label {
+                    objectName: "intradayPredictionCompletedSource"
+                    Layout.fillWidth: true
+                    visible: !!root.predictionData.sample
+                    text: !root.predictionData.sample ? "" : root.i18n.catalog["prediction_quality.completed_source"]
+                        + ": " + root.controller.predictionQualityCompletedSource.data_path
+                        + "\n" + root.predictionData.strategy.name + " · "
+                        + root.i18n.catalog["prediction_quality.cost_index"] + " " + root.predictionData.cost_index
+                        + " · " + root.i18n.catalog["prediction_quality.candidate_index"] + " " + root.predictionData.candidate_index
+                    textFormat: Text.PlainText
+                    wrapMode: Text.WrapAnywhere
+                    color: Theme.PixelTheme.inkMuted
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                }
+                Label {
+                    objectName: "intradayPredictionDraftChanged"
+                    Layout.fillWidth: true
+                    visible: root.controller.predictionQualityDraftChanged
+                    text: root.i18n.catalog["prediction_quality.draft_changed"]
+                    wrapMode: Text.WordWrap
+                    color: Theme.PixelTheme.ink
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                }
+                Label {
+                    objectName: "intradayPredictionCoverage"
+                    Layout.fillWidth: true
+                    visible: !!root.predictionData.sample
+                    text: {
+                        const sample = root.predictionData.sample
+                        if (!sample) return ""
+                        return root.i18n.catalog["prediction_quality.reconstructed"] + "\n"
+                            + root.i18n.catalog["prediction_quality.ready"] + ": " + sample.prediction_count
+                            + " · " + root.i18n.catalog["prediction_quality.complete"] + ": " + sample.complete_target_count
+                            + " · " + root.i18n.catalog["prediction_quality.incomplete"] + ": " + sample.incomplete_target_count
+                            + " · " + root.i18n.catalog["prediction_quality.scored_days"] + ": " + sample.scored_day_count
+                            + " / " + sample.evaluated_day_count
+                            + " · " + root.i18n.catalog["prediction_quality.folds"] + ": " + sample.fold_count
+                    }
+                    textFormat: Text.PlainText
+                    wrapMode: Text.WordWrap
+                    color: Theme.PixelTheme.ink
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    visible: !!root.predictionData.sample
+                    Components.LabeledComboBox {
+                        objectName: "intradayPredictionView"
+                        Layout.fillWidth: true
+                        label: root.i18n.catalog["prediction_quality.view"]
+                        model: ["pooled", "fold", "predictions"].map(key => root.predictionLabel(key))
+                        currentIndex: root.controller.predictionQualityViewIndex
+                        onModelChanged: currentIndex = Qt.binding(() => root.controller.predictionQualityViewIndex)
+                        onSelected: root.controller.selectPredictionQualityView(currentIndex)
+                    }
+                    Components.LabeledComboBox {
+                        objectName: "intradayPredictionFold"
+                        Layout.fillWidth: true
+                        visible: root.controller.predictionQualityViewIndex === 1
+                        label: root.i18n.catalog["prediction_quality.fold"]
+                        model: (root.predictionData.folds || []).map(fold => fold.fold_index + " · "
+                            + fold.validation_days[0] + " → " + fold.validation_days[fold.validation_days.length - 1])
+                        currentIndex: root.controller.predictionQualityFoldIndex
+                        onModelChanged: currentIndex = Qt.binding(() => root.controller.predictionQualityFoldIndex)
+                        onSelected: root.controller.selectPredictionQualityFold(currentIndex)
+                    }
+                }
+                Label {
+                    objectName: "intradayPredictionFoldCoverage"
+                    Layout.fillWidth: true
+                    visible: root.controller.predictionQualityViewIndex === 1 && !!root.predictionFold.sample
+                    text: !root.predictionFold.sample ? "" : root.i18n.catalog["prediction_quality.training_count"]
+                        + ": " + root.predictionFold.training_count
+                        + " · " + root.i18n.catalog["prediction_quality.ready"] + ": " + root.predictionFold.sample.prediction_count
+                        + " · " + root.i18n.catalog["prediction_quality.complete"] + ": " + root.predictionFold.sample.complete_target_count
+                        + "\n" + root.i18n.catalog["prediction_quality.training_boundary"] + ": " + root.predictionFold.training_boundary
+                    textFormat: Text.PlainText
+                    wrapMode: Text.WordWrap
+                    color: Theme.PixelTheme.inkMuted
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                }
+                Label {
+                    objectName: "intradayPredictionViewNote"
+                    Layout.fillWidth: true
+                    visible: !!root.predictionData.sample
+                    text: root.i18n.catalog["prediction_quality."
+                        + ["pooled", "fold", "predictions"][root.controller.predictionQualityViewIndex] + "_note"]
+                    wrapMode: Text.WordWrap
+                    color: Theme.PixelTheme.inkMuted
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                }
+            }
             Components.DataTable {
                 objectName: "intradayResearchTable"
                 visible: view.selectedView !== 16
@@ -1111,6 +1287,7 @@ Item {
                 tableModel: root.controller.tableModel
                 i18n: root.i18n
                 cellFormatter: function(value) {
+                    if (view.selectedView === 21) return root.predictionLabel(value)
                     if (view.selectedView === 20) return root.signalDelayLabel(value)
                     if (view.selectedView === 19) return root.sequentialLabel(value)
                     if (view.selectedView === 18) return root.familyLabel(value)
@@ -1120,6 +1297,85 @@ Item {
                 }
                 onPreviousRequested: root.controller.changePage(-1)
                 onNextRequested: root.controller.changePage(1)
+            }
+            Components.LabeledComboBox {
+                objectName: "intradayPredictionRowPicker"
+                visible: view.selectedView === 21 && root.controller.predictionQualityViewIndex === 2 && model.length > 0
+                Layout.fillWidth: true
+                Layout.maximumWidth: Infinity
+                label: root.i18n.catalog["prediction_quality.row_picker"]
+                model: root.controller.predictionQualityRowNames
+                currentIndex: root.controller.predictionQualityRowIndex
+                onModelChanged: currentIndex = Qt.binding(() => root.controller.predictionQualityRowIndex)
+                onSelected: root.controller.selectPredictionQualityRow(currentIndex)
+            }
+            Label {
+                objectName: "intradayPredictionRowDetails"
+                visible: view.selectedView === 21 && root.controller.predictionQualityViewIndex === 2
+                    && !!root.predictionRow.observation_key
+                Layout.fillWidth: true
+                text: {
+                    const row = root.predictionRow
+                    if (!row.observation_key) return ""
+                    return root.predictionLabel("row_number") + ": " + row.row_number + " / " + row.prediction_count
+                        + "\n" + root.predictionLabel("trading_day") + ": " + row.trading_day
+                        + " · " + root.predictionLabel("slot") + ": " + row.slot
+                        + "\n" + root.predictionLabel("prediction_time") + ": " + row.decision_time
+                        + "\n" + root.predictionLabel("row_return_unit")
+                        + "\n" + ["RIDGE", "ZERO", "TRAIN_MEAN"].map(key => root.predictionLabel(key)
+                            + ": " + String(row.scores[key])).join("\n")
+                        + "\n" + root.predictionLabel("row_target") + ": " + (row.target_value == null ? "—" : String(row.target_value))
+                        + "\n" + root.predictionLabel("prediction_target_status") + ": " + root.predictionLabel(row.target_status)
+                            + " (" + row.target_status + ")"
+                        + "\n" + root.predictionLabel("unavailable_reason") + ": " + (row.target_reason == null ? "—"
+                            : root.predictionLabel(row.target_reason) + " (" + row.target_reason + ")")
+                        + "\n" + root.predictionLabel("prediction_target_end") + ": " + (row.actual_label_end_time || "—")
+                        + "\n" + root.predictionLabel("prediction_observation_key") + ": " + row.observation_key
+                        + "\n" + root.predictionLabel("fold_index") + ": " + row.fold_index
+                            + " · " + root.predictionLabel("fold_id") + ": " + row.fold_id
+                        + "\n" + root.predictionLabel("model_id") + ": " + row.model_id
+                }
+                textFormat: Text.PlainText
+                wrapMode: Text.WrapAnywhere
+                color: Theme.PixelTheme.inkMuted
+                font.pixelSize: Theme.PixelTheme.fontSm
+            }
+            Components.PixelButton {
+                objectName: "intradayPredictionDetailsButton"
+                visible: view.selectedView === 21 && !!root.predictionData.sample
+                text: root.i18n.catalog["prediction_quality.details"]
+                onClicked: root.showPredictionDetails = !root.showPredictionDetails
+            }
+            Label {
+                objectName: "intradayPredictionDetails"
+                visible: view.selectedView === 21 && root.showPredictionDetails && !!root.predictionData.sample
+                Layout.fillWidth: true
+                text: {
+                    const data = root.predictionData
+                    if (!data.sample) return ""
+                    return root.controller.predictionQualityCompletedSource.experiment_path + "\n"
+                        + ["prediction_quality_id", "version", "experiment_id", "data_id", "research_id", "candidate_id"]
+                            .map(key => root.predictionLabel(key) + ": " + data[key]).join("\n")
+                        + "\n" + root.predictionLabel("features") + ": " + data.feature_fields.join(", ")
+                        + " · " + root.predictionLabel("horizon") + ": " + data.target_horizon_bars
+                        + "\n" + root.predictionLabel("recorded_locator") + ": " + data.source_locator.recorded
+                        + "\n" + root.predictionLabel("used_locator") + ": " + data.source_locator.used
+                        + "\n" + root.predictionLabel("evidence") + ": " + JSON.stringify(data.evidence)
+                        + "\n" + root.predictionLabel("method") + ": " + JSON.stringify(data.method)
+                        + "\n" + root.predictionLabel("fold_ids") + ": " + data.folds.map(fold => fold.fold_index
+                            + " · " + fold.fold_id + " · " + fold.model_id).join("\n")
+                        + "\n" + root.predictionLabel("metric_details") + " · "
+                        + (root.controller.predictionQualityViewIndex === 1 ? root.predictionLabel("fold")
+                            + " " + root.controller.predictionQualityFoldIndex : root.predictionLabel("pooled")) + ":\n"
+                        + root.controller.predictionQualityMetricDetails.map(row => root.predictionLabel(row.forecast)
+                            + " · " + root.predictionLabel(row.metric) + ": " + row.value
+                            + " (" + root.predictionLabel(row.unit) + ")"
+                            + (row.reason ? " · " + root.predictionLabel(row.reason) : "")).join("\n")
+                }
+                textFormat: Text.PlainText
+                wrapMode: Text.WrapAnywhere
+                color: Theme.PixelTheme.inkMuted
+                font.pixelSize: Theme.PixelTheme.fontSm
             }
             Components.LabeledComboBox {
                 objectName: "intradaySignalDelaySignalPicker"

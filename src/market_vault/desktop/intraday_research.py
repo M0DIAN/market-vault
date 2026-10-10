@@ -296,6 +296,25 @@ def signal_delay_table(result, index, delay_index, account_index):
         risk_value(row["equity"]), risk_value(row["drawdown"], "RATIO")) for row in execution["ledger"])
 
 
+def prediction_quality_table(result, index, fold_index):
+    """Display the reconstructed forecasts without inventing trading metrics."""
+    if index < 2:
+        forecasts = result["forecasts"] if index == 0 else result["folds"][fold_index]["forecasts"]
+        columns = ("prediction_forecast", "metric", "value", "unit", "unavailable_reason")
+        return columns, tuple((forecast["forecast"], name, risk_value(metric["value"], metric["unit"]),
+            metric["unit"], metric["unavailable_reason"] or "")
+            for forecast in forecasts for name, metric in forecast["metrics"].items())
+    folds = {fold["fold_id"]: fold["fold_index"] for fold in result["folds"]}
+    columns = ("fold_index", "trading_day", "prediction_time", "prediction_ridge", "prediction_zero",
+               "prediction_train_mean", "prediction_target", "prediction_target_status", "unavailable_reason",
+               "prediction_target_end", "prediction_observation_key")
+    return columns, tuple((str(folds[row["fold_id"]]), row["trading_day"],
+        datetime.fromisoformat(row["decision_time"]).astimezone(timezone.utc).time().isoformat(),
+        *(risk_value(row["scores"][name], "RATIO") for name in ("RIDGE", "ZERO", "TRAIN_MEAN")),
+        risk_value(row["target_value"], "RATIO"), row["target_status"], row["target_reason"] or "",
+        row["actual_label_end_time"] or "—", row["observation_key"]) for row in result["predictions"])
+
+
 class IntradayResearchController(PageController):
     changed = Signal()
 
@@ -343,6 +362,15 @@ class IntradayResearchController(PageController):
         self._signal_delay_scenario = 0
         self._signal_delay_account = 0
         self._signal_delay_signal = 0
+        self._prediction_quality_report = None
+        self._prediction_quality_error = ""
+        self._prediction_quality_pending = None
+        self._prediction_quality_source = ""
+        self._prediction_quality_completed_source = {}
+        self._prediction_quality_revision = 0
+        self._prediction_quality_view = 0
+        self._prediction_quality_fold = 0
+        self._prediction_quality_row = 0
         self._grid_snapshot = None
         self._grid_report = None
         self._grid_key = None
@@ -358,6 +386,7 @@ class IntradayResearchController(PageController):
         self.operationFailed.connect(self._family_bounds_failed)
         self.operationFailed.connect(self._sequential_failed)
         self.operationFailed.connect(self._signal_delay_failed)
+        self.operationFailed.connect(self._prediction_quality_failed)
         runtime.operationFinished.connect(self._analysis_idle)
 
     def _replay_failed(self):
@@ -494,6 +523,99 @@ class IntradayResearchController(PageController):
     @Property(int, notify=changed)
     def viewIndex(self):
         return self._view_index
+
+    @Property(bool, notify=changed)
+    def predictionQualityAvailable(self):
+        return bool(self._content and self._path and self._positions and not self._collection_content
+                    and self._root.get("evaluation_mode") in ("INTRADAY_COMPARISON", "INTRADAY_DIAGNOSTICS")
+                    and self._selected()[1]["strategy"]["kind"] == "RIDGE")
+
+    @Property(str, notify=changed)
+    def predictionQualitySource(self):
+        return self._prediction_quality_source
+
+    @Property(str, notify=changed)
+    def predictionQualityError(self):
+        return self._prediction_quality_error
+
+    @Property(bool, notify=changed)
+    def predictionQualityPending(self):
+        return self._prediction_quality_pending is not None
+
+    @Property(int, notify=changed)
+    def predictionQualityViewIndex(self):
+        return self._prediction_quality_view
+
+    @Property(int, notify=changed)
+    def predictionQualityFoldIndex(self):
+        return self._prediction_quality_fold
+
+    @Property(bool, notify=changed)
+    def predictionQualityDraftChanged(self):
+        return bool(self._prediction_quality_completed_source
+                    and self._prediction_quality_completed_source["draft_locator"] != self._prediction_quality_source)
+
+    @Property("QVariantMap", notify=changed)
+    def predictionQualityCompletedSource(self):
+        return deepcopy(self._prediction_quality_completed_source)
+
+    @Property("QVariantMap", notify=changed)
+    def predictionQualitySummary(self):
+        report = self._prediction_quality_report
+        if report is None:
+            return {}
+        summary = {key: report[key] for key in ("version", "prediction_quality_id", "experiment_id", "data_id",
+            "research_id", "candidate_id", "cost_index", "candidate_index", "strategy", "source_locator", "evidence",
+            "method", "sample")}
+        summary["feature_fields"] = report["context"]["feature_fields"]
+        summary["target_horizon_bars"] = report["context"]["target_horizon_bars"]
+        summary["folds"] = [{key: value for key, value in fold.items() if key != "forecasts"} for fold in report["folds"]]
+        return deepcopy(summary)
+
+    @Property("QVariantList", notify=changed)
+    def predictionQualityMetricDetails(self):
+        if self._prediction_quality_report is None:
+            return []
+        _, rows = prediction_quality_table(self._prediction_quality_report,
+            int(self._prediction_quality_view == 1), self._prediction_quality_fold)
+        return [dict(zip(("forecast", "metric", "value", "unit", "reason"), row, strict=True)) for row in rows]
+
+    @Property("QVariantMap", notify=changed)
+    def predictionQualityFold(self):
+        if self._prediction_quality_report is None:
+            return {}
+        fold = self._prediction_quality_report["folds"][self._prediction_quality_fold]
+        return deepcopy({key: value for key, value in fold.items() if key != "forecasts"})
+
+    def _prediction_quality_page(self):
+        if (self._prediction_quality_report is None or self._view_index != 21
+                or self._prediction_quality_view != 2):
+            return []
+        start = (self._page - 1) * 100
+        return self._prediction_quality_report["predictions"][start:start + 100]
+
+    @Property("QStringList", notify=changed)
+    def predictionQualityRowNames(self):
+        start = (self._page - 1) * 100
+        return [f'{start + i + 1} · {row["trading_day"]} · '
+                f'{datetime.fromisoformat(row["decision_time"]).astimezone(timezone.utc).time().isoformat()}'
+                for i, row in enumerate(self._prediction_quality_page())]
+
+    @Property(int, notify=changed)
+    def predictionQualityRowIndex(self):
+        return self._prediction_quality_row if self._prediction_quality_page() else -1
+
+    @Property("QVariantMap", notify=changed)
+    def predictionQualityRowDetails(self):
+        rows = self._prediction_quality_page()
+        if not rows:
+            return {}
+        row = deepcopy(rows[self._prediction_quality_row])
+        row["row_number"] = (self._page - 1) * 100 + self._prediction_quality_row + 1
+        row["prediction_count"] = self._prediction_quality_report["sample"]["prediction_count"]
+        row["fold_index"] = next(fold["fold_index"] for fold in self._prediction_quality_report["folds"]
+                                 if fold["fold_id"] == row["fold_id"])
+        return row
 
     @Property(bool, notify=changed)
     def uncertaintyAvailable(self):
@@ -765,7 +887,14 @@ class IntradayResearchController(PageController):
         report = self._root["report"]
         group, candidate = self._selected()
         execution = candidate["execution"]
-        if self._view_index == 20:
+        if self._view_index == 21:
+            self._prediction_quality_row = 0
+            if self._prediction_quality_report is not None:
+                self._columns, self._rows = prediction_quality_table(self._prediction_quality_report,
+                    self._prediction_quality_view, self._prediction_quality_fold)
+            else:
+                self._columns, self._rows = (), ()
+        elif self._view_index == 20:
             if self._signal_delay_report is not None:
                 self._columns, self._rows = signal_delay_table(self._signal_delay_report, self._signal_delay_view,
                     self._signal_delay_scenario, self._signal_delay_account)
@@ -846,6 +975,10 @@ class IntradayResearchController(PageController):
         if type(index) is not int or not 0 <= index < len(self._positions):
             return False
         if self._candidate_index != index:
+            self._prediction_quality_report, self._prediction_quality_error = None, ""
+            self._prediction_quality_completed_source = {}
+            self._prediction_quality_fold = 0
+            self._prediction_quality_revision += 1
             self._risk_report = None
             self._uncertainty_report, self._uncertainty_error = None, ""
             self._signal_delay_report, self._signal_delay_error = None, ""
@@ -875,12 +1008,117 @@ class IntradayResearchController(PageController):
 
     @Slot(int, result=bool)
     def selectView(self, index):
-        if type(index) is not int or not 0 <= index <= 20:
+        if type(index) is not int or not 0 <= index <= 21:
             return False
         self._view_index = index
         self._refresh_view()
         self.changed.emit()
         return True
+
+    @Slot(str, result=bool)
+    def setPredictionQualitySource(self, raw_path):
+        if type(raw_path) is not str:
+            return False
+        if raw_path != self._prediction_quality_source:
+            self._prediction_quality_source = raw_path
+            self._prediction_quality_error = ""
+            self._prediction_quality_revision += 1
+            self.changed.emit()
+        return True
+
+    @Slot(int, result=bool)
+    def selectPredictionQualityView(self, index):
+        if type(index) is not int or not 0 <= index <= 2:
+            return False
+        self._prediction_quality_view = index
+        if self._view_index == 21:
+            self._refresh_view()
+        self.changed.emit()
+        return True
+
+    @Slot(int, result=bool)
+    def selectPredictionQualityFold(self, index):
+        if (type(index) is not int or self._prediction_quality_report is None
+                or not 0 <= index < len(self._prediction_quality_report["folds"])):
+            return False
+        self._prediction_quality_fold = index
+        if self._view_index == 21:
+            self._refresh_view()
+        self.changed.emit()
+        return True
+
+    @Slot(int, result=bool)
+    def selectPredictionQualityRow(self, index):
+        if type(index) is not int or not 0 <= index < len(self._prediction_quality_page()):
+            return False
+        self._prediction_quality_row = index
+        self.changed.emit()
+        return True
+
+    def _prediction_quality_selection(self):
+        if not self.predictionQualityAvailable:
+            return None
+        return (self._root["experiment_id"], self._selected()[1]["candidate_id"],
+                *self._positions[self._candidate_index], self._prediction_quality_source,
+                self._prediction_quality_revision)
+
+    @Slot(result=bool)
+    def analyzePredictionQuality(self):
+        """Explicitly reconstruct the captured saved forecast on its Q5 source."""
+        if self.busy or self._runtime.busy:
+            return False
+        try:
+            from .quant_research import _experiment_file_path
+            if not self.predictionQualityAvailable:
+                raise ValueError("Open or save an ordinary DEV Ridge candidate before analyzing prediction quality.")
+            captured = self.selection_source()
+            raw_path = self._prediction_quality_source
+            data_file = _experiment_file_path(raw_path) if raw_path.strip() else None
+        except (OSError, TypeError, ValueError) as exc:
+            self._prediction_quality_error = str(exc)
+            self.changed.emit()
+            return self._reject_input(exc)
+        selection = self._prediction_quality_selection()
+        self._prediction_quality_pending = selection
+        self._prediction_quality_error = ""
+        self.changed.emit()
+
+        def operation(backend):
+            from ..research.intraday_prediction_quality import analyze_intraday_prediction_quality
+            from ..research.strategy_experiment import StrategyExperiment
+            return analyze_intraday_prediction_quality(StrategyExperiment(captured["content"]),
+                cost_index=captured["cost_index"], candidate_index=captured["candidate_index"],
+                intraday_data_file=data_file)
+
+        def apply(report):
+            self._prediction_quality_pending = None
+            if selection != self._prediction_quality_selection():
+                self.changed.emit()
+                return
+            self._prediction_quality_report = report
+            self._prediction_quality_completed_source = {
+                "experiment_path": captured["path"], "draft_locator": raw_path,
+                "data_path": report["source_locator"]["used"],
+                "experiment_id": captured["experiment_id"], "candidate_id": captured["candidate_id"],
+                "cost_index": captured["cost_index"], "candidate_index": captured["candidate_index"],
+            }
+            self._prediction_quality_fold = min(self._prediction_quality_fold, len(report["folds"]) - 1)
+            if self._view_index == 21:
+                self._refresh_view()
+            self.changed.emit()
+
+        accepted = self._submit("intraday_prediction_quality", operation, apply, requires_backend=False)
+        if not accepted:
+            self._prediction_quality_pending = None
+            self.changed.emit()
+        return accepted
+
+    def _prediction_quality_failed(self):
+        selection, self._prediction_quality_pending = self._prediction_quality_pending, None
+        if selection is not None and selection == self._prediction_quality_selection():
+            self._prediction_quality_error = self.error
+        if selection is not None:
+            self.changed.emit()
 
     def _uncertainty_selection(self):
         if not self.uncertaintyAvailable:
@@ -1164,7 +1402,11 @@ class IntradayResearchController(PageController):
         if not 1 <= page <= max(1, (len(self._rows) + 99) // 100):
             return False
         self._page = page
+        if self._view_index == 21 and self._prediction_quality_view == 2:
+            self._prediction_quality_row = 0
         self._set_page()
+        if self._view_index == 21 and self._prediction_quality_view == 2:
+            self.changed.emit()
         return True
 
     def _compile_comparison(self, values):
@@ -1326,6 +1568,11 @@ class IntradayResearchController(PageController):
         from ..strategy_comparison_io import canonical_json
         self._content = canonical_json(root)
         self._root = root
+        self._prediction_quality_report, self._prediction_quality_error = None, ""
+        self._prediction_quality_source = ""
+        self._prediction_quality_completed_source = {}
+        self._prediction_quality_fold = 0
+        self._prediction_quality_revision += 1
         self._risk_report = None
         self._uncertainty_report, self._uncertainty_error = None, ""
         self._family_report, self._family_error = None, ""
