@@ -9,7 +9,7 @@ from .dataset.cli import DatasetCLIError, _coerce_plan_path
 from .research.intraday_data import load_intraday_dataset, parse_json
 from .research.intraday_experiment import create_intraday_experiment
 from .research.intraday_research import (
-    INTRADAY_DIAGNOSTICS_PLAN_VERSION, default_intraday_research_plan, expand_intraday_plan, run_intraday_research,
+    INTRADAY_DIAGNOSTICS_PLAN_VERSIONS, default_intraday_research_plan, expand_intraday_plan, run_intraday_research,
 )
 from .research.strategy_experiment import write_strategy_experiment
 
@@ -41,7 +41,7 @@ def research_intraday_research_main(args, *, command: str) -> int:
                 raise ValueError("--name/--notes require --experiment")
             path = _coerce_plan_path(args.plan)
             plan, _, _ = expand_intraday_plan(parse_json(path.read_bytes()), base=path.parent)
-            if (plan["plan_schema_version"] == INTRADAY_DIAGNOSTICS_PLAN_VERSION) != (command == "research-intraday-diagnose"):
+            if (plan["plan_schema_version"] in INTRADAY_DIAGNOSTICS_PLAN_VERSIONS) != (command == "research-intraday-diagnose"):
                 raise ValueError("command differs from the supplied comparison/diagnostics plan")
             report = run_intraday_research(plan)
             payload = {"report": report}

@@ -142,6 +142,11 @@ quadratic-basis Ridge comparison. These studies strictly reload the matching
 Q5 source and reconstruct the selected historical prediction evidence. They
 use the existing DEV folds and do not grant full Replay or Freeze/TEST proof.
 
+Q24 makes that fixed representation an ordinary, reusable development strategy.
+Its explicit V2 contract and the following selection/TEST tasks are described in
+the [Q24–Q26 ML strategy package](intraday_ml_strategy_next.md). Q23 remains a
+separate forecast-only comparison with its original identity and output.
+
 The Q19 `research-intraday-signal-delay` action re-executes one saved DEV
 candidate and its original benchmark at 0, 1 and 2 additional bars. This
 differs from the existing `entry_delay_minutes` policy, which controls the
@@ -196,6 +201,37 @@ The diagnostics plan contains exactly `plan_schema_version` (value
 `parameter_axes` and `cost_scenarios`. Each cost scenario has `commission_bps`
 and `slippage_bps`. Axis syntax follows the existing Q4 finite diagnostics.
 
+Q24 adds explicit `market-vault-intraday-research-plan-v2` and
+`market-vault-intraday-diagnostics-plan-v2` variants with the same root fields.
+The latter must contain a V2 comparison. V2 additionally admits this exact
+intraday-only strategy descriptor:
+
+```json
+{"kind":"QUADRATIC_RIDGE","name":"Quadratic Ridge","alpha":1,"threshold":0}
+```
+
+Alpha must be positive and finite; threshold must be finite. The common saved
+Feature projection must have 1–6 entries. Original normalized inputs precede
+all degree-two products in fixed `i <= j` order, giving `p + p*(p+1)/2` terms.
+Each fold fits its input means/scales only on its admitted historical rows;
+TRAIN-constant inputs stay zero. The existing Ridge solver then fits and
+records its generated-term normalization, intercept and coefficients on those
+same rows. The model binds both stages, term order, training keys and boundary.
+Q23 and Q24 share this numerical implementation. A decision is long exactly
+when its predicted return is strictly greater than the saved threshold.
+
+Threshold and cost variants share fits; linear and quadratic representations
+have separate cache identities even at the same alpha. Their penalty geometry
+differs, so equal alpha is an explicit comparison setting, not an equivalence
+claim. V2 also permits the existing alpha/threshold diagnostics and named
+execution policies. No model or threshold is selected automatically.
+
+V1 plans retain their original strategy grammar, algorithm bindings and IDs.
+The proposal command and unchanged default desktop candidate list still use
+V1. Choosing Quadratic Ridge in the intraday editor explicitly creates a V2
+plan; loaded V2 plans and continued V2 candidates keep their version. Cross-day
+plans and their shared editor do not admit the new kind.
+
 Wrong command/plan combinations, unsupported fields, duplicate JSON keys,
 nonfinite values and invalid paths fail with a structured FAILED envelope on
 stderr and exit code 1. `--name` or `--notes` requires `--experiment`; metadata
@@ -236,6 +272,19 @@ cryptographic execution proof.
 Save plan instead captures a complete valid normalized configuration before
 its file dialog opens; it does not save unfinished editor text or a result.
 
+V2 comparison/diagnostics use `market-vault-intraday-experiment-v2`,
+`market-vault-intraday-research-result-v2` and research algorithm
+`market-vault-intraday-research-v2`. Quadratic models retain the Q23 numerical
+version `market-vault-intraday-quadratic-ridge-v1` alongside the existing Ridge
+solver binding. V2 Open validates the composite model grammar; full Replay
+reconstructs all source, fits, predictions and account evidence. Existing Saved
+DEV analytics consume the V2 ledger as well. Q21–Q23 still require a selected
+linear Ridge candidate, including one inside a mixed V2 comparison.
+
+Q8 Freeze currently accepts historical V1 DEV experiments only. V2 results show
+an explicit unavailable explanation in the desktop and cannot be frozen until
+the separately delivered Q26 contract adds that support.
+
 ## Desktop workflow and evidence
 
 Use **Quant Research → Intraday → Data**, then **Development research**. Research
@@ -260,6 +309,11 @@ behavior. Save experiment and Replay preserve current drafts; failed operations,
 including a Run whose original locator is unavailable, preserve the draft and
 last result with its page. A failed latest replay cannot retain a previous
 replay-match status.
+
+Quadratic fold models display both `INPUT_TRANSFORM` rows for original Features
+and `GENERATED_TERMS` rows for the Ridge coefficients/scaler, with their complete
+model identity and training cutoff. The strategy editor exposes alpha and
+threshold, the six-Feature bound and the different penalty interpretation.
 
 The focused suite uses real 36-day Canonical input with DST, independently
 calculated Ridge coefficients, means/scales and benchmark cash/risk. It checks

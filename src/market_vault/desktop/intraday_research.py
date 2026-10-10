@@ -977,10 +977,24 @@ class IntradayResearchController(PageController):
                 columns, rows = ("trading_day", "cash_open", "cash_close", "return", "trade_count"), execution["daily"]
             elif self._view_index == 4:
                 columns = ("fold_index", "feature", "alpha", "training_count", "intercept", "coefficient", "mean", "scale")
-                rows = [{"fold_index": i, "feature": feature, "alpha": r["model"]["alpha"], "training_count": len(r["model"]["training_keys"]),
-                         "intercept": r["model"]["intercept"], "coefficient": r["model"]["coefficients"][j],
-                         "mean": r["model"]["means"][j], "scale": r["model"]["scales"][j]}
-                        for i, r in enumerate(candidate["fold_models"]) for j, feature in enumerate(r["model"]["feature_fields"])]
+                quadratic = candidate["strategy"]["kind"] == "QUADRATIC_RIDGE"
+                if quadratic:
+                    columns = ("fold_index", "model_stage", *columns[1:], "model_id", "training_boundary")
+                rows = []
+                for i, record in enumerate(candidate["fold_models"]):
+                    model = record["model"]
+                    common = {"fold_index": i, "alpha": model["alpha"], "training_count": len(model["training_keys"])}
+                    if quadratic:
+                        common.update(model_id=model["model_id"], training_boundary=model["training_boundary"])
+                        rows.extend({**common, "model_stage": "INPUT_TRANSFORM", "feature": feature,
+                            "intercept": "—", "coefficient": "—",
+                            "mean": model["input_transform"]["means"][j], "scale": model["input_transform"]["scales"][j]}
+                            for j, feature in enumerate(model["input_features"]))
+                        model = model["ridge_model"]
+                        common["model_stage"] = "GENERATED_TERMS"
+                    rows.extend({**common, "feature": feature, "intercept": model["intercept"],
+                        "coefficient": model["coefficients"][j], "mean": model["means"][j], "scale": model["scales"][j]}
+                        for j, feature in enumerate(model["feature_fields"]))
             elif self._view_index == 5:
                 columns, rows = ("decision_time", "trading_day", "slot", "score", "target"), candidate["predictions"]
             elif self._view_index == 6:
@@ -1464,13 +1478,20 @@ class IntradayResearchController(PageController):
 
     def _compile_comparison(self, values):
         from .quant_research import _bounded_int, _parse_comparison_strategies
-        from ..research.intraday_research import INTRADAY_RESEARCH_PLAN_VERSION, normalize_intraday_research_plan
+        from ..research.intraday_research import (INTRADAY_RESEARCH_PLAN_VERSION, INTRADAY_RESEARCH_PLAN_V2_VERSION, INTRADAY_RESEARCH_PLAN_VERSIONS,
+                                                normalize_intraday_research_plan)
         from ..research.strategy_config import strategy_plan_fields
-        common = _parse_comparison_strategies(values, values.get("feature_fields", []))
-        plan = {"plan_schema_version": INTRADAY_RESEARCH_PLAN_VERSION,
+        common = _parse_comparison_strategies(values, values.get("feature_fields", []), allow_quadratic=True)
+        strategies = [strategy_plan_fields(s) for s in common["strategies"]]
+        version = values.get("plan_schema_version", INTRADAY_RESEARCH_PLAN_VERSION)
+        if version not in INTRADAY_RESEARCH_PLAN_VERSIONS:
+            raise ValueError("unsupported intraday research plan version")
+        if any(spec["kind"] == "QUADRATIC_RIDGE" for spec in strategies):
+            version = INTRADAY_RESEARCH_PLAN_V2_VERSION
+        plan = {"plan_schema_version": version,
                 "intraday_data_path": values.get("intraday_data_path", self.dataPath),
                 "data_id": values.get("data_id", self._source_id), "feature_fields": list(common["feature_fields"]),
-                "strategies": [strategy_plan_fields(s) for s in common["strategies"]],
+                "strategies": strategies,
                 "split": {key: values.get(key, "") for key in ("train_end_day", "validation_end_day", "test_end_day")},
                 "walk_forward": {key: _bounded_int(values.get(key), key, 1, 2**31 - 1) for key in
                                  ("minimum_train_days", "validation_days", "step_days")},
@@ -1494,7 +1515,8 @@ class IntradayResearchController(PageController):
 
     def _compile_diagnostics(self, values):
         from .quant_research import _finite_float
-        from ..research.intraday_research import INTRADAY_DIAGNOSTICS_PLAN_VERSION, expand_intraday_plan
+        from ..research.intraday_research import (INTRADAY_DIAGNOSTICS_PLAN_VERSION, INTRADAY_DIAGNOSTICS_PLAN_V2_VERSION,
+                                                expand_intraday_plan, is_intraday_plan_v2)
         axes = [{**axis, "values": [_finite_float(v.strip(), "axis value") for v in axis["values"].split(",")]
                  if type(axis["values"]) is str else axis["values"]} for axis in values["parameter_axes"]]
         costs = values["cost_scenarios"]
@@ -1503,15 +1525,18 @@ class IntradayResearchController(PageController):
             if any(len(pair) != 2 for pair in pairs):
                 raise ValueError("Costs use commission/slippage pairs separated by commas.")
             costs = [{"commission_bps": _finite_float(a, "commission"), "slippage_bps": _finite_float(b, "slippage")} for a, b in pairs]
-        plan, _, _ = expand_intraday_plan({"plan_schema_version": INTRADAY_DIAGNOSTICS_PLAN_VERSION,
-            "comparison_plan": self._compile_comparison(values["comparison"]), "strategy_name": values["strategy_name"],
+        comparison = self._compile_comparison(values["comparison"])
+        plan, _, _ = expand_intraday_plan({
+            "plan_schema_version": INTRADAY_DIAGNOSTICS_PLAN_V2_VERSION if is_intraday_plan_v2(comparison) else INTRADAY_DIAGNOSTICS_PLAN_VERSION,
+            "comparison_plan": comparison, "strategy_name": values["strategy_name"],
             "parameter_axes": axes, "cost_scenarios": costs}, recorded=True)
         return plan
 
     def _compile_scenarios(self, values):
         from ..research.intraday_backtest import EXECUTION_FIELDS
         from ..research.intraday_execution_scenarios import (
-            INTRADAY_EXECUTION_SCENARIOS_PLAN_VERSION, normalize_intraday_execution_scenarios_plan,
+            INTRADAY_EXECUTION_SCENARIOS_PLAN_VERSION, INTRADAY_EXECUTION_SCENARIOS_PLAN_V2_VERSION,
+            normalize_intraday_execution_scenarios_plan,
         )
         scenarios = values["execution_scenarios"]
         if type(scenarios) is not list or not scenarios:
@@ -1532,9 +1557,12 @@ class IntradayResearchController(PageController):
             self._compile_comparison({**common, **{key: 0 for key in ("commission_bps", "slippage_bps")
                 if common.get(key) in (None, "")}})
             common.update(normalized_scenarios[0]["execution"])
+        from ..research.intraday_research import is_intraday_plan_v2
+        comparison = self._compile_comparison(common)
         return normalize_intraday_execution_scenarios_plan({
-            "plan_schema_version": INTRADAY_EXECUTION_SCENARIOS_PLAN_VERSION,
-            "comparison_plan": self._compile_comparison(common), "execution_scenarios": normalized_scenarios,
+            "plan_schema_version": (INTRADAY_EXECUTION_SCENARIOS_PLAN_V2_VERSION if is_intraday_plan_v2(comparison)
+                                    else INTRADAY_EXECUTION_SCENARIOS_PLAN_VERSION),
+            "comparison_plan": comparison, "execution_scenarios": normalized_scenarios,
         }, recorded=True)
 
     @Slot(str, "QVariantMap", result=bool)
@@ -1643,11 +1671,11 @@ class IntradayResearchController(PageController):
         self._refresh_view()
 
     def _apply(self, snapshot, *, path="", opened=False):
-        from ..research.intraday_execution_scenarios import INTRADAY_EXECUTION_SCENARIOS_VERSION
+        from ..research.intraday_execution_scenarios import INTRADAY_EXECUTION_SCENARIOS_VERSIONS
         root = snapshot.as_dict()
         proof = "RECORDED" if opened else "COMPUTED"
         self._scenario_index, self._scenario_paths = 0, {}
-        if root["artifact_schema_version"] == INTRADAY_EXECUTION_SCENARIOS_VERSION:
+        if root["artifact_schema_version"] in INTRADAY_EXECUTION_SCENARIOS_VERSIONS:
             self._collection_content, self._collection_root = snapshot.content, root
             self._collection_path, self._collection_proof = path, proof
             self._apply_child(root["report"]["scenarios"][0]["experiment"], proof=proof)
@@ -1753,10 +1781,10 @@ class IntradayResearchController(PageController):
             return self._reject_input(exc)
         def operation(backend):
             from ..research.strategy_experiment import load_strategy_experiment
-            from ..research.intraday_experiment import INTRADAY_EXPERIMENT_VERSION
-            from ..research.intraday_execution_scenarios import INTRADAY_EXECUTION_SCENARIOS_VERSION
+            from ..research.intraday_experiment import INTRADAY_EXPERIMENT_VERSIONS
+            from ..research.intraday_execution_scenarios import INTRADAY_EXECUTION_SCENARIOS_VERSIONS
             snapshot = load_strategy_experiment(path)
-            if snapshot.as_dict()["artifact_schema_version"] not in (INTRADAY_EXPERIMENT_VERSION, INTRADAY_EXECUTION_SCENARIOS_VERSION):
+            if snapshot.as_dict()["artifact_schema_version"] not in (*INTRADAY_EXPERIMENT_VERSIONS, *INTRADAY_EXECUTION_SCENARIOS_VERSIONS):
                 raise ValueError("Select an intraday development experiment or execution scenario collection.")
             return snapshot
         return self._submit("intraday_experiment_open", operation, lambda value: self._apply(value, path=str(path), opened=True), requires_backend=False)

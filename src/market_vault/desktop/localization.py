@@ -837,6 +837,7 @@ EN.update({
     "columns.scale": "Training scale", "columns.validation_days": "Validation dates",
     "columns.benchmark_return": "Daily benchmark return", "columns.observed_max_drawdown": "Observed max drawdown",
     "columns.feature": "Feature", "columns.intercept": "Intercept", "columns.score": "Score", "columns.target": "Target position",
+    "columns.model_stage": "Model stage", "columns.model_id": "Model ID", "columns.training_boundary": "Training cutoff (UTC)",
     "columns.mae": "Target MAE", "columns.rmse": "Target RMSE", "columns.r2": "Target R²",
     "operation.intraday_research": "Intraday development research", "operation.intraday_experiment_save": "Save intraday experiment",
     "operation.intraday_experiment_open": "Open intraday experiment", "operation.intraday_experiment_replay": "Replay intraday experiment",
@@ -858,6 +859,7 @@ ZH_CN.update({
     "columns.scale": "训练尺度", "columns.validation_days": "验证交易日",
     "columns.benchmark_return": "日内基准收益", "columns.observed_max_drawdown": "观察到的最大回撤",
     "columns.feature": "特征", "columns.intercept": "截距", "columns.score": "分值", "columns.target": "目标仓位",
+    "columns.model_stage": "模型阶段", "columns.model_id": "模型 ID", "columns.training_boundary": "训练截止时间（UTC）",
     "columns.mae": "目标 MAE", "columns.rmse": "目标 RMSE", "columns.r2": "目标 R²",
     "operation.intraday_research": "日内开发期研究", "operation.intraday_experiment_save": "保存日内实验",
     "operation.intraday_experiment_open": "打开日内实验", "operation.intraday_experiment_replay": "重放日内实验",
@@ -865,6 +867,9 @@ ZH_CN.update({
 
 EN.update({
     "quant.intraday_final_tab": "Freeze / TEST", "quant.intraday_development_candidate": "Development candidate",
+    "quant.quadratic_ridge": "Quadratic Ridge",
+    "quant.quadratic_ridge_help": "Fixed degree 2 · 1–6 common Features. Both transforms use historical TRAIN only; the same alpha has a different penalty geometry from linear Ridge.",
+    "quant.intraday_freeze_unsupported": "This saved strategy is not yet supported by final TEST. Development research and replay remain available.",
     "quant.intraday_freeze": "Freeze selected", "quant.intraday_frozen": "Frozen",
     "quant.intraday_final_help": "Save the development experiment before freezing. Costs below are commission/slippage. Ridge fits TRAIN + VALIDATION once; rules need no fit. TEST starts with independent capital.",
     "quant.intraday_selection_open": "Open selection", "quant.intraday_selection_save": "Save selection",
@@ -885,6 +890,9 @@ EN.update({
 })
 ZH_CN.update({
     "quant.intraday_final_tab": "冻结 / TEST", "quant.intraday_development_candidate": "开发期候选",
+    "quant.quadratic_ridge": "二次 Ridge",
+    "quant.quadratic_ridge_help": "固定二次表示 · 1–6 个共同特征。两次变换都只使用历史训练数据；相同 alpha 与线性 Ridge 的正则化作用并不等价。",
+    "quant.intraday_freeze_unsupported": "此保存策略尚不支持最终 TEST，可继续进行开发研究和重放核验。",
     "quant.intraday_freeze": "冻结所选候选", "quant.intraday_frozen": "已冻结",
     "quant.intraday_final_help": "冻结前请先保存开发实验。下方成本为手续费/滑点。Ridge 使用 TRAIN + VALIDATION 拟合一次；规则无需拟合。TEST 使用独立初始资金。",
     "quant.intraday_selection_open": "打开冻结记录", "quant.intraday_selection_save": "保存冻结记录",
@@ -1195,6 +1203,7 @@ for key, english, chinese in (
     ("execution", "Execution", "执行"), ("cost", "Cost", "成本"), ("daily_risk", "Daily risk", "日风险"),
     ("benchmark", "Benchmark", "基准"), ("selection", "Selection", "冻结选择"), ("final_test", "Final TEST", "最终 TEST"),
     ("final_context", "Final context", "最终上下文"), ("ridge", "Ridge", "Ridge"), ("composite", "Composite rule", "复合规则"),
+    ("quadratic", "Quadratic Ridge", "二次 Ridge"),
 ):
     EN["comparison.algorithm_versions." + key] = english + " version"
     ZH_CN["comparison.algorithm_versions." + key] = chinese + "版本"

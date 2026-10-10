@@ -40,7 +40,13 @@ class IntradayFinalController(PageController):
 
     @Property(bool, notify=changed)
     def canFreeze(self):
-        return bool(self._research.resultLoaded and self._research.experimentPath)
+        return bool(self._research.resultLoaded and self._research.experimentPath and not self.freezeUnsupported)
+
+    @Property(bool, notify=changed)
+    def freezeUnsupported(self):
+        from ..research.intraday_experiment import INTRADAY_EXPERIMENT_VERSION
+        return bool(self._research.resultLoaded
+                    and self._research._root.get("artifact_schema_version") != INTRADAY_EXPERIMENT_VERSION)
 
     @Property(bool, notify=changed)
     def selectionLoaded(self):
@@ -200,6 +206,8 @@ class IntradayFinalController(PageController):
     @Slot(result=bool)
     def freezeSelected(self):
         try:
+            if self.freezeUnsupported:
+                raise ValueError("This saved strategy is not yet supported by final TEST.")
             captured = self._research.selection_source()
         except (TypeError, ValueError, IndexError) as exc:
             return self._reject_input(exc)

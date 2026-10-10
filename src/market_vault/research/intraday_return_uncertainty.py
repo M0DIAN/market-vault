@@ -11,7 +11,7 @@ import math
 import random
 
 from .intraday_data import digest
-from .intraday_experiment import INTRADAY_EXPERIMENT_VERSION
+from .intraday_experiment import INTRADAY_EXPERIMENT_VERSIONS
 from .intraday_risk_diagnostics import _available, _quantile
 from .intraday_saved_comparison import _basis
 from .strategy_experiment import StrategyExperiment
@@ -185,7 +185,7 @@ def analyze_intraday_return_uncertainty(snapshot: StrategyExperiment, *, cost_in
     _integer(replications, "replications", 1000, 20000)
     _integer(seed, "seed", 0, 2 ** 32 - 1)
     root = snapshot.as_dict()
-    if (root["artifact_schema_version"] != INTRADAY_EXPERIMENT_VERSION
+    if (root["artifact_schema_version"] not in INTRADAY_EXPERIMENT_VERSIONS
             or root["evaluation_mode"] not in ("INTRADAY_COMPARISON", "INTRADAY_DIAGNOSTICS")
             or root["report"]["evaluation_scope"] != "DEVELOPMENT_WALK_FORWARD_ONLY"):
         raise ValueError("return uncertainty requires an ordinary saved Q7 DEV comparison or diagnostics experiment")

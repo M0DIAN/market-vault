@@ -543,7 +543,7 @@ def _comparison_page(rows, *, with_equity=False):
     ) + (("bar_close_max_drawdown",) if with_equity else ()), rows)
 
 
-def _parse_comparison_strategies(values, admitted_features):
+def _parse_comparison_strategies(values, admitted_features, *, allow_quadratic=False):
     from market_vault.research.strategy_config import parse_strategy_specs, strategy_plan_fields
 
     fields = values.get("feature_fields")
@@ -576,7 +576,7 @@ def _parse_comparison_strategies(values, admitted_features):
                 conditions.append(condition)
             item["conditions"] = conditions
         specs.append(item)
-    strategies = parse_strategy_specs(specs)
+    strategies = parse_strategy_specs(specs, allow_quadratic=allow_quadratic)
     for strategy in strategies:
         spec = strategy_plan_fields(strategy)
         rules = ([spec] if spec["kind"] == "FEATURE_RULE" else spec.get("conditions", []))

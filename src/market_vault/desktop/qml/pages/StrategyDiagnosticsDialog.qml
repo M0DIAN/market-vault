@@ -37,7 +37,7 @@ Dialog {
                 options.push({parameter: "condition_threshold", condition_index: i})
         } else {
             options.push({parameter: "threshold"})
-            if (spec.kind === "RIDGE") options.push({parameter: "alpha"})
+            if (spec.kind === "RIDGE" || spec.kind === "QUADRATIC_RIDGE") options.push({parameter: "alpha"})
         }
         return options
     }

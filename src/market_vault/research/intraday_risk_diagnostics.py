@@ -11,7 +11,7 @@ import math
 
 from ..backtest.intraday import INTRADAY_COST_VERSION, INTRADAY_EXECUTION_VERSION
 from .intraday_data import digest
-from .intraday_experiment import INTRADAY_EXPERIMENT_VERSION
+from .intraday_experiment import INTRADAY_EXPERIMENT_VERSIONS
 from .intraday_final_test import INTRADAY_TEST_EXPERIMENT_VERSION
 from .intraday_performance import summarize_intraday_execution
 from .strategy_experiment import StrategyExperiment
@@ -259,7 +259,7 @@ def analyze_intraday_risk_diagnostics(snapshot: StrategyExperiment, *, cost_inde
         raise ValueError("cost_index and candidate_index must be nonnegative integers")
     root = snapshot.as_dict()
     report = root["report"]
-    if root["artifact_schema_version"] == INTRADAY_EXPERIMENT_VERSION:
+    if root["artifact_schema_version"] in INTRADAY_EXPERIMENT_VERSIONS:
         if cost_index >= len(report["groups"]) or candidate_index >= len(report["groups"][cost_index]["results"]):
             raise ValueError("selected cost/candidate index is outside the saved experiment")
         group = report["groups"][cost_index]

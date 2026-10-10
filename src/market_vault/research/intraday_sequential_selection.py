@@ -8,7 +8,7 @@ point-in-time correctness, and not a new execution or global overfitting test.
 from __future__ import annotations
 
 from .intraday_data import digest
-from .intraday_experiment import INTRADAY_EXPERIMENT_VERSION
+from .intraday_experiment import INTRADAY_EXPERIMENT_VERSIONS
 from .intraday_family_bounds import _family_basis
 from .intraday_portfolio import _account_summary
 from .intraday_return_uncertainty import _daily_values, _finite, _integer, _mean, _sample_coverage
@@ -171,7 +171,7 @@ def analyze_intraday_sequential_selection(snapshot: StrategyExperiment, *, cost_
     _integer(cost_index, "cost_index", 0)
     _integer(minimum_history_days, "minimum_history_days", 1)
     root = snapshot.as_dict()
-    if (root["artifact_schema_version"] != INTRADAY_EXPERIMENT_VERSION
+    if (root["artifact_schema_version"] not in INTRADAY_EXPERIMENT_VERSIONS
             or root["evaluation_mode"] not in ("INTRADAY_COMPARISON", "INTRADAY_DIAGNOSTICS")
             or root["report"]["evaluation_scope"] != "DEVELOPMENT_WALK_FORWARD_ONLY"):
         raise ValueError("sequential selection requires an ordinary saved Q7 DEV comparison or diagnostics experiment")

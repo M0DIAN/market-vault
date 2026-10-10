@@ -125,7 +125,7 @@ def analyze_intraday_experiment(snapshot, *, cost_index: int = 0, candidate_inde
         raise ValueError("cost_index and candidate_index must be nonnegative integers")
     root = snapshot.as_dict()
     report = root["report"]
-    if root["artifact_schema_version"] == "market-vault-intraday-experiment-v1":
+    if root["artifact_schema_version"] in ("market-vault-intraday-experiment-v1", "market-vault-intraday-experiment-v2"):
         if cost_index >= len(report["groups"]) or candidate_index >= len(report["groups"][cost_index]["results"]):
             raise ValueError("selected cost/candidate index is outside the saved experiment")
         group = report["groups"][cost_index]

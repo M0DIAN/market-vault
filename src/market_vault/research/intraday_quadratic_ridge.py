@@ -2,69 +2,22 @@
 
 from __future__ import annotations
 
-import math
 from pathlib import Path
 
 from . import intraday_prediction_quality as quality
 from . import intraday_research as research
 from .intraday_data import digest
 from .intraday_feature_ablation import _ERROR_UNITS, _paired_error_changes
-from .ridge_baseline import _column_stats
+from .intraday_models import (
+    INTRADAY_QUADRATIC_RIDGE_VERSION, MAX_QUADRATIC_INPUT_FEATURES as _MAX_INPUT_FEATURES,
+    quadratic_terms as _quadratic_terms, input_values as _input_values,
+    input_stats as _input_stats, expanded_observation as _expanded_observation, fit_quadratic_rows,
+)
 from .strategy_experiment import StrategyExperiment
 
 
-INTRADAY_QUADRATIC_RIDGE_VERSION = "market-vault-intraday-quadratic-ridge-v1"
-_MAX_INPUT_FEATURES = 6
 _FORECAST = "QUADRATIC_RIDGE"
 _FORECASTS = (*quality._FORECASTS, _FORECAST)
-
-
-def _quadratic_terms(features):
-    if not 1 <= len(features) <= _MAX_INPUT_FEATURES:
-        raise ValueError("quadratic Ridge requires 1 to 6 saved Features")
-    return ([{"name": f"z_{index}", "input_indices": [index]} for index in range(len(features))]
-            + [{"name": f"z_{left}*z_{right}", "input_indices": [left, right]}
-               for left in range(len(features)) for right in range(left, len(features))])
-
-
-def _input_values(observation, features):
-    values = tuple(observation["features"][name] for name in features)
-    if not all(math.isfinite(value) for value in values):
-        raise ValueError("quadratic Ridge input Feature is not finite")
-    return values
-
-
-def _input_stats(training_values):
-    means, scales = [], []
-    for column in zip(*training_values, strict=True):
-        # Equal TRAIN inputs are constant even when their rounded arithmetic
-        # mean differs from the input. They must stay zero in VALIDATION too.
-        if all(value == column[0] for value in column):
-            mean, scale = column[0], 0.0
-        else:
-            column_means, column_scales = _column_stats(tuple((value,) for value in column))
-            mean, scale = column_means[0], column_scales[0]
-        means.append(mean)
-        scales.append(scale)
-    return tuple(means), tuple(scales)
-
-
-def _expanded_observation(observation, features, means, scales, terms):
-    values = _input_values(observation, features)
-    normalized = tuple(0.0 if scale == 0 else (value - mean) / scale
-                       for value, mean, scale in zip(values, means, scales, strict=True))
-    if not all(math.isfinite(value) for value in normalized):
-        raise ValueError("quadratic Ridge input normalization is not finite")
-    expanded = {}
-    for term in terms:
-        indices = term["input_indices"]
-        value = normalized[indices[0]]
-        if len(indices) == 2:
-            value *= normalized[indices[1]]
-        if not math.isfinite(value):
-            raise ValueError("quadratic Ridge generated term is not finite")
-        expanded[term["name"]] = 0.0 if value == 0 else value
-    return {**observation, "features": expanded}
 
 
 def _quadratic_predictions(prepared, candidate):
@@ -75,25 +28,9 @@ def _quadratic_predictions(prepared, candidate):
     observations = {row["observation_key"]: row for row in prepared.observations}
     models = []
     for fold, training, scores in zip(prepared.context["folds"], prepared.fold_rows, folds, strict=True):
-        # Only the original admitted, purged TRAIN rows learn this first stage.
-        means, scales = _input_stats(tuple(_input_values(row, features) for row, _ in training))
-        if not all(math.isfinite(value) for value in (*means, *scales)):
-            raise ValueError("quadratic Ridge input normalization is not finite")
-        expanded_training = tuple((_expanded_observation(row, features, means, scales, terms), target)
-                                  for row, target in training)
-        validation = tuple(_expanded_observation(observations[key], features, means, scales, terms)
-                           for key in fold["validation_keys"])
-        # Each representation fits directly: the selected-candidate cache does
-        # not include a projection in its key. The existing fitter supplies the
-        # second TRAIN normalization and the intercept, without a bias column.
-        ridge_model, values = research.fit_ridge_rows(expanded_training, validation,
-            [term["name"] for term in terms], candidate["strategy"]["alpha"], boundary=fold["training_boundary"])
-        model = {"version": INTRADAY_QUADRATIC_RIDGE_VERSION, "kind": "QUADRATIC_BASIS_RIDGE",
-                 "alpha": candidate["strategy"]["alpha"], "input_features": list(features),
-                 "input_transform": {"means": list(means), "scales": list(scales), "constant_policy": "ZERO"},
-                 "terms": terms, "training_keys": list(fold["training_keys"]),
-                 "training_boundary": fold["training_boundary"], "ridge_model": ridge_model}
-        model["model_id"] = digest(model)
+        validation = tuple(observations[key] for key in fold["validation_keys"])
+        model, values = fit_quadratic_rows(training, validation, features,
+            candidate["strategy"]["alpha"], boundary=fold["training_boundary"])
         models.append({"fold_id": fold["fold_id"], "model": model})
         scores["quadratic_model_id"] = model["model_id"]
         for observation, value in zip(validation, values, strict=True):

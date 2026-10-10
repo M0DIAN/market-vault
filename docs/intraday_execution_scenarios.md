@@ -44,6 +44,18 @@ corresponding explicit plan. The benchmark uses that scenario's own windows
 and costs; its maximum hold remains the full session grid, independently of
 the candidate's maximum hold.
 
+[Q24](intraday_development_research.md) adds
+`market-vault-intraday-execution-scenarios-plan-v2` for V2 comparisons, including
+quadratic strategies. Wrapper and embedded comparison versions must agree.
+Representation joins fold and alpha in the fit-cache key, so linear and
+quadratic models cannot collide. The V2 collection and result use
+`market-vault-intraday-execution-scenarios-v2` and
+`market-vault-intraday-execution-scenarios-result-v2`; each child is an ordinary
+`market-vault-intraday-experiment-v2`. Save/Open, exact child export, continuation
+and complete collection Replay support both versions. V1 identities and
+account rules are unchanged. V2 child Freeze/TEST remains unavailable until
+Q26; exporting a child does not change its version or eligibility.
+
 ## Complete collection and ordinary child experiments
 
 The additive `market-vault-intraday-execution-scenarios-v1` artifact uses the

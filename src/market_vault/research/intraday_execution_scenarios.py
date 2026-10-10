@@ -12,22 +12,41 @@ from pathlib import Path
 from . import intraday_research as research
 from .intraday_backtest import execution_views, parse_execution_policy
 from .intraday_data import digest, object_fields
-from .intraday_experiment import INTRADAY_EXPERIMENT_VERSION, _array, _count, _hash, create_intraday_experiment
+from .intraday_experiment import (INTRADAY_EXPERIMENT_VERSION, INTRADAY_EXPERIMENT_V2_VERSION,
+                                  _array, _count, _hash, create_intraday_experiment)
 from .strategy_experiment import StrategyExperiment, canonical_json, environment_versions
 
 
 INTRADAY_EXECUTION_SCENARIOS_VERSION = "market-vault-intraday-execution-scenarios-v1"
 INTRADAY_EXECUTION_SCENARIOS_PLAN_VERSION = "market-vault-intraday-execution-scenarios-plan-v1"
 INTRADAY_EXECUTION_SCENARIOS_RESULT_VERSION = "market-vault-intraday-execution-scenarios-result-v1"
+INTRADAY_EXECUTION_SCENARIOS_V2_VERSION = "market-vault-intraday-execution-scenarios-v2"
+INTRADAY_EXECUTION_SCENARIOS_PLAN_V2_VERSION = "market-vault-intraday-execution-scenarios-plan-v2"
+INTRADAY_EXECUTION_SCENARIOS_RESULT_V2_VERSION = "market-vault-intraday-execution-scenarios-result-v2"
+INTRADAY_EXECUTION_SCENARIOS_VERSIONS = (INTRADAY_EXECUTION_SCENARIOS_VERSION, INTRADAY_EXECUTION_SCENARIOS_V2_VERSION)
+INTRADAY_EXECUTION_SCENARIOS_PLAN_VERSIONS = (INTRADAY_EXECUTION_SCENARIOS_PLAN_VERSION, INTRADAY_EXECUTION_SCENARIOS_PLAN_V2_VERSION)
+
+
+def _version(plan):
+    return (INTRADAY_EXECUTION_SCENARIOS_V2_VERSION if research.is_intraday_plan_v2(plan["comparison_plan"])
+            else INTRADAY_EXECUTION_SCENARIOS_VERSION)
+
+
+def _result_version(plan):
+    return (INTRADAY_EXECUTION_SCENARIOS_RESULT_V2_VERSION if research.is_intraday_plan_v2(plan["comparison_plan"])
+            else INTRADAY_EXECUTION_SCENARIOS_RESULT_VERSION)
 
 
 def normalize_intraday_execution_scenarios_plan(plan: dict, *, base: Path | None = None,
                                                recorded: bool = False) -> dict:
     """Validate every explicit scenario and the 64-evaluation bound before I/O."""
     object_fields(plan, {"plan_schema_version", "comparison_plan", "execution_scenarios"}, "execution-scenarios plan")
-    if plan["plan_schema_version"] != INTRADAY_EXECUTION_SCENARIOS_PLAN_VERSION:
+    if plan["plan_schema_version"] not in INTRADAY_EXECUTION_SCENARIOS_PLAN_VERSIONS:
         raise ValueError("unsupported execution-scenarios plan version")
     comparison = research.normalize_intraday_research_plan(plan["comparison_plan"], base=base, recorded=recorded)
+    if ((plan["plan_schema_version"] == INTRADAY_EXECUTION_SCENARIOS_PLAN_V2_VERSION)
+            != research.is_intraday_plan_v2(comparison)):
+        raise ValueError("execution-scenarios and comparison plan versions must agree")
     scenarios = _array(plan["execution_scenarios"], "execution scenarios")
     if not scenarios or len(scenarios) * len(comparison["strategies"]) > research.MAX_DIAGNOSTIC_EVALUATIONS:
         raise ValueError("explicit execution scenarios require between 1 and 64 strategy evaluations")
@@ -44,7 +63,7 @@ def normalize_intraday_execution_scenarios_plan(plan: dict, *, base: Path | None
         names.add(name)
         policies.add(key)
         result.append({"name": name, "execution": policy})
-    return {"plan_schema_version": INTRADAY_EXECUTION_SCENARIOS_PLAN_VERSION,
+    return {"plan_schema_version": plan["plan_schema_version"],
             "comparison_plan": comparison, "execution_scenarios": result}
 
 
@@ -55,7 +74,7 @@ def _children(plan):
 
 def _versions(plan):
     return {**research.research_algorithm_versions(plan["comparison_plan"]),
-            "execution_scenarios": INTRADAY_EXECUTION_SCENARIOS_VERSION}
+            "execution_scenarios": _version(plan)}
 
 
 def _shared_evidence(child):
@@ -86,6 +105,8 @@ def validate_intraday_execution_scenarios_root(root):
     _hash(root, "experiment_id")
     research._identity(root["dataset_id"], "data_id")
     plan = normalize_intraday_execution_scenarios_plan(root["plan"], recorded=True)
+    if root["artifact_schema_version"] != _version(plan):
+        raise ValueError("execution-scenarios artifact and plan versions must agree")
     if canonical_json(plan) != canonical_json(root["plan"]):
         raise ValueError("saved execution-scenarios plan must be normalized")
     versions = object_fields(root["algorithm_versions"], _versions(plan), "algorithm versions")
@@ -98,7 +119,7 @@ def validate_intraday_execution_scenarios_root(root):
         "data_id", "plan_sha256", "evaluation_count", "scenarios", "scenarios_id"}, "execution-scenarios report")
     _hash(report, "scenarios_id")
     children = _children(plan)
-    if (report["result_schema_version"] != INTRADAY_EXECUTION_SCENARIOS_RESULT_VERSION
+    if (report["result_schema_version"] != _result_version(plan)
             or report["version"] != versions["execution_scenarios"] or report["status"] != "SUCCESS"
             or report["evaluation_scope"] != "DEVELOPMENT_WALK_FORWARD_ONLY"
             or report["data_id"] != root["dataset_id"] or report["data_id"] != plan["comparison_plan"]["data_id"]
@@ -117,7 +138,8 @@ def validate_intraday_execution_scenarios_root(root):
         child = scenario["experiment"]
         # Check the narrow child type before invoking the generic reader: no
         # recursive collections, diagnostics, selection or TEST can be nested.
-        if (type(child) is not dict or child.get("artifact_schema_version") != INTRADAY_EXPERIMENT_VERSION
+        child_version = INTRADAY_EXPERIMENT_V2_VERSION if research.is_intraday_plan_v2(child_plan) else INTRADAY_EXPERIMENT_VERSION
+        if (type(child) is not dict or child.get("artifact_schema_version") != child_version
                 or child.get("evaluation_mode") != "INTRADAY_COMPARISON"):
             raise ValueError("a scenario must contain an ordinary Q7 development comparison")
         StrategyExperiment(canonical_json(child))
@@ -152,8 +174,8 @@ def _evaluate(plan, *, data_file=None, recorded_scenarios=None):
             child["environment"] = metadata["environment"]
             child["experiment_id"] = digest({key: value for key, value in child.items() if key != "experiment_id"})
         scenarios.append({"scenario_index": index, "name": plan["execution_scenarios"][index]["name"], "experiment": child})
-    result = {"result_schema_version": INTRADAY_EXECUTION_SCENARIOS_RESULT_VERSION,
-              "version": INTRADAY_EXECUTION_SCENARIOS_VERSION, "status": "SUCCESS",
+    result = {"result_schema_version": _result_version(plan),
+              "version": _version(plan), "status": "SUCCESS",
               "evaluation_scope": "DEVELOPMENT_WALK_FORWARD_ONLY", "data_id": prepared.data.data_id,
               "plan_sha256": digest(plan), "evaluation_count": len(children) * len(children[0]["strategies"]),
               "scenarios": scenarios}
@@ -168,7 +190,7 @@ def run_intraday_execution_scenarios(plan: dict, *, base: Path | None = None,
     if type(name) is not str or type(notes) is not str:
         raise ValueError("experiment name and notes must be strings")
     report = _evaluate(normalized)
-    root = {"artifact_schema_version": INTRADAY_EXECUTION_SCENARIOS_VERSION,
+    root = {"artifact_schema_version": _version(normalized),
             "evaluation_mode": "INTRADAY_EXECUTION_SCENARIOS", "dataset_id": report["data_id"],
             "plan": normalized, "report": report, "algorithm_versions": _versions(normalized),
             "environment": environment_versions(), "name": name, "notes": notes}
@@ -180,7 +202,7 @@ def _collection_root(snapshot):
     if type(snapshot) is not StrategyExperiment:
         raise ValueError("an immutable StrategyExperiment is required")
     root = snapshot.as_dict()
-    if root["artifact_schema_version"] != INTRADAY_EXECUTION_SCENARIOS_VERSION:
+    if root["artifact_schema_version"] not in INTRADAY_EXECUTION_SCENARIOS_VERSIONS:
         raise ValueError("an intraday execution-scenarios collection is required")
     return root
 

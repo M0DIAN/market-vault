@@ -13,12 +13,12 @@ from ..strategy_comparison_io import canonical_json
 from .intraday_backtest import intraday_data_path
 from .intraday_data import parse_json
 from .intraday_execution_scenarios import (
-    INTRADAY_EXECUTION_SCENARIOS_PLAN_VERSION, normalize_intraday_execution_scenarios_plan,
+    INTRADAY_EXECUTION_SCENARIOS_PLAN_VERSIONS, normalize_intraday_execution_scenarios_plan,
 )
-from .intraday_experiment import INTRADAY_EXPERIMENT_VERSION
+from .intraday_experiment import INTRADAY_EXPERIMENT_VERSIONS
 from .intraday_research import (
-    INTRADAY_DIAGNOSTICS_PLAN_VERSION, INTRADAY_RESEARCH_PLAN_VERSION,
-    _identity, expand_intraday_plan, normalize_intraday_research_plan,
+    INTRADAY_DIAGNOSTICS_PLAN_VERSIONS, INTRADAY_RESEARCH_PLAN_VERSIONS,
+    _identity, expand_intraday_plan, is_intraday_plan_v2, normalize_intraday_research_plan,
 )
 from .strategy_config import parse_strategy_specs, strategy_plan_fields
 from .strategy_experiment import load_strategy_experiment
@@ -26,18 +26,18 @@ from .strategy_experiment import load_strategy_experiment
 
 def _normalized(plan, *, base=None):
     if type(plan) is not dict or plan.get("plan_schema_version") not in (
-        INTRADAY_RESEARCH_PLAN_VERSION, INTRADAY_DIAGNOSTICS_PLAN_VERSION, INTRADAY_EXECUTION_SCENARIOS_PLAN_VERSION,
+        *INTRADAY_RESEARCH_PLAN_VERSIONS, *INTRADAY_DIAGNOSTICS_PLAN_VERSIONS, *INTRADAY_EXECUTION_SCENARIOS_PLAN_VERSIONS,
     ):
         raise ValueError("an existing intraday comparison, diagnostics or execution-scenarios plan is required")
     value = deepcopy(plan)
-    comparison = value if value["plan_schema_version"] == INTRADAY_RESEARCH_PLAN_VERSION else value.get("comparison_plan")
+    comparison = value if value["plan_schema_version"] in INTRADAY_RESEARCH_PLAN_VERSIONS else value.get("comparison_plan")
     if type(comparison) is not dict:
         raise ValueError("a complete comparison plan is required")
     locator = comparison.get("intraday_data_path")
     absolute = type(locator) is str and (Path(locator).is_absolute() or PureWindowsPath(locator).is_absolute())
     if not absolute and base is not None:
         comparison["intraday_data_path"] = str(intraday_data_path(locator, base=base))
-    if value["plan_schema_version"] == INTRADAY_EXECUTION_SCENARIOS_PLAN_VERSION:
+    if value["plan_schema_version"] in INTRADAY_EXECUTION_SCENARIOS_PLAN_VERSIONS:
         return normalize_intraday_execution_scenarios_plan(value, recorded=True)
     return expand_intraday_plan(value, recorded=True)[0]
 
@@ -132,7 +132,7 @@ def extract_intraday_candidate_plan(source_experiment_path: str | Path, *,
         if value is not None:
             _identity(value, label)
     root = load_strategy_experiment(source_experiment_path).as_dict()
-    if (root["artifact_schema_version"] != INTRADAY_EXPERIMENT_VERSION
+    if (root["artifact_schema_version"] not in INTRADAY_EXPERIMENT_VERSIONS
             or root["evaluation_mode"] not in ("INTRADAY_COMPARISON", "INTRADAY_DIAGNOSTICS")
             or root["report"]["evaluation_scope"] != "DEVELOPMENT_WALK_FORWARD_ONLY"):
         raise ValueError("continue requires an ordinary saved Q7 DEV comparison or diagnostics experiment")
@@ -145,6 +145,6 @@ def extract_intraday_candidate_plan(source_experiment_path: str | Path, *,
     if expected_candidate_id is not None and candidate["candidate_id"] != expected_candidate_id:
         raise ValueError("candidate identity differs from the explicitly selected candidate")
     comparison = root["plan"].get("comparison_plan", root["plan"])
-    strategy = strategy_plan_fields(parse_strategy_specs([candidate["strategy"]])[0])
+    strategy = strategy_plan_fields(parse_strategy_specs([candidate["strategy"]], allow_quadratic=is_intraday_plan_v2(comparison))[0])
     return normalize_intraday_research_plan({**comparison, "strategies": [strategy],
                                             "execution": group["execution_policy"]}, recorded=True)

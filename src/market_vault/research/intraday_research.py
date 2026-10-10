@@ -16,6 +16,8 @@ from ..backtest.intraday import INTRADAY_COST_VERSION, INTRADAY_EXECUTION_VERSIO
 from ..backtest.risk import ZERO_VOLATILITY_TOLERANCE
 from .intraday_backtest import execution_views, intraday_data_path, parse_execution_policy, rule_decisions
 from .intraday_data import INTRADAY_DATA_VERSION, digest, load_intraday_dataset, object_fields, positive_int
+from .intraday_models import (INTRADAY_QUADRATIC_RIDGE_VERSION, QuadraticRidgeStrategy,
+                              fit_quadratic_rows, quadratic_terms)
 from .ridge_baseline import RIDGE_BASELINE_VERSION, _fit, _metrics, _predict
 from .strategy_comparison import COMPOSITE_RULE_VERSION, CompositeRuleStrategy, FeatureRuleStrategy, RidgeStrategy
 from .strategy_config import parse_strategy_specs, strategy_plan_fields
@@ -26,11 +28,26 @@ INTRADAY_RESEARCH_VERSION = "market-vault-intraday-research-v1"
 INTRADAY_RESEARCH_PLAN_VERSION = "market-vault-intraday-research-plan-v1"
 INTRADAY_DIAGNOSTICS_PLAN_VERSION = "market-vault-intraday-diagnostics-plan-v1"
 INTRADAY_RESEARCH_RESULT_VERSION = "market-vault-intraday-research-result-v1"
+INTRADAY_RESEARCH_V2_VERSION = "market-vault-intraday-research-v2"
+INTRADAY_RESEARCH_PLAN_V2_VERSION = "market-vault-intraday-research-plan-v2"
+INTRADAY_DIAGNOSTICS_PLAN_V2_VERSION = "market-vault-intraday-diagnostics-plan-v2"
+INTRADAY_RESEARCH_RESULT_V2_VERSION = "market-vault-intraday-research-result-v2"
+INTRADAY_RESEARCH_PLAN_VERSIONS = (INTRADAY_RESEARCH_PLAN_VERSION, INTRADAY_RESEARCH_PLAN_V2_VERSION)
+INTRADAY_DIAGNOSTICS_PLAN_VERSIONS = (INTRADAY_DIAGNOSTICS_PLAN_VERSION, INTRADAY_DIAGNOSTICS_PLAN_V2_VERSION)
 INTRADAY_WALK_FORWARD_VERSION = "market-vault-intraday-walk-forward-v1"
 INTRADAY_DAILY_RISK_VERSION = "market-vault-intraday-daily-risk-v1"
 INTRADAY_BENCHMARK_VERSION = "market-vault-intraday-benchmark-v1"
 BENCHMARK_DEFINITION = {"entry": "FIRST_ELIGIBLE_READY", "exit": "EOD", "max_hold_rule": "FULL_EVALUATED_SESSION_GRID"}
 _PLAN_FIELDS = {"plan_schema_version", "intraday_data_path", "data_id", "feature_fields", "split", "walk_forward", "strategies", "execution"}
+
+
+def is_intraday_plan_v2(plan):
+    return plan["plan_schema_version"] in (INTRADAY_RESEARCH_PLAN_V2_VERSION, INTRADAY_DIAGNOSTICS_PLAN_V2_VERSION)
+
+
+def intraday_strategy_specs(plan):
+    """Only an explicit intraday V2 comparison admits the new learned kind."""
+    return parse_strategy_specs(plan["strategies"], allow_quadratic=is_intraday_plan_v2(plan))
 
 
 def _day(value, label):
@@ -48,14 +65,16 @@ def _identity(value, label):
 def normalize_intraday_research_plan(plan: dict, *, base: Path | None = None, recorded: bool = False) -> dict:
     """Preflight all inputs without source I/O; recorded locators stay portable."""
     object_fields(plan, _PLAN_FIELDS, "intraday research plan")
-    if plan["plan_schema_version"] != INTRADAY_RESEARCH_PLAN_VERSION:
+    if plan["plan_schema_version"] not in INTRADAY_RESEARCH_PLAN_VERSIONS:
         raise ValueError("unsupported intraday research plan version")
     data_id = _identity(plan["data_id"], "data_id")
     fields = plan["feature_fields"]
     if (type(fields) is not list or not fields or any(type(f) is not str or not f or f != f.strip() for f in fields)
             or len(set(fields)) != len(fields)):
         raise ValueError("an explicit unique ordered common Feature projection is required")
-    strategies = parse_strategy_specs(plan["strategies"])
+    strategies = intraday_strategy_specs(plan)
+    if any(type(strategy) is QuadraticRidgeStrategy for strategy in strategies):
+        quadratic_terms(fields)  # Dimension bound before source access or fitting.
     for strategy in strategies:
         rules = ((strategy.rule,) if type(strategy) is FeatureRuleStrategy else
                  strategy.conditions if type(strategy) is CompositeRuleStrategy else ())
@@ -79,7 +98,7 @@ def normalize_intraday_research_plan(plan: dict, *, base: Path | None = None, re
             raise ValueError("a saved intraday locator must not contain dot segments")
     else:
         locator = str(intraday_data_path(locator, base=base))
-    return {"plan_schema_version": INTRADAY_RESEARCH_PLAN_VERSION, "intraday_data_path": locator,
+    return {"plan_schema_version": plan["plan_schema_version"], "intraday_data_path": locator,
             "data_id": data_id, "feature_fields": list(fields), "split": split, "walk_forward": walk,
             "strategies": [strategy_plan_fields(s) for s in strategies], "execution": asdict(policy)}
 
@@ -107,17 +126,19 @@ def default_intraday_research_plan(data, *, commission_bps, slippage_bps) -> dic
 
 def expand_intraday_plan(plan: dict, *, base: Path | None = None, recorded: bool = False):
     """Return the normalized root plan, child comparison plans and axis values."""
-    if type(plan) is dict and plan.get("plan_schema_version") == INTRADAY_RESEARCH_PLAN_VERSION:
+    if type(plan) is dict and plan.get("plan_schema_version") in INTRADAY_RESEARCH_PLAN_VERSIONS:
         normalized = normalize_intraday_research_plan(plan, base=base, recorded=recorded)
         return normalized, (normalized,), tuple(() for _ in normalized["strategies"])
     object_fields(plan, {"plan_schema_version", "comparison_plan", "strategy_name", "parameter_axes", "cost_scenarios"}, "intraday diagnostics plan")
-    if plan["plan_schema_version"] != INTRADAY_DIAGNOSTICS_PLAN_VERSION:
+    if plan["plan_schema_version"] not in INTRADAY_DIAGNOSTICS_PLAN_VERSIONS:
         raise ValueError("unsupported intraday diagnostics plan version")
     comparison = normalize_intraday_research_plan(plan["comparison_plan"], base=base, recorded=recorded)
-    selected = next((s for s in parse_strategy_specs(comparison["strategies"]) if s.name == plan["strategy_name"]), None)
+    if is_intraday_plan_v2(plan) != is_intraday_plan_v2(comparison):
+        raise ValueError("diagnostics and comparison plan versions must agree")
+    selected = next((s for s in intraday_strategy_specs(comparison) if s.name == plan["strategy_name"]), None)
     if selected is None:
         raise ValueError("diagnostics must select a declared strategy by name")
-    axes = normalize_parameter_axes(selected, plan["parameter_axes"])
+    axes = normalize_parameter_axes(selected, plan["parameter_axes"], allow_quadratic=is_intraday_plan_v2(plan))
     costs = plan["cost_scenarios"]
     if type(costs) is not list or not costs:
         raise ValueError("explicit cost scenarios are required")
@@ -135,18 +156,21 @@ def expand_intraday_plan(plan: dict, *, base: Path | None = None, recorded: bool
         seen.add(pair)
         normalized_costs.append(cost)
         children.append({**comparison, "strategies": [strategy_plan_fields(s) for s in variants], "execution": asdict(policy)})
-    return {"plan_schema_version": INTRADAY_DIAGNOSTICS_PLAN_VERSION, "comparison_plan": comparison,
+    return {"plan_schema_version": plan["plan_schema_version"], "comparison_plan": comparison,
             "strategy_name": selected.name, "parameter_axes": axes, "cost_scenarios": normalized_costs}, tuple(children), combinations
 
 
 def research_algorithm_versions(plan: dict) -> dict:
     _, children, _ = expand_intraday_plan(plan, recorded=True)
-    strategies = parse_strategy_specs(children[0]["strategies"])
-    versions = {"data": INTRADAY_DATA_VERSION, "research": INTRADAY_RESEARCH_VERSION,
+    strategies = intraday_strategy_specs(children[0])
+    versions = {"data": INTRADAY_DATA_VERSION,
+                "research": INTRADAY_RESEARCH_V2_VERSION if is_intraday_plan_v2(plan) else INTRADAY_RESEARCH_VERSION,
                 "walk_forward": INTRADAY_WALK_FORWARD_VERSION, "execution": INTRADAY_EXECUTION_VERSION,
                 "cost": INTRADAY_COST_VERSION, "daily_risk": INTRADAY_DAILY_RISK_VERSION, "benchmark": INTRADAY_BENCHMARK_VERSION}
-    if any(type(s) is RidgeStrategy for s in strategies):
+    if any(type(s) in (RidgeStrategy, QuadraticRidgeStrategy) for s in strategies):
         versions["ridge"] = RIDGE_BASELINE_VERSION
+    if any(type(s) is QuadraticRidgeStrategy for s in strategies):
+        versions["quadratic"] = INTRADAY_QUADRATIC_RIDGE_VERSION
     if any(type(s) is CompositeRuleStrategy for s in strategies):
         versions["composite"] = COMPOSITE_RULE_VERSION
     return versions
@@ -255,14 +279,15 @@ def prediction_metrics(predictions: list[dict], report: dict) -> dict:
 
 def candidate_predictions(prepared: _PreparedIntradayResearch, strategy, cache: dict):
     features = prepared.context["feature_fields"]
-    if type(strategy) is not RidgeStrategy:
+    if type(strategy) not in (RidgeStrategy, QuadraticRidgeStrategy):
         return list(rule_decisions(list(prepared.observations), strategy, feature_names=tuple(features))), [], None
     models, predictions = [], []
     for fold, rows in zip(prepared.context["folds"], prepared.fold_rows, strict=True):
         observations = tuple(r for r in prepared.observations if r["trading_day"] in fold["validation_days"])
-        key = (fold["fold_index"], strategy.alpha)
+        key = (fold["fold_index"], type(strategy).__name__, strategy.alpha)
         if key not in cache:
-            cache[key] = fit_ridge_rows(rows, observations, features, strategy.alpha, boundary=fold["training_boundary"])
+            fit = fit_quadratic_rows if type(strategy) is QuadraticRidgeStrategy else fit_ridge_rows
+            cache[key] = fit(rows, observations, features, strategy.alpha, boundary=fold["training_boundary"])
         model, scores = cache[key]
         models.append({"fold_id": fold["fold_id"], "model": model})
         predictions.extend({**{k: row[k] for k in ("observation_key", "trading_day", "slot", "decision_time")},
@@ -319,7 +344,7 @@ def fold_cash_contributions(context: dict, execution: dict) -> list[dict]:
 def _evaluate_intraday_research(normalized: dict, children: tuple[dict, ...], axis_values: tuple,
                                 prepared: _PreparedIntradayResearch, *, fit_cache: dict | None = None) -> dict:
     """Pure evaluation of an already verified context, shared across all costs."""
-    strategies = parse_strategy_specs(children[0]["strategies"])
+    strategies = intraday_strategy_specs(children[0])
     cache = {} if fit_cache is None else fit_cache
     candidates = [candidate_predictions(prepared, strategy, cache) for strategy in strategies]
     days = tuple(prepared.context["evaluated_days"])
@@ -340,7 +365,8 @@ def _evaluate_intraday_research(normalized: dict, children: tuple[dict, ...], ax
             results.append(candidate)
         groups.append({"cost_index": cost_index, "execution_policy": asdict(policy), "results": results,
                        "benchmark": benchmark_execution(prepared.report, days, policy)})
-    result = {"result_schema_version": INTRADAY_RESEARCH_RESULT_VERSION, "version": INTRADAY_RESEARCH_VERSION,
+    result = {"result_schema_version": INTRADAY_RESEARCH_RESULT_V2_VERSION if is_intraday_plan_v2(normalized) else INTRADAY_RESEARCH_RESULT_VERSION,
+              "version": INTRADAY_RESEARCH_V2_VERSION if is_intraday_plan_v2(normalized) else INTRADAY_RESEARCH_VERSION,
               "status": "SUCCESS", "evaluation_scope": "DEVELOPMENT_WALK_FORWARD_ONLY", "data_id": prepared.data.data_id,
               "plan_sha256": digest(normalized), "context": prepared.context, "groups": groups,
               "evaluation_count": len(groups) * len(strategies)}

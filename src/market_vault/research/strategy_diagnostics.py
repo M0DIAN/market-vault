@@ -46,8 +46,10 @@ def _number(value, label):
     return 0.0 if number == 0 else number
 
 
-def normalize_parameter_axes(selected, raw_axes) -> list[dict]:
+def normalize_parameter_axes(selected, raw_axes, *, allow_quadratic: bool = False) -> list[dict]:
     """Shared finite axes, independent of data and execution cost grammar."""
+    from .intraday_models import QuadraticRidgeStrategy
+    learned_types = (RidgeStrategy, QuadraticRidgeStrategy) if allow_quadratic else (RidgeStrategy,)
     raw_axes = _list(raw_axes, "parameter_axes")
     if len(raw_axes) > 2:
         raise ValueError("diagnostics permits at most two parameter axes")
@@ -64,10 +66,10 @@ def normalize_parameter_axes(selected, raw_axes) -> list[dict]:
                     or not 0 <= index < len(selected.conditions)):
                 raise ValueError("condition_threshold requires a valid zero-based composite condition_index")
         elif parameter == "alpha":
-            if type(selected) is not RidgeStrategy:
+            if type(selected) not in learned_types:
                 raise ValueError("alpha axis requires a Ridge strategy")
         elif parameter == "threshold":
-            if type(selected) not in (FeatureRuleStrategy, RidgeStrategy):
+            if type(selected) not in (FeatureRuleStrategy, *learned_types):
                 raise ValueError("threshold axis requires a Feature rule or Ridge strategy")
         else:
             raise ValueError("unsupported diagnostic parameter")

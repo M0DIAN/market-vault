@@ -13,7 +13,7 @@ from pathlib import Path
 from . import intraday_research as research
 from .feature_research import _average_ranks, _pearson
 from .intraday_data import digest
-from .intraday_experiment import INTRADAY_EXPERIMENT_VERSION
+from .intraday_experiment import INTRADAY_EXPERIMENT_VERSIONS
 from .strategy_config import parse_strategy_specs
 from .strategy_experiment import StrategyExperiment, canonical_json
 
@@ -48,7 +48,7 @@ def _prepare_selected_ridge(snapshot, *, cost_index, candidate_index, intraday_d
     if type(snapshot) is not StrategyExperiment:
         raise ValueError("an immutable StrategyExperiment is required")
     root = snapshot.as_dict()
-    if (root["artifact_schema_version"] != INTRADAY_EXPERIMENT_VERSION
+    if (root["artifact_schema_version"] not in INTRADAY_EXPERIMENT_VERSIONS
             or root["evaluation_mode"] not in ("INTRADAY_COMPARISON", "INTRADAY_DIAGNOSTICS")):
         raise ValueError("prediction quality requires an ordinary saved DEV experiment")
     if root["algorithm_versions"] != research.research_algorithm_versions(root["plan"]):

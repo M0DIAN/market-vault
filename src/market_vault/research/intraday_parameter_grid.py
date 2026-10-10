@@ -5,7 +5,7 @@ from __future__ import annotations
 from fractions import Fraction
 
 from .intraday_data import digest
-from .intraday_experiment import INTRADAY_EXPERIMENT_VERSION
+from .intraday_experiment import INTRADAY_EXPERIMENT_VERSIONS
 from .intraday_risk_diagnostics import _available as _risk_available
 from .intraday_saved_comparison import _basis, _metric, _metric_rows, _selected_from_root
 from .strategy_experiment import StrategyExperiment
@@ -73,7 +73,7 @@ def analyze_intraday_parameter_grid(snapshot: StrategyExperiment, *, cost_index:
         raise ValueError("unsupported parameter-grid metric")
     root = snapshot.as_dict()
     report = root["report"]
-    if (root["artifact_schema_version"] != INTRADAY_EXPERIMENT_VERSION
+    if (root["artifact_schema_version"] not in INTRADAY_EXPERIMENT_VERSIONS
             or root["evaluation_mode"] != "INTRADAY_DIAGNOSTICS"
             or report["evaluation_scope"] != "DEVELOPMENT_WALK_FORWARD_ONLY"):
         raise ValueError("parameter grid requires an ordinary saved Q7 DEV INTRADAY_DIAGNOSTICS experiment")
