@@ -48,7 +48,7 @@ def test_new_contract_exact_realized_bindings_and_inventory():
     assert all(b.prospective_transition is None for b in contract.bindings)
     snapshot = gate.load_worktree_snapshot(ROOT)
     assert gate.validate_snapshot(snapshot) == []
-    assert (len(snapshot.contracts), len(snapshot.exemptions), len(snapshot.findings)) == (6, 16, 44)
+    assert (len(snapshot.contracts), len(snapshot.exemptions), len(snapshot.findings)) == (7, 16, 44)
     assert (ROOT / SOURCE_PATH).is_file()
     assert {(f.path, f.symbol, f.signal) for f in snapshot.findings
             if f.path.startswith("src/market_vault/cross_day_dataset/")} == {
