@@ -370,6 +370,7 @@ class IntradayResearchController(PageController):
         self._prediction_quality_revision = 0
         self._prediction_quality_view = 0
         self._prediction_quality_fold = 0
+        self._prediction_quality_row = 0
         self._grid_snapshot = None
         self._grid_report = None
         self._grid_key = None
@@ -585,6 +586,35 @@ class IntradayResearchController(PageController):
             return {}
         fold = self._prediction_quality_report["folds"][self._prediction_quality_fold]
         return deepcopy({key: value for key, value in fold.items() if key != "forecasts"})
+
+    def _prediction_quality_page(self):
+        if (self._prediction_quality_report is None or self._view_index != 21
+                or self._prediction_quality_view != 2):
+            return []
+        start = (self._page - 1) * 100
+        return self._prediction_quality_report["predictions"][start:start + 100]
+
+    @Property("QStringList", notify=changed)
+    def predictionQualityRowNames(self):
+        start = (self._page - 1) * 100
+        return [f'{start + i + 1} · {row["trading_day"]} · '
+                f'{datetime.fromisoformat(row["decision_time"]).astimezone(timezone.utc).time().isoformat()}'
+                for i, row in enumerate(self._prediction_quality_page())]
+
+    @Property(int, notify=changed)
+    def predictionQualityRowIndex(self):
+        return self._prediction_quality_row if self._prediction_quality_page() else -1
+
+    @Property("QVariantMap", notify=changed)
+    def predictionQualityRowDetails(self):
+        rows = self._prediction_quality_page()
+        if not rows:
+            return {}
+        row = deepcopy(rows[self._prediction_quality_row])
+        row["row_number"] = (self._page - 1) * 100 + self._prediction_quality_row + 1
+        row["fold_index"] = next(fold["fold_index"] for fold in self._prediction_quality_report["folds"]
+                                 if fold["fold_id"] == row["fold_id"])
+        return row
 
     @Property(bool, notify=changed)
     def uncertaintyAvailable(self):
@@ -857,6 +887,7 @@ class IntradayResearchController(PageController):
         group, candidate = self._selected()
         execution = candidate["execution"]
         if self._view_index == 21:
+            self._prediction_quality_row = 0
             if self._prediction_quality_report is not None:
                 self._columns, self._rows = prediction_quality_table(self._prediction_quality_report,
                     self._prediction_quality_view, self._prediction_quality_fold)
@@ -1012,6 +1043,14 @@ class IntradayResearchController(PageController):
         self._prediction_quality_fold = index
         if self._view_index == 21:
             self._refresh_view()
+        self.changed.emit()
+        return True
+
+    @Slot(int, result=bool)
+    def selectPredictionQualityRow(self, index):
+        if type(index) is not int or not 0 <= index < len(self._prediction_quality_page()):
+            return False
+        self._prediction_quality_row = index
         self.changed.emit()
         return True
 
@@ -1362,7 +1401,11 @@ class IntradayResearchController(PageController):
         if not 1 <= page <= max(1, (len(self._rows) + 99) // 100):
             return False
         self._page = page
+        if self._view_index == 21 and self._prediction_quality_view == 2:
+            self._prediction_quality_row = 0
         self._set_page()
+        if self._view_index == 21 and self._prediction_quality_view == 2:
+            self.changed.emit()
         return True
 
     def _compile_comparison(self, values):

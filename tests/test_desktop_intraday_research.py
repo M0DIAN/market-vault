@@ -912,12 +912,25 @@ def test_prediction_quality_explicit_saved_ridge_selection_source_units_and_refr
     incomplete = [row for row in controller._rows if row[7] == "INCOMPLETE"]
     assert len(incomplete) == report["sample"]["incomplete_target_count"] > 0
     assert all(row[6] == "—" and row[8] == "SESSION_END" for row in incomplete)
+    assert len(controller.predictionQualityRowNames) == controller.tableModel.rowCount() == 100
+    assert controller.predictionQualityRowIndex == 0 and controller.predictionQualityRowDetails["row_number"] == 1
+    assert controller.selectPredictionQualityRow(99) and not controller.selectPredictionQualityRow(100)
+    detail = controller.predictionQualityRowDetails
+    expected = report["predictions"][99]
+    assert {key: detail[key] for key in expected} == expected
+    detail["scores"]["RIDGE"] = 999
+    assert controller.predictionQualityRowDetails["scores"] == expected["scores"]
     assert controller.changePage(1) and controller.tableModel.page == 2
+    assert controller.predictionQualityRowIndex == 0 and controller.predictionQualityRowDetails["row_number"] == 101
+    assert controller.predictionQualityRowNames[0].startswith("101 · ")
     detached = controller.predictionQualitySummary
     detached["evidence"]["execution_replayed"] = True
     assert not controller.predictionQualitySummary["evidence"]["execution_replayed"]
     assert controller.selectView(0) and controller.selectView(21)
+    assert controller.predictionQualityRowIndex == 0 and controller.predictionQualityRowDetails["row_number"] == 1
     assert controller.selectPredictionQualityView(0) and len(calls) == 1
+    assert controller.predictionQualityRowIndex == -1 and controller.predictionQualityRowDetails == {}
+    assert controller.predictionQualityRowNames == [] and not controller.selectPredictionQualityRow(0)
 
     source = Path(root["plan"]["comparison_plan"]["intraday_data_path"])
     relocated = tmp_path / "relocated-q5.json"
@@ -1123,14 +1136,61 @@ assert 'Training cutoff' in find('intradayPredictionFoldCoverage').property('tex
 choose('intradayPredictionView', 2)
 table = find('intradayResearchTable')
 assert controller.tableModel.totalRows == report['sample']['prediction_count']
+def prediction_detail(expected):
+    label = find('intradayPredictionRowDetails')
+    reveal(label)
+    actual = controller.predictionQualityRowDetails
+    assert {key: actual[key] for key in expected} == expected
+    text = label.property('text')
+    for key in ('observation_key', 'trading_day', 'decision_time', 'fold_id', 'model_id', 'target_status'):
+        assert expected[key] in text, (key, text)
+    fields = dict(line.split(': ', 1) for line in text.splitlines() if ': ' in line)
+    catalog = session.i18n.catalog
+    for forecast in ('RIDGE', 'ZERO', 'TRAIN_MEAN'):
+        assert float(fields[catalog['prediction_quality.' + forecast]]) == expected['scores'][forecast]
+    target = fields[catalog['prediction_quality.row_target']]
+    assert target == '—' if expected['target_value'] is None else float(target) == expected['target_value']
+    assert fields[catalog['columns.prediction_target_end']] == (expected['actual_label_end_time'] or '—')
+    if expected['target_reason']:
+        assert catalog['prediction_quality.' + expected['target_reason']] in text
+        assert expected['target_reason'] in text
+    assert catalog['prediction_quality.row_return_unit'] in text
+    assert label.property('visible') and label.property('truncated') is False
+    flick = find('intradayResearchScroll').property('contentItem')
+    rect = label.mapRectToItem(flick, label.boundingRect())
+    assert rect.top() >= 0 and rect.bottom() <= flick.height(), (rect, flick.height())
+    assert len(controller.predictionQualityRowNames) == controller.tableModel.rowCount() <= controller.tableModel.pageSize
+    assert len(calls) == 1 and controller._prediction_quality_report is report
+    return label
+assert report['predictions'][0]['target_status'] == 'COMPLETE'
+prediction_detail(report['predictions'][0])
+assert window.grabWindow().save(str(root / 'prediction-row-en-complete.png'))
 next_button = next(obj for obj in table.findChildren(QObject) if obj.property('glyph') == 'next'
     and obj.metaObject().indexOfSignal('clicked()') >= 0)
 click_obj(next_button)
 assert controller.tableModel.page == 2
+assert controller.predictionQualityRowIndex == 0
+assert controller.predictionQualityRowDetails['row_number'] == controller.tableModel.pageSize + 1
 assert session.i18n.setLanguage('zh-CN'); app.processEvents()
 assert controller.tableModel.page == 2 and len(calls) == 1
 assert '目标不完整' in find('intradayPredictionViewNote').property('text')
+while controller.tableModel.hasNext:
+    click_obj(next_button)
+assert controller.tableModel.page == controller.tableModel.totalPages
+last = len(controller.predictionQualityRowNames) - 1
+choose('intradayPredictionRowPicker', last)
+assert controller.predictionQualityRowIndex == last
+assert controller.predictionQualityRowDetails['row_number'] == len(report['predictions'])
+assert report['predictions'][-1]['target_reason'] == 'SESSION_END'
+prediction_detail(report['predictions'][-1])
+assert window.grabWindow().save(str(root / 'prediction-row-zh-incomplete.png'))
+assert session.i18n.setLanguage('en'); app.processEvents()
+assert controller.predictionQualityRowIndex == last
+prediction_detail(report['predictions'][-1])
+assert window.grabWindow().save(str(root / 'prediction-row-en-incomplete.png'))
+assert session.i18n.setLanguage('zh-CN'); app.processEvents()
 choose('intradayPredictionView', 0)
+assert controller.predictionQualityRowIndex == -1 and not find('intradayPredictionRowDetails').property('visible')
 reveal(table)
 assert window.grabWindow().save(str(root / 'prediction-quality-zh.png'))
 assert session.i18n.setLanguage('en'); app.processEvents()

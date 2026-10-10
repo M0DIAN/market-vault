@@ -26,6 +26,7 @@ Item {
     property bool showSignalDelayDetails: false
     readonly property var predictionData: root.controller.predictionQualitySummary
     readonly property var predictionFold: root.controller.predictionQualityFold
+    readonly property var predictionRow: root.controller.predictionQualityRowDetails
     property bool showPredictionDetails: false
     readonly property var gridMetrics: ["total_return", "observed_max_drawdown", "trade_count",
         "worst_fold_return", "median_fold_return", "best_fold_return"]
@@ -1296,6 +1297,48 @@ Item {
                 }
                 onPreviousRequested: root.controller.changePage(-1)
                 onNextRequested: root.controller.changePage(1)
+            }
+            Components.LabeledComboBox {
+                objectName: "intradayPredictionRowPicker"
+                visible: view.selectedView === 21 && root.controller.predictionQualityViewIndex === 2 && model.length > 0
+                Layout.fillWidth: true
+                Layout.maximumWidth: Infinity
+                label: root.i18n.catalog["prediction_quality.row_picker"]
+                model: root.controller.predictionQualityRowNames
+                currentIndex: root.controller.predictionQualityRowIndex
+                onModelChanged: currentIndex = Qt.binding(() => root.controller.predictionQualityRowIndex)
+                onSelected: root.controller.selectPredictionQualityRow(currentIndex)
+            }
+            Label {
+                objectName: "intradayPredictionRowDetails"
+                visible: view.selectedView === 21 && root.controller.predictionQualityViewIndex === 2
+                    && !!root.predictionRow.observation_key
+                Layout.fillWidth: true
+                text: {
+                    const row = root.predictionRow
+                    if (!row.observation_key) return ""
+                    return root.predictionLabel("row_number") + ": " + row.row_number + " / " + root.predictionData.sample.prediction_count
+                        + "\n" + root.predictionLabel("trading_day") + ": " + row.trading_day
+                        + " · " + root.predictionLabel("slot") + ": " + row.slot
+                        + "\n" + root.predictionLabel("prediction_time") + ": " + row.decision_time
+                        + "\n" + root.predictionLabel("row_return_unit")
+                        + "\n" + ["RIDGE", "ZERO", "TRAIN_MEAN"].map(key => root.predictionLabel(key)
+                            + ": " + String(row.scores[key])).join("\n")
+                        + "\n" + root.predictionLabel("row_target") + ": " + (row.target_value == null ? "—" : String(row.target_value))
+                        + "\n" + root.predictionLabel("prediction_target_status") + ": " + root.predictionLabel(row.target_status)
+                            + " (" + row.target_status + ")"
+                        + "\n" + root.predictionLabel("unavailable_reason") + ": " + (row.target_reason == null ? "—"
+                            : root.predictionLabel(row.target_reason) + " (" + row.target_reason + ")")
+                        + "\n" + root.predictionLabel("prediction_target_end") + ": " + (row.actual_label_end_time || "—")
+                        + "\n" + root.predictionLabel("prediction_observation_key") + ": " + row.observation_key
+                        + "\n" + root.predictionLabel("fold_index") + ": " + row.fold_index
+                            + " · " + root.predictionLabel("fold_id") + ": " + row.fold_id
+                        + "\n" + root.predictionLabel("model_id") + ": " + row.model_id
+                }
+                textFormat: Text.PlainText
+                wrapMode: Text.WrapAnywhere
+                color: Theme.PixelTheme.inkMuted
+                font.pixelSize: Theme.PixelTheme.fontSm
             }
             Components.PixelButton {
                 objectName: "intradayPredictionDetailsButton"
