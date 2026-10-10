@@ -99,6 +99,7 @@ QML_PAGES = [
         "IntradayInnerSelectionPanel.qml",
         "IntradayTrainingHistoryPanel.qml",
         "IntradayThresholdSelectionPanel.qml",
+        "IntradayMLDiagnosticsPanel.qml",
         "RunsPage.qml",
         "StorageCleanupPage.qml",
         "TradingCalendarPage.qml",
