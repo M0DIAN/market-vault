@@ -43,6 +43,12 @@ Item {
                 variant: root.section === 4 ? "primary" : "secondary"
                 onClicked: root.section = 4
             }
+            Components.PixelButton {
+                objectName: "intradayInnerTab"
+                text: root.i18n.catalog["inner.tab"]
+                variant: root.section === 5 ? "primary" : "secondary"
+                onClicked: root.section = 5
+            }
         }
         StackLayout {
             Layout.fillWidth: true
@@ -53,6 +59,7 @@ Item {
             IntradayComparisonPanel { controller: root.controller.intradayResearchController; i18n: root.i18n }
             IntradayFinalPanel { controller: root.controller.intradayFinalController; i18n: root.i18n }
             IntradaySavedComparisonPanel { controller: root.controller.intradaySavedComparisonController; i18n: root.i18n }
+            IntradayInnerSelectionPanel { controller: root.controller.intradayInnerSelectionController; i18n: root.i18n }
         }
     }
 }

@@ -75,8 +75,9 @@ authorization. Release, deployment and live trading are not part of this work.
 The Q24 implementation uses the explicit V2 plan/artifact and desktop contracts
 documented in [development research](intraday_development_research.md),
 [plan reuse](intraday_plan_reuse.md) and
-[execution scenarios](intraday_execution_scenarios.md). Q25 and Q26 below remain
-separate subsequent deliveries; Q24 does not enable new-ML Freeze/TEST.
+[execution scenarios](intraday_execution_scenarios.md). Q25 is documented in
+[bounded inner selection](intraday_inner_selection.md); Q26 remains a separate
+subsequent delivery. Q24 and Q25 do not enable new-ML Freeze/TEST.
 
 ### Goal and technical approach
 
@@ -121,6 +122,10 @@ execution assumptions and automatic Freeze/TEST. Q25 and Q26 add their own
 explicit capabilities after this task is integrated.
 
 ## Q25 — bounded inner chronological model selection
+
+The implemented API/CLI, native workflow, independent artifact, embedded source
+and complete replay contract are documented in
+[bounded inner ML selection](intraday_inner_selection.md).
 
 ### Goal and technical approach
 

@@ -147,6 +147,11 @@ Its explicit V2 contract and the following selection/TEST tasks are described in
 the [Q24–Q26 ML strategy package](intraday_ml_strategy_next.md). Q23 remains a
 separate forecast-only comparison with its original identity and output.
 
+[Q25 bounded inner ML selection](intraday_inner_selection.md) selects the fixed
+six-member linear/quadratic family inside each original outer TRAIN history,
+then evaluates its selected refit on the unchanged outer sample. It saves an
+independent replayable study and a final DEV recipe; it does not enable TEST.
+
 The Q19 `research-intraday-signal-delay` action re-executes one saved DEV
 candidate and its original benchmark at 0, 1 and 2 additional bars. This
 differs from the existing `entry_delay_minutes` policy, which controls the
