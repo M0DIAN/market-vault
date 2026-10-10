@@ -253,7 +253,7 @@ def test_native_inner_qml_source_evidence_save_replay_stale_and_recovery(inner_c
     script = r'''
 import sys, time, json, threading
 from pathlib import Path
-from PySide6.QtCore import QObject, QUrl, Qt, QEvent
+from PySide6.QtCore import QObject, QUrl, Qt, QEvent, QPointF
 from PySide6.QtGui import QGuiApplication, QKeyEvent
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuickControls2 import QQuickStyle
@@ -404,6 +404,50 @@ assert window.grabWindow().save(str(root / 'q25-native-stale.png'))
 choose('intradayInnerCandidate', 3)
 click('intradayInnerRunButton'); complete()
 assert not controller.notice and controller.proof == 'COMPUTED'
+# At the supported compact window, scroll the actual panel and click its
+# previously unreachable pagination rather than assigning contentY or page.
+window.setWidth(1024); window.setHeight(600); QTest.qWait(100)
+choose('intradayInnerView', 0)
+scroll = find('intradayInnerScroll')
+flick = scroll.property('contentItem')
+assert flick.property('contentHeight') > scroll.property('availableHeight')
+def scroll_panel(delta):
+    bar = find('intradayInnerScrollBar')
+    thumb = bar.property('contentItem')
+    start = thumb.mapToScene(thumb.boundingRect().center()).toPoint()
+    end = bar.mapToScene(QPointF(bar.width() / 2, bar.height() - 2 if delta < 0 else 2)).toPoint()
+    assert bar.property('visible') and bar.property('size') < 1
+    assert bar.height() >= scroll.height() - 1
+    QTest.mousePress(window, Qt.LeftButton, Qt.NoModifier, start)
+    QTest.mouseMove(window, end, 50)
+    QTest.mouseRelease(window, Qt.LeftButton, Qt.NoModifier, end)
+    QTest.qWait(50)
+scroll_panel(-1200)
+assert flick.property('contentY') > 0
+assert window.grabWindow().save(str(root / 'q25-native-compact-overview.png'))
+scroll_panel(1200)
+assert flick.property('contentY') == 0
+choose('intradayInnerView', 2)
+scroll_panel(-1200)
+table = find('intradayInnerTable')
+pagination = nested(table, 'PixelPagination')
+next_button = next(c for c in pagination.findChildren(QObject) if c.property('glyph') == 'next')
+previous_button = next(c for c in pagination.findChildren(QObject) if c.property('glyph') == 'previous')
+def click_visible_button(button):
+    point = button.mapToScene(button.boundingRect().center()).toPoint()
+    bottom = button.mapToScene(QPointF(button.width(), button.height())).y()
+    viewport = find('adaptiveWorkspaceViewport')
+    visible_bottom = viewport.mapToScene(QPointF(0, viewport.height())).y()
+    assert 0 <= point.x() < window.width() and bottom <= visible_bottom, (point, bottom, visible_bottom)
+    assert button.property('visible') and button.property('enabled')
+    QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier, point); QTest.qWait(50)
+assert controller.tableModel.page == 1 and controller.tableModel.totalPages > 1
+first_rows = controller.tableModel.rowCount()
+click_visible_button(next_button)
+assert controller.tableModel.page == 2 and controller.tableModel.rowCount() == first_rows
+assert window.grabWindow().save(str(root / 'q25-native-compact-keys-page2.png'))
+click_visible_button(previous_button)
+assert controller.tableModel.page == 1
 assert source_path.read_bytes() == source_bytes and data_path.read_bytes() == data_bytes and saved.read_bytes() == saved_bytes
 assert session.runtime.backend_if_initialized is None and session.runtime.shutdown()
 engine.deleteLater(); app.processEvents()

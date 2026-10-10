@@ -150,6 +150,8 @@ loaded result. Correct the locator and explicitly replay to obtain
 `REPLAY_MATCH`. Changes to captured source selection or relocation while work
 is running discard the stale completion and leave the displayed completed
 source unchanged. English/Chinese switching preserves the selected view.
+At compact window sizes, scroll within the selection panel to reach the lower
+account views and table pagination; the table retains its own row scrolling.
 
 ## Limits
 
