@@ -183,6 +183,37 @@ reruns and general selection infrastructure. Correlated Features can substitute
 for one another. Removing a duplicate column also changes Ridge's penalty
 geometry at fixed alpha, so exact prediction invariance is not promised.
 
+### API, CLI and desktop
+
+`research.intraday_feature_ablation.analyze_intraday_feature_ablation` accepts
+the same immutable saved experiment, explicit cost/candidate indices and
+optional Q5 relocation as Q21. The derived report uses version
+`market-vault-intraday-feature-ablation-v1` and `feature_ablation_id`.
+It includes the verified full model, each omission's retained projection and
+complete fold models, pooled/fold forecasts and every original READY prediction.
+`DROP_0`, `DROP_1` and subsequent forecast keys follow the saved Feature order;
+they are stable identifiers within this report, not ranks.
+
+```console
+market-vault research-intraday-feature-ablation --experiment /absolute/development.json --cost-index 1 --candidate-index 1
+market-vault research-intraday-feature-ablation --experiment /absolute/development.json --intraday-data /relocated/intraday.json
+```
+
+The settings-independent command emits ASCII-safe JSON. Both pooled and
+original-fold `paired_error_changes` contain each omission's MAE, MSE and RMSE
+differences against full Ridge, using the same COMPLETE pairs and Q21's explicit
+units/unavailable reasons. A pooled RMSE difference is the difference of the two
+pooled RMSEs; it is not an average of fold RMSE differences.
+
+In the existing Development ML view, choose the leave-one-Feature-out method
+and press Analyze/Refresh. The method selector and optional Q5 locator edit the
+next request. An already completed result retains its own method and source
+labels until another explicit analysis completes. Pooled/fold tables show the
+signed error changes; MAE/RMSE differences display in percentage points, while
+MSE differences retain raw squared-return-ratio units. Full row details include
+every omission's prediction, including unscored session tails. Choosing a method,
+page or language does not fit a model or select a winning Feature set.
+
 ## Q23 — bounded quadratic-basis Ridge comparator
 
 ### Goal and method

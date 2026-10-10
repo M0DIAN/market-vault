@@ -299,18 +299,32 @@ def signal_delay_table(result, index, delay_index, account_index):
 def prediction_quality_table(result, index, fold_index):
     """Display the reconstructed forecasts without inventing trading metrics."""
     if index < 2:
-        forecasts = result["forecasts"] if index == 0 else result["folds"][fold_index]["forecasts"]
+        selected = result if index == 0 else result["folds"][fold_index]
         columns = ("prediction_forecast", "metric", "value", "unit", "unavailable_reason")
-        return columns, tuple((forecast["forecast"], name, risk_value(metric["value"], metric["unit"]),
+        rows = [(forecast["forecast"], name, risk_value(metric["value"], metric["unit"]),
             metric["unit"], metric["unavailable_reason"] or "")
-            for forecast in forecasts for name, metric in forecast["metrics"].items())
+            for forecast in selected["forecasts"] for name, metric in forecast["metrics"].items()]
+        for change in selected.get("paired_error_changes", []):
+            for name, metric in change["metrics"].items():
+                value = risk_value(metric["value"], metric["unit"])
+                unit = metric["unit"]
+                if unit == "RATIO":
+                    value, unit = value.removesuffix("%"), "PERCENTAGE_POINTS"
+                if metric["value"] is not None and metric["value"] > 0:
+                    value = "+" + value
+                rows.append((change["forecast"], "delta_" + name, value, unit,
+                             metric["unavailable_reason"] or ""))
+        return columns, tuple(rows)
     folds = {fold["fold_id"]: fold["fold_index"] for fold in result["folds"]}
+    variants = result.get("variants", [])
+    forecasts = ("RIDGE", "ZERO", "TRAIN_MEAN", *(variant["forecast"] for variant in variants))
     columns = ("fold_index", "trading_day", "prediction_time", "prediction_ridge", "prediction_zero",
-               "prediction_train_mean", "prediction_target", "prediction_target_status", "unavailable_reason",
+               "prediction_train_mean", *("prediction_without:" + variant["omitted_feature"] for variant in variants),
+               "prediction_target", "prediction_target_status", "unavailable_reason",
                "prediction_target_end", "prediction_observation_key")
     return columns, tuple((str(folds[row["fold_id"]]), row["trading_day"],
         datetime.fromisoformat(row["decision_time"]).astimezone(timezone.utc).time().isoformat(),
-        *(risk_value(row["scores"][name], "RATIO") for name in ("RIDGE", "ZERO", "TRAIN_MEAN")),
+        *(risk_value(row["scores"][name], "RATIO") for name in forecasts),
         risk_value(row["target_value"], "RATIO"), row["target_status"], row["target_reason"] or "",
         row["actual_label_end_time"] or "—", row["observation_key"]) for row in result["predictions"])
 
@@ -367,6 +381,7 @@ class IntradayResearchController(PageController):
         self._prediction_quality_pending = None
         self._prediction_quality_source = ""
         self._prediction_quality_completed_source = {}
+        self._prediction_quality_method = 0
         self._prediction_quality_revision = 0
         self._prediction_quality_view = 0
         self._prediction_quality_fold = 0
@@ -550,10 +565,15 @@ class IntradayResearchController(PageController):
     def predictionQualityFoldIndex(self):
         return self._prediction_quality_fold
 
+    @Property(int, notify=changed)
+    def predictionQualityMethodIndex(self):
+        return self._prediction_quality_method
+
     @Property(bool, notify=changed)
     def predictionQualityDraftChanged(self):
         return bool(self._prediction_quality_completed_source
-                    and self._prediction_quality_completed_source["draft_locator"] != self._prediction_quality_source)
+                    and (self._prediction_quality_completed_source["draft_locator"] != self._prediction_quality_source
+                         or self._prediction_quality_completed_source["method_index"] != self._prediction_quality_method))
 
     @Property("QVariantMap", notify=changed)
     def predictionQualityCompletedSource(self):
@@ -564,9 +584,14 @@ class IntradayResearchController(PageController):
         report = self._prediction_quality_report
         if report is None:
             return {}
-        summary = {key: report[key] for key in ("version", "prediction_quality_id", "experiment_id", "data_id",
+        identity = "feature_ablation_id" if "feature_ablation_id" in report else "prediction_quality_id"
+        summary = {key: report[key] for key in ("version", identity, "experiment_id", "data_id",
             "research_id", "candidate_id", "cost_index", "candidate_index", "strategy", "source_locator", "evidence",
             "method", "sample")}
+        summary["analysis_id_field"] = identity
+        summary["analysis_method"] = "feature_ablation" if identity == "feature_ablation_id" else "prediction_quality"
+        summary["variants"] = [{key: value for key, value in variant.items() if key != "fold_models"}
+                               for variant in report.get("variants", [])]
         summary["feature_fields"] = report["context"]["feature_fields"]
         summary["target_horizon_bars"] = report["context"]["target_horizon_bars"]
         summary["folds"] = [{key: value for key, value in fold.items() if key != "forecasts"} for fold in report["folds"]]
@@ -613,6 +638,10 @@ class IntradayResearchController(PageController):
         row = deepcopy(rows[self._prediction_quality_row])
         row["row_number"] = (self._page - 1) * 100 + self._prediction_quality_row + 1
         row["prediction_count"] = self._prediction_quality_report["sample"]["prediction_count"]
+        variants = {variant["forecast"]: variant for variant in self._prediction_quality_report.get("variants", [])}
+        row["forecasts"] = [{"forecast": forecast, "score": row["scores"][forecast],
+                             "omitted_feature": variants[forecast]["omitted_feature"] if forecast in variants else None}
+                            for forecast in self._prediction_quality_report["method"]["forecast_order"]]
         row["fold_index"] = next(fold["fold_index"] for fold in self._prediction_quality_report["folds"]
                                  if fold["fold_id"] == row["fold_id"])
         return row
@@ -1027,6 +1056,18 @@ class IntradayResearchController(PageController):
         return True
 
     @Slot(int, result=bool)
+    def selectPredictionQualityMethod(self, index):
+        """Edit the next action's method while retaining the completed report."""
+        if type(index) is not int or not 0 <= index <= 1:
+            return False
+        if index != self._prediction_quality_method:
+            self._prediction_quality_method = index
+            self._prediction_quality_error = ""
+            self._prediction_quality_revision += 1
+            self.changed.emit()
+        return True
+
+    @Slot(int, result=bool)
     def selectPredictionQualityView(self, index):
         if type(index) is not int or not 0 <= index <= 2:
             return False
@@ -1060,7 +1101,7 @@ class IntradayResearchController(PageController):
             return None
         return (self._root["experiment_id"], self._selected()[1]["candidate_id"],
                 *self._positions[self._candidate_index], self._prediction_quality_source,
-                self._prediction_quality_revision)
+                self._prediction_quality_method, self._prediction_quality_revision)
 
     @Slot(result=bool)
     def analyzePredictionQuality(self):
@@ -1073,6 +1114,7 @@ class IntradayResearchController(PageController):
                 raise ValueError("Open or save an ordinary DEV Ridge candidate before analyzing prediction quality.")
             captured = self.selection_source()
             raw_path = self._prediction_quality_source
+            method = self._prediction_quality_method
             data_file = _experiment_file_path(raw_path) if raw_path.strip() else None
         except (OSError, TypeError, ValueError) as exc:
             self._prediction_quality_error = str(exc)
@@ -1084,9 +1126,12 @@ class IntradayResearchController(PageController):
         self.changed.emit()
 
         def operation(backend):
-            from ..research.intraday_prediction_quality import analyze_intraday_prediction_quality
             from ..research.strategy_experiment import StrategyExperiment
-            return analyze_intraday_prediction_quality(StrategyExperiment(captured["content"]),
+            if method == 0:
+                from ..research.intraday_prediction_quality import analyze_intraday_prediction_quality as analyze
+            else:
+                from ..research.intraday_feature_ablation import analyze_intraday_feature_ablation as analyze
+            return analyze(StrategyExperiment(captured["content"]),
                 cost_index=captured["cost_index"], candidate_index=captured["candidate_index"],
                 intraday_data_file=data_file)
 
@@ -1098,6 +1143,7 @@ class IntradayResearchController(PageController):
             self._prediction_quality_report = report
             self._prediction_quality_completed_source = {
                 "experiment_path": captured["path"], "draft_locator": raw_path,
+                "method_index": method,
                 "data_path": report["source_locator"]["used"],
                 "experiment_id": captured["experiment_id"], "candidate_id": captured["candidate_id"],
                 "cost_index": captured["cost_index"], "candidate_index": captured["candidate_index"],
@@ -1107,7 +1153,8 @@ class IntradayResearchController(PageController):
                 self._refresh_view()
             self.changed.emit()
 
-        accepted = self._submit("intraday_prediction_quality", operation, apply, requires_backend=False)
+        operation_name = ("intraday_prediction_quality", "intraday_feature_ablation")[method]
+        accepted = self._submit(operation_name, operation, apply, requires_backend=False)
         if not accepted:
             self._prediction_quality_pending = None
             self.changed.emit()

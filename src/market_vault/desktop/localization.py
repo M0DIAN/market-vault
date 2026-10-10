@@ -1726,6 +1726,13 @@ ZH_CN.update({
 EN.update({
     "quant.prediction_quality": "ML · Prediction quality",
     "prediction_quality.note": "Compare the selected saved Ridge forecast with zero return and each fold's training-target mean. Each analysis verifies the source and reconstructs that candidate's historical fits. These are continuous-return prediction diagnostics.",
+    "prediction_quality.analysis_method": "Analysis method · next action",
+    "prediction_quality.prediction_quality": "Prediction quality",
+    "prediction_quality.feature_ablation": "Leave one Feature out",
+    "prediction_quality.completed_method": "Completed analysis method",
+    "prediction_quality.ablation_note": "Refit the selected saved Ridge once for each omitted Feature, in its original Feature order. Each fit keeps the saved alpha, folds and admitted rows. Analyze explicitly verifies the source and reconstructs the full Ridge first.",
+    "prediction_quality.ablation_result_note": "Error changes are omission minus full Ridge: positive means worse after removal. MAE/RMSE changes use percentage points; MSE changes use raw return ratio². These refits show sensitivity, without ranking, automatic Feature selection or a causal-importance claim. Row and fold model IDs refer to the verified full Ridge baseline; each omission's own model evidence is in the CLI report.",
+    "prediction_quality.ablation_fold_note": "Every forecast uses exactly the same COMPLETE target rows inside this existing chronological fold. Omission refits keep its historical training rows and saved alpha. Positive error change means the omitted Feature's refit performed worse than full Ridge.",
     "prediction_quality.saved_only": "Open or save an ordinary DEV experiment and select a Ridge candidate. For a scenario collection, export its ordinary child and open that file. Rule candidates, unsaved results and TEST are not admitted.",
     "prediction_quality.source": "Intraday source location (optional override)",
     "prediction_quality.recorded_source": "Blank: use the saved experiment's source location",
@@ -1734,7 +1741,7 @@ EN.update({
     "prediction_quality.calculating": "Verifying the captured source and reconstructing the selected Ridge forecasts…",
     "prediction_quality.retry_note": "Check the source error above. If Q5 moved, locate the same data file and analyze again. Its recorded Canonical source files must also remain available.",
     "prediction_quality.completed_source": "Completed analysis source",
-    "prediction_quality.draft_changed": "The source draft has changed. The displayed completed analysis still belongs to the source labelled above; analyze again to use the new draft.",
+    "prediction_quality.draft_changed": "The method or source draft has changed. The displayed completed analysis still belongs to the method and source labelled above; analyze again to use the new draft.",
     "prediction_quality.reconstructed": "Prediction source reconstructed · selected candidate only; not full Q7 Replay or trading performance",
     "prediction_quality.cost_index": "Cost index", "prediction_quality.candidate_index": "Candidate index",
     "prediction_quality.ready": "READY predictions", "prediction_quality.complete": "COMPLETE targets",
@@ -1752,6 +1759,16 @@ EN.update({
     "prediction_quality.training_count": "Training rows", "prediction_quality.training_boundary": "Training cutoff (UTC)",
     "prediction_quality.details": "Show / hide source and method details",
     "prediction_quality.prediction_quality_id": "Prediction report ID", "prediction_quality.version": "Report version",
+    "prediction_quality.feature_ablation_id": "Feature removal report ID",
+    "prediction_quality.without": "Without",
+    "prediction_quality.retained_features": "Retained Features",
+    "prediction_quality.no_retained_features": "None",
+    "prediction_quality.RIDGE_REFIT": "Ridge refit at the saved alpha",
+    "prediction_quality.INTERCEPT_ONLY_TRAIN_MEAN": "Intercept only: each fold's purged training-target mean; no Ridge solver",
+    "prediction_quality.delta_mae": "Δ MAE · omission minus full Ridge",
+    "prediction_quality.delta_mse": "Δ MSE · omission minus full Ridge",
+    "prediction_quality.delta_rmse": "Δ RMSE · omission minus full Ridge",
+    "prediction_quality.PERCENTAGE_POINTS": "Percentage points",
     "prediction_quality.experiment_id": "Source experiment ID", "prediction_quality.data_id": "Data ID",
     "prediction_quality.research_id": "Source research ID", "prediction_quality.candidate_id": "Candidate ID",
     "prediction_quality.features": "Saved Features", "prediction_quality.horizon": "Target horizon (bars)",
@@ -1779,10 +1796,18 @@ EN.update({
     "columns.prediction_target_status": "Target status", "columns.prediction_target_end": "Actual target end (UTC)",
     "columns.prediction_observation_key": "Full observation key",
     "operation.intraday_prediction_quality": "Reconstruct selected Ridge prediction quality",
+    "operation.intraday_feature_ablation": "Refit Ridge after each Feature removal",
 })
 ZH_CN.update({
     "quant.prediction_quality": "ML · 预测质量",
     "prediction_quality.note": "将所选已存 Ridge 预测与零收益、每折训练目标均值比较。每次分析均验证来源，并重新拟合该候选的历史模型。这是连续收益预测诊断。",
+    "prediction_quality.analysis_method": "分析方法 · 用于下一次分析",
+    "prediction_quality.prediction_quality": "预测质量",
+    "prediction_quality.feature_ablation": "逐项移除特征",
+    "prediction_quality.completed_method": "已完成分析的方法",
+    "prediction_quality.ablation_note": "按原始特征顺序，每次移除一个特征并重新拟合所选已存 Ridge；保持原 alpha、折和准入样本。点击分析后，先验证来源并重建完整 Ridge。",
+    "prediction_quality.ablation_result_note": "误差变化为移除后减完整 Ridge：正值表示移除后变差。MAE／RMSE 差使用百分点，MSE 差使用原始收益比值²。此处展示重新拟合后的敏感性，不排序、不自动选择特征，也不表示因果重要性。行和折中的模型 ID 指已验证的完整 Ridge 基线；各移除方案的独立模型证据见 CLI 报告。",
+    "prediction_quality.ablation_fold_note": "在这一既有时序折内，所有预测使用完全相同的 COMPLETE 目标行；逐项移除后的拟合保持原历史训练行及 alpha。误差变化为正表示移除后的预测劣于完整 Ridge。",
     "prediction_quality.saved_only": "请打开或保存普通 DEV 实验并选择 Ridge 候选。场景集合需先导出普通子实验再打开；规则候选、未保存结果及 TEST 不适用。",
     "prediction_quality.source": "日内数据位置（可选迁移路径）",
     "prediction_quality.recorded_source": "留空：使用已存实验记录的数据位置",
@@ -1791,7 +1816,7 @@ ZH_CN.update({
     "prediction_quality.calculating": "正在验证已捕获的数据来源，并重新构建所选 Ridge 预测…",
     "prediction_quality.retry_note": "请检查上方来源错误。若 Q5 已迁移，可定位同一数据文件后重新分析；其记录的 Canonical 源文件也须保持可用。",
     "prediction_quality.completed_source": "已完成分析的数据来源",
-    "prediction_quality.draft_changed": "数据路径草稿已修改。当前展示的已完成分析仍属于上方标注的来源；重新分析后才会使用新草稿。",
+    "prediction_quality.draft_changed": "分析方法或数据路径草稿已修改。当前展示的已完成分析仍属于上方标注的方法及来源；重新分析后才会使用新草稿。",
     "prediction_quality.reconstructed": "预测来源已重建 · 仅验证所选候选，不代表完整 Q7 Replay 或交易绩效",
     "prediction_quality.cost_index": "成本索引", "prediction_quality.candidate_index": "候选索引",
     "prediction_quality.ready": "READY 预测", "prediction_quality.complete": "COMPLETE 目标",
@@ -1809,6 +1834,16 @@ ZH_CN.update({
     "prediction_quality.training_count": "训练行数", "prediction_quality.training_boundary": "训练截止时间（UTC）",
     "prediction_quality.details": "显示／隐藏来源与方法详情",
     "prediction_quality.prediction_quality_id": "预测报告 ID", "prediction_quality.version": "报告版本",
+    "prediction_quality.feature_ablation_id": "特征移除报告 ID",
+    "prediction_quality.without": "移除",
+    "prediction_quality.retained_features": "保留特征",
+    "prediction_quality.no_retained_features": "无",
+    "prediction_quality.RIDGE_REFIT": "按原 alpha 重新拟合 Ridge",
+    "prediction_quality.INTERCEPT_ONLY_TRAIN_MEAN": "仅截距：使用每折排除穿越标签后的训练目标均值，不调用 Ridge 求解器",
+    "prediction_quality.delta_mae": "Δ MAE · 移除后减完整 Ridge",
+    "prediction_quality.delta_mse": "Δ MSE · 移除后减完整 Ridge",
+    "prediction_quality.delta_rmse": "Δ RMSE · 移除后减完整 Ridge",
+    "prediction_quality.PERCENTAGE_POINTS": "百分点",
     "prediction_quality.experiment_id": "来源实验 ID", "prediction_quality.data_id": "数据 ID",
     "prediction_quality.research_id": "来源研究 ID", "prediction_quality.candidate_id": "候选 ID",
     "prediction_quality.features": "已存特征", "prediction_quality.horizon": "目标期限（K 线数）",
@@ -1836,6 +1871,7 @@ ZH_CN.update({
     "columns.prediction_target_status": "目标状态", "columns.prediction_target_end": "实际目标结束（UTC）",
     "columns.prediction_observation_key": "完整观察点标识",
     "operation.intraday_prediction_quality": "重建所选 Ridge 预测质量",
+    "operation.intraday_feature_ablation": "逐项移除特征并重新拟合 Ridge",
 })
 
 TRANSLATIONS: Final[dict[str, dict[str, str]]] = {
@@ -1896,6 +1932,8 @@ class I18nBridge(QObject):
 
     @Slot(str, result=str)
     def columnLabel(self, raw_key: str) -> str:  # noqa: N802
+        if raw_key.startswith("prediction_without:"):
+            return f'{self.translate("prediction_quality.without")} {raw_key.split(":", 1)[1]} (%)'
         key = f"columns.{raw_key}"
         return self.translate(key) if key in EN else raw_key
 

@@ -50,7 +50,13 @@ Item {
         return root.i18n.catalog["signal_delay." + key] || root.i18n.catalog["columns." + key] || root.uncertaintyLabel(key)
     }
     function predictionLabel(key) {
+        const variant = (root.predictionData.variants || []).find(item => item.forecast === key)
+        if (variant) return root.predictionForecastLabel(variant)
         return root.i18n.catalog["prediction_quality." + key] || root.i18n.catalog["columns." + key] || key
+    }
+    function predictionForecastLabel(forecast) {
+        return forecast.omitted_feature ? root.i18n.catalog["prediction_quality.without"] + " " + forecast.omitted_feature
+            : root.i18n.catalog["prediction_quality." + forecast.forecast] || forecast.forecast
     }
     function signalDelayStatus(check) {
         return root.signalDelayLabel(check.status)
@@ -1124,11 +1130,22 @@ Item {
                 Layout.fillWidth: true
                 visible: view.selectedView === 21
                 spacing: Theme.PixelTheme.spacingSm
+                Components.LabeledComboBox {
+                    objectName: "intradayPredictionMethod"
+                    Layout.fillWidth: true
+                    Layout.maximumWidth: Infinity
+                    label: root.i18n.catalog["prediction_quality.analysis_method"]
+                    model: ["prediction_quality", "feature_ablation"].map(key => root.predictionLabel(key))
+                    currentIndex: root.controller.predictionQualityMethodIndex
+                    onModelChanged: currentIndex = Qt.binding(() => root.controller.predictionQualityMethodIndex)
+                    onSelected: root.controller.selectPredictionQualityMethod(currentIndex)
+                }
                 Label {
                     objectName: "intradayPredictionQualityNotice"
                     Layout.fillWidth: true
                     text: root.i18n.catalog[root.controller.predictionQualityAvailable
-                        ? "prediction_quality.note" : "prediction_quality.saved_only"]
+                        ? (root.controller.predictionQualityMethodIndex === 1
+                            ? "prediction_quality.ablation_note" : "prediction_quality.note") : "prediction_quality.saved_only"]
                     wrapMode: Text.WordWrap
                     color: Theme.PixelTheme.inkMuted
                     font.pixelSize: Theme.PixelTheme.fontSm
@@ -1189,8 +1206,10 @@ Item {
                     objectName: "intradayPredictionCompletedSource"
                     Layout.fillWidth: true
                     visible: !!root.predictionData.sample
-                    text: !root.predictionData.sample ? "" : root.i18n.catalog["prediction_quality.completed_source"]
-                        + ": " + root.controller.predictionQualityCompletedSource.data_path
+                    text: !root.predictionData.sample ? "" : root.i18n.catalog["prediction_quality.completed_method"]
+                        + ": " + root.predictionLabel(root.predictionData.analysis_method)
+                        + "\n" + root.i18n.catalog["prediction_quality.completed_source"]
+                        + ": " + root.predictionData.source_locator.used
                         + "\n" + root.predictionData.strategy.name + " · "
                         + root.i18n.catalog["prediction_quality.cost_index"] + " " + root.predictionData.cost_index
                         + " · " + root.i18n.catalog["prediction_quality.candidate_index"] + " " + root.predictionData.candidate_index
@@ -1206,6 +1225,15 @@ Item {
                     text: root.i18n.catalog["prediction_quality.draft_changed"]
                     wrapMode: Text.WordWrap
                     color: Theme.PixelTheme.ink
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                }
+                Label {
+                    objectName: "intradayPredictionAblationNote"
+                    Layout.fillWidth: true
+                    visible: root.predictionData.analysis_method === "feature_ablation"
+                    text: root.i18n.catalog["prediction_quality.ablation_result_note"]
+                    wrapMode: Text.WordWrap
+                    color: Theme.PixelTheme.inkMuted
                     font.pixelSize: Theme.PixelTheme.fontSm
                 }
                 Label {
@@ -1271,7 +1299,9 @@ Item {
                     Layout.fillWidth: true
                     visible: !!root.predictionData.sample
                     text: root.i18n.catalog["prediction_quality."
-                        + ["pooled", "fold", "predictions"][root.controller.predictionQualityViewIndex] + "_note"]
+                        + (root.predictionData.analysis_method === "feature_ablation"
+                            && root.controller.predictionQualityViewIndex === 1 ? "ablation_fold"
+                            : ["pooled", "fold", "predictions"][root.controller.predictionQualityViewIndex]) + "_note"]
                     wrapMode: Text.WordWrap
                     color: Theme.PixelTheme.inkMuted
                     font.pixelSize: Theme.PixelTheme.fontSm
@@ -1322,8 +1352,8 @@ Item {
                         + " · " + root.predictionLabel("slot") + ": " + row.slot
                         + "\n" + root.predictionLabel("prediction_time") + ": " + row.decision_time
                         + "\n" + root.predictionLabel("row_return_unit")
-                        + "\n" + ["RIDGE", "ZERO", "TRAIN_MEAN"].map(key => root.predictionLabel(key)
-                            + ": " + String(row.scores[key])).join("\n")
+                        + "\n" + row.forecasts.map(forecast => root.predictionForecastLabel(forecast)
+                            + ": " + String(forecast.score)).join("\n")
                         + "\n" + root.predictionLabel("row_target") + ": " + (row.target_value == null ? "—" : String(row.target_value))
                         + "\n" + root.predictionLabel("prediction_target_status") + ": " + root.predictionLabel(row.target_status)
                             + " (" + row.target_status + ")"
@@ -1354,7 +1384,7 @@ Item {
                     const data = root.predictionData
                     if (!data.sample) return ""
                     return root.controller.predictionQualityCompletedSource.experiment_path + "\n"
-                        + ["prediction_quality_id", "version", "experiment_id", "data_id", "research_id", "candidate_id"]
+                        + [data.analysis_id_field, "version", "experiment_id", "data_id", "research_id", "candidate_id"]
                             .map(key => root.predictionLabel(key) + ": " + data[key]).join("\n")
                         + "\n" + root.predictionLabel("features") + ": " + data.feature_fields.join(", ")
                         + " · " + root.predictionLabel("horizon") + ": " + data.target_horizon_bars
@@ -1362,6 +1392,10 @@ Item {
                         + "\n" + root.predictionLabel("used_locator") + ": " + data.source_locator.used
                         + "\n" + root.predictionLabel("evidence") + ": " + JSON.stringify(data.evidence)
                         + "\n" + root.predictionLabel("method") + ": " + JSON.stringify(data.method)
+                        + (data.variants.length ? "\n" + data.variants.map(variant => root.predictionForecastLabel(variant)
+                            + " · " + root.predictionLabel("retained_features") + ": "
+                            + (variant.retained_features.join(", ") || root.predictionLabel("no_retained_features"))
+                            + " · " + root.predictionLabel(variant.model_kind)).join("\n") : "")
                         + "\n" + root.predictionLabel("fold_ids") + ": " + data.folds.map(fold => fold.fold_index
                             + " · " + fold.fold_id + " · " + fold.model_id).join("\n")
                         + "\n" + root.predictionLabel("metric_details") + " · "
