@@ -1,0 +1,218 @@
+{
+  "schema_version": "market-vault-destructive-operation-v1",
+  "operation_id": "market_bar_atomic_file_publication_v1",
+  "approval": {
+    "status": "APPROVED",
+    "rationale": "Prospective design-only scope for independent review and merge before implementation. The registry status is not a review result or merge authorization; implementation requires this unchanged contract in its exact base."
+  },
+  "identity": {
+    "name": "Market-bar atomic file publication v1",
+    "purpose": "Publish one complete new market-bar Raw/Curated Parquet or recovery lineage JSON without overwriting any destination, and clean only the temporary sibling created by that invocation."
+  },
+  "implementation_bindings": [
+    {
+      "path": "src/market_vault/storage/atomic_file.py",
+      "symbols": [
+        "_write_file_no_replace"
+      ],
+      "role": "MUTATION_OWNER",
+      "surfaces": [
+        {
+          "kind": "destructive_call",
+          "signal": "path.unlink",
+          "expected_count": 1
+        }
+      ],
+      "rationale": "The single unlink occurrence removes only the exact temporary sibling exclusively created and still owned by this invocation, before or after no-replace publication; the final path is never a cleanup target."
+    }
+  ],
+  "authority_boundary": {
+    "initiators": [
+      "ParquetStore.write_raw and ParquetStore.write_curated for one explicit market-bar snapshot path",
+      "The bounded offline Raw replay service holding a named modern terminal source manifest with snapshot_binding_mode exactly REGISTERED_PER_SYMBOL, for one immutable lineage record belonging to a fresh recovery run"
+    ],
+    "mutation_owner": "src/market_vault/storage/atomic_file.py::_write_file_no_replace owns creation, publication and temporary-file cleanup for one invocation.",
+    "forbidden_bypass_layers": [
+      "Callers supply an intended new final path and complete serialization input, never a cleanup path or permission to replace an existing target.",
+      "No overwrite flag, same-content success, os.replace, overwriting rename, delete-then-publish, cross-filesystem fallback, or additional destructive primitive is authorized.",
+      "The helper does not modify Catalog rows, source evidence, existing manifests, existing lineage records, or another invocation's temporary files."
+    ]
+  },
+  "persistent_scope": {
+    "mutated_assets": [
+      "One exclusively created unique temporary sibling whose name does not end in .parquet",
+      "One previously absent final file: a market-bar Raw/Curated path in the existing layout, or a recovery lineage JSON under the configured manifest directory"
+    ],
+    "excluded_assets": [
+      "Every pre-existing target, including identical bytes, corrupt files, directories, links and reparse points",
+      "Old Raw/Curated files, source manifests, old run and pair records, quality evidence, and old recovery records",
+      "Other temporary files, crash residue, quarantine, Canonical/Dataset artifacts, unrelated datasets and persistent cleanup"
+    ]
+  },
+  "state_machine": {
+    "states": ["PREPARED", "COMMITTED", "REFUSED", "FAILED"],
+    "initial_state": "PREPARED",
+    "terminal_states": ["COMMITTED", "REFUSED", "FAILED"],
+    "allowed_transitions": [
+      {
+        "from": "PREPARED",
+        "to": "COMMITTED",
+        "rationale": "The completely serialized, flushed and closed owned temporary file is published by successful same-filesystem os.link(temp, final)."
+      },
+      {
+        "from": "PREPARED",
+        "to": "REFUSED",
+        "rationale": "Any existing destination, including one that appears during publication, is strictly refused without content comparison or mutation."
+      },
+      {
+        "from": "PREPARED",
+        "to": "FAILED",
+        "rationale": "Serialization, flush, path validation or publication failure prevents this invocation from committing a final file."
+      }
+    ],
+    "forbidden_transitions": [
+      {
+        "from": "COMMITTED",
+        "to": "PREPARED",
+        "rationale": "A published final file cannot become writable staging or a rollback target."
+      },
+      {
+        "from": "COMMITTED",
+        "to": "FAILED",
+        "rationale": "A later cleanup or caller error does not undo physical publication; report the actual published state and retain the final file."
+      },
+      {
+        "from": "REFUSED",
+        "to": "COMMITTED",
+        "rationale": "An existing target cannot be accepted, replaced or deleted to complete the refused invocation."
+      }
+    ]
+  },
+  "commit_point": {
+    "durable_authority": "Successful os.link of the complete closed owned temporary file to the exact previously absent sibling final path.",
+    "before_state": "PREPARED",
+    "after_state": "COMMITTED",
+    "success_authoritative_when": "The no-replace primitive has published the complete file. File publication alone is not pair registration, run completion or a filesystem/Catalog transaction."
+  },
+  "crash_semantics": {
+    "pre_commit": [
+      "Partial serialization is confined to the owned temporary name; the final file remains absent unless another invocation publishes it. Crash residue is not consumed by Parquet globs or adopted by later calls."
+    ],
+    "post_commit": [
+      "A complete final file may exist even if the caller did not receive success or temporary cleanup failed. Retain it and any unverified residue; never roll back by deleting the final file.",
+      "Atomic local publication is not a guarantee against storage hardware failure, power loss, or interruption of the separate pair/Catalog steps."
+    ]
+  },
+  "rollback_recovery": {
+    "restorable": [
+      "Handled failure may clean only the exact temporary file created by the current invocation while ownership and its regular non-reparse identity remain established."
+    ],
+    "non_restorable": [
+      "No published file or old Catalog row is restored over, repaired, deleted or replaced. A cleanup failure preserves the final file and does not erase the original failure evidence."
+    ],
+    "interruption_detection": [
+      "Report destination-exists, serialization/publication failure, and published-with-temporary-residue distinctly enough to avoid inferring rollback or successful run completion.",
+      "Raw-only, pair-unregistered or failed Catalog publication may be recovered only from a named modern terminal source manifest with status SUCCESS, PARTIAL or FAILED and snapshot_binding_mode exactly REGISTERED_PER_SYMBOL. Verify its exact Raw paths and consumed hashes, then replay offline into a fresh run. Legacy or unbound manifests, missing terminal evidence and stale lifecycle locks are refused; no old run is promoted or automatically unlocked."
+    ]
+  },
+  "idempotence": {
+    "same_request_retry": [
+      "A new invocation may retry only while the final destination remains absent and must create its own new temporary file; it never adopts previous temporary residue."
+    ],
+    "completed_retry": [
+      "Every existing destination is refused, even when its bytes would equal the requested output. This operation provides no idempotent-success mode."
+    ],
+    "conflicting_retry": [
+      "Changed input at the same target is refused and preserves the existing target. An explicitly requested recovery replay creates a new run and new output paths."
+    ]
+  },
+  "locking_concurrency": {
+    "lock_authority": [
+      "os.link supplies atomic destination exclusion; an existence pre-check is not the no-overwrite guarantee. Temporary ownership comes from exclusive creation."
+    ],
+    "lock_scope": [
+      "The helper owns one temporary file and one intended final path. Service collection and recovery retain the existing market-bar lifecycle lock; no additional lock framework or stale-lock reclamation is introduced."
+    ],
+    "under_lock_revalidation": [
+      "Use existing local path checks for the intended parent, owned temporary object and final target; retain the temporary file's identity and refuse cleanup if its ownership or type is uncertain."
+    ],
+    "concurrent_behavior": [
+      "If another publisher wins the destination race, os.link must refuse and the loser may clean only its own temporary file. Unsupported hard-link capability and other filesystem errors fail without an overwriting fallback."
+    ]
+  },
+  "execution_revalidation": {
+    "identities": [
+      "The exact final path, complete serialized input, exclusively created temporary object and common parent filesystem",
+      "For recovery, the named modern terminal source manifest and exact REGISTERED_PER_SYMBOL binding mode, consumed Raw paths and SHA-256 hashes, compatible request/source-schema facts, and fresh target run identity"
+    ],
+    "drift_behavior": [
+      "Reject relevant symlink/reparse or unverifiable path components before traversal or mutation. Path or temporary ownership drift authorizes neither publication nor cleanup of the uncertain object.",
+      "Recovery validates original Raw request/run metadata before assigning new run metadata; it does not discover substitute source files or change the original evidence."
+    ]
+  },
+  "success_evidence": {
+    "authoritative_evidence": [
+      "A successful no-replace publication of the complete intended file",
+      "Recovery run success additionally requires lineage publication, persisted-pair verification and registration, quality recording, and only then terminal record_run using the existing schemas"
+    ],
+    "non_success_evidence": [
+      "An existing target, partial or orphan temporary file, one-sided pair, unregistered files, or lineage record alone is not successful run completion."
+    ],
+    "integrity_binding": [
+      "Publication links the fully serialized temporary file without reopening the final path for writing. Existing pair verification remains authoritative for Raw/Curated facts.",
+      "One immutable lineage JSON binds the new recovery run to the exact consumed source manifest and Raw hashes; the new run uses its actual recovery ingestion time and leaves old files and Catalog rows unchanged."
+    ]
+  },
+  "path_safety": {
+    "mutates_paths": true,
+    "windows_reparse_policy": "FAIL_CLOSED_FILE_ATTRIBUTE_REPARSE_POINT",
+    "unverifiable_path_policy": "FAIL_CLOSED"
+  },
+  "stale_plan_ui": {
+    "invalidation_triggers": {
+      "applicable": false,
+      "rationale": "This internal file primitive introduces no persistent UI plan or preview."
+    },
+    "confirmation_invalidation": {
+      "applicable": false,
+      "rationale": "No overwrite or user-data deletion confirmation is exposed."
+    },
+    "execution_policy": [
+      "A recovery API/CLI invocation explicitly names source evidence and creates a new run; it does not grant authority over old files, old Catalog rows or stale locks."
+    ]
+  },
+  "physical_atomicity": {
+    "lifecycle_unit": [
+      "One complete local file published from an owned temporary sibling"
+    ],
+    "partial_mutation": [
+      "Only the temporary name may expose an incomplete write; the final name appears after complete serialization. Raw, Curated, lineage and Catalog records remain separate publications."
+    ],
+    "rollback_expectation": [
+      "Clean only the current owned temporary file when safe. Published files remain immutable, and incomplete pair/run authority remains fail closed."
+    ]
+  },
+  "unsupported_cascade": {
+    "retained_dependents": [
+      "All original snapshots, manifests, Catalog rows, old recovery records, crash residue and unrelated artifacts remain unchanged."
+    ],
+    "refused_cases": [
+      "Every existing destination; unsupported no-replace capability; unsafe or unverifiable relevant paths; uncertain temporary ownership; recovery without modern terminal source evidence bound by snapshot_binding_mode exactly REGISTERED_PER_SYMBOL, including legacy, missing, null or unknown binding modes"
+    ],
+    "unsupported_cases": [
+      "Same-content reuse, old-run repair, legacy migration, automatic source discovery, OpenD access, automatic unlocking, garbage collection, recursive cleanup, schema changes and a distributed transaction framework"
+    ]
+  },
+  "permanent_deletion": {
+    "supported": false,
+    "rationale": "The one unlink removes only invocation-created temporary storage; no published or pre-existing user-data deletion feature is authorized."
+  },
+  "implementation_tests": [
+    "The later implementation inventory has exactly one path.unlink occurrence in src/market_vault/storage/atomic_file.py::_write_file_no_replace, owned by this unchanged BASE contract and no exemption.",
+    "Both market-bar writers refuse repeated targets for identical and different input while preserving the existing files; a publication race also preserves the winner.",
+    "Interrupted serialization leaves no final Parquet and no temporary file visible to Parquet readers; handled cleanup never touches pre-existing temporary files or published outputs.",
+    "Unsupported os.link capability, relevant link/reparse paths and unverifiable temporary ownership fail without overwrite or broader cleanup; a post-publication cleanup error preserves and identifies the committed final file.",
+    "Offline recovery through the bounded API/CLI handles source Raw-only, unregistered-pair and Catalog-publication failures by producing a verified new run while source hashes and old Catalog rows remain unchanged.",
+    "Recovery records exact source lineage before terminal run publication, records quality before record_run, and refuses legacy/unbound manifests, non-REGISTERED_PER_SYMBOL binding modes, missing terminal evidence, Raw identity/schema mismatch and stale locks without touching original data."
+  ]
+}
