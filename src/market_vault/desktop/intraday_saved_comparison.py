@@ -372,13 +372,13 @@ class IntradaySavedComparisonController(PageController):
         def operation(backend):
             from ..research.strategy_experiment import load_strategy_experiment
             from ..research.intraday_experiment import INTRADAY_EXPERIMENT_VERSIONS
-            from ..research.intraday_final_test import INTRADAY_TEST_EXPERIMENT_VERSION
+            from ..research.intraday_final_test import INTRADAY_TEST_EXPERIMENT_VERSIONS
             from ..research.intraday_execution_scenarios import INTRADAY_EXECUTION_SCENARIOS_VERSIONS
             snapshot = load_strategy_experiment(path)
             root = snapshot.as_dict()
             if root["artifact_schema_version"] in INTRADAY_EXECUTION_SCENARIOS_VERSIONS:
                 raise ValueError("Export one scenario as a development experiment before opening it for A/B comparison.")
-            if root["artifact_schema_version"] not in (*INTRADAY_EXPERIMENT_VERSIONS, INTRADAY_TEST_EXPERIMENT_VERSION):
+            if root["artifact_schema_version"] not in (*INTRADAY_EXPERIMENT_VERSIONS, *INTRADAY_TEST_EXPERIMENT_VERSIONS):
                 raise ValueError("Open a saved intraday development, diagnostics or TEST experiment.")
             return {"content": snapshot.content, "root": root, "path": str(path), "cost_index": 0, "candidate_index": 0}
         def apply(value):

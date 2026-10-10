@@ -149,12 +149,13 @@ def _select(window, features, source_strategy):
     evidence["selected_recipe"] = deepcopy(evidence["family_results"][index]["strategy"])
 
 
-def _evaluate(source, plan, *, data_file=None):
+def _evaluate(source, plan, *, data_file=None, data=None):
+    """Internal replay may reuse Q5 already verified by this same final action."""
     group, reference = _selected(source, plan)
     if source["algorithm_versions"] != research.research_algorithm_versions(source["plan"]):
         raise ValueError("recorded source algorithms differ; no Q5 data was read or model fitted")
     normalized, children, axes = research.expand_intraday_plan(source["plan"], recorded=True)
-    prepared = research._prepare_intraday_research(children[0], data_file=data_file or plan["intraday_data_path"])
+    prepared = research._prepare_intraday_research(children[0], data=data, data_file=data_file or plan["intraday_data_path"])
     _equal(prepared.context, source["report"]["context"], "source common context")
     # This single Q5 admission is also used for complete source reconstruction.
     original = research._evaluate_intraday_research(normalized, children, axes, prepared)

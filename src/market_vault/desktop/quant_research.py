@@ -732,10 +732,11 @@ class QuantResearchController(NetworkController):
         self._set_trade_page(1)
         from .intraday_research import IntradayResearchController
         self._intraday_research_controller = IntradayResearchController(runtime, owner=self)
-        from .intraday_final_test import IntradayFinalController
-        self._intraday_final_controller = IntradayFinalController(runtime, research=self._intraday_research_controller, parent=self)
         from .intraday_inner_selection import IntradayInnerSelectionController
         self._intraday_inner_controller = IntradayInnerSelectionController(runtime, research=self._intraday_research_controller, parent=self)
+        from .intraday_final_test import IntradayFinalController
+        self._intraday_final_controller = IntradayFinalController(runtime, research=self._intraday_research_controller,
+                                                                inner=self._intraday_inner_controller, parent=self)
         from .intraday_saved_comparison import IntradaySavedComparisonController
         self._intraday_saved_comparison_controller = IntradaySavedComparisonController(runtime, parent=self)
 

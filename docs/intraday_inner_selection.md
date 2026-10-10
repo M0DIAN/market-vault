@@ -153,11 +153,40 @@ source unchanged. English/Chinese switching preserves the selected view.
 At compact window sizes, scroll within the selection panel to reach the lower
 account views and table pagination; the table retains its own row scrolling.
 
+## Explicit final DEV Freeze and TEST (Q26)
+
+An AVAILABLE saved study can hand its final DEV recipe to the
+[explicit Freeze / TEST workflow](intraday_final_test.md). Freeze reads the
+saved study and verifies its expected root experiment ID, then copies the fixed
+recipe, method and complete six-member final DEV evidence. It does not read Q5,
+fit a model, rerun the family search or change any evaluated outer decision.
+An UNAVAILABLE study has no recipe to freeze.
+
+```console
+market-vault research-intraday-freeze-inner-selection --source-experiment /absolute/inner-selection.json --expected-experiment-id INNER_SELECTION_EXPERIMENT_ID --experiment /absolute/inner-frozen.json
+market-vault research-intraday-test --selection /absolute/inner-frozen.json --experiment /absolute/inner-test.json
+market-vault research-experiment-replay --experiment /absolute/inner-test.json
+```
+
+Use the Q25 root's `experiment_id` for `INNER_SELECTION_EXPERIMENT_ID`. In the
+native application, open/save the study, switch to **Freeze / TEST** and explicitly
+freeze its final DEV recipe, then continue with Save/Open, TEST and full
+Replay. TEST fits the frozen recipe once on all eligible TRAIN+VALIDATION rows,
+purged at the first TEST open, and starts a separate cash-1 Q6 account. The six
+inner models remain selection evidence; TEST records its own final model.
+
+The frozen selection and TEST use explicit V2 artifacts while the original Q25
+study stays V1 with unchanged content and replay semantics. During Q26 Run or
+Replay, `--source-experiment-file` refers to the Q25 study. Its embedded ordinary
+source means the original ordinary file is not a third required input. Q26
+FullReplay reconstructs the complete ordinary report, whole selection study
+and final TEST with one verified Q5 load.
+
 ## Limits
 
 The method is a fixed retrospective experiment; lower inner MSE does not
 establish higher economic return or correct unknown earlier research history.
 There is no Feature/threshold/cost search, arbitrary nested-CV configuration,
-new learner, optimizer, portfolio allocation or automatic promotion. Q25 does
-not run Freeze or TEST. Q26 separately enables explicit freezing of its saved
-final DEV recipe and independent held-out evaluation.
+new learner, optimizer, portfolio allocation or automatic promotion. Running a
+Q25 study stops at DEV evidence. Freeze and held-out TEST are separate explicit
+Q26 actions; they are never started automatically by selection or replay.

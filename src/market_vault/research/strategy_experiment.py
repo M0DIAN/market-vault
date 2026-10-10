@@ -341,11 +341,11 @@ def _validate_root(root):
         from .intraday_execution_scenarios import validate_intraday_execution_scenarios_root
         validate_intraday_execution_scenarios_root(root)
         return
-    if root["artifact_schema_version"] == "market-vault-intraday-selection-v1":
+    if root["artifact_schema_version"] in ("market-vault-intraday-selection-v1", "market-vault-intraday-selection-v2"):
         from .intraday_final_experiment import validate_intraday_selection_root
         validate_intraday_selection_root(root)
         return
-    if root["artifact_schema_version"] == "market-vault-intraday-test-v1":
+    if root["artifact_schema_version"] in ("market-vault-intraday-test-v1", "market-vault-intraday-test-v2"):
         from .intraday_final_experiment import validate_intraday_test_root
         validate_intraday_test_root(root)
         return
@@ -568,7 +568,8 @@ def replay_strategy_experiment(snapshot: StrategyExperiment, *, dataset_build_di
         from .intraday_inner_selection import replay_intraday_inner_selection
         return replay_intraday_inner_selection(snapshot, source_experiment_file=source_experiment_file,
                                                intraday_data_file=intraday_data_file)
-    if root["artifact_schema_version"] in ("market-vault-intraday-selection-v1", "market-vault-intraday-test-v1"):
+    if root["artifact_schema_version"] in ("market-vault-intraday-selection-v1", "market-vault-intraday-selection-v2",
+                                           "market-vault-intraday-test-v1", "market-vault-intraday-test-v2"):
         if dataset_build_dir is not None:
             raise ValueError("intraday final replay requires source_experiment_file/intraday_data_file, not a Dataset directory")
         from .intraday_final_test import replay_intraday_final_experiment

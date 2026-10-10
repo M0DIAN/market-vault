@@ -224,9 +224,12 @@ def test_quadratic_diagnostics_cli_saved_analytics_continuation_and_v1_freeze_bo
         assert analyze_intraday_risk_diagnostics(snapshot, cost_index=1, candidate_index=1)
         assert compare_saved_intraday_experiments(snapshot, snapshot, left_cost_index=1, right_cost_index=1,
             left_candidate_index=0, right_candidate_index=1)
-        with pytest.raises(ValueError):
-            freeze_intraday_candidate(path, expected_experiment_id=root["experiment_id"], cost_index=1, candidate_index=1,
-                                      expected_candidate_id=candidate["candidate_id"])
+        frozen = freeze_intraday_candidate(path, expected_experiment_id=root["experiment_id"], cost_index=1, candidate_index=1,
+                                           expected_candidate_id=candidate["candidate_id"]).as_dict()
+        assert frozen["artifact_schema_version"] == "market-vault-intraday-selection-v2"
+        assert frozen["report"]["candidate"]["strategy"] == candidate["strategy"]
+        assert frozen["report"]["candidate"]["execution_policy"] == root["report"]["groups"][1]["execution_policy"]
+        assert frozen["plan"]["selection"] == {"cost_index": 1, "candidate_index": 1, "candidate_id": candidate["candidate_id"]}
     assert path.read_bytes() == original
 
 
@@ -372,8 +375,11 @@ assert window.grabWindow().save(str(root / 'q24-native-models-zh.png'))
 saved = root / 'native-dev.json'
 click('intradayExperimentSaveButton'); file_selected('intradayExperimentSaveDialog', saved)
 captured = saved.read_bytes()
-assert not final.canFreeze and final.freezeUnsupported
-assert not final.freezeSelected() and final.status == 'VALIDATION_ERROR'
+assert final.canFreeze and not final.freezeUnsupported
+assert final.freezeSelected(); complete(final)
+assert final._selection_root['artifact_schema_version'] == 'market-vault-intraday-selection-v2'
+assert final.frozenCandidate['strategy'] == json.loads(captured)['plan']['strategies'][3]
+assert final._selection_root['plan']['source_experiment']['experiment_id'] == json.loads(captured)['experiment_id']
 choose('intradayResearchCandidate', 2)
 assert controller.predictionQualityAvailable and not final.canFreeze
 choose('intradayResearchCandidate', 3)

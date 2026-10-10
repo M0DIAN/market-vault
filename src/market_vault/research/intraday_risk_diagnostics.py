@@ -12,7 +12,7 @@ import math
 from ..backtest.intraday import INTRADAY_COST_VERSION, INTRADAY_EXECUTION_VERSION
 from .intraday_data import digest
 from .intraday_experiment import INTRADAY_EXPERIMENT_VERSIONS
-from .intraday_final_test import INTRADAY_TEST_EXPERIMENT_VERSION
+from .intraday_final_test import INTRADAY_TEST_EXPERIMENT_VERSIONS
 from .intraday_performance import summarize_intraday_execution
 from .strategy_experiment import StrategyExperiment
 
@@ -266,7 +266,7 @@ def analyze_intraday_risk_diagnostics(snapshot: StrategyExperiment, *, cost_inde
         candidate = group["results"][candidate_index]
         candidate_id, folds = candidate["candidate_id"], report["context"]["folds"]
         recorded_contributions = candidate["fold_contributions"]
-    elif root["artifact_schema_version"] == INTRADAY_TEST_EXPERIMENT_VERSION:
+    elif root["artifact_schema_version"] in INTRADAY_TEST_EXPERIMENT_VERSIONS:
         if cost_index or candidate_index:
             raise ValueError("TEST contains one frozen result; both indices must be zero")
         group = candidate = report
