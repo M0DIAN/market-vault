@@ -143,7 +143,7 @@ unchanged.
 Exclude refitted calibration, new thresholds, probability metrics, execution
 attribution by bin, selecting the best bin and TEST diagnostics.
 
-## Q34 — fixed inner-objective single-day sensitivity (planned)
+## Q34 — fixed inner-objective single-day sensitivity
 
 ### Goal and method
 
@@ -181,6 +181,30 @@ This is fixed-fit objective sensitivity. It is not leave-day-out retraining,
 jackknife inference, a probability of selection or a replacement choice for
 Freeze. No optimizer, additional family member, new TEST format or automatic
 promotion is introduced.
+
+The API is `analyze_intraday_inner_objective_sensitivity(snapshot)` in
+`research/intraday_inner_objective_sensitivity.py`. Its derived report version
+is `market-vault-intraday-inner-objective-sensitivity-v1`. It accepts only an
+immutable Q25/Q31 study, with no alternative source, candidate or Q5 parameter.
+All six/four members remain in every comparison; an unavailable member blocks
+that perturbed choice instead of reducing the family. A numeric failure has an
+explicit unavailable reason. Each window retains its entire original inner
+evidence, its original winner and objective values, all five perturbed member
+objectives, positive winner-to-runner-up margin (zero for ties), and counts
+over explicitly available omissions. FINAL_DEV remains separately labelled.
+
+```console
+market-vault research-intraday-inner-objective-sensitivity \
+  --experiment /absolute/saved-study.json
+```
+
+The native **ML diagnostics** page adds the fixed inner-objective method to
+the existing source workflow. Choosing a draft method does not reinterpret a
+previously completed report. Q34 offers window, original member, omitted-day,
+omitted-day member, selection-count and full fixed-evidence views. Ordinary
+candidates and Q5 relocation are not inputs to this method. All models, keys,
+scores, targets and original daily cash evidence remain available in paginated,
+selectable JSON; no target or account is recomputed by the desktop.
 
 ## Q35 — selected-procedure incremental outer returns (planned)
 

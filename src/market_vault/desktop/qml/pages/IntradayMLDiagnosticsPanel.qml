@@ -68,9 +68,19 @@ Item {
         ColumnLayout {
             width: scroll.availableWidth; height: Math.max(implicitHeight, scroll.availableHeight)
             spacing: Theme.PixelTheme.spacingSm
+            Components.LabeledComboBox {
+                objectName: "intradayMLMode"
+                Layout.fillWidth: true; Layout.maximumWidth: Infinity
+                label: root.label("mode")
+                model: ["quality_mode", "sensitivity_mode"].map(key => root.label(key))
+                currentIndex: root.controller.modeIndex
+                onModelChanged: currentIndex = Qt.binding(() => root.controller.modeIndex)
+                onSelected: root.controller.selectMode(currentIndex)
+            }
             Label {
                 objectName: "intradayMLMethod"
-                Layout.fillWidth: true; text: root.label("method")
+                Layout.fillWidth: true
+                text: root.label(root.controller.sensitivityMode ? "sensitivity_method" : "method")
                 wrapMode: Text.WordWrap; color: Theme.PixelTheme.inkMuted; font.pixelSize: Theme.PixelTheme.fontSm
             }
             RowLayout {
@@ -101,7 +111,7 @@ Item {
                 wrapMode: Text.WrapAnywhere; color: Theme.PixelTheme.inkMuted
             }
             RowLayout {
-                Layout.fillWidth: true; visible: root.controller.ordinarySource
+                Layout.fillWidth: true; visible: root.controller.ordinarySource && !root.controller.sensitivityMode
                 Components.LabeledComboBox {
                     objectName: "intradayMLCost"
                     Layout.fillWidth: true; Layout.maximumWidth: Infinity
@@ -120,7 +130,8 @@ Item {
                 }
             }
             RowLayout {
-                Layout.fillWidth: true
+                objectName: "intradayMLDataRow"
+                Layout.fillWidth: true; visible: !root.controller.sensitivityMode
                 Components.LabeledTextField {
                     objectName: "intradayMLDataPath"
                     Layout.fillWidth: true; Layout.maximumWidth: Infinity
@@ -155,8 +166,11 @@ Item {
                     root.i18n.language
                     const result = root.controller.resultSummary, sample = result.sample
                     if (!result.status) return ""
-                    return root.label(result.status) + " · " + root.label(result.source_kind)
-                        + (sample ? "\n" + root.label("folds") + ": " + (sample.fold_count || 0)
+                    return root.label(result.diagnostic_kind) + " · " + root.label(result.status) + " · " + root.label(result.source_kind)
+                        + (sample && root.controller.completedSensitivity ? "\n" + root.label("outer_windows") + ": " + sample.outer_window_count
+                        + " · " + root.label("final_windows") + ": " + sample.final_dev_window_count
+                        + " · " + root.label("omissions") + ": " + sample.omission_count
+                        : sample ? "\n" + root.label("folds") + ": " + (sample.fold_count || 0)
                         + " · " + root.label("days") + ": " + (sample.evaluated_day_count || 0)
                         + " · READY: " + (sample.prediction_count || 0) + " · COMPLETE: " + (sample.complete_target_count || 0)
                         + " · " + root.label("incomplete") + ": " + (sample.incomplete_target_count || 0) : "")
@@ -168,9 +182,10 @@ Item {
             Label {
                 objectName: "intradayMLNotice"
                 Layout.fillWidth: true
-                visible: root.controller.draftChanged || root.controller.notice.length > 0 || root.controller.studyError.length > 0
+                visible: root.controller.draftChanged || root.controller.notice.length > 0 || root.controller.studyError.length > 0 || root.controller.draftNotice.length > 0
                 text: root.controller.studyError ? root.controller.studyError + "\n" + root.label("retry")
-                    : root.controller.notice ? root.label(root.controller.notice) : root.label("draft_changed")
+                    : root.controller.notice ? root.label(root.controller.notice)
+                    : root.controller.draftNotice ? root.label(root.controller.draftNotice) : root.label("draft_changed")
                 wrapMode: Text.WordWrap; color: Theme.PixelTheme.inkMuted
             }
             RowLayout {
@@ -178,8 +193,8 @@ Item {
                 Components.LabeledComboBox {
                     objectName: "intradayMLScope"
                     Layout.fillWidth: true; Layout.maximumWidth: Infinity
-                    label: root.label("scope")
-                    model: [root.label("pooled")].concat(Array.from({length: root.controller.foldCount}, (_, index) => root.label("fold") + " " + index))
+                    label: root.label(root.controller.completedSensitivity ? "inner_scope" : "scope")
+                    model: root.controller.scopeOptions.map(option => root.label(option.kind) + (typeof option.fold_index === "number" ? " " + option.fold_index : ""))
                     currentIndex: root.controller.scopeIndex
                     onModelChanged: currentIndex = Qt.binding(() => root.controller.scopeIndex)
                     onSelected: root.controller.selectScope(currentIndex)
@@ -188,7 +203,7 @@ Item {
                     objectName: "intradayMLView"
                     Layout.fillWidth: true; Layout.maximumWidth: Infinity
                     label: root.i18n.catalog["quant.intraday_result_view"]
-                    model: ["metrics", "bins", "folds", "predictions", "models_keys"].map(key => root.label(key))
+                    model: root.controller.viewOptions.map(key => root.label(key))
                     currentIndex: root.controller.viewIndex
                     onModelChanged: currentIndex = Qt.binding(() => root.controller.viewIndex)
                     onSelected: root.controller.selectView(currentIndex)
@@ -201,7 +216,9 @@ Item {
             Label {
                 objectName: "intradayMLInterpretation"
                 Layout.fillWidth: true; visible: root.controller.resultLoaded
-                text: root.label("interpretation") + (root.controller.resultSummary.source_kind === "ECONOMIC_THRESHOLD_SELECTION" ? "\n" + root.label("same_scores") : "")
+                text: root.controller.completedSensitivity ? root.label("sensitivity_interpretation") + "\n"
+                    + root.label(root.controller.resultSummary.source_kind === "ECONOMIC_THRESHOLD_SELECTION" ? "cash_objective" : "mse_objective")
+                    : root.label("interpretation") + (root.controller.resultSummary.source_kind === "ECONOMIC_THRESHOLD_SELECTION" ? "\n" + root.label("same_scores") : "")
                 wrapMode: Text.WordWrap; color: Theme.PixelTheme.inkMuted; font.pixelSize: Theme.PixelTheme.fontSm
             }
             Components.DataTable {
