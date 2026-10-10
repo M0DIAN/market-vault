@@ -148,6 +148,10 @@ def build_parser() -> argparse.ArgumentParser:
     collect.add_argument("--session", default=None)
     collect.add_argument("--adjustment", default=None)
 
+    recover = sub.add_parser("recover-history", help="Replay a terminal run's retained Raw offline into a new run")
+    recover.add_argument("--manifest", required=True, type=Path, help="Exact original terminal run manifest")
+    recover.add_argument("--symbols", nargs="+", help="Nonempty subset of the original request; defaults to all")
+
     query = sub.add_parser("query", help="Query curated bars")
     query.add_argument("--code", required=True)
     query.add_argument("--trade-date")
@@ -390,6 +394,15 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(json.dumps(manifest.as_dict(), ensure_ascii=False, indent=2))
         return 0
+
+    if args.command == "recover-history":
+        try:
+            manifest = MarketVault(settings).recover_history_from_raw(args.manifest, symbols=args.symbols)
+        except Exception as exc:
+            print(json.dumps({"status": "FAILED", "error": str(exc)}, ensure_ascii=False, indent=2))
+            return 1
+        print(json.dumps(manifest.as_dict(), ensure_ascii=False, indent=2))
+        return 0 if manifest.status == "SUCCESS" else 2
 
     if args.command == "query":
         try:

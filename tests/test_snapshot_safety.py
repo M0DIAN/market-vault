@@ -1,6 +1,12 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from threading import Barrier
+import inspect
+import signal
+import sys
 
 import pandas as pd
 import pytest
@@ -10,6 +16,8 @@ from market_vault.backfill import collect_history_backfill
 from market_vault.models import QualityResult, RunManifest, Settings
 from market_vault.normalization import normalize_bars, normalize_trading_calendar
 from market_vault.storage import Catalog, ParquetStore
+from market_vault.storage import atomic_file
+from market_vault.lifecycle import LifecycleLockError
 
 
 def settings(tmp_path) -> Settings:
@@ -176,6 +184,282 @@ def test_market_bars_reject_unsafe_run_id(tmp_path):
         store.write_raw(frame, trade_date, "1m", ["US.MU"], "ALL", "NONE", run_id="../../evil")
     with pytest.raises(ValueError, match="Unsafe partition value"):
         store.write_curated(frame, trade_date, "1m", ["US.MU"], "ALL", "NONE", run_id="..")
+
+
+@pytest.mark.parametrize("writer_name", ["write_raw", "write_curated"])
+@pytest.mark.parametrize("changed", [False, True])
+def test_market_bar_existing_target_is_always_refused(tmp_path, writer_name, changed):
+    cfg = settings(tmp_path)
+    trade_date = date(2026, 7, 1)
+    writer = getattr(ParquetStore(cfg), writer_name)
+    original = curated_bars_frame(cfg, "US.MU", trade_date, "same-run")
+    path = writer(original, trade_date, "1m", ["US.MU"], "ALL", "NONE", "same-run")
+    original_bytes = path.read_bytes()
+    unrelated = path.parent / ".unrelated.tmp"
+    unrelated.write_bytes(b"another invocation")
+    retry = original.copy()
+    if changed:
+        retry["close"] = 200.0
+    with pytest.raises(FileExistsError, match="existing publication target"):
+        writer(retry, trade_date, "1m", ["US.MU"], "ALL", "NONE", "same-run")
+    assert path.read_bytes() == original_bytes
+    assert unrelated.read_bytes() == b"another invocation"
+    assert set(path.parent.iterdir()) == {path, unrelated}
+
+
+@pytest.mark.parametrize("writer_name", ["write_raw", "write_curated"])
+@pytest.mark.parametrize("interruption", [RuntimeError, KeyboardInterrupt])
+def test_market_bar_interrupted_serialization_never_exposes_final(
+    monkeypatch, tmp_path, writer_name, interruption
+):
+    cfg = settings(tmp_path)
+    store = ParquetStore(cfg)
+    trade_date = date(2026, 7, 1)
+    layer = "raw" if writer_name == "write_raw" else "curated"
+    final = store._path(layer, trade_date, "1m", ["US.MU"], "ALL", "NONE", "interrupted")
+    final.parent.mkdir(parents=True)
+    unrelated = final.parent / ".earlier-crash.tmp"
+    unrelated.write_bytes(b"retain")
+
+    def interrupted(_frame, stream, **_kwargs):
+        stream.write(b"incomplete parquet serialization")
+        assert not final.exists()
+        assert not list(final.parent.glob("*.parquet"))
+        raise interruption("serialization interrupted")
+
+    monkeypatch.setattr(pd.DataFrame, "to_parquet", interrupted)
+    with pytest.raises(interruption, match="serialization interrupted"):
+        getattr(store, writer_name)(
+            history_raw_frame("US.MU", trade_date), trade_date, "1m", ["US.MU"], "ALL", "NONE", "interrupted"
+        )
+    assert not final.exists()
+    assert set(final.parent.iterdir()) == {unrelated}
+    assert unrelated.read_bytes() == b"retain"
+
+
+def test_market_bar_real_no_replace_publication_race_has_one_winner(monkeypatch, tmp_path):
+    cfg = settings(tmp_path)
+    trade_date = date(2026, 7, 1)
+    barrier = Barrier(2)
+    actual_link = atomic_file.os.link
+
+    def race_link(source, target, **kwargs):
+        barrier.wait(timeout=10)
+        return actual_link(source, target, **kwargs)
+
+    monkeypatch.setattr(atomic_file.os, "link", race_link)
+
+    def publish(close):
+        try:
+            path = ParquetStore(cfg).write_raw(
+                history_raw_frame("US.MU", trade_date, close), trade_date,
+                "1m", ["US.MU"], "ALL", "NONE", "racing-run",
+            )
+            return close, path
+        except FileExistsError:
+            return close, None
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(publish, [100.5, 200.5]))
+    winners = [(close, path) for close, path in results if path is not None]
+    assert len(winners) == 1
+    close, path = winners[0]
+    assert pd.read_parquet(path)["close"].tolist() == [close]
+    assert set(path.parent.iterdir()) == {path}
+
+
+def test_atomic_publication_preserves_committed_final_on_cleanup_failure(monkeypatch, tmp_path):
+    final = tmp_path / "snapshot.parquet"
+    actual_unlink = Path.unlink
+
+    def cannot_cleanup(path, *args, **kwargs):
+        if path.name.endswith(".tmp"):
+            raise PermissionError("temporary cleanup denied")
+        return actual_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", cannot_cleanup)
+    with pytest.raises(atomic_file.AtomicFilePublicationError, match="published") as error:
+        atomic_file._write_file_no_replace(final, lambda stream: stream.write(b"complete"))
+    assert error.value.published is True
+    assert error.value.path == final
+    assert final.read_bytes() == b"complete"
+    assert error.value.temporary_path.read_bytes() == b"complete"
+    assert not error.value.temporary_path.name.endswith(".parquet")
+
+
+@pytest.mark.parametrize("failure", [RuntimeError("error after real link"), KeyboardInterrupt("interrupted after real link")])
+def test_atomic_publication_reconciles_real_link_then_error(monkeypatch, tmp_path, failure):
+    final = tmp_path / "snapshot.parquet"
+    actual_link = atomic_file.os.link
+
+    def link_then_error(source, target, **kwargs):
+        actual_link(source, target, **kwargs)
+        raise failure
+
+    monkeypatch.setattr(atomic_file.os, "link", link_then_error)
+    with pytest.raises(atomic_file.AtomicFilePublicationError) as error:
+        atomic_file._write_file_no_replace(final, lambda stream: stream.write(b"complete owned data"))
+    assert error.value.published is True
+    assert error.value.__cause__ is failure
+    assert final.read_bytes() == b"complete owned data"
+    assert not error.value.temporary_path.exists()
+    assert "owned temporary cleanup completed" in str(error.value)
+    assert "not published" not in str(error.value)
+    assert "residue retained" not in str(error.value)
+
+
+def test_atomic_publication_reports_real_sigint_after_link_before_python_flag(tmp_path):
+    final = tmp_path / "snapshot.parquet"
+    source_lines, first_line = inspect.getsourcelines(atomic_file._write_file_no_replace)
+    flag_line = first_line + next(
+        index for index, line in enumerate(source_lines) if line.strip() == "published = True"
+    )
+    previous_trace = sys.gettrace()
+    previous_handler = signal.signal(signal.SIGINT, signal.default_int_handler)
+    interrupted = []
+
+    def interrupt_after_link(frame, event, _argument):
+        if (
+            frame.f_code is atomic_file._write_file_no_replace.__code__
+            and event == "line" and frame.f_lineno == flag_line
+        ):
+            sys.settrace(previous_trace)
+            assert final.read_bytes() == b"complete owned data"
+            interrupted.append(True)
+            signal.raise_signal(signal.SIGINT)
+        return interrupt_after_link
+
+    try:
+        sys.settrace(interrupt_after_link)
+        with pytest.raises(atomic_file.AtomicFilePublicationError) as error:
+            atomic_file._write_file_no_replace(final, lambda stream: stream.write(b"complete owned data"))
+    finally:
+        sys.settrace(previous_trace)
+        signal.signal(signal.SIGINT, previous_handler)
+    assert interrupted == [True]
+    assert error.value.published is True
+    assert isinstance(error.value.__cause__, KeyboardInterrupt)
+    assert final.read_bytes() == b"complete owned data"
+    assert not error.value.temporary_path.exists()
+    assert "KeyboardInterrupt" in str(error.value)
+    assert "not published" not in str(error.value)
+
+
+def test_atomic_publication_keeps_unknown_outcome_and_temporary_when_inspection_fails(monkeypatch, tmp_path):
+    final = tmp_path / "snapshot.parquet"
+    actual_link = atomic_file.os.link
+    actual_lstat = Path.lstat
+    failure = KeyboardInterrupt("interrupted after real link")
+    linked = []
+
+    def link_then_interrupt(source, target, **kwargs):
+        actual_link(source, target, **kwargs)
+        linked.append(True)
+        raise failure
+
+    def cannot_inspect(path, *args, **kwargs):
+        if linked and path == final:
+            raise PermissionError("final identity inspection unavailable")
+        return actual_lstat(path, *args, **kwargs)
+
+    monkeypatch.setattr(atomic_file.os, "link", link_then_interrupt)
+    monkeypatch.setattr(Path, "lstat", cannot_inspect)
+    with pytest.raises(atomic_file.AtomicFilePublicationError) as error:
+        atomic_file._write_file_no_replace(final, lambda stream: stream.write(b"complete owned data"))
+    assert error.value.published is None
+    assert error.value.__cause__ is failure
+    assert final.read_bytes() == b"complete owned data"
+    assert error.value.temporary_path.read_bytes() == b"complete owned data"
+    assert actual_lstat(final).st_ino == actual_lstat(error.value.temporary_path).st_ino
+    assert "publication state unknown" in str(error.value)
+    assert "inspection unavailable" in str(error.value)
+    assert "not published" not in str(error.value)
+
+
+def test_atomic_publication_refuses_replaced_temporary_without_deleting_it(tmp_path):
+    final = tmp_path / "snapshot.parquet"
+    retained = tmp_path / "retained-owned-object.tmp"
+
+    def substitute(stream):
+        stream.write(b"owned data")
+        temporary = next(tmp_path.glob(".snapshot.parquet.*.tmp"))
+        temporary.rename(retained)
+        temporary.write_bytes(b"foreign replacement")
+
+    with pytest.raises(atomic_file.AtomicFilePublicationError, match="ownership changed") as error:
+        atomic_file._write_file_no_replace(final, substitute)
+    assert error.value.published is False
+    assert not final.exists()
+    assert retained.read_bytes() == b"owned data"
+    assert error.value.temporary_path.read_bytes() == b"foreign replacement"
+
+
+def test_atomic_publication_refuses_changed_parent_without_cleanup(tmp_path):
+    parent = tmp_path / "parent"
+    retained_parent = tmp_path / "retained-parent"
+    final = parent / "snapshot.parquet"
+
+    def replace_parent(stream):
+        stream.write(b"owned data")
+        name = next(parent.iterdir()).name
+        parent.rename(retained_parent)
+        parent.mkdir()
+        (parent / name).write_bytes(b"foreign object")
+
+    with pytest.raises(atomic_file.AtomicFilePublicationError, match="parent identity changed") as error:
+        atomic_file._write_file_no_replace(final, replace_parent)
+    assert not error.value.published
+    assert not final.exists()
+    assert error.value.temporary_path.read_bytes() == b"foreign object"
+    assert (retained_parent / error.value.temporary_path.name).read_bytes() == b"owned data"
+
+
+def test_atomic_publication_unsupported_link_has_no_overwrite_fallback(monkeypatch, tmp_path):
+    final = tmp_path / "snapshot.parquet"
+
+    def unsupported(*_args, **_kwargs):
+        raise OSError("hard links unsupported on this filesystem")
+
+    monkeypatch.setattr(atomic_file.os, "link", unsupported)
+    with pytest.raises(OSError, match="hard links unsupported"):
+        atomic_file._write_file_no_replace(final, lambda stream: stream.write(b"complete"))
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("kind", ["directory", "symlink", "dangling_symlink", "ancestor_link", "reparse", "unverifiable"])
+def test_atomic_publication_refuses_unsafe_or_existing_paths(monkeypatch, tmp_path, kind):
+    from market_vault import lifecycle
+
+    final = tmp_path / "snapshot.parquet"
+    if kind == "directory":
+        final.mkdir()
+    elif kind in {"symlink", "dangling_symlink", "ancestor_link"}:
+        target = tmp_path / "target"
+        if kind == "symlink":
+            target.write_bytes(b"pre-existing")
+        elif kind == "ancestor_link":
+            target.mkdir()
+        try:
+            final.symlink_to(target, target_is_directory=kind == "ancestor_link")
+        except OSError as exc:
+            pytest.skip(f"Symlink creation unavailable: {exc}")
+        if kind == "ancestor_link":
+            final = final / "child.parquet"
+    elif kind == "reparse":
+        monkeypatch.setattr(lifecycle, "is_junction_or_reparse", lambda path: path == final)
+    else:
+        def unverifiable(_path):
+            raise LifecycleLockError("cannot verify Windows file attributes")
+        monkeypatch.setattr(lifecycle, "is_junction_or_reparse", unverifiable)
+
+    def forbidden_serialization(_stream):
+        pytest.fail("Refused paths must not reach serialization")
+
+    with pytest.raises((LifecycleLockError, FileExistsError)):
+        atomic_file._write_file_no_replace(final, forbidden_serialization)
+    assert not list(tmp_path.rglob("*.tmp"))
+    if kind == "symlink":
+        assert target.read_bytes() == b"pre-existing"
 
 
 def test_legacy_market_bars_file_without_run_id_still_readable(tmp_path):

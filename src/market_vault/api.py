@@ -11,10 +11,10 @@ from .audit import AuditReport, InventoryReport, run_audit, run_inventory
 from .backfill import collect_history_backfill, plan_history_backfill
 from .config import load_settings
 from .intraday_audit import IntradayAuditReport, run_intraday_audit
-from .models import Settings
+from .models import RunManifest, Settings
 from .normalization.calendar import normalize_calendar_code, normalize_calendar_market
 from .purge import PurgePlan, PurgeResult, purge_execute, purge_plan
-from .service import collect_trading_calendar
+from .service import collect_trading_calendar, recover_history_from_raw
 from .storage import Catalog
 
 
@@ -483,6 +483,22 @@ class MarketVault:
             retry_backoff_seconds=retry_backoff_seconds,
             today=today,
         )
+
+    def recover_history_from_raw(
+        self,
+        manifest_path: str | Path,
+        *,
+        symbols: list[str] | None = None,
+    ) -> RunManifest:
+        """Replay a modern terminal manifest's Raw into a fresh run, offline.
+
+        Omit ``symbols`` for the original request, or select a nonempty subset.
+        Settings must reproduce the original request's schema and exact local
+        paths. Existing evidence and stale lifecycle locks are never repaired.
+        The returned run's immutable ``<date>_<run_id>.recovery.json`` lineage
+        lives beside its ordinary manifest in the configured manifest directory.
+        """
+        return recover_history_from_raw(self.settings, manifest_path, symbols=symbols)
 
     def inventory_market_bars(
         self,
