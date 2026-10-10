@@ -23,6 +23,24 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture(scope="session")
+def desktop_prediction_experiment(research_case):
+    """Use the existing Q5 fixture for a real three-feature, two-cost Ridge grid."""
+    from market_vault.research.intraday_experiment import create_intraday_experiment
+
+    data, comparison, _ = research_case
+    comparison = deepcopy(comparison)
+    comparison["feature_fields"] = ["return_2", "sma_5", "candle_body"]
+    plan = {"plan_schema_version": research.INTRADAY_DIAGNOSTICS_PLAN_VERSION,
+        "comparison_plan": comparison, "strategy_name": "Ridge",
+        "parameter_axes": [{"parameter": "alpha", "values": [1, 10]}],
+        "cost_scenarios": [{"commission_bps": 0, "slippage_bps": 0}, {"commission_bps": 10, "slippage_bps": 5}]}
+    normalized, children, coordinates = research.expand_intraday_plan(plan, recorded=True)
+    prepared = research._prepare_intraday_research(children[0], data=data)
+    report = research._evaluate_intraday_research(normalized, children, coordinates, prepared)
+    return create_intraday_experiment(plan=normalized, report=report, name="Saved Ridge prediction diagnostics")
+
+
+@pytest.fixture(scope="session")
 def desktop_execution_scenarios(research_case):
     from market_vault.research.intraday_execution_scenarios import (
         INTRADAY_EXECUTION_SCENARIOS_PLAN_VERSION, run_intraday_execution_scenarios,
@@ -825,6 +843,340 @@ def test_signal_delay_zero_reproduction_failure_keeps_all_scenarios(qt_app, para
     assert controller.signalDelayDetails["signals"]["source_count"] == controller.tableModel.totalRows
     assert path.read_bytes() == changed.content
     assert runtime.backend_if_initialized is None and runtime.shutdown()
+
+
+def test_prediction_quality_explicit_saved_ridge_selection_source_units_and_refresh(
+        qt_app, desktop_prediction_experiment, intraday_experiment, tmp_path, monkeypatch):
+    from market_vault.research import intraday_prediction_quality as quality
+
+    snapshot = desktop_prediction_experiment
+    root = snapshot.as_dict()
+    path = tmp_path / "saved-ridge.json"
+    write_strategy_experiment(snapshot, path=path)
+    runtime, runner = _runtime(tmp_path, [])
+    owner = QuantResearchController(runtime)
+    controller = owner.intradayResearchController
+    analyze, calls = quality.analyze_intraday_prediction_quality, []
+    loader, fit, admissions = research.load_intraday_dataset, research._fit, {"loads": 0, "fits": 0}
+
+    def captured(source, **options):
+        calls.append((source.content, options))
+        return analyze(source, **options)
+
+    def loaded(*args, **kwargs):
+        admissions["loads"] += 1
+        return loader(*args, **kwargs)
+
+    def fitted(*args, **kwargs):
+        admissions["fits"] += 1
+        return fit(*args, **kwargs)
+
+    monkeypatch.setattr(quality, "analyze_intraday_prediction_quality", captured)
+    monkeypatch.setattr(research, "load_intraday_dataset", loaded)
+    monkeypatch.setattr(research, "_fit", fitted)
+    controller._apply(snapshot, opened=True)
+    assert controller.selectCandidate(3) and controller.selectView(21)
+    assert not controller.predictionQualityAvailable and not controller.analyzePredictionQuality()
+    assert not calls and not runner.names
+    controller._apply(intraday_experiment, path=str(tmp_path / "rule.json"), opened=True)
+    assert not controller.predictionQualityAvailable and not controller.analyzePredictionQuality()
+    assert controller.openExperiment(str(path))
+    runtime._poll()
+    assert controller.selectCandidate(3) and controller.predictionQualityAvailable
+    bound = (controller._content, controller.restoredPlan, controller.restoreRevision,
+             controller.resultSummary, owner.intradayFinalController.canFreeze)
+    assert controller.selectView(21) and not controller.busy and not calls
+    assert controller.analyzePredictionQuality() and controller.predictionQualityPending
+    runtime._poll()
+    assert controller.status == "SUCCESS", controller.error
+    report = controller._prediction_quality_report
+    assert calls == [(snapshot.content, {"cost_index": 1, "candidate_index": 1, "intraday_data_file": None})]
+    assert admissions == {"loads": 1, "fits": len(report["folds"])}
+    saved = root["report"]["groups"][1]["results"][1]
+    assert report["candidate_id"] == saved["candidate_id"] and report["strategy"]["alpha"] == 10
+    assert report["context"]["feature_fields"] == ["return_2", "sma_5", "candle_body"]
+    assert report["evidence"]["predictions_match"] and not report["evidence"]["execution_replayed"]
+    assert controller.predictionQualityCompletedSource["draft_locator"] == ""
+    assert [row["forecast"] for row in report["forecasts"]] == ["RIDGE", "ZERO", "TRAIN_MEAN"]
+    rows = {(row[0], row[1]): row[2:] for row in controller._rows}
+    mse = report["forecasts"][0]["metrics"]["mse"]["value"]
+    assert mse == pytest.approx(saved["prediction_metrics"]["rmse"] ** 2)
+    assert 0 < mse < 1e-4 and rows["RIDGE", "mse"] == (f"{mse:.6g}", "SQUARED_RATIO", "")
+    assert rows["RIDGE", "rmse"][0].endswith("%") and rows["RIDGE", "r2"][1] == "NUMBER"
+    assert rows["ZERO", "pearson"] == ("—", "NUMBER", "CONSTANT_PREDICTIONS")
+    assert controller.selectPredictionQualityView(1) and controller.selectPredictionQualityFold(1)
+    assert controller.predictionQualityFold["fold_id"] == report["folds"][1]["fold_id"]
+    assert controller.tableModel.totalRows == 33
+    assert controller.selectPredictionQualityView(2)
+    assert controller.tableModel.totalRows == report["sample"]["prediction_count"] == len(saved["predictions"])
+    incomplete = [row for row in controller._rows if row[7] == "INCOMPLETE"]
+    assert len(incomplete) == report["sample"]["incomplete_target_count"] > 0
+    assert all(row[6] == "—" and row[8] == "SESSION_END" for row in incomplete)
+    assert controller.changePage(1) and controller.tableModel.page == 2
+    detached = controller.predictionQualitySummary
+    detached["evidence"]["execution_replayed"] = True
+    assert not controller.predictionQualitySummary["evidence"]["execution_replayed"]
+    assert controller.selectView(0) and controller.selectView(21)
+    assert controller.selectPredictionQualityView(0) and len(calls) == 1
+
+    source = Path(root["plan"]["comparison_plan"]["intraday_data_path"])
+    relocated = tmp_path / "relocated-q5.json"
+    relocated.write_bytes(source.read_bytes())
+    completed = controller.predictionQualityCompletedSource
+    assert controller.setPredictionQualitySource(str(relocated)) and controller.predictionQualityDraftChanged
+    assert controller._prediction_quality_report is report and controller.predictionQualityCompletedSource == completed
+    assert not controller.busy and len(calls) == 1
+    assert controller.analyzePredictionQuality()
+    runtime._poll()
+    assert controller.status == "SUCCESS", controller.error
+    assert calls[-1] == (snapshot.content, {"cost_index": 1, "candidate_index": 1, "intraday_data_file": relocated})
+    assert admissions == {"loads": 2, "fits": 2 * len(report["folds"])}
+    assert controller.predictionQualityCompletedSource["data_path"] == str(relocated)
+    assert not controller.predictionQualityDraftChanged
+    assert (controller._content, controller.restoredPlan, controller.restoreRevision,
+            controller.resultSummary, owner.intradayFinalController.canFreeze) == bound
+    assert path.read_bytes() == snapshot.content
+    assert runtime.backend_if_initialized is None and runtime.shutdown()
+
+
+def test_prediction_quality_worker_captures_bytes_and_discards_changed_selection_or_locator(
+        qt_app, desktop_prediction_experiment, tmp_path, monkeypatch):
+    from market_vault.research import intraday_prediction_quality as quality
+
+    snapshot = desktop_prediction_experiment
+    path = tmp_path / "saved-ridge.json"
+    write_strategy_experiment(snapshot, path=path)
+    runtime, runner = _runtime(tmp_path, [])
+    controller = QuantResearchController(runtime).intradayResearchController
+    assert controller.openExperiment(str(path))
+    runtime._poll()
+    assert controller.selectCandidate(3) and controller.selectView(21)
+    pending, captured = [], []
+
+    def deferred(name, operation):
+        future = Future()
+        pending.append((future, operation))
+        return future
+
+    def recorded(source, **options):
+        captured.append((source.content, options))
+        return {"stale": True}  # A stale result must be dropped before any report fields are consumed.
+
+    monkeypatch.setattr(runner, "submit", deferred)
+    analyze = quality.analyze_intraday_prediction_quality
+    monkeypatch.setattr(quality, "analyze_intraday_prediction_quality", recorded)
+    source = str(tmp_path / "captured-q5.json")
+    assert controller.setPredictionQualitySource(source) and controller.analyzePredictionQuality()
+    assert not controller.analyzePredictionQuality() and len(pending) == 1
+    path.write_bytes(b"the saved path changed after the action was captured")
+    assert controller.selectCandidate(0) and controller.selectCandidate(3)
+    future, operation = pending.pop()
+    future.set_result(operation())
+    runtime._poll()
+    assert captured == [(snapshot.content, {"cost_index": 1, "candidate_index": 1, "intraday_data_file": Path(source)})]
+    assert controller.predictionQualitySummary == {} and not controller.predictionQualityPending and not pending
+    assert controller.analyzePredictionQuality()
+    assert controller.setPredictionQualitySource("") and controller.setPredictionQualitySource(source)
+    future, operation = pending.pop()
+    future.set_result(operation())
+    runtime._poll()
+    assert controller.predictionQualitySummary == {} and not pending
+    assert controller.analyzePredictionQuality()
+    assert controller.setPredictionQualitySource("")
+    future, _ = pending.pop()
+    future.set_exception(ValueError("obsolete locator failed"))
+    runtime._poll()
+    assert controller.predictionQualityError == "" and not pending
+
+    monkeypatch.setattr(quality, "analyze_intraday_prediction_quality", analyze)
+    assert controller.analyzePredictionQuality()
+    assert controller.selectView(0) and controller.selectView(21)
+    future, operation = pending.pop()
+    future.set_result(operation())
+    runtime._poll()
+    assert controller.status == "SUCCESS", controller.error
+    assert controller.predictionQualitySummary["experiment_id"] == snapshot.experiment_id
+    assert controller.predictionQualitySummary["cost_index"] == controller.predictionQualitySummary["candidate_index"] == 1
+    assert controller._content == snapshot.content and controller.resultSummary["intraday_verification"] == "RECORDED"
+    assert runtime.backend_if_initialized is None and runtime.shutdown()
+
+
+def test_actual_qml_prediction_quality_source_retry_views_and_language(desktop_prediction_experiment, tmp_path):
+    saved = tmp_path / "saved-ridge.json"
+    write_strategy_experiment(desktop_prediction_experiment, path=saved)
+    recorded_source = Path(desktop_prediction_experiment.as_dict()["plan"]["comparison_plan"]["intraday_data_path"])
+    relocated = tmp_path / "relocated-q5.json"
+    relocated.write_bytes(recorded_source.read_bytes())
+    (tmp_path / "settings.yaml").write_text("storage:\n  root_dir: ./data\n")
+    script = r'''
+import sys, time
+from pathlib import Path
+from PySide6.QtCore import QObject, QUrl, Qt, QEvent, QMetaObject
+from PySide6.QtGui import QGuiApplication, QKeyEvent
+from PySide6.QtQml import QQmlApplicationEngine
+from PySide6.QtQuickControls2 import QQuickStyle
+from PySide6.QtTest import QTest
+from market_vault.application import build_application_context
+from market_vault.desktop.bootstrap import create_qml_application_session
+from market_vault.desktop.preferences import DesktopPreferenceStore
+from market_vault.research import intraday_prediction_quality as quality
+root = Path(sys.argv[1])
+analyze, calls = quality.analyze_intraday_prediction_quality, []
+def tracked(snapshot, **options):
+    calls.append((snapshot.experiment_id, options))
+    return analyze(snapshot, **options)
+quality.analyze_intraday_prediction_quality = tracked
+QQuickStyle.setStyle('Basic')
+app = QGuiApplication([])
+engine = QQmlApplicationEngine()
+session = create_qml_application_session(build_application_context(root / 'settings.yaml'), engine,
+    preference_store=DesktopPreferenceStore(root=root / 'preferences'))
+engine.load(QUrl.fromLocalFile(str(Path.cwd() / 'src/market_vault/desktop/qml/Main.qml')))
+assert engine.rootObjects()
+window = engine.rootObjects()[0]
+window.setWidth(1024); window.setHeight(600)
+controller = session.context_properties['quantResearchController'].intradayResearchController
+assert session.i18n.setLanguage('en')
+assert session.shell.selectPage('quant_research')
+def find(name):
+    obj = window.findChild(QObject, name)
+    if obj is None:
+        pending = [window.contentItem()]
+        while pending:
+            candidate = pending.pop()
+            if candidate.objectName() == name: obj = candidate; break
+            pending.extend(candidate.childItems())
+    assert obj is not None, name
+    return obj
+def reveal(obj):
+    flick = find('intradayResearchScroll').property('contentItem')
+    for _ in range(2):
+        app.processEvents()
+        rect = obj.mapRectToItem(flick, obj.boundingRect())
+        delta = rect.top() - 4 if rect.top() < 4 else max(0, rect.bottom() - flick.height() + 4)
+        flick.setProperty('contentY', min(max(0, flick.property('contentY') + delta),
+            max(0, flick.property('contentHeight') - flick.height())))
+        QTest.qWait(30)
+def click_obj(obj, *, scroll=True):
+    if scroll: reveal(obj)
+    app.processEvents()
+    assert obj.property('visible') and obj.property('enabled'), obj.objectName()
+    point = obj.mapToScene(obj.boundingRect().center()).toPoint()
+    assert 0 <= point.x() < window.width() and 0 <= point.y() < window.height(), (obj.objectName(), point)
+    QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier, point)
+    app.processEvents()
+def click(name): click_obj(find(name))
+def nested(obj, kind):
+    if kind in obj.metaObject().className(): return obj
+    return next(c for c in obj.findChildren(QObject) if kind in c.metaObject().className())
+def choose(name, index):
+    obj = find(name)
+    combo = nested(obj, 'PixelComboBox')
+    window.requestActivate(); QTest.qWait(30)
+    click_obj(combo)
+    QTest.keyClick(window, Qt.Key_Home)
+    for _ in range(index): QTest.keyClick(window, Qt.Key_Down)
+    QTest.keyClick(window, Qt.Key_Return); app.processEvents()
+    assert obj.property('currentIndex') == index, (name, obj.property('currentIndex'))
+def fill(name, text):
+    obj = find(name); reveal(obj)
+    window.requestActivate(); QTest.qWait(30)
+    edit = nested(obj, 'PixelTextField')
+    edit.forceActiveFocus()
+    QTest.keyClick(window, Qt.Key_A, Qt.ControlModifier)
+    for ch in text:
+        QGuiApplication.sendEvent(window, QKeyEvent(QEvent.KeyPress, ord(ch.upper()), Qt.NoModifier, ch))
+    app.processEvents()
+    assert obj.property('text') == text
+def complete(status='SUCCESS'):
+    deadline = time.monotonic() + 120
+    while controller.busy and time.monotonic() < deadline:
+        app.processEvents(); time.sleep(.01)
+    app.processEvents()
+    assert not controller.busy and controller.status == status, (controller.status, controller.error)
+def file_selected(name, path):
+    dialog = find(name)
+    assert dialog.setProperty('selectedFile', QUrl.fromLocalFile(str(path)))
+    assert QMetaObject.invokeMethod(dialog, 'accepted', Qt.DirectConnection)
+    QMetaObject.invokeMethod(dialog, 'close', Qt.DirectConnection)
+    app.processEvents()
+click_obj(find('quantIntradayTab'), scroll=False)
+click_obj(find('intradayComparisonTab'), scroll=False)
+click('intradayExperimentOpenButton')
+file_selected('intradayExperimentOpenDialog', root / 'saved-ridge.json'); complete()
+choose('intradayResearchCandidate', 3)
+choose('intradayResearchView', 21)
+assert controller.predictionQualityAvailable and not controller.busy and not calls
+assert find('intradayPredictionSource').property('text') == ''
+assert 'continuous-return' in find('intradayPredictionQualityNotice').property('text')
+click('intradayPredictionAnalyzeButton'); complete()
+report = controller._prediction_quality_report
+assert (report['cost_index'], report['candidate_index'], report['strategy']['alpha']) == (1, 1, 10)
+assert report['context']['feature_fields'] == ['return_2', 'sma_5', 'candle_body']
+assert len(calls) == 1 and calls[0][1]['intraday_data_file'] is None
+assert 'not full Q7 Replay' in find('intradayPredictionCoverage').property('text')
+assert controller.resultSummary['intraday_verification'] == 'RECORDED'
+assert controller.tableModel.totalRows == 33
+choose('intradayPredictionView', 1); choose('intradayPredictionFold', 1)
+assert controller.predictionQualityFold['fold_index'] == 1
+assert 'Training cutoff' in find('intradayPredictionFoldCoverage').property('text')
+choose('intradayPredictionView', 2)
+table = find('intradayResearchTable')
+assert controller.tableModel.totalRows == report['sample']['prediction_count']
+next_button = next(obj for obj in table.findChildren(QObject) if obj.property('glyph') == 'next'
+    and obj.metaObject().indexOfSignal('clicked()') >= 0)
+click_obj(next_button)
+assert controller.tableModel.page == 2
+assert session.i18n.setLanguage('zh-CN'); app.processEvents()
+assert controller.tableModel.page == 2 and len(calls) == 1
+assert '目标不完整' in find('intradayPredictionViewNote').property('text')
+choose('intradayPredictionView', 0)
+reveal(table)
+assert window.grabWindow().save(str(root / 'prediction-quality-zh.png'))
+assert session.i18n.setLanguage('en'); app.processEvents()
+assert len(calls) == 1 and controller._prediction_quality_report is report
+reveal(table)
+assert window.grabWindow().save(str(root / 'prediction-quality-en.png'))
+click('intradayPredictionDetailsButton')
+details = find('intradayPredictionDetails').property('text')
+assert report['candidate_id'] in details and 'candle_body' in details
+assert 'SOURCE_VERIFIED_SELECTED_RIDGE_RECONSTRUCTION' in details and 'COMPLETE_TARGET_ROW_WEIGHTED' in details
+assert 'Constant predictions' in details and 'Pearson correlation' in details
+assert 'Root mean squared error' in details and 'Return (%)' in details
+click('intradayPredictionDetailsButton')
+completed_label = find('intradayPredictionCompletedSource').property('text')
+fill('intradayPredictionSource', str(root / 'missing-q5.json'))
+assert controller.predictionQualityDraftChanged and len(calls) == 1
+assert find('intradayPredictionCompletedSource').property('text') == completed_label
+assert find('intradayPredictionDraftChanged').property('visible')
+click('intradayPredictionAnalyzeButton'); complete('FAILED')
+assert len(calls) == 2 and controller._prediction_quality_report is report
+assert 'locate the same data file' in find('intradayPredictionError').property('text')
+assert 'intraday data path must be a regular file' in find('intradayPredictionError').property('text')
+assert controller.predictionQualitySource == str(root / 'missing-q5.json')
+assert controller.resultSummary['intraday_verification'] == 'RECORDED'
+click('intradayPredictionLocateButton')
+file_selected('intradayPredictionSourceDialog', root / 'relocated-q5.json')
+assert not controller.busy and len(calls) == 2
+assert controller.predictionQualitySource == QUrl.fromLocalFile(str(root / 'relocated-q5.json')).toString()
+assert find('intradayPredictionCompletedSource').property('text') == completed_label
+click('intradayPredictionAnalyzeButton'); complete()
+assert len(calls) == 3 and controller.predictionQualityError == ''
+assert calls[-1][1] == {'cost_index': 1, 'candidate_index': 1, 'intraday_data_file': root / 'relocated-q5.json'}
+assert controller.predictionQualityCompletedSource['data_path'] == str(root / 'relocated-q5.json')
+assert not controller.predictionQualityDraftChanged and not find('intradayPredictionDraftChanged').property('visible')
+assert controller.resultSummary['intraday_verification'] == 'RECORDED'
+assert (root / 'saved-ridge.json').read_bytes() == controller._content
+assert session.runtime.backend_if_initialized is None and session.runtime.shutdown()
+engine.deleteLater(); app.processEvents()
+print('REAL_PREDICTION_QUALITY_UI_OK')
+'''
+    result = subprocess.run([sys.executable, "-c", script, str(tmp_path)], cwd=ROOT,
+        env={**os.environ, "QT_QPA_PLATFORM": "offscreen", "QT_QUICK_BACKEND": "software", "PYTHONPATH": str(ROOT / "src")},
+        capture_output=True, text=True, timeout=300)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "REAL_PREDICTION_QUALITY_UI_OK" in result.stdout
+    assert "ReferenceError" not in result.stderr and "TypeError" not in result.stderr
 
 
 def test_actual_qml_compare_models_pagination_save_open_replay_and_language(research_case, tmp_path):

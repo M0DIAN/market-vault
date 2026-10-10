@@ -1938,3 +1938,216 @@ def test_signal_delay_rejects_frozen_selection_and_out_of_range_indices(return_u
     for options in ({"cost_index": 2}, {"candidate_index": 2}):
         with pytest.raises(ValueError, match="outside the saved experiment"):
             analyze_intraday_signal_delay(case.snapshot, **options)
+
+
+def test_prediction_quality_small_rmse_negative_skill_and_pooled_fold_reversal():
+    from market_vault.research.intraday_prediction_quality import _score_forecasts
+
+    def rows(actual, predicted):
+        return [{"target_status": "COMPLETE", "target_value": target,
+                 "scores": {"RIDGE": prediction, "ZERO": 0.0, "TRAIN_MEAN": 0.0}}
+                for target, prediction in zip(actual, predicted, strict=True)]
+
+    tiny = _score_forecasts(rows((.001, -.001), (.003, -.003)))[0]["metrics"]
+    assert tiny["rmse"]["value"] == pytest.approx(.002)
+    assert tiny["mse_skill_vs_zero"]["value"] == pytest.approx(-3)
+    assert tiny["pearson"]["value"] == tiny["spearman"]["value"] == pytest.approx(1)
+    first, second = rows((-2, -1), (-2, -1)), rows((1, 2, 3), (-1, -2, -3))
+    fold_a, fold_b = (_score_forecasts(items)[0]["metrics"] for items in (first, second))
+    pooled = _score_forecasts(first + second)[0]["metrics"]
+    assert fold_a["pearson"]["value"] == pytest.approx(1)
+    assert fold_b["pearson"]["value"] == pytest.approx(-1)
+    assert pooled["mse"]["value"] == pytest.approx(56 / 5)
+    assert pooled["rmse"]["value"] == pytest.approx(math.sqrt(56 / 5))
+    assert pooled["mae"]["value"] == pytest.approx(12 / 5)
+    assert pooled["bias"]["value"] == pytest.approx(-12 / 5)
+    assert pooled["r2"]["value"] == pytest.approx(1 - 56 / 17.2)
+    assert pooled["mse"]["value"] != pytest.approx((fold_a["mse"]["value"] + fold_b["mse"]["value"]) / 2)
+
+
+def test_prediction_quality_ties_constants_missing_targets_and_finite_loss_ratios():
+    from market_vault.research.intraday_prediction_quality import _loss_skill, _prediction_metrics, _score_forecasts
+    tied = _prediction_metrics((1.0, 1.0, 2.0, 3.0), (4.0, 4.0, 3.0, 1.0))
+    assert tied["spearman"]["value"] == pytest.approx(-1)
+    constant = _prediction_metrics((0.0, 0.0), (0.0, 0.0))
+    assert constant["r2"]["unavailable_reason"] == "CONSTANT_TARGETS"
+    assert constant["pearson"]["unavailable_reason"] == "CONSTANT_PREDICTIONS_AND_TARGETS"
+    assert _prediction_metrics((1.0, 2.0), (0.0, 0.0))["pearson"]["unavailable_reason"] == "CONSTANT_PREDICTIONS"
+    assert _prediction_metrics((1.0,), (2.0,))["spearman"]["unavailable_reason"] == "INSUFFICIENT_COMPLETE_TARGETS"
+    assert _loss_skill((0.0, 0.0), (1.0, 1.0), (0.0, 0.0))["unavailable_reason"] == "ZERO_BASELINE_ERROR"
+    for forecast in _score_forecasts([]):
+        assert all(metric["value"] is None and metric["unavailable_reason"] == "NO_COMPLETE_TARGETS"
+                   for metric in forecast["metrics"].values())
+    # Tiny nonzero baseline errors must not be mislabeled as a perfect baseline.
+    assert _loss_skill((1e-200, -1e-200), (0.0, 0.0), (0.0, 0.0))["value"] == 0
+    large = _prediction_metrics((1e200, -1e200), (0.0, 0.0))
+    assert large["mse"]["unavailable_reason"] == "NONFINITE_RESULT"
+    assert large["rmse"]["value"] == pytest.approx(1e200)
+    assert large["r2"]["value"] == pytest.approx(0)
+
+
+def test_prediction_quality_training_mean_uses_each_purged_history_not_current_or_test_targets():
+    from market_vault.research.intraday_prediction_quality import _paired_prediction_rows
+    observations = [{"observation_key": f"key-{i}", "trading_day": f"2025-02-0{i + 3}",
+                     "status": "READY", "slot": 1, "decision_time": f"2025-02-0{i + 3}T15:00:00+00:00"}
+                    for i in range(4)]
+    folds = [{"fold_index": i, "fold_id": f"fold-{i}",
+              "training_boundary": f"2025-02-0{i + 4}T14:30:00+00:00",
+              "validation_keys": [f"key-{i + 1}"], "validation_days": [f"2025-02-0{i + 4}"]}
+             for i in range(2)]
+    candidate = {"predictions": [{**row, "score": 0.0} for row in observations[1:3]],
+                 "fold_models": [{"model": {"model_id": f"model-{i}"}} for i in range(2)]}
+
+    def calculated(values):
+        report = {"observations": observations,
+                  "targets": [{"observation_key": row["observation_key"], "status": "COMPLETE", "reason": None,
+                               "actual_label_end_time": f"{row['trading_day']}T15:15:00+00:00", "value": value}
+                              for row, value in zip(observations, values, strict=True)]}
+        retained = tuple(research.training_rows(report, tuple(row["trading_day"] for row in observations[:i + 1]),
+                                               fold["training_boundary"])[0] for i, fold in enumerate(folds))
+        prepared = SimpleNamespace(report=report, fold_rows=retained,
+                                   context={"folds": folds, "validation_keys": ["key-1", "key-2"]})
+        return _paired_prediction_rows(prepared, candidate)
+
+    original, future, held_out = calculated((1.0, 10.0, 100.0, 1000.0)), calculated((1.0, 20.0, 200.0, 1000.0)), calculated((1.0, 10.0, 100.0, -1000.0))
+    assert [fold["training_target_mean"] for fold in original[1]] == [1.0, 5.5]
+    assert [fold["training_target_mean"] for fold in future[1]] == [1.0, 10.5]
+    assert original == held_out
+    assert [row["scores"]["TRAIN_MEAN"] for row in future[0]] == [1.0, 10.5]
+    assert {row["observation_key"] for row in original[0]} == {"key-1", "key-2"}
+
+
+def test_prediction_quality_real_selected_refit_tail_coverage_source_locator_and_installed_cli(research_case, tmp_path, monkeypatch):
+    import json
+    import os
+    from pathlib import Path
+    import subprocess
+    import sysconfig
+    from market_vault.research import intraday_prediction_quality as quality
+    from market_vault.research.intraday_experiment import create_intraday_experiment
+    from market_vault.research.strategy_experiment import write_strategy_experiment
+    data, plan, report = research_case
+    snapshot = create_intraday_experiment(plan=plan, report=report, name="预测质量")
+    path, relocated = tmp_path / "development.json", tmp_path / "relocated-intraday.json"
+    write_strategy_experiment(snapshot, path=path)
+    relocated.write_bytes(data.path.read_bytes())
+    before = path.read_bytes(), data.path.read_bytes(), relocated.read_bytes()
+    calls, loader, fitter = {"loads": 0, "fits": 0}, research.load_intraday_dataset, research._fit
+    def loaded(*args, **kwargs):
+        calls["loads"] += 1
+        return loader(*args, **kwargs)
+    def fitted(*args, **kwargs):
+        calls["fits"] += 1
+        return fitter(*args, **kwargs)
+    monkeypatch.setattr(research, "load_intraday_dataset", loaded)
+    monkeypatch.setattr(research, "_fit", fitted)
+    monkeypatch.setattr(research, "run_intraday_execution", lambda *a, **kw: pytest.fail("prediction quality reran Q6"))
+    result = quality.analyze_intraday_prediction_quality(snapshot, candidate_index=2, intraday_data_file=" ")
+    assert calls == {"loads": 1, "fits": 2}
+    assert result["sample"] == {"prediction_count": 740, "complete_target_count": 710, "incomplete_target_count": 30,
+                                "scored_day_count": 10, "evaluated_day_count": 10, "fold_count": 2}
+    assert result["context"] == report["context"]
+    assert result["candidate_id"] == report["groups"][0]["results"][2]["candidate_id"]
+    assert result["source_locator"] == {"recorded": str(data.path), "used": str(data.path.resolve()), "override_used": False}
+    assert result["evidence"] == {"scope": "SOURCE_VERIFIED_SELECTED_RIDGE_RECONSTRUCTION", "context_matches": True,
+                                  "fold_models_match": True, "predictions_match": True,
+                                  "prediction_metrics_match": True, "execution_replayed": False}
+    assert [row["observation_key"] for row in result["predictions"]] == report["context"]["validation_keys"]
+    assert all(row["target_value"] is None and row["target_reason"] == "SESSION_END" and len(row["scores"]) == 3
+               for row in result["predictions"] if row["target_status"] != "COMPLETE")
+    target_by_key = {row["observation_key"]: row for row in data.as_dict()["report"]["targets"]}
+    for fold, original in zip(result["folds"], report["context"]["folds"], strict=True):
+        expected = math.fsum(target_by_key[key]["value"] for key in original["training_keys"]) / len(original["training_keys"])
+        assert fold["training_target_mean"] == expected
+        assert fold["sample"]["complete_target_count"] == 355
+    expected_errors = report["groups"][0]["results"][2]["prediction_metrics"]
+    assert [result["forecasts"][0]["metrics"][key]["value"] for key in ("mae", "rmse", "r2")] == pytest.approx(
+        [expected_errors[key] for key in ("mae", "rmse", "r2")])
+    assert result["prediction_quality_id"] == research.digest({key: value for key, value in result.items() if key != "prediction_quality_id"})
+    console = Path(sysconfig.get_path("scripts")) / ("market-vault.exe" if os.name == "nt" else "market-vault")
+    env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"), "PYTHONIOENCODING": "cp1252:strict"}
+    process = subprocess.run([str(console), "research-intraday-prediction-quality", "--experiment", str(path),
+                              "--candidate-index", "2", "--intraday-data", str(relocated)], env=env, capture_output=True, check=False)
+    assert process.returncode == 0 and not process.stderr
+    assert process.stdout.isascii()
+    cli_result = json.loads(process.stdout)["report"]
+    assert cli_result["forecasts"] == result["forecasts"] and cli_result["predictions"] == result["predictions"]
+    assert cli_result["source_locator"] == {"recorded": str(data.path), "used": str(relocated.resolve()), "override_used": True}
+    # Q5 locators are portable metadata. A valid relocated Q5 whose Canonical
+    # source is missing must fail as structured CLI output, without a traceback.
+    broken = data.as_dict()
+    broken["plan"]["canonical_build_dirs"] = [str(tmp_path / "missing-canonical")]
+    broken_path = tmp_path / "missing-source-intraday.json"
+    from market_vault.research.intraday_data import canonical_json
+    broken_path.write_bytes(canonical_json(broken))
+    failed = subprocess.run([str(console), "research-intraday-prediction-quality", "--experiment", str(path),
+                             "--candidate-index", "2", "--intraday-data", str(broken_path)],
+                            env=env, capture_output=True, check=False)
+    assert failed.returncode == 1 and not failed.stdout
+    assert failed.stderr.isascii() and json.loads(failed.stderr)["status"] == "FAILED"
+    assert (path.read_bytes(), data.path.read_bytes(), relocated.read_bytes()) == before
+
+
+@pytest.mark.parametrize("changed_field", ["context", "models", "predictions", "prediction_metrics"])
+def test_prediction_quality_rejects_resigned_selected_evidence(research_case, monkeypatch, changed_field):
+    from market_vault.research.intraday_prediction_quality import analyze_intraday_prediction_quality
+    from market_vault.research.intraday_experiment import create_intraday_experiment
+    from test_intraday_experiment import _comparison_snapshot
+    data, plan, report = research_case
+    root = create_intraday_experiment(plan=plan, report=report).as_dict()
+    candidate = root["report"]["groups"][0]["results"][2]
+    if changed_field == "context":
+        root["report"]["context"]["held_out_test_observation_count"] += 1
+    elif changed_field == "models":
+        candidate["fold_models"][0]["model"]["coefficients"][0] += .01
+    elif changed_field == "predictions":
+        candidate["predictions"][0]["score"] += .01
+        candidate["execution"]["decisions"][0]["score"] += .01
+    else:
+        candidate["prediction_metrics"]["rmse"] += .01
+    changed = _comparison_snapshot(root)  # Real saved grammar accepts these newly signed contents.
+    prepared = research._prepare_intraday_research(plan, data=data)
+    calls, fit = [], research._fit
+    monkeypatch.setattr(research, "_prepare_intraday_research", lambda *a, **kw: prepared)
+    def fitted(*args, **kwargs):
+        calls.append(1)
+        return fit(*args, **kwargs)
+    monkeypatch.setattr(research, "_fit", fitted)
+    with pytest.raises(ValueError, match="saved context" if changed_field == "context" else "reconstruction differs"):
+        analyze_intraday_prediction_quality(changed, candidate_index=2)
+    assert len(calls) == (0 if changed_field == "context" else 2)
+
+
+def test_prediction_quality_admission_precedes_source_io_and_cli_settings(research_case, tmp_path, monkeypatch, capsys):
+    import json
+    from market_vault import cli
+    from market_vault.research.intraday_prediction_quality import analyze_intraday_prediction_quality
+    from market_vault.research.intraday_experiment import create_intraday_experiment
+    from market_vault.research.intraday_final_test import freeze_intraday_candidate
+    from market_vault.research.strategy_experiment import write_strategy_experiment
+    from test_intraday_experiment import _comparison_snapshot
+    _, plan, report = research_case
+    snapshot = create_intraday_experiment(plan=plan, report=report)
+    monkeypatch.setattr(research, "load_intraday_dataset", lambda *a, **kw: pytest.fail("inadmissible request loaded Q5"))
+    monkeypatch.setattr(cli, "load_settings", lambda *a, **kw: pytest.fail("prediction quality loaded settings"))
+    for options in ({"cost_index": True}, {"candidate_index": -1}, {"candidate_index": 1.5},
+                    {"cost_index": 1}, {"candidate_index": 3}, {"candidate_index": 0}, {"intraday_data_file": False}):
+        with pytest.raises(ValueError):
+            analyze_intraday_prediction_quality(snapshot, **options)
+    root = snapshot.as_dict()
+    root["algorithm_versions"]["ridge"] = "historical-ridge"
+    with pytest.raises(ValueError, match="versions differ"):
+        analyze_intraday_prediction_quality(_comparison_snapshot(root), candidate_index=2)
+    with pytest.raises(ValueError, match="immutable StrategyExperiment"):
+        analyze_intraday_prediction_quality(object())
+    # A real frozen selection cannot enter the native DEV reconstruction path.
+    path = tmp_path / "development.json"
+    write_strategy_experiment(snapshot, path=path)
+    selection = freeze_intraday_candidate(path, expected_experiment_id=snapshot.experiment_id,
+        cost_index=0, candidate_index=2, expected_candidate_id=report["groups"][0]["results"][2]["candidate_id"])
+    with pytest.raises(ValueError, match="ordinary saved DEV"):
+        analyze_intraday_prediction_quality(selection)
+    assert cli.main(["research-intraday-prediction-quality", "--experiment", str(tmp_path / "missing.json"),
+                     "--candidate-index", "-1"]) == 1
+    error = capsys.readouterr()
+    assert not error.out and json.loads(error.err)["error"] == "candidate_index must be a nonnegative integer"
