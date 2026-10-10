@@ -333,6 +333,10 @@ def _validate_report(report, config, dataset_id, mode, versions):
 
 def _validate_root(root):
     _object(root, _ROOT_FIELDS, "experiment snapshot")
+    if root["artifact_schema_version"] == "market-vault-intraday-threshold-selection-v1":
+        from .intraday_threshold_experiment import validate_intraday_threshold_selection_root
+        validate_intraday_threshold_selection_root(root)
+        return
     if root["artifact_schema_version"] == "market-vault-intraday-inner-selection-v1":
         from .intraday_inner_experiment import validate_intraday_inner_selection_root
         validate_intraday_inner_selection_root(root)
@@ -562,6 +566,12 @@ def replay_strategy_experiment(snapshot: StrategyExperiment, *, dataset_build_di
     if type(snapshot) is not StrategyExperiment:
         raise ValueError("an immutable StrategyExperiment is required")
     root = snapshot.as_dict()
+    if root["artifact_schema_version"] == "market-vault-intraday-threshold-selection-v1":
+        if dataset_build_dir is not None:
+            raise ValueError("threshold selection replay requires intraday_data_file, not a Dataset directory")
+        from .intraday_threshold_selection import replay_intraday_threshold_selection
+        return replay_intraday_threshold_selection(snapshot, source_experiment_file=source_experiment_file,
+                                                   intraday_data_file=intraday_data_file)
     if root["artifact_schema_version"] == "market-vault-intraday-inner-selection-v1":
         if dataset_build_dir is not None:
             raise ValueError("inner selection replay requires intraday_data_file, not a Dataset directory")

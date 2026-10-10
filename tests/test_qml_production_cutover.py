@@ -48,7 +48,8 @@ def test_production_spec_has_exact_qml_asset_inventory() -> None:
     assert "IntradaySavedComparisonPanel.qml" in expected_qml
     assert "IntradayInnerSelectionPanel.qml" in expected_qml
     assert "IntradayTrainingHistoryPanel.qml" in expected_qml
-    assert len(expected_qml) == 50
+    assert "IntradayThresholdSelectionPanel.qml" in expected_qml
+    assert len(expected_qml) == 51
     for asset in (
         "qmldir",
         "fusion-pixel-12px-proportional-zh_hans.otf",
@@ -117,6 +118,7 @@ def test_production_build_audits_qml_identity_laziness_and_tk_absence() -> None:
         "Tk UI modules entered the production executable archive",
         "Required production QML assets are missing",
         r"_internal\market_vault\desktop\qml\pages\IntradayTrainingHistoryPanel.qml",
+        r"_internal\market_vault\desktop\qml\pages\IntradayThresholdSelectionPanel.qml",
         "Bundled Fusion Pixel hash mismatch",
         "Unapproved QtWidgets/WebEngine content entered the production bundle",
     ):

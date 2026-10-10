@@ -736,6 +736,8 @@ class QuantResearchController(NetworkController):
         self._intraday_inner_controller = IntradayInnerSelectionController(runtime, research=self._intraday_research_controller, parent=self)
         from .intraday_training_history import IntradayTrainingHistoryController
         self._intraday_training_history_controller = IntradayTrainingHistoryController(runtime, research=self._intraday_research_controller, parent=self)
+        from .intraday_threshold_selection import IntradayThresholdSelectionController
+        self._intraday_threshold_controller = IntradayThresholdSelectionController(runtime, research=self._intraday_research_controller, parent=self)
         from .intraday_final_test import IntradayFinalController
         self._intraday_final_controller = IntradayFinalController(runtime, research=self._intraday_research_controller,
                                                                 inner=self._intraday_inner_controller, parent=self)
@@ -757,6 +759,10 @@ class QuantResearchController(NetworkController):
     @Property(QObject, constant=True)
     def intradayTrainingHistoryController(self):
         return self._intraday_training_history_controller
+
+    @Property(QObject, constant=True)
+    def intradayThresholdSelectionController(self):
+        return self._intraday_threshold_controller
 
     @Property(QObject, constant=True)
     def intradaySavedComparisonController(self):
