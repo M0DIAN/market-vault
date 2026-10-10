@@ -59,6 +59,14 @@ Item {
         onAccepted: root.controller.saveTest(selectedFile.toString())
     }
     FileDialog {
+        id: openInnerSource
+        objectName: "intradayFinalInnerSourceDialog"
+        fileMode: FileDialog.OpenFile
+        nameFilters: ["JSON files (*.json)"]
+        title: root.i18n.catalog["inner.open"]
+        onAccepted: root.controller.openInnerSource(selectedFile.toString())
+    }
+    FileDialog {
         id: sourcePicker
         objectName: "intradayFinalSourceDialog"
         fileMode: FileDialog.OpenFile
@@ -88,18 +96,62 @@ Item {
             Label { Layout.fillWidth: true; text: root.i18n.catalog["quant.intraday_locations_help"]; wrapMode: Text.WordWrap; color: Theme.PixelTheme.ink }
             RowLayout {
                 Layout.fillWidth: true
-                Components.LabeledTextField { id: sourcePath; objectName: "intradayFinalSourcePath"; Layout.fillWidth: true; Layout.maximumWidth: Infinity; label: root.i18n.catalog["quant.intraday_source_override"] }
+                Components.LabeledTextField { id: sourcePath; objectName: "intradayFinalSourcePath"; Layout.fillWidth: true; Layout.maximumWidth: Infinity; label: root.i18n.catalog["quant.intraday_source_override"]; onTextChanged: root.controller.setLocations(text, dataPath.text) }
                 Components.PixelButton { objectName: "intradayFinalSourceBrowse"; text: root.i18n.catalog["quant.browse"]; onClicked: sourcePicker.open() }
             }
             RowLayout {
                 Layout.fillWidth: true
-                Components.LabeledTextField { id: dataPath; objectName: "intradayFinalDataPath"; Layout.fillWidth: true; Layout.maximumWidth: Infinity; label: root.i18n.catalog["quant.intraday_data_override"] }
+                Components.LabeledTextField { id: dataPath; objectName: "intradayFinalDataPath"; Layout.fillWidth: true; Layout.maximumWidth: Infinity; label: root.i18n.catalog["quant.intraday_data_override"]; onTextChanged: root.controller.setLocations(sourcePath.text, text) }
                 Components.PixelButton { objectName: "intradayFinalDataBrowse"; text: root.i18n.catalog["quant.browse"]; onClicked: dataPicker.open() }
             }
             RowLayout {
                 Components.PixelButton { objectName: "intradayFinalLocationsClear"; text: root.i18n.catalog["quant.intraday_locations_clear"]; onClicked: { sourcePath.text = ""; dataPath.text = "" } }
                 Item { Layout.fillWidth: true }
                 Components.PixelButton { objectName: "intradayFinalLocationsDone"; text: root.i18n.catalog["quant.intraday_apply_settings"]; onClicked: locations.close() }
+            }
+        }
+    }
+    Dialog {
+        id: details
+        objectName: "intradayFinalDetailsDialog"
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        width: Math.min(880, parent.width - 40)
+        height: Math.min(650, parent.height - 40)
+        modal: true
+        title: root.i18n.catalog["quant.intraday_final_details"]
+        standardButtons: Dialog.Close
+        background: Rectangle { color: Theme.PixelTheme.surface; border.color: Theme.PixelTheme.goldDark }
+        contentItem: ScrollView {
+            id: detailScroll
+            objectName: "intradayFinalDetailsScroll"
+            clip: true
+            contentWidth: availableWidth
+            rightPadding: detailsBar.width
+            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+            ScrollBar.vertical: Components.PixelScrollBar {
+                id: detailsBar
+                objectName: "intradayFinalDetailsScrollBar"
+                parent: detailScroll
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                anchors.right: parent.right
+            }
+            Label {
+                objectName: "intradayFinalEvidenceText"
+                width: detailScroll.availableWidth
+                text: {
+                    root.i18n.language
+                    const values = root.controller.selectionEvidence
+                    const lines = [root.controller.selectionDetails]
+                    for (const key of Object.keys(values)) {
+                        if (key === "method") continue
+                        lines.push((root.i18n.catalog["final." + key] || root.i18n.catalog["inner." + key] || key) + ": " + values[key])
+                    }
+                    return lines.join("\n")
+                }
+                wrapMode: Text.WrapAnywhere
+                color: Theme.PixelTheme.ink
             }
         }
     }
@@ -110,8 +162,16 @@ Item {
         anchors.fill: parent
         clip: true
         contentWidth: availableWidth
+        rightPadding: verticalBar.width
         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-        ScrollBar.vertical: Components.PixelScrollBar { objectName: "intradayFinalScrollBar" }
+        ScrollBar.vertical: Components.PixelScrollBar {
+            id: verticalBar
+            objectName: "intradayFinalScrollBar"
+            parent: scroll
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            anchors.right: parent.right
+        }
 
         ColumnLayout {
             width: scroll.availableWidth
@@ -138,6 +198,23 @@ Item {
                 }
                 Components.PixelStatusBadge { status: root.controller.status; text: { root.i18n.language; return root.i18n.statusLabel(root.controller.status) } }
             }
+            RowLayout {
+                Layout.fillWidth: true
+                enabled: !root.controller.busy && !operationRuntime.busy
+                Components.PixelButton { objectName: "intradayFinalInnerOpenButton"; text: root.i18n.catalog["inner.open"]; onClicked: openInnerSource.open() }
+                Label {
+                    objectName: "intradayFinalInnerSource"
+                    Layout.fillWidth: true
+                    text: root.controller.innerSourceDetails || root.i18n.catalog["quant.intraday_inner_freeze_help"]
+                    elide: Text.ElideMiddle
+                    color: Theme.PixelTheme.inkMuted
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                    ToolTip.visible: innerHover.hovered
+                    ToolTip.text: text
+                    HoverHandler { id: innerHover }
+                }
+                Components.PixelButton { objectName: "intradayFreezeInnerButton"; text: root.i18n.catalog["quant.intraday_freeze_inner"]; enabled: root.controller.canFreezeInner; onClicked: root.controller.freezeInnerSelection() }
+            }
             Label {
                 Layout.fillWidth: true
                 text: root.i18n.catalog["quant.intraday_final_help"]
@@ -163,16 +240,15 @@ Item {
             }
             RowLayout {
                 Layout.fillWidth: true
-                enabled: !root.controller.busy && !operationRuntime.busy
-                Components.PixelButton { objectName: "intradayTestOpenButton"; text: root.i18n.catalog["quant.intraday_test_open"]; onClicked: openTest.open() }
-                Components.PixelButton { objectName: "intradayTestSaveButton"; text: root.i18n.catalog["quant.intraday_test_save"]; enabled: root.controller.testLoaded; onClicked: saveTest.open() }
-                Components.PixelButton { objectName: "intradayTestReplayButton"; text: root.i18n.catalog["quant.intraday_test_replay"]; enabled: root.controller.testLoaded; onClicked: root.controller.replayTest(sourcePath.text, dataPath.text) }
+                Components.PixelButton { objectName: "intradayTestOpenButton"; text: root.i18n.catalog["quant.intraday_test_open"]; enabled: !operationRuntime.busy; onClicked: openTest.open() }
+                Components.PixelButton { objectName: "intradayTestSaveButton"; text: root.i18n.catalog["quant.intraday_test_save"]; enabled: root.controller.testLoaded && !operationRuntime.busy; onClicked: saveTest.open() }
+                Components.PixelButton { objectName: "intradayTestReplayButton"; text: root.i18n.catalog["quant.intraday_test_replay"]; enabled: root.controller.testLoaded && !operationRuntime.busy; onClicked: root.controller.replayTest(sourcePath.text, dataPath.text) }
                 Components.PixelButton { objectName: "intradayFinalLocationsButton"; text: root.i18n.catalog["quant.intraday_locations"]; enabled: root.controller.selectionLoaded; onClicked: locations.open() }
             }
             Label {
                 Layout.fillWidth: true
                 visible: text.length > 0
-                text: root.controller.error || ((sourcePath.text || dataPath.text) ? root.i18n.catalog["quant.intraday_locations_active"] : "")
+                text: root.controller.error || root.i18n.catalog["inner." + root.controller.notice] || ((sourcePath.text || dataPath.text) ? root.i18n.catalog["quant.intraday_locations_active"] : "")
                 wrapMode: Text.WordWrap
                 color: Theme.PixelTheme.ink
                 font.pixelSize: Theme.PixelTheme.fontSm
@@ -183,7 +259,8 @@ Item {
                 summary: {
                     const result = root.controller.resultSummary
                     const keys = {FROZEN: "quant.intraday_frozen", COMPUTED: "quant.intraday_computed", RECORDED: "quant.snapshot_loaded",
-                        REPLAY_MATCH: "quant.replay_verified", REPLAY_PENDING: "quant.intraday_replay_pending", REPLAY_FAILED: "quant.intraday_replay_failed"}
+                        REPLAY_MATCH: "quant.replay_verified", REPLAY_PENDING: "quant.intraday_replay_pending", REPLAY_FAILED: "quant.intraday_replay_failed",
+                        REPLAY_STALE_INPUT: "final.replay_stale"}
                     for (const key of ["intraday_selection_proof", "intraday_test_proof"]) {
                         if (result[key]) result[key] = root.i18n.catalog[keys[result[key]]]
                     }
@@ -202,21 +279,39 @@ Item {
                 ToolTip.text: root.controller.selectionDetails + "\n" + root.controller.provenanceDetails
                 HoverHandler { id: detailsHover }
             }
+            Components.PixelButton {
+                objectName: "intradayFinalDetailsButton"
+                text: root.i18n.catalog["quant.intraday_final_details"]
+                enabled: root.controller.selectionLoaded
+                onClicked: details.open()
+            }
+            Label {
+                objectName: "intradayFinalMethod"
+                Layout.fillWidth: true
+                property bool quadraticModel: root.controller.selectionLoaded && view.selectedView === 4
+                    && root.controller.frozenCandidate.strategy.kind === "QUADRATIC_RIDGE"
+                visible: root.controller.hasDevSelection || quadraticModel
+                text: (root.controller.hasDevSelection ? root.i18n.catalog["quant.intraday_final_selection_method"] : "")
+                    + (quadraticModel ? "\n" + root.i18n.catalog["quant.intraday_final_model_help"] : "")
+                wrapMode: Text.WordWrap
+                color: Theme.PixelTheme.inkMuted
+                font.pixelSize: Theme.PixelTheme.fontSm
+            }
             Components.LabeledComboBox {
                 id: view
                 objectName: "intradayTestView"
                 Layout.fillWidth: true
                 Layout.maximumWidth: 350
-                visible: root.controller.testLoaded
+                visible: root.controller.selectionLoaded
                 label: root.i18n.catalog["quant.intraday_result_view"]
                 property int selectedView: 0
                 model: ["quant.intraday_overview", "quant.trades", "quant.intraday_ledger", "quant.intraday_daily",
                     "quant.intraday_final_model", "quant.intraday_predictions", "quant.performance",
                     "quant.performance_exit", "quant.performance_entry", "quant.performance_day",
                     "quant.risk_summary", "quant.risk_drawdowns", "quant.risk_distributions", "quant.risk_concentration",
-                    "quant.risk_folds"].map(key => root.i18n.catalog[key])
+                    "quant.risk_folds"].concat(root.controller.hasDevSelection ? ["final.family", "final.models", "final.keys", "final.predictions"] : []).map(key => root.i18n.catalog[key])
                 onSelected: { selectedView = currentIndex; root.controller.selectView(currentIndex) }
-                onModelChanged: currentIndex = selectedView
+                onModelChanged: { if (selectedView >= model.length) selectedView = 0; currentIndex = selectedView; root.controller.selectView(selectedView) }
             }
             ColumnLayout {
                 visible: root.controller.testLoaded && view.selectedView === 0
@@ -260,6 +355,7 @@ Item {
                 tableModel: root.controller.tableModel
                 i18n: root.i18n
                 cellFormatter: function(value) {
+                    if (view.selectedView >= 15 || view.selectedView === 4) return root.i18n.catalog["inner." + value] || value
                     if (view.selectedView >= 10) return root.i18n.catalog["risk." + value] || root.i18n.catalog["performance." + value] || value
                     return view.selectedView >= 6 ? (root.i18n.catalog["performance." + value] || value) : value
                 }
@@ -268,7 +364,7 @@ Item {
             }
             Label {
                 Layout.fillWidth: true
-                visible: root.controller.testLoaded && view.selectedView >= 6
+                visible: root.controller.testLoaded && view.selectedView >= 6 && view.selectedView <= 14
                 text: {
                     if (view.selectedView < 10) return root.i18n.catalog["quant.performance_note"]
                     const note = ["", "quant.risk_drawdowns_note", "quant.risk_distributions_note",

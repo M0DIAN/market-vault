@@ -131,7 +131,7 @@ def analyze_intraday_experiment(snapshot, *, cost_index: int = 0, candidate_inde
         group = report["groups"][cost_index]
         candidate = group["results"][candidate_index]
         identity, scope = candidate["candidate_id"], "DEVELOPMENT_WALK_FORWARD_ONLY"
-    elif root["artifact_schema_version"] == "market-vault-intraday-test-v1":
+    elif root["artifact_schema_version"] in ("market-vault-intraday-test-v1", "market-vault-intraday-test-v2"):
         if cost_index or candidate_index:
             raise ValueError("TEST contains one frozen result; both indices must be zero")
         group = candidate = report

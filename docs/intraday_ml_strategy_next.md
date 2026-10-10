@@ -18,8 +18,8 @@ Q21–Q23 add source-verified forecast quality, Feature-omission refits and one
 bounded quadratic representation. The cross-day Dataset workflow separately
 already contains Feature research and Ridge selection.
 
-The remaining concrete gap is that Q23's quadratic forecasts are descriptive
-DEV evidence: they do not enter Q6 trading, ordinary reusable strategy plans or
+At that baseline, the concrete gap was that Q23's quadratic forecasts were descriptive
+DEV evidence: they did not enter Q6 trading, ordinary reusable strategy plans or
 Q8's frozen TEST. This package closes that path and adds one bounded inner
 selection experiment. It does not add a second general research framework.
 
@@ -76,8 +76,9 @@ The Q24 implementation uses the explicit V2 plan/artifact and desktop contracts
 documented in [development research](intraday_development_research.md),
 [plan reuse](intraday_plan_reuse.md) and
 [execution scenarios](intraday_execution_scenarios.md). Q25 is documented in
-[bounded inner selection](intraday_inner_selection.md); Q26 remains a separate
-subsequent delivery. Q24 and Q25 do not enable new-ML Freeze/TEST.
+[bounded inner selection](intraday_inner_selection.md). Q26 completes the
+explicit new-ML [Freeze/TEST workflow](intraday_final_test.md). Running Q24 or
+Q25 itself continues to stop at DEV evidence.
 
 ### Goal and technical approach
 
@@ -152,7 +153,7 @@ selection artifact must not masquerade as an ordinary fixed Q7 candidate.
 Also apply the same inner holdout rule once to the entire DEV history and
 record the six candidate losses/models and final fixed recipe. This final
 selection does not affect the already evaluated outer decisions, and its
-model is not a TEST-trained model. Q26 may explicitly freeze this saved recipe.
+model is not a TEST-trained model. Q26 explicitly freezes this saved recipe.
 Saving/opening/replaying the selection experiment and native/CLI usage are
 part of this task.
 
@@ -190,6 +191,12 @@ promotion and use of TEST. This remains a retrospective experiment on an
 explicit family; unknown earlier research history is not corrected.
 
 ## Q26 — explicit new-ML Freeze and independent TEST
+
+The API/CLI, native handoff, new Selection/TEST V2 contracts and source relocation
+behavior are documented in [frozen selection and final TEST](intraday_final_test.md).
+The ordinary fixed quadratic path uses the existing explicit candidate Freeze.
+The Q25 path uses `research-intraday-freeze-inner-selection` or the native final
+DEV recipe action. Both preserve the original Q8 V1 paths and identities.
 
 ### Goal and technical approach
 

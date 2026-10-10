@@ -150,7 +150,9 @@ separate forecast-only comparison with its original identity and output.
 [Q25 bounded inner ML selection](intraday_inner_selection.md) selects the fixed
 six-member linear/quadratic family inside each original outer TRAIN history,
 then evaluates its selected refit on the unchanged outer sample. It saves an
-independent replayable study and a final DEV recipe; it does not enable TEST.
+independent replayable study and a final DEV recipe. Q26 can explicitly freeze
+that saved recipe for [independent TEST](intraday_final_test.md); running Q25
+itself remains a DEV-only action.
 
 The Q19 `research-intraday-signal-delay` action re-executes one saved DEV
 candidate and its original benchmark at 0, 1 and 2 additional bars. This
@@ -286,9 +288,11 @@ reconstructs all source, fits, predictions and account evidence. Existing Saved
 DEV analytics consume the V2 ledger as well. Q21–Q23 still require a selected
 linear Ridge candidate, including one inside a mixed V2 comparison.
 
-Q8 Freeze currently accepts historical V1 DEV experiments only. V2 results show
-an explicit unavailable explanation in the desktop and cannot be frozen until
-the separately delivered Q26 contract adds that support.
+Q26 extends [explicit Freeze / TEST](intraday_final_test.md) to a saved ordinary
+V2 `QUADRATIC_RIDGE` candidate and the final DEV recipe of an AVAILABLE Q25
+study. It uses new Selection/TEST V2 artifacts and leaves Q8's historical V1
+rule/linear path unchanged. An ordinary V2 source's other candidates are not
+silently converted into V1 selections.
 
 ## Desktop workflow and evidence
 

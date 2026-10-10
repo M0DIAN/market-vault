@@ -162,7 +162,7 @@ def test_real_inner_full_source_final_dev_sample_account_and_embedded_replay(inn
     assert source_path.read_bytes() == original_bytes and path.read_bytes() == study_bytes
 
 
-def test_inner_insufficient_first_outer_makes_whole_study_unavailable(quadratic_dev_case, tmp_path):
+def test_inner_insufficient_first_outer_makes_whole_study_unavailable(quadratic_dev_case, tmp_path, monkeypatch):
     _, plan, _, _, _, _ = quadratic_dev_case
     plan = deepcopy(plan)
     plan["walk_forward"]["minimum_train_days"] = 14
@@ -181,6 +181,11 @@ def test_inner_insufficient_first_outer_makes_whole_study_unavailable(quadratic_
     saved = write_strategy_experiment(study, path=tmp_path / "unavailable.json").path
     assert load_strategy_experiment(saved).content == study.content
     assert replay_strategy_experiment(study)["report_matches"]
+    from market_vault.research import intraday_final_test as final
+    monkeypatch.setattr(final, "load_intraday_dataset", lambda *a, **kw: pytest.fail("unavailable Freeze read Q5"))
+    monkeypatch.setattr(research, "_fit", lambda *a, **kw: pytest.fail("unavailable Freeze fitted"))
+    with pytest.raises(ValueError, match="AVAILABLE"):
+        final.freeze_intraday_inner_selection(saved, expected_experiment_id=study.experiment_id)
 
 
 def resigned(root):
