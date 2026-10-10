@@ -1146,6 +1146,8 @@ def prediction_detail(expected):
         assert expected[key] in text, (key, text)
     fields = dict(line.split(': ', 1) for line in text.splitlines() if ': ' in line)
     catalog = session.i18n.catalog
+    assert actual['prediction_count'] == report['sample']['prediction_count']
+    assert fields[catalog['prediction_quality.row_number']] == f"{actual['row_number']} / {actual['prediction_count']}"
     for forecast in ('RIDGE', 'ZERO', 'TRAIN_MEAN'):
         assert float(fields[catalog['prediction_quality.' + forecast]]) == expected['scores'][forecast]
     target = fields[catalog['prediction_quality.row_target']]
@@ -1227,6 +1229,18 @@ assert controller.predictionQualityCompletedSource['data_path'] == str(root / 'r
 assert not controller.predictionQualityDraftChanged and not find('intradayPredictionDraftChanged').property('visible')
 assert controller.resultSummary['intraday_verification'] == 'RECORDED'
 assert (root / 'saved-ridge.json').read_bytes() == controller._content
+choose('intradayPredictionView', 2)
+row_detail = find('intradayPredictionRowDetails')
+reveal(row_detail)
+assert row_detail.property('visible') and controller.predictionQualityRowNames
+assert controller.predictionQualityRowDetails['prediction_count'] == controller.tableModel.totalRows
+choose('intradayResearchCandidate', 2)
+assert controller.predictionQualityRowDetails == {} and controller.predictionQualityRowNames == []
+assert controller.predictionQualityRowIndex == -1 and controller.tableModel.totalRows == 0
+assert not row_detail.property('visible') and row_detail.property('text') == ''
+assert not find('intradayPredictionRowPicker').property('visible')
+assert controller._prediction_quality_report is None and len(calls) == 3 and not controller.busy
+assert window.grabWindow().save(str(root / 'prediction-after-candidate-clear.png'))
 assert session.runtime.backend_if_initialized is None and session.runtime.shutdown()
 engine.deleteLater(); app.processEvents()
 print('REAL_PREDICTION_QUALITY_UI_OK')

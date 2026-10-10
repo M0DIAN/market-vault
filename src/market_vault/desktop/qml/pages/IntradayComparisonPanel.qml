@@ -1317,7 +1317,7 @@ Item {
                 text: {
                     const row = root.predictionRow
                     if (!row.observation_key) return ""
-                    return root.predictionLabel("row_number") + ": " + row.row_number + " / " + root.predictionData.sample.prediction_count
+                    return root.predictionLabel("row_number") + ": " + row.row_number + " / " + row.prediction_count
                         + "\n" + root.predictionLabel("trading_day") + ": " + row.trading_day
                         + " · " + root.predictionLabel("slot") + ": " + row.slot
                         + "\n" + root.predictionLabel("prediction_time") + ": " + row.decision_time

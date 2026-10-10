@@ -612,6 +612,7 @@ class IntradayResearchController(PageController):
             return {}
         row = deepcopy(rows[self._prediction_quality_row])
         row["row_number"] = (self._page - 1) * 100 + self._prediction_quality_row + 1
+        row["prediction_count"] = self._prediction_quality_report["sample"]["prediction_count"]
         row["fold_index"] = next(fold["fold_index"] for fold in self._prediction_quality_report["folds"]
                                  if fold["fold_id"] == row["fold_id"])
         return row
