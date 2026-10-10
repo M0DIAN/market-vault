@@ -51,6 +51,7 @@ class IntradaySavedComparisonController(PageController):
         self._bound_sources = []
         self._portfolio_result = {}
         self._portfolio_bound_sources = []
+        self._portfolio_model_index = 0
         self._weight_a_text, self._weight_b_text = "0.5", "0.5"
         self._view_index, self._page = 0, 1
         self._columns, self._rows = (), ()
@@ -119,13 +120,34 @@ class IntradaySavedComparisonController(PageController):
     def weightBText(self):
         return self._weight_b_text
 
+    @Property(int, notify=changed)
+    def portfolioModelIndex(self):
+        return self._portfolio_model_index
+
+    @Slot(int, result=bool)
+    def selectPortfolioModel(self, index):
+        if type(index) is not int or index not in (0, 1):
+            return False
+        self._portfolio_model_index = index
+        self.changed.emit()
+        return True
+
+    @Property(bool, notify=changed)
+    def portfolioRebalanceResult(self):
+        return self._portfolio_result.get("allocation", {}).get("method") == "DAILY_TARGET_CASH_REALLOCATION"
+
+    @Property(str, notify=changed)
+    def portfolioReportId(self):
+        key = "portfolio_rebalance_id" if self.portfolioRebalanceResult else "portfolio_id"
+        return self._portfolio_result.get(key, "")
+
     def _draft_weights(self):
         try:
             values = (float(self._weight_a_text), float(self._weight_b_text))
         except ValueError as exc:
-            raise ValueError("Enter finite initial A and B weights from 0 to 1, with a total no greater than 1.") from exc
+            raise ValueError("Enter finite A and B weights from 0 to 1, with a total no greater than 1.") from exc
         if any(not math.isfinite(value) or not 0 <= value <= 1 for value in values) or math.fsum(values) > 1:
-            raise ValueError("Enter finite initial A and B weights from 0 to 1, with a total no greater than 1.")
+            raise ValueError("Enter finite A and B weights from 0 to 1, with a total no greater than 1.")
         return values
 
     @Property(str, notify=changed)
@@ -171,7 +193,15 @@ class IntradaySavedComparisonController(PageController):
     @Property("QVariantMap", notify=changed)
     def portfolioContext(self):
         return deepcopy({key: self._portfolio_result[key] for key in
-            ("portfolio_id", "allocation", "sample", "basis", "availability")} if self._portfolio_result else {})
+            ("portfolio_id", "portfolio_rebalance_id", "version", "evidence", "allocation", "sample", "basis", "availability")
+            if key in self._portfolio_result})
+
+    @Property("QVariantList", notify=changed)
+    def portfolioCalendarRows(self):
+        if not self._portfolio_result:
+            return []
+        return deepcopy([{"side": "COMMON", **self._portfolio_result["sample"]},
+            *({"side": row["side"], **row["sample"]} for row in self._portfolio_bound_sources)])
 
     @Property("QVariantList", notify=changed)
     def portfolioWarnings(self):
@@ -293,15 +323,29 @@ class IntradaySavedComparisonController(PageController):
                 *(metric_value(row[key], "RATIO" if "drawdown" in key else "NUMBER")
                   for key in ("equity", "cash", "drawdown", "benchmark_equity", "benchmark_cash", "benchmark_drawdown")))
                 for row in report["path"])
-        else:
+        elif self._view_index == 7:
             self._columns = ("portfolio_account", "portfolio_sleeve", "metric", "value", "unit", "unavailable_reason")
+            keys = ("weight", "final_cash", "cash_contribution", "market_pnl", "commission_total", "slippage_total")
+            if self.portfolioRebalanceResult:
+                keys += ("initial_allocation", "net_transfers")
             self._rows = tuple((account, row["sleeve"], key, *metric(row[key]))
                 for account in ("portfolio", "benchmark") for row in report["attribution"][account]
-                for key in ("weight", "final_cash", "cash_contribution", "market_pnl", "commission_total", "slippage_total"))
+                for key in keys)
+        elif self._view_index in (8, 9):
+            allocation = self._view_index == 8
+            keys = (("target_weight", "source_cash_open", "scale_factor", "allocated_cash", "cash_close",
+                     "cash_contribution", "market_pnl", "commission_total", "slippage_total") if allocation else
+                    ("previous_cash_close", "target_cash", "net_transfer"))
+            self._columns = ("portfolio_account", "trading_day", "portfolio_time", "portfolio_sleeve",
+                *("portfolio_trading_contribution" if key == "cash_contribution" else key for key in keys))
+            collection = report["daily_allocations" if allocation else "cash_transfers"]
+            self._rows = tuple((account, row["trading_day"], utc_time(row["open_time"]), row["sleeve"],
+                *(metric_value(row[key], "RATIO" if key == "target_weight" else "NUMBER") for key in keys))
+                for account in ("portfolio", "benchmark") for row in collection[account])
 
     @Slot(int, result=bool)
     def selectView(self, index):
-        if type(index) is not int or not 0 <= index < 8:
+        if type(index) is not int or not 0 <= index < (10 if self.portfolioRebalanceResult else 8):
             return False
         self._view_index = index
         self._refresh_view()
@@ -413,16 +457,20 @@ class IntradaySavedComparisonController(PageController):
     def analyzePortfolio(self):
         try:
             if not self.canCompare or any(self._source_view(side)["is_test"] for side in ("left", "right")):
-                raise ValueError("Open two ordinary saved DEV candidates before analyzing fixed initial capital sleeves.")
+                raise ValueError("Open two ordinary saved DEV candidates before analyzing a portfolio.")
             weight_a, weight_b = self._draft_weights()
+            model_index = self._portfolio_model_index
             captured = {side: {key: self._sources[side][key] for key in ("content", "path", "cost_index", "candidate_index")}
                         for side in ("left", "right")}
         except (TypeError, ValueError) as exc:
             return self._reject_input(exc)
         def operation(backend):
             from ..research.strategy_experiment import StrategyExperiment
-            from ..research.intraday_portfolio import analyze_intraday_portfolio
-            return analyze_intraday_portfolio(StrategyExperiment(captured["left"]["content"]),
+            if model_index == 1:
+                from ..research.intraday_portfolio_rebalance import analyze_intraday_portfolio_rebalance as analyze
+            else:
+                from ..research.intraday_portfolio import analyze_intraday_portfolio as analyze
+            return analyze(StrategyExperiment(captured["left"]["content"]),
                 StrategyExperiment(captured["right"]["content"]), weight_a=weight_a, weight_b=weight_b,
                 **{side + "_" + key: source[key] for side, source in captured.items() for key in ("cost_index", "candidate_index")})
         def apply(value):
@@ -430,8 +478,9 @@ class IntradaySavedComparisonController(PageController):
             self._portfolio_result = value
             self._portfolio_bound_sources = [{"side": label, "path": captured[side]["path"], **deepcopy(value[side])}
                 for side, label in (("left", "A"), ("right", "B"))]
-            if not self.portfolioView:
+            if not self.portfolioView or (self._view_index >= 8 and not self.portfolioRebalanceResult):
                 self._view_index = 4
             self._refresh_view()
             self.changed.emit()
-        return self._submit("intraday_portfolio", operation, apply, requires_backend=False)
+        name = "intraday_portfolio_rebalance" if model_index == 1 else "intraday_portfolio"
+        return self._submit(name, operation, apply, requires_backend=False)

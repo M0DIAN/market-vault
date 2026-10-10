@@ -145,6 +145,15 @@ identities. It does not load Q5 or fit models; the pure Q6 execution kernel is
 used deliberately. See the package's Q19 contract for baseline evidence,
 session-tail handling, units and unavailable results.
 
+The Q20 `research-intraday-portfolio-rebalance` action adds an explicit Saved
+A/B model for daily target cash reallocation. Q17's fixed initial sleeves
+remain the default. Q20 scales each source relative to that day's original
+opening cash, compounds the benchmark independently and records cash-only
+transfers separately from trading profit and fees. It reuses complete saved
+basis/account checks without Q5 loading, fitting or Q6 re-execution. See the
+package's Q20 contract for captured model/weights, daily allocations, transfer
+assumptions and unavailable results.
+
 ## CLI and plan grammar
 
 Commands work offline, without settings or OpenD initialization:

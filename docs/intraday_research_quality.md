@@ -20,6 +20,12 @@ check; it does not inherit the bootstrap sample gates below. Its fixed
 0/1/2-bar scenarios address an execution assumption, with no new confidence
 interval or preferred-delay selection.
 
+Q20 adds explicit daily target cash reallocation in Saved A/B. Q17 remains the
+default fixed initial capital model; its existing report contents and identity
+are preserved. Both models use complete source admission, actual daily
+coverage and ordered account paths. Q20's separate report exposes each day's
+allocation and cash transfers, with no bootstrap gate or optimized weights.
+
 ## Why these three tasks
 
 The existing system already provides rule/Composite/Ridge comparisons,
@@ -385,8 +391,9 @@ cross-strategy cash reuse, netted orders, multi-asset/FX alignment, transaction
 capacity model, automatic weighting or N-strategy matrix is included. Under
 the current idealized account, daily reallocation could also be derived from
 saved daily returns if its capital-transfer assumptions were explicitly
-adopted; it remains a different deferred model. True shared-capital/netted
-execution requires a separate order and cost contract.
+adopted. [Q20](intraday_research_quality_next.md#q20--daily-cash-reallocation-for-two-saved-strategies)
+implements that separate model with explicit daily cash transfers. True
+shared-capital/netted execution requires a separate order and cost contract.
 
 ### API, console and recorded evidence
 
@@ -442,9 +449,10 @@ a combined result is produced.
 ### Saved A/B desktop workflow
 
 In **Saved A/B**, open two ordinary DEV results and explicitly choose each
-cost/candidate. The weight drafts start at 0.5/0.5; the residual cash share is
-read-only. Run the explicit portfolio analysis to capture those sources,
-selections and weights. The result has four views: A/B complementarity,
+cost/candidate. The default model is **Fixed initial capital sleeves**; weight
+drafts start at 0.5/0.5 and the residual cash share is read-only. Run the
+explicit portfolio analysis to capture those sources, selections, weights and
+model. The fixed-model result has four views: A/B complementarity,
 fixed-sleeve summary, ordered path and sleeve/fee attribution. Each view shows
 the sources and initial weights bound to that completed analysis.
 
@@ -454,6 +462,9 @@ keeps its captured inputs even if drafts change. View and language changes do
 not recalculate it. The existing Q11 comparison result is separate, including
 its descriptive TEST behavior. TEST inputs cannot initiate a new Q17 analysis;
 an earlier completed DEV portfolio remains viewable with its own identities.
+The separately selected Q20 model adds daily-allocation and cash-transfer
+views only for a completed Q20 report; its full contract is in the subsequent
+research-quality package.
 
 ## Method references
 

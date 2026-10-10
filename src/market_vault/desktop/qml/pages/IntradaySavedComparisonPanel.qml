@@ -12,9 +12,15 @@ Item {
     required property var i18n
     property bool showPortfolioDates: false
     property bool showPortfolioPolicies: false
+    property bool showPortfolioCalendar: false
+
+    function portfolioLabel(value) {
+        return (root.controller.portfolioRebalanceResult && root.i18n.catalog["rebalance." + value])
+            || root.i18n.catalog["portfolio." + value]
+    }
 
     function label(value) {
-        return (root.controller.portfolioView && root.i18n.catalog["portfolio." + value])
+        return (root.controller.portfolioView && root.portfolioLabel(value))
             || root.i18n.catalog["comparison." + value]
             || root.i18n.catalog["performance." + value]
             || root.i18n.catalog["columns." + value] || value
@@ -124,6 +130,17 @@ Item {
                 color: Theme.PixelTheme.inkMuted
                 font.pixelSize: Theme.PixelTheme.fontSm
             }
+            Components.LabeledComboBox {
+                objectName: "intradayPortfolioModel"
+                Layout.fillWidth: true
+                Layout.maximumWidth: 420
+                label: root.i18n.catalog["portfolio.draft_model"]
+                model: [root.i18n.catalog["portfolio.model_fixed"], root.i18n.catalog["portfolio.model_daily"]]
+                currentIndex: root.controller.portfolioModelIndex
+                enabled: !root.controller.busy && !operationRuntime.busy
+                onSelected: root.controller.selectPortfolioModel(currentIndex)
+                onModelChanged: currentIndex = Qt.binding(() => root.controller.portfolioModelIndex)
+            }
             RowLayout {
                 Layout.fillWidth: true
                 Components.LabeledTextField {
@@ -171,7 +188,7 @@ Item {
                 }
                 Components.PixelButton {
                     objectName: "intradayPortfolioAnalyzeButton"
-                    text: root.i18n.catalog["portfolio.analyze"]
+                    text: root.i18n.catalog[root.controller.portfolioModelIndex === 1 ? "rebalance.analyze" : "portfolio.analyze"]
                     enabled: root.controller.canAnalyzePortfolio && !root.controller.busy && !operationRuntime.busy
                     onClicked: root.controller.analyzePortfolio()
                 }
@@ -251,9 +268,11 @@ Item {
                 visible: root.controller.portfolioView && root.controller.portfolioResultLoaded
                 text: {
                     let allocation = root.controller.portfolioContext.allocation || ({})
-                    return root.i18n.catalog["portfolio.bound_weights"] + ": A " + root.weight(allocation.weight_a)
+                    return root.i18n.catalog["portfolio.bound_model"] + ": "
+                        + root.i18n.catalog[root.controller.portfolioRebalanceResult ? "portfolio.model_daily" : "portfolio.model_fixed"]
+                        + "\n" + root.portfolioLabel("bound_weights") + ": A " + root.weight(allocation.weight_a)
                         + " · B " + root.weight(allocation.weight_b) + " · " + root.i18n.catalog["portfolio.CASH"] + " " + root.weight(allocation.cash_weight)
-                        + "\n" + root.i18n.catalog["portfolio.capital_note"]
+                        + "\n" + root.portfolioLabel("capital_note")
                 }
                 wrapMode: Text.WordWrap
                 color: Theme.PixelTheme.ink
@@ -343,10 +362,12 @@ Item {
             Components.LabeledComboBox {
                 objectName: "intradaySavedComparisonView"
                 Layout.fillWidth: true
-                Layout.maximumWidth: 300
+                Layout.maximumWidth: 420
                 label: root.i18n.catalog["quant.intraday_result_view"]
-                model: ["quant.saved_strategy_metrics", "quant.saved_benchmark_metrics", "quant.saved_config_differences", "quant.saved_basis_checks",
-                    "portfolio.complementarity", "portfolio.summary", "portfolio.path", "portfolio.attribution"].map(key => root.i18n.catalog[key])
+                model: ["quant.saved_strategy_metrics", "quant.saved_benchmark_metrics", "quant.saved_config_differences", "quant.saved_basis_checks"]
+                    .map(key => root.i18n.catalog[key]).concat(["complementarity", "summary", "path", "attribution"]
+                        .concat(root.controller.portfolioRebalanceResult ? ["daily_allocations", "cash_transfers"] : [])
+                        .map(key => root.portfolioLabel(key)))
                 currentIndex: root.controller.viewIndex
                 onSelected: root.controller.selectView(currentIndex)
                 onModelChanged: currentIndex = Qt.binding(() => root.controller.viewIndex)
@@ -355,10 +376,37 @@ Item {
                 objectName: "intradayPortfolioViewNote"
                 Layout.fillWidth: true
                 visible: root.controller.portfolioView
-                text: root.i18n.catalog[["portfolio.complementarity_note", "portfolio.summary_note", "portfolio.path_note", "portfolio.attribution_note"][root.controller.viewIndex - 4]] || ""
+                text: root.portfolioLabel(["complementarity_note", "summary_note", "path_note", "attribution_note",
+                    "daily_allocations_note", "cash_transfers_note"][root.controller.viewIndex - 4]) || ""
                 wrapMode: Text.WordWrap
                 color: Theme.PixelTheme.inkMuted
                 font.pixelSize: Theme.PixelTheme.fontSm
+            }
+            Components.PixelButton {
+                objectName: "intradayPortfolioCalendarButton"
+                visible: root.controller.portfolioView && root.controller.portfolioResultLoaded
+                text: root.i18n.catalog["portfolio.calendar"]
+                onClicked: root.showPortfolioCalendar = !root.showPortfolioCalendar
+            }
+            ColumnLayout {
+                objectName: "intradayPortfolioCalendar"
+                Layout.fillWidth: true
+                visible: root.controller.portfolioView && root.showPortfolioCalendar
+                Repeater {
+                    model: root.controller.portfolioCalendarRows
+                    Label {
+                        required property var modelData
+                        objectName: "intradayPortfolioCalendar" + modelData.side
+                        Layout.fillWidth: true
+                        text: root.label(modelData.side) + " · " + root.i18n.catalog["portfolio.contiguous"] + ": "
+                            + (modelData.is_contiguous === null ? "—" : root.i18n.catalog[modelData.is_contiguous ? "portfolio.yes" : "portfolio.no"])
+                            + "\n" + root.i18n.catalog["portfolio.evaluated_days"] + ": " + ((modelData.evaluated_days || []).join(" · ") || "—")
+                            + "\n" + root.i18n.catalog["portfolio.gap_days"] + ": " + ((modelData.gap_days || []).join(" · ") || "—")
+                        wrapMode: Text.WordWrap
+                        color: Theme.PixelTheme.inkMuted
+                        font.pixelSize: Theme.PixelTheme.fontSm
+                    }
+                }
             }
             Components.PixelButton {
                 objectName: "intradayPortfolioDatesButton"
@@ -418,7 +466,9 @@ Item {
                 Label {
                     objectName: "intradayPortfolioReportId"
                     Layout.fillWidth: true
-                    text: root.i18n.catalog["portfolio.report_id"] + ": " + (root.controller.portfolioContext.portfolio_id || "")
+                    text: root.portfolioLabel("report_id") + ": " + root.controller.portfolioReportId
+                        + "\n" + root.i18n.catalog["portfolio.report_version"] + ": " + (root.controller.portfolioContext.version || "")
+                        + "\n" + root.i18n.catalog["portfolio.evidence"] + ": " + (root.controller.portfolioContext.evidence || "")
                     wrapMode: Text.WrapAnywhere
                     color: Theme.PixelTheme.inkMuted
                     font.pixelSize: Theme.PixelTheme.fontSm

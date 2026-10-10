@@ -201,16 +201,9 @@ def _attribution(a, b, allocation, final, reason=None):
     return rows
 
 
-def analyze_intraday_portfolio(left_snapshot: StrategyExperiment, right_snapshot: StrategyExperiment, *,
-                               left_cost_index: int = 0, left_candidate_index: int = 0,
-                               right_cost_index: int = 0, right_candidate_index: int = 0,
-                               weight_a: float = .5, weight_b: float = .5) -> dict:
-    """Describe two explicit ordinary DEV selections and fixed capital sleeves.
-
-    Full Q11 basis and all four Q9/Q12 accounts gate every joint derivation.
-    Correlation alone may be unavailable while the remaining description is
-    valid. Neither input is refitted, executed, rebalanced or modified.
-    """
+def _prepare_portfolio(left_snapshot, right_snapshot, *, left_cost_index=0, left_candidate_index=0,
+                       right_cost_index=0, right_candidate_index=0, weight_a=.5, weight_b=.5):
+    """Share complete source admission, with one decode per distinct input."""
     if any(type(snapshot) is not StrategyExperiment for snapshot in (left_snapshot, right_snapshot)):
         raise ValueError("an immutable StrategyExperiment is required for each side")
     for name, value in (("left_cost_index", left_cost_index), ("left_candidate_index", left_candidate_index),
@@ -246,6 +239,22 @@ def analyze_intraday_portfolio(left_snapshot: StrategyExperiment, right_snapshot
     detail = ("Recorded complete basis differs: " + ", ".join(failed) if failed else
               "; ".join(row["side"] + " " + row["account"] + ": " + row["unavailable_reason"] + ": " + row["detail"]
                         for row in invalid) if invalid else None)
+    return left, right, allocation, basis, sample, account_checks, values, reason, detail
+
+
+def analyze_intraday_portfolio(left_snapshot: StrategyExperiment, right_snapshot: StrategyExperiment, *,
+                               left_cost_index: int = 0, left_candidate_index: int = 0,
+                               right_cost_index: int = 0, right_candidate_index: int = 0,
+                               weight_a: float = .5, weight_b: float = .5) -> dict:
+    """Describe two explicit ordinary DEV selections and fixed capital sleeves.
+
+    Full Q11 basis and all four Q9/Q12 accounts gate every joint derivation.
+    Correlation alone may be unavailable while the remaining description is
+    valid. Neither input is refitted, executed, rebalanced or modified.
+    """
+    left, right, allocation, basis, sample, account_checks, values, reason, detail = _prepare_portfolio(
+        left_snapshot, right_snapshot, left_cost_index=left_cost_index, left_candidate_index=left_candidate_index,
+        right_cost_index=right_cost_index, right_candidate_index=right_candidate_index, weight_a=weight_a, weight_b=weight_b)
     a, b, ab, bb = (selected[index]["execution"] for selected, index in ((left, 2), (right, 2), (left, 3), (right, 3)))
     derived = None
     if reason is None:
