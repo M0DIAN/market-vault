@@ -216,6 +216,12 @@ def test_ml_resigned_evidence_grammar_and_full_hidden_source_reconstruction(inne
     fixed["report"]["context"]["target_horizon_bars"] = None
     with pytest.raises(ValueError, match="ML target horizon"):
         StrategyExperiment(signed_selection(fixed))
+    # Preserve Q25's exact method grammar, including declared numeric types.
+    for alpha in (True, 1):
+        root = selections["inner"].as_dict()
+        root["report"]["dev_selection"]["method"]["family"][1]["alpha"] = alpha
+        with pytest.raises(ValueError, match="frozen final DEV method"):
+            StrategyExperiment(signed_selection(root))
     for case in ("missing_member", "future_label", "term_order", "negative_transform", "selected_recipe"):
         root = selections["inner"].as_dict()
         evidence = root["report"]["dev_selection"]["final_dev"]

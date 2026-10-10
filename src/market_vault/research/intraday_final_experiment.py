@@ -148,9 +148,10 @@ def _dev_selection(value, *, source, selected, context, candidate, versions):
     from .intraday_inner_selection import METHOD, _equal
     evidence = object_fields(value, {"version", "inner_selection_id", "method", "source_experiment",
                                     "source_selection", "fixed_reference", "final_dev"}, "frozen final DEV evidence")
+    _equal(evidence["method"], METHOD, "frozen final DEV method")
     if (evidence["version"] != versions["inner_selection"] or evidence["inner_selection_id"] != source["report_id"]
-            or evidence["method"] != METHOD or candidate["axis_values"]):
-        raise ValueError("frozen final DEV method, source or recipe axes differ")
+            or candidate["axis_values"]):
+        raise ValueError("frozen final DEV version, source or recipe axes differ")
     ordinary = object_fields(evidence["source_experiment"], {"path", "experiment_id", "research_id"}, "original ordinary source")
     _recorded_path(ordinary["path"])
     for key in ("experiment_id", "research_id"):
