@@ -164,10 +164,10 @@ def _prediction_metrics(actual, predicted):
     return metrics
 
 
-def _score_forecasts(rows):
+def _score_forecasts(rows, *, forecast_order=_FORECASTS):
     paired = tuple(row for row in rows if row["target_status"] == "COMPLETE")
     actual = tuple(row["target_value"] for row in paired)
-    forecasts = {name: tuple(row["scores"][name] for row in paired) for name in _FORECASTS}
+    forecasts = {name: tuple(row["scores"][name] for row in paired) for name in forecast_order}
     results = []
     for name, predicted in forecasts.items():
         metrics = _prediction_metrics(actual, predicted)

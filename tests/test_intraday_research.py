@@ -2151,3 +2151,220 @@ def test_prediction_quality_admission_precedes_source_io_and_cli_settings(resear
                      "--candidate-index", "-1"]) == 1
     error = capsys.readouterr()
     assert not error.out and json.loads(error.err)["error"] == "candidate_index must be a nonnegative integer"
+
+
+def _feature_ablation_case(features=("constant", "informative", "distractor"), *, future_shift=0.0, test_shift=0.0):
+    """Controlled native row/fold shapes; real admission purge and Ridge fits."""
+    days = [f"2025-02-{index:02d}" for index in range(1, 8)]
+    observations, targets = [], []
+    for index, day in enumerate(days):
+        values = (-2, 1, 2) if index == 4 else (-2, -1, 0, 1, 2) if index == 5 else (-2, -1, 1, 2)
+        for slot, x in enumerate(values):
+            key = f"{day}-{slot}"
+            incomplete = index in (4, 5) and slot == len(values) - 1
+            fields = {"constant": 7.0, "informative": float(x), "distractor": float(index % 2 * 2 - 1)}
+            if index == 6:
+                fields = {name: value + test_shift for name, value in fields.items()}
+            observations.append({"observation_key": key, "trading_day": day, "slot": slot,
+                "decision_time": f"{day}T15:{slot * 5:02d}:00+00:00", "status": "READY", "features": fields})
+            targets.append({"observation_key": key, "status": "INCOMPLETE" if incomplete else "COMPLETE",
+                "reason": "SESSION_END" if incomplete else None,
+                "actual_label_end_time": None if incomplete else f"{day}T15:{slot * 5 + 5:02d}:00+00:00",
+                "value": None if incomplete else .1 + .2 * x + (future_shift if index == 4 else test_shift if index == 6 else 0)})
+    # Omitting the unavailable column must not re-admit this original non-READY row.
+    observations.append({**observations[0], "observation_key": "not-ready", "status": "NOT_READY",
+                         "features": {"constant": 7.0, "informative": None, "distractor": 0.0}})
+    targets.append({**targets[0], "observation_key": "not-ready"})
+    # The actual target end at the first fold boundary is purged, then admitted later.
+    observations.append({**observations[12], "observation_key": "boundary-purged"})
+    targets.append({**targets[12], "observation_key": "boundary-purged", "actual_label_end_time": f"{days[4]}T14:30:00+00:00"})
+    report = {"observations": observations, "targets": targets}
+    folds, training = [], []
+    for index, day in enumerate(days[4:6]):
+        boundary = f"{day}T14:30:00+00:00"
+        rows, purged = research.training_rows(report, tuple(days[:index + 4]), boundary)
+        fold = {"fold_index": index, "training_days": days[:index + 4], "validation_days": [day],
+                "training_boundary": boundary, "training_keys": [row["observation_key"] for row, _ in rows],
+                "purged_keys": list(purged),
+                "validation_keys": [row["observation_key"] for row in observations if row["trading_day"] == day]}
+        fold["fold_id"] = research.digest(fold)
+        folds.append(fold)
+        training.append(rows)
+    context = {"feature_fields": list(features), "folds": folds, "evaluated_days": days[4:6],
+               "validation_keys": [key for fold in folds for key in fold["validation_keys"]]}
+    prepared = SimpleNamespace(report=report, context=context, fold_rows=tuple(training),
+        observations=tuple(row for row in observations if row["observation_key"] in context["validation_keys"]))
+    spec = {"kind": "RIDGE", "name": "Controlled", "alpha": .1, "threshold": 0.0}
+    predictions, models, metrics = research.candidate_predictions(prepared, research.parse_strategy_specs([spec])[0], {})
+    return prepared, {"strategy": spec, "predictions": predictions, "fold_models": models, "prediction_metrics": metrics}
+
+
+def test_feature_ablation_constant_informative_order_and_exact_model_rows(monkeypatch):
+    from market_vault.research.intraday_feature_ablation import _ablation_predictions, _paired_error_changes
+    prepared, candidate = _feature_ablation_case()
+    original = deepcopy((prepared.context, prepared.report, candidate))
+    calls, fit = [], research.fit_ridge_rows
+    def fitted(training, observations, features, alpha, *, boundary):
+        calls.append((training, tuple(row["observation_key"] for row in observations), tuple(features), alpha, boundary))
+        return fit(training, observations, features, alpha, boundary=boundary)
+    monkeypatch.setattr(research, "fit_ridge_rows", fitted)
+    rows, folds, variants = _ablation_predictions(prepared, candidate)
+    assert len(calls) == 6
+    assert [variant["omitted_feature"] for variant in variants] == ["constant", "informative", "distractor"]
+    assert [variant["retained_features"] for variant in variants] == [["informative", "distractor"], ["constant", "distractor"], ["constant", "informative"]]
+    assert [row["observation_key"] for row in rows] == prepared.context["validation_keys"]
+    assert [fold["sample"]["complete_target_count"] for fold in folds] == [2, 4]
+    assert all(row["scores"]["DROP_0"] == row["scores"]["RIDGE"] for row in rows)
+    deltas = _paired_error_changes(rows, forecast_order=("DROP_0", "DROP_1", "DROP_2"))
+    assert all(metric["value"] == 0 for metric in deltas[0]["metrics"].values())
+    assert deltas[1]["metrics"]["mse"]["value"] > .05
+    for variant_index, variant in enumerate(variants):
+        assert variant["model_kind"] == "RIDGE_REFIT"
+        for index, (record, fold) in enumerate(zip(variant["fold_models"], prepared.context["folds"], strict=True)):
+            training, keys, features, alpha, boundary = calls[variant_index * 2 + index]
+            model = record["model"]
+            assert training is prepared.fold_rows[index]
+            assert keys == tuple(fold["validation_keys"])
+            assert list(features) == model["feature_fields"] == variant["retained_features"]
+            assert alpha == model["alpha"] == candidate["strategy"]["alpha"]
+            assert boundary == model["training_boundary"] == fold["training_boundary"]
+            assert model["training_keys"] == fold["training_keys"] and "not-ready" not in model["training_keys"]
+            assert ("boundary-purged" in model["training_keys"]) == (index == 1)
+            for field, mean, scale in zip(features, model["means"], model["scales"], strict=True):
+                values = [row["features"][field] for row, _ in training]
+                expected_mean = sum(values) / len(values)
+                assert mean == pytest.approx(expected_mean)
+                assert scale == pytest.approx(math.sqrt(sum((value - expected_mean) ** 2 for value in values) / len(values)))
+            assert model["model_id"] == research.digest({key: value for key, value in model.items() if key != "model_id"})
+    assert (prepared.context, prepared.report, candidate) == original
+
+
+def test_feature_ablation_single_feature_is_explicit_training_mean_without_solver(monkeypatch):
+    from market_vault.research.intraday_feature_ablation import _ablation_predictions
+    prepared, candidate = _feature_ablation_case(("informative",))
+    monkeypatch.setattr(research, "fit_ridge_rows", lambda *a, **kw: pytest.fail("intercept-only called Ridge solver"))
+    rows, folds, variants = _ablation_predictions(prepared, candidate)
+    assert len(variants) == 1 and variants[0]["retained_features"] == []
+    assert variants[0]["model_kind"] == "INTERCEPT_ONLY_TRAIN_MEAN"
+    assert all(row["scores"]["DROP_0"] == row["scores"]["TRAIN_MEAN"] for row in rows)
+    for index, (record, fold) in enumerate(zip(variants[0]["fold_models"], folds, strict=True)):
+        model = record["model"]
+        expected = math.fsum(target["value"] for _, target in prepared.fold_rows[index]) / len(prepared.fold_rows[index])
+        assert model["kind"] == "INTERCEPT_ONLY_TRAIN_MEAN" and model["solver_used"] is False
+        assert model["intercept"] == expected == fold["training_target_mean"]
+        assert model["feature_fields"] == model["coefficients"] == model["means"] == model["scales"] == []
+        assert model["training_keys"] == prepared.context["folds"][index]["training_keys"]
+        assert model["training_boundary"] == fold["training_boundary"]
+        assert model["model_id"] == research.digest({key: value for key, value in model.items() if key != "model_id"})
+
+
+def test_feature_ablation_signed_paired_errors_pool_rows_and_preserve_metric_availability():
+    from market_vault.research.intraday_feature_ablation import _paired_error_changes
+    def row(full, ablated, *, complete=True):
+        return {"target_status": "COMPLETE" if complete else "INCOMPLETE", "target_value": 0.0 if complete else None,
+                "scores": {"RIDGE": full, "DROP_0": ablated}}
+    first, second = [row(1, 3)], [row(2, 0), row(2, 1), row(2, 2)]
+    def metrics(rows):
+        return _paired_error_changes(rows, forecast_order=("DROP_0",))[0]["metrics"]
+    left, right = metrics(first), metrics(second)
+    pooled = metrics(first + second + [row(1e300, -1e300, complete=False)])
+    assert left["mse"]["value"] == 8 and right["mse"]["value"] == pytest.approx(-7 / 3)
+    assert pooled["mse"] == {"value": pytest.approx(.25), "unit": "SQUARED_RATIO", "unavailable_reason": None}
+    assert pooled["mae"]["value"] == pytest.approx(-.25)
+    assert pooled["rmse"]["value"] == pytest.approx(math.sqrt(14 / 4) - math.sqrt(13 / 4))
+    assert pooled["mse"]["value"] != pytest.approx((left["mse"]["value"] + right["mse"]["value"]) / 2)
+    assert all(metric["unavailable_reason"] == "NO_COMPLETE_TARGETS" for metric in metrics([]).values())
+    large = metrics([row(1e200, 2e200)])
+    assert large["mse"]["value"] is None and large["mse"]["unavailable_reason"] == "NONFINITE_RESULT"
+    assert large["mae"]["value"] == large["rmse"]["value"] == pytest.approx(1e200)
+
+
+def test_feature_ablation_future_target_changes_only_later_fits_and_test_is_excluded():
+    from market_vault.research.intraday_feature_ablation import _ablation_predictions
+    original = _ablation_predictions(*_feature_ablation_case())
+    future = _ablation_predictions(*_feature_ablation_case(future_shift=.6))
+    held_out = _ablation_predictions(*_feature_ablation_case(test_shift=1000))
+    assert original == held_out
+    for full, changed in zip(original[2], future[2], strict=True):
+        assert full["fold_models"][0] == changed["fold_models"][0]
+        assert full["fold_models"][1]["model"]["intercept"] != changed["fold_models"][1]["model"]["intercept"]
+        for before, after in zip(full["fold_models"], changed["fold_models"], strict=True):
+            assert before["model"]["means"] == after["model"]["means"]
+            assert before["model"]["scales"] == after["model"]["scales"]
+    assert [row["scores"] for row in original[0][:3]] == [row["scores"] for row in future[0][:3]]
+    assert original[1][0]["forecasts"] != future[1][0]["forecasts"]
+
+
+def test_feature_ablation_real_nonfirst_selected_source_refit_and_installed_cli(research_case, tmp_path, monkeypatch, capsys):
+    import json
+    import os
+    from pathlib import Path
+    import subprocess
+    import sysconfig
+    from market_vault import cli
+    from market_vault.research.intraday_feature_ablation import analyze_intraday_feature_ablation
+    from market_vault.research.intraday_experiment import create_intraday_experiment
+    from market_vault.research.strategy_experiment import write_strategy_experiment
+    data, comparison, _ = research_case
+    plan = diagnostic_plan(deepcopy(comparison))
+    plan["comparison_plan"]["feature_fields"] = ["return_2", "sma_5", "candle_body"]
+    plan["parameter_axes"] = [{"parameter": "alpha", "values": [1, 10]}]
+    saved = research.run_intraday_research(plan)
+    snapshot = create_intraday_experiment(plan=plan, report=saved, name="逐项移除")
+    path, relocated = tmp_path / "development.json", tmp_path / "relocated-intraday.json"
+    write_strategy_experiment(snapshot, path=path)
+    relocated.write_bytes(data.path.read_bytes())
+    before = path.read_bytes(), data.path.read_bytes(), relocated.read_bytes()
+    calls, loader, fitter = {"loads": 0, "fits": []}, research.load_intraday_dataset, research.fit_ridge_rows
+    def loaded(*args, **kwargs):
+        calls["loads"] += 1
+        return loader(*args, **kwargs)
+    def fitted(training, observations, features, alpha, *, boundary):
+        calls["fits"].append((list(features), alpha))
+        return fitter(training, observations, features, alpha, boundary=boundary)
+    monkeypatch.setattr(research, "load_intraday_dataset", loaded)
+    monkeypatch.setattr(research, "fit_ridge_rows", fitted)
+    monkeypatch.setattr(research, "run_intraday_execution", lambda *a, **kw: pytest.fail("ablation reran Q6"))
+    monkeypatch.setattr(cli, "load_settings", lambda *a, **kw: pytest.fail("ablation loaded settings"))
+    result = analyze_intraday_feature_ablation(snapshot, cost_index=1, candidate_index=1)
+    candidate = saved["groups"][1]["results"][1]
+    assert calls["loads"] == 1 and len(calls["fits"]) == 8
+    assert all(alpha == 10.0 for _, alpha in calls["fits"])
+    assert result["candidate_id"] == candidate["candidate_id"] and result["context"] == saved["context"]
+    assert result["baseline"] == {"strategy": candidate["strategy"], "fold_models": candidate["fold_models"]}
+    assert result["evidence"]["execution_replayed"] is False
+    assert result["method"]["forecast_order"] == ["RIDGE", "ZERO", "TRAIN_MEAN", "DROP_0", "DROP_1", "DROP_2"]
+    assert result["method"]["paired_error_difference"] == "ABLATION_MINUS_FULL_RIDGE"
+    assert result["sample"]["prediction_count"] == 740 and result["sample"]["complete_target_count"] == 710
+    assert [row["observation_key"] for row in result["predictions"]] == saved["context"]["validation_keys"]
+    assert all(list(row["scores"]) == result["method"]["forecast_order"] for row in result["predictions"])
+    assert all(row["target_value"] is None for row in result["predictions"] if row["target_status"] != "COMPLETE")
+    assert all(row["trading_day"] not in saved["context"]["split"]["TEST"] for row in result["predictions"])
+    assert result["feature_ablation_id"] == research.digest({key: value for key, value in result.items() if key != "feature_ablation_id"})
+    for fold, original in zip(result["folds"], saved["context"]["folds"], strict=True):
+        paired = [row for row in result["predictions"] if row["fold_id"] == fold["fold_id"] and row["target_status"] == "COMPLETE"]
+        for variant, change in zip(result["variants"], fold["paired_error_changes"], strict=True):
+            assert change["forecast"] == variant["forecast"]
+            expected = math.fsum((row["scores"][variant["forecast"]] - row["target_value"]) ** 2
+                                - (row["scores"]["RIDGE"] - row["target_value"]) ** 2 for row in paired) / len(paired)
+            assert change["metrics"]["mse"]["value"] == pytest.approx(expected, rel=1e-8, abs=1e-20)
+            model = variant["fold_models"][fold["fold_index"]]["model"]
+            assert model["training_keys"] == original["training_keys"]
+            assert model["feature_fields"] == variant["retained_features"]
+    console = Path(sysconfig.get_path("scripts")) / ("market-vault.exe" if os.name == "nt" else "market-vault")
+    env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"), "PYTHONIOENCODING": "cp1252:strict"}
+    command = [str(console), "research-intraday-feature-ablation", "--experiment", str(path),
+               "--cost-index", "1", "--candidate-index", "1", "--intraday-data", str(relocated)]
+    process = subprocess.run(command, env=env, cwd=tmp_path, capture_output=True, check=False)
+    assert process.returncode == 0 and not process.stderr and process.stdout.isascii()
+    cli_result = json.loads(process.stdout)["report"]
+    assert cli_result["forecasts"] == result["forecasts"] and cli_result["predictions"] == result["predictions"]
+    assert cli_result["variants"] == result["variants"] and cli_result["paired_error_changes"] == result["paired_error_changes"]
+    assert cli_result["source_locator"] == {"recorded": str(data.path), "used": str(relocated.resolve()), "override_used": True}
+    failed = subprocess.run(command[:-1] + [str(tmp_path / "missing-q5.json")], env=env, cwd=tmp_path, capture_output=True, check=False)
+    assert failed.returncode == 1 and not failed.stdout and json.loads(failed.stderr)["status"] == "FAILED"
+    assert cli.main(["research-intraday-feature-ablation", "--experiment", str(tmp_path / "missing.json"),
+                     "--cost-index", "-1"]) == 1
+    error = capsys.readouterr()
+    assert not error.out and json.loads(error.err)["error"] == "cost_index must be a nonnegative integer"
+    assert (path.read_bytes(), data.path.read_bytes(), relocated.read_bytes()) == before
