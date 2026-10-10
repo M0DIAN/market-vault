@@ -11,6 +11,9 @@ For two explicitly selected saved records, see
 [saved experiment A/B comparison](intraday_saved_comparison.md). Matching DEV
 evaluation evidence permits neutral differences; TEST remains descriptive.
 
+For fixed-recipe expanding versus recent 10 / 20-day refits, see
+[training-history sensitivity and the Q30–Q32 task package](intraday_training_policy_next.md).
+
 ## Explicit trading-day boundaries
 
 `research-intraday-plan` proposes a plan before evaluation. From the verified

@@ -21,7 +21,9 @@ Item {
             font.pixelSize: Theme.PixelTheme.fontSm
             wrapMode: Text.Wrap
         }
-        RowLayout {
+        Flow {
+            Layout.fillWidth: true
+            spacing: Theme.PixelTheme.spacingSm
             Components.PixelButton {
                 objectName: "intradayDataTab"
                 text: root.i18n.catalog["quant.intraday_data_tab"]
@@ -58,6 +60,12 @@ Item {
                 variant: root.section === 5 ? "primary" : "secondary"
                 onClicked: root.section = 5
             }
+            Components.PixelButton {
+                objectName: "intradayHistoryTab"
+                text: root.i18n.catalog["history.tab"]
+                variant: root.section === 6 ? "primary" : "secondary"
+                onClicked: root.section = 6
+            }
         }
         StackLayout {
             Layout.fillWidth: true
@@ -69,6 +77,7 @@ Item {
             IntradayFinalPanel { controller: root.controller.intradayFinalController; i18n: root.i18n }
             IntradaySavedComparisonPanel { controller: root.controller.intradaySavedComparisonController; i18n: root.i18n }
             IntradayInnerSelectionPanel { controller: root.controller.intradayInnerSelectionController; i18n: root.i18n }
+            IntradayTrainingHistoryPanel { controller: root.controller.intradayTrainingHistoryController; i18n: root.i18n }
         }
     }
 }
