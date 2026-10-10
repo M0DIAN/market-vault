@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the complete Python 3.11 suite in six functional partitions.
+"""Run the complete Python 3.11 suite in ten balanced functional partitions.
 
 The registry assigns files, never individual assertions or markers. Every
 discovered test file must have one owner. Jobs retain the complete checkout so
@@ -21,7 +21,8 @@ import tomllib
 
 
 PARTITION_NAMES = (
-    "data", "dataset_features", "strategy", "intraday_research",
+    "data", "dataset_features", "strategy", "diagnostics", "intraday_research",
+    "intraday_analytics", "intraday_experiment", "intraday_saved",
     "intraday_final", "app_ops",
 )
 REGISTRY_REL = Path("ci/test_partitions.toml")
@@ -40,7 +41,7 @@ def load_partitions(repo: Path) -> dict[str, tuple[str, ...]]:
         raise ValueError("invalid partition registry schema")
     rules = registry["partitions"]
     if not isinstance(rules, dict) or set(rules) != set(PARTITION_NAMES):
-        raise ValueError("partition registry must contain exactly the six named partitions")
+        raise ValueError("partition registry must contain exactly the ten named partitions")
     config = tomllib.loads((repo / "pyproject.toml").read_text(encoding="utf-8"))
     options = config.get("tool", {}).get("pytest", {}).get("ini_options", {})
     if options.get("testpaths") != ["tests"] or any(

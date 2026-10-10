@@ -477,6 +477,25 @@ def test_four_logical_surfaces_without_partitions_cannot_prove_full():
     assert v.reuse is False and v.reason == "jobs_missing_surface"
 
 
+def test_full_required_jobs_match_every_current_partition():
+    spec = importlib.util.spec_from_file_location("reuse_partition_contract", ROOT / "scripts/ci_test_partitions.py")
+    partitions = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(partitions)
+    assert reuse.FULL_REQUIRED_JOB_NAMES == (
+        *reuse.REQUIRED_JOB_SURFACES, "plan",
+        *(f"test-311 ({name})" for name in partitions.PARTITION_NAMES),
+    )
+
+
+def test_older_six_partition_success_cannot_prove_rebalanced_full():
+    old_partitions = ("data", "dataset_features", "strategy", "intraday_research", "intraday_final", "app_ops")
+    jobs = [make_job(name) for name in (
+        *reuse.REQUIRED_JOB_SURFACES, "plan", *(f"test-311 ({name})" for name in old_partitions),
+    )]
+    result = run_verifier(api_kwargs={"jobs": jobs})
+    assert result.reuse is False and result.reason == "jobs_missing_surface"
+
+
 @pytest.mark.parametrize("surface", reuse.FULL_REQUIRED_JOB_NAMES)
 def test_missing_one_job_rejected(surface):
     jobs = [j for j in make_all_jobs() if j["name"] != surface]

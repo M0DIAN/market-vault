@@ -121,9 +121,9 @@ jobs:
     timeout-minutes: ${{ matrix.partition == 'intraday_research' && 30 || 20 }}
     strategy:
       fail-fast: false
-      max-parallel: 6
+      max-parallel: 10
       matrix:
-        partition: [data, dataset_features, strategy, intraday_research, intraday_final, app_ops]
+        partition: [data, dataset_features, strategy, diagnostics, intraday_research, intraday_analytics, intraday_experiment, intraday_saved, intraday_final, app_ops]
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -223,7 +223,7 @@ jobs:
         if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && (env.CI_TIER != 'control_plane' || matrix.python-version == '3.11') && env.POST_MERGE_REUSE != 'true'
         run: python -m compileall -q src tests scripts examples
 
-      # FULL 3.11 tests already ran in the six independent module jobs.
+      # FULL 3.11 tests already ran in the ten independent module jobs.
       # Keep this stable check name as an explicit successful-result gate.
       - name: Run offline tests
         if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.CI_TIER != 'research_fast' && env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.11'

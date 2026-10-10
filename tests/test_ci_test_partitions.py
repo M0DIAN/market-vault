@@ -44,6 +44,12 @@ def test_current_registry_covers_every_discovered_test_exactly_once():
     assert len(files) == len(expected)
     assert "tests/test_intraday_final_test.py" in resolved["intraday_final"]
     assert "tests/test_desktop_intraday_research.py" in resolved["intraday_research"]
+    assert resolved["intraday_analytics"] == ("tests/test_intraday_research_analysis.py",)
+    assert resolved["intraday_experiment"] == ("tests/test_intraday_experiment.py",)
+    assert resolved["intraday_saved"] == ("tests/test_intraday_saved_diagnostics.py",)
+    assert resolved["diagnostics"] == (
+        "tests/test_strategy_diagnostics.py", "tests/test_strategy_intraday_performance.py",
+    )
 
 
 def test_new_test_in_known_domain_is_included_including_subdirectories(tmp_path):
@@ -165,8 +171,8 @@ def test_runner_rejects_inherited_options_that_can_omit_tests(tmp_path, addopts)
 
 
 @pytest.mark.parametrize("old,new,diagnostic", [
-    ("        partition: [data, dataset_features, strategy, intraday_research, intraday_final, app_ops]",
-     "        partition: [data, dataset_features, strategy, intraday_research, intraday_final, app_ops]\n"
+    ("        partition: [data, dataset_features, strategy, diagnostics, intraday_research, intraday_analytics, intraday_experiment, intraday_saved, intraday_final, app_ops]",
+     "        partition: [data, dataset_features, strategy, diagnostics, intraday_research, intraday_analytics, intraday_experiment, intraday_saved, intraday_final, app_ops]\n"
      "        exclude:\n          - partition: intraday_final", "cannot include or exclude"),
     ("  package:\n", "  package:\n    if: always()\n", "package must keep its exact job condition"),
     ("  package:\n", "  package:\n    if: false\n", "package must keep its exact job condition"),

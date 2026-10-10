@@ -25,7 +25,7 @@ Conditions (all must pass):
    stale-older-head runs are never accepted.
 5. Required job conclusions: the selected run's jobs terminate with SUCCESS
    on the four logical surfaces (test (3.11), test (3.14),
-   portability-pyarrow24, package), their common plan, and all six Python
+   portability-pyarrow24, package), their common plan, and all ten Python
    3.11 partitions. No missing / duplicate / extra / non-success job.
 6. Attestation: the attempt-bound attestation artifact produced by that
    exact run/attempt is downloaded and strictly schema-validated; its
@@ -109,7 +109,11 @@ FULL_REQUIRED_JOB_NAMES = (
     "test-311 (data)",
     "test-311 (dataset_features)",
     "test-311 (strategy)",
+    "test-311 (diagnostics)",
     "test-311 (intraday_research)",
+    "test-311 (intraday_analytics)",
+    "test-311 (intraday_experiment)",
+    "test-311 (intraday_saved)",
     "test-311 (intraday_final)",
     "test-311 (app_ops)",
 )

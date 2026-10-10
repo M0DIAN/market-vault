@@ -73,9 +73,27 @@ prefixes = [
 ]
 files = [
   "test_desktop_intraday_research.py",
-  "test_intraday_experiment.py",
   "test_intraday_research.py",
 ]
+
+[partitions.diagnostics]
+prefixes = []
+files = [
+  "test_strategy_diagnostics.py",
+  "test_strategy_intraday_performance.py",
+]
+
+[partitions.intraday_analytics]
+prefixes = []
+files = ["test_intraday_research_analysis.py"]
+
+[partitions.intraday_experiment]
+prefixes = []
+files = ["test_intraday_experiment.py"]
+
+[partitions.intraday_saved]
+prefixes = []
+files = ["test_intraday_saved_diagnostics.py"]
 
 [partitions.intraday_final]
 prefixes = [
