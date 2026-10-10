@@ -234,7 +234,7 @@ def test_workflow_never_restores_stale_action_majors():
 # ---------------------------------------------------------------------------
 
 
-def test_formal_jobs_keep_four_surfaces_with_six_full_partitions():
+def test_formal_jobs_keep_four_surfaces_with_balanced_full_partitions():
     headers = list(JOB_HEADER_RE.findall(_jobs_section(ci_text())))
     assert headers == ["plan", "test-modules", "test", "portability-pyarrow24", "package"]
     for forbidden in ("package-artifact-audit", "release", "publish", "deploy"):
