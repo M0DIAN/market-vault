@@ -1,5 +1,9 @@
 # Intraday training and decision policy package: Q30–Q32
 
+The completed package is followed by [Q33–Q35 ML evidence](intraday_ml_evidence_next.md):
+outer score diagnostics, fixed inner-objective sensitivity and selected-procedure
+incremental return uncertainty. The Q30–Q32 source and TEST meanings below remain unchanged.
+
 ## Baseline, scope and delivery
 
 The implementation baseline is verified Q29 main

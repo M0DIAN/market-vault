@@ -39,6 +39,7 @@ from .intraday_portfolio_rebalance_cli import add_intraday_portfolio_rebalance_s
 from .intraday_sequential_selection_cli import add_intraday_sequential_selection_subparser, research_intraday_sequential_selection_main
 from .intraday_signal_delay_cli import add_intraday_signal_delay_subparser, research_intraday_signal_delay_main
 from .intraday_prediction_quality_cli import add_intraday_prediction_quality_subparser, research_intraday_prediction_quality_main
+from .intraday_ml_diagnostics_cli import add_intraday_ml_diagnostics_subparser, research_intraday_ml_diagnostics_main
 from .intraday_feature_ablation_cli import add_intraday_feature_ablation_subparser, research_intraday_feature_ablation_main
 from .intraday_quadratic_ridge_cli import add_intraday_quadratic_ridge_subparser, research_intraday_quadratic_ridge_main
 from .intraday_training_history_cli import add_intraday_training_history_subparser, research_intraday_training_history_main
@@ -135,6 +136,7 @@ RESEARCH_COMMANDS = frozenset({
     "research-intraday-sequential-selection",
     "research-intraday-signal-delay",
     "research-intraday-prediction-quality",
+    "research-intraday-ml-prediction-quality",
     "research-intraday-feature-ablation",
     "research-intraday-quadratic-ridge",
     "research-intraday-training-history",
@@ -255,6 +257,7 @@ def add_research_subparsers(subparsers) -> None:
     add_intraday_sequential_selection_subparser(subparsers)
     add_intraday_signal_delay_subparser(subparsers)
     add_intraday_prediction_quality_subparser(subparsers)
+    add_intraday_ml_diagnostics_subparser(subparsers)
     add_intraday_feature_ablation_subparser(subparsers)
     add_intraday_quadratic_ridge_subparser(subparsers)
     add_intraday_training_history_subparser(subparsers)
@@ -302,6 +305,8 @@ def run_research_command(command: str, args: argparse.Namespace) -> int:
         return research_intraday_signal_delay_main(args)
     if command == "research-intraday-prediction-quality":
         return research_intraday_prediction_quality_main(args)
+    if command == "research-intraday-ml-prediction-quality":
+        return research_intraday_ml_diagnostics_main(args)
     if command == "research-intraday-feature-ablation":
         return research_intraday_feature_ablation_main(args)
     if command == "research-intraday-quadratic-ridge":

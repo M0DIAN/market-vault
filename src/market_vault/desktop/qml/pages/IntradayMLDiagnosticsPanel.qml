@@ -1,0 +1,219 @@
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Dialogs
+import QtQuick.Layouts
+import "../components" as Components
+import "../theme" as Theme
+
+Item {
+    id: root
+    objectName: "intradayMLDiagnosticsPanel"
+    required property var controller
+    required property var i18n
+    function label(key) { return root.i18n.catalog["ml_diagnostics." + key] || root.i18n.catalog["prediction_quality." + key] || root.i18n.catalog["inner." + key] || key }
+    FileDialog {
+        id: sourceFile; objectName: "intradayMLSourceDialog"
+        fileMode: FileDialog.OpenFile; nameFilters: ["JSON files (*.json)"]
+        onAccepted: root.controller.openSource(selectedFile.toString())
+    }
+    FileDialog {
+        id: dataFile; objectName: "intradayMLDataDialog"
+        fileMode: FileDialog.OpenFile; nameFilters: ["JSON files (*.json)"]
+        onAccepted: root.controller.setDataLocator(selectedFile.toString())
+    }
+    Dialog {
+        id: details; objectName: "intradayMLDetailsDialog"
+        parent: Overlay.overlay; anchors.centerIn: parent
+        width: Math.min(900, parent.width - 40); height: Math.min(650, parent.height - 40)
+        modal: true; title: root.label("details"); standardButtons: Dialog.Close
+        background: Rectangle { color: Theme.PixelTheme.surface; border.color: Theme.PixelTheme.goldDark }
+        contentItem: ScrollView {
+            objectName: "intradayMLDetailsScroll"
+            clip: true; contentWidth: availableWidth
+            TextArea {
+                objectName: "intradayMLDetailsText"
+                width: parent.width; readOnly: true; selectByMouse: true
+                text: details.visible ? root.controller.completedDetails : ""
+                wrapMode: TextEdit.WrapAnywhere; color: Theme.PixelTheme.ink
+            }
+        }
+    }
+    Dialog {
+        id: evidence; objectName: "intradayMLEvidenceDialog"
+        parent: Overlay.overlay; anchors.centerIn: parent
+        width: Math.min(900, parent.width - 40); height: Math.min(650, parent.height - 40)
+        modal: true; title: root.label("page_evidence"); standardButtons: Dialog.Close
+        background: Rectangle { color: Theme.PixelTheme.surface; border.color: Theme.PixelTheme.goldDark }
+        contentItem: ScrollView {
+            objectName: "intradayMLEvidenceScroll"
+            clip: true; contentWidth: availableWidth
+            TextArea {
+                objectName: "intradayMLEvidenceText"
+                width: parent.width; readOnly: true; selectByMouse: true
+                text: evidence.visible ? root.controller.currentPageEvidence : ""
+                wrapMode: TextEdit.WrapAnywhere; color: Theme.PixelTheme.ink
+            }
+        }
+    }
+    ScrollView {
+        id: scroll; objectName: "intradayMLScroll"
+        anchors.fill: parent; clip: true; contentWidth: availableWidth
+        rightPadding: verticalBar.width
+        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+        ScrollBar.vertical: Components.PixelScrollBar {
+            id: verticalBar; objectName: "intradayMLScrollBar"
+            parent: scroll
+            anchors.top: parent.top; anchors.bottom: parent.bottom; anchors.right: parent.right
+        }
+        ColumnLayout {
+            width: scroll.availableWidth; height: Math.max(implicitHeight, scroll.availableHeight)
+            spacing: Theme.PixelTheme.spacingSm
+            Label {
+                objectName: "intradayMLMethod"
+                Layout.fillWidth: true; text: root.label("method")
+                wrapMode: Text.WordWrap; color: Theme.PixelTheme.inkMuted; font.pixelSize: Theme.PixelTheme.fontSm
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Components.LabeledTextField {
+                    objectName: "intradayMLSourcePath"
+                    Layout.fillWidth: true; Layout.maximumWidth: Infinity
+                    label: root.label("source"); text: root.controller.sourcePath
+                    onTextChanged: root.controller.setSourcePath(text)
+                }
+                Components.PixelButton {
+                    objectName: "intradayMLSourceBrowse"; text: root.i18n.catalog["quant.browse"]
+                    enabled: !operationRuntime.busy; onClicked: sourceFile.open()
+                }
+                Components.PixelButton {
+                    objectName: "intradayMLOpenButton"; text: root.label("open")
+                    enabled: !operationRuntime.busy; onClicked: root.controller.openSource(root.controller.sourcePath)
+                }
+            }
+            Label {
+                objectName: "intradayMLDraftSource"
+                Layout.fillWidth: true
+                text: {
+                    root.i18n.language
+                    const source = root.controller.draftSource
+                    return source.experiment_id ? root.label(source.source_kind) + " · " + source.name + "\n" + source.experiment_id : root.label("source_required")
+                }
+                wrapMode: Text.WrapAnywhere; color: Theme.PixelTheme.inkMuted
+            }
+            RowLayout {
+                Layout.fillWidth: true; visible: root.controller.ordinarySource
+                Components.LabeledComboBox {
+                    objectName: "intradayMLCost"
+                    Layout.fillWidth: true; Layout.maximumWidth: Infinity
+                    label: root.label("cost"); model: root.controller.costNames
+                    currentIndex: root.controller.costIndex
+                    onModelChanged: currentIndex = Qt.binding(() => root.controller.costIndex)
+                    onSelected: root.controller.selectCost(currentIndex)
+                }
+                Components.LabeledComboBox {
+                    objectName: "intradayMLCandidate"
+                    Layout.fillWidth: true; Layout.maximumWidth: Infinity
+                    label: root.label("candidate"); model: root.controller.candidateNames
+                    currentIndex: root.controller.candidateIndex
+                    onModelChanged: currentIndex = Qt.binding(() => root.controller.candidateIndex)
+                    onSelected: root.controller.selectCandidate(currentIndex)
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Components.LabeledTextField {
+                    objectName: "intradayMLDataPath"
+                    Layout.fillWidth: true; Layout.maximumWidth: Infinity
+                    label: root.label("data"); text: root.controller.dataLocator
+                    onTextChanged: root.controller.setDataLocator(text)
+                }
+                Components.PixelButton {
+                    objectName: "intradayMLDataBrowse"; text: root.i18n.catalog["quant.browse"]
+                    onClicked: dataFile.open()
+                }
+                Components.PixelButton {
+                    objectName: "intradayMLDataClear"; text: root.label("clear")
+                    onClicked: root.controller.setDataLocator("")
+                }
+            }
+            Flow {
+                Layout.fillWidth: true; spacing: Theme.PixelTheme.spacingSm
+                Components.PixelButton {
+                    objectName: "intradayMLRunButton"; text: root.label("run")
+                    enabled: root.controller.canRun && !operationRuntime.busy
+                    onClicked: root.controller.runSelected()
+                }
+                Components.PixelButton {
+                    objectName: "intradayMLDetailsButton"; text: root.label("details")
+                    enabled: root.controller.resultLoaded; onClicked: details.open()
+                }
+            }
+            Label {
+                objectName: "intradayMLSummary"
+                Layout.fillWidth: true; visible: root.controller.resultLoaded
+                text: {
+                    root.i18n.language
+                    const result = root.controller.resultSummary, sample = result.sample
+                    if (!result.status) return ""
+                    return root.label(result.status) + " · " + root.label(result.source_kind)
+                        + (sample ? "\n" + root.label("folds") + ": " + (sample.fold_count || 0)
+                        + " · " + root.label("days") + ": " + (sample.evaluated_day_count || 0)
+                        + " · READY: " + (sample.prediction_count || 0) + " · COMPLETE: " + (sample.complete_target_count || 0)
+                        + " · " + root.label("incomplete") + ": " + (sample.incomplete_target_count || 0) : "")
+                        + "\n" + result.source_path
+                        + (result.unavailable_reasons.length ? "\n" + JSON.stringify(result.unavailable_reasons) : "")
+                }
+                wrapMode: Text.WrapAnywhere; color: Theme.PixelTheme.ink
+            }
+            Label {
+                objectName: "intradayMLNotice"
+                Layout.fillWidth: true
+                visible: root.controller.draftChanged || root.controller.notice.length > 0 || root.controller.studyError.length > 0
+                text: root.controller.studyError ? root.controller.studyError + "\n" + root.label("retry")
+                    : root.controller.notice ? root.label(root.controller.notice) : root.label("draft_changed")
+                wrapMode: Text.WordWrap; color: Theme.PixelTheme.inkMuted
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Components.LabeledComboBox {
+                    objectName: "intradayMLScope"
+                    Layout.fillWidth: true; Layout.maximumWidth: Infinity
+                    label: root.label("scope")
+                    model: [root.label("pooled")].concat(Array.from({length: root.controller.foldCount}, (_, index) => root.label("fold") + " " + index))
+                    currentIndex: root.controller.scopeIndex
+                    onModelChanged: currentIndex = Qt.binding(() => root.controller.scopeIndex)
+                    onSelected: root.controller.selectScope(currentIndex)
+                }
+                Components.LabeledComboBox {
+                    objectName: "intradayMLView"
+                    Layout.fillWidth: true; Layout.maximumWidth: Infinity
+                    label: root.i18n.catalog["quant.intraday_result_view"]
+                    model: ["metrics", "bins", "folds", "predictions", "models_keys"].map(key => root.label(key))
+                    currentIndex: root.controller.viewIndex
+                    onModelChanged: currentIndex = Qt.binding(() => root.controller.viewIndex)
+                    onSelected: root.controller.selectView(currentIndex)
+                }
+            }
+            Components.PixelButton {
+                objectName: "intradayMLEvidenceButton"; text: root.label("page_evidence")
+                enabled: root.controller.resultLoaded; onClicked: evidence.open()
+            }
+            Label {
+                objectName: "intradayMLInterpretation"
+                Layout.fillWidth: true; visible: root.controller.resultLoaded
+                text: root.label("interpretation") + (root.controller.resultSummary.source_kind === "ECONOMIC_THRESHOLD_SELECTION" ? "\n" + root.label("same_scores") : "")
+                wrapMode: Text.WordWrap; color: Theme.PixelTheme.inkMuted; font.pixelSize: Theme.PixelTheme.fontSm
+            }
+            Components.DataTable {
+                objectName: "intradayMLTable"
+                Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 210
+                paged: true; tableModel: root.controller.tableModel; i18n: root.i18n
+                cellFormatter: function(value) { return root.i18n.catalog["ml_diagnostics." + value]
+                    || root.i18n.catalog["prediction_quality." + value] || root.i18n.catalog["inner." + value]
+                    || root.i18n.catalog["columns." + value] || value }
+                onPreviousRequested: root.controller.changePage(-1)
+                onNextRequested: root.controller.changePage(1)
+            }
+        }
+    }
+}

@@ -72,6 +72,12 @@ Item {
                 variant: root.section === 7 ? "primary" : "secondary"
                 onClicked: root.section = 7
             }
+            Components.PixelButton {
+                objectName: "intradayMLDiagnosticsTab"
+                text: root.i18n.catalog["ml_diagnostics.tab"]
+                variant: root.section === 8 ? "primary" : "secondary"
+                onClicked: root.section = 8
+            }
         }
         StackLayout {
             Layout.fillWidth: true
@@ -85,6 +91,7 @@ Item {
             IntradayInnerSelectionPanel { controller: root.controller.intradayInnerSelectionController; i18n: root.i18n }
             IntradayTrainingHistoryPanel { controller: root.controller.intradayTrainingHistoryController; i18n: root.i18n }
             IntradayThresholdSelectionPanel { controller: root.controller.intradayThresholdSelectionController; i18n: root.i18n }
+            IntradayMLDiagnosticsPanel { controller: root.controller.intradayMLDiagnosticsController; i18n: root.i18n }
         }
     }
 }
