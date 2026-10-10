@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from datetime import date, time
 from typing import Iterable
 
+from .rth_calendar import resolve_exchange_rth_session
+
 RTH_TIMEZONE = "America/New_York"
 SPECIAL_SESSION_AUTHORITY_VERSION = "us-rth-special-session-authority-v1"
 NORMAL_RTH_PROFILE_VERSION = "moomoo-rth-normal-profile-v1"
@@ -135,7 +137,18 @@ def resolve_rth_session_geometry(
     *,
     authorities: Iterable[RTHSessionGeometry] | None = None,
 ) -> RTHSessionGeometry:
-    """Resolve an exact special-session override or the normal RTH profile."""
+    """Resolve only calendar-supported dates with a qualified provider profile.
+
+    Exchange hours and exact-date special provider qualification are separate.
+    Known but unqualified early closes must never fall back to a normal day.
+    """
+    schedule = resolve_exchange_rth_session(requested_trade_date)
+    if schedule.classification in {"CLOSED", "UNSUPPORTED"}:
+        raise ValueError(
+            f"US RTH calendar {schedule.classification} for {requested_trade_date}: "
+            f"{schedule.reason}; calendar={schedule.authority_version}; "
+            f"source={schedule.authority_reference}"
+        )
     entries = (
         SPECIAL_RTH_SESSION_GEOMETRIES
         if authorities is None
@@ -147,6 +160,15 @@ def resolve_rth_session_geometry(
         if getattr(entry, "trade_date", None) == requested_trade_date
     )
     if not matches:
+        if schedule.classification == "EARLY_CLOSE":
+            raise ValueError(
+                f"Moomoo RTH PROVIDER_UNVERIFIED for {requested_trade_date}: "
+                "exchange EARLY_CLOSE 09:30-13:00 America/New_York is known, "
+                "but exact-date provider timestamp qualification is missing; "
+                "new sealed OpenD evidence is required before conversion; "
+                f"calendar={schedule.authority_version}; "
+                f"source={schedule.authority_reference}"
+            )
         return RTHSessionGeometry(
             trade_date=requested_trade_date,
             market="US",
@@ -169,4 +191,14 @@ def resolve_rth_session_geometry(
             f"{requested_trade_date.isoformat()}"
         )
     _validate_special_geometry(geometry)
+    if (
+        schedule.classification != geometry.classification
+        or schedule.open_time != geometry.open_time
+        or schedule.close_time != geometry.close_time
+        or geometry.trade_date not in {date(2025, 11, 28), date(2025, 12, 24)}
+    ):
+        raise ValueError(
+            "Unsupported RTH special-session authority: exchange calendar or "
+            "exact-date provider qualification does not match"
+        )
     return geometry

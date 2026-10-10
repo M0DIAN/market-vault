@@ -70,19 +70,20 @@ qualified authority, or any timestamp geometry outside the recorded evidence
 require new live evidence before support. Tests must not silently generalize
 the conversion.
 
-The design-only
+The original
 [Early-Close RTH Geometry Qualification V1](../market_bar_early_close_rth_geometry_qualification_v1.md)
-now qualifies Moomoo RTH endpoint geometry for two independently authoritative
+qualifies Moomoo RTH endpoint geometry for two independently authoritative
 2025 US 13:00 early-close dates across 1m, 5m, 15m, 30m, and 60m, with a
-normal-date control. Runtime support is not implemented by that record and
-must continue to fail closed until a separately reviewed implementation
-lands. The exchange schedule authority and provider geometry authority remain
-independent. Its future special-session table is an explicit override
-allowlist: a listed date uses its exact qualified override, while an absent
-date retains the existing 09:30-16:00 America/New_York normal profile. An
-unlisted early-close-shaped response therefore fails the unchanged exact
-normal-sequence comparison; table absence is not an ordinary-date runtime
-authority failure, and bar shape never creates an override.
+normal-date control. Runtime uses its sealed exact-date allowlist. The exchange
+schedule authority and provider geometry authority remain independent.
+[US equity RTH calendar V1 (Q27)](us_rth_calendar_v1.md) now supplies a versioned
+2025–2027 schedule before that provider gate. Covered normal dates use the
+unchanged 09:30–16:00 profile; the two sealed special dates use their exact
+qualified overrides. Other published early closes report `PROVIDER_UNVERIFIED`
+instead of falling back to normal geometry. Closed dates and dates beyond
+calendar coverage have explicit refusal reasons. This supersedes the original
+absence-means-normal calendar rule; it neither extends provider qualification
+nor allows observed bar shape to create date authority.
 
 ## 3. `market_available_at` derivation
 
