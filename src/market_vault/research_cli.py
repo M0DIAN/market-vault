@@ -43,6 +43,7 @@ from .intraday_feature_ablation_cli import add_intraday_feature_ablation_subpars
 from .intraday_quadratic_ridge_cli import add_intraday_quadratic_ridge_subparser, research_intraday_quadratic_ridge_main
 from .intraday_training_history_cli import add_intraday_training_history_subparser, research_intraday_training_history_main
 from .intraday_inner_selection_cli import add_intraday_inner_selection_subparser, research_intraday_inner_selection_main
+from .intraday_threshold_selection_cli import add_intraday_threshold_selection_subparser, research_intraday_threshold_selection_main
 from .intraday_plan_cli import add_intraday_plan_subparser, research_intraday_plan_main
 from .intraday_saved_comparison_cli import add_intraday_saved_comparison_subparser, research_intraday_saved_comparison_main
 from .intraday_execution_scenarios_cli import add_intraday_execution_scenarios_subparsers, research_intraday_execution_scenarios_main
@@ -137,6 +138,7 @@ RESEARCH_COMMANDS = frozenset({
     "research-intraday-quadratic-ridge",
     "research-intraday-training-history",
     "research-intraday-inner-selection",
+    "research-intraday-threshold-selection",
     "research-intraday-plan-from-candidate",
     "research-intraday-compare-saved",
     "research-intraday-scenarios", "research-intraday-export-scenario",
@@ -256,6 +258,7 @@ def add_research_subparsers(subparsers) -> None:
     add_intraday_quadratic_ridge_subparser(subparsers)
     add_intraday_training_history_subparser(subparsers)
     add_intraday_inner_selection_subparser(subparsers)
+    add_intraday_threshold_selection_subparser(subparsers)
     add_intraday_plan_subparser(subparsers)
     add_intraday_saved_comparison_subparser(subparsers)
     add_intraday_execution_scenarios_subparsers(subparsers)
@@ -306,6 +309,8 @@ def run_research_command(command: str, args: argparse.Namespace) -> int:
         return research_intraday_training_history_main(args)
     if command == "research-intraday-inner-selection":
         return research_intraday_inner_selection_main(args)
+    if command == "research-intraday-threshold-selection":
+        return research_intraday_threshold_selection_main(args)
     if command == "research-intraday-plan-from-candidate":
         return research_intraday_plan_main(args)
     if command == "research-intraday-compare-saved":

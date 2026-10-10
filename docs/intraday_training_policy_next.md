@@ -173,7 +173,7 @@ Automatic history selection, promoting a recent window into ordinary plans,
 rolling-window Freeze/TEST, time decay, online refitting, Q25 window search,
 Feature/alpha/threshold/cost changes and inference about future profitability.
 
-## Q31 — bounded inner economic threshold selection (planned)
+## Q31 — bounded inner economic threshold selection
 
 ### Goal and technical approach
 
@@ -209,6 +209,86 @@ keys, fitted model, scores, four inner accounts, chosen index/threshold,
 outer outcomes and final DEV evidence. Include save/open/full replay, CLI and
 native entry. Any insufficient required history/training/execution input makes
 the study unavailable as a whole; do not discard folds or fill with cash.
+
+### Saved evidence and command line
+
+The independent schema is `market-vault-intraday-threshold-selection-v1`, with
+evaluation mode `INTRADAY_THRESHOLD_SELECTION`. Capture an ordinary saved
+`INTRADAY_COMPARISON` or `INTRADAY_DIAGNOSTICS` experiment ID, cost index,
+candidate index and candidate ID explicitly. The selected candidate must be
+fixed `RIDGE` or `QUADRATIC_RIDGE`; a Q25 procedure with changing per-fold
+models is not an ordinary source. Linear sources retain their existing Feature
+width; only a quadratic source uses the six-input / 27-term representation
+bound. The original source threshold is a fixed reference, even when it is
+outside the four-value selection family.
+
+Each saved window retains the complete historical and purged keys, admitted
+targets with actual end times, inner days/boundary, one model and one shared
+prediction set. Its four ordered members each retain a complete Q6 account
+on the same saved session/price grid. Shared predictions retain the original
+source threshold; each account's decisions apply that member's threshold.
+The outer application copies the verified original fold model and raw scores,
+then changes only its decision threshold. The selected outer account carries
+cash across every original evaluated day, with the original fixed reference
+and benchmark available on the same sample. Final DEV retains the same full
+window evidence without making a TEST prediction or introducing Selection V3.
+
+Run and FullReplay each admit Q5 once and reconstruct the complete ordinary
+source before evaluating the threshold procedure. Recorded Open performs
+structural, boundary, fixed-method, account and economic-winner consistency
+checks without reading Q5, fitting or rerunning Q6. Open does not establish
+the origin of a fully self-consistent saved fit; FullReplay reconstructs the
+fit and complete source to detect that case. Missing valid inner price coverage
+or execution windows that do not fit a valid inner session produce whole-study
+`UNAVAILABLE`; invalid source/data and unexpected numerical failures remain
+errors. Save uses the existing immutable writer and cannot replace a different
+artifact at the same path.
+
+```console
+market-vault research-intraday-threshold-selection \
+  --source-experiment /absolute/source.json \
+  --expected-experiment-id SOURCE_ID \
+  --cost-index 0 --candidate-index 1 \
+  --expected-candidate-id CANDIDATE_ID \
+  --experiment /absolute/threshold-study.json
+market-vault research-experiment-open --experiment /absolute/threshold-study.json
+market-vault research-experiment-replay --experiment /absolute/threshold-study.json
+```
+
+An explicit `--intraday-data` for Run, or `--intraday-data-file` for FullReplay,
+can relocate the verified Q5 source. Replay uses the embedded ordinary
+experiment; an optional `--source-experiment-file` replacement must equal that
+saved source completely.
+Changing a source path does not rewrite saved identities or original locators.
+The Python entry is `run_intraday_threshold_selection`; the shared experiment
+writer, loader and replay dispatcher support its independent contract.
+
+### Native workflow
+
+In **Quant Research → Intraday → Economic thresholds**, first open or save an
+ordinary DEV Ridge in Development research. Choose the saved DEV cost /
+candidate, then explicitly Run threshold selection. Evidence range selects the
+original outer evaluation, an outer fold's inner holdout, or the final DEV
+holdout. Account selection exposes the selected procedure, fixed source and
+benchmark on the outer sample, or all four thresholds on an inner sample.
+
+Result views retain account metrics, dates, complete keys and both boundaries,
+historical target evidence, fixed models, actual execution decisions, trades,
+daily cash, ledger, transactions, continuous outer fold contributions, and
+inner sessions/prices. Full page evidence opens selectable, wrapped, scrollable
+JSON with complete model IDs, transforms and keys. Inner shared predictions
+keep the source threshold; the decisions view uses the chosen account's actual
+execution decisions. The final DEV model remains an inner-training model.
+
+Save threshold study uses the immutable writer. Open threshold study records
+`RECORDED` verification; only Verify full replay can establish a fresh
+`REPLAY_MATCH`. Optional Q5 and ordinary-source relocation fields are captured
+together when that action starts. Changing an input prevents a stale delivery
+from replacing completed evidence; errors preserve the previous result and
+allow an explicit retry. Completed-source details retain the verified paths.
+The panel supports both languages and compact-window scrolling/pagination;
+views and language changes do not rerun the study. Q31 has no Freeze/TEST
+control.
 
 ### Acceptance and exclusions
 

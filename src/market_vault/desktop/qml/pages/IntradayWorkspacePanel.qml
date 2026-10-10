@@ -66,6 +66,12 @@ Item {
                 variant: root.section === 6 ? "primary" : "secondary"
                 onClicked: root.section = 6
             }
+            Components.PixelButton {
+                objectName: "intradayThresholdTab"
+                text: root.i18n.catalog["threshold.tab"]
+                variant: root.section === 7 ? "primary" : "secondary"
+                onClicked: root.section = 7
+            }
         }
         StackLayout {
             Layout.fillWidth: true
@@ -78,6 +84,7 @@ Item {
             IntradaySavedComparisonPanel { controller: root.controller.intradaySavedComparisonController; i18n: root.i18n }
             IntradayInnerSelectionPanel { controller: root.controller.intradayInnerSelectionController; i18n: root.i18n }
             IntradayTrainingHistoryPanel { controller: root.controller.intradayTrainingHistoryController; i18n: root.i18n }
+            IntradayThresholdSelectionPanel { controller: root.controller.intradayThresholdSelectionController; i18n: root.i18n }
         }
     }
 }
