@@ -285,7 +285,13 @@ def test_existing_destructive_contracts_and_inventory_validate():
         "market_bar_atomic_file_publication_v1",
     }
     assert len(snapshot.exemptions) == 16
-    assert len(snapshot.findings) == 44
+    assert len(snapshot.findings) == 45
+    atomic_contract = snapshot.contracts["market_bar_atomic_file_publication_v1"]
+    atomic_findings = [f for f in snapshot.findings if f.path == "src/market_vault/storage/atomic_file.py"]
+    assert {(f.path, f.symbol, f.kind, f.signal) for f in atomic_findings} == {
+        ("src/market_vault/storage/atomic_file.py", "_write_file_no_replace", "destructive_call", "path.unlink"),
+    }
+    assert all(atomic_contract.covers(f) for f in atomic_findings)
     cross_day_contract = snapshot.contracts["multi_source_cross_day_dataset_atomic_publication_v1"]
     cross_day_findings = [f for f in snapshot.findings if f.path.startswith("src/market_vault/cross_day_dataset/")]
     assert {(f.path, f.symbol, f.kind, f.signal) for f in cross_day_findings} == {
@@ -293,7 +299,7 @@ def test_existing_destructive_contracts_and_inventory_validate():
         ("src/market_vault/cross_day_dataset/materialization.py", "_remove_tree", "destructive_call", "shutil.rmtree"),
     }
     assert all(cross_day_contract.covers(f) for f in cross_day_findings)
-    assert len(snapshot.findings) - len(cross_day_findings) == 42
+    assert len(snapshot.findings) - len(cross_day_findings) == 43
     multi_source_contract = snapshot.contracts["multi_source_dataset_atomic_publication_v1"]
     multi_source_findings = [f for f in snapshot.findings if f.path.startswith("src/market_vault/multi_source/")]
     assert len(multi_source_findings) == 2
@@ -322,7 +328,7 @@ def test_existing_destructive_contracts_and_inventory_validate():
         ("_rename_directory_no_replace_windows", "destructive_call", "os.rename"),
         ("_remove_tree", "destructive_call", "shutil.rmtree"),
     }
-    assert len(snapshot.findings) - len(observation_findings) - len(multi_source_findings) - len(cross_day_findings) == 38
+    assert len(snapshot.findings) - len(observation_findings) - len(multi_source_findings) - len(cross_day_findings) == 39
     purge_contract = snapshot.contracts["safe_purge_v01"]
     purge_findings = [
         finding

@@ -8,6 +8,7 @@ from pathlib import Path
 import pandas as pd
 
 from ..models import Settings
+from .atomic_file import _write_file_no_replace
 
 
 class ParquetStore:
@@ -52,8 +53,7 @@ class ParquetStore:
         run_id: str,
     ) -> Path:
         path = self._path("raw", trade_date, interval, symbols, session, adjustment, run_id)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        df.to_parquet(path, index=False, compression="zstd")
+        _write_file_no_replace(path, lambda stream: df.to_parquet(stream, index=False, compression="zstd"))
         return path
 
     def write_curated(
@@ -67,8 +67,7 @@ class ParquetStore:
         run_id: str,
     ) -> Path:
         path = self._path("curated", trade_date, interval, symbols, session, adjustment, run_id)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        df.to_parquet(path, index=False, compression="zstd")
+        _write_file_no_replace(path, lambda stream: df.to_parquet(stream, index=False, compression="zstd"))
         return path
 
     @staticmethod

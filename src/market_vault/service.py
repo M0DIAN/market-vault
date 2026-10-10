@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import time
+from contextlib import nullcontext
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 
 import pandas as pd
 import pyarrow.parquet as pq
 
 from .collectors import MoomooCalendarCollector, MoomooHistoryCollector, MoomooOptionCollector
 from .collectors.moomoo_options import OPTION_VOLATILITY_PERIOD_VALUES, select_option_volatility_period
-from .lifecycle import MarketBarLifecycleLock
+from .lifecycle import MarketBarLifecycleLock, reject_link, verify_directory_chain
 from .models import DatasetRunManifest, MarketBarSnapshotPair, RunManifest, Settings
 from .normalization import (
     normalize_bars,
@@ -26,6 +29,8 @@ from .quality import (
     run_trading_calendar_quality_checks,
 )
 from .storage import Catalog, ParquetStore
+from .storage.atomic_file import _write_file_no_replace
+from .raw_recovery import _RawHistoryReplay, _load_raw_history_replay
 
 
 def _hash_config(payload: dict) -> str:
@@ -62,6 +67,22 @@ def collect_history(
             interval,
             session,
             adjustment,
+        )
+
+
+def recover_history_from_raw(
+    settings: Settings,
+    manifest_path: str | Path,
+    *,
+    symbols: list[str] | None = None,
+) -> RunManifest:
+    """Replay exact retained Raw inputs offline into a fresh registered run."""
+    with MarketBarLifecycleLock(settings.data_root, "recover_history_from_raw"):
+        replay = _load_raw_history_replay(settings, manifest_path, symbols=symbols)
+        source = replay.source
+        return _collect_history_locked(
+            settings, source.requested_trade_date, list(replay.frames), source.interval,
+            source.session, source.adjustment, _replay=replay,
         )
 
 
@@ -131,6 +152,8 @@ def _collect_history_locked(
     interval: str,
     session: str,
     adjustment: str,
+    *,
+    _replay: _RawHistoryReplay | None = None,
 ) -> RunManifest:
     if not symbols:
         raise ValueError("At least one symbol is required")
@@ -160,8 +183,23 @@ def _collect_history_locked(
     curated_frames: list[pd.DataFrame] = []
     store = ParquetStore(settings)
     catalog = Catalog(settings)
+    if _replay is not None:
+        if manifest.run_id == _replay.source.run_id:
+            raise ValueError("Recovery requires a fresh run ID")
+        for directory in (settings.manifest_dir, settings.report_dir):
+            verify_directory_chain(directory, label="recovery evidence directory")
+            if os.path.lexists(directory / f"{trade_date.isoformat()}_{manifest.run_id}.json"):
+                raise FileExistsError("Recovery run already has manifest/report evidence")
+        if os.path.lexists(settings.manifest_dir / f"{trade_date.isoformat()}_{manifest.run_id}.recovery.json"):
+            raise FileExistsError("Recovery run already has lineage evidence")
+        catalog.initialize()
+        with catalog.connect() as con:
+            for table in ("ingestion_runs", "market_bar_snapshot_pairs", "quality_results"):
+                if con.execute(f"SELECT 1 FROM {table} WHERE run_id = ? LIMIT 1", [manifest.run_id]).fetchone():
+                    raise ValueError("Recovery run ID already has Catalog evidence")
 
-    with MoomooHistoryCollector(settings) as collector:
+    context = MoomooHistoryCollector(settings) if _replay is None else nullcontext(_replay)
+    with context as collector:
         for index, symbol in enumerate(manifest.requested_symbols):
             try:
                 raw = collector.fetch_history(
@@ -239,7 +277,7 @@ def _collect_history_locked(
                 manifest.successful_symbols.append(symbol)
             except Exception as exc:  # preserve per-symbol failures and continue the batch
                 manifest.failed_symbols[symbol] = str(exc)
-            if index < len(manifest.requested_symbols) - 1:
+            if _replay is None and index < len(manifest.requested_symbols) - 1:
                 time.sleep(settings.request_pause_seconds)
 
     quality_results = []
@@ -269,19 +307,31 @@ def _collect_history_locked(
     else:
         manifest.status = "SUCCESS"
 
-    settings.manifest_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = settings.manifest_dir / f"{trade_date.isoformat()}_{manifest.run_id}.json"
-    manifest_path.write_text(json.dumps(manifest.as_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
-
-    settings.report_dir.mkdir(parents=True, exist_ok=True)
     report_path = settings.report_dir / f"{trade_date.isoformat()}_{manifest.run_id}.json"
-    report_path.write_text(
-        json.dumps([r.as_dict() for r in quality_results], ensure_ascii=False, indent=2),
-        encoding="utf-8",
+    evidence = (
+        (manifest_path, manifest.as_dict()),
+        (report_path, [r.as_dict() for r in quality_results]),
     )
+    for path, payload in evidence:
+        body = json.dumps(payload, ensure_ascii=False, indent=2)
+        if _replay is None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(body, encoding="utf-8")
+        else:
+            verify_directory_chain(path.parent, label="recovery evidence directory")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            verify_directory_chain(path.parent, label="recovery evidence directory")
+            reject_link(path, "recovery evidence")
+            with path.open("x", encoding="utf-8") as stream:
+                stream.write(body)
 
-    catalog.record_run(manifest)
+    if _replay is not None:
+        lineage_path = settings.manifest_dir / f"{trade_date.isoformat()}_{manifest.run_id}.recovery.json"
+        lineage_bytes = json.dumps(_replay.lineage(manifest, settings), ensure_ascii=False, indent=2).encode("utf-8")
+        _write_file_no_replace(lineage_path, lambda stream: stream.write(lineage_bytes))
     catalog.record_quality(manifest.run_id, quality_results)
+    catalog.record_run(manifest)
     return manifest
 
 
