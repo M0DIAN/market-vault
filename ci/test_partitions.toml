@@ -73,7 +73,10 @@ prefixes = [
 ]
 files = [
   "test_desktop_intraday_research.py",
+  "test_desktop_intraday_training_history.py",
+  "test_intraday_final_data_boundaries.py",
   "test_intraday_research.py",
+  "test_intraday_training_history.py",
 ]
 
 [partitions.diagnostics]
@@ -81,6 +84,7 @@ prefixes = []
 files = [
   "test_strategy_diagnostics.py",
   "test_strategy_intraday_performance.py",
+  "test_strategy_return_assessment.py",
 ]
 
 [partitions.intraday_analytics]

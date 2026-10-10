@@ -258,8 +258,8 @@ checkout，只改变 pytest 的文件选择，片内仍按原方式顺序执行�
 | `data` | 采集、Canonical、审计、清理、日内数据准备及桌面入口 |
 | `dataset_features` | Dataset、PIT、多源、跨日、特征与样本生成 |
 | `strategy` | Ridge、策略研究、比较、回测、执行及对应桌面入口 |
-| `diagnostics` | 策略诊断与日内绩效两个耗时文件 |
-| `intraday_research` | 日内研究核心、执行场景及研究桌面入口 |
+| `diagnostics` | 策略诊断、日内绩效与收益口径评估 |
+| `intraday_research` | 日内研究核心、执行场景、训练历史敏感性、最终数据边界及研究桌面入口 |
 | `intraday_analytics` | 收益不确定性、联合界限、组合、时序选择、延迟及预测分析 |
 | `intraday_experiment` | 已存实验语法、来源重放与场景验证 |
 | `intraday_saved` | 已存计划复用、参数网格、保存结果比较及实际 CLI |
@@ -284,7 +284,14 @@ run/attempt 上成功。执行契约变更禁止沿用旧证据，main 会实际
 函数，原 helper/fixture 仍留在原模块，维持已有导入路径。文件迁移应同时
 核对函数源码字节和 collection 映射，证明参数化用例无漏收集、无重复。
 
-此次平衡依据 [Q22 FULL 38035926102 attempt 1](https://github.com/M0DIAN/market-vault/actions/runs/38035926102/attempts/1)
+Q30 沿用以上规则，以 Q29 FULL `38068988258/1` 的 strategy 610 秒、
+intraday_final 637 秒为依据继续窄幅平衡：收益口径评估文件改归 diagnostics，
+两条独立最终数据边界测试原样移入 intraday_research；新增训练历史核心与
+原生入口测试共同归该研究分片，沿用现有真实来源 fixture 定义；实际耗时
+以自然 FULL 为准。该 registry 改动在 main 必须走自然 FULL；Python 3.14
+的兼容性编排保持不变。
+
+首轮平衡依据 [Q22 FULL 38035926102 attempt 1](https://github.com/M0DIAN/market-vault/actions/runs/38035926102/attempts/1)
 的实际日志：原日内研究作业 21 分 58 秒，策略作业 9 分 51 秒。单个
 `test_intraday_research.py` 中已列出的慢测试就超过 10 分钟，因此仅将原
 三个文件分别分组不足。新增的四个日内组与两个策略组由已观测的函数

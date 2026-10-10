@@ -41,6 +41,7 @@ from .intraday_signal_delay_cli import add_intraday_signal_delay_subparser, rese
 from .intraday_prediction_quality_cli import add_intraday_prediction_quality_subparser, research_intraday_prediction_quality_main
 from .intraday_feature_ablation_cli import add_intraday_feature_ablation_subparser, research_intraday_feature_ablation_main
 from .intraday_quadratic_ridge_cli import add_intraday_quadratic_ridge_subparser, research_intraday_quadratic_ridge_main
+from .intraday_training_history_cli import add_intraday_training_history_subparser, research_intraday_training_history_main
 from .intraday_inner_selection_cli import add_intraday_inner_selection_subparser, research_intraday_inner_selection_main
 from .intraday_plan_cli import add_intraday_plan_subparser, research_intraday_plan_main
 from .intraday_saved_comparison_cli import add_intraday_saved_comparison_subparser, research_intraday_saved_comparison_main
@@ -134,6 +135,7 @@ RESEARCH_COMMANDS = frozenset({
     "research-intraday-prediction-quality",
     "research-intraday-feature-ablation",
     "research-intraday-quadratic-ridge",
+    "research-intraday-training-history",
     "research-intraday-inner-selection",
     "research-intraday-plan-from-candidate",
     "research-intraday-compare-saved",
@@ -252,6 +254,7 @@ def add_research_subparsers(subparsers) -> None:
     add_intraday_prediction_quality_subparser(subparsers)
     add_intraday_feature_ablation_subparser(subparsers)
     add_intraday_quadratic_ridge_subparser(subparsers)
+    add_intraday_training_history_subparser(subparsers)
     add_intraday_inner_selection_subparser(subparsers)
     add_intraday_plan_subparser(subparsers)
     add_intraday_saved_comparison_subparser(subparsers)
@@ -299,6 +302,8 @@ def run_research_command(command: str, args: argparse.Namespace) -> int:
         return research_intraday_feature_ablation_main(args)
     if command == "research-intraday-quadratic-ridge":
         return research_intraday_quadratic_ridge_main(args)
+    if command == "research-intraday-training-history":
+        return research_intraday_training_history_main(args)
     if command == "research-intraday-inner-selection":
         return research_intraday_inner_selection_main(args)
     if command == "research-intraday-plan-from-candidate":
