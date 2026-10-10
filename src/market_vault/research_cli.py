@@ -24,6 +24,7 @@ from .strategy_comparison_cli import (
     research_compare_strategies_main,
 )
 from .strategy_experiment_cli import add_strategy_experiment_subparsers, research_experiment_main
+from .return_assessment_cli import add_return_assessment_subparser, research_return_assessment_main
 from .strategy_diagnostics_cli import add_strategy_diagnostics_subparser, research_diagnose_strategy_main
 from .intraday_data_cli import add_intraday_data_subparsers, research_intraday_data_main
 from .intraday_backtest_cli import add_intraday_backtest_subparser, research_intraday_backtest_main
@@ -118,6 +119,7 @@ from .research_dataset import build_research_dataset
 
 
 RESEARCH_COMMANDS = frozenset({
+    "research-return-assessment",
     "research-intraday-freeze", "research-intraday-freeze-inner-selection", "research-intraday-test",
     "research-intraday-plan", "research-intraday-compare", "research-intraday-diagnose",
     "research-intraday-performance",
@@ -233,6 +235,7 @@ def add_research_subparsers(subparsers) -> None:
     add_backtest_subparser(subparsers)
     add_strategy_comparison_subparser(subparsers)
     add_strategy_experiment_subparsers(subparsers)
+    add_return_assessment_subparser(subparsers)
     add_strategy_diagnostics_subparser(subparsers)
     add_intraday_data_subparsers(subparsers)
     add_intraday_backtest_subparser(subparsers)
@@ -268,6 +271,8 @@ def add_research_subparsers(subparsers) -> None:
 
 
 def run_research_command(command: str, args: argparse.Namespace) -> int:
+    if command == "research-return-assessment":
+        return research_return_assessment_main(args)
     if command in ("research-intraday-scenarios", "research-intraday-export-scenario"):
         return research_intraday_execution_scenarios_main(args, command=command)
     if command == "research-intraday-performance":

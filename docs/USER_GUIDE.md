@@ -63,6 +63,7 @@ market-vault --help
 | | `dataset-catalog-verify` | 校验一个 Catalog 快照 |
 | | `dataset-catalog-list` | 只读列出快照条目（过滤 + 分页） |
 | | `dataset-catalog-show` | 按精确 `dataset_id` 展示一个条目 |
+| 本地研究质量检查 | `research-return-assessment` | 独立披露未复权收益口径，并检查显式有限事件限制与实际价格 / 持仓窗口的相交 |
 
 ## 5. 配置与 OpenD
 
@@ -479,6 +480,42 @@ market-vault dataset-inspect --build-dir $complete.build_path --offset 0 --limit
 - 完整示例包（FeatureSpec / LabelSpec / split-spec 文件、COMPLETE 与 EMPTY 计划模板、stdlib-only 渲染器、Windows PowerShell 全流程、24 项常见错误）见 [examples/dataset_cli/README.md](../examples/dataset_cli/README.md)。
 
 **Dataset 策略边界**（policy boundaries）：当前 PIT / Dataset policy 仅支持 `adjustment = NONE`（不做复权）；adjusted-price 的 corporate-action as-of / PIT reconstruction 尚未实现，adjusted requests 会 fail closed。Feature window 按正式 PIT contract 的半开时间窗（half-open `[feature_window_start, feature_window_close)`）以及 market / archive availability 规则处理，不受 anchor-market-calendar-date 限制。默认的 no-cross-trading-day policy 作用于 Label：每个 Label row 必须属于该 sample 的 `anchor_market_calendar_date`。Dataset 是只读数据产物，不执行 arbitrary user code；所有读取走 verified Dataset reader（严格验证读取器）与 immutable Dataset materialization（不可变物化），任何不一致都 fail closed。
+
+### 未复权收益口径与事件窗口检查（Q29）
+
+**收益口径：`NONE` 未复权价格。** 当前价格标签、交易与价格基准按记录价格及
+各自执行 / 成本规则计算；没有拆股份额调整，也没有现金股息入账。已保存报告中
+`total_return` 表示相应模拟账户的累计收益。PIT 校验验证时间与来源约束，不能据此
+认定已完成公司行为处理。研究和日内工作区均显示这一口径说明及公司行动覆盖
+`UNKNOWN（未知）`：这是界面尚未附加独立检查结果时的默认状态，不表示 CLI 已运行。
+
+对一个已验证的 `NONE/RTH` multi-source cross-day Dataset 或一个已保存普通研究 /
+日内 TEST 实验，可执行独立的本地检查：
+
+```powershell
+market-vault research-return-assessment --dataset "D:\data\research-datasets\dataset_id=<64hex>"
+market-vault research-return-assessment --experiment "D:\reports\comparison.json" --events "D:\research\event-restrictions.json"
+```
+
+- 不提供 `--events`：`coverage_status = UNKNOWN`、`screening_status = NOT_CHECKED`。
+- 提供显式有限清单：覆盖始终是 `PARTIAL`，空清单或零命中也不代表区间内没有公司
+  行为。清单带独立内容身份和来源说明，支持明确有效时刻或保守的日期限制。
+- Dataset 检查实际 COMPLETE Feature / Label 消费的价格支持窗口；不把延迟可用
+  时间当作价格 bar 的延长。open-to-close 只从实际 entry open 开始，不包含仅作
+  provenance 的信号日 anchor。
+- 保存实验检查实际逐笔持仓及已有基准。日内每天强制平仓后的现金间隔不会被拼成
+  隔夜持仓；日期限制仍可能保守命中同日交易，此时不声称已证明精确跨事件。
+- 普通基础实验还需其记录的确切 Dataset；原路径搬迁时可用 `--source-dataset DIR`
+  指定同一 `dataset_id` 的位置。其他输入不接受该选项。新检查若无法证明精确窗口
+  会说明原因；这不会改变旧文件的 Open / Replay 规则。
+
+结果是独立的确定性 stdout JSON，不修改源文件、Label 值、收益、IDs 或旧报告。
+检查完成且无已列限制命中时退出 `0`；已列限制命中时仍输出完整报告并退出 `2`；
+输入或证据不足以完成检查时退出 `1`。退出 `0` 必须结合 UNKNOWN / PARTIAL 和
+实际检查范围解释，不能作为完整公司行为覆盖保证。命令语法错误仍由 argparse
+向 stderr 输出诊断并退出 `2`，应与 stdout 有完整检查报告的限制命中区分。
+精确 schema、支持的保存格式、匹配边界与命令错误约定见
+[Unadjusted return assessment V1](contracts/unadjusted_return_assessment_v1.md)。
 
 ## 12. Sample Generation
 
