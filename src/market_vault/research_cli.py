@@ -39,6 +39,7 @@ from .intraday_sequential_selection_cli import add_intraday_sequential_selection
 from .intraday_signal_delay_cli import add_intraday_signal_delay_subparser, research_intraday_signal_delay_main
 from .intraday_prediction_quality_cli import add_intraday_prediction_quality_subparser, research_intraday_prediction_quality_main
 from .intraday_feature_ablation_cli import add_intraday_feature_ablation_subparser, research_intraday_feature_ablation_main
+from .intraday_quadratic_ridge_cli import add_intraday_quadratic_ridge_subparser, research_intraday_quadratic_ridge_main
 from .intraday_plan_cli import add_intraday_plan_subparser, research_intraday_plan_main
 from .intraday_saved_comparison_cli import add_intraday_saved_comparison_subparser, research_intraday_saved_comparison_main
 from .intraday_execution_scenarios_cli import add_intraday_execution_scenarios_subparsers, research_intraday_execution_scenarios_main
@@ -129,6 +130,7 @@ RESEARCH_COMMANDS = frozenset({
     "research-intraday-signal-delay",
     "research-intraday-prediction-quality",
     "research-intraday-feature-ablation",
+    "research-intraday-quadratic-ridge",
     "research-intraday-plan-from-candidate",
     "research-intraday-compare-saved",
     "research-intraday-scenarios", "research-intraday-export-scenario",
@@ -244,6 +246,7 @@ def add_research_subparsers(subparsers) -> None:
     add_intraday_signal_delay_subparser(subparsers)
     add_intraday_prediction_quality_subparser(subparsers)
     add_intraday_feature_ablation_subparser(subparsers)
+    add_intraday_quadratic_ridge_subparser(subparsers)
     add_intraday_plan_subparser(subparsers)
     add_intraday_saved_comparison_subparser(subparsers)
     add_intraday_execution_scenarios_subparsers(subparsers)
@@ -286,6 +289,8 @@ def run_research_command(command: str, args: argparse.Namespace) -> int:
         return research_intraday_prediction_quality_main(args)
     if command == "research-intraday-feature-ablation":
         return research_intraday_feature_ablation_main(args)
+    if command == "research-intraday-quadratic-ridge":
+        return research_intraday_quadratic_ridge_main(args)
     if command == "research-intraday-plan-from-candidate":
         return research_intraday_plan_main(args)
     if command == "research-intraday-compare-saved":
