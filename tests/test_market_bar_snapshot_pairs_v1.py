@@ -87,6 +87,22 @@ def collect(monkeypatch, cfg: Settings, responses: dict[str, pd.DataFrame | Exce
     )
 
 
+def test_invalid_numeric_archive_is_preserved_but_not_complete(monkeypatch, tmp_path):
+    cfg = settings(tmp_path)
+    raw = raw_frame("US.SPY").assign(open=0.0, high=0.0, low=0.0, close=0.0)
+    manifest = collect(monkeypatch, cfg, {"US.SPY": raw})
+    assert manifest.status == "PARTIAL"
+    assert manifest.successful_symbols == ["US.SPY"]  # Archival success is distinct.
+    pair = manifest.snapshot_pairs[0]
+    pd.testing.assert_frame_equal(pd.read_parquet(pair.raw_file).loc[:, raw.columns], raw)
+    results = json.loads((cfg.report_dir / f"{TRADE_DATE.isoformat()}_{manifest.run_id}.json").read_text())
+    assert any(item["check_name"] == "finite_positive_prices" and item["result"] == "FAIL" for item in results)
+    assert not Catalog(cfg).completed_market_bar_items(
+        symbols=["US.SPY"], trade_dates=[TRADE_DATE], interval="1m", requested_session="ALL",
+        adjustment="NONE", source_schema_version=cfg.source_schema_version,
+    )
+
+
 def legacy_pair(
     cfg: Settings,
     symbols: list[str],

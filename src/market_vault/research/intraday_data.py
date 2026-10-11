@@ -20,6 +20,7 @@ from ..cross_day.schedule import admit_schedule
 from ..dataset.encoding import normalize_utc_datetime
 from ..dataset.pit import assemble_point_in_time_samples
 from ..dataset.pit_models import PITSampleRequest, PIT_ASSEMBLER_VERSION
+from ..market_values import is_nonnegative_volume, is_positive_price
 from ..ts2_feature import execute_ts2_features
 from ..ts2_feature.registry import TS2_FEATURE_EXECUTION_CONTRACT_VERSION
 
@@ -206,7 +207,8 @@ def build_intraday_dataset(plan: dict, *, base: Path | None = None) -> IntradayD
             raise IntradayDataError("multiple Canonical versions in one session slot")
         prices = {name: finite_number(getattr(bar, name), name)
                   for name in ("open", "high", "low", "close", "volume")}
-        if min(prices[name] for name in ("open", "high", "low", "close")) <= 0 or prices["volume"] < 0:
+        if (not all(is_positive_price(prices[name]) for name in ("open", "high", "low", "close"))
+                or not is_nonnegative_volume(prices["volume"])):
             raise IntradayDataError("prices must be positive and volume nonnegative")
         price_by_slot[key] = {"trading_day": day.market_calendar_date.isoformat(), "slot": slot,
                               "event_time": event.isoformat(), "available_at": available.isoformat(),

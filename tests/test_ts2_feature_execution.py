@@ -10,6 +10,7 @@ from ts2_feature_helpers import AS_OF, ARCHIVE, bar, build, pit, local, fixture,
 from market_vault.ts2_feature import execute_ts2_features, TS2FeatureError
 from market_vault.ts2_feature import execution as engine
 from market_vault.dataset.spec_models import SpecParameter
+from market_vault.canonical.reader import CanonicalArtifactValidationError
 
 
 def fails(code, call):
@@ -310,11 +311,15 @@ def test_dst_and_qualified_early_close_without_schedule(tmp_path, day, slot):
 
 @pytest.mark.parametrize("name", ["simple_return", "log_return", "volume_ratio"])
 def test_formula_domain_errors_are_hard(tmp_path, name):
-    rows = [bar(slot=0, close=0.0, low=0.0), bar(slot=1)]
     if name == "volume_ratio":
-        rows[0] = replace(rows[0], volume=0.0)
-    one = build(tmp_path, rows)
-    fails("TRANSFORM_DOMAIN", lambda: execute(one, pit((one,)), (spec(name),)))
+        # Zero volume remains valid Canonical input but not a ratio denominator.
+        one = build(tmp_path, [replace(bar(slot=0), volume=0.0), bar(slot=1)])
+        fails("TRANSFORM_DOMAIN", lambda: execute(one, pit((one,)), (spec(name),)))
+    else:
+        # Q42 rejects nonpositive prices at source admission, before either
+        # return formula can consume them. Retain the real reader boundary.
+        with pytest.raises(CanonicalArtifactValidationError, match="positive"):
+            build(tmp_path, [bar(slot=0, close=0.0, low=0.0), bar(slot=1)])
 
 
 @pytest.mark.parametrize("output", [1, True, float("nan"), float("inf")])

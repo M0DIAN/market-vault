@@ -15,6 +15,7 @@ from datetime import date, datetime
 import pandas as pd
 
 from ..intraday_audit import parse_intraday_interval
+from ..market_values import is_nonnegative_volume, is_positive_price
 from ..normalization import bar_available_at, market_session_label
 from .identity import canonical_bar_key, canonical_row_version_id
 from .models import (
@@ -158,12 +159,15 @@ def _as_date(value) -> date:
 def _finite_market_number(value, column: str) -> float:
     try:
         number = float(value)
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, OverflowError) as exc:
         raise CanonicalBuildError(f"non-numeric {column}: {value!r}") from exc
     if pd.isna(number):
         raise CanonicalBuildError(f"null {column} value")
     if number in (float("inf"), float("-inf")) or number != number:
         raise CanonicalBuildError(f"non-finite {column} value")
+    valid = is_nonnegative_volume(number) if column == "volume" else is_positive_price(number)
+    if not valid:
+        raise CanonicalBuildError(f"{column} must be finite and {'nonnegative' if column == 'volume' else 'positive'}")
     return number
 
 

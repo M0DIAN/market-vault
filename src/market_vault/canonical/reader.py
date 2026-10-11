@@ -40,6 +40,7 @@ import pandas as pd
 import pyarrow.parquet as pq
 
 from ..intraday_audit import parse_intraday_interval
+from ..market_values import is_nonnegative_volume, is_positive_price
 from .bars import DEFAULT_DATASET_KIND
 from .gaps import GAP_POLICY_VERSION, GapRange, derive_internal_gap_ranges
 from .identity import (
@@ -376,6 +377,9 @@ def _verified_bar(row: dict) -> CanonicalBar:
             float("-inf"),
         ):
             _fail(f"bars row has invalid market float {name}: {value!r}")
+        valid = is_nonnegative_volume(value) if name == "volume" else is_positive_price(value)
+        if not valid:
+            _fail(f"bars row {name} must be {'nonnegative' if name == 'volume' else 'positive'}")
     extra_fields = []
     for name in OPTIONAL_MARKET_COLUMNS:
         value = row.get(name)
