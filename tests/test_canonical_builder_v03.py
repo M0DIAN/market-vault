@@ -199,6 +199,30 @@ def test_empty_input_returns_empty_result(tmp_path):
     assert result.builder_version == CANONICAL_BUILDER_VERSION
 
 
+@pytest.mark.parametrize("column,value", [
+    ("open", 0.0), ("low", -1.0), ("high", float("inf")),
+    ("close", float("nan")), ("volume", -1.0), ("volume", float("inf")),
+])
+def test_canonical_rejects_invalid_core_market_numbers(tmp_path, column, value):
+    cfg = settings(tmp_path)
+    write_snapshot(cfg, trade_date=date(2026, 7, 1), run_id="numeric-admission",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 1))
+    ref, rows = read_run_rows(cfg, run_id="numeric-admission")
+    rows[column] = value
+    with pytest.raises(CanonicalBuildError, match=column):
+        build_canonical_market_bars([make_input(cfg, ref=ref, rows=rows)])
+
+
+def test_canonical_zero_volume_remains_valid(tmp_path):
+    cfg = settings(tmp_path)
+    write_snapshot(cfg, trade_date=date(2026, 7, 1), run_id="zero-volume",
+                   time_keys=minute_keys("2026-07-01 09:30:00", 1))
+    ref, rows = read_run_rows(cfg, run_id="zero-volume")
+    rows["volume"] = 0.0
+    built = build_canonical_market_bars([make_input(cfg, ref=ref, rows=rows)])
+    assert built.bars[0].volume == 0.0
+
+
 def test_complete_snapshot_produces_canonical_rows(tmp_path):
     cfg = settings(tmp_path)
     write_snapshot(cfg, code="US.MU", trade_date=date(2026, 7, 1), run_id="run-a",

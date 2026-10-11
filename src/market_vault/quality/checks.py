@@ -5,6 +5,7 @@ from datetime import date
 import pandas as pd
 
 from ..models import QualityResult
+from ..market_values import is_nonnegative_volume, is_positive_price
 from ..normalization.bars import infer_underlying
 
 
@@ -23,7 +24,7 @@ def run_bar_quality_checks(df: pd.DataFrame) -> list[QualityResult]:
         return [QualityResult("non_empty", "FAIL", "> 0 rows", "0 rows", "No bars were returned")]
 
     checks: list[QualityResult] = []
-    required = {"code", "time_utc", "open", "high", "low", "close", "volume"}
+    required = {"code", "interval", "adjustment", "time_utc", "open", "high", "low", "close", "volume"}
     missing = sorted(required - set(df.columns))
     checks.append(_result("required_columns", not missing, "all present", str(missing or "all present")))
     if missing:
@@ -32,15 +33,20 @@ def run_bar_quality_checks(df: pd.DataFrame) -> list[QualityResult]:
     duplicate_count = int(df.duplicated(subset=["code", "interval", "adjustment", "time_utc"]).sum())
     checks.append(_result("duplicate_bars", duplicate_count == 0, "0", str(duplicate_count)))
 
+    prices = df[["open", "high", "low", "close"]].apply(pd.to_numeric, errors="coerce")
+    invalid_price_count = int((~prices.apply(lambda column: column.map(is_positive_price)).all(axis=1)).sum())
+    checks.append(_result("finite_positive_prices", invalid_price_count == 0,
+                          "0 missing, non-finite or non-positive price rows", str(invalid_price_count)))
     invalid_ohlc = (
-        (df["high"] < df[["open", "close", "low"]].max(axis=1))
-        | (df["low"] > df[["open", "close", "high"]].min(axis=1))
+        (prices["high"] < prices[["open", "close", "low"]].max(axis=1))
+        | (prices["low"] > prices[["open", "close", "high"]].min(axis=1))
     )
     invalid_ohlc_count = int(invalid_ohlc.fillna(True).sum())
     checks.append(_result("ohlc_consistency", invalid_ohlc_count == 0, "0 invalid rows", str(invalid_ohlc_count)))
 
-    negative_volume_count = int((df["volume"].fillna(-1) < 0).sum())
-    checks.append(_result("non_negative_volume", negative_volume_count == 0, "0 invalid rows", str(negative_volume_count)))
+    invalid_volume_count = int((~df["volume"].map(is_nonnegative_volume)).sum())
+    checks.append(_result("non_negative_volume", invalid_volume_count == 0,
+                          "0 missing, non-finite or negative volume rows", str(invalid_volume_count)))
 
     monotonic_failures = 0
     for _, group in df.groupby("code", sort=False):
@@ -51,6 +57,12 @@ def run_bar_quality_checks(df: pd.DataFrame) -> list[QualityResult]:
     null_price_count = int(df[["open", "high", "low", "close"]].isna().any(axis=1).sum())
     checks.append(_result("non_null_prices", null_price_count == 0, "0 invalid rows", str(null_price_count)))
 
+    checks.append(_result(
+        "validation_scope", True, "BASIC_BAR_STRUCTURE_AND_NUMERICS", "BASIC_BAR_STRUCTURE_AND_NUMERICS",
+        "Only basic structure and numeric checks. External market accuracy, complete session coverage, "
+        "Canonical provenance and research/PIT admission are separate checks.",
+    ))
+
     return checks
 
 
@@ -59,7 +71,7 @@ def run_option_contract_quality_checks(df: pd.DataFrame) -> list[QualityResult]:
         return [QualityResult("non_empty", "FAIL", "> 0 rows", "0 rows", "No option contracts were returned")]
 
     checks: list[QualityResult] = []
-    required = {"option_code", "underlying_code", "option_type", "strike_price", "expiry_date"}
+    required = {"option_code", "underlying_code", "option_type", "strike_price", "expiry_date", "captured_at", "source"}
     missing = sorted(required - set(df.columns))
     checks.append(_result("required_columns", not missing, "all present", str(missing or "all present")))
     if missing:
@@ -76,8 +88,8 @@ def run_option_contract_quality_checks(df: pd.DataFrame) -> list[QualityResult]:
     invalid_type = int((~df["option_type"].isin(["CALL", "PUT"])).sum())
     checks.append(_result("option_type_call_or_put", invalid_type == 0, "CALL or PUT", str(invalid_type)))
 
-    invalid_strike = int((pd.to_numeric(df["strike_price"], errors="coerce") <= 0).fillna(True).sum())
-    checks.append(_result("strike_price_positive", invalid_strike == 0, "> 0", str(invalid_strike)))
+    invalid_strike = int((~df["strike_price"].map(is_positive_price)).sum())
+    checks.append(_result("strike_price_positive", invalid_strike == 0, "present, finite and > 0", str(invalid_strike)))
 
     invalid_expiry = int(pd.to_datetime(df["expiry_date"], errors="coerce").isna().sum())
     checks.append(_result("expiry_date_valid", invalid_expiry == 0, "valid dates", str(invalid_expiry)))
