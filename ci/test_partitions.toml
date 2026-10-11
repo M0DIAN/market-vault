@@ -7,6 +7,7 @@ schema_version = 1
 [partitions.data]
 prefixes = [
   "test_canonical_",
+  "test_market_data_",
   "test_safe_purge_",
   "test_timestamp_semantics_",
 ]

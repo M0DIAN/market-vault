@@ -43,6 +43,7 @@ from .intraday_ml_diagnostics_cli import add_intraday_ml_diagnostics_subparser, 
 from .intraday_procedure_comparison_cli import add_intraday_procedure_comparison_subparser, research_intraday_procedure_comparison_main
 from .intraday_procedure_family_cli import add_intraday_procedure_family_subparser, research_intraday_procedure_family_main
 from .intraday_procedure_stress_cli import add_intraday_procedure_stress_subparser, research_intraday_procedure_stress_main
+from .market_data_cli import MARKET_DATA_COMMANDS, add_market_data_subparsers, market_data_main
 from .intraday_feature_ablation_cli import add_intraday_feature_ablation_subparser, research_intraday_feature_ablation_main
 from .intraday_quadratic_ridge_cli import add_intraday_quadratic_ridge_subparser, research_intraday_quadratic_ridge_main
 from .intraday_training_history_cli import add_intraday_training_history_subparser, research_intraday_training_history_main
@@ -125,7 +126,7 @@ from .observation.reader import load_verified_observation_build
 from .research_dataset import build_research_dataset
 
 
-RESEARCH_COMMANDS = frozenset({
+RESEARCH_COMMANDS = MARKET_DATA_COMMANDS | frozenset({
     "research-return-assessment",
     "research-intraday-freeze", "research-intraday-freeze-inner-selection", "research-intraday-freeze-threshold-selection",
     "research-intraday-freeze-joint-selection",
@@ -240,6 +241,7 @@ _DOCUMENTED_ERRORS = (
 
 
 def add_research_subparsers(subparsers) -> None:
+    add_market_data_subparsers(subparsers)
     build = subparsers.add_parser(
         "research-build",
         help="Build one PIT-safe research Dataset from an explicit research plan",
@@ -296,6 +298,8 @@ def add_research_subparsers(subparsers) -> None:
 
 
 def run_research_command(command: str, args: argparse.Namespace) -> int:
+    if command in MARKET_DATA_COMMANDS:
+        return market_data_main(args, command=command)
     if command == "research-intraday-procedure-comparison":
         return research_intraday_procedure_comparison_main(args)
     if command == "research-intraday-procedure-family":
