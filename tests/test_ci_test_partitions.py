@@ -54,6 +54,33 @@ def test_current_registry_covers_every_discovered_test_exactly_once():
         "tests/test_strategy_diagnostics.py", "tests/test_strategy_intraday_performance.py",
         "tests/test_strategy_return_assessment.py",
     )
+    assert {
+        "tests/test_strategy_intraday_inner_objective_sensitivity.py",
+        "tests/test_strategy_intraday_inner_selection.py",
+        "tests/test_strategy_intraday_joint_diagnostics.py",
+        "tests/test_strategy_intraday_joint_final.py",
+        "tests/test_strategy_intraday_joint_selection.py",
+        "tests/test_strategy_intraday_ml_diagnostics.py",
+        "tests/test_strategy_intraday_procedure_return_uncertainty.py",
+        "tests/test_strategy_intraday_threshold_selection.py",
+    } <= set(resolved["intraday_ml_procedures"])
+
+
+def test_current_registry_assigns_new_ml_procedure_tests_without_strategy_overlap(tmp_path):
+    (tmp_path / "ci").mkdir()
+    (tmp_path / "tests/nested").mkdir(parents=True)
+    (tmp_path / "pyproject.toml").write_text((ROOT / "pyproject.toml").read_text())
+    (tmp_path / partitions.REGISTRY_REL).write_text((ROOT / partitions.REGISTRY_REL).read_text())
+    for files in partitions.load_partitions(ROOT).values():
+        for relative in files:
+            path = tmp_path / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.touch()
+    added = "tests/nested/test_intraday_ml_procedures_comparison.py"
+    (tmp_path / added).touch()
+    resolved = partitions.load_partitions(tmp_path)
+    assert added in resolved["intraday_ml_procedures"]
+    assert added not in resolved["strategy"]
 
 
 def test_new_test_in_known_domain_is_included_including_subdirectories(tmp_path):
@@ -175,8 +202,8 @@ def test_runner_rejects_inherited_options_that_can_omit_tests(tmp_path, addopts)
 
 
 @pytest.mark.parametrize("old,new,diagnostic", [
-    ("        partition: [data, dataset_features, strategy, diagnostics, intraday_research, intraday_analytics, intraday_experiment, intraday_saved, intraday_final, app_ops]",
-     "        partition: [data, dataset_features, strategy, diagnostics, intraday_research, intraday_analytics, intraday_experiment, intraday_saved, intraday_final, app_ops]\n"
+    ("        partition: [data, dataset_features, strategy, diagnostics, intraday_research, intraday_analytics, intraday_experiment, intraday_saved, intraday_final, app_ops, intraday_ml_procedures]",
+     "        partition: [data, dataset_features, strategy, diagnostics, intraday_research, intraday_analytics, intraday_experiment, intraday_saved, intraday_final, app_ops, intraday_ml_procedures]\n"
      "        exclude:\n          - partition: intraday_final", "cannot include or exclude"),
     ("  package:\n", "  package:\n    if: always()\n", "package must keep its exact job condition"),
     ("  package:\n", "  package:\n    if: false\n", "package must keep its exact job condition"),

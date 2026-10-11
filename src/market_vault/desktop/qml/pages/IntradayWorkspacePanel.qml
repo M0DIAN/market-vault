@@ -84,6 +84,12 @@ Item {
                 variant: root.section === 8 ? "primary" : "secondary"
                 onClicked: root.section = 8
             }
+            Components.PixelButton {
+                objectName: "intradayProcedureTab"
+                text: root.i18n.catalog["procedure.tab"]
+                variant: root.section === 10 ? "primary" : "secondary"
+                onClicked: root.section = 10
+            }
         }
         StackLayout {
             Layout.fillWidth: true
@@ -102,6 +108,7 @@ Item {
                 objectPrefix: "intradayJoint"; translationPrefix: "joint."; jointSelection: true
                 controller: root.controller.intradayJointSelectionController; i18n: root.i18n
             }
+            IntradayProcedureComparisonPanel { controller: root.controller.intradayProcedureComparisonController; i18n: root.i18n }
         }
     }
 }
