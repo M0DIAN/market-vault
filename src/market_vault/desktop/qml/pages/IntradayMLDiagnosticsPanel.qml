@@ -253,9 +253,18 @@ Item {
                 objectName: "intradayMLTable"
                 Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 210
                 paged: true; tableModel: root.controller.tableModel; i18n: root.i18n
-                cellFormatter: function(value) { return (root.controller.completedUncertainty && root.i18n.catalog["uncertainty." + value]) || root.i18n.catalog["ml_diagnostics." + value]
-                    || root.i18n.catalog["prediction_quality." + value] || root.i18n.catalog["inner." + value]
-                    || root.i18n.catalog["columns." + value] || value }
+                cellFormatter: function(value) {
+                    root.i18n.language
+                    const prefixes = root.controller.completedUncertainty
+                        ? ["uncertainty.", "ml_diagnostics.", "prediction_quality.", "inner.", "columns."]
+                        : ["ml_diagnostics.", "prediction_quality.", "inner.", "columns."]
+                    for (const prefix of prefixes) {
+                        const key = prefix + value
+                        const translated = root.i18n.translate(key)
+                        if (translated && translated !== key) return translated
+                    }
+                    return value
+                }
                 onPreviousRequested: root.controller.changePage(-1)
                 onNextRequested: root.controller.changePage(1)
             }
