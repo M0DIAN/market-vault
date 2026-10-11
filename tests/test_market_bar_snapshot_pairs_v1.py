@@ -5,6 +5,7 @@ import hashlib
 from datetime import date, datetime, timezone
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -13,6 +14,7 @@ import yaml
 from market_vault import service as service_module
 from market_vault import MarketVault
 from market_vault.cli import main as cli_main
+from market_vault.collectors import moomoo_history as history_module
 from market_vault.lifecycle import LifecycleLockError, MarketBarLifecycleLock
 from market_vault.audit import run_inventory
 from market_vault.models import MarketBarSnapshotPair, QualityResult, RunManifest, Settings
@@ -85,6 +87,127 @@ def collect(monkeypatch, cfg: Settings, responses: dict[str, pd.DataFrame | Exce
         "ALL",
         "NONE",
     )
+
+
+def install_history_sdk(monkeypatch, responses):
+    """Keep the real collector and service; only replace the offline SDK boundary."""
+    class Context:
+        def __init__(self):
+            self.calls = []
+            self.closed = False
+
+        def request_history_kline(self, code, *, session, **kwargs):
+            self.calls.append({"code": code, "session": session, **kwargs})
+            response = responses[code]
+            if isinstance(response, pd.DataFrame):
+                return 0, response.copy(), None
+            return response
+
+        def close(self):
+            self.closed = True
+
+    context = Context()
+    sdk = {
+        "OpenQuoteContext": lambda **_kwargs: context,
+        "RET_OK": 0,
+        "AuType": SimpleNamespace(NONE="NONE"),
+        "KLType": SimpleNamespace(K_1M="K_1M"),
+        "KL_FIELD": SimpleNamespace(ALL="ALL"),
+        "Session": SimpleNamespace(ALL="sdk-ALL"),
+        "module_name": "moomoo",
+        "version": "9.3-test-sdk",
+    }
+    monkeypatch.setattr(history_module, "load_moomoo_sdk", lambda: sdk)
+    return context
+
+
+@pytest.mark.parametrize("failure_stage", ["request", "registration"])
+def test_request_evidence_only_describes_registered_success_without_poisoning_completion(
+    monkeypatch, tmp_path, failure_stage,
+):
+    cfg = settings(tmp_path)
+    good, failed = "US.QQQ", "US.SPY"
+    responses = {good: raw_frame(good), failed: raw_frame(failed)}
+    if failure_stage == "request":
+        responses[failed] = (1, "provider failure", None)
+    else:
+        register = Catalog.register_market_bar_snapshot_pair
+
+        def fail_one_registration(catalog, pair):
+            if pair.symbol == failed:
+                raise RuntimeError("registry unavailable")
+            return register(catalog, pair)
+
+        monkeypatch.setattr(Catalog, "register_market_bar_snapshot_pair", fail_one_registration)
+    context = install_history_sdk(monkeypatch, responses)
+
+    manifest = service_module.collect_history(cfg, TRADE_DATE, [good, failed], "1m", "ALL", "NONE")
+
+    assert manifest.status == "PARTIAL"
+    assert manifest.successful_symbols == [good]
+    assert set(manifest.failed_symbols) == {failed}
+    assert [pair.symbol for pair in manifest.snapshot_pairs] == [good]
+    assert [call["code"] for call in context.calls] == [good, failed]
+    assert all(call["session"] == "sdk-ALL" and "extended_time" not in call for call in context.calls)
+    assert context.closed
+    report = json.loads((cfg.report_dir / f"{TRADE_DATE}_{manifest.run_id}.json").read_bytes())
+    recorded = [item for item in report if item["check_name"] == "history_request_evidence"]
+    assert len(recorded) == 1
+    assert recorded[0]["result"] == "PASS"
+    assert recorded[0]["expected_value"] == "REQUEST_PARAMETER_CAPABILITY_ONLY"
+    assert recorded[0]["actual_value"] == "SESSION"
+    assert json.loads(recorded[0]["details"]) == {
+        "symbol": good, "interval": "1m", "requested_session": "ALL",
+        "effective_request_session": "ALL", "request_mode": "SESSION",
+        "session_keyword_supported": True, "extended_time_keyword_supported": False,
+        "sdk_module": "moomoo", "sdk_version": "9.3-test-sdk",
+        "validation_scope": "REQUEST_PARAMETER_CAPABILITY_ONLY",
+        "response_session_coverage_verified": False,
+    }
+    assert cfg.source_schema_version != "9.3-test-sdk"
+    assert manifest.snapshot_pairs[0].source_schema_version == cfg.source_schema_version
+    assert not any(item["result"] == "FAIL" for item in report)
+    catalog = Catalog(cfg)
+    with catalog.connect() as con:
+        assert con.execute(
+            "SELECT result, expected_value, actual_value, details FROM quality_results "
+            "WHERE run_id = ? AND check_name = 'history_request_evidence'",
+            [manifest.run_id],
+        ).fetchall() == [("PASS", "REQUEST_PARAMETER_CAPABILITY_ONLY", "SESSION", recorded[0]["details"])]
+    assert not catalog.run_has_quality_fail(manifest.run_id)
+    assert catalog.completed_market_bar_items(
+        symbols=[good, failed], trade_dates=[TRADE_DATE], interval="1m", requested_session="ALL",
+        adjustment="NONE", source_schema_version=cfg.source_schema_version,
+    ) == {(good, TRADE_DATE)}
+
+
+def test_raw_recovery_does_not_copy_sdk_request_evidence(monkeypatch, tmp_path):
+    cfg = settings(tmp_path)
+    install_history_sdk(monkeypatch, {"US.SPY": raw_frame("US.SPY")})
+    original = service_module.collect_history(cfg, TRADE_DATE, ["US.SPY"], "1m", "ALL", "NONE")
+    assert original.status == "SUCCESS"
+    original_report = cfg.report_dir / f"{TRADE_DATE}_{original.run_id}.json"
+    original_bytes = original_report.read_bytes()
+    assert sum(item["check_name"] == "history_request_evidence" for item in json.loads(original_bytes)) == 1
+    original_rows = _old_catalog_rows(cfg, original.run_id)
+    _forbid_opend(monkeypatch)
+
+    recovered = service_module.recover_history_from_raw(
+        cfg, cfg.manifest_dir / f"{TRADE_DATE}_{original.run_id}.json",
+    )
+
+    assert recovered.status == "SUCCESS"
+    assert recovered.run_id != original.run_id
+    assert recovered.successful_symbols == ["US.SPY"]
+    report = json.loads((cfg.report_dir / f"{TRADE_DATE}_{recovered.run_id}.json").read_bytes())
+    assert not any(item["check_name"] == "history_request_evidence" for item in report)
+    with Catalog(cfg).connect() as con:
+        assert con.execute(
+            "SELECT 1 FROM quality_results WHERE run_id = ? AND check_name = 'history_request_evidence'",
+            [recovered.run_id],
+        ).fetchall() == []
+    assert original_report.read_bytes() == original_bytes
+    assert _old_catalog_rows(cfg, original.run_id) == original_rows
 
 
 def test_invalid_numeric_archive_is_preserved_but_not_complete(monkeypatch, tmp_path):
@@ -178,6 +301,8 @@ def test_multi_symbol_collection_publishes_independent_registered_pairs(monkeypa
     assert [pair.symbol for pair in manifest.snapshot_pairs] == ["US.QQQ", "US.SPY"]
     assert manifest.raw_file is None and manifest.curated_file is None
     assert manifest.row_count == 4
+    report = json.loads((cfg.report_dir / f"{TRADE_DATE}_{manifest.run_id}.json").read_bytes())
+    assert not any(item["check_name"] == "history_request_evidence" for item in report)
     assert len(list((cfg.data_root / "raw").rglob("*.parquet"))) == 2
     assert len(list((cfg.data_root / "curated").rglob("*.parquet"))) == 2
     pairs = Catalog(cfg).market_bar_snapshot_pairs_for_run(manifest.run_id)
