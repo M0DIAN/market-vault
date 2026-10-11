@@ -46,6 +46,14 @@ INTRADAY_TEST_PLAN_V3_VERSION = "market-vault-intraday-test-plan-v3"
 INTRADAY_FINAL_TEST_V3_VERSION = "market-vault-intraday-final-test-v3"
 INTRADAY_FINAL_CONTEXT_V3_VERSION = "market-vault-intraday-final-context-v3"
 INTRADAY_FINAL_RESULT_V3_VERSION = "market-vault-intraday-final-test-result-v3"
+INTRADAY_SELECTION_V4_VERSION = "market-vault-intraday-selection-v4"
+INTRADAY_SELECTION_PLAN_V4_VERSION = "market-vault-intraday-selection-plan-v4"
+INTRADAY_SELECTION_RESULT_V4_VERSION = "market-vault-intraday-selection-result-v4"
+INTRADAY_TEST_EXPERIMENT_V4_VERSION = "market-vault-intraday-test-v4"
+INTRADAY_TEST_PLAN_V4_VERSION = "market-vault-intraday-test-plan-v4"
+INTRADAY_FINAL_TEST_V4_VERSION = "market-vault-intraday-final-test-v4"
+INTRADAY_FINAL_CONTEXT_V4_VERSION = "market-vault-intraday-final-context-v4"
+INTRADAY_FINAL_RESULT_V4_VERSION = "market-vault-intraday-final-test-result-v4"
 INTRADAY_SELECTION_CONTRACTS = {
     INTRADAY_SELECTION_VERSION: {
         "plan": INTRADAY_SELECTION_PLAN_VERSION, "result": INTRADAY_SELECTION_RESULT_VERSION,
@@ -62,6 +70,11 @@ INTRADAY_SELECTION_CONTRACTS = {
         "test": INTRADAY_TEST_EXPERIMENT_V3_VERSION, "test_plan": INTRADAY_TEST_PLAN_V3_VERSION,
         "final_test": INTRADAY_FINAL_TEST_V3_VERSION, "final_context": INTRADAY_FINAL_CONTEXT_V3_VERSION,
         "final_result": INTRADAY_FINAL_RESULT_V3_VERSION},
+    INTRADAY_SELECTION_V4_VERSION: {
+        "plan": INTRADAY_SELECTION_PLAN_V4_VERSION, "result": INTRADAY_SELECTION_RESULT_V4_VERSION,
+        "test": INTRADAY_TEST_EXPERIMENT_V4_VERSION, "test_plan": INTRADAY_TEST_PLAN_V4_VERSION,
+        "final_test": INTRADAY_FINAL_TEST_V4_VERSION, "final_context": INTRADAY_FINAL_CONTEXT_V4_VERSION,
+        "final_result": INTRADAY_FINAL_RESULT_V4_VERSION},
 }
 INTRADAY_SELECTION_VERSIONS = tuple(INTRADAY_SELECTION_CONTRACTS)
 INTRADAY_TEST_SELECTION_VERSIONS = {contract["test"]: version for version, contract in INTRADAY_SELECTION_CONTRACTS.items()}
@@ -93,6 +106,14 @@ def _selection_root(selection: StrategyExperiment) -> dict:
 
 
 def current_selection_versions(recorded: dict) -> dict:
+    if recorded.get("selection") == INTRADAY_SELECTION_V4_VERSION:
+        from .intraday_joint_selection import INTRADAY_JOINT_SELECTION_VERSION
+        research_version = (research.INTRADAY_RESEARCH_V2_VERSION if recorded.get("research") == research.INTRADAY_RESEARCH_V2_VERSION
+                            else research.INTRADAY_RESEARCH_VERSION)
+        return {**SOURCE_VERSIONS, "research": research_version,
+                **{key: value for key, value in OPTIONAL_SOURCE_VERSIONS.items() if key in recorded},
+                "quadratic": INTRADAY_QUADRATIC_RIDGE_VERSION,
+                "joint_selection": INTRADAY_JOINT_SELECTION_VERSION, "selection": INTRADAY_SELECTION_V4_VERSION}
     if recorded.get("selection") == INTRADAY_SELECTION_V3_VERSION:
         from .intraday_threshold_selection import INTRADAY_THRESHOLD_SELECTION_VERSION
         research_version = (research.INTRADAY_RESEARCH_V2_VERSION if recorded.get("research") == research.INTRADAY_RESEARCH_V2_VERSION
@@ -132,6 +153,8 @@ def final_algorithm_versions(selection_root: dict) -> dict:
 
 
 def _selection_report(source: dict, plan: dict) -> dict:
+    if plan["plan_schema_version"] == INTRADAY_SELECTION_PLAN_V4_VERSION:
+        return _selection_report_v4(source, plan)
     if plan["plan_schema_version"] == INTRADAY_SELECTION_PLAN_V3_VERSION:
         return _selection_report_v3(source, plan)
     if plan["plan_schema_version"] == INTRADAY_SELECTION_PLAN_V2_VERSION:
@@ -167,7 +190,10 @@ def _selection_report(source: dict, plan: dict) -> dict:
 
 def _source_versions(source):
     from .intraday_inner_selection import INTRADAY_INNER_SELECTION_VERSION, inner_selection_versions
+    from .intraday_joint_selection import INTRADAY_JOINT_SELECTION_VERSION, joint_selection_versions
     from .intraday_threshold_selection import INTRADAY_THRESHOLD_SELECTION_VERSION, threshold_selection_versions
+    if source["artifact_schema_version"] == INTRADAY_JOINT_SELECTION_VERSION:
+        return joint_selection_versions(source["report"]["source_experiment"])
     if source["artifact_schema_version"] == INTRADAY_THRESHOLD_SELECTION_VERSION:
         return threshold_selection_versions(source["report"]["source_experiment"])
     if source["artifact_schema_version"] == INTRADAY_INNER_SELECTION_VERSION:
@@ -263,6 +289,43 @@ def _selection_report_v3(source, plan):
     return result
 
 
+def _selection_report_v4(source, plan):
+    """Bind the complete saved joint recipe, six fits and 24 final-DEV accounts."""
+    from .intraday_joint_selection import INTRADAY_JOINT_SELECTION_VERSION
+    reference, report = plan["source_experiment"], source["report"]
+    if (source["artifact_schema_version"] != INTRADAY_JOINT_SELECTION_VERSION
+            or reference["artifact_schema_version"] != INTRADAY_JOINT_SELECTION_VERSION
+            or reference["experiment_id"] != source["experiment_id"]
+            or reference["report_id"] != report["joint_selection_id"]):
+        raise ValueError("source experiment identity differs from the frozen joint selection")
+    window = report["final_dev"]
+    if report["status"] != "AVAILABLE" or window["selected_recipe"] is None:
+        raise ValueError("only an AVAILABLE joint-selection study has a final DEV recipe to freeze")
+    if plan["selection"] != {"final_dev_index": window["selected_index"]}:
+        raise ValueError("final DEV joint recipe differs from the frozen selection")
+    ordinary = report["source_experiment"]
+    context = ordinary["report"]["context"]
+    group = ordinary["report"]["groups"][source["plan"]["selection"]["cost_index"]]
+    fixed = group["results"][source["plan"]["selection"]["candidate_index"]]
+    evidence = {"version": source["algorithm_versions"]["joint_selection"],
+        "joint_selection_id": report["joint_selection_id"], "method": deepcopy(report["method"]),
+        "source_experiment": {**deepcopy(source["plan"]["source_experiment"]), "research_id": ordinary["report"]["research_id"]},
+        "source_selection": deepcopy(source["plan"]["selection"]),
+        "fixed_reference": {key: deepcopy(fixed[key]) for key in ("strategy", "axis_values")},
+        "final_dev": deepcopy(window)}
+    result = {"result_schema_version": INTRADAY_SELECTION_RESULT_V4_VERSION, "version": INTRADAY_SELECTION_V4_VERSION,
+        "status": "FROZEN", "evaluation_scope": "DEVELOPMENT_INNER_JOINT_ECONOMIC_FINAL_RECIPE",
+        "data_id": source["dataset_id"], "plan_sha256": digest(plan),
+        "context": {"source_context_id": context["context_id"], "intraday_data_path": source["plan"]["intraday_data_path"],
+                    **{key: deepcopy(context[key]) for key in ("symbol", "interval", "feature_fields", "target_horizon_bars", "split")}},
+        "candidate": {"strategy": deepcopy(window["selected_recipe"]), "axis_values": [],
+                      "execution_policy": deepcopy(group["execution_policy"])},
+        "benchmark_definition": dict(research.BENCHMARK_DEFINITION), "dev_selection": evidence,
+        "return_basis": deepcopy(report["return_basis"])}
+    result["selection_id"] = digest(result)
+    return result
+
+
 def _freeze_v2(source, path, expected_experiment_id, selected, *, name, notes):
     from .intraday_inner_selection import INTRADAY_INNER_SELECTION_VERSION
     if source["algorithm_versions"] != _source_versions(source):
@@ -345,6 +408,28 @@ def freeze_intraday_threshold_selection(source_experiment_path: str | Path, *, e
         plan=plan, report=report, name=name, notes=notes)
 
 
+def freeze_intraday_joint_selection(source_experiment_path: str | Path, *, expected_experiment_id: str,
+                                    name: str = "", notes: str = "") -> StrategyExperiment:
+    """Freeze one saved Q36 final recipe without Q5, fits, reselection or Q6."""
+    from .intraday_joint_selection import INTRADAY_JOINT_SELECTION_VERSION
+    research._identity(expected_experiment_id, "expected joint-selection experiment ID")
+    path = _source_path(source_experiment_path)
+    source = load_strategy_experiment(path).as_dict()
+    if source["artifact_schema_version"] != INTRADAY_JOINT_SELECTION_VERSION:
+        raise ValueError("Freeze joint final DEV recipe requires a saved joint-selection study")
+    if source["algorithm_versions"] != _source_versions(source):
+        raise ValueError("recorded source algorithms differ; no data was read or model fitted")
+    plan = {"plan_schema_version": INTRADAY_SELECTION_PLAN_V4_VERSION,
+        "source_experiment": {"path": str(path), "experiment_id": expected_experiment_id,
+                              "artifact_schema_version": INTRADAY_JOINT_SELECTION_VERSION,
+                              "report_id": source["report"]["joint_selection_id"]},
+        "selection": {"final_dev_index": source["report"]["final_dev"]["selected_index"]}}
+    report = _selection_report_v4(source, plan)
+    return _new_experiment(version=INTRADAY_SELECTION_V4_VERSION, mode="INTRADAY_SELECTION", data_id=source["dataset_id"],
+        versions={**source["algorithm_versions"], "selection": INTRADAY_SELECTION_V4_VERSION},
+        plan=plan, report=report, name=name, notes=notes)
+
+
 def _bound_source(root: dict, *, source_experiment_file=None) -> dict:
     """Current-version and complete source/config binding, before data or fit."""
     if root["algorithm_versions"] != current_selection_versions(root["algorithm_versions"]):
@@ -400,7 +485,7 @@ def _evaluate_final_test(root: dict, data) -> dict:
                "split": parts, "training_boundary": boundary,
                "training_keys": [row["observation_key"] for row, _ in rows], "purged_keys": list(purged),
                "test_keys": [r["observation_key"] for r in observations]}
-    if schema == INTRADAY_SELECTION_V3_VERSION:
+    if schema in (INTRADAY_SELECTION_V3_VERSION, INTRADAY_SELECTION_V4_VERSION):
         window = frozen["dev_selection"]["final_dev"]
         if any(context[key] != window[frozen_key] for key, frozen_key in (
                 ("training_boundary", "history_boundary"), ("training_keys", "history_training_keys"),
@@ -427,7 +512,7 @@ def _evaluate_final_test(root: dict, data) -> dict:
               "execution_policy": asdict(policy), "model": model, "predictions": predictions,
               "prediction_metrics": errors, "execution": execution, "risk": research.intraday_daily_risk(execution),
               "benchmark": research.benchmark_execution(report, days, policy)}
-    if schema == INTRADAY_SELECTION_V3_VERSION:
+    if schema in (INTRADAY_SELECTION_V3_VERSION, INTRADAY_SELECTION_V4_VERSION):
         result["return_basis"] = deepcopy(frozen["return_basis"])
     result["final_test_id"] = digest(result)
     return result
@@ -467,8 +552,11 @@ def replay_intraday_final_experiment(snapshot: StrategyExperiment, *, source_exp
     source = _bound_source(selection, source_experiment_file=source_experiment_file)
     data = _load_bound_data(selection, intraday_data_file=intraday_data_file)
     from .intraday_inner_selection import INTRADAY_INNER_SELECTION_VERSION, _evaluate as evaluate_inner_selection
+    from .intraday_joint_selection import INTRADAY_JOINT_SELECTION_VERSION, _evaluate as evaluate_joint_selection
     from .intraday_threshold_selection import INTRADAY_THRESHOLD_SELECTION_VERSION, _evaluate as evaluate_threshold_selection
-    if source["artifact_schema_version"] == INTRADAY_THRESHOLD_SELECTION_VERSION:
+    if source["artifact_schema_version"] == INTRADAY_JOINT_SELECTION_VERSION:
+        actual_source = evaluate_joint_selection(source["report"]["source_experiment"], source["plan"], data=data)
+    elif source["artifact_schema_version"] == INTRADAY_THRESHOLD_SELECTION_VERSION:
         actual_source = evaluate_threshold_selection(source["report"]["source_experiment"], source["plan"], data=data)
     elif source["artifact_schema_version"] == INTRADAY_INNER_SELECTION_VERSION:
         actual_source = evaluate_inner_selection(source["report"]["source_experiment"], source["plan"], data=data)

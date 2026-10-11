@@ -41,17 +41,18 @@ _MODEL_COLUMNS = ("model_stage", "feature", "alpha", "training_count", "intercep
 class IntradayFinalController(PageController):
     changed = Signal()
 
-    def __init__(self, runtime, *, research, parent, inner=None, threshold=None):
+    def __init__(self, runtime, *, research, parent, inner=None, threshold=None, joint=None):
         super().__init__(runtime, parent=parent)
         self._research = research
         self._inner = inner
         self._threshold = threshold
+        self._joint = joint
         self._selection_content, self._test_content = b"", b""
         self._selection_root, self._test_root = {}, {}
         self._selection_path, self._test_path = "", ""
         self._selection_proof, self._test_proof = "", ""
         self._pending_action = None
-        self._pending_threshold_freeze = None
+        self._pending_study_freeze = None
         self._locators, self._locator_revision, self._notice = ("", ""), 0, ""
         self._binding_revision = 0
         self._view_index, self._page = 0, 1
@@ -66,6 +67,8 @@ class IntradayFinalController(PageController):
             inner.changed.connect(self.changed.emit)
         if threshold is not None:
             threshold.changed.connect(self.changed.emit)
+        if joint is not None:
+            joint.changed.connect(self.changed.emit)
         self.operationFailed.connect(self._bound_failed)
 
     @Property(QObject, constant=True)
@@ -117,6 +120,25 @@ class IntradayFinalController(PageController):
                  if recipe else "UNAVAILABLE")
         return f'{shown}\n{self._threshold.experimentPath or "UNSAVED"}\n{root["experiment_id"]}'
 
+    @Property(bool, notify=changed)
+    def canFreezeJoint(self):
+        from ..research.intraday_joint_selection import INTRADAY_JOINT_SELECTION_VERSION
+        if self._joint is None or not self._joint.experimentPath:
+            return False
+        root = self._joint._root
+        return bool(root.get("artifact_schema_version") == INTRADAY_JOINT_SELECTION_VERSION
+                    and root["report"]["status"] == "AVAILABLE" and root["report"]["final_dev"]["selected_recipe"])
+
+    @Property(str, notify=changed)
+    def jointSourceDetails(self):
+        if self._joint is None or not self._joint.resultLoaded:
+            return ""
+        root = self._joint._root
+        recipe = root["report"]["final_dev"]["selected_recipe"]
+        shown = (f'{recipe["kind"]} · alpha={recipe["alpha"]} · threshold={recipe["threshold"] * 10000:g} bp'
+                 if recipe else "UNAVAILABLE")
+        return f'{shown}\n{self._joint.experimentPath or "UNSAVED"}\n{root["experiment_id"]}'
+
     @Property(str, notify=changed)
     def notice(self):
         return self._notice
@@ -139,6 +161,15 @@ class IntradayFinalController(PageController):
         from ..research.intraday_final_test import INTRADAY_SELECTION_V3_VERSION
         return self._selection_root.get("artifact_schema_version") == INTRADAY_SELECTION_V3_VERSION
 
+    @Property(bool, notify=changed)
+    def hasJointSelection(self):
+        from ..research.intraday_final_test import INTRADAY_SELECTION_V4_VERSION
+        return self._selection_root.get("artifact_schema_version") == INTRADAY_SELECTION_V4_VERSION
+
+    @Property(bool, notify=changed)
+    def hasEconomicSelection(self):
+        return self.hasThresholdSelection or self.hasJointSelection
+
     @Property("QVariantMap", notify=changed)
     def returnBasis(self):
         return deepcopy(self._selection_root.get("report", {}).get("return_basis", {}))
@@ -149,9 +180,15 @@ class IntradayFinalController(PageController):
 
     @Property("QVariantList", notify=changed)
     def thresholdAccountOptions(self):
-        if not self.hasThresholdSelection:
+        if not self.hasEconomicSelection:
             return []
         window = self._selection_root["report"]["dev_selection"]["final_dev"]
+        if self.hasJointSelection:
+            return [{"candidate_index": member["candidate_index"], "model_index": member["model_index"],
+                     "strategy_kind": member["strategy"]["kind"], "alpha": member["strategy"]["alpha"],
+                     "threshold_bps": member["strategy"]["threshold"] * 10000,
+                     "chosen": member["candidate_index"] == window["selected_index"]}
+                    for member in window["family_results"]]
         return [{"threshold_bps": member["threshold"] * 10000,
                  "chosen": member["candidate_index"] == window["selected_index"]}
                 for member in window["family_results"]]
@@ -178,13 +215,19 @@ class IntradayFinalController(PageController):
                 final_cutoff=window["history_boundary"], inner_cutoff=window["training_boundary"],
                 inner_days=" → ".join((window["validation_days"][0], window["validation_days"][-1])),
                 selected_index=window["selected_index"], method=evidence["method"])
-            if self.hasThresholdSelection:
-                result.update(threshold_selection_id=evidence["threshold_selection_id"],
+            if self.hasEconomicSelection:
+                result.update(
                     selected_threshold_bps=candidate["strategy"]["threshold"] * 10000,
-                    inner_model_id=window["model"]["model_id"],
                     inner_training_count=len(window["training_keys"]),
                     history_training_count=len(window["history_training_keys"]),
                     threshold_order_bps=[value * 10000 for value in evidence["method"]["thresholds"]])
+                if self.hasJointSelection:
+                    result.update(joint_selection_id=evidence["joint_selection_id"],
+                        joint_model_ids=[member["model"]["model_id"] for member in window["models"]],
+                        selected_model_index=window["family_results"][window["selected_index"]]["model_index"])
+                else:
+                    result.update(threshold_selection_id=evidence["threshold_selection_id"],
+                        inner_model_id=window["model"]["model_id"])
         else:
             result.update(candidate_id=root["plan"]["selection"]["candidate_id"],
                           cost_index=root["plan"]["selection"]["cost_index"], candidate_index=root["plan"]["selection"]["candidate_index"])
@@ -272,7 +315,7 @@ class IntradayFinalController(PageController):
             "source_experiment": self._selection_root["plan"]["source_experiment"],
             "view_index": self._view_index, "page": self._page,
             "rows": self._evidence_rows[start:start + 100]}
-        if self.hasThresholdSelection and self._view_index >= 15:
+        if self.hasEconomicSelection and self._view_index >= 15:
             recorded = self._selection_root["report"]["dev_selection"]
             window = recorded["final_dev"]
             account = window["family_results"][self._threshold_account_index]
@@ -284,7 +327,18 @@ class IntradayFinalController(PageController):
                     if key not in ("decisions", "trades", "transactions", "ledger", "daily")},
                 return_basis=self.returnBasis)
             if self._view_index == 16:
-                evidence["complete_model"] = window["model"]
+                if self.hasJointSelection:
+                    evidence["complete_models"] = window["models"]
+                else:
+                    evidence["complete_model"] = window["model"]
+            if self.hasJointSelection:
+                evidence.update(joint_selection_id=recorded["joint_selection_id"],
+                    source_selection=recorded["source_selection"], ordinary_source=recorded["source_experiment"],
+                    fixed_reference=recorded["fixed_reference"], frozen_candidate=self.frozenCandidate,
+                    account_strategy=account["strategy"],
+                    feature_fields=self._selection_root["report"]["context"]["feature_fields"])
+                if self._view_index == 18:
+                    evidence["shared_model_predictions"] = window["models"][account["model_index"]]
         elif self.testLoaded and self._view_index < 15:
             report = self._test_root["report"]
             evidence.update(scope="FINAL_TEST", test_id=self._test_root["experiment_id"],
@@ -298,7 +352,7 @@ class IntradayFinalController(PageController):
                 evidence["complete_execution"] = report["execution"]
             if 10 <= self._view_index <= 14:
                 evidence["risk_diagnostics"] = self._risk_report
-            if self.hasThresholdSelection:
+            if self.hasEconomicSelection:
                 evidence["return_basis"] = report["return_basis"]
         return json.dumps(evidence, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False)
 
@@ -365,7 +419,7 @@ class IntradayFinalController(PageController):
         evidence = self._selection_root.get("report", {}).get("dev_selection")
         if not evidence:
             return
-        if self.hasThresholdSelection:
+        if self.hasEconomicSelection:
             self._threshold_view(evidence["final_dev"])
             return
         window, rows = evidence["final_dev"], []
@@ -398,18 +452,28 @@ class IntradayFinalController(PageController):
         self._evidence_rows = rows
 
     def _threshold_view(self, window):
-        """The four actual accounts share one recorded inner model and scores."""
+        """Recorded economic accounts retain their model's original raw scores."""
         account = window["family_results"][self._threshold_account_index]
-        execution, view = account["execution"], self._view_index
+        execution, view, joint = account["execution"], self._view_index, self.hasJointSelection
         if view == 15:
-            columns = ("inner_member", "threshold_bps", "threshold_chosen", "trade_count", "total_return",
+            identity = ("joint_model_index", "strategy_kind", "alpha") if joint else ()
+            columns = ("inner_member", *identity, "threshold_bps", "threshold_chosen", "trade_count", "total_return",
                        "final_cash", "observed_max_drawdown", "training_count", "prediction_count")
-            rows = [{"inner_member": member["candidate_index"], "threshold_bps": member["threshold"] * 10000,
+            rows = [{"inner_member": member["candidate_index"],
+                **({"joint_model_index": member["model_index"], "strategy_kind": member["strategy"]["kind"],
+                    "alpha": member["strategy"]["alpha"], "complete_recipe": member["strategy"]} if joint else {}),
+                "threshold_bps": (member["strategy"]["threshold"] if joint else member["threshold"]) * 10000,
                 "threshold_chosen": "YES" if member["candidate_index"] == window["selected_index"] else "NO",
                 **member["execution"]["metrics"], "training_count": len(window["training_keys"]),
                 "prediction_count": len(window["validation_keys"])} for member in window["family_results"]]
         elif view == 16:
-            columns, rows = _MODEL_COLUMNS, _model_rows(window["model"])
+            if joint:
+                columns = ("joint_model_index", "strategy_kind", "model_threshold_bps", *_MODEL_COLUMNS)
+                rows = [row for member in window["models"] for row in _model_rows(member["model"],
+                    joint_model_index=member["model_index"], strategy_kind=member["strategy"]["kind"],
+                    model_threshold_bps=member["strategy"]["threshold"] * 10000)]
+            else:
+                columns, rows = _MODEL_COLUMNS, _model_rows(window["model"])
         elif view == 17:
             columns = ("threshold_role", "value", "actual_label_end_time", "label_return")
             rows = []
@@ -420,9 +484,13 @@ class IntradayFinalController(PageController):
             rows.extend({**target, "threshold_role": "HISTORY_TARGET", "value": target["observation_key"],
                          "label_return": target["value"]} for target in window["history_targets"])
         elif view == 18:
-            columns = ("observation_key", "trading_day", "slot", "decision_time", "score", "target", "shared_prediction_target")
-            shared = {row["observation_key"]: row for row in window["predictions"]}
-            rows = [{**row, "shared_prediction_target": shared[row["observation_key"]]["target"]}
+            identity = ("joint_model_index", "model_threshold_bps") if joint else ()
+            columns = (*identity, "observation_key", "trading_day", "slot", "decision_time", "score", "target", "shared_prediction_target")
+            model = window["models"][account["model_index"]] if joint else window
+            shared = {row["observation_key"]: row for row in model["predictions"]}
+            rows = [{**row, **({"joint_model_index": account["model_index"],
+                                "model_threshold_bps": model["strategy"]["threshold"] * 10000} if joint else {}),
+                     "shared_prediction_target": shared[row["observation_key"]]["target"]}
                     for row in execution["decisions"]]
         elif view == 19:
             columns, rows = ("entry_time", "exit_time", "exit_reason", "held_bars", "cash_before", "cash_after", "net_return"), execution["trades"]
@@ -456,7 +524,7 @@ class IntradayFinalController(PageController):
 
     @Slot(int, result=bool)
     def selectView(self, index):
-        maximum = 24 if self.hasThresholdSelection else 18 if self.hasDevSelection else 14
+        maximum = 24 if self.hasEconomicSelection else 18 if self.hasDevSelection else 14
         if type(index) is not int or not 0 <= index <= maximum:
             return False
         if index != self._view_index:
@@ -481,7 +549,7 @@ class IntradayFinalController(PageController):
         self._selection_path, self._selection_proof = path, "RECORDED" if opened else "FROZEN"
         self._test_content, self._test_root, self._test_path, self._test_proof = b"", {}, "", ""
         self._risk_report = None
-        if self.hasThresholdSelection:
+        if self.hasEconomicSelection:
             self._threshold_account_index = self._selection_root["report"]["dev_selection"]["final_dev"]["selected_index"]
             self._view_index = 15
         elif self._view_index > (18 if self.hasDevSelection else 14):
@@ -500,7 +568,7 @@ class IntradayFinalController(PageController):
         self._test_content, self._test_root = snapshot.content, root
         self._risk_report = None
         self._test_path, self._test_proof = path, "RECORDED" if opened else "COMPUTED"
-        if self.hasThresholdSelection:
+        if self.hasEconomicSelection:
             self._view_index = 0
         self._refresh_view()
         self.changed.emit()
@@ -533,38 +601,67 @@ class IntradayFinalController(PageController):
             return freeze_intraday_inner_selection(captured[0], expected_experiment_id=captured[1], name="Intraday final DEV selection")
         return self._submit("intraday_selection_freeze_inner", operation, self._apply_selection, requires_backend=False)
 
-    def _threshold_freeze_key(self):
-        if self._threshold is None:
+    def _study_freeze_key(self, source):
+        if source is None:
             return None
-        return (self._threshold.experimentPath, self._threshold._root.get("experiment_id"),
-                self._threshold._artifact_revision, self._binding_revision)
+        return (source.experimentPath, source._root.get("experiment_id"), source._artifact_revision, self._binding_revision)
 
-    @Slot(result=bool)
-    def freezeThresholdSelection(self):
+    def _freeze_study(self, source, available, freeze, *, action, name, requirement):
         if self.busy or self._runtime.busy:
             return False
         try:
-            if not self.canFreezeThreshold:
-                raise ValueError("Open or save an AVAILABLE Q31 threshold study before freezing its final DEV recipe.")
-            captured = self._threshold_freeze_key()
+            if not available:
+                raise ValueError(requirement)
+            captured = self._study_freeze_key(source)
         except (TypeError, ValueError, KeyError) as exc:
             return self._reject_input(exc)
-        self._pending_threshold_freeze, self._notice = captured, ""
+        self._pending_study_freeze, self._notice = (source, captured), ""
         def operation(backend):
-            from ..research.intraday_final_test import freeze_intraday_threshold_selection
-            return freeze_intraday_threshold_selection(captured[0], expected_experiment_id=captured[1],
-                name="Intraday economic threshold selection")
+            return freeze(captured[0], expected_experiment_id=captured[1], name=name)
         def completed(snapshot):
-            self._pending_threshold_freeze = None
-            if captured != self._threshold_freeze_key():
+            self._pending_study_freeze = None
+            if captured != self._study_freeze_key(source):
                 self._notice = "STALE_INPUT"
                 self.changed.emit()
                 return
             self._apply_selection(snapshot)
-        accepted = self._submit("intraday_selection_freeze_threshold", operation, completed, requires_backend=False)
+        accepted = self._submit(action, operation, completed, requires_backend=False)
         if not accepted:
-            self._pending_threshold_freeze = None
+            self._pending_study_freeze = None
         return accepted
+
+    @Slot(result=bool)
+    def freezeThresholdSelection(self):
+        from ..research.intraday_final_test import freeze_intraday_threshold_selection
+        return self._freeze_study(self._threshold, self.canFreezeThreshold, freeze_intraday_threshold_selection,
+            action="intraday_selection_freeze_threshold", name="Intraday economic threshold selection",
+            requirement="Open or save an AVAILABLE Q31 threshold study before freezing its final DEV recipe.")
+
+    @Slot(result=bool)
+    def freezeJointSelection(self):
+        from ..research.intraday_final_test import freeze_intraday_joint_selection
+        return self._freeze_study(self._joint, self.canFreezeJoint, freeze_intraday_joint_selection,
+            action="intraday_selection_freeze_joint", name="Intraday joint economic selection",
+            requirement="Open or save an AVAILABLE joint economic selection study before freezing its final DEV recipe.")
+
+    @Slot(str, result=bool)
+    def openJointSource(self, path):
+        if self._joint is None:
+            return self._reject_input(ValueError("The joint study source controller is unavailable."))
+        try:
+            from .quant_research import _experiment_file_path
+            path = _experiment_file_path(path)
+        except (OSError, TypeError, ValueError) as exc:
+            return self._reject_input(exc)
+        def operation(backend):
+            from ..research.strategy_experiment import load_strategy_experiment
+            from ..research.intraday_joint_selection import INTRADAY_JOINT_SELECTION_VERSION
+            snapshot = load_strategy_experiment(path)
+            if snapshot.as_dict()["artifact_schema_version"] != INTRADAY_JOINT_SELECTION_VERSION:
+                raise ValueError("Open a saved joint economic selection study.")
+            return snapshot
+        return self._submit("intraday_joint_open", operation,
+            lambda snapshot: self._joint._apply(snapshot, path=str(path), opened=True), requires_backend=False)
 
     @Slot(str, result=bool)
     def openThresholdSource(self, path):
@@ -709,9 +806,10 @@ class IntradayFinalController(PageController):
         return accepted
 
     def _bound_failed(self):
-        freeze, self._pending_threshold_freeze = self._pending_threshold_freeze, None
+        freeze, self._pending_study_freeze = self._pending_study_freeze, None
         if freeze is not None:
-            if freeze != self._threshold_freeze_key():
+            source, key = freeze
+            if key != self._study_freeze_key(source):
                 self._notice, self._error, self._status = "STALE_INPUT", "", "STALE_INPUT"
                 self.stateChanged.emit()
             self.changed.emit()

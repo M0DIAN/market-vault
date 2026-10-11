@@ -125,6 +125,7 @@ from .research_dataset import build_research_dataset
 RESEARCH_COMMANDS = frozenset({
     "research-return-assessment",
     "research-intraday-freeze", "research-intraday-freeze-inner-selection", "research-intraday-freeze-threshold-selection",
+    "research-intraday-freeze-joint-selection",
     "research-intraday-test",
     "research-intraday-plan", "research-intraday-compare", "research-intraday-diagnose",
     "research-intraday-performance",
@@ -330,7 +331,7 @@ def run_research_command(command: str, args: argparse.Namespace) -> int:
     if command == "research-intraday-compare-saved":
         return research_intraday_saved_comparison_main(args)
     if command in ("research-intraday-freeze", "research-intraday-freeze-inner-selection",
-                   "research-intraday-freeze-threshold-selection", "research-intraday-test"):
+                   "research-intraday-freeze-threshold-selection", "research-intraday-freeze-joint-selection", "research-intraday-test"):
         return research_intraday_final_main(args, command=command)
     if command in ("research-intraday-plan", "research-intraday-compare", "research-intraday-diagnose"):
         return research_intraday_research_main(args, command=command)

@@ -171,8 +171,32 @@ rows before the first TEST session open, and preserve existing TEST-only price,
 decision, account and benchmark boundaries. Source admission checks the bound
 saved study and configuration. Explicit full replay additionally reconstructs
 the complete ordinary source, joint study and TEST; it must not select based
-on TEST. Explicit relocation must match bound source/data identities. Persist, open and replay through existing
-immutable operations and the current final-test page.
+on TEST. Explicit relocation must match bound source/data identities. Persist,
+open and replay through existing immutable operations and the current
+final-test page.
+
+The public Freeze entry is `freeze_intraday_joint_selection`; the CLI is
+`research-intraday-freeze-joint-selection --source-experiment joint.json
+--expected-experiment-id ID --experiment selection.json`. It takes the one
+saved final-DEV index, with no cost/candidate or family override. Existing
+`research-intraday-test` and `research-experiment-replay` accept the explicit
+V4 objects. A TEST source relocation refers to the direct Q36 study; the
+ordinary source remains embedded and bound by its original identity.
+
+Selection V4 retains all six model fits and 24 member accounts from final DEV.
+The TEST result uses only the frozen recipe and records its newly fitted final
+model, complete eligible development sample and TEST account. Recorded Open
+performs no source/Q5 reads or recomputation. Normal TEST verifies the bound
+saved source and data; full Replay also reconstructs the complete DEV sources.
+Desktop TEST may use a freshly frozen immutable selection; its separate file
+can be saved for later use. A saved TEST embeds the complete selection without
+inventing a standalone Selection path. The Q36 source must already be saved.
+
+Keep the existing Q32 reader boundary: a single saved TEST may use the current
+risk diagnostics with both indices zero and fold diagnostics not applicable;
+execution summaries may derive from its recorded account. Do not broaden
+Saved A/B, ordinary experiment-performance or ReturnAssessment source
+allowlists, or introduce a comparison/ranking of multiple TEST attempts.
 
 ### Acceptance and exclusions
 

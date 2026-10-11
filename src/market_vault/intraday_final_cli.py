@@ -8,7 +8,7 @@ import sys
 from .dataset.cli import DatasetCLIError
 from .research.intraday_final_test import (
     create_intraday_test_experiment, freeze_intraday_candidate, freeze_intraday_inner_selection,
-    freeze_intraday_threshold_selection, run_intraday_final_test,
+    freeze_intraday_threshold_selection, freeze_intraday_joint_selection, run_intraday_final_test,
 )
 from .research.strategy_experiment import load_strategy_experiment, write_strategy_experiment
 
@@ -33,12 +33,17 @@ def add_intraday_final_subparsers(subparsers):
     threshold.add_argument("--source-experiment", required=True, metavar="PATH")
     threshold.add_argument("--expected-experiment-id", required=True)
     threshold.add_argument("--experiment", required=True, metavar="PATH")
+    joint = subparsers.add_parser("research-intraday-freeze-joint-selection",
+        help="Freeze the saved final DEV joint recipe, six models and all 24 account results")
+    joint.add_argument("--source-experiment", required=True, metavar="PATH")
+    joint.add_argument("--expected-experiment-id", required=True)
+    joint.add_argument("--experiment", required=True, metavar="PATH")
     test = subparsers.add_parser("research-intraday-test", help="Evaluate one frozen candidate on independent TEST with execution V2")
     test.add_argument("--selection", required=True, metavar="PATH")
-    test.add_argument("--source-experiment-file", metavar="PATH", help="Relocated direct ordinary DEV, inner-selection or threshold-selection source; frozen identity must match")
+    test.add_argument("--source-experiment-file", metavar="PATH", help="Relocated direct ordinary DEV, inner/threshold/joint-selection source; frozen identity must match")
     test.add_argument("--intraday-data-file", metavar="PATH", help="Relocated Q5 file; frozen data identity must match")
     test.add_argument("--experiment", metavar="PATH")
-    for parser in (freeze, inner, threshold, test):
+    for parser in (freeze, inner, threshold, joint, test):
         parser.add_argument("--name", default="")
         parser.add_argument("--notes", default="")
 
@@ -59,6 +64,10 @@ def research_intraday_final_main(args, *, command: str) -> int:
         elif command == "research-intraday-freeze-threshold-selection":
             snapshot = freeze_intraday_threshold_selection(args.source_experiment, expected_experiment_id=args.expected_experiment_id,
                                                            name=args.name, notes=args.notes)
+            payload = {"selection": snapshot.as_dict()}
+        elif command == "research-intraday-freeze-joint-selection":
+            snapshot = freeze_intraday_joint_selection(args.source_experiment, expected_experiment_id=args.expected_experiment_id,
+                                                       name=args.name, notes=args.notes)
             payload = {"selection": snapshot.as_dict()}
         else:
             selection = load_strategy_experiment(args.selection)
