@@ -45,6 +45,7 @@ prefixes = [
 files = [
   "test_chronological_splits.py",
   "test_experiment_metadata.py",
+  "test_intraday_ml_procedures_sample_evidence.py",
   "test_leakage_threat_model.py",
   "test_ml_dataset_adapter.py",
   "test_pit_sample_assembly.py",
