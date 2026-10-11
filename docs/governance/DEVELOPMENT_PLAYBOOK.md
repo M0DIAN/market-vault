@@ -301,6 +301,17 @@ Q39 根据 [Q38 PR FULL `38112752851/1`](https://github.com/M0DIAN/market-vault/
 旧十片证明不能充当新 FULL。运行时间以新的自然 FULL 实测为准；当前
 timeout 保留执行余量，分片契约改动后的 main 仍必须实际运行 FULL。
 
+Q46 根据 [Q45 PR FULL `38141083302/1`](https://github.com/M0DIAN/market-vault/actions/runs/38141083302/attempts/1) 的实际结果继续平衡：
+`intraday_ml_procedures` 作业 742 秒，pytest 709.38 秒；同次 `strategy`
+作业 340 秒，其余分片均低于 600 秒。把已有的
+`test_intraday_ml_procedures_comparison.py`、
+`test_intraday_ml_procedures_family.py` 和
+`test_intraday_ml_procedures_stress.py` 作为精确文件规则共同改归 `strategy`，
+保留这组三文件的共享 fixture、全部业务测试和断言。新程序测试仍由既有
+`test_intraday_ml_procedures_` 前缀承接；十一片、十六个 FULL 物理 job、
+工作流和复用证明契约均不变。此 registry 变更要求合并后自然 FULL，
+实际完成耗时以最终 PR 及该次 main 运行核验，不把分配估算视为性能达标。
+
 首轮平衡依据 [Q22 FULL 38035926102 attempt 1](https://github.com/M0DIAN/market-vault/actions/runs/38035926102/attempts/1)
 的实际日志：原日内研究作业 21 分 58 秒，策略作业 9 分 51 秒。单个
 `test_intraday_research.py` 中已列出的慢测试就超过 10 分钟，因此仅将原
