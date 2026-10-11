@@ -496,6 +496,12 @@ def test_older_six_partition_success_cannot_prove_rebalanced_full():
     assert result.reuse is False and result.reason == "jobs_missing_surface"
 
 
+def test_older_ten_partition_success_cannot_prove_ml_procedure_full():
+    jobs = [job for job in make_all_jobs() if job["name"] != "test-311 (intraday_ml_procedures)"]
+    result = run_verifier(api_kwargs={"jobs": jobs})
+    assert result.reuse is False and result.reason == "jobs_missing_surface"
+
+
 @pytest.mark.parametrize("surface", reuse.FULL_REQUIRED_JOB_NAMES)
 def test_missing_one_job_rejected(surface):
     jobs = [j for j in make_all_jobs() if j["name"] != surface]

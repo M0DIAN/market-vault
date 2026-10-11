@@ -250,7 +250,7 @@ FULL 为 true。没有 validation 契约的 registered independent component
 ### 2.4 Python 3.11 FULL 的功能分片
 
 PR 与 main push 使用同一套分片规则；`plan` job 是整次运行唯一的分类和
-复用证明来源。FULL 且未受证复用时，同时运行下列十片。每片保留完整
+复用证明来源。FULL 且未受证复用时，同时运行下列十一片。每片保留完整
 checkout，只改变 pytest 的文件选择，片内仍按原方式顺序执行。
 
 | 分片 | 功能边界 |
@@ -260,6 +260,7 @@ checkout，只改变 pytest 的文件选择，片内仍按原方式顺序执行�
 | `strategy` | Ridge、策略研究、比较、回测、执行及对应桌面入口 |
 | `diagnostics` | 策略诊断、日内绩效与收益口径评估 |
 | `intraday_research` | 日内研究核心、执行场景、训练历史敏感性、最终数据边界及研究桌面入口 |
+| `intraday_ml_procedures` | 日内 ML 内层选择、阈值与联合程序、程序诊断、联合最终 TEST 及后续程序研究 |
 | `intraday_analytics` | 收益不确定性、联合界限、组合、时序选择、延迟及预测分析 |
 | `intraday_experiment` | 已存实验语法、来源重放与场景验证 |
 | `intraday_saved` | 已存计划复用、参数网格、保存结果比较及实际 CLI |
@@ -269,18 +270,18 @@ checkout，只改变 pytest 的文件选择，片内仍按原方式顺序执行�
 [ci/test_partitions.toml](../../ci/test_partitions.toml) 以精确文件优先、
 随后前缀匹配的规则分配测试；新增陌生名称、重复归属、空分片或发现规则
 变化会直接失败。所有发现的测试文件必须恰好归属一片。分片规则变更时，
-还应在相同依赖环境中比较原完整 collection 与十片 collection 的 node-id
+还应在相同依赖环境中比较原完整 collection 与十一片 collection 的 node-id
 多重集，确认没有漏测或重复收集。执行器拒绝继承 `PYTEST_ADDOPTS`，防止
 环境过滤或 collect-only 把完整执行变成成功的空验证。
 
-稳定检查名 `test (3.11)` 在 FULL 路径汇总十片结果；只有计划成功且整个
+稳定检查名 `test (3.11)` 在 FULL 路径汇总十一片结果；只有计划成功且整个
 分片矩阵成功才通过。快速路径或受证复用必须对应按计划跳过的分片。
 `package` 保持成功依赖，任何必要验证失败都不能生成 FULL attestation。
-复用校验除四个原逻辑验证面外，还要求 `plan` 和全部十片在同一 PR
+复用校验除四个原逻辑验证面外，还要求 `plan` 和全部十一片在同一 PR
 run/attempt 上成功。执行契约变更禁止沿用旧证据，main 会实际运行 FULL。
 
-最多并发十片，片内保持顺序执行。原六个分片名称保留，新增四组；所有
-业务测试函数及其参数化装饰器原样保留。两个日内大文件按职责移出测试
+最多并发十一片，片内保持顺序执行。所有业务测试函数及其参数化装饰器
+原样保留。早期由六片扩为十片时，两个日内大文件按职责移出测试
 函数，原 helper/fixture 仍留在原模块，维持已有导入路径。文件迁移应同时
 核对函数源码字节和 collection 映射，证明参数化用例无漏收集、无重复。
 
@@ -291,6 +292,15 @@ intraday_final 637 秒为依据继续窄幅平衡：收益口径评估文件改�
 以自然 FULL 为准。该 registry 改动在 main 必须走自然 FULL；Python 3.14
 的兼容性编排保持不变。
 
+Q39 根据 [Q38 PR FULL `38112752851/1`](https://github.com/M0DIAN/market-vault/actions/runs/38112752851/attempts/1) 的实际日志拆分 strategy：原作业
+日志区间 946.25 秒，pytest 923.55 秒；其余分片均低于 600 秒。
+八个内层选择、阈值、联合程序及对应诊断/最终 TEST 文件改归
+`intraday_ml_procedures`，新增 `test_intraday_ml_procedures_` 前缀承接
+后续程序研究。已有测试、fixture 和断言不改，原 strategy 保留其余文件。
+完整 FULL 证明同步要求十六个物理 job（四个逻辑面、plan、十一片），
+旧十片证明不能充当新 FULL。运行时间以新的自然 FULL 实测为准；当前
+timeout 保留执行余量，分片契约改动后的 main 仍必须实际运行 FULL。
+
 首轮平衡依据 [Q22 FULL 38035926102 attempt 1](https://github.com/M0DIAN/market-vault/actions/runs/38035926102/attempts/1)
 的实际日志：原日内研究作业 21 分 58 秒，策略作业 9 分 51 秒。单个
 `test_intraday_research.py` 中已列出的慢测试就超过 10 分钟，因此仅将原
@@ -299,7 +309,7 @@ intraday_final 637 秒为依据继续窄幅平衡：收益口径评估文件改�
 必须用最终 PR 及控制面合并后正常 FULL 的真实完成耗时核验。
 
 实际等待时间仍取决于最慢片、runner 排队、兼容性与打包尾部。
-保留原双 Python `test` 矩阵意味着 3.14 在十片后运行，单作业性能目标
+保留原双 Python `test` 矩阵意味着 3.14 在十一片后运行，单作业性能目标
 不构成整个 workflow 的固定用时承诺。故障超时预算和实际完成耗时分别记录。
 PR 的后续推送取消旧 PR 运行；main 的每个自然 push 保留独立运行身份。
 
@@ -319,7 +329,7 @@ Python 3.14 的 FULL 与 RESEARCH_FAST 路径使用同一兼容性定义：
 仅在两个补充文件执行成功后输出。
 
 RESEARCH_FAST 的既有 21 文件业务组合及其成功 marker 限于 Python 3.11。
-main 的研究变更仍执行 Python 3.11 十片 FULL，3.14 使用上述同一兼容性
+main 的研究变更仍执行 Python 3.11 十一片 FULL，3.14 使用上述同一兼容性
 范围。其他快速 tier 和受证复用遵循原有跳过策略。
 
 ML Adapter 的小型 fixture 包含实际 PIT、Observation、TS2、跨日 join 与

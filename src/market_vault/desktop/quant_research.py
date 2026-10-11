@@ -748,6 +748,8 @@ class QuantResearchController(NetworkController):
         self._intraday_saved_comparison_controller = IntradaySavedComparisonController(runtime, parent=self)
         from .intraday_ml_diagnostics import IntradayMLDiagnosticsController
         self._intraday_ml_diagnostics_controller = IntradayMLDiagnosticsController(runtime, parent=self)
+        from .intraday_procedure_comparison import IntradayProcedureComparisonController
+        self._intraday_procedure_comparison_controller = IntradayProcedureComparisonController(runtime, parent=self)
 
     @Property(QObject, constant=True)
     def intradayResearchController(self):
@@ -780,6 +782,10 @@ class QuantResearchController(NetworkController):
     @Property(QObject, constant=True)
     def intradayMLDiagnosticsController(self):
         return self._intraday_ml_diagnostics_controller
+
+    @Property(QObject, constant=True)
+    def intradayProcedureComparisonController(self):
+        return self._intraday_procedure_comparison_controller
 
     @Property(str, notify=researchChanged)
     def intradayPath(self) -> str:

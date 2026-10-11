@@ -79,6 +79,19 @@ files = [
   "test_intraday_training_history.py",
 ]
 
+[partitions.intraday_ml_procedures]
+prefixes = ["test_intraday_ml_procedures_"]
+files = [
+  "test_strategy_intraday_inner_objective_sensitivity.py",
+  "test_strategy_intraday_inner_selection.py",
+  "test_strategy_intraday_joint_diagnostics.py",
+  "test_strategy_intraday_joint_final.py",
+  "test_strategy_intraday_joint_selection.py",
+  "test_strategy_intraday_ml_diagnostics.py",
+  "test_strategy_intraday_procedure_return_uncertainty.py",
+  "test_strategy_intraday_threshold_selection.py",
+]
+
 [partitions.diagnostics]
 prefixes = []
 files = [

@@ -1,5 +1,8 @@
 # Joint intraday economic selection: Q36–Q38
 
+The next package is [Q39–Q41 procedure comparison and robustness](intraday_procedure_robustness_next.md).
+The completed Q36–Q38 selection and TEST meanings below remain unchanged.
+
 ## Baseline and decision
 
 The package begins at verified Q35 main

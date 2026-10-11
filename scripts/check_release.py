@@ -3527,8 +3527,8 @@ def check_ci_partitions(root: Path) -> list[str]:
             "needs: plan",
             "if: needs.plan.outputs.run_partitions == 'true'",
             "fail-fast: false",
-            "max-parallel: 10",
-            "partition: [data, dataset_features, strategy, diagnostics, intraday_research, intraday_analytics, intraday_experiment, intraday_saved, intraday_final, app_ops]",
+            "max-parallel: 11",
+            "partition: [data, dataset_features, strategy, diagnostics, intraday_research, intraday_analytics, intraday_experiment, intraday_saved, intraday_final, app_ops, intraday_ml_procedures]",
             'python-version: "3.11"',
         ),
         "test": (
