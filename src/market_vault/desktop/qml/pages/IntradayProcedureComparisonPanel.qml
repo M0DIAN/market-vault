@@ -10,9 +10,14 @@ Item {
     objectName: "intradayProcedurePanel"
     required property var controller
     required property var i18n
+    // A path edit must not invalidate every translated result cell.
+    readonly property bool completedFamily: controller.completedFamily
+    readonly property var catalog: i18n.catalog
     function label(key) {
-        return root.i18n.catalog["procedure." + key] || root.i18n.catalog["ml_diagnostics." + key]
-            || root.i18n.catalog["uncertainty." + key] || root.i18n.catalog["inner." + key] || key
+        return root.catalog["procedure." + key]
+            || (root.completedFamily ? root.catalog["family_bounds." + key] : null)
+            || root.catalog["ml_diagnostics." + key]
+            || root.catalog["uncertainty." + key] || root.catalog["inner." + key] || key
     }
     function sourceText(source) {
         return source.experiment_id ? root.label(source.source_kind) + (source.name ? " · " + source.name : "")
@@ -27,6 +32,11 @@ Item {
         id: rightFile; objectName: "intradayProcedureRightDialog"
         fileMode: FileDialog.OpenFile; nameFilters: ["JSON files (*.json)"]
         onAccepted: root.controller.setRightPath(selectedFile.toString())
+    }
+    FileDialog {
+        id: thirdFile; objectName: "intradayProcedureThirdDialog"
+        fileMode: FileDialog.OpenFile; nameFilters: ["JSON files (*.json)"]
+        onAccepted: root.controller.setThirdPath(selectedFile.toString())
     }
     Dialog {
         id: report; objectName: "intradayProcedureReportDialog"
@@ -86,9 +96,17 @@ Item {
         ColumnLayout {
             width: scroll.availableWidth; height: Math.max(implicitHeight, scroll.availableHeight)
             spacing: Theme.PixelTheme.spacingSm
+            Components.LabeledComboBox {
+                objectName: "intradayProcedureMode"
+                Layout.fillWidth: true; Layout.maximumWidth: Infinity
+                label: root.label("mode"); model: ["pair_mode", "family_mode"].map(key => root.label(key))
+                currentIndex: root.controller.modeIndex
+                onModelChanged: currentIndex = Qt.binding(() => root.controller.modeIndex)
+                onSelected: root.controller.selectMode(currentIndex)
+            }
             Label {
                 objectName: "intradayProcedureMethod"
-                Layout.fillWidth: true; text: root.label("method")
+                Layout.fillWidth: true; text: root.label(root.controller.familyMode ? "family_method" : "method")
                 wrapMode: Text.WordWrap; color: Theme.PixelTheme.inkMuted; font.pixelSize: Theme.PixelTheme.fontSm
             }
             RowLayout {
@@ -100,7 +118,7 @@ Item {
                     onTextChanged: root.controller.setLeftPath(text)
                 }
                 Components.PixelButton {
-                    objectName: "intradayProcedureLeftBrowse"; text: root.i18n.catalog["quant.browse"]
+                    objectName: "intradayProcedureLeftBrowse"; text: root.catalog["quant.browse"]
                     enabled: !operationRuntime.busy; onClicked: leftFile.open()
                 }
                 Components.PixelButton {
@@ -123,7 +141,7 @@ Item {
                     onTextChanged: root.controller.setRightPath(text)
                 }
                 Components.PixelButton {
-                    objectName: "intradayProcedureRightBrowse"; text: root.i18n.catalog["quant.browse"]
+                    objectName: "intradayProcedureRightBrowse"; text: root.catalog["quant.browse"]
                     enabled: !operationRuntime.busy; onClicked: rightFile.open()
                 }
                 Components.PixelButton {
@@ -137,14 +155,38 @@ Item {
                 text: { root.i18n.language; return root.sourceText(root.controller.rightSource) }
                 wrapMode: Text.WrapAnywhere; color: Theme.PixelTheme.inkMuted; font.pixelSize: Theme.PixelTheme.fontSm
             }
+            RowLayout {
+                objectName: "intradayProcedureThirdRow"
+                Layout.fillWidth: true; visible: root.controller.familyMode
+                Components.LabeledTextField {
+                    objectName: "intradayProcedureThirdPath"
+                    Layout.fillWidth: true; Layout.maximumWidth: Infinity
+                    label: root.label("source_c"); text: root.controller.thirdPath
+                    onTextChanged: root.controller.setThirdPath(text)
+                }
+                Components.PixelButton {
+                    objectName: "intradayProcedureThirdBrowse"; text: root.catalog["quant.browse"]
+                    enabled: !operationRuntime.busy; onClicked: thirdFile.open()
+                }
+                Components.PixelButton {
+                    objectName: "intradayProcedureOpenThirdButton"; text: root.label("open_c")
+                    enabled: !operationRuntime.busy; onClicked: root.controller.openThird()
+                }
+            }
+            Label {
+                objectName: "intradayProcedureThirdSource"
+                Layout.fillWidth: true; visible: root.controller.familyMode
+                text: { root.i18n.language; return root.sourceText(root.controller.thirdSource) }
+                wrapMode: Text.WrapAnywhere; color: Theme.PixelTheme.inkMuted; font.pixelSize: Theme.PixelTheme.fontSm
+            }
             Flow {
                 Layout.fillWidth: true; spacing: Theme.PixelTheme.spacingSm
                 Components.PixelButton {
-                    objectName: "intradayProcedureOpenPairButton"; text: root.label("open_pair")
+                    objectName: "intradayProcedureOpenPairButton"; text: root.label(root.controller.familyMode ? "open_family" : "open_pair")
                     enabled: !operationRuntime.busy; onClicked: root.controller.openPair()
                 }
                 Components.PixelButton {
-                    objectName: "intradayProcedureRunButton"; text: root.label("run")
+                    objectName: "intradayProcedureRunButton"; text: root.label(root.controller.familyMode ? "run_family" : "run")
                     enabled: root.controller.canRun && !operationRuntime.busy; onClicked: root.controller.runComparison()
                 }
                 Components.PixelButton {
@@ -159,7 +201,8 @@ Item {
                     || root.controller.inputReason.length > 0 || root.controller.draftChanged
                 text: root.controller.studyError ? root.controller.studyError + "\n" + root.label("retry")
                     : root.controller.notice ? root.label(root.controller.notice)
-                    : root.controller.draftChanged ? root.label("draft_changed") : root.label(root.controller.inputReason)
+                    : root.controller.draftChanged ? root.label(root.completedFamily ? "family_draft_changed" : "draft_changed")
+                    : root.label(root.controller.inputReason)
                 wrapMode: Text.WordWrap; color: Theme.PixelTheme.inkMuted
             }
             Label {
@@ -169,18 +212,30 @@ Item {
                     root.i18n.language
                     const result = root.controller.resultSummary, sample = result.sample, sampling = result.sampling
                     if (!result.status) return ""
-                    let summary = root.label("completed") + " · " + root.label(result.status) + "\n" + result.comparison_id
+                    const family = root.completedFamily
+                    let summary = root.label(family ? "family_completed" : "completed") + " · " + root.label(result.status)
+                        + "\n" + (family ? result.family_bounds_id : result.comparison_id)
                     for (const source of root.controller.boundSources)
                         summary += "\n" + source.role + " · " + root.label(source.source_kind) + (source.name ? " · " + source.name : "")
                             + "\n" + source.experiment_id + "\n" + source.path
                     summary += "\n" + root.label("ordinary_source") + ": " + result.ordinary_source_id
-                        + "\n" + root.label("reference") + ": " + JSON.stringify(result.source_selection)
+                        + "\n" + root.label(family ? "family_reference_identity" : "reference") + ": "
+                        + JSON.stringify(family ? result.reference : result.source_selection)
                     if (sample) summary += "\n" + root.label("days") + ": " + sample.sample_count
                         + " · " + root.label("folds_count") + ": " + sample.fold_count
                         + " · " + sample.first_day + " – " + sample.last_day
                     if (sampling) summary += "\n" + root.label("replications") + ": " + sampling.replications
                         + " · " + root.label("seed") + ": " + sampling.seed + " · " + root.label("block_days") + ": " + sampling.block_days
                         + " · " + root.label(result.basis_matches ? "basis_matched" : "basis_mismatch")
+                    if (family) {
+                        const inference = result.family_inference
+                        summary += "\n" + root.label("family_size") + ": " + result.family_size + " · " + root.label(result.family_scope)
+                            + "\n" + root.label("historical_search_coverage") + ": " + root.label(result.historical_search_coverage)
+                            + "\n" + root.label("family_inference") + ": " + root.label(inference.status)
+                            + " · " + root.label("family_deduction") + ": " + result.deduction_display + " " + root.label("PERCENTAGE_POINTS")
+                        if (inference.reason) summary += "\n" + root.label(inference.reason)
+                        if (inference.detail) summary += "\n" + inference.detail
+                    }
                     if (result.unavailable_reason) summary += "\n" + root.label(result.unavailable_reason)
                         + "\n" + JSON.stringify(result.unavailable_reasons)
                     return summary
@@ -190,7 +245,7 @@ Item {
             Label {
                 objectName: "intradayProcedureInterpretation"
                 Layout.fillWidth: true; visible: root.controller.resultLoaded
-                text: root.label("interpretation")
+                text: root.label(root.completedFamily ? "family_interpretation" : "interpretation")
                 wrapMode: Text.WordWrap; color: Theme.PixelTheme.inkMuted; font.pixelSize: Theme.PixelTheme.fontSm
             }
             RowLayout {
@@ -198,7 +253,7 @@ Item {
                 Components.LabeledComboBox {
                     objectName: "intradayProcedureView"
                     Layout.fillWidth: true; Layout.maximumWidth: Infinity
-                    label: root.i18n.catalog["quant.intraday_result_view"]
+                    label: root.catalog["quant.intraday_result_view"]
                     model: root.controller.viewOptions.map(key => root.label(key)); currentIndex: root.controller.viewIndex
                     onModelChanged: currentIndex = Qt.binding(() => root.controller.viewIndex)
                     onSelected: root.controller.selectView(currentIndex)
@@ -217,7 +272,7 @@ Item {
                 objectName: "intradayProcedureSection"
                 Layout.fillWidth: true; Layout.maximumWidth: Infinity; visible: root.controller.viewIndex === 3
                 label: root.label("evidence_section")
-                model: root.controller.sectionOptions.map(key => root.i18n.catalog["ml_diagnostics.account_field." + key] || key)
+                model: root.controller.sectionOptions.map(key => root.catalog["ml_diagnostics.account_field." + key] || key)
                 currentIndex: root.controller.sectionIndex
                 onModelChanged: currentIndex = Qt.binding(() => root.controller.sectionIndex)
                 onSelected: root.controller.selectSection(currentIndex)
@@ -232,7 +287,10 @@ Item {
                 paged: true; tableModel: root.controller.tableModel; i18n: root.i18n
                 cellFormatter: function(value) {
                     root.i18n.language
-                    for (const prefix of ["procedure.", "uncertainty.", "ml_diagnostics.", "inner.", "columns."]) {
+                    const prefixes = root.completedFamily
+                        ? ["procedure.", "family_bounds.", "uncertainty.", "ml_diagnostics.", "inner.", "columns."]
+                        : ["procedure.", "uncertainty.", "ml_diagnostics.", "inner.", "columns."]
+                    for (const prefix of prefixes) {
                         const key = prefix + value, translated = root.i18n.translate(key)
                         if (translated && translated !== key) return translated
                     }

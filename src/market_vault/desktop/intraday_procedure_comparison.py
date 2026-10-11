@@ -1,4 +1,4 @@
-"""Explicit saved A/B procedure inputs and immutable native comparison evidence."""
+"""Captured saved procedures for paired and complete-family native evidence."""
 
 from __future__ import annotations
 
@@ -20,10 +20,13 @@ def _json(value):
 
 class IntradayProcedureComparisonController(PageController):
     changed = Signal()
+    choicesChanged = Signal()
 
     def __init__(self, runtime, *, parent):
         super().__init__(runtime, parent=parent)
-        self._paths, self._sources = {"A": "", "B": ""}, {"A": None, "B": None}
+        self._paths = {role: "" for role in ("A", "B", "C")}
+        self._sources = {role: None for role in ("A", "B", "C")}
+        self._mode_index = 0
         self._report, self._bound_sources = {}, []
         self._revision, self._completed_key, self._pending = 0, None, None
         self._study_error, self._notice = "", ""
@@ -34,8 +37,39 @@ class IntradayProcedureComparisonController(PageController):
         self.operationFailed.connect(self._failed)
 
     def _key(self):
-        return (self._revision, *(self._paths[role] for role in ("A", "B")),
-                *(source["sha256"] if source else None for source in self._sources.values()))
+        roles = self._active_roles()
+        return (self._revision, self._mode_index, *(self._paths[role] for role in roles),
+                *(self._sources[role]["sha256"] if self._sources[role] else None for role in roles))
+
+    def _active_roles(self):
+        return ("A", "B", "C") if self.familyMode else ("A", "B")
+
+    @Property(int, notify=changed)
+    def modeIndex(self):
+        return self._mode_index
+
+    @Property(bool, notify=changed)
+    def familyMode(self):
+        return self._mode_index == 1
+
+    @Property(bool, notify=changed)
+    def completedFamily(self):
+        # Finished views never inherit the meaning of a subsequently edited mode.
+        return "family_bounds_id" in self._report
+
+    @Slot(int, result=bool)
+    def selectMode(self, index):
+        if type(index) is not int or index not in (0, 1):
+            return False
+        if index != self._mode_index:
+            choices = (self.viewOptions, self.memberOptions)
+            self._mode_index = index
+            self._revision += 1
+            self._study_error, self._notice = "", ""
+            if choices != (self.viewOptions, self.memberOptions):
+                self.choicesChanged.emit()
+            self.changed.emit()
+        return True
 
     def _set_path(self, role, value):
         if value != self._paths[role]:
@@ -52,6 +86,10 @@ class IntradayProcedureComparisonController(PageController):
     def rightPath(self):
         return self._paths["B"]
 
+    @Property(str, notify=changed)
+    def thirdPath(self):
+        return self._paths["C"]
+
     @Slot(str)
     def setLeftPath(self, value):
         self._set_path("A", value)
@@ -59,6 +97,10 @@ class IntradayProcedureComparisonController(PageController):
     @Slot(str)
     def setRightPath(self, value):
         self._set_path("B", value)
+
+    @Slot(str)
+    def setThirdPath(self, value):
+        self._set_path("C", value)
 
     def _source_view(self, role):
         source = self._sources[role]
@@ -72,17 +114,25 @@ class IntradayProcedureComparisonController(PageController):
     def rightSource(self):
         return self._source_view("B")
 
+    @Property("QVariantMap", notify=changed)
+    def thirdSource(self):
+        return self._source_view("C")
+
     @Property(str, notify=changed)
     def inputReason(self):
-        if not all(self._sources.values()):
-            return "OPEN_TWO"
+        roles = self._active_roles()
+        if not all(self._sources[role] for role in roles):
+            return "OPEN_THREE" if self.familyMode else "OPEN_TWO"
         try:
             from .quant_research import _experiment_file_path
-            if any(str(_experiment_file_path(self._paths[role])) != self._sources[role]["path"] for role in ("A", "B")):
+            if any(str(_experiment_file_path(self._paths[role])) != self._sources[role]["path"] for role in roles):
                 return "OPEN_CHANGED"
         except (OSError, TypeError, ValueError):
             return "OPEN_CHANGED"
-        if self._sources["A"]["source_kind"] == self._sources["B"]["source_kind"]:
+        kinds = {self._sources[role]["source_kind"] for role in roles}
+        if self.familyMode and kinds != {"INNER_MODEL_SELECTION", "ECONOMIC_THRESHOLD_SELECTION", "JOINT_ECONOMIC_SELECTION"}:
+            return "COMPLETE_FAMILY_REQUIRED"
+        if not self.familyMode and len(kinds) != 2:
             return "DIFFERENT_KINDS"
         return ""
 
@@ -112,10 +162,15 @@ class IntradayProcedureComparisonController(PageController):
 
     @Property("QVariantMap", notify=changed)
     def resultSummary(self):
-        return {**deepcopy({key: self._report.get(key) for key in (
+        result = {**deepcopy({key: self._report.get(key) for key in (
             "status", "comparison_id", "ordinary_source_id", "data_id", "source_selection", "evaluation_scope",
-            "sample", "sampling", "unavailable_reason", "unavailable_reasons")}),
+            "sample", "sampling", "unavailable_reason", "unavailable_reasons", "family_bounds_id", "family_size",
+            "family_scope", "historical_search_coverage", "family_inference")}),
             "basis_matches": (self._report.get("basis") or {}).get("matches")} if self._report else {}
+        if self.completedFamily:
+            result["reference"] = {key: value for key, value in self._report["reference"].items() if key != "account"}
+            result["deduction_display"] = self._return_value(self._report["family_inference"]["deduction"], "B_MINUS_A")
+        return result
 
     @Property(str, notify=changed)
     def completeReport(self):
@@ -128,10 +183,14 @@ class IntradayProcedureComparisonController(PageController):
         # The native dialog stays responsive for long saved ledgers. Its
         # identity/method summary accompanies an exact full-report copy action;
         # complete records remain individually readable in the paged views.
-        keys = ("version", "comparison_id", "status", "evaluation_scope", "ordinary_source_id", "data_id",
+        keys = ("version", "comparison_id", "family_bounds_id", "status", "evaluation_scope", "ordinary_source_id", "data_id",
                 "source_selection", "evidence", "method", "parameters", "sample", "sampling", "statistics",
-                "unavailable_reason", "unavailable_reasons")
-        return _json({"sources": self._bound_sources, **{key: self._report[key] for key in keys}})
+                "unavailable_reason", "unavailable_reasons", "family_size", "family_scope", "historical_search_coverage",
+                "family_inference")
+        details = {"sources": self._bound_sources, **{key: self._report[key] for key in keys if key in self._report}}
+        if self.completedFamily:
+            details["reference"] = self.resultSummary["reference"]
+        return _json(details)
 
     @Slot(result=bool)
     def copyReport(self):
@@ -144,21 +203,35 @@ class IntradayProcedureComparisonController(PageController):
     def viewIndex(self):
         return self._view_index
 
-    @Property("QStringList", constant=True)
+    @Property("QStringList", notify=choicesChanged)
     def viewOptions(self):
+        if self.completedFamily or not self._report and self.familyMode:
+            return ["family_bounds", "family_daily", "folds", "accounts", "basis"]
         return ["intervals", "daily", "folds", "accounts", "basis"]
 
     @Property(int, notify=changed)
     def memberIndex(self):
         return self._member_index
 
-    @Property("QStringList", constant=True)
+    @Property("QStringList", notify=choicesChanged)
     def memberOptions(self):
+        if self.completedFamily:
+            return ["ALL_FAMILY", "Q25", "Q31", "Q36", *(["FAMILY_REFERENCE", "FAMILY_BENCHMARK"] if self._view_index == 3 else [])]
         return ["ALL", "A", "B"]
 
     def _members(self):
         members = self._report.get("members", [])
         return members if self._member_index == 0 else [member for member in members if member["role"] == self.memberOptions[self._member_index]]
+
+    def _account_sources(self):
+        role = self.memberOptions[self._member_index]
+        if self.completedFamily and role == "FAMILY_REFERENCE":
+            return [(role, self._report["reference"]["account"], "/reference/account")]
+        if self.completedFamily and role == "FAMILY_BENCHMARK":
+            return [(role, self._report["benchmark"], "/benchmark")]
+        indices = {member["role"]: index for index, member in enumerate(self._report.get("members", []))}
+        return [(member["role"], member.get("selected_account"), "/members/" + str(indices[member["role"]]) + "/selected_account")
+                for member in self._members()]
 
     @Property(int, notify=changed)
     def sectionIndex(self):
@@ -167,8 +240,8 @@ class IntradayProcedureComparisonController(PageController):
     @Property("QStringList", notify=changed)
     def sectionOptions(self):
         sections = []
-        for member in self._members():
-            for key, value in (member.get("selected_account") or {}).items():
+        for _, account, _ in self._account_sources():
+            for key, value in (account or {}).items():
                 sections.extend("execution." + child for child in value) if key == "execution" else sections.append(key)
         return ["all_fields", *dict.fromkeys(sections)]
 
@@ -186,7 +259,8 @@ class IntradayProcedureComparisonController(PageController):
         if not self._report:
             return ""
         start = (self._page - 1) * 100
-        return _json({"comparison_id": self._report["comparison_id"], "sources": self._bound_sources,
+        id_key = "family_bounds_id" if self.completedFamily else "comparison_id"
+        return _json({id_key: self._report[id_key], "sources": self._bound_sources,
                       "view": self.viewOptions[self._view_index], "member": self.memberOptions[self._member_index],
                       "section": self.sectionOptions[self._section_index], "page": self._page,
                       "rows": self._evidence_rows[start:start + 100]})
@@ -214,9 +288,7 @@ class IntradayProcedureComparisonController(PageController):
             else:
                 append(role, path, value)
 
-        for member in self._members():
-            account, role = member.get("selected_account"), member["role"]
-            base = "/members/" + str(("A", "B").index(role)) + "/selected_account"
+        for role, account, base in self._account_sources():
             if section == "all_fields":
                 walk(role, base, account)
             elif section.startswith("execution."):
@@ -233,7 +305,22 @@ class IntradayProcedureComparisonController(PageController):
             self._set_page()
             return
         rows = []
-        if self._view_index == 0:
+        if self.completedFamily and self._view_index == 0:
+            columns = ("family_role", "family_mean_excess", "family_lower_95", "unit", "sample_count",
+                       "mean_unavailable_reason", "bound_unavailable_reason", "detail")
+            rows = [{"family_role": row["role"], "sample_count": row["sample_count"],
+                "family_mean_excess": self._return_value(row["mean_excess"], "B_MINUS_A"),
+                "family_lower_95": self._return_value(row["lower"], "B_MINUS_A"), "unit": "PERCENTAGE_POINTS",
+                "mean_unavailable_reason": row["mean_unavailable_reason"] or "—",
+                "bound_unavailable_reason": row["bound_unavailable_reason"] or "—", "detail": row["detail"] or "—",
+                "complete_record": deepcopy(row)} for row in self._report["statistics"]]
+        elif self.completedFamily and self._view_index == 1:
+            columns = ("trading_day", "fold_id", "family_q25_excess", "family_q31_excess", "family_q36_excess")
+            rows = [{"trading_day": row["trading_day"], "fold_id": row["fold_id"],
+                **{column: self._return_value(row["values"][role], "B_MINUS_A") for column, role in
+                   zip(columns[2:], ("Q25", "Q31", "Q36"), strict=True)}, "complete_record": deepcopy(row)}
+                for row in self._report["daily"]]
+        elif self._view_index == 0:
             columns = ("return_series", "return_mean", "return_lower_95", "return_upper_95", "unit", "sample_count",
                        "mean_unavailable_reason", "interval_unavailable_reason", "detail")
             for row in self._report["statistics"]:
@@ -268,15 +355,16 @@ class IntradayProcedureComparisonController(PageController):
         else:
             columns = ("account_role", "basis_check", "basis_matches", "expected", "recorded")
             basis = self._report.get("basis") or {}
+            shared_role = "ALL_FAMILY" if self.completedFamily else "ALL"
             if basis:
-                rows.append({"account_role": "ALL", "basis_check": "basis_complete_source", "basis_matches": "YES",
+                rows.append({"account_role": shared_role, "basis_check": "basis_complete_source", "basis_matches": "YES",
                     "expected": "COMPLETE_ORDINARY_SOURCE_AND_REFERENCE_EQUAL", "recorded": basis["source_comparison"],
                     "complete_record": {"source_comparison": basis["source_comparison"]}})
             for member in basis.get("members", []):
                 rows.extend({"account_role": member["role"], "basis_check": "basis_" + row["key"],
                     "basis_matches": "YES" if row["matches"] else "NO", "expected": _json(row["expected"]),
                     "recorded": _json(row["recorded"]), "complete_record": deepcopy(row)} for row in member["checks"])
-            rows.extend({"account_role": "ALL", "basis_check": "shared_" + row["account"],
+            rows.extend({"account_role": shared_role, "basis_check": "shared_" + row["account"],
                 "basis_matches": "NO" if row["unavailable_reason"] else "YES", "expected": "AVAILABLE",
                 "recorded": row["unavailable_reason"] or "AVAILABLE", "complete_record": deepcopy(row)}
                 for row in self._report.get("shared_account_checks", []))
@@ -288,8 +376,13 @@ class IntradayProcedureComparisonController(PageController):
     def selectView(self, index):
         if type(index) is not int or not 0 <= index < len(self.viewOptions):
             return False
+        choices = self.memberOptions
         self._view_index = index
+        if self._member_index >= len(self.memberOptions):
+            self._member_index, self._section_index = 0, 0
         self._refresh()
+        if choices != self.memberOptions:
+            self.choicesChanged.emit()
         self.changed.emit()
         return True
 
@@ -382,7 +475,7 @@ class IntradayProcedureComparisonController(PageController):
             return sources
 
         def opened(sources):
-            # Pair opening is atomic: one invalid side never replaces the other.
+            # Group opening is atomic: one invalid file never replaces another.
             self._sources.update(sources)
             self._revision += 1
 
@@ -397,32 +490,49 @@ class IntradayProcedureComparisonController(PageController):
         return self._open(("B",))
 
     @Slot(result=bool)
+    def openThird(self):
+        return self._open(("C",))
+
+    @Slot(result=bool)
     def openPair(self):
-        return self._open(("A", "B"))
+        return self._open(self._active_roles())
 
     @Slot(result=bool)
     def runComparison(self):
         if self.busy or self._runtime.busy:
             return False
         if not self.canRun:
-            exc = ValueError("Explicitly open two different saved Q25/Q31/Q36 procedures before comparing.")
+            exc = ValueError("Explicitly open the complete Q25/Q31/Q36 family before analyzing." if self.familyMode else
+                             "Explicitly open two different saved Q25/Q31/Q36 procedures before comparing.")
             self._study_error = str(exc)
             self.changed.emit()
             return self._reject_input(exc)
-        captured = {role: dict(source) for role, source in self._sources.items()}
+        family = self.familyMode
+        captured = {role: dict(self._sources[role]) for role in self._active_roles()}
 
         def operation(backend):
-            from ..research.intraday_procedure_comparison import compare_intraday_procedures
             from ..research.strategy_experiment import StrategyExperiment
+            if family:
+                from ..research.intraday_procedure_family import analyze_intraday_procedure_family
+                return analyze_intraday_procedure_family(tuple(StrategyExperiment(source["content"]) for source in captured.values()))
+            from ..research.intraday_procedure_comparison import compare_intraday_procedures
             return compare_intraday_procedures(StrategyExperiment(captured["A"]["content"]),
                                                 StrategyExperiment(captured["B"]["content"]))
 
         def compared(report):
+            choices = (self.viewOptions, self.memberOptions)
             self._report = report
-            self._bound_sources = [{key: value for key, value in captured[role].items() if key != "content"}
-                                   for role in ("A", "B")]
+            if family:
+                by_kind = {source["source_kind"]: source for source in captured.values()}
+                self._bound_sources = [{**{key: value for key, value in by_kind[member["source_kind"]].items() if key != "content"},
+                    "input_slot": by_kind[member["source_kind"]]["role"], "role": member["role"]} for member in report["members"]]
+            else:
+                self._bound_sources = [{key: value for key, value in captured[role].items() if key != "content"}
+                                       for role in ("A", "B")]
             self._completed_key = self._key()
             self._member_index, self._section_index = 0, 0
             self._refresh()
+            if choices != (self.viewOptions, self.memberOptions):
+                self.choicesChanged.emit()
 
-        return self._start("compare", operation, compared)
+        return self._start("family" if family else "compare", operation, compared)
