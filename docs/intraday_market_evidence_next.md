@@ -1,5 +1,8 @@
 # Actual research-data evidence and sample usage: Q46–Q48
 
+The following package is [Q49–Q51 same-source procedure workflow and computation](intraday_procedure_efficiency_next.md).
+The Q46–Q48 evidence, sample denominators and source-admission meanings remain unchanged.
+
 ## Verified baseline and task package
 
 This package starts at Q45 main

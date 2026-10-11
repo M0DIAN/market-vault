@@ -43,6 +43,7 @@ from .intraday_ml_diagnostics_cli import add_intraday_ml_diagnostics_subparser, 
 from .intraday_procedure_comparison_cli import add_intraday_procedure_comparison_subparser, research_intraday_procedure_comparison_main
 from .intraday_procedure_family_cli import add_intraday_procedure_family_subparser, research_intraday_procedure_family_main
 from .intraday_procedure_stress_cli import add_intraday_procedure_stress_subparser, research_intraday_procedure_stress_main
+from .intraday_procedure_suite_cli import add_intraday_procedure_suite_subparser, research_intraday_procedure_suite_main
 from .intraday_market_evidence_cli import add_intraday_market_evidence_subparser, research_intraday_market_evidence_main
 from .intraday_market_dependencies_cli import add_intraday_market_dependencies_subparser, research_intraday_market_dependencies_main
 from .intraday_sample_usage_cli import add_intraday_sample_usage_subparser, research_intraday_sample_usage_main
@@ -149,6 +150,7 @@ RESEARCH_COMMANDS = MARKET_DATA_COMMANDS | frozenset({
     "research-intraday-procedure-comparison",
     "research-intraday-procedure-family",
     "research-intraday-procedure-stress",
+    "research-intraday-procedure-suite",
     "research-intraday-market-evidence",
     "research-intraday-market-dependencies",
     "research-intraday-sample-usage",
@@ -280,6 +282,7 @@ def add_research_subparsers(subparsers) -> None:
     add_intraday_procedure_comparison_subparser(subparsers)
     add_intraday_procedure_family_subparser(subparsers)
     add_intraday_procedure_stress_subparser(subparsers)
+    add_intraday_procedure_suite_subparser(subparsers)
     add_intraday_market_evidence_subparser(subparsers)
     add_intraday_market_dependencies_subparser(subparsers)
     add_intraday_sample_usage_subparser(subparsers)
@@ -315,6 +318,8 @@ def run_research_command(command: str, args: argparse.Namespace) -> int:
         return research_intraday_procedure_family_main(args)
     if command == "research-intraday-procedure-stress":
         return research_intraday_procedure_stress_main(args)
+    if command == "research-intraday-procedure-suite":
+        return research_intraday_procedure_suite_main(args)
     if command == "research-intraday-market-evidence":
         return research_intraday_market_evidence_main(args)
     if command == "research-intraday-market-dependencies":

@@ -1,0 +1,185 @@
+"""One real shared-source run, exact legacy oracles and individual save recovery."""
+
+from copy import deepcopy
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import time
+from types import SimpleNamespace
+
+import pytest
+
+from market_vault import cli
+from market_vault import intraday_procedure_suite_cli as suite_cli
+from market_vault.research import intraday_data as q5
+from market_vault.research import intraday_inner_selection as inner
+from market_vault.research import intraday_joint_selection as joint
+from market_vault.research import intraday_procedure_suite as suite
+from market_vault.research import intraday_research as research
+from market_vault.research import intraday_threshold_selection as threshold
+from market_vault.research import strategy_experiment as experiments
+from market_vault.research.intraday_experiment import create_intraday_experiment
+from market_vault.research.strategy_experiment import StrategyExperiment, canonical_json, write_strategy_experiment
+from test_intraday_experiment import signed
+from test_strategy_intraday_ml import quadratic_dev_case  # noqa: F401
+
+
+ROOT = Path(__file__).resolve().parents[1]
+RUNS = (inner.run_intraday_inner_selection, threshold.run_intraday_threshold_selection,
+        joint.run_intraday_joint_selection)
+
+
+def _arguments(source, *, cost=0, candidate=0):
+    return {"expected_experiment_id": source.experiment_id, "cost_index": cost, "candidate_index": candidate,
+        "expected_candidate_id": source.as_dict()["report"]["groups"][cost]["results"][candidate]["candidate_id"]}
+
+
+@pytest.fixture(scope="session")
+def suite_source(quadratic_dev_case, tmp_path_factory):
+    data, comparison, _, _, _, _ = quadratic_dev_case
+    plan = {"plan_schema_version": research.INTRADAY_DIAGNOSTICS_PLAN_V2_VERSION,
+        "comparison_plan": comparison, "strategy_name": "Quadratic",
+        "parameter_axes": [{"parameter": "alpha", "values": [.5, 2.]}],
+        "cost_scenarios": [{"commission_bps": 0, "slippage_bps": 0}, {"commission_bps": 10, "slippage_bps": 5}]}
+    source = create_intraday_experiment(plan=plan, report=research.run_intraday_research(plan))
+    path = write_strategy_experiment(source, path=tmp_path_factory.mktemp("procedure-suite") / "source.json").path
+    return SimpleNamespace(data=data, source=source, path=path, args=_arguments(source, cost=1, candidate=1))
+
+
+def test_real_three_run_canonical_equivalence_and_single_strict_preparation(suite_source, monkeypatch):
+    case = suite_source
+    before = {path: path.read_bytes() for path in (case.path, case.data.path)}
+    calls = {key: 0 for key in ("source_read", "q5_read", "q5_verify", "prepare", "reconstruct")}
+    for module, name, key in ((experiments, "_read_file", "source_read"), (q5, "_read", "q5_read"),
+            (q5, "verify_intraday_dataset", "q5_verify"), (research, "_prepare_intraday_research", "prepare"),
+            (research, "_evaluate_intraday_research", "reconstruct")):
+        original = getattr(module, name)
+        def recorded(*args, _key=key, _original=original, **kwargs):
+            calls[_key] += 1
+            return _original(*args, **kwargs)
+        monkeypatch.setattr(module, name, recorded)
+    metadata = {"name": "Same captured study", "notes": "Fixed three procedures"}
+    start = time.perf_counter()
+    independent = tuple(run(case.path, **case.args, **metadata) for run in RUNS)
+    independent_seconds = time.perf_counter() - start
+    independent_calls = dict(calls)
+    assert independent_calls == dict.fromkeys(calls, 3)
+    calls.update(dict.fromkeys(calls, 0))
+    start = time.perf_counter()
+    combined = suite.run_intraday_procedure_suite(case.path, **case.args, **metadata)
+    suite_seconds = time.perf_counter() - start
+    assert type(combined) is tuple and len(combined) == 3
+    assert calls == dict.fromkeys(calls, 1)
+    assert [value.content for value in combined] == [value.content for value in independent]
+    assert [value.experiment_id for value in combined] == [value.experiment_id for value in independent]
+    for snapshot, family_size in zip(combined, (6, 4, 24), strict=True):
+        report = snapshot.as_dict()["report"]
+        assert report["status"] == "AVAILABLE"
+        assert all(len(window["family_results"]) == family_size
+                   for window in [*(row["inner"] for row in report["outer_folds"]), report["final_dev"]])
+    assert all(path.read_bytes() == content for path, content in before.items())
+    print(json.dumps({"independent_seconds": round(independent_seconds, 3), "suite_seconds": round(suite_seconds, 3),
+        "independent_calls": independent_calls, "suite_calls": calls,
+        "canonical_bytes_equal": True, "experiment_ids": [value.experiment_id for value in combined]}))
+
+
+def test_captured_identity_and_complete_source_mismatch_fail_before_selection(suite_source, monkeypatch):
+    case = suite_source
+    def forbidden(*args, **kwargs):
+        pytest.fail("invalid captured source reached Q5 or procedure selection")
+    with monkeypatch.context() as patch:
+        patch.setattr(research, "load_intraday_dataset", forbidden)
+        for field in ("expected_experiment_id", "expected_candidate_id"):
+            with pytest.raises(ValueError, match="captured identity"):
+                suite.evaluate_intraday_procedure_suite(case.source, source_experiment_path=case.path,
+                    **{**case.args, field: "a" * 64})
+        with pytest.raises(ValueError, match="immutable"):
+            suite.evaluate_intraday_procedure_suite(case.source.as_dict(), source_experiment_path=case.path, **case.args)
+    # An unselected candidate's hidden price is part of the complete replay.
+    root = case.source.as_dict()
+    root["report"]["groups"][0]["results"][0]["execution"]["ledger"][0]["mark_price"] += .25
+    changed = StrategyExperiment(signed(root))
+    for module in (inner, threshold, joint):
+        monkeypatch.setattr(module, "_select", forbidden)
+    with pytest.raises(ValueError, match="complete ordinary source reconstruction"):
+        suite.evaluate_intraday_procedure_suite(changed, source_experiment_path=case.path,
+            **{**case.args, "expected_experiment_id": changed.experiment_id})
+
+
+@pytest.fixture(scope="session")
+def unavailable_suite_source(quadratic_dev_case, tmp_path_factory):
+    """A real Q5 source with an explicitly insufficient first inner history."""
+    data, original = quadratic_dev_case[:2]
+    root = tmp_path_factory.mktemp("procedure-suite-short-history")
+    plan = deepcopy(original)
+    plan["walk_forward"]["minimum_train_days"] = 10
+    plan["strategies"] = [plan["strategies"][0]]
+    source = create_intraday_experiment(plan=plan, report=research.run_intraday_research(plan))
+    path = write_strategy_experiment(source, path=root / "source.json").path
+    return SimpleNamespace(data=data, source=source, path=path, args=_arguments(source))
+
+
+def test_captured_source_not_reopened_and_independent_unavailability(unavailable_suite_source, monkeypatch):
+    case = unavailable_suite_source
+    monkeypatch.setattr(experiments, "_read_file", lambda *a, **k: pytest.fail("reopened captured ordinary source"))
+    studies = suite.evaluate_intraday_procedure_suite(case.source, source_experiment_path=case.path, **case.args)
+    reports = [snapshot.as_dict()["report"] for snapshot in studies]
+    assert len(reports) == 3
+    for report in reports:
+        assert report["status"] == "UNAVAILABLE"
+        assert report["unavailable_reasons"] == [
+            {"scope": "OUTER_FOLD", "fold_index": 0, "reason": "INSUFFICIENT_INNER_HISTORY"}]
+        assert report["selected_account"] is None
+        assert len(report["outer_folds"]) == len(case.source.as_dict()["report"]["context"]["folds"])
+        assert all(record["application" if "application" in record else "refit"] is None
+                   and record["inner"]["family_results"] == [] for record in report["outer_folds"])
+        assert report["final_dev"]["family_results"] == []
+    assert all(report["source_experiment"] == case.source.as_dict() for report in reports)
+
+
+def _cli_arguments(case):
+    return ["research-intraday-procedure-suite", "--source-experiment", str(case.path),
+        "--expected-experiment-id", case.args["expected_experiment_id"], "--cost-index", str(case.args["cost_index"]),
+        "--candidate-index", str(case.args["candidate_index"]), "--expected-candidate-id", case.args["expected_candidate_id"]]
+
+
+def test_actual_cli_partial_save_reports_successful_files_and_retry_reuses_bytes(
+        unavailable_suite_source, tmp_path, monkeypatch, capsys):
+    case = unavailable_suite_source
+    paths = [tmp_path / f"{name}.json" for name in suite.PROCEDURE_ORDER]
+    # A different valid existing artifact is a real no-overwrite conflict.
+    write_strategy_experiment(case.source, path=paths[1])
+    conflict = paths[1].read_bytes()
+    arguments = _cli_arguments(case)
+    for name, path in zip(suite.PROCEDURE_ORDER, paths, strict=True):
+        arguments.extend([f"--{name.lower()}-experiment", str(path)])
+    console = str(Path(sys.executable).with_name("market-vault.exe" if os.name == "nt" else "market-vault"))
+    process = subprocess.run([console, "--settings", str(tmp_path / "absent-settings.yaml"), *arguments],
+        cwd=tmp_path, env={**os.environ, "PYTHONPATH": str(ROOT / "src")}, capture_output=True, text=True, timeout=120)
+    assert process.returncode == 1 and process.stdout == "", process.stderr
+    result = json.loads(process.stderr)
+    assert result["status"] == "FAILED" and "existing experiment differs" in result["error"]
+    assert [row["procedure"] for row in result["studies"]] == list(suite.PROCEDURE_ORDER)
+    assert [row["procedure"] for row in result["saved_experiments"]] == ["Q25"]
+    assert result["saved_experiments"][0]["created_new_file"]
+    assert result["failed_save"] == {"procedure": "Q31", "path": str(paths[1])}
+    assert result["unattempted_saves"] == [{"procedure": "Q36", "path": str(paths[2])}]
+    assert paths[1].read_bytes() == conflict and not paths[2].exists()
+    first_bytes = paths[0].read_bytes()
+    studies = tuple(StrategyExperiment(canonical_json(row["study"])) for row in result["studies"])
+    assert studies[0].content == first_bytes
+    # The real run above proves CLI evaluation. Reuse its immutable outputs to
+    # isolate retry/save behavior without fitting the same three studies again.
+    monkeypatch.setattr(suite_cli, "run_intraday_procedure_suite", lambda *a, **k: studies)
+    monkeypatch.setattr(cli, "load_settings", lambda *a, **k: pytest.fail("loaded settings"))
+    replacement = tmp_path / "q31-new.json"
+    arguments[arguments.index("--q31-experiment") + 1] = str(replacement)
+    assert cli.main(arguments) == 0
+    retried = json.loads(capsys.readouterr().out)
+    assert retried["status"] == "SUCCESS"
+    assert [row["created_new_file"] for row in retried["saved_experiments"]] == [False, True, True]
+    assert paths[0].read_bytes() == first_bytes and paths[1].read_bytes() == conflict
+    assert [experiments.load_strategy_experiment(path).content for path in (paths[0], replacement, paths[2])] == [
+        snapshot.content for snapshot in studies]
