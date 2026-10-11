@@ -1,4 +1,4 @@
-"""Fixed-fit single-day objective sensitivity of saved Q25/Q31 choices.
+"""Fixed-fit single-day objective sensitivity of saved Q25/Q31/Q36 choices.
 
 Only the contribution to the original five-day inner objective is removed.
 Saved models, predictions and daily accounts stay fixed; no source is read,
@@ -11,6 +11,7 @@ from copy import deepcopy
 import math
 
 from . import intraday_inner_selection as inner
+from . import intraday_joint_selection as joint
 from .intraday_data import digest
 from .intraday_ml_diagnostics import _saved_ml_source
 from .intraday_risk_diagnostics import _metric
@@ -57,10 +58,11 @@ def _member_objective(member, recipe, unit, *, targets=None, omitted_day=None, m
             "value": value, "unit": unit, "unavailable_reason": reason}
 
 
-def _window_sensitivity(window, *, maximize, source_strategy, window_index, fold_index=None, fold_id=None):
+def _window_sensitivity(window, *, maximize, source_strategy, window_index, fold_index=None, fold_id=None,
+                        joint_family=False):
     unit = "RATIO" if maximize else "SQUARED_RATIO"
     family = window["family_results"]
-    recipes = [{**source_strategy, "threshold": member["threshold"]} if maximize else member["strategy"]
+    recipes = [{**source_strategy, "threshold": member["threshold"]} if maximize and not joint_family else member["strategy"]
                for member in family]
     objective = {"name": "NET_COMPOUNDED_RETURN" if maximize else "POOLED_COMPLETE_MSE", "unit": unit,
                  "direction": "MAXIMIZE" if maximize else "MINIMIZE",
@@ -103,10 +105,10 @@ def analyze_intraday_inner_objective_sensitivity(snapshot: StrategyExperiment) -
     selected = _saved_ml_source(snapshot)
     root, source, module = selected["root"], selected["source"], selected["module"]
     if module is None:
-        raise ValueError("inner objective sensitivity requires a saved Q25 or Q31 selection study")
+        raise ValueError("inner objective sensitivity requires a saved Q25 or Q31 or Q36 selection study")
     report = root["report"]
     maximize = module is not inner
-    key = "threshold_selection_id" if maximize else "inner_selection_id"
+    key = selected["report_key"]
     result = {"version": INTRADAY_INNER_OBJECTIVE_SENSITIVITY_VERSION, "status": report["status"],
         "evaluation_scope": "DEVELOPMENT_INNER_OBJECTIVE_SENSITIVITY_ONLY",
         "experiment_id": root["experiment_id"], "data_id": root["dataset_id"], "source_kind": selected["kind"],
@@ -127,10 +129,10 @@ def analyze_intraday_inner_objective_sensitivity(snapshot: StrategyExperiment) -
                       unavailable_reasons=deepcopy(report["unavailable_reasons"]))
     else:
         windows = [_window_sensitivity(record["inner"], maximize=maximize, source_strategy=selected["reference"]["strategy"],
-                       window_index=index, fold_index=index, fold_id=record["fold_id"])
+                       window_index=index, fold_index=index, fold_id=record["fold_id"], joint_family=module is joint)
                    for index, record in enumerate(report["outer_folds"])]
         windows.append(_window_sensitivity(report["final_dev"], maximize=maximize,
-                       source_strategy=selected["reference"]["strategy"], window_index=len(windows)))
+                       source_strategy=selected["reference"]["strategy"], window_index=len(windows), joint_family=module is joint))
         result.update(windows=windows, sample={"outer_window_count": len(windows) - 1,
                       "final_dev_window_count": 1, "omission_count": sum(len(row["omissions"]) for row in windows)})
     result["sensitivity_id"] = digest(result)

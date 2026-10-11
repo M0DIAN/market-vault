@@ -158,7 +158,7 @@ class IntradayMLDiagnosticsController(PageController):
         except (TypeError, ValueError, OSError):
             return False
         if self.recordedOnlyMode:
-            return self._source_kind in ("INNER_MODEL_SELECTION", "ECONOMIC_THRESHOLD_SELECTION")
+            return self._source_kind in ("INNER_MODEL_SELECTION", "ECONOMIC_THRESHOLD_SELECTION", "JOINT_ECONOMIC_SELECTION")
         if self.ordinarySource:
             candidate = self._root["report"]["groups"][self._cost_index]["results"][self._candidate_index]
             return candidate["strategy"]["kind"] in ("RIDGE", "QUADRATIC_RIDGE")
@@ -473,23 +473,31 @@ class IntradayMLDiagnosticsController(PageController):
                 "runner_up_index": choice["runner_up_index"], "margin": risk_value(margin["value"], margin["unit"]),
                 "unit": margin["unit"], "unavailable_reason": choice["unavailable_reason"] or margin["unavailable_reason"] or "—"}
 
+    @staticmethod
+    def _recipe_fields(recipe):
+        return {"strategy_kind": recipe["kind"], "alpha": recipe["alpha"],
+                "threshold": risk_value(recipe["threshold"], "RATIO")} if recipe else {}
+
     def _sensitivity_rows(self):
         windows = self._report["windows"] if self._scope_index == 0 else [self._scope()]
         identity = ("window_index", "ml_window_scope")
+        joint = self._report["source_kind"] == "JOINT_ECONOMIC_SELECTION"
+        chosen_columns = ("strategy_kind", "alpha", "threshold") if joint else ()
         if self._view_index == 0:
-            columns = (*identity, "status", "selected_index", "objective_value", "unit", "margin",
+            columns = (*identity, "status", "selected_index", *chosen_columns, "objective_value", "unit", "margin",
                        "available_omission_count", "changed_choice_count", "unavailable_reason")
         elif self._view_index in (1, 3):
             columns = (*identity, *(("omitted_day",) if self._view_index == 3 else ()), "candidate_index",
                        "strategy_kind", "alpha", "threshold", "objective_value", "unit", "ml_chosen", "unavailable_reason")
         elif self._view_index == 2:
             columns = (*identity, "omitted_day", "status", "remaining_day_count", "removed_complete_target_count",
-                       "remaining_complete_target_count", "selected_index", "runner_up_index", "margin", "unit",
+                       "remaining_complete_target_count", "selected_index", *chosen_columns, "runner_up_index", "margin", "unit",
                        "changed_choice", "unchanged_reason", "unavailable_reason")
         elif self._view_index == 4:
-            columns = (*identity, "candidate_index", "selection_count", "available_omission_count")
+            columns = (*identity, "candidate_index", *chosen_columns, "selection_count", "available_omission_count")
         else:
-            columns = (*identity, "candidate_index", "ml_evidence_role", "observation_key", "trading_day", "value", "unit")
+            model_columns = ("joint_model_index", "strategy_kind", "alpha", "threshold", "model_threshold_bps") if joint else ()
+            columns = (*identity, "candidate_index", *model_columns, "ml_evidence_role", "observation_key", "trading_day", "value", "unit")
         rows = []
         for window in windows:
             common = {"window_index": window["window_index"], "ml_window_scope": window["scope"]}
@@ -497,6 +505,7 @@ class IntradayMLDiagnosticsController(PageController):
             if self._view_index == 0:
                 chosen = next((row for row in original["objectives"] if row["candidate_index"] == original["selected_index"]), None)
                 rows.append({**common, **self._choice_fields(original),
+                    **(self._recipe_fields(original["selected_recipe"]) if joint else {}),
                     "objective_value": risk_value(chosen["value"], chosen["unit"]) if chosen else "—",
                     "available_omission_count": window["available_omission_count"],
                     "changed_choice_count": window["changed_choice_count"]})
@@ -515,20 +524,23 @@ class IntradayMLDiagnosticsController(PageController):
             elif self._view_index == 2:
                 for choice in window["omissions"]:
                     rows.append({**common, **self._choice_fields(choice), "omitted_day": choice["omitted_day"],
+                        **(self._recipe_fields(choice["selected_recipe"]) if joint else {}),
                         "remaining_day_count": len(choice["remaining_days"]),
                         "removed_complete_target_count": choice["removed_complete_target_count"],
                         "remaining_complete_target_count": choice["remaining_complete_target_count"],
                         "changed_choice": "—" if choice["changed_choice"] is None else "YES" if choice["changed_choice"] else "NO",
                         "unchanged_reason": choice["unchanged_reason"] or "—", "complete_omission": deepcopy(choice)})
             elif self._view_index == 4:
+                recipes = {row["candidate_index"]: row["recipe"] for row in original["objectives"]} if joint else {}
                 rows.extend({**common, "candidate_index": row["candidate_index"], "selection_count": row["count"],
+                             **(self._recipe_fields(recipes[row["candidate_index"]]) if joint else {}),
                              "available_omission_count": window["available_omission_count"]} for row in window["selection_counts"])
             else:
-                rows.extend({**common, **row} for row in self._fixed_evidence_rows(window["fixed_evidence"]))
+                rows.extend({**common, **row} for row in self._fixed_evidence_rows(window["fixed_evidence"], joint=joint))
         return columns, rows
 
     @staticmethod
-    def _fixed_evidence_rows(fixed):
+    def _fixed_evidence_rows(fixed, *, joint=False):
         rows = []
         for role in ("history_days", "training_days", "validation_days", "history_training_keys", "history_purged_keys",
                      "training_keys", "purged_keys", "validation_keys"):
@@ -536,13 +548,18 @@ class IntradayMLDiagnosticsController(PageController):
         for role in ("history_boundary", "training_boundary"):
             rows.append({"ml_evidence_role": "inner_" + role, "value": fixed[role]})
         targets = {row["observation_key"]: row for row in fixed.get("scored_targets", [])}
-        members = fixed["family_results"] if "scored_targets" in fixed else [fixed]
+        members = fixed["models"] if joint else fixed["family_results"] if "scored_targets" in fixed else [fixed]
         for member in members:
             model, candidate = member["model"], member.get("candidate_index")
-            rows.append({"candidate_index": candidate, "ml_evidence_role": "fixed_model", "value": model["model_id"],
+            shared = {"joint_model_index": member["model_index"], "strategy_kind": member["strategy"]["kind"],
+                      "alpha": member["strategy"]["alpha"], "model_threshold_bps": member["strategy"]["threshold"] * 10000,
+                      "complete_recipe": deepcopy(member["strategy"])} if joint else {}
+            rows.append({"candidate_index": candidate, **shared,
+                         "ml_evidence_role": "fixed_shared_model" if joint else "fixed_model", "value": model["model_id"],
                          "complete_model": deepcopy(model)})
             for prediction in member["predictions"]:
-                rows.append({"candidate_index": candidate, "ml_evidence_role": "fixed_prediction",
+                rows.append({"candidate_index": candidate, **shared,
+                    "ml_evidence_role": "fixed_shared_prediction" if joint else "fixed_prediction",
                     "observation_key": prediction["observation_key"], "trading_day": prediction["trading_day"],
                     "value": risk_value(prediction["score"], "RATIO"), "unit": "RATIO",
                     "complete_prediction": deepcopy(prediction), "scored_target": deepcopy(targets.get(prediction["observation_key"]))})
@@ -552,8 +569,11 @@ class IntradayMLDiagnosticsController(PageController):
                 "complete_target": deepcopy(target)})
         if "scored_targets" not in fixed:
             for member in fixed["family_results"]:
+                recipe = {"joint_model_index": member["model_index"],
+                          **IntradayMLDiagnosticsController._recipe_fields(member["strategy"]),
+                          "complete_recipe": deepcopy(member["strategy"])} if joint else {}
                 for day in member["execution"]["daily"]:
-                    rows.append({"candidate_index": member["candidate_index"], "ml_evidence_role": "fixed_daily_cash",
+                    rows.append({"candidate_index": member["candidate_index"], **recipe, "ml_evidence_role": "fixed_daily_cash",
                         "trading_day": day["trading_day"], "value": risk_value(day["return"], "RATIO"), "unit": "RATIO",
                         "complete_daily_cash": deepcopy(day)})
         return rows
@@ -632,6 +652,7 @@ class IntradayMLDiagnosticsController(PageController):
             from ..research.intraday_experiment import INTRADAY_EXPERIMENT_VERSIONS
             from ..research.intraday_inner_selection import INTRADAY_INNER_SELECTION_VERSION
             from ..research.intraday_threshold_selection import INTRADAY_THRESHOLD_SELECTION_VERSION
+            from ..research.intraday_joint_selection import INTRADAY_JOINT_SELECTION_VERSION
             from ..research.strategy_experiment import load_strategy_experiment
             snapshot = load_strategy_experiment(path)
             root = snapshot.as_dict()
@@ -645,8 +666,10 @@ class IntradayMLDiagnosticsController(PageController):
                 kind = "INNER_MODEL_SELECTION"
             elif schema == INTRADAY_THRESHOLD_SELECTION_VERSION:
                 kind = "ECONOMIC_THRESHOLD_SELECTION"
+            elif schema == INTRADAY_JOINT_SELECTION_VERSION:
+                kind = "JOINT_ECONOMIC_SELECTION"
             else:
-                raise ValueError("Open an ordinary learned DEV experiment, an inner ML selection study or an economic threshold study.")
+                raise ValueError("Open an ordinary learned DEV experiment, an inner ML, economic threshold or joint economic selection study.")
             return snapshot, root, kind
 
         def opened(value):
@@ -668,7 +691,7 @@ class IntradayMLDiagnosticsController(PageController):
         try:
             from .quant_research import _experiment_file_path
             if not self.canRun:
-                raise ValueError("Open an inner ML or economic threshold selection study before analyzing." if self.recordedOnlyMode else
+                raise ValueError("Open an inner ML, economic threshold or joint economic selection study before analyzing." if self.recordedOnlyMode else
                                  "Open the selected saved source and choose a learned DEV candidate before analyzing.")
             mode = self._mode_index
             locator = _experiment_file_path(self._data_locator) if mode == 0 and self._data_locator.strip() else None

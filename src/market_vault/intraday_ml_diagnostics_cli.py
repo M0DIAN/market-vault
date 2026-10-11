@@ -20,16 +20,16 @@ from .research.strategy_experiment import load_strategy_experiment
 
 def add_intraday_ml_diagnostics_subparser(subparsers):
     parser = subparsers.add_parser("research-intraday-ml-prediction-quality",
-        help="Verify fixed or Q25/Q31 outer ML forecasts and describe five fixed score intervals")
+        help="Verify fixed or Q25/Q31/Q36 outer ML forecasts and describe five fixed score intervals")
     parser.add_argument("--experiment", required=True, metavar="PATH")
     parser.add_argument("--cost-index", type=int, default=0)
     parser.add_argument("--candidate-index", type=int, default=0)
     parser.add_argument("--intraday-data", metavar="PATH", help="Relocated Q5 source with the same data identity")
     sensitivity = subparsers.add_parser("research-intraday-inner-objective-sensitivity",
-        help="Describe fixed-fit single-day objective sensitivity of a saved Q25/Q31 study without source access")
+        help="Describe fixed-fit single-day objective sensitivity of a saved Q25/Q31/Q36 study without source access")
     sensitivity.add_argument("--experiment", required=True, metavar="PATH")
     returns = subparsers.add_parser("research-intraday-procedure-return-uncertainty",
-        help="Describe selected-procedure outer daily increments and paired intervals from a saved Q25/Q31 study")
+        help="Describe selected-procedure outer daily increments and paired intervals from a saved Q25/Q31/Q36 study")
     returns.add_argument("--experiment", required=True, metavar="PATH")
     returns.add_argument("--block-days", type=int)
     returns.add_argument("--replications", type=int, default=5000)
