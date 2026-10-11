@@ -10,7 +10,7 @@ Item {
     objectName: "intradayMLDiagnosticsPanel"
     required property var controller
     required property var i18n
-    function label(key) { return root.i18n.catalog["ml_diagnostics." + key] || root.i18n.catalog["prediction_quality." + key] || root.i18n.catalog["inner." + key] || key }
+    function label(key) { return root.i18n.catalog["ml_diagnostics." + key] || root.i18n.catalog["uncertainty." + key] || root.i18n.catalog["prediction_quality." + key] || root.i18n.catalog["inner." + key] || key }
     FileDialog {
         id: sourceFile; objectName: "intradayMLSourceDialog"
         fileMode: FileDialog.OpenFile; nameFilters: ["JSON files (*.json)"]
@@ -72,7 +72,7 @@ Item {
                 objectName: "intradayMLMode"
                 Layout.fillWidth: true; Layout.maximumWidth: Infinity
                 label: root.label("mode")
-                model: ["quality_mode", "sensitivity_mode"].map(key => root.label(key))
+                model: ["quality_mode", "sensitivity_mode", "uncertainty_mode"].map(key => root.label(key))
                 currentIndex: root.controller.modeIndex
                 onModelChanged: currentIndex = Qt.binding(() => root.controller.modeIndex)
                 onSelected: root.controller.selectMode(currentIndex)
@@ -80,7 +80,7 @@ Item {
             Label {
                 objectName: "intradayMLMethod"
                 Layout.fillWidth: true
-                text: root.label(root.controller.sensitivityMode ? "sensitivity_method" : "method")
+                text: root.label(root.controller.uncertaintyMode ? "uncertainty_method" : root.controller.sensitivityMode ? "sensitivity_method" : "method")
                 wrapMode: Text.WordWrap; color: Theme.PixelTheme.inkMuted; font.pixelSize: Theme.PixelTheme.fontSm
             }
             RowLayout {
@@ -111,7 +111,7 @@ Item {
                 wrapMode: Text.WrapAnywhere; color: Theme.PixelTheme.inkMuted
             }
             RowLayout {
-                Layout.fillWidth: true; visible: root.controller.ordinarySource && !root.controller.sensitivityMode
+                Layout.fillWidth: true; visible: root.controller.ordinarySource && !root.controller.recordedOnlyMode
                 Components.LabeledComboBox {
                     objectName: "intradayMLCost"
                     Layout.fillWidth: true; Layout.maximumWidth: Infinity
@@ -131,7 +131,7 @@ Item {
             }
             RowLayout {
                 objectName: "intradayMLDataRow"
-                Layout.fillWidth: true; visible: !root.controller.sensitivityMode
+                Layout.fillWidth: true; visible: !root.controller.recordedOnlyMode
                 Components.LabeledTextField {
                     objectName: "intradayMLDataPath"
                     Layout.fillWidth: true; Layout.maximumWidth: Infinity
@@ -164,16 +164,21 @@ Item {
                 Layout.fillWidth: true; visible: root.controller.resultLoaded
                 text: {
                     root.i18n.language
-                    const result = root.controller.resultSummary, sample = result.sample
+                    const result = root.controller.resultSummary, sample = result.sample, sampling = result.sampling
                     if (!result.status) return ""
                     return root.label(result.diagnostic_kind) + " · " + root.label(result.status) + " · " + root.label(result.source_kind)
-                        + (sample && root.controller.completedSensitivity ? "\n" + root.label("outer_windows") + ": " + sample.outer_window_count
+                        + (sample && root.controller.completedUncertainty ? "\n" + root.label("days") + ": " + sample.sample_count
+                        + " · " + root.label("folds") + ": " + sample.fold_count + " · " + sample.first_day + " – " + sample.last_day
+                        : sample && root.controller.completedSensitivity ? "\n" + root.label("outer_windows") + ": " + sample.outer_window_count
                         + " · " + root.label("final_windows") + ": " + sample.final_dev_window_count
                         + " · " + root.label("omissions") + ": " + sample.omission_count
                         : sample ? "\n" + root.label("folds") + ": " + (sample.fold_count || 0)
                         + " · " + root.label("days") + ": " + (sample.evaluated_day_count || 0)
                         + " · READY: " + (sample.prediction_count || 0) + " · COMPLETE: " + (sample.complete_target_count || 0)
                         + " · " + root.label("incomplete") + ": " + (sample.incomplete_target_count || 0) : "")
+                        + (sampling && root.controller.completedUncertainty ? "\n" + root.label("replications") + ": " + sampling.replications
+                        + " · " + root.label("seed") + ": " + sampling.seed + " · " + root.label("block_days") + ": " + sampling.block_days
+                        + " · " + root.label(result.basis_matches ? "basis_matched" : "basis_mismatch") : "")
                         + "\n" + result.source_path
                         + (result.unavailable_reasons.length ? "\n" + JSON.stringify(result.unavailable_reasons) : "")
                 }
@@ -193,7 +198,7 @@ Item {
                 Components.LabeledComboBox {
                     objectName: "intradayMLScope"
                     Layout.fillWidth: true; Layout.maximumWidth: Infinity
-                    label: root.label(root.controller.completedSensitivity ? "inner_scope" : "scope")
+                    label: root.label(root.controller.completedUncertainty ? "return_scope" : root.controller.completedSensitivity ? "inner_scope" : "scope")
                     model: root.controller.scopeOptions.map(option => root.label(option.kind) + (typeof option.fold_index === "number" ? " " + option.fold_index : ""))
                     currentIndex: root.controller.scopeIndex
                     onModelChanged: currentIndex = Qt.binding(() => root.controller.scopeIndex)
@@ -209,6 +214,28 @@ Item {
                     onSelected: root.controller.selectView(currentIndex)
                 }
             }
+            RowLayout {
+                Layout.fillWidth: true
+                visible: root.controller.completedUncertainty && root.controller.viewIndex === 3
+                Components.LabeledComboBox {
+                    objectName: "intradayMLEvidenceAccount"
+                    Layout.fillWidth: true; Layout.maximumWidth: Infinity
+                    label: root.label("evidence_account")
+                    model: root.controller.evidenceAccountOptions.map(key => root.label(key))
+                    currentIndex: root.controller.evidenceAccountIndex
+                    onModelChanged: currentIndex = Qt.binding(() => root.controller.evidenceAccountIndex)
+                    onSelected: root.controller.selectEvidenceAccount(currentIndex)
+                }
+                Components.LabeledComboBox {
+                    objectName: "intradayMLEvidenceSection"
+                    Layout.fillWidth: true; Layout.maximumWidth: Infinity
+                    label: root.label("evidence_section")
+                    model: root.controller.evidenceSectionOptions.map(key => root.i18n.catalog["ml_diagnostics.account_field." + key] || key)
+                    currentIndex: root.controller.evidenceSectionIndex
+                    onModelChanged: currentIndex = Qt.binding(() => root.controller.evidenceSectionIndex)
+                    onSelected: root.controller.selectEvidenceSection(currentIndex)
+                }
+            }
             Components.PixelButton {
                 objectName: "intradayMLEvidenceButton"; text: root.label("page_evidence")
                 enabled: root.controller.resultLoaded; onClicked: evidence.open()
@@ -216,7 +243,8 @@ Item {
             Label {
                 objectName: "intradayMLInterpretation"
                 Layout.fillWidth: true; visible: root.controller.resultLoaded
-                text: root.controller.completedSensitivity ? root.label("sensitivity_interpretation") + "\n"
+                text: root.controller.completedUncertainty ? root.label("return_interpretation") + "\n" + root.label("return_units")
+                    : root.controller.completedSensitivity ? root.label("sensitivity_interpretation") + "\n"
                     + root.label(root.controller.resultSummary.source_kind === "ECONOMIC_THRESHOLD_SELECTION" ? "cash_objective" : "mse_objective")
                     : root.label("interpretation") + (root.controller.resultSummary.source_kind === "ECONOMIC_THRESHOLD_SELECTION" ? "\n" + root.label("same_scores") : "")
                 wrapMode: Text.WordWrap; color: Theme.PixelTheme.inkMuted; font.pixelSize: Theme.PixelTheme.fontSm
@@ -225,9 +253,18 @@ Item {
                 objectName: "intradayMLTable"
                 Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 210
                 paged: true; tableModel: root.controller.tableModel; i18n: root.i18n
-                cellFormatter: function(value) { return root.i18n.catalog["ml_diagnostics." + value]
-                    || root.i18n.catalog["prediction_quality." + value] || root.i18n.catalog["inner." + value]
-                    || root.i18n.catalog["columns." + value] || value }
+                cellFormatter: function(value) {
+                    root.i18n.language
+                    const prefixes = root.controller.completedUncertainty
+                        ? ["uncertainty.", "ml_diagnostics.", "prediction_quality.", "inner.", "columns."]
+                        : ["ml_diagnostics.", "prediction_quality.", "inner.", "columns."]
+                    for (const prefix of prefixes) {
+                        const key = prefix + value
+                        const translated = root.i18n.translate(key)
+                        if (translated && translated !== key) return translated
+                    }
+                    return value
+                }
                 onPreviousRequested: root.controller.changePage(-1)
                 onNextRequested: root.controller.changePage(1)
             }

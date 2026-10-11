@@ -138,6 +138,7 @@ RESEARCH_COMMANDS = frozenset({
     "research-intraday-prediction-quality",
     "research-intraday-ml-prediction-quality",
     "research-intraday-inner-objective-sensitivity",
+    "research-intraday-procedure-return-uncertainty",
     "research-intraday-feature-ablation",
     "research-intraday-quadratic-ridge",
     "research-intraday-training-history",
@@ -306,7 +307,8 @@ def run_research_command(command: str, args: argparse.Namespace) -> int:
         return research_intraday_signal_delay_main(args)
     if command == "research-intraday-prediction-quality":
         return research_intraday_prediction_quality_main(args)
-    if command in ("research-intraday-ml-prediction-quality", "research-intraday-inner-objective-sensitivity"):
+    if command in ("research-intraday-ml-prediction-quality", "research-intraday-inner-objective-sensitivity",
+                   "research-intraday-procedure-return-uncertainty"):
         return research_intraday_ml_diagnostics_main(args)
     if command == "research-intraday-feature-ablation":
         return research_intraday_feature_ablation_main(args)

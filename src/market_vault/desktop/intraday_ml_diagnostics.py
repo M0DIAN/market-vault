@@ -1,4 +1,4 @@
-"""Captured-source native views of ML predictions and fixed inner objectives."""
+"""Captured-source native ML prediction, inner-objective and return evidence."""
 
 from __future__ import annotations
 
@@ -27,6 +27,7 @@ class IntradayMLDiagnosticsController(PageController):
         self._revision, self._cost_index, self._candidate_index = 0, 0, 0
         self._mode_index = 0
         self._view_index, self._scope_index, self._page = 0, 0, 1
+        self._evidence_account_index, self._evidence_section_index = 0, 0
         self._completed_key, self._pending = None, None
         self._columns, self._rows, self._evidence_rows = (), (), []
         self._model = QtTableModel(parent=self)
@@ -68,7 +69,7 @@ class IntradayMLDiagnosticsController(PageController):
 
     @Slot(int, result=bool)
     def selectMode(self, index):
-        if type(index) is not int or index not in (0, 1):
+        if type(index) is not int or index not in (0, 1, 2):
             return False
         if index != self._mode_index:
             self._mode_index = index
@@ -80,13 +81,27 @@ class IntradayMLDiagnosticsController(PageController):
         return self._mode_index == 1
 
     @Property(bool, notify=changed)
+    def uncertaintyMode(self):
+        return self._mode_index == 2
+
+    @Property(bool, notify=changed)
+    def recordedOnlyMode(self):
+        return self._mode_index in (1, 2)
+
+    @Property(bool, notify=changed)
     def completedSensitivity(self):
         # Completed views use the actual returned report, never the draft mode.
         return "sensitivity_id" in self._report
 
+    @Property(bool, notify=changed)
+    def completedUncertainty(self):
+        return "uncertainty_id" in self._report
+
     @Property(str, notify=changed)
     def draftNotice(self):
-        return "sensitivity_source_required" if self.sensitivityMode and self.ordinarySource else ""
+        if self.recordedOnlyMode and self.ordinarySource:
+            return "uncertainty_source_required" if self.uncertaintyMode else "sensitivity_source_required"
+        return ""
 
     @Property(bool, notify=changed)
     def ordinarySource(self):
@@ -142,7 +157,7 @@ class IntradayMLDiagnosticsController(PageController):
                 return False
         except (TypeError, ValueError, OSError):
             return False
-        if self.sensitivityMode:
+        if self.recordedOnlyMode:
             return self._source_kind in ("INNER_MODEL_SELECTION", "ECONOMIC_THRESHOLD_SELECTION")
         if self.ordinarySource:
             candidate = self._root["report"]["groups"][self._cost_index]["results"][self._candidate_index]
@@ -178,8 +193,11 @@ class IntradayMLDiagnosticsController(PageController):
         if not self._report:
             return {}
         return {"status": self._report["status"], "source_kind": self._report["source_kind"],
-                "diagnostic_kind": "sensitivity_mode" if self.completedSensitivity else "quality_mode",
+                "diagnostic_kind": "uncertainty_mode" if self.completedUncertainty else
+                                   "sensitivity_mode" if self.completedSensitivity else "quality_mode",
                 "sample": deepcopy(self._report.get("sample", {})),
+                "sampling": deepcopy(self._report.get("sampling")),
+                "basis_matches": self._report["basis"]["matches"] if self._report.get("basis") is not None else None,
                 "source_path": self._completed_source["source_path"],
                 "unavailable_reasons": deepcopy(self._report.get("unavailable_reasons", []))}
 
@@ -189,9 +207,9 @@ class IntradayMLDiagnosticsController(PageController):
             return ""
         return _json({**deepcopy(self._completed_source), **{key: deepcopy(self._report[key]) for key in
             ("version", "status", "experiment_id", "data_id", "source_kind", "source_schema_version",
-             "source_selection", "selection_id", "prediction_quality_id", "sensitivity_id", "source_locator", "method",
+             "source_selection", "selection_id", "prediction_quality_id", "sensitivity_id", "uncertainty_id", "source_locator", "method",
              "evidence", "context", "sample", "ordinary_source_id", "algorithm_versions", "source_evaluation_scope",
-             "unavailable_reason", "unavailable_reasons") if key in self._report}})
+             "evaluation_scope", "parameters", "sampling", "basis", "unavailable_reason", "unavailable_reasons") if key in self._report}})
 
     @Property(int, notify=changed)
     def viewIndex(self):
@@ -207,6 +225,8 @@ class IntradayMLDiagnosticsController(PageController):
 
     @Property("QVariantList", notify=changed)
     def scopeOptions(self):
+        if self.completedUncertainty:
+            return [{"kind": "all_outer_returns", "fold_index": None}]
         if self.completedSensitivity:
             return [{"kind": "all_inner_windows", "fold_index": None}] + [
                 {"kind": window["scope"], "fold_index": window["fold_index"], "window_index": window["window_index"]}
@@ -216,10 +236,60 @@ class IntradayMLDiagnosticsController(PageController):
 
     @Property("QStringList", notify=changed)
     def viewOptions(self):
+        if self.completedUncertainty:
+            return ["return_intervals", "daily_returns", "return_basis", "outer_accounts"]
         if self.completedSensitivity:
             return ["window_overview", "original_objectives", "omission_results", "omission_objectives",
                     "selection_counts", "fixed_evidence"]
         return ["metrics", "bins", "folds", "predictions", "models_keys"]
+
+    @Property(int, notify=changed)
+    def evidenceAccountIndex(self):
+        return self._evidence_account_index
+
+    @Property("QStringList", notify=changed)
+    def evidenceAccountOptions(self):
+        return ["all_accounts", *self._report.get("accounts", {})]
+
+    def _evidence_accounts(self):
+        accounts = self._report.get("accounts", {})
+        if self._evidence_account_index:
+            name = self.evidenceAccountOptions[self._evidence_account_index]
+            return {name: accounts[name]}
+        return accounts
+
+    @Property(int, notify=changed)
+    def evidenceSectionIndex(self):
+        return self._evidence_section_index
+
+    @Property("QStringList", notify=changed)
+    def evidenceSectionOptions(self):
+        sections = []
+        for account in self._evidence_accounts().values():
+            for key, value in account.items():
+                if key == "execution":
+                    sections.extend("execution." + child for child in value)
+                else:
+                    sections.append(key)
+        return ["all_fields", *dict.fromkeys(sections)]
+
+    @Slot(int, result=bool)
+    def selectEvidenceAccount(self, index):
+        if type(index) is not int or not 0 <= index < len(self.evidenceAccountOptions):
+            return False
+        self._evidence_account_index, self._evidence_section_index = index, 0
+        self._refresh()
+        self.changed.emit()
+        return True
+
+    @Slot(int, result=bool)
+    def selectEvidenceSection(self, index):
+        if type(index) is not int or not 0 <= index < len(self.evidenceSectionOptions):
+            return False
+        self._evidence_section_index = index
+        self._refresh()
+        self.changed.emit()
+        return True
 
     def _scope(self):
         if self._scope_index == 0:
@@ -232,6 +302,13 @@ class IntradayMLDiagnosticsController(PageController):
             return ""
         start = (self._page - 1) * 100
         rows = self._evidence_rows[start:start + 100]
+        if self.completedUncertainty:
+            result = {"uncertainty_id": self._report["uncertainty_id"], "source": deepcopy(self._completed_source),
+                      "view": self.viewOptions[self._view_index], "scope": self.scopeOptions[0], "page": self._page, "rows": rows}
+            if self._view_index == 3:
+                result.update(account=self.evidenceAccountOptions[self._evidence_account_index],
+                              section=self.evidenceSectionOptions[self._evidence_section_index])
+            return _json(result)
         if self.completedSensitivity:
             indices = {row["window_index"] for row in rows}
             return _json({"sensitivity_id": self._report["sensitivity_id"], "source": deepcopy(self._completed_source),
@@ -271,7 +348,9 @@ class IntradayMLDiagnosticsController(PageController):
             self._set_page()
             return
         scope, rows = self._scope(), []
-        if self.completedSensitivity:
+        if self.completedUncertainty:
+            columns, rows = self._uncertainty_rows()
+        elif self.completedSensitivity:
             columns, rows = self._sensitivity_rows()
         elif self._view_index == 0:
             columns = ("forecast", "metric", "value", "unit", "unavailable_reason")
@@ -323,6 +402,69 @@ class IntradayMLDiagnosticsController(PageController):
         self._columns, self._evidence_rows = columns, rows
         self._rows = tuple(tuple("—" if row.get(column) is None else str(row[column]) for column in columns) for row in rows)
         self._set_page()
+
+    @staticmethod
+    def _return_value(value, series):
+        displayed = risk_value(value, "RATIO")
+        return displayed.removesuffix("%") if series.startswith("procedure_minus_") else displayed
+
+    def _uncertainty_rows(self):
+        if self._view_index == 0:
+            columns = ("return_series", "return_mean", "return_lower_95", "return_upper_95", "unit", "sample_count",
+                       "mean_unavailable_reason", "interval_unavailable_reason", "detail")
+            rows = [{"return_series": row["series"], "sample_count": row["sample_count"],
+                     **{"return_" + field + ("_95" if field != "mean" else ""): self._return_value(row[field], row["series"])
+                        for field in ("mean", "lower", "upper")},
+                     "unit": "PERCENTAGE_POINTS" if row["series"].startswith("procedure_minus_") else "RATIO",
+                     "mean_unavailable_reason": row["mean_unavailable_reason"] or "—",
+                     "interval_unavailable_reason": row["interval_unavailable_reason"] or "—",
+                     "detail": row["detail"] or "—", "complete_record": deepcopy(row)} for row in self._report["statistics"]]
+        elif self._view_index == 1:
+            series = self._report["method"]["series_order"]
+            columns = ("trading_day", "fold_id", *series)
+            rows = [{"trading_day": row["trading_day"], "fold_id": row["fold_id"],
+                     **{name: self._return_value(row["values"][name], name) for name in series},
+                     "complete_record": deepcopy(row)} for row in self._report["daily"]]
+        elif self._view_index == 2:
+            columns = ("basis_check", "basis_matches", "expected", "recorded")
+            rows = [{"basis_check": "basis_" + row["key"], "basis_matches": "YES" if row["matches"] else "NO",
+                     "expected": json.dumps(row["expected"], ensure_ascii=False, sort_keys=True, allow_nan=False),
+                     "recorded": json.dumps(row["recorded"], ensure_ascii=False, sort_keys=True, allow_nan=False),
+                     "complete_record": deepcopy(row)} for row in (self._report.get("basis") or {}).get("checks", [])]
+        else:
+            columns = ("account_role", "record_path", "record_kind", "record_value")
+            rows = self._account_evidence_rows()
+        return columns, rows
+
+    def _account_evidence_rows(self):
+        rows = []
+        section = self.evidenceSectionOptions[self._evidence_section_index]
+
+        def append(name, path, value):
+            kind = "OBJECT" if isinstance(value, dict) else "ARRAY" if isinstance(value, list) else "VALUE"
+            rows.append({"account_role": name, "record_path": path, "record_kind": kind,
+                         "record_value": len(value) if kind != "VALUE" else value, "complete_record": deepcopy(value)})
+
+        def walk(name, path, value):
+            if isinstance(value, dict) and value:
+                for key, child in value.items():
+                    walk(name, path + "/" + key.replace("~", "~0").replace("/", "~1"), child)
+            elif isinstance(value, list) and value:
+                for index, child in enumerate(value):
+                    append(name, path + "/" + str(index), child)
+            else:
+                append(name, path, value)
+
+        for name, account in self._evidence_accounts().items():
+            if section == "all_fields":
+                walk(name, "/accounts/" + name, account)
+            elif section.startswith("execution."):
+                field = section.removeprefix("execution.")
+                if field in account.get("execution", {}):
+                    walk(name, "/accounts/" + name + "/execution/" + field, account["execution"][field])
+            elif section in account:
+                walk(name, "/accounts/" + name + "/" + section, account[section])
+        return rows
 
     @staticmethod
     def _choice_fields(choice):
@@ -526,14 +668,14 @@ class IntradayMLDiagnosticsController(PageController):
         try:
             from .quant_research import _experiment_file_path
             if not self.canRun:
-                raise ValueError("Open an inner ML or economic threshold selection study before analyzing." if self.sensitivityMode else
+                raise ValueError("Open an inner ML or economic threshold selection study before analyzing." if self.recordedOnlyMode else
                                  "Open the selected saved source and choose a learned DEV candidate before analyzing.")
-            sensitivity = self.sensitivityMode
-            locator = _experiment_file_path(self._data_locator) if not sensitivity and self._data_locator.strip() else None
+            mode = self._mode_index
+            locator = _experiment_file_path(self._data_locator) if mode == 0 and self._data_locator.strip() else None
             content, cost, candidate = self._content, self._cost_index, self._candidate_index
             captured = {"source_path": self._opened_path, "source_experiment_id": self._root["experiment_id"],
-                        "diagnostic_mode": "INNER_OBJECTIVE_SENSITIVITY" if sensitivity else "PREDICTION_QUALITY"}
-            if not sensitivity:
+                        "diagnostic_mode": ("PREDICTION_QUALITY", "INNER_OBJECTIVE_SENSITIVITY", "PROCEDURE_RETURN_UNCERTAINTY")[mode]}
+            if mode == 0:
                 captured.update(requested_cost_index=cost, requested_candidate_index=candidate,
                                 requested_data_locator=self._data_locator)
         except (TypeError, ValueError, OSError) as exc:
@@ -543,7 +685,10 @@ class IntradayMLDiagnosticsController(PageController):
 
         def operation(backend):
             from ..research.strategy_experiment import StrategyExperiment
-            if sensitivity:
+            if mode == 2:
+                from ..research.intraday_procedure_return_uncertainty import analyze_intraday_procedure_return_uncertainty
+                return analyze_intraday_procedure_return_uncertainty(StrategyExperiment(content))
+            if mode == 1:
                 from ..research.intraday_inner_objective_sensitivity import analyze_intraday_inner_objective_sensitivity
                 return analyze_intraday_inner_objective_sensitivity(StrategyExperiment(content))
             from ..research.intraday_ml_diagnostics import analyze_intraday_ml_prediction_quality
@@ -551,11 +696,12 @@ class IntradayMLDiagnosticsController(PageController):
                 candidate_index=candidate, intraday_data_file=locator)
 
         def analyzed(report):
-            changed_method = self.completedSensitivity != ("sensitivity_id" in report)
+            changed_method = self._report.get("version") != report["version"]
             self._report, self._completed_source, self._completed_key = report, captured, self._key()
             self._scope_index = 0
+            self._evidence_account_index, self._evidence_section_index = 0, 0
             if changed_method:
                 self._view_index = 0
             self._refresh()
 
-        return self._start("sensitivity" if sensitivity else "analyze", operation, analyzed)
+        return self._start(("analyze", "sensitivity", "procedure_uncertainty")[mode], operation, analyzed)

@@ -206,7 +206,7 @@ candidates and Q5 relocation are not inputs to this method. All models, keys,
 scores, targets and original daily cash evidence remain available in paginated,
 selectable JSON; no target or account is recomputed by the desktop.
 
-## Q35 — selected-procedure incremental outer returns (planned)
+## Q35 — selected-procedure incremental outer returns
 
 ### Goal and method
 
@@ -224,6 +224,53 @@ implementation for all five series with the same indices: 5,000 replications,
 seed 0, 95% percentile intervals, existing cube-root expected block length,
 at least 100 dates, at least ten expected blocks and the existing internal-gap
 gate. Short samples keep observed values and unavailable interval reasons.
+
+The API is `analyze_intraday_procedure_return_uncertainty(snapshot, *,
+block_days=None, replications=5000, seed=0)` in
+`research/intraday_procedure_return_uncertainty.py`. Its new derived version is
+`market-vault-intraday-procedure-return-uncertainty-v1`. The only source input
+is an immutable Q25/Q31 study. The source view comes from Q33; Q15 supplies
+daily-cash reconciliation, coverage, means, shared sampling settings and the
+existing interval engine. Q34 precedes this task in delivery but its sensitivity
+result is not a new input or selection rule.
+
+The five ordered series are `procedure`, `fixed_reference`, `benchmark`,
+`procedure_minus_fixed_reference` and `procedure_minus_benchmark`. Daily
+returns are `cash_close / cash_open - 1`; the last two subtract synchronized
+daily returns. Their arithmetic means and 95% intervals are in RATIO units,
+not differences of compound returns or investable synthetic accounts. The
+three complete original accounts and fold contributions remain in the report.
+
+The common basis compares actual full dates, session clocks, raw price rows,
+execution windows, price IDs, cost/execution versions, initial cash, risk
+definitions and original source bindings. Procedure and fixed reference share
+all READY identities and their original execution policy. The benchmark keeps
+its different declared full-session `max_hold_bars` and must contain exactly
+each day's first eligible READY decision. Full raw price/decision projections
+are compared before compact digest/count evidence is displayed; this is
+recorded consistency, not an execution replay. A failed common basis blocks
+both paired series while valid individual means remain descriptive.
+
+Unavailable accounts retain Q15's explicit reasons. An unavailable whole
+study has no account paths or statistics. Constant, short, gapped, numerically
+invalid and insufficient-expected-block samples retain existing interval
+reasons; the 100-day/ten-block requirements are engineering minima, not a
+claim of statistical adequacy. Explicit replication counts are integers from
+1,000 through 20,000; seeds are integers from 0 through `2**32 - 1`; explicit
+block lengths are integers of at least two evaluated days.
+
+```console
+market-vault research-intraday-procedure-return-uncertainty \
+  --experiment /absolute/saved-study.json
+```
+
+The CLI optionally accepts `--block-days`, `--replications` and `--seed`.
+The native ML diagnostics page adds the outer-return method with the same
+defaults and separate views for statistics, daily returns, common-basis checks
+and complete original account evidence. Pagination and account/section filters
+only affect reading. They never alter the analyzed sample, captured inputs or
+report identity. Accounts display percentages and paired differences display
+percentage points; complete JSON retains the original RATIO values.
 
 ### Acceptance and exclusions
 

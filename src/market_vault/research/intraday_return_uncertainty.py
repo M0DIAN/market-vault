@@ -50,6 +50,18 @@ def _default_block_days(count):
     return value
 
 
+def _sampling(count, *, block_days=None, replications=5000, seed=0):
+    """Shared declared stationary-bootstrap settings; callers validate inputs."""
+    length = _default_block_days(count) if block_days is None else block_days
+    return {"method": "STATIONARY_BOOTSTRAP", "prng": "PYTHON_RANDOM_MT19937", "block_days": length,
+            "block_days_source": "CUBE_ROOT_HEURISTIC" if block_days is None else "EXPLICIT",
+            "replications": replications, "seed": seed, "confidence_level": .95,
+            "interval_method": "PERCENTILE", "quantile_method": "LINEAR_N_MINUS_ONE",
+            "restart_probability": 1 / length, "expected_block_count": 1 + (count - 1) / length,
+            "minimum_sample_count": MINIMUM_SAMPLE_COUNT,
+            "minimum_expected_block_count": MINIMUM_EXPECTED_BLOCK_COUNT, "boundary": "CIRCULAR"}
+
+
 def _stationary_indices(count, block_days, rng):
     """Uniform first index, geometric restarts, and circular successors."""
     index = rng.randrange(count)
@@ -201,14 +213,7 @@ def analyze_intraday_return_uncertainty(snapshot: StrategyExperiment, *, cost_in
                   complete_target_count=errors["complete_target_count"] if errors is not None else None,
                   complete_target_count_unavailable_reason=None if errors is not None else "NOT_APPLICABLE")
     count = sample["sample_count"]
-    length = _default_block_days(count) if block_days is None else block_days
-    sampling = {"method": "STATIONARY_BOOTSTRAP", "prng": "PYTHON_RANDOM_MT19937", "block_days": length,
-                "block_days_source": "CUBE_ROOT_HEURISTIC" if block_days is None else "EXPLICIT",
-                "replications": replications, "seed": seed, "confidence_level": .95,
-                "interval_method": "PERCENTILE", "quantile_method": "LINEAR_N_MINUS_ONE",
-                "restart_probability": 1 / length, "expected_block_count": 1 + (count - 1) / length,
-                "minimum_sample_count": MINIMUM_SAMPLE_COUNT,
-                "minimum_expected_block_count": MINIMUM_EXPECTED_BLOCK_COUNT, "boundary": "CIRCULAR"}
+    sampling = _sampling(count, block_days=block_days, replications=replications, seed=seed)
     basis = _self_basis(root, context, candidate, benchmark)
     statistics, values = [], {}
     for name, record, contributions in (("strategy", candidate, candidate["fold_contributions"]),
