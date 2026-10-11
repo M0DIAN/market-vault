@@ -96,6 +96,12 @@ Item {
                 variant: root.section === 11 ? "primary" : "secondary"
                 onClicked: root.section = 11
             }
+            Components.PixelButton {
+                objectName: "intradaySampleUsageTab"
+                text: root.i18n.catalog["sample_usage.tab"]
+                variant: root.section === 12 ? "primary" : "secondary"
+                onClicked: root.section = 12
+            }
         }
         StackLayout {
             Layout.fillWidth: true
@@ -116,6 +122,7 @@ Item {
             }
             IntradayProcedureComparisonPanel { controller: root.controller.intradayProcedureComparisonController; i18n: root.i18n }
             IntradayProcedureStressPanel { controller: root.controller.intradayProcedureStressController; i18n: root.i18n }
+            IntradaySampleUsagePanel { controller: root.controller.intradaySampleUsageController; i18n: root.i18n }
         }
     }
 }

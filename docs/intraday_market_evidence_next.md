@@ -32,6 +32,25 @@ tree are both `86ea9cfdf6c6d5aeeb7bfd72a20ecc2bfebda020`. The main run explicitl
 used FULL with `POST_MERGE_REUSE=false`, reason `control_plane_changed`.
 Q47 implementation starts from this verified main, after that terminal result.
 
+### Q47 completed mainline gate
+
+Q47 was independently reviewed at final head
+`fa2a415642304949f5313e1c9dd8f4e323124687` and merged through
+[PR #317](https://github.com/M0DIAN/market-vault/pull/317). Natural PR FULL
+[38156605646/1](https://github.com/M0DIAN/market-vault/actions/runs/38156605646)
+completed with all sixteen required jobs successful. The squash main is
+`bc01e4cb52539991603eff16816f8d59e45876ca`; its tree and the reviewed candidate's
+tree are both `dd5f5f5477a70d97ac26aea70a34c1666ccb276f`.
+
+Exact-main natural push
+[38157680370/1](https://github.com/M0DIAN/market-vault/actions/runs/38157680370)
+completed successfully with `POST_MERGE_REUSE=true`, reason
+`verified_full_pr_tree_equivalence`, explicitly bound to PR #317, its final
+head and PR FULL run `38156605646`. Five required non-partition jobs succeeded;
+the unexpanded partition job was skipped as planned. This is verified reuse,
+not a second execution of FULL. Q48 implementation starts from this exact main
+only after that terminal result and a fresh current-main identity check.
+
 ## Why this direction
 
 Q1–Q41 already provide verified Q5 inputs, actual-label-end purging, linear and
@@ -247,7 +266,7 @@ Q31 or Q36 study using existing immutable readers. Bind the exact Q5 data ID
 and complete original context. Project Q47 observation evidence onto recorded
 outer training, purged rows, outer predictions/scored targets, inner training,
 inner holdout/scored targets and final DEV history/holdout sets, as applicable.
-Keep stages, fold/window IDs, READY versus COMPLETE support, actual selected
+Keep stages, fold IDs and window boundaries, READY versus COMPLETE support, actual selected
 recipes and original sample counts separate. Missing/unknown keys or mismatched
 data/context fail binding; there is no silent intersection or reduced sample.
 This is recorded sample-use derivation, not a fresh proof of the saved model's
@@ -288,6 +307,132 @@ no fit, recipe reselection, Q6 execution, TEST scoring or data writes occur.
 general experiment registry, new report platform, revised forecast/PnL estimates,
 new inference or model/history/Feature search.
 
+### Q48 entry and source binding
+
+```console
+market-vault research-intraday-sample-usage --experiment /absolute/saved-dev.json --manifest /absolute/evidence-plan.json --cost-index 0 --candidate-index 0 --output /absolute/new-sample-usage.json
+```
+
+The analysis API is `analyze_intraday_sample_usage(snapshot, plan, *,
+cost_index=0, candidate_index=0, intraday_data_file=None, base=None)`, accepting
+an immutable `StrategyExperiment` and the same Q46 evidence manifest. The file
+entry is `run_intraday_sample_usage(source_path, manifest_path, *,
+cost_index=0, candidate_index=0, intraday_data_file=None)`. The optional CLI
+`--intraday-data` names an explicit relocated Q5 file; omission uses the source's
+recorded locator. Relative reference snapshots resolve beside the manifest.
+
+For an ordinary DEV comparison or diagnostic, indices select one cost group
+and one RIDGE or QUADRATIC_RIDGE candidate; both default to zero. For Q25,
+Q31 and Q36, requested indices must both be zero because the study has one
+selected outer account. Its actual embedded source cost/candidate selection
+remains visible, including nonzero recorded indices. The existing immutable
+source readers and algorithm-version gates remain authoritative.
+
+One action strictly reconstructs Q5 once, derives Q47 and Q46 once, and uses
+that same verified Q5 object to reconstruct the complete ordinary research
+context and all inner/final window input facts. The binding compares saved
+keys, order, targets, cutoffs and economic execution-input grids. Unknown keys,
+changed context, incompatible data or changed recorded window inputs fail the
+action; they never yield a report with a smaller intersected sample. The
+embedded ordinary source is read from the captured study, without reopening
+its historical source filename.
+
+The report version is `market-vault-intraday-sample-usage-v1`, with a
+content-bound `sample_usage_id`. It retains source/content identities, original
+selection, data/content identity, matched context, normalized manifest identity
+and Q47/Q46 identities. `dependency_evidence` contains one complete Q47 report;
+that report contains one complete Q46 report. Stage `sample_refs` are indices
+into Q47 observations, while `price_row_refs` are indices into the Q46 full grid.
+The source content SHA refers to canonical immutable snapshot bytes, not the
+original file's whitespace or formatting.
+
+`AVAILABLE` means binding completed for a source with recorded actual uses.
+`DECLARED_ONLY` means binding completed for an UNAVAILABLE procedure whose
+retained windows were not executed. Neither is a data-quality grade. The
+embedded Q46 coverage status remains separate, including DIFFERENT and
+unassessed evidence. CLI SUCCESS means the report was produced; both report
+statuses may be successful outputs. Existing output files are refused.
+
+### Q48 stage meanings and denominators
+
+| Recorded stage | Feature / target use | What the fit fields mean |
+|---|---|---|
+| Ordinary outer training | Actual training Features and COMPLETE target labels. | The source records an ordinary fold fit. |
+| Q25/Q36 outer training | Actual selected-recipe training dependencies. | The procedure records an outer refit. |
+| Q31 outer training | Actual dependencies of the reused fixed source model. | The procedure did not perform another outer fit. |
+| Outer prediction, and Q25 inner holdout prediction | Features are used for recorded predictions; their target labels are associated evidence only. | Prediction is not a fit stage. |
+| Outer target score, and Q25 inner target score | Exact COMPLETE scoring labels, through recorded predictions. | Q25 uses its saved `scored_targets`; READY prediction counts remain separate. |
+| Inner model training | Actual inner training Features and COMPLETE labels; the six-model family shares one input set. | Preserve each recorded model identity and recipe without multiplying sample counts by family size. |
+| Q31/Q36 inner economic holdout | READY holdout decisions and the complete recorded execution-price grid. | Target labels are not used by the economic objective; a 24-member family does not create 24 independent input samples. |
+| Purged rows | Retained excluded inputs with zero actual-use count. | Purge is not a fit. Empty original purge sets remain empty. |
+| Final DEV complete history | History eligible for a later final fit, distinct from the actual final inner training/holdout split. | No final TEST fit is performed by this evidence action or asserted to have occurred in the source study. |
+| Any UNAVAILABLE procedure's retained windows | Declared inputs with zero actual-use counts, even if an individual window has no local error. | The procedure's global unavailability means its fits, refits and applications were not executed. |
+
+Stage membership counts can include the same observation in several roles or
+folds. Summary fields therefore separate recorded memberships, actual-used
+memberships and their distinct observation counts. They are not independent
+statistical samples. Each stage preserves its source order and original
+denominator; purged, eligible-only and unexecuted declarations are not counted
+as actual fits or scores.
+
+The shared 130-day synthetic saved-fixture acceptance case has the following
+independently reconciled totals. These are engineering oracles, not observed
+market results. Q25's final eligible history contributes 840 recorded
+memberships without becoming an executed final fit; the same distinction
+applies to Q31 and Q36.
+
+| Source | Stages | Recorded sample memberships | Actual-used memberships | Unique actual observations | Economic price-slot memberships |
+|---|---:|---:|---:|---:|---:|
+| Ordinary | 16 | 3,210 | 3,210 | 1,040 | 0 |
+| Q25 | 38 | 6,725 | 5,885 | 1,050 | 0 |
+| Q31 | 33 | 6,550 | 5,710 | 1,050 | 325 |
+| Q36 | 33 | 6,550 | 5,710 | 1,050 | 325 |
+
+Three separate support summaries describe Feature windows, actual COMPLETE
+target endpoints and target-completeness intervals. Each records applicable
+and non-applicable samples, samples with differences and samples with incomplete
+comparison evidence. Difference and incomplete-evidence counts can overlap.
+Endpoint comparison uses Q47's exact field status, so volume/high-only changes
+do not become open/close endpoint differences. Known session-end horizon
+shortfall is an original label-boundary fact; it does not itself mean missing
+external comparison evidence. The original target state and reason stay visible.
+
+Economic holdout price evidence includes every slot of its original sessions,
+not just trades, selected Feature windows or externally covered bars. Preserve
+whole-slot status counts and separate open/close field comparison counts.
+A bar's volume difference cannot become an execution-price disagreement.
+
+The analysis records that Q5, context and window inputs were reconstructed.
+It also explicitly records no model refit, selection rerun, execution replay
+or complete research replay. Historical `recorded_fit_executed` and `fit_origin`
+describe the saved research grammar; they are not a new proof of coefficients,
+selected winners or account generation. Existing FullReplay is stronger.
+Strict Q5 verification includes the saved data's full session grid, including
+held-out dates; this action adds no TEST score, ranking or selection use.
+
+### Q48 native capture and review flow
+
+The intraday workspace appends a sample-use evidence entry without moving the
+existing sections. Open captures one explicit source's immutable canonical
+content, identity and content SHA. Ordinary sources can be opened when candidate
+zero is not learned, so the user can explicitly choose a supported candidate.
+UNAVAILABLE Q25/Q31/Q36 sources are also admitted for declared-input evidence.
+
+Run reads the current manifest once, captures the selected indices and optional
+Q5 override, and analyzes the already-opened source bytes in a background worker.
+It does not reopen that source filename. Completed identities retain the opened
+source path/content SHA, requested manifest/data locators and indices, together
+with the actual report identity. Editing and restoring an input still invalidates
+an in-flight result through a monotonic input revision. Draft edits, failed opens,
+failed runs and stale completions leave the previous completed result intact.
+
+Overview, stage, sample and bar evidence is projected from the completed report.
+Language, selection and pagination changes do not reread files or rerun analysis.
+Selectable evidence, copy and exclusive new-file save retain the full captured
+chain. Compact 1024-by-600 English and Simplified Chinese validation uses the
+actual Main.qml, native Qt controls and asynchronous worker. This is local Qt
+engineering validation, not a Windows release or live-market qualification.
+
 ## CI cost and verification
 
 Q45 natural FULL `38141083302/1` measured `intraday_ml_procedures` at 742
@@ -306,13 +451,14 @@ Use focused local behavior checks and mandatory remote CI; do not duplicate a
 full local suite merely because a PR exists. Native validation uses real Qt in
 the available development environment, not a claim of Windows release testing.
 
-The completed Q46 natural runs provide the measured result:
+The completed natural FULL runs provide the measured result:
 
 | Natural run | ML procedures | Strategy | Longest functional job |
 |---|---:|---:|---:|
 | Q45 PR `38141083302/1` | 742 s | 340 s | 742 s |
 | Q46 final PR `38153626605/1` | 413 s | 646 s | 646 s |
 | Q46 exact main `38154754691/1` | 411 s | 658 s | 658 s |
+| Q47 PR `38156605646/1` | 544 s | 649 s | 649 s |
 
 The longest functional job decreased by 96 seconds on the final PR and 84
 seconds on main relative to that Q45 run. This is an observed improvement,
@@ -321,6 +467,27 @@ test contribution do not justify another speculative registry change. Q47's
 new `test_feature_intraday_market_dependencies.py` belongs to the existing
 `dataset_features` partition, which measured 353 seconds on the Q46 final PR
 and 228 seconds on main. Existing ownership and FULL semantics remain intact.
+Q47's actual `dataset_features` job completed in 358 seconds with the new
+dependency tests included. The unchanged ML partition's 544-second Q47 run
+also shows that runner timing varies; the measured results do not justify
+further speculative repartitioning of the existing tests. Q48 adds a measured
+new workload: its four focused tests completed locally in 240.35 seconds,
+with 78.46 seconds of reported setup and 161.44 seconds of calls. Its global
+session fixture is a different pytest FixtureDef from Q35's module-local
+fixture, so the current ML job cannot amortize that preparation. Moving this
+new file to `dataset_features` loses no existing fixture sharing and places
+sample/dependency evidence beside Q47. Use one exact-file registry entry;
+retain the general ML prefix and every test, fixture and assertion.
+
+As a capacity model only, adding about 240 seconds to the Q47 baselines gives
+about 784 seconds for ML or 598 seconds for `dataset_features`, versus the
+unchanged 649-second strategy job. These mixed local/CI measurements justify
+placement, not a runtime guarantee. Confirm actual final PR and main timings.
+Keep eleven partitions and sixteen FULL jobs. The registry is control-plane
+code, so this Q48 change requires a normal natural FULL on the resulting main,
+with no post-merge reuse; account for that one-time verification cost.
+The native test remains in `app_ops`; real local Qt acceptance supplements
+the existing Qt-free natural CI environment.
 
 ## Method references
 
