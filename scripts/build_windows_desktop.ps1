@@ -172,6 +172,7 @@ $RequiredQmlAssets = @(
     "_internal\market_vault\desktop\qml\pages\IntradayTrainingHistoryPanel.qml",
     "_internal\market_vault\desktop\qml\pages\IntradayThresholdSelectionPanel.qml",
     "_internal\market_vault\desktop\qml\pages\IntradayProcedureComparisonPanel.qml",
+    "_internal\market_vault\desktop\qml\pages\IntradayProcedureStressPanel.qml",
     "_internal\market_vault\desktop\qml\pages\RunsPage.qml",
     "_internal\market_vault\desktop\qml\pages\StorageCleanupPage.qml",
     "_internal\market_vault\desktop\qml\pages\TradingCalendarPage.qml"
