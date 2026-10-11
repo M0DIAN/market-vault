@@ -183,3 +183,15 @@ def test_actual_cli_partial_save_reports_successful_files_and_retry_reuses_bytes
     assert paths[0].read_bytes() == first_bytes and paths[1].read_bytes() == conflict
     assert [experiments.load_strategy_experiment(path).content for path in (paths[0], replacement, paths[2])] == [
         snapshot.content for snapshot in studies]
+
+    # A completed calculation can still fail while publishing stdout. Its
+    # error envelope must agree with the nonzero exit code.
+    def unavailable_stdout(*values, **options):
+        if options.get("file") is not sys.stderr:
+            raise OSError("stdout unavailable")
+        print(*values, **options)
+    monkeypatch.setattr(suite_cli, "print", unavailable_stdout, raising=False)
+    assert cli.main(_cli_arguments(case)) == 1
+    output_error = json.loads(capsys.readouterr().err)
+    assert output_error["status"] == "FAILED" and output_error["error"] == "stdout unavailable"
+    assert len(output_error["studies"]) == 3

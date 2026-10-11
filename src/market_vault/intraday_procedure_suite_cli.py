@@ -55,6 +55,7 @@ def research_intraday_procedure_suite_main(args) -> int:
         print(json.dumps(result, ensure_ascii=True, allow_nan=False))
         return 0
     except (DatasetCLIError, OSError, TypeError, ValueError, KeyError, ArithmeticError, RecursionError) as exc:
+        result["status"] = "FAILED"
         result["error"] = str(exc)
         if saving is not None:
             result["failed_save"] = saving
