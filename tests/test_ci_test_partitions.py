@@ -76,7 +76,7 @@ def test_current_registry_assigns_new_ml_procedure_tests_without_strategy_overla
             path = tmp_path / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.touch()
-    added = "tests/nested/test_intraday_ml_procedures_comparison.py"
+    added = "tests/nested/test_intraday_ml_procedures_future_example.py"
     (tmp_path / added).touch()
     resolved = partitions.load_partitions(tmp_path)
     assert added in resolved["intraday_ml_procedures"]

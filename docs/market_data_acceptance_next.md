@@ -1,5 +1,8 @@
 # Market-data trust task package: Q42–Q45
 
+The next package is [Q46–Q48 actual research-data evidence and sample usage](intraday_market_evidence_next.md).
+The completed comparison and acceptance meanings below remain unchanged.
+
 ## Baseline, authorization and delivery
 
 Verified baseline: `90ad32e3f48130a17c71db7001070bc9c8af9f3c`, tree
