@@ -44,6 +44,7 @@ from .intraday_procedure_comparison_cli import add_intraday_procedure_comparison
 from .intraday_procedure_family_cli import add_intraday_procedure_family_subparser, research_intraday_procedure_family_main
 from .intraday_procedure_stress_cli import add_intraday_procedure_stress_subparser, research_intraday_procedure_stress_main
 from .intraday_market_evidence_cli import add_intraday_market_evidence_subparser, research_intraday_market_evidence_main
+from .intraday_market_dependencies_cli import add_intraday_market_dependencies_subparser, research_intraday_market_dependencies_main
 from .market_data_cli import MARKET_DATA_COMMANDS, add_market_data_subparsers, market_data_main
 from .intraday_feature_ablation_cli import add_intraday_feature_ablation_subparser, research_intraday_feature_ablation_main
 from .intraday_quadratic_ridge_cli import add_intraday_quadratic_ridge_subparser, research_intraday_quadratic_ridge_main
@@ -148,6 +149,7 @@ RESEARCH_COMMANDS = MARKET_DATA_COMMANDS | frozenset({
     "research-intraday-procedure-family",
     "research-intraday-procedure-stress",
     "research-intraday-market-evidence",
+    "research-intraday-market-dependencies",
     "research-intraday-inner-objective-sensitivity",
     "research-intraday-procedure-return-uncertainty",
     "research-intraday-feature-ablation",
@@ -277,6 +279,7 @@ def add_research_subparsers(subparsers) -> None:
     add_intraday_procedure_family_subparser(subparsers)
     add_intraday_procedure_stress_subparser(subparsers)
     add_intraday_market_evidence_subparser(subparsers)
+    add_intraday_market_dependencies_subparser(subparsers)
     add_intraday_feature_ablation_subparser(subparsers)
     add_intraday_quadratic_ridge_subparser(subparsers)
     add_intraday_training_history_subparser(subparsers)
@@ -311,6 +314,8 @@ def run_research_command(command: str, args: argparse.Namespace) -> int:
         return research_intraday_procedure_stress_main(args)
     if command == "research-intraday-market-evidence":
         return research_intraday_market_evidence_main(args)
+    if command == "research-intraday-market-dependencies":
+        return research_intraday_market_dependencies_main(args)
     if command == "research-return-assessment":
         return research_return_assessment_main(args)
     if command in ("research-intraday-scenarios", "research-intraday-export-scenario"):

@@ -18,6 +18,20 @@ The resulting exact-main natural push must reach successful terminal CI before
 the next task starts. Follow the supplied Development Workflow v2 and Personal
 Local Tool Workflow v1 together with checked-in governance. Version stays 0.9.0.
 
+### Q46 completed mainline gate
+
+Q46 was independently reviewed at final head
+`a3b8892a51030f3f06a1a43a800ea64552f1789e` and merged through
+[PR #316](https://github.com/M0DIAN/market-vault/pull/316). Natural PR FULL
+[38153626605/1](https://github.com/M0DIAN/market-vault/actions/runs/38153626605)
+and resulting main FULL
+[38154754691/1](https://github.com/M0DIAN/market-vault/actions/runs/38154754691)
+both completed with all sixteen required jobs successful. The squash main is
+`ab8f7a3ca7aff7894d21f269aa89dc30fa1002dd`; its tree and the reviewed candidate's
+tree are both `86ea9cfdf6c6d5aeeb7bfd72a20ecc2bfebda020`. The main run explicitly
+used FULL with `POST_MERGE_REUSE=false`, reason `control_plane_changed`.
+Q47 implementation starts from this verified main, after that terminal result.
+
 ## Why this direction
 
 Q1–Q41 already provide verified Q5 inputs, actual-label-end purging, linear and
@@ -164,6 +178,64 @@ reselections, hypothetical repaired data or profit recalculation.
 **Exclusions:** exact formula-level Feature sensitivity, causal model impact,
 dropping contaminated observations or automatically selecting a cleaner period.
 
+### Q47 entry and dependency meanings
+
+```console
+market-vault research-intraday-market-dependencies --data /absolute/q5.json --manifest /absolute/evidence-plan.json --output /absolute/new-dependencies.json
+```
+
+The API is `analyze_intraday_market_dependencies(data, plan, base=None)`;
+`run_intraday_market_dependencies(data_path, manifest_path)` is its file entry.
+It uses the same Q46 manifest, relative-reference resolution and exclusive
+new-file writer. One action strictly verifies Q5 once and derives Q46 once.
+It does not trust a previously saved Q46 report as a substitute for those reads.
+The complete Q46 report is embedded once; observation support uses indices into
+its complete `rows` grid, including locally missing slots.
+
+The derived report's `REPORTED` status means the dependency calculation finished.
+Its version is `market-vault-intraday-market-dependencies-v1`; the
+`market_dependencies_id` binds the complete derived content. `sampling` retains
+the original preset, stride and target horizon, beside the original Feature
+names and window length.
+The embedded Q46 status still describes numerical comparison coverage. Neither
+status certifies data quality. Every original observation keeps its key,
+Feature value IDs, READY/UNAVAILABLE state and reason. A target retains its
+original value, COMPLETE/INCOMPLETE state, reason and actual label-end time.
+Reference changes cannot rewrite any of those original facts.
+
+| Dependency | Included support | Interpretation |
+|---|---|---|
+| Feature window | All same-session slots in the recorded `[window_start, decision_time)` interval, including gaps. | Conservative exposure to differing or incompletely compared input bars; no claim that a particular Feature formula changed. |
+| Target completeness | Same-session slots after the observation, bounded by the requested horizon and session end; excess horizon is an integer shortfall. | Full recorded support for target availability, separate from the price fields that determine a COMPLETE value. |
+| Actual target endpoints | Original `entry_row_version_id` open and `exit_row_version_id` close, only for COMPLETE targets. | Field-level disagreement in the actual price dependencies; no recomputed external target and no inferred change to the return ratio. |
+
+For observation slot `k` in a session with `N` slots and target horizon `H`,
+the same-session future support has `min(H, N - k - 1)` slots. The remainder
+is `session_end_shortfall`. Even a very large valid H never creates an H-sized
+list or crosses into another session. The original Q5 `SESSION_END` reason
+keeps precedence over `MISSING_PRICE`, while missing same-session support stays
+visible. INCOMPLETE targets have no actual endpoint references. With H=1,
+entry and exit share a bar but still refer to its distinct open/close fields;
+with targets disabled, target evidence is null.
+
+A high or volume disagreement in an intermediate bar may expose a Feature
+window or target-completeness support. It is not an entry-open/exit-close
+disagreement. A Q5-present bar that Q44 blocks for invalid OHLC remains PRESENT
+with blocked comparison evidence; this layer does not compare selected fields
+again to bypass the block. Even two differing endpoint prices can preserve
+the same return ratio, so endpoint disagreement is not a changed target value.
+The counts of targets with endpoint disagreement and targets without complete
+endpoint comparison can overlap: one endpoint may differ while the other is
+unassessed. They must not be added as if they were mutually exclusive groups.
+
+Counts of support links can exceed the number of distinct bars because a bar
+may support multiple observations. They are not independent samples. The
+two-day 5m LIGHT-window-5, stride-1, H=3 acceptance case has 148 observations,
+142 COMPLETE targets, six incomplete tails, 740 Feature links, 432 same-session
+future links, total shortfall 12 and 284 actual endpoint field references.
+Zero-observation datasets retain their complete Q46 session/grid evidence with
+zero dependency counts.
+
 ## Q48 — recorded ML sample-use evidence and research entry
 
 **Goal:** show whether disputed/unassessed dependencies occur in the sample
@@ -210,7 +282,7 @@ purged/inner/outer/final DEV sets keep their actual denominators, and bad
 bindings fail. An endpoint disagreement and volume-only Feature exposure stay
 distinct through the sample projection. Real CLI/native run and result views,
 failure recovery, captured identity, compact-window and language checks pass;
-no fit, source selection, Q6 execution, TEST scoring or data writes occur.
+no fit, recipe reselection, Q6 execution, TEST scoring or data writes occur.
 
 **Exclusions:** TEST ranking or new TEST lifecycle, automated research gate,
 general experiment registry, new report platform, revised forecast/PnL estimates,
@@ -233,6 +305,22 @@ durations and address a remaining bottleneck only when new evidence warrants it.
 Use focused local behavior checks and mandatory remote CI; do not duplicate a
 full local suite merely because a PR exists. Native validation uses real Qt in
 the available development environment, not a claim of Windows release testing.
+
+The completed Q46 natural runs provide the measured result:
+
+| Natural run | ML procedures | Strategy | Longest functional job |
+|---|---:|---:|---:|
+| Q45 PR `38141083302/1` | 742 s | 340 s | 742 s |
+| Q46 final PR `38153626605/1` | 413 s | 646 s | 646 s |
+| Q46 exact main `38154754691/1` | 411 s | 658 s | 658 s |
+
+The longest functional job decreased by 96 seconds on the final PR and 84
+seconds on main relative to that Q45 run. This is an observed improvement,
+not a guaranteed runtime. Same-phase timing variation and the small new Q46
+test contribution do not justify another speculative registry change. Q47's
+new `test_feature_intraday_market_dependencies.py` belongs to the existing
+`dataset_features` partition, which measured 353 seconds on the Q46 final PR
+and 228 seconds on main. Existing ownership and FULL semantics remain intact.
 
 ## Method references
 
