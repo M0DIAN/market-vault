@@ -14,6 +14,13 @@ from .table_model import QtTableModel
 
 class IntradayThresholdSelectionController(PageController):
     changed = Signal()
+    _study_id_key = "threshold_selection_id"
+    _operation_prefix = "intraday_threshold_"
+    _study_title = "intraday economic threshold-selection study"
+    _source_requirement = "Select an ordinary saved DEV linear or quadratic Ridge candidate."
+    _metric_columns = ("threshold_account", "threshold_bps", "threshold_chosen", "metric", "value", "unit", "unavailable_reason")
+    _model_columns = ("fold_index", "model_stage", "feature", "alpha", "training_count", "intercept", "coefficient",
+                      "mean", "scale", "model_id", "training_boundary")
 
     def __init__(self, runtime, *, research, parent):
         super().__init__(runtime, parent=parent)
@@ -142,7 +149,7 @@ class IntradayThresholdSelectionController(PageController):
         root, report = self._root, self._root["report"]
         context, group, reference = self._source_parts()
         details = {"experiment_id": root["experiment_id"], "study_path": self._path,
-            "threshold_selection_id": report["threshold_selection_id"], "proof": self._proof,
+            self._study_id_key: report[self._study_id_key], "proof": self._proof,
             "source_experiment": deepcopy(root["plan"]["source_experiment"]),
             "fixed_reference": deepcopy(report["fixed_reference"]), "fixed_recipe": deepcopy(reference["strategy"]),
             "feature_fields": context["feature_fields"], "evaluated_days": context["evaluated_days"],
@@ -308,7 +315,7 @@ class IntradayThresholdSelectionController(PageController):
             model = record["model"]
             common = {"fold_index": record["fold_index"], "alpha": model["alpha"],
                       "training_count": len(model["training_keys"]), "model_id": model["model_id"],
-                      "training_boundary": model["training_boundary"]}
+                      "training_boundary": model["training_boundary"], **record.get("identity", {})}
             if "input_transform" in model:
                 rows.extend({**common, "model_stage": "INPUT_TRANSFORM", "feature": feature,
                     "mean": model["input_transform"]["means"][index], "scale": model["input_transform"]["scales"][index]}
@@ -321,13 +328,16 @@ class IntradayThresholdSelectionController(PageController):
                 for index, feature in enumerate(model["feature_fields"]))
         return rows
 
+    def _account_metadata(self, option):
+        return {"threshold_account": option["kind"], "threshold_bps": option["threshold_bps"],
+                "threshold_chosen": "YES" if option["chosen"] else "NO" if option["kind"] == "THRESHOLD" else "—"}
+
     def _metric_rows(self):
         rows = []
         for option, account in zip(self.accountOptions, self._accounts()):
             if account is None:
                 continue
-            common = {"threshold_account": option["kind"], "threshold_bps": option["threshold_bps"],
-                      "threshold_chosen": "YES" if option["chosen"] else "NO" if option["kind"] == "THRESHOLD" else "—"}
+            common = self._account_metadata(option)
             for key, value in account["execution"]["metrics"].items():
                 unit = ("RATIO" if key in ("total_return", "observed_max_drawdown") else
                         "COUNT" if key == "trade_count" else "INITIAL_CASH_UNITS")
@@ -353,14 +363,13 @@ class IntradayThresholdSelectionController(PageController):
         window, account, view = self._window(), self._account(), self._view_index
         execution = account["execution"] if account is not None else {}
         if view == 0:
-            columns = ("threshold_account", "threshold_bps", "threshold_chosen", "metric", "value", "unit", "unavailable_reason")
+            columns = self._metric_columns
             rows = self._metric_rows()
         elif view == 1:
             columns = ("fold_index", "threshold_role", "value", "actual_label_end_time", "label_return")
             rows = self._key_rows()
         elif view == 2:
-            columns = ("fold_index", "model_stage", "feature", "alpha", "training_count", "intercept", "coefficient",
-                       "mean", "scale", "model_id", "training_boundary")
+            columns = self._model_columns
             rows = self._model_rows()
         elif view == 3:
             columns = ("observation_key", "trading_day", "slot", "decision_time", "score", "target")
@@ -465,7 +474,7 @@ class IntradayThresholdSelectionController(PageController):
                 return
             apply(value)
 
-        accepted = self._submit("intraday_threshold_" + action, operation, completed, requires_backend=False)
+        accepted = self._submit(self._operation_prefix + action, operation, completed, requires_backend=False)
         if not accepted:
             self._pending = None
         self.changed.emit()
@@ -494,7 +503,7 @@ class IntradayThresholdSelectionController(PageController):
         try:
             from .quant_research import _experiment_file_path
             if not self.canRun:
-                raise ValueError("Select an ordinary saved DEV linear or quadratic Ridge candidate.")
+                raise ValueError(self._source_requirement)
             captured = self._research.selection_source()
             data = _experiment_file_path(self._data_locator) if self._data_locator.strip() else None
         except (OSError, TypeError, ValueError) as exc:
@@ -503,12 +512,19 @@ class IntradayThresholdSelectionController(PageController):
             return self._reject_input(exc)
 
         def operation(backend):
-            from ..research.intraday_threshold_selection import run_intraday_threshold_selection
-            return run_intraday_threshold_selection(captured["path"], expected_experiment_id=captured["experiment_id"],
-                cost_index=captured["cost_index"], candidate_index=captured["candidate_index"],
-                expected_candidate_id=captured["candidate_id"], intraday_data_file=data, name="Intraday economic threshold selection")
+            return self._run_study(captured, data)
 
         return self._start("run", operation, self._apply)
+
+    def _run_study(self, captured, data):
+        from ..research.intraday_threshold_selection import run_intraday_threshold_selection
+        return run_intraday_threshold_selection(captured["path"], expected_experiment_id=captured["experiment_id"],
+            cost_index=captured["cost_index"], candidate_index=captured["candidate_index"],
+            expected_candidate_id=captured["candidate_id"], intraday_data_file=data, name="Intraday economic threshold selection")
+
+    def _schema_version(self):
+        from ..research.intraday_threshold_selection import INTRADAY_THRESHOLD_SELECTION_VERSION
+        return INTRADAY_THRESHOLD_SELECTION_VERSION
 
     @Slot(str, result=bool)
     def openExperiment(self, raw_path):
@@ -520,10 +536,9 @@ class IntradayThresholdSelectionController(PageController):
 
         def operation(backend):
             from ..research.strategy_experiment import load_strategy_experiment
-            from ..research.intraday_threshold_selection import INTRADAY_THRESHOLD_SELECTION_VERSION
             snapshot = load_strategy_experiment(path)
-            if snapshot.as_dict()["artifact_schema_version"] != INTRADAY_THRESHOLD_SELECTION_VERSION:
-                raise ValueError("Open an intraday economic threshold-selection study.")
+            if snapshot.as_dict()["artifact_schema_version"] != self._schema_version():
+                raise ValueError(f"Open an {self._study_title}.")
             return snapshot
 
         return self._start("open", operation, lambda snapshot: self._apply(snapshot, path=str(path), opened=True))
@@ -534,7 +549,7 @@ class IntradayThresholdSelectionController(PageController):
             from .quant_research import _experiment_file_path
             path = _experiment_file_path(raw_path)
             if not self._content:
-                raise ValueError("Run or open a threshold-selection study before saving.")
+                raise ValueError(f"Run or open an {self._study_title} before saving.")
             content = self._content
         except (OSError, TypeError, ValueError) as exc:
             return self._reject_input(exc)
@@ -558,7 +573,7 @@ class IntradayThresholdSelectionController(PageController):
             data = _experiment_file_path(self._data_locator) if self._data_locator.strip() else None
             source = _experiment_file_path(self._source_locator) if self._source_locator.strip() else None
             if not self._content:
-                raise ValueError("Run or open a threshold-selection study before full replay.")
+                raise ValueError(f"Run or open an {self._study_title} before full replay.")
             content = self._content
             used_data = str(data) if data is not None else self._root["plan"]["intraday_data_path"]
             used_source = str(source) if source is not None else "EMBEDDED_SNAPSHOT"

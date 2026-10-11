@@ -73,6 +73,12 @@ Item {
                 onClicked: root.section = 7
             }
             Components.PixelButton {
+                objectName: "intradayJointTab"
+                text: root.i18n.catalog["joint.tab"]
+                variant: root.section === 9 ? "primary" : "secondary"
+                onClicked: root.section = 9
+            }
+            Components.PixelButton {
                 objectName: "intradayMLDiagnosticsTab"
                 text: root.i18n.catalog["ml_diagnostics.tab"]
                 variant: root.section === 8 ? "primary" : "secondary"
@@ -92,6 +98,10 @@ Item {
             IntradayTrainingHistoryPanel { controller: root.controller.intradayTrainingHistoryController; i18n: root.i18n }
             IntradayThresholdSelectionPanel { controller: root.controller.intradayThresholdSelectionController; i18n: root.i18n }
             IntradayMLDiagnosticsPanel { controller: root.controller.intradayMLDiagnosticsController; i18n: root.i18n }
+            IntradayThresholdSelectionPanel {
+                objectPrefix: "intradayJoint"; translationPrefix: "joint."; jointSelection: true
+                controller: root.controller.intradayJointSelectionController; i18n: root.i18n
+            }
         }
     }
 }
