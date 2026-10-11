@@ -750,6 +750,8 @@ class QuantResearchController(NetworkController):
         self._intraday_ml_diagnostics_controller = IntradayMLDiagnosticsController(runtime, parent=self)
         from .intraday_procedure_comparison import IntradayProcedureComparisonController
         self._intraday_procedure_comparison_controller = IntradayProcedureComparisonController(runtime, parent=self)
+        from .intraday_procedure_stress import IntradayProcedureStressController
+        self._intraday_procedure_stress_controller = IntradayProcedureStressController(runtime, parent=self)
 
     @Property(QObject, constant=True)
     def intradayResearchController(self):
@@ -786,6 +788,10 @@ class QuantResearchController(NetworkController):
     @Property(QObject, constant=True)
     def intradayProcedureComparisonController(self):
         return self._intraday_procedure_comparison_controller
+
+    @Property(QObject, constant=True)
+    def intradayProcedureStressController(self):
+        return self._intraday_procedure_stress_controller
 
     @Property(str, notify=researchChanged)
     def intradayPath(self) -> str:

@@ -167,11 +167,15 @@ planned-slot transform; session tails never cross into the following day.
 Signal delay does not alter opening `entry_delay_minutes`.
 
 First require Q35's complete three-account basis and Q19's saved-price
-projection. Independently reproduce all three zero-increment/zero-delay
+projection, with Q12's complete source-account reconciliation for all three
+roles. Independently reproduce all three zero-increment/zero-delay
 accounts in full. Only the two declared projection identity fields,
 `price_evidence_id` and `execution_id`, may differ. If any baseline fails,
 do not run the remaining grid or present apparently valid stress results.
-All derived execution/price identities remain the kernel's own computed IDs.
+Keep all nine declared scenario rows unavailable with their reason. Reuse the
+three successful baseline executions for the 0/0 scenario, so the successful
+action makes 27 kernel calls, not 30. All derived execution/price identities
+remain the kernel's own computed IDs.
 
 Reuse Q19's projection/delay/baseline helpers and unchanged Q6 execution.
 Expose each scenario's full accounts, costs, trade counts, return/risk
@@ -179,7 +183,34 @@ metrics, changes from the baseline and descriptive daily procedure-minus-fixed
 increments. No further bootstrap is needed. Label evidence
 `RECORDED_PRICE_GRID_REEXECUTION`, never full source/Q5 Replay. A scenario
 whose added slippage violates Q6's valid range is explicitly unavailable;
-it is never clipped or omitted.
+it is never clipped or omitted. Validate all three role policies before running
+any account in that scenario. An account failure makes the whole scenario
+unavailable instead of yielding a smaller set of roles. Preserve actual cash
+days, evaluated gaps and full outer recipe/refit evidence. Daily excess is
+`procedure - fixed_reference`, averaged arithmetically; its change from 0/0
+is descriptive and is not a compounded investable return. Existing ratio
+metric changes are already in percentage points and are displayed once.
+
+The API is `analyze_intraday_procedure_stress(snapshot)` and the report version
+is `market-vault-intraday-procedure-stress-v1`. There are no user-defined grid
+or refitting parameters. Report status is `AVAILABLE`, `PARTIAL` or
+`UNAVAILABLE` when all, some or no declared scenarios are available; the
+baseline gate has its own status. The CLI wrapper's `SUCCESS` means that an
+analysis report was produced, including a report with unavailable scenarios.
+This descriptive action uses the admitted study's complete evaluated support
+without an additional inferential sample-size gate. The settings-independent
+CLI accepts one explicitly saved study:
+
+```console
+market-vault research-intraday-procedure-stress --study /absolute/study.json
+```
+
+An unavailable selected study fails the entry precondition explicitly; a study
+admitted to baseline/grid analysis retains all nine rows even when reproduction
+or a stress scenario is unavailable. A dedicated native Procedure stress page
+opens and captures that one source, then exposes scenarios, three roles,
+metrics/deltas, daily values, signal provenance, complete accounts and
+basis/baseline checks. Its completed labels follow the captured source.
 
 ### Acceptance and exclusions
 
@@ -235,6 +266,35 @@ for Q39-Q41, avoiding a duplicate reconstruction for every new report file.
 The original Q35 fixture's study mapping remains unchanged, test assertions
 remain intact, and unavailable-study cases retain their own real inputs.
 No further CI partition or timeout changes are needed for this fixture reuse.
+
+### Observed Q40 completion
+
+Q40 is complete on main `6a12075487586abff909108024cafaf848292d84`, tree
+`29d0ad50473c427a42c8e20fd9f25ba2b1edb82b`, from PR #310. The final PR head
+`08c633d199822d01fb5bc86b9eaae67480511115` passed independent core and real
+native reviews with zero blocking findings. Natural FULL `38123839294/1`
+completed in 12m53s with all 16 physical jobs successful. Exact-main push
+`38124751825/1` completed successfully in 57s with
+`POST_MERGE_REUSE=true / verified_full_pr_tree_equivalence`, tied to that final
+PR run/head and the identical tested/main tree. This was verified evidence
+reuse, not a second FULL run. Q41 starts only after this completed main gate.
+
+The Q40 ML partition took 8m51s (70 passed, one existing Qt skip; pytest
+505.79s), versus Q39's 11m14s. Its seven new core tests all ran, using the
+same session fixture. Intraday research was the longest partition at 9m48s;
+the complete run was 2m01s shorter than Q39. Existing ML tests also ran faster
+while strategy ran slower, so runner variation prevents attributing all of
+this difference to fixture reuse. No additional partition change was needed.
+
+Real native testing exposed repeated QML catalog conversion and choice-model
+updates during path typing. Q40 fixed only that page's stable catalog and
+completed-mode bindings and notified choices only when their values changed.
+The original Q39 native assertions and timeout remained intact. Root's normal
+core run passed 14 tests; the author's normal Q39/Q40 native run passed both
+tests, and the independent reviewer separately exercised both complete native
+functions plus cash-unit, full-account, asynchronous recovery, language and
+1024×600 navigation checks. Native validation used real Qt on Linux, not a
+Windows release executable.
 
 ## Method references
 
