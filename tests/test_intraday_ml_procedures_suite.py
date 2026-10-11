@@ -18,9 +18,11 @@ from market_vault.research import intraday_inner_selection as inner
 from market_vault.research import intraday_joint_selection as joint
 from market_vault.research import intraday_procedure_suite as suite
 from market_vault.research import intraday_research as research
+from market_vault.research import intraday_selection_fit as fit_reuse
 from market_vault.research import intraday_threshold_selection as threshold
 from market_vault.research import strategy_experiment as experiments
 from market_vault.research.intraday_experiment import create_intraday_experiment
+from market_vault.research.intraday_selection_source import _PreparedSelectionSource
 from market_vault.research.strategy_experiment import StrategyExperiment, canonical_json, write_strategy_experiment
 from test_intraday_experiment import signed
 from test_strategy_intraday_ml import quadratic_dev_case  # noqa: F401
@@ -34,6 +36,48 @@ RUNS = (inner.run_intraday_inner_selection, threshold.run_intraday_threshold_sel
 def _arguments(source, *, cost=0, candidate=0):
     return {"expected_experiment_id": source.experiment_id, "cost_index": cost, "candidate_index": candidate,
         "expected_candidate_id": source.as_dict()["report"]["groups"][cost]["results"][candidate]["candidate_id"]}
+
+
+def _physical_fit_counts(monkeypatch):
+    """One solver call for either representation, with ordinary work separate."""
+    counts, requests, depth = {"ordinary_fits": 0, "procedure_fits": 0}, [], 0
+    solve, evaluate = research._fit, research._evaluate_intraday_research
+    def solved(X, y, alpha):
+        counts["ordinary_fits" if depth else "procedure_fits"] += 1
+        if not depth:
+            requests.append((len(X), len(X[0]), alpha))
+        return solve(X, y, alpha)
+    def ordinary(*args, **kwargs):
+        nonlocal depth
+        depth += 1
+        try:
+            return evaluate(*args, **kwargs)
+        finally:
+            depth -= 1
+    monkeypatch.setattr(research, "_fit", solved)
+    monkeypatch.setattr(research, "_evaluate_intraday_research", ordinary)
+    return counts, requests
+
+
+def _cache_costs(monkeypatch):
+    costs = {"key_seconds": 0., "model_copy_seconds": 0., "requests": 0}
+    key, copy = fit_reuse._fit_key, fit_reuse.deepcopy
+    def keyed(*args):
+        start = time.perf_counter()
+        try:
+            return key(*args)
+        finally:
+            costs["key_seconds"] += time.perf_counter() - start
+            costs["requests"] += 1
+    def copied(value):
+        start = time.perf_counter()
+        try:
+            return copy(value)
+        finally:
+            costs["model_copy_seconds"] += time.perf_counter() - start
+    monkeypatch.setattr(fit_reuse, "_fit_key", keyed)
+    monkeypatch.setattr(fit_reuse, "deepcopy", copied)
+    return costs
 
 
 @pytest.fixture(scope="session")
@@ -51,6 +95,8 @@ def suite_source(quadratic_dev_case, tmp_path_factory):
 def test_real_three_run_canonical_equivalence_and_single_strict_preparation(suite_source, monkeypatch):
     case = suite_source
     before = {path: path.read_bytes() for path in (case.path, case.data.path)}
+    fits, _ = _physical_fit_counts(monkeypatch)
+    overhead = _cache_costs(monkeypatch)
     calls = {key: 0 for key in ("source_read", "q5_read", "q5_verify", "prepare", "reconstruct")}
     for module, name, key in ((experiments, "_read_file", "source_read"), (q5, "_read", "q5_read"),
             (q5, "verify_intraday_dataset", "q5_verify"), (research, "_prepare_intraday_research", "prepare"),
@@ -65,13 +111,41 @@ def test_real_three_run_canonical_equivalence_and_single_strict_preparation(suit
     independent = tuple(run(case.path, **case.args, **metadata) for run in RUNS)
     independent_seconds = time.perf_counter() - start
     independent_calls = dict(calls)
+    independent_fits = dict(fits)
+    folds = len(case.source.as_dict()["report"]["context"]["folds"])
+    assert independent_fits["procedure_fits"] == 13 * (folds + 1) + 2 * folds
     assert independent_calls == dict.fromkeys(calls, 3)
     calls.update(dict.fromkeys(calls, 0))
+    fits.update(dict.fromkeys(fits, 0))
+    # This private injection is Q49's identical single-preparation path. No
+    # public option can turn source verification or fit reuse on/off.
+    with monkeypatch.context() as patch:
+        patch.setattr(suite, "_SelectionFitCache", lambda prepared: None)
+        start = time.perf_counter()
+        uncached = suite.run_intraday_procedure_suite(case.path, **case.args, **metadata)
+        uncached_seconds = time.perf_counter() - start
+    uncached_fits = dict(fits)
+    assert calls == dict.fromkeys(calls, 1)
+    assert uncached_fits["procedure_fits"] == independent_fits["procedure_fits"]
+    assert uncached_fits["ordinary_fits"] * 3 == independent_fits["ordinary_fits"]
+    assert [value.content for value in uncached] == [value.content for value in independent]
+    calls.update(dict.fromkeys(calls, 0))
+    fits.update(dict.fromkeys(fits, 0))
+    owners, caches = [], []
+    def created(prepared):
+        owners.append(prepared)
+        cache = fit_reuse._SelectionFitCache(prepared)
+        caches.append(cache)
+        return cache
+    monkeypatch.setattr(suite, "_SelectionFitCache", created)
     start = time.perf_counter()
     combined = suite.run_intraday_procedure_suite(case.path, **case.args, **metadata)
     suite_seconds = time.perf_counter() - start
+    combined_fits = dict(fits)
     assert type(combined) is tuple and len(combined) == 3
     assert calls == dict.fromkeys(calls, 1)
+    assert combined_fits["ordinary_fits"] == uncached_fits["ordinary_fits"]
+    assert combined_fits["procedure_fits"] <= uncached_fits["procedure_fits"] - 6 * (folds + 1)
     assert [value.content for value in combined] == [value.content for value in independent]
     assert [value.experiment_id for value in combined] == [value.experiment_id for value in independent]
     for snapshot, family_size in zip(combined, (6, 4, 24), strict=True):
@@ -79,10 +153,153 @@ def test_real_three_run_canonical_equivalence_and_single_strict_preparation(suit
         assert report["status"] == "AVAILABLE"
         assert all(len(window["family_results"]) == family_size
                    for window in [*(row["inner"] for row in report["outer_folds"]), report["final_dev"]])
+    calls.update(dict.fromkeys(calls, 0))
+    fits.update(dict.fromkeys(fits, 0))
+    start = time.perf_counter()
+    repeated = suite.run_intraday_procedure_suite(case.path, **case.args, **metadata)
+    repeated_seconds = time.perf_counter() - start
+    assert calls == dict.fromkeys(calls, 1) and fits == combined_fits
+    assert owners[0] is not owners[1] and caches[0] is not caches[1]
+    assert [value.content for value in repeated] == [value.content for value in combined]
+    # Equal source bytes do not make another action's cache admissible.
+    for (module, *_), snapshot in zip(suite._MEMBERS, combined, strict=True):
+        with pytest.raises(ValueError, match="another prepared selection action"):
+            module._evaluate(case.source.as_dict(), snapshot.as_dict()["plan"],
+                prepared_source=owners[0], fit_cache=caches[1])
+    assert calls == dict.fromkeys(calls, 1) and fits == combined_fits
     assert all(path.read_bytes() == content for path, content in before.items())
-    print(json.dumps({"independent_seconds": round(independent_seconds, 3), "suite_seconds": round(suite_seconds, 3),
+    print(json.dumps({"folds": folds, "source_kind": "QUADRATIC_RIDGE", "source_alpha": 2.,
+        "independent_seconds": round(independent_seconds, 3), "q49_seconds": round(uncached_seconds, 3),
+        "suite_seconds": round(suite_seconds, 3), "repeated_suite_seconds": round(repeated_seconds, 3),
         "independent_calls": independent_calls, "suite_calls": calls,
+        "independent_fits": independent_fits, "q49_fits": uncached_fits, "suite_fits": combined_fits,
+        "two_suite_cache_costs": overhead,
         "canonical_bytes_equal": True, "experiment_ids": [value.experiment_id for value in combined]}))
+
+
+def test_real_linear_outside_family_reuses_inner_models_without_changing_q49(quadratic_dev_case, tmp_path, monkeypatch):
+    data, original = quadratic_dev_case[:2]
+    plan = deepcopy(original)
+    plan["strategies"] = [{"kind": "RIDGE", "name": "Outside family", "alpha": 1000., "threshold": -.0005}]
+    source = create_intraday_experiment(plan=plan, report=research.run_intraday_research(plan))
+    path = write_strategy_experiment(source, path=tmp_path / "linear-source.json").path
+    args = _arguments(source)
+    fits, requests = _physical_fit_counts(monkeypatch)
+    overhead = _cache_costs(monkeypatch)
+    with monkeypatch.context() as patch:
+        patch.setattr(suite, "_SelectionFitCache", lambda prepared: None)
+        start = time.perf_counter()
+        baseline = suite.run_intraday_procedure_suite(path, **args)
+        baseline_seconds = time.perf_counter() - start
+    baseline_fits = dict(fits)
+    fits.update(dict.fromkeys(fits, 0))
+    requests.clear()
+    start = time.perf_counter()
+    reused = suite.run_intraday_procedure_suite(path, **args)
+    reused_seconds = time.perf_counter() - start
+    folds = len(source.as_dict()["report"]["context"]["folds"])
+    assert baseline_fits["procedure_fits"] == 13 * (folds + 1) + 2 * folds
+    assert fits["ordinary_fits"] == baseline_fits["ordinary_fits"]
+    assert fits["procedure_fits"] <= 7 * (folds + 1) + 2 * folds
+    assert fits["procedure_fits"] < baseline_fits["procedure_fits"]
+    assert sum(alpha == 1000. for _, _, alpha in requests) == folds + 1
+    assert {width for _, width, _ in requests} == {2, 5}  # Real linear and quadratic solves.
+    assert [value.content for value in reused] == [value.content for value in baseline]
+    assert [value.experiment_id for value in reused] == [value.experiment_id for value in baseline]
+    print(json.dumps({"folds": folds, "source_kind": "RIDGE", "source_alpha": 1000.,
+        "q49_seconds": round(baseline_seconds, 3), "suite_seconds": round(reused_seconds, 3),
+        "q49_fits": baseline_fits, "suite_fits": fits, "cache_costs": overhead,
+        "canonical_bytes_equal": True}))
+
+
+def _numeric_cache_case():
+    # This small private owner is only for raw-fit discrimination; the tests
+    # above exercise actual strict Q5/source admission and action ownership.
+    owner = _PreparedSelectionSource(b"{}", b"{}", research._PreparedIntradayResearch(None, {}, {}, (), ()))
+    rows = tuple(({"observation_key": f"train-{index}", "features": {"x": float(index), "y": float(index % 3)}},
+                  {"value": (index + 1) * .001}) for index in range(6))
+    observations = tuple({"observation_key": f"predict-{index}", "trading_day": "2025-01-03", "slot": index,
+        "decision_time": f"2025-01-03T14:{35 + 5 * index}:00+00:00", "features": {"x": float(index + 3), "y": .5}}
+        for index in range(2))
+    return owner, {"rows": rows, "observations": observations, "features": ["x", "y"],
+        "recipe": {"kind": "RIDGE", "name": "Fixed", "alpha": 1., "threshold": 0.},
+        "boundary": "2025-01-03T14:30:00+00:00"}
+
+
+def test_fit_identity_uses_actual_ordered_values_cutoff_and_numeric_encoding(monkeypatch):
+    owner, inputs = _numeric_cache_case()
+    cache = fit_reuse._SelectionFitCache(owner)
+    fitter = cache.fitter(owner, inner._fit)
+    fits, _ = _physical_fit_counts(monkeypatch)
+    original = fitter(**inputs)
+    assert fits["procedure_fits"] == 1
+    assert canonical_json(fitter(**deepcopy(inputs))) == canonical_json(original)
+    assert fits["procedure_fits"] == 1
+    for change in ("training_value", "target_value", "training_key", "training_order", "features_order",
+                   "cutoff", "prediction_value", "prediction_key", "prediction_order", "prediction_support",
+                   "alpha_encoding", "representation"):
+        altered = deepcopy(inputs)
+        if change == "training_value":
+            altered["rows"][0][0]["features"]["x"] += .25
+        elif change == "target_value":
+            altered["rows"][0][1]["value"] += .01
+        elif change == "training_key":
+            altered["rows"][0][0]["observation_key"] += "-changed"
+        elif change == "training_order":
+            altered["rows"] = altered["rows"][::-1]
+        elif change == "features_order":
+            altered["features"].reverse()
+        elif change == "cutoff":
+            altered["boundary"] = "2025-01-04T14:30:00+00:00"
+        elif change == "prediction_value":
+            altered["observations"][0]["features"]["x"] += .25
+        elif change == "prediction_key":
+            altered["observations"][0]["observation_key"] += "-changed"
+        elif change == "prediction_order":
+            altered["observations"] = altered["observations"][::-1]
+        elif change == "prediction_support":
+            altered["observations"] = altered["observations"][:1]
+        elif change == "alpha_encoding":
+            altered["recipe"]["alpha"] = 1
+        else:
+            altered["recipe"]["kind"] = "QUADRATIC_RIDGE"
+        before = fits["procedure_fits"]
+        actual = fitter(**altered)
+        assert fits["procedure_fits"] == before + 1, change
+        expected = inner._fit(**altered)
+        assert canonical_json(actual) == canonical_json(expected), change
+        if change == "alpha_encoding":
+            assert actual[0]["alpha"] == original[0]["alpha"]
+            assert type(actual[0]["alpha"]) is int and type(original[0]["alpha"]) is float
+            assert actual[0]["model_id"] != original[0]["model_id"]
+
+
+@pytest.mark.parametrize("kind", ["RIDGE", "QUADRATIC_RIDGE"])
+def test_shared_raw_scores_keep_fresh_threshold_actions_metadata_and_model_isolation(kind, monkeypatch):
+    owner, inputs = _numeric_cache_case()
+    inputs["recipe"]["kind"] = kind
+    cache = fit_reuse._SelectionFitCache(owner)
+    fitter = cache.fitter(owner, inner._fit)
+    fits, _ = _physical_fit_counts(monkeypatch)
+    first_model, first_predictions = fitter(**inputs)
+    saved = canonical_json((first_model, first_predictions))
+    other = deepcopy(inputs)
+    other["recipe"].update(name="Another threshold", threshold=1.)
+    other["observations"][0]["decision_time"] = "2025-01-03T14:36:00+00:00"
+    second_model, second_predictions = fitter(**other)
+    assert fits["procedure_fits"] == 1
+    assert [row["score"] for row in first_predictions] == [row["score"] for row in second_predictions]
+    assert all(row["target"] == "LONG" for row in first_predictions)
+    assert all(row["target"] == "FLAT" for row in second_predictions)
+    assert second_predictions[0]["decision_time"] == other["observations"][0]["decision_time"]
+    assert first_model == second_model and first_model is not second_model
+    first_model.get("ridge_model", first_model)["coefficients"][0] = 999
+    first_model["training_keys"].append("mutated")
+    first_predictions[0].update(score=999, target="FLAT")
+    assert canonical_json(fitter(**inputs)) == saved
+    assert fits["procedure_fits"] == 1
+    assert second_model.get("ridge_model", second_model)["coefficients"][0] != 999
+    assert "mutated" not in second_model["training_keys"]
 
 
 def test_captured_identity_and_complete_source_mismatch_fail_before_selection(suite_source, monkeypatch):
