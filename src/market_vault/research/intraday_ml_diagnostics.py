@@ -1,7 +1,7 @@
 """Outer DEV prediction evidence for fixed and bounded selected ML procedures.
 
 The source grammars remain explicit. Ordinary candidates reconstruct only
-their selected forecasts; Q25/Q31 reconstruct their complete saved procedure.
+their selected forecasts; Q25/Q31/Q36 reconstruct their complete saved procedure.
 Neither path turns this derived diagnostic into a selection or TEST artifact.
 """
 
@@ -12,6 +12,7 @@ import math
 from pathlib import Path
 
 from . import intraday_inner_selection as inner
+from . import intraday_joint_selection as joint
 from . import intraday_research as research
 from . import intraday_threshold_selection as threshold
 from .intraday_data import digest
@@ -45,18 +46,23 @@ def _saved_ml_source(snapshot, *, cost_index=0, candidate_index=0):
         raise ValueError("an immutable StrategyExperiment is required")
     root = snapshot.as_dict()
     schema = root["artifact_schema_version"]
+    procedures = {
+        inner.INTRADAY_INNER_SELECTION_VERSION: ("INNER_MODEL_SELECTION", inner, "inner_selection_id"),
+        threshold.INTRADAY_THRESHOLD_SELECTION_VERSION: ("ECONOMIC_THRESHOLD_SELECTION", threshold, "threshold_selection_id"),
+        joint.INTRADAY_JOINT_SELECTION_VERSION: ("JOINT_ECONOMIC_SELECTION", joint, "joint_selection_id"),
+    }
     if schema in INTRADAY_EXPERIMENT_VERSIONS and root["evaluation_mode"] in (
             "INTRADAY_COMPARISON", "INTRADAY_DIAGNOSTICS"):
         source, kind, module = root, "ORDINARY", None
         selection = {"cost_index": cost_index, "candidate_index": candidate_index}
-    elif schema in (inner.INTRADAY_INNER_SELECTION_VERSION, threshold.INTRADAY_THRESHOLD_SELECTION_VERSION):
+        report_key = "research_id"
+    elif schema in procedures:
         if cost_index or candidate_index:
             raise ValueError("a selected procedure has one outer account; both indices must be zero")
         source, selection = root["report"]["source_experiment"], root["plan"]["selection"]
-        kind, module = (("INNER_MODEL_SELECTION", inner) if schema == inner.INTRADAY_INNER_SELECTION_VERSION
-                        else ("ECONOMIC_THRESHOLD_SELECTION", threshold))
+        kind, module, report_key = procedures[schema]
     else:
-        raise ValueError("ML diagnostics require an ordinary learned DEV candidate or a saved Q25/Q31 study")
+        raise ValueError("ML diagnostics require an ordinary learned DEV candidate or a saved Q25/Q31/Q36 study")
     groups = source["report"]["groups"]
     ci, si = selection["cost_index"], selection["candidate_index"]
     if ci >= len(groups) or si >= len(groups[ci]["results"]):
@@ -64,7 +70,7 @@ def _saved_ml_source(snapshot, *, cost_index=0, candidate_index=0):
     group, reference = groups[ci], groups[ci]["results"][si]
     if reference["strategy"]["kind"] not in ("RIDGE", "QUADRATIC_RIDGE"):
         raise ValueError("ML diagnostics require a linear or quadratic Ridge reference")
-    return {"root": root, "source": source, "kind": kind, "module": module,
+    return {"root": root, "source": source, "kind": kind, "module": module, "report_key": report_key,
             "selection": {"cost_index": ci, "candidate_index": si, "candidate_id": reference["candidate_id"]},
             "group": group, "reference": reference, "context": source["report"]["context"]}
 
@@ -74,8 +80,8 @@ def _verified_predictions(selected, locator):
     if source["algorithm_versions"] != research.research_algorithm_versions(source["plan"]):
         raise ValueError("recorded source algorithms differ; no Q5 data was read or model fitted")
     if module is not None:
-        versions = (inner.inner_selection_versions(source) if module is inner
-                    else threshold.threshold_selection_versions(source))
+        versions = (joint.joint_selection_versions(source) if module is joint else
+                    inner.inner_selection_versions(source) if module is inner else threshold.threshold_selection_versions(source))
         if root["algorithm_versions"] != versions:
             raise ValueError("recorded selection algorithms differ; no Q5 data was read or model fitted")
     _, children, _ = research.expand_intraday_plan(source["plan"], recorded=True)
@@ -98,7 +104,7 @@ def _verified_predictions(selected, locator):
         report = module._evaluate(source, root["plan"], data=prepared.data)
         _equal(report, root["report"], "complete saved selection procedure")
         predictions = report["selected_account"]["predictions"]
-        field = "refit" if module is inner else "application"
+        field = "application" if module is threshold else "refit"
         records = [row[field] for row in report["outer_folds"]]
         scope = "SOURCE_VERIFIED_COMPLETE_ML_PROCEDURE"
     return prepared, predictions, records, recorded_path, scope
@@ -171,8 +177,7 @@ def analyze_intraday_ml_prediction_quality(snapshot: StrategyExperiment, *, cost
     locator = _data_override(intraday_data_file)
     selected = _saved_ml_source(snapshot, cost_index=cost_index, candidate_index=candidate_index)
     root, source, module = selected["root"], selected["source"], selected["module"]
-    selection_key = ("research_id" if module is None else "inner_selection_id" if module is inner
-                     else "threshold_selection_id")
+    selection_key = selected["report_key"]
     result = {"version": INTRADAY_ML_PREDICTION_QUALITY_VERSION, "status": "AVAILABLE",
         "evaluation_scope": "DEVELOPMENT_OUTER_PREDICTION_DIAGNOSTICS_ONLY",
         "experiment_id": root["experiment_id"], "data_id": root["dataset_id"],

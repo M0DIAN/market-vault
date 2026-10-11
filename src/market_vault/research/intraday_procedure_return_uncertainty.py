@@ -1,4 +1,4 @@
-"""Recorded outer-return increments of saved Q25/Q31 selection procedures.
+"""Recorded outer-return increments of saved Q25/Q31/Q36 selection procedures.
 
 All five daily series share stationary-bootstrap indices. These conditional
 path intervals do not resample fitting/selection or correct research search.
@@ -9,7 +9,6 @@ from __future__ import annotations
 from copy import deepcopy
 from datetime import datetime
 
-from . import intraday_inner_selection as inner
 from . import intraday_return_uncertainty as uncertainty
 from .intraday_data import digest
 from .intraday_ml_diagnostics import _saved_ml_source
@@ -141,9 +140,9 @@ def analyze_intraday_procedure_return_uncertainty(snapshot: StrategyExperiment, 
     selected = _saved_ml_source(snapshot)
     root, source, module = selected["root"], selected["source"], selected["module"]
     if module is None:
-        raise ValueError("procedure return uncertainty requires a saved Q25 or Q31 selection study")
+        raise ValueError("procedure return uncertainty requires a saved Q25 or Q31 or Q36 selection study")
     report, context = root["report"], selected["context"]
-    key = "inner_selection_id" if module is inner else "threshold_selection_id"
+    key = selected["report_key"]
     result = {"version": INTRADAY_PROCEDURE_RETURN_UNCERTAINTY_VERSION, "status": report["status"],
         "evaluation_scope": "DEVELOPMENT_OUTER_RETURN_UNCERTAINTY_ONLY",
         "experiment_id": root["experiment_id"], "data_id": root["dataset_id"], "source_kind": selected["kind"],

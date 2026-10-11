@@ -122,6 +122,26 @@ two synchronous paired daily-return increments. Retain its shared sampling
 stream, 5,000 replications, seed 0, 95% intervals, cube-root expected block
 length, 100-day and ten-expected-block minima, and gap/numerical gates.
 
+The source is identified explicitly as `JOINT_ECONOMIC_SELECTION`. A joint
+study has one selected outer account, so diagnostic cost/candidate indices
+must both be zero; the report separately retains the original ordinary
+source's actual cost index, candidate index and candidate ID. Existing derived
+report versions and numerical definitions remain unchanged, and this new
+source does not alter reports or IDs produced for ordinary, Q25 or Q31 inputs.
+
+| Existing CLI entry | Q36 behavior |
+| --- | --- |
+| `research-intraday-ml-prediction-quality --experiment joint.json` | Reconstruct the complete ordinary source and joint procedure with one Q5 admission, then describe actual outer refit forecasts. Optional `--intraday-data` relocates the same bound Q5. |
+| `research-intraday-inner-objective-sensitivity --experiment joint.json` | Derive all 24 full-recipe objectives and five day-omission choices per saved inner window; no Q5 or model/execution recomputation. |
+| `research-intraday-procedure-return-uncertainty --experiment joint.json` | Derive the existing five synchronized daily series from the saved outer accounts, using the existing sampling controls and defaults. |
+
+The native **Quant Research → Intraday → ML diagnostics** page uses these
+same three methods. Joint fixed-evidence views identify all six shared models
+by model index and full recipe, and each of the 24 daily-account members by
+its complete recipe. Shared prediction targets retain their recorded source
+threshold meaning; actual member decisions remain in that member's account.
+These diagnostics do not create a new immutable experiment eligible for Freeze.
+
 ### Acceptance and exclusions
 
 Prove the new source's metrics use each actual outer refit; detect recipes
@@ -180,6 +200,15 @@ runner slowdown relative to the same tests on its predecessor. Observe this
 package's actual durations before changing CI controls. A justified rebalance
 must preserve all collected tests, ownership and acceptance conditions; do not
 drop tests or manufacture evidence with a forced tier.
+
+Q36's natural FULL `38107747598/1` measured strategy at 737 seconds and
+intraday_research at 540 seconds. The logged Q33–Q35 diagnostic hotspots
+suggest about 153 seconds of potential savings from moving those three files
+to an existing lighter partition, subject to runner and shared-fixture effects.
+That control-plane change would also require an additional normal FULL on
+main; the estimate needs roughly four to five future FULL runs to offset it.
+The remaining two PR runs in this package do not justify that added wait, so
+Q36–Q38 retain the current partitions and verified post-merge reuse contract.
 
 Method references:
 

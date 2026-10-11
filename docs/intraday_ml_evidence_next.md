@@ -2,6 +2,8 @@
 
 The completed package is followed by [Q36–Q38 joint economic selection](intraday_joint_economic_selection_next.md).
 Existing source and diagnostic meanings below remain unchanged.
+Q37 extends these same three diagnostic entries to the explicit Q36 joint
+source; its full-recipe and six-model evidence contract is documented there.
 
 ## Baseline, decision and delivery
 

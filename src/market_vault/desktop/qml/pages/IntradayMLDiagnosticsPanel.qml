@@ -10,6 +10,7 @@ Item {
     objectName: "intradayMLDiagnosticsPanel"
     required property var controller
     required property var i18n
+    readonly property bool completedJoint: controller.resultSummary.source_kind === "JOINT_ECONOMIC_SELECTION"
     function label(key) { return root.i18n.catalog["ml_diagnostics." + key] || root.i18n.catalog["uncertainty." + key] || root.i18n.catalog["prediction_quality." + key] || root.i18n.catalog["inner." + key] || key }
     FileDialog {
         id: sourceFile; objectName: "intradayMLSourceDialog"
@@ -245,8 +246,10 @@ Item {
                 Layout.fillWidth: true; visible: root.controller.resultLoaded
                 text: root.controller.completedUncertainty ? root.label("return_interpretation") + "\n" + root.label("return_units")
                     : root.controller.completedSensitivity ? root.label("sensitivity_interpretation") + "\n"
-                    + root.label(root.controller.resultSummary.source_kind === "ECONOMIC_THRESHOLD_SELECTION" ? "cash_objective" : "mse_objective")
-                    : root.label("interpretation") + (root.controller.resultSummary.source_kind === "ECONOMIC_THRESHOLD_SELECTION" ? "\n" + root.label("same_scores") : "")
+                    + root.label(root.completedJoint ? "joint_cash_objective"
+                        : root.controller.resultSummary.source_kind === "ECONOMIC_THRESHOLD_SELECTION" ? "cash_objective" : "mse_objective")
+                    : root.label("interpretation") + (root.completedJoint ? "\n" + root.label("joint_refits")
+                        : root.controller.resultSummary.source_kind === "ECONOMIC_THRESHOLD_SELECTION" ? "\n" + root.label("same_scores") : "")
                 wrapMode: Text.WordWrap; color: Theme.PixelTheme.inkMuted; font.pixelSize: Theme.PixelTheme.fontSm
             }
             Components.DataTable {
