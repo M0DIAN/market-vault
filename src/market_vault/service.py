@@ -14,7 +14,7 @@ import pyarrow.parquet as pq
 from .collectors import MoomooCalendarCollector, MoomooHistoryCollector, MoomooOptionCollector
 from .collectors.moomoo_options import OPTION_VOLATILITY_PERIOD_VALUES, select_option_volatility_period
 from .lifecycle import MarketBarLifecycleLock, reject_link, verify_directory_chain
-from .models import DatasetRunManifest, MarketBarSnapshotPair, RunManifest, Settings
+from .models import DatasetRunManifest, MarketBarSnapshotPair, QualityResult, RunManifest, Settings
 from .normalization import (
     normalize_bars,
     normalize_option_contracts,
@@ -181,6 +181,7 @@ def _collect_history_locked(
     )
 
     curated_frames: list[pd.DataFrame] = []
+    request_quality: list[QualityResult] = []
     store = ParquetStore(settings)
     catalog = Catalog(settings)
     if _replay is not None:
@@ -211,6 +212,16 @@ def _collect_history_locked(
                 )
                 if raw.empty:
                     raise RuntimeError("No data returned")
+                request_result = None
+                request_evidence = getattr(collector, "last_request_evidence", None) if _replay is None else None
+                if request_evidence is not None:
+                    request_result = QualityResult(
+                        check_name="history_request_evidence",
+                        result="PASS",
+                        expected_value="REQUEST_PARAMETER_CAPABILITY_ONLY",
+                        actual_value=request_evidence["request_mode"],
+                        details=json.dumps(request_evidence, sort_keys=True, ensure_ascii=True, allow_nan=False),
+                    )
                 raw = raw.copy()
                 raw["requested_trade_date"] = trade_date
                 raw["interval"] = manifest.interval
@@ -275,12 +286,14 @@ def _collect_history_locked(
                 curated_frames.append(curated)
                 manifest.snapshot_pairs.append(pair)
                 manifest.successful_symbols.append(symbol)
+                if request_result is not None:
+                    request_quality.append(request_result)
             except Exception as exc:  # preserve per-symbol failures and continue the batch
                 manifest.failed_symbols[symbol] = str(exc)
             if _replay is None and index < len(manifest.requested_symbols) - 1:
                 time.sleep(settings.request_pause_seconds)
 
-    quality_results = []
+    quality_results = list(request_quality)
 
     manifest.snapshot_pairs.sort(key=lambda item: item.symbol)
     manifest.successful_symbols = [pair.symbol for pair in manifest.snapshot_pairs]
@@ -294,7 +307,7 @@ def _collect_history_locked(
 
     if curated_frames:
         curated_all = pd.concat(curated_frames, ignore_index=True)
-        quality_results = run_bar_quality_checks(curated_all)
+        quality_results = run_bar_quality_checks(curated_all) + request_quality
         catalog.refresh_market_bars_view()
 
     manifest.finished_at = datetime.now(timezone.utc)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import time
 from datetime import date
 from typing import Any
@@ -21,6 +22,7 @@ class MoomooHistoryCollector:
         self.settings = settings
         self._ctx: Any | None = None
         self._sdk: dict[str, Any] | None = None
+        self.last_request_evidence: dict[str, Any] | None = None
 
     def _load_sdk(self) -> dict[str, Any]:
         if self._sdk is not None:
@@ -78,9 +80,11 @@ class MoomooHistoryCollector:
         adjustment: str = "NONE",
         session: str = "ALL",
     ) -> pd.DataFrame:
+        self.last_request_evidence = None
         self.connect()
         assert self._ctx is not None
         sdk = self._load_sdk()
+        session_kwargs, evidence = self._session_request(interval, session)
 
         date_text = trade_date.isoformat()
         page_req_key = None
@@ -98,20 +102,10 @@ class MoomooHistoryCollector:
                 "page_req_key": page_req_key,
             }
 
-            is_intraday = interval.lower() not in {"1d", "day", "k_day"}
-            if is_intraday:
-                try:
-                    kwargs["session"] = getattr(sdk["Session"], session.upper())
-                except AttributeError as exc:
-                    raise ValueError(f"Unsupported session: {session}") from exc
-
-            try:
-                ret, data, next_key = self._ctx.request_history_kline(**kwargs)
-            except TypeError:
-                # Compatibility path for older SDKs that do not expose `session`.
-                kwargs.pop("session", None)
-                kwargs["extended_time"] = session.upper() != "RTH"
-                ret, data, next_key = self._ctx.request_history_kline(**kwargs)
+            kwargs.update(session_kwargs)
+            # Execution/unpacking TypeError is a real failure, never evidence
+            # that retrying with a narrower trading session is safe.
+            ret, data, next_key = self._ctx.request_history_kline(**kwargs)
 
             if ret != sdk["RET_OK"]:
                 raise MoomooRequestError(f"{code}: {data}")
@@ -125,6 +119,62 @@ class MoomooHistoryCollector:
                 break
             time.sleep(self.settings.request_pause_seconds)
 
-        if not pages:
-            return pd.DataFrame()
-        return pd.concat(pages, ignore_index=True)
+        frame = pd.concat(pages, ignore_index=True) if pages else pd.DataFrame()
+        self.last_request_evidence = {"symbol": code, "interval": interval, **evidence}
+        return frame
+
+    def _session_request(self, interval: str, session: str) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Choose one documented request meaning before the first history page."""
+        sdk = self._load_sdk()
+        requested = session.upper()
+        kwargs: dict[str, Any] = {}
+        native: bool | None = None
+        legacy: bool | None = None
+        mode = "DAILY_DEFAULT"
+        effective = "SDK_DAILY_DEFAULT"
+        if interval.lower() not in {"1d", "day", "k_day"}:
+            if requested not in {"RTH", "ETH", "ALL"}:
+                raise ValueError(f"Unsupported session: {session}")
+            assert self._ctx is not None
+            try:
+                parameters = inspect.signature(self._ctx.request_history_kline).parameters
+            except (TypeError, ValueError) as exc:
+                raise MoomooDependencyError("Cannot determine history session keyword capabilities") from exc
+
+            def supports(name: str) -> bool:
+                parameter = parameters.get(name)
+                return parameter is not None and parameter.kind in {
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY,
+                }
+
+            native, legacy = supports("session"), supports("extended_time")
+            if native:
+                value = getattr(sdk.get("Session"), requested, None)
+                if value is None:
+                    raise MoomooDependencyError(f"SDK session parameter requires Session.{requested}")
+                kwargs["session"] = value
+                mode = "SESSION"
+            elif legacy and requested in {"RTH", "ETH"}:
+                kwargs["extended_time"] = requested == "ETH"
+                mode = "EXTENDED_TIME"
+            elif legacy:
+                raise MoomooDependencyError(
+                    "ALL requires native session support; extended_time only expresses RTH/ETH"
+                )
+            else:
+                # A **kwargs parameter alone is not an explicit capability.
+                raise MoomooDependencyError(
+                    "History method does not expose explicit session or extended_time keyword support"
+                )
+            effective = requested
+        return kwargs, {
+            "requested_session": requested,
+            "effective_request_session": effective,
+            "request_mode": mode,
+            "session_keyword_supported": native,
+            "extended_time_keyword_supported": legacy,
+            "sdk_module": sdk.get("module_name"),
+            "sdk_version": sdk.get("version"),
+            "validation_scope": "REQUEST_PARAMETER_CAPABILITY_ONLY",
+            "response_session_coverage_verified": False,
+        }
