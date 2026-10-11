@@ -1,5 +1,8 @@
 # Intraday ML evidence package: Q33–Q35
 
+The completed package is followed by [Q36–Q38 joint economic selection](intraday_joint_economic_selection_next.md).
+Existing source and diagnostic meanings below remain unchanged.
+
 ## Baseline, decision and delivery
 
 The package starts from verified Q32 main

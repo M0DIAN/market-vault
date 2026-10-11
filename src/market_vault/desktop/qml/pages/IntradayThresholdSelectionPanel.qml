@@ -7,17 +7,31 @@ import "../theme" as Theme
 
 Item {
     id: root
-    objectName: "intradayThresholdPanel"
+    objectName: root.objectPrefix + "Panel"
     required property var controller
     required property var i18n
+    property string objectPrefix: "intradayThreshold"
+    property string translationPrefix: "threshold."
+    property bool jointSelection: false
     function label(key) {
-        return root.i18n.catalog["threshold." + key] || root.i18n.catalog["history." + key]
-            || root.i18n.catalog["inner." + key] || key
+        root.i18n.language
+        for (const prefix of [root.translationPrefix, "threshold.", "history.", "inner."]) {
+            const fullKey = prefix + key, translated = root.i18n.translate(fullKey)
+            if (translated !== fullKey) return translated
+        }
+        return key
+    }
+    function recipeLabel(recipe) {
+        return recipe.kind + " · alpha=" + recipe.alpha + " · " + recipe.threshold * 10000 + " bp"
     }
     function scopeLabel(value) {
         return root.label(value.kind) + (value.kind === "OUTER_INNER" ? " " + value.fold_index : "")
     }
     function accountLabel(value) {
+        if (value.kind === "JOINT_MEMBER") {
+            return "#" + value.candidate_index + " · " + value.strategy_kind + " · alpha=" + value.alpha
+                + " · " + value.threshold_bps + " bp" + (value.chosen ? " · " + root.label("chosen") : "")
+        }
         return value.kind === "THRESHOLD" ? value.threshold_bps + " bp" + (value.chosen ? " · " + root.label("chosen") : "")
             : root.label(value.kind)
     }
@@ -28,29 +42,29 @@ Item {
     Component.onCompleted: sync()
     Connections { target: root.controller; function onChanged() { root.sync() } }
     FileDialog {
-        id: openFile; objectName: "intradayThresholdOpenDialog"
+        id: openFile; objectName: root.objectPrefix + "OpenDialog"
         fileMode: FileDialog.OpenFile; nameFilters: ["JSON files (*.json)"]
         title: root.label("open")
         onAccepted: root.controller.openExperiment(selectedFile.toString())
     }
     FileDialog {
-        id: saveFile; objectName: "intradayThresholdSaveDialog"
+        id: saveFile; objectName: root.objectPrefix + "SaveDialog"
         fileMode: FileDialog.SaveFile; nameFilters: ["JSON files (*.json)"]; defaultSuffix: "json"
         title: root.label("save")
         onAccepted: root.controller.saveExperiment(selectedFile.toString())
     }
     FileDialog {
-        id: dataFile; objectName: "intradayThresholdDataDialog"
+        id: dataFile; objectName: root.objectPrefix + "DataDialog"
         fileMode: FileDialog.OpenFile; nameFilters: ["JSON files (*.json)"]
         onAccepted: root.controller.setDataLocator(selectedFile.toString())
     }
     FileDialog {
-        id: sourceFile; objectName: "intradayThresholdSourceDialog"
+        id: sourceFile; objectName: root.objectPrefix + "SourceDialog"
         fileMode: FileDialog.OpenFile; nameFilters: ["JSON files (*.json)"]
         onAccepted: root.controller.setSourceLocator(selectedFile.toString())
     }
     Dialog {
-        id: details; objectName: "intradayThresholdDetailsDialog"
+        id: details; objectName: root.objectPrefix + "DetailsDialog"
         parent: Overlay.overlay; anchors.centerIn: parent
         width: Math.min(900, parent.width - 40); height: Math.min(650, parent.height - 40)
         modal: true; title: root.label("details"); standardButtons: Dialog.Close
@@ -58,7 +72,7 @@ Item {
         contentItem: ScrollView {
             clip: true; contentWidth: availableWidth
             TextArea {
-                objectName: "intradayThresholdDetailsText"
+                objectName: root.objectPrefix + "DetailsText"
                 width: parent.width; readOnly: true; selectByMouse: true
                 text: details.visible ? root.controller.completedDetails : ""
                 wrapMode: TextEdit.WrapAnywhere; color: Theme.PixelTheme.ink
@@ -66,16 +80,16 @@ Item {
         }
     }
     Dialog {
-        id: evidence; objectName: "intradayThresholdEvidenceDialog"
+        id: evidence; objectName: root.objectPrefix + "EvidenceDialog"
         parent: Overlay.overlay; anchors.centerIn: parent
         width: Math.min(900, parent.width - 40); height: Math.min(650, parent.height - 40)
         modal: true; title: root.label("page_evidence"); standardButtons: Dialog.Close
         background: Rectangle { color: Theme.PixelTheme.surface; border.color: Theme.PixelTheme.goldDark }
         contentItem: ScrollView {
-            objectName: "intradayThresholdEvidenceScroll"
+            objectName: root.objectPrefix + "EvidenceScroll"
             clip: true; contentWidth: availableWidth
             TextArea {
-                objectName: "intradayThresholdEvidenceText"
+                objectName: root.objectPrefix + "EvidenceText"
                 width: parent.width; readOnly: true; selectByMouse: true
                 text: evidence.visible ? root.controller.currentPageEvidence : ""
                 wrapMode: TextEdit.WrapAnywhere; color: Theme.PixelTheme.ink
@@ -83,12 +97,12 @@ Item {
         }
     }
     ScrollView {
-        id: scroll; objectName: "intradayThresholdScroll"
+        id: scroll; objectName: root.objectPrefix + "Scroll"
         anchors.fill: parent; clip: true; contentWidth: availableWidth
         rightPadding: verticalBar.width
         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
         ScrollBar.vertical: Components.PixelScrollBar {
-            id: verticalBar; objectName: "intradayThresholdScrollBar"
+            id: verticalBar; objectName: root.objectPrefix + "ScrollBar"
             parent: scroll
             anchors.top: parent.top; anchors.bottom: parent.bottom; anchors.right: parent.right
         }
@@ -96,27 +110,27 @@ Item {
             width: scroll.availableWidth; height: Math.max(implicitHeight, scroll.availableHeight)
             spacing: Theme.PixelTheme.spacingSm
             Label {
-                objectName: "intradayThresholdMethod"
+                objectName: root.objectPrefix + "Method"
                 Layout.fillWidth: true; text: root.label("method")
                 wrapMode: Text.WordWrap; color: Theme.PixelTheme.inkMuted; font.pixelSize: Theme.PixelTheme.fontSm
             }
             RowLayout {
                 Layout.fillWidth: true
                 Components.LabeledComboBox {
-                    id: candidate; objectName: "intradayThresholdCandidate"
+                    id: candidate; objectName: root.objectPrefix + "Candidate"
                     Layout.fillWidth: true; Layout.maximumWidth: Infinity
                     label: root.label("source"); model: root.controller.researchController.candidateNames
                     onSelected: root.controller.researchController.selectCandidate(currentIndex)
                     onModelChanged: currentIndex = root.controller.researchController.candidateIndex
                 }
                 Components.PixelButton {
-                    objectName: "intradayThresholdRunButton"; text: root.label("run")
+                    objectName: root.objectPrefix + "RunButton"; text: root.label("run")
                     enabled: root.controller.canRun && !operationRuntime.busy
                     onClicked: root.controller.runSelected()
                 }
             }
             Label {
-                objectName: "intradayThresholdSource"
+                objectName: root.objectPrefix + "Source"
                 Layout.fillWidth: true
                 text: {
                     root.i18n.language
@@ -131,58 +145,58 @@ Item {
             RowLayout {
                 Layout.fillWidth: true
                 Components.LabeledTextField {
-                    id: dataPath; objectName: "intradayThresholdDataPath"
+                    id: dataPath; objectName: root.objectPrefix + "DataPath"
                     Layout.fillWidth: true; Layout.maximumWidth: Infinity
                     label: root.label("data"); text: root.controller.dataLocator
                     onTextChanged: root.controller.setDataLocator(text)
                 }
                 Components.PixelButton {
-                    objectName: "intradayThresholdDataBrowse"; text: root.i18n.catalog["quant.browse"]
+                    objectName: root.objectPrefix + "DataBrowse"; text: root.i18n.catalog["quant.browse"]
                     onClicked: dataFile.open()
                 }
                 Components.PixelButton {
-                    objectName: "intradayThresholdDataClear"; text: root.label("clear")
+                    objectName: root.objectPrefix + "DataClear"; text: root.label("clear")
                     onClicked: root.controller.setDataLocator("")
                 }
             }
             RowLayout {
                 Layout.fillWidth: true
                 Components.LabeledTextField {
-                    id: sourcePath; objectName: "intradayThresholdSourcePath"
+                    id: sourcePath; objectName: root.objectPrefix + "SourcePath"
                     Layout.fillWidth: true; Layout.maximumWidth: Infinity
                     label: root.label("replay_source"); text: root.controller.sourceLocator
                     onTextChanged: root.controller.setSourceLocator(text)
                 }
                 Components.PixelButton {
-                    objectName: "intradayThresholdSourceBrowse"; text: root.i18n.catalog["quant.browse"]
+                    objectName: root.objectPrefix + "SourceBrowse"; text: root.i18n.catalog["quant.browse"]
                     onClicked: sourceFile.open()
                 }
                 Components.PixelButton {
-                    objectName: "intradayThresholdSourceClear"; text: root.label("clear")
+                    objectName: root.objectPrefix + "SourceClear"; text: root.label("clear")
                     onClicked: root.controller.setSourceLocator("")
                 }
             }
             Flow {
                 Layout.fillWidth: true; spacing: Theme.PixelTheme.spacingSm
                 Components.PixelButton {
-                    objectName: "intradayThresholdOpenButton"; text: root.label("open")
+                    objectName: root.objectPrefix + "OpenButton"; text: root.label("open")
                     enabled: !operationRuntime.busy; onClicked: openFile.open()
                 }
                 Components.PixelButton {
-                    objectName: "intradayThresholdSaveButton"; text: root.label("save")
+                    objectName: root.objectPrefix + "SaveButton"; text: root.label("save")
                     enabled: root.controller.resultLoaded && !operationRuntime.busy; onClicked: saveFile.open()
                 }
                 Components.PixelButton {
-                    objectName: "intradayThresholdReplayButton"; text: root.label("replay")
+                    objectName: root.objectPrefix + "ReplayButton"; text: root.label("replay")
                     enabled: root.controller.resultLoaded && !operationRuntime.busy; onClicked: root.controller.replayExperiment()
                 }
                 Components.PixelButton {
-                    objectName: "intradayThresholdDetailsButton"; text: root.label("details")
+                    objectName: root.objectPrefix + "DetailsButton"; text: root.label("details")
                     enabled: root.controller.resultLoaded; onClicked: details.open()
                 }
             }
             Label {
-                objectName: "intradayThresholdSummary"
+                objectName: root.objectPrefix + "Summary"
                 Layout.fillWidth: true; visible: root.controller.resultLoaded
                 text: {
                     root.i18n.language
@@ -190,14 +204,16 @@ Item {
                     if (!result.status) return ""
                     const recipe = result.final_recipe
                     return root.label(result.status) + " · " + root.label(root.controller.proof)
-                        + " · " + result.strategy.kind + " · alpha=" + result.strategy.alpha
+                        + " · " + (root.jointSelection ? root.label("fixed_reference") + ": " + root.recipeLabel(result.strategy)
+                            : result.strategy.kind + " · alpha=" + result.strategy.alpha)
                         + " · " + root.label("folds") + ": " + result.fold_count + " · " + root.label("days") + ": " + result.day_count
-                        + "\n" + root.label("final_threshold") + ": " + (recipe ? recipe.threshold * 10000 + " bp" : root.label("not_computed"))
+                        + "\n" + root.label(root.jointSelection ? "final_recipe" : "final_threshold") + ": "
+                        + (recipe ? root.jointSelection ? root.recipeLabel(recipe) : recipe.threshold * 10000 + " bp" : root.label("not_computed"))
                 }
                 wrapMode: Text.WordWrap; color: Theme.PixelTheme.ink
             }
             Label {
-                objectName: "intradayThresholdNotice"
+                objectName: root.objectPrefix + "Notice"
                 Layout.fillWidth: true
                 visible: root.controller.draftChanged || root.controller.notice.length > 0 || root.controller.studyError.length > 0
                 text: root.controller.studyError ? root.controller.studyError + "\n" + root.label("retry")
@@ -205,7 +221,7 @@ Item {
                 wrapMode: Text.WordWrap; color: Theme.PixelTheme.inkMuted
             }
             Label {
-                objectName: "intradayThresholdUnavailable"
+                objectName: root.objectPrefix + "Unavailable"
                 Layout.fillWidth: true; visible: root.controller.resultSummary.status === "UNAVAILABLE"
                 text: root.label("WHOLE_STUDY_NOT_COMPUTED") + "\n" + (root.controller.resultSummary.unavailable_reasons || []).map(row =>
                     root.label(row.scope) + (typeof row.fold_index === "number" ? " " + row.fold_index : "") + ": " + root.label(row.reason)).join("\n")
@@ -214,7 +230,7 @@ Item {
             RowLayout {
                 Layout.fillWidth: true
                 Components.LabeledComboBox {
-                    id: scope; objectName: "intradayThresholdScope"
+                    id: scope; objectName: root.objectPrefix + "Scope"
                     Layout.fillWidth: true; Layout.maximumWidth: Infinity
                     label: root.label("scope")
                     model: root.controller.scopeOptions.map(value => root.scopeLabel(value))
@@ -223,7 +239,7 @@ Item {
                     onSelected: root.controller.selectScope(currentIndex)
                 }
                 Components.LabeledComboBox {
-                    id: account; objectName: "intradayThresholdAccount"
+                    id: account; objectName: root.objectPrefix + "Account"
                     Layout.fillWidth: true; Layout.maximumWidth: Infinity
                     label: root.label("account")
                     model: root.controller.accountOptions.map(value => root.accountLabel(value))
@@ -235,7 +251,7 @@ Item {
             RowLayout {
                 Layout.fillWidth: true
                 Components.LabeledComboBox {
-                    id: view; objectName: "intradayThresholdView"
+                    id: view; objectName: root.objectPrefix + "View"
                     Layout.fillWidth: true; Layout.maximumWidth: Infinity
                     label: root.i18n.catalog["quant.intraday_result_view"]
                     model: ["overview", "keys", "models", "decisions", "trades", "daily", "ledger", "transactions",
@@ -245,12 +261,12 @@ Item {
                     onSelected: root.controller.selectView(currentIndex)
                 }
                 Components.PixelButton {
-                    objectName: "intradayThresholdEvidenceButton"; text: root.label("page_evidence")
+                    objectName: root.objectPrefix + "EvidenceButton"; text: root.label("page_evidence")
                     enabled: root.controller.resultLoaded; onClicked: evidence.open()
                 }
             }
             Label {
-                objectName: "intradayThresholdScopeSummary"
+                objectName: root.objectPrefix + "ScopeSummary"
                 Layout.fillWidth: true; visible: root.controller.resultLoaded && root.controller.scopeIndex > 0
                 text: {
                     root.i18n.language
@@ -259,18 +275,25 @@ Item {
                     return root.label("training_boundary") + ": " + result.training_boundary
                         + "\n" + root.label("history_boundary") + ": " + result.history_boundary
                         + " · TRAIN: " + result.training_count + " · READY: " + result.prediction_count
+                        + (root.jointSelection ? "\n" + root.label("selected_recipe") + ": "
+                            + (result.selected_recipe ? root.recipeLabel(result.selected_recipe) : root.label("not_computed"))
+                            + " · " + root.label("computed_models") + ": " + result.model_count
+                            + " · " + root.label("computed_accounts") + ": " + result.account_count : "")
+                        + (root.jointSelection && result.refit_model_id ? "\n" + root.label("outer_refit") + ": "
+                            + result.refit_training_boundary + " · TRAIN: " + result.refit_training_count
+                            + " · " + result.refit_model_id : "")
                         + (result.execution_input.detail ? "\n" + root.label(result.execution_input.reason) + ": " + result.execution_input.detail : "")
                 }
                 wrapMode: Text.WordWrap; color: Theme.PixelTheme.inkMuted; font.pixelSize: Theme.PixelTheme.fontSm
             }
             Label {
-                objectName: "intradayThresholdViewNotice"
+                objectName: root.objectPrefix + "ViewNotice"
                 Layout.fillWidth: true; visible: root.controller.resultLoaded
                 text: root.label(root.controller.viewNotice)
                 wrapMode: Text.WordWrap; color: Theme.PixelTheme.inkMuted; font.pixelSize: Theme.PixelTheme.fontSm
             }
             Label {
-                objectName: "intradayThresholdReturnBasis"
+                objectName: root.objectPrefix + "ReturnBasis"
                 Layout.fillWidth: true; visible: root.controller.resultLoaded
                 text: {
                     root.i18n.language
@@ -286,7 +309,7 @@ Item {
                 wrapMode: Text.WordWrap; color: Theme.PixelTheme.inkMuted; font.pixelSize: Theme.PixelTheme.fontSm
             }
             Canvas {
-                id: equity; objectName: "intradayThresholdEquity"
+                id: equity; objectName: root.objectPrefix + "Equity"
                 Layout.fillWidth: true; Layout.preferredHeight: 54
                 visible: root.controller.viewIndex === 0 && root.controller.equitySeries.length > 0
                 onWidthChanged: requestPaint()
@@ -308,14 +331,16 @@ Item {
                 }
             }
             Components.DataTable {
-                objectName: "intradayThresholdTable"
+                objectName: root.objectPrefix + "Table"
                 Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 220; Layout.preferredHeight: 260
                 paged: true; tableModel: root.controller.tableModel; i18n: root.i18n
                 cellFormatter: function(value) {
-                    return root.i18n.catalog["threshold." + value] || root.i18n.catalog["history." + value]
-                        || root.i18n.catalog["inner." + value] || root.i18n.catalog["performance." + value]
-                        || root.i18n.catalog["risk." + value] || root.i18n.catalog["prediction_quality." + value]
-                        || root.i18n.catalog["comparison." + value] || root.i18n.catalog["columns." + value] || value
+                    for (const prefix of [root.translationPrefix, "threshold.", "history.", "inner.", "performance.",
+                            "risk.", "prediction_quality.", "comparison.", "columns."]) {
+                        const key = prefix + value, translated = root.i18n.translate(key)
+                        if (translated !== key) return translated
+                    }
+                    return value
                 }
                 onPreviousRequested: root.controller.changePage(-1)
                 onNextRequested: root.controller.changePage(1)
