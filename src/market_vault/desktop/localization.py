@@ -3263,6 +3263,45 @@ ZH_CN.update({
     "operation.intraday_sample_usage_save": "将已完成样本用途报告保存到新文件",
 })
 
+EN.update({
+    "suite.tab": "Three procedures", "suite.run": "Run all three",
+    "suite.method": "Run Q25, Q31 and Q36 for a saved DEV Ridge candidate with 1–6 Features. Each study retains its own availability. Save the three studies separately before comparing their complete family.",
+    "suite.source_required": "Open or save an ordinary DEV experiment, then select a linear or quadratic Ridge candidate with 1–6 Features in Development research.",
+    "suite.draft_source": "Selected source for the next run", "suite.completed_source": "Captured source of the completed studies",
+    "suite.data": "Optional relocated Q5 file", "suite.source_id": "Source ID", "suite.candidate_id": "Candidate ID",
+    "suite.cost_index": "Cost index", "suite.candidate_index": "Candidate index",
+    "suite.experiment_id": "Study ID", "suite.selection_id": "Selection ID",
+    "suite.Q25": "Q25 · Inner model selection", "suite.Q31": "Q31 · Economic threshold selection",
+    "suite.Q36": "Q36 · Joint economic selection", "suite.not_run": "Not run",
+    "suite.SAVED": "Saved", "suite.UNSAVED": "Unsaved", "suite.save_path": "Save path · JSON",
+    "suite.saved_path": "Saved file", "suite.save": "Save study", "suite.view": "View study",
+    "suite.compare": "Compare saved family",
+    "suite.draft_changed": "The current source or Q5 path differs from the completed studies. Their captured identity and saved files remain unchanged until another run succeeds.",
+    "suite.STALE_INPUT": "Inputs changed during the operation. Its completion was discarded; previous completed studies remain available.",
+    "suite.retry": "Completed studies and successful saves are retained. Correct the input or choose a new save path, then retry.",
+    "operation.intraday_procedure_suite_run": "Run the three captured DEV selection procedures",
+    "operation.intraday_procedure_suite_save": "Save a completed selection study",
+})
+ZH_CN.update({
+    "suite.tab": "三流程运行", "suite.run": "运行三流程",
+    "suite.method": "对使用 1–6 个 Feature 的已存 DEV Ridge 候选运行 Q25、Q31 和 Q36。各研究保留自己的可用性状态；分别保存三份研究后，可比较完整流程族。",
+    "suite.source_required": "在开发研究中打开或保存普通 DEV 实验，并选择使用 1–6 个 Feature 的线性或二次 Ridge 候选。",
+    "suite.draft_source": "下次运行所选来源", "suite.completed_source": "已完成研究的捕获来源",
+    "suite.data": "可选：迁移后的 Q5 文件", "suite.source_id": "来源身份", "suite.candidate_id": "候选身份",
+    "suite.cost_index": "成本下标", "suite.candidate_index": "候选下标",
+    "suite.experiment_id": "研究身份", "suite.selection_id": "选择身份",
+    "suite.Q25": "Q25 · 内层模型选择", "suite.Q31": "Q31 · 经济阈值选择",
+    "suite.Q36": "Q36 · 联合经济选参", "suite.not_run": "尚未运行",
+    "suite.SAVED": "已保存", "suite.UNSAVED": "未保存", "suite.save_path": "保存路径 · JSON",
+    "suite.saved_path": "已存文件", "suite.save": "保存研究", "suite.view": "查看研究",
+    "suite.compare": "比较已存三流程",
+    "suite.draft_changed": "当前来源或 Q5 路径与已完成研究不同。再次运行成功前，已完成研究保留原捕获身份和已存文件。",
+    "suite.STALE_INPUT": "操作期间输入发生变化，本次迟到结果已丢弃；此前完成的研究仍可使用。",
+    "suite.retry": "已完成研究和成功保存的文件均已保留。修正输入或选择新的保存路径后重试。",
+    "operation.intraday_procedure_suite_run": "运行捕获 DEV 来源的三条选择流程",
+    "operation.intraday_procedure_suite_save": "保存已完成的选择研究",
+})
+
 TRANSLATIONS: Final[dict[str, dict[str, str]]] = {
     "en": EN,
     "zh-CN": ZH_CN,

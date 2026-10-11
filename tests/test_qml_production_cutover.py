@@ -53,7 +53,8 @@ def test_production_spec_has_exact_qml_asset_inventory() -> None:
     assert "IntradayProcedureComparisonPanel.qml" in expected_qml
     assert "IntradayProcedureStressPanel.qml" in expected_qml
     assert "IntradaySampleUsagePanel.qml" in expected_qml
-    assert len(expected_qml) == 55
+    assert "IntradayProcedureSuitePanel.qml" in expected_qml
+    assert len(expected_qml) == 56
     for asset in (
         "qmldir",
         "fusion-pixel-12px-proportional-zh_hans.otf",
@@ -126,6 +127,7 @@ def test_production_build_audits_qml_identity_laziness_and_tk_absence() -> None:
         r"_internal\market_vault\desktop\qml\pages\IntradayProcedureComparisonPanel.qml",
         r"_internal\market_vault\desktop\qml\pages\IntradayProcedureStressPanel.qml",
         r"_internal\market_vault\desktop\qml\pages\IntradaySampleUsagePanel.qml",
+        r"_internal\market_vault\desktop\qml\pages\IntradayProcedureSuitePanel.qml",
         "Bundled Fusion Pixel hash mismatch",
         "Unapproved QtWidgets/WebEngine content entered the production bundle",
     ):

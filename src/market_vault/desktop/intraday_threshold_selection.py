@@ -442,11 +442,12 @@ class IntradayThresholdSelectionController(PageController):
         self.changed.emit()
         return True
 
-    def _apply(self, snapshot, *, path="", opened=False):
+    def _apply(self, snapshot, *, path="", opened=False, completed_signature=None):
         self._content, self._root, self._path = snapshot.content, snapshot.as_dict(), path
         self._artifact_revision += 1
         self._scope_index, self._account_index, self._view_index = 0, 0, 0
-        self._completed_signature = None if opened else (self._source_signature, self._data_locator)
+        self._completed_signature = None if opened else (
+            completed_signature if completed_signature is not None else (self._source_signature, self._data_locator))
         self._proof, self._notice, self._study_error = "RECORDED" if opened else "COMPUTED", "", ""
         self._verified_data_path, self._verified_source_path = "", ""
         self._refresh()

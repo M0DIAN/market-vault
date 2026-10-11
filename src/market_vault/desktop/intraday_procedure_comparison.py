@@ -443,6 +443,57 @@ class IntradayProcedureComparisonController(PageController):
                 self.stateChanged.emit()
             self.changed.emit()
 
+    @staticmethod
+    def _source_descriptor(role, snapshot, path):
+        from ..research.intraday_inner_selection import INTRADAY_INNER_SELECTION_VERSION
+        from ..research.intraday_joint_selection import INTRADAY_JOINT_SELECTION_VERSION
+        from ..research.intraday_threshold_selection import INTRADAY_THRESHOLD_SELECTION_VERSION
+        kinds = {INTRADAY_INNER_SELECTION_VERSION: ("INNER_MODEL_SELECTION", "inner_selection_id"),
+                 INTRADAY_THRESHOLD_SELECTION_VERSION: ("ECONOMIC_THRESHOLD_SELECTION", "threshold_selection_id"),
+                 INTRADAY_JOINT_SELECTION_VERSION: ("JOINT_ECONOMIC_SELECTION", "joint_selection_id")}
+        root = snapshot.as_dict()
+        if root["artifact_schema_version"] not in kinds:
+            raise ValueError("Open saved Q25, Q31 or Q36 selection studies with their complete ordinary DEV source.")
+        kind, id_key = kinds[root["artifact_schema_version"]]
+        return {"role": role, "path": str(path), "content": snapshot.content,
+                "experiment_id": root["experiment_id"], "selection_id": root["report"][id_key],
+                "source_kind": kind, "name": root["name"], "sha256": hashlib.sha256(snapshot.content).hexdigest()}
+
+    def adopt_saved_family(self, studies: tuple, paths: tuple) -> bool:
+        """Atomically capture three saved standard studies; keep completed evidence."""
+        self._assert_thread()
+        if self.busy or self._runtime.busy:
+            return False
+        try:
+            from .quant_research import _experiment_file_path
+            from ..research.strategy_experiment import StrategyExperiment
+            if len(studies) != 3 or len(paths) != 3 or any(type(study) is not StrategyExperiment for study in studies):
+                raise ValueError("Provide the complete saved Q25, Q31 and Q36 family.")
+            sources = {}
+            kinds = ("INNER_MODEL_SELECTION", "ECONOMIC_THRESHOLD_SELECTION", "JOINT_ECONOMIC_SELECTION")
+            for role, study, raw_path, kind in zip(("A", "B", "C"), studies, paths, kinds, strict=True):
+                path = _experiment_file_path(raw_path)
+                source = self._source_descriptor(role, study, path)
+                if source["source_kind"] != kind:
+                    raise ValueError("The saved family must be ordered Q25, Q31, Q36.")
+                if path.is_symlink() or not path.is_file() or path.read_bytes() != study.content:
+                    raise ValueError("The saved study path must contain the captured immutable bytes.")
+                sources[role] = source
+        except (OSError, TypeError, ValueError) as exc:
+            self._study_error, self._notice = str(exc), ""
+            self.changed.emit()
+            return self._reject_input(exc)
+        choices = (self.viewOptions, self.memberOptions)
+        self._mode_index = 1
+        self._paths = {role: source["path"] for role, source in sources.items()}
+        self._sources = sources
+        self._revision += 1
+        self._study_error, self._notice = "", ""
+        if choices != (self.viewOptions, self.memberOptions):
+            self.choicesChanged.emit()
+        self.changed.emit()
+        return True
+
     def _open(self, roles):
         if self.busy or self._runtime.busy:
             return False
@@ -455,24 +506,8 @@ class IntradayProcedureComparisonController(PageController):
             return self._reject_input(exc)
 
         def operation(backend):
-            from ..research.intraday_inner_selection import INTRADAY_INNER_SELECTION_VERSION
-            from ..research.intraday_joint_selection import INTRADAY_JOINT_SELECTION_VERSION
-            from ..research.intraday_threshold_selection import INTRADAY_THRESHOLD_SELECTION_VERSION
             from ..research.strategy_experiment import load_strategy_experiment
-            kinds = {INTRADAY_INNER_SELECTION_VERSION: ("INNER_MODEL_SELECTION", "inner_selection_id"),
-                     INTRADAY_THRESHOLD_SELECTION_VERSION: ("ECONOMIC_THRESHOLD_SELECTION", "threshold_selection_id"),
-                     INTRADAY_JOINT_SELECTION_VERSION: ("JOINT_ECONOMIC_SELECTION", "joint_selection_id")}
-            sources = {}
-            for role, path in paths.items():
-                snapshot = load_strategy_experiment(path)
-                root = snapshot.as_dict()
-                if root["artifact_schema_version"] not in kinds:
-                    raise ValueError("Open saved Q25, Q31 or Q36 selection studies with their complete ordinary DEV source.")
-                kind, id_key = kinds[root["artifact_schema_version"]]
-                sources[role] = {"role": role, "path": str(path), "content": snapshot.content,
-                    "experiment_id": root["experiment_id"], "selection_id": root["report"][id_key],
-                    "source_kind": kind, "name": root["name"], "sha256": hashlib.sha256(snapshot.content).hexdigest()}
-            return sources
+            return {role: self._source_descriptor(role, load_strategy_experiment(path), path) for role, path in paths.items()}
 
         def opened(sources):
             # Group opening is atomic: one invalid file never replaces another.
