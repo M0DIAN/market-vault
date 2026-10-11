@@ -178,8 +178,42 @@ mixed-availability case.
 
 Repository hygiene, release/version 0.9.0, diff whitespace and actual partition
 coverage passed. The new test resolves to `intraday_ml_procedures`; no workflow
-or partition configuration changed. Natural final-candidate FULL CI and fresh
-independent review remain the merge gates described below.
+or partition configuration changed. Independent review found and resolved a
+stdout-publication error whose envelope could retain SUCCESS; the corrected
+CLI reports FAILED with exit 1 and preserves computed studies and completed
+saves. The focused real CLI/save test, including the new reporting probe,
+passed in 14.96 s. An independent isolated probe also verified retention of
+all three completed saves after stdout failed.
+
+### Q49 completed mainline gate
+
+[PR #319](https://github.com/M0DIAN/market-vault/pull/319) received fresh
+independent final-candidate PASS at
+`7429ac7bb7e94ce2624cf0abd96dc3ed90a91eaf`, tree
+`9971a7b9b8a6fd58c7cace9da26a1f1f8317c2f0`. Natural PR FULL
+[38166192471/1](https://github.com/M0DIAN/market-vault/actions/runs/38166192471/attempts/1)
+completed with all sixteen required jobs successful; actual candidate-source
+`check_jobs` returned `(True, None)`, with every raw job bound to that head,
+run and attempt. The earlier pre-repair run was superseded and cancelled;
+none of its results substitutes for this final-candidate evidence.
+
+The authorized squash main is
+`fcde2eb340a76522b3eeca5f66ac7d7a9d6295ab`, with the same tree and the single
+parent `fd87aa3594c43c9563e8a821752a66a6ce0f8308`. Its exact natural main push
+[38167436490/1](https://github.com/M0DIAN/market-vault/actions/runs/38167436490/attempts/1)
+completed successfully. The actual plan reported `POST_MERGE_REUSE=true`,
+reason `verified_full_pr_tree_equivalence`, binding PR #319, final head
+`7429ac7`, PR run `38166192471`, tested merge
+`561d9873f20079e4847e2fec133c8fb72ccdfae0`, and the identical tested/main tree.
+Five required non-partition jobs succeeded; the unexpanded partition job was
+skipped as planned. This is verified reuse, not a second FULL execution.
+Q50 implementation starts only after this terminal gate and a fresh main check.
+
+The final PR's longest functional job was the existing strategy partition
+(671 s); `intraday_ml_procedures`, which includes the new suite file, took
+551 s. Its new suite test call times were 15.98, 6.11, 3.17 and 2.60 s. Keep the
+existing eleven-way CI topology: this one observation does not establish a
+need to move tests or change the control plane.
 
 ## Q50 — identical fits shared within one action
 
@@ -224,6 +258,58 @@ Limit changes to the suite's private fit lifecycle, the directly affected fit
 call sites and focused suite regressions. Do not change Ridge arithmetic,
 normalization, solver, floating-point accumulation order, Q6, selected family,
 statistical objective, persisted formats or TEST.
+
+### Q50 implementation and local evidence
+
+The suite now creates one private `_SelectionFitCache` only after strict source
+preparation succeeds. Each evaluator verifies the same prepared-object owner;
+independent public runners still resolve their original fitter dynamically and
+do not use the cache. The key hashes the actual ordered fit inputs and preserves
+exact JSON number representations, including alpha `1` versus `1.0`. Cached
+models are deep-copied on every return; immutable raw scores produce fresh
+threshold actions and observation metadata on every request.
+
+Physical solver counts are measured at `intraday_research._fit`, counting each
+linear or quadratic solve once and separating complete ordinary reconstruction
+from the three procedures. The existing real two-fold quadratic source uses
+the non-first cost/candidate and source alpha 2.0. Its measurements were:
+
+| Execution | Strict preparation / reconstruction | Ordinary solves | Procedure solves | Total seconds |
+|---|---:|---:|---:|---:|
+| Three independent public runners | 3 each | 12 | 43 | 13.148 |
+| Q49 single preparation, no fit cache | 1 each | 4 | 43 | 5.997 |
+| Q50 single preparation and fit reuse | 1 each | 4 | 21 | 5.495 |
+| A second Q50 action with a fresh owner/cache | 1 each | 4 | 21 | 5.786 |
+
+All three complete canonical experiments and IDs matched across these runs.
+A real two-fold linear source with alpha 1000.0 also retained complete equality
+with the Q49 path: procedure solves fell from 43 to 21, ordinary solves remained
+2, and the outside-family alpha still required its three distinct inner fits.
+Its end-to-end times were 4.817 s without reuse and 5.096 s with reuse. Measured
+key construction plus model copying cost approximately 0.022–0.025 s per action.
+
+One bounded interleaved comparison investigated this remaining timing question
+using the same prepared linear source and a fresh cache on every cached run.
+The measured segment includes the three procedures and immutable artifact
+construction, but excludes mandatory source preparation. Three uncached samples
+were 2.266295, 2.182463 and 2.128172 s; three cached samples were 2.169277,
+2.271115 and 2.332223 s. The median changed from 2.182463 to 2.271115 s
+(+0.088652 s, +4.062%). Every sample retained identical complete experiments and
+the same 43-to-21 physical-work reduction. This compact linear fixture does
+not demonstrate wall-clock acceleration. The accepted deterministic benefit
+is removal of identical physical fits, with bounded measured cache overhead;
+neither a runtime guarantee nor an extrapolated production speedup is claimed.
+
+The focused suite file passed all eight tests in 73.23 s. Coverage includes
+actual-value/key/order/boundary/prediction-support discrimination, exact numeric
+encoding, real linear and quadratic fits, threshold and metadata independence,
+nested model mutation isolation, fresh second-action verification, owner
+rejection, complete unavailability and the existing actual CLI/save behavior.
+Three existing focused window regressions and three of the new small cache
+checks passed together in 0.40 s. Tests assert complete content and physical
+work, not a wall-clock threshold. Repository hygiene and
+release/version 0.9.0 checks passed. No numerical core or CI configuration was
+changed.
 
 ## Q51 — native run, save and compare workflow
 

@@ -14,6 +14,7 @@ from . import intraday_joint_selection as joint
 from . import intraday_threshold_selection as threshold
 from .intraday_backtest import intraday_data_path
 from .intraday_data import digest
+from .intraday_selection_fit import _SelectionFitCache
 from .intraday_selection_source import _prepare_selection_source
 from .strategy_experiment import StrategyExperiment, canonical_json, environment_versions, load_strategy_experiment
 
@@ -61,9 +62,10 @@ def evaluate_intraday_procedure_suite(source: StrategyExperiment, *, source_expe
         module._selected(root, plan)
         plans.append(plan)
     prepared = _prepare_selection_source(root, plans[0], label="procedure suite")
+    fit_cache = _SelectionFitCache(prepared)
     studies = []
     for (module, _, versions, _, artifact_version, mode), plan in zip(_MEMBERS, plans, strict=True):
-        report = module._evaluate(root, plan, prepared_source=prepared)
+        report = module._evaluate(root, plan, prepared_source=prepared, fit_cache=fit_cache)
         member = {"artifact_schema_version": artifact_version, "evaluation_mode": mode,
             "dataset_id": root["dataset_id"], "plan": plan, "report": report,
             "algorithm_versions": versions(root), "environment": environment_versions(), "name": name, "notes": notes}

@@ -18,6 +18,7 @@ from .intraday_data import digest, object_fields
 from .intraday_experiment import INTRADAY_EXPERIMENT_VERSIONS, _count
 from .intraday_inner_selection import _fit, _locator
 from .intraday_models import quadratic_terms
+from .intraday_selection_fit import _SelectionFitCache
 from .intraday_selection_source import _PreparedSelectionSource, _prepare_selection_source
 from .strategy_experiment import StrategyExperiment, canonical_json, environment_versions, load_strategy_experiment
 
@@ -144,15 +145,17 @@ def _threshold_accounts(predictions, sessions, prices, interval, policy):
     return family, selected
 
 
-def _select(window, features, source_strategy, interval, policy):
+def _select(window, features, source_strategy, interval, policy, *, fitter=None):
+    fitter = _fit if fitter is None else fitter
     evidence, rows, observations = window
-    model, predictions = _fit(rows, observations, features, source_strategy, evidence["training_boundary"])
+    model, predictions = fitter(rows, observations, features, source_strategy, evidence["training_boundary"])
     family, chosen = _threshold_accounts(predictions, evidence["sessions"], evidence["prices"], interval, policy)
     evidence.update(model=model, predictions=predictions, family_results=family, selected_index=chosen,
                     selected_recipe={**source_strategy, "threshold": THRESHOLDS[chosen]})
 
 
-def _evaluate(source, plan, *, data_file=None, data=None, prepared_source: _PreparedSelectionSource | None = None):
+def _evaluate(source, plan, *, data_file=None, data=None, prepared_source: _PreparedSelectionSource | None = None,
+              fit_cache: _SelectionFitCache | None = None):
     """Replay may reuse Q5 verified by this same action; no public data bypass."""
     group, reference = _selected(source, plan)
     if prepared_source is None:
@@ -160,6 +163,7 @@ def _evaluate(source, plan, *, data_file=None, data=None, prepared_source: _Prep
     elif data_file is not None or data is not None:
         raise ValueError("prepared selection source cannot be combined with another Q5 input")
     prepared = prepared_source.context_for(source, plan)
+    fitter = _fit if fit_cache is None else fit_cache.fitter(prepared_source, _fit)
     context, policy = prepared.context, parse_execution_policy(group["execution_policy"])
     windows = [_window(prepared, fold["training_days"], rows, fold["purged_keys"], fold["training_boundary"], policy)
                for fold, rows in zip(context["folds"], prepared.fold_rows, strict=True)]
@@ -178,14 +182,14 @@ def _evaluate(source, plan, *, data_file=None, data=None, prepared_source: _Prep
     if not reasons:
         predictions = []
         for fold, model, window, record in zip(context["folds"], reference["fold_models"], windows, outer, strict=True):
-            _select(window, context["feature_fields"], reference["strategy"], context["interval"], policy)
+            _select(window, context["feature_fields"], reference["strategy"], context["interval"], policy, fitter=fitter)
             recipe = window[0]["selected_recipe"]
             values = threshold_predictions([row for row in reference["predictions"]
                                             if row["trading_day"] in fold["validation_days"]], recipe["threshold"])
             record["application"] = {"strategy": deepcopy(recipe), "model": deepcopy(model["model"]), "predictions": values,
                                       "prediction_metrics": research.prediction_metrics(values, prepared.report)}
             predictions.extend(values)
-        _select(final, context["feature_fields"], reference["strategy"], context["interval"], policy)
+        _select(final, context["feature_fields"], reference["strategy"], context["interval"], policy, fitter=fitter)
         sessions, prices = execution_views(prepared.report, trading_days=tuple(context["evaluated_days"]))
         execution = run_intraday_execution(sessions=sessions, prices=prices, decisions=tuple(predictions),
                                           interval=context["interval"], policy=policy)

@@ -19,6 +19,7 @@ from .intraday_backtest import execution_views, intraday_data_path, parse_execut
 from .intraday_data import digest, object_fields
 from .intraday_experiment import INTRADAY_EXPERIMENT_VERSIONS
 from .intraday_models import INTRADAY_QUADRATIC_RIDGE_VERSION, fit_quadratic_rows, quadratic_terms
+from .intraday_selection_fit import _SelectionFitCache
 from .intraday_selection_source import _PreparedSelectionSource, _prepare_selection_source
 from .strategy_experiment import StrategyExperiment, canonical_json, environment_versions, load_strategy_experiment
 
@@ -94,9 +95,12 @@ def _recipe(member, source_strategy):
             "threshold": source_strategy["threshold"]}
 
 
-def _fit(rows, observations, features, recipe, boundary):
+def _fit(rows, observations, features, recipe, boundary, *, fit_cache: _SelectionFitCache | None = None):
     fitter = fit_quadratic_rows if recipe["kind"] == "QUADRATIC_RIDGE" else research.fit_ridge_rows
-    model, scores = fitter(rows, observations, features, recipe["alpha"], boundary=boundary)
+    if fit_cache is None:
+        model, scores = fitter(rows, observations, features, recipe["alpha"], boundary=boundary)
+    else:
+        model, scores = fit_cache.raw_fit(rows, observations, features, recipe, boundary, fitter)
     predictions = [{**{key: row[key] for key in ("observation_key", "trading_day", "slot", "decision_time")},
                     "score": score, "target": "LONG" if score > recipe["threshold"] else "FLAT"}
                    for row, score in zip(observations, scores, strict=True)]
@@ -138,11 +142,12 @@ def _window(prepared, history_days, history_rows, history_purged, history_bounda
     return evidence, rows, observations
 
 
-def _select(window, features, source_strategy):
+def _select(window, features, source_strategy, *, fitter=None):
+    fitter = _fit if fitter is None else fitter
     evidence, rows, observations = window
     for index, member in enumerate(FAMILY):
         recipe = _recipe(member, source_strategy)
-        model, predictions = _fit(rows, observations, features, recipe, evidence["training_boundary"])
+        model, predictions = fitter(rows, observations, features, recipe, evidence["training_boundary"])
         evidence["family_results"].append({"candidate_index": index, "strategy": recipe, "model": model,
             "predictions": predictions, "mse": pooled_mse(predictions, evidence["scored_targets"])})
     index = min(range(len(FAMILY)), key=lambda index: evidence["family_results"][index]["mse"])
@@ -150,7 +155,8 @@ def _select(window, features, source_strategy):
     evidence["selected_recipe"] = deepcopy(evidence["family_results"][index]["strategy"])
 
 
-def _evaluate(source, plan, *, data_file=None, data=None, prepared_source: _PreparedSelectionSource | None = None):
+def _evaluate(source, plan, *, data_file=None, data=None, prepared_source: _PreparedSelectionSource | None = None,
+              fit_cache: _SelectionFitCache | None = None):
     """Internal replay may reuse Q5 already verified by this same final action."""
     group, reference = _selected(source, plan)
     if prepared_source is None:
@@ -158,6 +164,7 @@ def _evaluate(source, plan, *, data_file=None, data=None, prepared_source: _Prep
     elif data_file is not None or data is not None:
         raise ValueError("prepared selection source cannot be combined with another Q5 input")
     prepared = prepared_source.context_for(source, plan)
+    fitter = _fit if fit_cache is None else fit_cache.fitter(prepared_source, _fit)
     context = prepared.context
     windows = [_window(prepared, fold["training_days"], rows, fold["purged_keys"], fold["training_boundary"])
                for fold, rows in zip(context["folds"], prepared.fold_rows, strict=True)]
@@ -176,14 +183,14 @@ def _evaluate(source, plan, *, data_file=None, data=None, prepared_source: _Prep
     if not reasons:
         predictions = []
         for fold, rows, window, record in zip(context["folds"], prepared.fold_rows, windows, outer, strict=True):
-            _select(window, context["feature_fields"], reference["strategy"])
+            _select(window, context["feature_fields"], reference["strategy"], fitter=fitter)
             observations = tuple(row for row in prepared.observations if row["trading_day"] in fold["validation_days"])
             recipe = window[0]["selected_recipe"]
-            model, values = _fit(rows, observations, context["feature_fields"], recipe, fold["training_boundary"])
+            model, values = fitter(rows, observations, context["feature_fields"], recipe, fold["training_boundary"])
             record["refit"] = {"strategy": deepcopy(recipe), "model": model, "predictions": values,
                                "prediction_metrics": research.prediction_metrics(values, prepared.report)}
             predictions.extend(values)
-        _select(final, context["feature_fields"], reference["strategy"])
+        _select(final, context["feature_fields"], reference["strategy"], fitter=fitter)
         sessions, prices = execution_views(prepared.report, trading_days=tuple(context["evaluated_days"]))
         execution = run_intraday_execution(sessions=sessions, prices=prices, decisions=tuple(predictions),
             interval=context["interval"], policy=parse_execution_policy(group["execution_policy"]))
