@@ -742,7 +742,8 @@ class QuantResearchController(NetworkController):
         self._intraday_joint_controller = IntradayJointSelectionController(runtime, research=self._intraday_research_controller, parent=self)
         from .intraday_final_test import IntradayFinalController
         self._intraday_final_controller = IntradayFinalController(runtime, research=self._intraday_research_controller,
-            inner=self._intraday_inner_controller, threshold=self._intraday_threshold_controller, parent=self)
+            inner=self._intraday_inner_controller, threshold=self._intraday_threshold_controller,
+            joint=self._intraday_joint_controller, parent=self)
         from .intraday_saved_comparison import IntradaySavedComparisonController
         self._intraday_saved_comparison_controller = IntradaySavedComparisonController(runtime, parent=self)
         from .intraday_ml_diagnostics import IntradayMLDiagnosticsController

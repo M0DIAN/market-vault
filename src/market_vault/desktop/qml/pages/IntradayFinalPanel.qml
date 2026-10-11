@@ -11,7 +11,8 @@ Item {
     required property var controller
     required property var i18n
     property int bindingRevision: -1
-    readonly property string sourceOverrideKey: controller.hasThresholdSelection ? "final.threshold_source_override" : "quant.intraday_source_override"
+    readonly property string sourceOverrideKey: controller.hasJointSelection ? "final.joint_source_override"
+        : controller.hasThresholdSelection ? "final.threshold_source_override" : "quant.intraday_source_override"
 
     function sync() {
         if (bindingRevision !== controller.bindingRevision) {
@@ -79,6 +80,14 @@ Item {
         onAccepted: root.controller.openThresholdSource(selectedFile.toString())
     }
     FileDialog {
+        id: openJointSource
+        objectName: "intradayFinalJointSourceDialog"
+        fileMode: FileDialog.OpenFile
+        nameFilters: ["JSON files (*.json)"]
+        title: root.i18n.catalog["joint.open"]
+        onAccepted: root.controller.openJointSource(selectedFile.toString())
+    }
+    FileDialog {
         id: sourcePicker
         objectName: "intradayFinalSourceDialog"
         fileMode: FileDialog.OpenFile
@@ -105,7 +114,8 @@ Item {
         background: Rectangle { color: Theme.PixelTheme.surface; border.color: Theme.PixelTheme.goldDark }
         contentItem: ColumnLayout {
             spacing: Theme.PixelTheme.spacingSm
-            Label { Layout.fillWidth: true; text: root.i18n.catalog[root.controller.hasThresholdSelection ? "final.threshold_locations_help" : "quant.intraday_locations_help"]; wrapMode: Text.WordWrap; color: Theme.PixelTheme.ink }
+            Label { Layout.fillWidth: true; text: root.i18n.catalog[root.controller.hasJointSelection ? "final.joint_locations_help"
+                : root.controller.hasThresholdSelection ? "final.threshold_locations_help" : "quant.intraday_locations_help"]; wrapMode: Text.WordWrap; color: Theme.PixelTheme.ink }
             RowLayout {
                 Layout.fillWidth: true
                 Components.LabeledTextField { id: sourcePath; objectName: "intradayFinalSourcePath"; Layout.fillWidth: true; Layout.maximumWidth: Infinity; label: root.i18n.catalog[root.sourceOverrideKey]; onTextChanged: root.controller.setLocations(text, dataPath.text) }
@@ -273,6 +283,23 @@ Item {
                 }
                 Components.PixelButton { objectName: "intradayFreezeThresholdButton"; text: root.i18n.catalog["final.freeze_threshold"]; enabled: root.controller.canFreezeThreshold; onClicked: root.controller.freezeThresholdSelection() }
             }
+            RowLayout {
+                Layout.fillWidth: true
+                enabled: !root.controller.busy && !operationRuntime.busy
+                Components.PixelButton { objectName: "intradayFinalJointOpenButton"; text: root.i18n.catalog["joint.open"]; onClicked: openJointSource.open() }
+                Label {
+                    objectName: "intradayFinalJointSource"
+                    Layout.fillWidth: true
+                    text: root.controller.jointSourceDetails || root.i18n.catalog["final.joint_freeze_help"]
+                    elide: Text.ElideMiddle
+                    color: Theme.PixelTheme.inkMuted
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                    ToolTip.visible: jointHover.hovered
+                    ToolTip.text: text
+                    HoverHandler { id: jointHover }
+                }
+                Components.PixelButton { objectName: "intradayFreezeJointButton"; text: root.i18n.catalog["final.freeze_joint"]; enabled: root.controller.canFreezeJoint; onClicked: root.controller.freezeJointSelection() }
+            }
             Label {
                 Layout.fillWidth: true
                 text: root.i18n.catalog["quant.intraday_final_help"]
@@ -359,7 +386,8 @@ Item {
                 property bool quadraticModel: root.controller.selectionLoaded && view.selectedView === 4
                     && root.controller.frozenCandidate.strategy.kind === "QUADRATIC_RIDGE"
                 visible: root.controller.hasDevSelection || quadraticModel
-                text: (root.controller.hasDevSelection ? root.i18n.catalog[root.controller.hasThresholdSelection ? "final.threshold_method" : "quant.intraday_final_selection_method"] : "")
+                text: (root.controller.hasDevSelection ? root.i18n.catalog[root.controller.hasJointSelection ? "final.joint_method"
+                    : root.controller.hasThresholdSelection ? "final.threshold_method" : "quant.intraday_final_selection_method"] : "")
                     + (quadraticModel ? "\n" + root.i18n.catalog["quant.intraday_final_model_help"] : "")
                 wrapMode: Text.WordWrap
                 color: Theme.PixelTheme.inkMuted
@@ -368,7 +396,7 @@ Item {
             Label {
                 objectName: "intradayFinalReturnBasis"
                 Layout.fillWidth: true
-                visible: root.controller.hasThresholdSelection
+                visible: root.controller.hasEconomicSelection
                 text: root.controller.returnBasis.price_basis ? root.i18n.catalog["quant.return_basis_help"] : ""
                 wrapMode: Text.WordWrap
                 color: Theme.PixelTheme.inkMuted
@@ -386,7 +414,8 @@ Item {
                     "quant.intraday_final_model", "quant.intraday_predictions", "quant.performance",
                     "quant.performance_exit", "quant.performance_entry", "quant.performance_day",
                     "quant.risk_summary", "quant.risk_drawdowns", "quant.risk_distributions", "quant.risk_concentration",
-                    "quant.risk_folds"].concat(root.controller.hasThresholdSelection ? ["final.threshold_family", "final.threshold_model", "final.keys", "final.threshold_decisions",
+                    "quant.risk_folds"].concat(root.controller.hasEconomicSelection ? [root.controller.hasJointSelection ? "final.joint_family" : "final.threshold_family",
+                    root.controller.hasJointSelection ? "final.joint_models" : "final.threshold_model", "final.keys", "final.threshold_decisions",
                     "final.threshold_trades", "final.threshold_daily", "final.threshold_ledger", "final.threshold_transactions", "threshold.sessions", "threshold.prices"]
                     : root.controller.hasDevSelection ? ["final.family", "final.models", "final.keys", "final.predictions"] : []).map(key => root.i18n.catalog[key])
                 onSelected: { selectedView = currentIndex; root.controller.selectView(currentIndex) }
@@ -396,18 +425,20 @@ Item {
                 id: thresholdAccount
                 objectName: "intradayFinalThresholdAccount"
                 Layout.fillWidth: true
-                Layout.maximumWidth: 350
-                visible: root.controller.hasThresholdSelection && view.selectedView >= 15
-                label: root.i18n.catalog["final.threshold_account"]
-                model: root.controller.thresholdAccountOptions.map(option => option.threshold_bps + " bp" + (option.chosen ? " · " + root.i18n.catalog["threshold.chosen"] : ""))
+                Layout.maximumWidth: root.controller.hasJointSelection ? 600 : 350
+                visible: root.controller.hasEconomicSelection && view.selectedView >= 15
+                label: root.i18n.catalog[root.controller.hasJointSelection ? "final.joint_account" : "final.threshold_account"]
+                model: root.controller.thresholdAccountOptions.map(option => (root.controller.hasJointSelection
+                    ? root.i18n.catalog["prediction_quality." + option.strategy_kind] + " · alpha=" + option.alpha + " · " : "")
+                    + option.threshold_bps + " bp" + (option.chosen ? " · " + root.i18n.catalog["threshold.chosen"] : ""))
                 onSelected: root.controller.selectThresholdAccount(currentIndex)
                 onModelChanged: currentIndex = root.controller.thresholdAccountIndex
             }
             Label {
                 objectName: "intradayFinalThresholdDecisionNote"
                 Layout.fillWidth: true
-                visible: root.controller.hasThresholdSelection && view.selectedView >= 15
-                text: root.i18n.catalog["final.threshold_decision_note"]
+                visible: root.controller.hasEconomicSelection && view.selectedView >= 15
+                text: root.i18n.catalog[root.controller.hasJointSelection ? "final.joint_decision_note" : "final.threshold_decision_note"]
                 wrapMode: Text.WordWrap
                 color: Theme.PixelTheme.inkMuted
                 font.pixelSize: Theme.PixelTheme.fontSm
@@ -455,15 +486,24 @@ Item {
                 objectName: "intradayTestTable"
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                Layout.minimumHeight: root.controller.hasThresholdSelection && view.selectedView === 15 ? 220
+                Layout.minimumHeight: root.controller.hasEconomicSelection && view.selectedView === 15 ? 220
                     : view.selectedView === 0 ? 120 : 170
                 paged: true
                 tableModel: root.controller.tableModel
                 i18n: root.i18n
                 cellFormatter: function(value) {
-                    if (view.selectedView >= 15 || view.selectedView === 4) return root.i18n.catalog["threshold." + value] || root.i18n.catalog["inner." + value] || root.i18n.catalog["performance." + value] || value
-                    if (view.selectedView >= 10) return root.i18n.catalog["risk." + value] || root.i18n.catalog["performance." + value] || value
-                    return view.selectedView >= 6 ? (root.i18n.catalog["performance." + value] || value) : value
+                    root.i18n.language
+                    const prefixes = view.selectedView >= 15 || view.selectedView === 4
+                        ? ["threshold.", "inner.", "performance."]
+                        : view.selectedView >= 10 ? ["risk.", "performance."]
+                        : view.selectedView >= 6 ? ["performance."] : []
+                    if (root.controller.hasJointSelection && (view.selectedView >= 15 || view.selectedView === 4))
+                        prefixes.push("prediction_quality.")
+                    for (const prefix of prefixes) {
+                        const key = prefix + value, translated = root.i18n.translate(key)
+                        if (translated && translated !== key) return translated
+                    }
+                    return value
                 }
                 onPreviousRequested: root.controller.changePage(-1)
                 onNextRequested: root.controller.changePage(1)
