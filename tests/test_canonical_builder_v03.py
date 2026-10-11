@@ -201,7 +201,8 @@ def test_empty_input_returns_empty_result(tmp_path):
 
 @pytest.mark.parametrize("column,value", [
     ("open", 0.0), ("low", -1.0), ("high", float("inf")),
-    ("close", float("nan")), ("volume", -1.0), ("volume", float("inf")),
+    ("close", 0.0), ("close", -5.0), ("close", float("nan")),
+    ("volume", -1.0), ("volume", float("inf")),
 ])
 def test_canonical_rejects_invalid_core_market_numbers(tmp_path, column, value):
     cfg = settings(tmp_path)

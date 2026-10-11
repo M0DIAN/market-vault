@@ -298,8 +298,6 @@ def fixtures(tmp_path_factory):
     ``b``  US.MU 2026-07-01 09:36..09:37 NY (label-window rows), archived 14:00Z
     ``g``  US.MU 2026-07-01 09:30 + 09:32 NY (one internal gap), archived 14:00Z
     ``d``  US.NVDA 2026-07-02 09:30..09:31 NY, archived 2026-07-02T14:00Z
-    ``zero``  US.MU 2026-07-01 09:30..09:31 NY, closes 0,110
-    ``neg``   US.MU 2026-07-01 09:30..09:31 NY, closes -5,110
     ``volzero``  US.MU 2026-07-01 09:30..09:31 NY, volumes 0,100
     """
     root = tmp_path_factory.mktemp("mv_feature_execution")
@@ -335,19 +333,11 @@ def fixtures(tmp_path_factory):
         "US.NVDA", date(2026, 7, 2), "run-d", minute_keys("2026-07-02 09:30:00", 2),
         run_finished_at=datetime(2026, 7, 2, 14, 0, tzinfo=UTC),
     )
-    zero = build(
-        "US.MU", date(2026, 7, 1), "run-zero",
-        minute_keys("2026-07-01 09:30:00", 2), closes=[0.0, 110.0],
-    )
-    neg = build(
-        "US.MU", date(2026, 7, 1), "run-neg",
-        minute_keys("2026-07-01 09:30:00", 2), closes=[-5.0, 110.0],
-    )
     volzero = build(
         "US.MU", date(2026, 7, 1), "run-volzero",
         minute_keys("2026-07-01 09:30:00", 2), volumes=[0.0, 100.0],
     )
-    return SimpleNamespace(a=a, b=b, g=g, d=d, zero=zero, neg=neg, volzero=volzero)
+    return SimpleNamespace(a=a, b=b, g=g, d=d, volzero=volzero)
 
 
 # ---------------------------------------------------------------------------
@@ -1012,45 +1002,43 @@ def test_negative_zero_output_normalization():
 # ---------------------------------------------------------------------------
 
 
-def test_simple_return_zero_denominator_wrapped(fixtures):
-    pit = assemble([fixtures.zero], [request()])
-    with pytest.raises(FeatureExecutionError) as excinfo:
-        execute_builtin_features(
-            [fixtures.zero],
-            pit,
-            [feature_spec("sr", REF_SIMPLE, ("close",), parameters=(wb(2),))],
-        )
-    message = str(excinfo.value)
-    assert REF_SIMPLE in message
-    assert "sr" in message
-    assert pit_sample_key(request()) in message
+def test_simple_return_zero_denominator_fails():
+    # Canonical admission now rejects nonpositive prices before execution.
+    # Exercise the unchanged formula guard directly, without forging a
+    # supposedly verified build. The legal zero-volume case below proves
+    # the executor's common exception wrapping through the real reader.
+    with pytest.raises(ValueError, match="non-zero first close"):
+        simple_return(FeatureTransformInput(
+            field_names=("close",), rows=((0.0,), (110.0,)), parameters=(wb(2),),
+        ))
 
 
-def test_log_return_zero_input_fails(fixtures):
-    with pytest.raises(FeatureExecutionError):
-        execute_builtin_features(
-            [fixtures.zero],
-            assemble([fixtures.zero], [request()]),
-            [feature_spec("lr", REF_LOG, ("close",), parameters=(wb(2),))],
-        )
+def test_log_return_zero_input_fails():
+    with pytest.raises(ValueError, match="strictly positive closes"):
+        log_return(FeatureTransformInput(
+            field_names=("close",), rows=((0.0,), (110.0,)), parameters=(wb(2),),
+        ))
 
 
-def test_log_return_negative_input_fails(fixtures):
-    with pytest.raises(FeatureExecutionError):
-        execute_builtin_features(
-            [fixtures.neg],
-            assemble([fixtures.neg], [request()]),
-            [feature_spec("lr", REF_LOG, ("close",), parameters=(wb(2),))],
-        )
+def test_log_return_negative_input_fails():
+    with pytest.raises(ValueError, match="strictly positive closes"):
+        log_return(FeatureTransformInput(
+            field_names=("close",), rows=((-5.0,), (110.0,)), parameters=(wb(2),),
+        ))
 
 
 def test_volume_ratio_zero_previous_mean_fails(fixtures):
-    with pytest.raises(FeatureExecutionError):
+    with pytest.raises(FeatureExecutionError) as excinfo:
         execute_builtin_features(
             [fixtures.volzero],
             assemble([fixtures.volzero], [request()]),
             [feature_spec("vr", REF_VRATIO, ("volume",), parameters=(wb(2),))],
         )
+    message = str(excinfo.value)
+    assert REF_VRATIO in message
+    assert "vr" in message
+    assert pit_sample_key(request()) in message
+    assert isinstance(excinfo.value.__cause__, ValueError)
 
 
 def test_candle_range_high_below_low_fails(fixtures):

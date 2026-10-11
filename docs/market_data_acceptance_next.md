@@ -61,6 +61,10 @@ The existing TS2 zero-price domain checks now require refusal at Canonical
 reader admission; zero-volume ratio denominators still reach and fail the
 formula domain check. This is an explicit earlier rejection, not a weakened
 formula guard or a historical artifact rewrite.
+The legacy Dataset feature suite likewise keeps verified fixtures numerically
+valid: nonpositive return inputs exercise the existing transforms directly,
+and legal zero-volume Canonical data proves the executor's error wrapping,
+including transform/spec/sample attribution and the original cause.
 
 **Exclusions:** filling or correcting data, changing run-wide quality attribution,
 rewriting archives, volatility-domain expansion, corporate-action accounting,
