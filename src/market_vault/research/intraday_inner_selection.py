@@ -19,6 +19,7 @@ from .intraday_backtest import execution_views, intraday_data_path, parse_execut
 from .intraday_data import digest, object_fields
 from .intraday_experiment import INTRADAY_EXPERIMENT_VERSIONS
 from .intraday_models import INTRADAY_QUADRATIC_RIDGE_VERSION, fit_quadratic_rows, quadratic_terms
+from .intraday_selection_source import _PreparedSelectionSource, _prepare_selection_source
 from .strategy_experiment import StrategyExperiment, canonical_json, environment_versions, load_strategy_experiment
 
 
@@ -149,17 +150,14 @@ def _select(window, features, source_strategy):
     evidence["selected_recipe"] = deepcopy(evidence["family_results"][index]["strategy"])
 
 
-def _evaluate(source, plan, *, data_file=None, data=None):
+def _evaluate(source, plan, *, data_file=None, data=None, prepared_source: _PreparedSelectionSource | None = None):
     """Internal replay may reuse Q5 already verified by this same final action."""
     group, reference = _selected(source, plan)
-    if source["algorithm_versions"] != research.research_algorithm_versions(source["plan"]):
-        raise ValueError("recorded source algorithms differ; no Q5 data was read or model fitted")
-    normalized, children, axes = research.expand_intraday_plan(source["plan"], recorded=True)
-    prepared = research._prepare_intraday_research(children[0], data=data, data_file=data_file or plan["intraday_data_path"])
-    _equal(prepared.context, source["report"]["context"], "source common context")
-    # This single Q5 admission is also used for complete source reconstruction.
-    original = research._evaluate_intraday_research(normalized, children, axes, prepared)
-    _equal(original, source["report"], "complete ordinary source reconstruction")
+    if prepared_source is None:
+        prepared_source = _prepare_selection_source(source, plan, data_file=data_file, data=data, label="inner selection")
+    elif data_file is not None or data is not None:
+        raise ValueError("prepared selection source cannot be combined with another Q5 input")
+    prepared = prepared_source.context_for(source, plan)
     context = prepared.context
     windows = [_window(prepared, fold["training_days"], rows, fold["purged_keys"], fold["training_boundary"])
                for fold, rows in zip(context["folds"], prepared.fold_rows, strict=True)]

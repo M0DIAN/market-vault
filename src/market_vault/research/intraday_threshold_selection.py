@@ -18,6 +18,7 @@ from .intraday_data import digest, object_fields
 from .intraday_experiment import INTRADAY_EXPERIMENT_VERSIONS, _count
 from .intraday_inner_selection import _fit, _locator
 from .intraday_models import quadratic_terms
+from .intraday_selection_source import _PreparedSelectionSource, _prepare_selection_source
 from .strategy_experiment import StrategyExperiment, canonical_json, environment_versions, load_strategy_experiment
 
 
@@ -151,16 +152,14 @@ def _select(window, features, source_strategy, interval, policy):
                     selected_recipe={**source_strategy, "threshold": THRESHOLDS[chosen]})
 
 
-def _evaluate(source, plan, *, data_file=None, data=None):
+def _evaluate(source, plan, *, data_file=None, data=None, prepared_source: _PreparedSelectionSource | None = None):
     """Replay may reuse Q5 verified by this same action; no public data bypass."""
     group, reference = _selected(source, plan)
-    if source["algorithm_versions"] != research.research_algorithm_versions(source["plan"]):
-        raise ValueError("recorded source algorithms differ; no Q5 data was read or model fitted")
-    normalized, children, axes = research.expand_intraday_plan(source["plan"], recorded=True)
-    prepared = research._prepare_intraday_research(children[0], data=data, data_file=data_file or plan["intraday_data_path"])
-    _equal(prepared.context, source["report"]["context"], "source common context")
-    original = research._evaluate_intraday_research(normalized, children, axes, prepared)
-    _equal(original, source["report"], "complete ordinary source reconstruction")
+    if prepared_source is None:
+        prepared_source = _prepare_selection_source(source, plan, data_file=data_file, data=data, label="threshold selection")
+    elif data_file is not None or data is not None:
+        raise ValueError("prepared selection source cannot be combined with another Q5 input")
+    prepared = prepared_source.context_for(source, plan)
     context, policy = prepared.context, parse_execution_policy(group["execution_policy"])
     windows = [_window(prepared, fold["training_days"], rows, fold["purged_keys"], fold["training_boundary"], policy)
                for fold, rows in zip(context["folds"], prepared.fold_rows, strict=True)]
