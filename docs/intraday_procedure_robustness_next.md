@@ -127,6 +127,19 @@ bounds and unavailable reasons, the common deduction, complete synchronized
 daily values and original member/account identities. Extend Q39's desktop
 surface and add a settings-independent three-source CLI entry.
 
+The API is `analyze_intraday_procedure_family(snapshots, ...)`; `snapshots`
+contains exactly three immutable saved studies. The CLI accepts three repeated
+`--study` arguments, with the same optional numerical parameters as Q39:
+
+```console
+market-vault research-intraday-procedure-family --study /absolute/q25.json --study /absolute/q31.json --study /absolute/q36.json
+```
+
+The report version is `market-vault-intraday-procedure-family-v1`. Canonical
+member order also applies to its `family_bounds_id`. The existing native
+Procedure comparison page adds a family mode and a third explicitly opened
+input; changing the draft mode never reinterprets a previously completed result.
+
 ### Acceptance and exclusions
 
 An independent small-matrix oracle verifies centering, common sample indices,
@@ -199,6 +212,29 @@ Validation uses compact real-source fixtures, numerical oracles and focused
 failure/recovery cases, followed by independent final-candidate review and
 natural FULL CI. No unrelated safety audit, whole-project refactor or new
 testing framework is included.
+
+### Observed Q39 execution and fixture reuse
+
+Q39 is complete on main `65d374eda3203737a326a90d1ce7c685d617e271`, tree
+`19c853fe8ec193d879f42800b74ac9a828ff2c96`, from PR #309. The final PR head
+`f9027f329bf967caa369c6721e1ec667a253a87a` passed independent core/CI and native
+review and natural FULL `38120135747/1`: all 16 jobs succeeded in 14m54s.
+Exact-main push `38121023070/1` succeeded in 14m48s with 16 jobs and explicit
+`reuse=false / control_plane_changed`; it actually executed FULL.
+
+Final PR strategy took 5m45s and the new ML-procedure partition 11m14s.
+The overall run was 4m21s shorter than Q38's reference run, with runner
+variation and Q39's added work limiting attribution. The initial candidate's
+production QML inventory failure was repaired by registering the new panel
+in the production spec and Windows asset audit; both final runs passed it.
+
+The new Q39 test file took about 123 seconds in that run, including about
+70 seconds constructing its real studies. Q40 shares the existing immutable
+Q25/Q31/Q36 fixture through a standard session fixture in `tests/conftest.py`
+for Q39-Q41, avoiding a duplicate reconstruction for every new report file.
+The original Q35 fixture's study mapping remains unchanged, test assertions
+remain intact, and unavailable-study cases retain their own real inputs.
+No further CI partition or timeout changes are needed for this fixture reuse.
 
 ## Method references
 

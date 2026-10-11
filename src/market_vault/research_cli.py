@@ -41,6 +41,7 @@ from .intraday_signal_delay_cli import add_intraday_signal_delay_subparser, rese
 from .intraday_prediction_quality_cli import add_intraday_prediction_quality_subparser, research_intraday_prediction_quality_main
 from .intraday_ml_diagnostics_cli import add_intraday_ml_diagnostics_subparser, research_intraday_ml_diagnostics_main
 from .intraday_procedure_comparison_cli import add_intraday_procedure_comparison_subparser, research_intraday_procedure_comparison_main
+from .intraday_procedure_family_cli import add_intraday_procedure_family_subparser, research_intraday_procedure_family_main
 from .intraday_feature_ablation_cli import add_intraday_feature_ablation_subparser, research_intraday_feature_ablation_main
 from .intraday_quadratic_ridge_cli import add_intraday_quadratic_ridge_subparser, research_intraday_quadratic_ridge_main
 from .intraday_training_history_cli import add_intraday_training_history_subparser, research_intraday_training_history_main
@@ -141,6 +142,7 @@ RESEARCH_COMMANDS = frozenset({
     "research-intraday-prediction-quality",
     "research-intraday-ml-prediction-quality",
     "research-intraday-procedure-comparison",
+    "research-intraday-procedure-family",
     "research-intraday-inner-objective-sensitivity",
     "research-intraday-procedure-return-uncertainty",
     "research-intraday-feature-ablation",
@@ -266,6 +268,7 @@ def add_research_subparsers(subparsers) -> None:
     add_intraday_prediction_quality_subparser(subparsers)
     add_intraday_ml_diagnostics_subparser(subparsers)
     add_intraday_procedure_comparison_subparser(subparsers)
+    add_intraday_procedure_family_subparser(subparsers)
     add_intraday_feature_ablation_subparser(subparsers)
     add_intraday_quadratic_ridge_subparser(subparsers)
     add_intraday_training_history_subparser(subparsers)
@@ -292,6 +295,8 @@ def add_research_subparsers(subparsers) -> None:
 def run_research_command(command: str, args: argparse.Namespace) -> int:
     if command == "research-intraday-procedure-comparison":
         return research_intraday_procedure_comparison_main(args)
+    if command == "research-intraday-procedure-family":
+        return research_intraday_procedure_family_main(args)
     if command == "research-return-assessment":
         return research_return_assessment_main(args)
     if command in ("research-intraday-scenarios", "research-intraday-export-scenario"):

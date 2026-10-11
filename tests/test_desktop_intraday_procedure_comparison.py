@@ -17,9 +17,7 @@ from market_vault.research.intraday_experiment import create_intraday_experiment
 from market_vault.research.intraday_inner_selection import run_intraday_inner_selection
 from market_vault.research.intraday_threshold_selection import run_intraday_threshold_selection
 from market_vault.research.strategy_experiment import canonical_json, write_strategy_experiment
-from test_intraday_ml_procedures_comparison import (
-    procedure_comparison_case, procedure_return_case, reseal_procedure_benchmark,  # noqa: F401
-)
+from test_intraday_ml_procedures_comparison import reseal_procedure_benchmark
 
 
 ROOT = Path(__file__).resolve().parents[1]

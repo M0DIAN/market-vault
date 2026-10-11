@@ -22,21 +22,9 @@ from market_vault.research.intraday_experiment import create_intraday_experiment
 from market_vault.research.strategy_experiment import StrategyExperiment, canonical_json, write_strategy_experiment
 from test_intraday_experiment import signed
 from test_strategy_intraday_inner_objective_sensitivity import prohibit_recomputation
-from test_strategy_intraday_procedure_return_uncertainty import procedure_return_case  # noqa: F401
 
 
 ROOT = Path(__file__).resolve().parents[1]
-
-
-@pytest.fixture(scope="session")
-def procedure_comparison_case(procedure_return_case):
-    case = procedure_return_case
-    candidate = case.source.as_dict()["report"]["groups"][0]["results"][0]
-    snapshot = joint.run_intraday_joint_selection(case.path,
-        expected_experiment_id=case.source.experiment_id, cost_index=0, candidate_index=0,
-        expected_candidate_id=candidate["candidate_id"])
-    case.studies["q36"] = snapshot, write_strategy_experiment(snapshot, path=case.path.parent / "q36.json").path
-    return case
 
 
 def _values(snapshot):
