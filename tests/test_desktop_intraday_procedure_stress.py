@@ -174,6 +174,45 @@ def evidence():
 def displayed(value):
     return find('intradayProcedureStressTable').property('cellFormatter').call([QJSValue(value)]).toString()
 
+def check_account_section_labels():
+    # Origin identifies the account. Its section menu must not reclassify a
+    # derived ledger, daily path or risk record as an original saved record.
+    locale = session.i18n.language
+    origin, role, section = controller.originIndex, controller.roleIndex, controller.sectionOptions[controller.sectionIndex]
+    labels = {
+        'en': {'execution.ledger': 'Complete ledger', 'execution.daily': 'Daily cash accounts', 'execution.windows': 'Trading windows',
+               'execution.decisions': 'Execution decisions', 'execution.trades': 'Completed trades',
+               'execution.transactions': 'Transaction records', 'execution.metrics': 'Execution metrics',
+               'risk': 'Daily risk summary'},
+        'zh-CN': {'execution.ledger': '完整账本', 'execution.daily': '逐日现金账户', 'execution.windows': '交易窗口',
+                  'execution.decisions': '执行决策记录', 'execution.trades': '已完成交易',
+                  'execution.transactions': '成交明细', 'execution.metrics': '执行指标', 'risk': '每日风险摘要'},
+    }
+    for language, expected in labels.items():
+        assert session.i18n.setLanguage(language)
+        for origin_index in (0, 1):
+            choose('intradayProcedureStressOrigin', origin_index)
+            for role_index, account_role in enumerate(controller.roleOptions):
+                choose('intradayProcedureStressRole', role_index)
+                menu = find('intradayProcedureStressSection')
+                choices = menu.property('model')
+                choices = choices.toVariant() if isinstance(choices, QJSValue) else list(choices)
+                assert len(choices) == len(controller.sectionOptions)
+                for key, text in zip(controller.sectionOptions, choices, strict=True):
+                    assert text == session.i18n.catalog['procedure_stress.account_field.' + key]
+                    assert 'original' not in text.lower() and '原' not in text
+                for key, text in expected.items():
+                    choose('intradayProcedureStressSection', controller.sectionOptions.index(key))
+                    assert menu.property('currentText') == text
+                    page = json.loads(controller.currentPageEvidence)
+                    assert page['account_origin'] == controller.originOptions[origin_index]
+                    assert page['role'] == account_role and page['section'] == key
+                    assert ('scenario_index' in page) is (origin_index == 0)
+    assert session.i18n.setLanguage(locale)
+    choose('intradayProcedureStressOrigin', origin)
+    choose('intradayProcedureStressRole', role)
+    choose('intradayProcedureStressSection', controller.sectionOptions.index(section))
+
 click('quantIntradayTab'); click('intradayProcedureStressTab'); QTest.qWait(30)
 assert not controller.resultLoaded and not controller.canRun
 assert 'All three complete zero-stress accounts' in find('intradayProcedureStressMethod').property('text')
@@ -261,6 +300,7 @@ assert [row['complete_record'] for row in checks if row['check_group'] == 'proje
 
 # Both complete derived and original accounts remain navigable for all roles.
 choose('intradayProcedureStressView', 4)
+check_account_section_labels()
 for origin in (0, 1):
     choose('intradayProcedureStressOrigin', origin)
     for role_index, role in enumerate(controller.roleOptions):

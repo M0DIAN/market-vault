@@ -230,7 +230,7 @@ Item {
                 Components.LabeledComboBox {
                     objectName: "intradayProcedureStressSection"
                     Layout.fillWidth: true; Layout.maximumWidth: Infinity; label: root.label("evidence_section")
-                    model: root.controller.sectionOptions.map(key => root.catalog["ml_diagnostics.account_field." + key] || root.label(key))
+                    model: root.controller.sectionOptions.map(key => root.catalog["procedure_stress.account_field." + key] || root.label(key))
                     currentIndex: root.controller.sectionIndex
                     onModelChanged: currentIndex = Qt.binding(() => root.controller.sectionIndex)
                     onSelected: root.controller.selectSection(currentIndex)
