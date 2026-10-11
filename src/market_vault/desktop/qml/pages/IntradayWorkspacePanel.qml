@@ -9,6 +9,10 @@ Item {
     required property var controller
     required property var i18n
     property int section: 0
+    Connections {
+        target: root.controller.intradayProcedureSuiteController
+        function onSectionRequested(section) { root.section = section }
+    }
     ColumnLayout {
         anchors.fill: parent
         spacing: Theme.PixelTheme.spacingSm
@@ -102,6 +106,12 @@ Item {
                 variant: root.section === 12 ? "primary" : "secondary"
                 onClicked: root.section = 12
             }
+            Components.PixelButton {
+                objectName: "intradaySuiteTab"
+                text: root.i18n.catalog["suite.tab"]
+                variant: root.section === 13 ? "primary" : "secondary"
+                onClicked: root.section = 13
+            }
         }
         StackLayout {
             Layout.fillWidth: true
@@ -123,6 +133,7 @@ Item {
             IntradayProcedureComparisonPanel { controller: root.controller.intradayProcedureComparisonController; i18n: root.i18n }
             IntradayProcedureStressPanel { controller: root.controller.intradayProcedureStressController; i18n: root.i18n }
             IntradaySampleUsagePanel { controller: root.controller.intradaySampleUsageController; i18n: root.i18n }
+            IntradayProcedureSuitePanel { controller: root.controller.intradayProcedureSuiteController; i18n: root.i18n }
         }
     }
 }

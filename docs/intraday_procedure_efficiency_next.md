@@ -82,6 +82,25 @@ runtime or CI duration will fall by the same ratio.
 - No persistent cache, global cache, download, extra dependency, automatic
   Freeze/TEST, real trading, release, deployment or runtime-state replacement.
 
+The existing research methods supply these unchanged defaults:
+
+| Item | Default retained by the package |
+|---|---|
+| Q25 model family and objective | Linear then quadratic Ridge, each with alpha `0.1, 1.0, 10.0`; minimize pooled COMPLETE-target MSE. |
+| Q31 threshold family and objective | Keep the saved representation, alpha and Feature order; thresholds `0, 5, 10, 20` basis points; maximize inner net compounded return. |
+| Q36 joint family and objective | The same six models crossed with four thresholds; model outer / threshold inner order; maximize inner net compounded return. |
+| Inner chronology | Last five history days form the inner holdout; at least ten preceding inner training days; retain the source's actual-label-end purge. |
+| Economic execution support | Q31/Q36 use all READY holdout observations and the complete declared session price grid; COMPLETE inner scoring labels are not required. |
+| Ties and decisions | FIRST_DECLARED; LONG only when score is strictly greater than the selected threshold, otherwise FLAT. |
+| Outer models | Q31 reuses the verified original fixed models/scores; Q25/Q36 refit the chosen recipe on the complete purged outer TRAIN. |
+| Final DEV boundary | First TEST session open; record the final DEV recipe without fitting or evaluating TEST. |
+
+These values come from the existing
+[Q25](../src/market_vault/research/intraday_inner_selection.py),
+[Q31](../src/market_vault/research/intraday_threshold_selection.py) and
+[Q36](../src/market_vault/research/intraday_joint_selection.py) methods. They
+are not new search axes or a replacement algorithm contract.
+
 ## Q49 — one source, three existing procedures
 
 ### Goal and implementation
@@ -311,6 +330,47 @@ work, not a wall-clock threshold. Repository hygiene and
 release/version 0.9.0 checks passed. No numerical core or CI configuration was
 changed.
 
+### Q50 completed mainline gate
+
+[PR #320](https://github.com/M0DIAN/market-vault/pull/320) received fresh
+independent final-candidate PASS at
+`df4bd8081af4837ba48d0c0a39fb7265fe934572`, tree
+`afc960de5c5f4df770b1429ce6b75e6853e3f34c`, with no actionable P1/P2/P3
+findings. The independent five-node run passed in 61.90 s, including an
+additional real linear alpha-1000 oracle against all three independent public
+runners: complete bytes and IDs matched, ordinary solves changed from 6 to 2,
+procedure solves from 43 to 21, and source files remained unchanged. A bounded
+independent boundary audit also verified owner/source/locator rejection,
+dynamic legacy fitter aliases and strict threshold equality producing FLAT.
+
+Natural PR FULL
+[38168305887/1](https://github.com/M0DIAN/market-vault/actions/runs/38168305887/attempts/1)
+completed with all sixteen required jobs successful. The actual candidate's
+`check_jobs` returned `(True, None)` for the complete raw attempt-1 job set;
+every job's head, run and attempt matched. The actual plan ran all eleven
+partitions, and package validated version 0.9.0 and created the attempt-bound
+FULL attestation. Synthetic tested merge
+`a6f3bb79d54160d67055f1dd5a02526335f5228d` had the same candidate tree.
+
+The authorized squash main is
+`3c09fcaac37247e2fce545501798bdab2eab5275`, with that identical tree and
+single parent `fcde2eb340a76522b3eeca5f66ac7d7a9d6295ab`. Exact natural main
+push [38169446819/1](https://github.com/M0DIAN/market-vault/actions/runs/38169446819/attempts/1)
+completed successfully. Its actual plan proved
+`POST_MERGE_REUSE=true`, reason `verified_full_pr_tree_equivalence`, binding
+PR #320, final head, source FULL run, tested merge and identical tested/main
+tree. Five required non-partition jobs succeeded and the unexpanded partition
+job was skipped as planned. The actual-main verifier and real reuse markers
+were checked; this is verified reuse, not a second FULL execution. Q51 started
+only after this terminal gate and another current-main check.
+
+The Q50 PR's longest job was strategy at 649 s, followed by
+`intraday_ml_procedures` at 610 s. The latter ran 64 passed / 1 existing
+optional-Qt skip in 579.18 s; its increased work includes the expanded suite
+oracle and new linear source regression. Cross-run timing changes are not
+attributed to fit reuse. The 39 s gap between these two longest jobs does not
+justify changing the established eleven-partition CI topology for this task.
+
 ## Q51 — native run, save and compare workflow
 
 ### Goal and implementation
@@ -353,6 +413,84 @@ The new controller/panel, existing workspace/registration/localization and
 production inventories, narrow comparison handoff, focused native test and
 this document are the expected surface. No workspace redesign, new dashboard,
 automatic ranking/promotion, automatic Freeze/TEST or batch job platform.
+
+### Native interface and operation
+
+The appended workspace tab is **Three procedures / 三流程运行**. Select an
+ordinary saved DEV linear or quadratic Ridge candidate with 1–6 Features in
+the existing development controls, optionally enter a relocated Q5 file, then
+run all three procedures. The new controller uses the existing Q36 admission
+getter and Q49's captured-content API. The worker receives the immutable source
+bytes, source path, IDs, cost/candidate indices and resolved optional Q5 path;
+it does not reopen the ordinary source pathname. Suite metadata keeps the
+existing default empty name and notes. No new search controls are added.
+
+The page shows the next-run draft separately from the completed source and
+three fixed Q25/Q31/Q36 result rows. Each row shows its real availability,
+study/selection IDs, individual saved state and successful writer-returned
+path. Save-path input text remains a draft; a failed save cannot label it as a
+saved artifact or erase another successful save. Fixed delegates preserve
+the input controls and their text across result and language updates.
+
+Viewing a member adopts the completed immutable snapshot in the existing
+Q25/Q31/Q36 page. Unsaved snapshots have no path and retain COMPUTED proof;
+opening the saved file through its existing reader yields RECORDED proof.
+Q31/Q36 receive the suite's captured completed signature rather than attaching
+the current draft to an older result. Their existing independent run/open
+defaults remain unchanged.
+
+Once all three files have actually been saved, the explicit comparison action
+checks their standard kinds and saved bytes, captures them atomically in the
+existing comparison controller as A/B/C, and starts its existing family
+analysis. Q39 pair analysis remains available through the existing mode
+control. This handoff retains complete UNAVAILABLE members and the previous
+completed comparison while a new input or action is being evaluated. It does
+not fit models, select a winner, Freeze a candidate or run TEST.
+
+### Q51 implementation and local evidence
+
+The two focused tests in `tests/test_desktop_intraday_procedure_suite.py`
+passed on their first complete run: **2 passed in 220.96 s**, with no skip or
+retry. They launched the actual `Main.qml` through the production bootstrap,
+using Python 3.11.17 and PySide6/Qt 6.11.2 with the tested checkout's explicit
+source/test paths, offscreen rendering and the software Qt Quick backend.
+
+The real four-fold, 100-evaluated-day fixture ran the suite once in 26.763 s;
+all three complete canonical artifacts and IDs equalled the independent
+public-runner fixture. This is a bounded local observation, not a GUI latency
+or general performance guarantee. A source-read guard prohibited reopening
+the captured ordinary file. After computation, guards prohibited Q5 loading,
+fitting, procedure execution and execution replay throughout native viewing,
+individual publication, existing-reader reopening, complete family analysis
+and the existing A/B comparison. The second-member real file conflict retained
+the first saved member; an explicit new-path retry completed the family.
+
+The short-history fixture retained all three complete UNAVAILABLE reports,
+their six/four/24-member method declarations and unavailable reasons. It
+covered candidate and locator A→B→A changes before late success, a late failure,
+one real missing-Q5 failure and one real corrected retry. The late callbacks
+used newly constructed immutable tuples from the actual completed studies,
+so an incorrectly adopted stale success was distinguishable without repeating
+the same fits. These callbacks test state handling, not additional research
+computations. Previous results and saved files survived failed or stale work.
+
+Both tests exercised English and Simplified Chinese at 1024×600. Actual
+screenshots were visually inspected; scrolling exposed the controls without
+horizontal overflow. Native assertions checked control reachability and that
+save-path QObject identity and typed text survived member saves and language
+changes. Existing Freeze source admission accepted saved AVAILABLE members
+and rejected unsaved or UNAVAILABLE members; no selection was frozen and no
+TEST was loaded or run. No backend was initialized.
+
+The existing native family identity/evidence/recovery node also passed on
+the changed production checkout: **1 passed in 235.22 s**. It exercises the
+old explicit-open path affected by extraction of the shared source descriptor.
+Production QML inventory checks passed all five existing tests and
+localization passed all nine. Repository hygiene, version 0.9.0, whitespace
+and the complete 235-file partition ownership check passed. The new native
+file belongs to `app_ops`; the eleven partitions and CI control plane remain
+unchanged. These local Qt runs are the native evidence; any optional-Qt skip
+in natural CI is not reported as a substitute.
 
 ## CI and final delivery gates
 
