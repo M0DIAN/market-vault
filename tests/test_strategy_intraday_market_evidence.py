@@ -29,11 +29,12 @@ def _source(name="local", kind="SYNTHETIC"):
             "data_kind": kind, "upstream_id": name, "upstream_evidence": f"declared:{name}"}
 
 
-def _data(parent, *, days=DAYS, missing=(), source="a"):
+def _data(parent, *, days=DAYS, missing=(), source="a", inconsistent_ohlc=False):
     parent.mkdir(parents=True, exist_ok=True)
     builds = []
     for day in days:
-        bars = [cd.bar(day, slot=slot, open=100 + slot / 100, close=100.005 + slot / 100, source=source)
+        bars = [cd.bar(day, slot=slot, open=100 + slot / 100, close=100.005 + slot / 100,
+                       high=99.0 if inconsistent_ohlc and slot == 0 else 150.0, source=source)
                 for slot in range(78) if (day, slot) not in missing]
         build = cd.build(parent / day, bars, dates=[date.fromisoformat(day)])
         builds.append(str(build.build_path))
@@ -283,6 +284,32 @@ def test_full_numeric_coverage_does_not_hide_differences_or_unmapped_invalid_row
     assert report["summary"]["reference_status_counts"]["INVALID_INPUT"] == 1
     assert report["references"][0]["comparison"]["inputs"]["right"]["summary"]["invalid_rows"] == 1
     _partition(report)
+
+
+def test_actual_q5_presence_is_distinct_from_q44_ohlc_validity_even_without_reference(tmp_path):
+    data = _data(tmp_path / "local", days=(DAYS[0],), inconsistent_ohlc=True)
+    reference = _reference(data)
+    reference["bars"][0]["high"] = 150.0
+    path = _write(tmp_path / "reference.json", reference)
+    report = evidence.analyze_intraday_market_evidence(data.path, _plan(_item(path)))
+    row = report["rows"][0]
+    assert row["local_state"] == "PRESENT" and row["local_values"]["high"] == 99.0
+    assert row["comparison_local_state"] == "INVALID" and row["reference_state"] == "VALID_UNIQUE"
+    assert row["status"] == "BLOCKED" and row["differences"] == {}
+    assert report["summary"]["local_price_rows"] == 78
+    assert report["summary"]["local_missing_slots"] == 0
+    assert report["summary"]["numerically_compared_slots"] == 77
+    assert report["summary"]["input_diagnostics_present"] is True
+    left = report["references"][0]["comparison"]["inputs"]["left"]
+    assert left["status"] == "INVALID_INPUT" and left["summary"]["invalid_rows"] == 1
+    absent = evidence.analyze_intraday_market_evidence(data.path, _plan(_item(None)))
+    assert absent["summary"]["counts"]["NOT_RUN"] == 78
+    assert absent["summary"]["input_diagnostics_present"] is True
+    assert absent["rows"][0]["local_state"] == "PRESENT"
+    assert absent["rows"][0]["comparison_local_state"] == "NOT_RUN"
+    assert absent["references"][0]["comparison"]["inputs"]["left"]["status"] == "INVALID_INPUT"
+    _partition(report)
+    _partition(absent)
 
 
 def test_actual_cli_relative_references_exclusive_output_and_recovery(q5_case, tmp_path, capsys, monkeypatch):

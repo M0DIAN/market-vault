@@ -129,7 +129,7 @@ def _summary(rows):
     counts = {status: sum(row["status"] == status for row in rows) for status in SLOT_STATUSES}
     compared = counts["MATCH"] + counts["DIFFERENT"]
     return {"expected_slots": len(rows),
-            "local_price_rows": sum(row["local_state"] == "VALID_UNIQUE" for row in rows),
+            "local_price_rows": sum(row["local_state"] == "PRESENT" for row in rows),
             "local_missing_slots": sum(row["local_state"] == "MISSING" for row in rows),
             "reference_declared_slots": sum(row["reference_index"] is not None for row in rows),
             "numerically_compared_slots": compared, "counts": counts,
@@ -164,7 +164,8 @@ def _analyze_verified(snapshot: IntradayDataset, plan: dict) -> dict:
             start, end = comparison.utc_text(opening + slot * step), comparison.utc_text(opening + (slot + 1) * step)
             row = {"trading_day": day, "slot": slot, "start": start, "end": end,
                    "row_version_id": None if price is None else price["row_version_id"],
-                   "local_state": "MISSING" if price is None else "VALID_UNIQUE",
+                   "local_state": "MISSING" if price is None else "PRESENT",
+                   "comparison_local_state": "UNASSESSED",
                    "local_values": None if price is None else {field: price[field] for field in comparison.VALUE_FIELDS},
                    "reference_index": None, "reference_state": "UNASSESSED", "reference_row_indices": [],
                    "status": "UNASSESSED", "independence": "UNKNOWN", "differences": {}}
@@ -176,9 +177,10 @@ def _analyze_verified(snapshot: IntradayDataset, plan: dict) -> dict:
                     status = reference["comparison"]["status"]
                     if status not in {"NOT_RUN", "INVALID_INPUT"}:
                         raise ValueError("Q44 comparison lacks its declared common slot grid")
-                    row.update(status=status, reference_state=status)
+                    row.update(status=status, comparison_local_state=status, reference_state=status)
                 else:
-                    row.update(status=compared["status"], reference_state=compared["right"]["state"],
+                    row.update(status=compared["status"], comparison_local_state=compared["left"]["state"],
+                               reference_state=compared["right"]["state"],
                                reference_row_indices=compared["right"]["row_indices"],
                                differences=compared["differences"])
             session_rows.append(row)
@@ -193,7 +195,9 @@ def _analyze_verified(snapshot: IntradayDataset, plan: dict) -> dict:
     summary.update(reference_count=len(references),
                    reference_status_counts={status: sum(ref["comparison"]["status"] == status for ref in references)
                                             for status in reference_statuses},
-                   input_diagnostics_present=any(ref["comparison"]["status"] == "INVALID_INPUT" for ref in references))
+                   input_diagnostics_present=any(item["status"] == "INVALID_INPUT"
+                                                 for ref in references
+                                                 for item in ref["comparison"]["inputs"].values()))
     compared, expected = summary["numerically_compared_slots"], summary["expected_slots"]
     result = {"version": INTRADAY_MARKET_EVIDENCE_VERSION,
               "status": "AVAILABLE" if compared == expected else "PARTIAL" if compared else "UNAVAILABLE",
@@ -214,6 +218,7 @@ def _analyze_verified(snapshot: IntradayDataset, plan: dict) -> dict:
               "summary": summary, "sessions": sessions, "rows": rows,
               "references": sorted(references, key=lambda item: item["reference_index"]),
               "limitations": ["AVAILABLE describes numerical coverage, including disagreements; it is not a quality PASS.",
+                              "Local PRESENT means admitted to Q5; Q44 comparison validity is a separate state.",
                               "Input diagnostics can remain outside the Q5 slot grid and are retained in each original comparison.",
                               "Source nature, independence and economic basis are caller declarations, not provider certification.",
                               "Q5 verification binds these actual prices and row versions, not external market accuracy.",

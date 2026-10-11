@@ -128,6 +128,10 @@ means complete numerical comparison coverage, including any DIFFERENT rows;
 it does not mean agreement, independence or market accuracy. Reference-level
 status counts and `input_diagnostics_present` keep invalid rows visible even
 when those rows cannot be attached to a particular Q5 slot.
+The local `PRESENT`/`MISSING` state describes Q5 admission; the separate
+`comparison_local_state` records Q44 validity when a paired grid was inspected.
+Strict Q5 reconstruction does not imply valid OHLC ordering under Q44. Input
+diagnostics remain visible even when an absent reference prevents comparison.
 
 ## Q47 — Feature-window and target dependency evidence
 
