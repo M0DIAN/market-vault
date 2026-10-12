@@ -14,6 +14,7 @@ from . import intraday_research as research
 from .feature_research import _average_ranks, _pearson
 from .intraday_data import digest
 from .intraday_experiment import INTRADAY_EXPERIMENT_VERSIONS
+from .ridge_baseline import _training_target_mean
 from .strategy_config import parse_strategy_specs
 from .strategy_experiment import StrategyExperiment, canonical_json
 
@@ -196,7 +197,7 @@ def _paired_prediction_rows(prepared, candidate):
     for fold, training, record in zip(prepared.context["folds"], prepared.fold_rows, candidate["fold_models"], strict=True):
         # Match the existing fitter's target-mean arithmetic on the actual
         # retained training rows, rather than estimating it from coefficients.
-        train_mean = math.fsum(target["value"] for _, target in training) / len(training)
+        train_mean = _training_target_mean(tuple(target["value"] for _, target in training))
         model_id, fold_rows = record["model"]["model_id"], []
         for key in fold["validation_keys"]:
             prediction, target = predictions[key], targets[key]

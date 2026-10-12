@@ -39,6 +39,64 @@ def test_intraday_constant_target_r2_keeps_complete_pairing_and_errors():
                      "rmse": None, "r2": None, "unavailable_reason": "NO_COMPLETE_TARGETS"}
 
 
+@pytest.mark.parametrize("quadratic", [False, True])
+def test_constant_training_target_keeps_actual_intraday_fits_constant(quadratic):
+    from market_vault.research.intraday_models import fit_quadratic_rows
+    target = 1.03 / 1.0 - 1.0
+    rows = tuple((
+        {"observation_key": f"train-{index}",
+         "features": {"volume_ratio_5": math.nextafter(1.0, 2.0) if index == 66 else 1.0}},
+        {"value": target},
+    ) for index in range(67))
+    observations = tuple({"observation_key": f"validation-{index}",
+                          "features": {"volume_ratio_5": value}}
+                         for index, value in enumerate((.5, 1.0, 2.0)))
+    fit = fit_quadratic_rows if quadratic else research.fit_ridge_rows
+    model, predictions = fit(rows, observations, ["volume_ratio_5"], 1.0,
+                             boundary="2025-03-03T14:30:00+00:00")
+    ridge = model["ridge_model"] if quadratic else model
+    assert ridge["coefficients"] == [0.0] * (2 if quadratic else 1)
+    assert ridge["intercept"] == target
+    assert predictions == (target,) * len(observations)
+    assert model["training_keys"] == [row["observation_key"] for row, _ in rows]
+
+
+def test_constant_training_target_mean_agrees_in_both_forecast_reference_paths():
+    from market_vault.research.intraday_prediction_quality import _paired_prediction_rows
+    from market_vault.research.intraday_ml_diagnostics import _outer_rows
+    from market_vault.research.intraday_feature_ablation import _ablation_predictions
+    constant = .1
+    training = tuple(({"observation_key": f"train-{i}", "features": {"x": float(i)}},
+                      {"value": constant}) for i in range(3))
+    observation = {"observation_key": "validation", "trading_day": "2025-03-03", "slot": 0,
+                   "decision_time": "2025-03-03T15:00:00+00:00", "features": {"x": 4.0}}
+    boundary = "2025-03-03T14:30:00+00:00"
+    model, scores = research.fit_ridge_rows(training, (observation,), ["x"], 1.0, boundary=boundary)
+    prediction = {**observation, "score": scores[0], "target": "LONG"}
+    fold = {"fold_index": 0, "fold_id": "fold", "training_boundary": boundary,
+            "training_days": ["2025-02-28"], "training_keys": model["training_keys"],
+            "purged_keys": [], "validation_keys": ["validation"], "validation_days": ["2025-03-03"]}
+    context = {"folds": [fold], "validation_keys": ["validation"], "feature_fields": ["x"]}
+    prepared = SimpleNamespace(context=context, fold_rows=(training,),
+        observations=(observation,), report={"targets": [{"observation_key": "validation",
+            "status": "COMPLETE", "reason": None, "actual_label_end_time": "2025-03-03T15:30:00+00:00",
+            "value": constant}]})
+    strategy = {"kind": "RIDGE", "name": "Reference", "alpha": 1.0, "threshold": 0.0}
+    candidate = {"strategy": strategy, "predictions": [prediction], "fold_models": [{"model": model}]}
+    ordinary = _paired_prediction_rows(prepared, candidate)
+    selected = _outer_rows({"context": context, "reference": candidate}, prepared, [prediction],
+                           [{"model": model, "strategy": strategy}])
+    for rows, folds in (ordinary, selected):
+        assert folds[0]["training_target_mean"] == constant
+        assert rows[0]["scores"]["TRAIN_MEAN"] == constant
+        forecast = next(row for row in folds[0]["forecasts"] if row["forecast"] == "TRAIN_MEAN")
+        assert forecast["metrics"]["mse"]["value"] == 0.0
+        assert forecast["metrics"]["mse_skill_vs_train_mean"]["unavailable_reason"] == "ZERO_BASELINE_ERROR"
+    rows, _, variants = _ablation_predictions(prepared, candidate)
+    assert rows[0]["scores"]["DROP_0"] == constant
+    assert variants[0]["fold_models"][0]["model"]["intercept"] == constant
+
+
 def test_return_uncertainty_stationary_restart_wrap_and_exact_quantile_oracle(monkeypatch):
     from fractions import Fraction
     from market_vault.research import intraday_return_uncertainty as uncertainty
