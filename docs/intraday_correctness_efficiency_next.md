@@ -270,7 +270,8 @@ ordinary table pagination does not always emit the same signal.
 Scope: `desktop/intraday_research.py`, directly related existing native tests
 and this record. The observed Windows timeout additionally brings
 `.github/workflows/adaptive-window-windows.yml` and the existing risk-view
-test's navigation helper into the authorized in-scope repair below. No QML
+and final-workflow tests' actual navigation/scrolling into the authorized
+in-scope repairs below. No QML
 layout changes, listener framework, source revalidation bypass, background
 cache service or automatic research/Freeze/TEST action.
 
@@ -439,6 +440,64 @@ FULL evidence above are historical evidence, not replacement-candidate approval.
 Because the repair touches a workflow path, the existing control-plane
 exclusion rejects post-merge FULL reuse: Q57's exact merged main must complete
 its own natural normal FULL run.
+
+### Q57 final replay workflow viewport repair
+
+The first replacement head `52150be78de07987e50c52e7fff043718bd9e9bd`, tree
+`3e492957f0b7d06d5cf4205baeb7167bd8ac8a04`, received a formal independent PASS.
+Its independent complete risk-view pair gave **2 passed in 336.40 s**; JUnit
+recorded 336.395 s, with no failures, errors or skips and exit 0. Development
+took 281.242 s including fixtures (setup 172.82 s, call 108.43 s); final took
+54.169 s. The reviewer verified the head/tree/parent, version 0.9.0 and clean
+detached checkout. The conditional pagination branch did not produce a page-2
+screenshot in that run; its unchanged code is retained, without claiming that
+this particular condition was exercised. The prior three-node evidence was
+explicitly reused only after proving unchanged production and test code.
+
+Natural core [38220077801/1](https://github.com/M0DIAN/market-vault/actions/runs/38220077801/attempts/1)
+passed all 16 required jobs and the complete job-set validator. Version was
+0.9.0, its longest partition was 621 s, and its FULL attestation bound the
+same tested tree. However, natural Windows
+[38220077786/1](https://github.com/M0DIAN/market-vault/actions/runs/38220077786/attempts/1)
+still failed. Native checks and the six plan/grid and ten saved/comparison
+nodes passed. The third group reported **6 passed, 1 failed, 16 deselected in
+552.65 s**. Both repaired risk-view cases and the immutable-capture guard
+passed; the last, previously unchanged Final Freeze E2E failed. The strict
+aggregate also failed, and no merge occurred.
+
+The complete traceback identifies `click_obj(next_button)` in
+`test_actual_qml_freeze_save_open_final_test_and_two_file_replay`: its point
+`(1038, 968)` lies outside the 1100-by-700 window. A complete local replay of
+the unchanged embedded script reproduced that exact point, exit 1 in
+59.561 s, without a timeout. The footer is inside `intradayFinalScroll`'s
+actual Flickable at y=691..721, with viewport height 394, content height 721
+and contentY=0. It needs 327 pixels of scrolling. The original test scrolled
+in its later size/language loop but did not scroll before its first page-2
+click; a visible item can still be clipped by its ScrollView.
+
+The final repair adds seven lines only to this existing node. Before clicking,
+scroll that actual Flickable to its bottom, process the layout with the
+existing 50 ms wait convention and assert that the full footer rectangle is
+inside its viewport. Use the unchanged real mouse click and window-coordinate
+assertion, require page 2, then scroll back to the top before operating the
+save toolbar. No direct clicked signal, controller substitute, larger window
+or weakened geometry assertion is used. The original 58 embedded assertions
+remain among the final 61. Removing these seven lines exactly restores the
+entire previous test file, including the already-passed risk pair. Production,
+QML, workflow, other tests and the original 420-second subprocess limit are
+unchanged.
+
+The complete candidate native diagnostic passed in 144.747 s, exit 0, with
+`REAL_INTRADAY_FINAL_WORKFLOW_OK` and unchanged shared development/Q5 inputs.
+It exercised page 2, save/open, both languages at all three original window
+sizes, two-file relocation/overrides/replays, failed-proof retention and source
+clearing. This native-only diagnostic is separate from the subsequent complete
+pytest node with original fixture preparation: **1 passed in 229.89 s**,
+JUnit 229.885 s, one case, no failures/errors/skips, exit 0. The test file hash
+was unchanged before/after this run. The final published append requires its
+own independent incremental review of this full changed node and successful
+natural core/Windows CI, followed by exact-main normal FULL. Those final
+identities and terminal results are recorded in PR #327.
 
 ## Validation and delivery
 

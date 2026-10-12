@@ -2433,8 +2433,15 @@ assert controller.tableModel.totalRows == 936
 table = find('intradayTestTable')
 assert table.height() >= 170, table.height()
 next_button = next(obj for obj in table.findChildren(QObject) if obj.property('glyph') == 'next' and obj.metaObject().indexOfSignal('clicked()') >= 0)
+flickable = find('intradayFinalScroll').property('contentItem')
+assert flickable.setProperty('contentY', max(0, flickable.property('contentHeight') - flickable.height()))
+QTest.qWait(50)
+footer_rect = next_button.mapRectToItem(flickable, next_button.boundingRect())
+assert footer_rect.top() >= -1 and footer_rect.bottom() <= flickable.height() + 1, (footer_rect, flickable.height())
 click_obj(next_button)
 assert controller.tableModel.page == 2
+assert flickable.setProperty('contentY', 0)
+QTest.qWait(50)
 click('intradayTestSaveButton'); file_selected('intradayTestSaveDialog', saved_test)
 original = saved_test.read_bytes()
 assert controller.tableModel.page == 2
