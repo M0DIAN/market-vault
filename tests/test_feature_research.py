@@ -6,6 +6,7 @@ from collections import Counter
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import math
+from fractions import Fraction
 
 import pytest
 
@@ -195,9 +196,32 @@ def test_adjacent_nonconstant_feature_statistics_keep_real_variation():
     ))
     metric = analyze_features(bundle, feature_names=("good",)).metrics[0]
     assert metric.feature_mean == 1.0
-    assert metric.feature_std == math.sqrt(math.ulp(1.0) ** 2 / 3)
+    # The exact population variance uses the unrounded mean, not float(1 + ulp/3).
+    assert metric.feature_std == pytest.approx(math.ulp(1.0) * math.sqrt(2) / 3, rel=1e-15, abs=0)
     assert metric.feature_std > 0.0
     assert metric.pearson_ic == metric.rank_ic == 1.0
+
+
+@pytest.mark.parametrize("sign", (1.0, -1.0))
+def test_near_constant_affine_features_have_no_false_split_drift(sign):
+    from market_vault.research.feature_stability import compare_feature_stability
+
+    values = (1.0, 1.0, math.nextafter(1.0, math.inf))
+    shifted = tuple(value - 1.0 for value in values)
+    labels = tuple(sign * value for value in shifted)
+    bundle = replace(_bundle(),
+        train=_split("TRAIN", tuple((value, 0., 0.) for value in values), labels),
+        validation=_split("VALIDATION", tuple((value, 0., 0.) for value in shifted), labels))
+    metrics = [analyze_features(bundle, split=split, feature_names=("good",)).metrics[0]
+               for split in ("TRAIN", "VALIDATION")]
+    exact_mean = sum(map(Fraction, values)) / len(values)
+    exact_variance = sum((Fraction(value) - exact_mean) ** 2 for value in values) / len(values)
+    for metric in metrics:
+        assert metric.pearson_ic == pytest.approx(sign, rel=1e-15, abs=0)
+        assert metric.rank_ic == pytest.approx(sign, rel=1e-15, abs=0)
+        assert metric.feature_std == pytest.approx(math.sqrt(float(exact_variance)), rel=1e-15, abs=0)
+    stability = compare_feature_stability(bundle, feature_names=("good",))
+    assert stability.metrics[0].pearson_range == pytest.approx(0., abs=1e-15)
 
 
 def test_explicit_feature_subset_preserves_requested_order():

@@ -137,12 +137,28 @@ def _mean(values: tuple[float, ...]) -> float | None:
     return math.fsum(values) / len(values)
 
 
+def _centered_scaled(values: tuple[float, ...]):
+    # Subtract an observed origin before rounding a mean. This preserves real
+    # variation smaller than the spacing around the unshifted arithmetic mean.
+    shifted = tuple(value - values[0] for value in values)
+    scale = max(abs(value) for value in shifted)
+    if not math.isfinite(scale):
+        # Opposite finite extremes can overflow the origin subtraction.
+        scale = max(abs(value) for value in values)
+        normalized = tuple(value / scale for value in values)
+    elif scale == 0.0:
+        return shifted, 0.0
+    else:
+        normalized = tuple(value / scale for value in shifted)
+    mean = math.fsum(normalized) / len(normalized)
+    return tuple(value - mean for value in normalized), scale
+
+
 def _std(values: tuple[float, ...], mean: float | None) -> float | None:
     if mean is None:
         return None
-    return math.sqrt(
-        math.fsum((value - mean) ** 2 for value in values) / len(values)
-    )
+    centered, scale = _centered_scaled(values)
+    return scale * math.sqrt(math.fsum(value * value for value in centered) / len(values))
 
 
 def _pearson(x: tuple[float, ...], y: tuple[float, ...]) -> float | None:
@@ -153,10 +169,8 @@ def _pearson(x: tuple[float, ...], y: tuple[float, ...]) -> float | None:
     # A rounded mean must not turn an exact constant into an available IC.
     if all(value == x[0] for value in x) or all(value == y[0] for value in y):
         return None
-    mx = math.fsum(x) / len(x)
-    my = math.fsum(y) / len(y)
-    dx = tuple(value - mx for value in x)
-    dy = tuple(value - my for value in y)
+    dx, _ = _centered_scaled(x)
+    dy, _ = _centered_scaled(y)
     denominator = math.sqrt(
         math.fsum(value * value for value in dx)
         * math.fsum(value * value for value in dy)

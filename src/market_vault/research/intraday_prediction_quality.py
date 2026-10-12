@@ -117,11 +117,9 @@ def _correlation(actual, predicted, *, ranked=False):
         return _metric(reason=reason)
     if ranked:
         actual, predicted = _average_ranks(actual), _average_ranks(predicted)
-    # Scaling preserves correlation and avoids overflow/underflow in the shared
-    # Pearson implementation's squared deviations for finite input vectors.
-    left, right = max(abs(value) for value in actual), max(abs(value) for value in predicted)
-    result = _calculated(lambda: _pearson(tuple(value / left for value in actual),
-                                        tuple(value / right for value in predicted)))
+    # The shared calculation centers before scaling; pre-dividing the raw
+    # values can round away small variation around a nonzero offset.
+    result = _calculated(lambda: _pearson(actual, predicted))
     if result["value"] is None:
         result["unavailable_reason"] = "NONFINITE_RESULT"
     return result
