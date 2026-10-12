@@ -112,6 +112,28 @@ exact remote gate identities are recorded in the associated PR. The historical
 artifact compatibility statement is a reader/replay code assessment, not a
 claim of a separate historical bad-artifact end-to-end replay.
 
+### Q61 completed main gate
+
+[PR #331](https://github.com/M0DIAN/market-vault/pull/331) passed independent
+final-candidate review at `86d68c6667a8383fde4f300f9018f0a86cbe91a6`, tree
+`ce97099c720e6a455cfda3743c8cf26020d4f4ab`. Its natural FULL
+[38244145781/1](https://github.com/M0DIAN/market-vault/actions/runs/38244145781/attempts/1)
+passed all 16 required jobs; the current `check_jobs` returned `(True, None)`.
+The longest job was diagnostics at 457 s. The broader local affected selection
+passed 56 tests; independent base/candidate replay, nonconstant complete-byte
+comparisons and temporal/Open/Replay checks also passed.
+
+Authorized squash produced main `541d7e35f81779757f5adfa168b26092d53db8a2`,
+with one parent equal to the declared base and the same complete tree. Its
+natural push
+[38245512709/1](https://github.com/M0DIAN/market-vault/actions/runs/38245512709/attempts/1)
+is terminal SUCCESS. The actual plan proved `POST_MERGE_REUSE=true`, reason
+`verified_full_pr_tree_equivalence`, bound to that PR, head, run and tree.
+All five active jobs passed; the partition placeholder was skipped by this
+proof. This is verified FULL reuse, not a second FULL execution. Independent
+post-merge review returned PASS / COMPLETE. Q62 started from this verified
+main with local/origin/remote identities equal and a clean worktree.
+
 ## Q62 — constant Feature Research statistics
 
 ### Goal and technical plan
@@ -148,6 +170,27 @@ tests and directly relevant entry tests if needed, plus this record. Q61 is
 the delivery dependency; no new business dependency or Feature-selection rule.
 No new score, selection criterion, TEST access, generic overflow policy or
 correlation algorithm for nonconstant inputs.
+
+### Q62 implementation and local evidence
+
+The existing `_mean` now returns the exact common float for an exact constant,
+with canonical positive zero; empty input remains unavailable. `_pearson`
+rejects either constant vector before calculating centered deviations.
+Nonconstant mean/correlation arithmetic, rank ties and tail membership remain
+unchanged. No Feature Stability or Feature Selection implementation changed.
+
+The six new public-analysis cases produced **5 failed, 1 passed in 0.23 s**
+on the Q61 base, then **6 passed in 0.07 s** after repair. They cover both or
+either constant side, signed fractional Features, constant tail means,
+adjacent nonconstant floats and three-split stability. The complete Feature
+Research/Stability/Selection and their existing CLI files passed **84 tests
+in 0.72 s**. Two existing correlation boundary cases passed in 50.05 s.
+Actual CLI dispatch, real analysis and JSON serialization also preserved
+the corrected values and null availability; only the existing source-load
+and ML-adapter boundary was substituted with an immutable ML bundle for this
+bounded consumer check. It is not a full-Q5 data-admission test. Hygiene,
+whitespace and release/version 0.9.0 checks passed on Python 3.11.17.
+Exact candidate review and remote gate identities belong in the associated PR.
 
 ## Q63 — compute each symmetric Ridge Gram entry once
 

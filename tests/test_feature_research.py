@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import math
 
@@ -120,6 +121,53 @@ def test_average_rank_ties_are_deterministic():
         4.5,
         4.5,
     )
+
+
+@pytest.mark.parametrize(
+    "x,y,mean,std",
+    [
+        ((.1,) * 3, (.1,) * 3, .1, 0.0),
+        ((-.1,) * 3, (1.0, 2.0, 3.0), -.1, 0.0),
+        ((1.0, 2.0, 3.0), (-.1,) * 3, 2.0, math.sqrt(2.0 / 3.0)),
+    ],
+    ids=("both-constant", "feature-constant", "label-constant"),
+)
+def test_fractional_constant_vectors_have_no_correlation(x, y, mean, std):
+    bundle = replace(_bundle(), train=_split(
+        "TRAIN", tuple((value, 0.0, 0.0) for value in x), y,
+    ))
+    metric = analyze_features(bundle, feature_names=("good",)).metrics[0]
+    assert metric.sample_count == 3
+    assert metric.feature_mean == mean
+    assert metric.feature_std == std
+    assert metric.pearson_ic is None
+    assert metric.rank_ic is None
+
+
+def test_fractional_constant_tail_labels_keep_their_common_mean():
+    bundle = replace(_bundle(), train=_split(
+        "TRAIN", tuple((value, 0.0, 0.0) for value in (-3, -2, -1, 1, 2, 3)),
+        (.1,) * 6,
+    ))
+    metric = analyze_features(
+        bundle, feature_names=("good",), quantile_count=2,
+    ).metrics[0]
+    assert (metric.bottom_count, metric.top_count) == (3, 3)
+    assert metric.bottom_label_mean == metric.top_label_mean == .1
+    assert metric.top_bottom_spread == 0.0
+    assert metric.pearson_ic is metric.rank_ic is None
+
+
+def test_adjacent_nonconstant_feature_statistics_keep_real_variation():
+    values = (1.0, 1.0, math.nextafter(1.0, math.inf))
+    bundle = replace(_bundle(), train=_split(
+        "TRAIN", tuple((value, 0.0, 0.0) for value in values), values,
+    ))
+    metric = analyze_features(bundle, feature_names=("good",)).metrics[0]
+    assert metric.feature_mean == 1.0
+    assert metric.feature_std == math.sqrt(math.ulp(1.0) ** 2 / 3)
+    assert metric.feature_std > 0.0
+    assert metric.pearson_ic == metric.rank_ic == 1.0
 
 
 def test_explicit_feature_subset_preserves_requested_order():
