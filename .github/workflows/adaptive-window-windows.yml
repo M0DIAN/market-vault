@@ -24,7 +24,7 @@ permissions:
   contents: read
 
 jobs:
-  native-qt-and-qml:
+  windows-native:
     runs-on: windows-2022
     timeout-minutes: 20
     steps:
@@ -54,19 +54,130 @@ jobs:
         env:
           QT_QPA_PLATFORM: windows
           QT_QUICK_BACKEND: software
-        run: python -m pytest tests/test_desktop_window_native.py -q -s
+        run: python -u -m pytest tests/test_desktop_window_native.py -vv -x --tb=long -s --junitxml="${{ runner.temp }}/adaptive-window-native-placement.xml"
       - name: Check focused geometry and preference regressions
         shell: pwsh
-        run: python -m pytest tests/test_window_geometry.py tests/test_window_preference_roundtrip.py tests/test_adaptive_window_controller.py tests/test_adaptive_window_state_regressions.py tests/test_desktop_preferences.py -q
+        run: python -u -m pytest tests/test_window_geometry.py tests/test_window_preference_roundtrip.py tests/test_adaptive_window_controller.py tests/test_adaptive_window_state_regressions.py tests/test_desktop_preferences.py -vv -x --tb=long --junitxml="${{ runner.temp }}/adaptive-window-native-geometry.xml"
       - name: Check small-workspace dialog completion through actual QML
         shell: pwsh
         env:
           QT_QPA_PLATFORM: offscreen
           QT_QUICK_BACKEND: software
-        run: python -m pytest tests/test_desktop_adaptive_layout.py -q -s
-      - name: Exercise actual PySide6 QML 1024x600 interaction on Windows host
+        run: python -u -m pytest tests/test_desktop_adaptive_layout.py -vv -x --tb=long -s --junitxml="${{ runner.temp }}/adaptive-window-native-layout.xml"
+      - name: Preserve native Windows test reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: adaptive-window-native
+          path: ${{ runner.temp }}/adaptive-window-native-*.xml
+          if-no-files-found: error
+          retention-days: 30
+
+  qml-plan-grid:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - name: Check out exact PR merge tree
+        uses: actions/checkout@v6
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Install desktop and test dependencies
+        run: python -m pip install -e ".[desktop,dev]"
+      - name: Exercise actual QML plan and parameter-grid workflows
         shell: pwsh
         env:
           QT_QPA_PLATFORM: offscreen
           QT_QUICK_BACKEND: software
-        run: python -m pytest tests/test_desktop_intraday_final_test.py -q
+        run: >-
+          python -u -m pytest tests/test_desktop_intraday_final_test.py
+          -k "plan or continue_candidate or parameter_grid"
+          -vv -x --tb=long --junitxml="${{ runner.temp }}/adaptive-window-plan-grid.xml"
+      - name: Preserve plan and grid test reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: adaptive-window-plan-grid
+          path: ${{ runner.temp }}/adaptive-window-plan-grid.xml
+          if-no-files-found: error
+          retention-days: 30
+
+  qml-saved-comparison:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - name: Check out exact PR merge tree
+        uses: actions/checkout@v6
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Install desktop and test dependencies
+        run: python -m pip install -e ".[desktop,dev]"
+      - name: Exercise actual QML saved portfolio and comparison workflows
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QT_QUICK_BACKEND: software
+        run: >-
+          python -u -m pytest tests/test_desktop_intraday_final_test.py
+          -k "saved and not (plan or continue_candidate or parameter_grid)"
+          -vv -x --tb=long --junitxml="${{ runner.temp }}/adaptive-window-saved-comparison.xml"
+      - name: Preserve saved comparison test reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: adaptive-window-saved-comparison
+          path: ${{ runner.temp }}/adaptive-window-saved-comparison.xml
+          if-no-files-found: error
+          retention-days: 30
+
+  qml-scenario-risk-final:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - name: Check out exact PR merge tree
+        uses: actions/checkout@v6
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Install desktop and test dependencies
+        run: python -m pip install -e ".[desktop,dev]"
+      - name: Exercise actual QML scenario, risk and final TEST workflows
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QT_QUICK_BACKEND: software
+        run: >-
+          python -u -m pytest tests/test_desktop_intraday_final_test.py
+          -k "not (plan or continue_candidate or parameter_grid or saved)"
+          -vv -x --tb=long --junitxml="${{ runner.temp }}/adaptive-window-scenario-risk-final.xml"
+      - name: Preserve scenario, risk and final TEST reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: adaptive-window-scenario-risk-final
+          path: ${{ runner.temp }}/adaptive-window-scenario-risk-final.xml
+          if-no-files-found: error
+          retention-days: 30
+
+  native-qt-and-qml:
+    needs: [windows-native, qml-plan-grid, qml-saved-comparison, qml-scenario-risk-final]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every Windows validation job to succeed
+        env:
+          NATIVE_RESULT: ${{ needs.windows-native.result }}
+          PLAN_GRID_RESULT: ${{ needs.qml-plan-grid.result }}
+          SAVED_COMPARISON_RESULT: ${{ needs.qml-saved-comparison.result }}
+          SCENARIO_RISK_FINAL_RESULT: ${{ needs.qml-scenario-risk-final.result }}
+        run: |
+          set -euo pipefail
+          test "$NATIVE_RESULT" = success
+          test "$PLAN_GRID_RESULT" = success
+          test "$SAVED_COMPARISON_RESULT" = success
+          test "$SCENARIO_RISK_FINAL_RESULT" = success

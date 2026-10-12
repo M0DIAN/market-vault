@@ -262,10 +262,17 @@ ordinary table pagination does not always emit the same signal.
 3. Existing late-result rejection, failed-action recovery and save/reopen
    behavior remain. Execute the directly affected real Qt flow; optional Qt
    skips in CI are not evidence of native success.
+4. The naturally triggered Windows validation must finish successfully for
+   the final candidate. If a blocking job requires partitioning, preserve every
+   existing native target and all QML nodes, the original platform settings,
+   timeouts and required check, with a fail-closed aggregate.
 
 Scope: `desktop/intraday_research.py`, directly related existing native tests
-and this record. No QML layout changes, listener framework, source revalidation
-bypass, background cache service or automatic research/Freeze/TEST action.
+and this record. The observed Windows timeout additionally brings
+`.github/workflows/adaptive-window-windows.yml` and the existing risk-view
+test's navigation helper into the authorized in-scope repair below. No QML
+layout changes, listener framework, source revalidation bypass, background
+cache service or automatic research/Freeze/TEST action.
 
 ### Q57 local evidence
 
@@ -298,6 +305,141 @@ the candidate's production-Main.qml evidence proves removal of full-source
 parsing, not a new measured end-to-end latency guarantee. Final independent
 review and remote gate identities are recorded in the associated PR.
 
+### Q57 Windows gate counterevidence and in-scope repair
+
+The initial published candidate was
+`4096e87cc762c159f02af5dfcc60448f0ecb3cf0`, tree
+`555ebedd82473f9ba9d5f7684afe906a1bb844e9`, in
+[PR #327](https://github.com/M0DIAN/market-vault/pull/327).
+Its core [FULL CI 38213027109/1](https://github.com/M0DIAN/market-vault/actions/runs/38213027109/attempts/1)
+completed all 16 expected jobs successfully, with a longest partition of 614 s.
+The independent reviewer also passed the three directly affected native nodes:
+**3 passed in 466.72 s**, with no errors, failures or skips. The reviewer's
+first execution lost its tool transport before producing a terminal pytest
+result; one justified recovery execution produced the terminal result, JUnit
+and native completion markers. The interrupted execution is not test evidence.
+
+These results did not satisfy the complete merge gate. The separately triggered
+[Windows run 38213027033/1](https://github.com/M0DIAN/market-vault/actions/runs/38213027033/attempts/1)
+was CANCELLED; the check annotation explicitly says that its single job exceeded
+the maximum execution time of **20 minutes**. The full-file pytest step printed
+18 success dots, `F`, then two further dots before cancellation, without a
+failure traceback. Actual collection found 22 nodes; position 19 is
+`test_actual_qml_offline_performance_views_in_both_languages`.
+Running that complete unchanged node locally against the initial candidate
+gave **1 failed in 244.18 s**: its native subprocess exceeded the existing
+**120-second** limit. This is a separate reproducible local counterexample;
+it does not reconstruct the missing Windows traceback. No merge occurred.
+
+The repair retains the original Windows workflow triggers, permissions, native
+platform checks, dependency installation and 20-minute worker timeouts. Four
+independent Windows jobs now run the original work:
+
+| Worker | Coverage |
+|---|---|
+| `windows-native` | Existing screens/DPI and actual startup probes, native placement, geometry/preferences and small-workspace QML checks, each once. |
+| `qml-plan-grid` | Six nodes selected by `plan or continue_candidate or parameter_grid`. |
+| `qml-saved-comparison` | Ten nodes selected by `saved and not (plan or continue_candidate or parameter_grid)`. |
+| `qml-scenario-risk-final` | The seven-case complement: `not (plan or continue_candidate or parameter_grid or saved)`, including the two page cases of the existing risk-view test. |
+
+Actual collect-only execution of the expressions read from the modified YAML
+proved **23 = 6 + 10 + 7**, with no missing, duplicated or extra cases. The
+original 22 test functions remain; the one long risk-view node is now two page
+cases as described below. Both risk-view cases and final Freeze E2E remain in
+the final group. Native Windows
+steps still use the Windows Qt backend; QML steps still use offscreen/software.
+The existing `native-qt-and-qml` check becomes an always-evaluated aggregate
+that requires all four explicit dependency results to be `success`. Running
+its actual Bash script accepted all-success and rejected all 16 cases formed
+by one dependency being failure, cancelled, skipped or empty. This local
+check verifies shell rejection, not remote Actions scheduling.
+
+Verbose unbuffered pytest output, a complete failure traceback and JUnit uploads
+make a failed node identifiable. A failed shard stops at its first failure;
+other independent workers continue. That candidate cannot pass the aggregate.
+A successful final candidate must still execute every original target and all
+23 QML cases. No assertion or timeout is weakened to satisfy the gate.
+
+The first repair attempt changed only the existing risk-view node's
+`choose(name, index)` to read the displayed current index and send the necessary
+real Up/Down key events. Previously each call sent Home followed by every Down
+step, repeatedly rendering intermediate views even for adjacent targets.
+That attempt kept focus, waits, target-index assertions, all
+views/languages/source/proof checks and the native 120-second limit.
+
+That helper-only attempt did not resolve the full node: its complete rerun
+exited 1, with JUnit **1 failure, 0 errors, 0 skips, 256.224 s suite time**, again
+reporting native `TimeoutExpired` at 120 seconds. Its screenshots reached both
+pages' basic bilingual views and the development page's bilingual risk views;
+the remaining final-page risk and source-replacement work had not completed.
+This failed attempt was not published or accepted as a passing repair.
+
+The same test is therefore parametrized by `development` / `final` page. Each
+case still executes its page's entire basic and risk loops in both languages.
+The development case retains the complete source/candidate replacement,
+paging, zero-trade and partial-record sequence. Both cases preload the original
+TEST and verify that its content, selection content and proof summary remain
+unchanged. The original 54 embedded-script assertions are retained; page
+filtering changes which case executes each original page loop, not its body or
+targets. Actual Qt focus/key events, source immutability, offline prohibitions,
+completion marker and **120 seconds per native subprocess** remain. Existing
+session-scoped study fixtures are shared by the two pytest cases.
+
+The first full page-split run passed development but failed final on a strict
+visibility assertion (JUnit: 2 cases, 1 failure, 0 errors/skips, 279.616 s).
+The final case failed in 35.637 s, not at the subprocess timeout. A complete
+isolated native replay confirmed that the viewport changed from 351 to 294
+pixels after the first scroll; the control consequently needed another 57
+pixels of scrolling. The existing `reveal` helper now processes events,
+remeasures geometry and scrolls for at most five iterations, retaining the
+original 30 ms wait and the exact final fully-visible assertion. It neither
+accepts clipping nor changes production layout. With unchanged saved inputs,
+the complete final-page native-script diagnostic finished in 51.918 s, exit 0,
+and emitted `REAL_INTRADAY_RISK_VIEWS_OK`; this diagnostic is not a pytest PASS.
+
+The subsequent complete two-case pytest run passed final in 48.638 s but
+development again exceeded its native 120-second limit (JUnit: 2 cases,
+1 failure, 0 errors/skips, 312.510 s). Thus page splitting and geometry settling
+alone did not establish adequate completion behavior. This failed candidate
+was not published or accepted. The closed ComboBox's arrow events still
+activated every intermediate choice and triggered work for unasserted views.
+
+The final `choose` repair uses the real popup interaction already present in
+two other QML flows in this file: Space opens it, Up/Down moves the highlighted
+option, and Return commits the requested option once. Three additional
+assertions verify initial and target highlights and that `currentIndex` stays
+unchanged until commit. Equal current/target indices send no keys. An actual
+Main.qml probe verified popup visibility and both forward/backward navigation;
+this is not direct property assignment or synthetic signal emission.
+
+The complete final embedded scripts were then exercised sequentially with
+fresh settings/preferences and independent copies of the same saved inputs:
+development finished in 93.745 s and final in 40.600 s. Both children exited 0,
+emitted `REAL_INTRADAY_RISK_VIEWS_OK`, retained the 120-second limit and left
+original/copy bytes unchanged. These diagnostic runs avoid regenerating the
+research fixtures and are not counted as pytest passes. The original 54
+embedded assertions remain, with the final-binding and three popup assertions
+added. No production/QML change, new test framework or timeout increase was
+introduced by these test repairs.
+
+The final complete two-case pytest run, including its original research fixture
+preparation, exited 0: **2 passed, 0 errors, 0 failures, 0 skips**, JUnit suite
+time **279.212 s**. Development took 234.783 s including fixture setup; final
+took 43.654 s. The external wrapper took 282.045 s. These are full pytest
+results, distinct from the native-only diagnostics above. AST comparison
+confirmed all 54 original assertions remain among the final 58 and that every
+other module-level test is unchanged from the initial Q57 candidate. Hygiene,
+release/version 0.9.0 and whitespace checks passed. The actual classifier on
+the four-file cumulative diff requires FULL; the existing reuse control-plane
+check returns `control_plane_changed`.
+
+The replacement candidate requires its own exact-head independent review and
+natural core and Windows CI results. The initial candidate's PASS and core
+FULL evidence above are historical evidence, not replacement-candidate approval.
+Because the repair touches a workflow path, the existing control-plane
+exclusion rejects post-merge FULL reuse: Q57's exact merged main must complete
+its own natural normal FULL run.
+
 ## Validation and delivery
 
 Use the tested checkout's explicit `PYTHONPATH`, Python 3.11 and repository-external
@@ -309,11 +451,13 @@ successfully. A FULL PR can be reused only after the existing main verifier
 proves the required run/attempt and Git-tree equivalence. Do not change paths
 or add redundant tests to manipulate a tier.
 
-The existing eleven-partition ownership and complete FULL test selection
-remain. Q54's longest PR job was 620 s, Q55's was 600 s and Q56's main FULL
-partition maximum was 561 s; these observations do not justify a new CI
-topology. Measure this package's actual runs and adjust
-only if a concrete blocking imbalance requires it.
+The existing eleven-partition ownership and complete core FULL test selection
+remain. Q54's longest PR job was 620 s, Q55's was 600 s, Q56's main FULL maximum
+was 561 s and the initial Q57 FULL maximum was 614 s; these observations do not
+justify changing that matrix. The separate Windows workflow did hit its
+20-minute job limit, so the narrowly scoped partitioning above is necessary.
+Final Windows success and observed worker durations must come from the new
+candidate's natural run, not estimates or the cancelled initial run.
 
 For each task: commit the stable candidate; independently review that exact
 head; wait for successful required natural PR CI; recheck current head/base,
