@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import math
@@ -121,6 +122,35 @@ def test_average_rank_ties_are_deterministic():
         4.5,
         4.5,
     )
+
+
+def test_analysis_ranks_each_selected_feature_and_label_once_per_call(monkeypatch):
+    from market_vault.research import feature_research as research
+
+    vectors = ((1., 1., 1., 2., 3., 3.), (3., 3., 2., 1., 1., 1.), (7.,) * 6)
+    labels = (.1, .3, .1, .4, .2, .2)
+    bundle = replace(_bundle(), train=_split("TRAIN", tuple(zip(*vectors)), labels))
+    calls = []
+    rank = research._average_ranks
+    def counted(values):
+        calls.append(values)
+        return rank(values)
+    monkeypatch.setattr(research, "_average_ranks", counted)
+    options = {"feature_names": ("bad", "good", "constant"), "quantile_count": 3}
+
+    report = analyze_features(bundle, **options)
+    assert len(calls) == 4
+    assert Counter(calls) == Counter((*vectors, labels))
+    assert tuple(metric.feature_name for metric in report.metrics) == options["feature_names"]
+    good = report.metrics[1]
+    assert (good.bottom_count, good.top_count) == (3, 2)
+    assert good.bottom_label_mean == pytest.approx(1. / 6.)
+    assert good.top_label_mean == .2
+    assert report.metrics[2].rank_ic is None
+
+    assert analyze_features(bundle, **options) == report
+    assert len(calls) == 8
+    assert Counter(calls) == Counter((*vectors, labels) * 2)
 
 
 @pytest.mark.parametrize(

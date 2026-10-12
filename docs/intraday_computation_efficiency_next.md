@@ -111,6 +111,21 @@ The original file was unchanged. These timings remain individual observations.
 Repository hygiene, whitespace and release/version 0.9.0 checks passed on
 Python 3.11.17. Final independent review and remote gates are recorded in the PR.
 
+### Q64 delivery closure
+
+[PR #334](https://github.com/M0DIAN/market-vault/pull/334) received independent
+final-candidate PASS on `d1cd72356bc3f44c2fdf116fafd2c85cd16c2876` and natural
+RESEARCH_FAST PR CI
+[38260030077/1](https://github.com/M0DIAN/market-vault/actions/runs/38260030077/attempts/1).
+Squash main `422c515033bdcce375ff1e43d463cc450a46644f` retains the reviewed tree
+`5775a05f7e53012af33407fc328c2a4ed19b5259`. Its natural push
+[38260550153/1](https://github.com/M0DIAN/market-vault/actions/runs/38260550153/attempts/1)
+passed all 16 physical FULL jobs. This was actual FULL, not subset reuse:
+`research_fast_is_pull_request_only`, `POST_MERGE_REUSE=false`,
+`jobs_missing_surface`. The longest partition took 447 seconds. Independent
+post-merge review confirmed COMPLETE, exact version 0.9.0 and clean synchronized
+main before Q65 implementation began.
+
 ## Q65 — calculate each split/Feature rank vector once
 
 ### Goal, plan and defaults
@@ -139,6 +154,25 @@ complete report bytes. That is synthetic ML-input analysis, not Q5 load time.
 Scope: Feature Research internals, directly related existing tests and this
 record. Q64 is a delivery dependency, not a statistics dependency. No new
 statistics framework, fitted calibration, score, selector or GUI redesign.
+
+### Q65 local evidence
+
+Implementation starts from completed Q64 main
+`422c515033bdcce375ff1e43d463cc450a46644f`. The new public-entry work-count test
+fails on the unchanged production baseline with 9 rank calls instead of 4.
+The candidate performs those 4 calls and recomputes all 4 on a second analysis.
+Existing Feature Research, Stability, Selection and their three CLI test files
+give **85 passed in 0.45 seconds**, including the one new test; previous
+mathematical and split-boundary assertions remain unchanged.
+
+Complete reports match the saved pre-implementation baseline for normal,
+requested-order, tied, empty and constant cases. The same 30,000-row/six-Feature
+public input also retains all 2,246 report bytes while rank calls fall 18→7.
+One unprofiled local observation was 0.829853 seconds on the baseline and
+0.619962 seconds on the candidate. This is a bounded software measurement, not
+a timing gate or an end-to-end Q5/suite latency claim. No Feature vectors or
+ranks persist beyond one analysis call. Final independent review and remote
+gates are recorded in the associated PR.
 
 ## Q66 — reuse alpha-independent preparation within the existing suite
 

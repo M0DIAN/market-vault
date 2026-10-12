@@ -192,13 +192,12 @@ def _average_ranks(values: tuple[float, ...]) -> tuple[float, ...]:
 
 
 def _tail_statistics(
-    feature_values: tuple[float, ...],
+    ranks: tuple[float, ...],
     label_values: tuple[float, ...],
     quantile_count: int,
 ):
-    if not feature_values:
+    if not ranks:
         return 0, 0, None, None, None
-    ranks = _average_ranks(feature_values)
     n = len(ranks)
     tail_size = n / quantile_count
     bottom = tuple(
@@ -249,6 +248,8 @@ def _analyze_one(
     split: MLDatasetSplit,
     feature_name: str,
     quantile_count: int,
+    y: tuple[float, ...],
+    y_ranks: tuple[float, ...],
 ) -> FeatureResearchMetric:
     try:
         index = split.feature_names.index(feature_name)
@@ -256,13 +257,13 @@ def _analyze_one(
         raise FeatureResearchError(f"Feature not present in ML split: {feature_name}") from exc
 
     x = tuple(row[index] for row in split.X)
-    y = tuple(float(value) for value in split.y)
     mean = _mean(x)
     std = _std(x, mean)
     pearson = _pearson(x, y)
-    rank_ic = _pearson(_average_ranks(x), _average_ranks(y))
+    x_ranks = _average_ranks(x)
+    rank_ic = _pearson(x_ranks, y_ranks)
     bottom_count, top_count, bottom_mean, top_mean, spread = _tail_statistics(
-        x,
+        x_ranks,
         y,
         quantile_count,
     )
@@ -297,8 +298,10 @@ def analyze_features(
         raise FeatureResearchError("split must be TRAIN, VALIDATION, or TEST")
     selected = _feature_selection(bundle, feature_names)
     ml_split = bundle.split(split)
+    y = tuple(float(value) for value in ml_split.y)
+    y_ranks = _average_ranks(y)
     metrics = tuple(
-        _analyze_one(ml_split, feature_name, quantile_count)
+        _analyze_one(ml_split, feature_name, quantile_count, y, y_ranks)
         for feature_name in selected
     )
     return FeatureResearchReport(
