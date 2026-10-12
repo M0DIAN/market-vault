@@ -17,7 +17,7 @@ from .intraday_research import (
     _day, _evaluate_intraday_research, _identity, _prepare_intraday_research,
     expand_intraday_plan, fold_cash_contributions, is_intraday_plan_v2, research_algorithm_versions,
 )
-from .ridge_baseline import RIDGE_BASELINE_LEGACY_VERSION, RIDGE_BASELINE_VERSION
+from .ridge_baseline import RIDGE_BASELINE_LEGACY_VERSION, RIDGE_BASELINE_STANDARDIZED_VERSION, RIDGE_BASELINE_VERSION
 from .strategy_experiment import StrategyExperiment, canonical_json, environment_versions
 
 
@@ -230,13 +230,20 @@ def _ridge_model(model, *, features, training_keys, boundary, alpha, version):
     fields = {"version", "alpha", "feature_fields", "training_keys", "training_boundary",
               "intercept", "coefficients", "means", "scales", "model_id"}
     standardized_fields = {"target_mean", "standardized_coefficients"}
+    center_fields = {"feature_center_offsets", "target_center_offset"}
     # Open accepts complete known historical shapes, including records with
-    # unknown historical version labels. Known v1/v2 labels fix their shape;
+    # unknown historical version labels. Known v1/v2/v3 labels fix their shape;
     # current Replay rejects historical versions before source access or fit.
-    if type(model) is dict and (model.get("version") == RIDGE_BASELINE_VERSION
-            or (model.get("version") != RIDGE_BASELINE_LEGACY_VERSION
-                and standardized_fields.intersection(model))):
-        fields.update(standardized_fields)
+    if type(model) is dict:
+        label = model.get("version")
+        if label in (RIDGE_BASELINE_STANDARDIZED_VERSION, RIDGE_BASELINE_VERSION):
+            fields.update(standardized_fields)
+        elif label != RIDGE_BASELINE_LEGACY_VERSION and (standardized_fields | center_fields).intersection(model):
+            fields.update(standardized_fields)
+        if label == RIDGE_BASELINE_VERSION or (
+                label not in (RIDGE_BASELINE_LEGACY_VERSION, RIDGE_BASELINE_STANDARDIZED_VERSION)
+                and center_fields.intersection(model)):
+            fields.update(center_fields)
     object_fields(model, fields, "Ridge model")
     _hash(model, "model_id")
     if (model["version"] != version or model["alpha"] != alpha or model["training_keys"] != training_keys
@@ -247,6 +254,9 @@ def _ridge_model(model, *, features, training_keys, boundary, alpha, version):
     if "target_mean" in model:
         finite_number(model["target_mean"], "target_mean")
         vector_fields += ("standardized_coefficients",)
+    if "target_center_offset" in model:
+        finite_number(model["target_center_offset"], "target_center_offset")
+        vector_fields += ("feature_center_offsets",)
     for key in vector_fields:
         if len(_array(model[key], key)) != len(features):
             raise ValueError("Ridge vector differs from explicit Feature order")
@@ -255,7 +265,7 @@ def _ridge_model(model, *, features, training_keys, boundary, alpha, version):
 
 
 def _quadratic_model(model, *, features, training_keys, boundary, alpha, versions):
-    from .intraday_models import quadratic_terms
+    from .intraday_models import INTRADAY_QUADRATIC_RIDGE_LEGACY_VERSION, INTRADAY_QUADRATIC_RIDGE_VERSION, quadratic_terms
 
     object_fields(model, {"version", "kind", "alpha", "input_features", "input_transform", "terms",
                          "training_keys", "training_boundary", "ridge_model", "model_id"}, "quadratic Ridge model")
@@ -267,10 +277,16 @@ def _quadratic_model(model, *, features, training_keys, boundary, alpha, version
             or model["training_keys"] != training_keys or model["training_boundary"] != boundary
             or canonical_json(model["terms"]) != canonical_json(terms)):
         raise ValueError("quadratic model differs from its own representation or training fold")
-    transform = object_fields(model["input_transform"], {"means", "scales", "constant_policy"}, "quadratic input transform")
+    transform_fields = {"means", "scales", "constant_policy"}
+    if model["version"] == INTRADAY_QUADRATIC_RIDGE_VERSION or (
+            model["version"] != INTRADAY_QUADRATIC_RIDGE_LEGACY_VERSION
+            and type(model["input_transform"]) is dict and "center_offsets" in model["input_transform"]):
+        transform_fields.add("center_offsets")
+    transform = object_fields(model["input_transform"], transform_fields, "quadratic input transform")
     if transform["constant_policy"] != "ZERO":
         raise ValueError("quadratic TRAIN-constant Features must map to zero")
-    for key in ("means", "scales"):
+    vector_fields = ("means", "scales") + (("center_offsets",) if "center_offsets" in transform else ())
+    for key in vector_fields:
         if len(_array(transform[key], key)) != len(features):
             raise ValueError("quadratic transform differs from the original Feature order")
         for value in transform[key]:

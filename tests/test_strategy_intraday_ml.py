@@ -146,7 +146,7 @@ def test_real_quadratic_v2_complete_account_legacy_content_and_replay(quadratic_
     assert roots[1]["execution"]["metrics"]["trade_count"] > 0 and roots[2]["execution"]["metrics"]["trade_count"] == 0
     assert roots[1]["predictions"] != roots[0]["predictions"]
     assert snapshot.as_dict()["artifact_schema_version"] == "market-vault-intraday-experiment-v2"
-    assert snapshot.as_dict()["algorithm_versions"]["quadratic"] == "market-vault-intraday-quadratic-ridge-v1"
+    assert snapshot.as_dict()["algorithm_versions"]["quadratic"] == "market-vault-intraday-quadratic-ridge-v2"
     assert report["result_schema_version"] == research.INTRADAY_RESEARCH_RESULT_V2_VERSION
     original = path.read_bytes()
     assert load_strategy_experiment(path).content == original
@@ -165,7 +165,10 @@ def test_quadratic_saved_model_shape_and_versions_reject_resigned_corruption(qua
     _, _, _, snapshot, _, _ = quadratic_dev_case
     for change in ("terms", "transform", "nested_binding", "artifact_version", "missing_centered", "partial_centered",
                    "legacy_with_centered", "target_mean_type", "standardized_width", "standardized_type",
-                   "target_mean_binding", "standardized_binding"):
+                   "target_mean_binding", "standardized_binding", "missing_offsets", "partial_offsets",
+                   "v2_with_offsets", "feature_offsets_width", "feature_offsets_type", "target_offset_type",
+                   "feature_offsets_binding", "target_offset_binding", "transform_offsets_missing",
+                   "transform_offsets_width", "transform_offsets_type", "transform_offsets_binding"):
         root = snapshot.as_dict()
         candidate = root["report"]["groups"][0]["results"][1]
         model = candidate["fold_models"][0]["model"]
@@ -179,6 +182,15 @@ def test_quadratic_saved_model_shape_and_versions_reject_resigned_corruption(qua
             nested["model_id"] = research.digest({k: v for k, v in nested.items() if k != "model_id"})
         elif change == "artifact_version":
             root["artifact_schema_version"] = "market-vault-intraday-experiment-v1"
+        elif change.startswith("transform_offsets"):
+            if change == "transform_offsets_missing":
+                model["input_transform"].pop("center_offsets")
+            elif change == "transform_offsets_width":
+                model["input_transform"]["center_offsets"].pop()
+            elif change == "transform_offsets_type":
+                model["input_transform"]["center_offsets"][0] = True
+            else:
+                model["input_transform"]["center_offsets"][0] += 1
         else:
             nested = model["ridge_model"]
             if change in ("missing_centered", "partial_centered"):
@@ -195,11 +207,28 @@ def test_quadratic_saved_model_shape_and_versions_reject_resigned_corruption(qua
                 nested["standardized_coefficients"][0] = None
             elif change == "target_mean_binding":
                 nested["target_mean"] += 1
-            else:
+            elif change == "standardized_binding":
                 nested["standardized_coefficients"][0] += 1
-            if change not in ("target_mean_binding", "standardized_binding"):
+            elif change in ("missing_offsets", "partial_offsets"):
+                nested.pop("feature_center_offsets")
+                if change == "missing_offsets":
+                    nested.pop("target_center_offset")
+            elif change == "v2_with_offsets":
+                nested["version"] = "market-vault-ridge-baseline-v2"
+            elif change == "feature_offsets_width":
+                nested["feature_center_offsets"].pop()
+            elif change == "feature_offsets_type":
+                nested["feature_center_offsets"][0] = None
+            elif change == "target_offset_type":
+                nested["target_center_offset"] = True
+            elif change == "feature_offsets_binding":
+                nested["feature_center_offsets"][0] += 1
+            else:
+                nested["target_center_offset"] += 1
+            if change not in ("target_mean_binding", "standardized_binding", "feature_offsets_binding", "target_offset_binding"):
                 nested["model_id"] = research.digest({k: v for k, v in nested.items() if k != "model_id"})
-        model["model_id"] = research.digest({k: v for k, v in model.items() if k != "model_id"})
+        if change != "transform_offsets_binding":
+            model["model_id"] = research.digest({k: v for k, v in model.items() if k != "model_id"})
         candidate["candidate_id"] = research.digest({k: v for k, v in candidate.items() if k != "candidate_id"})
         report = root["report"]
         report["research_id"] = research.digest({k: v for k, v in report.items() if k != "research_id"})
@@ -213,30 +242,51 @@ def test_quadratic_saved_model_shape_and_versions_reject_resigned_corruption(qua
             "standardized_type": "standardized_coefficients must be finite numeric data",
             "target_mean_binding": "saved model_id does not bind complete content",
             "standardized_binding": "saved model_id does not bind complete content",
+            "missing_offsets": "Ridge model must contain exactly",
+            "partial_offsets": "Ridge model must contain exactly",
+            "v2_with_offsets": "Ridge model must contain exactly",
+            "feature_offsets_width": "Ridge vector differs",
+            "feature_offsets_type": "feature_center_offsets must be finite numeric data",
+            "target_offset_type": "target_center_offset must be finite numeric data",
+            "feature_offsets_binding": "saved model_id does not bind complete content",
+            "target_offset_binding": "saved model_id does not bind complete content",
+            "transform_offsets_missing": "quadratic input transform must contain exactly",
+            "transform_offsets_width": "quadratic transform differs",
+            "transform_offsets_type": "center_offsets must be finite numeric data",
+            "transform_offsets_binding": "saved model_id does not bind complete content",
         }.get(change)
         with pytest.raises(ValueError, match=expected_error):
             StrategyExperiment(canonical_json(root))
 
 
-@pytest.mark.parametrize("version,legacy_shape", [("market-vault-ridge-baseline-v1", True), ("historical-ridge", False)])
+@pytest.mark.parametrize("version,shape", [("market-vault-ridge-baseline-v1", 1),
+    ("market-vault-ridge-baseline-v2", 2), ("historical-ridge", 1), ("historical-ridge", 2), ("historical-ridge", 3)])
 def test_historical_ridge_shapes_open_unchanged_but_current_replay_rejects_before_io(
-    quadratic_dev_case, tmp_path, monkeypatch, version, legacy_shape,
+    quadratic_dev_case, tmp_path, monkeypatch, version, shape,
 ):
     from test_intraday_experiment import signed
 
     root = quadratic_dev_case[3].as_dict()
     root["algorithm_versions"]["ridge"] = version
+    if shape < 3:
+        root["algorithm_versions"]["quadratic"] = "market-vault-intraday-quadratic-ridge-v1"
     for group in root["report"]["groups"]:
         for candidate in group["results"]:
             for record in candidate["fold_models"]:
                 model = record["model"]
                 ridge = model.get("ridge_model", model)
                 ridge["version"] = version
-                if legacy_shape:
+                if shape < 3:
+                    ridge.pop("feature_center_offsets")
+                    ridge.pop("target_center_offset")
+                if shape == 1:
                     ridge.pop("target_mean")
                     ridge.pop("standardized_coefficients")
                 ridge["model_id"] = research.digest({k: v for k, v in ridge.items() if k != "model_id"})
                 if ridge is not model:
+                    if shape < 3:
+                        model["version"] = root["algorithm_versions"]["quadratic"]
+                        model["input_transform"].pop("center_offsets")
                     model["model_id"] = research.digest({k: v for k, v in model.items() if k != "model_id"})
     content = signed(root)
     path = tmp_path / "historical.json"

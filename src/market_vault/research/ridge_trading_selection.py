@@ -513,6 +513,8 @@ def _validation_predictions(
                 result.standardized_coefficients,
                 result.feature_means,
                 result.feature_scales,
+                result.feature_center_offsets,
+                result.target_center_offset,
             )
         except RidgeBaselineError as exc:
             raise RidgeTradingThresholdSelectionError(str(exc)) from exc

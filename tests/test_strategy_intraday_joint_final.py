@@ -193,12 +193,14 @@ def test_one_final_fit_training_scores_tails_and_independent_cash_oracle(joint_f
                 ridge = model
                 values = [features[field] for field in model["feature_fields"]]
             else:
-                z = (features["return_2"] - model["input_transform"]["means"][0]) / model["input_transform"]["scales"][0]
+                transform = model["input_transform"]
+                z = ((features["return_2"] - transform["means"][0]) - transform["center_offsets"][0]) / transform["scales"][0]
                 ridge = model["ridge_model"]
                 values = [z, z * z]
-            score = ridge["target_mean"] + fsum(coefficient * ((value - mean) / scale if scale else 0.0)
-                for value, coefficient, mean, scale in zip(values, ridge["standardized_coefficients"],
-                    ridge["means"], ridge["scales"], strict=True))
+            score = fsum((ridge["target_mean"], ridge["target_center_offset"],
+                *(coefficient * (((value - mean) - offset) / scale if scale else 0.0)
+                for value, coefficient, mean, scale, offset in zip(values, ridge["standardized_coefficients"],
+                    ridge["means"], ridge["scales"], ridge["feature_center_offsets"], strict=True))))
             assert row["score"] == pytest.approx(score, abs=1e-14)
             assert row["target"] == ("LONG" if score > report["strategy"]["threshold"] else "FLAT")
             target = targets[row["observation_key"]]

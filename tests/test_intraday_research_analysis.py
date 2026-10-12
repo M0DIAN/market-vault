@@ -62,17 +62,24 @@ def test_constant_training_target_keeps_actual_intraday_fits_constant(quadratic)
     assert model["training_keys"] == [row["observation_key"] for row, _ in rows]
 
 
-def test_constant_training_target_mean_agrees_in_both_forecast_reference_paths():
+@pytest.mark.parametrize("constant", [.1, -.1])
+@pytest.mark.parametrize("nonconstant", [False, True])
+def test_training_target_mean_agrees_in_both_forecast_reference_paths(constant, nonconstant):
     from market_vault.research.intraday_prediction_quality import _paired_prediction_rows
     from market_vault.research.intraday_ml_diagnostics import _outer_rows
     from market_vault.research.intraday_feature_ablation import _ablation_predictions
-    constant = .1
+    adjacent = math.nextafter(constant, math.copysign(math.inf, constant))
+    targets = (constant, constant, adjacent if nonconstant else constant)
+    exact_mean = sum(map(Fraction, targets)) / len(targets)
+    expected = float(exact_mean)
     training = tuple(({"observation_key": f"train-{i}", "features": {"x": float(i)}},
-                      {"value": constant}) for i in range(3))
+                      {"value": target}) for i, target in enumerate(targets))
     observation = {"observation_key": "validation", "trading_day": "2025-03-03", "slot": 0,
                    "decision_time": "2025-03-03T15:00:00+00:00", "features": {"x": 4.0}}
     boundary = "2025-03-03T14:30:00+00:00"
     model, scores = research.fit_ridge_rows(training, (observation,), ["x"], 1.0, boundary=boundary)
+    assert model["target_mean"] == expected
+    assert model["target_center_offset"] == pytest.approx(float(exact_mean - Fraction(expected)), rel=1e-15, abs=0.0)
     prediction = {**observation, "score": scores[0], "target": "LONG"}
     fold = {"fold_index": 0, "fold_id": "fold", "training_boundary": boundary,
             "training_days": ["2025-02-28"], "training_keys": model["training_keys"],
@@ -88,14 +95,14 @@ def test_constant_training_target_mean_agrees_in_both_forecast_reference_paths()
     selected = _outer_rows({"context": context, "reference": candidate}, prepared, [prediction],
                            [{"model": model, "strategy": strategy}])
     for rows, folds in (ordinary, selected):
-        assert folds[0]["training_target_mean"] == constant
-        assert rows[0]["scores"]["TRAIN_MEAN"] == constant
+        assert folds[0]["training_target_mean"] == expected
+        assert rows[0]["scores"]["TRAIN_MEAN"] == expected
         forecast = next(row for row in folds[0]["forecasts"] if row["forecast"] == "TRAIN_MEAN")
         assert forecast["metrics"]["mse"]["value"] == 0.0
         assert forecast["metrics"]["mse_skill_vs_train_mean"]["unavailable_reason"] == "ZERO_BASELINE_ERROR"
     rows, _, variants = _ablation_predictions(prepared, candidate)
-    assert rows[0]["scores"]["DROP_0"] == constant
-    assert variants[0]["fold_models"][0]["model"]["intercept"] == constant
+    assert rows[0]["scores"]["DROP_0"] == expected
+    assert variants[0]["fold_models"][0]["model"]["intercept"] == expected
 
 
 def test_return_uncertainty_stationary_restart_wrap_and_exact_quantile_oracle(monkeypatch):
@@ -2134,7 +2141,8 @@ def test_quadratic_ridge_symmetric_heldout_curvature_and_both_training_normaliza
     assert quadratic["degree"] == 2 and quadratic["expanded_width"] == 2
     assert quadratic["terms"] == [{"name": "z_0", "input_indices": [0]}, {"name": "z_0*z_0", "input_indices": [0, 0]}]
     model = quadratic["fold_models"][0]["model"]
-    assert model["input_transform"] == {"means": [0.0], "scales": [pytest.approx(math.sqrt(2.5))], "constant_policy": "ZERO"}
+    assert model["input_transform"] == {"means": [0.0], "scales": [pytest.approx(math.sqrt(2.5))],
+                                       "center_offsets": [0.0], "constant_policy": "ZERO"}
     assert model["ridge_model"]["means"] == pytest.approx([0.0, 1.0])
     assert model["ridge_model"]["scales"] == pytest.approx([1.0, .6])
     assert model["ridge_model"]["coefficients"] == pytest.approx([0.0, 2.5 * shrink])
@@ -2172,7 +2180,8 @@ def test_quadratic_ridge_pair_interaction_exact_order_arithmetic_and_constant_co
     assert quadratic["expanded_width"] == 9 and [term["name"] for term in quadratic["terms"]] == names
     assert [term["input_indices"] for term in quadratic["terms"]] == [[0], [1], [2], [0, 0], [0, 1], [0, 2], [1, 1], [1, 2], [2, 2]]
     model = quadratic["fold_models"][0]["model"]
-    assert model["input_transform"] == {"means": [0.0, 0.0, 7.0], "scales": [1.0, 1.0, 0.0], "constant_policy": "ZERO"}
+    assert model["input_transform"] == {"means": [0.0, 0.0, 7.0], "scales": [1.0, 1.0, 0.0],
+                                       "center_offsets": [0.0, 0.0, 0.0], "constant_policy": "ZERO"}
     ridge = model["ridge_model"]
     assert ridge["means"] == pytest.approx([0, 0, 0, 1, 0, 0, 1, 0, 0])
     assert ridge["scales"] == pytest.approx([1, 1, 0, 0, 1, 0, 0, 0, 0])
@@ -2183,7 +2192,8 @@ def test_quadratic_ridge_pair_interaction_exact_order_arithmetic_and_constant_co
     assert [row["scores"]["QUADRATIC_RIDGE"] for row in rows[:5]] == pytest.approx(
         [6 * shrink, -6 * shrink, -6 * shrink, 6 * shrink, 20 * shrink])
     observation = {"features": {"y": 14.0, "x": 4.0, "constant": 99.0}, "observation_key": "arithmetic"}
-    expanded = _expanded_observation(observation, quadratic["input_features"], (10, 2, 7), (2, 4, 0), quadratic["terms"])
+    expanded = _expanded_observation(observation, quadratic["input_features"], (10, 2, 7), (2, 4, 0),
+                                     (0.0, 0.0, 0.0), quadratic["terms"])
     assert list(expanded["features"].values()) == [2, .5, 0, 4, 1, 0, .25, 0, 0]
     assert expanded["observation_key"] == observation["observation_key"]
     assert observation["features"] == {"y": 14.0, "x": 4.0, "constant": 99.0}
@@ -2280,9 +2290,9 @@ def test_quadratic_ridge_single_constant_is_training_mean_and_finite_overflow_fa
                for record in quadratic["fold_models"])
     terms = _quadratic_terms(("x",))
     with pytest.raises(ValueError, match="normalization is not finite"):
-        _expanded_observation({"features": {"x": 1e308}}, ("x",), (-1e308,), (1.0,), terms)
+        _expanded_observation({"features": {"x": 1e308}}, ("x",), (-1e308,), (1.0,), (0.0,), terms)
     with pytest.raises(ValueError, match="generated term is not finite"):
-        _expanded_observation({"features": {"x": 1e200}}, ("x",), (0.0,), (1.0,), terms)
+        _expanded_observation({"features": {"x": 1e200}}, ("x",), (0.0,), (1.0,), (0.0,), terms)
     prepared, candidate = _quadratic_case()
     prepared.observations[0]["features"]["x"] = 1e200
     with pytest.raises(ValueError, match="generated term is not finite"):
@@ -2324,7 +2334,7 @@ def test_quadratic_ridge_dimension_and_selected_admission_precede_q5_io(research
             for record in candidate["fold_models"]:
                 model = record["model"]
                 model["feature_fields"] = fields
-                for key in ("means", "scales", "coefficients", "standardized_coefficients"):
+                for key in ("means", "scales", "coefficients", "standardized_coefficients", "feature_center_offsets"):
                     model[key] += [0.0] * 6
     # A structurally valid, re-signed oversized saved projection must be rejected
     # before source access; no source-reconstruction proof is invented here.

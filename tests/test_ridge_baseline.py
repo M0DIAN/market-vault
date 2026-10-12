@@ -175,12 +175,117 @@ def test_centered_ridge_predictions_preserve_the_fractional_threshold_oracle():
                                       boundary="2025-03-03T14:30:00+00:00")
         assert scores == pytest.approx(expected, rel=0.0, abs=tolerance)
         assert tuple(score > .0005 for score in scores) == (True, False)
-        restored = tuple(model["target_mean"] + math.fsum(
-            coefficient * ((observation["features"][feature] - mean) / scale if scale else 0.0)
-            for feature, coefficient, mean, scale in zip(model["feature_fields"],
-                model["standardized_coefficients"], model["means"], model["scales"], strict=True))
+        restored = tuple(math.fsum((model["target_mean"], model["target_center_offset"], *(
+            coefficient * (((observation["features"][feature] - mean) - offset) / scale if scale else 0.0)
+            for feature, coefficient, mean, scale, offset in zip(model["feature_fields"],
+                model["standardized_coefficients"], model["means"], model["scales"],
+                model["feature_center_offsets"], strict=True))))
             for observation in observations)
         assert restored == scores
+
+
+@pytest.mark.parametrize("origin", [0.0, 1.0, -1.0])
+@pytest.mark.parametrize("alpha", [.1, 1.0, 10.0])
+def test_asymmetric_train_centers_preserve_the_linear_threshold_oracle(origin, alpha):
+    from market_vault.research.intraday_research import fit_ridge_rows
+
+    unit = math.ulp(1.0)
+    training_x = (origin, origin, origin + unit)
+    targets = (0.0, 0.0, .003)
+    rows = tuple(({"observation_key": f"train-{i}", "features": {"x": x}}, {"value": target})
+                 for i, (x, target) in enumerate(zip(training_x, targets, strict=True)))
+    observations = tuple({"observation_key": f"validation-{i}", "features": {"x": x}}
+                         for i, x in enumerate((origin, origin + unit)))
+    # A one-column population-standardized fit has Z'Z=n. Its centered
+    # predictions shrink by n/(n+alpha); no fitted production parameter is
+    # used to obtain this exact binary-input oracle.
+    target_mean = sum(map(Fraction, targets)) / 3
+    shrink = Fraction(3) / (3 + Fraction(alpha))
+    expected = tuple(float(target_mean + shrink * (Fraction(y) - target_mean))
+                     for y in (targets[0], targets[-1]))
+    model, scores = fit_ridge_rows(rows, observations, ["x"], alpha,
+                                  boundary="2025-03-03T14:30:00+00:00")
+    assert scores == pytest.approx(expected, rel=0.0, abs=8 * math.ulp(max(expected)))
+    if alpha == 1.0:
+        assert tuple(score > .0005 for score in scores) == (False, True)
+    exact_center = sum(map(Fraction, training_x)) / len(training_x)
+    assert model["means"] == [float(exact_center)]
+    assert model["feature_center_offsets"][0] == pytest.approx(
+        float(exact_center - Fraction(model["means"][0])), rel=1e-15, abs=0.0)
+    reconstructed = tuple(math.fsum((model["target_mean"], model["target_center_offset"],
+        model["standardized_coefficients"][0] * (((row["features"]["x"] - model["means"][0])
+             - model["feature_center_offsets"][0]) / model["scales"][0]))) for row in observations)
+    assert reconstructed == scores
+
+
+@pytest.mark.parametrize("origin", [0.0, 1.0, -1.0])
+def test_asymmetric_quadratic_train_centers_preserve_the_threshold_oracle(origin):
+    from market_vault.research.intraday_models import fit_quadratic_rows
+
+    unit = math.ulp(1.0)
+    offsets = tuple(map(Fraction, (0, 1, 1, 3)))
+    targets = tuple(map(Fraction, (0.0, 0.0, 0.0, .003)))
+    mean = sum(offsets) / len(offsets)
+    centered = tuple(x - mean for x in offsets)
+    variance = sum(x * x for x in centered) / len(centered)
+    squared = tuple(x * x - variance for x in centered)
+    square_variance = sum(x * x for x in squared) / len(squared)
+    target_mean = sum(targets) / len(targets)
+    # Eliminate both square roots algebraically: standardizing a column is
+    # equivalent to adding alpha * population_variance to its raw Gram
+    # diagonal. Solve this two-column system independently with Fractions.
+    a = sum(x * x for x in centered) + variance
+    b = sum(x * z for x, z in zip(centered, squared, strict=True))
+    c = sum(z * z for z in squared) + square_variance
+    u = sum(x * (y - target_mean) for x, y in zip(centered, targets, strict=True))
+    v = sum(z * (y - target_mean) for z, y in zip(squared, targets, strict=True))
+    determinant = a * c - b * b
+    slope = (u * c - v * b) / determinant
+    curvature = (v * a - u * b) / determinant
+    query = Fraction(2) - mean
+    expected = float(target_mean + slope * query + curvature * (query * query - variance))
+    rows = tuple(({"observation_key": f"train-{i}", "features": {"x": origin + float(x) * unit}},
+                  {"value": float(y)}) for i, (x, y) in enumerate(zip(offsets, targets, strict=True)))
+    observations = ({"observation_key": "validation", "features": {"x": origin + 2 * unit}},)
+    model, scores = fit_quadratic_rows(rows, observations, ["x"], 1.0,
+                                      boundary="2025-03-03T14:30:00+00:00")
+    assert scores[0] == pytest.approx(expected, rel=0.0, abs=16 * math.ulp(expected))
+    assert scores[0] < .001
+
+
+@pytest.mark.parametrize("constant", [.1, -.1])
+def test_nonconstant_train_mean_references_use_the_complete_center(constant):
+    from market_vault.research.ridge_baseline import _training_target_mean
+
+    adjacent = math.nextafter(constant, math.copysign(math.inf, constant))
+    targets = (constant, constant, adjacent)
+    expected = float(sum(map(Fraction, targets)) / len(targets))
+    assert _training_target_mean(targets) == expected
+    report = evaluate_ridge_baseline(_plan(train_X=((0.0,),) * 3, train_y=targets,
+        validation_X=((0.0,),) * 2, validation_y=(expected,) * 2))
+    assert report.folds[0].target_mean == expected
+    assert report.rmse == 0.0
+
+
+def test_train_mean_retains_supported_opposite_finite_extremes():
+    from market_vault.research.ridge_baseline import _training_target_mean
+
+    assert _training_target_mean((-1e308, 1e308)) == 0.0
+
+
+@pytest.mark.parametrize("values", [
+    (0.0, math.ulp(1.0)), (0.0, 0.0, math.ulp(1.0)),
+    (1.0, math.nextafter(1.0, math.inf)),
+    (.1, math.nextafter(.1, math.inf)),
+    (-.1, math.nextafter(-.1, -math.inf)),
+])
+def test_train_center_retains_fraction_mean_and_offset_at_rounding_boundaries(values):
+    from market_vault.research.ridge_baseline import _training_center
+
+    exact_mean = sum(map(Fraction, values)) / len(values)
+    mean, offset = _training_center(values)
+    assert mean == float(exact_mean)
+    assert offset == pytest.approx(float(exact_mean - Fraction(mean)), rel=1e-15, abs=0.0)
 
 
 def test_centered_ridge_prediction_only_reorders_an_overflowing_standardization():
@@ -254,8 +359,8 @@ def test_ridge_gram_matches_dense_oracle_with_one_product_per_pair(
                 products += 1
             return float(self) * float(other)
 
-    def counted_standardize(X, means, scales):
-        Z = standardize(X, means, scales)
+    def counted_standardize(X, means, scales, center_offsets):
+        Z = standardize(X, means, scales, center_offsets)
         captured["Z"] = Z
         return tuple(tuple(Counted(value) for value in row) for row in Z)
 
@@ -278,13 +383,16 @@ def test_ridge_gram_matches_dense_oracle_with_one_product_per_pair(
     dense = tuple(tuple(math.fsum(row[left] * row[right] for row in Z)
                         + (alpha if left == right else 0.0)
                         for right in range(width)) for left in range(width))
-    mean = math.fsum(y) / len(y)
-    vector = tuple(math.fsum(row[column] * (target - mean)
+    mean = sum(map(Fraction, y)) / len(y)
+    vector = tuple(math.fsum(row[column] * float(Fraction(target) - mean)
                              for row, target in zip(Z, y)) for column in range(width))
     assert captured["matrix"] == dense
-    assert captured["vector"] == vector
+    assert captured["vector"] == pytest.approx(vector, rel=0.0,
+        abs=8 * math.ulp(max(abs(value) for value in vector)))
     monkeypatch.setattr(ridge, "_standardize", standardize)
-    monkeypatch.setattr(ridge, "_solve", lambda matrix, rhs: solve(dense, vector))
+    # The exact byte oracle isolates symmetric Gram reuse; target-centering
+    # accuracy is checked independently against the Fraction vector above.
+    monkeypatch.setattr(ridge, "_solve", lambda matrix, rhs: solve(dense, captured["vector"]))
     expected = fit(training, validation, features, alpha, **options)
     assert canonical_json(actual) == canonical_json(expected)
 
@@ -333,9 +441,10 @@ def test_adjacent_nonconstant_features_keep_their_training_variation():
     ), alpha=1.0)
     fold = report.folds[0]
     # Exact equality, not an epsilon cutoff, distinguishes this from a
-    # constant. The mean rounds to 1, leaving one nonzero squared deviation.
+    # constant. The displayed mean rounds to 1; its saved correction retains
+    # the exact center and population variance 2 * ulp**2 / 9.
     assert fold.feature_means == (1.0,)
-    assert fold.feature_scales == (math.sqrt(math.ulp(1.0) ** 2 / 3),)
+    assert fold.feature_scales == (math.sqrt(2 * math.ulp(1.0) ** 2 / 9),)
     assert fold.feature_scales[0] > 0.0
     assert fold.coefficients[0] > 0.0
 
@@ -360,6 +469,9 @@ def test_validation_features_never_enter_fit_or_standardization():
     right = two.folds[0]
     assert left.feature_means == right.feature_means
     assert left.feature_scales == right.feature_scales
+    assert left.feature_center_offsets == right.feature_center_offsets
+    assert left.target_mean == right.target_mean
+    assert left.target_center_offset == right.target_center_offset
     assert left.coefficients == right.coefficients
     assert left.intercept == right.intercept
 
@@ -449,6 +561,18 @@ def test_held_out_test_count_cannot_change_model_results():
 def test_invalid_alpha_fails_closed(bad):
     with pytest.raises(RidgeBaselineError):
         evaluate_ridge_baseline(_plan(), alpha=bad)
+
+
+@pytest.mark.parametrize("changes,message", [
+    ({"target_center_offset": math.inf}, "target_center_offset must be finite"),
+    ({"target_center_offset": True}, "target_center_offset must be numeric"),
+    ({"feature_center_offsets": (math.nan,)}, "feature_center_offsets value must be finite"),
+    ({"feature_center_offsets": (0.0, 0.0)}, "parameter vector widths differ"),
+])
+def test_fold_complete_center_rejects_nonfinite_or_incomplete_parameters(changes, message):
+    fold = evaluate_ridge_baseline(_plan()).folds[0]
+    with pytest.raises(RidgeBaselineError, match=message):
+        replace(fold, **changes)
 
 
 @pytest.mark.parametrize("constant", [0.1, -0.1])

@@ -1,4 +1,4 @@
-"""Deterministic Ridge Regression Baseline V2 over Walk-Forward folds.
+"""Deterministic Ridge Regression Baseline V3 over Walk-Forward folds.
 
 This is the first model-fitting layer in the MarketVault research mainline.
 
@@ -31,7 +31,8 @@ from .walk_forward import WalkForwardPlan
 
 
 RIDGE_BASELINE_LEGACY_VERSION = "market-vault-ridge-baseline-v1"
-RIDGE_BASELINE_VERSION = "market-vault-ridge-baseline-v2"
+RIDGE_BASELINE_STANDARDIZED_VERSION = "market-vault-ridge-baseline-v2"
+RIDGE_BASELINE_VERSION = "market-vault-ridge-baseline-v3"
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -74,6 +75,8 @@ class RidgeFoldResult:
     feature_scales: tuple[float, ...]
     target_mean: float
     standardized_coefficients: tuple[float, ...]
+    feature_center_offsets: tuple[float, ...]
+    target_center_offset: float
     mae: float
     rmse: float
     r2: float | None
@@ -94,7 +97,8 @@ class RidgeFoldResult:
             _finite_number(self.intercept, "intercept"),
         )
         object.__setattr__(self, "target_mean", _finite_number(self.target_mean, "target_mean"))
-        for name in ("coefficients", "feature_means", "feature_scales", "standardized_coefficients"):
+        object.__setattr__(self, "target_center_offset", _finite_number(self.target_center_offset, "target_center_offset"))
+        for name in ("coefficients", "feature_means", "feature_scales", "standardized_coefficients", "feature_center_offsets"):
             values = getattr(self, name)
             if type(values) is not tuple or not values:
                 raise RidgeBaselineError(f"{name} must be a non-empty tuple")
@@ -108,6 +112,7 @@ class RidgeFoldResult:
             len(self.feature_means) != width
             or len(self.feature_scales) != width
             or len(self.standardized_coefficients) != width
+            or len(self.feature_center_offsets) != width
         ):
             raise RidgeBaselineError("ridge parameter vector widths differ")
         if any(scale < 0.0 for scale in self.feature_scales):
@@ -188,6 +193,42 @@ class RidgeBaselineReport:
         object.__setattr__(self, "r2", _optional_finite(self.r2, "r2"))
 
 
+def _training_center(values: tuple[float, ...]) -> tuple[float, float]:
+    """Return a rounded TRAIN mean and its low-order center correction."""
+    if not values:
+        raise RidgeBaselineError("TRAIN center requires at least one value")
+    if all(value == values[0] for value in values):
+        return (0.0 if values[0] == 0.0 else float(values[0])), 0.0
+    origin = values[0]
+    differences = tuple(value - origin for value in values)
+    if not all(math.isfinite(value) for value in differences):
+        # Opposite finite extremes can overflow only the origin subtraction.
+        # Preserve the already supported raw-mean path for that case; this is
+        # not a new extreme-value fitting or variance policy.
+        mean = math.fsum(values) / len(values)
+    else:
+        try:
+            shifted_mean = math.fsum(differences) / len(values)
+        except OverflowError:
+            shifted_mean = math.fsum(value / len(values) for value in differences)
+        mean = math.fsum((origin, shifted_mean))
+    try:
+        # Sum the unrounded differences. Rounding each value-mean first can
+        # move a correct mean by one ULP, even for (0, 0, ulp(1)). Interleaving
+        # keeps nearby large values cancelled without forming their raw sum.
+        offset = math.fsum(part for value in values for part in (value, -mean)) / len(values)
+    except OverflowError:
+        # Keep the existing finite-mean fallback; this does not widen the
+        # range supported by the variance or linear solver.
+        return (0.0 if mean == 0.0 else mean), 0.0
+    # Reconcile the displayed mean with the same complete center used by fit
+    # and reference forecasts, retaining the part that cannot be added to it.
+    rounded_mean = math.fsum((mean, offset))
+    offset = math.fsum((mean, -rounded_mean, offset))
+    mean = rounded_mean
+    return (0.0 if mean == 0.0 else mean), (0.0 if offset == 0.0 else offset)
+
+
 def _column_stats(X: tuple[tuple[float, ...], ...]):
     if not X:
         raise RidgeBaselineError("ridge TRAIN matrix must not be empty")
@@ -195,36 +236,30 @@ def _column_stats(X: tuple[tuple[float, ...], ...]):
     if width == 0 or any(len(row) != width for row in X):
         raise RidgeBaselineError("ridge TRAIN matrix width is invalid")
 
-    # The rounded mean of an exactly constant column can differ from its
-    # value, creating a false scale and a spurious predictive coefficient.
-    # Preserve exact constancy; nonconstant columns keep their original math.
-    means = tuple(
-        (0.0 if X[0][column] == 0.0 else float(X[0][column]))
-        if all(row[column] == X[0][column] for row in X)
-        else math.fsum(row[column] for row in X) / len(X)
-        for column in range(width)
-    )
+    centers = tuple(_training_center(tuple(row[column] for row in X)) for column in range(width))
+    means, offsets = tuple(center[0] for center in centers), tuple(center[1] for center in centers)
     scales = []
     for column, mean in enumerate(means):
         variance = math.fsum(
-            (row[column] - mean) ** 2 for row in X
+            ((row[column] - mean) - offsets[column]) ** 2 for row in X
         ) / len(X)
         scale = math.sqrt(variance)
         if not math.isfinite(scale):
             raise RidgeBaselineError("Feature scale is not finite")
         scales.append(0.0 if scale == 0.0 else scale)
-    return means, tuple(scales)
+    return means, tuple(scales), offsets
 
 
 def _standardize(
     X: tuple[tuple[float, ...], ...],
     means: tuple[float, ...],
     scales: tuple[float, ...],
+    center_offsets: tuple[float, ...],
 ):
     return tuple(
         tuple(
             0.0 if scales[column] == 0.0
-            else (row[column] - means[column]) / scales[column]
+            else ((row[column] - means[column]) - center_offsets[column]) / scales[column]
             for column in range(len(means))
         )
         for row in X
@@ -274,11 +309,8 @@ def _solve(matrix, vector) -> tuple[float, ...]:
 
 
 def _training_target_mean(values: tuple[float, ...]) -> float:
-    # A rounded mean must not create a response direction when every
-    # admitted TRAIN target is identical. Keep nonconstant arithmetic.
-    if all(value == values[0] for value in values):
-        return 0.0 if values[0] == 0.0 else float(values[0])
-    return math.fsum(values) / len(values)
+    # Reference forecasts and fitted models share the same rounded mean.
+    return _training_center(values)[0]
 
 
 @dataclass(frozen=True, slots=True)
@@ -286,6 +318,8 @@ class _RidgePreparation:
     means: tuple[float, ...]
     scales: tuple[float, ...]
     y_mean: float
+    feature_center_offsets: tuple[float, ...]
+    target_center_offset: float
     gram: tuple[tuple[float, ...], ...]
     vector: tuple[float, ...]
 
@@ -296,10 +330,10 @@ def _prepare_fit(
 ) -> _RidgePreparation:
     if len(X) != len(y) or not X:
         raise RidgeBaselineError("ridge TRAIN X/y row counts are invalid")
-    means, scales = _column_stats(X)
-    Z = _standardize(X, means, scales)
-    y_mean = _training_target_mean(y)
-    centered_y = tuple(value - y_mean for value in y)
+    means, scales, feature_offsets = _column_stats(X)
+    Z = _standardize(X, means, scales, feature_offsets)
+    y_mean, target_offset = _training_center(y)
+    centered_y = tuple((value - y_mean) - target_offset for value in y)
     width = len(means)
 
     matrix = [[0.0] * width for _ in range(width)]
@@ -319,7 +353,8 @@ def _prepare_fit(
         )
 
     return _RidgePreparation(
-        means, scales, y_mean, tuple(tuple(row) for row in matrix), tuple(vector),
+        means, scales, y_mean, feature_offsets, target_offset,
+        tuple(tuple(row) for row in matrix), tuple(vector),
     )
 
 
@@ -337,6 +372,7 @@ def _fit(
         if _preparation is not None:
             _preparation["ridge"] = prepared
     means, scales, y_mean = prepared.means, prepared.scales, prepared.y_mean
+    feature_offsets, target_offset = prepared.feature_center_offsets, prepared.target_center_offset
     width = len(means)
     matrix = tuple(
         tuple(value + (alpha if left == right else 0.0)
@@ -349,10 +385,9 @@ def _fit(
         else standardized_coefficients[index] / scales[index]
         for index in range(width)
     )
-    intercept = y_mean - math.fsum(
-        coefficient * mean
-        for coefficient, mean in zip(coefficients, means)
-    )
+    intercept = math.fsum((y_mean, target_offset,
+        *(-coefficient * mean for coefficient, mean in zip(coefficients, means)),
+        *(-coefficient * offset for coefficient, offset in zip(coefficients, feature_offsets))))
     if not math.isfinite(intercept):
         raise RidgeBaselineError("ridge intercept is not finite")
     return (
@@ -362,6 +397,8 @@ def _fit(
         scales,
         y_mean,
         standardized_coefficients,
+        feature_offsets,
+        target_offset,
     )
 
 
@@ -371,28 +408,33 @@ def _predict(
     standardized_coefficients: tuple[float, ...],
     means: tuple[float, ...],
     scales: tuple[float, ...],
+    center_offsets: tuple[float, ...],
+    target_center_offset: float,
 ) -> tuple[float, ...]:
     width = len(standardized_coefficients)
-    if len(means) != width or len(scales) != width:
+    if len(means) != width or len(scales) != width or len(center_offsets) != width:
         raise RidgeBaselineError("ridge prediction parameter widths differ")
     predictions = []
     for row in X:
         if len(row) != width:
             raise RidgeBaselineError("ridge prediction matrix width mismatch")
         contributions = []
-        for coefficient, feature, mean, scale in zip(standardized_coefficients, row, means, scales):
+        for coefficient, feature, mean, scale, offset in zip(standardized_coefficients, row, means, scales, center_offsets):
             if not math.isfinite(feature):
                 raise RidgeBaselineError("ridge prediction Feature is not finite")
             if coefficient == 0.0 or scale == 0.0:
                 continue
-            delta = feature - mean
+            delta = (feature - mean) - offset
             standardized = delta / scale
             # Preserve the normal standardized operation order. Only an
             # overflowing intermediate quotient reorders this centered term;
             # a tiny nonzero weight can still yield a finite prediction.
             contributions.append(coefficient * standardized if math.isfinite(standardized)
                                  else (coefficient / scale) * delta)
-        value = target_mean + math.fsum(contributions)
+        try:
+            value = math.fsum((target_mean, target_center_offset, *contributions))
+        except OverflowError as exc:
+            raise RidgeBaselineError("ridge prediction is not finite") from exc
         if not math.isfinite(value):
             raise RidgeBaselineError("ridge prediction is not finite")
         predictions.append(0.0 if value == 0.0 else value)
@@ -457,7 +499,8 @@ def evaluate_ridge_baseline(
     for fold in plan.folds:
         train_y = tuple(float(value) for value in fold.train.y)
         validation_y = tuple(float(value) for value in fold.validation.y)
-        intercept, coefficients, means, scales, target_mean, standardized_coefficients = _fit(
+        (intercept, coefficients, means, scales, target_mean, standardized_coefficients,
+         feature_offsets, target_offset) = _fit(
             fold.train.X,
             train_y,
             alpha,
@@ -468,6 +511,8 @@ def evaluate_ridge_baseline(
             standardized_coefficients,
             means,
             scales,
+            feature_offsets,
+            target_offset,
         )
         (
             mae,
@@ -491,6 +536,8 @@ def evaluate_ridge_baseline(
                 scales,
                 target_mean,
                 standardized_coefficients,
+                feature_offsets,
+                target_offset,
                 mae,
                 rmse,
                 r2,

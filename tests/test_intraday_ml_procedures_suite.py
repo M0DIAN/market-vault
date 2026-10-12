@@ -372,6 +372,10 @@ def test_shared_raw_scores_keep_fresh_threshold_actions_metadata_and_model_isola
     first_model.get("ridge_model", first_model)["coefficients"][0] = 999
     first_model.get("ridge_model", first_model)["standardized_coefficients"][0] = 999
     first_model.get("ridge_model", first_model)["target_mean"] = 999
+    first_model.get("ridge_model", first_model)["feature_center_offsets"][0] = 999
+    first_model.get("ridge_model", first_model)["target_center_offset"] = 999
+    if kind == "QUADRATIC_RIDGE":
+        first_model["input_transform"]["center_offsets"][0] = 999
     first_model["training_keys"].append("mutated")
     first_predictions[0].update(score=999, target="FLAT")
     assert canonical_json(fitter(**inputs)) == saved
@@ -379,6 +383,10 @@ def test_shared_raw_scores_keep_fresh_threshold_actions_metadata_and_model_isola
     assert second_model.get("ridge_model", second_model)["coefficients"][0] != 999
     assert second_model.get("ridge_model", second_model)["standardized_coefficients"][0] != 999
     assert second_model.get("ridge_model", second_model)["target_mean"] != 999
+    assert second_model.get("ridge_model", second_model)["feature_center_offsets"][0] != 999
+    assert second_model.get("ridge_model", second_model)["target_center_offset"] != 999
+    if kind == "QUADRATIC_RIDGE":
+        assert second_model["input_transform"]["center_offsets"][0] != 999
     assert "mutated" not in second_model["training_keys"]
 
 
