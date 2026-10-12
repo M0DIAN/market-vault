@@ -21,6 +21,54 @@ from market_vault.research.strategy_experiment import (
 from test_intraday_research import execution_scenarios_case, execution_scenarios_plan, research_case  # noqa: F401
 
 
+def test_saved_hash_native_json_encoding_and_complete_content_binding(monkeypatch):
+    from market_vault.research import intraday_data as data
+    from market_vault.research.intraday_experiment import _hash
+
+    fields = {"numbers": [0, 1, 1.0, -0.0, 1e-300, 1e300],
+              "nested": [{"text": "中日é\n", "flag": True, "missing": None}]}
+    record = {"fields": fields, "record_id": digest({"fields": fields})}
+    before = deepcopy(record)
+    monkeypatch.setattr(data, "json_values", lambda value: pytest.fail(
+        "saved native hash recursively copied decoded JSON"))
+    _hash(record, "record_id")
+    assert record == before
+
+    changed = deepcopy(record)
+    changed["fields"]["numbers"][1] = 1.0  # Equal numeric value, different canonical bytes.
+    with pytest.raises(ValueError, match="^saved record_id does not bind complete content$"):
+        _hash(changed, "record_id")
+    for value in (float("nan"), float("inf"), -float("inf")):
+        with pytest.raises(ValueError, match="Out of range float values"):
+            _hash({"value": value, "record_id": "a" * 64}, "record_id")
+
+
+def test_saved_hash_explicit_encoder_and_date_aware_digest_are_preserved():
+    from datetime import date, datetime, timezone
+    from market_vault.research.intraday_experiment import _hash
+
+    payload = {"timestamp": "2025-01-02T14:30:00+00:00", "amount": 0.25}
+    identity = execution_digest(payload)
+    assert identity != digest(payload)  # Execution encoding omits the trailing newline.
+    _hash({**payload, "execution_id": identity}, "execution_id", function=execution_digest)
+    with pytest.raises(ValueError, match="^saved execution_id does not bind complete content$"):
+        _hash({**payload, "amount": 0.5, "execution_id": identity}, "execution_id", function=execution_digest)
+
+    calls, value = [], object()
+    def custom(payload):
+        calls.append(payload)
+        return "a" * 64
+    _hash({"value": value, "custom_id": "a" * 64}, "custom_id", function=custom)
+    assert calls == [{"value": value}]  # Callback inputs are not serialized first.
+    with pytest.raises(ValueError, match="^custom_id must be a lowercase SHA-256 identity$"):
+        _hash({"value": value, "custom_id": "invalid"}, "custom_id", function=custom)
+    assert len(calls) == 1  # Identity validation still precedes hashing.
+
+    temporal = {"day": date(2025, 1, 2), "time": datetime(2025, 1, 2, tzinfo=timezone.utc)}
+    expected = {key: value.isoformat() for key, value in temporal.items()}
+    assert digest(temporal) == sha256(canonical_json(expected)).hexdigest()
+
+
 def signed(root):
     """Re-sign changed records to test grammar/replay beyond checksum detection."""
     def bind(value, key, function=digest):
