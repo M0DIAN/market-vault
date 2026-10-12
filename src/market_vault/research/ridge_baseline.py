@@ -266,6 +266,14 @@ def _solve(matrix, vector) -> tuple[float, ...]:
     return tuple(solution)
 
 
+def _training_target_mean(values: tuple[float, ...]) -> float:
+    # A rounded mean must not create a response direction when every
+    # admitted TRAIN target is identical. Keep nonconstant arithmetic.
+    if all(value == values[0] for value in values):
+        return 0.0 if values[0] == 0.0 else float(values[0])
+    return math.fsum(values) / len(values)
+
+
 def _fit(
     X: tuple[tuple[float, ...], ...],
     y: tuple[float, ...],
@@ -275,7 +283,7 @@ def _fit(
         raise RidgeBaselineError("ridge TRAIN X/y row counts are invalid")
     means, scales = _column_stats(X)
     Z = _standardize(X, means, scales)
-    y_mean = math.fsum(y) / len(y)
+    y_mean = _training_target_mean(y)
     centered_y = tuple(value - y_mean for value in y)
     width = len(means)
 

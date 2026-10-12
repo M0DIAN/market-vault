@@ -21,6 +21,7 @@ from .intraday_prediction_quality import (
     _calculated, _coverage, _data_override, _index, _mean, _metric,
     _prediction_metrics, _score_forecasts,
 )
+from .ridge_baseline import _training_target_mean
 from .strategy_experiment import StrategyExperiment, canonical_json
 
 
@@ -145,7 +146,7 @@ def _outer_rows(selected, prepared, predictions, records):
     rows, folds = [], []
     for fold, training, record, original_model in zip(context["folds"], prepared.fold_rows, records,
                                                      reference["fold_models"], strict=True):
-        train_mean = math.fsum(target["value"] for _, target in training) / len(training)
+        train_mean = _training_target_mean(tuple(target["value"] for _, target in training))
         model, recipe, fold_rows = record["model"], record["strategy"], []
         for key in fold["validation_keys"]:
             prediction, target, old = actual_predictions[key], targets[key], fixed[key]

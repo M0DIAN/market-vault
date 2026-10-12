@@ -276,6 +276,32 @@ def test_invalid_alpha_fails_closed(bad):
         evaluate_ridge_baseline(_plan(), alpha=bad)
 
 
+@pytest.mark.parametrize("constant", [0.1, -0.1])
+def test_constant_training_targets_cannot_create_a_predictive_direction(constant):
+    plan = _plan(
+        train_X=((1.0,), (1.0,), (math.nextafter(1.0, 2.0),)),
+        train_y=(constant,) * 3,
+        validation_X=((0.0,), (2.0,)), validation_y=(constant,) * 2,
+    )
+    report = evaluate_ridge_baseline(plan)
+    fold = report.folds[0]
+    assert fold.coefficients == (0.0,)
+    assert fold.intercept == constant
+    assert fold.mae == fold.rmse == report.mae == report.rmse == 0.0
+    assert fold.r2 is report.r2 is None
+
+
+def test_adjacent_nonconstant_training_targets_keep_their_predictive_direction():
+    adjacent = math.nextafter(.1, .2)
+    plan = _plan(train_y=(.1, .1, adjacent))
+    fold = evaluate_ridge_baseline(plan).folds[0]
+    # Three centered x values (-1, 0, 1), population variance 2/3,
+    # and alpha 1 give slope (last_y - first_y) / (2 + 2/3).
+    expected = (adjacent - .1) * 3 / 8
+    assert fold.coefficients[0] == pytest.approx(expected, rel=1e-15, abs=0)
+    assert fold.coefficients[0] != 0.0
+
+
 def test_classifier_label_is_not_silently_treated_as_regression():
     plan = _plan(
         train_y=(1, 0, 1),

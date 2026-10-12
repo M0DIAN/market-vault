@@ -1,0 +1,186 @@
+# Intraday numerical integrity and fitting efficiency: Q61–Q63
+
+## Verified baseline and authorized package
+
+Start from main `b0b554a3ee4387a95a9977fd5cade37ede183204`, tree
+`a8e9257f5a6ff632535eec8a370c040fdf32d645`, in `M0DIAN/market-vault`.
+[Q60 PR #330](https://github.com/M0DIAN/market-vault/pull/330) is merged;
+its exact-main natural push
+[38236215470/1](https://github.com/M0DIAN/market-vault/actions/runs/38236215470/attempts/1)
+is terminal SUCCESS through the existing verified FULL PR tree-reuse path.
+Remote main, local/origin main and a clean worktree were verified before
+creating the Q61 feature branch.
+
+The owner's 2026-10-12 request authorizes these three tasks, including in-scope
+repairs, tests, commits, push, PRs, independent final-candidate review,
+conditional squash merge and exact-main CI verification. Follow the supplied
+Development Workflow v2, Personal Local Tool Workflow v1, AGENTS.md and checked-in
+governance. Version remains 0.9.0. Implementation order is **Q61 → Q62 → Q63**;
+each begins only after the preceding merged-main gate succeeds. Read-only
+preparation may overlap. Each worktree has one writer; a final reviewer must
+not have designed or implemented that candidate.
+
+## Assessment and counterevidence
+
+Q1–Q60 already provide verified intraday data, actual-label-end purging,
+linear/quadratic Ridge, chronological model/threshold/joint selection,
+explicit Freeze/TEST, paired and family uncertainty, execution stress, market
+and sample evidence, one-source procedure execution and native inspection.
+Q55/Q58 repaired constant Features and R²; Q59/Q60 reduced TS2 leaf hashing
+and PIT candidate scans. These completed capabilities are not repeated here.
+
+| Candidate | Decision based on current code and bounded evidence |
+|---|---|
+| Constant TRAIN targets | Q61. `_fit` can round a constant target mean away from its common value, then amplify the false residual through a small but real Feature scale. |
+| Constant Feature Research statistics | Q62. Fractional constants can produce nonzero standard deviation and Pearson IC 1, which Feature Stability counts as three stable available correlations. |
+| Repeated symmetric Ridge Gram entries | Q63. The shared fitter computes both halves independently. Reusing each identical dot product preserves accumulation order and reduces work, especially at quadratic width 27. |
+| CI repartition | Not needed now. Q60 final PR FULL `38234612849/1` passed all 16 jobs; its longest partition was 544 s. Q59's last actual main FULL had a longest partition of 561 s. |
+| TS2 digest-string validation | Defer. A bounded Q5 prototype retained bytes while reducing single-run build/load observations by roughly 7–14%; this does not outrank the two correctness fixes and fitting work. No validator is weakened. |
+| More learners, Features, search axes or reports | Excluded. The inspected repository evidence establishes software defects and costs, not a market-study need for a larger search space. |
+
+All numerical examples and timings below are offline software evidence, not
+claims of observed market profitability or live performance.
+
+## Shared defaults and exclusions
+
+- Keep ordered Features, recipes, alphas, thresholds, complete candidate support,
+  chronological windows, actual-end purging, FIRST_DECLARED ties, execution
+  costs/rules and TEST isolation.
+- Q61/Q62 correct erroneous numbers. Historical artifacts remain immutable and
+  readable; strict replay of an affected old result may correctly report a
+  mismatch. Fresh reports bind corrected numbers in their existing identities.
+  Do not relabel, overwrite or silently accept old erroneous results.
+- Q63 must preserve complete model/report bytes, predictions and identities.
+  Reuse is local to a single matrix calculation and never substitutes for
+  current source admission or changes fit-reuse scope.
+- No new dependency, learner, Feature, epsilon-based constant policy, persistent
+  cache, storage format, data collection, source overwrite, release, deployment
+  or live trade. No general solver/conditioning or statistical-library rewrite.
+- CI follows the actual classifier. Preserve all required coverage and existing
+  post-merge proof/fallback behavior. No permanent wall-clock test threshold.
+
+## Q61 — constant TRAIN target mean and reference forecasts
+
+### Goal and technical plan
+
+Use the exact common value when all admitted TRAIN targets compare equal;
+otherwise retain `math.fsum(values) / len(values)`. Apply the same small shared
+helper to Ridge centering and the two existing TRAIN_MEAN forecast paths in
+Q21 and ML prediction diagnostics. The single-Feature ablation already consumes
+Q21's recorded training mean and needs no new fitting mechanism. Retain positive
+zero conventions and the existing solver, Feature scaling and alpha.
+
+The public baseline accepts `X=(1, 1, nextafter(1, 2))`, `y=(.1, .1, .1)`.
+On the base it produces a coefficient about -0.046875 instead of zero. An actual
+intraday fit with 67 copies of the Q5-computable target `1.03 / 1 - 1` and an
+adjacent-float Feature produces about 77–154 bps of spurious forecast deviation.
+These are legal fitter-input counterexamples, not a claim that this complete
+input combination has been observed in market history. Q55 protects X and Q58
+protects metrics; neither covers this target-centering defect.
+
+### Acceptance and scope
+
+1. The same public baseline and actual linear/quadratic intraday fitter
+   regressions fail on the base for the target defect and pass after repair.
+   Constant targets give exact zero coefficients and constant predictions.
+2. Both forecast-reference paths retain the exact same TRAIN-only mean; the
+   sole-Feature ablation and zero-baseline-error availability remain consistent.
+3. Nonconstant adjacent-float targets retain their real variation and original
+   arithmetic. Existing temporal intervention, purging, source reconstruction,
+   recorded-model and CLI checks remain authoritative.
+4. Final-candidate independent review, natural required PR CI and exact-main
+   verification pass; no historical artifact is rewritten.
+
+Scope: `research/ridge_baseline.py`, `research/intraday_prediction_quality.py`,
+`research/intraday_ml_diagnostics.py`, directly related existing numerical and
+diagnostic tests, and this task record. No UI redesign or change to model
+selection, economic objectives, schema/version labels or TEST eligibility.
+
+### Q61 local evidence
+
+On the original production code, the six added cases gave **5 failed, 1 passed
+in 0.44 s**: both signed public-baseline constants, both actual intraday
+representations and the forecast-reference mean reached the defect; the
+nonconstant adjacent-target oracle already passed. The unchanged cases gave
+**6 passed in 0.10 s** after repair, including the single-Feature ablation
+consumer and zero-baseline-error availability. The existing complete ML
+diagnostics test file gave **5 passed in 41.48 s**, covering real saved sources,
+ordinary/selected forecasts, source rejection and installed-CLI recovery.
+These observations use Python 3.11.17. Hygiene, whitespace and release/version
+0.9.0 checks pass. Broader affected regression, final independent review and
+exact remote gate identities are recorded in the associated PR. The historical
+artifact compatibility statement is a reader/replay code assessment, not a
+claim of a separate historical bad-artifact end-to-end replay.
+
+## Q62 — constant Feature Research statistics
+
+### Goal and technical plan
+
+In the existing Feature Research implementation, exact constants retain their
+common mean and zero population standard deviation. Pearson correlation is
+undefined when either vector is constant, independent of rounded means. Keep
+the current nonconstant arithmetic, rank ties and tail membership. Existing
+Feature Stability and native/CLI consumers receive the corrected values
+through the same interfaces.
+
+Three `.1` Feature values paired with three `.1` labels currently give mean
+`.10000000000000002`, standard deviation about `1.388e-17` and Pearson IC 1.
+Three identical splits then give availability count 3 and sign consistency
+true. Rank IC is already unavailable and current Feature Selection uses Rank
+IC; this is not evidence that automatic Feature selection chose the constant.
+Q21's own correlation guard already handles constants and is not reimplemented.
+
+### Acceptance and scope
+
+1. Public `analyze_features` returns the exact mean, standard deviation 0 and
+   Pearson null for the fractional-constant counterexample. Either constant
+   side independently makes Pearson unavailable.
+2. Public `compare_feature_stability` retains split identities while reporting
+   zero available Pearson ICs and unavailable consistency/range for this case.
+3. Normal positive/negative relationships, adjacent nonconstant floats, rank
+   ties, tail statistics, empty support and existing split permissions retain
+   their specified behavior. Check the actual output consumer without adding
+   new GUI behavior or a separate statistics framework.
+4. Final-candidate review, actual required PR CI and exact-main CI succeed.
+
+Scope: `research/feature_research.py`, existing Feature Research/Stability
+tests and directly relevant entry tests if needed, plus this record. Q61 is
+the delivery dependency; no new business dependency or Feature-selection rule.
+No new score, selection criterion, TEST access, generic overflow policy or
+correlation algorithm for nonconstant inputs.
+
+## Q63 — compute each symmetric Ridge Gram entry once
+
+### Goal and technical plan
+
+Construct the existing standardized Gram matrix from one triangle, assigning
+each computed entry to both symmetric positions. Each dot product retains
+the original row order, multiplication, `math.fsum` and diagonal alpha addition.
+The target vector, Gaussian elimination, normalization, coefficient conversion
+and predictions stay unchanged. No BLAS dependency, parallel reduction,
+cross-fit cache or new public numerical API is needed.
+
+A pre-implementation call to the actual `fit_quadratic_rows` with six Features,
+3,000 TRAIN rows and 600 validation rows measured 0.315660 s on the base versus
+0.182278 s for an in-memory prototype. Width 27 requires 729 dot products on
+the base and 378 after triangular construction. The complete model, model ID
+and every forecast were equal. This is one bounded raw-fit observation, not
+a promised end-to-end study speed or a permanent timing gate.
+
+### Acceptance and scope
+
+1. Compare complete coefficients, intercepts, transforms and predictions with
+   an independent full-matrix oracle, including mixed signs, constant/duplicate
+   columns, width one, quadratic expansion and supported alpha values.
+2. Prove the reduced dot-product work without asserting elapsed time. Preserve
+   existing failure behavior and no cross-call reuse.
+3. Actual saved intraday reconstruction retains complete report bytes and IDs;
+   observe the same raw fitting entry before/after without profiler distortion.
+4. Existing Ridge, quadratic and selected-procedure regressions plus actual
+   required PR CI pass, followed by final independent and exact-main checks.
+
+Scope: the shared Ridge matrix construction, directly related existing Ridge
+and intraday numerical tests, and this record. Q62 is the delivery dependency;
+Q61's corrected target centering is the fitting baseline. Do not add a new
+solver, change numerical summation order, trim family evidence or reopen
+accepted Q49–Q51 fit ownership and source-verification boundaries.
