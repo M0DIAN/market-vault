@@ -40,6 +40,7 @@ from market_vault.canonical.gaps import GAP_POLICY_VERSION, GapRange
 from market_vault.canonical.materialization import GAP_COLUMNS, gap_schema
 from market_vault.canonical.models import CanonicalResolutionEntry, CanonicalSourceRef
 from market_vault.canonical.schema import canonical_bars_schema
+from market_vault.dataset import pit as pit_module
 from market_vault.dataset import (
     PIT_ASSEMBLER_VERSION,
     PIT_ASSOCIATION_SCHEMA_VERSION,
@@ -892,6 +893,77 @@ def test_adjustment_not_none_fails():
         request(adjustment="ADJ")
 
 
+@pytest.mark.parametrize("dataset_as_of", [
+    None, datetime(2026, 7, 1, 13, 0, tzinfo=UTC),
+])
+def test_cross_day_label_error_precedes_clocks_in_original_candidate_order(pit_templates, dataset_as_of):
+    _, a, *_ = pit_templates.builds
+    requested = request(
+        anchor=date(2026, 6, 30),
+        feature_start=datetime(2026, 7, 1, 13, 29, tzinfo=UTC),
+        feature_close=datetime(2026, 7, 1, 13, 30, tzinfo=UTC),
+        label_start=datetime(2026, 7, 1, 13, 30, tzinfo=UTC),
+        label_close=datetime(2026, 7, 1, 13, 33, 30, tzinfo=UTC),
+    )
+    first = min(a.bars, key=lambda bar: bar.canonical_bar_key)
+    assert first.event_time != min(bar.event_time for bar in a.bars)
+    assert first.market_available_at > requested.label_window_close
+    if dataset_as_of is not None:
+        assert all(bar.archive_available_at > dataset_as_of for bar in a.bars)
+    with pytest.raises(PITAssemblyError, match=f"^label candidate {first.canonical_bar_key} "):
+        assemble([a], [requested], dataset_as_of=dataset_as_of)
+
+
+@pytest.mark.parametrize("dataset_as_of", [
+    None,
+    datetime(2026, 7, 1, 13, 59, 59, tzinfo=UTC),
+    datetime(2026, 7, 1, 14, 0, tzinfo=UTC),
+])
+def test_window_index_matches_complete_full_scan_with_fewer_checks(pit_templates, monkeypatch, dataset_as_of):
+    builds = [pit_templates.multi_symbol_gap, pit_templates.builds[-1], pit_templates.empty]
+    requests = [
+        request(feature_close=datetime(2026, 7, 1, 13, 31, tzinfo=UTC),
+                label_start=datetime(2026, 7, 1, 13, 31, tzinfo=UTC),
+                label_close=datetime(2026, 7, 1, 13, 33, tzinfo=UTC)),
+        request(code="US.NVDA", feature_close=datetime(2026, 7, 1, 13, 32, 30, tzinfo=UTC)),
+        request(code="US.NVDA", feature_start=datetime(2026, 7, 2, 13, 30, tzinfo=UTC),
+                feature_close=datetime(2026, 7, 2, 13, 32, tzinfo=UTC)),
+        request(code="US.QQQ"),
+        request(feature_start=datetime(2026, 7, 1, 14, 0, tzinfo=UTC),
+                feature_close=datetime(2026, 7, 1, 14, 1, tzinfo=UTC)),
+    ]
+    calls = 0
+    original = pit_module._matches
+
+    def counted(*args):
+        nonlocal calls
+        calls += 1
+        return original(*args)
+
+    monkeypatch.setattr(pit_module, "_matches", counted)
+    indexed = assemble(builds, requests, dataset_as_of=dataset_as_of)
+    indexed_calls = calls
+
+    def full_scan(_request, candidates_by_time, _event_times):
+        return [candidate for _, candidate in sorted(candidates_by_time, key=lambda item: item[0])]
+
+    # Restore the old all-row scan, leaving the complete assembly logic intact.
+    monkeypatch.setattr(pit_module, "_window_candidates", full_scan)
+    calls = 0
+    expected = assemble(builds, requests, dataset_as_of=dataset_as_of)
+    assert indexed == expected
+    assert 0 < indexed_calls < calls
+    samples = {sample.sample_key: sample for sample in indexed.samples}
+    assert samples[pit_sample_key(requests[1])].diagnostics.feature_market_future_excluded_count == 1
+    if dataset_as_of is None:
+        assert len(samples[pit_sample_key(requests[2])].feature_canonical_row_version_ids) == 2
+    label_gaps = samples[pit_sample_key(requests[0])].diagnostics.known_label_gap_ids
+    assert bool(label_gaps) == (
+        dataset_as_of is None or dataset_as_of >= datetime(2026, 7, 1, 14, 0, tzinfo=UTC)
+    )
+    assert all(samples[pit_sample_key(r)].diagnostics.feature_candidate_count == 0 for r in requests[-2:])
+
+
 def test_label_horizon_not_claimed_complete(pit_templates):
     _, a, b, c, _ = pit_templates.builds
     result = assemble(
@@ -1038,6 +1110,18 @@ def test_different_row_versions_fail(pit_templates):
     a, a2 = pit_templates.second_run
     with pytest.raises(PITAssemblyError, match="conflicting canonical candidates"):
         assemble([a, a2], [request()])
+
+
+def test_conflicts_outside_every_requested_time_window_still_fail(pit_templates):
+    a, a2 = pit_templates.second_run
+    requested = request(
+        anchor=date(2026, 7, 3),
+        feature_start=datetime(2026, 7, 3, 13, 30, tzinfo=UTC),
+        feature_close=datetime(2026, 7, 3, 13, 32, tzinfo=UTC),
+    )
+    assert all(bar.event_time < requested.feature_window_start for build in (a, a2) for bar in build.bars)
+    with pytest.raises(PITAssemblyError, match="conflicting canonical candidates"):
+        assemble([a, a2], [requested])
 
 
 def test_same_version_different_market_values_fail(pit_templates):

@@ -178,6 +178,22 @@ execution test files give **129 passed in 27.09 s**. Hygiene, whitespace and
 release/version 0.9.0 checks pass. Final review and remote gate identities are
 recorded in the associated PR. No PIT candidate-index change is included in Q59.
 
+### Q59 delivery closure
+
+[PR #329](https://github.com/M0DIAN/market-vault/pull/329) received independent
+final-candidate PASS on `dfd050593d800205c667efb7756231dbe1b6cba0` and natural
+PR CI [38231600296/1](https://github.com/M0DIAN/market-vault/actions/runs/38231600296/attempts/1).
+The committed diff was classified `research_fast`; all five active jobs
+succeeded, with the unused partition placeholder skipped. Squash main
+`54c672910883f76b2a07746c94332fabb0633730` retains the reviewed/tested tree
+`35c59ea160a40aed17285d42077c99cc1873eee3`.
+
+Its natural push [38232297304/1](https://github.com/M0DIAN/market-vault/actions/runs/38232297304/attempts/1)
+ran and passed all 16 FULL jobs. The plan reported
+`research_fast_is_pull_request_only`, and the reuse verifier rejected the
+smaller PR surface with `jobs_missing_surface`; this was NORMAL FULL, not PR
+subset reuse. Independent post-merge review confirmed COMPLETE before Q60.
+
 ## Q60 — bound PIT candidate scans by the requested time range
 
 ### Goal, plan and defaults
@@ -189,6 +205,9 @@ needed by each request. Restore the original candidate order before the existing
 cross-date Label rejection, market-then-archive counters, final ordering, gap
 admission and source provenance. A single time index is sufficient for current
 Q5 single-symbol inputs; no additional dimension-index abstraction is needed.
+The index adds linear temporary references and one sort per assembly; each
+window restores only its selected candidates to the original order. Nothing
+persists across calls.
 
 Do not filter by anchor date, actual session or either availability clock in
 the index. Feature windows may span dates. Cross-date Label candidates must
@@ -210,3 +229,39 @@ outside all requested windows must still fail before indexing.
 Expected scope: `dataset/pit.py`, existing PIT tests and this record. No PIT
 assembler-version change, Canonical reader change, gap index, Feature formula
 change, persistent cache, row omission or new cross-day/ALL policy.
+
+### Q60 local evidence
+
+Implementation starts from completed Q59 main
+`54c672910883f76b2a07746c94332fabb0633730`. The event-time index is built only
+after both complete row and gap reconciliation. A pair of `bisect_left` bounds
+selects the request's Feature start through Label close, or Feature close when
+there is no Label. The existing predicates, admission, clocks and output
+assembly are unchanged.
+
+The complete PIT test file gives **105 passed in 4.56 s**. Three added functions
+provide six cases: complete indexed/full-scan equality under three archive
+cutoffs, original first cross-date Label error before both clock exclusions,
+and source conflicts wholly outside the requested time range. The equality
+cases also cover multiple symbols/dates, Feature observations outside the
+anchor date, known-gap availability, and empty scope/time windows. Existing
+clock equality, ALL/session, ordering and provenance cases remain intact.
+The directly affected complete intraday data test file gives **23 passed in
+15.09 s**.
+
+On the same admitted Q5 fixture used for Q59, a separate instrumented build
+reduces `_matches` calls from **1,977,300 to 5,850**. Instrumentation is used for
+counts only. Independent unprofiled Python 3.11.17 runs, one per operation per
+revision, measured:
+
+| Actual Q5 entry | Q59 base | Q60 candidate |
+|---|---:|---:|
+| Build from verified Canonical sources | 9.283 s | 6.106 s |
+| Strict load with complete source reconstruction | 8.727 s | 7.442 s |
+
+Every build/load and count probe retains all **2,300,696 bytes** and the same
+data ID and bytes SHA-256 recorded under Q59, with 1,170 observations and 910
+COMPLETE targets. These single-run observations are bounded fixture evidence,
+not general latency guarantees, timing-test thresholds or market evidence.
+Final review and exact remote gate identities are recorded in the associated
+PR. Version remains 0.9.0; no CI partition or reuse-policy change is included.
