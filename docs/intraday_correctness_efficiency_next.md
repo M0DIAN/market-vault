@@ -9,7 +9,7 @@ Its natural exact-main push [38201809612/1](https://github.com/M0DIAN/market-vau
 is terminal SUCCESS. The remote main SHA and clean local/origin main were
 verified before creating the Q55 feature branch.
 
-The owner's 2026-10-12 Japan-time request authorizes this three-task package:
+The owner's 2026-10-12 request authorizes this three-task package:
 in-scope fixes, tests, commits, push, PRs, independent final-candidate review,
 conditional squash merge and exact-main CI verification. Follow the supplied
 Development Workflow v2, Personal Local Tool Workflow v1, AGENTS.md and the
@@ -203,6 +203,32 @@ prototype comparison; they are neither process RSS nor a new candidate memory
 test. The implementation removes the same redundant conversion and preserves
 the generic encoder's broader date/container contract.
 
+### Q56 remote closure
+
+[PR #326](https://github.com/M0DIAN/market-vault/pull/326) received an independent
+final-candidate PASS for head `8f08eeab8995ff59deb9a06b36d8b31e7018234b`, tree
+`1ecc64d3819a9872a0ded4f16456f05baf965078`, with Q55 main as its sole parent.
+The independent checkout repeated the unchanged two-file regression selection:
+**17 passed in 115.08 s**. Actual base/candidate API comparisons retained every
+Q53/Q41 byte and ID, including injected unavailable/partial failure paths.
+The reviewer also verified that the generic encoders' real date/custom-container
+differences are not reachable through these two admitted JSON-native sources.
+
+Natural PR [38209938241/1](https://github.com/M0DIAN/market-vault/actions/runs/38209938241/attempts/1)
+was terminal SUCCESS at the actual `research_fast` tier. Its five planned jobs
+succeeded; the full partition matrix was intentionally skipped. This is subset
+CI evidence, not a FULL run or a reusable FULL attestation.
+
+The authorized squash produced main `37d1bd8b4720d56ebf46d2852eca6346b50d6dba`,
+with the same reviewed/tested tree and Q55 main as its sole parent. Natural main
+[38210531542/1](https://github.com/M0DIAN/market-vault/actions/runs/38210531542/attempts/1)
+ran FULL because `research_fast_is_pull_request_only`; all 16 required jobs
+succeeded and the complete job-set validator passed. The actual plan reported
+`POST_MERGE_REUSE=false`, reason `jobs_missing_surface`, so no reuse is claimed.
+Version remained 0.9.0; the longest partition was 561 s. Q57 implementation
+started only after this exact-main gate and a fresh remote-main/clean-worktree
+check.
+
 ## Q57 — lightweight native selection capture
 
 ### Goal and technical plan
@@ -241,6 +267,37 @@ Scope: `desktop/intraday_research.py`, directly related existing native tests
 and this record. No QML layout changes, listener framework, source revalidation
 bypass, background cache service or automatic research/Freeze/TEST action.
 
+### Q57 local evidence
+
+The production change is six added and three removed lines in the controller.
+The existing Main.qml test adds 35 lines and removes two; the suite and Freeze
+regressions remain unchanged. There are no QML, listener or state-machine changes.
+
+The complete production Main.qml flow passed on Python 3.11.17 / PySide6 6.11.2:
+**1 passed in 344.25 s**, without skips. Its native subprocess emitted
+`REAL_PLAN_DRAFT_QML_OK`. The added assertions use an actual saved 4,437,118-byte
+ordinary scenario child at cost/candidate (0, 1), then a 12,663,405-byte grid
+at (1, 1). Real candidate/view controls retain the full immutable capture,
+including saved path and IDs. Explicit same-source bytes/string `json.loads`
+counts are zero. Perturbing the presentation IDs or clearing a returned capture
+dictionary cannot change subsequent captures; test instrumentation is restored.
+
+The two unchanged, directly related guards gave **2 passed in 133.05 s**,
+without skips: the native suite's unavailable/stale-success/stale-failure/retry
+flow and the controller's immutable Freeze capture with independent proofs.
+They cover candidate/locator changes and changes back, retention of prior saved
+results, recovery after failure, unsaved-to-saved path/admission updates and
+selection changes after a worker has captured its input.
+
+Both commands passed on their first execution. All native evidence is from the
+actual candidate with explicit source `PYTHONPATH`, offscreen Qt/software Quick
+rendering and repository-external temporary directories. No local full matrix,
+new benchmark or permanent wall-clock assertion was added. The earlier
+3,579,174-byte timing observation is a pre-implementation controller probe;
+the candidate's production-Main.qml evidence proves removal of full-source
+parsing, not a new measured end-to-end latency guarantee. Final independent
+review and remote gate identities are recorded in the associated PR.
+
 ## Validation and delivery
 
 Use the tested checkout's explicit `PYTHONPATH`, Python 3.11 and repository-external
@@ -253,8 +310,9 @@ proves the required run/attempt and Git-tree equivalence. Do not change paths
 or add redundant tests to manipulate a tier.
 
 The existing eleven-partition ownership and complete FULL test selection
-remain. Q54's longest PR job was 620 s and Q55's was 600 s; these observations
-do not justify a new CI topology. Measure this package's actual runs and adjust
+remain. Q54's longest PR job was 620 s, Q55's was 600 s and Q56's main FULL
+partition maximum was 561 s; these observations do not justify a new CI
+topology. Measure this package's actual runs and adjust
 only if a concrete blocking imbalance requires it.
 
 For each task: commit the stable candidate; independently review that exact

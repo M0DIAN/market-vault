@@ -340,6 +340,7 @@ class IntradayResearchController(PageController):
         self._defaults = {}
         self._source_note = ""
         self._content = b""
+        self._experiment_id = ""
         self._root = {}
         self._path = ""
         self._proof = ""
@@ -357,6 +358,7 @@ class IntradayResearchController(PageController):
         self._plan_save_receipt = {}
         self._candidate_index = 0
         self._positions = ()
+        self._candidate_ids = ()
         self._names = []
         self._view_index = 0
         self._risk_report = None
@@ -880,11 +882,10 @@ class IntradayResearchController(PageController):
         if not self._content or not self._path or not self._positions:
             raise ValueError("Save or open the development experiment before freezing a candidate.")
         content, path = self._content, self._path
-        root = json.loads(content)
         cost, index = self._positions[self._candidate_index]
-        return {"path": path, "content": content, "experiment_id": root["experiment_id"],
+        return {"path": path, "content": content, "experiment_id": self._experiment_id,
                 "cost_index": cost, "candidate_index": index,
-                "candidate_id": root["report"]["groups"][cost]["results"][index]["candidate_id"]}
+                "candidate_id": self._candidate_ids[self._candidate_index]}
 
     def _scenario_overview(self):
         from .quant_research import _format_number, _format_percent
@@ -1648,6 +1649,7 @@ class IntradayResearchController(PageController):
         """Present an already validated ordinary Q7 child; its file path is separate."""
         from ..strategy_comparison_io import canonical_json
         self._content = canonical_json(root)
+        self._experiment_id = root["experiment_id"]
         self._root = root
         self._prediction_quality_report, self._prediction_quality_error = None, ""
         self._prediction_quality_source = ""
@@ -1665,6 +1667,7 @@ class IntradayResearchController(PageController):
         self._grid_metric = GRID_METRICS[0]
         self._path, self._proof = path, proof
         self._positions = tuple((i, j) for i, g in enumerate(self._root["report"]["groups"]) for j in range(len(g["results"])))
+        self._candidate_ids = tuple(root["report"]["groups"][i]["results"][j]["candidate_id"] for i, j in self._positions)
         self._names = [f'{self._root["report"]["groups"][i]["results"][j]["strategy"]["name"]} | {self._root["report"]["groups"][i]["execution_policy"]["commission_bps"]}/{self._root["report"]["groups"][i]["execution_policy"]["slippage_bps"]} bps'
                        for i, j in self._positions]
         self._candidate_index = min(candidate_index, len(self._positions) - 1)

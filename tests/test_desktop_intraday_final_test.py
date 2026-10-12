@@ -451,6 +451,39 @@ open_plan('bad-plan.json', status='FAILED')
 assert draft() == retained_draft and proof() == recorded_proof
 assert find('intradayResearchCommission').property('text') == '12.5'
 assert value(editor, 'strategies')[0]['name'] == 'Edited Flat'
+
+def check_selection_capture(path, flat_index, cost_index, candidate_index):
+    content = controller._content
+    assert content == path.read_bytes()
+    recorded = json.loads(content)
+    expected_source = {'path': str(path), 'content': content, 'experiment_id': recorded['experiment_id'],
+        'cost_index': cost_index, 'candidate_index': candidate_index,
+        'candidate_id': recorded['report']['groups'][cost_index]['results'][candidate_index]['candidate_id']}
+    presentation = controller._root
+    candidate = presentation['report']['groups'][cost_index]['results'][candidate_index]
+    experiment_id, candidate_id = presentation['experiment_id'], candidate['candidate_id']
+    content_text, loads, source_parses = content.decode('utf-8'), json.loads, []
+    def counted_loads(value, *args, **kwargs):
+        if value == content or value == content_text:
+            source_parses.append(1)
+        return loads(value, *args, **kwargs)
+    json.loads = counted_loads
+    try:
+        choose('intradayResearchCandidate', flat_index, panel_scroll)
+        assert controller.selection_source() == expected_source
+        presentation['experiment_id'] = 'changed-presentation-experiment'
+        candidate['candidate_id'] = 'changed-presentation-candidate'
+        for view_index in (1, 0):
+            choose('intradayResearchView', view_index, panel_scroll)
+            captured = controller.selection_source()
+            assert captured == expected_source and captured['content'] is content
+            captured.clear()
+            assert controller.selection_source() == expected_source
+        assert source_parses == []
+    finally:
+        json.loads = loads
+        presentation['experiment_id'], candidate['candidate_id'] = experiment_id, candidate_id
+
 open_record('collection')
 assert draft() == retained_draft and not controller.canContinueCandidate
 assert not find('intradayPlanContinueButton').isEnabled()
@@ -462,12 +495,12 @@ click('intradayResearchSettingsDone', settings_scroll)
 click('intradayScenarioExportButton', panel_scroll)
 selected('intradayScenarioExportDialog', root / 'ordinary-child.json')
 assert controller.canContinueCandidate
-choose('intradayResearchCandidate', 1, panel_scroll)
+check_selection_capture(root / 'ordinary-child.json', 1, 0, 1)
 click('intradayPlanContinueButton', panel_scroll); complete()
 assert controller.draftSource['path'] == str(root / 'ordinary-child.json')
 assert controller.draftPlan['execution'] == controller._root['report']['groups'][0]['execution_policy']
 open_record('grid')
-choose('intradayResearchCandidate', 7, panel_scroll)
+check_selection_capture(sources['grid'], 7, 1, 1)
 click('intradayPlanContinueButton', panel_scroll); complete()
 expected = controller._root['report']['groups'][1]
 continued = controller.draftPlan
