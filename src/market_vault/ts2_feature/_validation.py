@@ -1,8 +1,11 @@
 """Fail-closed scalar checks for the parallel TS2 Feature authority."""
 
 import math
+import re
 
 from ..dataset.encoding import DatasetError, normalize_utc_datetime
+
+_DIGEST_RE = re.compile(r"[0-9a-f]{64}")
 
 REASON_CODES = (
     "SOURCE_COHORT", "SCOPE", "DUPLICATE_INPUT", "CANONICAL_AUTHORITY",
@@ -40,6 +43,6 @@ def finite_float(value, code):
 
 
 def digest(value):
-    require(type(value) is str and len(value) == 64 and all(c in "0123456789abcdef" for c in value),
+    require(type(value) is str and _DIGEST_RE.fullmatch(value) is not None,
             "RESULT_AUTHORITY", "invalid identity digest")
     return value

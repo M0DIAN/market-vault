@@ -7,6 +7,7 @@ import pytest
 
 from market_vault.dataset.specs import feature_label_spec_content_id, feature_label_spec_pin
 from market_vault.ts2_feature import identity as ids
+from market_vault.ts2_feature._validation import TS2FeatureError, digest
 from market_vault.ts2_feature.registry import _registry, _registry_for_specs
 from ts2_feature_helpers import spec
 
@@ -158,3 +159,20 @@ def actual():
 @pytest.mark.parametrize("name", tuple(EXPECTED))
 def test_frozen_digest(name, actual):
     assert actual[name] == EXPECTED[name]
+
+
+def test_digest_preserves_exact_lowercase_hex_input():
+    value = "0123456789abcdef" * 4
+    assert digest(value) is value
+
+
+@pytest.mark.parametrize("value", [
+    "a" * 63, "a" * 65, "A" + "a" * 63, "a" * 31 + "g" + "a" * 32,
+    "a" * 63 + "\n", "a" * 64 + "\n", "a" * 63 + "\uFF10", b"a" * 64,
+    type("DigestString", (str,), {})("a" * 64), None,
+], ids=("short", "long", "uppercase", "nonhex", "embedded-newline",
+        "trailing-newline", "unicode-digit", "bytes", "str-subclass", "none"))
+def test_sequence_digest_rejects_noncanonical_identity(value):
+    with pytest.raises(TS2FeatureError, match="^RESULT_AUTHORITY: invalid identity digest$") as caught:
+        ids.sequence_id("ts2-feature-input-rows-v1", (value,))
+    assert caught.value.reason_code == "RESULT_AUTHORITY"
