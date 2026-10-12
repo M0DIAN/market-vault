@@ -11,7 +11,7 @@ import math
 from pathlib import Path
 
 from . import intraday_research as research
-from .feature_research import _average_ranks, _pearson
+from .feature_research import _average_ranks, _centered_scaled, _pearson
 from .intraday_data import digest
 from .intraday_experiment import INTRADAY_EXPERIMENT_VERSIONS
 from .ridge_baseline import _training_target_mean
@@ -141,6 +141,19 @@ def _loss_skill(actual, predicted, baseline, *, zero_reason="ZERO_BASELINE_ERROR
                        / math.fsum((value / scale) ** 2 for value in reference))
 
 
+def _centered_r2(actual, errors):
+    if not all(math.isfinite(value) for value in errors):
+        raise OverflowError("nonfinite forecast error")
+    centered, target_scale = _centered_scaled(actual)
+    scale = max(target_scale, max(abs(value) for value in errors))
+    relative_scale = target_scale / scale
+    # Cancel a common scale before squaring. The population center need not
+    # be representable as a single float, and the raw SST may under/overflow.
+    return 1.0 - math.fsum((value / scale) ** 2 for value in errors) / math.fsum(
+        (value * relative_scale) ** 2 for value in centered
+    )
+
+
 def _prediction_metrics(actual, predicted):
     """Descriptive metrics for one paired vector, with local availability."""
     if not actual:
@@ -162,8 +175,7 @@ def _prediction_metrics(actual, predicted):
     elif mean_target["value"] is None:
         metrics["r2"] = _metric(reason="NONFINITE_RESULT")
     else:
-        metrics["r2"] = _loss_skill(actual, predicted, (mean_target["value"],) * len(actual),
-                                    zero_reason="NONFINITE_RESULT")
+        metrics["r2"] = _calculated(lambda: _centered_r2(actual, errors))
     return metrics
 
 

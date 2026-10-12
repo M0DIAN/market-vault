@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 from datetime import timedelta
+from fractions import Fraction
 import math
 from types import SimpleNamespace
 
@@ -1684,6 +1685,33 @@ def test_prediction_quality_ties_constants_missing_targets_and_finite_loss_ratio
     assert large["mse"]["unavailable_reason"] == "NONFINITE_RESULT"
     assert large["rmse"]["value"] == pytest.approx(1e200)
     assert large["r2"]["value"] == pytest.approx(0)
+
+
+@pytest.mark.parametrize("origin", [0.01, -0.01])
+def test_prediction_quality_asymmetric_target_r2_uses_centered_fraction_oracle(origin):
+    from market_vault.research.intraday_prediction_quality import _prediction_metrics
+
+    actual = (origin, origin, math.nextafter(origin, math.inf))
+    exact = tuple(map(Fraction, actual))
+    mean = sum(exact) / len(exact)
+    expected = 1 - sum((value - Fraction(origin)) ** 2 for value in exact) / sum(
+        (value - mean) ** 2 for value in exact
+    )
+    # Both the saved intraday scorer and Q21/Q34 diagnostics must use the
+    # population center, not either separately rounded displayed mean.
+    predictions = [{"observation_key": str(i), "score": origin} for i in range(4)]
+    targets = [{"observation_key": str(i), "status": "COMPLETE", "value": value}
+               for i, value in enumerate(actual)]
+    targets.append({"observation_key": "3", "status": "INCOMPLETE", "value": None})
+    intraday = research.prediction_metrics(predictions, {"targets": targets})
+    assert intraday["prediction_count"] == 4 and intraday["complete_target_count"] == 3
+    assert intraday["r2"] == pytest.approx(float(expected), rel=0.0, abs=1e-15)
+    metric = _prediction_metrics(actual, (origin,) * 3)["r2"]
+    assert metric["value"] == pytest.approx(float(expected), rel=0.0, abs=1e-15)
+    assert metric["unavailable_reason"] is None
+    tiny = _prediction_metrics((0.0, 0.0, 1e-200), (0.0,) * 3)["r2"]
+    assert tiny["value"] == pytest.approx(float(expected), rel=0.0, abs=1e-15)
+    assert tiny["unavailable_reason"] is None
 
 
 @pytest.mark.parametrize("scale", (math.ulp(1.0), .0007, 1e-200, 1e200))

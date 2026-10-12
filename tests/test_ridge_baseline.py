@@ -392,6 +392,26 @@ def test_low_variance_single_fold_and_pooled_r2_agree():
     assert report.rmse == report.folds[0].rmse
 
 
+@pytest.mark.parametrize("origin", [0.01, -0.01])
+def test_asymmetric_adjacent_targets_use_the_exact_center_for_r2(origin):
+    actual = (origin, origin, math.nextafter(origin, math.inf))
+    exact = tuple(map(Fraction, actual))
+    mean = sum(exact) / len(exact)
+    expected = 1 - sum((value - Fraction(origin)) ** 2 for value in exact) / sum(
+        (value - mean) ** 2 for value in exact
+    )
+    assert expected == Fraction(-1, 2)
+    for shift in (0.0, origin):
+        report = evaluate_ridge_baseline(_plan(
+            train_X=((0.0,),) * 3, train_y=(origin - shift,) * 3,
+            validation_X=((0.0,),) * 3,
+            validation_y=tuple(value - shift for value in actual),
+        ))
+        assert report.folds[0].r2 == pytest.approx(float(expected), rel=0.0, abs=1e-15)
+        assert report.r2 == pytest.approx(float(expected), rel=0.0, abs=1e-15)
+        assert report.rmse > 0.0
+
+
 def test_pooled_r2_uses_every_target_across_unequal_constant_folds():
     first = _plan(train_X=((0.0,),) * 3, train_y=(0.01,) * 3,
                   validation_X=((0.0,),) * 2, validation_y=(0.01,) * 2)
