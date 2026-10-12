@@ -277,6 +277,20 @@ desktop tests and the comparison desktop worker test); no native GUI validation
 is claimed. This repair follows the first in another ordinary commit, with
 the combined new candidate still requiring FULL CI and independent review.
 
+### Q68 delivery closure
+
+[PR #338](https://github.com/M0DIAN/market-vault/pull/338) closed on final
+candidate `c77e8175cec4efc615d84979654d52b72221390c` after incremental independent
+review and natural FULL PR CI
+[38313428901/1](https://github.com/M0DIAN/market-vault/actions/runs/38313428901/attempts/1),
+with all 16 physical jobs successful. Squash main
+`4c4402c71f0f52ed6187e2ee62f77c2e8d4785a8` retains reviewed tree
+`5ff8820e066a09b8d8ba88650507f7e62bc2dee5`. Its natural push
+[38314862391/1](https://github.com/M0DIAN/market-vault/actions/runs/38314862391/attempts/1)
+is terminal SUCCESS through independently verified FULL PR tree-equivalence
+reuse. Version remains 0.9.0. Q69 starts only after that exact-main closure and
+a fresh fetched-main/clean-worktree check.
+
 ## Q69 — hash decoded saved objects without recursive recopying
 
 **Goal.** Reduce the cost of opening/validating real saved research artifacts
@@ -299,3 +313,59 @@ relevant existing artifact tests and this record. Q68 must close first so the
 byte comparison is against the corrected numerical model. No source cache,
 cross-action state, schema change, hashing-domain change, missing validation,
 generic serializer rewrite or unrelated TS2 optimization.
+
+### Q69 local evidence
+
+Implementation begins from verified, clean Q68 main
+`4c4402c71f0f52ed6187e2ee62f77c2e8d4785a8`. Before changing the production
+helper, the existing `quadratic_dev_case` and `suite_source` fixtures generated
+a fresh current-v2 ordinary source, Canonical/Q5 input and three complete
+public suite outputs. The fixture retains 36 trading sessions, 30-minute bars,
+two DEV folds and two Features. Its chosen quadratic-alpha-2 source and cost
+group are fixture inputs, not new product defaults. Historical Q66/v1 files
+were neither reused as the current baseline nor overwritten.
+
+The two new helper tests first gave **1 failed, 1 passed in 0.12 seconds** on
+unchanged production: the default-hash test failed specifically because it
+entered recursive `json_values` conversion. After the patch, these two tests
+and six exact existing ordinary/scenario/joint/Freeze/TEST regression nodes
+gave **8 passed in 82.93 seconds**, without skips, on Python 3.11.17. They
+retain integer-versus-float identity distinctions, Unicode, nonfinite rejection,
+the exact changed-content error, identity validation before callbacks, explicit
+execution/custom encoders and the generic date-aware encoder. Re-signed
+negative fees, inconsistent scenario predictions, joint family/evidence changes
+and invalid final records remain rejected. Offline Freeze/TEST Open and Save
+still forbid source access and fitting. No GUI execution is claimed.
+
+One public suite call against the same saved source, arguments and metadata
+retains every byte, experiment ID and SHA-256 of the post-Q68 baseline:
+
+| Complete output | Bytes before and after |
+|---|---:|
+| Q25 | 1,937,456 |
+| Q31 | 2,739,329 |
+| Q36 | 7,958,371 |
+| Total | 12,635,156 |
+
+A separate instrumented Open of all three saved outputs reduces recursive
+`json_values` calls from **1,102,844 to 34,072**, with unchanged complete bytes.
+Other legitimate normalization paths still perform conversions. Removing a
+Q36 inner family member and re-signing its report/root identities still raises
+`every available joint window requires six fits and all 24 accounts`.
+Original source and Q5 file SHA-256 values remain unchanged.
+
+Independent of the work-count probe, one unprofiled observation per version
+gave the following times; the candidate timing ran after focused tests ended:
+
+| Actual entry | Post-Q68 baseline | Q69 candidate |
+|---|---:|---:|
+| Public three-procedure suite | 3.622928 s | 3.384573 s |
+| Strict Open of all three complete outputs | 1.437295 s | 1.155310 s |
+
+These are bounded local software observations, not timing assertions or a
+production latency guarantee. The only production change is the shared
+saved-object helper's default encoding branch. Explicit execution hashing
+retains its distinct no-newline protocol. Generic input conversion, checks,
+source reconstruction, numerical results, versions, dependencies, CLI and CI
+are unchanged. Hygiene, whitespace and release/version 0.9.0 checks pass;
+final-candidate independent review and natural remote gates remain required.

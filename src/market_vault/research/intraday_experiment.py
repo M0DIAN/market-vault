@@ -44,9 +44,12 @@ def _count(value, label):
     return value
 
 
-def _hash(value, key, *, function=digest):
+def _hash(value, key, *, function=None):
     _identity(value[key], key)
-    if value[key] != function({k: v for k, v in value.items() if k != key}):
+    # Saved validators receive decoded JSON; explicit digest protocols stay intact.
+    payload = {k: v for k, v in value.items() if k != key}
+    actual = sha256(canonical_json(payload)).hexdigest() if function is None else function(payload)
+    if value[key] != actual:
         raise ValueError(f"saved {key} does not bind complete content")
 
 
