@@ -104,6 +104,13 @@ source/installed CLI path, source rejection and Q65 rank work-count guard.
 Repository hygiene, whitespace and release/version 0.9.0 checks passed.
 Final independent review and remote gates are recorded in the Q67 PR.
 
+Q67 closed through [PR #337](https://github.com/M0DIAN/market-vault/pull/337):
+final candidate `a996f8d0357e2775dfbef0683d968f257681d2b9` passed independent
+review and FULL CI `38306719532/1`. Its squash main
+`aae99727b972a8151cf962fda3f27e1d25ed42d9` passed natural push CI
+`38308217439/1`, with the exact tree and full-CI attestation reuse independently
+verified. Q68 started from that clean, fetched main after this gate closed.
+
 ## Q68 — authoritative standardized-space Ridge predictions
 
 **Goal.** Eliminate avoidable prediction cancellation when raw coefficients
@@ -141,6 +148,88 @@ No new solver, epsilon threshold, float precision dependency, search change or
 claim of exact translation invariance for every floating-point dataset.
 Existing TRAIN means/scales and target-centering arithmetic remain in scope
 only as inputs to the new prediction representation, not a general rewrite.
+
+### Q68 representation and compatibility
+
+Ridge baseline/model version is `market-vault-ridge-baseline-v2`; the generic
+final result/model identity uses v2 as well. New fitted models retain finite
+`target_mean` and Feature-ordered `standardized_coefficients`, bound alongside
+the existing means/scales and raw interpretation parameters. Generic fold
+candidate and final model identities include both new authoritative fields.
+Intraday quadratic, inner, threshold, joint and final records retain their
+existing wrappers and bind the new nested Ridge representation.
+
+Zero-weight or zero-scale terms contribute zero without unnecessary division.
+The usual finite standardized quotient keeps its original operation order;
+only an overflowing quotient evaluates the same centered term as
+`(standardized_coefficient / scale) * (x - mean)`. This avoids an unnecessary
+infinite intermediate when the weighted prediction is finite. Nonfinite input
+Features and nonfinite final scores still fail closed; this is not a fallback
+to raw intercept/Feature multiplication or a general extreme-value solver.
+
+Known v1 model labels require the historical field shape; known v2 labels
+require both new fields. Offline Open can also read either complete known
+shape under an unknown historical algorithm label, while rejecting incomplete
+or malformed shapes. Current Replay and source admission remain strict about
+the current algorithm version before source reads/fitting. Intercept-only
+ablation records keep their own representation.
+
+`research-ridge` and `research-ridge-final` explicitly advance only their
+result schemas to `market-vault-ridge-cli-result-v2` and
+`market-vault-ridge-final-cli-result-v2`; their input plan schemas remain v1.
+Their JSON includes `target_mean` and each Feature's
+`standardized_coefficient`. Generic final algorithm version is
+`market-vault-ridge-final-test-v2`. The USER_GUIDE explains the prediction
+formula and historical Open/current Replay boundary.
+
+### Q68 local evidence
+
+The Fraction threshold regression was first run against unchanged production
+code and failed on the public baseline RMSE: `1.0054174544968865e-05` instead
+of zero. The independent symmetric three-row, alpha=1 endpoint is
+`0.0005024999999999613`; the old original-coordinate raw formula yielded
+`0.00048828125`, changing the strict 5 bps action. The repaired original and
+translated cases agree with the Fraction oracle within eight endpoint ULPs
+through baseline, generic strategy/trading selection, actual `fit_ridge_rows`
+and separate generic final TEST paths.
+
+A targeted follow-up caught avoidable intermediate overflow in the new
+formula: zero weights with finite extreme inputs, and a tiny nonzero weight
+with an overflowing standardized quotient but a finite weighted result.
+The two constant-target cases and one independent Fraction case were red
+before the narrow contribution repair. Both finite cases now pass, while a
+closed-form result beyond binary64 range is explicitly rejected.
+
+Local Python 3.11.17 validation used the installed editable package:
+
+| Direct validation group | Result |
+|---|---|
+| Generic Ridge, alpha/final/trading/evaluation artifacts and actual CLI files (16 files) | 201 passed, 1 skipped; 26.96 seconds |
+| Saved model grammar and historical ordinary/final Open/Replay cases | 20 passed; 39.10 seconds |
+| Intraday linear/quadratic, inner, threshold and joint DEV (4 files) | 31 passed, 2 skipped; 111.90 seconds |
+| Intraday ordinary, quadratic/inner, threshold and joint final TEST (4 files) | 55 passed, 1 skipped; 330.08 seconds |
+| Q66 procedure suite, complete saved-output equality and action-local work counts | 11 passed; 41.25 seconds |
+| Existing constant Feature/target, intercept-only ablation and diagnostic admission cases | 11 passed; 22.96 seconds |
+| Final focused run after the intermediate-overflow repair: complete Ridge baseline/final/suite files, joint final saved-parameter/cash oracle and constant-target/ablation cases | 59 passed; 57.83 seconds |
+
+The final focused command was `python -m pytest tests/test_ridge_baseline.py
+tests/test_ridge_final_test.py tests/test_intraday_ml_procedures_suite.py
+tests/test_strategy_intraday_joint_final.py::test_one_final_fit_training_scores_tails_and_independent_cash_oracle
+tests/test_intraday_research_analysis.py::test_constant_training_target_keeps_actual_intraday_fits_constant
+tests/test_intraday_research_analysis.py::test_feature_ablation_single_feature_is_explicit_training_mean_without_solver -q`.
+Skipped desktop/native cases require the unavailable PySide6 module; no local
+native GUI verification is claimed. The saved-format runs precede the last
+arithmetic-only repair; the final focused run verifies that repair, Gram and
+suite reuse, the five prediction consumers and actual selected final scores.
+
+The three retained genuine Q66 outputs were opened unchanged under v2 code:
+Q25 (1,932,968 bytes, 28 historical Ridge models), Q31 (2,736,840 bytes, 13)
+and Q36 (7,954,078 bytes, 28). Their original SHA-256 values and source/data
+files remain unchanged. Current Replay rejected each recorded algorithm
+version before source access or fitting with those operations forbidden.
+These large fixtures remain outside Git. Repository hygiene, whitespace and
+release/version 0.9.0 checks passed; final independent review and remote gates
+are recorded in the Q68 PR.
 
 ## Q69 — hash decoded saved objects without recursive recopying
 

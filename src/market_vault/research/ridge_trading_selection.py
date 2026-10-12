@@ -509,8 +509,10 @@ def _validation_predictions(
         try:
             values = _predict(
                 fold.validation.X,
-                result.intercept,
-                result.coefficients,
+                result.target_mean,
+                result.standardized_coefficients,
+                result.feature_means,
+                result.feature_scales,
             )
         except RidgeBaselineError as exc:
             raise RidgeTradingThresholdSelectionError(str(exc)) from exc

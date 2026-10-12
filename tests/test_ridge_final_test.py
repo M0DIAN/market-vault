@@ -1,8 +1,9 @@
-"""Focused leakage and identity tests for Ridge Final TEST Evaluation V1."""
+"""Focused leakage, numerical and identity tests for Ridge Final TEST V2."""
 
 from __future__ import annotations
 
 from dataclasses import replace
+from fractions import Fraction
 import math
 
 import pytest
@@ -72,6 +73,42 @@ def test_final_fit_uses_all_purged_development_and_scores_test_once():
     assert result.rmse >= 0.0
 
 
+def test_final_centered_prediction_matches_fraction_oracle_above_five_bps():
+    delta = 2.0 ** -50
+    targets = (.99933 / 1.0 - 1.0, 0.0, 1.00067 / 1.0 - 1.0)
+    # Three symmetric DEV rows have population-standardized Z'Z=3.
+    # Alpha=1 shrinks the exact endpoint slope by 3/4; the other Feature
+    # is constant and must contribute zero even for a changed TEST value.
+    endpoint = Fraction(3, 8) * (Fraction(targets[2]) - Fraction(targets[0]))
+    expected = (float(endpoint), -float(endpoint))
+    assert expected[0] > .0005
+    for origin in (1.0, 0.0):
+        bundle = _bundle(train_periods=(0, 1), validation_periods=(2,), test_periods=(3, 4))
+        values = {
+            "train": (((origin - delta, 0.0), (origin, 0.0)), targets[:2]),
+            "validation": (((origin + delta, 0.0),), targets[2:]),
+            "test": (((origin + delta, 999.0), (origin - delta, -999.0)), expected),
+        }
+        splits = {name: replace(getattr(bundle, name),
+            ml_split=replace(getattr(bundle.ml_bundle, name), X=X, y=y))
+            for name, (X, y) in values.items()}
+        bundle = replace(bundle, **splits,
+            ml_bundle=replace(bundle.ml_bundle, **{name: split.ml_split for name, split in splits.items()}))
+        plan = build_walk_forward_plan(bundle, minimum_train_periods=2, validation_periods=1, step_periods=1)
+        selection = select_ridge_alpha(plan, alphas=(1.0, 10.0))
+        assert selection.selected_alpha == 1.0
+        result = evaluate_ridge_final_test(bundle, plan, selection)
+        scores = tuple(row.predicted for row in result.predictions)
+        assert scores == pytest.approx(expected, rel=0.0, abs=8 * math.ulp(expected[0]))
+        assert tuple(score > .0005 for score in scores) == (True, False)
+        assert result.target_mean == 0.0 and result.standardized_coefficients[1] == 0.0
+        reconstructed = tuple(result.target_mean + math.fsum(
+            coefficient * ((value - mean) / scale if scale else 0.0)
+            for value, coefficient, mean, scale in zip(X, result.standardized_coefficients,
+                result.feature_means, result.feature_scales, strict=True)) for X in bundle.test.X)
+        assert reconstructed == scores
+
+
 def test_test_targets_change_test_result_but_not_final_model():
     one = _bundle(test_y_shift=0.0)
     two = _bundle(test_y_shift=9999.0)
@@ -95,6 +132,8 @@ def test_test_targets_change_test_result_but_not_final_model():
     assert left.coefficients == right.coefficients
     assert left.feature_means == right.feature_means
     assert left.feature_scales == right.feature_scales
+    assert left.target_mean == right.target_mean
+    assert left.standardized_coefficients == right.standardized_coefficients
 
     # TEST evaluation itself must reflect the changed held-out targets.
     assert left.final_test_id != right.final_test_id
@@ -172,6 +211,16 @@ def test_result_identities_reject_tampering():
         match="model_id differs",
     ):
         replace(result, model_id="0" * 64)
+
+    for changes in ({"target_mean": result.target_mean + .125},
+                    {"standardized_coefficients": (result.standardized_coefficients[0] + .125,
+                                                   *result.standardized_coefficients[1:])}):
+        with pytest.raises(RidgeFinalTestError, match="model_id differs"):
+            replace(result, **changes)
+    with pytest.raises(RidgeFinalTestError, match="target_mean must be finite"):
+        replace(result, target_mean=math.inf)
+    with pytest.raises(RidgeFinalTestError, match="parameter widths differ"):
+        replace(result, standardized_coefficients=result.standardized_coefficients[:-1])
 
     with pytest.raises(
         RidgeFinalTestError,

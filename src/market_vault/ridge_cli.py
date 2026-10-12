@@ -53,7 +53,7 @@ from .research.walk_forward import (
 
 
 RIDGE_PLAN_SCHEMA_VERSION = "market-vault-ridge-plan-v1"
-RIDGE_CLI_RESULT_SCHEMA_VERSION = "market-vault-ridge-cli-result-v1"
+RIDGE_CLI_RESULT_SCHEMA_VERSION = "market-vault-ridge-cli-result-v2"
 
 _PLAN_FIELDS = frozenset({
     "plan_schema_version",
@@ -225,12 +225,14 @@ def _feature_parameter_payload(report, fold) -> list[dict]:
         {
             "feature_name": name,
             "coefficient": coefficient,
+            "standardized_coefficient": standardized_coefficient,
             "train_mean": mean,
             "train_scale": scale,
         }
-        for name, coefficient, mean, scale in zip(
+        for name, coefficient, standardized_coefficient, mean, scale in zip(
             report.feature_names,
             fold.coefficients,
+            fold.standardized_coefficients,
             fold.feature_means,
             fold.feature_scales,
         )
@@ -245,6 +247,7 @@ def _fold_payload(report, fold) -> dict:
         "validation_count": fold.validation_count,
         "alpha": fold.alpha,
         "intercept": fold.intercept,
+        "target_mean": fold.target_mean,
         "features": _feature_parameter_payload(report, fold),
         "metrics": {
             "mae": fold.mae,

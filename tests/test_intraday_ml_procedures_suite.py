@@ -370,11 +370,15 @@ def test_shared_raw_scores_keep_fresh_threshold_actions_metadata_and_model_isola
     assert second_predictions[0]["decision_time"] == other["observations"][0]["decision_time"]
     assert first_model == second_model and first_model is not second_model
     first_model.get("ridge_model", first_model)["coefficients"][0] = 999
+    first_model.get("ridge_model", first_model)["standardized_coefficients"][0] = 999
+    first_model.get("ridge_model", first_model)["target_mean"] = 999
     first_model["training_keys"].append("mutated")
     first_predictions[0].update(score=999, target="FLAT")
     assert canonical_json(fitter(**inputs)) == saved
     assert fits["procedure_fits"] == 1
     assert second_model.get("ridge_model", second_model)["coefficients"][0] != 999
+    assert second_model.get("ridge_model", second_model)["standardized_coefficients"][0] != 999
+    assert second_model.get("ridge_model", second_model)["target_mean"] != 999
     assert "mutated" not in second_model["training_keys"]
 
 

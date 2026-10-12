@@ -83,17 +83,13 @@ def test_exact_rmse_tie_selects_smaller_alpha(monkeypatch):
     assert result.selected_report.rmse == 2.0
 
 
-def test_candidate_identity_binds_fold_parameters_not_only_aggregate_metrics():
+@pytest.mark.parametrize("field", ["coefficients", "target_mean", "standardized_coefficients"])
+def test_candidate_identity_binds_fold_parameters_not_only_aggregate_metrics(field):
     report = evaluate_ridge_baseline(_plan(), alpha=1.0)
     fold = report.folds[0]
-    changed_coefficients = (
-        fold.coefficients[0] + 0.125,
-        *fold.coefficients[1:],
-    )
-    changed_fold = replace(
-        fold,
-        coefficients=tuple(changed_coefficients),
-    )
+    value = getattr(fold, field)
+    changed_value = value + .125 if field == "target_mean" else (value[0] + .125, *value[1:])
+    changed_fold = replace(fold, **{field: changed_value})
     changed_report = replace(
         report,
         folds=(changed_fold,) + report.folds[1:],

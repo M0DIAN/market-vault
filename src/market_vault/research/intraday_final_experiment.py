@@ -9,7 +9,7 @@ from . import intraday_final_test as final
 from .intraday_backtest import parse_execution_policy
 from .intraday_data import digest, finite_number, object_fields, positive_int
 from .intraday_experiment import (INTRADAY_EXPERIMENT_V2_VERSION, _array, _clock, _count, _decisions,
-                                 _execution, _hash, _quadratic_model, _risk, _strings)
+                                 _execution, _hash, _quadratic_model, _ridge_model, _risk, _strings)
 from .intraday_research import BENCHMARK_DEFINITION, _day, _identity
 from .strategy_comparison import CompositeRuleStrategy, FeatureRuleStrategy
 from .strategy_config import parse_strategy_specs, strategy_plan_fields
@@ -288,20 +288,12 @@ def _joint_dev_selection(value, *, source, selected, context, candidate, version
 
 
 def _model(value, *, context, strategy, version):
-    model = object_fields(value, {"version", "alpha", "feature_fields", "training_keys", "training_boundary",
-                                  "intercept", "coefficients", "means", "scales", "model_id"}, "final Ridge model")
-    _hash(model, "model_id")
-    if (model["version"] != version or finite_number(model["alpha"], "model alpha") != strategy["alpha"]
-            or model["feature_fields"] != context["feature_fields"] or model["training_keys"] != context["training_keys"]
-            or model["training_boundary"] != context["training_boundary"] or not model["training_keys"]):
+    _ridge_model(value, features=context["feature_fields"], training_keys=context["training_keys"],
+                 boundary=context["training_boundary"], alpha=strategy["alpha"], version=version)
+    if (finite_number(value["alpha"], "model alpha") != strategy["alpha"] or not value["training_keys"]):
         raise ValueError("final model must bind its complete TRAIN+VALIDATION context")
-    finite_number(model["intercept"], "model intercept")
-    for key in ("coefficients", "means", "scales"):
-        if len(_array(model[key], key)) != len(context["feature_fields"]):
-            raise ValueError("final model vectors differ from the Feature order")
-        for number in model[key]:
-            if finite_number(number, key) < 0 and key == "scales":
-                raise ValueError("final Feature scales cannot be negative")
+    if any(scale < 0 for scale in value["scales"]):
+        raise ValueError("final Feature scales cannot be negative")
 
 
 def _errors(value, count):

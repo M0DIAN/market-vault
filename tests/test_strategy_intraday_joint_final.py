@@ -190,12 +190,15 @@ def test_one_final_fit_training_scores_tails_and_independent_cash_oracle(joint_f
         for row in report["predictions"]:
             features = observations[row["observation_key"]]["features"]
             if name == "ridge":
-                score = model["intercept"] + fsum(coefficient * features[field]
-                    for field, coefficient in zip(model["feature_fields"], model["coefficients"], strict=True))
+                ridge = model
+                values = [features[field] for field in model["feature_fields"]]
             else:
                 z = (features["return_2"] - model["input_transform"]["means"][0]) / model["input_transform"]["scales"][0]
                 ridge = model["ridge_model"]
-                score = ridge["intercept"] + ridge["coefficients"][0] * z + ridge["coefficients"][1] * z * z
+                values = [z, z * z]
+            score = ridge["target_mean"] + fsum(coefficient * ((value - mean) / scale if scale else 0.0)
+                for value, coefficient, mean, scale in zip(values, ridge["standardized_coefficients"],
+                    ridge["means"], ridge["scales"], strict=True))
             assert row["score"] == pytest.approx(score, abs=1e-14)
             assert row["target"] == ("LONG" if score > report["strategy"]["threshold"] else "FLAT")
             target = targets[row["observation_key"]]

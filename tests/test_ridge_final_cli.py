@@ -69,6 +69,8 @@ def _final():
         coefficients=(0.2, -0.1),
         feature_means=(50.0, 0.0),
         feature_scales=(10.0, 1.0),
+        target_mean=10.01,
+        standardized_coefficients=(2.0, -0.1),
         predictions=tuple(range(30)),
         mae=0.025,
         rmse=0.035,
@@ -155,11 +157,12 @@ def test_ridge_final_cli_is_settings_independent_and_explicit(
 
     output = json.loads(capsys.readouterr().out)
     assert output["status"] == "SUCCESS"
+    assert output["result_schema_version"] == "market-vault-ridge-final-cli-result-v2"
     assert output["alpha_selection_version"] == (
         "market-vault-ridge-alpha-selection-v1"
     )
     assert output["final_test_version"] == (
-        "market-vault-ridge-final-test-v1"
+        "market-vault-ridge-final-test-v2"
     )
     assert output["selection_id"] == "s" * 64
     assert output["final_test_id"] == "f" * 64
@@ -197,16 +200,19 @@ def test_ridge_final_cli_is_settings_independent_and_explicit(
     assert output["prediction_count"] == 30
     assert output["model"] == {
         "intercept": 0.01,
+        "target_mean": 10.01,
         "features": [
             {
                 "feature_name": "rsi14",
                 "coefficient": 0.2,
+                "standardized_coefficient": 2.0,
                 "development_mean": 50.0,
                 "development_scale": 10.0,
             },
             {
                 "feature_name": "macd",
                 "coefficient": -0.1,
+                "standardized_coefficient": -0.1,
                 "development_mean": 0.0,
                 "development_scale": 1.0,
             },

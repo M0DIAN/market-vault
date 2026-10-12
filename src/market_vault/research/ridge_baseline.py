@@ -1,8 +1,8 @@
-"""Deterministic Ridge Regression Baseline V1 over Walk-Forward folds.
+"""Deterministic Ridge Regression Baseline V2 over Walk-Forward folds.
 
 This is the first model-fitting layer in the MarketVault research mainline.
 
-V1 deliberately stays narrow:
+The baseline deliberately stays narrow:
 
 - input is one exact WalkForwardPlan;
 - TEST is inaccessible because WalkForwardPlan contains development folds only;
@@ -15,8 +15,9 @@ V1 deliberately stays narrow:
 
 The solver uses the closed-form ridge normal equations with deterministic
 partial-pivot Gaussian elimination.  Ridge regularization is applied in the
-standardized Feature space; the reported coefficients/intercept are converted
-back to the original Feature scale.
+standardized Feature space. Predictions retain that representation and the
+TRAIN target mean. Raw coefficients/intercept remain interpretation fields;
+converting back and adding them can lose low bits through cancellation.
 """
 
 from __future__ import annotations
@@ -28,12 +29,13 @@ import re
 from .walk_forward import WalkForwardPlan
 
 
-RIDGE_BASELINE_VERSION = "market-vault-ridge-baseline-v1"
+RIDGE_BASELINE_LEGACY_VERSION = "market-vault-ridge-baseline-v1"
+RIDGE_BASELINE_VERSION = "market-vault-ridge-baseline-v2"
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 class RidgeBaselineError(ValueError):
-    """Fail-closed Ridge Regression Baseline V1 error."""
+    """Fail-closed Ridge Regression Baseline error."""
 
 
 def _finite_number(value, label: str) -> float:
@@ -69,6 +71,8 @@ class RidgeFoldResult:
     coefficients: tuple[float, ...]
     feature_means: tuple[float, ...]
     feature_scales: tuple[float, ...]
+    target_mean: float
+    standardized_coefficients: tuple[float, ...]
     mae: float
     rmse: float
     r2: float | None
@@ -88,7 +92,8 @@ class RidgeFoldResult:
             "intercept",
             _finite_number(self.intercept, "intercept"),
         )
-        for name in ("coefficients", "feature_means", "feature_scales"):
+        object.__setattr__(self, "target_mean", _finite_number(self.target_mean, "target_mean"))
+        for name in ("coefficients", "feature_means", "feature_scales", "standardized_coefficients"):
             values = getattr(self, name)
             if type(values) is not tuple or not values:
                 raise RidgeBaselineError(f"{name} must be a non-empty tuple")
@@ -101,6 +106,7 @@ class RidgeFoldResult:
         if (
             len(self.feature_means) != width
             or len(self.feature_scales) != width
+            or len(self.standardized_coefficients) != width
         ):
             raise RidgeBaselineError("ridge parameter vector widths differ")
         if any(scale < 0.0 for scale in self.feature_scales):
@@ -353,22 +359,39 @@ def _fit(
         coefficients,
         means,
         scales,
+        y_mean,
+        standardized_coefficients,
     )
 
 
 def _predict(
     X: tuple[tuple[float, ...], ...],
-    intercept: float,
-    coefficients: tuple[float, ...],
+    target_mean: float,
+    standardized_coefficients: tuple[float, ...],
+    means: tuple[float, ...],
+    scales: tuple[float, ...],
 ) -> tuple[float, ...]:
+    width = len(standardized_coefficients)
+    if len(means) != width or len(scales) != width:
+        raise RidgeBaselineError("ridge prediction parameter widths differ")
     predictions = []
     for row in X:
-        if len(row) != len(coefficients):
+        if len(row) != width:
             raise RidgeBaselineError("ridge prediction matrix width mismatch")
-        value = intercept + math.fsum(
-            coefficient * feature
-            for coefficient, feature in zip(coefficients, row)
-        )
+        contributions = []
+        for coefficient, feature, mean, scale in zip(standardized_coefficients, row, means, scales):
+            if not math.isfinite(feature):
+                raise RidgeBaselineError("ridge prediction Feature is not finite")
+            if coefficient == 0.0 or scale == 0.0:
+                continue
+            delta = feature - mean
+            standardized = delta / scale
+            # Preserve the normal standardized operation order. Only an
+            # overflowing intermediate quotient reorders this centered term;
+            # a tiny nonzero weight can still yield a finite prediction.
+            contributions.append(coefficient * standardized if math.isfinite(standardized)
+                                 else (coefficient / scale) * delta)
+        value = target_mean + math.fsum(contributions)
         if not math.isfinite(value):
             raise RidgeBaselineError("ridge prediction is not finite")
         predictions.append(0.0 if value == 0.0 else value)
@@ -434,15 +457,17 @@ def evaluate_ridge_baseline(
     for fold in plan.folds:
         train_y = tuple(float(value) for value in fold.train.y)
         validation_y = tuple(float(value) for value in fold.validation.y)
-        intercept, coefficients, means, scales = _fit(
+        intercept, coefficients, means, scales, target_mean, standardized_coefficients = _fit(
             fold.train.X,
             train_y,
             alpha,
         )
         predictions = _predict(
             fold.validation.X,
-            intercept,
-            coefficients,
+            target_mean,
+            standardized_coefficients,
+            means,
+            scales,
         )
         (
             mae,
@@ -464,6 +489,8 @@ def evaluate_ridge_baseline(
                 coefficients,
                 means,
                 scales,
+                target_mean,
+                standardized_coefficients,
                 mae,
                 rmse,
                 r2,

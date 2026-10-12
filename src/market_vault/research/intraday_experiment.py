@@ -17,6 +17,7 @@ from .intraday_research import (
     _day, _evaluate_intraday_research, _identity, _prepare_intraday_research,
     expand_intraday_plan, fold_cash_contributions, is_intraday_plan_v2, research_algorithm_versions,
 )
+from .ridge_baseline import RIDGE_BASELINE_LEGACY_VERSION, RIDGE_BASELINE_VERSION
 from .strategy_experiment import StrategyExperiment, canonical_json, environment_versions
 
 
@@ -223,14 +224,27 @@ def _execution(value, *, policy, days, interval, versions):
 
 
 def _ridge_model(model, *, features, training_keys, boundary, alpha, version):
-    object_fields(model, {"version", "alpha", "feature_fields", "training_keys", "training_boundary",
-                         "intercept", "coefficients", "means", "scales", "model_id"}, "Ridge model")
+    fields = {"version", "alpha", "feature_fields", "training_keys", "training_boundary",
+              "intercept", "coefficients", "means", "scales", "model_id"}
+    standardized_fields = {"target_mean", "standardized_coefficients"}
+    # Open accepts complete known historical shapes, including records with
+    # unknown historical version labels. Known v1/v2 labels fix their shape;
+    # current Replay rejects historical versions before source access or fit.
+    if type(model) is dict and (model.get("version") == RIDGE_BASELINE_VERSION
+            or (model.get("version") != RIDGE_BASELINE_LEGACY_VERSION
+                and standardized_fields.intersection(model))):
+        fields.update(standardized_fields)
+    object_fields(model, fields, "Ridge model")
     _hash(model, "model_id")
     if (model["version"] != version or model["alpha"] != alpha or model["training_keys"] != training_keys
             or model["training_boundary"] != boundary or model["feature_fields"] != features):
         raise ValueError("Ridge model differs from its own training fold")
     finite_number(model["intercept"], "intercept")
-    for key in ("coefficients", "means", "scales"):
+    vector_fields = ("coefficients", "means", "scales")
+    if "target_mean" in model:
+        finite_number(model["target_mean"], "target_mean")
+        vector_fields += ("standardized_coefficients",)
+    for key in vector_fields:
         if len(_array(model[key], key)) != len(features):
             raise ValueError("Ridge vector differs from explicit Feature order")
         for number in model[key]:
