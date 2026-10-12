@@ -116,6 +116,27 @@ release/version 0.9.0 and whitespace checks passed. Historical affected-artifact
 Open/Replay behavior above is a code-based compatibility assessment, not a claim
 that a separate old-bad-artifact end-to-end fixture was executed.
 
+### Q55 remote closure
+
+[PR #325](https://github.com/M0DIAN/market-vault/pull/325) received an independent
+final-candidate PASS for head `e02c288988f7866b91f5999dd7c347b2c8da0ac3`, tree
+`5c2f1ab8741bf2c299a8a86a52322c686e3d371c`. The reviewer independently exercised
+actual base-source counterexamples, quadratic squares/interactions, signed zero
+and unchanged nonconstant arithmetic. Natural FULL PR
+[38208068023/1](https://github.com/M0DIAN/market-vault/actions/runs/38208068023/attempts/1)
+passed all 16 required jobs, the existing job-set validator and the package
+version/attestation checks. Its longest partition was 600 s.
+
+The authorized squash produced main `1a03ae5f3d083ad6397ab13a74cd651a10dfd08f`,
+with the same reviewed/tested tree and Q54 main as its sole parent. Natural main
+[38209196363/1](https://github.com/M0DIAN/market-vault/actions/runs/38209196363/attempts/1)
+is terminal SUCCESS. Its actual plan log reports `POST_MERGE_REUSE=true` and
+`verified_full_pr_tree_equivalence`, binding PR #325, that final head, PR run
+38208068023, tested merge `d54f765e7da99c51630c4faf19000ee4ecf50e0c`, and the
+identical main/tested tree. All five reuse-path jobs succeeded; the partition
+matrix was skipped by that existing verified contract. Q56 started only after
+this gate and a fresh remote-main/clean-worktree check.
+
 ## Q56 — avoid copying already JSON-native diagnostic reports
 
 ### Goal and technical plan
@@ -152,6 +173,35 @@ Scope: `research/intraday_inner_cost_sensitivity.py`,
 `research/intraday_procedure_stress.py`, their focused existing tests and this
 record. No Q52 expansion, execution-kernel changes, report trimming, generic
 serializer changes or persistent result caching.
+
+### Q56 local evidence
+
+The production change is six added and six removed lines across the two
+declared report modules. The two existing test files were left unchanged:
+**17 passed in 119.80 s** on Python 3.11.17. They retain the unmodified
+`intraday_data.digest` as an independent full-report identity oracle, complete
+account/cost calculations, unavailable-state coverage, source-file immutability
+and whole CLI-report equality. No duplicate test or permanent timing gate was
+added.
+
+An actual candidate API comparison loaded the old modules from Q56's base main
+`1a03ae5f3d083ad6397ab13a74cd651a10dfd08f`. On the same saved Q54 Q36 fixture,
+complete reports, including IDs, were byte-for-byte equal. The 17,400,706-byte
+input had SHA-256
+`f258933112144be8871e524e7a1c882a0708139b6ac5aff9834aaa5f56192338`:
+
+| Report | Complete bytes | Old API | Candidate API |
+|---|---:|---:|---:|
+| Q53 inner-cost sensitivity | 35,375,278 | 3.219602 s | 2.038068 s |
+| Q41 execution stress | 53,614,148 | 3.201175 s | 2.765924 s |
+
+These are one bounded call per path after loading the source, not repeatable
+latency guarantees. The separate pre-implementation `tracemalloc` experiment
+measured transient allocation peaks of 205,383,334 → 162,846,846 bytes for Q53
+and 282,431,407 → 220,146,717 bytes for Q41. Those peak figures describe the
+prototype comparison; they are neither process RSS nor a new candidate memory
+test. The implementation removes the same redundant conversion and preserves
+the generic encoder's broader date/container contract.
 
 ## Q57 — lightweight native selection capture
 
@@ -195,11 +245,17 @@ bypass, background cache service or automatic research/Freeze/TEST action.
 
 Use the tested checkout's explicit `PYTHONPATH`, Python 3.11 and repository-external
 temporary test directories. Run meaningful affected regressions, whitespace,
-hygiene and release/version checks locally; the natural PR CI is authoritative
-for the full matrix. The existing eleven-partition ownership and complete test
-selection remain. Q54's longest PR job was 620 s; that small single-run overrun
-alone does not justify a new CI topology. Measure this package's actual runs
-and adjust only if a concrete blocking imbalance requires it.
+hygiene and release/version checks locally. Natural PR CI follows the actual
+checked-in classifier. A `research_fast` PR is subset evidence and cannot mint
+a FULL attestation; its natural main push is forced to FULL and must finish
+successfully. A FULL PR can be reused only after the existing main verifier
+proves the required run/attempt and Git-tree equivalence. Do not change paths
+or add redundant tests to manipulate a tier.
+
+The existing eleven-partition ownership and complete FULL test selection
+remain. Q54's longest PR job was 620 s and Q55's was 600 s; these observations
+do not justify a new CI topology. Measure this package's actual runs and adjust
+only if a concrete blocking imbalance requires it.
 
 For each task: commit the stable candidate; independently review that exact
 head; wait for successful required natural PR CI; recheck current head/base,

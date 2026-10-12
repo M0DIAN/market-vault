@@ -8,14 +8,14 @@ accounts, source replay, fitted recipes or candidates eligible for Freeze.
 from __future__ import annotations
 
 from copy import deepcopy
+from hashlib import sha256
 
 from ..backtest.intraday import (
     INTRADAY_COST_VERSION, INTRADAY_EXECUTION_VERSION, IntradayExecutionPolicy, run_intraday_execution,
 )
-from .intraday_data import canonical_json, digest
 from .intraday_ml_diagnostics import _saved_ml_source
 from .intraday_threshold_selection import threshold_predictions
-from .strategy_experiment import StrategyExperiment
+from .strategy_experiment import StrategyExperiment, canonical_json
 
 
 INTRADAY_INNER_COST_SENSITIVITY_VERSION = "market-vault-intraday-inner-cost-sensitivity-v1"
@@ -195,5 +195,5 @@ def analyze_intraday_inner_cost_sensitivity(snapshot: StrategyExperiment) -> dic
             "scenario_count": scenario_count, "available_scenario_count": scenario_count - len(failures)},
         "unavailable_reason": reason, "unavailable_reasons": failures, "windows": windows,
         "choice_changes": _choice_changes(windows)}
-    result["sensitivity_id"] = digest(result)
+    result["sensitivity_id"] = sha256(canonical_json(result)).hexdigest()
     return result

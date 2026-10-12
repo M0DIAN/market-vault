@@ -8,18 +8,18 @@ kernel reexecutes; this is neither fitted-source replay nor a new strategy.
 from __future__ import annotations
 
 from copy import deepcopy
+from hashlib import sha256
 
 from ..backtest.intraday import (
     INTRADAY_COST_VERSION, INTRADAY_EXECUTION_VERSION, IntradayExecutionPolicy, run_intraday_execution,
 )
 from . import intraday_signal_delay as delay_engine
-from .intraday_data import canonical_json, digest
 from .intraday_procedure_comparison import _accounts, _member, _procedure
 from .intraday_procedure_return_uncertainty import ACCOUNT_ORDER, _account_basis
 from .intraday_research import intraday_daily_risk
 from .intraday_return_uncertainty import _finite, _mean, _sample_coverage
 from .intraday_risk_diagnostics import _available, _metric
-from .strategy_experiment import StrategyExperiment
+from .strategy_experiment import StrategyExperiment, canonical_json
 
 
 INTRADAY_PROCEDURE_STRESS_VERSION = "market-vault-intraday-procedure-stress-v1"
@@ -207,5 +207,5 @@ def analyze_intraday_procedure_stress(snapshot: StrategyExperiment) -> dict:
                      "DECLARED_SLIPPAGE_INCREMENTS_NOT_MARKET_IMPACT_ESTIMATES", "FIXED_BAR_DELAYS_NOT_MEASURED_LATENCY",
                      "DELAY_EFFECT_NEED_NOT_BE_MONOTONIC", "DAILY_EXCESS_NOT_AN_INVESTABLE_ACCOUNT",
                      "NO_REFIT_RESELECTION_BOOTSTRAP_FREEZE_TEST_OR_PROMOTION"]}
-    result["stress_id"] = digest(result)
+    result["stress_id"] = sha256(canonical_json(result)).hexdigest()
     return result
