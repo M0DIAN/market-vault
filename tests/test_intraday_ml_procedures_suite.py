@@ -42,11 +42,11 @@ def _physical_fit_counts(monkeypatch):
     """One solver call for either representation, with ordinary work separate."""
     counts, requests, depth = {"ordinary_fits": 0, "procedure_fits": 0}, [], 0
     solve, evaluate = research._fit, research._evaluate_intraday_research
-    def solved(X, y, alpha):
+    def solved(X, y, alpha, **kwargs):
         counts["ordinary_fits" if depth else "procedure_fits"] += 1
         if not depth:
             requests.append((len(X), len(X[0]), alpha))
-        return solve(X, y, alpha)
+        return solve(X, y, alpha, **kwargs)
     def ordinary(*args, **kwargs):
         nonlocal depth
         depth += 1
@@ -59,13 +59,27 @@ def _physical_fit_counts(monkeypatch):
     return counts, requests
 
 
+def _ridge_work_counts(monkeypatch):
+    from market_vault.research import intraday_models as models, ridge_baseline as ridge
+
+    counts = {"preparations": 0, "solves": 0, "quadratic_expansions": 0}
+    for module, name, key in ((ridge, "_standardize", "preparations"),
+            (ridge, "_solve", "solves"), (models, "input_stats", "quadratic_expansions")):
+        original = getattr(module, name)
+        def recorded(*args, _key=key, _original=original, **kwargs):
+            counts[_key] += 1
+            return _original(*args, **kwargs)
+        monkeypatch.setattr(module, name, recorded)
+    return counts
+
+
 def _cache_costs(monkeypatch):
     costs = {"key_seconds": 0., "model_copy_seconds": 0., "requests": 0}
     key, copy = fit_reuse._fit_key, fit_reuse.deepcopy
-    def keyed(*args):
+    def keyed(*args, **kwargs):
         start = time.perf_counter()
         try:
-            return key(*args)
+            return key(*args, **kwargs)
         finally:
             costs["key_seconds"] += time.perf_counter() - start
             costs["requests"] += 1
@@ -97,6 +111,7 @@ def test_real_three_run_canonical_equivalence_and_single_strict_preparation(suit
     before = {path: path.read_bytes() for path in (case.path, case.data.path)}
     fits, _ = _physical_fit_counts(monkeypatch)
     overhead = _cache_costs(monkeypatch)
+    work = _ridge_work_counts(monkeypatch)
     calls = {key: 0 for key in ("source_read", "q5_read", "q5_verify", "prepare", "reconstruct")}
     for module, name, key in ((experiments, "_read_file", "source_read"), (q5, "_read", "q5_read"),
             (q5, "verify_intraday_dataset", "q5_verify"), (research, "_prepare_intraday_research", "prepare"),
@@ -112,11 +127,14 @@ def test_real_three_run_canonical_equivalence_and_single_strict_preparation(suit
     independent_seconds = time.perf_counter() - start
     independent_calls = dict(calls)
     independent_fits = dict(fits)
+    independent_work = dict(work)
     folds = len(case.source.as_dict()["report"]["context"]["folds"])
     assert independent_fits["procedure_fits"] == 13 * (folds + 1) + 2 * folds
+    assert independent_work["preparations"] == independent_work["solves"] == sum(independent_fits.values())
     assert independent_calls == dict.fromkeys(calls, 3)
     calls.update(dict.fromkeys(calls, 0))
     fits.update(dict.fromkeys(fits, 0))
+    work.update(dict.fromkeys(work, 0))
     # This private injection is Q49's identical single-preparation path. No
     # public option can turn source verification or fit reuse on/off.
     with monkeypatch.context() as patch:
@@ -125,12 +143,15 @@ def test_real_three_run_canonical_equivalence_and_single_strict_preparation(suit
         uncached = suite.run_intraday_procedure_suite(case.path, **case.args, **metadata)
         uncached_seconds = time.perf_counter() - start
     uncached_fits = dict(fits)
+    uncached_work = dict(work)
     assert calls == dict.fromkeys(calls, 1)
     assert uncached_fits["procedure_fits"] == independent_fits["procedure_fits"]
     assert uncached_fits["ordinary_fits"] * 3 == independent_fits["ordinary_fits"]
+    assert uncached_work["preparations"] == uncached_work["solves"] == sum(uncached_fits.values())
     assert [value.content for value in uncached] == [value.content for value in independent]
     calls.update(dict.fromkeys(calls, 0))
     fits.update(dict.fromkeys(fits, 0))
+    work.update(dict.fromkeys(work, 0))
     owners, caches = [], []
     def created(prepared):
         owners.append(prepared)
@@ -142,10 +163,16 @@ def test_real_three_run_canonical_equivalence_and_single_strict_preparation(suit
     combined = suite.run_intraday_procedure_suite(case.path, **case.args, **metadata)
     suite_seconds = time.perf_counter() - start
     combined_fits = dict(fits)
+    combined_work = dict(work)
     assert type(combined) is tuple and len(combined) == 3
     assert calls == dict.fromkeys(calls, 1)
     assert combined_fits["ordinary_fits"] == uncached_fits["ordinary_fits"]
     assert combined_fits["procedure_fits"] <= uncached_fits["procedure_fits"] - 6 * (folds + 1)
+    assert combined_work == {
+        "preparations": combined_fits["ordinary_fits"] + 2 * (folds + 1),
+        "solves": sum(combined_fits.values()),
+        "quadratic_expansions": combined_fits["ordinary_fits"] + 4 * (folds + 1),
+    }
     assert [value.content for value in combined] == [value.content for value in independent]
     assert [value.experiment_id for value in combined] == [value.experiment_id for value in independent]
     for snapshot, family_size in zip(combined, (6, 4, 24), strict=True):
@@ -155,10 +182,12 @@ def test_real_three_run_canonical_equivalence_and_single_strict_preparation(suit
                    for window in [*(row["inner"] for row in report["outer_folds"]), report["final_dev"]])
     calls.update(dict.fromkeys(calls, 0))
     fits.update(dict.fromkeys(fits, 0))
+    work.update(dict.fromkeys(work, 0))
     start = time.perf_counter()
     repeated = suite.run_intraday_procedure_suite(case.path, **case.args, **metadata)
     repeated_seconds = time.perf_counter() - start
     assert calls == dict.fromkeys(calls, 1) and fits == combined_fits
+    assert work == combined_work
     assert owners[0] is not owners[1] and caches[0] is not caches[1]
     assert [value.content for value in repeated] == [value.content for value in combined]
     # Equal source bytes do not make another action's cache admissible.
@@ -173,6 +202,8 @@ def test_real_three_run_canonical_equivalence_and_single_strict_preparation(suit
         "suite_seconds": round(suite_seconds, 3), "repeated_suite_seconds": round(repeated_seconds, 3),
         "independent_calls": independent_calls, "suite_calls": calls,
         "independent_fits": independent_fits, "q49_fits": uncached_fits, "suite_fits": combined_fits,
+        "independent_ridge_work": independent_work, "q49_ridge_work": uncached_work,
+        "suite_ridge_work": combined_work,
         "two_suite_cache_costs": overhead,
         "canonical_bytes_equal": True, "experiment_ids": [value.experiment_id for value in combined]}))
 
@@ -226,21 +257,64 @@ def _numeric_cache_case():
         "boundary": "2025-01-03T14:30:00+00:00"}
 
 
+@pytest.mark.parametrize("kind", ["RIDGE", "QUADRATIC_RIDGE"])
+def test_alpha_family_prepares_once_and_solves_each_alpha_with_fresh_action_state(kind, monkeypatch):
+    owner, inputs = _numeric_cache_case()
+    cases = [{**inputs, "recipe": {**inputs["recipe"], "kind": kind, "alpha": alpha}}
+             for alpha in (.1, 1., 10.)]
+    expected = [canonical_json(inner._fit(**case)) for case in cases]
+    work = _ridge_work_counts(monkeypatch)
+    cache = fit_reuse._SelectionFitCache(owner)
+    fitter = cache.fitter(owner, inner._fit)
+    actual = [canonical_json(fitter(**case)) for case in cases]
+    assert actual == expected
+    assert work == {"preparations": 1, "solves": 3,
+                    "quadratic_expansions": 3 if kind == "QUADRATIC_RIDGE" else 0}
+    assert canonical_json(fitter(**cases[0])) == expected[0]
+    assert work["solves"] == 3  # Existing alpha-specific complete-fit reuse.
+    another_owner, _ = _numeric_cache_case()
+    another = fit_reuse._SelectionFitCache(another_owner).fitter(another_owner, inner._fit)
+    assert canonical_json(another(**cases[0])) == expected[0]
+    assert work["preparations"] == 2 and work["solves"] == 4
+
+
+def test_failed_solver_does_not_publish_a_cached_model(monkeypatch):
+    from market_vault.research.ridge_baseline import RidgeBaselineError
+
+    owner, inputs = _numeric_cache_case()
+    inputs["recipe"]["alpha"] = 1e-20
+    for row, _ in inputs["rows"]:
+        row["features"]["y"] = .1
+    cache = fit_reuse._SelectionFitCache(owner)
+    fitter = cache.fitter(owner, inner._fit)
+    work = _ridge_work_counts(monkeypatch)
+    for attempt in (1, 2):
+        with pytest.raises(RidgeBaselineError, match="singular"):
+            fitter(**inputs)
+        assert cache._fits == {}
+        assert work["solves"] == attempt
+    inputs["recipe"]["alpha"] = 1.
+    assert canonical_json(fitter(**inputs)) == canonical_json(inner._fit(**inputs))
+
+
 def test_fit_identity_uses_actual_ordered_values_cutoff_and_numeric_encoding(monkeypatch):
     owner, inputs = _numeric_cache_case()
     cache = fit_reuse._SelectionFitCache(owner)
     fitter = cache.fitter(owner, inner._fit)
     fits, _ = _physical_fit_counts(monkeypatch)
+    work = _ridge_work_counts(monkeypatch)
     original = fitter(**inputs)
     assert fits["procedure_fits"] == 1
     assert canonical_json(fitter(**deepcopy(inputs))) == canonical_json(original)
     assert fits["procedure_fits"] == 1
-    for change in ("training_value", "target_value", "training_key", "training_order", "features_order",
+    for change in ("training_value", "training_encoding", "target_value", "training_key", "training_order", "features_order",
                    "cutoff", "prediction_value", "prediction_key", "prediction_order", "prediction_support",
                    "alpha_encoding", "representation"):
         altered = deepcopy(inputs)
         if change == "training_value":
             altered["rows"][0][0]["features"]["x"] += .25
+        elif change == "training_encoding":
+            altered["rows"][0][0]["features"]["x"] = 0
         elif change == "target_value":
             altered["rows"][0][1]["value"] += .01
         elif change == "training_key":
@@ -264,8 +338,10 @@ def test_fit_identity_uses_actual_ordered_values_cutoff_and_numeric_encoding(mon
         else:
             altered["recipe"]["kind"] = "QUADRATIC_RIDGE"
         before = fits["procedure_fits"]
+        before_preparations = work["preparations"]
         actual = fitter(**altered)
         assert fits["procedure_fits"] == before + 1, change
+        assert work["preparations"] == before_preparations + (change != "alpha_encoding"), change
         expected = inner._fit(**altered)
         assert canonical_json(actual) == canonical_json(expected), change
         if change == "alpha_encoding":

@@ -274,11 +274,19 @@ def _training_target_mean(values: tuple[float, ...]) -> float:
     return math.fsum(values) / len(values)
 
 
-def _fit(
+@dataclass(frozen=True, slots=True)
+class _RidgePreparation:
+    means: tuple[float, ...]
+    scales: tuple[float, ...]
+    y_mean: float
+    gram: tuple[tuple[float, ...], ...]
+    vector: tuple[float, ...]
+
+
+def _prepare_fit(
     X: tuple[tuple[float, ...], ...],
     y: tuple[float, ...],
-    alpha: float,
-):
+) -> _RidgePreparation:
     if len(X) != len(y) or not X:
         raise RidgeBaselineError("ridge TRAIN X/y row counts are invalid")
     means, scales = _column_stats(X)
@@ -294,7 +302,7 @@ def _fit(
         for right in range(left, width):
             value = math.fsum(
                 row[left] * row[right] for row in Z
-            ) + (alpha if left == right else 0.0)
+            )
             matrix[left][right] = matrix[right][left] = value
         vector.append(
             math.fsum(
@@ -303,10 +311,32 @@ def _fit(
             )
         )
 
-    standardized_coefficients = _solve(
-        tuple(tuple(row) for row in matrix),
-        tuple(vector),
+    return _RidgePreparation(
+        means, scales, y_mean, tuple(tuple(row) for row in matrix), tuple(vector),
     )
+
+
+def _fit(
+    X: tuple[tuple[float, ...], ...],
+    y: tuple[float, ...],
+    alpha: float,
+    *,
+    _preparation: dict[str, _RidgePreparation] | None = None,
+):
+    # Only the input-bound suite cache supplies this private, action-local slot.
+    prepared = None if _preparation is None else _preparation.get("ridge")
+    if prepared is None:
+        prepared = _prepare_fit(X, y)
+        if _preparation is not None:
+            _preparation["ridge"] = prepared
+    means, scales, y_mean = prepared.means, prepared.scales, prepared.y_mean
+    width = len(means)
+    matrix = tuple(
+        tuple(value + (alpha if left == right else 0.0)
+              for right, value in enumerate(row))
+        for left, row in enumerate(prepared.gram)
+    )
+    standardized_coefficients = _solve(matrix, prepared.vector)
     coefficients = tuple(
         0.0 if scales[index] == 0.0
         else standardized_coefficients[index] / scales[index]

@@ -256,10 +256,12 @@ def _prepare_intraday_research(plan: dict, *, data=None, data_file: str | Path |
     return _PreparedIntradayResearch(data, report, context, observations, tuple(row_groups))
 
 
-def fit_ridge_rows(rows, observations, features, alpha, *, boundary: str) -> tuple[dict, tuple[float, ...]]:
+def fit_ridge_rows(rows, observations, features, alpha, *, boundary: str,
+                   _preparation=None) -> tuple[dict, tuple[float, ...]]:
     X = tuple(tuple(row["features"][f] for f in features) for row, target in rows)
     y = tuple(target["value"] for row, target in rows)
-    intercept, coefficients, means, scales = _fit(X, y, alpha)
+    options = {} if _preparation is None else {"_preparation": _preparation}
+    intercept, coefficients, means, scales = _fit(X, y, alpha, **options)
     predictions = _predict(tuple(tuple(row["features"][f] for f in features) for row in observations), intercept, coefficients)
     model = {"version": RIDGE_BASELINE_VERSION, "alpha": alpha, "feature_fields": list(features),
              "training_keys": [row["observation_key"] for row, _ in rows], "training_boundary": boundary,

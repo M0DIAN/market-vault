@@ -71,7 +71,7 @@ def expanded_observation(observation, features, means, scales, terms):
     return {**observation, "features": expanded}
 
 
-def fit_quadratic_rows(rows, observations, features, alpha, *, boundary):
+def fit_quadratic_rows(rows, observations, features, alpha, *, boundary, _preparation=None):
     """Fit both historical transforms and return the complete composite model."""
     from .intraday_research import fit_ridge_rows
 
@@ -82,8 +82,9 @@ def fit_quadratic_rows(rows, observations, features, alpha, *, boundary):
     expanded_training = tuple((expanded_observation(row, features, means, scales, terms), target)
                               for row, target in rows)
     validation = tuple(expanded_observation(row, features, means, scales, terms) for row in observations)
+    options = {} if _preparation is None else {"_preparation": _preparation}
     ridge_model, values = fit_ridge_rows(expanded_training, validation,
-        [term["name"] for term in terms], alpha, boundary=boundary)
+        [term["name"] for term in terms], alpha, boundary=boundary, **options)
     model = {"version": INTRADAY_QUADRATIC_RIDGE_VERSION, "kind": "QUADRATIC_BASIS_RIDGE",
              "alpha": alpha, "input_features": list(features),
              "input_transform": {"means": list(means), "scales": list(scales), "constant_policy": "ZERO"},

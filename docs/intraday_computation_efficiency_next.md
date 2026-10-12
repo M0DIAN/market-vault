@@ -68,6 +68,33 @@ numerical issues are resolved follows from this package.
   tier, wall-clock assertion or unrelated safety/test expansion. Measurements
   are bounded offline software observations, not profit or production promises.
 
+The existing fixed procedure rules remain explicit (these families are not
+new user-configurable search parameters):
+
+| Procedure | Fixed family and selection objective | Threshold and costs |
+|---|---|---|
+| Q25 model selection | RIDGE then QUADRATIC_RIDGE, each with alpha 0.1, 1.0, 10.0; minimize row-weighted pooled MSE across COMPLETE inner observations | Threshold and execution/cost assumptions inherit the captured ordinary source |
+| Q31 threshold selection | Keep the source representation, alpha and ordered Features; maximize inner net compounded account return | Select among 0, 5, 10, 20 bps; retain source execution/cost assumptions |
+| Q36 joint selection | The same six models times four thresholds, 24 declared members; maximize inner net compounded account return | Same four thresholds and source execution/cost assumptions |
+
+All three use the final five **trading sessions** of the available history as
+the inner holdout and all preceding eligible history as TRAIN, with at least
+ten TRAIN sessions. Ten is a minimum, not a fixed rolling window. Preserve
+actual label ends strictly before the training boundary, TRAIN-only
+transformations, FIRST_DECLARED ties and
+the strict `score > threshold` LONG rule (otherwise FLAT). Q25 does not impose
+a universal 5 bps threshold. The ordinary source, DEV chronology and frozen
+final TEST boundaries remain authoritative; this package adds no tuning axis.
+Q25 scores available COMPLETE labels; Q31/Q36 evaluate the economic holdout
+over READY decisions and the complete price grid, without requiring COMPLETE
+scoring labels. Source reconstruction still verifies the full Q5 file,
+including held-out rows; training, selection and scoring remain isolated from
+TEST. The suite neither selects a winning procedure nor automatically runs TEST.
+These rules come from the existing [Q25](../src/market_vault/research/intraday_inner_selection.py),
+[Q31](../src/market_vault/research/intraday_threshold_selection.py),
+[Q36](../src/market_vault/research/intraday_joint_selection.py) and
+[suite](../src/market_vault/research/intraday_procedure_suite.py) implementations.
+
 ## Q64 — strict TS2 digest validation without per-character Python work
 
 ### Goal, implementation and defaults
@@ -174,6 +201,21 @@ a timing gate or an end-to-end Q5/suite latency claim. No Feature vectors or
 ranks persist beyond one analysis call. Final independent review and remote
 gates are recorded in the associated PR.
 
+### Q65 delivery closure
+
+[PR #335](https://github.com/M0DIAN/market-vault/pull/335) received independent
+final-candidate PASS on `01697da15fdf05304bca6a1a2351f3f90a9a1941`, including
+85 associated tests and 324 bounded complete-report/CLI differential cases.
+Natural RESEARCH_FAST PR CI
+[38262393941/1](https://github.com/M0DIAN/market-vault/actions/runs/38262393941/attempts/1)
+passed. Squash main `8d0ee586ff9e02e1e2273dcdc6dfeab83bec8cff` retains the
+reviewed tree `8acdf7e853022e367124068af5bb55831a20ff81`. Its natural push
+[38263166962/1](https://github.com/M0DIAN/market-vault/actions/runs/38263166962/attempts/1)
+passed all 16 physical FULL jobs. This was actual FULL with
+`POST_MERGE_REUSE=false` / `jobs_missing_surface`, not subset reuse. The longest
+partition took 503 seconds. Independent post-merge review confirmed COMPLETE,
+exact version 0.9.0 and clean synchronized main before Q66 implementation began.
+
 ## Q66 — reuse alpha-independent preparation within the existing suite
 
 ### Goal, plan and defaults
@@ -223,3 +265,63 @@ and Q50's prepared-action ownership are existing technical dependencies.
 No global fitting context, cross-action/window reuse, source bypass, new
 solver/BLAS, alpha pruning, fitted-score reuse across different alphas,
 quadratic-expansion cache, model format change or numerical correction.
+
+### Q66 local evidence
+
+Implementation starts from completed Q65 main
+`8d0ee586ff9e02e1e2273dcdc6dfeab83bec8cff`. Both new linear/quadratic alpha-family
+work-count cases were run against unchanged production first: each failed
+because preparation ran three times instead of once. The candidate prepares
+once and solves all three alphas, preserves the alpha-specific complete-fit
+cache, and starts fresh for a different prepared action. Input/order/boundary/
+support changes require new preparation; alpha numeric encoding still remains
+part of the complete model identity. Failed solves do not publish cached models.
+
+The existing shared Ridge, intraday ML, suite, selection and final TEST
+regressions across eleven directly affected test files give **131 passed,
+3 skipped in 505.62 seconds** on Python 3.11.17. The three skips are existing
+PySide6-dependent GUI tests. Both this local environment and the existing
+FULL CI's `dev` dependency set omit PySide6, so those GUI tests remain skipped;
+no GUI execution coverage is claimed for this package. Existing dense-Gram,
+constant/adjacent-value, source admission,
+canonical output and TEST-isolation assertions remain intact.
+
+The pre-implementation saved fixture uses 36 sessions, two DEV folds, two
+Features and a captured quadratic-alpha-2 source. That source is a fixture
+choice, not a new default. The eleven relevant implementation blobs were
+unchanged between the saved baseline and Q65 main. Actual public suite replay
+retains all **12,623,988 bytes** and IDs across Q25 (1,933,002 bytes), Q31
+(2,736,874) and Q36 (7,954,112), with original source/Q5 files unchanged.
+A separate instrumented call confirms:
+
+| Actual work in one public suite call | Before Q66 | Q66 |
+|---|---:|---:|
+| Strict ordinary-source reconstruction | 1 | 1 |
+| Ordinary Ridge preparations / solves / quadratic expansions | 4 / 4 / 4 | 4 / 4 / 4 |
+| Procedure Ridge preparations | 21 | 6 |
+| Procedure solves | 21 | 21 |
+| Procedure quadratic expansions | 12 | 12 |
+| Fit identity projections/hashes | 43 | 64 |
+
+The extra identity projection on each raw-fit miss binds preparations to all
+existing inputs except alpha. Instrumented key-only time was 0.021003 seconds
+before and 0.022309 after; these are attribution observations, not end-to-end
+benchmarks. The unprofiled complete suite observation was **3.548624 → 3.795229
+seconds**, so this small fixture does **not** demonstrate a wall-clock speedup.
+No timing threshold is used for acceptance or claimed as a production guarantee.
+
+For the separate 3,000-TRAIN/600-prediction/six-Feature input (quadratic width
+27), all three standalone candidate fits retain the saved **1,256,788 bytes**,
+SHA256 `266f58be72c6c8a31a6f86567b48cc15537e01018526522eb92789a891a3bcbc`.
+One unprofiled candidate observation was 0.528282 seconds for three standalone
+fits and 0.291939 seconds using the actual private preparation slot. A separate
+instrumented probe confirms one preparation, three solves and three quadratic
+expansions, with identical complete bytes. This bounded raw-fit probe excludes
+suite identity hashing and source verification; it is neither a public source
+admission test nor evidence of complete-suite latency improvement.
+
+The production state is limited to immutable means/scales, target mean, Gram
+and target vector inside the existing action cache; standardized training rows
+are not retained. No dependency, schema, solver, candidate coverage, public CLI,
+workflow or version change is included. Final independent review and natural
+PR/exact-main gates are recorded in the associated PR.
