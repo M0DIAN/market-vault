@@ -231,6 +231,28 @@ These large fixtures remain outside Git. Repository hygiene, whitespace and
 release/version 0.9.0 checks passed; final independent review and remote gates
 are recorded in the Q68 PR.
 
+### Q68 CI fixture repair
+
+Candidate `ef899083fb5998114578eb66f8a38cbec340bc9c` encountered a direct
+fixture failure in FULL CI `38311641594/1`, job `115018578584`
+(`test-311 (intraday_analytics)`): 1 failed, 132 passed in 327.57 seconds.
+`test_quadratic_ridge_dimension_and_selected_admission_precede_q5_io`
+expanded a saved projection to seven Features but extended only means,
+scales and raw coefficients. Its standardized coefficient vector remained
+one-dimensional, so the strict v2 saved-model validator correctly rejected
+the fixture before its intended dimension/admission assertions ran.
+
+The repair adds `standardized_coefficients` to that fixture's existing vector
+extension. All original dimension, invalid-selection, zero-Q5-read and Q21
+loader assertions remain intact; production code and validators are unchanged.
+The targeted command `python -m pytest
+tests/test_intraday_research_analysis.py::test_quadratic_ridge_dimension_and_selected_admission_precede_q5_io
+-q` passed **1 test in 21.25 seconds** on Python 3.11.17. This restores the
+test's original discriminating path rather than bypassing saved-model checks.
+The repair is an ordinary new commit whose parent is that failed remote
+candidate; new-head FULL CI and incremental independent review remain the
+delivery gates.
+
 ## Q69 — hash decoded saved objects without recursive recopying
 
 **Goal.** Reduce the cost of opening/validating real saved research artifacts
