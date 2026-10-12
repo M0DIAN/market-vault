@@ -358,3 +358,151 @@ identity before squash. Verify natural main push for the resulting SHA before
 starting the next task. Verified FULL reuse is claimed only from the existing
 verifier and run evidence; otherwise normal FULL applies. Do not create empty
 commits or dispatch synthetic closure runs. Finish after Q54's main gate.
+
+### Q53 completed delivery gates
+
+[PR #323](https://github.com/M0DIAN/market-vault/pull/323) received independent
+**MERGE-READY PASS** at final head
+`6158bb74ca96b7e74cf5815b411a2c6b923c35ac`, based on
+`8cb07735be7ac343982c57749e0b721897c539df`, with tree
+`fa1846e0d96293f5ca90e2368b41d89b13206142`. Its natural PR FULL
+[38196391517/1](https://github.com/M0DIAN/market-vault/actions/runs/38196391517/attempts/1)
+succeeded with all sixteen required jobs. Evidence artifact `11723414738`
+records tested merge `30e6b32574b3b0a32981a6b3c2c31d702b4afd4e` and that
+same tree.
+
+Squash produced main `b0f9aa2235df705808e58f801488a973a84f0362`, again with
+that tree. Its natural exact-main push FULL
+[38197437263/1](https://github.com/M0DIAN/market-vault/actions/runs/38197437263/attempts/1)
+completed successfully, with all sixteen jobs checked against the exact head,
+run and attempt. Its plan was `tier=full`, `reuse=false`,
+`reason=control_plane_changed`. Q54's feature branch was created only after
+this gate, from equal local main, origin/main and remote main with a clean
+worktree.
+
+| Job | Q53 PR seconds | Q53 main seconds |
+| --- | ---: | ---: |
+| `strategy` | 594 | 604 |
+| `intraday_experiment` | 496 | 509 |
+| `intraday_ml_procedures` | 615 | 606 |
+
+These are observed job durations. The exact-file changes remove a repeated
+cross-partition request for the comparison fixture; Q35's original setup is
+still required. These observations do not isolate a fixed seventy-second
+saving or establish a fixed improvement of the whole pipeline.
+
+### Q54 implemented native contract
+
+The new **Selection diagnostics** tab appends section 14 to the existing
+intraday workspace. Sections 0–13 keep their existing controllers and routes.
+One focused controller/panel offers **Recorded outer risk** and **Inner cost
+sensitivity**, calling the two public Q52/Q53 APIs on the existing background
+runtime without initializing the settings backend.
+
+Open validates and captures immutable study bytes and their content hash.
+The pending action binds path, source hash, draft mode and a monotonically
+increasing revision. A same-path reopen also advances the revision. Edits
+during a pending operation, including A → B → A, discard its late success or
+failure. Failed Open/Run and draft changes retain the previous completed
+report, captured source and mode. Opening Q25 leaves only the risk draft
+option; a previously completed cost report keeps its own cost selectors.
+
+Risk views retain all three actual roles, drawdown stages with ledger sequence
+and UTC timestamp, return distributions, signed cash concentration, complete
+fold rows, actual outer recipes/applications, accounts and common basis.
+The root `diagnostics_id` is explicitly distinct from the selected role's Q12
+`diagnostics_id`. Role availability and common-basis comparability remain
+independent, including PARTIAL reports with three individually available roles.
+
+Cost views retain the original window order, explicit OUTER_FOLD/FINAL_DEV
+scope, actual added and total per-fill slippage, original member order,
+complete recipes, all seven Q6 metrics, complete zero-cost checks, fixed
+source evidence and member accounts. Window, scenario and member availability
+remain separately visible. No eligible windows keep null changed counts/rates;
+an empty recorded family remains an empty array at its actual report path.
+Ratios display as percentages and best/runner-up gaps as percentage points;
+costs retain normalized initial cash = 1. Complete JSON keeps the original
+core values and units.
+
+Every table uses the existing 100-row model. Page evidence includes the root
+report identity, captured source, completed mode and only the selectors
+actually applicable to that view. In particular, a fixed-evidence page binds
+its window without a hidden scenario/member preference, while aggregate
+choice-change pages do not inherit a selected window. The complete core
+report is serialized once in the worker and copied exactly; the separate
+identity dialog uses compact metadata rather than loading every account into
+a text widget. Original studies and saved-experiment grammars are unchanged.
+
+The new QML page appears in both explicit packaging resource lists and their
+production inventory regression. New native tests use the existing desktop
+prefix and naturally belong to `app_ops`; Q54 changes no partition registry,
+workflow, dependency or version. Version remains 0.9.0.
+
+### Q54 local native validation evidence
+
+Python 3.11.17 used explicit checkout `src`/`tests` paths, Qt's Basic controls,
+the offscreen platform and software scene graph. Local iteration directly
+supplied the already saved real Q53 Q25/Q31/Q36 fixture snapshots to the two
+committed native test functions; each function launched a fresh actual
+`Main.qml` process. The original training fixture was reused. CI retains the
+ordinary unparameterized session fixture, with the module-level Qt skip before
+any training-fixture request. Screenshots, logs and copied study inputs stayed
+in external temporary directories.
+
+The first evidence/recovery runs passed in **68.61 / 58.85 seconds**. Visual
+inspection then found a real presentation defect: a nullable FINAL_DEV fold
+index could arrive in QML as `undefined`, displaying a false `#undefined`
+suffix. The fix displays a fold suffix only for a numeric fold index and
+renders absent recipes as an em dash. Compact recipe summaries show model,
+alpha and threshold; their complete original records remain in page evidence
+and full JSON. The native checks now reject `undefined` in the FINAL_DEV menu
+and visible summaries.
+
+Fresh Main processes loading that corrected QML passed both committed cases:
+
+| Native case | Seconds | Actual evidence |
+| --- | ---: | --- |
+| Two modes, full evidence and bilingual compact navigation | 64.59 | One Q36 risk analysis and Q36/Q31 inner-cost analyses reached their real public APIs on background threads. The two economic studies made 420 actual Q6 calls, all on original inner support. Each complete report was serialized exactly once off the GUI thread. |
+| Availability, stale callbacks and recovery | 80.03 | Actual basis-mismatched and ledger-mismatched risk reports, an inner zero-baseline mismatch and a real short-history unavailable Q31 remained inspectable. Path/mode A → B → A and a same-path pending Open discarded late successes; a late failure and current failures retained the prior report and recovered correctly. |
+
+Both used **English and simplified Chinese at 1024×600**, with actual mouse
+clicks, expanded combo boxes, scrollbar drags, pagination buttons, evidence
+dialogs and clipboard actions. A final missing evidence-section translation
+was corrected in the two catalogs and verified in another real Main process
+in **16.44 seconds**, including visible `Evidence section` / `证据字段` labels,
+both languages and the actual ledger evidence page.
+
+The evidence case checks all three risk roles, ratio/minute units, distinct
+root/role IDs, equal-time drawdown events with different ledger sequences,
+distributions, concentration, complete folds/recipes and the existing
+2,600-row recorded ledger. Its page two equals original ledger rows 100–199.
+Cost inspection checks added **0/5/10 bp** against actual total **2/7/12 bp**,
+24- and four-member families in their original order, member 23 and separate
+FINAL_DEV scope, full zero reproduction records and unmodified fixed evidence.
+Complete copied JSON equals the respective core report in both languages.
+Hidden role/window/scenario/member preferences cannot relabel another view.
+Opening Q25 removes the draft economic option while keeping a completed Q36
+cost report bound to its original source and mode.
+
+The recovery case separately verifies **three available role diagnostics with
+unavailable common-basis comparability**, and **two available roles with one
+unavailable ledger diagnostic**. A failed inner baseline retains the full
+four-member scenario without a winner. Legal unavailable sources keep all
+three scenarios, empty recorded families, and null choice-change counts/rates
+shown as em dashes; they are not presented as zero instability. Invalid Open,
+current Run failure and stale callbacks retain the exact previous result and
+copy text. During the native diagnostic actions, Q5 access, source
+reconstruction, fitting, outer execution, Freeze and TEST stayed prohibited.
+The settings backend stayed uninitialized, and all saved study input bytes
+remained unchanged.
+
+The production QML inventory regression passed **5 tests in 0.25 seconds**,
+including the new explicit asset and **57-file QML inventory**.
+Focused collection discovers exactly the two new native tests. Partition
+validation owns **238 files exactly once**, including **61 in app_ops**.
+Repository hygiene, release validation (`0.9.0`), Python syntax and whitespace
+checks passed. Existing translation values were retained. Main/Dialog and
+HomePage warnings were kept in the captured logs; no warning identifies the
+new panel or intraday workspace. This is native development validation, with
+independent candidate review, natural PR CI and exact-main delivery gates
+still performed separately.
