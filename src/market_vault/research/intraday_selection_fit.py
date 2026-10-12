@@ -10,7 +10,7 @@ from .intraday_selection_source import _PreparedSelectionSource
 from .strategy_experiment import canonical_json
 
 
-def _fit_key(rows, observations, features, recipe, boundary):
+def _fit_key(rows, observations, features, recipe, boundary, *, include_alpha=True):
     # Retain the exact numeric JSON representation, including alpha 1 vs 1.0.
     # Keys alone cannot identify mutable decoded values. Project only what the
     # raw fitter consumes; prediction metadata is rebuilt for every caller.
@@ -20,6 +20,8 @@ def _fit_key(rows, observations, features, recipe, boundary):
         "boundary": boundary,
         "observations": [[row["observation_key"], [row["features"][name] for name in features]]
                          for row in observations]}
+    if not include_alpha:
+        del inputs["alpha"]  # Preparation keeps every other raw-fit identity input.
     return sha256(canonical_json(inputs)).digest()
 
 
@@ -31,6 +33,7 @@ class _SelectionFitCache:
             raise ValueError("a prepared selection source is required for fit reuse")
         self._source = source
         self._fits = {}
+        self._preparations = {}
 
     def fitter(self, source: _PreparedSelectionSource, fit):
         if source is not self._source:
@@ -41,7 +44,10 @@ class _SelectionFitCache:
         key = _fit_key(rows, observations, features, recipe, boundary)
         cached = self._fits.get(key)
         if cached is None:
-            model, scores = fit(rows, observations, features, recipe["alpha"], boundary=boundary)
+            preparation_key = _fit_key(rows, observations, features, recipe, boundary, include_alpha=False)
+            preparation = self._preparations.setdefault(preparation_key, {})
+            model, scores = fit(rows, observations, features, recipe["alpha"],
+                                boundary=boundary, _preparation=preparation)
             cached = model, tuple(scores)
             self._fits[key] = cached
         # A result cannot mutate this cache or another procedure's evidence.
