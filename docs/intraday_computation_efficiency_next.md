@@ -280,8 +280,10 @@ part of the complete model identity. Failed solves do not publish cached models.
 The existing shared Ridge, intraday ML, suite, selection and final TEST
 regressions across eleven directly affected test files give **131 passed,
 3 skipped in 505.62 seconds** on Python 3.11.17. The three skips are existing
-PySide6-dependent GUI tests in the local environment; natural FULL CI supplies
-that dependency. Existing dense-Gram, constant/adjacent-value, source admission,
+PySide6-dependent GUI tests. Both this local environment and the existing
+FULL CI's `dev` dependency set omit PySide6, so those GUI tests remain skipped;
+no GUI execution coverage is claimed for this package. Existing dense-Gram,
+constant/adjacent-value, source admission,
 canonical output and TEST-isolation assertions remain intact.
 
 The pre-implementation saved fixture uses 36 sessions, two DEV folds, two
