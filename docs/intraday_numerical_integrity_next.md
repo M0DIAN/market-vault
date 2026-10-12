@@ -192,6 +192,28 @@ bounded consumer check. It is not a full-Q5 data-admission test. Hygiene,
 whitespace and release/version 0.9.0 checks passed on Python 3.11.17.
 Exact candidate review and remote gate identities belong in the associated PR.
 
+### Q62 completed main gate
+
+[PR #332](https://github.com/M0DIAN/market-vault/pull/332) passed independent
+final-candidate review at `e6b8f97d7ac7dbc2ed22f7a4cf4a2b4466e1b926`, tree
+`fa8d1e2ea014590254b7ad158dce7e14e3243ee4`. Natural PR
+[38246241885/1](https://github.com/M0DIAN/market-vault/actions/runs/38246241885/attempts/1)
+was RESEARCH_FAST / SUCCESS, including the 1,042-test Python 3.11 portfolio
+and the existing Python 3.14 compatibility surface. This was subset evidence.
+Independent comparison also retained identical complete bytes across 43
+nonconstant cases, with the declared constant/availability boundaries passing.
+
+Authorized squash produced main `f8310f84833a401a3a6d94c2744db71a93eda021`,
+with one parent equal to Q61 main and the same complete tree. Natural push
+[38246705548/1](https://github.com/M0DIAN/market-vault/actions/runs/38246705548/attempts/1)
+is terminal SUCCESS. The actual plan classified FULL and refused subset
+reuse (`POST_MERGE_REUSE=false`, `jobs_missing_surface`); all 16 required
+physical jobs actually executed successfully. The current `check_jobs`
+returned `(True, None)`. Longest job: Dataset/Features, 494 s. Version 0.9.0,
+new package builds, fresh-wheel checks and SHA256 verification passed.
+Independent post-merge review returned PASS / COMPLETE. Q63 began only after
+this gate, equal local/origin/remote main identities and a clean worktree.
+
 ## Q63 — compute each symmetric Ridge Gram entry once
 
 ### Goal and technical plan
@@ -227,3 +249,41 @@ and intraday numerical tests, and this record. Q62 is the delivery dependency;
 Q61's corrected target centering is the fitting baseline. Do not add a new
 solver, change numerical summation order, trim family evidence or reopen
 accepted Q49–Q51 fit ownership and source-verification boundaries.
+
+### Q63 implementation and local evidence
+
+Only the shared fitter's Gram construction changed: build the upper triangle,
+copy each value to its symmetric position, then preserve the tuple-of-tuples
+solver input. The target vector, row-ordered `math.fsum`, alpha addition,
+solver, transforms and forecast calculations retain their original behavior.
+
+The new operation-count and independent dense-matrix oracle spans width one,
+mixed/duplicate/constant columns and actual six-Feature quadratic width 27,
+each at alpha 0.1, 1 and 10. On the Q62 base it gave **6 failed, 3 passed in
+0.16 s**: the failures were redundant-product counts, not numerical errors.
+The candidate gave **9 passed in 0.06 s**, including exact matrix/vector and
+complete model/forecast canonical-byte equality to the dense oracle. The
+complete Ridge baseline/alpha/final-test/threshold files passed **66 tests
+in 0.42 s**. Existing intraday linear/quadratic and constant-target checks
+passed **14 tests in 98.83 s**; actual three-procedure equivalence, an
+outside-family alpha, fit identity and raw-score isolation passed **5 tests
+in 44.76 s**. There is no elapsed-time assertion or persisted fitted cache.
+
+A read-only baseline used the unchanged actual `quadratic_dev_case` fixture
+at Q62 candidate tree `fa8d1e2ea014590254b7ad158dce7e14e3243ee4`, which is also
+the completed Q62 main tree. The candidate reconstructed the same saved
+Canonical/Q5 source with its full 36-session 30m calendar, 324 observations,
+two DEV folds and all three ordinary linear/quadratic candidates. Complete
+report bytes (721,930) and artifact bytes (723,646) remained equal. The artifact
+SHA256 stayed `9c8cf65ed520e3bcdb0c2de0aafd23662ecfed49eae6a1429ff08100e2eb8c08`;
+all original source/baseline file hashes were rechecked and remained unchanged.
+
+The same separately saved synthetic raw-fit input (3,000 TRAIN, 600 validation,
+six Features, alpha 1) retained its entire model and forecast bytes, including
+model ID `1b0a0dd9b1945a330eaf4df08d4c2c740747271b08c81ffff4b04d750ef9ffbd`.
+One unprofiled baseline fit measured **0.303562 s**, and one candidate fit
+**0.195099 s**. Gram dot products fell from **729 to 378** (48.1% fewer);
+this raw-fit timing was about 35.7% shorter. The observation is bounded to
+that input and entry, not an end-to-end study or production latency claim.
+Final related regressions, candidate review and exact remote gates are recorded
+in the associated PR. Version remains 0.9.0.
