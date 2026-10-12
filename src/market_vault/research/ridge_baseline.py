@@ -188,8 +188,13 @@ def _column_stats(X: tuple[tuple[float, ...], ...]):
     if width == 0 or any(len(row) != width for row in X):
         raise RidgeBaselineError("ridge TRAIN matrix width is invalid")
 
+    # The rounded mean of an exactly constant column can differ from its
+    # value, creating a false scale and a spurious predictive coefficient.
+    # Preserve exact constancy; nonconstant columns keep their original math.
     means = tuple(
-        math.fsum(row[column] for row in X) / len(X)
+        (0.0 if X[0][column] == 0.0 else float(X[0][column]))
+        if all(row[column] == X[0][column] for row in X)
+        else math.fsum(row[column] for row in X) / len(X)
         for column in range(width)
     )
     scales = []

@@ -1,0 +1,209 @@
+# Intraday numerical correctness and measured efficiency: Q55–Q57
+
+## Verified baseline and authorized package
+
+Start from Q54 main `32c2bfd29b1a6ef68be89b302caf7a76525736de`, tree
+`394e81cb7519de6b1918650465e28cbc4ffebc0d`, in `M0DIAN/market-vault`.
+[Q54 PR #324](https://github.com/M0DIAN/market-vault/pull/324) is merged.
+Its natural exact-main push [38201809612/1](https://github.com/M0DIAN/market-vault/actions/runs/38201809612/attempts/1)
+is terminal SUCCESS. The remote main SHA and clean local/origin main were
+verified before creating the Q55 feature branch.
+
+The owner's 2026-10-12 Japan-time request authorizes this three-task package:
+in-scope fixes, tests, commits, push, PRs, independent final-candidate review,
+conditional squash merge and exact-main CI verification. Follow the supplied
+Development Workflow v2, Personal Local Tool Workflow v1, AGENTS.md and the
+checked-in governance. Version remains 0.9.0. Each task begins implementation
+only after the preceding task's merged-main gate succeeds. Read-only preparation
+may overlap; each worktree has one writer, and final review is performed by an
+agent that did not design or implement that candidate.
+
+**Order: Q55 correct TRAIN-constant Ridge columns → Q56 remove redundant
+serialization copies in recorded diagnostics → Q57 capture native selection
+identities without repeated full-file parsing.**
+
+## Assessment and counterevidence
+
+Q1–Q54 already provide verified intraday inputs, actual-label-end purging,
+linear/quadratic Ridge, fixed chronological inner model/threshold/joint
+selection, explicit Freeze/TEST, risk and uncertainty, complete-family and
+paired comparisons, recorded execution stress, market/sample evidence,
+one-source three-procedure execution and native risk/inner-cost inspection.
+See [Q49–Q51](intraday_procedure_efficiency_next.md) and
+[Q52–Q54](intraday_selection_reliability_next.md). These remain completed
+capabilities; this package addresses actual defects and measured overhead.
+
+| Candidate direction | Decision and evidence |
+|---|---|
+| Shared Ridge constant-column arithmetic | Q55. `_column_stats` can give a mathematically constant TRAIN column a nonzero scale because `fsum(values) / n` rounds away from the original value. The existing constant-zero policy is consequently violated. |
+| Recorded large-report serialization | Q56. Q53/Q41 copy already JSON-native trees through `intraday_data.json_values` before encoding. Existing plain canonical encoding produces identical complete reports without that copy. |
+| Native source refresh | Q57. A real view change synchronously calls four source listeners; each `selection_source()` decodes the same complete ordinary artifact merely to obtain small immutable identities. |
+| New cost-dependent outer research engine | Not needed. An ordinary source can already declare multiple cost groups; running Q49 for each explicit cost index performs the existing Q31/Q36 selection and actual outer refits at that cost. Q53 alone does not produce changed-winner outer performance, but this is not a missing research computation. |
+| Reuse Q6 session/price validation | Defer. On the measured Q36 five-window diagnostic, 360 validations and price hashes cost 0.217 s of 2.679 s (about 8.1%). That observation does not justify changing the execution kernel in this package. |
+| Optimize every serializer or add more diagnostics/models | Excluded. Q52's measured encoding saving was only about 0.06 s; no new observed research result justifies more search axes, learners or report types. |
+
+Measurements use Python 3.11.17 and an existing synthetic Q54 study fixture,
+not live market evidence or a trading-profit experiment. They identify concrete
+software work; they do not establish production latency guarantees.
+
+## Shared defaults and boundaries
+
+- Preserve the existing ordered Features, model/threshold families, alphas,
+  chronological windows, label purging, FIRST_DECLARED ties, execution rules,
+  cost scenarios and complete evaluated support. No TEST-driven selection.
+- No new dependency, learner, Feature, optimizer, persistent cache, storage
+  format, data collection, source overwrite, deployment, release or live trade.
+- Q55 repairs the already-promised TRAIN-constant-to-zero behavior. It does
+  not introduce a new normalization rule or silently classify near-constant
+  columns as constant. Existing v1 schemas and algorithm labels remain.
+- Existing saved bytes stay immutable and readable. An older artifact affected
+  by the Q55 bug may no longer reproduce its recorded fit/report under corrected
+  code. Existing strict replay must report that mismatch; it must not relabel
+  the historical result, overwrite it or claim that every old ID is unchanged.
+  A fresh run records its corrected model/report and corresponding content IDs.
+- Q56/Q57 are behavior-preserving optimizations: complete report bytes, IDs,
+  supported failure behavior and captured-input/stale-result boundaries remain
+  unchanged. Neither optimization replaces validation with an unverified cache.
+
+## Q55 — exact TRAIN-constant Ridge columns
+
+### Goal and technical plan
+
+Make every exactly constant TRAIN Feature have zero population scale and zero
+coefficient, including the Ridge layer applied to generated quadratic terms.
+Detect exact equality before computing the mean; use that common value as the
+mean. Keep the original `fsum / n` and variance arithmetic for every nonconstant
+column. Preserve float and positive-zero output conventions. Do not add an
+epsilon threshold, change regularization or rewrite the solver.
+
+The defect is reachable through `evaluate_ridge_baseline`, ordinary intraday
+`fit_ridge_rows`, Q25/Q31/Q36 and the second Ridge stage of quadratic models.
+For 710 TRAIN rows with `x=0.03`, the old scale is approximately
+`3.469446951953614e-18`; a shifted validation Feature can then change the
+prediction despite TRAIN having no Feature variation. A symmetric six-row
+quadratic example also gives its constant generated square a false coefficient.
+Q23's first-stage constant protection does not cover this shared second stage.
+
+### Acceptance and scope
+
+1. The same focused regression fails because of the numerical defect on the
+   old implementation and passes on the candidate. Validate the public baseline
+   entry, actual intraday fitter and generated quadratic constant term.
+2. Independently computed TRAIN means are the predictions when no predictive
+   direction exists, including changed VALIDATION Feature values. Scales and
+   coefficients are exactly zero, not approximately close to zero.
+3. A nonconstant column differing by one representable float retains its
+   variation and the original arithmetic. Existing nonconstant numerical,
+   TRAIN-only fitting and model-identity regressions continue to pass.
+4. Existing artifact readers/replay behavior and required CI are retained.
+   No historical saved study is rewritten or automatically re-run on TEST.
+
+Expected changes are `research/ridge_baseline.py`, the existing baseline and
+intraday numerical test files, and this task record. Numerical effects are made
+explicit in the PR. No new learner/version migration, general conditioning
+work, prediction formula change or broader historical-data audit.
+
+### Q55 local evidence
+
+The five new numerical cases ran against the original production implementation
+first: **4 failed, 1 passed in 0.29 s**. The failures reached the actual numerical
+defect; the one-ULP nonconstant counterexample already passed. After the fix,
+`test_ridge_baseline.py` and `test_intraday_research_analysis.py`, selected with
+`-k ridge`, gave **27 passed, 113 deselected in 225.71 s** on Python 3.11.17.
+This included the existing real Q5/saved-source/installed-CLI quadratic checks,
+not a full local suite. Temporary paths were outside the repository. Hygiene,
+release/version 0.9.0 and whitespace checks passed. Historical affected-artifact
+Open/Replay behavior above is a code-based compatibility assessment, not a claim
+that a separate old-bad-artifact end-to-end fixture was executed.
+
+## Q56 — avoid copying already JSON-native diagnostic reports
+
+### Goal and technical plan
+
+Reduce Q53 inner-cost and Q41 execution-stress overhead while retaining their
+complete evidence. Their source is an admitted immutable `StrategyExperiment`;
+the derived trees contain decoded JSON values and newly constructed JSON-native
+fields. Reuse the existing `strategy_experiment.canonical_json` encoder and
+compute the existing SHA-256 over those exact bytes. Keep the newline, UTF-8,
+key ordering, numeric encoding and nonfinite rejection unchanged.
+
+Do not replace `intraday_data.canonical_json` or `json_values`: the general
+helper also handles dates and container conversion, and replacing its contract
+is unnecessary. No new encoder, serialization framework or optional dependency.
+
+The bounded pre-implementation API comparison retained every report byte and ID:
+Q53 produced 35,375,278 bytes in 2.410/2.296 s on the old path and
+1.802/1.772 s with the prototype; Q41 produced 53,614,148 bytes in
+3.268/3.223 s and 2.586/2.718 s respectively. These are local observations,
+not CI or future-input performance promises.
+
+### Acceptance and scope
+
+1. Compare complete real saved-study diagnostic outputs, including all member
+   accounts, unavailable states, identities and final report digests, with the
+   old encoder as an independent compatibility oracle.
+2. Retain the existing CLI and numerical/failure tests. Unsupported and
+   nonfinite inputs must still fail; no Q5, fit, Freeze or TEST is introduced.
+3. Measure the actual public analysis path on the same inputs and confirm
+   removal of the extra tree traversal/copy. Do not assert wall-clock thresholds
+   in permanent tests or discard evidence to obtain a speedup.
+
+Scope: `research/intraday_inner_cost_sensitivity.py`,
+`research/intraday_procedure_stress.py`, their focused existing tests and this
+record. No Q52 expansion, execution-kernel changes, report trimming, generic
+serializer changes or persistent result caching.
+
+## Q57 — lightweight native selection capture
+
+### Goal and technical plan
+
+When `_apply_child` publishes one ordinary immutable content snapshot, capture
+its experiment ID and ordered candidate IDs as immutable scalar/tuple metadata.
+`selection_source()` then returns those IDs, the current selected cost/candidate
+indices, the actual saved path and the original immutable content bytes without
+decoding the full document again. Do not derive captured identity from the
+mutable presentation tree on each call.
+
+Reuse the four existing listeners and their revision/stale-callback rules.
+Saving, opening another source, exporting a Q10 ordinary child and selecting
+another candidate must keep path, content and identities aligned. Unsaved
+sources remain ineligible. There is no new signal graph or UI redesign.
+
+On an existing 3,579,174-byte ordinary study, a real view change caused four
+full JSON decodes. Three local calls took 0.089/0.085/0.087 s, of which
+0.084/0.080/0.082 s was parsing. The constant-time descriptor prototype returned
+the same capture. This finding concerns candidate/view/relevant draft changes;
+ordinary table pagination does not always emit the same signal.
+
+### Acceptance and scope
+
+1. A real native controller/production session uses the ordinary source through
+   the actual selection/view controls. Captures match the immutable bytes;
+   repeated refreshes no longer decode the full ordinary report.
+2. Candidate/source changes, saved paths and ordinary scenario-child export
+   retain correct identities and admission. A returned dictionary or mutable
+   presentation-tree change cannot alter the immutable capture metadata.
+3. Existing late-result rejection, failed-action recovery and save/reopen
+   behavior remain. Execute the directly affected real Qt flow; optional Qt
+   skips in CI are not evidence of native success.
+
+Scope: `desktop/intraday_research.py`, directly related existing native tests
+and this record. No QML layout changes, listener framework, source revalidation
+bypass, background cache service or automatic research/Freeze/TEST action.
+
+## Validation and delivery
+
+Use the tested checkout's explicit `PYTHONPATH`, Python 3.11 and repository-external
+temporary test directories. Run meaningful affected regressions, whitespace,
+hygiene and release/version checks locally; the natural PR CI is authoritative
+for the full matrix. The existing eleven-partition ownership and complete test
+selection remain. Q54's longest PR job was 620 s; that small single-run overrun
+alone does not justify a new CI topology. Measure this package's actual runs
+and adjust only if a concrete blocking imbalance requires it.
+
+For each task: commit the stable candidate; independently review that exact
+head; wait for successful required natural PR CI; recheck current head/base,
+tree and version; squash merge under the existing owner authorization. Verify
+the exact resulting main's natural push to terminal success. Post-merge reuse
+is claimed only from the checked-in verifier and the actual run's evidence;
+otherwise FULL fallback is authoritative. Stop after Q57's main gate.

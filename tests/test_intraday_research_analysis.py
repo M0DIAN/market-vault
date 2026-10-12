@@ -2106,6 +2106,52 @@ def test_quadratic_ridge_fractional_train_constant_cannot_create_interactions(co
     assert [row["scores"]["QUADRATIC_RIDGE"] for row in rows] == pytest.approx([1.5, 1.5])
 
 
+def test_intraday_ridge_fractional_constant_preserves_training_mean_and_model_identity():
+    # Ten ordinary 5m sessions can supply 710 COMPLETE labels. This row
+    # count makes the rounded mean of the exact constant 0.03 differ by one ULP.
+    training = tuple(({"observation_key": f"train-{index}", "features": {"x": 0.03}},
+                      {"value": 0.001 * (index % 3 - 1)}) for index in range(710))
+    validation = tuple({"observation_key": f"validation-{index}", "features": {"x": value}}
+                       for index, value in enumerate((0.03, 1.03)))
+    original = deepcopy((training, validation))
+    boundary = "2025-01-16T14:30:00+00:00"
+    model, predictions = research.fit_ridge_rows(training, validation, ["x"], 1.0, boundary=boundary)
+    expected = math.fsum(target["value"] for _, target in training) / len(training)
+    assert predictions == (expected, expected)
+    assert model["means"] == [0.03]
+    assert model["scales"] == model["coefficients"] == [0.0]
+    assert model["intercept"] == expected
+    assert model["training_keys"] == [row["observation_key"] for row, _ in training]
+    assert model["training_boundary"] == boundary
+    assert model["feature_fields"] == ["x"] and model["alpha"] == 1.0
+    assert model["version"] == research.RIDGE_BASELINE_VERSION
+    assert model["model_id"] == research.digest({key: value for key, value in model.items() if key != "model_id"})
+    assert research.fit_ridge_rows(training, tuple(reversed(validation)), ["x"], 1.0, boundary=boundary)[0] == model
+    assert (training, validation) == original
+
+
+def test_quadratic_ridge_constant_generated_square_cannot_create_curvature():
+    from market_vault.research.intraday_models import fit_quadratic_rows
+
+    training = tuple(({"observation_key": f"train-{index}", "features": {"x": x}}, {"value": target})
+                     for index, (x, target) in enumerate(zip((-.03, .03) * 3, (.01, .02, .03) * 2, strict=True)))
+    validation = tuple({"observation_key": f"validation-{index}", "features": {"x": x}}
+                       for index, x in enumerate((-.03, .03, .06)))
+    model, predictions = fit_quadratic_rows(training, validation, ["x"], 1.0,
+                                          boundary="2025-01-02T14:30:00+00:00")
+    ridge = model["ridge_model"]
+    square = (.03 / model["input_transform"]["scales"][0]) ** 2
+    assert square != 1.0  # The generated constant itself is not an integer.
+    assert ridge["means"][1] == square
+    assert ridge["scales"][1] == ridge["coefficients"][1] == 0.0
+    # Both signs have the same target mean; neither the linear direction nor
+    # the TRAIN-constant square can predict curvature at x=0.06.
+    assert ridge["coefficients"][0] == 0.0
+    assert predictions == (0.02, 0.02, 0.02)
+    assert model["model_id"] == research.digest({key: value for key, value in model.items() if key != "model_id"})
+    assert ridge["model_id"] == research.digest({key: value for key, value in ridge.items() if key != "model_id"})
+
+
 def test_quadratic_ridge_single_constant_is_training_mean_and_finite_overflow_fails():
     from market_vault.research.intraday_quadratic_ridge import _expanded_observation, _quadratic_predictions, _quadratic_terms
     rows, _, quadratic = _quadratic_predictions(*_quadratic_case(("constant",)))
