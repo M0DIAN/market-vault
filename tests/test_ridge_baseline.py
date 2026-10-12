@@ -149,6 +149,40 @@ def test_constant_feature_is_zero_weight_after_train_only_standardization():
     assert fold.intercept == pytest.approx(1.0)
 
 
+@pytest.mark.parametrize("constant", [0.1, -0.1])
+def test_fractional_constant_feature_cannot_predict_validation_changes(constant):
+    # fsum([0.1] * 3) / 3 differs from 0.1 by one ULP. A constant
+    # Feature has no predictive direction, including outside its TRAIN value.
+    report = evaluate_ridge_baseline(_plan(
+        train_X=((constant,),) * 3,
+        train_y=(0.01, 0.02, 0.03),
+        validation_X=((constant,), (constant + 1.0,)),
+        validation_y=(0.02, 0.02),
+    ), alpha=1.0)
+    fold = report.folds[0]
+    assert fold.feature_means == (constant,)
+    assert fold.feature_scales == fold.coefficients == (0.0,)
+    assert fold.intercept == 0.02
+    assert fold.mae == fold.rmse == report.mae == report.rmse == 0.0
+
+
+def test_adjacent_nonconstant_features_keep_their_training_variation():
+    adjacent = math.nextafter(1.0, math.inf)
+    report = evaluate_ridge_baseline(_plan(
+        train_X=((1.0,), (1.0,), (adjacent,)),
+        train_y=(0.0, 0.0, 1.0),
+        validation_X=((1.0,), (adjacent,)),
+        validation_y=(0.0, 1.0),
+    ), alpha=1.0)
+    fold = report.folds[0]
+    # Exact equality, not an epsilon cutoff, distinguishes this from a
+    # constant. The mean rounds to 1, leaving one nonzero squared deviation.
+    assert fold.feature_means == (1.0,)
+    assert fold.feature_scales == (math.sqrt(math.ulp(1.0) ** 2 / 3),)
+    assert fold.feature_scales[0] > 0.0
+    assert fold.coefficients[0] > 0.0
+
+
 def test_validation_features_never_enter_fit_or_standardization():
     one = evaluate_ridge_baseline(
         _plan(
