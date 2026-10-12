@@ -72,3 +72,25 @@ def values_content_id(values):
 
 def samples_content_id(samples):
     return sequence_id("ts2-feature-samples-v1", (s.sample_id for s in sorted(samples, key=lambda s: s.sample_key)))
+
+
+def _execution_content_ids(samples):
+    """Compose both content IDs from leaf digests local to this invocation."""
+    value_members, sample_members = [], []
+    for sample in samples:
+        members = sorted(
+            ((v.sample_key, spec_pin_id(v.spec_pin), v.value_id) for v in sample.values),
+            key=lambda member: member[:2],
+        )
+        value_members.extend(members)
+        sample_values_id = sequence_id("ts2-feature-values-v1", (member[2] for member in members))
+        sample_members.append((sample.sample_key, sample_id(dict(
+            sample_key=sample.sample_key, bar_sample_version_id=sample.bar_sample_version_id,
+            status=sample.status, values_content_id=sample_values_id,
+        ))))
+    value_members.sort(key=lambda member: member[:2])
+    sample_members.sort(key=lambda member: member[0])
+    return (
+        sequence_id("ts2-feature-values-v1", (member[2] for member in value_members)),
+        sequence_id("ts2-feature-samples-v1", (member[1] for member in sample_members)),
+    )

@@ -108,6 +108,18 @@ identities are recorded in the associated PR. The old-artifact compatibility
 assessment above is based on the reader/replay code, not a claimed historical
 bad-artifact E2E execution.
 
+### Q58 delivery closure
+
+[PR #328](https://github.com/M0DIAN/market-vault/pull/328) received independent
+final-candidate PASS on `df54f9c741e111ac01a54a64835b5cdd58961a7a` and exact-head
+FULL CI [38229191858/1](https://github.com/M0DIAN/market-vault/actions/runs/38229191858/attempts/1)
+with all 16 required jobs successful. Squash main
+`c7197fc7647161a0884f7a363115247767fdc246` retains the reviewed/tested tree.
+Its natural push [38230932702/1](https://github.com/M0DIAN/market-vault/actions/runs/38230932702/attempts/1)
+succeeded through the existing verified FULL PR tree-reuse gate: five active
+jobs succeeded and the partition placeholder was skipped under that proof.
+Independent post-merge review confirmed COMPLETE before Q59 delivery.
+
 ## Q59 — reuse leaf identities within one TS2 execution digest
 
 ### Goal, plan and defaults
@@ -136,6 +148,35 @@ Expected scope: `ts2_feature/identity.py`, `ts2_feature/models.py`, existing TS2
 tests and this record. No persistent record cache, added dataclass field,
 authority bypass, transform/source change, hash-version change or Q5 admission
 relaxation. Q58 is the delivery dependency, not a new semantic prerequisite.
+
+### Q59 local evidence
+
+Implementation starts from the completed Q58 main
+`c7197fc7647161a0884f7a363115247767fdc246`. A private identity helper shares leaf
+digests only during one `execution_id` property call; all record fields and
+independent public content-ID properties are unchanged. On the old code, the
+new per-leaf assertions fail in both populated scenarios because each leaf is
+calculated twice; the three empty scenarios already pass. On the candidate,
+the existing TS2 execution, identity, boundary and canary files give **221 passed
+in 4.76 s**, including the five new complete/mixed/empty cases and a second-call
+recalculation assertion. The 82 literal digest oracles remain unchanged.
+
+The same admitted 1,170-observation Q5 fixture retains all **2,300,696 bytes**,
+data ID `123da0ea2873fdf03538183a00f8a999e7d5b03f1ad3a41b1538ce0571f35e6c`
+and bytes SHA-256 `af4c07a1cced1f17d74282731a377fb651b0a16fbda336a5682d00010ee8577d`.
+One unprofiled Python 3.11.17 run per operation per revision measured:
+
+| Actual Q5 entry | Q58 base | Q59 candidate |
+|---|---:|---:|
+| Build from verified Canonical sources | 11.129 s | 9.136 s |
+| Strict load with complete source reconstruction | 11.226 s | 8.997 s |
+
+These bounded observations demonstrate this fixture's end-to-end effect; they
+are not a general speed guarantee or a permanent timing-test threshold.
+The complete intraday data, cross-day artifact TS2 and cross-day dataset
+execution test files give **129 passed in 27.09 s**. Hygiene, whitespace and
+release/version 0.9.0 checks pass. Final review and remote gate identities are
+recorded in the associated PR. No PIT candidate-index change is included in Q59.
 
 ## Q60 — bound PIT candidate scans by the requested time range
 
