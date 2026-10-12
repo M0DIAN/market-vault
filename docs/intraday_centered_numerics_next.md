@@ -231,7 +231,7 @@ These large fixtures remain outside Git. Repository hygiene, whitespace and
 release/version 0.9.0 checks passed; final independent review and remote gates
 are recorded in the Q68 PR.
 
-### Q68 CI fixture repair
+### Q68 CI fixture repairs
 
 Candidate `ef899083fb5998114578eb66f8a38cbec340bc9c` encountered a direct
 fixture failure in FULL CI `38311641594/1`, job `115018578584`
@@ -252,6 +252,30 @@ test's original discriminating path rather than bypassing saved-model checks.
 The repair is an ordinary new commit whose parent is that failed remote
 candidate; new-head FULL CI and incremental independent review remain the
 delivery gates.
+
+The same candidate/run also failed job `115018578660` (`test-311 (strategy)`):
+1 failed, 388 passed, 12 skipped in 352.45 seconds.
+`test_adding_composite_preserves_legacy_result_ids_and_condition_order` pinned
+the pre-Q68 comparison checksum even though its third strategy is Ridge.
+The existing identity chain binds `model_version` through
+`_strategy_fields` / `_strategy_identity_fields` into `result_id`, together
+with `scores_id`, and then into `comparison_id`. Both the declared Ridge v2
+version and its corrected prediction scores intentionally update that aggregate.
+A read-only diagnostic using the same TRAIN fit, v1 metadata and the retained
+raw scoring exactly reconstructed the old checksum; both FeatureRule results,
+including their IDs, remained unchanged. No identity binding or production
+code is weakened to retain the historical aggregate.
+
+This second repair updates only that current Ridge v2 fixture checksum and
+explains its scope. Every original adding-composite, condition-order,
+sample-count, schema and plan-roundtrip assertion remains intact. The exact
+failed node reproduced locally (**1 failed in 0.08 seconds**), then
+`python -m pytest tests/test_strategy_configuration.py
+tests/test_strategy_comparison.py -q -rs` passed **23 tests in 51.09 seconds**.
+All three skips explicitly report that PySide6 is unavailable (two configuration
+desktop tests and the comparison desktop worker test); no native GUI validation
+is claimed. This repair follows the first in another ordinary commit, with
+the combined new candidate still requiring FULL CI and independent review.
 
 ## Q69 — hash decoded saved objects without recursive recopying
 
