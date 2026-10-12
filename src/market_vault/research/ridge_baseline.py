@@ -26,6 +26,7 @@ from dataclasses import dataclass
 import math
 import re
 
+from .feature_research import _centered_scaled
 from .walk_forward import WalkForwardPlan
 
 
@@ -399,12 +400,11 @@ def _predict(
 
 
 def _total_variation(actual: tuple[float, ...]) -> float:
-    # Exact constants have no R² even when fsum(actual) / n rounds away
-    # from their common value. Do not erase small but real variation.
-    if all(value == actual[0] for value in actual):
-        return 0.0
-    mean = math.fsum(actual) / len(actual)
-    return math.fsum((value - mean) ** 2 for value in actual)
+    # Center differences from an observed origin before rounding the mean.
+    # Exact constants remain zero; asymmetric adjacent values retain their
+    # true population center even when the displayed mean cannot represent it.
+    centered, scale = _centered_scaled(actual)
+    return math.fsum((value * scale) ** 2 for value in centered)
 
 
 def _metrics(actual: tuple[float, ...], predicted: tuple[float, ...]):
