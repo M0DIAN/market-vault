@@ -1686,6 +1686,20 @@ def test_prediction_quality_ties_constants_missing_targets_and_finite_loss_ratio
     assert large["r2"]["value"] == pytest.approx(0)
 
 
+@pytest.mark.parametrize("scale", (math.ulp(1.0), .0007, 1e-200, 1e200))
+def test_prediction_quality_correlation_preserves_affine_small_variation(scale):
+    from market_vault.research.intraday_prediction_quality import _correlation
+
+    actual = (1., 1., math.nextafter(1., math.inf))
+    for sign in (1., -1.):
+        predicted = (0., 0., sign * scale)
+        metric = _correlation(actual, predicted)
+        assert metric["value"] == pytest.approx(sign, rel=1e-15, abs=0)
+        assert metric["unavailable_reason"] is None
+    # Centering must also retain Q21's finite extreme-range support.
+    assert _correlation((-1e308, 1e308), (1e-200, -1e-200))["value"] == pytest.approx(-1.)
+
+
 def test_prediction_quality_training_mean_uses_each_purged_history_not_current_or_test_targets():
     from market_vault.research.intraday_prediction_quality import _paired_prediction_rows
     observations = [{"observation_key": f"key-{i}", "trading_day": f"2025-02-0{i + 3}",
