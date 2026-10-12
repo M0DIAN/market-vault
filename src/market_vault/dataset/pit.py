@@ -41,6 +41,8 @@ network.
 
 from __future__ import annotations
 
+from bisect import bisect_left
+
 from ..canonical.reader import VerifiedCanonicalBuild
 from .content import dataset_schema_id, logical_dataset_content_id
 from .encoding import DatasetError, normalize_utc_datetime
@@ -177,12 +179,18 @@ def assemble_point_in_time_samples(builds, requests, *, dataset_as_of=None) -> P
     }
     considered_build_ids = tuple(sorted({build.canonical_build_id for build in builds_sorted}))
     gap_facts = _reconcile_gaps(builds_sorted)
+    candidates_by_time = sorted(
+        enumerate(candidates), key=lambda item: item[1]["bar"].event_time
+    )
+    event_times = [candidate["bar"].event_time for _, candidate in candidates_by_time]
 
     samples = []
     selected_versions: set[str] = set()
     for request in requests_sorted:
         sample = _assemble_sample(
-            request, dataset_as_of, candidates, considered_build_ids, gap_facts
+            request, dataset_as_of,
+            _window_candidates(request, candidates_by_time, event_times),
+            considered_build_ids, gap_facts,
         )
         samples.append(sample)
         selected_versions.update(sample.feature_canonical_row_version_ids)
@@ -307,6 +315,19 @@ def _reconcile_rows(builds: tuple) -> list[dict]:
         }
         reconciled.append(merged)
     return reconciled
+
+
+def _window_candidates(request: PITSampleRequest, candidates_by_time, event_times) -> list[dict]:
+    """Bound the time range, retaining the original order for admission errors."""
+    close = (request.feature_window_close if request.label_window_close is None
+             else request.label_window_close)
+    start = bisect_left(event_times, request.feature_window_start)
+    stop = bisect_left(event_times, close)
+    return [
+        candidate for _, candidate in sorted(
+            candidates_by_time[start:stop], key=lambda item: item[0]
+        )
+    ]
 
 
 def _matches(bar, request: PITSampleRequest, window_start, window_close) -> bool:
