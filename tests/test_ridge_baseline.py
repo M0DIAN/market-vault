@@ -134,6 +134,82 @@ def test_ridge_baseline_closed_form_shrinkage_and_metrics():
     assert report.r2 == pytest.approx(-0.625)
 
 
+@pytest.mark.parametrize("alpha", [.1, 1.0, 10.0])
+@pytest.mark.parametrize(
+    "features,quadratic",
+    [
+        (("x",), False),
+        (("x", "copy", "constant", "negative"), False),
+        (("x", "copy", "constant", "negative", "square", "mixed"), True),
+    ],
+    ids=("width-one", "mixed-duplicate-constant", "quadratic-width-27"),
+)
+def test_ridge_gram_matches_dense_oracle_with_one_product_per_pair(
+    monkeypatch, features, quadratic, alpha,
+):
+    from market_vault.research import ridge_baseline as ridge
+    from market_vault.research.intraday_models import fit_quadratic_rows
+    from market_vault.research.intraday_research import fit_ridge_rows
+    from market_vault.research.strategy_experiment import canonical_json
+
+    def observation(key, value):
+        values = {"x": value, "copy": value, "constant": .1,
+                  "negative": -value, "square": value ** 2,
+                  "mixed": value ** 3 - 2 * value}
+        return {"observation_key": key,
+                "features": {name: values[name] for name in features}}
+
+    y = (.03, -.02, .01, 0.0, .04, -.01, .02)
+    training = tuple((observation(f"train-{i}", float(i - 3)), {"value": value})
+                     for i, value in enumerate(y))
+    validation = tuple(observation(f"validation-{i}", value)
+                       for i, value in enumerate((-4.0, .5, 5.0)))
+    standardize, solve = ridge._standardize, ridge._solve
+    captured = {}
+    products = 0
+
+    class Counted(float):
+        def __mul__(self, other):
+            nonlocal products
+            if isinstance(other, Counted):
+                products += 1
+            return float(self) * float(other)
+
+    def counted_standardize(X, means, scales):
+        Z = standardize(X, means, scales)
+        captured["Z"] = Z
+        return tuple(tuple(Counted(value) for value in row) for row in Z)
+
+    def capture_solve(matrix, vector):
+        captured["matrix"], captured["vector"] = matrix, vector
+        return solve(matrix, vector)
+
+    monkeypatch.setattr(ridge, "_standardize", counted_standardize)
+    monkeypatch.setattr(ridge, "_solve", capture_solve)
+    fit = fit_quadratic_rows if quadratic else fit_ridge_rows
+    options = {"boundary": "2025-03-03T14:30:00+00:00"}
+    actual = fit(training, validation, features, alpha, **options)
+    Z = captured["Z"]
+    width = len(Z[0])
+    assert width == (27 if quadratic else len(features))
+    assert products == len(Z) * width * (width + 1) // 2
+
+    # Independent full-matrix construction preserves every input row and
+    # diagonal penalty; no triangle or fitted-result cache supplies this oracle.
+    dense = tuple(tuple(math.fsum(row[left] * row[right] for row in Z)
+                        + (alpha if left == right else 0.0)
+                        for right in range(width)) for left in range(width))
+    mean = math.fsum(y) / len(y)
+    vector = tuple(math.fsum(row[column] * (target - mean)
+                             for row, target in zip(Z, y)) for column in range(width))
+    assert captured["matrix"] == dense
+    assert captured["vector"] == vector
+    monkeypatch.setattr(ridge, "_standardize", standardize)
+    monkeypatch.setattr(ridge, "_solve", lambda matrix, rhs: solve(dense, vector))
+    expected = fit(training, validation, features, alpha, **options)
+    assert canonical_json(actual) == canonical_json(expected)
+
+
 def test_constant_feature_is_zero_weight_after_train_only_standardization():
     plan = _plan(
         feature_names=("x", "constant"),

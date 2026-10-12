@@ -287,15 +287,15 @@ def _fit(
     centered_y = tuple(value - y_mean for value in y)
     width = len(means)
 
-    matrix = []
+    matrix = [[0.0] * width for _ in range(width)]
     vector = []
     for left in range(width):
-        matrix.append(tuple(
-            math.fsum(
+        # Each symmetric pair has the same row-ordered dot product.
+        for right in range(left, width):
+            value = math.fsum(
                 row[left] * row[right] for row in Z
             ) + (alpha if left == right else 0.0)
-            for right in range(width)
-        ))
+            matrix[left][right] = matrix[right][left] = value
         vector.append(
             math.fsum(
                 row[left] * target
@@ -304,7 +304,7 @@ def _fit(
         )
 
     standardized_coefficients = _solve(
-        tuple(matrix),
+        tuple(tuple(row) for row in matrix),
         tuple(vector),
     )
     coefficients = tuple(
