@@ -20,6 +20,25 @@ from test_intraday_research import (
 )
 
 
+def test_intraday_constant_target_r2_keeps_complete_pairing_and_errors():
+    # A target produced by Q5's actual open-to-close formula; the rounded
+    # mean of 67 identical copies differs from this value on the old path.
+    target = 1.03 / 1.0 - 1.0
+    predictions = [{"observation_key": str(index), "score": 0.0} for index in range(68)]
+    targets = [{"observation_key": str(index), "status": "COMPLETE", "value": target}
+               for index in range(67)]
+    targets.append({"observation_key": "67", "status": "INCOMPLETE", "value": None})
+    result = research.prediction_metrics(predictions, {"targets": targets})
+    assert result["r2"] is None
+    assert result["mae"] == pytest.approx(abs(target))
+    assert result["rmse"] == pytest.approx(abs(target))
+    assert result["prediction_count"] == 68 and result["complete_target_count"] == 67
+    assert result["unavailable_reason"] is None
+    empty = research.prediction_metrics(predictions, {"targets": []})
+    assert empty == {"prediction_count": 68, "complete_target_count": 0, "mae": None,
+                     "rmse": None, "r2": None, "unavailable_reason": "NO_COMPLETE_TARGETS"}
+
+
 def test_return_uncertainty_stationary_restart_wrap_and_exact_quantile_oracle(monkeypatch):
     from fractions import Fraction
     from market_vault.research import intraday_return_uncertainty as uncertainty

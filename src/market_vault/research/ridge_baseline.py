@@ -337,6 +337,15 @@ def _predict(
     return tuple(predictions)
 
 
+def _total_variation(actual: tuple[float, ...]) -> float:
+    # Exact constants have no R² even when fsum(actual) / n rounds away
+    # from their common value. Do not erase small but real variation.
+    if all(value == actual[0] for value in actual):
+        return 0.0
+    mean = math.fsum(actual) / len(actual)
+    return math.fsum((value - mean) ** 2 for value in actual)
+
+
 def _metrics(actual: tuple[float, ...], predicted: tuple[float, ...]):
     if len(actual) != len(predicted) or not actual:
         raise RidgeBaselineError("validation metric vectors are invalid")
@@ -349,8 +358,7 @@ def _metrics(actual: tuple[float, ...], predicted: tuple[float, ...]):
     mae = absolute_error / len(actual)
     rmse = math.sqrt(squared_error / len(actual))
 
-    mean = math.fsum(actual) / len(actual)
-    total = math.fsum((value - mean) ** 2 for value in actual)
+    total = _total_variation(actual)
     r2 = None if total == 0.0 else 1.0 - squared_error / total
 
     return (
@@ -384,8 +392,6 @@ def evaluate_ridge_baseline(
     total_count = 0
     total_abs_error = 0.0
     total_squared_error = 0.0
-    total_y_sum = 0.0
-    total_y_squared_sum = 0.0
 
     for fold in plan.folds:
         train_y = tuple(float(value) for value in fold.train.y)
@@ -406,8 +412,7 @@ def evaluate_ridge_baseline(
             r2,
             absolute_error,
             squared_error,
-            y_sum,
-            y_squared_sum,
+            *_unused_moments,
         ) = _metrics(validation_y, predictions)
 
         fold_results.append(
@@ -429,18 +434,17 @@ def evaluate_ridge_baseline(
         total_count += len(validation_y)
         total_abs_error += absolute_error
         total_squared_error += squared_error
-        total_y_sum += y_sum
-        total_y_squared_sum += y_squared_sum
 
     if total_count <= 0:
         raise RidgeBaselineError("Walk-Forward plan has no validation samples")
 
     mae = total_abs_error / total_count
     rmse = math.sqrt(total_squared_error / total_count)
-    total_variance = (
-        total_y_squared_sum
-        - (total_y_sum * total_y_sum) / total_count
-    )
+    # Center the complete pooled targets. Subtracting raw second moments
+    # loses low variance; summing fold variances loses between-fold changes.
+    total_variance = _total_variation(tuple(
+        float(value) for fold in plan.folds for value in fold.validation.y
+    ))
     if total_variance <= 0.0:
         r2 = None
     else:
