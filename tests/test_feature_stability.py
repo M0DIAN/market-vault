@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -183,6 +184,29 @@ def test_one_available_split_does_not_fake_stability():
         assert metric.spread_available_count == 1
         assert metric.spread_sign_consistent is None
         assert metric.spread_range is None
+
+
+def test_fractional_constant_splits_do_not_fabricate_stable_correlation():
+    X = ((1.0, 3.0, .1), (2.0, 2.0, .1), (3.0, 1.0, .1))
+    y = (.1,) * 3
+    bundle = replace(
+        _bundle_with_flip(),
+        train=_split("TRAIN", X, y, start_day=1),
+        validation=_split("VALIDATION", X, y, start_day=10),
+        test=_split("TEST", X, y, start_day=20),
+    )
+    report = compare_feature_stability(bundle, feature_names=("constant",))
+    assert report.dataset_id == bundle.dataset_id
+    assert report.label_name == LABEL
+    metric, = report.metrics
+    assert metric.feature_name == "constant"
+    assert (metric.train_sample_count, metric.validation_sample_count,
+            metric.test_sample_count) == (3, 3, 3)
+    assert metric.train_pearson_ic is metric.validation_pearson_ic is metric.test_pearson_ic is None
+    assert metric.pearson_available_count == 0
+    assert metric.pearson_sign_consistent is metric.pearson_range is None
+    assert metric.rank_available_count == 0
+    assert metric.rank_sign_consistent is metric.rank_range is None
 
 
 def test_feature_subset_preserves_requested_order():

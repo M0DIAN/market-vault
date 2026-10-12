@@ -130,7 +130,11 @@ class FeatureResearchReport:
 
 
 def _mean(values: tuple[float, ...]) -> float | None:
-    return None if not values else math.fsum(values) / len(values)
+    if not values:
+        return None
+    if all(value == values[0] for value in values):
+        return 0.0 if values[0] == 0.0 else float(values[0])
+    return math.fsum(values) / len(values)
 
 
 def _std(values: tuple[float, ...], mean: float | None) -> float | None:
@@ -145,6 +149,9 @@ def _pearson(x: tuple[float, ...], y: tuple[float, ...]) -> float | None:
     if len(x) != len(y):
         raise FeatureResearchError("correlation vectors have different lengths")
     if len(x) < 2:
+        return None
+    # A rounded mean must not turn an exact constant into an available IC.
+    if all(value == x[0] for value in x) or all(value == y[0] for value in y):
         return None
     mx = math.fsum(x) / len(x)
     my = math.fsum(y) / len(y)
