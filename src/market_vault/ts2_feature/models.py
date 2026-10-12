@@ -96,6 +96,7 @@ class TS2FeatureExecutionResult(_Issued):
 
     @property
     def execution_id(self):
+        values_content_id, samples_content_id = ids._execution_content_ids(self.samples)
         return ids.execution_id(dict(
             execution_contract_version=self.execution_contract_version, registry_contract_version=self.registry_contract_version,
             feature_association_content_id=self.feature_association_content_id,
@@ -104,4 +105,4 @@ class TS2FeatureExecutionResult(_Issued):
             feature_spec_pins_digest=ids.spec_pins_digest(self.feature_spec_pins),
             registry_implementation_pins_digest=ids.registry_pins_digest(self.registry_implementation_pins),
             sample_count=self.sample_count, feature_count=self.feature_count, status=self.status,
-            values_content_id=self.values_content_id, samples_content_id=self.samples_content_id))
+            values_content_id=values_content_id, samples_content_id=samples_content_id))

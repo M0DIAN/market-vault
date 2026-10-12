@@ -1,5 +1,6 @@
 """Real TS2 Canonical/PIT admission, windows and formula canaries."""
 
+from collections import Counter
 from dataclasses import replace
 from datetime import timedelta, datetime
 import math
@@ -9,6 +10,7 @@ import pytest
 from ts2_feature_helpers import AS_OF, ARCHIVE, bar, build, pit, local, fixture, spec, execute, tamper
 from market_vault.ts2_feature import execute_ts2_features, TS2FeatureError
 from market_vault.ts2_feature import execution as engine
+from market_vault.ts2_feature import identity as ids
 from market_vault.dataset.spec_models import SpecParameter
 from market_vault.canonical.reader import CanonicalArtifactValidationError
 
@@ -352,6 +354,47 @@ def test_zero_samples_specs_and_both(tmp_path, monkeypatch):
     unknown = tamper(spec(), transform_ref="unknown.module:callback")
     fails("REGISTRY_AUTHORITY", lambda: execute(one, empty, (unknown,)))
     fails("CLOCK_AUTHORITY", lambda: execute(one, empty, (), cutoff=datetime(2026, 1, 1)))
+
+
+@pytest.mark.parametrize("slots,specs", [
+    pytest.param((1, 2), (spec(), spec("rolling_mean")), id="complete-multiple-samples-specs"),
+    pytest.param((1, 2), (spec(), spec(n=3, name="long_return")), id="mixed-complete-excluded"),
+    pytest.param((), (spec(),), id="zero-samples"),
+    pytest.param((1, 2), (), id="zero-specs"),
+    pytest.param((), (), id="zero-samples-and-specs"),
+])
+def test_execution_identity_reuses_each_leaf_only_within_one_call(tmp_path, monkeypatch, slots, specs):
+    one, selected = fixture(tmp_path, slots=(0, 1, 2))
+    request = selected.samples[0].request
+    requests = tuple(replace(request, feature_window_close=local("2025-03-03")
+                             + timedelta(minutes=5 * (slot + 1))) for slot in slots)
+    result = execute(one, pit((one,), requests=requests), specs)
+    # The independent public properties retain the old separate composition.
+    expected = ids.execution_id(dict(
+        execution_contract_version=result.execution_contract_version,
+        registry_contract_version=result.registry_contract_version,
+        feature_association_content_id=result.feature_association_content_id,
+        feature_association_schema_id=result.feature_association_schema_id,
+        dataset_as_of=result.dataset_as_of,
+        considered_canonical_build_ids_digest=ids.considered_builds_digest(result.considered_canonical_build_ids),
+        feature_spec_pins_digest=ids.spec_pins_digest(result.feature_spec_pins),
+        registry_implementation_pins_digest=ids.registry_pins_digest(result.registry_implementation_pins),
+        sample_count=result.sample_count, feature_count=result.feature_count, status=result.status,
+        values_content_id=result.values_content_id, samples_content_id=result.samples_content_id,
+    ))
+    leaves = tuple((value.sample_key, ids.spec_pin_id(value.spec_pin))
+                   for sample in result.samples for value in sample.values)
+    calls = []
+    original = ids.value_id
+
+    def counted(payload):
+        calls.append((payload["sample_key"], payload["feature_spec_pin_id"]))
+        return original(payload)
+
+    monkeypatch.setattr(ids, "value_id", counted)
+    for invocation in (1, 2):
+        assert result.execution_id == expected
+        assert Counter(calls) == Counter(leaves * invocation)
 
 
 def test_unused_extensions_do_not_churn_legacy_execution_identity(tmp_path):
