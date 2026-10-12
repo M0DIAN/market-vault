@@ -50,6 +50,10 @@ def test_current_registry_covers_every_discovered_test_exactly_once():
     assert resolved["intraday_analytics"] == ("tests/test_intraday_research_analysis.py",)
     assert resolved["intraday_experiment"] == ("tests/test_intraday_experiment.py", "tests/test_strategy_experiment.py")
     assert resolved["intraday_saved"] == ("tests/test_intraday_saved_diagnostics.py",)
+    assert {
+        "tests/test_intraday_ml_procedures_inner_cost_sensitivity.py",
+        "tests/test_intraday_ml_procedures_risk_diagnostics.py",
+    } <= set(resolved["strategy"])
     assert resolved["diagnostics"] == (
         "tests/test_strategy_diagnostics.py", "tests/test_strategy_intraday_performance.py",
         "tests/test_strategy_return_assessment.py",

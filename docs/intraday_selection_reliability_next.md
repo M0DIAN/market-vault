@@ -229,6 +229,128 @@ fixture files are restored and original study bytes remain unchanged.
 Independent final-candidate review and natural PR/main CI are separate
 delivery gates; these local results do not claim either gate or a release.
 
+### Q52 completed delivery gates
+
+[PR #322](https://github.com/M0DIAN/market-vault/pull/322) completed independent
+**MERGE-READY PASS** at candidate
+`f7487937f5e169a0e1c459c5159b74838e78bc22`, tree
+`3ffc49da5ef108fe4e8ab1a243fc9ce27feb9a4d`. Its natural PR FULL
+[38192887630/1](https://github.com/M0DIAN/market-vault/actions/runs/38192887630/attempts/1)
+passed. Squash produced exact main
+`8cb07735be7ac343982c57749e0b721897c539df` with that same tree. Natural main
+push FULL [38193993957/1](https://github.com/M0DIAN/market-vault/actions/runs/38193993957/attempts/1)
+then passed, with all sixteen jobs bound to that exact head and attempt.
+Q53 began only after these gates and a clean feature branch from that main.
+
+| Job | Q52 PR seconds | Q52 main seconds |
+| --- | ---: | ---: |
+| `strategy` | 564 | 419 |
+| `intraday_experiment` | 299 | 287 |
+| `intraday_ml_procedures` | 698 | 747 |
+
+### Measured fixture reuse included with Q53
+
+The Q52 PR recorded `procedure_comparison_case` setup at 70.04 seconds in
+ML and 70.07 seconds in strategy; the main ML setup took 72.60 seconds.
+The existing comparison, family and stress files already share the single
+unparameterized session fixture in `tests/conftest.py` inside strategy's one
+pytest process. Q52's risk file reached the same fixture in another process
+through the broad ML prefix. Other current ML files do not request that
+comparison fixture; Q35's own original fixture remains required there.
+
+Q53 adds exact-file strategy ownership for the two complete files
+`test_intraday_ml_procedures_risk_diagnostics.py` and
+`test_intraday_ml_procedures_inner_cost_sensitivity.py`. Both inspect the
+same saved procedure evidence and reuse strategy's existing fixture. No
+prefix, fixture, business test, assertion, workflow, timeout or job is split
+or removed. Eleven partitions and all sixteen FULL jobs remain required.
+Complete collection multiset equality is checked on the final candidate.
+This control-plane change again requires natural main FULL; eliminating a
+measured repeated setup does not promise any resulting job below ten minutes.
+
+### Q53 implementation and report contract
+
+`analyze_intraday_inner_cost_sensitivity(StrategyExperiment)` and the thin
+`research-intraday-inner-cost-sensitivity --study PATH` CLI accept one saved
+Q31/Q36 economic procedure. The independent derived report version is
+`market-vault-intraday-inner-cost-sensitivity-v1`, with its own
+`sensitivity_id`; it is not a new StrategyExperiment grammar.
+
+Every original OUTER_FOLD inner window and the separately labelled FINAL_DEV
+window retains complete saved models, raw predictions, training/holdout
+support and prices under `fixed_evidence`. The three declared scenarios keep
+complete member executions and their original identities, full recipes,
+returns, trade counts, commission and slippage in normalized cash. Q6 uses
+the full saved sessions, including identity-bearing fields beyond geometry.
+Zero means zero **additional** slippage: existing commission and slippage
+remain in force. It verifies every complete canonical account, including all
+IDs, plus the original selected index and full recipe, and reuses those
+executions for the zero scenario.
+
+A failed window baseline blocks only that window's higher-cost scenarios.
+A failed pressure member retains every declared member slot and any successful
+execution evidence, but leaves the entire scenario without a winner. Illegal
+added policies are reported at their requested values and never clipped.
+Legal whole-study unavailability retains all original windows and all three
+scenario slots, including later windows whose own reason is null but whose
+family was never executed; recorded member counts remain zero and no account
+is invented. Source reasons and diagnostic reasons remain distinct.
+
+`choice_changes` separates OUTER_FOLD and FINAL_DEV counts by cost. Zero
+eligible windows yield null changed counts/rates and an explicit unavailable
+reason. The best/runner-up gap uses the first two ranked members, including
+ties, and is an inner compounded-return ratio. All exactly tied best indices
+remain visible and FIRST_DECLARED chooses the original-order first member.
+No gap is an outer effect, confidence interval or recommendation. FINAL_DEV
+remains diagnostic only; no Q5, fitted-source replay, model fit, new outer
+account, Freeze or TEST action is performed.
+
+### Q53 local implementation evidence
+
+Python 3.11.17 used this checkout's explicit `PYTHONPATH` and the existing
+installed console launcher. One focused pytest invocation included the new
+Q53 file, Q52 risk and partition tests, using an external temporary directory.
+Its single shared study setup took **70.00 seconds**. The first run finished
+with **63 passed and one fixture-construction failure in 104.29 seconds**:
+the new mismatch test initially signed its Q6 account with the research hash
+helper instead of Q6's distinct execution hash. The immutable reader correctly
+rejected that test input before the Q53 API ran. Correcting only that test
+helper made the original regression function pass with `pytest.MonkeyPatch`
+and the same saved real Q31 fixture in **3.88 seconds**, without rebuilding
+the study. This is a focused recheck, not a claim of a second all-green pytest
+invocation; no core implementation repair was needed.
+
+The nine Q53 cases exercise these distinct boundaries:
+
+- Real Q31/Q36: **20 + 120 complete zero accounts**, including every original
+  execution/price identity and selected recipe, reach actual Q6. All three
+  costs execute all four or twenty-four members on the original complete
+  sessions, prices and fixed forecast decisions. Exactly 420 kernel calls
+  cover the two studies' full three-cost grids, reusing all 140 zero results.
+- Independent rational per-fill cash, commission and slippage calculations
+  verify a real selected-recipe reversal and exactly tied best members.
+  An all-cash case verifies unchanged choices and all-member ties.
+- A valid, resealed nonnumeric ledger difference fails the complete zero
+  baseline while preserving equal returns/recipes and all other windows.
+  A single pressure-member failure retains the other members' evidence but
+  prevents partial-family selection. An actually saved high-slippage study
+  retains illegal +5/+10 policies without clipping or executing them.
+- Both Q31 and Q36 whole-study unavailable cases retain later windows with
+  null original reasons and empty, never-executed families. No eligible
+  windows produce unavailable null counts/rates, including FINAL_DEV.
+- The installed CLI recovers from a missing file and returns the **complete
+  Q36 report equal to the API result**, with missing settings and synthetic
+  ordinary/Q5 source files temporarily absent. Original source/study bytes
+  are unchanged; no Q5, fitting, source replay, outer execution or TEST ran.
+
+Default complete collection and collection from all eleven resolved
+partition file lists each contain **8,401 node IDs with identical multisets**.
+The 237 discovered test files are owned exactly once, including both explicit
+risk/cost files in strategy. Repository hygiene, release checker
+(`version=0.9.0`), partition coverage and whitespace checks pass. No local FULL
+test execution was run. Independent exact-candidate review and natural
+PR/main FULL remain the subsequent delivery gates.
+
 Each final candidate records its actual focused validation and receives one
 independent exact-commit review, with incremental review after confirmed
 in-scope repairs. Check current PR head/base, required natural CI and attempt

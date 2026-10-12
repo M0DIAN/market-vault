@@ -257,7 +257,7 @@ checkout，只改变 pytest 的文件选择，片内仍按原方式顺序执行�
 |---|---|
 | `data` | 采集、Canonical、审计、清理、日内数据准备及桌面入口 |
 | `dataset_features` | Dataset、PIT、多源、跨日、特征与样本生成 |
-| `strategy` | Ridge、策略研究、比较、回测、执行及对应桌面入口 |
+| `strategy` | Ridge、策略研究、比较、回测、执行、已存程序风险与内层成本诊断及对应桌面入口 |
 | `diagnostics` | 策略诊断、日内绩效与收益口径评估 |
 | `intraday_research` | 日内研究核心、执行场景、训练历史敏感性、最终数据边界及研究桌面入口 |
 | `intraday_ml_procedures` | 日内 ML 内层选择、阈值与联合程序、程序诊断、联合最终 TEST 及后续程序研究 |

@@ -46,6 +46,9 @@ from .intraday_procedure_stress_cli import add_intraday_procedure_stress_subpars
 from .intraday_procedure_risk_diagnostics_cli import (
     add_intraday_procedure_risk_diagnostics_subparser, research_intraday_procedure_risk_diagnostics_main,
 )
+from .intraday_inner_cost_sensitivity_cli import (
+    add_intraday_inner_cost_sensitivity_subparser, research_intraday_inner_cost_sensitivity_main,
+)
 from .intraday_procedure_suite_cli import add_intraday_procedure_suite_subparser, research_intraday_procedure_suite_main
 from .intraday_market_evidence_cli import add_intraday_market_evidence_subparser, research_intraday_market_evidence_main
 from .intraday_market_dependencies_cli import add_intraday_market_dependencies_subparser, research_intraday_market_dependencies_main
@@ -142,6 +145,7 @@ RESEARCH_COMMANDS = MARKET_DATA_COMMANDS | frozenset({
     "research-intraday-performance",
     "research-intraday-risk-diagnostics",
     "research-intraday-procedure-risk-diagnostics",
+    "research-intraday-inner-cost-sensitivity",
     "research-intraday-parameter-grid",
     "research-intraday-return-uncertainty",
     "research-intraday-family-bounds",
@@ -287,6 +291,7 @@ def add_research_subparsers(subparsers) -> None:
     add_intraday_procedure_family_subparser(subparsers)
     add_intraday_procedure_stress_subparser(subparsers)
     add_intraday_procedure_risk_diagnostics_subparser(subparsers)
+    add_intraday_inner_cost_sensitivity_subparser(subparsers)
     add_intraday_procedure_suite_subparser(subparsers)
     add_intraday_market_evidence_subparser(subparsers)
     add_intraday_market_dependencies_subparser(subparsers)
@@ -325,6 +330,8 @@ def run_research_command(command: str, args: argparse.Namespace) -> int:
         return research_intraday_procedure_stress_main(args)
     if command == "research-intraday-procedure-risk-diagnostics":
         return research_intraday_procedure_risk_diagnostics_main(args)
+    if command == "research-intraday-inner-cost-sensitivity":
+        return research_intraday_inner_cost_sensitivity_main(args)
     if command == "research-intraday-procedure-suite":
         return research_intraday_procedure_suite_main(args)
     if command == "research-intraday-market-evidence":
