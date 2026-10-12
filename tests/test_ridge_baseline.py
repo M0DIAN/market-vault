@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from fractions import Fraction
 import math
 
 import pytest
@@ -212,6 +214,48 @@ def test_constant_validation_target_has_no_r2():
     report = evaluate_ridge_baseline(plan, alpha=1.0)
     assert report.folds[0].r2 is None
     assert report.r2 is None
+
+
+@pytest.mark.parametrize("constant", [0.03, -0.03])
+def test_fractional_constant_validation_targets_have_no_r2(constant):
+    report = evaluate_ridge_baseline(_plan(
+        train_X=((0.0,),) * 3, train_y=(0.0,) * 3,
+        validation_X=((0.0,),) * 9, validation_y=(constant,) * 9,
+    ))
+    assert report.folds[0].r2 is report.r2 is None
+    assert report.mae == pytest.approx(abs(constant))
+    assert report.rmse == pytest.approx(abs(constant))
+
+
+def test_low_variance_single_fold_and_pooled_r2_agree():
+    report = evaluate_ridge_baseline(_plan(
+        train_X=((0.0,),) * 3, train_y=(0.01,) * 3,
+        validation_X=((0.0,),) * 2, validation_y=(0.01 - 1e-10, 0.01 + 1e-10),
+    ))
+    assert report.folds[0].r2 == report.r2 == 0.0
+    assert report.mae == report.folds[0].mae
+    assert report.rmse == report.folds[0].rmse
+
+
+def test_pooled_r2_uses_every_target_across_unequal_constant_folds():
+    first = _plan(train_X=((0.0,),) * 3, train_y=(0.01,) * 3,
+                  validation_X=((0.0,),) * 2, validation_y=(0.01,) * 2)
+    second = _plan(train_X=((0.0,),) * 3, train_y=(0.01,) * 3,
+                   validation_X=((0.0,),) * 3, validation_y=(0.01 + 1e-10,) * 3).folds[0]
+    validation = replace(second.validation, metadata=_metadata(7, 3, sequence_start=201))
+    second = replace(second, fold_index=1, fold_id="d" * 64,
+                     validation_start_time=validation.metadata[0].feature_window_close,
+                     validation_end_time=validation.metadata[-1].feature_window_close,
+                     validation=validation)
+    plan = replace(first, folds=(first.folds[0], second), development_sample_count=8)
+    report = evaluate_ridge_baseline(plan)
+    actual = [Fraction(y) for fold in plan.folds for y in fold.validation.y]
+    prediction = Fraction(report.folds[0].intercept)
+    mean = sum(actual) / len(actual)
+    expected = 1 - sum((y - prediction) ** 2 for y in actual) / sum((y - mean) ** 2 for y in actual)
+    assert all(fold.r2 is None for fold in report.folds)
+    assert report.validation_sample_count == 5
+    assert report.r2 == pytest.approx(float(expected), rel=1e-12)
 
 
 def test_held_out_test_count_cannot_change_model_results():
