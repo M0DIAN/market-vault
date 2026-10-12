@@ -262,7 +262,7 @@ checkout，只改变 pytest 的文件选择，片内仍按原方式顺序执行�
 | `intraday_research` | 日内研究核心、执行场景、训练历史敏感性、最终数据边界及研究桌面入口 |
 | `intraday_ml_procedures` | 日内 ML 内层选择、阈值与联合程序、程序诊断、联合最终 TEST 及后续程序研究 |
 | `intraday_analytics` | 收益不确定性、联合界限、组合、时序选择、延迟及预测分析 |
-| `intraday_experiment` | 已存实验语法、来源重放与场景验证 |
+| `intraday_experiment` | 普通策略与日内已存实验语法、Open/Replay、来源重放与场景验证 |
 | `intraday_saved` | 已存计划复用、参数网格、保存结果比较及实际 CLI |
 | `intraday_final` | 日内最终 TEST 及对应桌面入口 |
 | `app_ops` | 通用桌面、启动、CI、打包、治理与其余历史回归 |
