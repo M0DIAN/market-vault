@@ -1,4 +1,4 @@
-"""Focused tests for Ridge Regression Plan + CLI V1."""
+"""Focused tests for Ridge Regression Plan V1 and CLI result V2."""
 
 from __future__ import annotations
 
@@ -35,6 +35,8 @@ def _result():
             coefficients=(0.2, -0.1),
             feature_means=(50.0, 0.0),
             feature_scales=(10.0, 1.0),
+            target_mean=10.01,
+            standardized_coefficients=(2.0, -0.1),
             mae=0.03,
             rmse=0.04,
             r2=0.25,
@@ -49,6 +51,8 @@ def _result():
             coefficients=(0.15, -0.05),
             feature_means=(52.0, 0.1),
             feature_scales=(9.0, 1.1),
+            target_mean=7.815,
+            standardized_coefficients=(1.35, -0.055),
             mae=0.02,
             rmse=0.03,
             r2=None,
@@ -122,7 +126,8 @@ def test_ridge_cli_is_settings_independent_and_explicit(
 
     output = json.loads(capsys.readouterr().out)
     assert output["status"] == "SUCCESS"
-    assert output["ridge_version"] == "market-vault-ridge-baseline-v1"
+    assert output["result_schema_version"] == "market-vault-ridge-cli-result-v2"
+    assert output["ridge_version"] == "market-vault-ridge-baseline-v2"
     assert output["walk_forward_id"] == "b" * 64
     assert output["dataset_id"] == "a" * 64
     assert output["label_name"] == "forward_return_5d"
@@ -142,16 +147,19 @@ def test_ridge_cli_is_settings_independent_and_explicit(
         "validation_count": 20,
         "alpha": 1.5,
         "intercept": 0.01,
+        "target_mean": 10.01,
         "features": [
             {
                 "feature_name": "rsi14",
                 "coefficient": 0.2,
+                "standardized_coefficient": 2.0,
                 "train_mean": 50.0,
                 "train_scale": 10.0,
             },
             {
                 "feature_name": "macd",
                 "coefficient": -0.1,
+                "standardized_coefficient": -0.1,
                 "train_mean": 0.0,
                 "train_scale": 1.0,
             },

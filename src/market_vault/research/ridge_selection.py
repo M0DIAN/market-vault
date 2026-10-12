@@ -98,7 +98,7 @@ def _scalar_vector_digest(
 
 def _fold_result_id(fold) -> str:
     return encode_identity(
-        "market-vault-ridge-alpha-fold-result-v1",
+        "market-vault-ridge-alpha-fold-result-v2",
         {
             "fold_index": fold.fold_index,
             "fold_id": fold.fold_id,
@@ -106,6 +106,11 @@ def _fold_result_id(fold) -> str:
             "validation_count": fold.validation_count,
             "alpha": fold.alpha,
             "intercept": fold.intercept,
+            "target_mean": fold.target_mean,
+            "standardized_coefficients_digest": _scalar_vector_digest(
+                "market-vault-ridge-alpha-fold-standardized-coefficients",
+                fold.standardized_coefficients,
+            ),
             "coefficients_digest": _scalar_vector_digest(
                 "market-vault-ridge-alpha-fold-coefficients",
                 fold.coefficients,

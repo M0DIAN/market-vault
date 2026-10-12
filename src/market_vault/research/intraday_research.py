@@ -261,11 +261,13 @@ def fit_ridge_rows(rows, observations, features, alpha, *, boundary: str,
     X = tuple(tuple(row["features"][f] for f in features) for row, target in rows)
     y = tuple(target["value"] for row, target in rows)
     options = {} if _preparation is None else {"_preparation": _preparation}
-    intercept, coefficients, means, scales = _fit(X, y, alpha, **options)
-    predictions = _predict(tuple(tuple(row["features"][f] for f in features) for row in observations), intercept, coefficients)
+    intercept, coefficients, means, scales, target_mean, standardized_coefficients = _fit(X, y, alpha, **options)
+    predictions = _predict(tuple(tuple(row["features"][f] for f in features) for row in observations),
+                           target_mean, standardized_coefficients, means, scales)
     model = {"version": RIDGE_BASELINE_VERSION, "alpha": alpha, "feature_fields": list(features),
              "training_keys": [row["observation_key"] for row, _ in rows], "training_boundary": boundary,
-             "intercept": intercept, "coefficients": list(coefficients), "means": list(means), "scales": list(scales)}
+             "intercept": intercept, "coefficients": list(coefficients), "means": list(means), "scales": list(scales),
+             "target_mean": target_mean, "standardized_coefficients": list(standardized_coefficients)}
     model["model_id"] = digest(model)
     return model, predictions
 

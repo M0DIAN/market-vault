@@ -33,7 +33,7 @@ def _selection():
 
 def _final():
     return SimpleNamespace(
-        version="market-vault-ridge-final-test-v1",
+        version="market-vault-ridge-final-test-v2",
         final_test_id="f" * 64,
         model_id="m" * 64,
         dataset_id="a" * 64,
@@ -136,7 +136,7 @@ def test_trading_cli_is_settings_independent_and_has_no_test_threshold(
         .RIDGE_FINAL_TRADING_CLI_RESULT_SCHEMA_VERSION
     )
     assert output["final_test_version"] == (
-        "market-vault-ridge-final-test-v1"
+        "market-vault-ridge-final-test-v2"
     )
     assert output["trading_evaluation_version"] == (
         "market-vault-ridge-final-trading-v1"

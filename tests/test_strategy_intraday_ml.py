@@ -163,7 +163,9 @@ def test_real_quadratic_v2_complete_account_legacy_content_and_replay(quadratic_
 
 def test_quadratic_saved_model_shape_and_versions_reject_resigned_corruption(quadratic_dev_case):
     _, _, _, snapshot, _, _ = quadratic_dev_case
-    for change in ("terms", "transform", "nested_binding", "artifact_version"):
+    for change in ("terms", "transform", "nested_binding", "artifact_version", "missing_centered", "partial_centered",
+                   "legacy_with_centered", "target_mean_type", "standardized_width", "standardized_type",
+                   "target_mean_binding", "standardized_binding"):
         root = snapshot.as_dict()
         candidate = root["report"]["groups"][0]["results"][1]
         model = candidate["fold_models"][0]["model"]
@@ -175,15 +177,77 @@ def test_quadratic_saved_model_shape_and_versions_reject_resigned_corruption(qua
             nested = model["ridge_model"]
             nested["training_boundary"] = "2025-01-01T00:00:00+00:00"
             nested["model_id"] = research.digest({k: v for k, v in nested.items() if k != "model_id"})
-        else:
+        elif change == "artifact_version":
             root["artifact_schema_version"] = "market-vault-intraday-experiment-v1"
+        else:
+            nested = model["ridge_model"]
+            if change in ("missing_centered", "partial_centered"):
+                nested.pop("standardized_coefficients")
+                if change == "missing_centered":
+                    nested.pop("target_mean")
+            elif change == "legacy_with_centered":
+                nested["version"] = "market-vault-ridge-baseline-v1"
+            elif change == "target_mean_type":
+                nested["target_mean"] = True
+            elif change == "standardized_width":
+                nested["standardized_coefficients"].pop()
+            elif change == "standardized_type":
+                nested["standardized_coefficients"][0] = None
+            elif change == "target_mean_binding":
+                nested["target_mean"] += 1
+            else:
+                nested["standardized_coefficients"][0] += 1
+            if change not in ("target_mean_binding", "standardized_binding"):
+                nested["model_id"] = research.digest({k: v for k, v in nested.items() if k != "model_id"})
         model["model_id"] = research.digest({k: v for k, v in model.items() if k != "model_id"})
         candidate["candidate_id"] = research.digest({k: v for k, v in candidate.items() if k != "candidate_id"})
         report = root["report"]
         report["research_id"] = research.digest({k: v for k, v in report.items() if k != "research_id"})
         root["experiment_id"] = research.digest({k: v for k, v in root.items() if k != "experiment_id"})
-        with pytest.raises(ValueError):
+        expected_error = {
+            "missing_centered": "Ridge model must contain exactly",
+            "partial_centered": "Ridge model must contain exactly",
+            "legacy_with_centered": "Ridge model must contain exactly",
+            "target_mean_type": "target_mean must be finite numeric data",
+            "standardized_width": "Ridge vector differs",
+            "standardized_type": "standardized_coefficients must be finite numeric data",
+            "target_mean_binding": "saved model_id does not bind complete content",
+            "standardized_binding": "saved model_id does not bind complete content",
+        }.get(change)
+        with pytest.raises(ValueError, match=expected_error):
             StrategyExperiment(canonical_json(root))
+
+
+@pytest.mark.parametrize("version,legacy_shape", [("market-vault-ridge-baseline-v1", True), ("historical-ridge", False)])
+def test_historical_ridge_shapes_open_unchanged_but_current_replay_rejects_before_io(
+    quadratic_dev_case, tmp_path, monkeypatch, version, legacy_shape,
+):
+    from test_intraday_experiment import signed
+
+    root = quadratic_dev_case[3].as_dict()
+    root["algorithm_versions"]["ridge"] = version
+    for group in root["report"]["groups"]:
+        for candidate in group["results"]:
+            for record in candidate["fold_models"]:
+                model = record["model"]
+                ridge = model.get("ridge_model", model)
+                ridge["version"] = version
+                if legacy_shape:
+                    ridge.pop("target_mean")
+                    ridge.pop("standardized_coefficients")
+                ridge["model_id"] = research.digest({k: v for k, v in ridge.items() if k != "model_id"})
+                if ridge is not model:
+                    model["model_id"] = research.digest({k: v for k, v in model.items() if k != "model_id"})
+    content = signed(root)
+    path = tmp_path / "historical.json"
+    path.write_bytes(content)
+    monkeypatch.setattr(research, "load_intraday_dataset", lambda *a, **kw: pytest.fail("historical version read Q5"))
+    monkeypatch.setattr(research, "_fit", lambda *a, **kw: pytest.fail("historical version fitted"))
+    historical = load_strategy_experiment(path)
+    assert historical.content == path.read_bytes() == content
+    with pytest.raises(ValueError, match="no source was read"):
+        replay_strategy_experiment(historical)
+    assert path.read_bytes() == content
 
 
 def test_quadratic_diagnostics_cli_saved_analytics_continuation_and_v1_freeze_boundary(quadratic_dev_case, tmp_path, monkeypatch):

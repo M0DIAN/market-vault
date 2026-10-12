@@ -134,6 +134,85 @@ def test_ridge_baseline_closed_form_shrinkage_and_metrics():
     assert report.r2 == pytest.approx(-0.625)
 
 
+def test_centered_ridge_predictions_preserve_the_fractional_threshold_oracle():
+    from types import SimpleNamespace
+    from market_vault.research.intraday_research import fit_ridge_rows
+    from market_vault.research.ridge_trading_selection import _validation_predictions
+    from market_vault.research.strategy_comparison import RidgeStrategy, _strategy_signals
+
+    delta = 2.0 ** -50
+    targets = (.99933 / 1.0 - 1.0, 0.0, 1.00067 / 1.0 - 1.0)
+    # For symmetric X and population scaling, Z'Z=3. Alpha=1 shrinks
+    # the unregularized endpoint forecast by 3/4. Fraction uses the exact
+    # admitted binary targets, independently of the production fit/solver.
+    exact_mean = sum(map(Fraction, targets)) / 3
+    endpoint = exact_mean + Fraction(3, 8) * (Fraction(targets[2]) - Fraction(targets[0]))
+    expected = (float(endpoint), float(exact_mean))
+    assert expected[0] > .0005
+    tolerance = 8 * math.ulp(expected[0])
+
+    for origin in (1.0, 0.0):
+        train_X = tuple((origin + value,) for value in (-delta, 0.0, delta))
+        validation_X = ((origin + delta,), (origin,))
+        plan = _plan(train_X=train_X, train_y=targets,
+                     validation_X=validation_X, validation_y=expected)
+        report = evaluate_ridge_baseline(plan, alpha=1.0)
+        assert report.rmse == pytest.approx(0.0, abs=tolerance)
+        fold = report.folds[0]
+        assert fold.target_mean == float(exact_mean)
+
+        signals, _ = _strategy_signals(RidgeStrategy("ridge", 1.0, .0005), plan, {})
+        assert tuple(signals.values()) == pytest.approx(expected, rel=0.0, abs=tolerance)
+        selected = SimpleNamespace(selected_report=report, selected_alpha=1.0)
+        trading = _validation_predictions(plan, selected)
+        assert tuple(row.predicted for row in trading) == pytest.approx(expected, rel=0.0, abs=tolerance)
+
+        rows = tuple(({"observation_key": f"train-{index}", "features": {"x": values[0]}},
+                      {"value": target}) for index, (values, target) in enumerate(zip(train_X, targets)))
+        observations = tuple({"observation_key": f"validation-{index}", "features": {"x": values[0]}}
+                             for index, values in enumerate(validation_X))
+        model, scores = fit_ridge_rows(rows, observations, ["x"], 1.0,
+                                      boundary="2025-03-03T14:30:00+00:00")
+        assert scores == pytest.approx(expected, rel=0.0, abs=tolerance)
+        assert tuple(score > .0005 for score in scores) == (True, False)
+        restored = tuple(model["target_mean"] + math.fsum(
+            coefficient * ((observation["features"][feature] - mean) / scale if scale else 0.0)
+            for feature, coefficient, mean, scale in zip(model["feature_fields"],
+                model["standardized_coefficients"], model["means"], model["scales"], strict=True))
+            for observation in observations)
+        assert restored == scores
+
+
+def test_centered_ridge_prediction_only_reorders_an_overflowing_standardization():
+    from market_vault.research.intraday_research import fit_ridge_rows
+
+    unit = 1e-20
+    observations = tuple({"observation_key": f"validation-{index}", "features": {"x": value}}
+                         for index, value in enumerate((1e300, -1e300)))
+
+    def training(target):
+        return tuple(({"observation_key": f"train-{index}", "features": {"x": x}}, {"value": y})
+                     for index, (x, y) in enumerate(zip((0.0, unit, 2 * unit), (0.0, target, 2 * target))))
+
+    def oracle(target, x):
+        # Three equally spaced samples with population scaling and alpha=1
+        # shrink the exact centered slope by 3/4. No production fit supplies it.
+        slope = Fraction(3, 4) * Fraction(target) / Fraction(unit)
+        return Fraction(target) + slope * (Fraction(x) - Fraction(unit))
+
+    expected = tuple(float(oracle(1e-100, row["features"]["x"])) for row in observations)
+    assert all(math.isfinite(value) for value in expected)
+    model, scores = fit_ridge_rows(training(1e-100), observations, ["x"], 1.0,
+                                  boundary="2025-03-03T14:30:00+00:00")
+    assert math.isinf((observations[0]["features"]["x"] - model["means"][0]) / model["scales"][0])
+    assert model["standardized_coefficients"][0] != 0.0
+    assert scores == pytest.approx(expected, rel=0.0, abs=8 * math.ulp(expected[0]))
+    assert oracle(1e100, observations[0]["features"]["x"]) > 2 ** 1024
+    with pytest.raises(RidgeBaselineError, match="ridge prediction is not finite"):
+        fit_ridge_rows(training(1e100), observations, ["x"], 1.0,
+                       boundary="2025-03-03T14:30:00+00:00")
+
+
 @pytest.mark.parametrize("alpha", [.1, 1.0, 10.0])
 @pytest.mark.parametrize(
     "features,quadratic",
@@ -353,11 +432,12 @@ def test_invalid_alpha_fails_closed(bad):
 
 
 @pytest.mark.parametrize("constant", [0.1, -0.1])
-def test_constant_training_targets_cannot_create_a_predictive_direction(constant):
+@pytest.mark.parametrize("validation_X", [((0.0,), (2.0,)), ((-1e308,), (1e308,))])
+def test_constant_training_targets_cannot_create_a_predictive_direction(constant, validation_X):
     plan = _plan(
         train_X=((1.0,), (1.0,), (math.nextafter(1.0, 2.0),)),
         train_y=(constant,) * 3,
-        validation_X=((0.0,), (2.0,)), validation_y=(constant,) * 2,
+        validation_X=validation_X, validation_y=(constant,) * 2,
     )
     report = evaluate_ridge_baseline(plan)
     fold = report.folds[0]

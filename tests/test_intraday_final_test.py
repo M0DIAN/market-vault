@@ -162,7 +162,7 @@ def test_offline_open_exclusive_save_and_embedded_selection(final_case, selectio
 
 @pytest.mark.parametrize("case", ["model_keys", "negative_scale", "prediction_clock", "daily_shape", "benchmark_decision",
     "context_overlap", "errors", "nested_test", "bool_strategy", "bool_policy", "bool_execution_policy", "bool_benchmark_policy",
-    "decision_slot", "decision_day"])
+    "decision_slot", "decision_day", "missing_centered"])
 def test_resigned_malformed_test_records_are_rejected(final_case, case):
     root = final_case[1].as_dict()
     report = root["report"]
@@ -170,6 +170,9 @@ def test_resigned_malformed_test_records_are_rejected(final_case, case):
         report["model"]["training_keys"].pop()
     elif case == "negative_scale":
         report["model"]["scales"][0] = -1
+    elif case == "missing_centered":
+        report["model"].pop("target_mean")
+        report["model"].pop("standardized_coefficients")
     elif case == "prediction_clock":
         report["predictions"][0]["decision_time"] = "bad"
         report["execution"]["decisions"][0]["decision_time"] = "bad"
@@ -198,6 +201,36 @@ def test_resigned_malformed_test_records_are_rejected(final_case, case):
         root["plan"]["selection"] = {"artifact_schema_version": final.INTRADAY_TEST_EXPERIMENT_VERSION}
     with pytest.raises((ValueError, TypeError, KeyError)):
         StrategyExperiment(sign_test(root))
+
+
+@pytest.mark.parametrize("version,legacy_shape", [("market-vault-ridge-baseline-v1", True), ("historical-ridge", False)])
+def test_historical_final_ridge_shapes_open_without_reinterpreting_or_reading_sources(
+    final_case, tmp_path, monkeypatch, version, legacy_shape,
+):
+    root = final_case[1].as_dict()
+    selection = root["plan"]["selection"]
+    selection["algorithm_versions"]["ridge"] = version
+    selection = json.loads(sign_selection(selection))
+    root["plan"]["selection"] = selection
+    root["algorithm_versions"]["ridge"] = version
+    report = root["report"]
+    report["selection_experiment_id"] = selection["experiment_id"]
+    report["selection_id"] = report["context"]["selection_id"] = selection["report"]["selection_id"]
+    report["model"]["version"] = version
+    if legacy_shape:
+        report["model"].pop("target_mean")
+        report["model"].pop("standardized_coefficients")
+    content = sign_test(root)
+    path = tmp_path / "historical-test.json"
+    path.write_bytes(content)
+    monkeypatch.setattr(final, "load_strategy_experiment", lambda *a, **kw: pytest.fail("historical version read source"))
+    monkeypatch.setattr(final, "load_intraday_dataset", lambda *a, **kw: pytest.fail("historical version read Q5"))
+    monkeypatch.setattr(research, "_fit", lambda *a, **kw: pytest.fail("historical version fitted"))
+    historical = load_strategy_experiment(path)
+    assert historical.content == path.read_bytes() == content
+    with pytest.raises(ValueError, match="no source was read"):
+        replay_strategy_experiment(historical)
+    assert path.read_bytes() == content
 
 
 def test_version_source_and_candidate_guards_precede_data_and_fit(selection_case, final_case, tmp_path, monkeypatch):

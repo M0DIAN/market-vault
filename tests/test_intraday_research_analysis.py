@@ -2296,7 +2296,7 @@ def test_quadratic_ridge_dimension_and_selected_admission_precede_q5_io(research
             for record in candidate["fold_models"]:
                 model = record["model"]
                 model["feature_fields"] = fields
-                for key in ("means", "scales", "coefficients"):
+                for key in ("means", "scales", "coefficients", "standardized_coefficients"):
                     model[key] += [0.0] * 6
     # A structurally valid, re-signed oversized saved projection must be rejected
     # before source access; no source-reconstruction proof is invented here.

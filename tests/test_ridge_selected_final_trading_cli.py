@@ -76,7 +76,7 @@ def _threshold_selection():
 
 def _final():
     return SimpleNamespace(
-        version="market-vault-ridge-final-test-v1",
+        version="market-vault-ridge-final-test-v2",
         final_test_id="f" * 64,
         model_id="m" * 64,
         dataset_id="a" * 64,
