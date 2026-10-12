@@ -451,6 +451,39 @@ open_plan('bad-plan.json', status='FAILED')
 assert draft() == retained_draft and proof() == recorded_proof
 assert find('intradayResearchCommission').property('text') == '12.5'
 assert value(editor, 'strategies')[0]['name'] == 'Edited Flat'
+
+def check_selection_capture(path, flat_index, cost_index, candidate_index):
+    content = controller._content
+    assert content == path.read_bytes()
+    recorded = json.loads(content)
+    expected_source = {'path': str(path), 'content': content, 'experiment_id': recorded['experiment_id'],
+        'cost_index': cost_index, 'candidate_index': candidate_index,
+        'candidate_id': recorded['report']['groups'][cost_index]['results'][candidate_index]['candidate_id']}
+    presentation = controller._root
+    candidate = presentation['report']['groups'][cost_index]['results'][candidate_index]
+    experiment_id, candidate_id = presentation['experiment_id'], candidate['candidate_id']
+    content_text, loads, source_parses = content.decode('utf-8'), json.loads, []
+    def counted_loads(value, *args, **kwargs):
+        if value == content or value == content_text:
+            source_parses.append(1)
+        return loads(value, *args, **kwargs)
+    json.loads = counted_loads
+    try:
+        choose('intradayResearchCandidate', flat_index, panel_scroll)
+        assert controller.selection_source() == expected_source
+        presentation['experiment_id'] = 'changed-presentation-experiment'
+        candidate['candidate_id'] = 'changed-presentation-candidate'
+        for view_index in (1, 0):
+            choose('intradayResearchView', view_index, panel_scroll)
+            captured = controller.selection_source()
+            assert captured == expected_source and captured['content'] is content
+            captured.clear()
+            assert controller.selection_source() == expected_source
+        assert source_parses == []
+    finally:
+        json.loads = loads
+        presentation['experiment_id'], candidate['candidate_id'] = experiment_id, candidate_id
+
 open_record('collection')
 assert draft() == retained_draft and not controller.canContinueCandidate
 assert not find('intradayPlanContinueButton').isEnabled()
@@ -462,12 +495,12 @@ click('intradayResearchSettingsDone', settings_scroll)
 click('intradayScenarioExportButton', panel_scroll)
 selected('intradayScenarioExportDialog', root / 'ordinary-child.json')
 assert controller.canContinueCandidate
-choose('intradayResearchCandidate', 1, panel_scroll)
+check_selection_capture(root / 'ordinary-child.json', 1, 0, 1)
 click('intradayPlanContinueButton', panel_scroll); complete()
 assert controller.draftSource['path'] == str(root / 'ordinary-child.json')
 assert controller.draftPlan['execution'] == controller._root['report']['groups'][0]['execution_policy']
 open_record('grid')
-choose('intradayResearchCandidate', 7, panel_scroll)
+check_selection_capture(sources['grid'], 7, 1, 1)
 click('intradayPlanContinueButton', panel_scroll); complete()
 expected = controller._root['report']['groups'][1]
 continued = controller.draftPlan
@@ -1941,7 +1974,8 @@ def test_risk_views_keep_selected_accounts_and_offline_proofs(qt_app, saved_comp
     assert runtime.shutdown()
 
 
-def test_actual_qml_offline_performance_views_in_both_languages(intraday_experiment, final_case,
+@pytest.mark.parametrize("page", ("development", "final"))
+def test_actual_qml_offline_performance_views_in_both_languages(page, intraday_experiment, final_case,
         saved_comparison_diagnostics, tmp_path):
     source, test_path = tmp_path / "development.json", tmp_path / "test.json"
     write_strategy_experiment(intraday_experiment, path=source)
@@ -1961,7 +1995,9 @@ from PySide6.QtTest import QTest
 from market_vault.application import build_application_context
 from market_vault.desktop.bootstrap import create_qml_application_session
 from market_vault.desktop.preferences import DesktopPreferenceStore
-root, source, test_path, diagnostic_path, partial_path = map(Path, sys.argv[1:])
+page = sys.argv[1]
+root, source, test_path, diagnostic_path, partial_path = map(Path, sys.argv[2:])
+page_tab = {'development': 'intradayComparisonTab', 'final': 'intradayFinalTab'}[page]
 QQuickStyle.setStyle('Basic')
 app = QGuiApplication([])
 engine = QQmlApplicationEngine()
@@ -1999,8 +2035,15 @@ def choose(name, index):
     combo = next(c for c in item.findChildren(QObject) if 'PixelComboBox' in c.metaObject().className())
     window.requestActivate(); QTest.qWait(20)
     combo.forceActiveFocus()
-    QTest.keyClick(window, Qt.Key_Home)
-    for _ in range(index): QTest.keyClick(window, Qt.Key_Down)
+    current = item.property('currentIndex')
+    if index != current:
+        QTest.keyClick(window, Qt.Key_Space)
+        assert combo.property('highlightedIndex') == current
+        key = Qt.Key_Down if index > current else Qt.Key_Up
+        for _ in range(abs(index - current)): QTest.keyClick(window, key)
+        assert combo.property('highlightedIndex') == index
+        assert item.property('currentIndex') == current
+        QTest.keyClick(window, Qt.Key_Return)
     QTest.qWait(30)
     assert item.property('currentIndex') == index
 def complete(controller):
@@ -2012,9 +2055,12 @@ click('quantIntradayTab'); click('intradayComparisonTab')
 assert development.openExperiment(str(source)); complete(development)
 assert final.openTest(str(test_path)); complete(final)
 before = (development._content, final._test_content)
+final_before = (final._test_content, final._selection_content, final.resultSummary)
 for tab, controller, selector, first, table_name, day_count in (
     ('intradayComparisonTab', development, 'intradayResearchView', 7, 'intradayResearchTable', 10),
     ('intradayFinalTab', final, 'intradayTestView', 6, 'intradayTestTable', 6)):
+    if tab != page_tab:
+        continue
     click(tab)
     for language, label in (('en', 'Trades'), ('zh-CN', '交易次数')):
         assert session.i18n.setLanguage(language)
@@ -2040,12 +2086,16 @@ def descendants(parent):
         pending.extend(item.childItems())
 def reveal(item, scroll_name):
     flick = find(scroll_name).property('contentItem')
-    rect = item.mapRectToItem(flick, item.boundingRect())
-    delta = rect.top() if rect.top() < 0 else max(0, rect.bottom() - flick.height())
-    flick.setProperty('contentY', min(max(0, flick.property('contentY') + delta),
-        max(0, flick.property('contentHeight') - flick.height())))
-    QTest.qWait(30)
-    rect = item.mapRectToItem(flick, item.boundingRect())
+    for _ in range(5):
+        app.processEvents()
+        rect = item.mapRectToItem(flick, item.boundingRect())
+        delta = rect.top() if rect.top() < 0 else max(0, rect.bottom() - flick.height())
+        flick.setProperty('contentY', min(max(0, flick.property('contentY') + delta),
+            max(0, flick.property('contentHeight') - flick.height())))
+        QTest.qWait(30)
+        rect = item.mapRectToItem(flick, item.boundingRect())
+        if rect.top() >= -1 and rect.bottom() <= flick.height() + 1:
+            break
     assert rect.top() >= -1 and rect.bottom() <= flick.height() + 1, (item.objectName(), rect, flick.height())
 def risk_choose(selector, index, scroll_name):
     reveal(find(selector), scroll_name)
@@ -2079,6 +2129,8 @@ view_keys = ('quant.risk_summary', 'quant.risk_drawdowns', 'quant.risk_distribut
 for tab, controller, selector, first, table_name, scroll_name in (
     ('intradayComparisonTab', development, 'intradayResearchView', 11, 'intradayResearchTable', 'intradayResearchScroll'),
     ('intradayFinalTab', final, 'intradayTestView', 10, 'intradayTestTable', 'intradayFinalScroll')):
+    if tab != page_tab:
+        continue
     click(tab)
     bound = (controller._content, controller.resultSummary) if controller is development else (
         controller._test_content, controller._selection_content, controller.resultSummary)
@@ -2116,39 +2168,41 @@ for tab, controller, selector, first, table_name, scroll_name in (
 
 # Reopening same-shaped records and selecting another candidate must replace
 # the derived identity while preserving the captured TEST and verification.
-click('intradayComparisonTab')
-assert development.openExperiment(str(source)); complete(development)
-risk_choose('intradayResearchCandidate', 1, 'intradayResearchScroll')
-risk_choose('intradayResearchView', 12, 'intradayResearchScroll')
-assert development._risk_report['candidate_id'] == development.selection_source()['candidate_id']
-assert development._risk_report['strategy_diagnostics']['status'] == 'AVAILABLE'
-table, viewport = visible_table('intradayResearchTable', 'intradayResearchScroll')
-assert any(row[2] == 'TROUGH' for row in development._rows)
-assert any(row[2] in ('RECOVERY', 'UNRECOVERED') for row in development._rows)
-if development.tableModel.hasNext:
-    button = next(item for item in descendants(table) if 'PixelButton' in item.metaObject().className()
-        and item.property('text') == session.i18n.catalog['common.next'])
-    reveal(button, 'intradayResearchScroll')
-    point = button.mapToScene(button.boundingRect().center()).toPoint()
-    QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier, point); QTest.qWait(50)
-    assert development.tableModel.page == 2
-    assert development.tableModel._page.rows == development._rows[100:200]
-    assert window.grabWindow().save(str(root / 'development-risk-drawdown-page-2.png'))
-risk_choose('intradayResearchCandidate', 0, 'intradayResearchScroll')
-risk_choose('intradayResearchView', 13, 'intradayResearchScroll')
-rows = {(row[0], row[1], row[2]): row for row in development._rows}
-assert rows['STRATEGY', 'TRADE_RETURNS', 'p05'][3:] == ('—', 'RATIO', 'NO_TRADES')
-assert rows['STRATEGY', 'DAILY_RETURNS', 'p05'][3:] == ('0%', 'RATIO', '')
-assert development.openExperiment(str(partial_path)); complete(development)
-risk_choose('intradayResearchCandidate', 1, 'intradayResearchScroll')
-risk_choose('intradayResearchView', 11, 'intradayResearchScroll')
-assert development._risk_report['strategy_diagnostics']['status'] == 'UNAVAILABLE'
-assert development._risk_report['benchmark_diagnostics']['status'] == 'AVAILABLE'
-assert next(row for row in development._rows if row[0] == 'STRATEGY')[-1] == 'RECORDED_CASH_RECONCILIATION_FAILED'
-table, viewport = visible_table('intradayResearchTable', 'intradayResearchScroll')
-visible_label(viewport, '现金对账不一致')
-assert window.grabWindow().save(str(root / 'development-risk-partial-zh-CN.png'))
+if page == 'development':
+    click('intradayComparisonTab')
+    assert development.openExperiment(str(source)); complete(development)
+    risk_choose('intradayResearchCandidate', 1, 'intradayResearchScroll')
+    risk_choose('intradayResearchView', 12, 'intradayResearchScroll')
+    assert development._risk_report['candidate_id'] == development.selection_source()['candidate_id']
+    assert development._risk_report['strategy_diagnostics']['status'] == 'AVAILABLE'
+    table, viewport = visible_table('intradayResearchTable', 'intradayResearchScroll')
+    assert any(row[2] == 'TROUGH' for row in development._rows)
+    assert any(row[2] in ('RECOVERY', 'UNRECOVERED') for row in development._rows)
+    if development.tableModel.hasNext:
+        button = next(item for item in descendants(table) if 'PixelButton' in item.metaObject().className()
+            and item.property('text') == session.i18n.catalog['common.next'])
+        reveal(button, 'intradayResearchScroll')
+        point = button.mapToScene(button.boundingRect().center()).toPoint()
+        QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier, point); QTest.qWait(50)
+        assert development.tableModel.page == 2
+        assert development.tableModel._page.rows == development._rows[100:200]
+        assert window.grabWindow().save(str(root / 'development-risk-drawdown-page-2.png'))
+    risk_choose('intradayResearchCandidate', 0, 'intradayResearchScroll')
+    risk_choose('intradayResearchView', 13, 'intradayResearchScroll')
+    rows = {(row[0], row[1], row[2]): row for row in development._rows}
+    assert rows['STRATEGY', 'TRADE_RETURNS', 'p05'][3:] == ('—', 'RATIO', 'NO_TRADES')
+    assert rows['STRATEGY', 'DAILY_RETURNS', 'p05'][3:] == ('0%', 'RATIO', '')
+    assert development.openExperiment(str(partial_path)); complete(development)
+    risk_choose('intradayResearchCandidate', 1, 'intradayResearchScroll')
+    risk_choose('intradayResearchView', 11, 'intradayResearchScroll')
+    assert development._risk_report['strategy_diagnostics']['status'] == 'UNAVAILABLE'
+    assert development._risk_report['benchmark_diagnostics']['status'] == 'AVAILABLE'
+    assert next(row for row in development._rows if row[0] == 'STRATEGY')[-1] == 'RECORDED_CASH_RECONCILIATION_FAILED'
+    table, viewport = visible_table('intradayResearchTable', 'intradayResearchScroll')
+    visible_label(viewport, '现金对账不一致')
+    assert window.grabWindow().save(str(root / 'development-risk-partial-zh-CN.png'))
 assert final._test_content == before[1]
+assert (final._test_content, final._selection_content, final.resultSummary) == final_before
 assert all(path.read_bytes() == content for path, content in content_before.items())
 assert development.resultSummary['intraday_verification'] == 'RECORDED'
 assert final.resultSummary['intraday_test_proof'] == 'RECORDED'
@@ -2156,7 +2210,7 @@ assert session.runtime.backend_if_initialized is None
 assert session.shutdown()
 print('REAL_INTRADAY_RISK_VIEWS_OK')
 '''
-    result = subprocess.run([sys.executable, "-c", script, str(tmp_path), str(source), str(test_path),
+    result = subprocess.run([sys.executable, "-c", script, page, str(tmp_path), str(source), str(test_path),
                              str(diagnostic_path), str(partial_path)],
                             cwd=ROOT, env={**os.environ, "QT_QPA_PLATFORM": "offscreen", "QSG_RHI_BACKEND": "software"},
                             capture_output=True, text=True, timeout=120)
@@ -2379,8 +2433,15 @@ assert controller.tableModel.totalRows == 936
 table = find('intradayTestTable')
 assert table.height() >= 170, table.height()
 next_button = next(obj for obj in table.findChildren(QObject) if obj.property('glyph') == 'next' and obj.metaObject().indexOfSignal('clicked()') >= 0)
+flickable = find('intradayFinalScroll').property('contentItem')
+assert flickable.setProperty('contentY', max(0, flickable.property('contentHeight') - flickable.height()))
+QTest.qWait(50)
+footer_rect = next_button.mapRectToItem(flickable, next_button.boundingRect())
+assert footer_rect.top() >= -1 and footer_rect.bottom() <= flickable.height() + 1, (footer_rect, flickable.height())
 click_obj(next_button)
 assert controller.tableModel.page == 2
+assert flickable.setProperty('contentY', 0)
+QTest.qWait(50)
 click('intradayTestSaveButton'); file_selected('intradayTestSaveDialog', saved_test)
 original = saved_test.read_bytes()
 assert controller.tableModel.page == 2
