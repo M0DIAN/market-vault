@@ -226,6 +226,18 @@ def _training_center(values: tuple[float, ...]) -> tuple[float, float]:
     rounded_mean = math.fsum((mean, offset))
     offset = math.fsum((mean, -rounded_mean, offset))
     mean = rounded_mean
+    unit = math.ulp(mean)
+    if (offset == 0.0 and unit == math.ulp(0.0)
+            and math.remainder(mean, 2.0 * unit) != 0.0):
+        # A half-minimum-subnormal remainder cannot be stored as an offset.
+        # Recheck after feedback, which may itself have rounded a nonzero
+        # offset, and resolve an exact tie away from this odd grid value.
+        try:
+            residual_total = math.fsum(part for value in values for part in (value, -mean))
+        except OverflowError:
+            return mean, 0.0
+        if 2.0 * abs(residual_total) == len(values) * unit:
+            mean = math.nextafter(mean, math.copysign(math.inf, residual_total))
     return (0.0 if mean == 0.0 else mean), (0.0 if offset == 0.0 else offset)
 
 

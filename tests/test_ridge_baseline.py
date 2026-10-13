@@ -273,11 +273,60 @@ def test_train_mean_retains_supported_opposite_finite_extremes():
     assert _training_target_mean((-1e308, 1e308)) == 0.0
 
 
+@pytest.mark.parametrize("units", [(1, 0), (1, 2), (2, 3), (3, 4), (1, 4), (1, -2),
+    (1, 0, 0), (2, 0, 0), (2 ** 52 - 1, 2 ** 52 - 2), (2 ** 52 - 1, 2 ** 52)])
+@pytest.mark.parametrize("sign", [1.0, -1.0])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_subnormal_train_mean_and_zero_threshold_match_fraction(units, sign, reverse):
+    from market_vault.research.intraday_research import fit_ridge_rows
+    from market_vault.research.ridge_baseline import _training_target_mean
+
+    tiny = math.nextafter(0.0, 1.0)
+    targets = tuple(sign * value * tiny for value in units)
+    if reverse:
+        targets = targets[::-1]
+    expected = float(sum(map(Fraction, targets)) / len(targets))
+    rows = tuple(({"observation_key": f"train-{i}", "features": {"x": 0.0}}, {"value": target})
+                 for i, target in enumerate(targets))
+    model, predictions = fit_ridge_rows(rows, ({"features": {"x": 0.0}},), ["x"], 1.0,
+                                        boundary="2025-03-03T14:30:00+00:00")
+    assert (_training_target_mean(targets), model["target_mean"], predictions) == (
+        expected, expected, (expected,))
+    assert tuple(score > 0.0 for score in predictions) == (expected > 0.0,)
+    assert model["standardized_coefficients"] == model["scales"] == [0.0]
+    assert predictions == (math.fsum((model["target_mean"], model["target_center_offset"])),)
+
+
+@pytest.mark.parametrize("sign", [1.0, -1.0])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_subnormal_center_tie_after_nonzero_offset_matches_fraction(sign, reverse):
+    from market_vault.research.intraday_research import fit_ridge_rows
+    from market_vault.research.ridge_baseline import _training_target_mean
+
+    tiny = math.nextafter(0.0, 1.0)
+    # The origin-shifted mean is 3*tiny and its first rounded offset is
+    # -2*tiny: the half-unit tie remains only after that nonzero feedback.
+    targets = tuple(sign * value for value in (5 * tiny, 1.0, -1.0, -3 * tiny))
+    if reverse:
+        targets = targets[::-1]
+    expected = float(sum(map(Fraction, targets)) / len(targets))
+    rows = tuple(({"observation_key": f"train-{i}", "features": {"x": 0.0}}, {"value": target})
+                 for i, target in enumerate(targets))
+    model, predictions = fit_ridge_rows(rows, ({"features": {"x": 0.0}},), ["x"], 1.0,
+                                        boundary="2025-03-03T14:30:00+00:00")
+    assert (_training_target_mean(targets), model["target_mean"], predictions) == (
+        expected, expected, (expected,))
+    assert tuple(score > 0.0 for score in predictions) == (False,)
+    assert predictions == (math.fsum((model["target_mean"], model["target_center_offset"])),)
+
+
 @pytest.mark.parametrize("values", [
     (0.0, math.ulp(1.0)), (0.0, 0.0, math.ulp(1.0)),
     (1.0, math.nextafter(1.0, math.inf)),
     (.1, math.nextafter(.1, math.inf)),
     (-.1, math.nextafter(-.1, -math.inf)),
+    (.1, math.nextafter(0.0, 1.0), .2),
+    (-.1, math.nextafter(0.0, -1.0), -.2),
 ])
 def test_train_center_retains_fraction_mean_and_offset_at_rounding_boundaries(values):
     from market_vault.research.ridge_baseline import _training_center
