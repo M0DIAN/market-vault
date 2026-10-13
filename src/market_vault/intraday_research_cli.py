@@ -15,6 +15,7 @@ from .research.strategy_experiment import write_strategy_experiment
 
 
 INTRADAY_RESEARCH_CLI_VERSION = "market-vault-intraday-research-cli-result-v1"
+INTRADAY_PREFLIGHT_CLI_VERSION = "market-vault-intraday-preflight-cli-result-v1"
 
 
 def add_intraday_research_subparsers(subparsers):
@@ -28,21 +29,33 @@ def add_intraday_research_subparsers(subparsers):
         parser.add_argument("--experiment", metavar="PATH", help="Create an immutable experiment file")
         parser.add_argument("--name", default="")
         parser.add_argument("--notes", default="")
+        if name == "research-intraday-compare":
+            parser.add_argument("--preflight", action="store_true",
+                                help="Check DEV training/entry feasibility without fitting, trading or saving")
 
 
 def research_intraday_research_main(args, *, command: str) -> int:
+    preflight = command == "research-intraday-compare" and getattr(args, "preflight", False)
+    result_version = INTRADAY_PREFLIGHT_CLI_VERSION if preflight else INTRADAY_RESEARCH_CLI_VERSION
     try:
         if command == "research-intraday-plan":
             data = load_intraday_dataset(_coerce_plan_path(args.data))
             plan = default_intraday_research_plan(data, commission_bps=float(args.commission_bps), slippage_bps=float(args.slippage_bps))
             payload = {"plan": plan}
         else:
+            if preflight and (args.experiment is not None or args.name or args.notes):
+                raise ValueError("--preflight cannot save an experiment or use --name/--notes")
             if (args.name or args.notes) and args.experiment is None:
                 raise ValueError("--name/--notes require --experiment")
             path = _coerce_plan_path(args.plan)
             plan, _, _ = expand_intraday_plan(parse_json(path.read_bytes()), base=path.parent)
             if (plan["plan_schema_version"] in INTRADAY_DIAGNOSTICS_PLAN_VERSIONS) != (command == "research-intraday-diagnose"):
                 raise ValueError("command differs from the supplied comparison/diagnostics plan")
+            if preflight:
+                from .research.intraday_preflight import analyze_intraday_preflight
+                report = analyze_intraday_preflight(plan)
+                print(json.dumps({"result_schema_version": result_version, "status": report["status"], "preflight": report}, ensure_ascii=False, allow_nan=False))
+                return 2 if report["status"] == "BLOCKED" else 0
             report = run_intraday_research(plan)
             payload = {"report": report}
             if args.experiment is not None:
@@ -50,8 +63,8 @@ def research_intraday_research_main(args, *, command: str) -> int:
                 written = write_strategy_experiment(snapshot, path=args.experiment)
                 payload["experiment"] = {"path": str(written.path), "experiment_id": written.experiment_id,
                                          "created_new_file": written.created_new_file}
-        print(json.dumps({"result_schema_version": INTRADAY_RESEARCH_CLI_VERSION, "status": "SUCCESS", **payload}, ensure_ascii=False, allow_nan=False))
+        print(json.dumps({"result_schema_version": result_version, "status": "SUCCESS", **payload}, ensure_ascii=False, allow_nan=False))
         return 0
     except (DatasetCLIError, OSError, TypeError, ValueError, KeyError, ArithmeticError, RecursionError) as exc:
-        print(json.dumps({"result_schema_version": INTRADAY_RESEARCH_CLI_VERSION, "status": "FAILED", "error": str(exc)}, ensure_ascii=False), file=sys.stderr)
+        print(json.dumps({"result_schema_version": result_version, "status": "FAILED", "error": str(exc)}, ensure_ascii=False), file=sys.stderr)
         return 1
