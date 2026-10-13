@@ -108,6 +108,11 @@ def test_training_target_mean_agrees_in_both_forecast_reference_paths(constant, 
 def test_return_uncertainty_stationary_restart_wrap_and_exact_quantile_oracle(monkeypatch):
     from fractions import Fraction
     from market_vault.research import intraday_return_uncertainty as uncertainty
+    class CountedFloat(float):
+        divisions = 0
+        def __truediv__(self, other):
+            type(self).divisions += 1
+            return super().__truediv__(other)
     class Draws:
         def __init__(self):
             self.starts, self.restarts, self.bounds = iter((4, 3)), iter((.2, .1, .9, .8)), []
@@ -125,6 +130,7 @@ def test_return_uncertainty_stationary_restart_wrap_and_exact_quantile_oracle(mo
     values = {"strategy": (0., .125, .03125) + (0.,) * 97}
     values["benchmark"] = tuple(value + .25 for value in values["strategy"])
     values["paired_excess"] = (-.25,) * 100
+    values = {name: tuple(map(CountedFloat, series)) for name, series in values.items()}
     pairs = [divmod(index, 91) for index in range(1000)]
     prescribed = iter(pairs)
     def indices(count, block_days, rng):
@@ -133,6 +139,7 @@ def test_return_uncertainty_stationary_restart_wrap_and_exact_quantile_oracle(mo
         return [1] * a + [2] * b + [0] * (100 - a - b)
     monkeypatch.setattr(uncertainty, "_stationary_indices", indices)
     rows = [uncertainty._statistic(name, 100, series) for name, series in values.items()]
+    CountedFloat.divisions = 0  # Count resampling work separately from observed means.
     sample = {"sample_count": 100, "is_contiguous": True}
     sampling = {"expected_block_count": 20.8, "block_days": 5, "seed": 0, "replications": 1000}
     uncertainty._mean_intervals(rows, values, sample, sampling)
@@ -145,11 +152,14 @@ def test_return_uncertainty_stationary_restart_wrap_and_exact_quantile_oracle(mo
     assert rows[2]["mean"] == -.25 and rows[2]["mean_unavailable_reason"] is None
     assert rows[2]["lower"] is rows[2]["upper"] is None
     assert rows[2]["interval_unavailable_reason"] == "ZERO_SAMPLE_VARIATION"
+    assert CountedFloat.divisions == 200  # Two active columns, once per input, not 1000 draws.
     # Distinguish a constant input from a nonconstant input with degenerate draws.
     monkeypatch.setattr(uncertainty, "_stationary_indices", lambda count, block_days, rng: list(range(count)))
     rows = [uncertainty._statistic(name, 100, series) for name, series in values.items()]
+    CountedFloat.divisions = 0
     uncertainty._mean_intervals(rows, values, sample, sampling)
     assert [row["interval_unavailable_reason"] for row in rows] == ["DEGENERATE_RESAMPLING", "DEGENERATE_RESAMPLING", "ZERO_SAMPLE_VARIATION"]
+    assert CountedFloat.divisions == 200  # The same inputs are prepared anew on each call.
 
 
 def test_return_uncertainty_real_long_account_one_decode_paired_cash_days_and_console(return_uncertainty_case, monkeypatch, capsys):
@@ -314,9 +324,15 @@ def test_return_uncertainty_bad_saved_side_and_full_basis_are_local(return_uncer
 def test_family_bounds_exact_centered_joint_oracle_duplicate_and_reordered_columns(monkeypatch):
     from fractions import Fraction
     from market_vault.research import intraday_family_bounds as family
+    class CountedFloat(float):
+        divisions = 0
+        def __truediv__(self, other):
+            type(self).divisions += 1
+            return super().__truediv__(other)
     a = (0., .125, .03125) + (0.,) * 97
     b = (.0625, -.0625, .25) + (.0625,) * 97
     fixed = (.1,) * 100
+    a, b, fixed = (tuple(map(CountedFloat, column)) for column in (a, b, fixed))
     pairs = [divmod(index, 91) for index in range(1000)]
     expected_maxima = sorted(max(Fraction(4 * x + y - 5, 3200), Fraction(-4 * x + 6 * y - 2, 3200), 0)
                              for x, y in pairs)
@@ -342,8 +358,11 @@ def test_family_bounds_exact_centered_joint_oracle_duplicate_and_reordered_colum
             return [1] * x + [2] * y + [0] * (count - x - y)
         monkeypatch.setattr(family, "_stationary_indices", indices)
         rows = family_test_rows(columns)
+        CountedFloat.divisions = 0
         inference = family._family_bounds(rows, columns, sample, sampling, {"matches": True})
         assert calls == [(100, 5)] * 1000  # One shared draw per replicate, not independent candidate streams.
+        # Repeated/reordered calls prepare each active column afresh, never the constant.
+        assert CountedFloat.divisions == 100 * sum(column is not fixed for column in columns)
         return rows, inference
     rows, inference = calculate([a, b, fixed])
     assert captured[-1] == pytest.approx([float(value) for value in expected_maxima])
