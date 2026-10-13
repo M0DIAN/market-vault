@@ -7,6 +7,7 @@ dependent daily evidence; it does not cover unseen historical research.
 
 from __future__ import annotations
 
+import math
 import random
 
 from .intraday_data import digest
@@ -71,12 +72,15 @@ def _family_bounds(members, values, sample, sampling, basis):
     rng, maxima = random.Random(sampling["seed"]), []
     first_deltas, varied = None, [False] * len(members)
     try:
+        divided = [None if fixed else tuple(value / sample["sample_count"] for value in series)
+                   for series, fixed in zip(values, constant, strict=True)]
         for _ in range(sampling["replications"]):
             indices = _stationary_indices(sample["sample_count"], sampling["block_days"], rng)
             # Exactly constant columns contribute exact centered zero, even
             # when the floating mean of a repeated constant rounds differently.
-            deltas = [0.0 if fixed else _finite(_mean([series[index] for index in indices]) - row["mean_excess"])
-                      for row, series, fixed in zip(members, values, constant, strict=True)]
+            deltas = [0.0 if fixed else _finite(
+                _finite(math.fsum(series[index] for index in indices)) - row["mean_excess"])
+                for row, series, fixed in zip(members, divided, constant, strict=True)]
             maxima.append(max(deltas))
             if first_deltas is None:
                 first_deltas = deltas

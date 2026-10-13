@@ -153,13 +153,15 @@ def _mean_intervals(statistics, values, sample, sampling):
             active[name] = []
     if not active:
         return
+    # The denominator is fixed; keep each draw's original summation order.
+    divided = {name: tuple(value / sample["sample_count"] for value in values[name]) for name in active}
     rng = random.Random(sampling["seed"])
     rows = {row["series"]: row for row in statistics}
     for _ in range(sampling["replications"]):
         indices = _stationary_indices(sample["sample_count"], sampling["block_days"], rng)
         for name in tuple(active):
             try:
-                active[name].append(_mean([values[name][index] for index in indices]))
+                active[name].append(_finite(math.fsum(divided[name][index] for index in indices)))
             except ArithmeticError as exc:
                 rows[name]["interval_unavailable_reason"] = "NUMERIC_OVERFLOW"
                 rows[name]["detail"] = str(exc)

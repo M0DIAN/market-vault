@@ -166,7 +166,7 @@ Q5 or fitting entry points; original hashes remained unchanged.
 Repository hygiene and release checks pass at package 0.9.0. The actual
 classifier requires FULL CI. This local evidence is not independent final
 review or remote CI proof; exact candidate, PR and merged-main gates are
-recorded in the Q71 PR. Q72 remains pending its predecessor's merged-main gate.
+recorded in the Q71 PR and the completed delivery gate below.
 
 ### Q71 independent-review correction
 
@@ -195,8 +195,20 @@ order, the subnormal/normal boundary and the mixed-magnitude case. The affected
 baseline/final/alpha group passes **134 tests** (including that focused group),
 and direct TRAIN-mean reference, ablation and quadratic consumers pass
 **15 tests**. Earlier saved-file compatibility checks were not repeated for
-this helper-only repair. New-head CI and independent review are still required;
-the earlier candidate's CI does not clear its review blocker.
+this helper-only repair. The repair required new-head CI and independent
+review; the earlier candidate's CI did not clear its review blocker.
+
+### Q71 completed delivery gate
+
+PR #341's repaired final head `2949ee62cbb62b4f105d7c9e086871f8d5fab309`
+received independent MERGE-READY review and natural FULL CI
+`38325216626/1`, with all 16 jobs successful. Squash merge produced main
+`237ba1bb0ef1481d5e50d634ed6768b01e406ecd`, tree
+`ce9ed98cf78f8cd0659e715ee7d7a0e89bee236d`. Its natural push CI
+`38326428086/1` completed SUCCESS. Plan job `115066054239` proved
+`POST_MERGE_REUSE=true`, `verified_full_pr_tree_equivalence` and matching
+tested/main trees against PR run `38325216626`; the main closure jobs all
+succeeded. Q72 began only after this exact-main gate.
 
 ## Q72 - predivide active bootstrap series once per analysis
 
@@ -206,14 +218,25 @@ Every draw still visits the same indices in the same order and passes the
 same divided floating values to `math.fsum`. Keep constant-family deviations
 as exact zero. Local tuples end with the call; no cache service is introduced.
 
-**Defaults.** Preserve stationary bootstrap, synchronous PRNG stream, seed,
-default 5,000 replications, block/sample/continuity gates, full candidate family,
-declaration order, quantile interpolation and all unavailable reasons.
+**Defaults.** Preserve stationary bootstrap with `PYTHON_RANDOM_MT19937`,
+seed 0 and 5,000 replications. All active series share each draw's indices.
+Return intervals use 95% percentile coverage (2.5th and 97.5th percentiles);
+family bounds use the nonnegative 95th percentile of the complete family's
+centered maximum. Both retain `LINEAR_N_MINUS_ONE` interpolation.
+
+The default `block_days=max(2,ceil(cuberoot(n)))` retains its integer-cube
+rounding correction, restart probability `1/block_days` and `CIRCULAR`
+successors. Inference requires at least 100 daily returns, expected blocks
+`1+(n-1)/block_days >= 10` and contiguous evaluated DEV trading days. For the
+actual 100-day fixture, the default block length is 5 and expected block count
+is 20.8. Keep the full candidate family, declaration order and all unavailable
+reasons. These engineering gates do not establish statistical adequacy.
 
 **Scope.** `research/intraday_return_uncertainty.py`,
 `research/intraday_family_bounds.py`, their direct existing regression files
 and this record. Procedure analyses reuse these helpers without a new engine.
-Q71 is a delivery dependency; capture the byte baseline on its completed main.
+Q71 is a delivery dependency; the byte baseline was captured on its completed
+main before Q72 implementation.
 
 **Acceptance.** Complete bytes/IDs match for ordinary return intervals, full
 family bounds and a five-series procedure analysis from real saved fixtures.
@@ -226,3 +249,60 @@ required PR CI and exact-main CI succeed.
 **Excluded.** A different PRNG, resampling method, NumPy/BLAS dependency,
 family pruning, refitting during bootstrap, sample-policy changes, persistent
 state, result schema or statistical-definition changes.
+
+### Q72 implementation and local evidence
+
+The two kernels now prepare only active, nonconstant columns after the
+existing gates. Every replication feeds the same divided binary64 values,
+in the original index order, to `math.fsum`. `_mean` and
+`_stationary_indices` are unchanged. The family kernel retains both the
+mean's finite check and the centered-deviation finite check; constants still
+contribute exact zero. Tuples are local to each analysis, with no cross-call
+state, version, dependency, schema or statistical-definition change.
+
+Two existing independent Fraction/index/quantile oracles now count division
+work separately from observed means. Before the implementation, both failed
+at **200,000 divisions instead of 200** for 100 observations, two active
+columns and 1,000 replications. Afterward they pass, including fresh
+preparation on repeated calls and duplicate/reordered family members. The
+original numerical assertions remain in place.
+
+Formal baseline capture used the completed Q71 main above, with the actual
+saved 100-day DEV ordinary source and Q31 study. These historical inputs were
+opened through current `StrategyExperiment` validation without refitting or
+rewriting. Candidate source/tests were frozen at
+`b4b391e916077d6d996c2da99e56a308678bbb88`. Actual public Q13, Q16 and Q52
+analysis results match the baseline byte for byte, including every result ID:
+
+| Replications / seed | Result | Complete bytes | SHA256, identical before and after |
+|---|---|---:|---|
+| 5,000 / 0 | Q13 | 3,700 | `f630f46b35c3171def24d31a11b6efacdf11488dc92377f4feef5112355cf9fe` |
+| 5,000 / 0 | Q16 | 3,543 | `855e99f46ef31a49fadf808f8c88391a6e5935132c1c04590c94203a3ed9e4ad` |
+| 5,000 / 0 | Q52 | 5,151,696 | `058aed06e5994a58258cf66dac4e530228fc5c4abd7f268610e30ca1b833d090` |
+| 1,000 / 17 | Q13 | 3,702 | `76370fd37b69a2b4a0ff9d9d14f533d8567b812860b0291750c6eba99bf37fa5` |
+| 1,000 / 17 | Q16 | 3,543 | `eacbf1e88da8a39786cc44c8df87efaaaf562d26e6265366653a71f164ac82fc` |
+| 1,000 / 17 | Q52 | 5,151,698 | `70f07ea50078d2ec8591cb769aed75a236b6b5da576b1c41cc17ee9628deb6e6` |
+
+Both parameter sets also preserve the complete ordered indices-stream hashes,
+one draw per replication and final RNG-state hashes for all three APIs. The
+input bytes/hashes remain unchanged. The preserved baseline kernels were
+replayed with surrounding source proved unchanged; only the two kernels and
+the family module's required `math` import differ.
+
+Before concurrent tests, two bounded alternating runs on Python 3.11.17
+measured old/candidate totals of **1.109012/1.044429 seconds** and
+**1.145637/0.970631 seconds**. Each total covers the three already-opened
+snapshots' actual analysis entries, including internal decoding, ledger
+derivation and bootstrap. It excludes initial Strict Open, result encoding
+and file writing. These observations have no wall-clock acceptance threshold
+and do not measure CLI end-to-end latency; the earlier prototype timings are
+not the final acceptance evidence.
+
+The disjoint focused regressions pass **40 tests, with no skips**: 26 ordinary
+return-uncertainty/family tests, 13 procedure-uncertainty/procedure-family tests
+and the actual Q53 synchronous-stream/reversed-pair entry. They retain the
+independent numerical oracles, constants, tiny returns, overflow, full-family
+gates and real public/installed-CLI coverage. All 688 source/test file hashes
+remained unchanged throughout the frozen candidate checks. Only this record
+was updated afterward. Final-candidate independent review, required PR CI and
+exact-main verification remain the publication gates, recorded in the Q72 PR.
