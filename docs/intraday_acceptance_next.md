@@ -132,11 +132,14 @@ verdict, without treating successful report generation as data acceptance.
 
 **Technical approach:** accept explicit Q5, Q46 evidence manifest and policy
 inputs; reconstruct through existing Q46/Q47 entry points instead of trusting a
-saved MATCH or filename. Evaluate complete required DEV support and preserve
-unassessed, missing, invalid, duplicate, differing and agreeing denominators.
+saved MATCH or filename. Evaluate the full Q5 grid, a conservative superset of DEV support, and retain
+Q47 whole-window/target dependency links. Preserve unassessed, missing, invalid,
+duplicate, differing and agreeing denominators. Full-grid inspection includes
+any reserved TEST dates and recorded labels, not TEST strategy performance; it
+must not be described as a certificate of unseen TEST information.
 Bind the policy, data, reference content identities and declared source basis.
 Return REJECTED for confirmed policy violations, NEEDS_EVIDENCE for missing
-required evidence, or POLICY_SATISFIED for the stated numerical/coverage policy.
+required evidence, or POLICY_SATISFIED for the stated numerical/coverage and declared-source policy.
 Source-independence confidence remains a separate explicit declaration, never
 silently promoted by the policy verdict.
 
@@ -145,8 +148,10 @@ contracts. Reuse their verified price versions, actual scope and validity
 reasons. One additive settings-independent service/CLI and immutable new-file
 output are sufficient; no second comparison engine or evidence database.
 
-**Defaults:** existing zero numerical tolerances; complete required coverage;
-no accepted missing/duplicate/invalid required price rows; no dropping affected
+**Defaults:** existing zero numerical tolerances; complete FULL_Q5_GRID coverage;
+no accepted missing/duplicate/invalid required price rows; both sources must be
+declared OBSERVED with a claimed distinct upstream. These are required
+declarations, not proof of independent provenance; no dropping affected
 samples, intersecting dates or widening tolerances to obtain success. Explicit
 policy deviations must be identity-bound and visible. An empty reference list
 cannot satisfy the policy. POLICY_SATISFIED is not a market-accuracy certificate,
@@ -162,6 +167,62 @@ its absence does not justify inventing observed agreement.
 **Exclusions:** vendor selection, downloading, authentication, automatic repair,
 real dataset accuracy claims without evidence, and changes to legacy research
 or Freeze/TEST admission. No compulsory global clean-data gate.
+
+### Q74 entry and decision contract
+
+```console
+market-vault research-intraday-market-evidence --data /absolute/q5.json --manifest /absolute/evidence-plan.json --policy /absolute/acceptance-policy.json --output /absolute/new-acceptance.json
+```
+
+The existing command without `--policy` is unchanged, including SUCCESS/0 when
+a comparison report is generated with partial or missing evidence. With the
+flag, the explicit policy selects the new result version
+`market-vault-intraday-data-acceptance-v1`. The published file is the complete
+acceptance object; the CLI envelope reports the **same policy status**, not
+SUCCESS. Exit 0 means POLICY_SATISFIED, 2 means REJECTED or NEEDS_EVIDENCE (a new
+report was still published), and 1 means invalid request or publication failure.
+Existing destinations are never overwritten, including rejected reports.
+
+Python entry:
+`analyze_intraday_data_acceptance(data, manifest, policy, base=...)` in
+`market_vault.research.intraday_data_acceptance`. The public action performs one
+strict Q5 verification, calls Q47 -> Q46 once, and inspects every local session
+with the same Q44 validity kernel. There is no saved-report or preverified-input
+shortcut. Full dependency evidence contains the Q46 report **once**; its
+original identifiers, input diagnostics and all denominators remain intact.
+
+Minimal explicit policy:
+
+```json
+{"schema_version":"market-vault-intraday-data-acceptance-policy-v1"}
+```
+
+Normalization fills `scope: FULL_Q5_GRID`, all three Q44 tolerances with zero,
+and `require_declared_distinct_observed: true`. Any supplied tolerances must
+match the independently explicit Q46 manifest; mismatch is FAILED before data
+processing, not an automatic tolerance override. The only supported scope is
+the complete Q5 grid; no dates/samples are intersected away to produce a pass.
+A caller can explicitly set the declaration requirement false for a numerical
+policy (including synthetic software testing); that changed canonical policy
+and its distinct ID stay in the report. Such a verdict does not assert
+observed provenance or independence. The source-assurance field always says
+SOURCE_DECLARATIONS_ONLY and `independence_verified: false`.
+
+Known missing local prices, invalid local/reference inputs (including duplicate
+or unkeyed rows), numerical differences, or prohibited synthetic/shared source
+declarations produce REJECTED. Missing/partial reference coverage and unknown
+required source declarations produce NEEDS_EVIDENCE. Rejections take precedence,
+but the report also retains all evidence gaps. Incompatible scope/economic
+basis remains the existing explicit input error: no false partial report is
+manufactured. Hash consistency or Q46 AVAILABLE alone cannot satisfy a policy.
+
+`acceptance_id` binds the entire derived result excluding that ID. `policy_id`
+binds canonical normalized content; Q46 binds actual captured reference bytes
+and verified Q5 content/source identities. These hashes do not prove prior
+registration, an authenticated timestamp, observed accuracy or strategy value.
+This is additive CLI/API functionality; there is no GUI control or automatic
+research/Freeze/TEST launch gate. Synthetic integration fixtures test decisions
+and input preservation; no actual market-data acceptance is claimed.
 
 ## Q75 - bounded TEST-exposure and trial-history record
 
