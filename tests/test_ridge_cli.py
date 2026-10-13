@@ -1,4 +1,4 @@
-"""Focused tests for Ridge Regression Plan V1 and CLI result V2."""
+"""Focused tests for Ridge Regression Plan V1 and CLI result V3."""
 
 from __future__ import annotations
 
@@ -37,6 +37,8 @@ def _result():
             feature_scales=(10.0, 1.0),
             target_mean=10.01,
             standardized_coefficients=(2.0, -0.1),
+            feature_center_offsets=(1e-15, -1e-18),
+            target_center_offset=1e-16,
             mae=0.03,
             rmse=0.04,
             r2=0.25,
@@ -53,6 +55,8 @@ def _result():
             feature_scales=(9.0, 1.1),
             target_mean=7.815,
             standardized_coefficients=(1.35, -0.055),
+            feature_center_offsets=(0.0, 1e-18),
+            target_center_offset=0.0,
             mae=0.02,
             rmse=0.03,
             r2=None,
@@ -126,8 +130,8 @@ def test_ridge_cli_is_settings_independent_and_explicit(
 
     output = json.loads(capsys.readouterr().out)
     assert output["status"] == "SUCCESS"
-    assert output["result_schema_version"] == "market-vault-ridge-cli-result-v2"
-    assert output["ridge_version"] == "market-vault-ridge-baseline-v2"
+    assert output["result_schema_version"] == "market-vault-ridge-cli-result-v3"
+    assert output["ridge_version"] == "market-vault-ridge-baseline-v3"
     assert output["walk_forward_id"] == "b" * 64
     assert output["dataset_id"] == "a" * 64
     assert output["label_name"] == "forward_return_5d"
@@ -148,6 +152,7 @@ def test_ridge_cli_is_settings_independent_and_explicit(
         "alpha": 1.5,
         "intercept": 0.01,
         "target_mean": 10.01,
+        "target_center_offset": 1e-16,
         "features": [
             {
                 "feature_name": "rsi14",
@@ -155,6 +160,7 @@ def test_ridge_cli_is_settings_independent_and_explicit(
                 "standardized_coefficient": 2.0,
                 "train_mean": 50.0,
                 "train_scale": 10.0,
+                "train_center_offset": 1e-15,
             },
             {
                 "feature_name": "macd",
@@ -162,6 +168,7 @@ def test_ridge_cli_is_settings_independent_and_explicit(
                 "standardized_coefficient": -0.1,
                 "train_mean": 0.0,
                 "train_scale": 1.0,
+                "train_center_offset": -1e-18,
             },
         ],
         "metrics": {

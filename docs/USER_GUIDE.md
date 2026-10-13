@@ -517,26 +517,37 @@ market-vault research-return-assessment --experiment "D:\reports\comparison.json
 精确 schema、支持的保存格式、匹配边界与命令错误约定见
 [Unadjusted return assessment V1](contracts/unadjusted_return_assessment_v1.md)。
 
-### Ridge 研究模型参数（Q68）
+### Ridge 研究模型参数（Q71）
 
-当前 Ridge 模型使用 `market-vault-ridge-baseline-v2`。预测值由保存的
-`target_mean`、`standardized_coefficients` 和各 Feature 的训练 `means` / `scales`
-重建：`target_mean + math.fsum(standardized_coefficient * ((x - mean) / scale))`。
+当前 Ridge 模型使用 `market-vault-ridge-baseline-v3`。`means` 与 `target_mean`
+仍报告训练均值，另以 `feature_center_offsets` 与 `target_center_offset` 保存
+均值不能直接表示的低位修正。Feature 标准化为
+`z = ((x - mean) - feature_center_offset) / scale`；预测重建为
+`math.fsum((target_mean, target_center_offset, *weighted_terms))`，其中各项
+`weighted_terms = standardized_coefficient * z`。目标训练残差也减去完整中心，
+TRAIN_MEAN 参考预测与拟合共用同一均值计算，避免近常量目标直接求和再除法造成的偏差。
 权重为零或训练时为常数的 Feature（`scale = 0`）在预测中贡献零；如果标准化的
-中间商溢出，改以 `(standardized_coefficient / scale) * (x - mean)` 计算该中心化项。
+中间商溢出，改以 `(standardized_coefficient / scale) * ((x - mean) - feature_center_offset)`
+计算该中心化项。
 DEV 只使用各 fold 的
 TRAIN 统计；final TEST 使用按既有规则 purge 后的 TRAIN+VALIDATION 统计。
-Quadratic Ridge 先应用保存的输入变换与项展开，再使用其嵌套 Ridge 的这些参数。
+Quadratic Ridge 使用 `market-vault-intraday-quadratic-ridge-v2`，先应用保存的
+`input_transform` 中的 `means`、`center_offsets`、`scales` 与项展开，再使用
+其嵌套 Ridge v3 的参数；两层均只使用对应训练历史。
 `intercept` 与原尺度 `coefficients` 仍用于解释模型；大数相消可能损失低位，
 因此不能用这两项重建当前预测值。
 
-`research-ridge` 的结果 schema 为 `market-vault-ridge-cli-result-v2`；
-`research-ridge-final` 的结果 schema 为 `market-vault-ridge-final-cli-result-v2`，
-final 算法版本为 `market-vault-ridge-final-test-v2`。两种 CLI 均输出
-`target_mean`，并在各 Feature 条目中输出 `standardized_coefficient`；输入 plan
-版本保持不变。旧模型文件仍可通过 Open 只读查看，文件不会被迁移或覆盖；
+`research-ridge` 的结果 schema 为 `market-vault-ridge-cli-result-v3`；
+`research-ridge-final` 的结果 schema 为 `market-vault-ridge-final-cli-result-v3`，
+final 算法版本为 `market-vault-ridge-final-test-v3`。两种 CLI 均输出
+`target_mean`、`target_center_offset`，并在各 Feature 条目中输出
+`standardized_coefficient` 及 `train_center_offset` / `development_center_offset`；
+输入 plan 版本保持不变。完整的 Ridge v1/v2 与 quadratic v1 旧模型仍可通过
+Open 只读查看，文件不会被迁移或覆盖；
 当前 Replay 与源重建会在读取源数据或拟合前明确拒绝旧算法版本。需要当前结果时，
 按显式计划重新运行研究并另存新结果。
+这些修正保留已表示的非恒定训练变化；它们不保证任意浮点平移下结果完全相同，
+也没有扩大原有方差或求解器的有限数值范围。
 
 ## 12. Sample Generation
 

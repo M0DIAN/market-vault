@@ -162,7 +162,8 @@ def test_offline_open_exclusive_save_and_embedded_selection(final_case, selectio
 
 @pytest.mark.parametrize("case", ["model_keys", "negative_scale", "prediction_clock", "daily_shape", "benchmark_decision",
     "context_overlap", "errors", "nested_test", "bool_strategy", "bool_policy", "bool_execution_policy", "bool_benchmark_policy",
-    "decision_slot", "decision_day", "missing_centered"])
+    "decision_slot", "decision_day", "missing_centered", "missing_offsets", "partial_offsets",
+    "offset_width", "offset_type"])
 def test_resigned_malformed_test_records_are_rejected(final_case, case):
     root = final_case[1].as_dict()
     report = root["report"]
@@ -173,6 +174,14 @@ def test_resigned_malformed_test_records_are_rejected(final_case, case):
     elif case == "missing_centered":
         report["model"].pop("target_mean")
         report["model"].pop("standardized_coefficients")
+    elif case in ("missing_offsets", "partial_offsets"):
+        report["model"].pop("target_center_offset")
+        if case == "missing_offsets":
+            report["model"].pop("feature_center_offsets")
+    elif case == "offset_width":
+        report["model"]["feature_center_offsets"].pop()
+    elif case == "offset_type":
+        report["model"]["target_center_offset"] = True
     elif case == "prediction_clock":
         report["predictions"][0]["decision_time"] = "bad"
         report["execution"]["decisions"][0]["decision_time"] = "bad"
@@ -203,9 +212,10 @@ def test_resigned_malformed_test_records_are_rejected(final_case, case):
         StrategyExperiment(sign_test(root))
 
 
-@pytest.mark.parametrize("version,legacy_shape", [("market-vault-ridge-baseline-v1", True), ("historical-ridge", False)])
+@pytest.mark.parametrize("version,shape", [("market-vault-ridge-baseline-v1", 1),
+    ("market-vault-ridge-baseline-v2", 2), ("historical-ridge", 1), ("historical-ridge", 2), ("historical-ridge", 3)])
 def test_historical_final_ridge_shapes_open_without_reinterpreting_or_reading_sources(
-    final_case, tmp_path, monkeypatch, version, legacy_shape,
+    final_case, tmp_path, monkeypatch, version, shape,
 ):
     root = final_case[1].as_dict()
     selection = root["plan"]["selection"]
@@ -217,7 +227,10 @@ def test_historical_final_ridge_shapes_open_without_reinterpreting_or_reading_so
     report["selection_experiment_id"] = selection["experiment_id"]
     report["selection_id"] = report["context"]["selection_id"] = selection["report"]["selection_id"]
     report["model"]["version"] = version
-    if legacy_shape:
+    if shape < 3:
+        report["model"].pop("feature_center_offsets")
+        report["model"].pop("target_center_offset")
+    if shape == 1:
         report["model"].pop("target_mean")
         report["model"].pop("standardized_coefficients")
     content = sign_test(root)

@@ -1,4 +1,4 @@
-"""Focused leakage, numerical and identity tests for Ridge Final TEST V2."""
+"""Focused leakage, numerical and identity tests for Ridge Final TEST V3."""
 
 from __future__ import annotations
 
@@ -102,10 +102,11 @@ def test_final_centered_prediction_matches_fraction_oracle_above_five_bps():
         assert scores == pytest.approx(expected, rel=0.0, abs=8 * math.ulp(expected[0]))
         assert tuple(score > .0005 for score in scores) == (True, False)
         assert result.target_mean == 0.0 and result.standardized_coefficients[1] == 0.0
-        reconstructed = tuple(result.target_mean + math.fsum(
-            coefficient * ((value - mean) / scale if scale else 0.0)
-            for value, coefficient, mean, scale in zip(X, result.standardized_coefficients,
-                result.feature_means, result.feature_scales, strict=True)) for X in bundle.test.X)
+        reconstructed = tuple(math.fsum((result.target_mean, result.target_center_offset, *(
+            coefficient * (((value - mean) - offset) / scale if scale else 0.0)
+            for value, coefficient, mean, scale, offset in zip(X, result.standardized_coefficients,
+                result.feature_means, result.feature_scales, result.feature_center_offsets, strict=True))))
+            for X in bundle.test.X)
         assert reconstructed == scores
 
 
@@ -134,6 +135,8 @@ def test_test_targets_change_test_result_but_not_final_model():
     assert left.feature_scales == right.feature_scales
     assert left.target_mean == right.target_mean
     assert left.standardized_coefficients == right.standardized_coefficients
+    assert left.feature_center_offsets == right.feature_center_offsets
+    assert left.target_center_offset == right.target_center_offset
 
     # TEST evaluation itself must reflect the changed held-out targets.
     assert left.final_test_id != right.final_test_id
@@ -213,14 +216,23 @@ def test_result_identities_reject_tampering():
         replace(result, model_id="0" * 64)
 
     for changes in ({"target_mean": result.target_mean + .125},
+                    {"target_center_offset": result.target_center_offset + .125},
+                    {"feature_center_offsets": (result.feature_center_offsets[0] + .125,
+                                                *result.feature_center_offsets[1:])},
                     {"standardized_coefficients": (result.standardized_coefficients[0] + .125,
                                                    *result.standardized_coefficients[1:])}):
         with pytest.raises(RidgeFinalTestError, match="model_id differs"):
             replace(result, **changes)
     with pytest.raises(RidgeFinalTestError, match="target_mean must be finite"):
         replace(result, target_mean=math.inf)
+    with pytest.raises(RidgeFinalTestError, match="target_center_offset must be finite"):
+        replace(result, target_center_offset=math.inf)
     with pytest.raises(RidgeFinalTestError, match="parameter widths differ"):
         replace(result, standardized_coefficients=result.standardized_coefficients[:-1])
+    with pytest.raises(RidgeFinalTestError, match="parameter widths differ"):
+        replace(result, feature_center_offsets=result.feature_center_offsets[:-1])
+    with pytest.raises(RidgeFinalTestError, match="feature_center_offsets value must be finite"):
+        replace(result, feature_center_offsets=(math.inf, *result.feature_center_offsets[1:]))
 
     with pytest.raises(
         RidgeFinalTestError,

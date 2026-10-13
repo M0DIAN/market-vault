@@ -125,6 +125,79 @@ new solvers/precision libraries, broad overflow policy redesign, persistent
 caches, alternate search, general translation-invariance guarantees and any
 change to TEST permissions.
 
+### Q71 implementation and local evidence
+
+Implemented from Q70 main `3aa14ae67f0540268211ffe27b3efba9425d057b` after
+its exact-main gate. The initial independent linear/quadratic/target-mean
+regressions produced **10 failures and 5 passing controls** before repair.
+Linear predictions now agree with the Fraction shrinkage oracle at alphas
+0.1/1/10, including the strict 5 bps decision. The asymmetric quadratic
+prediction agrees with a separate Fraction two-column normal equation that
+eliminates both normalization square roots, and stays below 10 bps.
+
+The shared TRAIN center helper keeps a rounded mean plus its offset. The
+offset calculation feeds interleaved `(value, -mean)` terms directly to
+`math.fsum`: first rounding individual residuals can incorrectly move the
+already correct mean of `(0,0,ulp(1))` upward by one ULP. Fraction checks cover
+this zero-origin case, half-ULP boundaries and nonconstant targets near
+positive/negative 0.1. Q21, Q33 and intercept-only ablation use the same rounded
+TRAIN mean. The previously supported opposite finite target pair
+`(-1e308,1e308)` still has mean zero; the solver/variance range is unchanged.
+
+Both new Ridge offset fields enter saved model IDs, alpha fold IDs, generic
+final IDs and CLI results. Quadratic v2 records input `center_offsets` before
+its nested Ridge v3. Saved parameters reconstruct the asymmetric linear
+predictions in the declared operation order exactly. Current-version shape,
+numeric type, width and identity corruptions are rejected. Regressions retain
+TRAIN/TEST separation, complete-label metrics with all-READY predictions,
+constant-column policy, symmetric Gram work counts and Q66 action-local reuse.
+
+Focused local groups passed: core/CLI/configuration **148 passed, 2 GUI skips**;
+the extended baseline/final center guards **70 passed** (overlapping core);
+prediction diagnostics/ablation/quadratic **37 passed**;
+saved DEV and final TEST **73 passed, 2 GUI skips**;
+procedure suite/training history **17 passed**;
+generic strategy/trading consumers **38 passed, 1 GUI skip**. GUI skips are
+the existing PySide6 availability gates, not native GUI validation. A separate
+read-only check opened six genuine historical v1/v2 files unchanged and
+rejected all twelve default/explicit-locator Replay attempts before source,
+Q5 or fitting entry points; original hashes remained unchanged.
+
+Repository hygiene and release checks pass at package 0.9.0. The actual
+classifier requires FULL CI. This local evidence is not independent final
+review or remote CI proof; exact candidate, PR and merged-main gates are
+recorded in the Q71 PR. Q72 remains pending its predecessor's merged-main gate.
+
+### Q71 independent-review correction
+
+Review of candidate `f3933f5042d773fa783cad73c367b6276ee5e4be` found a
+supported finite-target regression at the minimum binary64 spacing. With
+`u=nextafter(0,1)` and TRAIN targets `(u,0)`, the correctly rounded mean is
+zero, but an underflowed center correction retained `u`. An actual
+constant-Feature Ridge fit consequently changed a strict zero-threshold
+decision from FLAT to LONG. Direct Fraction/fit regressions first produced
+**10 failures and 18 passing controls** on that candidate.
+
+The helper now resolves an exact half-grid tie after its final mean/offset
+feedback, using the even neighboring mean. Only an odd value at the minimum
+binary64 spacing with zero stored offset needs the extra residual sum. The
+post-feedback position also covers `(5*u,1,-1,-3*u)`, whose first correction
+is nonzero but leaves the same unrepresentable half-grid remainder. A general
+fallback to `fsum(targets)/n` would instead reintroduce double rounding at
+ordinary magnitudes: for `(0.1,u,0.2)` it produces `0.10000000000000002`,
+where Fraction gives a rounded mean of `0.1`. Both signs remain direct
+controls. This correction does not alter model versions or offset fields,
+constant classification, solver/variance range or historical replay policy.
+
+The focused Fraction/actual-fit/strict-zero/saved-reconstruction group passes
+**51 tests**, including adjacent even/odd ties, thirds, both signs, reversed
+order, the subnormal/normal boundary and the mixed-magnitude case. The affected
+baseline/final/alpha group passes **134 tests** (including that focused group),
+and direct TRAIN-mean reference, ablation and quadratic consumers pass
+**15 tests**. Earlier saved-file compatibility checks were not repeated for
+this helper-only repair. New-head CI and independent review are still required;
+the earlier candidate's CI does not clear its review blocker.
+
 ## Q72 - predivide active bootstrap series once per analysis
 
 **Goal and technical plan.** In `_mean_intervals` and `_family_bounds`, compute

@@ -1,4 +1,4 @@
-"""Leakage-safe final Ridge TEST evaluation V2.
+"""Leakage-safe final Ridge TEST evaluation V3.
 
 This layer closes the regression research loop after Walk-Forward validation
 and Ridge alpha selection.
@@ -45,7 +45,7 @@ from .walk_forward import (
 )
 
 
-RIDGE_FINAL_TEST_VERSION = "market-vault-ridge-final-test-v2"
+RIDGE_FINAL_TEST_VERSION = "market-vault-ridge-final-test-v3"
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -161,6 +161,8 @@ class RidgeFinalTestResult:
     feature_scales: tuple[float, ...]
     target_mean: float
     standardized_coefficients: tuple[float, ...]
+    feature_center_offsets: tuple[float, ...]
+    target_center_offset: float
     predictions: tuple[RidgeFinalTestPrediction, ...]
     mae: float
     rmse: float
@@ -232,7 +234,8 @@ class RidgeFinalTestResult:
             _finite(self.intercept, "intercept"),
         )
         object.__setattr__(self, "target_mean", _finite(self.target_mean, "target_mean"))
-        for name in ("coefficients", "feature_means", "feature_scales", "standardized_coefficients"):
+        object.__setattr__(self, "target_center_offset", _finite(self.target_center_offset, "target_center_offset"))
+        for name in ("coefficients", "feature_means", "feature_scales", "standardized_coefficients", "feature_center_offsets"):
             values = getattr(self, name)
             if type(values) is not tuple or not values:
                 raise RidgeFinalTestError(
@@ -248,6 +251,7 @@ class RidgeFinalTestResult:
             or len(self.feature_means) != width
             or len(self.feature_scales) != width
             or len(self.standardized_coefficients) != width
+            or len(self.feature_center_offsets) != width
         ):
             raise RidgeFinalTestError(
                 "final Ridge parameter widths differ from Feature schema"
@@ -299,6 +303,8 @@ class RidgeFinalTestResult:
             feature_scales=self.feature_scales,
             target_mean=self.target_mean,
             standardized_coefficients=self.standardized_coefficients,
+            feature_center_offsets=self.feature_center_offsets,
+            target_center_offset=self.target_center_offset,
         )
         if self.model_id != expected_model_id:
             raise RidgeFinalTestError(
@@ -412,10 +418,12 @@ def _model_id(
     feature_scales: tuple[float, ...],
     target_mean: float,
     standardized_coefficients: tuple[float, ...],
+    feature_center_offsets: tuple[float, ...],
+    target_center_offset: float,
 ) -> str:
     _identity(development_keys_digest, "development_keys_digest")
     return encode_identity(
-        "market-vault-ridge-final-model-v2",
+        "market-vault-ridge-final-model-v3",
         {
             "selection_id": selection_id,
             "walk_forward_id": walk_forward_id,
@@ -433,6 +441,11 @@ def _model_id(
             "development_keys_digest": development_keys_digest,
             "intercept": intercept,
             "target_mean": target_mean,
+            "target_center_offset": target_center_offset,
+            "feature_center_offsets_digest": _scalar_digest(
+                "market-vault-ridge-final-feature-center-offsets-v1",
+                feature_center_offsets,
+            ),
             "standardized_coefficients_digest": _scalar_digest(
                 "market-vault-ridge-final-standardized-coefficients-v1",
                 standardized_coefficients,
@@ -558,12 +571,13 @@ def evaluate_ridge_final_test(
     test_y = tuple(row.y for row in test_rows)
 
     try:
-        intercept, coefficients, means, scales, target_mean, standardized_coefficients = _fit(
+        (intercept, coefficients, means, scales, target_mean, standardized_coefficients,
+         feature_offsets, target_offset) = _fit(
             train_X,
             train_y,
             selection.selected_alpha,
         )
-        predicted = _predict(test_X, target_mean, standardized_coefficients, means, scales)
+        predicted = _predict(test_X, target_mean, standardized_coefficients, means, scales, feature_offsets, target_offset)
         mae, rmse, r2, *_ = _metrics(test_y, predicted)
     except RidgeBaselineError as exc:
         raise RidgeFinalTestError(str(exc)) from exc
@@ -611,6 +625,8 @@ def evaluate_ridge_final_test(
         feature_scales=scales,
         target_mean=target_mean,
         standardized_coefficients=standardized_coefficients,
+        feature_center_offsets=feature_offsets,
+        target_center_offset=target_offset,
     )
     final_test_id = _final_test_id(
         model_id=model_id,
@@ -641,6 +657,8 @@ def evaluate_ridge_final_test(
         scales,
         target_mean,
         standardized_coefficients,
+        feature_offsets,
+        target_offset,
         predictions,
         mae,
         rmse,

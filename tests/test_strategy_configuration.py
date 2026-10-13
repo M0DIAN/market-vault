@@ -43,10 +43,10 @@ def test_all_any_boundary_truth_values_are_feature_only():
 def test_adding_composite_preserves_legacy_result_ids_and_condition_order(monkeypatch):
     _bind_bundle(monkeypatch, _execution_bundle())
     original = compare_strategies(object(), **_config())
-    # The aggregate binds Ridge's model version and scores, so Q68's v2
+    # The aggregate binds Ridge's model version and scores, so Q71's v3
     # prediction representation intentionally changes this fixture checksum.
     # Adding a composite must still preserve every existing result below.
-    assert original.comparison_id == "615d1f52915ea8333ef0c4058c0dc9b3551954e8edd8c59e891ddb21bba4687a"
+    assert original.comparison_id == "0ea6718463bb6921a32aa5fe6ff39df1507095ba4c3844ca3d540ec8aad2111f"
     mixed = compare_strategies(object(), **_config(strategies=_config()["strategies"] + (_composite(),)))
     assert mixed.results[:3] == original.results
     assert mixed.version == "market-vault-strategy-comparison-v2"

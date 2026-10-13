@@ -1,4 +1,4 @@
-"""Focused tests for Ridge Final TEST Plan + CLI V1."""
+"""Focused tests for Ridge Final TEST Plan V1 and CLI result V3."""
 
 from __future__ import annotations
 
@@ -71,6 +71,8 @@ def _final():
         feature_scales=(10.0, 1.0),
         target_mean=10.01,
         standardized_coefficients=(2.0, -0.1),
+        feature_center_offsets=(1e-15, -1e-18),
+        target_center_offset=1e-16,
         predictions=tuple(range(30)),
         mae=0.025,
         rmse=0.035,
@@ -157,12 +159,12 @@ def test_ridge_final_cli_is_settings_independent_and_explicit(
 
     output = json.loads(capsys.readouterr().out)
     assert output["status"] == "SUCCESS"
-    assert output["result_schema_version"] == "market-vault-ridge-final-cli-result-v2"
+    assert output["result_schema_version"] == "market-vault-ridge-final-cli-result-v3"
     assert output["alpha_selection_version"] == (
         "market-vault-ridge-alpha-selection-v1"
     )
     assert output["final_test_version"] == (
-        "market-vault-ridge-final-test-v2"
+        "market-vault-ridge-final-test-v3"
     )
     assert output["selection_id"] == "s" * 64
     assert output["final_test_id"] == "f" * 64
@@ -201,6 +203,7 @@ def test_ridge_final_cli_is_settings_independent_and_explicit(
     assert output["model"] == {
         "intercept": 0.01,
         "target_mean": 10.01,
+        "target_center_offset": 1e-16,
         "features": [
             {
                 "feature_name": "rsi14",
@@ -208,6 +211,7 @@ def test_ridge_final_cli_is_settings_independent_and_explicit(
                 "standardized_coefficient": 2.0,
                 "development_mean": 50.0,
                 "development_scale": 10.0,
+                "development_center_offset": 1e-15,
             },
             {
                 "feature_name": "macd",
@@ -215,6 +219,7 @@ def test_ridge_final_cli_is_settings_independent_and_explicit(
                 "standardized_coefficient": -0.1,
                 "development_mean": 0.0,
                 "development_scale": 1.0,
+                "development_center_offset": -1e-18,
             },
         ],
     }

@@ -169,7 +169,8 @@ def _strategy_signals(strategy: Strategy, plan: WalkForwardPlan, feature_rows: d
         scores = {}
         for fold, fitted in zip(plan.folds, ridge.folds, strict=True):
             predictions = _predict(fold.validation.X, fitted.target_mean, fitted.standardized_coefficients,
-                                   fitted.feature_means, fitted.feature_scales)
+                                   fitted.feature_means, fitted.feature_scales,
+                                   fitted.feature_center_offsets, fitted.target_center_offset)
             scores.update(zip(fold.validation.sample_keys, predictions, strict=True))
         return scores, BacktestRule("ridge_prediction", "GT", strategy.threshold)
     raise StrategyComparisonError("unsupported strategy type")

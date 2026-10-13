@@ -60,7 +60,7 @@ from .research.walk_forward import (
 
 RIDGE_FINAL_PLAN_SCHEMA_VERSION = "market-vault-ridge-final-plan-v1"
 RIDGE_FINAL_CLI_RESULT_SCHEMA_VERSION = (
-    "market-vault-ridge-final-cli-result-v2"
+    "market-vault-ridge-final-cli-result-v3"
 )
 
 _PLAN_FIELDS = frozenset({
@@ -284,13 +284,15 @@ def _feature_parameter_payload(result) -> list[dict]:
             "standardized_coefficient": standardized_coefficient,
             "development_mean": mean,
             "development_scale": scale,
+            "development_center_offset": center_offset,
         }
-        for name, coefficient, standardized_coefficient, mean, scale in zip(
+        for name, coefficient, standardized_coefficient, mean, scale, center_offset in zip(
             result.feature_names,
             result.coefficients,
             result.standardized_coefficients,
             result.feature_means,
             result.feature_scales,
+            result.feature_center_offsets,
         )
     ]
 
@@ -324,6 +326,7 @@ def _success_payload(selection, result) -> dict:
         "model": {
             "intercept": result.intercept,
             "target_mean": result.target_mean,
+            "target_center_offset": result.target_center_offset,
             "features": _feature_parameter_payload(result),
         },
         "test_metrics": {
