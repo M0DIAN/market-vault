@@ -65,7 +65,7 @@ strategy is profitable.
 
 **Goal and technical plan.** Reuse Q67's origin-first, scaled centering for
 target total variation. Use it in generic Ridge fold/pooled/final metrics and
-Q21/Q34 prediction diagnostics. Q21 retains a scaled loss ratio, so tiny or
+Q21/Q33 prediction diagnostics. Q21 retains a scaled loss ratio, so tiny or
 large representable ratios do not require representable individual sums of
 squares. A rounded displayed mean is not the reference vector for R-squared.
 
@@ -271,17 +271,26 @@ Formal baseline capture used the completed Q71 main above, with the actual
 saved 100-day DEV ordinary source and Q31 study. These historical inputs were
 opened through current `StrategyExperiment` validation without refitting or
 rewriting. Candidate source/tests were frozen at
-`b4b391e916077d6d996c2da99e56a308678bbb88`. Actual public Q13, Q16 and Q52
-analysis results match the baseline byte for byte, including every result ID:
+`b4b391e916077d6d996c2da99e56a308678bbb88`. Actual public
+`analyze_intraday_return_uncertainty` (Q15), `analyze_intraday_family_bounds`
+(Q16) and `analyze_intraday_procedure_return_uncertainty` (Q35) analysis
+results match the baseline byte for byte, including every result ID:
 
 | Replications / seed | Result | Complete bytes | SHA256, identical before and after |
 |---|---|---:|---|
-| 5,000 / 0 | Q13 | 3,700 | `f630f46b35c3171def24d31a11b6efacdf11488dc92377f4feef5112355cf9fe` |
+| 5,000 / 0 | Q15 | 3,700 | `f630f46b35c3171def24d31a11b6efacdf11488dc92377f4feef5112355cf9fe` |
 | 5,000 / 0 | Q16 | 3,543 | `855e99f46ef31a49fadf808f8c88391a6e5935132c1c04590c94203a3ed9e4ad` |
-| 5,000 / 0 | Q52 | 5,151,696 | `058aed06e5994a58258cf66dac4e530228fc5c4abd7f268610e30ca1b833d090` |
-| 1,000 / 17 | Q13 | 3,702 | `76370fd37b69a2b4a0ff9d9d14f533d8567b812860b0291750c6eba99bf37fa5` |
+| 5,000 / 0 | Q35 | 5,151,696 | `058aed06e5994a58258cf66dac4e530228fc5c4abd7f268610e30ca1b833d090` |
+| 1,000 / 17 | Q15 | 3,702 | `76370fd37b69a2b4a0ff9d9d14f533d8567b812860b0291750c6eba99bf37fa5` |
 | 1,000 / 17 | Q16 | 3,543 | `eacbf1e88da8a39786cc44c8df87efaaaf562d26e6265366653a71f164ac82fc` |
-| 1,000 / 17 | Q52 | 5,151,698 | `70f07ea50078d2ec8591cb769aed75a236b6b5da576b1c41cc17ee9628deb6e6` |
+| 1,000 / 17 | Q35 | 5,151,698 | `70f07ea50078d2ec8591cb769aed75a236b6b5da576b1c41cc17ee9628deb6e6` |
+
+The capture script mistakenly used case keys `Q13` and `Q52` for the Q15
+and Q35 calls. These keys are outside the result payloads. The mapping above
+was checked against the callable entries and the [Q15/Q16 contract](intraday_research_quality.md)
+and [Q35 contract](intraday_ml_evidence_next.md); captured evidence and output
+bytes were not rewritten. Direct procedure comparison and complete-family
+consumers are [Q39 and Q40](intraday_procedure_robustness_next.md).
 
 Both parameter sets also preserve the complete ordered indices-stream hashes,
 one draw per replication and final RNG-state hashes for all three APIs. The
@@ -300,7 +309,7 @@ not the final acceptance evidence.
 
 The disjoint focused regressions pass **40 tests, with no skips**: 26 ordinary
 return-uncertainty/family tests, 13 procedure-uncertainty/procedure-family tests
-and the actual Q53 synchronous-stream/reversed-pair entry. They retain the
+and the actual Q39 synchronous-stream/reversed-pair entry. They retain the
 independent numerical oracles, constants, tiny returns, overflow, full-family
 gates and real public/installed-CLI coverage. All 688 source/test file hashes
 remained unchanged throughout the frozen candidate checks. Only this record
