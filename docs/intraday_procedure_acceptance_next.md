@@ -186,3 +186,54 @@ Natural push/main CI 38672844316/1 passed with the existing exact-tree FULL reus
 proof. Q78 starts only after that closure. The local dependency limitation is
 unchanged: syntax checks are not public integration PASS; required natural CI
 and a new independent exact-head review are still required for Q78.
+
+## Q79 public command entry
+
+The installed `market-vault` entry now exposes the same explicit offline
+operations as the original module commands. For example, with already-prepared
+saved inputs in the current directory and output names that do not yet exist:
+
+```console
+market-vault research-intraday-history record --experiment saved-study.json --declaration declaration.json --output event.json
+market-vault research-intraday-history assess --experiment saved-study.json --event event.json --output history-assessment.json
+market-vault research-intraday-forward-reconciliation --experiment saved-study.json --observations observations.json --output reconciliation.json
+```
+
+The example filenames are inputs to prepare and explicitly select, not source
+discovery or files this task claims to have captured. `--event` may be repeated
+for individually named saved events; omitting it examines an empty supplied
+history, not a complete global record. Existing commands remain valid:
+`python -m market_vault.research.intraday_history record|assess ...` and
+`python -m market_vault.research.intraday_forward_reconciliation ...`.
+
+Root and module commands share argument builders and execution functions.
+The nested history action uses `history_action`, separate from the root
+`command` discriminator, so it cannot redirect execution into settings loading.
+The existing root research dispatcher runs before application settings are
+loaded; these actions do not require a settings file. There is no automatic
+source discovery, refit, replay, Freeze, TEST or follow-on action.
+
+Schemas, identity checks, declarations, limitations and exclusive new-file
+publication are unchanged. History returns 0 for recording or no overlap in the
+supplied history, 2 for known/unknown recorded exposure, and 1 for processing or
+publication failure. Reconciliation returns 0 only for RECONCILED with no quote
+policy exceedance, 2 for other diagnostic outcomes, and 1 for processing or
+publication failure. Standard argparse usage errors retain exit 2. An exit 0
+is not a certification of untouched TEST, live capture, fills or profitability.
+
+Four added parameterized public-entry tests use the installed console executable
+and the legacy modules on the existing same-module `inner_case` fixture. They
+compare full v1/v2 event and assessment/reconciliation content, known exposure
+and missing-evidence exits, exact-account failure, no overwrite, root help and
+operation with a nonexistent settings path. No additional study construction,
+new test partition, workflow, dependency, schema, GUI or generic CLI layer.
+
+Q78 completed before Q79 implementation: PR348 independently reviewed head
+`651e807924b2c059c5ecd636b7e0ba7168af69bb`; FULL PR CI 38674159770/1 passed
+all 16 jobs (ML: 80 passed, one existing skipped, 412.85s). Squash main
+`521d2df8c21715f814d544bbc7b483fa9090297b` retains tested tree
+`867ca3158f62691ab6af6f59e13de59e6f94c44a`. Its natural push/main CI
+38675628048/1 passed with the existing exact-tree FULL reuse proof. Q79 requires
+its own final independent review, required natural CI and exact-main closure.
+The local missing-pyarrow import limitation remains distinct from CI runtime
+proof; it is not hidden with dependency stubs or skipped tests.

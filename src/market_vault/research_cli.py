@@ -162,6 +162,8 @@ RESEARCH_COMMANDS = MARKET_DATA_COMMANDS | frozenset({
     "research-intraday-market-evidence",
     "research-intraday-market-dependencies",
     "research-intraday-sample-usage",
+    "research-intraday-history",
+    "research-intraday-forward-reconciliation",
     "research-intraday-inner-objective-sensitivity",
     "research-intraday-procedure-return-uncertainty",
     "research-intraday-feature-ablation",
@@ -257,7 +259,18 @@ _DOCUMENTED_ERRORS = (
 
 
 def add_research_subparsers(subparsers) -> None:
+    from .research.intraday_history import add_history_arguments
+    from .research.intraday_forward_reconciliation import add_forward_arguments
+
     add_market_data_subparsers(subparsers)
+    add_history_arguments(subparsers.add_parser(
+        "research-intraday-history",
+        help="Record saved research history or assess explicitly supplied TEST exposure",
+    ))
+    add_forward_arguments(subparsers.add_parser(
+        "research-intraday-forward-reconciliation",
+        help="Reconcile explicit observed quotes/paper fills with a saved DEV account",
+    ))
     build = subparsers.add_parser(
         "research-build",
         help="Build one PIT-safe research Dataset from an explicit research plan",
@@ -320,6 +333,12 @@ def add_research_subparsers(subparsers) -> None:
 
 
 def run_research_command(command: str, args: argparse.Namespace) -> int:
+    if command == "research-intraday-history":
+        from .research.intraday_history import run_history_command
+        return run_history_command(args)
+    if command == "research-intraday-forward-reconciliation":
+        from .research.intraday_forward_reconciliation import run_forward_command
+        return run_forward_command(args)
     if command in MARKET_DATA_COMMANDS:
         return market_data_main(args, command=command)
     if command == "research-intraday-procedure-comparison":
