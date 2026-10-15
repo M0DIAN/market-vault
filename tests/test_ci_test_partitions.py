@@ -249,3 +249,31 @@ def test_plan_cli_exports_the_exact_normalized_plan(tmp_path):
     assert run.returncode == 0, run.stderr
     assert output.read_text() == run.stdout
     assert "run_partitions=true\n" in run.stdout
+
+
+def test_python314_compatibility_is_independent_and_package_requires_both():
+    """Q80 must move the actual compatibility work, not merely rename a check."""
+    import re
+
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+    aggregate = release_checker._ci_job_block(workflow, "test")
+    compatibility = release_checker._ci_job_block(workflow, "test-314")
+    package = release_checker._ci_job_block(workflow, "package")
+    assert aggregate is not None and compatibility is not None and package is not None
+    assert re.findall(r"(?m)^    needs: (.*)$", aggregate) == ["[plan, test-modules]"]
+    assert re.findall(r"(?m)^    needs: (.*)$", compatibility) == ["plan"]
+    assert 'python-version: ["3.11"]' in aggregate
+    assert 'python-version: ["3.14"]' in compatibility
+    assert "name: test (3.14)" in compatibility
+    assert "CI_PARTITIONS_RESULT" not in compatibility
+    assert "needs.test-modules" not in compatibility
+    assert "ci_test_partitions.py verify" not in compatibility
+    for step in ("Validate Python 3.14 compatibility surface", "Run Python 3.14 compatibility surface",
+                 "Run Python 3.14 research compatibility"):
+        assert release_checker._ci_step_region(compatibility, step) is not None
+        assert release_checker._ci_step_region(aggregate, step) is None
+    assert re.findall(r"(?m)^    needs: (.*)$", package) == ["[plan, test, test-314, portability-pyarrow24]"]
+    guards = re.findall(r"(?m)^    if: (.*)$", package)
+    assert len(guards) == 1 and "always() && !cancelled()" in guards[0]
+    for job in ("plan", "test", "test-314", "portability-pyarrow24"):
+        assert f"needs.{job}.result == 'success'" in guards[0]
