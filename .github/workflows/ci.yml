@@ -155,7 +155,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.14"]
+        python-version: ["3.11"]
 
     steps:
       - name: Require successful CI plan
@@ -229,52 +229,8 @@ jobs:
         if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.CI_TIER != 'research_fast' && env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.11'
         run: python scripts/ci_test_partitions.py verify
 
-      - name: Validate Python 3.14 compatibility surface
-        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.14'
-        run: python scripts/ci_python314_surface.py --repo .
-
-      # P1-1 (PR #75): execute exactly the validated surface, fail-closed.
-      # The selector list is loaded into an explicit Bash array from the
-      # validated manifest ci/python314_compatibility_surface.txt with a
-      # hard count check (258), printed for auditability, and expanded
-      # quoted into pytest (no command substitution, xargs, eval, globs,
-      # -k, markers, or dynamic discovery); the previous validator step
-      # must have passed, otherwise this step never runs and the job
-      # fails.
-      - name: Run Python 3.14 compatibility surface
-        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.14'
-        run: |
-          set -euo pipefail
-
-          mapfile -t PY314_SELECTORS \
-            < ci/python314_compatibility_surface.txt
-
-          test "${#PY314_SELECTORS[@]}" -eq 258
-
-          printf 'PY314_SELECTOR_COUNT=%s\n' \
-            "${#PY314_SELECTORS[@]}"
-
-          printf '%s\n' "${PY314_SELECTORS[@]}"
-
-          python -m pytest \
-            "${PY314_SELECTORS[@]}" \
-            -q --durations=200
-
-      # FULL and research_fast share the same 3.14 compatibility contract:
-      # the sealed base above plus pandas projection and inspect/TS2 runtime
-      # boundaries. These complete files supplement the sealed 294-node base.
-      - name: Run Python 3.14 research compatibility
-        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.14'
-        run: |
-          set -euo pipefail
-          python -m pytest \
-            tests/test_ml_dataset_adapter.py \
-            tests/test_ts2_feature_boundaries.py \
-            -q --durations=20
-          echo "PY314_RESEARCH_COMPATIBILITY_OK"
-
       # CI Acceleration V1: bounded Research/Feature portfolio on 3.11.
-      # Python 3.14 runs the compatibility contract above in research_fast.
+      # The independent test-314 job runs compatibility in research_fast.
       # Integration tests also cover adjacent Dataset and Cross-Day boundaries;
       # their source paths keep the existing tier classification.
       - name: Run Research fast tests
@@ -328,6 +284,128 @@ jobs:
             tests/test_v061_ci_auditability.py \
             tests/test_release_v061.py \
             -q --durations=100
+      - name: FULL tests reused from verified PR
+        if: env.POST_MERGE_REUSE == 'true'
+        run: |
+          echo "FULL_TESTS_REUSED_FROM_VERIFIED_PR"
+          echo "reason=${{ env.POST_MERGE_REUSE_REASON }}"
+
+      - name: Fast-path tier marker
+        if: env.CI_TIER == 'docs_fast' || env.CI_TIER == 'package_docs'
+        run: |
+          echo "CI_TIER=${{ env.CI_TIER }}"
+          echo "FULL_TESTS_SKIPPED_BY_POLICY"
+
+      # P1-2 control-plane tier marker (PR #71): an explicit marker step
+      # rather than overloading the old fast marker. On the 3.14 leg the
+      # FULL suite is skipped by the validated control-plane policy, and
+      # the marker makes that evident in the logs.
+      - name: Control-plane tier marker
+        if: env.CI_TIER == 'control_plane'
+        run: |
+          echo "CI_TIER=control_plane"
+          echo "CONTROL_PLANE_SUBSET_POLICY_ACTIVE"
+          echo "matrix_python_version=${{ matrix.python-version }}"
+          if [ "${{ matrix.python-version }}" != "3.11" ]; then
+            echo "FULL_SUITE_SKIPPED_BY_CONTROL_PLANE_POLICY"
+          fi
+
+  test-314:
+    name: test (3.14)
+    needs: plan
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-latest
+    env:
+      CI_TIER: ${{ needs.plan.outputs.tier }}
+      POST_MERGE_REUSE: ${{ needs.plan.outputs.reuse }}
+      POST_MERGE_REUSE_REASON: ${{ needs.plan.outputs.reuse_reason }}
+      CI_FULL_MATRIX_REQUIRED: ${{ needs.plan.outputs.full_matrix_required }}
+      CI_PLAN_RESULT: ${{ needs.plan.result }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.14"]
+
+    steps:
+      - name: Require successful CI plan
+        run: test "$CI_PLAN_RESULT" = success
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Check whitespace in change range
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git diff --check "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}"
+          elif [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
+            git diff --check "${{ github.event.before }}" "${{ github.sha }}"
+          fi
+
+      - name: Check repository hygiene
+        run: python scripts/check_repo_hygiene.py
+
+      - name: Install dependencies
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && (env.CI_TIER != 'control_plane' || matrix.python-version == '3.11') && env.POST_MERGE_REUSE != 'true'
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Compile Python
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && (env.CI_TIER != 'control_plane' || matrix.python-version == '3.11') && env.POST_MERGE_REUSE != 'true'
+        run: python -m compileall -q src tests scripts examples
+
+      - name: Validate Python 3.14 compatibility surface
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.14'
+        run: python scripts/ci_python314_surface.py --repo .
+
+      # P1-1 (PR #75): execute exactly the validated surface, fail-closed.
+      # The selector list is loaded into an explicit Bash array from the
+      # validated manifest ci/python314_compatibility_surface.txt with a
+      # hard count check (258), printed for auditability, and expanded
+      # quoted into pytest (no command substitution, xargs, eval, globs,
+      # -k, markers, or dynamic discovery); the previous validator step
+      # must have passed, otherwise this step never runs and the job
+      # fails.
+      - name: Run Python 3.14 compatibility surface
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.14'
+        run: |
+          set -euo pipefail
+
+          mapfile -t PY314_SELECTORS \
+            < ci/python314_compatibility_surface.txt
+
+          test "${#PY314_SELECTORS[@]}" -eq 258
+
+          printf 'PY314_SELECTOR_COUNT=%s\n' \
+            "${#PY314_SELECTORS[@]}"
+
+          printf '%s\n' "${PY314_SELECTORS[@]}"
+
+          python -m pytest \
+            "${PY314_SELECTORS[@]}" \
+            -q --durations=200
+
+      # FULL and research_fast share the same 3.14 compatibility contract:
+      # the sealed base above plus pandas projection and inspect/TS2 runtime
+      # boundaries. These complete files supplement the sealed 294-node base.
+      - name: Run Python 3.14 research compatibility
+        if: env.CI_TIER != 'docs_fast' && env.CI_TIER != 'package_docs' && env.CI_TIER != 'control_plane' && env.POST_MERGE_REUSE != 'true' && matrix.python-version == '3.14'
+        run: |
+          set -euo pipefail
+          python -m pytest \
+            tests/test_ml_dataset_adapter.py \
+            tests/test_ts2_feature_boundaries.py \
+            -q --durations=20
+          echo "PY314_RESEARCH_COMPATIBILITY_OK"
+
       - name: FULL tests reused from verified PR
         if: env.POST_MERGE_REUSE == 'true'
         run: |
@@ -449,10 +527,10 @@ jobs:
 
   package:
     runs-on: ubuntu-latest
-    needs: [plan, test, portability-pyarrow24]
+    needs: [plan, test, test-314, portability-pyarrow24]
     # An explicit status function avoids transitive skips from the planned
     # module skip. Direct prerequisites must still all succeed.
-    if: ${{ always() && !cancelled() && needs.plan.result == 'success' && needs.test.result == 'success' && needs.portability-pyarrow24.result == 'success' }}
+    if: ${{ always() && !cancelled() && needs.plan.result == 'success' && needs.test.result == 'success' && needs.test-314.result == 'success' && needs.portability-pyarrow24.result == 'success' }}
     env:
       CI_TIER: ${{ needs.plan.outputs.tier }}
       POST_MERGE_REUSE: ${{ needs.plan.outputs.reuse }}
