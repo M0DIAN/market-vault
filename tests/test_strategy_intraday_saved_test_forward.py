@@ -186,3 +186,28 @@ def test_saved_flat_test_forward_retains_no_reference_actions(intraday_experimen
     snapshot = final.create_intraday_test_experiment(selection, report)
     _, template, result = assert_saved_test_forward(snapshot, tmp_path, monkeypatch, require_actions=False)
     assert template["records"] == [] and result["status"] == "NO_REFERENCE_ACTIONS"
+
+
+def test_economic_test_comparison_mixed_sources_remain_descriptive(final_case, ml_final_case,
+        threshold_final_case, joint_final_case, intraday_experiment, monkeypatch):
+    from market_vault.research.intraday_saved_comparison import compare_saved_intraday_experiments
+    from market_vault.research import intraday_research as research
+    blocked = lambda *a, **kw: pytest.fail("saved A/B read source data, fitted or executed")
+    for module, name in ((research, "load_intraday_dataset"), (research, "_fit"),
+                         (research, "run_intraday_execution"), (final, "load_intraday_dataset"),
+                         (final, "run_intraday_final_test"), (final, "run_intraday_execution")):
+        monkeypatch.setattr(module, name, blocked)
+    v1, v2, v3, v4 = final_case[1], ml_final_case[1]["fixed"], threshold_final_case[1], joint_final_case["quadratic"].tested
+    for left, right in ((v1, v3), (v2, v4), (v3, v4), (intraday_experiment, v4), (v3, intraday_experiment)):
+        before = left.content, right.content
+        result = compare_saved_intraday_experiments(left, right)
+        assert result["status"] == "SUCCESS" and not result["delta_allowed"]
+        assert result["delta_reasons"][0] == "TEST_DESCRIPTIVE_ONLY"
+        assert result["left"]["experiment_id"] == left.experiment_id
+        assert result["right"]["experiment_id"] == right.experiment_id
+        assert all(side["candidate_performance"]["status"] == "AVAILABLE" for side in (result["left"], result["right"]))
+        basis = next(row for row in result["basis_checks"] if row["key"] == "return_basis")
+        assert basis["matches"] == ("return_basis" in left.as_dict()["report"] and "return_basis" in right.as_dict()["report"])
+        assert all(row["delta"]["value"] is None and row["delta"]["unavailable_reason"] == "TEST_DESCRIPTIVE_ONLY"
+                   for group in ("strategy_metrics", "benchmark_metrics") for row in result[group])
+        assert (left.content, right.content) == before

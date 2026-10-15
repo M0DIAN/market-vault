@@ -5,6 +5,14 @@ comparisons, Q7 diagnostics and Q8 final TEST records are accepted. Export an
 ordinary Q7 child from a [Q10 collection](intraday_execution_scenarios.md) before
 comparing it. A frozen selection without a TEST result is not an execution.
 
+Q87 extends both the public core/CLI and native opener to strictly validated
+saved TEST V3 (economic threshold) and V4 (joint recipe), alongside V1/V2. The
+strict reader still binds the frozen recipe and recorded TEST account. New
+economic sides retain their saved `return_basis`; basis checks additionally
+disclose it whenever either side has one. Existing DEV/TEST V1/V2 result shapes
+are unchanged. This is a description of already exposed TEST information, not
+another unseen holdout, account replay or selection among TEST attempts.
+
 The operation validates the two experiment files and uses their recorded
 evidence. It does not read Q5/Canonical sources, fit, execute strategies, discover
 files, modify experiments or create a new comparison archive format. Its derived

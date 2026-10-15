@@ -435,8 +435,17 @@ def test_explicit_saved_reader_boundaries_for_v3(threshold_final_case, monkeypat
             analyze_intraday_experiment(tested, **args)
     with pytest.raises(ValueError):
         analyze_intraday_experiment(selection)
-    with pytest.raises(ValueError, match="saved comparison requires"):
-        compare_saved_intraday_experiments(tested, tested)
+    comparison = compare_saved_intraday_experiments(tested, tested)
+    assert comparison["basis_matches"] and not comparison["delta_allowed"]
+    assert comparison["delta_reasons"] == ["TEST_DESCRIPTIVE_ONLY"]
+    assert comparison["left"]["return_basis"] == comparison["right"]["return_basis"] == audited["return_basis"]
+    assert all(row["delta"]["value"] is None and row["delta"]["unavailable_reason"] == "TEST_DESCRIPTIVE_ONLY"
+               for group in ("strategy_metrics", "benchmark_metrics") for row in comparison[group])
+    for kwargs in ({"left_candidate_index": 1}, {"right_cost_index": True}):
+        with pytest.raises(ValueError):
+            compare_saved_intraday_experiments(tested, tested, **kwargs)
+    with pytest.raises(ValueError):
+        compare_saved_intraday_experiments(selection, tested)
     saved = path / "test.json"
     before = saved.read_bytes()
     assessment = assess_saved_experiment(saved)
@@ -455,6 +464,8 @@ def test_explicit_saved_reader_boundaries_for_v3(threshold_final_case, monkeypat
     event_path.write_text(json.dumps(events))
     assert cli.main(["research-intraday-performance", "--experiment", str(saved)]) == 0
     assert json.loads(capsys.readouterr().out)["report"] == audited
+    assert cli.main(["research-intraday-compare-saved", "--left", str(saved), "--right", str(saved)]) == 0
+    assert json.loads(capsys.readouterr().out)["report"] == comparison
     assert cli.main(["research-return-assessment", "--experiment", str(saved), "--events", str(event_path)]) == 2
     assert json.loads(capsys.readouterr().out) == restricted
     with pytest.raises(ReturnAssessmentError):

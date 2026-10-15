@@ -459,17 +459,26 @@ assert controller.tableModel.totalRows > 0
 shot('q32-native-compact-test-risk-zh')
 assert session.i18n.setLanguage('en'); app.processEvents()
 assert 'one shared inner model' in find('intradayTestView').property('model')[16]
-# Q11 remains a V1/V2 reader and preserves the completed sources/result on V3.
-# Perform this expected failure after the normal-state evidence screenshots.
+# Q87 opens the saved economic TEST through the actual A/B QML entry.
 window.setWidth(1280); window.setHeight(1000); app.processEvents()
 click('intradaySavedComparisonTab')
 file_action('intradaySavedLeftOpen', 'intradaySavedOpenLeftDialog', ordinary, comparison)
 file_action('intradaySavedRightOpen', 'intradaySavedOpenRightDialog', ordinary, comparison)
 click('intradaySavedCompareButton'); complete(comparison)
+file_action('intradaySavedLeftOpen', 'intradaySavedOpenLeftDialog', tested, comparison)
+click('intradaySavedCompareButton'); complete(comparison)
+assert comparison.leftSource['is_test'] and not comparison.canAnalyzePortfolio
+assert comparison._result['left']['experiment_id'] == json.loads(test_bytes)['experiment_id']
+assert not comparison._result['delta_allowed']
+assert all(row['delta']['value'] is None and row['delta']['unavailable_reason'] == 'TEST_DESCRIPTIVE_ONLY'
+           for group in ('strategy_metrics', 'benchmark_metrics') for row in comparison._result[group])
 comparison_before = (comparison._sources.copy(), comparison._result.copy(), comparison._bound_sources.copy())
-file_action('intradaySavedLeftOpen', 'intradaySavedOpenLeftDialog', tested, comparison, 'FAILED')
+file_action('intradaySavedLeftOpen', 'intradaySavedOpenLeftDialog', selected, comparison, 'FAILED')
 assert (comparison._sources, comparison._result, comparison._bound_sources) == comparison_before
-assert 'V1/V2' in comparison.error and controller._test_content == test_bytes
+assert comparison.error and controller._test_content == test_bytes
+file_action('intradaySavedLeftOpen', 'intradaySavedOpenLeftDialog', tested, comparison)
+click('intradaySavedCompareButton'); complete(comparison)
+assert not comparison._result['delta_allowed'] and not comparison.error
 assert selected.read_bytes() == selected_bytes and tested.read_bytes() == test_bytes
 assert all(path.read_bytes() == content for path, content in originals.items())
 (root/'q32-native-warnings.json').write_text(json.dumps(warnings, ensure_ascii=False, indent=2))

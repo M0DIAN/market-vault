@@ -198,8 +198,10 @@ inventing a standalone Selection path. The Q36 source must already be saved.
 The original Q38 scope retained the Q32 saved-reader boundary. Q86 subsequently
 extends public performance and ReturnAssessment to strictly read TEST V3/V4,
 using the existing recorded account and benchmark; risk fold diagnostics remain
-not applicable and TEST indices stay zero. Saved A/B retains its V1/V2 boundary
-until Q87. No TEST search, ranking or promotion is introduced.
+not applicable and TEST indices stay zero. Q87 extends Saved A/B core/CLI and
+native opening to these TESTs while retaining TEST_DESCRIPTIVE_ONLY for every
+numerical delta, even self-comparison. Portfolio/rebalance remain DEV-only.
+No TEST search, ranking or promotion is introduced.
 
 ### Acceptance and exclusions
 

@@ -543,8 +543,22 @@ def test_v4_saved_test_readers_retain_single_candidate_boundaries(joint_final_ca
             analyze_intraday_experiment(case.tested, **args)
     with pytest.raises(ValueError):
         analyze_intraday_experiment(case.selection)
-    with pytest.raises(ValueError, match="saved comparison requires"):
-        compare_saved_intraday_experiments(case.tested, case.tested)
+    comparison = compare_saved_intraday_experiments(case.tested, case.tested)
+    assert comparison["basis_matches"] and not comparison["delta_allowed"]
+    assert comparison["delta_reasons"] == ["TEST_DESCRIPTIVE_ONLY"]
+    assert comparison["left"]["return_basis"] == comparison["right"]["return_basis"] == audited["return_basis"]
+    assert all(row["delta"]["value"] is None and row["delta"]["unavailable_reason"] == "TEST_DESCRIPTIVE_ONLY"
+               for group in ("strategy_metrics", "benchmark_metrics") for row in comparison[group])
+    for kwargs in ({"right_candidate_index": 1}, {"left_cost_index": False}):
+        with pytest.raises(ValueError):
+            compare_saved_intraday_experiments(case.tested, case.tested, **kwargs)
+    with pytest.raises(ValueError):
+        compare_saved_intraday_experiments(case.selection, case.tested)
+    from market_vault.research.intraday_portfolio import analyze_intraday_portfolio
+    from market_vault.research.intraday_portfolio_rebalance import analyze_intraday_portfolio_rebalance
+    for analyze in (analyze_intraday_portfolio, analyze_intraday_portfolio_rebalance):
+        with pytest.raises(ValueError, match="ordinary saved Q7 DEV"):
+            analyze(case.tested, case.tested)
     before = case.test_path.read_bytes()
     assessment = assess_saved_experiment(case.test_path)
     assert assessment["source_id"] == case.tested.experiment_id
@@ -554,6 +568,8 @@ def test_v4_saved_test_readers_retain_single_candidate_boundaries(joint_final_ca
     assert assessment["window_counts"]["STRATEGY_TRADE"] == performance["summary"]["trade_count"]["value"]
     assert cli.main(["research-intraday-performance", "--experiment", str(case.test_path)]) == 0
     assert json.loads(capsys.readouterr().out)["report"] == audited
+    assert cli.main(["research-intraday-compare-saved", "--left", str(case.test_path), "--right", str(case.test_path)]) == 0
+    assert json.loads(capsys.readouterr().out)["report"] == comparison
     assert cli.main(["research-return-assessment", "--experiment", str(case.test_path)]) == 0
     assert json.loads(capsys.readouterr().out) == assessment
     with pytest.raises(ReturnAssessmentError):
