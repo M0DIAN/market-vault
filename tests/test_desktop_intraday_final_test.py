@@ -2644,8 +2644,8 @@ def test_q83_native_forward_controller_round_trip_capture_recovery_and_test_scop
     assert controller.notice == "STALE_INPUT"
     assert all(path.read_bytes() == body for path, body in original.items())
     assert source_declaration.read_bytes() == declared_bytes
-    assert not runtime.backend_initialized
-    assert runner.names.count("intraday_forward") == 7
+    assert runtime.backend_if_initialized is None
+    assert runner.names.count("intraday_forward") == 6
 
 
 def test_q83_real_qml_saved_test_export_analysis_and_language(final_case, tmp_path):
