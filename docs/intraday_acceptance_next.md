@@ -179,7 +179,7 @@ a comparison report is generated with partial or missing evidence. With the
 flag, the explicit policy selects the new result version
 `market-vault-intraday-data-acceptance-v1`. The published file is the complete
 acceptance object; the CLI envelope reports the **same policy status**, not
-SUCCESS. Exit 0 means POLICY_SATISFIED, 2 means REJECTED or NEEDS_EVIDENCE (a new
+SUCCESS. Exit 0 means POLICY_SATISFIED, 2 for REJECTED or NEEDS_EVIDENCE (a new
 report was still published), and 1 means invalid request or publication failure.
 Existing destinations are never overwritten, including rejected reports.
 
@@ -236,6 +236,7 @@ binding data/source identity, symbol/basis, date intervals, candidate/plan/code
 identity, declared candidate family/costs, observation/tuning purpose and TEST
 exposure. Compare dates and economic scope, not filenames or display names.
 Report KNOWN_EXPOSURE when matching TEST scope was inspected or used for tuning;
+UNKNOWN_RECORDED_EXPOSURE for relevant unknown imported history, or
 NO_RECORDED_EXPOSURE_IN_SUPPLIED_HISTORY otherwise, with external historical
 coverage UNKNOWN. The report cannot relabel previously viewed TEST as pristine.
 
@@ -258,6 +259,75 @@ exposure. Inputs remain unchanged; no fitting or TEST execution occurs.
 **Exclusions:** global enforcement, complete lifetime search accounting,
 anti-tamper promises for user-controlled files, an approval platform, global
 statistical overfitting certification, and changes to existing TEST algorithms.
+
+### Q75 entry, scope and saved-record contract
+
+The additive module CLI deliberately leaves existing root commands and GUI
+behavior unchanged:
+
+```console
+python -m market_vault.research.intraday_history record --experiment /absolute/saved.json --declaration /absolute/history-declaration.json --output /absolute/new-event.json
+python -m market_vault.research.intraday_history assess --experiment /absolute/proposed-selection.json --event /absolute/new-event.json --output /absolute/new-assessment.json
+```
+
+Repeat `--event` for each explicit history file; omitting it assesses an empty
+supplied history, not a complete history. API entries are
+`create_intraday_history_event(experiment_path, declaration)` and
+`analyze_intraday_test_history(experiment_path, event_paths)` in that module.
+No data directory or implicit latest record is accepted. Inputs may be ordinary
+Q7 DEV V1/V2, frozen selection V1-V4, or saved TEST V1-V4; other artifact types
+are rejected rather than being partially interpreted.
+
+A declaration has exactly `schema_version` (value
+`market-vault-intraday-history-declaration-v1`), `expected_experiment_id`,
+`recorded_at` (explicit UTC instant), `purpose`, `observed_days`, `code_commit`
+and `notes`. Purposes INSPECT/TUNE require a sorted unique, nonempty list of
+source-scope trading days; PLAN_ONLY/UNKNOWN require an empty list. A known
+code commit is an explicit full 40-character lowercase Git SHA; null means
+unknown. Neither the time nor code commit is authenticated by this action.
+There is no automatic timestamp or false prior-registration claim.
+
+Creation uses the existing strict offline artifact grammar exactly once. Each
+new event retains source artifact/data/plan identities, Feature/split context,
+the saved candidate family and execution-cost recipes, a recipe-set identity,
+algorithm/environment metadata and the complete declaration. A saved event has
+version `market-vault-intraday-history-event-v1` and a full-content `event_id`.
+Loading checks its grammar and content/recipe bindings; it does not re-open the
+original source or certify a user-controlled file against deliberate rewriting.
+Keep the original artifacts and explicit events for reproducibility.
+
+Known research-use exposure conservatively includes **all recorded TRAIN and
+VALIDATION dates**, including dates that were not scored in a DEV fold. A saved
+TEST additionally includes all of its TEST dates regardless of the declaration.
+This describes recorded research use, not proof that a human saw particular
+pixels. Declared INSPECT/TUNE dates are added, never used to subtract existing
+recorded exposure. Thus older DEV dates later proposed as TEST remain exposed,
+and importing TEST with PLAN_ONLY cannot erase its saved result evidence.
+
+Matching uses the same literal US symbol and New York trading date under the
+existing RTH/unadjusted contract. Different data IDs, names, files, Feature sets,
+recipes or bar intervals do not reset overlap. Currency/asset-class provenance,
+related-symbol information transfer and global economic equivalence are not
+verified by these saved metadata. Do not infer them from a matching verdict.
+
+Assessment returns `market-vault-intraday-test-history-v1`. KNOWN_EXPOSURE takes
+precedence over UNKNOWN_RECORDED_EXPOSURE, which represents relevant UNKNOWN
+history declarations. Otherwise the status is
+NO_RECORDED_EXPOSURE_IN_SUPPLIED_HISTORY. Each supplied unique event retains its
+known/declared/unknown overlap explanation; duplicate content IDs are counted
+but do not inflate evidence. Known and unknown day unions remain separate. A
+proposed artifact that is itself a saved TEST contributes its own TEST exposure
+even when the supplied event list is empty. Corrupt or unreadable event files
+fail the action instead of being silently dropped.
+
+Every result explicitly retains `external_history_coverage: UNKNOWN` and
+`independence_certified: false`. An empty or disjoint history is not pristine-TEST
+certification. No action fits a model, reconstructs Q5 or executes/replays TEST.
+Both CLI commands exclusively publish a **new** file; existing files are never
+overwritten. Exit 0 means event recorded or no overlap found in supplied history,
+2 means known/unknown overlap (the report was still published), and 1 means
+invalid input or publication failure. No exit status automatically authorizes a
+research run, TEST use, model promotion or trade.
 
 ## Q76 - forward-observation execution discrepancy reconciliation
 
