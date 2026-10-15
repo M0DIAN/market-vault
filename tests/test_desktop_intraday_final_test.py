@@ -2530,3 +2530,233 @@ print('REAL_INTRADAY_FINAL_WORKFLOW_OK')
     assert result.returncode == 0, result.stdout + result.stderr
     assert "REAL_INTRADAY_FINAL_WORKFLOW_OK" in result.stdout
     assert "ReferenceError" not in result.stderr and "TypeError" not in result.stderr
+
+
+
+def test_q83_native_forward_controller_round_trip_capture_recovery_and_test_scope(
+        qt_app, tmp_path, intraday_experiment, final_case, monkeypatch):
+    """Real saved files and the same v1/v3 research API; no reconstructed accounts."""
+    from market_vault.desktop.intraday_forward import IntradayForwardController
+    from market_vault.research import intraday_forward_reconciliation as forward
+    from market_vault.research import intraday_research as research
+    from market_vault.quality.market_data_comparison import read_json_file
+    from test_strategy_intraday_forward_reconciliation import observed
+
+    source = tmp_path / "ordinary.json"
+    frozen_test = tmp_path / "test.json"
+    write_strategy_experiment(intraday_experiment, path=source)
+    write_strategy_experiment(final_case[1], path=frozen_test)
+    original = {p: p.read_bytes() for p in (source, frozen_test)}
+    root = intraday_experiment.as_dict()
+    indices = next((i, j) for i, group in enumerate(root["report"]["groups"])
+                   for j, candidate in enumerate(group["results"])
+                   if candidate["execution"]["transactions"])
+    declaration = {
+        "source": {"provider": "synthetic-unit-fixture", "version": "1",
+                   "captured_at": "2026-10-15T00:00:00Z", "data_kind": "SYNTHETIC",
+                   "upstream_id": None, "upstream_evidence": None},
+        "reference_clock_id": "capture",
+        "policy": {"max_quote_age_ms": 10, "max_adverse_quote_bps": None},
+    }
+    source_declaration = tmp_path / "declaration.json"
+    source_declaration.write_text(json.dumps(declaration))
+    declared_bytes = source_declaration.read_bytes()
+    from test_desktop_quant_research import _runtime
+    runtime, runner = _runtime(tmp_path, [])
+    controller = IntradayForwardController(runtime, parent=None)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Q83 replayed Q5, fitted or executed saved account")
+    monkeypatch.setattr(research, "load_intraday_dataset", forbidden)
+    monkeypatch.setattr(research, "_fit", forbidden)
+    monkeypatch.setattr(research, "run_intraday_execution", forbidden)
+
+    template_path = tmp_path / "template.json"
+    values = {"mode": "TEMPLATE", "experiment_path": str(source),
+              "declaration_path": str(source_declaration), "observations_path": "",
+              "output_path": str(template_path), "cost_index": str(indices[0]),
+              "candidate_index": str(indices[1])}
+    assert controller.run(values)
+    runtime._poll()
+    qt_app.processEvents()
+    assert controller.resultLoaded and controller.resultScope == "ORDINARY_DEV"
+    template = read_json_file(template_path)
+    total = len(template["records"])
+    assert total > 0 and controller.resultSummary["reference_action_count"] == total
+    assert all(row["action_ready_at"] is row["quote"] is row["paper_fill"] is None
+               for row in template["records"])
+    assert not controller.forwardCaptureVerified and not controller.fillsVerified
+
+    report_path = tmp_path / "report.json"
+    analysis = {**values, "mode": "RECONCILE", "observations_path": str(template_path),
+                "output_path": str(report_path), "cost_index": "", "candidate_index": ""}
+    assert controller.run(analysis)
+    runtime._poll()
+    qt_app.processEvents()
+    assert controller.resultStatus == "NOT_MEASURED"
+    assert controller.resultSummary["matched_record_count"] == total
+    assert controller.resultSummary["measured_quote_count"] == 0
+
+    # One explicit synthetic quote changes precisely one measured action.
+    reference = forward._reference_rows(
+        root["report"]["groups"][indices[0]]["results"][indices[1]]["execution"],
+        root["report"]["context"]["symbol"])[0]
+    template["records"][0] = observed(reference)
+    partial_source = tmp_path / "observed.json"
+    partial_source.write_text(json.dumps(template))
+    partial_path = tmp_path / "partial.json"
+    assert controller.run({**analysis, "observations_path": str(partial_source),
+                           "output_path": str(partial_path)})
+    runtime._poll()
+    qt_app.processEvents()
+    partial = read_json_file(partial_path)
+    assert partial == forward.analyze_intraday_forward_reconciliation(source, template)
+    assert controller.resultSummary["measured_quote_count"] == 1
+    assert controller.resultSummary["matched_record_count"] == total
+    assert controller.resultSummary["missing_record_count"] == 0
+    assert controller.statistics["ready_to_quote_ms"]["unavailable_count"] == total - 1
+
+    # Same visible form can point to changed file bytes; even on a failed
+    # rerun the old result must not appear current.
+    same = {**analysis, "observations_path": str(partial_source),
+            "output_path": str(partial_path)}
+    assert controller.run(same)
+    assert not controller.resultLoaded
+    runtime._poll()
+    qt_app.processEvents()
+    assert not controller.resultLoaded and controller.error
+    assert partial_path.read_bytes() == (tmp_path / "partial.json").read_bytes()
+
+    # Exclusive publisher failure keeps existing output and source untouched.
+    blocked = tmp_path / "existing.json"
+    blocked.write_bytes(b"UNTOUCHED")
+    assert controller.run({**analysis, "output_path": str(blocked)})
+    runtime._poll()
+    qt_app.processEvents()
+    assert not controller.resultLoaded and controller.error
+    assert blocked.read_bytes() == b"UNTOUCHED"
+    test_template = tmp_path / "test-template.json"
+    assert controller.run({**values, "experiment_path": str(frozen_test),
+                           "cost_index": "", "candidate_index": "",
+                           "output_path": str(test_template)})
+    runtime._poll()
+    qt_app.processEvents()
+    assert controller.resultScope == "SAVED_TEST"
+    assert read_json_file(test_template)["schema_version"] == forward.TEST_OBSERVATIONS_VERSION
+
+    # Capturing a worker's old draft must not relabel it after user edits.
+    old_out = tmp_path / "old-draft.json"
+    stale = {**values, "output_path": str(old_out)}
+    assert controller.run(stale)
+    controller.setDraft({**stale, "output_path": str(tmp_path / "new-draft.json")})
+    runtime._poll()
+    qt_app.processEvents()
+    assert old_out.exists() and not controller.resultLoaded
+    assert controller.notice == "STALE_INPUT"
+    assert all(path.read_bytes() == body for path, body in original.items())
+    assert source_declaration.read_bytes() == declared_bytes
+    assert runtime.backend_if_initialized is None
+    assert runner.names.count("intraday_forward") == 7
+
+
+def test_q83_real_qml_saved_test_export_analysis_and_language(final_case, tmp_path):
+    """Reach the panel through the production Main.qml and click its real actions."""
+    saved_test = tmp_path / "saved-test.json"
+    write_strategy_experiment(final_case[1], path=saved_test)
+    declaration = tmp_path / "declaration.json"
+    declaration.write_text(json.dumps({
+        "source": {"provider": "synthetic-ui-fixture", "version": "1",
+                   "captured_at": "2026-10-15T00:00:00Z", "data_kind": "SYNTHETIC",
+                   "upstream_id": None, "upstream_evidence": None},
+        "reference_clock_id": None,
+        "policy": {"max_quote_age_ms": 20, "max_adverse_quote_bps": None},
+    }))
+    (tmp_path / "settings.yaml").write_text("storage:\n  root_dir: ./data\n")
+    before = (saved_test.read_bytes(), declaration.read_bytes())
+    script = r'''
+import json, sys
+from pathlib import Path
+from PySide6.QtCore import QObject, QUrl, Qt, QMetaObject
+from PySide6.QtGui import QGuiApplication
+from PySide6.QtQml import QQmlApplicationEngine
+from PySide6.QtQuickControls2 import QQuickStyle
+from PySide6.QtTest import QTest
+from market_vault.application import build_application_context
+from market_vault.desktop.bootstrap import create_qml_application_session
+from market_vault.desktop.preferences import DesktopPreferenceStore
+from market_vault.desktop.localization import translation_keys_match
+root = Path(sys.argv[1])
+assert translation_keys_match()
+QQuickStyle.setStyle('Basic')
+app = QGuiApplication([])
+engine = QQmlApplicationEngine()
+warnings = []
+engine.warnings.connect(lambda values: warnings.extend(value.toString() for value in values))
+session = create_qml_application_session(build_application_context(root / 'settings.yaml'), engine,
+    preference_store=DesktopPreferenceStore(root=root / 'preferences'))
+engine.load(QUrl.fromLocalFile(str(Path.cwd() / 'src/market_vault/desktop/qml/Main.qml')))
+assert engine.rootObjects(), warnings
+window = engine.rootObjects()[0]
+window.setWidth(1280); window.setHeight(900)
+owner = session.context_properties['quantResearchController']
+controller = owner.intradayForwardController
+assert session.shell.selectPage('quant_research')
+def find(name):
+    result = window.findChild(QObject, name)
+    if result is not None: return result
+    pending = [window.contentItem()]
+    while pending:
+        item = pending.pop()
+        if item.objectName() == name: return item
+        pending.extend(item.childItems())
+    raise AssertionError(name)
+def click(name):
+    item = find(name)
+    assert item.property('enabled'), name
+    assert QMetaObject.invokeMethod(item, 'clicked', Qt.DirectConnection), name
+    QTest.qWait(30)
+def finish(expected):
+    for _ in range(180):
+        session.runtime._poll()
+        app.processEvents()
+        if controller.resultStatus == expected or controller.error: break
+        QTest.qWait(50)
+    assert controller.resultStatus == expected, (expected, controller.status, controller.error, warnings)
+click('quantIntradayTab')
+click('intradayForwardTab')
+assert find('intradayForwardPanel').property('visible')
+assert session.i18n.setLanguage('zh-CN')
+QTest.qWait(50)
+assert '观测' in find('intradayForwardTab').property('text')
+assert session.i18n.setLanguage('en')
+find('intradayForwardExperimentPath').setProperty('text', str(root / 'saved-test.json'))
+find('intradayForwardDeclarationPath').setProperty('text', str(root / 'declaration.json'))
+find('intradayForwardOutputDraft').setProperty('text', str(root / 'template.json'))
+click('intradayForwardRun')
+finish('TEMPLATE_CREATED')
+assert controller.resultScope == 'SAVED_TEST'
+assert not controller.forwardCaptureVerified
+assert 'SAVED_TEST' in find('intradayForwardResultKind').property('text')
+saved = json.loads((root / 'template.json').read_bytes())
+assert saved['schema_version'].endswith('-v3')
+find('intradayForwardMode').setProperty('currentIndex', 1)
+find('intradayForwardObservationsPath').setProperty('text', str(root / 'template.json'))
+find('intradayForwardOutputDraft').setProperty('text', str(root / 'analysis.json'))
+click('intradayForwardRun')
+finish('NOT_MEASURED' if saved['records'] else 'NO_REFERENCE_ACTIONS')
+assert json.loads((root / 'analysis.json').read_bytes())['summary']['reference_action_count'] == len(saved['records'])
+assert 'UNVERIFIED' in find('intradayForwardVerification').property('text')
+assert session.shutdown()
+print('REAL_FORWARD_QML_OK')
+'''
+    env = os.environ.copy()
+    env["QT_QPA_PLATFORM"] = "offscreen"
+    env["QSG_RHI_BACKEND"] = "software"
+    env["PYTHONPATH"] = str(ROOT / "src")
+    result = subprocess.run([sys.executable, "-c", script, str(tmp_path)], cwd=ROOT, env=env,
+                            capture_output=True, text=True, timeout=45, check=False)
+    assert result.returncode == 0, result.stderr
+    assert "REAL_FORWARD_QML_OK" in result.stdout
+    assert "ReferenceError" not in result.stderr
+    assert "TypeError" not in result.stderr
+    assert (saved_test.read_bytes(), declaration.read_bytes()) == before
