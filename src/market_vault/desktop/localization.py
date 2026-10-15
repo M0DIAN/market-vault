@@ -3507,6 +3507,60 @@ ZH_CN.update({
     "operation.intraday_forward": "离线前瞻观测",
 })
 
+EN.update({
+    "preflight.title": "Current comparison · structural preflight",
+    "preflight.run": "Check current structure", "preflight.report": "Preflight report",
+    "preflight.help": "Optional check of the current ordinary comparison only, not an entire diagnostic grid or scenario collection. Counts are fresh READY entry opportunities while flat, not trades. No fitting, signals, account, TEST performance, market accuracy, fill or profitability judgment. Rerun after external file changes.",
+    "preflight.CHECKED": "No structural blockers found", "preflight.BLOCKED": "Structural blockers found",
+    "preflight.opportunities": "Eligible entry opportunities", "preflight.zero_groups": "Zero-entry days / folds",
+    "preflight.blockers": "Blockers", "preflight.folds": "All DEV folds", "preflight.days": "All evaluated DEV days",
+    "preflight.details": "Complete captured report / plan / exclusions",
+    "preflight.INPUT_CHANGED": "Inputs changed; previous preflight cleared",
+    "preflight.INPUT_CHANGED_WHILE_RUNNING": "Inputs changed; in-flight preflight will be stale",
+    "preflight.STALE_INPUT": "Earlier preflight ignored because inputs changed",
+    "operation.intraday_preflight": "Comparison structural preflight",
+})
+ZH_CN.update({
+    "preflight.title": "当前普通比较 · 结构预检",
+    "preflight.run": "检查当前结构", "preflight.report": "预检报告",
+    "preflight.help": "可选检查，仅针对当前普通比较表单，不代表整个诊断网格或场景集合。计数为空仓时新鲜 READY 入场机会，不是交易数。不拟合、不产出信号或账户，不评估 TEST 表现、行情准确性、成交或盈利。外部文件改变后请重新检查。",
+    "preflight.CHECKED": "未发现结构阻塞", "preflight.BLOCKED": "发现结构阻塞",
+    "preflight.opportunities": "可用入场机会", "preflight.zero_groups": "零入场日／折",
+    "preflight.blockers": "阻塞原因", "preflight.folds": "全部 DEV 折", "preflight.days": "全部已评估 DEV 日期",
+    "preflight.details": "完整捕获报告／计划／排除原因",
+    "preflight.INPUT_CHANGED": "输入已更改，旧预检已清除",
+    "preflight.INPUT_CHANGED_WHILE_RUNNING": "执行中输入已更改，原预检将过期",
+    "preflight.STALE_INPUT": "输入变更，已忽略旧预检",
+    "operation.intraday_preflight": "普通比较结构预检",
+})
+
+EN.update({
+    "columns.training_day_count": "Training days",
+    "columns.training_row_count": "Admitted training rows",
+    "columns.purged_training_row_count": "Purged training rows",
+    "columns.ready_validation_observation_count": "READY validation rows",
+    "columns.eligible_entry_observation_count": "Eligible entry opportunities",
+    "columns.observation_count": "All observations",
+    "columns.ready_observation_count": "READY observations",
+    "columns.unavailable_observation_count": "Unavailable observations",
+    "columns.first_ready_decision_time": "First READY decision",
+    "columns.first_eligible_next_open_time": "First eligible next open",
+    "columns.excluded_ready_observations": "Excluded READY counts"
+})
+ZH_CN.update({
+    "columns.training_day_count": "训练日数",
+    "columns.training_row_count": "准入训练行数",
+    "columns.purged_training_row_count": "清除训练行数",
+    "columns.ready_validation_observation_count": "READY 验证行数",
+    "columns.eligible_entry_observation_count": "可用入场机会",
+    "columns.observation_count": "全部观测数",
+    "columns.ready_observation_count": "READY 观测数",
+    "columns.unavailable_observation_count": "不可用观测数",
+    "columns.first_ready_decision_time": "首次 READY 决策时间",
+    "columns.first_eligible_next_open_time": "首次可用下一开盘",
+    "columns.excluded_ready_observations": "READY 排除计数"
+})
+
 TRANSLATIONS: Final[dict[str, dict[str, str]]] = {
     "en": EN,
     "zh-CN": ZH_CN,

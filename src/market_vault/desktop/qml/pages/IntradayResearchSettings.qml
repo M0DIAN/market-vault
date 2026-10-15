@@ -16,6 +16,7 @@ Dialog {
     property bool executionPolicyBound: false
     property var savePlan: null
     property string errorText: ""
+    signal edited()
     readonly property var featureOptions: {
         const names = root.dataId === root.availableDataId ? root.availableFeatures.slice() : []
         const keep = function(name) { if (name && names.indexOf(name) < 0) names.push(name) }
@@ -135,19 +136,19 @@ Dialog {
                     columns: 3
                     columnSpacing: 8
                     rowSpacing: 6
-                    Components.LabeledTextField { id: features; objectName: "intradayResearchFeatures"; Layout.columnSpan: 3; label: root.i18n.catalog["quant.common_features"] }
-                    Components.LabeledTextField { id: trainEnd; objectName: "intradayResearchTrainEnd"; label: root.i18n.catalog["quant.intraday_train_end"] }
-                    Components.LabeledTextField { id: valEnd; objectName: "intradayResearchValidationEnd"; label: root.i18n.catalog["quant.intraday_validation_end"] }
-                    Components.LabeledTextField { id: testEnd; objectName: "intradayResearchTestEnd"; label: root.i18n.catalog["quant.intraday_test_end"] }
-                    Components.LabeledTextField { id: trainDays; objectName: "intradayResearchTrainDays"; label: root.i18n.catalog["quant.intraday_train_days"]; text: "20" }
-                    Components.LabeledTextField { id: valDays; objectName: "intradayResearchValidationDays"; label: root.i18n.catalog["quant.intraday_validation_days"]; text: "5" }
-                    Components.LabeledTextField { id: stepDays; objectName: "intradayResearchStepDays"; label: root.i18n.catalog["quant.intraday_step_days"]; text: "5" }
-                    Components.LabeledTextField { id: commission; objectName: "intradayResearchCommission"; label: root.i18n.catalog["quant.commission_bps"] }
-                    Components.LabeledTextField { id: slippage; objectName: "intradayResearchSlippage"; label: root.i18n.catalog["quant.slippage_bps"] }
-                    Components.LabeledTextField { id: maxHold; objectName: "intradayResearchMaxHold"; label: root.i18n.catalog["quant.intraday_max_hold"]; text: "12" }
-                    Components.LabeledTextField { id: entryDelay; objectName: "intradayResearchEntryDelay"; label: root.i18n.catalog["quant.intraday_entry_delay"]; text: "15" }
-                    Components.LabeledTextField { id: stopNew; objectName: "intradayResearchStopNew"; label: root.i18n.catalog["quant.intraday_stop_new"]; text: "30" }
-                    Components.LabeledTextField { id: flatten; objectName: "intradayResearchFlatten"; label: root.i18n.catalog["quant.intraday_flatten"]; text: "5" }
+                    Components.LabeledTextField { id: features; objectName: "intradayResearchFeatures"; Layout.columnSpan: 3; label: root.i18n.catalog["quant.common_features"]; onEdited: root.edited() }
+                    Components.LabeledTextField { id: trainEnd; objectName: "intradayResearchTrainEnd"; label: root.i18n.catalog["quant.intraday_train_end"]; onEdited: root.edited() }
+                    Components.LabeledTextField { id: valEnd; objectName: "intradayResearchValidationEnd"; label: root.i18n.catalog["quant.intraday_validation_end"]; onEdited: root.edited() }
+                    Components.LabeledTextField { id: testEnd; objectName: "intradayResearchTestEnd"; label: root.i18n.catalog["quant.intraday_test_end"]; onEdited: root.edited() }
+                    Components.LabeledTextField { id: trainDays; objectName: "intradayResearchTrainDays"; label: root.i18n.catalog["quant.intraday_train_days"]; text: "20"; onEdited: root.edited() }
+                    Components.LabeledTextField { id: valDays; objectName: "intradayResearchValidationDays"; label: root.i18n.catalog["quant.intraday_validation_days"]; text: "5"; onEdited: root.edited() }
+                    Components.LabeledTextField { id: stepDays; objectName: "intradayResearchStepDays"; label: root.i18n.catalog["quant.intraday_step_days"]; text: "5"; onEdited: root.edited() }
+                    Components.LabeledTextField { id: commission; objectName: "intradayResearchCommission"; label: root.i18n.catalog["quant.commission_bps"]; onEdited: root.edited() }
+                    Components.LabeledTextField { id: slippage; objectName: "intradayResearchSlippage"; label: root.i18n.catalog["quant.slippage_bps"]; onEdited: root.edited() }
+                    Components.LabeledTextField { id: maxHold; objectName: "intradayResearchMaxHold"; label: root.i18n.catalog["quant.intraday_max_hold"]; text: "12"; onEdited: root.edited() }
+                    Components.LabeledTextField { id: entryDelay; objectName: "intradayResearchEntryDelay"; label: root.i18n.catalog["quant.intraday_entry_delay"]; text: "15"; onEdited: root.edited() }
+                    Components.LabeledTextField { id: stopNew; objectName: "intradayResearchStopNew"; label: root.i18n.catalog["quant.intraday_stop_new"]; text: "30"; onEdited: root.edited() }
+                    Components.LabeledTextField { id: flatten; objectName: "intradayResearchFlatten"; label: root.i18n.catalog["quant.intraday_flatten"]; text: "5"; onEdited: root.edited() }
                 }
                 StrategyListEditor {
                     id: editor
@@ -156,6 +157,7 @@ Dialog {
                     Layout.fillHeight: true
                     i18n: root.i18n
                     allowQuadratic: true
+                    onUserEdited: root.edited()
                     featureOptions: root.featureOptions
                     defaultFeature: features.text.split(",")[0].trim()
                 }
