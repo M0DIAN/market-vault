@@ -66,11 +66,14 @@ def _elapsed(first, last):
         return _metric(reason="MISSING_TIMESTAMP")
     if first["clock_id"] is None or first["clock_id"] != last["clock_id"]:
         return _metric(reason="CLOCK_BASIS_MISMATCH")
-    elapsed = (datetime.fromisoformat(last["timestamp"].replace("Z", "+00:00")) -
-               datetime.fromisoformat(first["timestamp"].replace("Z", "+00:00"))).total_seconds() * 1000
-    if elapsed < 0:
+    delta = (datetime.fromisoformat(last["timestamp"].replace("Z", "+00:00")) -
+             datetime.fromisoformat(first["timestamp"].replace("Z", "+00:00")))
+    # Integer microseconds followed by one division preserves equality with a
+    # caller's millisecond limit (9 us -> 0.009, not 0.009000000000000001).
+    microseconds = (delta.days * 86400 + delta.seconds) * 1_000_000 + delta.microseconds
+    if microseconds < 0:
         raise ValueError("impossible same-clock ordering in forward observation")
-    return _metric(elapsed)
+    return _metric(microseconds / 1000)
 
 
 def _bps(price, reference, side):
@@ -162,6 +165,8 @@ def _reference_rows(execution, symbol):
         trade = execution["trades"][index // 2]
         endpoint = "entry" if transaction["side"] == "BUY" else "exit"
         clock = datetime.fromisoformat(transaction["timestamp"])
+        decision = signals.get((day, slot - 1))
+        decision_key = None if decision is None else decision["observation_key"]
         if (point is None or point["action"] != transaction["side"] or point["reason"] != transaction["reason"]
                 or point["mark_price"] != transaction["raw_open"] or point["row_version_id"] != transaction["row_version_id"]
                 or datetime.fromisoformat(point["timestamp"]) != clock or starts[day] + slot * delta != clock
@@ -169,9 +174,15 @@ def _reference_rows(execution, symbol):
                 or datetime.fromisoformat(trade[endpoint + "_time"]) != clock
                 or trade[endpoint + "_raw_open"] != transaction["raw_open"]
                 or trade[endpoint + "_fill_price"] != transaction["fill_price"]
-                or trade[endpoint + "_row_version_id"] != transaction["row_version_id"]):
+                or trade[endpoint + "_row_version_id"] != transaction["row_version_id"]
+                or point["observation_key"] != decision_key
+                or (endpoint == "exit" and trade["exit_reason"] != transaction["reason"])
+                or (endpoint == "entry" and datetime.fromisoformat(trade["signal_time"]) != clock)
+                or (transaction["reason"] in ("EOD", "MAX_HOLD") and trade["exit_observation_key"] is not None)):
             raise ValueError("saved transaction reference differs from its OPEN grid or trade endpoint")
-        signal = signals.get((day, slot - 1)) if transaction["reason"] in ("TARGET_LONG", "TARGET_FLAT") else None
+        # An automatic exit can coincide with a fresh decision in the ledger;
+        # validate that key above without presenting it as the exit's cause.
+        signal = decision if transaction["reason"] in ("TARGET_LONG", "TARGET_FLAT") else None
         if transaction["reason"] in ("TARGET_LONG", "TARGET_FLAT") and (
                 signal is None or signal["target"] != transaction["reason"].removeprefix("TARGET_")
                 or datetime.fromisoformat(signal["decision_time"]) != clock

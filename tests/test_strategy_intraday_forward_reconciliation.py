@@ -203,10 +203,19 @@ def test_rehashed_transaction_reference_is_not_a_price_authority(forward_case, t
     from market_vault.research.strategy_experiment import load_strategy_experiment
     from test_intraday_experiment import signed
     _, root = forward_case
-    for field in ("raw_open", "fill_price"):
+    for field in ("raw_open", "fill_price", "exit_reason", "ledger_observation_key"):
         changed = deepcopy(root)
         candidate = changed["report"]["groups"][0]["results"][1]
-        candidate["execution"]["transactions"][0][field] += 1
+        execution = candidate["execution"]
+        if field == "exit_reason":
+            execution["trades"][0]["exit_reason"] = "TARGET_FLAT"
+        elif field == "ledger_observation_key":
+            tx = execution["transactions"][0]
+            point = next(row for row in execution["ledger"] if row["phase"] == "OPEN"
+                         and (row["trading_day"], row["slot"]) == (tx["trading_day"], tx["slot"]))
+            point["observation_key"] = "0" * 64
+        else:
+            execution["transactions"][0][field] += 1
         path = tmp_path / (field + ".json")
         path.write_bytes(signed(changed))
         admitted = load_strategy_experiment(path).as_dict()  # Existing grammar/hash Open is not replay.
@@ -217,6 +226,25 @@ def test_rehashed_transaction_reference_is_not_a_price_authority(forward_case, t
         with pytest.raises(ValueError, match="OPEN grid or trade endpoint"):
             forward.analyze_intraday_forward_reconciliation(path, observations)
         assert path.read_bytes() == before
+
+
+def test_microsecond_quote_age_equality_through_the_public_entry(forward_case):
+    path, root = forward_case
+    observations = batch(root, complete=True)
+    observations["records"] = observations["records"][:1]
+    row = observations["records"][0]
+    quote_time = row["quote"]["observed_at"]["timestamp"]
+    row["quote"]["received_at"] = stamp(quote_time, .009)
+    observations["policy"]["max_quote_age_ms"] = .009
+    equal = forward.analyze_intraday_forward_reconciliation(path, observations)
+    assert equal["rows"][0]["metrics"]["quote_age_ms"]["value"] == .009
+    assert equal["rows"][0]["quote_status"] == "MEASURED"
+    assert equal["summary"]["measured_quote_count"] == 1
+    observations["policy"]["max_quote_age_ms"] = .008
+    stale = forward.analyze_intraday_forward_reconciliation(path, observations)
+    assert stale["rows"][0]["quote_status"] == "STALE_QUOTE"
+    assert stale["summary"]["measured_quote_count"] == 0
+    assert stale["summary"]["reference_action_count"] == equal["summary"]["reference_action_count"]
 
 
 def test_real_module_cli_nonpass_publication_is_exclusive(forward_case, tmp_path, capsys):
