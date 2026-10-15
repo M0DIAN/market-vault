@@ -1,4 +1,4 @@
-"""Offline observed-quote/paper-fill differences against one saved DEV account.
+"""Offline observed-quote/paper-fill differences against one saved DEV or TEST account.
 
 The complete saved transaction population is the denominator, not the supplied
 observation subset. Clock and provenance claims are declarations, never proof
@@ -26,6 +26,7 @@ from ..quality.market_data_comparison import (
 from ..storage.atomic_file import AtomicFilePublicationError
 from .intraday_data import digest
 from .intraday_experiment import INTRADAY_EXPERIMENT_VERSIONS
+from .intraday_final_test import INTRADAY_TEST_EXPERIMENT_VERSIONS
 from .intraday_research import _day, _identity
 from .intraday_return_uncertainty import _integer
 from .strategy_experiment import load_strategy_experiment
@@ -35,6 +36,8 @@ OBSERVATIONS_VERSION = "market-vault-intraday-forward-observations-v1"
 RECONCILIATION_VERSION = "market-vault-intraday-forward-reconciliation-v1"
 PROCEDURE_OBSERVATIONS_VERSION = "market-vault-intraday-forward-observations-v2"
 PROCEDURE_RECONCILIATION_VERSION = "market-vault-intraday-forward-reconciliation-v2"
+TEST_OBSERVATIONS_VERSION = "market-vault-intraday-forward-observations-v3"
+TEST_RECONCILIATION_VERSION = "market-vault-intraday-forward-reconciliation-v3"
 TEMPLATE_RESULT_VERSION = "market-vault-intraday-forward-template-cli-result-v1"
 _METRICS = {"reference_to_ready_ms": "MILLISECONDS", "ready_to_quote_ms": "MILLISECONDS",
             "quote_age_ms": "MILLISECONDS", "ready_to_paper_fill_ms": "MILLISECONDS",
@@ -111,17 +114,22 @@ def _normalize_forward_declaration(value: dict) -> dict:
 def normalize_forward_observations(value: dict) -> dict:
     """Normalize explicit identities, clock declarations and finite observations."""
     procedure = type(value) is dict and value.get("schema_version") == PROCEDURE_OBSERVATIONS_VERSION
-    fields = (("schema_version", "expected_experiment_id", "expected_execution_id", "source",
+    saved_test = type(value) is dict and value.get("schema_version") == TEST_OBSERVATIONS_VERSION
+    fields = (("schema_version", "expected_experiment_id", "expected_execution_id", "expected_final_test_id",
+               "expected_selection_id", "source", "reference_clock_id", "policy", "records") if saved_test else
+              (("schema_version", "expected_experiment_id", "expected_execution_id", "source",
                "reference_clock_id", "policy", "records") if procedure else
               ("schema_version", "expected_experiment_id", "cost_index", "candidate_index",
-               "expected_candidate_id", "source", "reference_clock_id", "policy", "records"))
+               "expected_candidate_id", "source", "reference_clock_id", "policy", "records")))
     require_fields(value, fields, label="forward observations")
     result = deepcopy(value)
-    if result["schema_version"] not in (OBSERVATIONS_VERSION, PROCEDURE_OBSERVATIONS_VERSION):
+    if result["schema_version"] not in (OBSERVATIONS_VERSION, PROCEDURE_OBSERVATIONS_VERSION, TEST_OBSERVATIONS_VERSION):
         raise ValueError("unsupported forward observations version")
-    for key in ("expected_experiment_id", "expected_execution_id" if procedure else "expected_candidate_id"):
+    identities = (("expected_experiment_id", "expected_execution_id", "expected_final_test_id", "expected_selection_id")
+                  if saved_test else ("expected_experiment_id", "expected_execution_id" if procedure else "expected_candidate_id"))
+    for key in identities:
         _identity(result[key], key)
-    if not procedure:
+    if not (procedure or saved_test):
         for key in ("cost_index", "candidate_index"):
             _integer(result[key], key, 0)
     result.update(_normalize_forward_declaration({key: result[key] for key in
@@ -300,13 +308,40 @@ def _ordinary_reference(root, cost_index, candidate_index, batch=None):
     return execution, symbol, source
 
 
+def _saved_test_reference(root, batch=None):
+    """Use only the TEST execution of an already strictly validated snapshot."""
+    if root["artifact_schema_version"] not in INTRADAY_TEST_EXPERIMENT_VERSIONS:
+        raise ValueError("TEST observations require a saved frozen-candidate TEST artifact")
+    report, selection = root["report"], root["plan"]["selection"]
+    execution = report["execution"]
+    identities = {"experiment_id": root["experiment_id"], "execution_id": execution["execution_id"],
+                  "final_test_id": report["final_test_id"], "selection_id": report["selection_id"]}
+    if batch is not None:
+        for key, value in identities.items():
+            if batch["expected_" + key] != value:
+                raise ValueError(f"saved TEST {key} identity differs")
+    source = {**identities, "data_id": root["dataset_id"],
+              "artifact_schema_version": root["artifact_schema_version"],
+              "evaluation_scope": report["evaluation_scope"],
+              "selection_experiment_id": report["selection_experiment_id"],
+              "selection_artifact_schema_version": selection["artifact_schema_version"],
+              "selection_scope": selection["report"]["evaluation_scope"],
+              "source_experiment": deepcopy(selection["plan"]["source_experiment"]),
+              "strategy": report["strategy"], "execution_policy": report["execution_policy"],
+              "algorithm_versions": root["algorithm_versions"], "environment": root["environment"]}
+    if "return_basis" in report:
+        source["return_basis"] = report["return_basis"]
+    return execution, report["context"]["symbol"], source
+
+
 def create_intraday_forward_template(experiment_path: str | Path, declaration: dict, *,
                                      cost_index: int | None = None, candidate_index: int | None = None) -> dict:
-    """Export action keys from one saved DEV account, without observed values.
+    """Export action keys from one saved account, without observed values.
 
     Ordinary DEV requires both explicit indices. A selected procedure rejects
     indices and uses its complete outer DEV execution, never its fixed reference.
-    The returned observations v1/v2 object is editable input, not measurement.
+    Saved TEST rejects indices and uses only its frozen candidate execution.
+    The returned observations v1/v2/v3 object is editable input, not measurement.
     """
     declared = _normalize_forward_declaration(declaration)
     snapshot = load_strategy_experiment(experiment_path)
@@ -319,6 +354,13 @@ def create_intraday_forward_template(experiment_path: str | Path, declaration: d
         identity = {"schema_version": OBSERVATIONS_VERSION, "expected_experiment_id": source["experiment_id"],
                     "cost_index": cost_index, "candidate_index": candidate_index,
                     "expected_candidate_id": source["candidate_id"]}
+    elif root["artifact_schema_version"] in INTRADAY_TEST_EXPERIMENT_VERSIONS:
+        if cost_index is not None or candidate_index is not None:
+            raise ValueError("saved TEST template does not accept cost/candidate indices")
+        execution, symbol, source = _saved_test_reference(root)
+        identity = {"schema_version": TEST_OBSERVATIONS_VERSION,
+                    **{"expected_" + key: source[key] for key in
+                       ("experiment_id", "execution_id", "final_test_id", "selection_id")}}
     else:
         if cost_index is not None or candidate_index is not None:
             raise ValueError("selected procedure template does not accept cost/candidate indices")
@@ -333,11 +375,14 @@ def create_intraday_forward_template(experiment_path: str | Path, declaration: d
 
 
 def analyze_intraday_forward_reconciliation(experiment_path: str | Path, observations: dict) -> dict:
-    """Read one exact DEV artifact and reconcile, without Q5 I/O or execution."""
+    """Read one exact saved artifact and reconcile, without Q5 I/O or execution."""
     batch = normalize_forward_observations(observations)
     snapshot = load_strategy_experiment(experiment_path)
     procedure = batch["schema_version"] == PROCEDURE_OBSERVATIONS_VERSION
-    if procedure:
+    saved_test = batch["schema_version"] == TEST_OBSERVATIONS_VERSION
+    if saved_test:
+        execution, symbol, source = _saved_test_reference(snapshot.as_dict(), batch)
+    elif procedure:
         execution, symbol, source = _selected_procedure_reference(snapshot, batch)
     else:
         execution, symbol, source = _ordinary_reference(snapshot.as_dict(), batch["cost_index"], batch["candidate_index"], batch)
@@ -358,7 +403,8 @@ def analyze_intraday_forward_reconciliation(experiment_path: str | Path, observa
         mean = float(sum(map(Fraction, values), Fraction()) / len(values)) if values else None
         statistics[key] = {"unit": unit, "available_count": len(values), "unavailable_count": len(rows) - len(values),
                            "mean": mean, "maximum": max(values) if values else None}
-    version = PROCEDURE_RECONCILIATION_VERSION if procedure else RECONCILIATION_VERSION
+    version = (TEST_RECONCILIATION_VERSION if saved_test else
+               PROCEDURE_RECONCILIATION_VERSION if procedure else RECONCILIATION_VERSION)
     result = {"version": version, "status": status, "source": source,
               "observations_id": digest(batch), "observation_source": batch["source"],
               "reference_clock_id": batch["reference_clock_id"], "policy": batch["policy"],
@@ -382,6 +428,11 @@ def analyze_intraday_forward_reconciliation(experiment_path: str | Path, observa
     if procedure:
         result["limitations"].append(
             "The complete selected outer DEV account is used; per-fold recipes and the fixed reference are distinct from a final DEV winner.")
+    if saved_test:
+        result["limitations"][0] = (
+            "Only the exact saved frozen-candidate TEST transaction population is assessed, not DEV or the benchmark.")
+        result["limitations"].append(
+            "Reading saved TEST exposes existing TEST information; it does not certify a new unseen holdout or an untouched TEST history.")
     return {**result, "reconciliation_id": digest(result)}
 
 
@@ -414,6 +465,8 @@ def run_forward_command(args: argparse.Namespace) -> int:
         observations = read_json_file(args.observations)
         if type(observations) is dict and observations.get("schema_version") == PROCEDURE_OBSERVATIONS_VERSION:
             version = PROCEDURE_RECONCILIATION_VERSION
+        elif type(observations) is dict and observations.get("schema_version") == TEST_OBSERVATIONS_VERSION:
+            version = TEST_RECONCILIATION_VERSION
         report = analyze_intraday_forward_reconciliation(args.experiment, observations)
         version = report["version"]
         output = write_market_data_json(args.output, report)
