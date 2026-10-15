@@ -311,7 +311,8 @@ jobs:
           fi
 
   test-314:
-    name: test (3.14)
+    # The matrix suffix yields the preserved required-check name `test (3.14)`.
+    name: test
     needs: plan
     if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-latest

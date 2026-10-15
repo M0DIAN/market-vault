@@ -3541,7 +3541,7 @@ def check_ci_partitions(root: Path) -> list[str]:
             "fail-fast: false",
         ),
         "test-314": (
-            "name: test (3.14)",
+            "name: test",
             "needs: plan",
             "if: ${{ always() && !cancelled() }}",
             "CI_PLAN_RESULT: ${{ needs.plan.result }}",

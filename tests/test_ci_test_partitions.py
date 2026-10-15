@@ -307,7 +307,7 @@ def test_python314_compatibility_is_independent_and_package_requires_both():
     assert re.findall(r"(?m)^    needs: (.*)$", compatibility) == ["plan"]
     assert 'python-version: ["3.11"]' in aggregate
     assert 'python-version: ["3.14"]' in compatibility
-    assert "name: test (3.14)" in compatibility
+    assert "name: test\n" in compatibility
     assert "CI_PARTITIONS_RESULT" not in compatibility
     assert "needs.test-modules" not in compatibility
     assert "ci_test_partitions.py verify" not in compatibility

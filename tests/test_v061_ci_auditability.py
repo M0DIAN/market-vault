@@ -1132,7 +1132,7 @@ def test_314_schedules_after_plan_without_waiting_for_311_partitions():
     assert PY314_VALIDATOR_STEP not in aggregate
     assert PY314_SURFACE_STEP not in aggregate
     assert "Run Python 3.14 research compatibility" not in aggregate
-    assert "name: test (3.14)" in compatibility
+    assert "name: test\n" in compatibility
 
 
 def test_package_requires_each_physical_test_leg_to_succeed():
