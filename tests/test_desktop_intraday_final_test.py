@@ -3039,3 +3039,281 @@ engine.deleteLater(); app.processEvents()
         capture_output=True, text=True, timeout=300)
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert "ReferenceError" not in completed.stderr and "TypeError" not in completed.stderr
+
+
+from test_strategy_intraday_data_acceptance import acceptance_data  # noqa: E402,F401
+
+
+def _acceptance_files(data, parent, *, kind="OBSERVED", absent=False):
+    from test_strategy_intraday_data_acceptance import policy, references
+    from test_strategy_intraday_market_evidence import _plan, _source, _write
+    manifest, refs = references(data, parent, kind=kind)
+    if absent:
+        manifest = _plan(source=_source("local", "OBSERVED"))
+    else:
+        for item in manifest["references"]:
+            item["snapshot"] = Path(item["snapshot"]).name
+    manifest_path = _write(parent / "manifest.json", manifest)
+    policy_path = _write(parent / "policy.json", policy())
+    return {"data_path": str(data.path), "manifest_path": str(manifest_path), "policy_path": str(policy_path)}, refs
+
+
+@pytest.mark.parametrize("kind,absent,status", [("OBSERVED", False, "POLICY_SATISFIED"),
+    ("OBSERVED", True, "NEEDS_EVIDENCE"), ("SYNTHETIC", False, "REJECTED")])
+def test_q90_native_policy_matches_api_and_exports_captured_report(qt_app, acceptance_data, tmp_path,
+        monkeypatch, kind, absent, status):
+    from market_vault.research import intraday_data as q5, intraday_data_acceptance as api
+    values, refs = _acceptance_files(acceptance_data, tmp_path, kind=kind, absent=absent)
+    expected = api.run_intraday_data_acceptance(**values)
+    inputs = [Path(v) for v in values.values()] + refs
+    before = {p: p.read_bytes() for p in inputs}
+    runtime, _ = _runtime(tmp_path, [])
+    owner = QuantResearchController(runtime); controller = owner.intradayDataAcceptanceController
+    assert not owner.intradayLoaded  # Q5-only operation; no saved study or open workspace required.
+    verify, calls = q5.verify_intraday_dataset, []
+    def counted(*args, **kwargs):
+        calls.append(1); return verify(*args, **kwargs)
+    def forbidden(*args, **kwargs):
+        pytest.fail("data policy work fitted, executed or recomputed an export")
+    monkeypatch.setattr(q5, "verify_intraday_dataset", counted)
+    monkeypatch.setattr(research, "_fit", forbidden)
+    monkeypatch.setattr(research, "run_intraday_execution", forbidden)
+    assert controller.run(values); runtime._poll()
+    assert calls == [1] and controller.resultStatus == status
+    assert controller.status == ("SUCCESS" if status == "POLICY_SATISFIED" else "PARTIAL"), controller.error
+    captured = json.loads(controller.reportJson)
+    assert captured == expected and captured["market_accuracy_certified"] is False
+    assert captured["source_assurance"]["independence_verified"] is False
+    assert controller.resultSummary["expected_slots"] == 156
+    assert sum(controller.resultSummary["counts"].values()) == 156
+    if not absent:
+        assert [r["snapshot_locator"] for r in captured["dependencies"]["market_evidence"]["references"]] == [str(p) for p in refs]
+    monkeypatch.setattr(api, "run_intraday_data_acceptance", forbidden)
+    output = tmp_path / "captured.json"
+    assert controller.exportReport(output.as_uri()); runtime._poll()
+    assert controller.status == "SUCCESS", controller.error
+    assert json.loads(output.read_text()) == captured and calls == [1]
+    saved = output.read_bytes()
+    assert controller.exportReceipt == {"path": str(output), "acceptance_id": captured["acceptance_id"]}
+    assert controller.exportReport(str(output)); runtime._poll()
+    assert controller.status == "FAILED" and output.read_bytes() == saved
+    assert json.loads(controller.reportJson) == captured and controller.resultStatus == status
+    assert controller.exportReport(str(inputs[0])); runtime._poll()
+    assert controller.status == "FAILED"
+    assert all(p.read_bytes() == content for p, content in before.items())
+    assert runtime.backend_if_initialized is None and runtime.shutdown()
+
+
+def test_q90_native_policy_capture_stale_failure_retry_and_export(qt_app, acceptance_data, tmp_path, monkeypatch):
+    from market_vault.research import intraday_data_acceptance as api
+    values, _ = _acceptance_files(acceptance_data, tmp_path)
+    original = dict(values)
+    runtime, runner = _runtime(tmp_path, [])
+    owner = QuantResearchController(runtime); controller = owner.intradayDataAcceptanceController
+    pending, calls = [], []
+    analyze = api.run_intraday_data_acceptance
+    def recorded(*args):
+        calls.append(args); return analyze(*args)
+    def deferred(name, operation):
+        future = Future(); pending.append((future, operation)); return future
+    monkeypatch.setattr(api, "run_intraday_data_acceptance", recorded)
+    with monkeypatch.context() as patch:
+        patch.setattr(runner, "submit", deferred)
+        assert controller.run(values)
+        values["manifest_path"] = str(tmp_path / "other.json")
+        controller.setDraft(values); controller.setDraft(original)  # edit and undo
+        pending[-1][0].set_result(pending[-1][1]()); runtime._poll()
+        assert tuple(map(str, calls[-1])) == tuple(original.values())
+        assert not controller.resultLoaded and controller.notice == "STALE_INPUT"
+        assert controller.run(original)
+        controller.setDraft(values)
+        pending[-1][0].set_exception(ValueError("obsolete failure")); runtime._poll()
+        assert not controller.error and controller.notice == "STALE_INPUT"
+    assert controller.run(values); runtime._poll()
+    assert controller.status == "FAILED" and not controller.resultLoaded
+    assert controller.run(original); runtime._poll()
+    assert controller.resultStatus == "POLICY_SATISFIED"
+    captured = json.loads(controller.reportJson)
+    with monkeypatch.context() as patch:
+        patch.setattr(runner, "submit", deferred)
+        output = tmp_path / "captured-before-edit.json"
+        assert controller.exportReport(str(output))
+        controller.setDraft(values)
+        pending[-1][0].set_result(pending[-1][1]()); runtime._poll()
+        assert json.loads(output.read_text()) == captured
+        assert not controller.resultLoaded and not controller.exportReceipt and controller.notice == "STALE_INPUT"
+    assert not controller.run({**original, "policy_path": "relative.json"})
+    assert controller.status == "VALIDATION_ERROR"
+    assert controller.run(original); runtime._poll()
+    assert controller.resultStatus == "POLICY_SATISFIED"
+    assert runtime.backend_if_initialized is None and runtime.shutdown()
+
+
+def test_q90_actual_main_qml_policy_states_export_and_compact_languages(acceptance_data, tmp_path):
+    supplied = {}
+    for name, options in (("good", {}), ("missing", {"absent": True}), ("synthetic", {"kind": "SYNTHETIC"})):
+        parent = tmp_path / name; parent.mkdir()
+        values, refs = _acceptance_files(acceptance_data, parent, **options)
+        supplied[name] = {"values": values, "refs": [str(p) for p in refs]}
+    (tmp_path / "inputs.json").write_text(json.dumps(supplied))
+    (tmp_path / "settings.yaml").write_text("storage:\n  root_dir: ./data\n", encoding="utf-8")
+    script = r'''
+import json, sys, time
+from pathlib import Path
+from PySide6.QtCore import QObject, QUrl, Qt, QEvent, QMetaObject
+from PySide6.QtGui import QGuiApplication, QKeyEvent
+from PySide6.QtQml import QQmlApplicationEngine
+from PySide6.QtQuickControls2 import QQuickStyle
+from PySide6.QtTest import QTest
+from market_vault.application import build_application_context
+from market_vault.desktop.bootstrap import create_qml_application_session
+from market_vault.desktop.preferences import DesktopPreferenceStore
+from market_vault.research import intraday_data_acceptance as api, intraday_research as research
+root = Path(sys.argv[1]); supplied = json.loads((root / 'inputs.json').read_text())
+paths = {p for case in supplied.values() for p in list(case['values'].values()) + case['refs']}
+before = {p: Path(p).read_bytes() for p in paths}
+QQuickStyle.setStyle('Basic')
+app = QGuiApplication([]); engine = QQmlApplicationEngine()
+session = create_qml_application_session(build_application_context(root / 'settings.yaml'), engine,
+    preference_store=DesktopPreferenceStore(root=root / 'preferences'))
+engine.load(QUrl.fromLocalFile(str(Path.cwd() / 'src/market_vault/desktop/qml/Main.qml')))
+assert engine.rootObjects()
+window = engine.rootObjects()[0]; window.setWidth(1024); window.setHeight(600)
+owner = session.context_properties['quantResearchController']; controller = owner.intradayDataAcceptanceController
+assert session.shell.selectPage('quant_research')
+calls = []; analyze = api.run_intraday_data_acceptance
+def recorded(*args):
+    calls.append(args); return analyze(*args)
+def forbidden(*args, **kwargs):
+    raise AssertionError('native policy fitted or executed an account')
+api.run_intraday_data_acceptance = recorded
+research._fit = research.run_intraday_execution = forbidden
+def descendants(parent):
+    pending = [parent]
+    while pending:
+        item = pending.pop()
+        yield item
+        if hasattr(item, 'childItems'): pending.extend(item.childItems())
+def find(name, parent=None):
+    base = parent or window
+    item = base.findChild(QObject, name)
+    if item is None:
+        visual = window.contentItem() if base is window else base
+        if not hasattr(visual, 'childItems'):
+            visual = base.property('contentItem') or base
+        item = next((obj for obj in descendants(visual)
+            if obj.objectName() == name), None)
+    assert item is not None, name
+    return item
+def value(obj, name):
+    result = obj.property(name)
+    return result.toVariant() if hasattr(result, 'toVariant') else result
+def reveal(item, scroll=None, scope=None):
+    if scroll is None: return
+    flick = find(scroll, scope).property('contentItem')
+    rect = item.mapRectToItem(flick, item.boundingRect())
+    for axis, start, end, size in (('X', rect.left(), rect.right(), flick.width()),
+            ('Y', rect.top(), rect.bottom(), flick.height())):
+        delta = start if start < 0 else max(0, end - size)
+        limit = max(0, flick.property('contentWidth' if axis == 'X' else 'contentHeight') - size)
+        flick.setProperty('content' + axis, min(max(0, flick.property('content' + axis) + delta), limit))
+    QTest.qWait(25)
+    rect = item.mapRectToItem(flick, item.boundingRect())
+    assert rect.left() >= -1 and rect.right() <= flick.width() + 1, (item.objectName(), rect, flick.width())
+    assert rect.top() >= -1 and rect.bottom() <= flick.height() + 1, (item.objectName(), rect, flick.height())
+def click(name, scroll=None, scope=None):
+    item = find(name, scope); app.processEvents(); reveal(item, scroll, scope)
+    assert item.isVisible() and item.isEnabled(), name
+    point = item.mapToScene(item.boundingRect().center()).toPoint()
+    assert 0 <= point.x() < 1024 and 0 <= point.y() < 600, (name, point)
+    QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier, point); QTest.qWait(30)
+def nested(item, kind):
+    if kind in item.metaObject().className(): return item
+    return next(child for child in item.findChildren(QObject) if kind in child.metaObject().className())
+def fill(name, text, scroll=None, scope=None):
+    item = find(name, scope); reveal(item, scroll, scope)
+    window.requestActivate(); QTest.qWait(15)
+    edit = nested(item, 'PixelTextField'); edit.forceActiveFocus()
+    QTest.keyClick(window, Qt.Key_A, Qt.ControlModifier); QTest.keyClick(window, Qt.Key_Backspace)
+    for char in text:
+        QGuiApplication.sendEvent(window, QKeyEvent(QEvent.KeyPress, ord(char.upper()), Qt.NoModifier, char))
+    app.processEvents()
+    assert item.property('text') == text, (name, item.property('text'))
+def choose(name, index, scroll=None, scope=None):
+    item = find(name, scope); reveal(item, scroll, scope)
+    combo = nested(item, 'PixelComboBox')
+    window.requestActivate(); QTest.qWait(15); combo.forceActiveFocus()
+    QTest.keyClick(window, Qt.Key_Space); QTest.keyClick(window, Qt.Key_Home)
+    for _ in range(index): QTest.keyClick(window, Qt.Key_Down)
+    QTest.keyClick(window, Qt.Key_Return); QTest.qWait(30)
+    assert item.property('currentIndex') == index, (name, index, item.property('currentIndex'))
+def complete(target=controller, status='SUCCESS'):
+    deadline = time.monotonic() + 150
+    while target.busy and time.monotonic() < deadline:
+        app.processEvents(); time.sleep(.01)
+    assert not target.busy and target.status == status, (target.status, target.error)
+    QTest.qWait(35)
+
+click('quantIntradayTab'); click('intradayDataAcceptanceTab')
+scroll = 'intradayAcceptanceScroll'
+def fill_inputs(name):
+    values = supplied[name]['values']
+    for field, key in (('Data', 'data_path'), ('Manifest', 'manifest_path'), ('Policy', 'policy_path')):
+        fill('intradayAcceptance' + field + 'Path', values[key], scroll)
+def run_case(name, status):
+    fill_inputs(name)
+    count = len(calls)
+    click('intradayAcceptanceRun', scroll)
+    complete(status='SUCCESS' if status == 'POLICY_SATISFIED' else 'PARTIAL')
+    assert len(calls) == count + 1
+    assert controller.resultStatus == status
+    assert status in find('intradayAcceptanceStatus').property('text')
+    assert controller.resultSummary['expected_slots'] == 156
+    report = json.loads(controller.reportJson)
+    assert not report['market_accuracy_certified'] and not report['source_assurance']['independence_verified']
+    return report
+for language in ('en', 'zh-CN'):
+    assert session.i18n.setLanguage(language); QTest.qWait(35)
+    report = run_case('missing', 'NEEDS_EVIDENCE')
+    assert report['summary']['counts']['UNASSESSED'] == 156
+    assert report['evidence_gaps'][0]['count'] == 156
+    reveal(find('intradayAcceptanceAssurance'), scroll)
+    assert window.grabWindow().save(str(root / ('q90-policy-' + language + '.png')))
+    click('intradayAcceptanceShowDetails', scroll)
+    dialog = find('intradayAcceptanceDetailsDialog')
+    assert dialog.property('visible')
+    assert json.loads(find('intradayAcceptanceDetails').property('text')) == report
+    QMetaObject.invokeMethod(dialog, 'close', Qt.DirectConnection); QTest.qWait(25)
+assert run_case('good', 'POLICY_SATISFIED')['summary']['counts']['MATCH'] == 156
+report = run_case('synthetic', 'REJECTED')
+assert report['rejections'] and report['summary']['counts']['MATCH'] == 156
+count = len(calls)
+output = root / 'captured.json'
+def export(status):
+    click('intradayAcceptanceExport', scroll)
+    dialog = find('intradayAcceptanceExportDialog')
+    assert dialog.property('visible')
+    assert dialog.setProperty('selectedFile', QUrl.fromLocalFile(str(output)))
+    QMetaObject.invokeMethod(dialog, 'accepted', Qt.DirectConnection)
+    QMetaObject.invokeMethod(dialog, 'close', Qt.DirectConnection)
+    complete(status=status)
+export('SUCCESS'); saved = output.read_bytes()
+assert json.loads(saved) == report and controller.exportReceipt['acceptance_id'] == report['acceptance_id']
+export('FAILED')
+assert output.read_bytes() == saved and len(calls) == count
+assert controller.resultStatus == 'REJECTED'
+fill('intradayAcceptancePolicyPath', str(root / 'missing-policy.json'), scroll)
+assert not controller.resultLoaded and not controller.exportReceipt
+click('intradayAcceptanceRun', scroll); complete(status='FAILED')
+assert not controller.resultLoaded
+run_case('good', 'POLICY_SATISFIED')
+assert all(Path(p).read_bytes() == content for p, content in before.items())
+assert not owner.intradayLoaded and not owner.intradayResearchController.resultLoaded
+assert session.runtime.backend_if_initialized is None and session.runtime.shutdown()
+engine.deleteLater(); app.processEvents()
+'''
+    completed = subprocess.run([sys.executable, "-c", script, str(tmp_path)], cwd=ROOT,
+        env={**os.environ, "QT_QPA_PLATFORM": "offscreen", "QT_QUICK_BACKEND": "software"},
+        capture_output=True, text=True, timeout=300)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "ReferenceError" not in completed.stderr and "TypeError" not in completed.stderr
