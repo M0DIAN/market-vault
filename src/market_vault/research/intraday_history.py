@@ -1,7 +1,7 @@
 """Explicit, bounded saved-research history; never a global TEST certificate.
 
-Creation reads an ordinary DEV, frozen selection or TEST artifact through the
-existing offline grammar. Assessment reads only the named artifact/event files:
+Creation reads an ordinary DEV, Q25/Q31/Q36 procedure, frozen selection or TEST
+artifact through the existing offline grammar. Assessment reads only the named artifact/event files:
 no Q5 reconstruction, model fit, TEST replay, registry or directory discovery.
 """
 
@@ -23,6 +23,9 @@ from .intraday_experiment import INTRADAY_EXPERIMENT_VERSIONS, _hash
 from .intraday_final_experiment import _feature_context
 from .intraday_final_test import INTRADAY_SELECTION_VERSIONS, INTRADAY_TEST_SELECTION_VERSIONS
 from .intraday_research import _day, _identity
+from .intraday_inner_selection import INTRADAY_INNER_SELECTION_VERSION
+from .intraday_threshold_selection import INTRADAY_THRESHOLD_SELECTION_VERSION
+from .intraday_joint_selection import INTRADAY_JOINT_SELECTION_VERSION
 from .strategy_config import parse_strategy_specs, strategy_plan_fields
 from .strategy_experiment import load_strategy_experiment
 
@@ -30,11 +33,16 @@ from .strategy_experiment import load_strategy_experiment
 DECLARATION_VERSION = "market-vault-intraday-history-declaration-v1"
 EVENT_VERSION = "market-vault-intraday-history-event-v1"
 ASSESSMENT_VERSION = "market-vault-intraday-test-history-v1"
+PROCEDURE_EVENT_VERSION = "market-vault-intraday-history-event-v2"
+PROCEDURE_ASSESSMENT_VERSION = "market-vault-intraday-test-history-v2"
+_PROCEDURES = (INTRADAY_INNER_SELECTION_VERSION, INTRADAY_THRESHOLD_SELECTION_VERSION,
+               INTRADAY_JOINT_SELECTION_VERSION)
 _CONTEXT_FIELDS = {"symbol", "interval", "feature_fields", "target_horizon_bars", "split"}
 _SOURCE_FIELDS = {"artifact_schema_version", "experiment_id", "data_id", "plan_id", "context",
                   "recipes", "recipe_set_id", "algorithm_versions", "environment", "basis"}
 _BASIS = {"session": "RTH", "adjustment": "NONE", "matching": "SAME_US_SYMBOL_AND_NEW_YORK_TRADING_DAY"}
-_SUPPORTED = (*INTRADAY_EXPERIMENT_VERSIONS, *INTRADAY_SELECTION_VERSIONS, *INTRADAY_TEST_SELECTION_VERSIONS)
+_SUPPORTED = (*INTRADAY_EXPERIMENT_VERSIONS, *INTRADAY_SELECTION_VERSIONS,
+              *INTRADAY_TEST_SELECTION_VERSIONS, *_PROCEDURES)
 
 
 def _days(value, label):
@@ -68,20 +76,43 @@ def _declaration(value):
     return value
 
 
+def _ordinary_recipes(source):
+    return [{"strategy": candidate["strategy"], "execution_policy": group["execution_policy"]}
+            for group in source["report"]["groups"] for candidate in group["results"]]
+
+
 def _source_summary(snapshot):
     root = snapshot.as_dict()
     schema = root["artifact_schema_version"]
     if schema not in _SUPPORTED:
-        raise ValueError("history requires an ordinary intraday DEV, frozen selection or TEST artifact")
-    context = root["report"]["context"]
-    if schema in INTRADAY_EXPERIMENT_VERSIONS:
-        recipes = [{"strategy": candidate["strategy"], "execution_policy": group["execution_policy"]}
-                   for group in root["report"]["groups"] for candidate in group["results"]]
-    elif schema in INTRADAY_SELECTION_VERSIONS:
-        candidate = root["report"]["candidate"]
-        recipes = [{key: candidate[key] for key in ("strategy", "execution_policy")}]
+        raise ValueError("history requires an ordinary intraday DEV, Q25/Q31/Q36 procedure, frozen selection or TEST artifact")
+    if schema in _PROCEDURES:
+        # Strict Open has already validated the embedded source, selected
+        # reference and complete fixed method. Never reopen its locator or
+        # substitute the final winner for the procedure's declared family.
+        source = root["report"]["source_experiment"]
+        context = source["report"]["context"]
+        selected = root["plan"]["selection"]
+        group = source["report"]["groups"][selected["cost_index"]]
+        reference = group["results"][selected["candidate_index"]]["strategy"]
+        method = root["report"]["method"]
+        members = ([{"threshold": value} for value in method["thresholds"]]
+                   if schema == INTRADAY_THRESHOLD_SELECTION_VERSION else method["family"])
+        # Preserve original order and duplicates. These are declared recipes,
+        # not a count of executed fits, independent trials or lifetime searches.
+        # UNAVAILABLE procedures retain the same declared family and DEV scope.
+        recipes = _ordinary_recipes(source) + [
+            {"strategy": {**reference, **member}, "execution_policy": group["execution_policy"]}
+            for member in members]
     else:
-        recipes = [{key: root["report"][key] for key in ("strategy", "execution_policy")}]
+        context = root["report"]["context"]
+        if schema in INTRADAY_EXPERIMENT_VERSIONS:
+            recipes = _ordinary_recipes(root)
+        elif schema in INTRADAY_SELECTION_VERSIONS:
+            candidate = root["report"]["candidate"]
+            recipes = [{key: candidate[key] for key in ("strategy", "execution_policy")}]
+        else:
+            recipes = [{key: root["report"][key] for key in ("strategy", "execution_policy")}]
     return {"artifact_schema_version": schema, "experiment_id": root["experiment_id"],
             "data_id": root["dataset_id"], "plan_id": digest(root["plan"]),
             "context": {key: context[key] for key in sorted(_CONTEXT_FIELDS)},
@@ -125,17 +156,21 @@ def _recorded_use_days(source):
 def create_intraday_history_event(experiment_path: str | Path, declaration: dict) -> dict:
     declared = _declaration(declaration)
     source = _source_summary(load_strategy_experiment(experiment_path))
-    event = {"schema_version": EVENT_VERSION, "source": source, "declaration": declared}
+    version = PROCEDURE_EVENT_VERSION if source["artifact_schema_version"] in _PROCEDURES else EVENT_VERSION
+    event = {"schema_version": version, "source": source, "declaration": declared}
     event["event_id"] = digest(event)
     return validate_intraday_history_event(event)
 
 
 def validate_intraday_history_event(event: dict) -> dict:
     object_fields(event, {"schema_version", "source", "declaration", "event_id"}, "history event")
-    if event["schema_version"] != EVENT_VERSION:
+    if event["schema_version"] not in (EVENT_VERSION, PROCEDURE_EVENT_VERSION):
         raise ValueError("unsupported history event version")
     _hash(event, "event_id")
     source, declared = _validate_source(event["source"]), _declaration(event["declaration"])
+    expected_version = PROCEDURE_EVENT_VERSION if source["artifact_schema_version"] in _PROCEDURES else EVENT_VERSION
+    if event["schema_version"] != expected_version:
+        raise ValueError("history event version differs from its source kind")
     if declared["expected_experiment_id"] != source["experiment_id"]:
         raise ValueError("history declaration source identity differs")
     days = {day for group in source["context"]["split"].values() for day in group}
@@ -151,8 +186,10 @@ def analyze_intraday_test_history(experiment_path: str | Path, event_paths: list
     target_days = set(source["context"]["split"]["TEST"])
     own_overlap = sorted(target_days.intersection(_recorded_use_days(source)))
     known, unknown, seen, matches = set(own_overlap), set(), set(), []
+    procedures = source["artifact_schema_version"] in _PROCEDURES
     for path in event_paths:
         event = validate_intraday_history_event(read_json_file(path))
+        procedures = procedures or event["schema_version"] == PROCEDURE_EVENT_VERSION
         if event["event_id"] in seen:
             continue
         seen.add(event["event_id"])
@@ -169,7 +206,8 @@ def analyze_intraday_test_history(experiment_path: str | Path, event_paths: list
                         "declared_exposure_overlap_days": observed, "unknown_overlap_days": uncertain})
     status = ("KNOWN_EXPOSURE" if known else "UNKNOWN_RECORDED_EXPOSURE" if unknown
               else "NO_RECORDED_EXPOSURE_IN_SUPPLIED_HISTORY")
-    result = {"version": ASSESSMENT_VERSION, "status": status, "proposed_source": source,
+    version = PROCEDURE_ASSESSMENT_VERSION if procedures else ASSESSMENT_VERSION
+    result = {"version": version, "status": status, "proposed_source": source,
               "input_count": len(event_paths), "unique_event_count": len(seen),
               "duplicate_event_count": len(event_paths) - len(seen), "matches": matches,
               "own_recorded_test_days": own_overlap, "known_exposure_days": sorted(known),
@@ -203,6 +241,7 @@ def main(argv=None) -> int:
     try:
         result = (create_intraday_history_event(args.experiment, read_json_file(args.declaration))
                   if args.command == "record" else analyze_intraday_test_history(args.experiment, args.event))
+        version = result["schema_version"] if args.command == "record" else result["version"]
         output = write_market_data_json(args.output, result)
         status = "RECORDED" if args.command == "record" else result["status"]
         print(json.dumps({"version": version, "status": status, "output": str(output), "report": result}, allow_nan=False))
