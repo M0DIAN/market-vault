@@ -1,192 +1,218 @@
-# Intraday research: CI critical path and usable forward observations, Q80-Q82
+# Intraday research: usable forward observations and CI closure, Q80-Q82
 
-## Baseline, assessment and authority
+## Verified continuation baseline and scope decision
 
-The assessed baseline is Q79 main `51e5ba54b86aa0741eb991c634c85c50746a89b3`,
-tree `05de70780c31611aee0d6a48a4aee94a0aef1b30`, version 0.9.0. At the start
-of the 2026-10-15 owner request, main was actually Q78
-`521d2df8c21715f814d544bbc7b483fa9090297b` and Q79 PR #349 was still open.
-That prerequisite was closed only after checking its exact-head Codex review,
-natural FULL PR CI `38677351178/1`, downloaded package/attestation identities,
-and squash merge. Natural push/main CI `38678807920/1` then succeeded for the
-actual Q79 merge commit. The user's Q1-Q79 premise is now true at source level;
-it does not establish a profitable strategy or actual independent market data.
+The owner's 2026-10-15 continuation request authorizes 3-4 bounded mainline
+items, including repairs, tests, commits, push, PRs, independent exact-candidate
+review and guarded squash followed by exact-main natural push CI verification.
+The owner also requested direct implementation rather than delegating coding
+to the unavailable cloud worker. Existing repository governance still applies.
 
-The owner authorized the next 3-4 mainline tasks in this repository on
-2026-10-15, including in-scope repairs, tests, commits, push, PRs, independent
-review and conditional squash merge. This record selects three tasks. Follow
-AGENTS.md, repository governance, Development Workflow v2 and Personal Local
-Tool Workflow v1. No repeated step authorization is needed.
+The actual continuation main is `f8b7d4cdf93ff203402131a56af8bb8ad4647933`,
+tree `c922b4e877064c1cadd0b122325279135226e24a`. PR #350 merged only this task
+document (one file, 192 additions), not the Q80 workflow/checker/test patch.
+Natural main push CI `38690082289/1` succeeded for that documentation scope;
+it does not establish Q80 implementation or parallel scheduling. Q80 is OPEN.
+Q79 source remains the previously accepted
+`51e5ba54b86aa0741eb991c634c85c50746a89b3`, tested tree
+`05de70780c31611aee0d6a48a4aee94a0aef1b30`, with FULL PR CI
+`38677351178/1` and exact-main push CI `38678807920/1` successful.
 
-**Delivery order: Q80 -> Q81 -> Q82.** Each task gets a stable exact-head
-independent review and required natural PR CI before squash merge; verify the
-actual main merge and its natural push CI before implementing the next task.
-Read-only preparation may overlap. One writer per worktree. A planning-only PR
-or an implementation request is not a completed implementation or a review.
-Keep evidence in this record and the individual PRs, not a new audit platform.
+This continuation retains three items: Q81 observations export, Q82 saved-TEST
+reconciliation, and completion of Q80 CI parallelism. **Delivery order is now
+Q81 -> Q82 -> Q80 closure**, superseding the earlier Q80-first scheduling.
+Q81 depends on Q76/Q78/Q79, not on the CI optimization. Q82 actually depends on
+Q81; Q80 is orthogonal. The healthy existing workflow remains authoritative
+while the product work proceeds. This prioritizes a usable research input path
+rather than making a throughput improvement an artificial product dependency.
+Do not mark Q80 complete, remove its acceptance conditions, or relabel it Q83.
 
-### Why these tasks, and what is not being repeated
+Each item is a separate PR from the then-current verified main. Implement the
+next item only after final independent review, required natural CI, guarded
+squash and actual merged-main CI closure for its predecessor. Read-only
+preparation may overlap. One writer per worktree; no self-review presented as
+independent approval. A planning-only PR or source blob is not an accepted
+implementation. This document and the individual PRs are the task record.
+
+## Assessment and exclusions common to the package
 
 Q1-Q79 already provide verified Q5 inputs, actual-label-end purging,
 linear/quadratic Ridge, model/threshold/joint selection, saved experiments,
-Freeze/TEST, cost/delay stress, bootstrap uncertainty, procedure comparison,
-market evidence and bounded research-history assessment. Q55-Q72 addressed
-specific numerical and repeated-computation counterexamples. Q73-Q79 added
-structural/data/history/forward acceptance and actual procedure/CLI connections.
-Do not rebuild these or reopen closed numerical cases without a relevant new
-counterexample. Existing six-model and 24-member searches are enough to test
-whether a declared hypothesis adds value; more learners/search dimensions are
-not justified merely by the completed-task count.
+Freeze/TEST, cost/delay stress, uncertainty, procedure comparison, market
+comparison evidence and bounded research history. Q55-Q72 corrected specific
+numerical and repeated-computation cases. Q73-Q79 added structural/data/history
+acceptance and actual procedure/CLI connections. Do not rebuild these or reopen
+closed numerical cases without a directly relevant counterexample.
 
-Two concrete remaining frictions are visible in the current implementation.
-First, `.github/workflows/ci.yml` places BOTH Python matrix legs behind all
-3.11 partitions. Q79's successful 3.14 compatibility job `116236224209` ran
-from 03:47:49Z to 03:49:59Z, after that dependency, despite not consuming any
-partition output. This is an approximately 130-second serial leg in that run,
-not evidence that more partitioning is required or a future latency promise.
-Second, forward observations currently require hand-entered exact experiment,
-candidate/execution identities and action keys, although `_reference_rows`
-already knows the complete saved action population. There is no template
-export entry. Forward reconciliation intentionally accepts ordinary DEV and
-Q25/Q31/Q36 selected outer-DEV accounts, not an already-saved TEST account.
-The latter is a new bounded extension, not a previously hidden defect.
+The current forward input requires manually copying exact identities and action
+keys even though the reader already knows the complete saved action population.
+Its scope ends at ordinary DEV and Q25/Q31/Q36 selected outer DEV. The first gap
+is practical input preparation; the second is the deliberately unsupported
+already-saved TEST account. They justify Q81 and Q82, not a new comparison
+engine. Q80 removes an observed unnecessary dependency: the old Python 3.14 job
+waits for all 3.11 partitions, although it consumes no partition result. In
+Q79 that compatibility job took about 130 seconds after the wait. This is one
+observed serial cost, not a guaranteed future saving or a reason for new shards.
 
-The next research-use priority is to make actual observations easier to bring
-to existing comparisons and to measure the frozen candidate separately from
-its DEV selection procedure. Generated templates remain unmeasured. Without
-actual independent bars/quotes/paper observations, software acceptance cannot
-be promoted to market validity, execution realism, capacity or profitability.
-No automatic strategy choice or model promotion is part of this package.
+Keep version 0.9.0 and current US equity/ETF, RTH, unadjusted 1/5/15/30-minute,
+long/flat scope, TRAIN-only transforms, actual-label-end purge, strict score >
+threshold, declared-family ordering/ties and frozen TEST semantics. No new
+learners, Features, search dimensions, automatic selection/promotion, releases,
+tags, deployment, production replacement, paid data, credential/account changes,
+live subscriptions or brokerage orders. Synthetic inputs demonstrate software
+behavior, not market accuracy, actual capture, obtainable fills or profitability.
+No supplied real independent observations are being claimed by this package.
 
-## Q80 - run Python 3.14 compatibility beside the 3.11 partitions
+## Q81 - export an unmeasured template for the exact saved DEV account
 
-**Goal.** Remove the unnecessary serial dependency while preserving every
-required check, selector, failure gate and exact-version evidence contract.
+**Goal.** Remove manual identity/action-key copying without creating evidence
+that was never observed.
 
-**Technical plan and dependencies.** Keep the eleven existing file-owned 3.11
-partitions and their runner unchanged. Keep the 3.11 aggregate behind plan and
-all partitions; run the actual 3.14 compatibility leg after plan independently
-of those partitions. Keep the visible required check names `test (3.11)` and
-`test (3.14)`. Package publication and FULL attestation must directly depend
-on successful results from BOTH legs and the existing portability job. Update
-only the directly affected workflow topology checks in `check_release.py` and
-its existing regression tests. Preserve classifier, post-merge reuse proof,
-selector manifests, complete-file compatibility supplements and fast-tier
-behavior. Do not fabricate a successful partition result for the 3.14 leg.
+**Technical approach and dependencies.** Reuse strict
+`load_strategy_experiment`, existing ordinary-candidate/selected-procedure
+resolution and `_reference_rows`. The two callers share only the necessary
+account and declaration helpers. The existing root and legacy module CLI share
+the same parser/runner; add mutually exclusive `--template-declaration PATH`
+beside unchanged `--observations PATH`. No new router or GUI.
 
-**Defaults.** Same eleven partitions, max parallelism, Python versions,
-dependency policy, 258-selector/294-node sealed base, two research compatibility
-files, PyArrow compatibility surface, tier defaults and existing timeouts.
-Unknown classification or missing required evidence still fails closed. No
-new worker framework, service, action dependency or global cache is needed.
-
-**Acceptance.** Existing partition ownership and tier/reuse tests remain valid.
-Focused topology regressions distinguish independent 3.14 scheduling from the
-old serial graph, retain the 3.11 aggregation, and prevent package/attestation
-success when either test leg fails, is cancelled or is unexpectedly skipped.
-The natural FULL PR run must actually execute all existing test surfaces and
-show 3.14 starting without waiting for the last 3.11 partition. Report observed
-job and total durations separately; runner queue variation is not a test
-failure. Final review, required CI and post-merge exact-main checks must pass.
-
-**Exclusions.** No additional shards, selector deletion, weakened assertions,
-new security audit, branch-protection changes, fake success markers, empty
-commits, manual dispatch substitute or release. A sub-ten-minute job budget
-is an optimization aim, not achieved by reducing coverage or lowering timeouts.
-
-## Q81 - export an unmeasured observation template from the exact saved account
-
-**Goal.** Eliminate manual identity/action-key copying before using Q76/Q78,
-without inventing quote, action-ready or fill evidence.
-
-**Technical plan and dependencies.** Reuse strict `load_strategy_experiment`,
-the existing ordinary-candidate/selected-procedure resolution and
-`_reference_rows`; factor only the directly repeated resolution needed by the
-exporter and analyzer. Add a small API and root/module CLI mode on the existing
-forward-reconciliation command. `--observations PATH` remains the unchanged
-analysis mode; mutually exclusive `--template-declaration PATH` selects export.
 The declaration has exactly `source`, `reference_clock_id` and `policy`, using
-the existing validators. Ordinary DEV export requires explicit `--cost-index`
-and `--candidate-index`; selected-procedure export rejects those selectors and
-uses its actual selected outer-DEV account. Never silently choose a fixed
-reference or final DEV winner.
+the existing metadata validators. Ordinary DEV requires both explicit
+`--cost-index` and `--candidate-index`; selected procedures reject these flags,
+even zero, and use their complete actual selected outer-DEV account. Never use
+the fixed reference or final DEV winner as a substitute. The Python entry is
+`create_intraday_forward_template(experiment_path, declaration, *,
+cost_index=None, candidate_index=None)` in `intraday_forward_reconciliation`.
 
-Publish the existing observations v1 (ordinary) or v2 (procedure), binding IDs
-from the verified artifact. Emit exactly one record per saved transaction in
-saved order, with its actual symbol/day/slot/side; `action_ready_at`, `quote`
-and `paper_fill` are all null. Do NOT copy modeled times/prices into observed
-fields. Validate the complete generated object through the existing normalizer.
-Use the existing exclusive new-file publisher. A generated template is a caller
-editable input, not a new trusted market artifact or an immutable measurement.
+**Defaults.** Emit existing observations v1 for ordinary DEV and v2 for a
+supported AVAILABLE procedure. Derive exact experiment and candidate/execution
+identities from the validated saved source. Preserve every saved transaction in
+recorded order with symbol, trading_day, slot and side. `action_ready_at`,
+`quote` and `paper_fill` must all be null; modeled prices/times are never copied
+into observed fields. Normalize the generated object through the existing
+observation grammar before returning or publishing it.
 
-**Defaults.** No guessed source provenance, capture timestamp, quote-age limit
-or adverse-price threshold: these come from the explicit declaration. A null
-reference clock stays null. A supported zero-action account emits an empty
-records array; an UNAVAILABLE procedure is rejected rather than exported as
-all-flat. No automatic path/latest-file discovery or existing-file overwrite.
+Source provenance, source timestamp, clock basis and policy thresholds are
+explicit caller inputs, not guessed defaults. Preserve a null reference clock.
+An AVAILABLE zero-action account exports an empty array; an UNAVAILABLE study
+fails. Use the existing exclusive new-file publisher; no overwrite or discovery.
+The output is editable input, not a trusted immutable market measurement.
 
-**Acceptance.** Ordinary and all three procedure kinds produce correct full
-populations and identity bindings. Generated inputs normalize and analyze as
-NOT_MEASURED (or NO_REFERENCE_ACTIONS), never as measured or policy success.
-A small filled observation then traverses the real CLI into existing matching
-and metrics without changing other records. Root and legacy module behavior,
-wrong selectors, unavailable source and no-overwrite behavior are covered by
-focused tests reusing existing fixtures. One strict source open per action;
-no Q5 reload, fit, replay, account execution, TEST evaluation or network call.
-The export envelope explicitly reports TEMPLATE_CREATED, not RECONCILED;
-exit 0 means export succeeded only. Old analysis exits 0/2/1 remain unchanged.
+**Acceptance.** Real saved ordinary and all three procedure inputs prove exact
+whole populations, selected-not-fixed account choice and one strict Open per
+action. Generated input normalizes and yields NOT_MEASURED (or
+NO_REFERENCE_ACTIONS), never measured acceptance. Null records are present
+matches with unavailable measurements, not missing records and not zero costs.
+Reuse the same existing study fixtures, including existing flat/unavailable
+cases. Test invalid/missing/boolean/negative/out-of-range selectors, explicit
+unknown clock, declaration validation and unchanged source/declaration bytes.
 
-**Exclusions.** No new observation schema for existing DEV accounts, inferred
-quotes/fills/clocks, live capture, broker connection, GUI, universal CLI router,
-new study registry, automatic population filtering or capacity/PnL certificate.
+Real installed root and legacy module exports must agree. Pass the resulting
+file back into both unchanged analysis entries; then fill one synthetic record
+and prove exactly one measurement while all other null records remain in the
+denominator. Verify no overwrite, mutually exclusive modes, index rejection in
+analysis mode, and operation without settings. Instrument no Q5 reconstruction,
+fit, procedure evaluation or account replay. Existing Q76-Q79 tests remain.
 
-## Q82 - reconcile observations against an already-saved frozen-candidate TEST
+The export envelope is `market-vault-intraday-forward-template-cli-result-v1`
+with status TEMPLATE_CREATED, output path and template. Exit 0 means export
+succeeded only. Template errors use FAILED/exit 1 with that envelope; argparse
+usage errors remain 2. Existing analysis v1/v2 content and 0/2/1 exits remain
+unchanged. No report is promoted into profitability or untouched-TEST proof.
 
-**Goal.** Measure the saved frozen candidate's TEST execution separately from
-its outer-DEV selection procedure, without rerunning or reopening TEST selection.
+**Exclusions.** No new DEV observation grammar, observed data generation,
+quote/fill/clock inference, automatic history certification, live collection,
+broker service, source repair, refit, execution, TEST scoring or new registry.
 
-**Technical plan and dependencies.** After Q81 closes, extend the same strict
-reference resolver to the supported self-contained saved intraday TEST roots
-already validated by `intraday_final_experiment.py`. Use only the TEST report's
-actual `execution`, not embedded DEV, benchmark or the selection artifact alone.
-Reuse the same transaction consistency checks, whole-population matching,
-clock/price metrics and no-replace publication. Introduce explicit observations
-and reconciliation v3 for TEST (do not reinterpret v1/v2). Bind expected
-experiment ID, execution ID, final_test_id and selection_id; retain selection
-experiment ID, evaluation scope and algorithm/environment/source metadata in
-the result. Q81's export mode produces the matching v3 template for a TEST
-artifact and rejects ordinary candidate indices for it.
+### Q81 usage
 
-**Defaults.** Only already-saved, strictly readable TEST results with supported
-execution/cost versions are accepted. A selection-only artifact has no executed
-TEST account and must fail. Existing ordinary/procedure v1/v2 outputs remain
-unchanged. Keep the frozen recipe and complete saved TEST action denominator;
-no new benchmark choice, refit, threshold selection or portfolio aggregation.
-Existing policy and clock declarations retain their precise limited meaning.
-Opening an already-saved TEST result is exposure to existing TEST information;
-it is NOT a new unseen holdout, authenticated forward capture or preregistration.
+Prepare an explicit declaration with the same source/clock/policy fields as the
+existing observation interface. These illustrative filenames must already
+exist for inputs; output names must not exist:
 
-**Acceptance.** Reuse existing ordinary/inner/threshold/joint TEST fixtures to
-exercise each supported root family, with a discriminating example where DEV
-and TEST transactions differ. Bind wrong TEST/selection/execution identities to
-failures; prove embedded source paths can be unavailable without triggering any
-source read. Test no-action, partial/missing evidence and one complete measured
-population, preserving policy exceedances independently from measurement
-coverage. Exact saved source bytes remain unchanged. Actual API plus root/module
-CLI and template-to-analyzer round trip pass. Verify no Q5 access, fits, account
-execution or TEST scoring is called. Independent review and exact CI gates apply.
+```console
+market-vault research-intraday-forward-reconciliation --experiment saved-dev.json --template-declaration declaration.json --cost-index 0 --candidate-index 1 --output observations-to-fill.json
+market-vault research-intraday-forward-reconciliation --experiment saved-procedure.json --template-declaration declaration.json --output procedure-observations-to-fill.json
+market-vault research-intraday-forward-reconciliation --experiment saved-procedure.json --observations procedure-observations-to-fill.json --output unmeasured-reconciliation.json
+```
 
-**Exclusions.** No TEST execution, re-selection from TEST, automatic history
-certification, authenticated broker fills, live trading, suite/portfolio account
-support, new model family or alteration of historical artifacts.
+The first command's 0/1 indices are an example, not automatic candidate choice.
+The final command still reports missing measurement until genuine compatible
+observations are supplied. Keep unknown fields null rather than copy modeled
+reference values to manufacture an apparently complete capture.
 
-## Shared delivery boundaries
+## Q82 - reconcile an already-saved frozen-candidate TEST execution
 
-Keep version 0.9.0, current US equity/ETF RTH, unadjusted 1/5/15/30-minute,
-long/flat semantics, TRAIN-only transforms, actual-label-end purge, strict
-score > threshold, declared-family ordering/ties and frozen TEST contracts.
-No releases, tags, deployment, production replacement, paid data acquisition,
-credentials/account changes, live subscription or brokerage order is included.
-Synthetic fixtures demonstrate software behavior only. Missing external market
-observations remain a research-evidence limitation, not a reason to fabricate
-measurement or expand this package into a data-acquisition platform.
+**Goal.** Assess the frozen candidate's saved TEST account separately from its
+DEV selection procedure, without rerunning or reopening TEST selection.
+
+**Approach and dependencies.** After Q81 closes, extend the same resolver to
+self-contained supported intraday TEST roots already validated by
+`intraday_final_experiment.py`. Use only the TEST report's own execution, not
+embedded DEV, benchmark or a selection-only file. Reuse transaction consistency,
+whole-population matching, clock/price metrics and exclusive publication.
+Introduce explicit observations/reconciliation v3 for TEST; bind expected
+experiment_id, execution_id, final_test_id and selection_id. Retain selection
+experiment identity, evaluation scope and algorithm/environment/source metadata.
+Q81's template entry produces matching v3 and rejects ordinary indices.
+
+**Defaults.** Only already-saved, strictly readable TEST with supported
+execution/cost versions. Selection-only artifacts have no TEST account and fail.
+Preserve ordinary/procedure v1/v2 outputs and historical bytes. Preserve the
+frozen recipe and complete action denominator. Opening saved TEST exposes
+existing TEST information; it is not a new unseen holdout, authenticated capture,
+preregistration or verified brokerage fill.
+
+**Acceptance.** Reuse supported ordinary/inner/threshold/joint TEST fixtures,
+including a case with different DEV/TEST transactions. Reject wrong
+TEST/selection/execution identities. Missing embedded source paths must not
+trigger data reads. Cover no actions, partial/missing evidence and a complete
+measured population; keep policy exceedance separate from coverage. Actual API,
+root/module CLI and template round trip pass with source bytes unchanged and
+no Q5 reads, fitting, account execution or TEST scoring. Exact review/CI gates
+remain required.
+
+**Exclusions.** No TEST execution/reselection, history certification, automatic
+promotion, live capture/trading, suite/portfolio support or new model family.
+
+## Q80 closure - independent Python 3.14 compatibility scheduling
+
+**Goal.** Remove the unnecessary serial dependency without reducing coverage.
+
+**Approach.** Keep the eleven file-owned 3.11 partitions and 3.11 aggregation.
+Run actual 3.14 compatibility after plan independently of partitions. Preserve
+visible checks `test (3.11)` and `test (3.14)`. Package/FULL attestation must
+directly require both test legs and existing portability success. Adapt only
+directly affected workflow/checker/topology tests. The earlier uncommitted
+patch is not accepted: inspect all active checker entry points, including
+`check_ci_auditability`, rather than trusting earlier sparse checks.
+
+**Defaults.** Same partitions, parallelism, Python/dependency policy, sealed
+258-selector/294-node base and two research compatibility files, PyArrow surface,
+classifier/reuse behavior, unknown-to-FULL policy and timeouts. Do not fabricate
+partition success in the independent 3.14 environment.
+
+**Acceptance.** Whole-file coverage and failure propagation remain. Focused
+topology tests reject the old serial graph and package/attestation success when
+either leg fails, is cancelled or unexpectedly skipped. Natural FULL must execute
+all existing surfaces and demonstrate 3.14 starting before the final partition
+completes. Record job duration and end-to-end duration separately; queue variance
+is not a correctness failure. Final review and exact-main CI must pass.
+
+**Exclusions.** No extra shards, deleted selectors, weaker assertions, new
+framework/cache/service, branch-protection changes, fake markers, empty commits,
+manual-dispatch substitute, increased timeouts or release. Sub-ten-minute jobs
+are an optimization aim, not achieved by relaxing the checks.
+
+## Q81 candidate evidence boundary
+
+Direct implementation changes only the existing forward module, its existing
+same-fixture acceptance test module and this record. No CI workflow change is
+included in the Q81 candidate. Local Python 3.13 syntax checks passed. Nine
+calculation/reference kernels and the complete report-reduction AST are unchanged;
+12 isolated normalizer equivalence cases and five parser cases passed using
+extracted source definitions. These are supplementary checks, not public runtime
+or independent evidence. Actual public pytest was attempted and exited 2 during
+collection at `service.py: import pyarrow.parquet`; zero acceptance tests ran in
+this local environment. No dependency stubs or skipped assertions conceal that
+limitation. Required natural FULL CI must execute the genuine installed-entry,
+saved-reader and procedure tests. Final review and merge remain separate gates.
