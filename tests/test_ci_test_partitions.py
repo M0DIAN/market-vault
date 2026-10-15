@@ -47,6 +47,18 @@ def test_current_registry_covers_every_discovered_test_exactly_once():
     assert "tests/test_desktop_intraday_training_history.py" in resolved["intraday_research"]
     assert "tests/test_intraday_training_history.py" in resolved["intraday_research"]
     assert "tests/test_intraday_final_data_boundaries.py" in resolved["intraday_research"]
+    assert {
+        "tests/test_intraday_ml_procedures_comparison.py",
+        "tests/test_intraday_ml_procedures_family.py",
+        "tests/test_intraday_ml_procedures_stress.py",
+        "tests/test_strategy_intraday_preflight.py",
+    } <= set(resolved["intraday_research"])
+    assert not {
+        "tests/test_intraday_ml_procedures_comparison.py",
+        "tests/test_intraday_ml_procedures_family.py",
+        "tests/test_intraday_ml_procedures_stress.py",
+        "tests/test_strategy_intraday_preflight.py",
+    } & set(resolved["strategy"])
     assert resolved["intraday_analytics"] == ("tests/test_intraday_research_analysis.py",)
     assert resolved["intraday_experiment"] == ("tests/test_intraday_experiment.py", "tests/test_strategy_experiment.py")
     assert resolved["intraday_saved"] == ("tests/test_intraday_saved_diagnostics.py",)

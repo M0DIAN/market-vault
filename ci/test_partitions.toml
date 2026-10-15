@@ -67,11 +67,8 @@ files = [
   "test_desktop_strategy_diagnostics.py",
   "test_desktop_strategy_experiment.py",
   "test_intraday_execution.py",
-  "test_intraday_ml_procedures_comparison.py",
-  "test_intraday_ml_procedures_family.py",
   "test_intraday_ml_procedures_inner_cost_sensitivity.py",
   "test_intraday_ml_procedures_risk_diagnostics.py",
-  "test_intraday_ml_procedures_stress.py",
   "test_research_workspace.py",
 ]
 
@@ -79,6 +76,10 @@ files = [
 prefixes = [
 ]
 files = [
+  "test_intraday_ml_procedures_comparison.py",
+  "test_intraday_ml_procedures_family.py",
+  "test_intraday_ml_procedures_stress.py",
+  "test_strategy_intraday_preflight.py",
   "test_desktop_intraday_research.py",
   "test_desktop_intraday_training_history.py",
   "test_intraday_final_data_boundaries.py",
