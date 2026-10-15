@@ -7454,7 +7454,7 @@ def test_release_checker_fails_when_ci_matrix_changes(tmp_path):
     ci = repo / ".github" / "workflows" / "ci.yml"
     ci.write_text(
         ci.read_text(encoding="utf-8").replace(
-            '["3.11", "3.14"]', '["3.11", "3.13", "3.14"]'
+            '["3.11"]', '["3.11", "3.13"]'
         ),
         encoding="utf-8",
     )
@@ -7925,7 +7925,7 @@ def test_release_checker_fails_when_package_job_loses_portability_dependency(
     path = repo / ".github" / "workflows" / "ci.yml"
     path.write_text(
         path.read_text(encoding="utf-8").replace(
-            "needs: [plan, test, portability-pyarrow24]",
+            "needs: [plan, test, test-314, portability-pyarrow24]",
             "needs: test",
         ),
         encoding="utf-8",
@@ -7933,7 +7933,7 @@ def test_release_checker_fails_when_package_job_loses_portability_dependency(
     assert_check_fails(
         _check_release.check_ci_pr8,
         repo,
-        "must depend on [plan, test, portability-pyarrow24]",
+        "must depend on [plan, test, test-314, portability-pyarrow24]",
     )
 
 
@@ -8351,7 +8351,8 @@ def test_control_plane_check_fails_when_classify_branch_removed(tmp_path):
      "&& env.CI_TIER != 'research_fast' && matrix.python-version == '3.14'", "surface step must keep the exact fail-closed 3.14 guard"),
 ])
 def test_py314_research_contract_rejects_scope_or_guard_regressions(tmp_path, step, old, new, diagnostic):
-    repo = _mutate_step_guard(tmp_path, step, old, new, job="test")
+    job = "test-314" if "Python 3.14" in step else "test"
+    repo = _mutate_step_guard(tmp_path, step, old, new, job=job)
     assert_check_fails(_check_release.check_ci_python314_surface, repo, diagnostic)
 #
 # Every mutation changes exactly ONE activation invariant and leaves every
@@ -8406,8 +8407,8 @@ def _mutate_surface_run(tmp_path, new_run):
     repo = copy_repo(tmp_path)
     ci = repo / ".github" / "workflows" / "ci.yml"
     text = ci.read_text(encoding="utf-8").replace("\r\n", "\n")
-    block = _check_release._ci_job_block(text, "test")
-    assert block is not None, "test"
+    block = _check_release._ci_job_block(text, "test-314")
+    assert block is not None, "test-314"
     region = _check_release._ci_step_region(
         block, "Run Python 3.14 compatibility surface"
     )
@@ -8427,7 +8428,7 @@ def test_py314_check_fails_when_validator_step_removed(tmp_path):
         "Validate Python 3.14 compatibility surface",
         "- name: Validate Python 3.14 compatibility surface",
         "- name: Validate Python 3.14 compatibility surface (removed)",
-        job="test",
+        job="test-314",
     )
     assert_check_fails(
         _check_release.check_ci_python314_surface,
@@ -8444,7 +8445,7 @@ def test_py314_check_fails_when_surface_step_removed(tmp_path):
         "Run Python 3.14 compatibility surface",
         "- name: Run Python 3.14 compatibility surface",
         "- name: Run Python 3.14 compatibility surface (removed)",
-        job="test",
+        job="test-314",
     )
     assert_check_fails(
         _check_release.check_ci_python314_surface,
@@ -8461,7 +8462,7 @@ def test_py314_check_fails_when_validator_guard_loses_314(tmp_path):
         "Validate Python 3.14 compatibility surface",
         "&& matrix.python-version == '3.14'",
         "&& matrix.python-version == '3.11'",
-        job="test",
+        job="test-314",
     )
     assert_check_fails(
         _check_release.check_ci_python314_surface,
@@ -8478,7 +8479,7 @@ def test_py314_check_fails_when_surface_guard_loses_314(tmp_path):
         "Run Python 3.14 compatibility surface",
         "&& matrix.python-version == '3.14'",
         "&& matrix.python-version == '3.11'",
-        job="test",
+        job="test-314",
     )
     assert_check_fails(
         _check_release.check_ci_python314_surface,
@@ -8495,7 +8496,7 @@ def test_py314_check_fails_when_validator_invocation_changed(tmp_path):
         "Validate Python 3.14 compatibility surface",
         "run: python scripts/ci_python314_surface.py --repo .",
         "run: python scripts/ci_python314_surface.py",
-        job="test",
+        job="test-314",
     )
     assert_check_fails(
         _check_release.check_ci_python314_surface,
@@ -8512,7 +8513,7 @@ def test_py314_check_fails_when_surface_reads_other_manifest(tmp_path):
         "Run Python 3.14 compatibility surface",
         "ci/python314_compatibility_surface.txt",
         "ci/python314_compatibility_surface2.txt",
-        job="test",
+        job="test-314",
     )
     assert_check_fails(
         _check_release.check_ci_python314_surface,
@@ -8774,7 +8775,7 @@ def test_py314_check_fails_when_validator_and_surface_steps_swapped(tmp_path):
     repo = copy_repo(tmp_path)
     ci = repo / ".github" / "workflows" / "ci.yml"
     text = ci.read_text(encoding="utf-8")
-    block = _check_release._ci_job_block(text, "test")
+    block = _check_release._ci_job_block(text, "test-314")
     validator = _check_release._ci_step_region(
         block, "Validate Python 3.14 compatibility surface"
     )

@@ -249,3 +249,74 @@ def test_plan_cli_exports_the_exact_normalized_plan(tmp_path):
     assert run.returncode == 0, run.stderr
     assert output.read_text() == run.stdout
     assert "run_partitions=true\n" in run.stdout
+
+
+@pytest.mark.parametrize("old,new,diagnostic", [
+    ("    needs: plan\n", "    needs: [plan, test-modules]\n", "must contain 'needs: plan'"),
+    ("    needs: plan\n", "    needs: plan\n    needs: [plan, test-modules]\n", "exact job dependencies"),
+    ("    if: ${{ always() && !cancelled() }}\n", "    if: false\n", "exact job condition"),
+    ("    env:\n", "    env:\n      CI_PARTITIONS_RESULT: success\n", "cannot consume or fabricate partition results"),
+    ('        python-version: ["3.14"]', '        python-version: ["3.11"]', "python-version"),
+    ("    runs-on: ubuntu-latest\n", "    runs-on: ubuntu-latest\n    continue-on-error: true\n", "cannot ignore failures"),
+    ("      matrix:\n", "      matrix:\n        exclude:\n          - python-version: '3.14'\n", "cannot include or exclude"),
+    ('        run: test "$CI_PLAN_RESULT" = success', '        run: echo success', "must run"),
+])
+def test_independent_314_topology_rejects_regressions(tmp_path, old, new, diagnostic):
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+    block = release_checker._ci_job_block(workflow, "test-314")
+    assert block is not None and old in block
+    changed = workflow.replace(block, block.replace(old, new, 1), 1)
+    target = tmp_path / ".github/workflows/ci.yml"
+    target.parent.mkdir(parents=True)
+    target.write_text(changed)
+    for relative in ("ci/test_partitions.toml", "scripts/ci_test_partitions.py"):
+        path = tmp_path / relative
+        path.parent.mkdir(exist_ok=True)
+        path.write_text((ROOT / relative).read_text())
+    failures = release_checker.check_ci_partitions(tmp_path)
+    assert any(diagnostic in failure for failure in failures), failures
+
+
+@pytest.mark.parametrize("job", ["test", "test-314"])
+@pytest.mark.parametrize("replacement", ["failure", "cancelled", "skipped"])
+def test_package_cannot_accept_a_non_successful_test_leg(tmp_path, job, replacement):
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+    old = f"needs.{job}.result == 'success'"
+    assert old in workflow
+    target = tmp_path / ".github/workflows/ci.yml"
+    target.parent.mkdir(parents=True)
+    target.write_text(workflow.replace(old, f"needs.{job}.result == '{replacement}'", 1))
+    for relative in ("ci/test_partitions.toml", "scripts/ci_test_partitions.py"):
+        path = tmp_path / relative
+        path.parent.mkdir(exist_ok=True)
+        path.write_text((ROOT / relative).read_text())
+    failures = release_checker.check_ci_partitions(tmp_path)
+    assert any("package must keep its exact job condition" in failure for failure in failures), failures
+
+
+def test_python314_compatibility_is_independent_and_package_requires_both():
+    """Q80 must move the actual compatibility work, not merely rename a check."""
+    import re
+
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+    aggregate = release_checker._ci_job_block(workflow, "test")
+    compatibility = release_checker._ci_job_block(workflow, "test-314")
+    package = release_checker._ci_job_block(workflow, "package")
+    assert aggregate is not None and compatibility is not None and package is not None
+    assert re.findall(r"(?m)^    needs: (.*)$", aggregate) == ["[plan, test-modules]"]
+    assert re.findall(r"(?m)^    needs: (.*)$", compatibility) == ["plan"]
+    assert 'python-version: ["3.11"]' in aggregate
+    assert 'python-version: ["3.14"]' in compatibility
+    assert "name: test\n" in compatibility
+    assert "CI_PARTITIONS_RESULT" not in compatibility
+    assert "needs.test-modules" not in compatibility
+    assert "ci_test_partitions.py verify" not in compatibility
+    for step in ("Validate Python 3.14 compatibility surface", "Run Python 3.14 compatibility surface",
+                 "Run Python 3.14 research compatibility"):
+        assert release_checker._ci_step_region(compatibility, step) is not None
+        assert release_checker._ci_step_region(aggregate, step) is None
+    assert re.findall(r"(?m)^    needs: (.*)$", package) == ["[plan, test, test-314, portability-pyarrow24]"]
+    guards = re.findall(r"(?m)^    if: (.*)$", package)
+    assert len(guards) == 1 and "always() && !cancelled()" in guards[0]
+    for job in ("plan", "test", "test-314", "portability-pyarrow24"):
+        assert f"needs.{job}.result == 'success'" in guards[0]

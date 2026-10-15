@@ -203,7 +203,7 @@ def _region(text: str, start_marker: str, end_marker: str | None) -> str:
 
 def test_workflow_uses_checkout_v6_for_every_checkout_job():
     text = ci_text()
-    for job in ("test", "portability-pyarrow24", "package"):
+    for job in ("test", "test-314", "portability-pyarrow24", "package"):
         block = _job_block(text, job)
         assert "uses: actions/checkout@v6" in block
         assert "actions/checkout@v4" not in block
@@ -211,7 +211,7 @@ def test_workflow_uses_checkout_v6_for_every_checkout_job():
 
 def test_workflow_uses_setup_python_v6_for_every_python_job():
     text = ci_text()
-    for job in ("test", "portability-pyarrow24", "package"):
+    for job in ("test", "test-314", "portability-pyarrow24", "package"):
         block = _job_block(text, job)
         assert "uses: actions/setup-python@v6" in block
         assert "actions/setup-python@v5" not in block
@@ -236,22 +236,22 @@ def test_workflow_never_restores_stale_action_majors():
 
 def test_formal_jobs_keep_four_surfaces_with_balanced_full_partitions():
     headers = list(JOB_HEADER_RE.findall(_jobs_section(ci_text())))
-    assert headers == ["plan", "test-modules", "test", "portability-pyarrow24", "package"]
+    assert headers == ["plan", "test-modules", "test", "test-314", "portability-pyarrow24", "package"]
     for forbidden in ("package-artifact-audit", "release", "publish", "deploy"):
         assert forbidden not in headers
 
 
 def test_normal_test_matrix_exactly_311_and_314():
-    block = _job_block(ci_text(), "test")
-    assert '"3.11", "3.14"' in block
-    for third in ('"3.12"', '"3.13"', '"3.15"'):
-        assert third not in block
-    assert "fail-fast: false" in block
+    for job, version in (("test", "3.11"), ("test-314", "3.14")):
+        block = _job_block(ci_text(), job)
+        assert re.findall(r'(?m)^        python-version: (.+)$', block) == [f'["{version}"]']
+        assert "fail-fast: false" in block
+        assert not re.search(r"(?m)^\s*(?:include|exclude):", block)
 
 
 def test_package_job_needs_test_and_portability():
     block = _job_block(ci_text(), "package")
-    assert "needs: [plan, test, portability-pyarrow24]" in block
+    assert "needs: [plan, test, test-314, portability-pyarrow24]" in block
 
 
 def test_release_checker_step_runs_on_all_tiers():
@@ -356,7 +356,7 @@ def test_314_leg_keeps_fail_closed_validator_step():
     """The 3.14 leg must validate the surface BEFORE any execution: the
     exact fail-closed validator step with the exact 3.14 guard and the
     pinned invocation."""
-    block = _job_block(ci_text(), "test")
+    block = _job_block(ci_text(), "test-314")
     names = _step_names(block)
     assert PY314_VALIDATOR_STEP in names
     idx = names.index(PY314_VALIDATOR_STEP)
@@ -372,7 +372,7 @@ def test_314_leg_executes_audited_surface_from_sealed_manifest():
     $(cat ...) command substitution), a hard selector-count check, the
     audit marker, the full selector set printed, and the array expanded
     QUOTED into pytest with --durations=200, with the exact 3.14 guard."""
-    block = _job_block(ci_text(), "test")
+    block = _job_block(ci_text(), "test-314")
     names = _step_names(block)
     assert PY314_SURFACE_STEP in names
     idx = names.index(PY314_SURFACE_STEP)
@@ -396,7 +396,7 @@ def test_314_leg_executes_audited_surface_from_sealed_manifest():
 
 def test_314_validator_precedes_surface_execution():
     """The surface must never run before fail-closed validation."""
-    block = _job_block(ci_text(), "test")
+    block = _job_block(ci_text(), "test-314")
     assert block.index(f"- name: {PY314_VALIDATOR_STEP}") < block.index(
         f"- name: {PY314_SURFACE_STEP}"
     )
@@ -682,7 +682,7 @@ def test_reuse_proof_has_one_plan_authority():
     assert "env.CI_TIER == 'full'" in block
     assert "POST_MERGE_REUSE=" in block
     assert text.count("- name: Post-merge FULL reuse proof") == 1
-    for job in ("test", "portability-pyarrow24", "package"):
+    for job in ("test", "test-314", "portability-pyarrow24", "package"):
         assert "POST_MERGE_REUSE: ${{ needs.plan.outputs.reuse }}" in _job_block(text, job)
 
 
@@ -764,13 +764,17 @@ def test_classify_exports_one_full_matrix_decision_to_all_consumers():
     text = ci_text()
     assert text.count("- name: Classify change tier") == 1
     assert "CI_FULL_MATRIX_REQUIRED=" in _job_block(text, "plan")
-    for job in ("test", "portability-pyarrow24", "package"):
+    for job in ("test", "test-314", "portability-pyarrow24", "package"):
         block = _job_block(text, job)
         assert "CI_FULL_MATRIX_REQUIRED: ${{ needs.plan.outputs.full_matrix_required }}" in block
 
 
 _HEAVY_STEPS_PER_JOB = {
     "test": (
+        "Install dependencies",
+        "Compile Python",
+    ),
+    "test-314": (
         "Install dependencies",
         "Compile Python",
     ),
@@ -847,7 +851,9 @@ def test_reuse_true_guard_appears_only_on_marker_and_bootstrap_steps():
 
 def test_reuse_markers_present_with_exact_names():
     text = ci_text()
-    assert text.count("FULL_TESTS_REUSED_FROM_VERIFIED_PR") == 2
+    for job in ("test", "test-314", "portability-pyarrow24"):
+        assert _job_block(text, job).count("FULL_TESTS_REUSED_FROM_VERIFIED_PR") == 1
+    assert text.count("FULL_TESTS_REUSED_FROM_VERIFIED_PR") == 3
     assert text.count("PACKAGE_VALIDATION_REUSED_FROM_VERIFIED_PR") == 1
 
 
@@ -939,7 +945,7 @@ def _evaluate_guard(expr: str, tier: str, reuse: str) -> bool:
 def test_package_has_exactly_one_release_checker_runtime_bootstrap():
     """(A) Exactly one ``Prepare release-checker runtime`` step exists,
     in the package job (the name may also appear in comments)."""
-    for job in ("test", "portability-pyarrow24", "package"):
+    for job in ("test", "test-314", "portability-pyarrow24", "package"):
         block = _job_block(ci_text(), job)
         names = _step_names(block)
         assert names.count("Prepare release-checker runtime") == (1 if job == "package" else 0)
@@ -1106,7 +1112,7 @@ def test_package_heavy_steps_skip_on_control_plane():
 
 def test_control_plane_marker_present_in_all_three_jobs():
     """Every formal job carries the control-plane tier marker."""
-    for job in ("test", "portability-pyarrow24", "package"):
+    for job in ("test", "test-314", "portability-pyarrow24", "package"):
         block = _job_block(ci_text(), job)
         assert CONTROL_PLANE_MARKER_STEP in _step_names(block), job
         assert f"- name: {CONTROL_PLANE_MARKER_STEP}" in block
@@ -1123,3 +1129,30 @@ def test_control_plane_never_mints_full_evidence():
         ):
             assert "env.CI_TIER == 'full'" in region, name
             assert "'control_plane'" not in region, name
+
+
+def test_314_schedules_after_plan_without_waiting_for_311_partitions():
+    text = ci_text()
+    compatibility = _job_block(text, "test-314")
+    aggregate = _job_block(text, "test")
+    assert re.findall(r"(?m)^    needs: (.+)$", compatibility) == ["plan"]
+    assert re.findall(r"(?m)^    needs: (.+)$", aggregate) == ["[plan, test-modules]"]
+    assert "CI_PARTITIONS_RESULT" not in compatibility
+    assert "scripts/ci_test_partitions.py verify" not in compatibility
+    assert "CI_PARTITIONS_RESULT: ${{ needs.test-modules.result }}" in aggregate
+    assert PY314_VALIDATOR_STEP not in aggregate
+    assert PY314_SURFACE_STEP not in aggregate
+    assert "Run Python 3.14 research compatibility" not in aggregate
+    assert "name: test\n" in compatibility
+
+
+def test_package_requires_each_physical_test_leg_to_succeed():
+    block = _job_block(ci_text(), "package")
+    assert re.findall(r"(?m)^    needs: (.+)$", block) == [
+        "[plan, test, test-314, portability-pyarrow24]"
+    ]
+    assert re.findall(r"(?m)^    if: (.+)$", block) == [
+        "${{ always() && !cancelled() && needs.plan.result == 'success' "
+        "&& needs.test.result == 'success' && needs.test-314.result == 'success' "
+        "&& needs.portability-pyarrow24.result == 'success' }}"
+    ]
