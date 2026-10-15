@@ -337,13 +337,15 @@ def analyze_intraday_forward_reconciliation(experiment_path: str | Path, observa
     return {**result, "reconciliation_id": digest(result)}
 
 
-def main(argv=None) -> int:
-    """Exclusive new-file module CLI; no root-command or GUI behavior changes."""
-    parser = argparse.ArgumentParser(description=__doc__)
+def add_forward_arguments(parser: argparse.ArgumentParser) -> None:
+    """Share explicit file arguments between root and module commands."""
     parser.add_argument("--experiment", required=True)
     parser.add_argument("--observations", required=True)
     parser.add_argument("--output", required=True)
-    args = parser.parse_args(argv)
+
+
+def run_forward_command(args: argparse.Namespace) -> int:
+    """Execute one parsed reconciliation without loading application settings."""
     version = RECONCILIATION_VERSION
     try:
         from ..quality.market_data_comparison import write_market_data_json
@@ -363,6 +365,13 @@ def main(argv=None) -> int:
             payload["published"] = exc.published
         print(json.dumps(payload), file=sys.stderr)
         return 1
+
+
+def main(argv=None) -> int:
+    """Legacy module entry, with unchanged publication and exit semantics."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    add_forward_arguments(parser)
+    return run_forward_command(parser.parse_args(argv))
 
 
 if __name__ == "__main__":

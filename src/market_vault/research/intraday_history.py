@@ -225,10 +225,9 @@ def analyze_intraday_test_history(experiment_path: str | Path, event_paths: list
     return {**result, "history_assessment_id": digest(result)}
 
 
-def main(argv=None) -> int:
-    """Explicit module CLI; existing market-vault commands are unchanged."""
-    parser = argparse.ArgumentParser(description=__doc__)
-    commands = parser.add_subparsers(dest="command", required=True)
+def add_history_arguments(parser: argparse.ArgumentParser) -> None:
+    """Share the explicit action grammar between root and module commands."""
+    commands = parser.add_subparsers(dest="history_action", required=True)
     record = commands.add_parser("record", help="Create one new history event from an explicit saved artifact")
     record.add_argument("--declaration", required=True)
     assess = commands.add_parser("assess", help="Assess proposed TEST dates against explicitly named history events")
@@ -236,14 +235,17 @@ def main(argv=None) -> int:
     for command in (record, assess):
         command.add_argument("--experiment", required=True)
         command.add_argument("--output", required=True)
-    args = parser.parse_args(argv)
-    version = EVENT_VERSION if args.command == "record" else ASSESSMENT_VERSION
+
+
+def run_history_command(args: argparse.Namespace) -> int:
+    """Execute one parsed action; both CLI entry points use this same runner."""
+    version = EVENT_VERSION if args.history_action == "record" else ASSESSMENT_VERSION
     try:
         result = (create_intraday_history_event(args.experiment, read_json_file(args.declaration))
-                  if args.command == "record" else analyze_intraday_test_history(args.experiment, args.event))
-        version = result["schema_version"] if args.command == "record" else result["version"]
+                  if args.history_action == "record" else analyze_intraday_test_history(args.experiment, args.event))
+        version = result["schema_version"] if args.history_action == "record" else result["version"]
         output = write_market_data_json(args.output, result)
-        status = "RECORDED" if args.command == "record" else result["status"]
+        status = "RECORDED" if args.history_action == "record" else result["status"]
         print(json.dumps({"version": version, "status": status, "output": str(output), "report": result}, allow_nan=False))
         return 0 if status in ("RECORDED", "NO_RECORDED_EXPOSURE_IN_SUPPLIED_HISTORY") else 2
     except (DatasetCLIError, OSError, TypeError, ValueError, KeyError, ArithmeticError, RecursionError,
@@ -253,6 +255,13 @@ def main(argv=None) -> int:
             payload["published"] = exc.published
         print(json.dumps(payload), file=sys.stderr)
         return 1
+
+
+def main(argv=None) -> int:
+    """Legacy module entry, with the same arguments and results as before."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    add_history_arguments(parser)
+    return run_history_command(parser.parse_args(argv))
 
 
 if __name__ == "__main__":

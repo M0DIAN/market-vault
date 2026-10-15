@@ -1,4 +1,4 @@
-"""Q77/Q78: saved procedure history and selected-account acceptance entries.
+"""Q77-Q79: saved procedure history and selected-account acceptance entries.
 
 Keep shared study fixtures in this module to avoid rebuilding them per action.
 All observations are synthetic software evidence, not verified market capture.
@@ -309,3 +309,111 @@ def test_actual_procedure_forward_module_cli_v2_identity_and_exclusive_output(in
     assert result.returncode == 1 and not missing.exists()
     assert json.loads(result.stderr)["version"] == forward.PROCEDURE_RECONCILIATION_VERSION
     assert "execution identity differs" in json.loads(result.stderr)["error"]
+
+
+def acceptance_process(tmp_path, module, root_command, arguments, *, root):
+    """Exercise the installed console entry or legacy module in a clean cwd."""
+    if root:
+        cli = Path(sys.executable).with_name("market-vault.exe" if os.name == "nt" else "market-vault")
+        assert cli.is_file(), "the installed public entry must exist in the test environment"
+        command = [str(cli), "--settings", str(tmp_path / "nonexistent-settings.yaml"), root_command]
+    else:
+        command = [sys.executable, "-m", "market_vault.research." + module]
+    return subprocess.run(command + arguments, cwd=tmp_path,
+                          env={**os.environ, "PYTHONPATH": str(ROOT / "src")},
+                          text=True, capture_output=True, timeout=90)
+
+
+@pytest.mark.parametrize("procedure", [False, True], ids=["ordinary-v1", "procedure-v2"])
+def test_installed_root_and_module_history_record_assess_agree_without_settings(inner_case, tmp_path, procedure):
+    path = inner_case[5] if procedure else inner_case[2]
+    day = inner_case[1].as_dict()["report"]["context"]["split"]["TEST"][0]
+    declared = write_market_data_json(tmp_path / "declared.json", declaration(path, purpose="INSPECT", days=[day]))
+    versions = ((history.PROCEDURE_EVENT_VERSION, history.PROCEDURE_ASSESSMENT_VERSION) if procedure
+                else (history.EVENT_VERSION, history.ASSESSMENT_VERSION))
+    records, assessments = [], []
+    outputs = []
+    for root in (False, True):
+        output = tmp_path / f"{root}-event.json"
+        args = ["record", "--experiment", str(path), "--declaration", str(declared), "--output", str(output)]
+        result = acceptance_process(tmp_path, "intraday_history", "research-intraday-history", args, root=root)
+        assert result.returncode == 0, result.stderr
+        payload = json.loads(result.stdout)
+        assert payload["version"] == versions[0] and payload["status"] == "RECORDED"
+        records.append(payload["report"])
+        outputs.append(output)
+        if root:
+            before = output.read_bytes()
+            repeated = acceptance_process(tmp_path, "intraday_history", "research-intraday-history", args, root=True)
+            assert repeated.returncode == 1 and output.read_bytes() == before
+            assert json.loads(repeated.stderr)["status"] == "FAILED"
+    assert records[0] == records[1] and outputs[0].read_bytes() == outputs[1].read_bytes()
+    for root in (False, True):
+        output = tmp_path / f"{root}-assessment.json"
+        args = ["assess", "--experiment", str(path), "--event", str(outputs[0]), "--output", str(output)]
+        result = acceptance_process(tmp_path, "intraday_history", "research-intraday-history", args, root=root)
+        assert result.returncode == 2, result.stderr
+        payload = json.loads(result.stdout)
+        assert payload["version"] == versions[1] and payload["status"] == "KNOWN_EXPOSURE"
+        assert payload["report"]["known_exposure_days"] == [day]
+        assert payload["report"]["independence_certified"] is False
+        assessments.append(payload["report"])
+    assert assessments[0] == assessments[1]
+    assert (tmp_path / "False-assessment.json").read_bytes() == (tmp_path / "True-assessment.json").read_bytes()
+    assert not (tmp_path / "nonexistent-settings.yaml").exists()
+    if not procedure:
+        help_result = acceptance_process(tmp_path, "intraday_history", "--help", [], root=True)
+        assert help_result.returncode == 0, help_result.stderr
+        assert "research-intraday-history" in help_result.stdout
+        assert "research-intraday-forward-reconciliation" in help_result.stdout
+
+
+@pytest.mark.parametrize("procedure", [False, True], ids=["ordinary-v1", "procedure-v2"])
+def test_installed_root_and_module_forward_agree_for_measured_and_missing_evidence(inner_case, tmp_path, procedure):
+    root = inner_case[4].as_dict()
+    batch = procedure_observations(root)
+    path = inner_case[5] if procedure else inner_case[2]
+    if procedure:
+        # Missing observations must remain a nonpassing report through the root
+        # entry, not become acceptance or trigger another research operation.
+        expected_version, expected_status, expected_exit = forward.PROCEDURE_RECONCILIATION_VERSION, "NOT_MEASURED", 2
+    else:
+        source = inner_case[1].as_dict()
+        selection = inner_case[3]
+        ci, si = selection["cost_index"], selection["candidate_index"]
+        candidate = source["report"]["groups"][ci]["results"][si]
+        rows = forward._reference_rows(candidate["execution"], source["report"]["context"]["symbol"])
+        assert rows
+        batch = {**{key: value for key, value in batch.items() if key != "expected_execution_id"},
+                 "schema_version": forward.OBSERVATIONS_VERSION, "expected_experiment_id": source["experiment_id"],
+                 "cost_index": ci, "candidate_index": si, "expected_candidate_id": candidate["candidate_id"],
+                 "records": [observed(row) for row in rows]}
+        expected_version, expected_status, expected_exit = forward.RECONCILIATION_VERSION, "RECONCILED", 0
+    observations = write_market_data_json(tmp_path / "observations.json", batch)
+    reports, outputs = [], []
+    for use_root in (False, True):
+        output = tmp_path / f"{use_root}-reconciliation.json"
+        args = ["--experiment", str(path), "--observations", str(observations), "--output", str(output)]
+        result = acceptance_process(tmp_path, "intraday_forward_reconciliation", "research-intraday-forward-reconciliation", args, root=use_root)
+        assert result.returncode == expected_exit, result.stderr
+        payload = json.loads(result.stdout)
+        assert payload["version"] == expected_version and payload["status"] == expected_status
+        assert payload["report"]["forward_capture_verified"] is False
+        reports.append(payload["report"])
+        outputs.append(output)
+    assert reports[0] == reports[1] and outputs[0].read_bytes() == outputs[1].read_bytes()
+    before = outputs[1].read_bytes()
+    repeated = acceptance_process(tmp_path, "intraday_forward_reconciliation", "research-intraday-forward-reconciliation", args, root=True)
+    assert repeated.returncode == 1 and outputs[1].read_bytes() == before
+    assert json.loads(repeated.stderr)["version"] == expected_version
+    if procedure:
+        wrong = write_market_data_json(tmp_path / "wrong-execution.json", {**batch, "expected_execution_id": "0" * 64})
+        args[args.index("--observations") + 1] = str(wrong)
+        missing = tmp_path / "must-not-exist.json"
+        args[-1] = str(missing)
+        failed = acceptance_process(tmp_path, "intraday_forward_reconciliation", "research-intraday-forward-reconciliation", args, root=True)
+        assert failed.returncode == 1 and not missing.exists()
+        payload = json.loads(failed.stderr)
+        assert payload["version"] == expected_version and payload["status"] == "FAILED"
+        assert "execution identity differs" in payload["error"]
+    assert not (tmp_path / "nonexistent-settings.yaml").exists()
