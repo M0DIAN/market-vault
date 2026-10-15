@@ -39,6 +39,16 @@ change, and coverage UNKNOWN without a list or PARTIAL with a finite list.
 No listed intersection is not corporate-action clearance. Q11 admission stays
 unchanged during Q86 and is extended separately in Q87.
 
+Q86 closed through PR #356: independently reviewed candidate
+`9686be9afc77ac58e3d955313896fdbc4852a334`, natural FULL PR CI
+`38737072873/1`, squash main `4a81656b11574475f8b5cf1fe344262a49e3876a`,
+and natural exact-main push CI `38738638791/1` all passed. Q87 starts from that
+clean verified main. It changes only Saved A/B admission and new economic-source
+disclosure, not difference eligibility, calculations or portfolio scope. New
+economic sides add `return_basis` and an explicit basis check; old DEV/TEST
+V1/V2 result shapes remain unchanged. Native source capture, prior-result
+binding, failed-open recovery and TEST portfolio rejection are retained.
+
 ## Baseline, rationale and delivery order
 
 The verified planning baseline is Q72 main
