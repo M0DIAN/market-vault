@@ -1,24 +1,37 @@
-# Q76: offline forward-observation reconciliation
+# Offline forward-observation templates and reconciliation
 
-This is the last task in the owner-authorized
-[Advice03 Q73-Q76 package](intraday_acceptance_next.md). Implementation starts
-from Q75 main `6b41ac72bdf299a47f953fdf209e1b930188a9e4`, after natural push CI
-`38664865873/1` completed successfully. The tool compares explicitly supplied
-observations with a selected saved DEV account; it does not collect forward
-observations or certify that they were recorded before the outcome was known.
+This current-main guide covers the existing Q76-Q83 workflow: reconcile supplied
+observations, export unmeasured templates, and use the native saved-file entry.
+Historical implementation records remain in the
+[acceptance package](intraday_acceptance_next.md) and
+[forward workflow package](intraday_forward_workflow_next.md). The tool does not
+collect observations or certify that they were recorded before outcomes were known.
 
 ## Entry and supported scope
 
 ```console
+market-vault research-intraday-forward-reconciliation --experiment /absolute/development.json --observations /absolute/observations.json --output /absolute/new-reconciliation.json
 python -m market_vault.research.intraday_forward_reconciliation --experiment /absolute/development.json --observations /absolute/observations.json --output /absolute/new-reconciliation.json
 ```
 
-The API is `analyze_intraday_forward_reconciliation(experiment_path, observations)`
-in that module. It strictly opens one ordinary Q7 DEV V1/V2 experiment using the
-existing offline reader. The explicit cost/candidate indices and expected IDs
-must match. Its selected execution must use the existing execution V2 and cost
-V2 versions. No automatic strategy choice, data discovery, Q5 reconstruction,
-fit, account replay or TEST evaluation occurs. Existing commands, GUI, artifacts
+Root and legacy module commands share the same parser and runner. The API is
+`analyze_intraday_forward_reconciliation(experiment_path, observations)`;
+`create_intraday_forward_template(experiment_path, declaration, *,
+cost_index=None, candidate_index=None)` prepares its editable input. Both use
+the existing strict saved reader. Execution V2 and cost V2 are required.
+
+| Saved source | Observation / reconciliation version suffix | Required identity and account |
+| --- | --- | --- |
+| Ordinary Q7 DEV V1/V2 | v1 | `expected_experiment_id`, `expected_candidate_id`, explicit cost/candidate indices; one selected saved candidate. |
+| AVAILABLE Q25/Q31/Q36 selection procedure | v2 | `expected_experiment_id`, `expected_execution_id`; the complete selected outer-DEV account, not the fixed reference or final DEV winner. |
+| Already-saved TEST V1-V4 | v3 | `expected_experiment_id`, `expected_execution_id`, `expected_final_test_id`, `expected_selection_id`; only the TEST report's own execution. |
+
+The version prefixes are `market-vault-intraday-forward-observations-` and
+`market-vault-intraday-forward-reconciliation-`. The expected identities must
+match the selected account. A frozen selection-only file has no TEST execution
+and is rejected. No automatic strategy choice, data discovery, Q5 reconstruction,
+fitting, account replay, TEST evaluation or reselection occurs. Reading saved TEST
+exposes existing information; it is not a new unseen holdout. Source artifacts
 and identities remain unchanged. Package version remains 0.9.0.
 
 Every saved BUY and SELL transaction is retained in original order, including
@@ -31,12 +44,75 @@ These internal consistency checks are not price authority or full replay proof.
 The population is **saved transactions, not all emitted signals or all possible
 trades**. A previously unused later period can be recorded as an ordinary DEV
 artifact and explicitly selected here, but this tool does not run that research
-or establish prospective recipe selection. Frozen selections, saved TEST and
-selection-procedure studies are not accepted by this entry.
+or establish prospective recipe selection. The supported procedures and saved
+TEST accounts use the same whole-population matching, not a filtered subset.
+
+## Export an unmeasured template
+
+The declaration has exactly `source`, `reference_clock_id` and `policy`. For
+example, this is an explicitly unverified declaration, not a capture record:
+
+```json
+{
+  "source": {
+    "provider": "caller-declared-source",
+    "version": "1",
+    "captured_at": "2026-10-15T20:00:00Z",
+    "data_kind": "UNKNOWN",
+    "upstream_id": null,
+    "upstream_evidence": null
+  },
+  "reference_clock_id": null,
+  "policy": {"max_quote_age_ms": 100, "max_adverse_quote_bps": null}
+}
+```
+
+The illustrative 100ms is caller policy, not a recommendation or default. No
+clock, provenance, timestamp or tolerance is inferred by export. Inputs in the
+following examples must exist; each output must be a new path:
+
+```console
+market-vault research-intraday-forward-reconciliation --experiment /absolute/dev.json --template-declaration /absolute/declaration.json --cost-index 0 --candidate-index 0 --output /absolute/new-dev-observations.json
+market-vault research-intraday-forward-reconciliation --experiment /absolute/procedure.json --template-declaration /absolute/declaration.json --output /absolute/new-procedure-observations.json
+market-vault research-intraday-forward-reconciliation --experiment /absolute/test.json --template-declaration /absolute/declaration.json --output /absolute/new-test-observations.json
+market-vault research-intraday-forward-reconciliation --experiment /absolute/test.json --observations /absolute/filled-test-observations.json --output /absolute/new-test-reconciliation.json
+```
+
+Ordinary DEV export requires both indices explicitly; 0/0 above is an example,
+not automatic candidate selection. Procedure/TEST export rejects either index,
+including zero. Reconciliation takes indices and identities from observations
+and rejects extra CLI selectors. This differs from performance/Saved A/B, whose
+indices default to zero and whose TEST account requires zero indices.
+
+Export derives the exact identities and all saved BUY/SELL keys. Every record's
+`action_ready_at`, `quote` and `paper_fill` is null; modeled prices or clocks are
+never copied into observed fields. These records match the complete population
+but have unavailable measurements, not missing records or zero slippage.
+`TEMPLATE_CREATED` / exit 0 means input preparation only. An unchanged template
+analyzes as NOT_MEASURED, or NO_REFERENCE_ACTIONS for a valid zero-action account.
+Export errors use FAILED / exit 1; argparse usage errors remain 2. Both modes use
+exclusive new-file publication and leave existing files intact.
+
+## Native saved-file entry
+
+Use **Quant Research → Intraday → Forward observations**
+(**量化研究 → 日内研究 → 前瞻观测**). Select **Export empty observation template** or
+**Reconcile supplied observations**, supply the explicit experiment,
+declaration/observations and new result paths, and use the corresponding action.
+The desktop accepts absolute local paths or local `file:///` URLs and calls the
+same APIs and exclusive publisher. Ordinary DEV export needs both indices;
+leave both blank for procedure/TEST and for reconciliation.
+
+The panel shows scope, exact identities, whole-action denominators, measured,
+missing/unmatched and policy-exceedance counts, unavailable metrics and output
+location. Changing inputs or retrying clears the previous display; stale worker
+results cannot become the result of new inputs. A file already published by a
+worker is not automatically deleted when its display becomes stale. Capture and
+fill verification stay false.
 
 ## Explicit observation manifest
 
-All root fields below are required. The example is a schema illustration:
+All root fields below are required for **ordinary DEV v1**. The example is a schema illustration:
 replace the identity placeholders with the actual selected saved IDs. No default
 clock synchronization, quote age or adverse-price tolerance is invented.
 
@@ -127,7 +203,7 @@ only when strictly greater. Without a limit the verdict is null, not a PASS.
 Statistics use only available values but retain available and unavailable counts
 against **every reference action**; missing measurements never become zeros.
 
-The report version is `market-vault-intraday-forward-reconciliation-v1`.
+The report uses v1, v2 or v3 according to the account table above.
 RECONCILED means all reference quotes are measured with no unmatched supplied
 records. It does not mean the adverse-price policy passed or that a fill was
 obtainable. PARTIAL retains some measured quotes plus gaps or unmatched records;
@@ -155,9 +231,9 @@ Synthetic fixtures prove software behavior only. Real forward acceptance remains
 pending until genuine observations are supplied and their collection procedure
 is evaluated separately.
 
-This task adds no dependency, root command, GUI page, market feed, capture daemon,
-subscription, order routing, brokerage action, fill simulator, capacity/impact
-model, cross-asset search, release or deployment. It does not reconstruct quotes
+The current workflow provides no market feed, capture daemon, subscription,
+order routing, brokerage action, fill simulator, capacity/impact model or
+cross-asset search. It does not reconstruct quotes
 from OHLC, assess intrabar drawdown, certify untouched TEST, or establish actual
 profitability. Q6 next-open assumptions and Q19 whole-bar delay studies remain
 unchanged; neither is upgraded into observed execution evidence by this report.

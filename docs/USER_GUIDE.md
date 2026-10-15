@@ -1,11 +1,11 @@
 # MarketVault 使用说明
 
-本指南是 MarketVault 当前正式版本（v0.7.x）的统一用户操作说明。它描述**当前行为**，不描述版本演进历史；版本历史见 [CHANGELOG.md](../CHANGELOG.md) 与各版本 release 记录。正式契约文档（[contracts/](contracts/)）对精确契约语义保持权威。
+本指南面向 MarketVault 当前 `main` 源码，包版本为 `0.9.0`。包版本与源码合并不代表该版本已正式发布；已安装发行包的能力以其版本及对应 release 记录为准。版本历史见 [CHANGELOG.md](../CHANGELOG.md)；正式契约文档（[contracts/](contracts/)）对精确契约语义保持权威。
 
 ## 1. 适用范围
 
-- 覆盖：数据采集（K 线 / 期权 / 交易日历）、审计、Canonical 构建、Dataset 工作流、Sample Generation、Dataset Catalog、Python `ArtifactClient` 读取。
-- 描述当前正式 release `v0.7.0` 的行为（安装后可用 `market-vault --version` 确认）。
+- 覆盖：数据采集（K 线 / 期权 / 交易日历）、审计、Canonical 构建、Dataset 工作流、Sample Generation、Dataset Catalog、Python `ArtifactClient` 读取，以及现有离线研究入口。
+- 安装后可用 `market-vault --version` 确认包版本；历史 `v0.7.0` 的封存记录不代表当前 main 的全部能力。
 - 命令名、flag、JSON 字段名、类/函数名、artifact 名一律使用正式英文拼写，不翻译。
 - 本指南不复制完整契约条款；需要精确语义时链接到正式契约。
 
@@ -13,13 +13,13 @@
 
 - Python >= 3.11。
 - moomoo OpenD：仅真正通过 OpenD 采集/检查的命令需要本机 OpenD 正在运行、已登录且账号具备所需权限——`collect`、`calendar`、`backfill`、`option-chain`、`option-volatility`、`doctor`。
-- 纯本地命令**不需要** OpenD：`inventory`、`audit`、`intraday-audit`、`query`、`calendar-query`，以及 Dataset / Sample Generation / Dataset Catalog 全部命令和 `ArtifactClient`。
+- 纯本地命令**不需要** OpenD：`inventory`、`audit`、`intraday-audit`、`query`、`calendar-query`，以及 Dataset / Sample Generation / Dataset Catalog、现有 `research-*` 命令和 `ArtifactClient`。
 - MarketVault 桌面应用默认纯本地；只有界面中明确确认的 Trading Calendar `Fetch from OpenD` 与 Backfill `Execute via OpenD` 操作可能连接 OpenD。
 - 操作系统：安装脚本与示例以 Windows PowerShell 为准（`scripts/setup_windows.ps1`、`scripts/first_collection.ps1`）。
 
 ## 3. 安装
 
-**PyPI 未发布**，不存在 `pip install market-vault` 的安装路径。请从源码树安装（已验证的 editable install）：
+本指南使用显式源码树安装；以下 editable install 绑定该源码树，不以包名或版本号推断公开发布状态：
 
 ```powershell
 py -3.11 -m venv .venv
@@ -39,7 +39,7 @@ market-vault --help
 
 ## 4. 命令总览
 
-以下全部为当前正式 CLI 命令（`market-vault --help` 可查）。按功能分组：
+以下是本指南涉及的主要 CLI 命令；当前完整列表以 `market-vault --help` 为准。按功能分组：
 
 | 分组 | 命令 | 说明 |
 |---|---|---|
@@ -64,10 +64,22 @@ market-vault --help
 | | `dataset-catalog-list` | 只读列出快照条目（过滤 + 分页） |
 | | `dataset-catalog-show` | 按精确 `dataset_id` 展示一个条目 |
 | 本地研究质量检查 | `research-return-assessment` | 独立披露未复权收益口径，并检查显式有限事件限制与实际价格 / 持仓窗口的相交 |
+| 已保存研究分析 | `research-intraday-performance` | 单一 DEV 候选或已保存 TEST 的逐笔现金、成本与持有期归因 |
+| | `research-intraday-compare-saved` | 显式 A/B 记录描述；任一侧含 TEST 时所有数值差分均为空 |
+| 研究历史 | `research-intraday-history record` / `assess` | 记录显式历史声明，并检查显式提供的历史事件；不认证全局未见 TEST |
+| 前瞻观测 | `research-intraday-forward-reconciliation` | 导出全 null 观测模板，或核对调用方明确提供的观测 |
+
+离线日内研究的范围是美股单标的股票/ETF、RTH、未复权 1/5/15/30 分钟数据及
+long/flat 模拟账户。模型、选择与 Freeze/TEST 工作流见
+[日内 ML 研究](intraday_ml_research.md) 和 [Freeze/TEST](intraday_final_test.md)；
+保存结果分析见 [绩效](intraday_performance.md)、[Saved A/B](intraday_saved_comparison.md)。
+普通 DEV 和已保存 TEST V1–V4 均可进入对应账户分析；冻结 Selection 本身不是
+TEST execution。前瞻模板与核对的账户版本、索引、声明及真实证据边界见
+[前瞻观测说明](intraday_forward_reconciliation.md)。
 
 ## 5. 配置与 OpenD
 
-顶层选项 `--settings`（默认 `config/settings.yaml`）只对 **settings-backed** 命令生效；Dataset、Sample Generation、Dataset Catalog 命令**忽略**它，也不要求 settings 文件存在。
+顶层选项 `--settings`（默认 `config/settings.yaml`）只对 **settings-backed** 命令生效；Dataset、Sample Generation、Dataset Catalog 和现有 `research-*` 命令**忽略**它，也不要求 settings 文件存在。
 
 `config/settings.yaml` 当前结构：
 
@@ -96,7 +108,7 @@ collector:
 - OpenD 不在默认端点（`127.0.0.1:11111`）时修改 `opend.host` / `opend.port`。
 - `collect` / `backfill` / `audit` / `intraday-audit` 省略 `--session` / `--adjustment` 时，回退到 `collector.default_session`（`ALL`）与 `collector.default_adjustment`（`NONE`）；显式传值覆盖默认值。
 - `query` 的 `--requested-session` 是采集请求会话（`RTH` / `ALL` / `ETH`），`--bar-session` 是行级时段标签；旧 `--session` 仅作为 `--bar-session` 的兼容别名，不代表采集请求会话。
-- Dataset、Sample Generation、Dataset Catalog 命令与 `ArtifactClient` 是 settings-independent：不读 settings.yaml、不连接 OpenD、不访问网络。
+- Dataset、Sample Generation、Dataset Catalog、现有 `research-*` 命令与 `ArtifactClient` 是 settings-independent：不读 settings.yaml、不连接 OpenD、不访问网络。
 
 ### MarketVault PySide6/QML 桌面应用
 
@@ -105,7 +117,10 @@ collector:
 backend、models 与 task runner，不再提供 Tk presentation 或源码 UI 入口。
 
 桌面壳层使用左侧导航，提供 Home、Historical Data、Trading Calendar、Market
-Data、Inventory、Coverage Audit、Intraday Audit、Runs 与 Storage & Cleanup。
+Data、Inventory、Coverage Audit、Intraday Audit、Runs、Storage & Cleanup 与
+Quant Research（量化研究）。在 Quant Research → Intraday（日内研究）内，
+Saved A/B（已存 A/B 对比）打开明确的已保存来源；Forward observations（前瞻观测）
+提供导出空观测模板和核对已提供观测两个模式。纯本地研究不会启动 OpenD。
 切换工作区不会重建页面，因此现有表单、表格、分页与已审核的清理预览状态会保留。
 Home 初始保持被动状态，只有点击 Refresh 后才通过现有 Dashboard backend
 读取本地归档概览；打开应用或切换导航不会连接 OpenD。
@@ -503,6 +518,8 @@ market-vault research-return-assessment --experiment "D:\reports\comparison.json
 - Dataset 检查实际 COMPLETE Feature / Label 消费的价格支持窗口；不把延迟可用
   时间当作价格 bar 的延长。open-to-close 只从实际 entry open 开始，不包含仅作
   provenance 的信号日 anchor。
+- 保存日内实验支持普通 DEV 和 TEST V1–V4；经济 TEST V3/V4 只读取自身保存的账户，
+  以 `source_return_basis` 披露严格验证的来源收益口径，并将其纳入 `assessment_id`。
 - 保存实验检查实际逐笔持仓及已有基准。日内每天强制平仓后的现金间隔不会被拼成
   隔夜持仓；日期限制仍可能保守命中同日交易，此时不声称已证明精确跨事件。
 - 普通基础实验还需其记录的确切 Dataset；原路径搬迁时可用 `--source-dataset DIR`
@@ -592,9 +609,8 @@ market-vault dataset-catalog-show `
 
 ## 14. Python ArtifactClient
 
-settings-independent、只读的 Python artifact 客户端。正式发布的 v0.7.0
-wheel/sdist 历史上恰好包含三个 load 方法；当前 main 在不改版本号的情况下增加了一个
-post-v0.7 精确 Catalog 条目选择方法：
+settings-independent、只读的 Python artifact 客户端。当前源码公开三个严格读取方法
+和一个精确 Catalog 条目选择方法；历史发行包以其对应记录为准：
 
 ```python
 ArtifactClient()
@@ -658,6 +674,9 @@ print(entry.dataset_id, entry.content_id)
 
 - **Dataset / Sample Generation / Dataset Catalog 家族**（实现与正式文档共同证明）：`0` = 成功；`1` = 文档化的命令失败；`2` = argparse 用法错误。成功输出恰好一个 JSON 对象到 **stdout**（stderr 保持为空）；文档化失败恰好一个 JSON 对象到 **stderr**（stdout 保持为空）；argparse 诊断到 stderr。解析成功 JSON 只从 stdout 取。
 - **`audit`**（settings-backed 家族的正式文档化行为，仅该命令）：`PASS` 退出 0；`WARN` 退出 0（`--fail-on-gaps` 时 2）；`FAILED` 退出 1。`intraday-audit` 同族：`--fail-on-warn` 时 `WARN` 退出 2。
+- **已保存日内绩效 / Saved A/B**：`SUCCESS` / `0` 只表示分析完成；含 TEST 的描述性比较同样退出 `0`，不表示策略通过或可选优。输入失败为 `1`，argparse 用法错误为 `2`。
+- **前瞻模板导出**：`TEMPLATE_CREATED` / `0` 只表示输入准备成功，所有测量仍可为 null。输入或发布错误为 `1`，argparse 用法错误为 `2`。
+- **前瞻观测核对**：`0` 表示 RECONCILED 且没有已测政策超限；其他已计算结论或政策超限为 `2`，仍发布完整报告；输入或发布错误为 `1`。argparse 用法错误也为 `2`，需区别是否产生报告。任何退出码均不认证行情来源或真实成交。
 - 其他命令各自的退出码以当前实现与正式文档为准，不要假设与本指南任何条目相同。
 
 ## 17. Common problems
@@ -668,7 +687,7 @@ print(entry.dataset_id, entry.content_id)
 4. **未验证 / 损坏的 artifact** — 验证读取器抛正式验证错误，绝不返回部分结果。正确做法：重新构建或改指向，**绝不**"修复" artifact 或绕过验证读取器。
 5. **使用 `latest` / 自动发现** — 不存在也不支持。所有输入必须是显式最终路径。
 6. **Canonical 覆盖不完整** — COMPLETE 不保证；Feature lookback 或 Label horizon 覆盖不足时样本被排除或标签为 `INCOMPLETE`。扩展 Canonical 覆盖或调整窗口。
-7. **settings 混淆** — `--settings` 只对 settings-backed 命令生效；Dataset / Sample Generation / Dataset Catalog 命令忽略它，也不需要 settings 文件存在。
+7. **settings 混淆** — `--settings` 只对 settings-backed 命令生效；Dataset / Sample Generation / Dataset Catalog / 现有 `research-*` 命令忽略它，也不需要 settings 文件存在。
 8. **backfill 前未收集 calendar 或日历有缺口** — `backfill` 拒绝运行并打印缺失日期。一次性覆盖整个自然日范围（分块收集会产生覆盖缺口）。
 9. **并发 backfill** — 每个数据集同时只运行一个 backfill 进程，否则可能重复采集相同项。
 10. **`--limit` 超过 1000** — argparse 拒绝（退出码 2）。用 `--offset` / `--limit`（≤1000）分页。
@@ -679,8 +698,9 @@ print(entry.dataset_id, entry.content_id)
 
 - **历史可回填**：K 线、期权合约静态元数据、日度波动率分析——在 OpenD 与账户权限允许的范围内。
 - **历史不可重建**：分钟级 Bid/Ask、订单簿深度（order-book depth）、Greeks、完整盘中 IV——若从未实时捕获，事后无法重建（cannot be reconstructed after the fact）；这些字段需要实时捕获与订阅管线。
-- **产品不支持**：实时订阅、实时 Bid/Ask / Greeks、持仓、信号（signals）、执行、自动交易（automatic trading）。
-- **产品不支持**：ML 训练（ML training）、模型评估、回测框架（backtest）、特征重要性——MarketVault 只生产可验证的数据与 Dataset 产物，ML 训练与模型评估是用户自己的下游工作。
+- **当前支持离线研究**：限定范围内的 Ridge / Quadratic Ridge ML training、模型评估、signals、backtest 模拟账户、程序选择、保存实验和冻结候选 TEST。训练变换只用对应训练历史；结果不构成市场有效性或盈利证明。
+- **不提供实时交易服务**：实时订阅、实时 Bid/Ask / Greeks、券商持仓读取、实盘信号/订单执行或 automatic trading。保存账本中的模拟持仓和动作不等于券商状态或可成交订单。
+- **观测证据边界**：可导出 null 模板并核对显式提供的报价/纸面成交，但不自行采集行情；`forward_capture_verified` 与 `fills_verified` 始终为 false。打开已保存 TEST 不产生新的未见 holdout；有限历史声明和事件清单不认证完整研究历史或公司行动覆盖。
 - `ArtifactClient` 严格只读；验证读取没有 `latest` 自动发现。
 
 ## 19. Further documentation
