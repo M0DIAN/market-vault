@@ -302,3 +302,92 @@ new history authority, new report schema beyond Q82, auto-trading, auto-selectio
 retraining, deployments or release. Unrelated numerical and governance surfaces
 remain frozen. Stop after each item's verified main integration, then continue
 only the next authorized item; stop the package after Q83 closure.
+
+## 2026-10-15 next package: Q83 closure, Q84 measured CI rebalance, Q85 evidence-led forward qualification
+
+The owner's 2026-10-15 11:46:26 UTC instruction authorizes 3-4 bounded
+mainline tasks, direct implementation, scope-limited repairs, checks, final
+independent candidate review, push/PR and guarded squash followed by the
+actual exact-main natural CI. This is a new continuation, not an extension of
+the historical Q80-Q83 stop point without authorization.
+
+**Confirmed Q83 completion.** PR #354 independently reviewed final HEAD
+`fbaf436e96ff4b25f65406ae6b3d75df916b1c1c`, including its fix
+for stale results on unchanged-form retries. Natural FULL PR CI
+`38732550400/1` and separate real Windows/QML validation
+`38732550376/1` succeeded; guarded squash main
+`2d35814c67f0cdb9874fb90c98fd592b0b7f408f` passed natural
+exact-main push CI `38734781759/1`. The saved DEV / selected procedure /
+already-exposed TEST native forward workflow is offline and still has
+`forward_capture_verified=false`, `fills_verified=false`.
+No new observed market measurements or profitable strategy are implied.
+
+### Q84 — rebalance the measured 3.11 strategy CI bottleneck
+
+**Goal and evidence.** Q80's natural FULL main run `38724777800/1`
+recorded 505 passed, 12 existing skips in strategy in 801.30 seconds,
+with the job lasting almost fourteen minutes, while the
+`intraday_research` job finished around five minutes and
+`intraday_ml_procedures` around eight minutes. This is a real repeated
+CI elapsed-time cost, not a reason to rebuild the scheduler or weaken tests.
+
+**Approach and ordering.** Q83 exact-main closure is a prerequisite. Move
+the three jointly fixtured existing procedure comparison/family/stress
+test files from file-owned `strategy` to `intraday_research`, together
+with the directly related `test_strategy_intraday_preflight.py`. The
+file-exact override for preflight takes precedence over the
+`test_strategy_` prefix. Retain eleven partitions, normal 3.11
+aggregation, actual 3.14 independent job, portability, all fixture/test
+contents, suite union and fail-closed package/attestation.
+
+**Defaults.** No new job, shard, dependencies, timeout or speed claim.
+Keep all existing tests and assertions; no changes to Q1-Q83 research,
+models, data, GUI, public contracts or published reports.
+A high-variance runner is not a semantic failure; compare the actual
+per-job *test*, full-job and end-to-end times. If this small rebalance
+makes the longest functional job slower or moves the bottleneck without
+real gain, narrowly revise the same grouping based on measured results,
+not test disabling.
+
+**Acceptance.** Existing exact owner/whole-suite test and
+`scripts/ci_test_partitions.py validate` pass, the FULL PR run tests
+every previously owned file exactly once, necessary release/control-plane
+checks still reject omitted coverage, and the observed strategy duration
+improves while independent 3.14 and Q83 regressions remain green.
+An under-ten-minute job is a target, never license to alter acceptance
+or hide a true failing test. Final independent exact-HEAD review,
+required natural FULL PR CI, guarded squash and exact-main CI are
+mandatory. No release, deployment, live data, brokerage or environment
+change is authorized.
+
+### Q85 — evidence-qualified forward research, conditional real-input boundary
+
+**Problem.** Q76/Q81/Q82/Q83 supply identity-bound empty templates,
+offline observation/reconciliation and the native entry. Their measured
+and source-authority fields are intentionally not verified. There is
+no provided authentic quote or paper-fill sample establishing clock
+basis, provider provenance, actual obtainable fills or independence.
+Adding another learner, automatic selection, fill simulator or a
+generic unknown-format importer cannot manufacture these facts.
+
+**Scope/stop gate.** First examine whether a *genuine* permitted
+timestamped quote/action observation file and declared clock/source
+metadata are actually available. If present, exercise the existing
+strict Q83 native/template -> reconciliation paths and resolve only
+a demonstrated input-compatibility blocker with a narrow adapter to
+that real shape; do not change saved source data or declare authenticated
+fills. Genuine observations are required for empirical statements.
+If absent, explicitly record `REAL_OBSERVATIONS_NOT_SUPPLIED` and stop
+this task at the actual data boundary rather than creating speculative
+infrastructure or false empirical success. The authorized source-code
+work is conditional, not a license for live/broker access.
+
+**Defaults/acceptance/non-goals.** Retain US RTH unadjusted long/flat
+contracts, frozen TEST exposure, explicit action keys and clocks,
+complete denominators, separate measured quote/paper outcomes and
+caller-declared source limitations. Real path means one independently
+supplied sample is reconciled without any refit, TEST rerun or silent
+open-price substitution and any residual uncertainty is disclosed;
+a synthetic fixture passes only engineering tests. No new model family,
+optimization/search, account or credential access, live capture service,
+paid data, orders, deployment, or evidence certification without data.
