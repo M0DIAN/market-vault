@@ -391,3 +391,100 @@ open-price substitution and any residual uncertainty is disclosed;
 a synthetic fixture passes only engineering tests. No new model family,
 optimization/search, account or credential access, live capture service,
 paid data, orders, deployment, or evidence certification without data.
+
+## 2026-10-15 continuation after Q88: Q84 closure -> Q89 -> Q90
+
+The owner's new Q1-Q88 continuation request authorizes these three bounded
+items, including related repairs/tests/commits/push/PR, independent exact-final
+review, guarded squash and natural exact-main CI before the next implementation.
+The actual main is `0f0679af9bca912e7a9abf18f875f2b81bcc1289`, tree
+`cc677c167089abb39563083a04609f8d073e393e`; natural Q88 main CI
+`38742432338/1` succeeded. Q86-Q88 are implemented. Q84 is still open in #355,
+not completed merely because later task numbers exist. Q85 remains conditional:
+`REAL_OBSERVATIONS_NOT_SUPPLIED`, not an empirical research PASS.
+
+**Assessment.** Q73 preflight and Q74 data-policy judgment already have tested
+services/CLI, but no desktop connection. They directly help users distinguish
+structurally unusable settings and insufficient data evidence before running
+further models. Q12 risk, Q86 single-account audit and Q87 Saved A/B already
+support saved economic TEST. Q15's DEV-only bootstrap is an explicit statistical
+scope, not a missing version admission; do not mechanically widen it. No new
+high-value numerical defect was established in Q55-Q72's closed work.
+
+**Delivery order: Q84 -> Q89 -> Q90.** Read-only preparation may overlap;
+implementation of each next item waits for the prior merged main CI. Keep one
+writer. Version stays 0.9.0, US single-symbol equity/ETF RTH/unadjusted
+1/5/15/30-minute long/flat research, existing strict source and TRAIN/purge
+semantics. No new learner, search dimension, data/schema migration, mandatory
+research gate, automatic selection/promotion, release/tag/deploy, live/paid data,
+broker credentials, orders or source/profitability certification.
+
+### Q84 closure on the current main
+
+Retain the existing three shared-fixture procedure files and preflight whole-file
+move, eleven partitions and every test/assertion. Integrate current main into
+the existing branch by normal history-preserving update, not force push. Run a
+new natural FULL on the integrated exact candidate, independently review it,
+squash only after green gates, then verify actual natural main FULL because this
+touches the registry control plane. No new shard or timeout change.
+
+Old Q84 FULL `38735257477/1` passed with longest job 561 seconds (research),
+strategy 358, ML 521; end-to-end was about 708 seconds. Recent original-layout
+Q86/Q87 FULL runs `38737072873/1` and `38739627379/1` also had every job under
+ten minutes (longest 558 and 494 seconds). Different runners are not a controlled
+benchmark: this is closure of an existing measured balancing change, not a claim
+it outperforms every recent run. Record full-job, pytest and end-to-end separately.
+If the integrated run demonstrates a real new research bottleneck, only then
+narrowly rebalance the preflight file; keep the procedure trio together.
+
+### Q89 - native structural preflight of current ordinary comparison settings
+
+**Goal/approach.** Add an explicit optional action beside Run comparison. Capture
+the same current `settings.values()` through the existing `_plan` compilation
+and current-Q5 admission, then call `analyze_intraday_preflight` once in the
+existing asynchronous PageController path. Store/show a separate report, never
+an experiment or Replay proof. Reuse Q73; no numerical or schema changes.
+
+**Defaults/scope.** Current ordinary comparison form only; do not claim the whole
+diagnostic grid or execution-scenario collection was checked. Same explicit
+Feature order, strategies, split, fold/window/cost settings and Q5 identity as
+Run. CHECKED/BLOCKED are structural outcomes, not profitability or execution
+approval. Show blockers, purged/training rows, all evaluated DEV days/folds,
+zero-entry groups and eligible opportunity counts (not trade counts).
+
+**Acceptance.** Real native action equals the existing API for the same captured
+plan; cover CHECKED, zero-entry and learned-training BLOCKED, common read/input
+failure and retry. One strict Q5 reconstruction, no fitting/account/replay/TEST
+evaluation; source bytes and existing research result/path/proof stay unchanged.
+Use a monotonic input revision for form/strategy/source/draft changes so editing
+and restoring while running cannot accept stale success. Actual Main.qml action,
+report views and bilingual compact-window use must run, not only static checks.
+
+**Exclusions.** No automatic preflight before Run, new admission authority,
+grid/scenario aggregate preflight, policy judgment, strategy output or UI redesign.
+
+### Q90 - native explicit Q5 data-policy judgment
+
+**Goal/approach.** A thin native controller/panel calls existing
+`run_intraday_data_acceptance(data_path, manifest_path, policy_path)` once;
+reuse runtime, strict local paths, manifest-relative references and exclusive
+new-file publication. Do not route through saved learned-study Sample usage,
+which would add an artificial prerequisite to this Q5-only operation.
+
+**Defaults/scope.** Caller supplies all three explicit input files. Existing
+FULL_Q5_GRID, zero tolerances and distinct observed-source declaration defaults
+remain in the policy API; do not silently create declarations or lower policy.
+Display POLICY_SATISFIED/NEEDS_EVIDENCE/REJECTED separately from transport success,
+full denominators, rejection/evidence-gap reasons, IDs and unverified source
+assurance. FULL_Q5_GRID includes reserved TEST dates' data, not TEST performance
+or proof that TEST was unseen. No automatic gate on research or Freeze/TEST.
+
+**Acceptance.** Actual API/native results agree for all three business outcomes;
+one strict Q5 reconstruction and no fit/account/TEST execution. Cover relative
+manifest references, edits/stale worker, failure/retry, unchanged inputs and
+optional report export to a new file with overwrite refusal and no recomputation.
+Real QML bilingual/compact layout must reach the actual controller/service.
+Do not duplicate the existing Q74 numerical test matrix.
+
+**Exclusions.** No source repair, intersection/filtering to hide differences,
+market/source-independence certification, live collection or learner changes.

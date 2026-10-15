@@ -120,20 +120,21 @@ def choose(name, index):
     app.processEvents()
     assert obj.property('currentIndex') == index, (name, obj.property('currentIndex'))
 
-def complete(status='SUCCESS'):
+def complete(status='SUCCESS', target=None):
+    target = controller if target is None else target
     deadline = time.monotonic() + 90
-    while controller.busy and time.monotonic() < deadline:
+    while target.busy and time.monotonic() < deadline:
         app.processEvents(); time.sleep(.01)
     app.processEvents()
-    assert not controller.busy and controller.status == status, (controller.status, controller.error, warnings)
+    assert not target.busy and target.status == status, (target.status, target.error, warnings)
 
-def file_action(button, dialog_name, path, status='SUCCESS'):
+def file_action(button, dialog_name, path, status='SUCCESS', target=None):
     click(button); dialog = find(dialog_name)
     assert dialog.property('visible')
     assert dialog.setProperty('selectedFile', QUrl.fromLocalFile(str(path)))
     assert QMetaObject.invokeMethod(dialog, 'accepted', Qt.DirectConnection)
     QMetaObject.invokeMethod(dialog, 'close', Qt.DirectConnection)
-    complete(status)
+    complete(status, target)
 
 def evidence():
     window.requestActivate(); QTest.qWait(20)
@@ -456,6 +457,26 @@ choose('intradayTestView', 4)
 assert evidence()['complete_model'] == report['model']
 shot('q38-native-compact-final-fit-zh')
 assert controller._selection_root['report']['candidate']['strategy'] == frozen_window['selected_recipe']
+# Q87 uses the actual saved A/B QML dialogs for TEST V4 as well.
+window.setWidth(1280); window.setHeight(1100); app.processEvents()
+assert session.i18n.setLanguage('en')
+comparison = owner.intradaySavedComparisonController
+click('intradaySavedComparisonTab')
+file_action('intradaySavedLeftOpen', 'intradaySavedOpenLeftDialog', tested, target=comparison)
+file_action('intradaySavedRightOpen', 'intradaySavedOpenRightDialog', tested, target=comparison)
+click('intradaySavedCompareButton'); complete(target=comparison)
+assert comparison.leftSource['is_test'] and comparison.rightSource['is_test']
+assert not comparison.canAnalyzePortfolio and not comparison.analyzePortfolio()
+assert comparison._result['basis_matches'] and comparison._result['delta_reasons'] == ['TEST_DESCRIPTIVE_ONLY']
+assert comparison._result['left']['return_basis'] == report['return_basis']
+assert all(row['delta']['value'] is None and row['delta']['unavailable_reason'] == 'TEST_DESCRIPTIVE_ONLY'
+           for group in ('strategy_metrics', 'benchmark_metrics') for row in comparison._result[group])
+comparison_before = (comparison._sources.copy(), comparison._result.copy(), comparison._bound_sources.copy())
+file_action('intradaySavedRightOpen', 'intradaySavedOpenRightDialog', selected, 'FAILED', comparison)
+assert (comparison._sources, comparison._result, comparison._bound_sources) == comparison_before
+file_action('intradaySavedRightOpen', 'intradaySavedOpenRightDialog', tested, target=comparison)
+click('intradaySavedCompareButton'); complete(target=comparison)
+assert comparison.status == 'SUCCESS' and not comparison.error
 Path.open = actual_open
 assert all(path.read_bytes() == content for path, content in originals.items())
 assert selected.read_bytes() == selected_bytes and tested.read_bytes() == test_bytes

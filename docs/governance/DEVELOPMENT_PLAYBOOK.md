@@ -70,7 +70,7 @@ CI（见 2.3）。CI 未到达 terminal 状态前不得报告完成——见
 [AGENT_HANDOFF.md](AGENT_HANDOFF.md) 的 CI-wait 报告规则。
 
 PR 验证按第 2 节的 tier 分层。tier=full 的 PR 执行完整验证：Python 3.11
-十个功能分片的全量离线套件、Python 3.14 审定兼容性 surface、PyArrow 24
+十一个功能分片的全量离线套件、Python 3.14 审定兼容性 surface、PyArrow 24
 可移植性 gate、package build /
 fresh-wheel / SHA256 closure。tier=full 且 full-matrix-required 的 PR
 运行在 package job 全部成功后会产出 **FULL CI attestation** artifact
@@ -285,6 +285,9 @@ run/attempt 上成功。执行契约变更禁止沿用旧证据，main 会实际
 函数，原 helper/fixture 仍留在原模块，维持已有导入路径。文件迁移应同时
 核对函数源码字节和 collection 映射，证明参数化用例无漏收集、无重复。
 
+以下 Q30/Q39/Q46 是历史平衡记录，不是当前文件归属清单；当前归属始终以
+`ci/test_partitions.toml` 为准，不以任务号或耗时估算推断在途变更已完成。
+
 Q30 沿用以上规则，以 Q29 FULL `38068988258/1` 的 strategy 610 秒、
 intraday_final 637 秒为依据继续窄幅平衡：收益口径评估文件改归 diagnostics，
 两条独立最终数据边界测试原样移入 intraday_research；新增训练历史核心与
@@ -319,8 +322,15 @@ Q46 根据 [Q45 PR FULL `38141083302/1`](https://github.com/M0DIAN/market-vault/
 耗时及额外 fixture 开销确定；性能目标是每个实际作业在 10 分钟内完成，
 必须用最终 PR 及控制面合并后正常 FULL 的真实完成耗时核验。
 
-实际等待时间仍取决于最慢片、runner 排队、兼容性与打包尾部。
-保留原双 Python `test` 矩阵意味着 3.14 在十一片后运行，单作业性能目标
+Q80 已移除原双 Python `test` 矩阵造成的兼容性串行等待。当前
+`test-modules` 仅依赖 `plan` 并执行十一片，单一 3.11 `test` 矩阵依赖
+`[plan, test-modules]` 汇总，保留检查名 `test (3.11)`；`test-314` 仅依赖
+`plan`，独立执行真实 3.14 兼容性范围，保留 `test (3.14)`。`package`
+直接依赖 `[plan, test, test-314, portability-pyarrow24]`，显式核对各项真实成功，
+FULL attestation 仍只能在适用的 FULL 路径和 package 成功后生成。
+3.14 不伪造或消费 3.11 分片成功结果。
+
+实际等待时间仍取决于最慢片、runner 排队、兼容性与打包尾部；单作业性能目标
 不构成整个 workflow 的固定用时承诺。故障超时预算和实际完成耗时分别记录。
 PR 的后续推送取消旧 PR 运行；main 的每个自然 push 保留独立运行身份。
 

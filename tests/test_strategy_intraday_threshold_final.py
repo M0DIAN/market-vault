@@ -400,13 +400,17 @@ def test_real_cli_freeze_test_open_full_replay_relocation_and_immutable_recovery
     assert load_strategy_experiment(ordinary_path).experiment_id == ordinary.experiment_id
 
 
-def test_explicit_saved_reader_boundaries_for_v3(threshold_final_case, monkeypatch):
+def test_explicit_saved_reader_boundaries_for_v3(threshold_final_case, monkeypatch, tmp_path, capsys):
+    from market_vault import cli
+    from market_vault.research import return_assessment
     from market_vault.research.intraday_performance import analyze_intraday_experiment, summarize_intraday_execution
     from market_vault.research.intraday_risk_diagnostics import analyze_intraday_risk_diagnostics
     from market_vault.research.intraday_saved_comparison import compare_saved_intraday_experiments
     from market_vault.research.return_assessment import ReturnAssessmentError, assess_saved_experiment
     selection, tested, _, path = threshold_final_case
     blocked = lambda *a, **kw: pytest.fail("recorded reader read Q5 or fitted")
+    monkeypatch.setattr(return_assessment, "load_verified_multi_source_cross_day_dataset", blocked)
+    monkeypatch.setattr(final, "run_intraday_execution", blocked)
     monkeypatch.setattr(final, "load_intraday_dataset", blocked)
     monkeypatch.setattr(final, "load_strategy_experiment", blocked)
     monkeypatch.setattr(research, "load_intraday_dataset", blocked)
@@ -420,10 +424,50 @@ def test_explicit_saved_reader_boundaries_for_v3(threshold_final_case, monkeypat
         analyze_intraday_risk_diagnostics(tested, candidate_index=1)
     with pytest.raises(ValueError):
         analyze_intraday_risk_diagnostics(selection)
-    with pytest.raises(ValueError, match="performance requires"):
-        analyze_intraday_experiment(tested)
-    with pytest.raises(ValueError, match="saved comparison requires"):
-        compare_saved_intraday_experiments(tested, tested)
-    with pytest.raises(ReturnAssessmentError) as exc:
-        assess_saved_experiment(path / "test.json")
-    assert exc.value.reason_code == "UNSUPPORTED_SOURCE"
+    audited = analyze_intraday_experiment(tested)
+    assert audited["performance"] == performance
+    assert audited["benchmark"] == summarize_intraday_execution(tested.as_dict()["report"]["benchmark"]["execution"])
+    assert audited["return_basis"] == tested.as_dict()["report"]["return_basis"]
+    assert audited["candidate_id"] == tested.as_dict()["report"]["final_test_id"]
+    assert audited["evaluation_scope"] == "FROZEN_SINGLE_CANDIDATE_TEST"
+    for args in ({"candidate_index": 1}, {"cost_index": 1}, {"candidate_index": True}):
+        with pytest.raises(ValueError):
+            analyze_intraday_experiment(tested, **args)
+    with pytest.raises(ValueError):
+        analyze_intraday_experiment(selection)
+    comparison = compare_saved_intraday_experiments(tested, tested)
+    assert comparison["basis_matches"] and not comparison["delta_allowed"]
+    assert comparison["delta_reasons"] == ["TEST_DESCRIPTIVE_ONLY"]
+    assert comparison["left"]["return_basis"] == comparison["right"]["return_basis"] == audited["return_basis"]
+    assert all(row["delta"]["value"] is None and row["delta"]["unavailable_reason"] == "TEST_DESCRIPTIVE_ONLY"
+               for group in ("strategy_metrics", "benchmark_metrics") for row in comparison[group])
+    for kwargs in ({"left_candidate_index": 1}, {"right_cost_index": True}):
+        with pytest.raises(ValueError):
+            compare_saved_intraday_experiments(tested, tested, **kwargs)
+    with pytest.raises(ValueError):
+        compare_saved_intraday_experiments(selection, tested)
+    saved = path / "test.json"
+    before = saved.read_bytes()
+    assessment = assess_saved_experiment(saved)
+    assert assessment["source_id"] == tested.experiment_id
+    assert assessment["source_return_basis"] == audited["return_basis"]
+    assert assessment["assessment_id"] == digest({key: value for key, value in assessment.items() if key != "assessment_id"})
+    assert assessment["coverage_status"] == "UNKNOWN" and assessment["screening_status"] == "NOT_CHECKED"
+    assert assessment["window_counts"]["STRATEGY_TRADE"] == performance["summary"]["trade_count"]["value"]
+    events = {"schema_version": "market-vault-return-restrictions-v1", "provenance": "synthetic declared event",
+              "events": [{"event_id": "known", "symbol": tested.as_dict()["report"]["context"]["symbol"],
+                          "kind": "EFFECTIVE_INSTANT", "source": "test only",
+                          "effective_at": tested.as_dict()["report"]["execution"]["trades"][0]["exit_time"]}]}
+    restricted = assess_saved_experiment(saved, events=events)
+    assert restricted["coverage_status"] == "PARTIAL" and restricted["restriction_matches"]
+    event_path = tmp_path / "events.json"
+    event_path.write_text(json.dumps(events))
+    assert cli.main(["research-intraday-performance", "--experiment", str(saved)]) == 0
+    assert json.loads(capsys.readouterr().out)["report"] == audited
+    assert cli.main(["research-intraday-compare-saved", "--left", str(saved), "--right", str(saved)]) == 0
+    assert json.loads(capsys.readouterr().out)["report"] == comparison
+    assert cli.main(["research-return-assessment", "--experiment", str(saved), "--events", str(event_path)]) == 2
+    assert json.loads(capsys.readouterr().out) == restricted
+    with pytest.raises(ReturnAssessmentError):
+        assess_saved_experiment(path / "selection.json")
+    assert saved.read_bytes() == before

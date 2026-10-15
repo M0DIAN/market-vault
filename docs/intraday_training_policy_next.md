@@ -418,9 +418,12 @@ exclusive and idempotent for identical content; a different artifact cannot
 overwrite a completed selection or TEST at that path.
 
 Q12's saved TEST risk derivation and the native raw Q6 performance view accept
-the V3 TEST account. Public Q9 saved performance, Q11 saved A/B comparison and
-Q29 return assessment keep their existing V1/V2 TEST source boundaries. A V3
-Selection is not a TEST account and cannot enter those account readers.
+the V3 TEST account. Q86 subsequently extends public Q9 saved performance and
+Q29 return assessment to the same strictly read TEST account. Q87 subsequently
+admits saved TEST V3/V4 to Q11 core/CLI and native Saved A/B. Any TEST side still
+disables all numerical differences, including self-comparison; no ranking or
+TEST selection is introduced. A V3 Selection is not a TEST account and cannot
+enter those account readers.
 
 ### Native workflow
 

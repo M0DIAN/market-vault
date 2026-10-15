@@ -7,6 +7,9 @@ recorded price or holding windows against a caller-supplied finite restriction
 list. The independent assessment version is
 `market-vault-return-assessment-v1`. The approved scope is
 [Research data quality Q27–Q29](../research_data_quality_next.md).
+The authorized [Q86 continuation](../intraday_acceptance_next.md) subsequently
+extends saved TEST admission to V3/V4 using the same economic/window kernels.
+This contract describes that current behavior; existing artifacts are unchanged.
 
 Current Labels and price-derived Features consume the recorded unadjusted
 prices. Backtests and benchmarks use those prices with their existing execution
@@ -54,10 +57,13 @@ Canonical path discovery or current calendar lookup is performed.
 | --- | --- |
 | Ordinary `market-vault-strategy-experiment-v1` | Actual trades in every saved strategy result; the recorded buy-and-hold benchmark when the mode is `RISK`. |
 | Ordinary `market-vault-intraday-experiment-v1` / `v2` | Actual trades in every saved result and every group's benchmark, including finite intraday diagnostics in these schemas. |
-| `market-vault-intraday-test-v1` / `v2` | Actual trades in the saved TEST execution and its benchmark. |
+| `market-vault-intraday-test-v1` / `v2` / `v3` / `v4` | Actual trades in the saved TEST report's own execution and its benchmark; never the embedded DEV account. |
 
 Intraday V2 and TEST V2 include the saved ML results without adding a model-
-specific window interpretation. Selection-only artifacts, inner-selection
+specific window interpretation. Economic TEST V3/V4 use the same Q6 execution
+and cost V2 interpretation, with `return_basis` strictly bound to their matching
+frozen selection. Assessment does not rerun TEST or reselect a candidate.
+Selection-only artifacts, inner-selection
 artifacts, base strategy diagnostics bundles, scenario collections and
 standalone intraday data artifacts are outside this command's V1 scope.
 Export or choose a supported ordinary experiment as a separate explicit input
@@ -166,7 +172,7 @@ It can cross market dates even when strategy trades are shorter or absent.
 
 ### Intraday ordinary and TEST experiments
 
-Ordinary V1/V2 and TEST V1/V2 use a shared interpretation of their saved
+Ordinary V1/V2 and TEST V1–V4 use a shared interpretation of their saved
 executions. Every strategy trade and benchmark trade has its own entry-to-exit
 window. Cash between sessions is not combined into a continuous position, and
 the earliest entry and latest exit across multiple days never stand in for
@@ -317,6 +323,7 @@ canonical UTF-8 bytes used for restriction or assessment identities.
 | `source_id` / `dataset_id` | Original source identity and its original Dataset/data identity. For direct Dataset input the two are equal. |
 | `source_evidence` | `STRICT_VERIFIED_DATASET` or `VALIDATED_SAVED_RECORDS_NOT_REPLAYED`, as defined above. |
 | `source_economic_versions` | Only the checked saved economic version map; `{}` for direct Dataset input. |
+| `source_return_basis` | Present only for economic TEST V3/V4: the original strictly validated `return_basis`, included in `assessment_id`. Absent for Dataset, ordinary DEV/base and TEST V1/V2; their output shapes remain unchanged. |
 | `price_basis` | `NONE_UNADJUSTED`. |
 | `split_share_adjustment` / `cash_dividend_accounting` | Both `NOT_APPLIED`. |
 | `total_return_semantics` | `SIMULATED_ACCOUNT_CHANGE`, describing the existing account-return field meaning. A Dataset assessment does not itself calculate account return. |

@@ -53,6 +53,14 @@ is elapsed time, not trade count divided by observation count.
 
 ## CLI and desktop
 
+Q86 also accepts strictly validated saved TEST V3 (economic threshold) and V4
+(joint recipe) accounts, using the same recorded Q6 execution/cost V2 cash
+derivation. Only the TEST report's own execution and benchmark are analyzed;
+embedded DEV selections are not substituted. For these economic TESTs the
+result additionally retains the saved `return_basis`. Existing DEV and TEST
+V1/V2 result shapes and calculations remain unchanged. This does not run TEST
+again, establish market-data authority, or authorize selection among TESTs.
+
 ```console
 market-vault research-intraday-performance --experiment /absolute/development.json --cost-index 1 --candidate-index 2
 market-vault research-intraday-performance --experiment /absolute/test.json

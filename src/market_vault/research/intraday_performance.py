@@ -13,6 +13,8 @@ import statistics
 
 from ..backtest.intraday import INTRADAY_COST_VERSION, INTRADAY_EXECUTION_VERSION
 from .intraday_data import digest
+from .intraday_experiment import INTRADAY_EXPERIMENT_VERSIONS
+from .intraday_final_test import INTRADAY_TEST_EXPERIMENT_VERSIONS
 
 
 INTRADAY_PERFORMANCE_VERSION = "market-vault-intraday-performance-v1"
@@ -125,13 +127,13 @@ def analyze_intraday_experiment(snapshot, *, cost_index: int = 0, candidate_inde
         raise ValueError("cost_index and candidate_index must be nonnegative integers")
     root = snapshot.as_dict()
     report = root["report"]
-    if root["artifact_schema_version"] in ("market-vault-intraday-experiment-v1", "market-vault-intraday-experiment-v2"):
+    if root["artifact_schema_version"] in INTRADAY_EXPERIMENT_VERSIONS:
         if cost_index >= len(report["groups"]) or candidate_index >= len(report["groups"][cost_index]["results"]):
             raise ValueError("selected cost/candidate index is outside the saved experiment")
         group = report["groups"][cost_index]
         candidate = group["results"][candidate_index]
         identity, scope = candidate["candidate_id"], "DEVELOPMENT_WALK_FORWARD_ONLY"
-    elif root["artifact_schema_version"] in ("market-vault-intraday-test-v1", "market-vault-intraday-test-v2"):
+    elif root["artifact_schema_version"] in INTRADAY_TEST_EXPERIMENT_VERSIONS:
         if cost_index or candidate_index:
             raise ValueError("TEST contains one frozen result; both indices must be zero")
         group = candidate = report
@@ -143,4 +145,5 @@ def analyze_intraday_experiment(snapshot, *, cost_index: int = 0, candidate_inde
             "evidence": "RECORDED_LEDGER_DERIVATION", "strategy": candidate["strategy"],
             "execution_policy": group["execution_policy"],
             "performance": summarize_intraday_execution(candidate["execution"]),
-            "benchmark": summarize_intraday_execution(group["benchmark"]["execution"])}
+            "benchmark": summarize_intraday_execution(group["benchmark"]["execution"]),
+            **({"return_basis": report["return_basis"]} if "return_basis" in report else {})}

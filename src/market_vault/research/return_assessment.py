@@ -19,7 +19,7 @@ from ..cross_day._authority import INTERVAL_MINUTES
 from ..cross_day_dataset import load_verified_multi_source_cross_day_dataset
 from .intraday_data import INTRADAY_DATA_VERSION, canonical_json, digest, object_fields, parse_json
 from .intraday_experiment import INTRADAY_EXPERIMENT_VERSIONS
-from .intraday_final_test import INTRADAY_TEST_EXPERIMENT_VERSION, INTRADAY_TEST_EXPERIMENT_V2_VERSION
+from .intraday_final_test import INTRADAY_TEST_EXPERIMENT_VERSIONS
 from .intraday_research import BENCHMARK_DEFINITION, INTRADAY_BENCHMARK_VERSION
 from .strategy_equity import STRATEGY_EQUITY_VERSION
 from .strategy_experiment import STRATEGY_EXPERIMENT_VERSION, load_strategy_experiment
@@ -28,7 +28,6 @@ from .strategy_risk import STRATEGY_RISK_VERSION
 
 RETURN_ASSESSMENT_VERSION = "market-vault-return-assessment-v1"
 RESTRICTION_LIST_VERSION = "market-vault-return-restrictions-v1"
-_TEST_VERSIONS = (INTRADAY_TEST_EXPERIMENT_VERSION, INTRADAY_TEST_EXPERIMENT_V2_VERSION)
 _ZONE = ZoneInfo("America/New_York")
 _CLOCK = re.compile(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d{1,6})?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)")
 _PRICE_FIELDS = frozenset(("open", "high", "low", "close"))
@@ -461,12 +460,16 @@ def assess_saved_experiment(path: str | Path, *, events: dict | None = None,
         dataset = load_verified_multi_source_cross_day_dataset(source_dataset or root["plan"]["dataset_build_dir"])
         windows, versions = _base_windows(root, dataset)
         source_kind = "SAVED_BASE_EXPERIMENT"
-    elif schema in (*INTRADAY_EXPERIMENT_VERSIONS, *_TEST_VERSIONS):
+    elif schema in (*INTRADAY_EXPERIMENT_VERSIONS, *INTRADAY_TEST_EXPERIMENT_VERSIONS):
         _require(source_dataset is None, "source-dataset applies only to a saved base experiment", "INVALID_INPUT")
         windows, versions = _saved_intraday_windows(root)
         source_kind = "SAVED_INTRADAY_EXPERIMENT"
     else:
         raise ReturnAssessmentError("UNSUPPORTED_SOURCE", "assessment v1 supports ordinary saved base/intraday/TEST experiments only")
-    return _assessment(source_kind=source_kind, source_id=root["experiment_id"], dataset_id=root["dataset_id"],
-                       evidence="VALIDATED_SAVED_RECORDS_NOT_REPLAYED", versions=versions,
-                       windows=windows, omitted={}, events=events)
+    result = _assessment(source_kind=source_kind, source_id=root["experiment_id"], dataset_id=root["dataset_id"],
+                         evidence="VALIDATED_SAVED_RECORDS_NOT_REPLAYED", versions=versions,
+                         windows=windows, omitted={}, events=events)
+    if "return_basis" in root["report"]:
+        result["source_return_basis"] = root["report"]["return_basis"]
+        result["assessment_id"] = digest({key: value for key, value in result.items() if key != "assessment_id"})
+    return result
