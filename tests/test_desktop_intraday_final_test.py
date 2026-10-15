@@ -2760,3 +2760,282 @@ print('REAL_FORWARD_QML_OK')
     assert "ReferenceError" not in result.stderr
     assert "TypeError" not in result.stderr
     assert (saved_test.read_bytes(), declaration.read_bytes()) == before
+
+
+def test_q89_native_preflight_api_parity_and_read_only(qt_app, research_case, intraday_experiment,
+        tmp_path, monkeypatch):
+    from dataclasses import replace
+    from market_vault.research.intraday_data import build_intraday_dataset, write_intraday_dataset
+    from market_vault.research.intraday_preflight import analyze_intraday_preflight
+    from test_intraday_research import comparison_plan
+    data, plan, _ = research_case
+    without = build_intraday_dataset({**data.as_dict()["plan"], "target_horizon_bars": None})
+    without = replace(without, path=write_intraday_dataset(without, path=tmp_path / "without-targets.json"))
+    zero = deepcopy(plan); zero["execution"]["entry_delay_minutes"] = 359
+    cases = [(data, plan, "CHECKED"), (data, zero, "BLOCKED"),
+             (without, comparison_plan(without), "BLOCKED")]
+    expected = [analyze_intraday_preflight(p) for _, p, _ in cases]
+    before = {d.path: d.path.read_bytes() for d, _, _ in cases}
+    runtime, _ = _runtime(tmp_path, [])
+    owner = QuantResearchController(runtime)
+    controller = owner.intradayResearchController
+    controller._apply(intraday_experiment, path=str(tmp_path / "existing.json"), opened=True)
+    prior = (controller._content, controller._root, controller.experimentPath, controller._proof,
+             controller.restoreRevision, controller.draftPlan, controller.draftSource)
+    loader, calls = research.load_intraday_dataset, []
+    def loaded(*args, **kwargs):
+        calls.append(args[0]); return loader(*args, **kwargs)
+    def forbidden(*args, **kwargs):
+        pytest.fail("native structural preflight fitted or executed an account")
+    monkeypatch.setattr(research, "load_intraday_dataset", loaded)
+    monkeypatch.setattr(research, "_fit", forbidden)
+    monkeypatch.setattr(research, "run_intraday_execution", forbidden)
+    for (source, requested, status), report in zip(cases, expected, strict=True):
+        owner._apply_intraday(source)
+        count = len(calls)
+        assert controller.runPreflight(_intraday_plan_form(requested)); runtime._poll()
+        assert len(calls) == count + 1
+        assert controller.status == ("SUCCESS" if status == "CHECKED" else "PARTIAL"), controller.error
+        assert controller.preflightReport == report == json.loads(controller.preflightJson)
+        assert report["status"] == status
+        assert controller.preflightTableModel.totalRows == len(report["folds"])
+        controller.selectPreflightView(1)
+        assert controller.preflightTableModel.totalRows == len(report["sessions"])
+        controller.selectPreflightView(0)
+        assert prior == (controller._content, controller._root, controller.experimentPath, controller._proof,
+            controller.restoreRevision, controller.draftPlan, controller.draftSource)
+    assert all(path.read_bytes() == content for path, content in before.items())
+    # A failed strict read does not leave a prior CHECKED/BLOCKED visible.
+    owner._apply_intraday(data)
+    values = _intraday_plan_form(plan)
+    assert controller.runPreflight({**values, "intraday_data_path": str(tmp_path / "missing.json")})
+    runtime._poll()
+    assert controller.status == "FAILED" and not controller.preflightReport
+    assert controller.runPreflight(values); runtime._poll()
+    assert controller.preflightReport == expected[0]
+    controller._apply_draft(plan, {"kind": "FILE", "path": "draft"})
+    assert not controller.preflightReport
+    assert not controller.runPreflight({**values, "minimum_train_days": "bad"})
+    assert controller.status == "VALIDATION_ERROR" and not controller.preflightReport
+    assert runtime.backend_if_initialized is None and runtime.shutdown()
+
+
+def test_q89_native_preflight_captures_plan_and_rejects_edit_undo(qt_app, research_case,
+        intraday_experiment, tmp_path, monkeypatch):
+    from market_vault.research import intraday_preflight as preflight
+    data, plan, _ = research_case
+    runtime, runner = _runtime(tmp_path, [])
+    owner = QuantResearchController(runtime); owner._apply_intraday(data)
+    controller = owner.intradayResearchController
+    pending, captured = [], []
+    analyze = preflight.analyze_intraday_preflight
+    def recorded(requested):
+        captured.append(deepcopy(requested)); return analyze(requested)
+    def deferred(name, operation):
+        future = Future(); pending.append((future, operation)); return future
+    monkeypatch.setattr(preflight, "analyze_intraday_preflight", recorded)
+    with monkeypatch.context() as patch:
+        patch.setattr(runner, "submit", deferred)
+        values = _intraday_plan_form(plan)
+        assert controller.runPreflight(values)
+        values["strategies"][0]["name"] = "edited after submission"
+        controller.invalidatePreflight(); controller.invalidatePreflight()  # edit, then undo
+        pending[-1][0].set_result(pending[-1][1]()); runtime._poll()
+        assert captured[-1] == plan and not controller.preflightReport
+        assert controller.preflightNotice == "STALE_INPUT"
+        assert controller.runPreflight(_intraday_plan_form(plan))
+        # Same data identity at a different source locator also invalidates.
+        owner._intraday_path = str(tmp_path / "relocated.json"); owner.researchChanged.emit()
+        pending[-1][0].set_exception(ValueError("obsolete source failure")); runtime._poll()
+        assert controller.preflightNotice == "STALE_INPUT" and not controller.error
+        assert not controller.preflightReport
+        assert controller.runPreflight(_intraday_plan_form(plan))
+        controller._apply(intraday_experiment, opened=True)
+        pending[-1][0].set_result(pending[-1][1]()); runtime._poll()
+        assert not controller.preflightReport and controller.preflightNotice == "STALE_INPUT"
+    assert controller.runPreflight(_intraday_plan_form(plan)); runtime._poll()
+    assert controller.preflightReport["status"] == "CHECKED"
+    assert runtime.backend_if_initialized is None and runtime.shutdown()
+
+
+def test_q89_actual_main_qml_preflight_views_edits_and_small_window(research_case, intraday_experiment, tmp_path):
+    data, plan, _ = research_case
+    write_strategy_experiment(intraday_experiment, path=tmp_path / "existing.json")
+    (tmp_path / "settings.yaml").write_text("storage:\n  root_dir: ./data\n", encoding="utf-8")
+    script = r'''
+import hashlib, json, sys, time
+from pathlib import Path
+from PySide6.QtCore import QObject, QUrl, Qt, QEvent, QMetaObject
+from PySide6.QtGui import QGuiApplication, QKeyEvent
+from PySide6.QtQml import QQmlApplicationEngine
+from PySide6.QtQuickControls2 import QQuickStyle
+from PySide6.QtTest import QTest
+from market_vault.application import build_application_context
+from market_vault.desktop.bootstrap import create_qml_application_session
+from market_vault.desktop.preferences import DesktopPreferenceStore
+from market_vault.research import intraday_data, intraday_preflight, intraday_research as research
+from market_vault.research.strategy_experiment import StrategyExperiment
+root, source = Path(sys.argv[1]), Path(sys.argv[2])
+before = source.read_bytes()
+QQuickStyle.setStyle('Basic')
+app = QGuiApplication([]); engine = QQmlApplicationEngine()
+session = create_qml_application_session(build_application_context(root / 'settings.yaml'), engine,
+    preference_store=DesktopPreferenceStore(root=root / 'preferences'))
+engine.load(QUrl.fromLocalFile(str(Path.cwd() / 'src/market_vault/desktop/qml/Main.qml')))
+assert engine.rootObjects()
+window = engine.rootObjects()[0]; window.setWidth(1024); window.setHeight(600)
+owner = session.context_properties['quantResearchController']
+controller = owner.intradayResearchController
+owner._apply_intraday(intraday_data.load_intraday_dataset(source))
+controller._apply(StrategyExperiment((root / 'existing.json').read_bytes()), path=str(root / 'existing.json'), opened=True)
+assert session.shell.selectPage('quant_research')
+def descendants(parent):
+    pending = [parent]
+    while pending:
+        item = pending.pop()
+        yield item
+        if hasattr(item, 'childItems'): pending.extend(item.childItems())
+def find(name, parent=None):
+    base = parent or window
+    item = base.findChild(QObject, name)
+    if item is None:
+        visual = window.contentItem() if base is window else base
+        if not hasattr(visual, 'childItems'):
+            visual = base.property('contentItem') or base
+        item = next((obj for obj in descendants(visual)
+            if obj.objectName() == name), None)
+    assert item is not None, name
+    return item
+def value(obj, name):
+    result = obj.property(name)
+    return result.toVariant() if hasattr(result, 'toVariant') else result
+def reveal(item, scroll=None, scope=None):
+    if scroll is None: return
+    flick = find(scroll, scope).property('contentItem')
+    rect = item.mapRectToItem(flick, item.boundingRect())
+    for axis, start, end, size in (('X', rect.left(), rect.right(), flick.width()),
+            ('Y', rect.top(), rect.bottom(), flick.height())):
+        delta = start if start < 0 else max(0, end - size)
+        limit = max(0, flick.property('contentWidth' if axis == 'X' else 'contentHeight') - size)
+        flick.setProperty('content' + axis, min(max(0, flick.property('content' + axis) + delta), limit))
+    QTest.qWait(25)
+    rect = item.mapRectToItem(flick, item.boundingRect())
+    assert rect.left() >= -1 and rect.right() <= flick.width() + 1, (item.objectName(), rect, flick.width())
+    assert rect.top() >= -1 and rect.bottom() <= flick.height() + 1, (item.objectName(), rect, flick.height())
+def click(name, scroll=None, scope=None):
+    item = find(name, scope); app.processEvents(); reveal(item, scroll, scope)
+    assert item.isVisible() and item.isEnabled(), name
+    point = item.mapToScene(item.boundingRect().center()).toPoint()
+    assert 0 <= point.x() < 1024 and 0 <= point.y() < 600, (name, point)
+    QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier, point); QTest.qWait(30)
+def nested(item, kind):
+    if kind in item.metaObject().className(): return item
+    return next(child for child in item.findChildren(QObject) if kind in child.metaObject().className())
+def fill(name, text, scroll=None, scope=None):
+    item = find(name, scope); reveal(item, scroll, scope)
+    window.requestActivate(); QTest.qWait(15)
+    edit = nested(item, 'PixelTextField'); edit.forceActiveFocus()
+    QTest.keyClick(window, Qt.Key_A, Qt.ControlModifier); QTest.keyClick(window, Qt.Key_Backspace)
+    for char in text:
+        QGuiApplication.sendEvent(window, QKeyEvent(QEvent.KeyPress, ord(char.upper()), Qt.NoModifier, char))
+    app.processEvents()
+    assert item.property('text') == text, (name, item.property('text'))
+def choose(name, index, scroll=None, scope=None):
+    item = find(name, scope); reveal(item, scroll, scope)
+    combo = nested(item, 'PixelComboBox')
+    window.requestActivate(); QTest.qWait(15); combo.forceActiveFocus()
+    QTest.keyClick(window, Qt.Key_Space); QTest.keyClick(window, Qt.Key_Home)
+    for _ in range(index): QTest.keyClick(window, Qt.Key_Down)
+    QTest.keyClick(window, Qt.Key_Return); QTest.qWait(30)
+    assert item.property('currentIndex') == index, (name, index, item.property('currentIndex'))
+def complete(target=controller, status='SUCCESS'):
+    deadline = time.monotonic() + 150
+    while target.busy and time.monotonic() < deadline:
+        app.processEvents(); time.sleep(.01)
+    assert not target.busy and target.status == status, (target.status, target.error)
+    QTest.qWait(35)
+
+click('quantIntradayTab'); click('intradayComparisonTab')
+proof = (controller._content, controller._proof, controller.experimentPath, controller.restoreRevision)
+calls = []
+analyze = intraday_preflight.analyze_intraday_preflight
+def recorded(plan):
+    calls.append(plan); return analyze(plan)
+def forbidden(*args, **kwargs):
+    raise AssertionError('native preflight fitted or executed')
+intraday_preflight.analyze_intraday_preflight = recorded
+research._fit = research.run_intraday_execution = forbidden
+panel_scroll = 'intradayResearchScroll'
+dialog = find('intradayPreflightDialog')
+for language in ('en', 'zh-CN'):
+    assert session.i18n.setLanguage(language); QTest.qWait(35)
+    count = len(calls)
+    click('intradayPreflightButton', panel_scroll); complete()
+    assert len(calls) == count + 1 and controller.preflightReport['status'] == 'CHECKED'
+    assert 'CHECKED' in find('intradayPreflightStatus').property('text')
+    assert dialog.property('visible')
+    for index, key in ((0, 'folds'), (1, 'sessions'), (2, None)):
+        choose('intradayPreflightView', index, scope=dialog)
+        if key:
+            assert controller.preflightTableModel.totalRows == len(controller.preflightReport[key])
+            assert find('intradayPreflightTable').isVisible()
+        else:
+            assert json.loads(find('intradayPreflightDetails').property('text')) == controller.preflightReport
+    assert window.grabWindow().save(str(root / ('q89-preflight-' + language + '.png')))
+    QMetaObject.invokeMethod(dialog, 'close', Qt.DirectConnection); QTest.qWait(25)
+    assert proof == (controller._content, controller._proof, controller.experimentPath, controller.restoreRevision)
+# Viewing/committing a strategy is not an edit. Actual typing is.
+click('intradayResearchSettingsButton', panel_scroll)
+settings = find('intradayResearchSettings'); revision = controller._preflight_revision
+choose('quantStrategySelector', 1, 'intradaySettingsScroll', settings)
+assert controller._preflight_revision == revision and controller.preflightReport
+fill('quantStrategyName', 'Edited rule', 'intradaySettingsScroll', settings)
+assert controller._preflight_revision > revision and not controller.preflightReport
+revision = controller._preflight_revision
+choose('quantStrategyKind', 2, 'intradaySettingsScroll', settings)
+assert controller._preflight_revision > revision
+fill('intradayResearchEntryDelay', '359', 'intradaySettingsScroll', settings)
+click('intradayResearchSettingsDone', 'intradaySettingsScroll', settings)
+click('intradayPreflightButton', panel_scroll); complete(status='PARTIAL')
+assert controller.preflightReport['status'] == 'BLOCKED'
+assert controller.preflightReport['blockers'][0]['reason'] == 'NO_ELIGIBLE_ENTRY_OBSERVATIONS'
+assert 'BLOCKED' in find('intradayPreflightStatus').property('text')
+QMetaObject.invokeMethod(dialog, 'close', Qt.DirectConnection); QTest.qWait(25)
+click('intradayResearchSettingsButton', panel_scroll)
+fill('intradayResearchEntryDelay', '15', 'intradaySettingsScroll', settings)
+assert not controller.preflightReport
+click('intradayResearchSettingsDone', 'intradaySettingsScroll', settings)
+click('intradayPreflightButton', panel_scroll); complete()
+assert controller.preflightReport['status'] == 'CHECKED'
+assert proof == (controller._content, controller._proof, controller.experimentPath, controller.restoreRevision)
+assert source.read_bytes() == before
+# Legal Q73 output may contain one training blocker per fold, with no small
+# fold limit. Exercise presentation scale without repeating Q73 numerical work.
+report = controller.preflightReport
+report['status'] = 'BLOCKED'
+report['folds'] = [dict(report['folds'][0], fold_index=i, training_row_count=0) for i in range(100)]
+report['blockers'] = [{'reason': 'NO_LEARNED_TRAINING_ROWS', 'fold_index': i} for i in range(100)]
+controller._preflight_report = report
+controller._set_preflight_table(); controller.changed.emit()
+for language in ('en', 'zh-CN'):
+    assert session.i18n.setLanguage(language); QTest.qWait(35)
+    assert dialog.property('visible')
+    choose('intradayPreflightView', 0, scope=dialog)
+    table = find('intradayPreflightTable')
+    assert table.height() >= 100 and controller.preflightTableModel.totalRows == 100
+    summary = find('intradayPreflightSummary')
+    assert summary.height() < 130 and '100' in summary.property('text')
+    picker = find('intradayPreflightView')
+    rect = picker.mapRectToItem(window.contentItem(), picker.boundingRect())
+    assert rect.top() >= 0 and rect.bottom() < 600, rect
+    choose('intradayPreflightView', 2, scope=dialog)
+    assert len(json.loads(find('intradayPreflightDetails').property('text'))['blockers']) == 100
+    assert window.grabWindow().save(str(root / ('q89-long-blocked-' + language + '.png')))
+assert session.runtime.shutdown()
+engine.deleteLater(); app.processEvents()
+'''
+    completed = subprocess.run([sys.executable, "-c", script, str(tmp_path), str(data.path)], cwd=ROOT,
+        env={**os.environ, "QT_QPA_PLATFORM": "offscreen", "QT_QUICK_BACKEND": "software"},
+        capture_output=True, text=True, timeout=300)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "ReferenceError" not in completed.stderr and "TypeError" not in completed.stderr

@@ -361,6 +361,14 @@ class IntradayResearchController(PageController):
         self._candidate_ids = ()
         self._names = []
         self._view_index = 0
+        self._preflight_report = {}
+        self._preflight_revision = 0
+        self._preflight_pending = None
+        self._preflight_notice = ""
+        self._preflight_source = (owner._intraday_data, owner.intradayPath)
+        self._preflight_view, self._preflight_page = 0, 1
+        self._preflight_model = QtTableModel(parent=self)
+        self._set_preflight_table()
         self._risk_report = None
         self._uncertainty_report = None
         self._uncertainty_error = ""
@@ -405,6 +413,7 @@ class IntradayResearchController(PageController):
         self.operationFailed.connect(self._sequential_failed)
         self.operationFailed.connect(self._signal_delay_failed)
         self.operationFailed.connect(self._prediction_quality_failed)
+        self.operationFailed.connect(self._preflight_failed)
         runtime.operationFinished.connect(self._analysis_idle)
 
     def _replay_failed(self):
@@ -416,6 +425,10 @@ class IntradayResearchController(PageController):
             self.changed.emit()
 
     def _source_changed(self):
+        source = (self._owner._intraday_data, self._owner.intradayPath)
+        if source != self._preflight_source:
+            self._preflight_source = source
+            self.invalidatePreflight()
         if self._owner._intraday_data:
             raw = json.loads(self._owner._intraday_data)
             if raw["data_id"] != self._source_id:
@@ -1514,6 +1527,98 @@ class IntradayResearchController(PageController):
     def _plan(self, values):
         return self._admit_run(self._compile_comparison(values))
 
+    @Property("QVariantMap", notify=changed)
+    def preflightReport(self):
+        return deepcopy(self._preflight_report)
+
+    @Property(str, notify=changed)
+    def preflightNotice(self):
+        return self._preflight_notice
+
+    @Property(str, notify=changed)
+    def preflightJson(self):
+        return json.dumps(self._preflight_report, ensure_ascii=False, indent=2) if self._preflight_report else ""
+
+    @Property(QObject, constant=True)
+    def preflightTableModel(self):
+        return self._preflight_model
+
+    def _set_preflight_table(self):
+        from ..console.models import TablePage
+        key = "folds" if self._preflight_view == 0 else "sessions"
+        rows = self._preflight_report.get(key, [])
+        columns = tuple(rows[0]) if rows else ()
+        def cell(value):
+            if value is None:
+                return "—"
+            return json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, list)) else str(value)
+        start = (self._preflight_page - 1) * 100
+        shown = tuple(tuple(cell(row[k]) for k in columns) for row in rows[start:start + 100])
+        self._preflight_model.set_page(TablePage(columns, shown, self._preflight_page, 100, len(rows)))
+
+    @Slot(int)
+    def selectPreflightView(self, index):
+        if index in (0, 1):
+            self._preflight_view, self._preflight_page = index, 1
+            self._set_preflight_table()
+
+    @Slot(int)
+    def selectPreflightPage(self, page):
+        if 1 <= page <= self._preflight_model.totalPages:
+            self._preflight_page = page
+            self._set_preflight_table()
+
+    @Slot()
+    def invalidatePreflight(self):
+        # Revision, rather than value equality, rejects edits followed by undo.
+        self._preflight_revision += 1
+        self._preflight_report, self._preflight_page = {}, 1
+        self._preflight_notice = "INPUT_CHANGED_WHILE_RUNNING" if self._preflight_pending is not None else "INPUT_CHANGED"
+        self._set_preflight_table()
+        self.changed.emit()
+
+    @Slot("QVariantMap", result=bool)
+    def runPreflight(self, values):
+        if self.busy or self._runtime.busy:
+            return False
+        self.invalidatePreflight()  # An unchanged form can still reference changed files.
+        self._preflight_notice = ""
+        try:
+            plan = deepcopy(self._plan(values))
+        except (OSError, TypeError, ValueError, KeyError) as exc:
+            self.changed.emit()
+            return self._reject_input(exc)
+        submitted = self._preflight_revision
+        self._preflight_pending = submitted
+        self.changed.emit()
+        def operation(_backend):
+            from ..research.intraday_preflight import analyze_intraday_preflight
+            return analyze_intraday_preflight(plan)
+        def completed(report):
+            self._preflight_pending = None
+            if submitted == self._preflight_revision:
+                self._preflight_report = report
+                self._preflight_page = 1
+                self._set_preflight_table()
+            else:
+                self._preflight_notice = "STALE_INPUT"
+            self.changed.emit()
+        accepted = self._submit("intraday_preflight", operation, completed,
+            result_status=lambda report: "SUCCESS" if report["status"] == "CHECKED" else "PARTIAL",
+            requires_backend=False)
+        if not accepted:
+            self._preflight_pending = None
+        return accepted
+
+    def _preflight_failed(self):
+        submitted, self._preflight_pending = self._preflight_pending, None
+        if submitted is not None:
+            if submitted != self._preflight_revision:
+                self._preflight_notice = "STALE_INPUT"
+                self._error, self._status = "", "STALE_INPUT"
+                self.stateChanged.emit()
+            self.changed.emit()
+
     def _compile_diagnostics(self, values):
         from .quant_research import _finite_float
         from ..research.intraday_research import (INTRADAY_DIAGNOSTICS_PLAN_VERSION, INTRADAY_DIAGNOSTICS_PLAN_V2_VERSION,
@@ -1613,6 +1718,7 @@ class IntradayResearchController(PageController):
     def _apply_draft(self, plan, source):
         self._draft_plan, self._draft_source = deepcopy(plan), deepcopy(source)
         self._draft_revision += 1
+        self.invalidatePreflight()
         self.changed.emit()
 
     @Slot(str, result=bool)
@@ -1647,6 +1753,7 @@ class IntradayResearchController(PageController):
 
     def _apply_child(self, root, *, path="", proof="COMPUTED", candidate_index=0, snapshot=None):
         """Present an already validated ordinary Q7 child; its file path is separate."""
+        self.invalidatePreflight()
         from ..strategy_comparison_io import canonical_json
         self._content = canonical_json(root)
         self._experiment_id = root["experiment_id"]

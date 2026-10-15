@@ -135,7 +135,100 @@ Item {
         id: settings
         i18n: root.i18n
         errorText: root.controller.error
+        onEdited: root.controller.invalidatePreflight()
         savePlan: function(values) { root.preparePlanSave("comparison", values) }
+    }
+    Dialog {
+        id: preflightDialog
+        objectName: "intradayPreflightDialog"
+        readonly property var report: root.controller.preflightReport
+        modal: true
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        width: Math.min(960, parent ? parent.width - 32 : 960)
+        height: Math.max(1, Math.min(620, parent ? parent.height - 24 : 620))
+        title: root.i18n.catalog["preflight.title"]
+        padding: Theme.PixelTheme.panelPadding
+        standardButtons: Dialog.Close
+        background: Rectangle { color: Theme.PixelTheme.surface; border.color: Theme.PixelTheme.goldDark }
+        contentItem: ColumnLayout {
+            spacing: Theme.PixelTheme.spacingSm
+            Label {
+                Layout.fillWidth: true
+                text: root.i18n.catalog["preflight.help"]
+                wrapMode: Text.WordWrap
+                color: Theme.PixelTheme.inkMuted
+                font.pixelSize: Theme.PixelTheme.fontSm
+            }
+            Label {
+                objectName: "intradayPreflightStatus"
+                Layout.fillWidth: true
+                text: preflightDialog.report.status ? preflightDialog.report.status + " · "
+                    + root.i18n.catalog["preflight." + preflightDialog.report.status] : root.i18n.catalog["common.no_data"]
+                wrapMode: Text.WordWrap
+                color: Theme.PixelTheme.ink
+            }
+            Label {
+                objectName: "intradayPreflightSummary"
+                Layout.fillWidth: true
+                visible: !!preflightDialog.report.status
+                text: {
+                    const report = preflightDialog.report
+                    if (!report.status) return ""
+                    return root.i18n.catalog["preflight.opportunities"] + ": " + report.eligible_entry_observation_count
+                        + " · " + root.i18n.catalog["preflight.zero_groups"] + ": " + report.zero_entry_days.length + " / " + report.zero_entry_folds.length
+                        + "\n" + root.i18n.catalog["preflight.blockers"] + ": " + report.blockers.length
+                        + " · " + report.blockers.map(item => item.reason).filter((reason, index, reasons) => reasons.indexOf(reason) === index).join(", ")
+                        + "\nData ID: " + report.data_id + "\nPreflight ID: " + report.preflight_id
+                }
+                wrapMode: Text.WrapAnywhere
+                color: Theme.PixelTheme.inkMuted
+                font.pixelSize: Theme.PixelTheme.fontSm
+            }
+            Label {
+                objectName: "intradayPreflightNotice"
+                Layout.fillWidth: true
+                visible: !!root.controller.preflightNotice || !!root.controller.error
+                text: root.controller.preflightNotice ? root.i18n.catalog["preflight." + root.controller.preflightNotice] : root.controller.error
+                wrapMode: Text.WordWrap
+                color: Theme.PixelTheme.ink
+                font.pixelSize: Theme.PixelTheme.fontSm
+            }
+            Components.PixelComboBox {
+                id: preflightView
+                objectName: "intradayPreflightView"
+                Layout.fillWidth: true
+                model: [root.i18n.catalog["preflight.folds"], root.i18n.catalog["preflight.days"], root.i18n.catalog["preflight.details"]]
+                onActivated: root.controller.selectPreflightView(currentIndex)
+            }
+            Components.DataTable {
+                objectName: "intradayPreflightTable"
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                visible: preflightView.currentIndex < 2
+                tableModel: root.controller.preflightTableModel
+                i18n: root.i18n
+                paged: true
+                onPreviousRequested: root.controller.selectPreflightPage(tableModel.page - 1)
+                onNextRequested: root.controller.selectPreflightPage(tableModel.page + 1)
+            }
+            ScrollView {
+                objectName: "intradayPreflightDetailsScroll"
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                visible: preflightView.currentIndex === 2
+                clip: true
+                TextArea {
+                    objectName: "intradayPreflightDetails"
+                    text: root.controller.preflightJson
+                    readOnly: true
+                    selectByMouse: true
+                    wrapMode: TextEdit.WrapAnywhere
+                    color: Theme.PixelTheme.ink
+                    font.pixelSize: Theme.PixelTheme.fontSm
+                }
+            }
+        }
     }
     IntradayExecutionScenariosDialog {
         id: scenarios
@@ -260,6 +353,22 @@ Item {
                 wrapMode: Text.WordWrap
                 color: Theme.PixelTheme.inkMuted
                 font.pixelSize: Theme.PixelTheme.fontSm
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Components.PixelButton {
+                    objectName: "intradayPreflightButton"
+                    text: root.i18n.catalog["preflight.run"]
+                    enabled: root.controller.dataLoaded && !root.controller.busy && !operationRuntime.busy
+                    onClicked: { root.controller.runPreflight(settings.values()); preflightDialog.open() }
+                }
+                Components.PixelButton {
+                    objectName: "intradayPreflightReportButton"
+                    text: root.i18n.catalog["preflight.report"]
+                    enabled: !!root.controller.preflightReport.status
+                    onClicked: preflightDialog.open()
+                }
+                Item { Layout.fillWidth: true }
             }
             RowLayout {
                 Layout.fillWidth: true

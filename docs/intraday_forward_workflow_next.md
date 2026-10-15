@@ -488,3 +488,30 @@ Do not duplicate the existing Q74 numerical test matrix.
 
 **Exclusions.** No source repair, intersection/filtering to hide differences,
 market/source-independence certification, live collection or learner changes.
+
+### Q84 closure evidence and Q89 native use
+
+Q84 merged as `2cb3c357a0da48e417e95b03b878e5259d11b5de` (#355),
+with the independently reviewed candidate tree unchanged. Natural candidate
+FULL `38744179089/1` and actual main FULL `38745964331/1` both succeeded.
+The main strategy test step took 579 seconds, its full job 607 seconds, and
+created-to-terminal-update elapsed time was 727 seconds. The ten-minute
+full-job target was missed by seven seconds on this run; coverage and gates
+were not changed. These runner observations do not prove a universal speedup.
+
+In native Intraday comparison, **Check current structure** captures the same
+ordinary form as Run comparison, using the original data locator and current
+Q5 identity admission. It does not run automatically. A separate report dialog
+shows CHECKED/BLOCKED, all DEV folds, evaluated days, purged/admitted training
+rows, opportunity and exclusion counts, zero-entry groups, and complete
+captured plan/report identities. The table is paged without dropping rows;
+complete details retain sampling, split and scope evidence. This checks the
+ordinary comparison projected in the editor, not a full grid or scenario set.
+
+Editing a form or strategy, replacing a source or loading/restoring a plan
+invalidates the old report. An input revision rejects in-flight results even
+if an edit is undone. A retry strictly reads Q5 again; external file changes
+require rerunning the check. Preflight does not fit, execute or save an
+experiment, produce Replay proof, evaluate TEST performance or judge market
+accuracy, achievable fills or profitability. Existing research result bytes,
+paths and proof remain separate.

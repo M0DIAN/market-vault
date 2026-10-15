@@ -16,6 +16,7 @@ ColumnLayout {
     property string selectedKind: "FEATURE_RULE"
     property string matchChoice: "ALL"
     property bool allowQuadratic: false
+    signal userEdited()
     readonly property bool selectedLearned: root.selectedKind === "RIDGE" || root.selectedKind === "QUADRATIC_RIDGE"
     readonly property var kinds: ["FEATURE_RULE", "RIDGE", "COMPOSITE_RULE"].concat(root.allowQuadratic ? ["QUADRATIC_RIDGE"] : [])
     readonly property var comparators: ["GT", "GE", "LT", "LE"]
@@ -78,6 +79,7 @@ ColumnLayout {
                     "signal_field": root.defaultFeature, "comparator": "GT", "threshold": "0"})
         root.strategies = items
         load(items.length - 1)
+        root.userEdited()
     }
     function removeStrategy() {
         if (root.strategies.length <= 1) return
@@ -85,6 +87,7 @@ ColumnLayout {
         items.splice(root.selectedIndex, 1)
         root.strategies = items
         load(Math.min(root.selectedIndex, items.length - 1))
+        root.userEdited()
     }
     function changeKind(index) {
         commit()
@@ -100,21 +103,25 @@ ColumnLayout {
         items[root.selectedIndex] = item
         root.strategies = items
         load(root.selectedIndex)
+        root.userEdited()
     }
     function setCondition(index, field, value) {
         // Keep controls alive while typing; recreated rows read this same draft.
         root.conditionDraft[index][field] = value
+        root.userEdited()
     }
     function addCondition() {
         const items = clone(root.conditionDraft)
         items.push(condition(root.defaultFeature))
         root.conditionDraft = items
+        root.userEdited()
     }
     function removeCondition(index) {
         if (root.conditionDraft.length <= 2) return
         const items = clone(root.conditionDraft)
         items.splice(index, 1)
         root.conditionDraft = items
+        root.userEdited()
     }
 
     RowLayout {
@@ -146,6 +153,7 @@ ColumnLayout {
             objectName: "quantStrategyName"
             Layout.maximumWidth: 10000
             label: root.i18n.catalog["quant.strategy_name"]
+            onEdited: root.userEdited()
         }
         Components.LabeledComboBox {
             id: kindField
@@ -165,11 +173,13 @@ ColumnLayout {
             id: alphaField
             objectName: "quantStrategyAlpha"
             label: root.i18n.catalog["quant.ridge_alpha"]
+            onEdited: root.userEdited()
         }
         Components.LabeledTextField {
             id: ridgeThreshold
             objectName: "quantStrategyRidgeThreshold"
             label: root.i18n.catalog["quant.ridge_threshold"]
+            onEdited: root.userEdited()
         }
     }
     Label {
@@ -192,7 +202,7 @@ ColumnLayout {
             objectName: "quantStrategyMatch"
             Layout.fillWidth: true
             model: [root.i18n.catalog["quant.match_all"], root.i18n.catalog["quant.match_any"]]
-            onActivated: root.matchChoice = currentIndex === 1 ? "ANY" : "ALL"
+            onActivated: { root.matchChoice = currentIndex === 1 ? "ANY" : "ALL"; root.userEdited() }
             onModelChanged: currentIndex = root.matchChoice === "ANY" ? 1 : 0
         }
         Components.PixelButton {
