@@ -118,6 +118,12 @@ Item {
                 variant: root.section === 14 ? "primary" : "secondary"
                 onClicked: root.section = 14
             }
+            Components.PixelButton {
+                objectName: "intradayForwardTab"
+                text: root.i18n.catalog["forward.tab"]
+                variant: root.section === 15 ? "primary" : "secondary"
+                onClicked: root.section = 15
+            }
         }
         StackLayout {
             Layout.fillWidth: true
@@ -141,6 +147,7 @@ Item {
             IntradaySampleUsagePanel { controller: root.controller.intradaySampleUsageController; i18n: root.i18n }
             IntradayProcedureSuitePanel { controller: root.controller.intradayProcedureSuiteController; i18n: root.i18n }
             IntradaySelectionDiagnosticsPanel { controller: root.controller.intradaySelectionDiagnosticsController; i18n: root.i18n }
+            IntradayForwardPanel { controller: root.controller.intradayForwardController; i18n: root.i18n }
         }
     }
 }
