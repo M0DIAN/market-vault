@@ -507,31 +507,55 @@ def test_real_cli_joint_freeze_test_relocation_and_immutable_failure_recovery(jo
     assert case.source_path.read_bytes() == case.source.content
 
 
-def test_v4_saved_test_readers_retain_single_candidate_boundaries(joint_final_case, monkeypatch):
+@pytest.mark.parametrize("kind", ["ridge", "quadratic"])
+def test_v4_saved_test_readers_retain_single_candidate_boundaries(joint_final_case, monkeypatch, capsys, kind):
+    from market_vault import cli
     from market_vault.research.intraday_performance import analyze_intraday_experiment, summarize_intraday_execution
     from market_vault.research.intraday_risk_diagnostics import analyze_intraday_risk_diagnostics
     from market_vault.research.intraday_saved_comparison import compare_saved_intraday_experiments
     from market_vault.research.return_assessment import ReturnAssessmentError, assess_saved_experiment
-    case = joint_final_case["quadratic"]
+    case = joint_final_case[kind]
+    from market_vault.research import return_assessment
     blocked = lambda *a, **kw: pytest.fail("saved reader read source data or fitted")
     for module, attribute in ((final, "load_intraday_dataset"), (final, "load_strategy_experiment"),
                               (research, "load_intraday_dataset"), (research, "_fit"), (joint, "_fit"),
-                              (joint, "_select"), (joint, "run_intraday_execution")):
+                              (joint, "_select"), (joint, "run_intraday_execution"),
+                              (final, "run_intraday_execution"),
+                              (return_assessment, "load_verified_multi_source_cross_day_dataset")):
         monkeypatch.setattr(module, attribute, blocked)
     risk = analyze_intraday_risk_diagnostics(case.tested)
     assert risk["status"] == "SUCCESS"
     assert risk["strategy_diagnostics"]["report"]["fold_diagnostics"]["status"] == "NOT_APPLICABLE"
     performance = summarize_intraday_execution(case.tested.as_dict()["report"]["execution"])
-    assert performance["summary"]["trade_count"]["value"] == 2
+    assert performance["summary"]["trade_count"]["value"] > 0
     for args in ({"candidate_index": 1}, {"cost_index": 1}):
         with pytest.raises(ValueError, match="both indices must be zero"):
             analyze_intraday_risk_diagnostics(case.tested, **args)
     with pytest.raises(ValueError):
         analyze_intraday_risk_diagnostics(case.selection)
-    with pytest.raises(ValueError, match="performance requires"):
-        analyze_intraday_experiment(case.tested)
+    audited = analyze_intraday_experiment(case.tested)
+    assert audited["performance"] == performance
+    assert audited["benchmark"] == summarize_intraday_execution(case.tested.as_dict()["report"]["benchmark"]["execution"])
+    assert audited["return_basis"] == case.tested.as_dict()["report"]["return_basis"]
+    assert audited["candidate_id"] == case.tested.as_dict()["report"]["final_test_id"]
+    for args in ({"candidate_index": 1}, {"cost_index": 1}, {"cost_index": True}):
+        with pytest.raises(ValueError):
+            analyze_intraday_experiment(case.tested, **args)
+    with pytest.raises(ValueError):
+        analyze_intraday_experiment(case.selection)
     with pytest.raises(ValueError, match="saved comparison requires"):
         compare_saved_intraday_experiments(case.tested, case.tested)
-    with pytest.raises(ReturnAssessmentError) as exc:
-        assess_saved_experiment(case.test_path)
-    assert exc.value.reason_code == "UNSUPPORTED_SOURCE"
+    before = case.test_path.read_bytes()
+    assessment = assess_saved_experiment(case.test_path)
+    assert assessment["source_id"] == case.tested.experiment_id
+    assert assessment["source_return_basis"] == audited["return_basis"]
+    assert assessment["assessment_id"] == digest({key: value for key, value in assessment.items() if key != "assessment_id"})
+    assert assessment["coverage_status"] == "UNKNOWN" and assessment["screening_status"] == "NOT_CHECKED"
+    assert assessment["window_counts"]["STRATEGY_TRADE"] == performance["summary"]["trade_count"]["value"]
+    assert cli.main(["research-intraday-performance", "--experiment", str(case.test_path)]) == 0
+    assert json.loads(capsys.readouterr().out)["report"] == audited
+    assert cli.main(["research-return-assessment", "--experiment", str(case.test_path)]) == 0
+    assert json.loads(capsys.readouterr().out) == assessment
+    with pytest.raises(ReturnAssessmentError):
+        assess_saved_experiment(case.selection_path)
+    assert case.test_path.read_bytes() == before

@@ -1,5 +1,44 @@
 # Advice 03: bounded research acceptance, Q73-Q76
 
+## 2026-10-15 continuation: saved TEST compatibility, Q86-Q88
+
+The owner authorizes implementation, related repairs/tests, feature-branch
+commits/push/PR, independent final-candidate review and conditional squash to
+main, followed by natural exact-main CI before each next task. The verified
+assessment baseline is Q83 main `2d35814c67f0cdb9874fb90c98fd592b0b7f408f`, tree
+`281273b2398234415c0a222445ba45b6f020f1d1`. Q80 is implemented and Q83 already
+provides a native saved-forward entry. Q84 is separately in progress in #355;
+do not duplicate its measured CI rebalance. Q85 remains conditional on genuine
+supplied observations. This continuation does not manufacture that evidence.
+
+Priority is completing the existing saved-account research workflow rather
+than adding learners. The strict reader and Q12 risk already admit TEST V3/V4,
+but public performance, event screening and Saved A/B intentionally retained
+older admission boundaries. All four TEST versions share Q6 execution/cost V2;
+the economic versions additionally bind their recorded unadjusted return basis.
+This package explicitly extends those boundaries, not the economic algorithms.
+
+**Order: Q86 -> Q87 -> Q88.** Each is independently reviewed and verified on
+actual merged main before the next implementation. One writer; no releases,
+tags, deployment, paid/live data, credentials, orders, new models/features,
+search dimensions, TEST execution/reselection or automatic promotion.
+
+| Task | Goal and approach | Defaults and acceptance | Exclusions |
+| --- | --- | --- | --- |
+| Q86 | Analyze a single saved economic TEST through existing performance and ReturnAssessment entries; use the authoritative TEST version tuple and strict immutable reader. | Only report execution and same-window benchmark; TEST indices zero. Preserve unadjusted simulated cash, costs once, cash-only days and unavailable values. Retain saved return basis for the newly admitted economic TESTs. Real API/CLI must agree with the existing ledger derivation, report actual holding/event intersections with UNKNOWN/PARTIAL coverage, reject Selection and invalid selectors, and leave sources unchanged without Q5 reads, fitting or replay. | No event discovery, corporate-action adjustment/clearance, TEST recomputation or comparison. |
+| Q87 | Admit the same saved TESTs to existing A/B core and desktop opener; reuse basis checks and captured-input controller. Depends on Q86. | Explicit A/B identities and source return basis. Any TEST, including self-comparison, keeps every delta null with TEST_DESCRIPTIVE_ONLY. Verify same/mixed versions, DEV/TEST, actual CLI/native open/compare, invalid-open recovery and TEST rejection by portfolio/rebalance. | No ranking, winner, TEST search, portfolio expansion or QML redesign. |
+| Q88 | Correct existing user-facing current-main capability, forward workflow and CI topology documentation after Q86/Q87. | Check commands/options and actual controller wiring; distinguish current main from sealed releases, null template from measurements, declared event lists from complete coverage. Update existing docs only, static consistency/link/checker validation. | No new feature, repeated report set, release claim or market-success claim. |
+
+Q86 result compatibility: performance v1 adds `return_basis` only for economic
+TEST V3/V4; ReturnAssessment v1 adds `source_return_basis` for those sources and
+includes it in `assessment_id`. Existing DEV/TEST V1/V2 output shapes, numerical
+kernels, artifact bytes and CLI exits are unchanged. The strict reader validates
+the basis against the frozen selection before either analysis. ReturnAssessment
+still reports NONE_UNADJUSTED, no split/dividend adjustment, simulated account
+change, and coverage UNKNOWN without a list or PARTIAL with a finite list.
+No listed intersection is not corporate-action clearance. Q11 admission stays
+unchanged during Q86 and is extended separately in Q87.
+
 ## Baseline, rationale and delivery order
 
 The verified planning baseline is Q72 main

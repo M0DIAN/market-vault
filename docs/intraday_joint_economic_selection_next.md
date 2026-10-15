@@ -195,11 +195,11 @@ Desktop TEST may use a freshly frozen immutable selection; its separate file
 can be saved for later use. A saved TEST embeds the complete selection without
 inventing a standalone Selection path. The Q36 source must already be saved.
 
-Keep the existing Q32 reader boundary: a single saved TEST may use the current
-risk diagnostics with both indices zero and fold diagnostics not applicable;
-execution summaries may derive from its recorded account. Do not broaden
-Saved A/B, ordinary experiment-performance or ReturnAssessment source
-allowlists, or introduce a comparison/ranking of multiple TEST attempts.
+The original Q38 scope retained the Q32 saved-reader boundary. Q86 subsequently
+extends public performance and ReturnAssessment to strictly read TEST V3/V4,
+using the existing recorded account and benchmark; risk fold diagnostics remain
+not applicable and TEST indices stay zero. Saved A/B retains its V1/V2 boundary
+until Q87. No TEST search, ranking or promotion is introduced.
 
 ### Acceptance and exclusions
 
