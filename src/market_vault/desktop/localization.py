@@ -3561,6 +3561,39 @@ ZH_CN.update({
     "columns.excluded_ready_observations": "READY 排除计数"
 })
 
+EN.update({
+    "acceptance.tab": "Data policy", "acceptance.data": "Q5 intraday data (JSON)",
+    "acceptance.manifest": "Market-evidence manifest (JSON)", "acceptance.policy": "Explicit acceptance policy (JSON)",
+    "acceptance.method": "Judge the complete Q5 grid using three explicit local files. References resolve relative to the manifest. Existing policy defaults: FULL_Q5_GRID, zero tolerances, distinct observed-source declarations required. No declarations or policy changes are supplied automatically.",
+    "acceptance.analyze": "Judge data evidence", "acceptance.export": "Save captured report to new file",
+    "acceptance.details": "Complete captured report", "acceptance.coverage": "Numerically compared / full required grid",
+    "acceptance.reasons": "Rejections and evidence gaps", "acceptance.saved": "New report saved",
+    "acceptance.assurance": "SOURCE DECLARATIONS ONLY; independence unverified, market accuracy uncertified. FULL_Q5_GRID exposes all Q5 dates, prices and dependencies, including reserved TEST dates. This is not TEST performance or proof that TEST was unseen. No fitting, account execution, research/Freeze gate or trading approval.",
+    "acceptance.POLICY_SATISFIED": "Only the recorded policy conditions are satisfied",
+    "acceptance.NEEDS_EVIDENCE": "Additional evidence is required", "acceptance.REJECTED": "Evidence violates the explicit policy",
+    "acceptance.INPUT_CHANGED": "Inputs changed; previous report cleared",
+    "acceptance.INPUT_CHANGED_WHILE_RUNNING": "Inputs changed; in-flight result will be stale",
+    "acceptance.STALE_INPUT": "Earlier result ignored because inputs changed",
+    "operation.intraday_data_acceptance": "Explicit Q5 data-policy judgment",
+    "operation.intraday_data_acceptance_export": "Export captured data-policy report",
+})
+ZH_CN.update({
+    "acceptance.tab": "数据政策", "acceptance.data": "Q5 日内数据（JSON）",
+    "acceptance.manifest": "行情证据 manifest（JSON）", "acceptance.policy": "显式验收政策（JSON）",
+    "acceptance.method": "使用三个明确的本地文件判定完整 Q5 网格；引用相对 manifest 所在目录解析。沿用既有默认政策：FULL_Q5_GRID、零容差、要求不同观测来源的声明。不会自动补声明或调整政策。",
+    "acceptance.analyze": "判定数据证据", "acceptance.export": "将捕获报告保存为新文件",
+    "acceptance.details": "完整捕获报告", "acceptance.coverage": "已数值比较／全部必需网格",
+    "acceptance.reasons": "拒绝原因与证据缺口", "acceptance.saved": "已保存新报告",
+    "acceptance.assurance": "仅核对来源声明；来源独立性未验证，行情准确性未经认证。FULL_Q5_GRID 会暴露全部 Q5 日期、价格和依赖，包括预留 TEST 日期；这不是 TEST 表现，也不能证明 TEST 未被查看。不拟合、不执行账户、不增加研究／Freeze 门槛、不授权交易。",
+    "acceptance.POLICY_SATISFIED": "仅表示满足已记录政策条件",
+    "acceptance.NEEDS_EVIDENCE": "仍需补充证据", "acceptance.REJECTED": "证据不符合显式政策",
+    "acceptance.INPUT_CHANGED": "输入已更改，旧报告已清除",
+    "acceptance.INPUT_CHANGED_WHILE_RUNNING": "执行中输入已更改，原结果将过期",
+    "acceptance.STALE_INPUT": "输入变更，已忽略旧结果",
+    "operation.intraday_data_acceptance": "显式 Q5 数据政策判定",
+    "operation.intraday_data_acceptance_export": "导出捕获的数据政策报告",
+})
+
 TRANSLATIONS: Final[dict[str, dict[str, str]]] = {
     "en": EN,
     "zh-CN": ZH_CN,

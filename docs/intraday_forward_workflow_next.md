@@ -392,7 +392,7 @@ a synthetic fixture passes only engineering tests. No new model family,
 optimization/search, account or credential access, live capture service,
 paid data, orders, deployment, or evidence certification without data.
 
-## 2026-10-15 continuation after Q88: Q84 closure -> Q89 -> Q90
+## 2026-10-15 continuation after Q88: Q84 closure -> Q89 -> Q90 -> Q91
 
 The owner's new Q1-Q88 continuation request authorizes these three bounded
 items, including related repairs/tests/commits/push/PR, independent exact-final
@@ -411,7 +411,7 @@ support saved economic TEST. Q15's DEV-only bootstrap is an explicit statistical
 scope, not a missing version admission; do not mechanically widen it. No new
 high-value numerical defect was established in Q55-Q72's closed work.
 
-**Delivery order: Q84 -> Q89 -> Q90.** Read-only preparation may overlap;
+**Delivery order: Q84 -> Q89 -> Q90 -> Q91.** Read-only preparation may overlap;
 implementation of each next item waits for the prior merged main CI. Keep one
 writer. Version stays 0.9.0, US single-symbol equity/ETF RTH/unadjusted
 1/5/15/30-minute long/flat research, existing strict source and TRAIN/purge
@@ -515,3 +515,61 @@ require rerunning the check. Preflight does not fit, execute or save an
 experiment, produce Replay proof, evaluate TEST performance or judge market
 accuracy, achievable fills or profitability. Existing research result bytes,
 paths and proof remain separate.
+
+
+### Q89 closure and Q90 native use
+
+Q89 merged as `3278189ea00b48cb2559ae34653e91822db43d79` (#359).
+Final candidate `601fce72b7bb35c3a9b06bc3481b9ae47456ea40` passed
+independent review after fixing a reproduced long-BLOCKED-report overflow.
+Natural FULL `38750344446/1`, actual Windows/Qt `38750344155/1` and
+exact-main push `38761996633/1` succeeded. The main run used the existing
+verified FULL tree-equivalence reuse; it did not rerun all partitions.
+
+Native Intraday **Data policy** takes three explicit local JSON files: Q5,
+market-evidence manifest and acceptance policy. It calls Q74 once without a
+saved research study, model, account or backend connection. Manifest-relative
+references and all existing defaults remain authoritative. The primary result
+shows POLICY_SATISFIED / NEEDS_EVIDENCE / REJECTED, the full denominator and
+counts, rejection/gap reasons and all five report identities. Complete JSON
+retains source declarations, dependency evidence, policy and limitations.
+
+Editing input paths clears the prior report; a revision rejects late results
+including edit/undo. Retrying rereads files. Optional export publishes the
+captured report exclusively to a new file, with no recomputation or overwrite.
+It does not certify source independence or market accuracy, hide missing rows,
+inspect only an intersection, evaluate TEST performance or gate research/Freeze.
+Viewing FULL_Q5_GRID exposes any reserved TEST dates' data and is not proof
+that TEST remained unseen.
+
+### Q91 - rebalance the measured Windows QML tail
+
+**Reason/goal.** Added to this package after actual Q89 measurement, not as
+speculative CI work. Windows run `38750344155/1` recorded 800 seconds for
+qml-scenario-risk-final (713-second test step, 708.803 JUnit seconds), after
+617/520 seconds in `38749159138/1`. Q83 had 558/477 and 493/401 seconds.
+The two new preflight cases account for 236.432 seconds; old cases remain
+about 472 seconds, and dependency installation took 72 seconds. This is a
+real workload increase on the old tail, compounded by runner variance.
+
+**Approach/dependency.** After Q90 exact-main closure, split only the existing
+qml-scenario-risk-final job into two complementary matrix selections with
+fail-fast disabled. Within its original tail selection, group execution_scenarios,
+risk_views and offline_performance together, and put the remaining cases in
+the complementary group. Actual Q89 JUnit totals are 353.907 / 353.680 seconds;
+Q90's small policy cases join the latter. Keep the same aggregate dependency
+and require every matrix member to succeed; suffix artifact names and JUnit
+paths to avoid collisions. One additional parallel Windows worker, no new
+main FULL partition. Other Windows groups and native checks stay unchanged.
+
+**Default/acceptance.** This is full coverage with different scheduling, not a
+reduced tier or partial test reuse. Prove the same-environment collection union
+and unique ownership for the whole Qt module before/after. Require all natural
+PR CI, Windows native/QML jobs, independent final-candidate review, guarded
+squash and actual exact-main FULL (control-plane changes exclude reuse). Record
+full-job and test-step duration separately; under ten minutes is a measured
+target, not permission to weaken gates or a universal runner guarantee.
+
+**Exclusions.** No test bodies, fixtures, assertions, timeout, native platform,
+main partition, aggregation policy, attestation or release changes; no general
+scheduler or benchmark framework.
