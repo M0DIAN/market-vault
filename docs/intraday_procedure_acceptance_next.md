@@ -145,3 +145,44 @@ container lacks pyarrow/duckdb; the attempted Q77 public pytest command fails
 during collection at `service.py: import pyarrow.parquet`, before the changed
 behavior. Syntax and isolated composition probes are not integration PASS.
 Required natural CI must run the real tests with the repository environment.
+
+
+## Q78 observation interface and validation scope
+
+Use `market-vault-intraday-forward-observations-v2` only with a saved AVAILABLE
+Q25/Q31/Q36 study. Its exact top-level fields are `schema_version`,
+`expected_experiment_id`, `expected_execution_id`, `source`,
+`reference_clock_id`, `policy`, and `records`. The expected execution ID is
+`report.selected_account.execution.execution_id` in that saved study. Do not
+supply a cost/candidate index or candidate ID: those would denote the embedded
+fixed reference, not the selected procedure's outer account. The `source`,
+clock, policy and record grammars are unchanged from Q76 v1.
+
+The result uses `market-vault-intraday-forward-reconciliation-v2`. It identifies
+the exact study, procedure kind/ID, embedded source and selected execution ID.
+`fixed_reference` identifies the embedded comparison candidate separately;
+`outer_fold_recipes` records the actual `refit`/`application` strategy for each
+outer fold, in recorded order. Neither is substituted by a final DEV winner.
+An UNAVAILABLE study fails explicitly. An AVAILABLE zero-action account returns
+NO_REFERENCE_ACTIONS with empty measurements, not a success or missing account.
+Ordinary observation/result v1 remains unchanged, and v1/v2 source kinds are not
+silently interchanged. Recognized v2 CLI errors retain a v2 envelope.
+
+Q78 acceptance tests reuse the study fixture instances already constructed in
+`test_intraday_ml_procedures_history.py`; no new cross-module fixture suite is
+introduced. They cover all three real saved-study API paths, one offline Open,
+selected rather than fixed execution extraction, all transaction denominators,
+per-fold metadata, exact identity rejection, signed bid/ask/paper calculations,
+partial/unmatched evidence, actual AVAILABLE-flat versus UNAVAILABLE behavior,
+and module CLI publication/identity failures. Existing Q76 ordinary, clock,
+reference-consistency and publication tests remain required regressions. The
+shared calculation kernels and source readers are not changed.
+
+Q77 completed: PR347 squash `f2363ce9345ae25fefb866cedcef65d268e4daae`, tree
+`8646d9f4607f54c4a576078b49bb53540d222159`; independent Codex review binds
+`dc6a61e88c079d2fe0d8a96ff11e13a13ce17024`. FULL PR CI 38671329930/1 passed
+all 16 jobs; its ML partition reports 74 passed, one existing skipped, 441.95s.
+Natural push/main CI 38672844316/1 passed with the existing exact-tree FULL reuse
+proof. Q78 starts only after that closure. The local dependency limitation is
+unchanged: syntax checks are not public integration PASS; required natural CI
+and a new independent exact-head review are still required for Q78.

@@ -33,6 +33,8 @@ from .strategy_experiment import load_strategy_experiment
 
 OBSERVATIONS_VERSION = "market-vault-intraday-forward-observations-v1"
 RECONCILIATION_VERSION = "market-vault-intraday-forward-reconciliation-v1"
+PROCEDURE_OBSERVATIONS_VERSION = "market-vault-intraday-forward-observations-v2"
+PROCEDURE_RECONCILIATION_VERSION = "market-vault-intraday-forward-reconciliation-v2"
 _METRICS = {"reference_to_ready_ms": "MILLISECONDS", "ready_to_quote_ms": "MILLISECONDS",
             "quote_age_ms": "MILLISECONDS", "ready_to_paper_fill_ms": "MILLISECONDS",
             "quote_adverse_bps": "BASIS_POINTS", "paper_fill_adverse_bps": "BASIS_POINTS"}
@@ -93,16 +95,20 @@ def _key(row):
 
 def normalize_forward_observations(value: dict) -> dict:
     """Normalize explicit identities, clock declarations and finite observations."""
-    require_fields(value, ("schema_version", "expected_experiment_id", "cost_index", "candidate_index",
-                           "expected_candidate_id", "source", "reference_clock_id", "policy", "records"),
-                   label="forward observations")
+    procedure = type(value) is dict and value.get("schema_version") == PROCEDURE_OBSERVATIONS_VERSION
+    fields = (("schema_version", "expected_experiment_id", "expected_execution_id", "source",
+               "reference_clock_id", "policy", "records") if procedure else
+              ("schema_version", "expected_experiment_id", "cost_index", "candidate_index",
+               "expected_candidate_id", "source", "reference_clock_id", "policy", "records"))
+    require_fields(value, fields, label="forward observations")
     result = deepcopy(value)
-    if result["schema_version"] != OBSERVATIONS_VERSION:
+    if result["schema_version"] not in (OBSERVATIONS_VERSION, PROCEDURE_OBSERVATIONS_VERSION):
         raise ValueError("unsupported forward observations version")
-    for key in ("expected_experiment_id", "expected_candidate_id"):
+    for key in ("expected_experiment_id", "expected_execution_id" if procedure else "expected_candidate_id"):
         _identity(result[key], key)
-    for key in ("cost_index", "candidate_index"):
-        _integer(result[key], key, 0)
+    if not procedure:
+        for key in ("cost_index", "candidate_index"):
+            _integer(result[key], key, 0)
     result["source"] = normalize_source(result["source"])
     if result["reference_clock_id"] is not None:
         _text(result["reference_clock_id"], "reference_clock_id")
@@ -231,24 +237,63 @@ def _reconcile(reference, record, batch):
     return result
 
 
+def _selected_procedure_reference(snapshot, batch):
+    # This existing view reads only the already-validated immutable snapshot.
+    # Do not use its separate reconstruction/refit action for reconciliation.
+    from .intraday_ml_diagnostics import _saved_ml_source
+    selected = _saved_ml_source(snapshot)
+    if selected["module"] is None:
+        raise ValueError("procedure observations require a saved Q25/Q31/Q36 study")
+    root, report = selected["root"], selected["root"]["report"]
+    if root["experiment_id"] != batch["expected_experiment_id"]:
+        raise ValueError("selected experiment identity differs")
+    if report["status"] != "AVAILABLE" or report["selected_account"] is None:
+        raise ValueError("forward reconciliation requires an AVAILABLE selected procedure account")
+    execution = report["selected_account"]["execution"]
+    if execution["execution_id"] != batch["expected_execution_id"]:
+        raise ValueError("selected execution identity differs")
+    applied = "application" if selected["kind"] == "ECONOMIC_THRESHOLD_SELECTION" else "refit"
+    source = {"experiment_id": snapshot.experiment_id, "data_id": root["dataset_id"],
+              "artifact_schema_version": root["artifact_schema_version"],
+              "procedure_kind": selected["kind"], "procedure_id": report[selected["report_key"]],
+              "execution_id": execution["execution_id"],
+              "source_experiment_id": selected["source"]["experiment_id"],
+              "fixed_reference": {**selected["selection"], "strategy": selected["reference"]["strategy"],
+                                  "execution_id": selected["reference"]["execution"]["execution_id"]},
+              "outer_fold_recipes": [{"fold_id": row["fold_id"], "strategy": row[applied]["strategy"]}
+                                     for row in report["outer_folds"]],
+              "execution_policy": execution["policy"],
+              "algorithm_versions": root["algorithm_versions"], "environment": root["environment"]}
+    return execution, selected["context"]["symbol"], source
+
+
 def analyze_intraday_forward_reconciliation(experiment_path: str | Path, observations: dict) -> dict:
     """Read one exact DEV artifact and reconcile, without Q5 I/O or execution."""
     batch = normalize_forward_observations(observations)
     snapshot = load_strategy_experiment(experiment_path)
-    root = snapshot.as_dict()
-    if root["artifact_schema_version"] not in INTRADAY_EXPERIMENT_VERSIONS:
-        raise ValueError("forward reconciliation requires an ordinary saved Q7 DEV artifact")
-    if root["experiment_id"] != batch["expected_experiment_id"]:
-        raise ValueError("selected experiment identity differs")
-    groups = root["report"]["groups"]
-    ci, si = batch["cost_index"], batch["candidate_index"]
-    if ci >= len(groups) or si >= len(groups[ci]["results"]):
-        raise ValueError("selected cost/candidate index is outside the saved experiment")
-    candidate = groups[ci]["results"][si]
-    if candidate["candidate_id"] != batch["expected_candidate_id"]:
-        raise ValueError("selected candidate identity differs")
-    execution = candidate["execution"]
-    references = _reference_rows(execution, root["report"]["context"]["symbol"])
+    procedure = batch["schema_version"] == PROCEDURE_OBSERVATIONS_VERSION
+    if procedure:
+        execution, symbol, source = _selected_procedure_reference(snapshot, batch)
+    else:
+        root = snapshot.as_dict()
+        if root["artifact_schema_version"] not in INTRADAY_EXPERIMENT_VERSIONS:
+            raise ValueError("forward reconciliation requires an ordinary saved Q7 DEV artifact")
+        if root["experiment_id"] != batch["expected_experiment_id"]:
+            raise ValueError("selected experiment identity differs")
+        groups = root["report"]["groups"]
+        ci, si = batch["cost_index"], batch["candidate_index"]
+        if ci >= len(groups) or si >= len(groups[ci]["results"]):
+            raise ValueError("selected cost/candidate index is outside the saved experiment")
+        candidate = groups[ci]["results"][si]
+        if candidate["candidate_id"] != batch["expected_candidate_id"]:
+            raise ValueError("selected candidate identity differs")
+        execution = candidate["execution"]
+        symbol = root["report"]["context"]["symbol"]
+        source = {"experiment_id": snapshot.experiment_id, "data_id": root["dataset_id"],
+                  "candidate_id": candidate["candidate_id"], "execution_id": execution["execution_id"],
+                  "strategy": candidate["strategy"], "execution_policy": execution["policy"],
+                  "algorithm_versions": root["algorithm_versions"], "environment": root["environment"]}
+    references = _reference_rows(execution, symbol)
     recorded = {_key(row): row for row in batch["records"]}
     rows = [_reconcile(row, recorded.pop(_key(row), None), batch) for row in references]
     measured = sum(row["quote_status"] == "MEASURED" for row in rows)
@@ -265,11 +310,8 @@ def analyze_intraday_forward_reconciliation(experiment_path: str | Path, observa
         mean = float(sum(map(Fraction, values), Fraction()) / len(values)) if values else None
         statistics[key] = {"unit": unit, "available_count": len(values), "unavailable_count": len(rows) - len(values),
                            "mean": mean, "maximum": max(values) if values else None}
-    result = {"version": RECONCILIATION_VERSION, "status": status,
-              "source": {"experiment_id": snapshot.experiment_id, "data_id": root["dataset_id"],
-                         "candidate_id": candidate["candidate_id"], "execution_id": execution["execution_id"],
-                         "strategy": candidate["strategy"], "execution_policy": execution["policy"],
-                         "algorithm_versions": root["algorithm_versions"], "environment": root["environment"]},
+    version = PROCEDURE_RECONCILIATION_VERSION if procedure else RECONCILIATION_VERSION
+    result = {"version": version, "status": status, "source": source,
               "observations_id": digest(batch), "observation_source": batch["source"],
               "reference_clock_id": batch["reference_clock_id"], "policy": batch["policy"],
               "policy_id": digest(batch["policy"]), "summary": summary, "statistics": statistics,
@@ -289,6 +331,9 @@ def analyze_intraday_forward_reconciliation(experiment_path: str | Path, observa
                   "Reference consistency is checked against saved OPEN/trade records, not reconstructed market data or full execution replay.",
                   "No source data is repaired, no TEST is scored and no model/account is re-executed.",
               ]}
+    if procedure:
+        result["limitations"].append(
+            "The complete selected outer DEV account is used; per-fold recipes and the fixed reference are distinct from a final DEV winner.")
     return {**result, "reconciliation_id": digest(result)}
 
 
@@ -299,16 +344,21 @@ def main(argv=None) -> int:
     parser.add_argument("--observations", required=True)
     parser.add_argument("--output", required=True)
     args = parser.parse_args(argv)
+    version = RECONCILIATION_VERSION
     try:
         from ..quality.market_data_comparison import write_market_data_json
-        report = analyze_intraday_forward_reconciliation(args.experiment, read_json_file(args.observations))
+        observations = read_json_file(args.observations)
+        if type(observations) is dict and observations.get("schema_version") == PROCEDURE_OBSERVATIONS_VERSION:
+            version = PROCEDURE_RECONCILIATION_VERSION
+        report = analyze_intraday_forward_reconciliation(args.experiment, observations)
+        version = report["version"]
         output = write_market_data_json(args.output, report)
-        print(json.dumps({"version": RECONCILIATION_VERSION, "status": report["status"],
+        print(json.dumps({"version": version, "status": report["status"],
                           "output": str(output), "report": report}, allow_nan=False))
         return 0 if report["status"] == "RECONCILED" and not report["summary"]["quote_policy_exceeded_count"] else 2
     except (DatasetCLIError, OSError, TypeError, ValueError, KeyError, ArithmeticError, RecursionError,
             LifecycleLockError, AtomicFilePublicationError) as exc:
-        payload = {"version": RECONCILIATION_VERSION, "status": "FAILED", "error": str(exc)}
+        payload = {"version": version, "status": "FAILED", "error": str(exc)}
         if isinstance(exc, AtomicFilePublicationError):
             payload["published"] = exc.published
         print(json.dumps(payload), file=sys.stderr)

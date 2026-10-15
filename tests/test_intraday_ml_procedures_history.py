@@ -1,4 +1,8 @@
-"""Q77: saved procedure history preserves declared families and TEST overlap."""
+"""Q77/Q78: saved procedure history and selected-account acceptance entries.
+
+Keep shared study fixtures in this module to avoid rebuilding them per action.
+All observations are synthetic software evidence, not verified market capture.
+"""
 
 from copy import deepcopy
 import json
@@ -11,6 +15,7 @@ import pytest
 
 from market_vault.quality.market_data_comparison import write_market_data_json
 from market_vault.research import intraday_history as history
+from market_vault.research import intraday_forward_reconciliation as forward
 from market_vault.research import intraday_inner_selection as inner
 from market_vault.research import intraday_joint_selection as joint
 from market_vault.research import intraday_threshold_selection as threshold
@@ -22,6 +27,7 @@ from test_strategy_intraday_ml import quadratic_dev_case  # noqa: F401
 from test_strategy_intraday_inner_selection import inner_case  # noqa: F401
 from test_strategy_intraday_threshold_selection import threshold_case  # noqa: F401
 from test_strategy_intraday_joint_selection import joint_case  # noqa: F401
+from test_strategy_intraday_forward_reconciliation import observed
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -115,6 +121,8 @@ def test_unavailable_procedure_records_declared_family_without_claiming_fits(qua
     assert len(event["source"]["recipes"]) == 7  # One original recipe plus the declared six; not seven fits.
     assert history._recorded_use_days(event["source"]) == (
         event["source"]["context"]["split"]["TRAIN"] + event["source"]["context"]["split"]["VALIDATION"])
+    with pytest.raises(ValueError, match="AVAILABLE selected procedure account"):
+        forward.analyze_intraday_forward_reconciliation(path, procedure_observations(study.as_dict()))
 
 
 def test_procedure_event_downgrade_and_rehashed_recipe_mismatch_fail(threshold_case):
@@ -146,3 +154,158 @@ def test_actual_module_cli_emits_v2_and_preserves_exclusive_publication(threshol
     result = subprocess.run(command, env=env, cwd=tmp_path, text=True, capture_output=True, timeout=90)
     assert result.returncode == 1 and output.read_bytes() == before
     assert json.loads(result.stderr)["status"] == "FAILED"
+
+
+def procedure_observations(root, records=None):
+    account = root["report"]["selected_account"]
+    return {"schema_version": forward.PROCEDURE_OBSERVATIONS_VERSION,
+            "expected_experiment_id": root["experiment_id"],
+            "expected_execution_id": "0" * 64 if account is None else account["execution"]["execution_id"],
+            "source": {"provider": "synthetic-procedure-fixture", "version": "1",
+                       "captured_at": "2026-10-15T02:50:00Z", "data_kind": "SYNTHETIC",
+                       "upstream_id": None, "upstream_evidence": None},
+            "reference_clock_id": "capture", "policy": {"max_quote_age_ms": 10, "max_adverse_quote_bps": None},
+            "records": [] if records is None else records}
+
+
+@pytest.mark.parametrize("fixture_name,kind,applied", [
+    ("inner_case", "INNER_MODEL_SELECTION", "refit"),
+    ("threshold_case", "ECONOMIC_THRESHOLD_SELECTION", "application"),
+    ("joint_case", "JOINT_ECONOMIC_SELECTION", "refit"),
+])
+def test_saved_selected_account_reconciliation_binds_actual_execution_not_fixed_reference(
+        request, fixture_name, kind, applied, monkeypatch):
+    case = request.getfixturevalue(fixture_name)
+    root, path = case[4].as_dict(), case[5]
+    report = root["report"]
+    execution = report["selected_account"]["execution"]
+    source = report["source_experiment"]
+    symbol = source["report"]["context"]["symbol"]
+    selected = root["plan"]["selection"]
+    fixed = source["report"]["groups"][selected["cost_index"]]["results"][selected["candidate_index"]]
+    rows = forward._reference_rows(execution, symbol)
+    observations = procedure_observations(root, [observed(row) for row in rows])
+    original, source_bytes = deepcopy(observations), path.read_bytes()
+    loads, accounts = [], []
+    loader, references = forward.load_strategy_experiment, forward._reference_rows
+    def load(*args, **kwargs):
+        loads.append(args[0])
+        return loader(*args, **kwargs)
+    def captured(account, symbol):
+        accounts.append(account)
+        return references(account, symbol)
+    def forbidden(*args, **kwargs):
+        pytest.fail("saved reconciliation reconstructed Q5, fitted or replayed a procedure")
+    monkeypatch.setattr(forward, "load_strategy_experiment", load)
+    monkeypatch.setattr(forward, "_reference_rows", captured)
+    monkeypatch.setattr(research, "load_intraday_dataset", forbidden)
+    monkeypatch.setattr(research, "_fit", forbidden)
+    for module in (inner, threshold, joint):
+        monkeypatch.setattr(module, "_evaluate", forbidden)
+    result = forward.analyze_intraday_forward_reconciliation(path, observations)
+    assert loads == [path] and accounts == [execution]
+    assert path.read_bytes() == source_bytes and observations == original
+    assert result["version"] == forward.PROCEDURE_RECONCILIATION_VERSION
+    assert result["source"]["procedure_kind"] == kind
+    assert result["source"]["experiment_id"] == root["experiment_id"]
+    assert result["source"]["source_experiment_id"] == source["experiment_id"]
+    assert result["source"]["execution_id"] == execution["execution_id"]
+    assert result["source"]["fixed_reference"] == {
+        **selected, "strategy": fixed["strategy"], "execution_id": fixed["execution"]["execution_id"]}
+    assert result["source"]["outer_fold_recipes"] == [
+        {"fold_id": row["fold_id"], "strategy": row[applied]["strategy"]} for row in report["outer_folds"]]
+    assert "strategy" not in result["source"] and "candidate_id" not in result["source"]
+    assert result["source"]["execution_policy"] == execution["policy"]
+    assert result["status"] == ("RECONCILED" if rows else "NO_REFERENCE_ACTIONS")
+    assert result["summary"]["reference_action_count"] == len(execution["transactions"])
+    assert result["summary"]["matched_record_count"] == len(execution["transactions"])
+    assert [(row["reference"]["trading_day"], row["reference"]["slot"], row["reference"]["side"])
+            for row in result["rows"]] == [(tx["trading_day"], tx["slot"], tx["side"]) for tx in execution["transactions"]]
+    for row, tx in zip(result["rows"], execution["transactions"], strict=True):
+        assert row["reference"]["raw_open"] == tx["raw_open"]
+        assert row["reference"]["modeled_fill_price"] == tx["fill_price"]
+        spread = .03 if tx["side"] == "BUY" else .02
+        assert row["metrics"]["quote_adverse_bps"]["value"] == pytest.approx(spread / tx["raw_open"] * 10000)
+        assert row["metrics"]["paper_fill_adverse_bps"]["value"] == pytest.approx(.04 / tx["raw_open"] * 10000)
+        assert row["metrics"]["quote_age_ms"]["value"] == 10
+    assert result["forward_capture_verified"] is False and result["fills_verified"] is False
+    assert result["reconciliation_id"] == digest({key: value for key, value in result.items() if key != "reconciliation_id"})
+    for key in ("expected_experiment_id", "expected_execution_id"):
+        with pytest.raises(ValueError, match="identity differs"):
+            forward.analyze_intraday_forward_reconciliation(path, {**observations, key: "0" * 64})
+    assert accounts == [execution]  # Wrong identities fail before reference extraction.
+
+
+def test_procedure_partial_evidence_retains_selected_population_denominators(inner_case):
+    root, path = inner_case[4].as_dict(), inner_case[5]
+    execution = root["report"]["selected_account"]["execution"]
+    rows = forward._reference_rows(execution, root["report"]["source_experiment"]["report"]["context"]["symbol"])
+    assert len(rows) > 2
+    first = observed(rows[0])
+    unmatched = {**observed(rows[1]), "symbol": "US.AAPL"}
+    batch = procedure_observations(root, [first, unmatched])
+    result = forward.analyze_intraday_forward_reconciliation(path, batch)
+    assert result["status"] == "PARTIAL"
+    assert result["summary"] == {"reference_action_count": len(rows), "supplied_record_count": 2,
+                                 "matched_record_count": 1, "unmatched_record_count": 1,
+                                 "missing_record_count": len(rows) - 1, "measured_quote_count": 1,
+                                 "quote_policy_exceeded_count": 0}
+    assert result["unmatched_records"] == [unmatched]
+    assert result["statistics"]["quote_adverse_bps"]["available_count"] == 1
+    assert result["statistics"]["quote_adverse_bps"]["unavailable_count"] == len(rows) - 1
+    assert all(row["metrics"]["quote_adverse_bps"]["value"] is None for row in result["rows"][1:])
+    with pytest.raises(ValueError):
+        forward.normalize_forward_observations({**batch, "expected_candidate_id": "0" * 64})
+    with pytest.raises(ValueError, match="ordinary saved Q7"):
+        forward.analyze_intraday_forward_reconciliation(path, {
+            **{k: v for k, v in batch.items() if k != "expected_execution_id"},
+            "schema_version": forward.OBSERVATIONS_VERSION, "cost_index": 0, "candidate_index": 0,
+            "expected_candidate_id": "0" * 64})
+
+
+def test_available_flat_procedure_is_not_unavailable_or_an_ordinary_v2_source(quadratic_dev_case, tmp_path):
+    source, source_path = quadratic_dev_case[3], quadratic_dev_case[4]
+    candidate = source.as_dict()["report"]["groups"][0]["results"][2]
+    assert candidate["strategy"]["threshold"] == 1 and candidate["execution"]["metrics"]["trade_count"] == 0
+    study = inner.run_intraday_inner_selection(source_path, expected_experiment_id=source.experiment_id,
+        cost_index=0, candidate_index=2, expected_candidate_id=candidate["candidate_id"])
+    root = study.as_dict()
+    assert root["report"]["status"] == "AVAILABLE"
+    assert root["report"]["selected_account"]["execution"]["transactions"] == []
+    path = write_strategy_experiment(study, path=tmp_path / "flat-procedure.json").path
+    result = forward.analyze_intraday_forward_reconciliation(path, procedure_observations(root))
+    assert result["status"] == "NO_REFERENCE_ACTIONS" and result["rows"] == []
+    assert all(value["available_count"] == 0 and value["mean"] is None for value in result["statistics"].values())
+    assert result["source"]["outer_fold_recipes"]
+    with pytest.raises(ValueError, match="saved Q25/Q31/Q36"):
+        forward.analyze_intraday_forward_reconciliation(source_path, {
+            **procedure_observations(root), "expected_experiment_id": source.experiment_id})
+
+
+def test_actual_procedure_forward_module_cli_v2_identity_and_exclusive_output(inner_case, tmp_path):
+    root, path = inner_case[4].as_dict(), inner_case[5]
+    rows = forward._reference_rows(root["report"]["selected_account"]["execution"],
+                                   root["report"]["source_experiment"]["report"]["context"]["symbol"])
+    assert rows
+    batch = procedure_observations(root, [observed(row) for row in rows])
+    observations = write_market_data_json(tmp_path / "observations.json", batch)
+    output = tmp_path / "reconciliation.json"
+    command = [sys.executable, "-m", "market_vault.research.intraday_forward_reconciliation",
+               "--experiment", str(path), "--observations", str(observations), "--output", str(output)]
+    env = {**os.environ, "PYTHONPATH": str(ROOT / "src")}
+    result = subprocess.run(command, env=env, cwd=tmp_path, text=True, capture_output=True, timeout=90)
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["version"] == payload["report"]["version"] == forward.PROCEDURE_RECONCILIATION_VERSION
+    original = output.read_bytes()
+    result = subprocess.run(command, env=env, cwd=tmp_path, text=True, capture_output=True, timeout=90)
+    assert result.returncode == 1 and output.read_bytes() == original
+    assert json.loads(result.stderr)["status"] == "FAILED"
+    invalid = write_market_data_json(tmp_path / "wrong-account.json", {**batch, "expected_execution_id": "0" * 64})
+    command[command.index("--observations") + 1] = str(invalid)
+    missing = tmp_path / "not-published.json"
+    command[-1] = str(missing)
+    result = subprocess.run(command, env=env, cwd=tmp_path, text=True, capture_output=True, timeout=90)
+    assert result.returncode == 1 and not missing.exists()
+    assert json.loads(result.stderr)["version"] == forward.PROCEDURE_RECONCILIATION_VERSION
+    assert "execution identity differs" in json.loads(result.stderr)["error"]
