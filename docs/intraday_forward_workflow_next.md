@@ -216,3 +216,89 @@ collection at `service.py: import pyarrow.parquet`; zero acceptance tests ran in
 this local environment. No dependency stubs or skipped assertions conceal that
 limitation. Required natural FULL CI must execute the genuine installed-entry,
 saved-reader and procedure tests. Final review and merge remain separate gates.
+
+## 2026-10-15 continuation after Q81: Q82 -> Q80 closure -> Q83
+
+The new owner request at 07:17:05 UTC again authorizes the full bounded delivery
+chain. Verified main is `cd6cf040ae3ce45fdf3f9401abdfd8df6786f44c`, tree
+`6987f46e9c7d3b260c3988992d4b29bf8dc41b77`. Q81 PR #351 merged after independent
+review of candidate `d4e9534b8668e8a97de05514c2048eddcb493ba5` and successful FULL
+PR CI `38693324240/1`; natural exact-main push CI `38695175360/1` succeeded.
+The preceding Q81 candidate paragraph is historical, not the current gate status.
+Q80 remains unfinished. No open PR was present at the continuation check.
+
+The next three items are **Q82 -> completion of Q80 -> Q83 native forward entry**.
+Q82 and Q80 retain their cards and exclusions above. Q83 is a product usability
+extension, not a new name for the missing CI change. Existing Q76/Q78/Q79/Q81
+backend and CLI capability must be reused rather than rewritten. The latest Q81
+FULL intraday_research job ran in 4m52s; intraday_ml_procedures tests ran in 6m22s.
+Those observations do not justify more shards. Q80 targets the proven serial
+compatibility dependency, not an invented over-ten-minute partition claim.
+
+### Q82 candidate and usage
+
+The implementation adds observations/reconciliation v3 and a narrow saved TEST
+resolver in the existing forward module, plus a focused test file using existing
+session-scoped final fixtures. Only `report.execution` is the account. The four
+required identity fields are `expected_experiment_id`, `expected_execution_id`,
+`expected_final_test_id` and `expected_selection_id`. Source metadata retains
+selection experiment/schema/scope, TEST scope, frozen strategy/policy, data id,
+algorithm versions and environment; economic TEST also retains its return basis.
+
+```console
+market-vault research-intraday-forward-reconciliation --experiment saved-test.json --template-declaration declaration.json --output test-observations-to-fill.json
+market-vault research-intraday-forward-reconciliation --experiment saved-test.json --observations test-observations-to-fill.json --output test-reconciliation.json
+```
+
+Inputs must exist and output paths must be new. TEST does not accept DEV candidate
+indices. Null template values mean unmeasured evidence. Export success is exit 0;
+analysis keeps exit 0 only for complete measured coverage without policy excess,
+2 for incomplete/no-action/policy-excess results, and 1 for errors. Error envelopes
+for explicit v3 observations use reconciliation v3. No extra settings are needed.
+
+Local syntax checks succeeded on Python 3.13.5. Source identity from the verified
+Q81 sdist matched the pinned repository blob. AST inspection confirms the price,
+clock, reference consistency and per-row reconciliation kernels are unchanged.
+Public pytest was attempted and failed during collection at missing PyArrow;
+no acceptance test executed locally. Dependency installation was also unavailable.
+No mocks for missing dependencies, test skips or weaker expectations conceal this.
+Natural FULL CI and independent exact-candidate review remain mandatory before
+merging; source preparation and uploaded blobs alone are not completion.
+
+### Q83 - native entry for saved observations export and reconciliation
+
+**Goal and dependency.** Make the supported saved DEV/procedure/TEST forward
+workflow usable from the existing quant desktop, without manually assembling CLI
+commands. Semantically it depends on Q81/Q82; delivery follows Q80 closure so the
+already identified CI debt is not carried forward under another task number.
+
+**Approach.** Add a thin desktop controller/panel through the existing
+`QuantResearchPage` controller and QML conventions. Call the same template,
+analysis and exclusive publisher functions. Keep file and candidate selection
+explicit and capture the submitted inputs before asynchronous execution. Display
+scope and exact identities, whole-action counts, measured/unmatched/missing
+counts, policy exceedances, unavailable metrics and output location. Separate
+exported input from measured analysis. Reuse current busy/error/lifecycle and
+translation mechanisms; no new task engine or analytical implementation.
+
+**Defaults.** Local saved files only, explicit declaration/observation and new
+output paths. Ordinary DEV uses explicit cost/candidate selectors; selected
+procedures and TEST reject them. No automatic provenance, clock or threshold
+inference; unknown measurements stay null. Clearly label TEST exposure and the
+absence of verified capture/fills. Changing inputs must not present an old result
+as the result of the new selection. Failed input/publication leaves existing
+files intact and allows a corrected retry.
+
+**Acceptance.** Real controller-to-existing-API output agrees with CLI results;
+actual QML integration reaches export and analysis for an explicit saved source.
+Exercise unmeasured-to-measured input, a common file/identity failure and recovery,
+no overwrite, unchanged source, and separate coverage/policy/verification states.
+Prove no fitting, account replay, TEST evaluation or hidden source-data reads.
+Native behavior needs real Qt evidence; static text checks alone cannot close
+this item. Independent final review and exact PR/main CI remain required.
+
+**Exclusions.** No GUI redesign, inline market-observation editor, live collector,
+new history authority, new report schema beyond Q82, auto-trading, auto-selection,
+retraining, deployments or release. Unrelated numerical and governance surfaces
+remain frozen. Stop after each item's verified main integration, then continue
+only the next authorized item; stop the package after Q83 closure.
