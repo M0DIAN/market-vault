@@ -3009,6 +3009,28 @@ click('intradayPreflightButton', panel_scroll); complete()
 assert controller.preflightReport['status'] == 'CHECKED'
 assert proof == (controller._content, controller._proof, controller.experimentPath, controller.restoreRevision)
 assert source.read_bytes() == before
+# Legal Q73 output may contain one training blocker per fold, with no small
+# fold limit. Exercise presentation scale without repeating Q73 numerical work.
+report = controller.preflightReport
+report['status'] = 'BLOCKED'
+report['folds'] = [dict(report['folds'][0], fold_index=i, training_row_count=0) for i in range(100)]
+report['blockers'] = [{'reason': 'NO_LEARNED_TRAINING_ROWS', 'fold_index': i} for i in range(100)]
+controller._preflight_report = report
+controller._set_preflight_table(); controller.changed.emit()
+for language in ('en', 'zh-CN'):
+    assert session.i18n.setLanguage(language); QTest.qWait(35)
+    assert dialog.property('visible')
+    choose('intradayPreflightView', 0, scope=dialog)
+    table = find('intradayPreflightTable')
+    assert table.height() >= 100 and controller.preflightTableModel.totalRows == 100
+    summary = find('intradayPreflightSummary')
+    assert summary.height() < 130 and '100' in summary.property('text')
+    picker = find('intradayPreflightView')
+    rect = picker.mapRectToItem(window.contentItem(), picker.boundingRect())
+    assert rect.top() >= 0 and rect.bottom() < 600, rect
+    choose('intradayPreflightView', 2, scope=dialog)
+    assert len(json.loads(find('intradayPreflightDetails').property('text'))['blockers']) == 100
+    assert window.grabWindow().save(str(root / ('q89-long-blocked-' + language + '.png')))
 assert session.runtime.shutdown()
 engine.deleteLater(); app.processEvents()
 '''

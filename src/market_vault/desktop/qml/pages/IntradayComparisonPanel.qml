@@ -177,7 +177,8 @@ Item {
                     if (!report.status) return ""
                     return root.i18n.catalog["preflight.opportunities"] + ": " + report.eligible_entry_observation_count
                         + " · " + root.i18n.catalog["preflight.zero_groups"] + ": " + report.zero_entry_days.length + " / " + report.zero_entry_folds.length
-                        + "\n" + root.i18n.catalog["preflight.blockers"] + ": " + JSON.stringify(report.blockers)
+                        + "\n" + root.i18n.catalog["preflight.blockers"] + ": " + report.blockers.length
+                        + " · " + report.blockers.map(item => item.reason).filter((reason, index, reasons) => reasons.indexOf(reason) === index).join(", ")
                         + "\nData ID: " + report.data_id + "\nPreflight ID: " + report.preflight_id
                 }
                 wrapMode: Text.WrapAnywhere
