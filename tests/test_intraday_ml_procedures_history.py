@@ -1,4 +1,4 @@
-"""Q77-Q79: saved procedure history and selected-account acceptance entries.
+"""Q77-Q79/Q81: saved procedure acceptance and unmeasured observation export.
 
 Keep shared study fixtures in this module to avoid rebuilding them per action.
 All observations are synthetic software evidence, not verified market capture.
@@ -123,6 +123,8 @@ def test_unavailable_procedure_records_declared_family_without_claiming_fits(qua
         event["source"]["context"]["split"]["TRAIN"] + event["source"]["context"]["split"]["VALIDATION"])
     with pytest.raises(ValueError, match="AVAILABLE selected procedure account"):
         forward.analyze_intraday_forward_reconciliation(path, procedure_observations(study.as_dict()))
+    with pytest.raises(ValueError, match="AVAILABLE selected procedure account"):
+        forward.create_intraday_forward_template(path, template_declaration(study.as_dict()))
 
 
 def test_procedure_event_downgrade_and_rehashed_recipe_mismatch_fail(threshold_case):
@@ -277,6 +279,12 @@ def test_available_flat_procedure_is_not_unavailable_or_an_ordinary_v2_source(qu
     assert result["status"] == "NO_REFERENCE_ACTIONS" and result["rows"] == []
     assert all(value["available_count"] == 0 and value["mean"] is None for value in result["statistics"].values())
     assert result["source"]["outer_fold_recipes"]
+    declared = template_declaration(root)
+    flat_template = forward.create_intraday_forward_template(path, declared)
+    assert flat_template["records"] == []
+    assert forward.analyze_intraday_forward_reconciliation(path, flat_template)["status"] == "NO_REFERENCE_ACTIONS"
+    ordinary_flat = forward.create_intraday_forward_template(source_path, declared, cost_index=0, candidate_index=2)
+    assert ordinary_flat["records"] == [] and ordinary_flat["schema_version"] == forward.OBSERVATIONS_VERSION
     with pytest.raises(ValueError, match="saved Q25/Q31/Q36"):
         forward.analyze_intraday_forward_reconciliation(source_path, {
             **procedure_observations(root), "expected_experiment_id": source.experiment_id})
@@ -416,4 +424,154 @@ def test_installed_root_and_module_forward_agree_for_measured_and_missing_eviden
         payload = json.loads(failed.stderr)
         assert payload["version"] == expected_version and payload["status"] == "FAILED"
         assert "execution identity differs" in payload["error"]
+    assert not (tmp_path / "nonexistent-settings.yaml").exists()
+
+
+def template_declaration(root):
+    batch = procedure_observations(root)
+    return {key: batch[key] for key in ("source", "reference_clock_id", "policy")}
+
+
+@pytest.mark.parametrize("fixture_name,ordinary", [
+    ("inner_case", True), ("inner_case", False), ("threshold_case", False), ("joint_case", False),
+], ids=["ordinary", "inner", "threshold", "joint"])
+def test_template_keeps_exact_saved_population_unmeasured_without_reconstruction(
+        request, fixture_name, ordinary, monkeypatch):
+    case = request.getfixturevalue(fixture_name)
+    declared = template_declaration(case[4].as_dict())
+    root, path = (case[1].as_dict(), case[2]) if ordinary else (case[4].as_dict(), case[5])
+    selectors = {key: case[3][key] for key in ("cost_index", "candidate_index")} if ordinary else {}
+    candidate = (root["report"]["groups"][selectors["cost_index"]]["results"][selectors["candidate_index"]]
+                 if ordinary else None)
+    execution = candidate["execution"] if ordinary else root["report"]["selected_account"]["execution"]
+    symbol = (root if ordinary else root["report"]["source_experiment"])["report"]["context"]["symbol"]
+    before, original = path.read_bytes(), deepcopy(declared)
+    calls, accounts = [], []
+    loader, references = forward.load_strategy_experiment, forward._reference_rows
+    def loaded(*args, **kwargs):
+        calls.append(args[0])
+        return loader(*args, **kwargs)
+    def captured(account, symbol):
+        accounts.append(account)
+        return references(account, symbol)
+    def forbidden(*args, **kwargs):
+        pytest.fail("template export reconstructed Q5, fitted or replayed an account")
+    monkeypatch.setattr(forward, "load_strategy_experiment", loaded)
+    monkeypatch.setattr(forward, "_reference_rows", captured)
+    monkeypatch.setattr(research, "load_intraday_dataset", forbidden)
+    monkeypatch.setattr(research, "_fit", forbidden)
+    monkeypatch.setattr(research, "run_intraday_execution", forbidden)
+    for module in (inner, threshold, joint):
+        monkeypatch.setattr(module, "_evaluate", forbidden)
+    template = forward.create_intraday_forward_template(path, declared, **selectors)
+    assert calls == [path] and accounts == [execution]
+    assert path.read_bytes() == before and declared == original
+    expected_version = forward.OBSERVATIONS_VERSION if ordinary else forward.PROCEDURE_OBSERVATIONS_VERSION
+    assert template["schema_version"] == expected_version
+    assert template["expected_experiment_id"] == root["experiment_id"]
+    if ordinary:
+        assert template["expected_candidate_id"] == candidate["candidate_id"]
+        assert all(template[key] == value for key, value in selectors.items())
+    else:
+        assert template["expected_execution_id"] == execution["execution_id"]
+        assert "expected_candidate_id" not in template and "cost_index" not in template
+    assert template["records"] == [
+        {"symbol": symbol, **{key: tx[key] for key in ("trading_day", "slot", "side")},
+         "action_ready_at": None, "quote": None, "paper_fill": None}
+        for tx in execution["transactions"]]
+    assert {key: template[key] for key in declared} == declared
+    assert forward.normalize_forward_observations(template) == template
+    result = forward.analyze_intraday_forward_reconciliation(path, template)
+    count = len(execution["transactions"])
+    assert result["status"] == ("NOT_MEASURED" if count else "NO_REFERENCE_ACTIONS")
+    assert result["summary"]["matched_record_count"] == result["summary"]["reference_action_count"] == count
+    assert result["summary"]["missing_record_count"] == result["summary"]["measured_quote_count"] == 0
+    assert all(row["quote_status"] == "NO_QUOTE" for row in result["rows"])
+    assert all(item["available_count"] == 0 and item["mean"] is None for item in result["statistics"].values())
+    assert result["forward_capture_verified"] is result["fills_verified"] is False
+    assert calls == [path, path] and accounts == [execution, execution]
+    assert path.read_bytes() == before
+
+
+def test_template_requires_explicit_selectors_and_preserves_declared_unknown_clock(inner_case):
+    source_path, procedure_path = inner_case[2], inner_case[5]
+    declared = template_declaration(inner_case[4].as_dict())
+    for selectors in ({}, {"cost_index": 0}, {"candidate_index": 0}):
+        with pytest.raises(ValueError, match="requires explicit"):
+            forward.create_intraday_forward_template(source_path, declared, **selectors)
+    for ci, si in ((True, 0), (0, False), (-1, 0), (0, -1), (999, 0), (0, 999)):
+        with pytest.raises(ValueError, match="integer|outside"):
+            forward.create_intraday_forward_template(source_path, declared, cost_index=ci, candidate_index=si)
+    for selectors in ({"cost_index": 0}, {"candidate_index": 0}, {"cost_index": 0, "candidate_index": 0}):
+        with pytest.raises(ValueError, match="does not accept"):
+            forward.create_intraday_forward_template(procedure_path, declared, **selectors)
+    unknown = deepcopy(declared)
+    unknown["reference_clock_id"] = None
+    unknown["source"]["captured_at"] = "2026-10-15T02:50:00+00:00"
+    template = forward.create_intraday_forward_template(procedure_path, unknown)
+    assert template["reference_clock_id"] is None
+    assert template["source"]["captured_at"] == "2026-10-15T02:50:00Z"
+    assert unknown["source"]["captured_at"].endswith("+00:00")
+    for value in ({**declared, "records": []}, {key: val for key, val in declared.items() if key != "policy"},
+                  {**declared, "policy": {"max_quote_age_ms": -1, "max_adverse_quote_bps": None}}):
+        with pytest.raises(ValueError):
+            forward.create_intraday_forward_template(procedure_path, value)
+
+
+@pytest.mark.parametrize("ordinary", [True, False], ids=["ordinary-v1", "procedure-v2"])
+def test_real_template_root_module_and_filled_observation_round_trip(inner_case, tmp_path, ordinary):
+    path = inner_case[2] if ordinary else inner_case[5]
+    declared = write_market_data_json(tmp_path / "declared.json", template_declaration(inner_case[4].as_dict()))
+    selectors = {key: inner_case[3][key] for key in ("cost_index", "candidate_index")} if ordinary else {}
+    selection_args = (["--cost-index", str(selectors["cost_index"]), "--candidate-index", str(selectors["candidate_index"])]
+                      if ordinary else [])
+    outputs, templates = [], []
+    source_before, declaration_before = path.read_bytes(), declared.read_bytes()
+    module, command = "intraday_forward_reconciliation", "research-intraday-forward-reconciliation"
+    for use_root in (False, True):
+        output = tmp_path / f"{use_root}-template.json"
+        args = ["--experiment", str(path), "--template-declaration", str(declared), "--output", str(output), *selection_args]
+        process = acceptance_process(tmp_path, module, command, args, root=use_root)
+        assert process.returncode == 0, process.stderr
+        payload = json.loads(process.stdout)
+        assert payload["version"] == forward.TEMPLATE_RESULT_VERSION and payload["status"] == "TEMPLATE_CREATED"
+        template = json.loads(output.read_bytes())
+        assert template == payload["template"]
+        templates.append(template)
+        outputs.append(output)
+    assert templates[0] == templates[1] and outputs[0].read_bytes() == outputs[1].read_bytes()
+    assert templates[0] == forward.create_intraday_forward_template(path, json.loads(declared.read_bytes()), **selectors)
+    before = outputs[1].read_bytes()
+    repeated = acceptance_process(tmp_path, module, command, args, root=True)
+    assert repeated.returncode == 1 and outputs[1].read_bytes() == before
+    assert json.loads(repeated.stderr)["version"] == forward.TEMPLATE_RESULT_VERSION
+    reports = []
+    for use_root in (False, True):
+        output = tmp_path / f"{use_root}-unmeasured.json"
+        analysis_args = ["--experiment", str(path), "--observations", str(outputs[use_root]), "--output", str(output)]
+        process = acceptance_process(tmp_path, module, command, analysis_args, root=use_root)
+        assert process.returncode == 2, process.stderr
+        reports.append(json.loads(process.stdout)["report"])
+    assert reports[0] == reports[1] and reports[0]["status"] == "NOT_MEASURED"
+    assert len(templates[0]["records"]) > 2
+    filled = deepcopy(templates[0])
+    filled["records"][0] = observed(reports[0]["rows"][0]["reference"])
+    observation_path = write_market_data_json(tmp_path / "one-observation.json", filled)
+    analysis_args = ["--experiment", str(path), "--observations", str(observation_path),
+                     "--output", str(tmp_path / "one-measured.json")]
+    process = acceptance_process(tmp_path, module, command, analysis_args, root=True)
+    assert process.returncode == 2, process.stderr
+    result = json.loads(process.stdout)["report"]
+    assert result["status"] == "PARTIAL" and result["summary"]["measured_quote_count"] == 1
+    assert result["summary"]["matched_record_count"] == len(filled["records"])
+    assert all(row["quote_status"] == "NO_QUOTE" for row in result["rows"][1:])
+    assert result["rows"][0]["metrics"]["ready_to_quote_ms"]["value"] == 30
+    assert path.read_bytes() == source_before and declared.read_bytes() == declaration_before
+    invalid_output = tmp_path / "invalid.json"
+    invalid_args = ["--experiment", str(path), "--observations", str(observation_path), "--output", str(invalid_output)]
+    both = acceptance_process(tmp_path, module, command, invalid_args + ["--template-declaration", str(declared)], root=True)
+    assert both.returncode == 2 and not invalid_output.exists()
+    indexed = acceptance_process(tmp_path, module, command, invalid_args + ["--cost-index", "0"], root=True)
+    assert indexed.returncode == 1 and not invalid_output.exists()
+    assert "only accepted with --template-declaration" in json.loads(indexed.stderr)["error"]
     assert not (tmp_path / "nonexistent-settings.yaml").exists()
