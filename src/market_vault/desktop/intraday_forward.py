@@ -162,6 +162,12 @@ class IntradayForwardController(PageController):
         if self.busy or self._runtime.busy:
             return False
         self.setDraft(values)
+        # Re-running with unchanged form values is still a new observation:
+        # the files can have changed on disk. Never display the prior result
+        # as current during the retry or after a strict read/publication error.
+        self._result = {}
+        self._notice = ""
+        self.changed.emit()
         try:
             mode, experiment, source, output, cost, candidate = _mode_and_paths(self._draft)
             # A new existing output must fail inside the same exclusive

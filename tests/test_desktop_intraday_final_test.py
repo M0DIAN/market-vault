@@ -2616,6 +2616,17 @@ def test_q83_native_forward_controller_round_trip_capture_recovery_and_test_scop
     assert controller.resultSummary["missing_record_count"] == 0
     assert controller.statistics["ready_to_quote_ms"]["unavailable_count"] == total - 1
 
+    # Same visible form can point to changed file bytes; even on a failed
+    # rerun the old result must not appear current.
+    same = {**analysis, "observations_path": str(partial_source),
+            "output_path": str(partial_path)}
+    assert controller.run(same)
+    assert not controller.resultLoaded
+    runtime._poll()
+    qt_app.processEvents()
+    assert not controller.resultLoaded and controller.error
+    assert partial_path.read_bytes() == (tmp_path / "partial.json").read_bytes()
+
     # Exclusive publisher failure keeps existing output and source untouched.
     blocked = tmp_path / "existing.json"
     blocked.write_bytes(b"UNTOUCHED")
@@ -2645,7 +2656,7 @@ def test_q83_native_forward_controller_round_trip_capture_recovery_and_test_scop
     assert all(path.read_bytes() == body for path, body in original.items())
     assert source_declaration.read_bytes() == declared_bytes
     assert runtime.backend_if_initialized is None
-    assert runner.names.count("intraday_forward") == 6
+    assert runner.names.count("intraday_forward") == 7
 
 
 def test_q83_real_qml_saved_test_export_analysis_and_language(final_case, tmp_path):
