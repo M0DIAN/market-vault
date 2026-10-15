@@ -134,8 +134,17 @@ jobs:
           retention-days: 30
 
   qml-scenario-risk-final:
+    name: qml-scenario-risk-final (${{ matrix.partition }})
     runs-on: windows-2022
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - partition: accounts
+            selection: "not (plan or continue_candidate or parameter_grid or saved) and (execution_scenarios or risk_views or offline_performance)"
+          - partition: evidence
+            selection: "not (plan or continue_candidate or parameter_grid or saved) and not (execution_scenarios or risk_views or offline_performance)"
     steps:
       - name: Check out exact PR merge tree
         uses: actions/checkout@v6
@@ -152,14 +161,14 @@ jobs:
           QT_QUICK_BACKEND: software
         run: >-
           python -u -m pytest tests/test_desktop_intraday_final_test.py
-          -k "not (plan or continue_candidate or parameter_grid or saved)"
-          -vv -x --tb=long --junitxml="${{ runner.temp }}/adaptive-window-scenario-risk-final.xml"
+          -k "${{ matrix.selection }}"
+          -vv -x --tb=long --junitxml="${{ runner.temp }}/adaptive-window-scenario-risk-final-${{ matrix.partition }}.xml"
       - name: Preserve scenario, risk and final TEST reports
         if: ${{ always() }}
         uses: actions/upload-artifact@v7
         with:
-          name: adaptive-window-scenario-risk-final
-          path: ${{ runner.temp }}/adaptive-window-scenario-risk-final.xml
+          name: adaptive-window-scenario-risk-final-${{ matrix.partition }}
+          path: ${{ runner.temp }}/adaptive-window-scenario-risk-final-${{ matrix.partition }}.xml
           if-no-files-found: error
           retention-days: 30
 

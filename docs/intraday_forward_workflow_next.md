@@ -394,10 +394,11 @@ paid data, orders, deployment, or evidence certification without data.
 
 ## 2026-10-15 continuation after Q88: Q84 closure -> Q89 -> Q90 -> Q91
 
-The owner's new Q1-Q88 continuation request authorizes these three bounded
-items, including related repairs/tests/commits/push/PR, independent exact-final
+The owner's Q1-Q88 continuation initially selected three bounded items; Q91
+was added only after the measured Windows workload increase, under the same
+three-to-four-item package and CI-optimization authorization. This includes related repairs/tests/commits/push/PR, independent exact-final
 review, guarded squash and natural exact-main CI before the next implementation.
-The actual main is `0f0679af9bca912e7a9abf18f875f2b81bcc1289`, tree
+The assessment baseline was `0f0679af9bca912e7a9abf18f875f2b81bcc1289`, tree
 `cc677c167089abb39563083a04609f8d073e393e`; natural Q88 main CI
 `38742432338/1` succeeded. Q86-Q88 are implemented. Q84 is still open in #355,
 not completed merely because later task numbers exist. Q85 remains conditional:
@@ -573,3 +574,29 @@ target, not permission to weaken gates or a universal runner guarantee.
 **Exclusions.** No test bodies, fixtures, assertions, timeout, native platform,
 main partition, aggregation policy, attestation or release changes; no general
 scheduler or benchmark framework.
+
+
+### Q90 closure and Q91 implementation evidence
+
+Q90 merged as `fafab7a1f4e465b7717ad457e0c658847147443c` (#360).
+Independent final candidate review passed for
+`db642e2deec22850c7c326762cb88cc466dd6aba`. Natural FULL
+`38763565739/1`, Windows `38763565772/1` and exact-main push
+`38765632691/1` succeeded; main used verified FULL tree-equivalence reuse.
+Windows scenario-risk-final again took 783 seconds (plan 519, saved 345,
+native 117). No live observations, authenticated market agreement, fills or
+profitability were established; Q85 still awaits real supplied observations.
+
+Q91 changes only the existing Windows workflow's tail scheduling plus this
+record. It uses accounts/evidence matrix members, fail-fast false and distinct
+JUnit/artifact suffixes. The aggregate still depends on the same job ID and
+requires every Windows result to be success. Native windows-2022 startup,
+window geometry and the other QML groups retain their original commands,
+timeouts and platform. No main FULL partition or test content changes.
+
+On the actual Q90 source, same-environment collect-only found 33 node IDs:
+old plan/saved/tail = 7/11/15; new plan/saved/accounts/evidence = 7/11/4/11.
+The node-ID multiset equals the whole module, every item is owned once, and
+the two new members equal the original tail. Q90's five cases are in evidence.
+These counts are scheduling proof, not new functional test runs. Final natural
+CI and independently reviewed exact candidate remain the delivery gates.
