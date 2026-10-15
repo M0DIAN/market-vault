@@ -20,8 +20,8 @@ Item {
             "declaration_path": declarationPath.text,
             "observations_path": observationsPath.text,
             "output_path": outputPath.text,
-            "cost_index": costIndex.text,
-            "candidate_index": candidateIndex.text
+            "cost_index": actionMode.currentIndex === 0 ? costIndex.text : "",
+            "candidate_index": actionMode.currentIndex === 0 ? candidateIndex.text : ""
         }
     }
     function syncDraft() { if (formReady) root.controller.setDraft(root.form()) }
