@@ -208,3 +208,31 @@ def test_default_factory_uses_existing_collectors_with_quote_only_sdk(capture_mo
     returned = [event for event in events if event["kind"] == "history" and event["status"] == "RETURNED"]
     assert all(event["request_capability"]["sdk_module"] == "offline_fixture" for event in returned)
     assert all(not event["request_capability"]["response_session_coverage_verified"] for event in returned)
+
+
+@pytest.mark.parametrize("interrupt_on,expected_symbol,completed", [(1, "US.SPY", 0), (2, "US.QQQ", 1)])
+def test_interrupt_between_requests_does_not_relabel_completed_snapshot(
+    capture_module, monkeypatch, tmp_path, interrupt_on, expected_symbol, completed,
+):
+    calls, closed = install_fake(capture_module, monkeypatch)
+    sleeps = 0
+
+    def interrupt_delay(_):
+        nonlocal sleeps
+        sleeps += 1
+        if sleeps == interrupt_on:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(capture_module.time, "sleep", interrupt_delay)
+    output = tmp_path / "interrupted"
+    assert capture_module.main(arguments(output)) == 130
+    manifest = read_manifest(output)
+    assert manifest["failure"]["kind"] == "history_delay"
+    assert manifest["failure"]["symbol"] == expected_symbol
+    assert manifest["failure"]["date"] == "2020-01-02"
+    assert manifest["completed_history_requests"] == completed
+    assert len(calls) == 1 + completed and closed == [True]
+    events = [json.loads(line) for line in (output / "events.jsonl").read_text().splitlines()]
+    assert events[-1]["kind"] == "history_delay"
+    assert all(event["status"] != "INTERRUPTED" for event in events if event["kind"] in {"calendar", "history"})
+    assert (output / "upload.zip").exists()

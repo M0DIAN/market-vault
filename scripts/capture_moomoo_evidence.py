@@ -157,6 +157,8 @@ def capture(args: argparse.Namespace) -> tuple[int, Path]:
             })
             for day in days:
                 for symbol in args.symbols:
+                    operation = {"kind": "history_delay", "symbol": symbol, "date": day.isoformat(),
+                                 "started_at_utc": utc_now()}
                     time.sleep(0.6)
                     operation = {"kind": "history", "symbol": symbol, "date": day.isoformat(),
                                  "started_at_utc": utc_now()}
