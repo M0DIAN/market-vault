@@ -282,7 +282,13 @@ Screenshot agreement is not signed broker evidence or an independent quote feed.
     Push-Location -LiteralPath $Source
     try {
         $env:PYTHONPATH = Join-Path $Source 'src'
-        & $Py -c "from pathlib import Path; import market_vault.moomoo_simulation_qualifier as q; assert Path(q.__file__).resolve() == Path('src/market_vault/moomoo_simulation_qualifier.py').resolve(), 'Wrong imported source'"
+        $Bind = @'
+from pathlib import Path
+import market_vault.moomoo_simulation_qualifier as q
+if Path(q.__file__).resolve() != Path('src/market_vault/moomoo_simulation_qualifier.py').resolve():
+    raise RuntimeError('Wrong imported source')
+'@
+        & $Py -c $Bind
         if ($LASTEXITCODE -ne 0) { throw 'Source binding failed; do not reinstall or fall back.' }
         if ($Choice -eq '1') {
             # Read-only correspondence check; actual account/risk guards still run in submit.
@@ -292,14 +298,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from market_vault.moomoo_simulation_evidence import build_evidence
 from market_vault.moomoo_simulation_orders import require_rth
+def require(condition, message):
+    if not condition:
+        raise RuntimeError(message)
 prior = json.loads(Path(sys.argv[2]).read_text(encoding='utf-8-sig'))
-assert prior['action'] == 'prepare' and prior['result'] == 'PREPARED', 'Preparation not successful'
+require(prior['action'] == 'prepare' and prior['result'] == 'PREPARED', 'Preparation not successful')
 old = prior['evidence']
 now = build_evidence(Path(sys.argv[1]))
-assert now['environment'] == old['environment'] == 'SIMULATE', 'Wrong environment'
-assert now['journal_created_at_utc'] == old['journal_created_at_utc'], 'Wrong journal'
-assert now['events'][:len(old['events'])] == old['events'], 'Preparation history mismatch'
-assert not now['stopped'] and not now['intentions'], 'Stopped or already consumed: use check/stop, never submit'
+require(now['environment'] == old['environment'] == 'SIMULATE', 'Wrong environment')
+require(now['journal_created_at_utc'] == old['journal_created_at_utc'], 'Wrong journal')
+require(now['events'][:len(old['events'])] == old['events'], 'Preparation history mismatch')
+require(not now['stopped'] and not now['intentions'], 'Stopped or already consumed: use check/stop, never submit')
 require_rth(datetime.now(timezone.utc))
 print('Prepared journal matched; local RTH check passed. Broker preflight still required.')
 '@
