@@ -248,6 +248,8 @@ def build_evidence(path: Path) -> dict[str, Any]:
         "fees": "NOT_OBSERVED", "cash_flows": "NOT_OBSERVED",
         "scope": "OWNER_LOCAL_JOURNAL_PROJECTION_NOT_BROKER_ATTESTATION",
     }
+    from .moomoo_simulation_observations import summarize
+    report["observation_summary"] = summarize(report)
     return report
 
 

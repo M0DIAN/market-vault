@@ -110,3 +110,36 @@ these new fixed action fields; arbitrary runtime fields are never copied.
 Exit 0 indicates the requested action completed at its named boundary, NOT that
 the broker lifecycle, strategy or independent-data gate has passed. Only upload
 the new JSON privately; do not upload the SQLite journal or full OpenD logs.
+
+
+## S6 observed differences in the existing upload
+
+S4 exports and S5 action reports now include the additive `observation_summary`
+object (`market_vault_paper_observations_v1`). It is descriptive, requires no new
+command and makes no broker call or journal change. The denominator is every
+recorded intention in THIS journal, not every market signal or attempted CLI
+invocation. Empty denominators produce null fractions, not 100% or zero evidence.
+Each intention is classified as observed working, observed terminal, explicitly
+not sent, or unresolved as of recorded evidence. ACKs alone never establish a
+fresh fill/cancellation; failed queries, pending cancellations, ambiguous order
+aliases or incomplete actions keep the uncertainty visible. Accepted history is
+retained, not corrected. S3 progression checks are reused rather than duplicated.
+
+The last valid cumulative quantity is used ONCE, not summed over queries. The
+price difference is BUY average-fill minus the owner's limit; this is NOT market
+slippage and there is no quote, signal-price or validated turnover VWAP baseline.
+Missing/conflicting cumulative evidence does not produce a numeric fill result.
+Local wall-clock call-to-receipt/query intervals may include account validation,
+manual waiting, reconnection and clock error. Missing/negative/naive timing is
+null with a reason. S5 monotonic durations belong only to matched action start/
+finish pairs; an interrupted action remains incomplete with no invented duration.
+Neither measurement is broker/network latency or a timestamp for an individual
+execution. The local submission-boundary marker does not prove broker receipt.
+
+The last recorded S3 reconciliation is preserved as a historical NON-ATOMIC
+comparison, with subsequent activity indicated; it is never silently promoted
+to current account readiness. Every summary continues to deny new-order authority
+and leaves broker qualification unassessed, market slippage/latency unmeasured,
+cost calibration and strategy-forward validation not performed. No strategy TEST
+artifact is created from this manual one-order qualifier. Real observation values
+can only be accepted after the owner's actual run/report, not from CI fixtures.
