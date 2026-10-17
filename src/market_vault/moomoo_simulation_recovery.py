@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timedelta
+from decimal import Decimal
 import json
 from pathlib import Path
 import sys
@@ -64,6 +65,40 @@ def funds_diagnostic(frame: Any) -> dict[str, str]:
             except SimulationError:
                 result[key + "_state"] = "INVALID"
     return result
+
+
+CASH_BASES = frozenset({"USD_CURRENCY_BALANCE", "LEGACY_DISPLAY_USD"})
+
+
+def select_usd_cash(frame: Any) -> tuple[Decimal, str]:
+    """Prefer actual USD balance; never relabel requested/displayed currency.
+
+    Missing/unavailable explicit USD may use the original strictly USD-labelled
+    cash path, but as a DIFFERENT compatibility basis. Invalid explicit USD is
+    a hard failure, not a reason to fall back to an otherwise valid display sum.
+    """
+    row = one_row(frame, set())
+    state = funds_diagnostic(frame)["us_cash_state"]
+    if state == "FINITE":
+        return number(row["us_cash"]), "USD_CURRENCY_BALANCE"
+    if state == "INVALID":
+        raise SimulationError("USD_CASH_INVALID")
+    row = one_row(frame, {"cash", "currency"})
+    if not isinstance(row["currency"], str) or row["currency"] != "USD":
+        raise SimulationError("CASH_CURRENCY_NOT_USD")
+    try:
+        return number(row["cash"]), "LEGACY_DISPLAY_USD"
+    except SimulationError:
+        raise SimulationError("USD_CASH_UNAVAILABLE") from None
+
+
+def cash_basis(snapshot: dict[str, Any]) -> str:
+    """The published original v1 baseline had strict USD display-cash semantics."""
+    basis = snapshot.get("cash_basis", "LEGACY_DISPLAY_USD")
+    if (snapshot.get("currency") != "USD" or not isinstance(basis, str)
+            or basis not in CASH_BASES):
+        raise SimulationError("CASH_BASIS_UNVERIFIED")
+    return basis
 
 
 def records(frame: Any, required: set[str]) -> list[dict[str, Any]]:
@@ -188,11 +223,9 @@ class PaperRecovery(PaperExecution):
             positions[code] = str(qty)
         frame = self._call("accinfo_query", refresh_cache=True, currency=self.session._sdk.Currency.USD)
         self.journal.append("FUNDS_RESPONSE", None, **funds_diagnostic(frame))
-        funds = one_row(frame, {"cash", "currency"})
-        if funds["currency"] != "USD":
-            raise SimulationError("CASH_CURRENCY_NOT_USD")
+        cash, basis = select_usd_cash(frame)
         snapshot = {"started_at_utc": started, "finished_at_utc": self.clock().isoformat(),
-                    "positions": positions, "cash": str(number(funds["cash"])), "currency": "USD",
+                    "positions": positions, "cash": str(cash), "currency": "USD", "cash_basis": basis,
                     "atomic_snapshot": False, "fees": "NOT_OBSERVED", "cash_flows": "NOT_OBSERVED"}
         self.journal.append("ACCOUNT_OBSERVATION", None, **snapshot)
         return snapshot
@@ -229,6 +262,9 @@ class PaperRecovery(PaperExecution):
             intents = self.journal.intentions()
             before = [self.recover(item.intent_id) for item in intents]
             account = self.account_snapshot()
+            result.update(baseline_cash_basis=cash_basis(baselines[0]), cash_basis=cash_basis(account))
+            if result["baseline_cash_basis"] != result["cash_basis"]:
+                raise SimulationError("CASH_BASIS_CHANGED")
             after = [self.recover(item.intent_id) for item in intents]
             if before != after:
                 raise SimulationError("ORDER_CHANGED_DURING_ACCOUNT_SNAPSHOT")
