@@ -150,3 +150,199 @@ the exporter hash; they do not attest loaded bytecode or an entire installation.
 The reconciliation's subsequent-activity marker includes successful local stop
 and later action starts. Finishing the same successful check is not itself a
 new account observation, whereas starting another action or stopping is recorded.
+
+
+## S10-S12: first observed paper-order cycle, not another adapter
+
+Owner-authorized next package, 2026-10-17, after S9 at
+`e24f9396ef319c6aecd9351f75386bce15bc5522`. The newly supplied linked prepare report
+records PREPARED, explicit USD_CURRENCY_BALANCE on baseline and comparison,
+OBSERVATIONS_MATCH, no intentions, and an unstopped successor. Its funds metadata
+classifies display currency as N/A and explicit USD cash as FINITE. This supports
+the corrected preparation path on that run; the original failed report did not
+capture those fields, so it does not establish the original response verbatim.
+The old failed journal remains stopped. No owner files, account details or
+runtime database belong in Git. A supplied journal projection is not independent
+broker attestation. Preparation success does not qualify an order.
+
+The existing S1-S9 Python entry points already implement this bounded exercise.
+This increment fixes the task/measurement scope and operator instructions; it
+adds no trading engine, collector, report schema or permanent wrapper. A merged
+instruction PR is NOT completion of S10, S11 or S12. Their external acceptance
+requires the observations below. In-scope defects revealed by those observations
+may be repaired under the current authorization through exact-candidate review,
+required CI, squash and exact-main verification; no speculative refactor.
+
+| Task | Goal / technical path | Dependency / defaults | Required observed result | Excluded |
+| --- | --- | --- | --- | --- |
+| S10 first paper order | Use existing qualifier submit once on the successful S9 successor; fresh account/reconciliation/cash checks precede S2's durable intention and explicit SIMULATE SDK call. | Prepared successor, actual supported RTH, one controller; ONE BUY intention / ONE whole SPY or QQQ share / owner-selected USD1..1000 cent limit / NORMAL / DAY / adjust_limit=0. No new preparation. | Retained intent and broker-correlatable receipt plus a fresh attributable order observation. A returned ID or ACK alone is insufficient; refusal/unknown remains the actual result, not a passed order test. | REAL, auto strategy/price, margin/SELL, additional journals to retry, guaranteed fill or expiry liquidation. |
+| S11 reopen, reconcile and stop | Start a separate check process against that SAME journal, then existing offline stop or explicit stop-with-owned-cancel, and a later check after reopening. | After the S10 attempt; unknown outcomes go here, never to submit. Keep original and successor. At least 30 seconds between manual checks; at most three checks in this first exercise, then preserve unresolved evidence for diagnosis. | One broker order identity, stable cumulative quantity counted once, same cash basis and zero unexplained residuals, sticky stop visible after reopening, no second submission. Working orders/unknown cancellation remain BLOCKED. Mark only the terminal branch actually seen; FILLED and CANCELLED are not both inferred from one order. | Automatic retry/resume, forced liquidation, unowned cancellation, fee imputation, claiming a live network outage from an ordinary new connection. |
+| S12 first observation analysis | Read the existing S4/S6 projection and compare the owner's broker-client order record with its local mapping; compute only already defined counts, local durations, buy-average-minus-limit and reconciliation residuals. | After S10/S11 data; denominator is all recorded intentions, including failures. A missing fill gives no price statistic. Return a final sanitized check JSON; keep intermediate JSONs for a failed/incomplete path. | An actual, bounded report separates accepted observations, discrepancies and NOT_OBSERVED items. Symbol/quantity/status/price/time checked against the simulator's order view; raw ID mapping stays local. No automatic changes to execution assumptions. | Market slippage/latency inferred from limit/wall time, one-order profitability/general reliability claims, fitting costs, rewriting TEST or counting this manual exercise as frozen-strategy forward data. |
+
+Independent market data, contemporaneous signal/market-quote observations,
+individual executions/fees and post-freeze strategy samples are still missing.
+This exercise cannot calibrate unobserved market slippage or prove a strategy.
+Freeze a separate strategy/selection/cost/benchmark procedure before its genuinely
+new forward samples; do not backdate that freeze to this manual qualifier.
+
+### Owner execution and stopping points
+
+Do not repeat S1, prepare, funds-repair preparation, historical recapture or SDK
+installation. Reuse the pinned S9 source worktree and working interpreter.
+Close other writers/controllers, leave OpenD logged in, and exclude manual
+trades, cash transfers/conversions or simulator reset during the exercise.
+The source pin below deliberately stays at e24f9396: this documentation increment
+does not change its executable files or the successful preparation's semantics.
+
+Run menu 1 exactly once during supported RTH. Its local confirmation concerns
+SIMULATE only. Select your own symbol and limit; no price is suggested or fetched.
+A limit order may remain unfilled. Both success and failure end the command;
+there is no automatic next action or blind resend. If an intention was recorded,
+reopening cannot restore its consumed budget. Missing output is not proof that
+no order reached the broker. Outside-RTH or other pre-submit refusal sends no
+order; report that refusal instead of changing a clock or relaxing the guard.
+
+After at least 30 seconds, run menu 2 in a new process. A working order can make
+check BLOCKED without proving a bug. For a verified terminal order, use menu 3
+(offline stop). For an attributable working order, menu 4 explicitly requests
+stop plus the existing ONE owned cancellation attempt. It also tolerates a race
+to terminal by observing rather than cancelling a completed order. For an
+unresolved/error state, menu 3 stops new risk; retain the report and inspect the
+simulator, rather than forcing a cancel through missing attribution. If a prior
+submission failure already stopped the run, check is still allowed and menu 4
+may attempt attributable cancellation; neither clears stop.
+
+Finally reopen with menu 2 (respect the 30-second pacing and three-check budget).
+The desired recorded end is one attributable terminal order, explained position/
+cash comparison and stopped=true. Stop alone never proves no outstanding order
+or no position. If cancellation is not confirmed, do not retry it or leave the
+order unattended: inspect/manage that order in the simulator client and report
+any manual intervention as external activity, not program success. Filled stock
+is NOT sold by any of these commands; manage that simulated residual explicitly
+after preserving the final comparison. Never touch a real account for this test.
+
+The self-contained block runs ONE chosen existing action per invocation. It
+prompts for paths rather than inventing them and does not install, fetch, reset,
+copy databases or rewrite source. Menu 1 additionally verifies that the selected
+journal retains the supplied successful prepare-event prefix; this is local
+correspondence, not account authorization. Stop does not depend on that old JSON
+being available. Review the report before sharing it privately. Only the new
+sanitized JSON is for upload; keep databases and raw logs local. A cropped broker
+order screenshot can corroborate symbol/quantity/status/price/time; conceal
+account/name/balance/unrelated rows, and keep full identity mapping local.
+Screenshot agreement is not signed broker evidence or an independent quote feed.
+
+```powershell
+& {
+    $ErrorActionPreference = 'Stop'
+    $Pin = 'e24f9396ef319c6aecd9351f75386bce15bc5522'
+    $Port = 11111
+    $Firm = 'NONE'
+    $Source = Join-Path $env:USERPROFILE 'MarketVaultEvidence\funds-repair-source-e24f9396ef31'
+    if (-not (Test-Path -LiteralPath $Source -PathType Container)) {
+        $Source = (Read-Host 'Existing e24f9396 source worktree path').Trim().Trim('"')
+    }
+    $Source = (Resolve-Path -LiteralPath $Source).Path
+    $Head = & git -C $Source rev-parse HEAD
+    if ($LASTEXITCODE -ne 0 -or ([string]$Head).Trim() -ne $Pin) { throw 'Wrong source revision; do not substitute another version.' }
+    $Dirty = & git -C $Source status --porcelain -- src/market_vault
+    if ($LASTEXITCODE -ne 0 -or $Dirty) { throw 'Source changed; preserve it and stop.' }
+
+    $Py = @('D:\GitHub\market-vault\.venv\Scripts\python.exe', 'D:\market-vault\repo\.venv\Scripts\python.exe') |
+        Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+    if (-not $Py) { $Py = (Read-Host 'Existing working python.exe full path').Trim().Trim('"') }
+    $Py = (Resolve-Path -LiteralPath $Py).Path
+    $Journal = (Read-Host 'Successful private.sqlite.funds-repair.sqlite full path (KEEP LOCAL)').Trim().Trim('"')
+    if (-not (Test-Path -LiteralPath $Journal -PathType Leaf)) { throw 'Journal missing; do not create or replace it.' }
+    $Journal = (Resolve-Path -LiteralPath $Journal).Path
+    $Choice = Read-Host '1=SUBMIT ONCE, 2=CHECK, 3=OFFLINE STOP, 4=STOP AND CANCEL OWNED'
+    if ($Choice -notin @('1', '2', '3', '4')) { throw 'No action selected.' }
+    $Action = if ($Choice -eq '1') { 'submit' } elseif ($Choice -eq '2') { 'check' } else { 'stop' }
+    $Out = Join-Path (Split-Path -Parent $Journal) ('pilot-' + $Action + '-' + [guid]::NewGuid().ToString('N') + '.json')
+    $Extra = @()
+    if ($Choice -eq '1') {
+        $Prepared = Join-Path (Split-Path -Parent $Journal) 'prepare-repair-upload.json'
+        if (-not (Test-Path -LiteralPath $Prepared -PathType Leaf)) {
+            $Prepared = (Read-Host 'Successful prepare-repair-upload.json full path').Trim().Trim('"')
+        }
+        $Prepared = (Resolve-Path -LiteralPath $Prepared).Path
+        $Symbol = (Read-Host 'Choose US.SPY or US.QQQ for the simulator test').Trim().ToUpperInvariant()
+        if ($Symbol -notin @('US.SPY', 'US.QQQ')) { throw 'Unsupported symbol.' }
+        $Price = (Read-Host 'Your one-share USD limit, 1.00 to 1000.00 (not an automatic price)').Trim()
+        Write-Host "SIMULATE ONLY: BUY 1 $Symbol, LIMIT=$Price, DAY/RTH. A filled position is NOT liquidated automatically."
+        if ((Read-Host 'Type SIMULATE to submit this single intent') -cne 'SIMULATE') { throw 'No order authorized.' }
+        $Extra = @('--symbol', $Symbol, '--price', $Price, '--execute-simulate')
+    } elseif ($Choice -eq '4') {
+        Write-Host 'Stop remains active even if cancellation fails. Only this journal-owned order may be cancelled; positions are not sold.'
+        if ((Read-Host 'Type SIMULATE to allow the one owned cancellation attempt') -cne 'SIMULATE') { throw 'No cancellation authorized.' }
+        $Extra = @('--cancel-owned', '--execute-simulate')
+    }
+
+    $OldPath = $env:PYTHONPATH
+    Push-Location -LiteralPath $Source
+    try {
+        $env:PYTHONPATH = Join-Path $Source 'src'
+        $Bind = @'
+from pathlib import Path
+import market_vault.moomoo_simulation_qualifier as q
+if Path(q.__file__).resolve() != Path('src/market_vault/moomoo_simulation_qualifier.py').resolve():
+    raise RuntimeError('Wrong imported source')
+'@
+        & $Py -c $Bind
+        if ($LASTEXITCODE -ne 0) { throw 'Source binding failed; do not reinstall or fall back.' }
+        if ($Choice -eq '1') {
+            # Read-only correspondence check; actual account/risk guards still run in submit.
+            $Verify = @'
+import json, sys
+from datetime import datetime, timezone
+from pathlib import Path
+from market_vault.moomoo_simulation_evidence import build_evidence
+from market_vault.moomoo_simulation_orders import require_rth
+def require(condition, message):
+    if not condition:
+        raise RuntimeError(message)
+prior = json.loads(Path(sys.argv[2]).read_text(encoding='utf-8-sig'))
+require(prior['action'] == 'prepare' and prior['result'] == 'PREPARED', 'Preparation not successful')
+old = prior['evidence']
+now = build_evidence(Path(sys.argv[1]))
+require(now['environment'] == old['environment'] == 'SIMULATE', 'Wrong environment')
+require(now['journal_created_at_utc'] == old['journal_created_at_utc'], 'Wrong journal')
+require(now['events'][:len(old['events'])] == old['events'], 'Preparation history mismatch')
+require(not now['stopped'] and not now['intentions'], 'Stopped or already consumed: use check/stop, never submit')
+require_rth(datetime.now(timezone.utc))
+print('Prepared journal matched; local RTH check passed. Broker preflight still required.')
+'@
+            & $Py -c $Verify $Journal $Prepared
+            if ($LASTEXITCODE -ne 0) { throw 'Pre-submit check failed. No submit command was invoked. Preserve files.' }
+        }
+        Write-Host "SOURCE_COMMIT=$Pin"
+        $ArgsForModule = @('-m', 'market_vault.moomoo_simulation_qualifier', $Action,
+            '--journal', $Journal, '--output', $Out, '--port', "$Port", '--security-firm', $Firm) + $Extra
+        & $Py @ArgsForModule
+        $Code = $LASTEXITCODE
+        Write-Host "ACTION=$Action EXIT_CODE=$Code"
+        if (Test-Path -LiteralPath $Out -PathType Leaf) {
+            try {
+                $Report = Get-Content -LiteralPath $Out -Raw -Encoding UTF8 | ConvertFrom-Json
+                if ($Report.schema -ne 'market_vault_paper_qualification_v1') { throw 'Unexpected schema' }
+                Write-Host "UPLOAD_FILE=$Out"
+                Write-Host ('RESULT=' + $Report.result + '; BROKER_QUALIFICATION=NOT_ASSESSED')
+            } catch { Write-Host 'REPORT_EMPTY_OR_INVALID: keep journal; use check, never repeat submit.' }
+        } else { Write-Host 'REPORT_MISSING: keep journal; use check, never repeat submit.' }
+        Write-Host 'No automatic next action. Preserve all reports and the SAME journal. Upload only sanitized JSON.'
+    } finally {
+        $env:PYTHONPATH = $OldPath
+        Pop-Location
+    }
+}
+```
+
+A missing/invalid report, unknown order, schema/account error, unexplained cash
+residual or exhausted check/cancel budget ends the affected exercise. Keep the
+same journal; return available JSON and the static failure, not its database.
+No subsequent mainline implementation is justified merely by a missing optional
+metric. Code review/CI for these instructions establishes no actual owner order.
+
+Official order and cash-preflight interfaces checked for this package:
+- https://openapi.moomoo.com/moomoo-api-doc/en/trade/place-order.html
+- https://openapi.moomoo.com/moomoo-api-doc/en/trade/get-max-trd-qtys.html
