@@ -223,7 +223,7 @@ A missing baseline on an older S2 journal is reported, never reconstructed from
 post-trade balances. Baselines must precede any intention and cannot be replaced.
 
 Before the first bounded order, run `baseline --journal PATH` in the recovery
-module. It records all returned long-position quantities and displayed USD cash,
+module. It records all returned long-position quantities and basis-labelled USD cash,
 with no working/unknown US orders observed before or after the snapshot. Stop on
 a baseline failure. Use only the same selected account and single controller;
 exclude manual/other-program trades, deposits, conversions and account resets.
@@ -244,8 +244,12 @@ Account reconciliation uses each order's cumulative executed quantity ONCE,
 with fresh order observations bracketing the position/funds calls. Changing
 orders, unrelated working/unknown US orders, position residuals and any nonzero
 cash residual remain BLOCKED. It does not sum repeated cumulative snapshots.
-USD cash is the broker's displayed cash (currency must be USD), not buying power;
-FX translation, fees and external cash flows are not independently explained.
+S8 prefers finite explicit us_cash (USD_CURRENCY_BALANCE), not buying power or a
+converted display sum. Missing/unavailable us_cash can use strictly USD-labelled
+legacy cash as LEGACY_DISPLAY_USD; invalid explicit USD never falls back. The
+selected cash basis must match the baseline, even if both numbers are equal.
+Original v1 baselines retain their legacy meaning without rewriting them. See
+MOOMOO_FUNDS_REPAIR.md. Fees and external cash flows remain unexplained.
 OBSERVATIONS_MATCH is explicitly conditional and non-atomic, never proof of zero
 fees, full custody reconciliation, trade profitability or live readiness.
 A recorded failed reconciliation blocks new submission even with unused budget;

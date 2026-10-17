@@ -65,3 +65,32 @@ unrelated holdings or arbitrary SDK errors. No extra command is needed.
 Public SDK source above is not a claim to have read the owner's installed SDK
 bytes. Owner runtime reports moomoo 10.09.6908 and Python 3.14.4. No user payload,
 private journal, credential or generated market data belongs in this repository.
+
+
+## S8 selected USD cash and reconciliation meaning
+
+The existing query still uses explicit SIMULATE/pinned acc_id/refresh/USD. A
+finite us_cash, including zero or a negative observed balance, is selected as
+USD_CURRENCY_BALANCE independently of the optional display currency or obsolete
+cash field. Negative balances are observations, not permission to borrow; the
+existing separate cash-capacity/no-short-cover submission checks remain intact.
+
+Missing/None/NONE/N/A/empty explicit USD is not imputed. Only a finite legacy cash
+with returned currency exactly USD may use LEGACY_DISPLAY_USD compatibility.
+NaN/infinity/bool/malformed explicit USD raises USD_CASH_INVALID and cannot fall
+back to a display sum. Missing legacy columns fail schema validation; an unknown
+or non-USD legacy display currency retains CASH_CURRENCY_NOT_USD. Unusable
+strictly USD-labelled legacy cash raises USD_CASH_UNAVAILABLE. This does not
+promise either field is available for the owner's particular simulator account.
+
+New account observations/baselines record cash_basis. Reconciliation records
+both selected and baseline bases and blocks CASH_BASIS_CHANGED before computing
+a cash residual when they differ. Equal numerical amounts do not waive that
+check. Original v1 baselines without the additive field had strict USD-labelled
+legacy semantics and are read as LEGACY_DISPLAY_USD without updating them;
+missing currency, an explicit unknown/null basis or non-USD currency blocks as
+CASH_BASIS_UNVERIFIED. No baseline is replaced and no schema is migrated.
+
+The upload allowlists these basis labels, not cash amounts. All existing
+non-atomic/fee/flow/sticky-stop limits still apply. This replaces the original
+S3 displayed-cash-only definition; it does not claim a real preparation succeeded.

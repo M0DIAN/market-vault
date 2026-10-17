@@ -52,6 +52,7 @@ ERROR_CODES = frozenset({
     "CANCEL_OUTCOME_UNKNOWN",
     "CANCEL_RESPONSE_MISMATCH",
     "CASH_CURRENCY_NOT_USD",
+    "USD_CASH_INVALID", "USD_CASH_UNAVAILABLE", "CASH_BASIS_CHANGED", "CASH_BASIS_UNVERIFIED",
     "CASH_ONLY_LONG_BUY_UNAVAILABLE",
     "CASH_PREFLIGHT_FAILED",
     "CLOCK_MUST_BE_AWARE",
@@ -215,6 +216,12 @@ def build_evidence(path: Path) -> dict[str, Any]:
                 residuals = event.get("position_residuals", {})
                 item["position_residuals"] = {code: str(number(qty)) for code, qty in residuals.items()
                                               if code in owned_symbols}
+            if kind in {"ACCOUNT_BASELINE", "ACCOUNT_OBSERVATION", "RECONCILIATION"}:
+                from .moomoo_simulation_recovery import CASH_BASES
+                for key in ("cash_basis", "baseline_cash_basis"):
+                    if key in event:
+                        value = event[key]
+                        item[key] = value if isinstance(value, str) and value in CASH_BASES else "UNVERIFIED"
             if kind in {"QUALIFICATION_START", "QUALIFICATION_FINISH"}:
                 if event.get("action") not in ACTIONS:
                     raise ValueError("INVALID_QUALIFICATION_ACTION")
