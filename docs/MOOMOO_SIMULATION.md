@@ -213,3 +213,65 @@ Additional official interfaces checked 2026-10-17:
 - https://openapi.moomoo.com/moomoo-api-doc/en/trade/modify-order.html
 - https://openapi.moomoo.com/moomoo-api-doc/en/trade/get-order-fill-list.html
 - https://openapi.moomoo.com/moomoo-api-doc/en/trade/get-history-order-fill-list.html
+
+## S3 executable boundary and owner sequence
+
+`market_vault.moomoo_simulation_recovery` adds `baseline`, `recover`, `reconcile`
+and `stop`, using the existing journal schema and insertion-only events. No new
+journal version, reset, deletion, migration, fee endpoint or execution-ID model.
+A missing baseline on an older S2 journal is reported, never reconstructed from
+post-trade balances. Baselines must precede any intention and cannot be replaced.
+
+Before the first bounded order, run `baseline --journal PATH` in the recovery
+module. It records all returned long-position quantities and displayed USD cash,
+with no working/unknown US orders observed before or after the snapshot. Stop on
+a baseline failure. Use only the same selected account and single controller;
+exclude manual/other-program trades, deposits, conversions and account resets.
+Then use S2's explicit single-order command. After closing/reopening the process,
+use `recover --journal PATH --intent-id SAME_UUID_HEX`, then `reconcile --journal
+PATH`. No recovery action calls place_order, creates another intention, or
+restores the one-intention budget.
+
+Recovery queries the fresh current US order list; when the exact remark/known
+locator is absent, it queries history for that symbol from the recorded intention
+date through now (maximum 31 elapsed days). Unsupported/missing history stays
+unknown. Identical duplicates do not add executions; conflicting rows/IDs,
+unknown status, missing cumulative data/update time, backwards cumulative fills,
+terminal-status regressions and same-quantity average-price revisions block.
+Existing S2 observe/cancel also rejects regressing recorded observations.
+
+Account reconciliation uses each order's cumulative executed quantity ONCE,
+with fresh order observations bracketing the position/funds calls. Changing
+orders, unrelated working/unknown US orders, position residuals and any nonzero
+cash residual remain BLOCKED. It does not sum repeated cumulative snapshots.
+USD cash is the broker's displayed cash (currency must be USD), not buying power;
+FX translation, fees and external cash flows are not independently explained.
+OBSERVATIONS_MATCH is explicitly conditional and non-atomic, never proof of zero
+fees, full custody reconciliation, trade profitability or live readiness.
+A recorded failed reconciliation blocks new submission even with unused budget;
+only an explicit later successful reconciliation removes that particular block.
+Neither connection success nor reconciliation clears an emergency stop.
+
+`stop --journal PATH` commits the sticky local stop WITHOUT importing/connecting
+to OpenD. It never cancels or liquidates by default. Adding `--cancel-owned
+--execute-simulate` commits stop BEFORE connecting, then makes at most S2's one
+cancellation attempt for each freshly attributed working owned order. A failed
+connection/cancel leaves stop in force. The cancel response is still only an ACK;
+query again to establish the final outcome. Unrelated orders are never cancelled.
+Already in-flight broker requests cannot be recalled by a local stop. The
+supported runtime remains single-writer, not a concurrent execution service.
+There is deliberately no resume command in this bounded qualifier. Keep the
+stopped journal and inspect outstanding positions manually in the simulator;
+do not use an older executable or another journal to bypass it.
+
+Full order/account observations and residuals remain in the local journal.
+The recovery CLI prints only an allowlisted summary, not IDs, balances or raw
+SDK errors. Do not upload the journal or reset the simulator. First return only
+S1's sanitized probe JSON; broker-order qualification is a subsequent owner-run
+exercise. All real account/order/restart/stop qualification remains NOT_RUN until
+its actual records are supplied, regardless of engineering CI success.
+
+Additional official interfaces checked 2026-10-17:
+- https://openapi.moomoo.com/moomoo-api-doc/en/trade/get-history-order-list.html
+- https://openapi.moomoo.com/moomoo-api-doc/en/trade/get-funds.html
+- https://openapi.moomoo.com/moomoo-api-doc/en/trade/get-acc-cash-flow.html

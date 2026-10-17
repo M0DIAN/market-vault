@@ -166,10 +166,29 @@ class PaperJournal:
             raise SimulationError("INTENTION_NOT_OWNED")
         return matches[0]
 
+    @property
+    def stopped(self) -> bool:
+        return self._db.execute("SELECT 1 FROM events WHERE kind='EMERGENCY_STOP' LIMIT 1").fetchone() is not None
+
+    def require_running(self) -> None:
+        if self.stopped:
+            raise SimulationError("PAPER_JOURNAL_STOPPED")
+        latest = self._db.execute("SELECT payload FROM events WHERE kind='RECONCILIATION' "
+                                  "ORDER BY seq DESC LIMIT 1").fetchone()
+        if latest is not None and json.loads(latest["payload"]).get("result") != "OBSERVATIONS_MATCH":
+            raise SimulationError("PAPER_RECONCILIATION_BLOCKED")
+
+    def stop(self) -> None:
+        with self._db:
+            self._db.execute("BEGIN IMMEDIATE")
+            if not self.stopped:
+                self._insert_event("EMERGENCY_STOP", None, {"automatic_resume": False})
+
     def reserve(self, intent: BuyIntent) -> None:
         intent = intent.validated()
         with self._db:
             self._db.execute("BEGIN IMMEDIATE")
+            self.require_running()
             if self._db.execute("SELECT 1 FROM intentions WHERE intent_id=?", (intent.intent_id,)).fetchone():
                 raise SimulationError("INTENTION_ALREADY_RECORDED_NO_RESUBMIT")
             if self._db.execute("SELECT 1 FROM intentions").fetchone():
@@ -251,6 +270,8 @@ class PaperExecution:
         account = self.session.verify()
         if account.account_id != self.journal.account_id:
             raise SimulationError("JOURNAL_ACCOUNT_MISMATCH")
+        if method == "place_order":
+            self.journal.require_running()
         # There is deliberately no caller-selectable environment or account index.
         ret, frame = getattr(self.session._ctx, method)(
             trd_env=self.session._sdk.TrdEnv.SIMULATE,
@@ -264,6 +285,7 @@ class PaperExecution:
         if execute_simulate is not True:
             raise SimulationError("EXPLICIT_SIMULATION_OPT_IN_REQUIRED")
         intent = intent.validated()
+        self.journal.require_running()
         require_rth(self.clock())
         # Check duplicates before a network preflight as well as atomically at reserve.
         if self.journal.intentions():
@@ -315,6 +337,8 @@ class PaperExecution:
             frame = self._call("order_list_query", order_id=oid,
                                order_market=self.session._sdk.TrdMarket.US, refresh_cache=True)
             snapshot = order_snapshot(one_row(frame, {"order_id"}), intent, oid)
+            from .moomoo_simulation_recovery import check_progress
+            check_progress(snapshot, self.journal.events(intent_id))
         except Exception as exc:
             self.journal.append("ORDER_QUERY_FAILED", intent_id, error_type=type(exc).__name__)
             raise SimulationError("ORDER_OBSERVATION_UNAVAILABLE") from None
