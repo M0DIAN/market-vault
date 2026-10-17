@@ -20,6 +20,7 @@ from .moomoo_simulation_orders import (
 )
 
 OBSERVATIONS = {"SUBMISSION_ACK", "ORDER_OBSERVATION"}
+UNFILLED = frozenset({"UNSUBMITTED", "WAITING_SUBMIT", "SUBMITTING", "SUBMITTED"})
 WORKING = CANCELLABLE | {"UNSUBMITTED", "WAITING_SUBMIT", "SUBMITTING",
                          "CANCELLING_PART", "CANCELLING_ALL"}
 
@@ -43,6 +44,8 @@ def check_progress(snapshot: dict[str, Any], previous: list[dict[str, Any]]) -> 
         if ("dealt_qty" in old and "dealt_qty" in snapshot
                 and number(snapshot["dealt_qty"]) < number(old["dealt_qty"])):
             raise SimulationError("CUMULATIVE_FILL_REGRESSION")
+        if old["order_status"] == "FILLED_PART" and snapshot["order_status"] in UNFILLED:
+            raise SimulationError("WORKING_STATUS_REGRESSION")
         if (old["order_status"] in TERMINAL
                 and snapshot["order_status"] != old["order_status"]):
             raise SimulationError("TERMINAL_STATUS_REGRESSION")
@@ -66,7 +69,7 @@ def complete_snapshot(row: dict[str, Any], intent: BuyIntent) -> dict[str, Any]:
         raise SimulationError("UNKNOWN_ORDER_STATUS")
     if ((status == "FILLED_ALL" and filled != intent.qty)
             or (status in {"FILLED_PART", "CANCELLED_PART"} and not 0 < filled < intent.qty)
-            or (status in {"CANCELLED_ALL", "FAILED"} and filled != 0)
+            or (status in UNFILLED | {"CANCELLED_ALL", "FAILED"} and filled != 0)
             or (filled == 0 and average != 0)):
         raise SimulationError("ORDER_STATUS_FILL_CONFLICT")
     if not isinstance(snapshot.get("updated_time"), str) or not snapshot["updated_time"]:

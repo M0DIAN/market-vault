@@ -345,3 +345,31 @@ def test_stop_arriving_during_revalidation_is_checked_at_place_boundary(paper, m
         with pytest.raises(SimulationError, match="SUBMISSION_OUTCOME_UNKNOWN"):
             work.submit(intent(), execute_simulate=True)
         assert journal.stopped and not any(name == "place" for name, _ in paper.calls)
+
+
+@pytest.mark.parametrize("entry", ["existing", "recovery"])
+def test_partial_to_submitted_regression_cannot_authorize_cancel(paper, tmp_path, entry):
+    with orders.PaperJournal.create(tmp_path / "p.sqlite", 200) as journal, SimulationAccountSession() as session:
+        work = (orders.PaperExecution(session, journal, clock=lambda: NOW)
+                if entry == "existing" else engine(session, journal))
+        work.submit(intent(), execute_simulate=True)
+        fill(paper, qty="0.5", status="FILLED_PART")
+        work.observe(IDENTIFIER)
+        paper.rows[0].update(order_status="SUBMITTED", updated_time="2026-10-16 11:02:00")
+        with pytest.raises(SimulationError):
+            work.cancel(IDENTIFIER, execute_simulate=True)
+        assert not any(name == "cancel" for name, _ in paper.calls)
+        latest = [e for e in journal.events() if e["kind"] == "ORDER_OBSERVATION"][-1]
+        assert latest["order_status"] == "FILLED_PART"
+
+
+def test_first_recovered_submitted_row_with_nonzero_fill_is_inconsistent(paper, tmp_path):
+    paper.fail_place = TimeoutError("lost-ack")
+    with orders.PaperJournal.create(tmp_path / "p.sqlite", 200) as journal, SimulationAccountSession() as session:
+        work = engine(session, journal)
+        with pytest.raises(SimulationError, match="OUTCOME_UNKNOWN"):
+            work.submit(intent(), execute_simulate=True)
+        fill(paper, qty="0.5", status="SUBMITTED")
+        with pytest.raises(SimulationError, match="ORDER_STATUS_FILL_CONFLICT"):
+            work.recover(IDENTIFIER)
+        assert not any(e["kind"] == "ORDER_OBSERVATION" for e in journal.events())
