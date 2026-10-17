@@ -6,20 +6,22 @@ There is no REAL option, automatic price selection, liquidation, or resume.
 from __future__ import annotations
 
 import argparse
+from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
+import sqlite3
 import sys
 import time
-from typing import Any
+from typing import Any, Iterator
 from uuid import uuid4
 
-from .moomoo_simulation import SimulationAccountSession, SimulationError
+from .moomoo_simulation import SimulationAccountSession, SimulationError, _account_id
 from .moomoo_simulation_orders import BuyIntent, PaperJournal, SYMBOLS
 from .moomoo_simulation_recovery import PaperRecovery
 from .moomoo_simulation_evidence import (
-    ERROR_CODES, RUNTIME_FILES, build_evidence, safe_runtime,
+    ERROR_CODES, PREPARE_FUNDS_ERRORS, RUNTIME_FILES, build_evidence, read_journal, safe_runtime, timestamp,
 )
 
 
@@ -38,6 +40,75 @@ def runtime_identity() -> dict[str, Any]:
 def diagnostic(exc: BaseException) -> str:
     code = str(exc)
     return code if isinstance(exc, SimulationError) and code in ERROR_CODES else "QUALIFICATION_FAILED"
+
+
+@contextmanager
+def preparation_origin(previous: Path | None, destination: Path) -> Iterator[dict[str, Any] | None]:
+    """One linked successor to a completed pre-order funds failure, not resume.
+
+    The predecessor is never opened by PaperJournal (which is read/write).
+    A rollback-mode read lock pins its contents while the successor is prepared.
+    Deterministic destination + exclusive creation prevent siblings through this
+    path without adding a registry or changing the stopped predecessor.
+    """
+    if previous is None:
+        yield None
+        return
+    validated = False
+    try:
+        source = previous.resolve(strict=True)
+        successor = source.with_name(source.name + ".funds-repair.sqlite")
+        if destination.resolve() != successor:
+            raise SimulationError("PREPARATION_SUCCESSOR_PATH_REQUIRED")
+        if successor.exists():
+            raise SimulationError("JOURNAL_ALREADY_EXISTS")
+        # Only the existing writer's closed rollback-mode journals are supported.
+        # Reject WAL before SQLite can create/recover any auxiliary files.
+        raw = source.read_bytes()
+        if (raw[:16] != b"SQLite format 3\x00" or raw[18:20] != b"\x01\x01"
+                or any(Path(str(source) + suffix).exists() for suffix in ("-wal", "-shm", "-journal"))):
+            raise SimulationError("PREVIOUS_PREPARE_UNSAFE")
+        digest = hashlib.sha256(raw).hexdigest()
+        with closing(sqlite3.connect(source.as_uri() + "?mode=ro", uri=True, timeout=0)) as db:
+            db.execute("PRAGMA query_only=ON")
+            db.execute("BEGIN")
+            db.execute("SELECT count(*) FROM metadata").fetchone()  # Hold a shared read lock.
+            if db.execute("PRAGMA journal_mode").fetchone()[0] != "delete":
+                raise SimulationError("PREVIOUS_PREPARE_UNSAFE")
+            meta, intents, events = read_journal(source)  # Reuse the existing schema/parser.
+            kinds = [e["kind"] for e in events]
+            if (intents or kinds not in [
+                    ["QUALIFICATION_START", "EMERGENCY_STOP", "QUALIFICATION_FINISH"],
+                    ["QUALIFICATION_START", "FUNDS_RESPONSE", "EMERGENCY_STOP", "QUALIFICATION_FINISH"]]
+                    or any(e["seq"] != i or e["intent_id"] is not None for i, e in enumerate(events, 1))):
+                raise SimulationError("PREVIOUS_PREPARE_UNSAFE")
+            start, finish = events[0], events[-1]
+            times = [datetime.fromisoformat(timestamp(e["recorded_at_utc"], aware=True)) for e in events]
+            if (start.get("action") != "prepare" or finish.get("action") != "prepare"
+                    or finish.get("result") != "FAILED" or finish.get("error_code") not in PREPARE_FUNDS_ERRORS
+                    or type(finish.get("start_seq")) is not int or finish["start_seq"] != start["seq"]
+                    or start.get("started_at_utc") != finish.get("started_at_utc")
+                    or times != sorted(times)
+                    or datetime.fromisoformat(timestamp(finish["finished_at_utc"], aware=True))
+                       < datetime.fromisoformat(timestamp(start["started_at_utc"], aware=True))):
+                raise SimulationError("PREVIOUS_PREPARE_UNSAFE")
+            identifier = meta.get("account_id")
+            if not isinstance(identifier, str) or not identifier.isascii() or not identifier.isdecimal():
+                raise SimulationError("PREVIOUS_PREPARE_UNSAFE")
+            account_id = _account_id(int(identifier))
+            if hashlib.sha256(source.read_bytes()).hexdigest() != digest:
+                raise SimulationError("PREVIOUS_PREPARE_CHANGED")
+            validated = True
+            yield {"account_id": account_id, "previous_journal_sha256": digest,
+                   "previous_failure_code": finish["error_code"], "previous_event_count": len(events)}
+            if hashlib.sha256(source.read_bytes()).hexdigest() != digest:
+                raise SimulationError("PREVIOUS_PREPARE_CHANGED")
+    except SimulationError:
+        raise
+    except (OSError, sqlite3.Error, ValueError, KeyError, TypeError):
+        if validated:
+            raise  # A successor operation failure is not a predecessor validation failure.
+        raise SimulationError("PREVIOUS_PREPARE_UNAVAILABLE") from None
 
 
 def _connected_action(args: argparse.Namespace, journal: PaperJournal,
@@ -79,14 +150,19 @@ def perform(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
         if args.action == "prepare":
             if args.journal.exists():
                 raise SimulationError("JOURNAL_ALREADY_EXISTS")
-            with SimulationAccountSession(account_id=args.account_id, port=args.port,
-                                          security_firm=args.security_firm) as session:
-                journal = PaperJournal.create(args.journal, session.account.account_id)
-                journal.append("QUALIFICATION_START", None, action=args.action,
-                               started_at_utc=started, runtime=runtime)
-                start_seq = journal.events()[-1]["seq"]
-                runtime.update(session._metadata)
-                result = _connected_action(args, journal, session)
+            with preparation_origin(getattr(args, "previous_journal", None), args.journal) as origin:
+                account_id = origin["account_id"] if origin is not None else args.account_id
+                with SimulationAccountSession(account_id=account_id, port=args.port,
+                                              security_firm=args.security_firm) as session:
+                    journal = PaperJournal.create(args.journal, session.account.account_id)
+                    if origin is not None:
+                        journal.append("PREPARATION_ORIGIN", None,
+                                       **{key: value for key, value in origin.items() if key != "account_id"})
+                    journal.append("QUALIFICATION_START", None, action=args.action,
+                                   started_at_utc=started, runtime=runtime)
+                    start_seq = journal.events()[-1]["seq"]
+                    runtime.update(session._metadata)
+                    result = _connected_action(args, journal, session)
         else:
             journal = PaperJournal(args.journal)
             if args.action == "stop":
@@ -143,6 +219,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("action", choices=("prepare", "submit", "check", "stop"))
     parser.add_argument("--journal", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True, help="New sanitized JSON for this action")
+    parser.add_argument("--previous-journal", type=Path, help="Only for prepare: stopped pre-order funds failure")
     parser.add_argument("--account-id", type=int, help="Only for prepare; kept local")
     parser.add_argument("--port", type=int, default=11111)
     parser.add_argument("--security-firm", default="NONE")
@@ -151,6 +228,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--execute-simulate", action="store_true")
     parser.add_argument("--cancel-owned", action="store_true")
     args = parser.parse_args(argv)
+    if args.previous_journal is not None and (args.action != "prepare" or args.account_id is not None):
+        parser.error("--previous-journal requires prepare and pins its account; omit --account-id")
     if args.action == "submit" and (not args.execute_simulate or not args.symbol or not args.price):
         parser.error("submit requires --symbol, --price and --execute-simulate")
     if args.action != "prepare" and args.account_id is not None:

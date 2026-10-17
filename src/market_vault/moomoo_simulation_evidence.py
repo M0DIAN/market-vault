@@ -23,7 +23,7 @@ EVENT_KINDS = frozenset({
     "SUBMISSION_UNKNOWN", "SUBMISSION_NOT_SENT", "ORDER_OBSERVATION", "ORDER_QUERY_FAILED",
     "CANCEL_INTENT", "CANCEL_ACK", "CANCEL_UNKNOWN", "RECOVERY_FAILED", "ACCOUNT_OBSERVATION",
     "ACCOUNT_BASELINE", "RECONCILIATION", "EMERGENCY_STOP",
-    "QUALIFICATION_START", "QUALIFICATION_FINISH", "FUNDS_RESPONSE",
+    "QUALIFICATION_START", "QUALIFICATION_FINISH", "FUNDS_RESPONSE", "PREPARATION_ORIGIN",
 })
 ORDER_STATES = frozenset({
     "UNSUBMITTED", "WAITING_SUBMIT", "SUBMITTING", "SUBMITTED", "FILLED_PART", "FILLED_ALL",
@@ -36,6 +36,8 @@ ERROR_CODES = frozenset({
     "QUALIFICATION_FAILED", "QUALIFICATION_PREFLIGHT_BLOCKED",
     "QUALIFICATION_PREPARATION_REQUIRED", "QUALIFICATION_CANCEL_NOT_CONFIRMED",
     "QUALIFICATION_OUTPUT_IS_JOURNAL",
+    "PREVIOUS_PREPARE_UNSAFE", "PREVIOUS_PREPARE_UNAVAILABLE", "PREVIOUS_PREPARE_CHANGED",
+    "PREPARATION_SUCCESSOR_PATH_REQUIRED",
     "ACCOUNT_QUERY_FAILED",
     "ACCOUNT_RESIDUAL_UNEXPLAINED",
     "ACCOUNT_SCHEMA_MISMATCH",
@@ -105,6 +107,8 @@ ERROR_CODES = frozenset({
     "WORKING_STATUS_REGRESSION",
 })
 
+
+PREPARE_FUNDS_ERRORS = frozenset({"CASH_CURRENCY_NOT_USD", "USD_CASH_INVALID", "USD_CASH_UNAVAILABLE"})
 
 RUNTIME_FILES = (
     "moomoo_simulation.py", "moomoo_sdk.py", "moomoo_simulation_orders.py",
@@ -183,6 +187,15 @@ def build_evidence(path: Path) -> dict[str, Any]:
             "recorded_at_utc": timestamp(event["recorded_at_utc"], aware=True),
         }
         if kind in EVENT_KINDS:
+            if kind == "PREPARATION_ORIGIN":
+                digest = event.get("previous_journal_sha256")
+                count, error = event.get("previous_event_count"), event.get("previous_failure_code")
+                if (not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+                        or type(count) is not int or count not in {3, 4}
+                        or not isinstance(error, str) or error not in PREPARE_FUNDS_ERRORS):
+                    raise ValueError("INVALID_PREPARATION_ORIGIN")
+                item.update(previous_journal_sha256=digest, previous_event_count=count,
+                            previous_failure_code=error)
             if kind == "FUNDS_RESPONSE":
                 from .moomoo_simulation_recovery import FUNDS_DIAGNOSTIC_VALUES
                 for key, allowed in FUNDS_DIAGNOSTIC_VALUES.items():

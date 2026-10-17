@@ -94,3 +94,60 @@ CASH_BASIS_UNVERIFIED. No baseline is replaced and no schema is migrated.
 The upload allowlists these basis labels, not cash amounts. All existing
 non-atomic/fee/flow/sticky-stop limits still apply. This replaces the original
 S3 displayed-cash-only definition; it does not claim a real preparation succeeded.
+
+
+## S9 linked preparation, not unstop or order retry
+
+The existing qualifier's `prepare` action accepts optional `--previous-journal`.
+Close all writers first. Select the original private SQLite journal, not the
+sanitized upload. Its schema and metadata are read with the existing S4 parser.
+A separate read-only rollback-mode transaction holds a shared lock during the
+new preparation; the predecessor is never opened with the write-mode journal
+class. Its SHA256 is checked before and after the operation, and no old rows,
+stop markers, baselines or schema are changed. WAL, active rollback journals,
+unreadable/locked files, malformed or incomplete histories are refused.
+
+Only these exact original histories qualify: prepare START, optional S7
+FUNDS_RESPONSE, EMERGENCY_STOP, and matching prepare FINISH/FAILED, with no
+intention or baseline and no other event. The failure must be one of
+CASH_CURRENCY_NOT_USD, USD_CASH_INVALID, or USD_CASH_UNAVAILABLE. This bounded
+exception does not apply to a failed submission, an unfinished action, a manual
+stop after success, a later account discrepancy or an unrecognized operation.
+It verifies local records, not signed broker history or the owner's installed
+SDK payload. The old failure and stop remain authoritative for that old run.
+
+The new destination is fixed: append `.funds-repair.sqlite` to the original
+canonical filename (for `private.sqlite`, use `private.sqlite.funds-repair.sqlite`
+in the SAME directory). Any other destination or an existing successor refuses.
+Exclusive creation prevents sibling continuations through this path; once the
+successor exists, do not delete, rename or replace it to retry. This is not an
+account-wide budget controller, and manually copying/renaming journals or using
+other entry points must not bypass the owner's single-controller restriction.
+A failed successor contains an origin event and is not itself eligible for this
+one-step exception. Keep it and return its failure report instead of chaining
+new runs. No sidecar registry or migration is introduced.
+
+The account ID comes solely from the verified predecessor. Do not supply
+--account-id alongside --previous-journal; REAL or changed-account selection is
+rejected by S1 before creating the successor. No new broker endpoint is added:
+preparation uses the existing S8 funds basis and S3 baseline/reconciliation and
+still never places or cancels. The new journal starts with PREPARATION_ORIGIN,
+then its own action history. Its safe export contains only predecessor SHA256,
+prior failure code and event count, not source paths, account IDs or balances.
+Qualifier/exporter source identities continue to identify the changed code.
+
+PowerShell command shape, with an existing reviewed checkout/environment:
+
+```powershell
+$prior = (Resolve-Path -LiteralPath (Read-Host 'Full path of the original failed private.sqlite')).Path
+$next = $prior + '.funds-repair.sqlite'
+$out = Join-Path (Split-Path -Parent $prior) ('prepare-repair-' + [guid]::NewGuid().ToString('N') + '.json')
+python -m market_vault.moomoo_simulation_qualifier prepare --previous-journal $prior --journal $next --output $out
+```
+
+Use the pinned reviewed source via PYTHONPATH as in the earlier instructions;
+this shape alone does not select an interpreter/source checkout. Upload only
+the new JSON, even on failure. Retain both private journals and the old report
+locally. A PREPARED result is only the new pre-order baseline check: orders,
+recovery under real disconnection, costs and strategy-forward qualification
+remain unaccepted. No submit/cancel command is part of this repair instruction.
