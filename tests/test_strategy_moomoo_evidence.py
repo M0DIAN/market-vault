@@ -51,7 +51,7 @@ def test_actual_writer_read_only_export_preserves_unknown_and_duplicate_observat
     reconciliation = next(e for e in report["events"] if e["kind"] == "RECONCILIATION")
     assert reconciliation["cash_residual_usd"] == "-0.01"
     assert reconciliation["position_residuals"] == {"US.SPY": "0"}
-    assert reconciliation["unrelated_position_residual_count"] == 1
+    assert "unrelated_position_residual_count" not in reconciliation
     text = output.read_text()
     for secret in [ID, "sensitive-broker-id", "98765432123456789", "9876543.21", "US.PRIVATE", "private-token"]:
         assert secret not in text
@@ -118,3 +118,12 @@ def test_cli_export_and_help_need_no_sdk_and_emit_no_private_details(tmp_path, c
     command = [sys.executable, "-m", "market_vault.moomoo_simulation_evidence", "--help"]
     result = subprocess.run(command, capture_output=True, text=True, timeout=20)
     assert result.returncode == 0 and "--journal" in result.stdout
+
+
+@pytest.mark.parametrize("code", ["AMBIGUOUS_POSITION", "BROKER_RESPONSE_SCHEMA_MISMATCH",
+                                  "BROKER_ORDER_INTENTION_MISMATCH"])
+def test_fixed_writer_failure_codes_survive_projection(tmp_path, code):
+    path = tmp_path / "p.sqlite"
+    with PaperJournal.create(path, 200) as journal:
+        journal.append("RECOVERY_FAILED", None, error_code=code, error_type="SimulationError")
+    assert evidence.build_evidence(path)["events"][0]["error_code"] == code
