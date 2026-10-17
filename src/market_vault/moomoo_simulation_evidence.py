@@ -248,8 +248,16 @@ def build_evidence(path: Path) -> dict[str, Any]:
         "fees": "NOT_OBSERVED", "cash_flows": "NOT_OBSERVED",
         "scope": "OWNER_LOCAL_JOURNAL_PROJECTION_NOT_BROKER_ATTESTATION",
     }
-    from .moomoo_simulation_observations import summarize
-    report["observation_summary"] = summarize(report)
+    from . import moomoo_simulation_observations as observed_code
+    from . import moomoo_simulation_orders as order_code
+    from . import moomoo_simulation_recovery as recovery_code
+    report["observation_summary"] = observed_code.summarize(report)
+    report["observation_summary_source_sha256_lf"] = {
+        name: hashlib.sha256(Path(module.__file__).read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+        for name, module in (("moomoo_simulation_observations.py", observed_code),
+                             ("moomoo_simulation_orders.py", order_code),
+                             ("moomoo_simulation_recovery.py", recovery_code))
+    }
     return report
 
 

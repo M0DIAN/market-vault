@@ -130,8 +130,10 @@ def summarize(evidence: dict[str, Any]) -> dict[str, Any]:
         last_reconciliation = {key: record[key] for key in (
             "seq", "result", "cash_residual_usd", "position_residuals", "error_code") if key in record}
         last_reconciliation["subsequent_activity_recorded"] = any(
-            e["seq"] > record["seq"] and (e["kind"] in UNCERTAIN | {"SUBMISSION_CALL", "ORDER_OBSERVATION", "ACCOUNT_OBSERVATION"}
-                                          or (e["kind"] == "QUALIFICATION_FINISH" and e.get("result") == "FAILED"))
+            e["seq"] > record["seq"] and (e["kind"] in UNCERTAIN | {"SUBMISSION_CALL", "ORDER_OBSERVATION", "ACCOUNT_OBSERVATION",
+                                                                     "EMERGENCY_STOP", "QUALIFICATION_START"}
+                                          or (e["kind"] == "QUALIFICATION_FINISH" and
+                                              (e.get("result") == "FAILED" or e.get("action") == "stop")))
             for e in events) or any(a["start_seq"] > record["seq"] for a in unresolved_actions)
         last_reconciliation["basis"] = "HISTORICAL_NONATOMIC_COMPARISON_ONLY"
     return {

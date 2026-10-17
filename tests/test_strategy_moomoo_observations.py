@@ -147,3 +147,35 @@ def test_explicit_not_sent_is_distinct_from_unknown_reservation(tmp_path):
         assert build_evidence(path)["observation_summary"]["outcome_counts"]["UNRESOLVED"] == 1
         journal.append("SUBMISSION_NOT_SENT", ID)
         assert build_evidence(path)["observation_summary"]["outcome_counts"]["NOT_SENT"] == 1
+
+
+def test_summary_provenance_changes_when_only_summary_source_changes(tmp_path, monkeypatch):
+    from pathlib import Path
+    from market_vault import moomoo_simulation_observations as observed_code
+
+    path = tmp_path / "p.sqlite"
+    with PaperJournal.create(path, 200):
+        pass
+    first = build_evidence(path)
+    source = Path(observed_code.__file__)
+    copy = tmp_path / "summary_copy.py"
+    copy.write_bytes(source.read_bytes() + b"\n# isolated source-version change\n")
+    monkeypatch.setattr(observed_code, "__file__", str(copy))
+    second = build_evidence(path)
+    assert first["exporter_sha256"] == second["exporter_sha256"]
+    first_sources = first.get("observation_summary_source_sha256_lf", {})
+    second_sources = second.get("observation_summary_source_sha256_lf", {})
+    assert first_sources.get("moomoo_simulation_observations.py") != second_sources.get("moomoo_simulation_observations.py")
+    assert set(first_sources) == {"moomoo_simulation_observations.py", "moomoo_simulation_orders.py",
+                                  "moomoo_simulation_recovery.py"}
+
+
+def test_normal_offline_stop_marks_activity_after_last_reconciliation(broker, tmp_path):
+    assert run(tmp_path, "prepare")[0] == 0
+    before = len(broker.contexts)
+    code, stopped = run(tmp_path, "stop")
+    assert code == 0 and len(broker.contexts) == before
+    assert stopped["evidence"]["stopped"]
+    summary = stopped["evidence"]["observation_summary"]
+    assert summary["last_reconciliation"]["subsequent_activity_recorded"]
+    assert summary["last_reconciliation"]["basis"] == "HISTORICAL_NONATOMIC_COMPARISON_ONLY"

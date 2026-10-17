@@ -143,3 +143,10 @@ and leaves broker qualification unassessed, market slippage/latency unmeasured,
 cost calibration and strategy-forward validation not performed. No strategy TEST
 artifact is created from this manual one-order qualifier. Real observation values
 can only be accepted after the owner's actual run/report, not from CI fixtures.
+
+The summary projection also reports LF-normalized on-disk source hashes for the
+summary module and its direct order/progression helper modules. These supplement
+the exporter hash; they do not attest loaded bytecode or an entire installation.
+The reconciliation's subsequent-activity marker includes successful local stop
+and later action starts. Finishing the same successful check is not itself a
+new account observation, whereas starting another action or stopping is recorded.
