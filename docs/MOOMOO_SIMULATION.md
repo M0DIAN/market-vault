@@ -192,7 +192,10 @@ until the S1 local account probe passes and the bounded paper exercise is ready.
 
 The journal commits the intention before place_order; failure after that boundary
 retains UNKNOWN or a provable NOT_SENT marker. Neither outcome permits resubmission.
-A successful submit is only SUBMISSION_ACKNOWLEDGED, not a fill. Observation
+A sparse SDK response retains its broker ID as an UNVERIFIED query hint; a fresh
+attribution check must pass before that ID can support cancellation. It does not
+permit resubmission or establish a fill. A successful full response is only
+SUBMISSION_ACKNOWLEDGED, not a fill. Observation
 checks exact code/side/quantity/limit/type/remark/order ID. Cancellation requires
 a fresh attributable SUBMITTED/FILLED_PART observation; its response is only
 CANCEL_ACKNOWLEDGED. A cancel timeout remains unknown and is not blindly repeated.
@@ -208,5 +211,5 @@ Additional official interfaces checked 2026-10-17:
 - https://openapi.moomoo.com/moomoo-api-doc/en/trade/get-max-trd-qtys.html
 - https://openapi.moomoo.com/moomoo-api-doc/en/trade/get-order-list.html
 - https://openapi.moomoo.com/moomoo-api-doc/en/trade/modify-order.html
-- https://openapi.moomoo.com/moomoo-api-doc/en/trade/get-deal-list.html
-- https://openapi.moomoo.com/moomoo-api-doc/en/trade/get-history-deal-list.html
+- https://openapi.moomoo.com/moomoo-api-doc/en/trade/get-order-fill-list.html
+- https://openapi.moomoo.com/moomoo-api-doc/en/trade/get-history-order-fill-list.html

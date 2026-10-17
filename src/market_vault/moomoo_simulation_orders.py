@@ -190,7 +190,16 @@ class PaperJournal:
     def bound_order_id(self, intent_id: str) -> str:
         self.intent(intent_id)
         identifiers = {item["order_id"] for item in self.events(intent_id)
-                       if item["kind"] == "SUBMISSION_ACK"}
+                       if item["kind"] in {"SUBMISSION_ACK", "ORDER_OBSERVATION"}}
+        if len(identifiers) != 1:
+            raise SimulationError("SUBMISSION_OUTCOME_UNKNOWN")
+        return identifiers.pop()
+
+    def query_order_id(self, intent_id: str) -> str:
+        self.intent(intent_id)
+        # A sparse placement receipt is a query hint, never cancel authority.
+        identifiers = {item["order_id"] for item in self.events(intent_id)
+                       if item["kind"] in {"SUBMISSION_RECEIPT", "SUBMISSION_ACK", "ORDER_OBSERVATION"}}
         if len(identifiers) != 1:
             raise SimulationError("SUBMISSION_OUTCOME_UNKNOWN")
         return identifiers.pop()
@@ -283,7 +292,14 @@ class PaperExecution:
                 remark=intent.remark, time_in_force=sdk.TimeInForce.DAY,
                 fill_outside_rth=False, session=sdk.Session.RTH,
             )
-            snapshot = order_snapshot(one_row(frame, {"order_id"}), intent)
+            row = one_row(frame, {"order_id"})
+            oid = row["order_id"]
+            if not isinstance(oid, str) or not oid.strip():
+                raise SimulationError("BROKER_ORDER_ID_MISMATCH")
+            # The SDK may return only an ID before its cached order row appears.
+            self.journal.append("SUBMISSION_RECEIPT", intent.intent_id,
+                                order_id=oid, attribution="UNVERIFIED")
+            snapshot = order_snapshot(row, intent)
             self.journal.append("SUBMISSION_ACK", intent.intent_id, **snapshot)
         except (Exception, KeyboardInterrupt) as exc:
             self.journal.append("SUBMISSION_UNKNOWN" if attempted else "SUBMISSION_NOT_SENT",
@@ -294,7 +310,7 @@ class PaperExecution:
 
     def observe(self, intent_id: str) -> dict[str, Any]:
         intent = self.journal.intent(intent_id)
-        oid = self.journal.bound_order_id(intent_id)
+        oid = self.journal.query_order_id(intent_id)
         try:
             frame = self._call("order_list_query", order_id=oid,
                                order_market=self.session._sdk.TrdMarket.US, refresh_cache=True)

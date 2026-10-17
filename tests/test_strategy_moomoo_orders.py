@@ -22,7 +22,7 @@ OTHER_ID = "1123456789abcdef0123456789abcdef"
 def broker(monkeypatch):
     state = SimpleNamespace(calls=[], contexts=[], env="SIMULATE", cash_qty=10,
                             buy_back=0, rows=[], fail_place=None, fail_cancel=False,
-                            fail_query=False, before_place=None)
+                            fail_query=False, before_place=None, sparse_ack=False)
 
     class Context:
         def __init__(self, **kwargs):
@@ -61,6 +61,8 @@ def broker(monkeypatch):
             state.rows = [row]
             if state.fail_place:
                 raise state.fail_place
+            if state.sparse_ack:
+                return 0, pd.DataFrame([{"order_id": row["order_id"]}], columns=list(row))
             return 0, pd.DataFrame(state.rows)
 
         def order_list_query(self, **kwargs):
@@ -281,3 +283,35 @@ def test_preflight_crossing_close_retains_not_sent_intent(broker, tmp_path):
         assert len(journal.intentions()) == 1
         assert journal.events()[-1]["kind"] == "SUBMISSION_NOT_SENT"
         assert not any(method == "place" for method, _ in broker.calls)
+
+
+def test_sparse_ack_retains_queryable_id_without_trusting_attribution(broker, tmp_path):
+    path = tmp_path / "sparse.sqlite"
+    broker.sparse_ack = True
+    with orders.PaperJournal.create(path, 200) as journal, SimulationAccountSession() as session:
+        engine = orders.PaperExecution(session, journal, clock=lambda: NOW)
+        with pytest.raises(SimulationError, match="SUBMISSION_OUTCOME_UNKNOWN"):
+            engine.submit(intent(), execute_simulate=True)
+        with pytest.raises(SimulationError, match="SUBMISSION_OUTCOME_UNKNOWN"):
+            journal.bound_order_id(IDENTIFIER)
+    with orders.PaperJournal(path) as journal, SimulationAccountSession() as session:
+        engine = orders.PaperExecution(session, journal, clock=lambda: NOW)
+        assert engine.observe(IDENTIFIER)["order_id"] == "paper-001"
+        assert journal.bound_order_id(IDENTIFIER) == "paper-001"
+        assert engine.cancel(IDENTIFIER, execute_simulate=True)["result"] == "CANCEL_ACKNOWLEDGED"
+        with pytest.raises(SimulationError, match="NO_RESUBMIT"):
+            engine.submit(intent(), execute_simulate=True)
+    assert [name for name, _ in broker.calls].count("place") == 1
+
+
+def test_unverified_receipt_never_authorizes_cancelling_an_unrelated_order(broker, tmp_path):
+    broker.sparse_ack = True
+    with orders.PaperJournal.create(tmp_path / "sparse.sqlite", 200) as journal, SimulationAccountSession() as session:
+        engine = orders.PaperExecution(session, journal, clock=lambda: NOW)
+        with pytest.raises(SimulationError, match="SUBMISSION_OUTCOME_UNKNOWN"):
+            engine.submit(intent(), execute_simulate=True)
+        broker.rows[0]["remark"] = "unrelated-order"
+        with pytest.raises(SimulationError, match="ORDER_OBSERVATION_UNAVAILABLE"):
+            engine.cancel(IDENTIFIER, execute_simulate=True)
+        assert not any(method == "cancel" for method, _ in broker.calls)
+        assert journal.events()[-1]["kind"] == "ORDER_QUERY_FAILED"
