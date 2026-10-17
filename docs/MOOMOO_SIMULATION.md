@@ -69,9 +69,17 @@ orders owned by this journal. The local runtime journal is separate from market
 catalogs, append-preserving and never automatically reset or migrated.
 
 **Dependency/default:** S1 merged/main verified. First scope US.SPY/US.QQQ,
-whole shares, limit DAY orders, regular session only, no borrowing/shorting,
-no strategy-selected price or automatic live run. Conservative engineering
-limits are recorded explicitly by the executable entry point before use.
+one BUY intention total per journal, exactly one whole share, an owner-entered
+limit price USD 1.00..1000.00 in cents, NORMAL limit/DAY/RTH, adjust_limit=0.
+The same or another ID cannot reset that journal's consumed intention budget,
+even after a timeout, rejection, cancellation or restart. No strategy-selected
+price, SELL, shorting or automatic run. The broker's max_cash_buy preflight must
+cover the share and max_buy_back must be zero; margin buying power is not used.
+This is a preflight, not an atomic broker cash-only guarantee: the owner must
+exclude concurrent/manual account activity during qualification. Caps are per
+journal, not an account-wide capital controller; do not create another journal
+to bypass an unknown outcome. DAY expiration does not liquidate a filled
+position. No intraday-flat or no-overnight-position guarantee is claimed.
 
 **Engineering acceptance:** same intention cannot submit twice; failures after
 submission are UNKNOWN rather than assumed rejected; environment mismatch never
@@ -93,8 +101,12 @@ positions and cash; stop new risk durably, including across process restart.
 **Solution:** reconcile S2 intentions against fresh, explicitly SIMULATE broker
 queries, with duplicate/partial/out-of-order handling and no resend while status
 is unresolved. Preserve broker and local identities in local-only records.
-Compare positions from a recorded baseline and unique fills; show cash residual
-and unobserved fee/cash-flow limits instead of claiming an unexplained match.
+Compare positions from a recorded baseline and per-order cumulative executed
+quantity/average-price observations; never sum repeated cumulative snapshots.
+Official deal_list_query and history_deal_list_query do not support SIMULATE,
+so individual executions, their IDs/times and fees must not be fabricated or
+queried through a REAL fallback. Show cash residual and unobserved fee/cash-flow
+limits instead of claiming an unexplained match.
 Persist stop before cancellation; cancel only attributable working orders.
 Keep stopped state after restart; any local resume is explicit and contingent
 on reconciled state, never inferred from a successful connection.
@@ -155,3 +167,49 @@ The SDK defaults of trading queries/orders must not be relied on: the documented
 place_order and position_list_query defaults are REAL. S1 itself calls only
 get_acc_list, which has no trading-environment argument; its returned environment
 is checked explicitly before the account is accepted.
+
+
+## S2 operator/API boundary
+
+The separate `market_vault.moomoo_simulation_orders` module has `init`, `submit`,
+`observe` and `cancel` actions. It is not called by the GUI or research pipeline.
+Use the reviewed source path and the existing Python environment as for S1.
+`--help` is offline. The following are command shapes, not a preselected trade:
+
+```text
+python -m market_vault.moomoo_simulation_orders init --journal NEW_LOCAL.sqlite
+python -m market_vault.moomoo_simulation_orders submit --journal EXISTING_LOCAL.sqlite --intent-id UUID_HEX --symbol US.SPY --price OWNER_LIMIT --execute-simulate
+python -m market_vault.moomoo_simulation_orders observe --journal EXISTING_LOCAL.sqlite --intent-id SAME_UUID_HEX
+python -m market_vault.moomoo_simulation_orders cancel --journal EXISTING_LOCAL.sqlite --intent-id SAME_UUID_HEX --execute-simulate
+```
+
+Choose the journal path and a 32-character lowercase UUID once; retain both.
+`init` opens no order and pins the verified account locally. Existing journals
+are opened read/write without creation; initialization is exclusive and never
+resets an existing database. Output includes no account ID. A mutating command
+requires `--execute-simulate`; there is no REAL flag. Do not run a broker order
+until the S1 local account probe passes and the bounded paper exercise is ready.
+
+The journal commits the intention before place_order; failure after that boundary
+retains UNKNOWN or a provable NOT_SENT marker. Neither outcome permits resubmission.
+A sparse SDK response retains its broker ID as an UNVERIFIED query hint; a fresh
+attribution check must pass before that ID can support cancellation. It does not
+permit resubmission or establish a fill. A successful full response is only
+SUBMISSION_ACKNOWLEDGED, not a fill. Observation
+checks exact code/side/quantity/limit/type/remark/order ID. Cancellation requires
+a fresh attributable SUBMITTED/FILLED_PART observation; its response is only
+CANCEL_ACKNOWLEDGED. A cancel timeout remains unknown and is not blindly repeated.
+S3 supplies recovery/reconciliation; it is not claimed by these S2 commands.
+
+This journal contains local account identity and order evidence. Do not upload
+it or ordinary OpenD logs to a public repository. Preserve it after a failure;
+never edit metadata, delete it or initialize another journal to retry blindly.
+No market database or Raw/Curated artifact is opened. The first qualifier is
+single-owner/single-controller; no cross-account scheduler or custody promise.
+
+Additional official interfaces checked 2026-10-17:
+- https://openapi.moomoo.com/moomoo-api-doc/en/trade/get-max-trd-qtys.html
+- https://openapi.moomoo.com/moomoo-api-doc/en/trade/get-order-list.html
+- https://openapi.moomoo.com/moomoo-api-doc/en/trade/modify-order.html
+- https://openapi.moomoo.com/moomoo-api-doc/en/trade/get-order-fill-list.html
+- https://openapi.moomoo.com/moomoo-api-doc/en/trade/get-history-order-fill-list.html
