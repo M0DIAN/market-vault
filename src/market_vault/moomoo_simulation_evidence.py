@@ -10,6 +10,7 @@ from contextlib import closing
 from datetime import datetime, timezone
 import hashlib
 import json
+import re
 from pathlib import Path
 import sqlite3
 import sys
@@ -22,6 +23,7 @@ EVENT_KINDS = frozenset({
     "SUBMISSION_UNKNOWN", "SUBMISSION_NOT_SENT", "ORDER_OBSERVATION", "ORDER_QUERY_FAILED",
     "CANCEL_INTENT", "CANCEL_ACK", "CANCEL_UNKNOWN", "RECOVERY_FAILED", "ACCOUNT_OBSERVATION",
     "ACCOUNT_BASELINE", "RECONCILIATION", "EMERGENCY_STOP",
+    "QUALIFICATION_START", "QUALIFICATION_FINISH",
 })
 ORDER_STATES = frozenset({
     "UNSUBMITTED", "WAITING_SUBMIT", "SUBMITTING", "SUBMITTED", "FILLED_PART", "FILLED_ALL",
@@ -31,6 +33,9 @@ ORDER_STATES = frozenset({
 ERROR_TYPES = frozenset({"SimulationError", "RuntimeError", "TimeoutError", "KeyboardInterrupt",
                          "OSError", "OperationalError", "ValueError", "TypeError", "KeyError"})
 ERROR_CODES = frozenset({
+    "QUALIFICATION_FAILED", "QUALIFICATION_PREFLIGHT_BLOCKED",
+    "QUALIFICATION_PREPARATION_REQUIRED", "QUALIFICATION_CANCEL_NOT_CONFIRMED",
+    "QUALIFICATION_OUTPUT_IS_JOURNAL",
     "ACCOUNT_QUERY_FAILED",
     "ACCOUNT_RESIDUAL_UNEXPLAINED",
     "ACCOUNT_SCHEMA_MISMATCH",
@@ -98,6 +103,30 @@ ERROR_CODES = frozenset({
     "UNSUPPORTED_SIMULATION_ENUM",
     "WORKING_STATUS_REGRESSION",
 })
+
+
+RUNTIME_FILES = (
+    "moomoo_simulation.py", "moomoo_sdk.py", "moomoo_simulation_orders.py",
+    "moomoo_simulation_recovery.py", "moomoo_simulation_qualifier.py",
+    "normalization/rth_calendar.py",
+)
+ACTIONS = frozenset({"prepare", "submit", "check", "stop"})
+ACTION_RESULTS = frozenset({"PREPARED", "SUBMISSION_ACKNOWLEDGED", "OBSERVATIONS_MATCH",
+                            "BLOCKED", "STOPPED", "FAILED"})
+
+
+def safe_runtime(value: dict[str, Any]) -> dict[str, Any]:
+    result: dict[str, Any] = {"source_sha256_lf": {}}
+    for key in ("python_version", "sdk_version"):
+        version = value.get(key)
+        if isinstance(version, str) and re.fullmatch(r"[0-9]+(?:\.[0-9]+){1,3}", version):
+            result[key] = version
+    if value.get("sdk_module") in {"moomoo", "futu"}:
+        result["sdk_module"] = value["sdk_module"]
+    for name, digest in value.get("source_sha256_lf", {}).items():
+        if name in RUNTIME_FILES and isinstance(digest, str) and re.fullmatch(r"[0-9a-f]{64}", digest):
+            result["source_sha256_lf"][name] = digest
+    return result
 
 
 def timestamp(value: Any, *, aware: bool) -> str:
@@ -181,6 +210,22 @@ def build_evidence(path: Path) -> dict[str, Any]:
                 residuals = event.get("position_residuals", {})
                 item["position_residuals"] = {code: str(number(qty)) for code, qty in residuals.items()
                                               if code in owned_symbols}
+            if kind in {"QUALIFICATION_START", "QUALIFICATION_FINISH"}:
+                if event.get("action") not in ACTIONS:
+                    raise ValueError("INVALID_QUALIFICATION_ACTION")
+                item["action"] = event["action"]
+                item["runtime"] = safe_runtime(event.get("runtime", {}))
+                item["started_at_utc"] = timestamp(event["started_at_utc"], aware=True)
+                if kind == "QUALIFICATION_FINISH":
+                    if event.get("result") not in ACTION_RESULTS:
+                        raise ValueError("INVALID_QUALIFICATION_RESULT")
+                    if type(event.get("start_seq")) is not int or event["start_seq"] <= 0:
+                        raise ValueError("INVALID_QUALIFICATION_START")
+                    elapsed = number(event["elapsed_ms"])
+                    if elapsed < 0:
+                        raise ValueError("INVALID_QUALIFICATION_DURATION")
+                    item.update(result=event["result"], start_seq=event["start_seq"], elapsed_ms=str(elapsed),
+                                finished_at_utc=timestamp(event["finished_at_utc"], aware=True))
             if "error_type" in event:
                 item["error_type"] = event["error_type"] if event["error_type"] in ERROR_TYPES else "REDACTED_ERROR_TYPE"
             if "error_code" in event:
