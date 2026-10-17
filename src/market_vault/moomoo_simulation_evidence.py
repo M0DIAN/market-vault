@@ -23,7 +23,7 @@ EVENT_KINDS = frozenset({
     "SUBMISSION_UNKNOWN", "SUBMISSION_NOT_SENT", "ORDER_OBSERVATION", "ORDER_QUERY_FAILED",
     "CANCEL_INTENT", "CANCEL_ACK", "CANCEL_UNKNOWN", "RECOVERY_FAILED", "ACCOUNT_OBSERVATION",
     "ACCOUNT_BASELINE", "RECONCILIATION", "EMERGENCY_STOP",
-    "QUALIFICATION_START", "QUALIFICATION_FINISH",
+    "QUALIFICATION_START", "QUALIFICATION_FINISH", "FUNDS_RESPONSE",
 })
 ORDER_STATES = frozenset({
     "UNSUBMITTED", "WAITING_SUBMIT", "SUBMITTING", "SUBMITTED", "FILLED_PART", "FILLED_ALL",
@@ -182,6 +182,11 @@ def build_evidence(path: Path) -> dict[str, Any]:
             "recorded_at_utc": timestamp(event["recorded_at_utc"], aware=True),
         }
         if kind in EVENT_KINDS:
+            if kind == "FUNDS_RESPONSE":
+                from .moomoo_simulation_recovery import FUNDS_DIAGNOSTIC_VALUES
+                for key, allowed in FUNDS_DIAGNOSTIC_VALUES.items():
+                    value = event.get(key)
+                    item[key] = value if isinstance(value, str) and value in allowed else "UNRECOGNIZED"
             if kind in {"SUBMISSION_RECEIPT", "SUBMISSION_ACK", "ORDER_OBSERVATION", "CANCEL_INTENT", "CANCEL_ACK"}:
                 oid = event.get("order_id")
                 if not isinstance(oid, str) or not oid:

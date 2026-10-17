@@ -25,6 +25,47 @@ WORKING = CANCELLABLE | {"UNSUBMITTED", "WAITING_SUBMIT", "SUBMITTING",
                          "CANCELLING_PART", "CANCELLING_ALL"}
 
 
+FUNDS_DIAGNOSTIC_VALUES = {
+    "requested_currency": frozenset({"USD"}),
+    "display_currency": frozenset({"USD", "HKD", "CNH", "JPY", "SGD", "AUD", "CAD", "MYR",
+                                    "NONE", "N/A", "MISSING", "UNAVAILABLE"}),
+    "cash_state": frozenset({"FINITE", "MISSING", "UNAVAILABLE", "INVALID"}),
+    "us_cash_state": frozenset({"FINITE", "MISSING", "UNAVAILABLE", "INVALID"}),
+    "response_shape": frozenset({"SINGLE_ROW", "INVALID_SCHEMA"}),
+}
+
+
+def funds_diagnostic(frame: Any) -> dict[str, str]:
+    """Fixed shape/currency metadata only; no amounts, IDs, raw columns or errors."""
+    from pandas import DataFrame
+
+    result = {"requested_currency": "USD", "display_currency": "MISSING",
+              "cash_state": "MISSING", "us_cash_state": "MISSING",
+              "response_shape": "INVALID_SCHEMA"}
+    if not isinstance(frame, DataFrame) or not frame.columns.is_unique or len(frame) != 1:
+        return result
+    result["response_shape"] = "SINGLE_ROW"
+    row = frame.to_dict("records")[0]
+    currency = row.get("currency")
+    if "currency" in row:
+        result["display_currency"] = (currency if isinstance(currency, str) and currency in
+                                      FUNDS_DIAGNOSTIC_VALUES["display_currency"] else
+                                      "UNAVAILABLE" if currency is None else "UNRECOGNIZED")
+    for key in ("cash", "us_cash"):
+        if key not in row:
+            continue
+        value = row[key]
+        if value is None or (isinstance(value, str) and value in {"N/A", "NONE", ""}):
+            result[key + "_state"] = "UNAVAILABLE"
+        else:
+            try:
+                number(value)
+                result[key + "_state"] = "FINITE"
+            except SimulationError:
+                result[key + "_state"] = "INVALID"
+    return result
+
+
 def records(frame: Any, required: set[str]) -> list[dict[str, Any]]:
     from pandas import DataFrame
 
@@ -145,8 +186,9 @@ class PaperRecovery(PaperExecution):
             if row["position_side"] != "LONG" or qty < 0:
                 raise SimulationError("POSITION_OUTSIDE_LONG_SCOPE")
             positions[code] = str(qty)
-        funds = one_row(self._call("accinfo_query", refresh_cache=True,
-                                   currency=self.session._sdk.Currency.USD), {"cash", "currency"})
+        frame = self._call("accinfo_query", refresh_cache=True, currency=self.session._sdk.Currency.USD)
+        self.journal.append("FUNDS_RESPONSE", None, **funds_diagnostic(frame))
+        funds = one_row(frame, {"cash", "currency"})
         if funds["currency"] != "USD":
             raise SimulationError("CASH_CURRENCY_NOT_USD")
         snapshot = {"started_at_utc": started, "finished_at_utc": self.clock().isoformat(),

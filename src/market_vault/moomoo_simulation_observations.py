@@ -131,7 +131,7 @@ def summarize(evidence: dict[str, Any]) -> dict[str, Any]:
             "seq", "result", "cash_residual_usd", "position_residuals", "error_code") if key in record}
         last_reconciliation["subsequent_activity_recorded"] = any(
             e["seq"] > record["seq"] and (e["kind"] in UNCERTAIN | {"SUBMISSION_CALL", "ORDER_OBSERVATION", "ACCOUNT_OBSERVATION",
-                                                                     "EMERGENCY_STOP", "QUALIFICATION_START"}
+                                                                     "EMERGENCY_STOP", "QUALIFICATION_START", "FUNDS_RESPONSE"}
                                           or (e["kind"] == "QUALIFICATION_FINISH" and
                                               (e.get("result") == "FAILED" or e.get("action") == "stop")))
             for e in events) or any(a["start_seq"] > record["seq"] for a in unresolved_actions)
