@@ -221,6 +221,9 @@ def public_cash_arithmetic(evidence: dict[str, Any], supported: dict[str, Any]) 
             require(len(reservations) <= 1 and all(before < e["seq"] < account for e in reservations))
             gross, selected = orders.number("0"), []
             for reservation in reservations:
+                locators = {e["order"] for e in prefix if e.get("intent") == reservation["intent"]
+                            and "order" in e}
+                require(len(locators) == 1)
                 own = [e for e in prefix if e.get("intent") == reservation["intent"]
                        and e["kind"] == "ORDER_OBSERVATION" and e["seq"] > reservation["seq"]]
                 accepted = []

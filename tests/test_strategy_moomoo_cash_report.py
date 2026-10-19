@@ -125,3 +125,16 @@ def test_public_order_reference_must_match_bracketing_observation(saved):
     saved.write_text(json.dumps(document))
     with pytest.raises(ValueError):
         reader.analyze_report(saved)
+
+
+def test_cash_verification_rejects_observations_for_a_different_receipted_order(saved):
+    document = json.loads(saved.read_bytes())
+    for event in document["evidence"]["events"]:
+        if event["kind"] == "ORDER_OBSERVATION":
+            event["order"] = "order-2"
+    # Receipt/ACK still identify order-1; unchanged arithmetic must not hide this.
+    saved.write_text(json.dumps(document))
+    before = saved.read_bytes()
+    with pytest.raises(ValueError):
+        reader.analyze_report(saved)
+    assert saved.read_bytes() == before
