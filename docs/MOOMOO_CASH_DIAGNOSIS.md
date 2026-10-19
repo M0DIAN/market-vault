@@ -58,3 +58,45 @@ unsupported simulator fee/cash-flow query or REAL fallback to obtain a number.
 No transaction-specific fee evidence is currently available. Independent market
 data, broker latency, market slippage, cost calibration and frozen strategy
 forward validation all retain their existing missing/unperformed status.
+
+## S14 offline saved-report entry
+
+Use the reviewed source and existing Python, with `src` on `PYTHONPATH`:
+
+```text
+python -m market_vault.moomoo_simulation_report --input EXISTING_SANITIZED.json --output NEW_ANALYSIS.json
+```
+
+Accepted inputs are the existing `market_vault_paper_qualification_v1` wrapper
+with available evidence, or a bare `market_vault_paper_evidence_v1` export.
+SQLite databases, incomplete wrappers without evidence and other schemas are
+not supported. UTF-8 with or without BOM is accepted. No SDK, pandas or database
+connection is needed; import and fresh-process execution work without installed
+site packages. Only the explicitly supplied JSON is read; no journal is opened.
+
+The reader validates environment, limits, counts, unique sequence/intent
+ownership, matching operation starts/finishes and declared stop. Wrapper
+result/action must match its final recorded operation. It retains incomplete
+operations in bare evidence without upgrading them. Missing comparison fields
+remain missing; malformed numbers, duplicate JSON keys and inconsistent
+identities are rejected. Extra private keys and embedded summaries are not
+forwarded. The S13 summary is recomputed from allowlisted event data, not copied
+from an old or edited summary. Only declared observations can be analyzed;
+validation cannot authenticate broker activity or independently recompute cash
+from private balances omitted by the original exporter.
+
+Output schema is `market_vault_paper_report_analysis_v1`. `source_declared`
+retains the original action/result/error, safe declared runtime, exporter hash
+and summary-source hashes separately from `analyzer_runtime`. `input_sha256`
+identifies the exact original file bytes, not a broker signature. No historical
+runtime hash is relabeled as this analysis's source identity. The original file
+is not changed and an existing output file is never overwritten.
+
+Exit 0 / ANALYZED means the analysis completed, not that the source's BLOCKED
+result, unexplained cash, missing fees or stopped state passed qualification.
+Exit 1 leaves a static diagnostic; preserve the input. Use a new output name
+only for a valid analysis retry, never another trading journal. This entry has
+no trading or recovery action and cannot grant new-order authority. The owner's
+already supplied report can be processed here without another OpenD session,
+screenshot or account operation. No owner report or runtime values are checked
+into the repository; regression fixtures remain synthetic.
