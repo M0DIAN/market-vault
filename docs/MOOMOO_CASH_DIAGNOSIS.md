@@ -76,7 +76,10 @@ site packages. Only the explicitly supplied JSON is read; no journal is opened.
 
 The reader validates environment, limits, counts, unique sequence/intent
 ownership, matching operation starts/finishes and declared stop. Wrapper
-result/action must match its final recorded operation. It retains incomplete
+result/action must match its final recorded operation. Non-failed finishes also
+need their supporting reconciliation, preparation baseline, submission receipt/ACK
+or persisted stop events; duplicated declarations alone do not establish success.
+It retains incomplete
 operations in bare evidence without upgrading them. Missing comparison fields
 remain missing; malformed numbers, duplicate JSON keys and inconsistent
 identities are rejected. Extra private keys and embedded summaries are not

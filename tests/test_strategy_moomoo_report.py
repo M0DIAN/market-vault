@@ -137,3 +137,33 @@ def test_cli_runs_in_fresh_process_without_site_packages(saved):
                             capture_output=True, text=True, timeout=20)
     assert result.returncode == 0, result.stderr
     assert json.loads(output.read_text())["source_declared"]["result"] == "BLOCKED"
+
+
+@pytest.mark.parametrize("mutation", ["check_result", "check_missing_record", "stop_missing_record",
+                                     "prepare_missing_baseline", "submit_missing_ack"])
+def test_finish_declarations_require_supporting_operation_events(saved, mutation):
+    value = json.loads(saved.read_bytes())
+    evidence = value["evidence"]
+    events = evidence["events"]
+    if mutation == "check_result":
+        value["result"] = events[-1]["result"] = "OBSERVATIONS_MATCH"
+        value.pop("error_code", None)
+        events[-1].pop("error_code", None)
+    else:
+        removed = {"check_missing_record": "RECONCILIATION", "stop_missing_record": "EMERGENCY_STOP",
+                   "prepare_missing_baseline": "ACCOUNT_BASELINE", "submit_missing_ack": "SUBMISSION_ACK"}[mutation]
+        target = next(e["seq"] for e in reversed(events) if e["kind"] == removed)
+        events[:] = [e for e in events if e["seq"] != target]
+        remap = {e["seq"]: index for index, e in enumerate(events, 1)}
+        for event in events:
+            event["seq"] = remap[event["seq"]]
+            if "start_seq" in event:
+                event["start_seq"] = remap[event["start_seq"]]
+        evidence["source_event_count"] = len(events)
+        if mutation == "stop_missing_record":
+            evidence["stopped"] = False
+    saved.write_text(json.dumps(value))
+    before = saved.read_bytes()
+    with pytest.raises(ValueError, match="INCONSISTENT"):
+        reader.analyze_report(saved)
+    assert saved.read_bytes() == before

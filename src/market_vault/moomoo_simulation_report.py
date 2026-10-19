@@ -43,6 +43,32 @@ def declared_runtime(value: Any) -> dict[str, Any]:
     return projection.safe_runtime(value)
 
 
+
+def validate_finish(finish: dict[str, Any], prior: list[dict[str, Any]]) -> None:
+    """A repeated wrapper/finish declaration is not its own supporting event."""
+    if finish["result"] == "FAILED":
+        return  # Failure may occur before any operation-specific response.
+    window = [e for e in prior if e["seq"] > finish["start_seq"]]
+    require(not any(e["kind"] == "QUALIFICATION_START" for e in window))
+    action = finish["action"]
+    compared = [e for e in window if e["kind"] == "RECONCILIATION"]
+    if action in {"check", "prepare"}:
+        expected = "OBSERVATIONS_MATCH" if action == "prepare" else finish["result"]
+        require(bool(compared) and compared[-1]["result"] == expected)
+        if action == "prepare":
+            require(any(e["kind"] == "ACCOUNT_BASELINE" and e["seq"] < compared[-1]["seq"] for e in window))
+    elif action == "submit":
+        acks = [e for e in window if e["kind"] == "SUBMISSION_ACK"]
+        require(len(acks) == 1)
+        ack = acks[0]
+        for kind in ("SUBMISSION_INTENT", "SUBMISSION_CALL", "SUBMISSION_RECEIPT"):
+            require(any(e["kind"] == kind and e["intent"] == ack["intent"] and e["seq"] < ack["seq"]
+                        and (kind != "SUBMISSION_RECEIPT" or e["order"] == ack["order"]) for e in window))
+    else:
+        # qualifier persists stop before QUALIFICATION_START, including offline stop.
+        require(any(e["kind"] == "EMERGENCY_STOP" for e in prior))
+
+
 def _project(evidence: dict[str, Any]) -> dict[str, Any]:
     """Validate the existing public projection; copy only summary-consumed fields."""
     require(evidence.get("schema") == "market_vault_paper_evidence_v1"
@@ -123,6 +149,8 @@ def _project(evidence: dict[str, Any]) -> dict[str, Any]:
             if "error_code" in event:
                 value = event["error_code"]
                 row["error_code"] = value if isinstance(value, str) and value in projection.ERROR_CODES else "REDACTED_ERROR_CODE"
+        if kind == "QUALIFICATION_FINISH":
+            validate_finish(row, safe_events)
         safe_events.append(row)
     require(reserved == aliases)
     require(type(evidence.get("source_event_count")) is int and evidence["source_event_count"] == len(events))
