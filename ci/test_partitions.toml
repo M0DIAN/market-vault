@@ -118,7 +118,12 @@ files = ["test_intraday_experiment.py", "test_strategy_experiment.py"]
 
 [partitions.intraday_saved]
 prefixes = []
-files = ["test_intraday_saved_diagnostics.py"]
+files = [
+  "test_intraday_saved_diagnostics.py",
+  "test_strategy_intraday_forward_reconciliation.py",
+  "test_strategy_intraday_history.py",
+  "test_strategy_intraday_saved_test_forward.py",
+]
 
 [partitions.intraday_final]
 prefixes = [

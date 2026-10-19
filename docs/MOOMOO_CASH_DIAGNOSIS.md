@@ -103,3 +103,31 @@ no trading or recovery action and cannot grant new-order authority. The owner's
 already supplied report can be processed here without another OpenD session,
 screenshot or account operation. No owner report or runtime values are checked
 into the repository; regression fixtures remain synthetic.
+
+## S15 saved/history test ownership balance
+
+After S14 exact-main validation, three existing test files move by explicit
+ownership from `strategy` to the existing `intraday_saved` partition:
+`test_strategy_intraday_history.py`,
+`test_strategy_intraday_forward_reconciliation.py`, and
+`test_strategy_intraday_saved_test_forward.py`. Their saved-history, saved-account
+and saved-TEST forward semantics match that partition. Test contents, fixtures,
+assertions and imports do not change; every job retains the full checkout.
+The broad strategy prefix stays unchanged, with existing exact-file precedence.
+
+The preceding successful FULL runs were rechecked. S13 PR run 39274472793,
+attempt 1, took 686 seconds for strategy and 157 seconds for intraday_saved
+end-to-end. S14 final PR run 39291119877, attempt 1, took 585 and 215 seconds
+respectively (partition test steps 556 and 182 seconds). S13's per-test duration
+log identifies the selected files among the expensive saved/history operations;
+these durations are not treated as complete per-file totals. Moving them can
+repeat some imported fixture setup in a different process, so measured job
+results, not subtraction of selected slow-test entries, decide the outcome.
+
+The partition validator, runner, workflow, eleven job names, concurrency,
+timeouts, required checks and Python 3.14 scope are unchanged. The ownership
+regression still proves the complete discovered-file union with one owner each
+and now requires all four saved-partition files. Compare actual affected PR/main
+job durations after this change; target each below 600 seconds, not a permanent
+runner-speed guarantee. Reuse must not be asserted as a fresh timing measurement.
+No business test is removed, filtered, skipped or weakened by this change.
