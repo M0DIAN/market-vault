@@ -1,6 +1,8 @@
 """S14: the saved public file is enough; no private journal or broker re-query."""
 import hashlib
 import json
+import os
+from pathlib import Path
 import subprocess
 import sys
 
@@ -132,9 +134,11 @@ def test_duplicate_json_keys_and_existing_destinations_are_not_accepted(saved):
 
 def test_cli_runs_in_fresh_process_without_site_packages(saved):
     output = saved.parent / "subprocess.json"
+    # -S bypasses editable-install .pth files; bind only the reviewed source.
+    env = {**os.environ, "PYTHONPATH": str(Path(reader.__file__).resolve().parents[1])}
     result = subprocess.run([sys.executable, "-S", "-m", "market_vault.moomoo_simulation_report",
                              "--input", str(saved), "--output", str(output)],
-                            capture_output=True, text=True, timeout=20)
+                            cwd=saved.parent, env=env, capture_output=True, text=True, timeout=20)
     assert result.returncode == 0, result.stderr
     assert json.loads(output.read_text())["source_declared"]["result"] == "BLOCKED"
 
