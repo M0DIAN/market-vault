@@ -118,7 +118,8 @@ def replay_cash_arithmetic(events: list[dict[str, Any]], reconciliation_seq: int
             preceding = [e for e in queries if e["seq"] < account["seq"]]
             fields = ("order_id", "order_status", "dealt_qty", "dealt_avg_price", "create_time", "updated_time")
             _require(bool(preceding) and all(
-                (key in preceding[-1]) == (key in last) and preceding[-1].get(key) == last.get(key)
+                (key in query) == (key in last) and query.get(key) == last.get(key)
+                for query in [preceding[-1], *[e for e in queries if e["seq"] > account["seq"]]]
                 for key in fields), "ORDER_SNAPSHOT_NOT_STABLE")
             qty, average = _number(last["dealt_qty"]), _number(last["dealt_avg_price"])
             _require(0 <= qty <= 1 and average >= 0 and ((qty == 0 and average == 0)

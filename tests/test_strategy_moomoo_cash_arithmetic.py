@@ -148,3 +148,19 @@ def test_impossible_status_fill_combinations_do_not_become_arithmetic_evidence(s
     result = replay_cash_arithmetic(events, 6)
     assert result["status"] == "UNAVAILABLE"
     assert result["reason"] == "ORDER_EVIDENCE_INCONSISTENT"
+
+
+@pytest.mark.parametrize('contradictory', [True, False])
+def test_all_post_cash_observations_must_remain_stable(contradictory):
+    events = deepcopy(snapshot())
+    extra = dict(events[4])
+    if contradictory:
+        extra.update(order_status='SUBMITTED', dealt_qty='0', dealt_avg_price='0')
+    events.insert(4, extra)
+    events = [dict(e, seq=n) for n, e in enumerate(events, 1)]
+    result = replay_cash_arithmetic(events, 7)
+    assert result['status'] == ('UNAVAILABLE' if contradictory else 'RECOMPUTED_MATCH')
+    if contradictory:
+        assert result['reason'] == 'ORDER_SNAPSHOT_NOT_STABLE'
+    else:
+        assert Decimal(result['gross_buy_notional_usd']) == 250
