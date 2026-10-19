@@ -6,6 +6,7 @@ agreement does not attribute a fee, reconcile an account, or authorize an order.
 """
 from __future__ import annotations
 
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -114,9 +115,32 @@ def replay_cash_arithmetic(events: list[dict[str, Any]], reconciliation_seq: int
             for key in ("order_id", "order_status", "dealt_qty", "dealt_avg_price", "updated_time"):
                 _require(key in order and key in last and order[key] == last[key],
                          "ORDER_EVIDENCE_INCONSISTENT")
+            preceding = [e for e in queries if e["seq"] < account["seq"]]
+            fields = ("order_id", "order_status", "dealt_qty", "dealt_avg_price", "create_time", "updated_time")
+            _require(bool(preceding) and all(
+                (key in preceding[-1]) == (key in last) and preceding[-1].get(key) == last.get(key)
+                for key in fields), "ORDER_SNAPSHOT_NOT_STABLE")
             qty, average = _number(last["dealt_qty"]), _number(last["dealt_avg_price"])
             _require(0 <= qty <= 1 and average >= 0 and ((qty == 0 and average == 0)
                      or (qty > 0 and average > 0)), "ORDER_EVIDENCE_INCONSISTENT")
+            # The frozen v1 journal's complete_snapshot status/fill contract.
+            # Work only on its allowlisted cumulative fields, not fabricated SDK rows.
+            unfilled = {"UNSUBMITTED", "WAITING_SUBMIT", "SUBMITTING", "SUBMITTED"}
+            known = unfilled | {"FILLED_PART", "FILLED_ALL", "CANCELLING_PART", "CANCELLING_ALL",
+                                "CANCELLED_PART", "CANCELLED_ALL", "FAILED", "DISABLED", "DELETED"}
+            status = last["order_status"]
+            _require(isinstance(status, str) and status in known
+                     and (status != "FILLED_ALL" or qty == 1)
+                     and (status not in {"FILLED_PART", "CANCELLED_PART"} or 0 < qty < 1)
+                     and (status not in unfilled | {"CANCELLED_ALL", "FAILED"} or qty == 0),
+                     "ORDER_EVIDENCE_INCONSISTENT")
+            _require(isinstance(last["order_id"], str) and bool(last["order_id"].strip())
+                     and isinstance(last["updated_time"], str) and bool(last["updated_time"]),
+                     "ORDER_EVIDENCE_INCONSISTENT")
+            try:
+                datetime.fromisoformat(last["updated_time"])
+            except ValueError:
+                raise _Unavailable("ORDER_EVIDENCE_INCONSISTENT") from None
             gross += qty * average
             observation_seqs.append(last["seq"])
         before, after = _number(baseline.get("cash")), _number(account.get("cash"))

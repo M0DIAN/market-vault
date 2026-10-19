@@ -117,3 +117,34 @@ def test_zero_intention_preparation_has_zero_debit_not_missing_order():
     assert result["status"] == "RECOMPUTED_MATCH"
     assert Decimal(result["gross_buy_notional_usd"]) == 0
     assert result["order_observation_seqs"] == []
+
+
+@pytest.mark.parametrize("change", ["missing", "changed_fill", "changed_time"])
+def test_order_observations_must_bracket_cash_with_identical_snapshot(change):
+    events = deepcopy(snapshot())
+    if change == "missing":
+        events[2]["kind"] = "SUBMISSION_ACK"
+    elif change == "changed_fill":
+        events[2].update(order_status="SUBMITTED", dealt_qty="0", dealt_avg_price="0")
+    else:
+        events[2]["updated_time"] = "2026-01-05T09:59:59"
+    result = replay_cash_arithmetic(events, 6)
+    assert result["status"] == "UNAVAILABLE"
+    assert result["reason"] == "ORDER_SNAPSHOT_NOT_STABLE"
+
+
+@pytest.mark.parametrize("state,quantity,average", [
+    ("FILLED_ALL", "0", "0"), ("SUBMITTED", "1", "250.00"),
+    ("FILLED_PART", "1", "250.00"), ("CANCELLED_PART", "0", "0"),
+    ("UNRECOGNIZED", "1", "250.00"), ("FAILED", "1", "250.00"),
+])
+def test_impossible_status_fill_combinations_do_not_become_arithmetic_evidence(state, quantity, average):
+    events = deepcopy(snapshot())
+    for item in (events[2], events[4], events[5]["orders"][0]):
+        item.update(order_status=state, dealt_qty=quantity, dealt_avg_price=average)
+    # Make the stored arithmetic match even an impossible zero-quantity order.
+    if quantity == "0":
+        events[5].update(cash_expected_before_unobserved_fees_usd="1000.00", cash_residual_usd="-252.20")
+    result = replay_cash_arithmetic(events, 6)
+    assert result["status"] == "UNAVAILABLE"
+    assert result["reason"] == "ORDER_EVIDENCE_INCONSISTENT"
