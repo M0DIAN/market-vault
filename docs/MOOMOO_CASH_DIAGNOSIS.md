@@ -131,3 +131,159 @@ and now requires all four saved-partition files. Compare actual affected PR/main
 job durations after this change; target each below 600 seconds, not a permanent
 runner-speed guarantee. Reuse must not be asserted as a fresh timing measurement.
 No business test is removed, filtered, skipped or weakened by this change.
+
+## S16-S18: replay the original stopped journal, not another trade
+
+The 2026-10-20 JST package was fixed before implementation in PR #376. S16
+independently replays recorded cash arithmetic; S17 connects that replay to the
+existing exporter and saved-report analyzer; S18 applies those entries to the
+owner's original stopped journal. Each dependent implementation follows the
+previous item's independent review, required PR CI, squash and exact-main CI.
+S16 and S17 source deliveries are #376 and #377. No existing trading, stop,
+reconciliation tolerance, journal schema or CI policy changes in this package.
+
+| Item | Goal / technical path | Defaults / dependency | Acceptance and exclusions |
+| --- | --- | --- | --- |
+| S16 | Derive recorded cash change plus one cumulative owned BUY debit, then compare with the original expected cash/residual. | Same recognized USD basis; existing v1 records; missing or contradictory supporting observations remain unavailable. | Known arithmetic, once-only cumulative quantities and contradictory-record tests. Pure computation, not fee attribution or account readiness. |
+| S17 | Add replay terms to the existing read-only export; independently check the public gross debit/equation in the existing JSON analyzer. | After S16 verified main; additive fields, old reports NOT_RECORDED; original result/stop/runtime preserved. | Actual exporter-to-analyzer entry tests and altered-term rejection. No new database, broker request, strategy, UI or trading authority. |
+| S18 | Export the already-existing stopped original journal once, analyze its actual terms and narrow the remaining discrepancy. | After S17 verified main; owner-local original journal, no new preparation/order/account query. | Actual original-record comparison with source bytes/stop preserved. A guide or synthetic test does not satisfy this observed acceptance. No guessed fees, tolerance waiver, reset/resume, REAL, deployment, calibration or forward acceptance. |
+
+**S18 observed qualification remains NOT_RUN until that original-record export
+is supplied and inspected.** The earlier sanitized report omitted baseline and
+current private cash, so its residual cannot be backsolved and called an
+independent replay. The original private journal is not available to this chat.
+Instruction delivery is separate from observed qualification; do not close the
+whole package merely because this guide merges.
+
+### Reading the two different results
+
+The export's `cash_arithmetic.status=RECOMPUTED_MATCH` means the recorded private
+cash change and owned gross debit reproduce the original expected cash/residual.
+`RECOMPUTED_MISMATCH` identifies inconsistent recorded arithmetic; `UNAVAILABLE`
+means supporting records do not suffice. Only cash differences, not account
+balances or raw IDs, are exported. Prefix sequence references retain historical
+scope; later events do not rewrite earlier comparisons.
+
+The analysis's `PUBLIC_EQUATION_VERIFIED` checks the public cumulative debit and
+cash-change-plus-debit equation. Its cash delta and private expected-cash-match
+flag remain exporter declarations, not independently authenticated balances or
+broker evidence. It can coexist with exporter RECOMPUTED_MISMATCH. Old reports
+without terms remain NOT_RECORDED. Missing basis/comparison support remains
+UNAVAILABLE; altered supported terms are rejected. Original BLOCKED, unattributed
+cash and sticky stop remain unchanged even when both arithmetic checks agree.
+
+### Owner-local one-time export (PowerShell)
+
+Close journal writers first. Select the SAME stopped journal that produced the
+first-order report, not its earlier failed preparation journal. Keep all original
+files. No new market session, quote, order, cancellation, reset or OpenD connection
+is needed. The code fetch below needs GitHub access; the two Python actions are
+then offline. Use an existing trusted Git checkout and working Python 3.11+.
+
+This creates a unique detached source worktree at S17's verified main commit,
+without switching/resetting the existing checkout or installing a package. Git
+objects/worktree metadata and new temporary source/report files are written;
+existing account data is not deliberately modified. Do not edit the new source
+or run another writer concurrently. The checks are local correspondence checks,
+not independent process attestation. The journal-shape guard cannot prove that
+the owner selected the intended file; compare its exported prefix with the old
+report before accepting observations.
+
+Paste the complete block into PowerShell. Inputs are requested at runtime, not
+placeholder paths. Any error stops this operation; retain files for diagnosis.
+
+```powershell
+& {
+    $ErrorActionPreference = 'Stop'
+    $pin = '5bff326145a1a1672987bcfb0677baac8dfe292c'
+    $repo = (Resolve-Path -LiteralPath (Read-Host 'Existing market-vault Git checkout path').Trim('"')).Path
+    $python = (Resolve-Path -LiteralPath (Read-Host 'Working python.exe full path').Trim('"')).Path
+    $journal = (Resolve-Path -LiteralPath (Read-Host 'SAME stopped first-order SQLite journal path').Trim('"')).Path
+    if (!(Test-Path -LiteralPath $repo -PathType Container) -or
+        !(Test-Path -LiteralPath $python -PathType Leaf) -or
+        !(Test-Path -LiteralPath $journal -PathType Leaf)) { throw 'INVALID_INPUT_PATH' }
+    $null = Get-Command git -ErrorAction Stop
+    $origin = git -C $repo remote get-url origin
+    if ($LASTEXITCODE -ne 0 -or $origin -notmatch '^(https://github\.com/|git@github\.com:|ssh://git@github\.com/)M0DIAN/market-vault(?:\.git)?/?$') {
+        throw 'EXPECTED_MARKET_VAULT_ORIGIN'
+    }
+    $codeRoot = Join-Path $env:TEMP ('mv-s18-' + [guid]::NewGuid().ToString('N'))
+    git -C $repo fetch --no-tags --no-recurse-submodules origin $pin
+    if ($LASTEXITCODE -ne 0) { throw 'SOURCE_FETCH_FAILED' }
+    git -C $repo worktree add --detach $codeRoot $pin
+    if ($LASTEXITCODE -ne 0) { throw 'SOURCE_WORKTREE_FAILED' }
+    $head = git -C $codeRoot rev-parse HEAD
+    if ($LASTEXITCODE -ne 0 -or $head -ne $pin) { throw 'SOURCE_PIN_MISMATCH' }
+    git -C $codeRoot diff --quiet HEAD -- src
+    if ($LASTEXITCODE -ne 0) { throw 'SOURCE_CHANGED' }
+    $src = Join-Path $codeRoot 'src'
+    $token = [guid]::NewGuid().ToString('N')
+    $export = Join-Path (Split-Path -Parent $journal) ('cash-export-' + $token + '.json')
+    $analysis = Join-Path (Split-Path -Parent $journal) ('cash-analysis-' + $token + '.json')
+    $before = (Get-FileHash -LiteralPath $journal -Algorithm SHA256).Hash
+    $runner = @'
+from pathlib import Path
+import sys
+try:
+    if len(sys.argv) != 5:
+        raise ValueError('INVALID_ARGUMENTS')
+    src, mode, source, output = Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3]), Path(sys.argv[4])
+    if not src.is_dir() or not source.is_file() or output.exists():
+        raise ValueError('INVALID_PATHS')
+    sys.path.insert(0, str(src.resolve()))
+    if mode == 'export':
+        from market_vault import moomoo_simulation_evidence as entry
+        _, intentions, events = entry.read_journal(source)
+        if len(intentions) != 1 or not any(e['kind'] == 'EMERGENCY_STOP' for e in events):
+            raise ValueError('EXPECTED_STOPPED_ORDER_JOURNAL')
+        flag = '--journal'
+    elif mode == 'analyze':
+        from market_vault import moomoo_simulation_report as entry
+        flag = '--input'
+    else:
+        raise ValueError('INVALID_ACTION')
+    result = entry.main([flag, str(source), '--output', str(output)])
+except (Exception, KeyboardInterrupt):
+    print('S18_OFFLINE_ACTION_FAILED: preserve all files', file=sys.stderr)
+    raise SystemExit(1)
+raise SystemExit(result)
+'@
+    & $python -I -S -c $runner $src export $journal $export
+    $exportExit = $LASTEXITCODE
+    if ((Get-FileHash -LiteralPath $journal -Algorithm SHA256).Hash -ne $before) {
+        throw 'JOURNAL_CHANGED_PRESERVE_ALL_FILES'
+    }
+    if ($exportExit -ne 0) { throw 'OFFLINE_EXPORT_FAILED_PRESERVE_FILES' }
+    & $python -I -S -c $runner $src analyze $export $analysis
+    if ($LASTEXITCODE -ne 0) { throw 'OFFLINE_ANALYSIS_FAILED_PRESERVE_FILES' }
+    if ((Get-FileHash -LiteralPath $journal -Algorithm SHA256).Hash -ne $before) {
+        throw 'JOURNAL_CHANGED_PRESERVE_ALL_FILES'
+    }
+    Write-Host 'OFFLINE_FILES_CREATED; S18_OBSERVED_ACCEPTANCE=PENDING; NEW_ORDERS_AUTHORIZED=false'
+    Write-Host "Review and return only the sanitized export: $export"
+    Write-Host "Keep the analysis and source locally: $analysis ; $codeRoot"
+}
+```
+
+No output is overwritten. A missing journal or an active/corrupt unsupported
+journal must be diagnosed without deleting, renaming, migrating or recreating it.
+If fetching or source validation fails, stop rather than run an older installed
+copy. Do not change the pin or install/upgrade the SDK to make this exercise run.
+The two inline invocations reuse existing entry functions; they are not a new
+permanent wrapper, nor a claim that this complete PowerShell block ran on the
+owner's Windows machine during engineering delivery.
+
+Review and return only the new `cash-export-*.json` in the private development
+conversation. Keep the analysis, SQLite, original reports and raw-ID mapping
+local; do not upload full OpenD logs, account balances or the database. The export
+includes own-order terms and cash differences already needed for diagnosis.
+Actual acceptance compares its original event prefix/result/stop with the earlier
+report, separates private-replay and public-equation conclusions, and records any
+remaining unavailable or contradictory observations. Producer source identity
+remains distinct from the runtime that originally submitted the order.
+
+If actual arithmetic agrees but a nonzero residual remains, its cause is still
+unattributed. Transaction-specific fee/cash-flow evidence would be needed to
+explain it; do not substitute a fee schedule or another trade. Missing external
+evidence is a real stop point, not a reason to build another diagnostic system
+or silently relax reconciliation. No result here permits resuming the account.
