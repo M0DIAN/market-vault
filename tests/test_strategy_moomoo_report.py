@@ -167,3 +167,29 @@ def test_finish_declarations_require_supporting_operation_events(saved, mutation
     with pytest.raises(ValueError, match="INCONSISTENT"):
         reader.analyze_report(saved)
     assert saved.read_bytes() == before
+
+
+@pytest.mark.parametrize("mode", ["blocked", "missing", "late"])
+def test_submit_success_requires_earlier_operation_local_preflight(saved, mode):
+    value = json.loads(saved.read_bytes())
+    evidence = value["evidence"]
+    events = evidence["events"]
+    start = next(e for e in events if e["kind"] == "QUALIFICATION_START" and e["action"] == "submit")
+    end = next(e for e in events if e["kind"] == "QUALIFICATION_FINISH" and e["action"] == "submit")
+    preflight = next(e for e in events if e["kind"] == "RECONCILIATION" and start["seq"] < e["seq"] < end["seq"])
+    if mode == "blocked":
+        preflight["result"] = "BLOCKED"
+        preflight["error_code"] = "ACCOUNT_RESIDUAL_UNEXPLAINED"
+    else:
+        events.remove(preflight)
+        if mode == "late":
+            events.insert(events.index(end), preflight)
+        remap = {e["seq"]: index for index, e in enumerate(events, 1)}
+        for event in events:
+            event["seq"] = remap[event["seq"]]
+            if "start_seq" in event:
+                event["start_seq"] = remap[event["start_seq"]]
+        evidence["source_event_count"] = len(events)
+    saved.write_text(json.dumps(value))
+    with pytest.raises(ValueError, match="INCONSISTENT"):
+        reader.analyze_report(saved)

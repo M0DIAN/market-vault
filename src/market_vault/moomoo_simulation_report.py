@@ -58,6 +58,9 @@ def validate_finish(finish: dict[str, Any], prior: list[dict[str, Any]]) -> None
         if action == "prepare":
             require(any(e["kind"] == "ACCOUNT_BASELINE" and e["seq"] < compared[-1]["seq"] for e in window))
     elif action == "submit":
+        reservations = [e for e in window if e["kind"] == "SUBMISSION_INTENT"]
+        require(len(compared) == 1 and compared[0]["result"] == "OBSERVATIONS_MATCH"
+                and len(reservations) == 1 and compared[0]["seq"] < reservations[0]["seq"])
         acks = [e for e in window if e["kind"] == "SUBMISSION_ACK"]
         require(len(acks) == 1)
         ack = acks[0]
