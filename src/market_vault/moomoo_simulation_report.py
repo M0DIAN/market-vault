@@ -18,6 +18,7 @@ from . import moomoo_simulation_evidence as projection
 from . import moomoo_simulation_observations as observations
 from . import moomoo_simulation_orders as orders
 from . import moomoo_simulation_recovery as recovery
+from . import moomoo_simulation_cash as cash_code
 
 ORDER_EVENTS = frozenset({"SUBMISSION_RECEIPT", "SUBMISSION_ACK", "ORDER_OBSERVATION",
                           "CANCEL_INTENT", "CANCEL_ACK"})
@@ -118,6 +119,9 @@ def _project(evidence: dict[str, Any]) -> dict[str, Any]:
                 for key in ("create_time", "updated_time"):
                     if event.get(key):
                         row[key] = projection.timestamp(event[key], aware=False)
+            if kind in {"ACCOUNT_BASELINE", "ACCOUNT_OBSERVATION"} and "cash_basis" in event:
+                value = event["cash_basis"]
+                row["cash_basis"] = value if isinstance(value, str) and value in recovery.CASH_BASES else "UNVERIFIED"
             if kind == "RECONCILIATION":
                 require(event.get("result") in {"BLOCKED", "OBSERVATIONS_MATCH"})
                 row["result"] = event["result"]
@@ -164,6 +168,101 @@ def _project(evidence: dict[str, Any]) -> dict[str, Any]:
     return dict(events=safe_events, intentions=safe_intents, unrecognized_event_count=unknown, stopped=stopped)
 
 
+def public_cash_arithmetic(evidence: dict[str, Any], supported: dict[str, Any]) -> list[dict[str, Any]]:
+    """Check public terms, not the omitted private balances or a broker account.
+
+    The exported cash delta and expected-cash-match flag remain declarations.
+    Gross cumulative BUY debit and the public equation are independently checked.
+    Original reconciliation, stop and fee/cash-flow uncertainty are never changed.
+    """
+    results = []
+    for raw, recorded in zip(evidence["events"], supported["events"]):
+        if recorded["kind"] != "RECONCILIATION":
+            continue
+        row = {"reconciliation_seq": recorded["seq"], "status": "NOT_RECORDED",
+               "reason": None, "scope": "PUBLIC_EQUATION_NOT_PRIVATE_BALANCE_REPLAY",
+               "fees": "NOT_OBSERVED", "cash_flows": "NOT_OBSERVED",
+               "new_orders_authorized": False}
+        results.append(row)
+        if "cash_arithmetic" not in raw:
+            continue
+        terms = raw["cash_arithmetic"]
+        require(isinstance(terms, dict) and isinstance(terms.get("status"), str) and terms["status"] in {
+            "UNAVAILABLE", "RECOMPUTED_MATCH", "RECOMPUTED_MISMATCH"})
+        require(terms.get("scope") == cash_code.SCOPE and terms.get("fees") == "NOT_OBSERVED"
+                 and terms.get("cash_flows") == "NOT_OBSERVED"
+                 and terms.get("new_orders_authorized") is False)
+        if terms["status"] == "UNAVAILABLE":
+            row.update(status="UNAVAILABLE", reason="EXPORTER_REPLAY_UNAVAILABLE")
+            continue
+        # Older reports with removed/unrecorded comparison support still get the
+        # existing diagnosis; do not impute a basis or residual from new claims.
+        if ("cash_residual_usd" not in recorded
+                or recorded.get("cash_basis") not in recovery.CASH_BASES
+                or recorded.get("baseline_cash_basis") != recorded.get("cash_basis")):
+            row.update(status="UNAVAILABLE", reason="PUBLIC_COMPARISON_SUPPORT_MISSING")
+            continue
+        try:
+            basis = terms["cash_basis"]
+            before, account = terms["baseline_seq"], terms["account_observation_seq"]
+            require(type(before) is int and type(account) is int
+                     and 0 < before < account < recorded["seq"])
+            prefix = supported["events"][:recorded["seq"] - 1]
+            baselines = [e for e in prefix if e["kind"] == "ACCOUNT_BASELINE"]
+            accounts = [e for e in prefix if e["kind"] == "ACCOUNT_OBSERVATION"]
+            require(len(baselines) == 1 and bool(accounts) and baselines[0]["seq"] == before
+                     and accounts[-1]["seq"] == account and basis == recorded["cash_basis"])
+            # Missing legacy snapshot labels cannot authenticate the private basis.
+            if any(e.get("cash_basis") is None for e in (baselines[0], accounts[-1])):
+                row.update(status="UNAVAILABLE", reason="PUBLIC_COMPARISON_SUPPORT_MISSING")
+                continue
+            require(baselines[0]["cash_basis"] == accounts[-1]["cash_basis"] == basis)
+            reservations = [e for e in prefix if e["kind"] == "SUBMISSION_INTENT"]
+            require(len(reservations) <= 1 and all(before < e["seq"] < account for e in reservations))
+            gross, selected = orders.number("0"), []
+            for reservation in reservations:
+                locators = {e["order"] for e in prefix if e.get("intent") == reservation["intent"]
+                            and "order" in e}
+                require(len(locators) == 1)
+                own = [e for e in prefix if e.get("intent") == reservation["intent"]
+                       and e["kind"] == "ORDER_OBSERVATION" and e["seq"] > reservation["seq"]]
+                accepted = []
+                for event in own:
+                    snapshot = observations._observation(event, 1)  # Existing public projection contract.
+                    recovery.check_progress(snapshot, accepted)
+                    accepted.append(snapshot)
+                left = [e for e in own if e["seq"] < account]
+                right = [e for e in own if e["seq"] > account]
+                require(bool(left) and bool(right))
+                fields = ("order", "order_status", "dealt_qty", "dealt_avg_price", "create_time", "updated_time")
+                require(all(e.get(key) == right[-1].get(key) for e in [left[-1], *right]
+                             for key in fields))
+                gross += orders.number(right[-1]["dealt_qty"]) * orders.number(right[-1]["dealt_avg_price"])
+                selected.append(right[-1]["seq"])
+            declared_seqs = terms["order_observation_seqs"]
+            require(isinstance(declared_seqs, list) and all(type(n) is int for n in declared_seqs)
+                     and declared_seqs == selected)
+            delta = orders.number(terms["observed_cash_change_usd"])
+            residual = delta + gross
+            original = orders.number(recorded["cash_residual_usd"])
+            expected_flag = terms["recorded_expected_cash_matches"]
+            require(type(expected_flag) is bool and orders.number(terms["gross_buy_notional_usd"]) == gross
+                     and orders.number(terms["recomputed_cash_residual_usd"]) == residual
+                     and orders.number(terms["recorded_cash_residual_usd"]) == original)
+            declared_match = "RECOMPUTED_MATCH" if expected_flag and original == residual else "RECOMPUTED_MISMATCH"
+            require(terms["status"] == declared_match)
+            row.update(status="PUBLIC_EQUATION_VERIFIED", exporter_replay_status=declared_match,
+                       cash_basis=basis, baseline_seq=before, account_observation_seq=account,
+                       order_observation_seqs=selected, gross_buy_notional_usd=str(gross),
+                       cash_change_declared_usd=str(delta), recomputed_cash_residual_usd=str(residual),
+                       recorded_cash_residual_usd=str(original), recorded_residual_matches=original == residual,
+                       expected_cash_match_declared=expected_flag,
+                       private_cash_change="EXPORTER_DECLARATION_NOT_INDEPENDENTLY_VERIFIED")
+        except (KeyError, TypeError, ValueError, RuntimeError):
+            raise ValueError("PAPER_REPORT_CASH_TERMS_MISMATCH") from None
+    return results
+
+
 def analyze_report(path: Path) -> dict[str, Any]:
     """Recompute S13 from one immutable input, not from its embedded summary."""
     raw = path.read_bytes()
@@ -201,7 +300,11 @@ def analyze_report(path: Path) -> dict[str, Any]:
         key: value for key, value in declared_sources.items()
         if key in {"moomoo_simulation_observations.py", "moomoo_simulation_orders.py", "moomoo_simulation_recovery.py"}
         and isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value)}
-    modules = (sys.modules[__name__], projection, observations, orders, recovery)
+    if "cash_arithmetic_source_sha256_lf" in evidence:
+        digest = evidence["cash_arithmetic_source_sha256_lf"]
+        require(isinstance(digest, str) and re.fullmatch(r"[0-9a-f]{64}", digest) is not None)
+        original["cash_arithmetic_source_sha256_lf"] = digest
+    modules = (sys.modules[__name__], projection, observations, orders, recovery, cash_code)
     return {
         "schema": "market_vault_paper_report_analysis_v1", "analysis_status": "ANALYZED",
         "input_sha256": hashlib.sha256(raw).hexdigest(), "source_declared": original,
@@ -209,7 +312,8 @@ def analyze_report(path: Path) -> dict[str, Any]:
             Path(m.__file__).name: hashlib.sha256(Path(m.__file__).read_bytes().replace(b"\r\n", b"\n")).hexdigest()
             for m in modules}},
         "analyzed_at_utc": datetime.now(timezone.utc).isoformat(),
-        "observation_summary": observations.summarize(supported), "embedded_summary_used": False,
+        "observation_summary": observations.summarize(supported),
+        "cash_arithmetic": public_cash_arithmetic(evidence, supported), "embedded_summary_used": False,
         "scope": "OFFLINE_REANALYSIS_OF_DECLARED_REPORT_NOT_NEW_BROKER_OBSERVATIONS",
         "broker_qualification": "NOT_ASSESSED", "new_orders_authorized": False,
     }
