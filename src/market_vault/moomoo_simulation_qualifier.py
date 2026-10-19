@@ -249,6 +249,12 @@ def main(argv: list[str] | None = None) -> int:
             json.dump(report, stream, ensure_ascii=False, indent=2, allow_nan=False)
             stream.write("\n")
         print(f"RESULT={report['result']}; BROKER_QUALIFICATION=NOT_ASSESSED")
+        evidence = report.get("evidence")
+        if evidence is not None:
+            from .moomoo_simulation_observations import format_diagnosis
+            print(format_diagnosis(evidence["observation_summary"]))
+        else:
+            print("RECORDED_ONLY: DIAGNOSIS_UNAVAILABLE; NEW_ORDERS_AUTHORIZED=false")
         return code
     except (Exception, KeyboardInterrupt):
         print("QUALIFICATION_OR_REPORT_FAILED: keep the journal; do not resubmit; use check/stop", file=sys.stderr)
