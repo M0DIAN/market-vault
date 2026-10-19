@@ -17,6 +17,7 @@ import sys
 from typing import Any
 
 from .moomoo_simulation_orders import BuyIntent, LIMITS, SCHEMA, number
+from . import moomoo_simulation_cash as cash_code
 
 EVENT_KINDS = frozenset({
     "SUBMISSION_INTENT", "SUBMISSION_CALL", "SUBMISSION_RECEIPT", "SUBMISSION_ACK",
@@ -223,6 +224,7 @@ def build_evidence(path: Path) -> dict[str, Any]:
                     item[key] = timestamp(event[key], aware=True)
                 item["atomic_snapshot"] = False
             if kind == "RECONCILIATION":
+                item["cash_arithmetic"] = cash_code.replay_cash_arithmetic(events, event["seq"])
                 item["result"] = ("OBSERVATIONS_MATCH" if event.get("result") == "OBSERVATIONS_MATCH" else "BLOCKED")
                 if "cash_residual_usd" in event:
                     item["cash_residual_usd"] = str(number(event["cash_residual_usd"]))
@@ -261,6 +263,8 @@ def build_evidence(path: Path) -> dict[str, Any]:
         "journal_created_at_utc": timestamp(meta["created_at_utc"], aware=True),
         "exported_at_utc": datetime.now(timezone.utc).isoformat(),
         "exporter_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        "cash_arithmetic_source_sha256_lf": hashlib.sha256(
+            Path(cash_code.__file__).read_bytes().replace(b"\r\n", b"\n")).hexdigest(),
         "limits": dict(LIMITS),
         "intentions": [{"intent": aliases[i.intent_id], "symbol": i.symbol, "qty": i.qty,
                         "limit_price": i.price, "side": "BUY"} for i in intents],
