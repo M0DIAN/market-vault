@@ -19,6 +19,7 @@ from . import moomoo_simulation_observations as observations
 from . import moomoo_simulation_orders as orders
 from . import moomoo_simulation_recovery as recovery
 from . import moomoo_simulation_cash as cash_code
+from . import moomoo_paper_fees as fee_code
 
 ORDER_EVENTS = frozenset({"SUBMISSION_RECEIPT", "SUBMISSION_ACK", "ORDER_OBSERVATION",
                           "CANCEL_INTENT", "CANCEL_ACK"})
@@ -263,8 +264,10 @@ def public_cash_arithmetic(evidence: dict[str, Any], supported: dict[str, Any]) 
     return results
 
 
-def analyze_report(path: Path) -> dict[str, Any]:
+def analyze_report(path: Path, *, paper_fee_usd: str | None = None) -> dict[str, Any]:
     """Recompute S13 from one immutable input, not from its embedded summary."""
+    if paper_fee_usd is not None:
+        fee_code.fee_amount(paper_fee_usd)
     raw = path.read_bytes()
     document = json.loads(raw.decode("utf-8-sig"), object_pairs_hook=object_pairs,
                           parse_constant=lambda _: require(False))
@@ -304,8 +307,8 @@ def analyze_report(path: Path) -> dict[str, Any]:
         digest = evidence["cash_arithmetic_source_sha256_lf"]
         require(isinstance(digest, str) and re.fullmatch(r"[0-9a-f]{64}", digest) is not None)
         original["cash_arithmetic_source_sha256_lf"] = digest
-    modules = (sys.modules[__name__], projection, observations, orders, recovery, cash_code)
-    return {
+    modules = (sys.modules[__name__], projection, observations, orders, recovery, cash_code, fee_code)
+    result = {
         "schema": "market_vault_paper_report_analysis_v1", "analysis_status": "ANALYZED",
         "input_sha256": hashlib.sha256(raw).hexdigest(), "source_declared": original,
         "analyzer_runtime": {"python_version": sys.version.split()[0], "source_sha256_lf": {
@@ -317,16 +320,20 @@ def analyze_report(path: Path) -> dict[str, Any]:
         "scope": "OFFLINE_REANALYSIS_OF_DECLARED_REPORT_NOT_NEW_BROKER_OBSERVATIONS",
         "broker_qualification": "NOT_ASSESSED", "new_orders_authorized": False,
     }
+    if paper_fee_usd is not None:
+        result["paper_fee_assessment"] = fee_code.assess_saved_analysis(result, paper_fee_usd)
+    return result
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, required=True, help="Existing sanitized qualification/evidence JSON")
     parser.add_argument("--output", type=Path, required=True, help="New analysis JSON; never overwritten")
+    parser.add_argument("--paper-fee-usd", help="Explicit estimated fee per filled paper order, e.g. 0.99; offline research only")
     args = parser.parse_args(argv)
     try:
         require(args.input.resolve() != args.output.resolve())
-        report = analyze_report(args.input)
+        report = analyze_report(args.input, paper_fee_usd=args.paper_fee_usd)
         with args.output.open("x", encoding="utf-8", newline="\n") as stream:
             json.dump(report, stream, ensure_ascii=False, indent=2, allow_nan=False)
             stream.write("\n")
